@@ -234,4 +234,69 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Implement eviction and fencing logic in the Distributed Lock Manager (DLM) to isolate dropped nodes safely during software DSM memory operations.
 
 
+---
+
+## 16. Pure-Rust AI Compute Engine & GPU Abstraction
+- [ ] **Native ML Framework Bindings (`synos-compute`)**
+  - [ ] Port pure-Rust ML runtimes (Candle / Burn) to target `std::sys::synos` natively.
+  - [ ] Implement direct zero-copy tensor mapping between SynOS IPC memory pages and compute runtimes.
+- [ ] **User-Space Accelerator Interfaces**
+  - [ ] Build Ring 3 PCIe/Vulkan driver abstractions for GPU/NPU compute offloading.
+
+---
+
+## 17. Rust Ecosystem Toolchain & Package Distribution
+- [ ] **Cargo Extension (`cargo-synos`)**
+  - [ ] Build toolchain utilities for automated cross-compiling, manifest signing, and binary bundle generation.
+- [ ] **Hermetic Package Daemon (`synos-pkg`)**
+  - [ ] Implement content-addressed package management backing declarative system configurations on SynFS.
+
+---
+
+## 18. Volume Management & Disaster Recovery
+- [ ] **Storage Pool Administration**
+  - [ ] Implement SynFS storage pool management for NVMe, CXL persistent memory, and network blocks.
+- [ ] **OpenVMS-Inspired Backup Tool (`synos-backup`)**
+  - [ ] Implement volume checkpointing and background streaming using SynFS Copy-on-Write snapshot trees.
+
+---
+
+## 19. Power & Hardware Lifecycle Management
+- [ ] **ACPI & Thermal Subsystem**
+  - [ ] Integrate pure-Rust ACPI parsing for hardware event handling, thermal throttling, and power state control (shutdown/reboot).
+- [ ] **Dynamic Hot-Plug Support**
+  - [ ] Support on-the-fly CXL memory module and NVMe storage insertion/removal events.
+
+---
+
+## 20. Cluster Topology Visualization
+- [ ] **Visual System & Fabric Monitor (`synos-top`)**
+  - [ ] Build a terminal/framebuffer dashboard visualizing cluster RAM/VRAM heatmaps, remote DSM page fault latency, and dynamic capability graphs in real time.
+
+
+---
+
+## 21. Cross-Platform Client SDKs & Frontend Gateways
+- [ ] **Multi-Platform Rust Client SDK (`synos-client-sdk`)**
+  - [ ] Build a cross-platform library (supporting macOS, iOS, Android, and WebAssembly) for remote capability exchange and RPCs.
+- [ ] **Native Mobile & macOS Control Applications**
+  - [ ] Develop native apps (Swift/SwiftUI) for cluster state monitoring, job submission, and capability handle delegation.
+
+---
+
+## 22. Remote Console & Remote Desktop Subsystems
+- [ ] **WebAssembly Terminal & SSH Gateway (`synos-webterm`)**
+  - [ ] Implement a high-performance WebAssembly/WebGPU terminal frontend (`syn-shell`) and an SSH daemon in Ring 3.
+  - [ ] Preserve VT100/VT420/DECterm terminal handling for remote admin access.
+- [ ] **Headless Low-Latency Display Streaming (`synos-remote-display`)**
+  - [ ] Build a zero-copy WebRTC/AV1 streaming daemon for remoting GUI/dashboard interfaces to phones, tablets, and desktop browsers.
+
+---
+
+## 23. Mobile & Remote Security Gateways
+- [ ] **Remote Token Attenuation & Passkey Auth**
+  - [ ] Implement remote capability token issuing with strict scope limits for untrusted frontend devices.
+  - [ ] Integrate WebAuthn / Passkeys / Device Biometrics into `synos-authd` for remote administrative access.
+
+
 
