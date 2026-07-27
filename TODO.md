@@ -358,3 +358,256 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Automatically export system script command signatures as structured tool-calling schemas for AI agents.
 
 
+---
+
+## 31. AI Agent Native Script Execution (`synos-agent-bridge`)
+- [ ] **Automated Tool Schema Reflection**
+  - [ ] Dynamically generate JSON-Schema tool definitions from `syn-script` command signatures for LLM function calling.
+- [ ] **Transactional CoW Execution Engine**
+  - [ ] Implement `RUN /SANDBOX` execution modes using SynFS Copy-on-Write snapshots to dry-run agent scripts safely before committing changes.
+- [ ] **Automatic Agent Capability Attenuation**
+  - [ ] Mint single-use, time-bound capability tokens tailored specifically to the scope of the agent's intended task.
+
+
+┌──────────────────────────────────────────────────────────────────┐
+│                      AI Agent / LLM Core                         │
+└────────────────────────────────┬─────────────────────────────────┘
+                                 │ Generates & Sends
+                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    SynOS Execution Sandbox                       │
+│                                                                  │
+│  1. Tool Reflection ──► Exposes JSON-Schema of Commands          │
+│  2. Token Attenuation ► Issues Short-Lived Capabilities (Read)   │
+│  3. CoW Execution ────► Runs Script on SynFS Copy-on-Write State │
+│  4. Structured Output ► Returns Typed Rust Objects (JSON/MsgPack)│
+└────────────────────────────────┬─────────────────────────────────┘
+                                 │
+                        [ Approved / Committed ]
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    Live Production System                        │
+└──────────────────────────────────────────────────────────────────┘
+
+
+
+---
+
+## 32. System Inspection & Diagnostics (`syn-inspect`)
+- [ ] **Memory & Fabric Inspection (`SHOW MEMORY`)**
+  - [ ] Build capability-restricted memory diagnostic tools detailing local RAM, CXL fabric leases, and remote Software DSM page allocations.
+- [ ] **Storage & SynFS Volume Diagnostics (`SHOW DISK`)**
+  - [ ] Implement disk usage inspection tools detailing CoW B-tree snapshot overhead, file version retentions, and NVMe/CXL storage health.
+- [ ] **Processor & Cluster Activity (`SHOW CPU`)**
+  - [ ] Build compute diagnostic tools measuring microkernel execution, user daemons, and Software DSM page-fault overhead.
+- [ ] **Session & Process Visibility (`SHOW USERS` / `SHOW PROCESS`)**
+  - [ ] Implement user and session tracking with capability-restricted views (`CAP_AUDIT_WORLD` required for full cluster visibility).
+
+---
+
+## 33. Interactive Cluster Monitor Utility (`MONITOR`)
+- [ ] **Terminal/Framebuffer Monitor Suite (`MONITOR PROCESSES / TOPCPU`)**
+  - [ ] Build a real-time visual monitor providing live bar graphs and metrics for CPU, RAM, IPC traffic, and active jobs.
+- [ ] **Distributed Memory & Lock Heatmap (`MONITOR DSM`)**
+  - [ ] Render inter-node memory access heatmaps, software DSM page-fault latencies, and DLM lock lease contention.
+
+---
+
+## 34. Capability-Guarded System Control
+- [ ] **Process Control & Task Management (`STOP / JOB`, `SET PROCESS`)**
+  - [ ] Implement capability-guarded utilities to terminate jobs, adjust dynamic priorities, or revoke remote memory tokens safely.
+
+
+---
+
+## 35. Atomic System Patching & Hot-Swapping (`synos-update`)
+- [ ] **Declarative Atomic Updates & Instant Rollbacks**
+  - [ ] Implement content-addressed system state updates on SynFS, enabling zero-cost instant rollbacks if boot or service checks fail.
+- [ ] **Zero-Downtime Microservice Hot-Swapping**
+  - [ ] Build IPC descriptor inheritance hooks to replace running Ring 3 daemons/drivers on-the-fly without service interruption.
+- [ ] **Live Microkernel Patching**
+  - [ ] Support safe Ring 0 function redirection for zero-reboot kernel security updates.
+
+---
+
+## 36. Package Obsolescence & Vulnerability Monitoring (`synos-audit`)
+- [ ] **Background Security Audit Daemon (`synos-auditd`)**
+  - [ ] Build a background scanner matching package content hashes against security advisory databases (RustSec/OSV/CVE).
+- [ ] **Obsolescence Inspection Utilities (`SHOW OBSOLETE`)**
+  - [ ] Implement administrative tools to display deprecated, unmaintained, or out-of-date binaries and driver packages across the cluster.
+- [ ] **AI-Assisted Patch Workflows**
+  - [ ] Enable AI agent integration to auto-generate patch application plans and dry-run updates in isolated CoW sandboxes before deployment.
+
+
+---
+
+## 37. Microkernel Cyber Defense & Runtime Protection (`synos-shield`)
+- [ ] **Sandboxed IPC & Behavior Tracing (`syn-probes`)**
+  - [ ] Build a zero-overhead Rust tracing probe framework to detect abnormal capability usage and unauthorized memory accesses.
+- [ ] **Memory Fabric & CXL Safeguards**
+  - [ ] Implement cryptographic frame signatures and page-fault rate-limiting to prevent Software DSM memory hijacking and remote DMA attacks.
+- [ ] **TPM & Hardware Attestation**
+  - [ ] Require cryptographic hardware attestation (TPM 2.0/TrustZone) before allowing new physical PCs/nodes into the cluster.
+
+---
+
+## 38. Dynamic Incident Response & Active Countermeasures
+- [ ] **Sub-Millisecond Capability Revocation**
+  - [ ] Implement immediate microkernel handle revocation to instantly isolate compromised processes or agents from network and memory resources.
+- [ ] **Honeypot Memory & Deception Primitives**
+  - [ ] Expose decoy memory pages (`SYS$HONEYPOT`) in the global address space to instantly flag and quarantine unauthorized memory scanners.
+- [ ] **Automated Self-Healing & CoW Forensics**
+  - [ ] Freeze compromised process trees into immutable SynFS CoW snapshots for post-mortem analysis while automatically re-spawning clean workers.
+
+---
+
+## 39. Supply Chain Security & Memory Integrity
+- [ ] **Signed Content-Addressed Binaries**
+  - [ ] Enforce cryptographically signed package validation (Sigstore/TUF) prior to process instantiation.
+- [ ] **Runtime Page Hash Verification**
+  - [ ] Continuously audit running executable memory pages against signed storage hashes to detect memory-injection exploits in real time.
+
+
+---
+
+## 37. Microkernel Cyber Defense & Runtime Protection (`synos-shield`)
+- [ ] **Sandboxed IPC & Behavior Tracing (`syn-probes`)**
+  - [ ] Build a zero-overhead Rust tracing probe framework to detect abnormal capability usage and unauthorized memory accesses.
+- [ ] **Memory Fabric & CXL Safeguards**
+  - [ ] Implement cryptographic frame signatures and page-fault rate-limiting to prevent Software DSM memory hijacking and remote DMA attacks.
+- [ ] **TPM & Hardware Attestation**
+  - [ ] Require cryptographic hardware attestation (TPM 2.0/TrustZone) before allowing new physical PCs/nodes into the cluster.
+
+---
+
+## 38. Dynamic Incident Response & Active Countermeasures
+- [ ] **Sub-Millisecond Capability Revocation**
+  - [ ] Implement immediate microkernel handle revocation to instantly isolate compromised processes or agents from network and memory resources.
+- [ ] **Honeypot Memory & Deception Primitives**
+  - [ ] Expose decoy memory pages (`SYS$HONEYPOT`) in the global address space to instantly flag and quarantine unauthorized memory scanners.
+- [ ] **Automated Self-Healing & CoW Forensics**
+  - [ ] Freeze compromised process trees into immutable SynFS CoW snapshots for post-mortem analysis while automatically re-spawning clean workers.
+
+---
+
+## 39. Supply Chain Security & Memory Integrity
+- [ ] **Signed Content-Addressed Binaries**
+  - [ ] Enforce cryptographically signed package validation (Sigstore/TUF) prior to process instantiation.
+- [ ] **Runtime Page Hash Verification**
+  - [ ] Continuously audit running executable memory pages against signed storage hashes to detect memory-injection exploits in real time.
+
+
+
+┌─────────────────────────┐               ┌─────────────────────────┐
+│       CLUSTER A         │               │       CLUSTER B         │
+│  (Running Heavy App)    │               │     (Idle Worker)       │
+│                         │               │                         │
+│  [App A Task] ──────────┼──(Presents)──►│  [Isolated Micro-Silo]  │
+│                         │  Capability   │   • 128GB Shared RAM    │
+│                         │   Token       │   • 16 CPU Cores        │
+│                         │               │   • ZERO OS/App Visibility
+└─────────────────────────┘               └─────────────────────────┘
+
+
+---
+
+## 40. Intra-Cluster Load Balancing & Resource Pooling (`synos-balancerd`)
+- [ ] **Dynamic Memory & Page Migration**
+  - [ ] Implement real-time page migration across CXL 3.0/3.1 fabrics and Layer-2 Ethernet software DSM based on access pattern and latency metrics.
+  - [ ] Build automated KV-cache rebalancing routines across remote cluster memory nodes during long-context inference operations.
+- [ ] **Cooperative Compute & Thread Scheduling**
+  - [ ] Implement active-active job and actor thread distribution via `synos-actors` across physical cluster CPUs.
+  - [ ] Integrate DLM granularity-aware lease management to prevent memory/cache thrashing during compute migration.
+- [ ] **Active-Active Node Failover & Redirection**
+  - [ ] Build hardware heartbeat health monitors to initiate sub-millisecond memory page redirection and thread reassignment upon node failure.
+
+---
+
+## 41. Inter-Cluster Federated Load Balancing ("Cluster of Clusters")
+- [ ] **Capability Token-Gated Resource Leasing**
+  - [ ] Build cross-cluster resource discovery protocols enabling clusters to exchange cryptographic capability tokens (Macaroons/Amoeba) for idle CPU/RAM/VRAM leasing.
+  - [ ] Implement owner-delegated capability attenuation primitives to scope remote execution rights tightly.
+- [ ] **Zero-Knowledge Micro-Silo Sandboxing**
+  - [ ] Enforce strict "Blind Sandbox" isolation for leased cross-cluster workloads: tenant processes cannot view host process trees, local SynFS mounts, or local sockets.
+  - [ ] Integrate hardware-assisted frame encryption (AMD SEV / Intel TDX / ARM CCA / CXL-IDE) for borrowed memory frames in-transit and at-rest.
+- [ ] **Hard Preemption & Epoch Fencing**
+  - [ ] Implement sub-millisecond inter-cluster revocation signals enabling lending nodes to reclaim local hardware instantly.
+  - [ ] Extend the DLM with cross-cluster epoch fencing to isolate revoked execution contexts safely without split-brain anomalies.
+
+---
+
+## 42. Load Balancing Topology & Arbitration Matrix
+
+| Feature | Intra-Cluster Load Balancing | Inter-Cluster Load Balancing |
+| :--- | :--- | :--- |
+| **Trust Scope** | Fully trusted within cluster boundary | Zero-Trust ("Cluster of Clusters") |
+| **Primary Mechanism** | Global 64-bit Address Space & CXL/Software DSM page migration | Capability-gated micro-silo resource leases |
+| **Security Mechanism** | Shared DLM leases and local capability handles | Cryptographic capability exchange + hardware memory encryption |
+| **Preemption Model** | Dynamic background rebalancing / sub-ms failover | Hard preemption via instantaneous lease revocation & epoch fencing |
+
+
+
+---
+
+## 43. Hardware Diagnostics & RAS (Reliability, Availability, Serviceability)
+- [ ] **EDAC & CXL Error Telemetry**
+  - [ ] Implement real-time hardware ECC memory error logging and CXL poisoned flit handling to prevent memory corruption propagation in Software DSM.
+  - [ ] Support PCIe Advanced Error Reporting (AER) drivers to isolate failing bus segments.
+- [ ] **Thermal & Power Budget Arbitration**
+  - [ ] Build predictive workload eviction and down-throttling logic when a physical node approaches critical thermal or power thresholds.
+- [ ] **Persistent Memory Pool Management**
+  - [ ] Implement safe dirty-page tracking and flush pipelines for persistent memory pools (e.g., CXL Type 3 NVM) across power cycle events.
+
+---
+
+## 44. Real-Time Determinism & Core Partitioning
+- [ ] **CPU Core Isolation (`synos-isolate`)**
+  - [ ] Build core partitioning primitives to isolate dedicated CPU cores entirely from microkernel interrupts, IPC queues, and timer ticks for hard real-time AI workloads.
+- [ ] **Priority Inversion Prevention**
+  - [ ] Implement deterministic priority inheritance mechanisms within Ring 3 capability-based IPC queues and service daemons.
+
+---
+
+## 45. Multi-Tenant Resource Quotas & Rate-Limiting
+- [ ] **Capability Rate-Limiting & DoS Protection**
+  - [ ] Enforce microkernel-level token-bucket rate limiting on IPC message throughput, page-fault rates, and memory allocations per capability handle.
+- [ ] **CXL Fabric Bandwidth QoS**
+  - [ ] Implement hardware and software traffic shaping on CXL memory channels to prevent background DMA from starving latency-critical inference loops.
+
+---
+
+## 46. Time Synchronization & Cluster Clock Alignment
+- [ ] **Sub-Microsecond PTP Engine (IEEE 1588)**
+  - [ ] Implement a user-space PTP daemon using hardware timestamps for precise clock alignment across Ethernet and CXL nodes.
+  - [ ] Guarantee absolute global event ordering for Distributed Lock Manager (DLM) operations and audit timestamps.
+- [ ] **Monotonic Epoch Counters**
+  - [ ] Sync hardware-backed monotonic counters across nodes to eliminate time-skew issues in SynFS Copy-on-Write versioning (`file.txt;1`).
+
+---
+
+## 47. Developer Ecosystem & Debugging Infrastructure
+- [ ] **Remote Microkernel Debugging (`synos-gdb`)**
+  - [ ] Build a lightweight Ring 0 `gdb` stub over serial/network interfaces to inspect microkernel state and DSM page faults without breaking Ring 3 process execution.
+- [ ] **User-Space Core Dump Engine**
+  - [ ] Implement instant CoW process state freezing on user daemon crashes, streaming state snapshots directly to SynFS without halting the microkernel.
+- [ ] **Sandboxed Dynamic Tracing (`syn-probes`)**
+  - [ ] Create an eBPF-style safe bytecode tracer in Ring 3 to monitor zero-copy IPC streams, ring buffer health, and CXL memory latencies in live production environments.
+
+
+---
+
+## 48. Capability-Gated Network Firewall & Packet Filtering (`synos-firewall`)
+- [ ] **Ring 3 Zero-Copy Packet Filter**
+  - [ ] Build a capability-aware packet filtering daemon integrated directly into the `synos-netd` network stack.
+  - [ ] Implement stateless and stateful packet inspection rules for IP, TCP, and UDP traffic without requiring Ring 0 system context switches.
+- [ ] **Capability-Authenticated Connection Grants**
+  - [ ] Require processes to present valid network capability tokens before binding to local ports or opening outbound raw socket streams.
+  - [ ] Enforce automated rate-limiting and connection filtering on incoming network interface requests.
+- [ ] **Micro-Silo & Cross-Cluster Traffic Isolation**
+  - [ ] Implement automated network perimeter isolation rules for leased inter-cluster workloads (preventing borrowed tenant nodes from accessing host intranet subnets).
+  - [ ] Enforce cryptographic packet header signatures for intra-cluster CXL/Ethernet Software DSM memory fault packets to block unauthorized remote DMA or packet spoofing attacks.
+- [ ] **Declarative Firewall Rule Specifications**
+  - [ ] Extend the `syn-shell` command dictionary with network control commands (`SHOW FIREWALL`, `SET FIREWALL /RULE`).
+  - [ ] Store network security policies as immutable, versioned declarative files on SynFS (`SYS$SYSTEM:FIREWALL.POLICY;1`).
+
