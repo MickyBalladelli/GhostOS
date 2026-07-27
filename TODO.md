@@ -195,3 +195,43 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 │ │ (Binary SynFS Stream)  │       │ (Distributed Trace Stream)│
 │ └────────────────────────┘       └────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
+
+
+
+---
+
+## 12. Rust Toolchain, Runtime & System Ecosystem
+- [ ] **Custom Rust Target & `std` Platform Layer**
+  - [ ] Define the `x86_64-unknown-synos` and `aarch64-unknown-synos` target specifications.
+  - [ ] Implement a native `std::sys::synos` backend mapping Rust primitives directly to SynOS capabilities, zero-copy IPC, and SynFS.
+- [ ] **Zero-Copy IPC Crate (`synos-ipc`)**
+  - [ ] Build a high-performance IPC library using `zerocopy`/`rkyv` for zero-allocation structured message passing between Ring 3 daemons and Ring 0.
+- [ ] **C / FFI Compatibility Layer**
+  - [ ] Provide an optional `synos-posix-compat` crate for running legacy C/C++ code (e.g., C-based LLM backends) via light syscall translation.
+
+---
+
+## 13. Native Rust Interactive Shell (`syn-shell`)
+- [ ] **Async Command Interpreter**
+  - [ ] Build an interactive CLI with OpenVMS DCL-inspired syntax, type-safe argument validation, and structured data outputs.
+  - [ ] Implement system diagnostics tools (`SHOW MEMORY/CLUSTER`, `SHOW PROCESS`, `MONITOR`).
+- [ ] **Batch & Job Management**
+  - [ ] Build a system-wide task queue service for background processing and automated pipeline runs.
+
+---
+
+## 14. User-Space Async Networking
+- [ ] **Ring 3 Network Daemon (`synos-netd`)**
+  - [ ] Build a pure-Rust user-space TCP/IP stack (`smoltcp`-backed) with zero-copy packet queues.
+  - [ ] Expose capability-authenticated sockets via IPC shared-memory ring buffers.
+
+---
+
+## 15. Service Isolation & Fault Recovery
+- [ ] **Supervisor Service (`synos-init`)**
+  - [ ] Implement dynamic driver recovery in Rust: catch panics/crashes in Ring 3 storage or network drivers and restart them without disrupting other services.
+- [ ] **Cluster Panic & Node Isolation**
+  - [ ] Implement eviction and fencing logic in the Distributed Lock Manager (DLM) to isolate dropped nodes safely during software DSM memory operations.
+
+
+
