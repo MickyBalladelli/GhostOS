@@ -132,3 +132,66 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 - [ ] **Distributed Multi-Node Authorization**
   - [ ] Support cross-node capability delegation over CXL 3.0 fabrics and Layer-2 Ethernet using cryptographic capability tokens (e.g., Macaroons / Amoeba capabilities).
   - [ ] Integrate with Distributed Lock Manager (DLM) to enforce cluster-wide lease controls and prevent unauthorized remote page faults (#PF) on Software DSM targets.
+- [ ] **Owner-Delegated Resource Lending**
+    - [ ] Build capability attenuation primitives enabling node owners to issue restricted, time-bound memory/compute tokens to remote cluster users.
+    - [ ] Implement transparent microkernel revocation hooks allowing resource providers to reclaim remote-mapped RAM/VRAM instantly.
+
+
+---
+
+## 10. Multi-Cluster Federation & Cross-Cluster Sandboxing
+- [ ] **Inter-Cluster Capability Exchanges ("Cluster of Clusters")**
+  - [ ] Implement inter-cluster cryptographic discovery protocols to federate distinct SynOS clusters without centralized management plane dependencies.
+  - [ ] Build multi-cluster resource trading primitives allowing Cluster A to lease idle CPU/RAM/VRAM capacity from Cluster B.
+- [ ] **Zero-Knowledge Micro-Silo Sandboxing**
+  - [ ] Enforce strict "Blind Sandbox" isolation scopes for cross-cluster workloads: tenant processes on borrowed nodes cannot inspect host process trees, local SynFS mountpoints, or host network sockets.
+  - [ ] Leverage CXL-IDE and CPU hardware isolation (e.g., AMD SEV / Intel TDX / ARM CCA) where available to encrypt borrowed memory frames in-transit and at-rest.
+- [ ] **Cross-Cluster Lease Arbitration & Preemption**
+  - [ ] Implement sub-millisecond inter-cluster revocation signals to allow lending clusters to reclaim borrowed hardware instantly when local priority workloads wake up.
+  - [ ] Extend the Distributed Lock Manager (DLM) with cross-cluster epoch fencing to prevent stale reads or split-brain states when inter-cluster leases expire.
+
+┌─────────────────────────┐               ┌─────────────────────────┐
+│       CLUSTER A         │               │       CLUSTER B         │
+│  (Running Heavy App)    │               │     (Idle Worker)       │
+│                         │               │                         │
+│  [App A Task] ──────────┼──(Presents)──►│  [Isolated Micro-Silo]  │
+│                         │  Capability   │   • 128GB Shared RAM    │
+│                         │   Token       │   • 16 CPU Cores        │
+│                         │               │   • ZERO OS / App Visibility
+└─────────────────────────┘               └─────────────────────────┘
+
+
+---
+
+## 11. System Diagnostics, Observability & Auditing
+- [ ] **Bare-Metal Boot Logging (Phase 1)**
+  - [ ] Implement early-boot raw serial port (COM1/16550 UART) and VGA framebuffer fallback writers (`#![no_std]`).
+  - [ ] Build a lock-free, zero-allocation ring-buffer queue for early kernel initialization traces before memory allocators online.
+- [ ] **Structured Trace Subsystem (Ring 0 / Native)**
+  - [ ] Create a zero-allocation structured tracing engine (`trace!`, `info!`, `warn!`, `error!`) passing typed event payloads instead of formatted string buffers.
+  - [ ] Assign unique 128-bit correlation IDs to asynchronous IPC messages and remote memory accesses for distributed tracing across CXL and Ethernet nodes.
+- [ ] **Ring 3 Log & Audit Daemon (`synos-logd`)**
+  - [ ] Implement a user-space logging daemon consuming kernel ring buffers via zero-copy IPC shared memory pages.
+  - [ ] Stream structured logs to SynFS binary journal streams (`SYS$LOG:SYSTEM.JOURNAL;1`) with automated background CoW retention rotation.
+  - [ ] Add an OpenVMS-style Operator Communication Manager (OPCOM) interface allowing real-time terminal broadcasts for critical system alarms.
+- [ ] **Security Auditing & Audit Analysis Utility**
+  - [ ] Build a dedicated, immutable security audit pipeline (`$AUDIT_EVENT`) recording capability grants, revocations, and authentication checks.
+  - [ ] Create a structured log query utility (`analyze/audit` CLI tool) to filter binary system traces by time window, capability handle, cluster node ID, or error status.
+  
+
+
+┌─────────────────────────────────────────────────────────────┐
+│                       Ring 0 Kernel                         │
+│  Kernel Tracing Macros (trace!, info!) ──> Ring-Buffer Queue│
+└──────────────────────────────┬──────────────────────────────┘
+                               │ Zero-Copy IPC / Mapped Buffer
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Ring 3 Logging Daemon                     │
+│               (`synos-logd` / OpenVMS OPCOM)                │
+│                                                             │
+│ ┌────────────────────────┐       ┌────────────────────────┐ │
+│ │ Local Storage Writer   │       │ Cluster Audit Network  │ │
+│ │ (Binary SynFS Stream)  │       │ (Distributed Trace Stream)│
+│ └────────────────────────┘       └────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
