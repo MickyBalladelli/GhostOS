@@ -1,0 +1,97 @@
+# TODO.md: SynOS Project Roadmap
+
+A comprehensive architectural roadmap for building **SynOS**—an active-active, capability-based microkernel designed to overcome legacy Linux limitations, incorporate key OpenVMS concepts, and pool memory across both modern CXL fabrics and legacy multi-PC hardware.
+
+---
+
+## 1. Core SynOS Kernel Architecture & SynFS (Phase 1)
+- [ ] **Establish Bare-Metal Bootstrapping**
+  - [ ] Implement UEFI and Legacy BIOS (MBR) handoff logic in Rust (`#![no_std]`).
+  - [ ] Set up early boot allocators, CPU interrupt handlers, and serial/VGA logging (`_start` entrypoint).
+  - [ ] Configure hardware-level page tables (x86_64 `CR3` / ARM `TTBR0` / RISC-V `satp`).
+- [ ] **Build Minimal Microkernel Core (<15k LOC)**
+  - [ ] Keep the SynOS core strictly in Ring 0; move all drivers, file systems, and network stacks to user space (Ring 3).
+  - [ ] Write asynchronous, zero-copy Inter-Process Communication (IPC) primitives for ultra-low latency messaging.
+  - [ ] Implement cooperative and real-time thread scheduling primitives.
+- [ ] **Native Versioned Filesystem (SynFS - Day 1 Core)**
+  - [ ] Implement Copy-on-Write (CoW) B-tree block structures for instant, zero-cost file versioning (`file.txt;1`, `file.txt;2`).
+  - [ ] Build OpenVMS-style version resolution into the VFS lookup pipeline (`path/to/file;version`).
+  - [ ] Design background block-sharing and retention garbage collection (`synfs_purged`).
+- [ ] **Implement Capability-Based Security**
+  - [ ] Replace POSIX root permissions with unforgeable, fine-grained object capability tokens.
+  - [ ] Build capability delegation models for memory mapping, process creation, and IPC channel authorization.
+
+---
+
+## 2. Legacy PC Hardware, Dual-Boot & Storage Co-Existence
+- [ ] **Legacy x86 PC Drivers**
+  - [ ] Add basic PCI bus enumeration and generic AHCI/NVMe storage drivers.
+  - [ ] Write driver hooks for standard Intel/Realtek Gigabit Ethernet NICs for bare-metal multi-PC networking.
+  - [ ] Implement fallback framebuffer display outputs (VGA/VESA/GOP).
+- [ ] **Dual-Boot & Storage Co-Existence**
+  - [ ] Implement UEFI chainloading (`synos_loader.efi`) for Windows Boot Manager and GRUB.
+  - [ ] Support loopback image booting (`synos.img`) directly from NTFS/EXT4 partitions without repartitioning.
+  - [ ] Add read-only EXT4 and FAT32/NTFS drivers to access local LLM weights from host OS partitions.
+
+---
+
+## 3. Solving Core Linux Pain Points in SynOS
+- [ ] **Enforce Memory Safety**
+  - [ ] Build the entire kernel and core system services in Rust/Zig, restricting `unsafe` code to isolated register/page-table blocks.
+- [ ] **Replace Legacy Filesystem & Global State Layouts**
+  - [ ] Abandon `/etc`, `/usr`, and `/var` directory hierarchies in favor of an immutable, declarative root filesystem in SynFS.
+  - [ ] Implement hermetic, content-addressed package isolation (Nix/Flatpak model).
+- [ ] **Redesign System I/O & Media Subsystems**
+  - [ ] Standardize on an async-first execution model rather than stacking legacy blocking POSIX calls and `io_uring`.
+  - [ ] Create unified, zero-copy audio/video pipeline APIs directly in the platform layer.
+
+---
+
+## 4. OpenVMS Feature Integration
+- [ ] **Native Distributed Lock Manager (DLM)**
+  - [ ] Build SynOS kernel-managed lock mechanisms for shared memory sections, files, and resources across cluster nodes.
+- [ ] **Logical Name Tables**
+  - [ ] Implement a system-wide, scoped dictionary mapping logical aliases to files, devices, or IPC channels with strict ACLs.
+- [ ] **Record Management Services (RMS)**
+  - [ ] Add native OS support for structured record types (indexed/sequential) directly within SynFS alongside flat byte streams.
+- [ ] **Standardized Command Interface**
+  - [ ] Build a CLI dictionary that validates typed arguments and options *before* execution.
+  - [ ] Standardize system tool outputs on structured data objects instead of unstructured raw text.
+- [ ] **Uniform Error Condition Signals**
+  - [ ] Implement a unified 32-bit `$STATUS` code standard across system calls, drivers, and user applications.
+
+---
+
+## 5. Hardware Fabric & Clustering Modes
+- [ ] **CXL 3.0 / 3.1 Hardware Fabric (Modern Target)**
+  - [ ] Write CXL component register (HDM) drivers to discover and map Type-3 memory devices on boot.
+  - [ ] Implement hardware-assisted dynamic memory lease allocation.
+- [ ] **Software-Defined Distributed Shared Memory (Legacy Target)**
+  - [ ] Implement `#PF` (Page Fault) traps to fetch memory pages over raw layer-2 Ethernet packets between legacy PCs.
+  - [ ] Enforce page-level cache coherence across PCs using software DLM lease locks.
+- [ ] **Global Address Space & Memory Pooling**
+  - [ ] Expose all cluster RAM and VRAM as a single, 64-bit unified address space regardless of hardware transport layer.
+  - [ ] Implement background memory page migration based on access patterns and network latency metrics.
+- [ ] **Active-Active Fault Tolerance**
+  - [ ] Build sub-millisecond heartbeat monitors over network interfaces.
+  - [ ] Support transparent page redirection to mirrored memory nodes on physical hardware failure.
+
+---
+
+## 6. Large Language Model (LLM) Enablement
+- [ ] **Single-Node Execution Paradigm**
+  - [ ] Enable framework-free, multi-terabyte memory allocations on SynOS without manual Tensor/Pipeline parallelism code.
+- [ ] **Cluster-Wide Dynamic KV-Cache Pooling**
+  - [ ] Allow real-time KV-cache allocation across remote CXL nodes or networked PCs during long-context inference runs.
+- [ ] **Zero-Downtime Failover**
+  - [ ] Guarantee inference request persistence during node drops through transparent memory degradation handles.
+
+---
+
+## 7. Target Platforms & Emulation
+- [ ] **Legacy Hardware Testbed**
+  - [ ] Test bare-metal two-node Ethernet clustering using standard consumer PCs.
+- [ ] **Local Emulation Sandbox**
+  - [ ] Configure multi-instance QEMU/KVM environments using emulated CXL devices (`ivshmem`) for local development.
+- [ ] **Enterprise Hardware Targets**
+  - [ ] Validate SynOS on rack-scale CXL switched nodes and PCIe/NVLink fabric AI clusters.
