@@ -95,3 +95,21 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Configure multi-instance QEMU/KVM environments using emulated CXL devices (`ivshmem`) for local development.
 - [ ] **Enterprise Hardware Targets**
   - [ ] Validate SynOS on rack-scale CXL switched nodes and PCIe/NVLink fabric AI clusters.
+
+---
+
+## 8. Architectural Risk Mitigations & Optimizations
+- [ ] **Software DSM & Latency Mitigation**
+  - [ ] Implement a predictive asynchronous prefetching engine at the memory allocator layer to prevent CPU stalls during continuous sequential memory reads.
+  - [ ] Decouple transport layers by mapping CXL HDM for cache-coherent RAM while treating Layer-2 Ethernet nodes as a tiered NUMA page cache (block-based remote paging).
+- [ ] **User-Space RMS Performance Optimization**
+  - [ ] Implement lock-free circular buffer IPC Shared-Memory Rings between user-space applications and system daemons to eliminate context switches.
+  - [ ] Support direct memory-mapped CoW B-tree node reads via capability handles, moving RMS parsing logic into an in-process runtime library.
+- [ ] **Distributed Lock Manager (DLM) Consistency & Thrashing Controls**
+  - [ ] Implement granularity-aware leases combining coarse-grained object locks with fine-grained byte-range locks to prevent false sharing on 4KB pages.
+  - [ ] Enforce an Epoch-based Read-Copy-Update (RCU) model for read-heavy distributed states (e.g., Logical Name Tables, shared weight matrices).
+- [ ] **Bootstrap Heap-Free Capability Management**
+  - [ ] Adopt an seL4-style static capability model where physical memory is initially passed to user-space managers as untyped memory capability tokens without dynamic kernel heap allocation.
+  - [ ] Embed Capability Derivation Tree (CDT) node pointers directly inside resource descriptor memory pages.
+- [ ] **Logical Name Fast-Path Resolution**
+  - [ ] Store process-local and system-wide logical name tables in lock-free atomic hash tables residing in read-only shared memory pages for fast user-space alias resolution without Ring 0 switches.
