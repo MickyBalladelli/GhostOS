@@ -300,3 +300,61 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 
 
+---
+
+## 24. Native Application Model & Service Runtimes
+- [ ] **Declarative Application Manifests (`App.toml`)**
+  - [ ] Implement capability-constrained app manifest specifications and supervisor spawning logic.
+- [ ] **Distributed Actor Framework (`synos-actors`)**
+  - [ ] Build a pure-Rust actor system using native IPC and Software DSM for multi-node process orchestration without manual networking boilerplate.
+
+---
+
+## 25. Application Data Layer & Native RMS
+- [ ] **Rust Record Management API (`synos-rms`)**
+  - [ ] Build idiomatic Rust bindings for OpenVMS-style indexed (ISAM) files, structured data records, and DLM-backed record-level locking.
+- [ ] **Embedded CoW Database Engine**
+  - [ ] Implement zero-copy key-value and transaction storage libraries optimized for SynFS B-trees.
+
+---
+
+## 26. High-Level AI Execution & Agent Pipelines
+- [ ] **Native LLM Service Gateway (`synos-inference`)**
+  - [ ] Build a user-space OpenAI/gRPC-compatible API server using pooled cluster RAM/VRAM for KV-cache allocation.
+- [ ] **Persistent Agent Execution State**
+  - [ ] Provide continuous CoW snapshotting for long-running AI agent stacks and execution states.
+
+---
+
+## 27. Web Application & Microservices Layer
+- [ ] **Async HTTP / gRPC Stack (`synos-http`)**
+  - [ ] Provide lightweight native web server primitives (`axum`/`hyper` ports) bound directly to `synos-netd` and capability checks.
+
+
+---
+
+## 28. Native Command Scripting (`syn-script`)
+- [ ] **Structured Pipeline Engine**
+  - [ ] Build a strongly-typed script interpreter passing structured Rust objects through IPC channels instead of raw text streams.
+- [ ] **Capability & Logical Name Control**
+  - [ ] Implement native syntax for Logical Name manipulation, symbol creation, and capability token attenuation.
+- [ ] **OpenVMS DCL-Style Status Handling**
+  - [ ] Enforce `$STATUS`-driven error propagation and conditional execution primitives.
+
+---
+
+## 29. Embedded Scripting & Wasm Extension Runtime
+- [ ] **Pure-Rust Embedded Engine (Rhai Integration)**
+  - [ ] Embed `Rhai` for fast, memory-safe system automation and service scripting without binary re-compilation.
+- [ ] **Sandboxed WebAssembly Scripting (`synos-wasm-script`)**
+  - [ ] Provide a zero-trust Wasm script engine (`wasmtime`/`wasmi`) for executing untrusted user/agent code with fine-grained capability restrictions.
+
+---
+
+## 30. AI Agent Orchestration & Deterministic Execution
+- [ ] **Dry-Run CoW Sandboxing**
+  - [ ] Implement isolated CoW execution environments for AI-generated scripts to validate system operations before committing changes.
+- [ ] **Structured LLM Function Reflection**
+  - [ ] Automatically export system script command signatures as structured tool-calling schemas for AI agents.
+
+
