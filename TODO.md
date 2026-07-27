@@ -669,4 +669,44 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 
 
-     
+---
+
+## 51. Hardware-Rooted Confidential Computing & TEE Enclaves (`synos-confidential`)
+- [ ] **Hardware Enclave Binding**
+  - [ ] Implement support for CPU and GPU Trusted Execution Environments (AMD SEV-SNP, Intel TDX, NVIDIA TEE) to protect memory in-use across nodes.
+- [ ] **Attestation-Gated Capability Provisioning**
+  - [ ] Require cryptographic hardware attestation tokens before granting capabilities to shared Software DSM memory or inter-node IPC streams.
+- [ ] **Post-Quantum Fabric Encryption**
+  - [ ] Secure cross-node CXL and Ethernet page-fault traffic using post-quantum cryptographic primitives (ML-KEM/PQC).
+
+---
+
+## 52. Deterministic Time-Travel Execution & Replay (`synos-replay`)
+- [ ] **Non-Deterministic Input Logging**
+  - [ ] Log microkernel timing events, network interrupts, and CXL memory access variations to lock-free ring buffers with low execution overhead.
+- [ ] **Time-Travel Process Replay**
+  - [ ] Build reverse-debugging primitives into `synos-gdb` allowing developers to step process states backward and forward in time.
+- [ ] **Flight-Recorder Post-Mortems**
+  - [ ] Automatically preserve execution logs on process crash to reproduce transient bugs in isolated test harnesses.
+
+---
+
+## 53. Agent-Native Semantic Memory & Context Bus (`synos-agentd`)
+- [ ] **Real-Time System Vector Indexing**
+  - [ ] Maintain low-latency vector embeddings of active SynFS files, system logs, and KV state using background NPU/GPU acceleration.
+- [ ] **Zero-Copy Semantic Retrieval**
+  - [ ] Expose capability-authenticated IPC channels for AI processes to perform semantic similarity queries over system memory.
+- [ ] **Context Lifecycle Management**
+  - [ ] Automatically garbage collect and decay context memory in accordance with process capability lifetimes.
+
+---
+
+## 54. Self-Healing Daemon Supervisor (`synos-heal`)
+- [ ] **Ring 3 Telemetry & Health Monitoring**
+  - [ ] Implement lock-free health checks to detect deadlocks, driver stalls, or memory corruption in user-space system services.
+- [ ] **Instant CoW State Recovery**
+  - [ ] Automatically restart crashed Ring 3 daemons and restore their state from the latest clean SynFS Copy-on-Write snapshot in sub-milliseconds.
+- [ ] **Zero-Downtime Hot-Patching**
+  - [ ] Support live microkernel code updates and Ring 3 server binary swaps without dropping process connections or rebooting nodes.
+
+
