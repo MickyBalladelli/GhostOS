@@ -611,3 +611,62 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Extend the `syn-shell` command dictionary with network control commands (`SHOW FIREWALL`, `SET FIREWALL /RULE`).
   - [ ] Store network security policies as immutable, versioned declarative files on SynFS (`SYS$SYSTEM:FIREWALL.POLICY;1`).
 
+---
+
+## 49. Native In-Memory Key-Value Cache Engine (`synos-kvd`)
+- [ ] **Zero-Copy Shared Memory KV Daemon**
+  - [ ] Implement a native user-space key-value daemon leveraging lock-free atomic hash tables in shared memory pages.
+  - [ ] Expose zero-copy read handles to processes via capability tokens, allowing sub-nanosecond key lookups without Ring 0 syscall overhead.
+- [ ] **Cluster-Wide Memory Pooling & CXL Offload**
+  - [ ] Integrates directly with Software DSM and CXL 3.0 fabrics to pool RAM/VRAM across physical nodes for multi-terabyte key-value caching.
+  - [ ] Implement automatic eviction policies (LRU, LFU, TTL) integrated with microkernel memory pressure events.
+- [ ] **Capability-Authenticated Keyspaces**
+  - [ ] Enforce namespace isolation (e.g., `sys/`, `job/`, `app/`) guarded by unforgeable capability handles instead of weak password/ACL strings.
+  - [ ] Support scoped token attenuation (e.g., granting a process read-only access to a specific sub-tree of keys).
+- [ ] **Transactional Copy-on-Write (CoW) Snapshots**
+  - [ ] Back the key-value store with SynFS B-trees for background zero-cost persistent checkpointing (`SYS$SYSTEM:KVD_STATE.DAT;1`).
+  - [ ] Support instant dry-run transaction branching for AI agent state testing using SynFS CoW pages.
+- [ ] **Redis Protocol Compatibility Gateway**
+  - [ ] Build an optional light translation shim supporting standard Redis RESP/RESP3 socket protocols to run unmodified legacy clients (e.g., LangChain, Python Redis SDKs).
+
+
+---
+
+## 50. Enterprise Remote Storage & NAS Mount Services (`synos-storaged`)
+- [ ] **User-Space Network File System Clients (Ring 3)**
+  - [ ] Implement a pure-Rust, async pNFS (Parallel NFSv4.1/4.2) daemon in Ring 3 for scale-out NAS arrays (e.g., Dell EMC Isilon / PowerScale).
+  - [ ] Build a lightweight SMB 3.1.1 client daemon (`synos-smb`) supporting multi-channel and SMB Direct (RDMA).
+- [ ] **High-Performance Block Storage Fabrics**
+  - [ ] Implement NVMe over Fabrics (NVMe-oF) over TCP and RoCEv2 (RDMA) for ultra-low latency remote block device mapping.
+  - [ ] Support generic user-space iSCSI initiator services for legacy enterprise SAN arrays.
+- [ ] **Capability-Gated Storage Mounts**
+  - [ ] Restrict remote storage mount points (`SYS$STORAGE:`) behind unforgeable capability tokens rather than ambient POSIX permissions.
+  - [ ] Implement transparent SynFS Copy-on-Write (CoW) caching layers over slow remote network mounts to accelerate read-heavy AI dataset access.
+- [ ] **Object Storage & S3 Stream Pipelines**
+  - [ ] Build a zero-copy S3 client runtime integrated directly into `synos-netd` for streaming multi-gigabyte LLM model weights directly into unified RAM/VRAM pools.
+- [ ] **Declarative Mount Configuration**
+  - [ ] Extend `syn-shell` syntax to support structured storage mounting (`MOUNT /NFS /SERVER=isilon.local:/data /LOGICAL=DATA_POOL`).
+  - [ ] Store persistent mount definitions in declarative, versioned SynFS system state files (`SYS$SYSTEM:MOUNTS.DAT;1`).
+
+
+
+┌─────────────────────────────────────────────────────────────┐
+│                 Application / AI Workload                   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ Requests File via Capability Token
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│             Ring 3 Enterprise Storage Daemon                │
+│                     (`synos-storaged`)                      │
+│                                                             │
+│   ┌──────────────────┐  ┌──────────────────┐  ┌───────────┐ │
+│   │ pNFS / NFSv4 Client│  │ NVMe-oF (TCP/RDMA)│  │ S3 Client │ │
+│   └─────────┬────────┘  └─────────┬────────┘  └─────┬─────┘ │
+└─────────────┼─────────────────────┼─────────────────┼───────┘
+              │                     │                 │
+              ▼                     ▼                 ▼
+     [ Enterprise Isilon ]   [ SAN / NVMe Array ]   [ Object Pool ]
+
+
+
+     
