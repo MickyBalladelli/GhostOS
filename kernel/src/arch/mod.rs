@@ -16,4 +16,3 @@ mod current;
 mod current;
 
 pub use current::{halt, interrupts, paging};
-

@@ -44,6 +44,24 @@ The AArch64 backend programs `TTBR0_EL1`; the RISC-V backend programs an Sv39
 root through `satp`. Platform-specific firmware entry shims for those machines
 can hand their memory map to the same `kernel_entry`.
 
+## Microkernel core
+
+The Ring 0 crate contains only boot, memory, interrupt, IPC, and scheduling
+mechanisms. Drivers, filesystems, networking, policy, and identity belong in
+isolated user address spaces.
+
+- `task` defines fixed-size thread contexts and distinct kernel/user execution
+  modes without a kernel heap.
+- `scheduler` provides 64 generation-checked thread slots. Cooperative threads
+  run until they yield or block. Real-time threads use fixed priority, then
+  earliest deadline, and can preempt lower-ranked work on a timer tick.
+- `ipc` is a bounded, non-blocking MPMC queue. Messages contain small control
+  words plus shared-region descriptors, so payload bytes stay in mapped pages
+  instead of being copied through the kernel.
+
+This core has no driver, filesystem, network stack, dynamic allocator, or POSIX
+compatibility layer. Those are user-space services communicating over IPC.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase
@@ -77,8 +95,7 @@ sync
 diskutil eject /dev/diskN
 ```
 
-Replace `disk5` with the USB drive. The `r` in `/dev/rdiskN` makes writing
-faster. Do not use a partition name such as `diskN1`.
+Replace `diskN` with the USB drive.
 
 On Linux:
 

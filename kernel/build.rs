@@ -5,4 +5,3 @@ fn main() {
         println!("cargo:rustc-link-arg=-Tkernel/linker/x86_64.ld");
     }
 }
-

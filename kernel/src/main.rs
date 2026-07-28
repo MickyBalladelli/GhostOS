@@ -8,4 +8,3 @@ use synos_boot_protocol::BootInfo;
 pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     synos_kernel::kernel_entry(boot_info)
 }
-

@@ -9,10 +9,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Implement UEFI and Legacy BIOS (MBR) handoff logic in Rust (`#![no_std]`).
   - [x] Set up early boot allocators, CPU interrupt handlers, and serial/VGA logging (`_start` entrypoint).
   - [x] Configure hardware-level page tables (x86_64 `CR3` / ARM `TTBR0` / RISC-V `satp`).
-- [ ] **Build Minimal Microkernel Core (<15k LOC)**
-  - [ ] Keep the SynOS core strictly in Ring 0; move all drivers, file systems, and network stacks to user space (Ring 3).
-  - [ ] Write asynchronous, zero-copy Inter-Process Communication (IPC) primitives for ultra-low latency messaging.
-  - [ ] Implement cooperative and real-time thread scheduling primitives.
+- [x] **Build Minimal Microkernel Core (<15k LOC)**
+  - [x] Keep the SynOS core strictly in Ring 0; move all drivers, file systems, and network stacks to user space (Ring 3).
+  - [x] Write asynchronous, zero-copy Inter-Process Communication (IPC) primitives for ultra-low latency messaging.
+  - [x] Implement cooperative and real-time thread scheduling primitives.
 - [ ] **Native Versioned Filesystem (SynFS - Day 1 Core)**
   - [ ] Implement Copy-on-Write (CoW) B-tree block structures for instant, zero-cost file versioning (`file.txt;1`, `file.txt;2`).
   - [ ] Build OpenVMS-style version resolution into the VFS lookup pipeline (`path/to/file;version`).

@@ -3,11 +3,18 @@
 mod allocator;
 mod arch;
 mod console;
+pub mod ipc;
+pub mod scheduler;
+pub mod task;
 
 use core::panic::PanicInfo;
 use synos_boot_protocol::BootInfo;
 
 pub use allocator::{AllocationError, EarlyFrameAllocator, FRAME_SIZE};
+pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
+pub use task::{
+    AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,
+};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
@@ -37,7 +44,13 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         arch::interrupts::enable();
     }
 
-    println!("paging and interrupts ready");
+    let scheduler = Scheduler::new();
+
+    println!(
+        "paging, interrupts, IPC, and scheduler ready ({} thread slots, clock={})",
+        task::MAX_THREADS,
+        scheduler.clock()
+    );
     halt()
 }
 
