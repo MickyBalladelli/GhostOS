@@ -11,10 +11,16 @@ mod console;
 pub mod dlm;
 pub mod ipc;
 #[allow(unsafe_code)]
+mod keyboard;
+#[allow(unsafe_code)]
 pub mod page_fault;
 pub mod persona;
 pub mod scheduler;
+#[allow(unsafe_code)]
+mod shell;
 pub mod task;
+#[allow(unsafe_code)]
+mod usb_keyboard;
 
 use core::panic::PanicInfo;
 use synos_boot_protocol::BootInfo;
@@ -69,7 +75,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         task::MAX_THREADS,
         scheduler.clock()
     );
-    halt()
+    shell::run(boot_info, scheduler.clock())
 }
 
 pub fn halt() -> ! {

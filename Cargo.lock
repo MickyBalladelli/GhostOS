@@ -41,9 +41,12 @@ dependencies = [
 name = "synos-kernel"
 version = "0.1.0"
 dependencies = [
+ "syn-shell",
  "synos-boot-protocol",
  "synos-fabric",
+ "synos-legacy-pc-drivers",
  "synos-status",
+ "synos-system-model",
 ]
 
 [[package]]

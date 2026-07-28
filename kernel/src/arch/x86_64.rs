@@ -115,7 +115,7 @@ pub mod interrupts {
         static synos_isr_table: [u64; IDT_ENTRIES];
     }
 
-    /// Installs an IDT, remaps the legacy PIC, and enables only the timer IRQ.
+    /// Installs an IDT, remaps the legacy PIC, and enables timer and keyboard IRQs.
     ///
     /// # Safety
     /// Must run once on the bootstrap processor while interrupts are disabled.
@@ -129,7 +129,7 @@ pub mod interrupts {
             }
 
             remap_pic();
-            outb(0x21, 0xfe);
+            outb(0x21, 0xfc);
             outb(0xa1, 0xff);
 
             let pointer = IdtPointer {

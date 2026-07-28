@@ -32,6 +32,17 @@ pub fn _print(args: fmt::Arguments<'_>) {
     LOCKED.store(false, Ordering::Release);
 }
 
+pub fn read_byte() -> Option<u8> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        serial::read()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        None
+    }
+}
+
 struct Console {
     #[cfg(target_arch = "x86_64")]
     vga_column: usize,
@@ -115,9 +126,25 @@ impl FramebufferConsole {
     }
 
     fn write(&mut self, byte: u8) {
-        if byte == b'\n' {
-            self.new_line();
-            return
+        match byte {
+            b'\n' => {
+                self.new_line();
+                return
+            }
+            b'\r' => {
+                self.column = 0;
+                return
+            }
+            8 => {
+                if self.column != 0 {
+                    self.column -= 1;
+                    let x = self.column * Self::GLYPH_WIDTH;
+                    let y = self.row * Self::GLYPH_HEIGHT;
+                    self.draw_glyph(x, y, glyph(b' '))
+                }
+                return
+            }
+            _ => {}
         }
 
         let x = self.column * Self::GLYPH_WIDTH;
@@ -283,6 +310,16 @@ mod serial {
         }
     }
 
+    pub fn read() -> Option<u8> {
+        unsafe {
+            if inb(COM1 + 5) & 0x01 == 0 {
+                None
+            } else {
+                Some(inb(COM1))
+            }
+        }
+    }
+
     unsafe fn outb(port: u16, value: u8) {
         unsafe {
             core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack));
@@ -308,6 +345,16 @@ mod vga {
     pub fn write(byte: u8, column: &mut usize) {
         match byte {
             b'\n' => *column = ((*column / WIDTH) + 1) * WIDTH,
+            b'\r' => *column = (*column / WIDTH) * WIDTH,
+            8 => {
+                let row_start = (*column / WIDTH) * WIDTH;
+                if *column > row_start {
+                    *column -= 1;
+                    unsafe {
+                        BUFFER.add(*column).write_volatile(COLOR | b' ' as u16);
+                    }
+                }
+            }
             byte => {
                 unsafe {
                     BUFFER.add(*column).write_volatile(COLOR | byte as u16);
