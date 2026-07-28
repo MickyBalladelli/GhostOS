@@ -8,6 +8,7 @@ mod arch;
 pub mod capability;
 #[allow(unsafe_code)]
 mod console;
+pub mod dlm;
 pub mod ipc;
 pub mod scheduler;
 pub mod task;
@@ -19,6 +20,10 @@ pub use allocator::{AllocationError, EarlyFrameAllocator, FRAME_SIZE};
 pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityObject, CapabilitySpace,
     MAX_CAPABILITIES, Rights,
+};
+pub use dlm::{
+    DistributedLockManager, LockError, LockGrant, LockHandle, LockMode, LockOwner, NodeId,
+    ResourceId, ResourceKind, ResourceName,
 };
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
 pub use task::{

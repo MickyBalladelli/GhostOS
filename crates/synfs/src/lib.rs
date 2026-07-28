@@ -3,6 +3,14 @@
 
 use core::cmp::Ordering;
 use core::fmt;
+use synos_status::{IntoStatus, Severity, Status, facility};
+
+mod rms;
+
+pub use rms::{
+    IndexDefinition, RecordDescriptor, RecordFileInfo, RecordFormat, RecordOrganization,
+    RecordRead, RecordSelector, RmsError,
+};
 
 pub const BLOCK_SIZE: usize = 4096;
 pub const DATA_BYTES: usize = BLOCK_SIZE - 16;
@@ -21,6 +29,29 @@ pub enum Error {
     OutOfSpace,
     TooManyRetentionRules,
     VersionOverflow,
+}
+
+impl IntoStatus for Error {
+    fn status(self) -> Status {
+        match self {
+            Self::NotFound => Status::NOT_FOUND,
+            Self::OutOfSpace | Self::TooManyRetentionRules => Status::NO_SPACE,
+            Self::Corrupt => Status::CORRUPT,
+            Self::InvalidPath | Self::InvalidVersion => Status::INVALID_ARGUMENT,
+            Self::BufferTooSmall { .. } => {
+                Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
+                    .expect("valid filesystem status")
+            }
+            Self::AlreadyExists => {
+                Status::new(Severity::Error, facility::FILESYSTEM, 2, 0)
+                    .expect("valid filesystem status")
+            }
+            Self::VersionOverflow => {
+                Status::new(Severity::Fatal, facility::FILESYSTEM, 3, 0)
+                    .expect("valid filesystem status")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

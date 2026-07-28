@@ -2,6 +2,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
 
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::task::AddressSpaceId;
+use synos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -59,6 +60,17 @@ pub enum IpcError {
     Full,
     Empty,
     AccessDenied,
+}
+
+impl IntoStatus for IpcError {
+    fn status(self) -> Status {
+        match self {
+            Self::Full => Status::BUSY,
+            Self::Empty => Status::new(Severity::Information, facility::KERNEL, 2, 0)
+                .expect("valid IPC status"),
+            Self::AccessDenied => Status::ACCESS_DENIED,
+        }
+    }
 }
 
 struct Slot {

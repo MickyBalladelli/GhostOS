@@ -1,6 +1,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use synos_status::{IntoStatus, Severity, Status, facility};
+
 pub const DEFAULT_QUEUE_CAPACITY: usize = 64;
 pub const MAX_MEDIA_PLANES: usize = 4;
 
@@ -15,6 +17,23 @@ pub enum Error {
     InvalidToken,
     QueueFull,
     RequestNotDispatched,
+}
+
+impl IntoStatus for Error {
+    fn status(self) -> Status {
+        match self {
+            Self::QueueFull => Status::BUSY,
+            Self::InvalidDevice => Status::NOT_FOUND,
+            Self::CannotCancel | Self::RequestNotDispatched => {
+                Status::new(Severity::Warning, facility::DRIVER, 1, 0).expect("valid I/O status")
+            }
+            Self::EmptyBuffer
+            | Self::InvalidBufferAccess
+            | Self::InvalidFormat
+            | Self::InvalidPlaneCount
+            | Self::InvalidToken => Status::INVALID_ARGUMENT,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

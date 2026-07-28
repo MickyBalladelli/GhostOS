@@ -48,17 +48,17 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 4. OpenVMS Feature Integration
-- [ ] **Native Distributed Lock Manager (DLM)**
-  - [ ] Build SynOS kernel-managed lock mechanisms for shared memory sections, files, and resources across cluster nodes.
-- [ ] **Logical Name Tables**
-  - [ ] Implement a system-wide, scoped dictionary mapping logical aliases to files, devices, or IPC channels with strict ACLs.
-- [ ] **Record Management Services (RMS)**
-  - [ ] Add native OS support for structured record types (indexed/sequential) directly within SynFS alongside flat byte streams.
-- [ ] **Standardized Command Interface**
-  - [ ] Build a CLI dictionary that validates typed arguments and options *before* execution.
-  - [ ] Standardize system tool outputs on structured data objects instead of unstructured raw text.
-- [ ] **Uniform Error Condition Signals**
-  - [ ] Implement a unified 32-bit `$STATUS` code standard across system calls, drivers, and user applications.
+- [x] **Native Distributed Lock Manager (DLM)**
+  - [x] Build SynOS kernel-managed lock mechanisms for shared memory sections, files, and resources across cluster nodes.
+- [x] **Logical Name Tables**
+  - [x] Implement a system-wide, scoped dictionary mapping logical aliases to files, devices, or IPC channels with strict ACLs.
+- [x] **Record Management Services (RMS)**
+  - [x] Add native OS support for structured record types (indexed/sequential) directly within SynFS alongside flat byte streams.
+- [x] **Standardized Command Interface**
+  - [x] Build a CLI dictionary that validates typed arguments and options *before* execution.
+  - [x] Standardize system tool outputs on structured data objects instead of unstructured raw text.
+- [x] **Uniform Error Condition Signals**
+  - [x] Implement a unified 32-bit `$STATUS` code standard across system calls, drivers, and user applications.
 
 ---
 

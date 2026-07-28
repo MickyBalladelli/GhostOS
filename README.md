@@ -131,6 +131,29 @@ between versions, and a failed or superseded tree update cannot damage the
 committed root. `SynfsPurged` applies bounded per-file retention work, then
 mark-and-sweep collection reclaims tombstoned data and abandoned CoW branches.
 
+## OpenVMS feature core
+
+The kernel DLM implements the six OpenVMS lock modes for shared-memory, file,
+and named resources. Lock requests require a matching resource capability,
+conflicts queue in FIFO order, and all locks from a failed cluster node can be
+released together.
+
+`synos-system-model` provides process, group, system, and cluster logical-name
+scopes. Entries target files, devices, or IPC channels and use owner-controlled
+ACLs. Its command dictionary accepts positional arguments and DCL-style
+qualifiers, validates Boolean, integer, and text values before dispatch, and
+returns bounded structured fields.
+
+SynFS stores sequential and indexed RMS record files as ordinary immutable file
+versions. Callers supply serialization scratch space and can select records by
+position or indexed key; flat byte-stream files continue to use `write` and
+`read`.
+
+`synos-status` defines the common 32-bit condition layout used by kernel,
+filesystem, driver, command, and system-model errors. It keeps the OpenVMS
+odd-value success convention while exposing facility, code, severity, and flag
+fields without platform-sized error values.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase

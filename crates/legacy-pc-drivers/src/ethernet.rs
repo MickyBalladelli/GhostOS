@@ -1,4 +1,5 @@
 use core::ptr::{NonNull, read_volatile, write_volatile};
+use synos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::pci::{Bar, PciDevice};
 
@@ -60,6 +61,18 @@ pub enum EthernetError {
     InvalidRegisterBase,
     InvalidRing,
     TimedOut,
+}
+
+impl IntoStatus for EthernetError {
+    fn status(self) -> Status {
+        let code = match self {
+            Self::InvalidRegisterBase => 1,
+            Self::InvalidRing => 2,
+            Self::TimedOut => 3,
+        };
+        Status::new(Severity::Error, facility::DRIVER, code, 0)
+            .expect("valid Ethernet status")
+    }
 }
 
 #[repr(C, align(16))]

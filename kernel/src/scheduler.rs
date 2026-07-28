@@ -3,6 +3,7 @@ use crate::task::{
     AddressSpaceId, Context, ExecutionMode, MAX_THREADS, SchedulingPolicy, Thread, ThreadId,
     ThreadState,
 };
+use synos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SchedulerError {
@@ -11,6 +12,19 @@ pub enum SchedulerError {
     InvalidContext,
     InvalidExecutionMode,
     AccessDenied,
+}
+
+impl IntoStatus for SchedulerError {
+    fn status(self) -> Status {
+        match self {
+            Self::Full => Status::NO_SPACE,
+            Self::AccessDenied => Status::ACCESS_DENIED,
+            Self::InvalidThread | Self::InvalidContext | Self::InvalidExecutionMode => {
+                Status::new(Severity::Error, facility::KERNEL, 3, 0)
+                    .expect("valid scheduler status")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

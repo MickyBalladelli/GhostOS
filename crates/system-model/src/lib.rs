@@ -2,7 +2,11 @@
 #![forbid(unsafe_code)]
 
 use core::fmt;
+use synos_status::{IntoStatus, Severity, Status, facility};
 use synos_synfs::{Error as SynFsError, SynFs};
+
+pub mod command;
+pub mod logical;
 
 pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_DEPENDENCIES: usize = 8;
@@ -24,12 +28,44 @@ pub enum Error {
     TooManyDependencies,
 }
 
+impl IntoStatus for Error {
+    fn status(self) -> Status {
+        match self {
+            Self::PackageNotFound | Self::MissingDependency => Status::NOT_FOUND,
+            Self::StoreFull | Self::TooManyDependencies => Status::NO_SPACE,
+            Self::InvalidEntryPoint | Self::InvalidName | Self::EmptyRoot => {
+                Status::INVALID_ARGUMENT
+            }
+            Self::AlreadyBound => {
+                Status::new(Severity::Error, facility::SYSTEM, 20, 0).expect("valid model status")
+            }
+            Self::StaleRevision => {
+                Status::new(Severity::Warning, facility::SYSTEM, 21, 0).expect("valid model status")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepositoryError {
     CorruptObject,
     Model(Error),
     SynFs(SynFsError),
     VerificationBufferTooSmall { required: usize },
+}
+
+impl IntoStatus for RepositoryError {
+    fn status(self) -> Status {
+        match self {
+            Self::CorruptObject => Status::CORRUPT,
+            Self::Model(error) => error.status(),
+            Self::SynFs(error) => error.status(),
+            Self::VerificationBufferTooSmall { .. } => {
+                Status::new(Severity::Error, facility::SYSTEM, 22, 0)
+                    .expect("valid repository status")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]

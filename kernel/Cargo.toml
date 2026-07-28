@@ -14,3 +14,4 @@ path = "src/main.rs"
 
 [dependencies]
 synos-boot-protocol = { path = "../crates/boot-protocol" }
+synos-status = { path = "../crates/status" }

@@ -9,30 +9,48 @@ version = "0.1.0"
 [[package]]
 name = "synos-host-filesystems"
 version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
 
 [[package]]
 name = "synos-kernel"
 version = "0.1.0"
 dependencies = [
  "synos-boot-protocol",
+ "synos-status",
 ]
 
 [[package]]
 name = "synos-legacy-pc-drivers"
 version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
 
 [[package]]
 name = "synos-platform-io"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
+name = "synos-status"
 version = "0.1.0"
 
 [[package]]
 name = "synos-synfs"
 version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
 
 [[package]]
 name = "synos-system-model"
 version = "0.1.0"
 dependencies = [
+ "synos-status",
  "synos-synfs",
 ]
 

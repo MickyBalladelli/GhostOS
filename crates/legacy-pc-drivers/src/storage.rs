@@ -1,4 +1,5 @@
 use core::ptr::{NonNull, read_volatile, write_volatile};
+use synos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::pci::PciDevice;
 
@@ -41,6 +42,20 @@ pub enum DriverError {
     NoDevice,
     TimedOut,
     ControllerFault,
+}
+
+impl IntoStatus for DriverError {
+    fn status(self) -> Status {
+        let (severity, code) = match self {
+            Self::InvalidRegisterBase => (Severity::Error, 10),
+            Self::InvalidQueue => (Severity::Error, 11),
+            Self::InvalidRequest => (Severity::Error, 12),
+            Self::NoDevice => return Status::NOT_FOUND,
+            Self::TimedOut => (Severity::Error, 13),
+            Self::ControllerFault => (Severity::Fatal, 14),
+        };
+        Status::new(severity, facility::DRIVER, code, 0).expect("valid storage status")
+    }
 }
 
 const AHCI_GHC_ENABLE: u32 = 1 << 31;

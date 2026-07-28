@@ -1,5 +1,7 @@
+use crate::dlm::ResourceId;
 use crate::ipc::{ChannelId, SharedRegionId};
 use crate::task::AddressSpaceId;
+use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_CAPABILITIES: usize = 256;
 
@@ -85,6 +87,7 @@ pub enum CapabilityObject {
     MemoryRegion(SharedRegionId),
     AddressSpace(AddressSpaceId),
     IpcChannel(ChannelId),
+    DistributedResource(ResourceId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,6 +105,19 @@ pub enum CapabilityError {
     AccessDenied,
     RightsEscalation,
     EmptyRights,
+}
+
+impl IntoStatus for CapabilityError {
+    fn status(self) -> Status {
+        match self {
+            Self::AccessDenied | Self::RightsEscalation => Status::ACCESS_DENIED,
+            Self::Full => Status::NO_SPACE,
+            Self::InvalidHandle | Self::EmptyRights => {
+                Status::new(Severity::Error, facility::KERNEL, 1, 0)
+                    .expect("valid capability status")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

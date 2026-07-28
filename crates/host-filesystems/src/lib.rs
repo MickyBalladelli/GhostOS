@@ -1,6 +1,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use synos_status::{IntoStatus, Severity, Status, facility};
+
 mod ext4;
 mod fat32;
 mod ntfs;
@@ -23,6 +25,22 @@ pub enum Error {
     Io,
     NotFound,
     NotSupported,
+}
+
+impl IntoStatus for Error {
+    fn status(self) -> Status {
+        match self {
+            Self::NotFound => Status::NOT_FOUND,
+            Self::Corrupt => Status::CORRUPT,
+            Self::InvalidOffset | Self::BufferTooSmall => Status::INVALID_ARGUMENT,
+            Self::Io => Status::new(Severity::Error, facility::FILESYSTEM, 10, 0)
+                .expect("valid host filesystem status"),
+            Self::NotSupported => {
+                Status::new(Severity::Error, facility::FILESYSTEM, 11, 0)
+                    .expect("valid host filesystem status")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
