@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "syn-shell"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-boot-protocol"
 version = "0.1.0"
 

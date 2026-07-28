@@ -210,6 +210,32 @@ Type-3 endpoint and an `ivshmem-plain` region shared by all guests. The
 companion failure-injection command terminates one selected node so heartbeat,
 lease cleanup, mirrored redirection, and inference recovery can be observed.
 
+## Native interactive shell
+
+`syn-shell` is a heap-free Ring 3 shell core. Its UTF-8 line editor provides
+cursor editing and bounded history. The parser supports quoted values,
+DCL-style qualifiers and negated Boolean qualifiers, comments, structured
+pipelines, and trailing `&` background submission.
+
+Commands are registered with typed positional and qualifier specifications.
+The complete invocation is validated before an executor receives it. Pipeline
+stages exchange `StructuredOutput` objects instead of text, while the terminal
+renderer can emit list or JSON views.
+
+Built-in diagnostics include:
+
+```text
+SHOW MEMORY
+SHOW MEMORY/CLUSTER
+SHOW PROCESS 42
+MONITOR /INTERVAL=250000 /SAMPLES=20
+```
+
+The asynchronous interpreter never waits inside command dispatch. Background
+commands and complete pipelines enter a system-wide bounded job queue with
+priorities, start times, dependencies, retry limits, worker leases,
+cancellation, and lost-worker recovery.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase

@@ -212,11 +212,11 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 13. Native Rust Interactive Shell (`syn-shell`)
-- [ ] **Async Command Interpreter**
-  - [ ] Build an interactive CLI with OpenVMS DCL-inspired syntax, type-safe argument validation, and structured data outputs.
-  - [ ] Implement system diagnostics tools (`SHOW MEMORY/CLUSTER`, `SHOW PROCESS`, `MONITOR`).
-- [ ] **Batch & Job Management**
-  - [ ] Build a system-wide task queue service for background processing and automated pipeline runs.
+- [x] **Async Command Interpreter**
+  - [x] Build an interactive CLI with OpenVMS DCL-inspired syntax, type-safe argument validation, and structured data outputs.
+  - [x] Implement system diagnostics tools (`SHOW MEMORY/CLUSTER`, `SHOW PROCESS`, `MONITOR`).
+- [x] **Batch & Job Management**
+  - [x] Build a system-wide task queue service for background processing and automated pipeline runs.
 
 ---
 
