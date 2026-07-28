@@ -1,4 +1,5 @@
 #![no_std]
+#![forbid(unsafe_code)]
 
 use core::cmp::Ordering;
 use core::fmt;
@@ -54,8 +55,7 @@ impl FileName {
     }
 
     pub fn as_str(&self) -> &str {
-        // FileName is only constructed from a valid str.
-        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
+        core::str::from_utf8(self.as_bytes()).expect("FileName invariant")
     }
 }
 

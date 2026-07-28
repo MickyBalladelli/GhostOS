@@ -76,6 +76,35 @@ isolated user address spaces.
 This core has no driver, filesystem, network stack, dynamic allocator, or POSIX
 compatibility layer. Those are user-space services communicating over IPC.
 
+## Memory-safe system model
+
+Safe kernel-independent crates forbid `unsafe` code. Hardware and firmware
+crates deny implicit unsafe operations, keeping raw register, MMIO, page-table,
+firmware, and ABI access inside explicit boundary blocks. The lock-free kernel
+IPC queue stores every message field in atomics and needs no unsafe cell.
+
+`synos-system-model` replaces mutable global directory conventions with sealed
+root manifests. A root binds logical service names to SHA-256 package IDs, and
+activation validates the complete manifest before replacing the active root.
+Packages and dependencies resolve only by immutable digest. Each process gets a
+bounded package namespace, so undeclared host paths and packages are invisible.
+Package payloads live as versioned SynFS objects; the system model is their
+heap-free metadata and activation layer. `SynFsRepository` writes payload and
+manifest objects under digest-derived names, verifies existing objects before
+reuse, and records every activated root as a new `system/root.manifest`
+version.
+
+## Async platform I/O and media
+
+`synos-platform-io` provides generation-checked, fixed-capacity asynchronous
+request/completion queues. Its API has submit, dispatch, complete, cancel, and
+poll operations, with no blocking compatibility call.
+
+Storage and device requests carry capability-mapped shared-buffer descriptors.
+The same descriptor contract drives unified audio and video packets for
+present, capture, encode, and decode operations. Multi-plane media payloads
+therefore stay in shared pages instead of being copied through IPC messages.
+
 ## Legacy x86 PC drivers
 
 The `synos-legacy-pc-drivers` crate provides heap-free Ring 3 driver building

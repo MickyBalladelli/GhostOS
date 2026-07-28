@@ -1,4 +1,5 @@
 #![no_std]
+#![forbid(unsafe_code)]
 
 mod ext4;
 mod fat32;

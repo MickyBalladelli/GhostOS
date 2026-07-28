@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 //! Heap-free driver building blocks for legacy x86_64 PCs.
 //!
@@ -13,4 +14,3 @@ pub mod storage;
 pub use ethernet::{EthernetAdapter, EthernetKind};
 pub use pci::{Bar, ConfigAccess, PciAddress, PciDevice};
 pub use storage::{StorageController, StorageKind};
-

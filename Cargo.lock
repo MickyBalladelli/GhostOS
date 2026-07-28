@@ -22,8 +22,19 @@ name = "synos-legacy-pc-drivers"
 version = "0.1.0"
 
 [[package]]
+name = "synos-platform-io"
+version = "0.1.0"
+
+[[package]]
 name = "synos-synfs"
 version = "0.1.0"
+
+[[package]]
+name = "synos-system-model"
+version = "0.1.0"
+dependencies = [
+ "synos-synfs",
+]
 
 [[package]]
 name = "synos-uefi"

@@ -16,3 +16,12 @@ mod current;
 mod current;
 
 pub use current::{halt, interrupts, paging};
+
+pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_offset: u64) {
+    // Safety: kernel_entry supplies distinct frames owned by the boot allocator.
+    unsafe {
+        paging::install_root(tables, physical_offset);
+        interrupts::init();
+        interrupts::enable();
+    }
+}

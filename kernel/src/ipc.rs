@@ -1,5 +1,4 @@
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::task::AddressSpaceId;
@@ -64,20 +63,88 @@ pub enum IpcError {
 
 struct Slot {
     sequence: AtomicUsize,
-    message: UnsafeCell<Message>,
+    message: AtomicMessage,
 }
 
 impl Slot {
     const fn new(sequence: usize) -> Self {
         Self {
             sequence: AtomicUsize::new(sequence),
-            message: UnsafeCell::new(Message::EMPTY),
+            message: AtomicMessage::new(),
         }
     }
 }
 
-// Access to the cell is owned by a queue position before it is read or written.
-unsafe impl Sync for Slot {}
+struct AtomicMessage {
+    label: AtomicU64,
+    buffer_present: AtomicBool,
+    buffer_region: AtomicU32,
+    buffer_offset: AtomicU32,
+    buffer_length: AtomicU32,
+    buffer_writable: AtomicBool,
+    words: [AtomicU64; 4],
+}
+
+impl AtomicMessage {
+    const fn new() -> Self {
+        Self {
+            label: AtomicU64::new(0),
+            buffer_present: AtomicBool::new(false),
+            buffer_region: AtomicU32::new(0),
+            buffer_offset: AtomicU32::new(0),
+            buffer_length: AtomicU32::new(0),
+            buffer_writable: AtomicBool::new(false),
+            words: [
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ],
+        }
+    }
+
+    fn write(&self, message: Message) {
+        self.label.store(message.label, Ordering::Relaxed);
+        if let Some(buffer) = message.buffer {
+            self.buffer_region
+                .store(buffer.region.raw(), Ordering::Relaxed);
+            self.buffer_offset.store(buffer.offset, Ordering::Relaxed);
+            self.buffer_length.store(buffer.length, Ordering::Relaxed);
+            self.buffer_writable
+                .store(buffer.writable, Ordering::Relaxed);
+            self.buffer_present.store(true, Ordering::Relaxed)
+        } else {
+            self.buffer_present.store(false, Ordering::Relaxed)
+        }
+        for (word, value) in self.words.iter().zip(message.words) {
+            word.store(value, Ordering::Relaxed)
+        }
+    }
+
+    fn read(&self) -> Message {
+        let buffer = if self.buffer_present.load(Ordering::Relaxed) {
+            SharedRegionId::new(self.buffer_region.load(Ordering::Relaxed)).map(|region| {
+                SharedBuffer {
+                    region,
+                    offset: self.buffer_offset.load(Ordering::Relaxed),
+                    length: self.buffer_length.load(Ordering::Relaxed),
+                    writable: self.buffer_writable.load(Ordering::Relaxed),
+                }
+            })
+        } else {
+            None
+        };
+        let mut words = [0; 4];
+        for (value, word) in words.iter_mut().zip(&self.words) {
+            *value = word.load(Ordering::Relaxed)
+        }
+        Message {
+            label: self.label.load(Ordering::Relaxed),
+            buffer,
+            words,
+        }
+    }
+}
 
 /// A bounded, non-blocking MPMC channel.
 ///
@@ -143,10 +210,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => {
-                        // Safety: the successful CAS gives this producer exclusive ownership.
-                        unsafe {
-                            slot.message.get().write(message);
-                        }
+                        slot.message.write(message);
                         slot.sequence
                             .store(position.wrapping_add(1), Ordering::Release);
                         return Ok(());
@@ -191,8 +255,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => {
-                        // Safety: the successful CAS gives this consumer exclusive ownership.
-                        let message = unsafe { slot.message.get().read() };
+                        let message = slot.message.read();
                         slot.sequence
                             .store(position.wrapping_add(CAPACITY), Ordering::Release);
                         return Ok(message);

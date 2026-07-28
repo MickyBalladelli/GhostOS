@@ -4,7 +4,9 @@ members = [
     "crates/boot-protocol",
     "crates/host-filesystems",
     "crates/legacy-pc-drivers",
+    "crates/platform-io",
     "crates/synfs",
+    "crates/system-model",
     "kernel",
     "boot/uefi",
 ]
@@ -12,7 +14,9 @@ default-members = [
     "crates/boot-protocol",
     "crates/host-filesystems",
     "crates/legacy-pc-drivers",
+    "crates/platform-io",
     "crates/synfs",
+    "crates/system-model",
     "kernel",
 ]
 

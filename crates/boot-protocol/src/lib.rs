@@ -1,4 +1,5 @@
 #![no_std]
+#![forbid(unsafe_code)]
 
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_4e4f_5342_4f4f;
 pub const BOOT_INFO_VERSION: u32 = 1;

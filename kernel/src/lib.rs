@@ -1,8 +1,12 @@
 #![no_std]
+#![deny(unsafe_code)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 mod allocator;
+#[allow(unsafe_code)]
 mod arch;
 pub mod capability;
+#[allow(unsafe_code)]
 mod console;
 pub mod ipc;
 pub mod scheduler;
@@ -21,6 +25,7 @@ pub use task::{
     AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,
 };
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     console::init(boot_info.framebuffer);
@@ -42,12 +47,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         *frame = frames.allocate().expect("no frame for paging");
     }
 
-    // Safety: the bootloader owns the machine and supplied usable physical memory.
-    unsafe {
-        arch::paging::install_root(&page_tables, boot_info.physical_address_offset);
-        arch::interrupts::init();
-        arch::interrupts::enable();
-    }
+    arch::initialize(&page_tables, boot_info.physical_address_offset);
 
     let scheduler = Scheduler::new();
 

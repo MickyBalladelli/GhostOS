@@ -36,14 +36,14 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 3. Solving Core Linux Pain Points in SynOS
-- [ ] **Enforce Memory Safety**
-  - [ ] Build the entire kernel and core system services in Rust/Zig, restricting `unsafe` code to isolated register/page-table blocks.
-- [ ] **Replace Legacy Filesystem & Global State Layouts**
-  - [ ] Abandon `/etc`, `/usr`, and `/var` directory hierarchies in favor of an immutable, declarative root filesystem in SynFS.
-  - [ ] Implement hermetic, content-addressed package isolation (Nix/Flatpak model).
-- [ ] **Redesign System I/O & Media Subsystems**
-  - [ ] Standardize on an async-first execution model rather than stacking legacy blocking POSIX calls and `io_uring`.
-  - [ ] Create unified, zero-copy audio/video pipeline APIs directly in the platform layer.
+- [x] **Enforce Memory Safety**
+  - [x] Build the entire kernel and core system services in Rust/Zig, restricting `unsafe` code to isolated register/page-table blocks.
+- [x] **Replace Legacy Filesystem & Global State Layouts**
+  - [x] Abandon `/etc`, `/usr`, and `/var` directory hierarchies in favor of an immutable, declarative root filesystem in SynFS.
+  - [x] Implement hermetic, content-addressed package isolation (Nix/Flatpak model).
+- [x] **Redesign System I/O & Media Subsystems**
+  - [x] Standardize on an async-first execution model rather than stacking legacy blocking POSIX calls and `io_uring`.
+  - [x] Create unified, zero-copy audio/video pipeline APIs directly in the platform layer.
 
 ---
 
