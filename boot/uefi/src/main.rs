@@ -245,7 +245,10 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
             write_text(output, "Choose 1, 2, or 3: ");
 
             match wait_for_choice(input) {
-                '1' => break,
+                '1' => {
+                    ((*output).clear_screen)(output);
+                    break
+                }
                 '2' => {
                     write_text(output, "\r\nStarting Windows Boot Manager...\r\n");
                     let status = chainload::windows(image, services);
@@ -262,9 +265,6 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
             ((*output).clear_screen)(output);
         }
 
-        write_text(output, "\r\n\r\nPreparing memory map...\r\n");
-        write_text(output, "Starting SynOS kernel...\r\n");
-        write_text(output, "Firmware services will now stop.\r\n");
         let framebuffer = locate_framebuffer(services);
 
         let mut last_status = 1;

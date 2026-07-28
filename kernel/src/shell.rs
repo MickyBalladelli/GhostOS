@@ -30,15 +30,18 @@ pub fn run(boot_info: &'static BootInfo, scheduler_clock: u64) -> ! {
     let mut usb_keyboard = crate::usb_keyboard::UsbKeyboard::new();
     let mut ignore_line_feed = false;
 
+    crate::console::clear();
+    crate::println!(r"   _____             ____   _____");
+    crate::println!(r"  / ____|           / __ \ / ____|");
+    crate::println!(r" | (___  _   _ _ __| |  | | (___");
+    crate::println!(r"  \___ \| | | | '_ \ |  | |\___ \");
+    crate::println!(r"  ____) | |_| | | | | |__| |____) |");
+    crate::println!(r" |_____/ \__, |_| |_|\____/|_____/");
+    crate::println!(r"          __/ |");
+    crate::println!(r"         |___/");
     crate::println!();
-    crate::println!("SynOS shell ready");
-    crate::println!("Keyboard: PS/2, USB legacy, and serial enabled");
-    if usb_keyboard.is_some() {
-        crate::println!("Keyboard: native xHCI USB HID detected")
-    } else {
-        crate::println!("Keyboard: no native xHCI USB HID device detected")
-    }
-    crate::println!("Type HELP for commands");
+    crate::println!();
+    crate::println!();
     prompt();
 
     loop {
@@ -169,7 +172,7 @@ fn execute_line(
 }
 
 fn prompt() {
-    crate::print!("SYNOS> ")
+    crate::print!("$ ")
 }
 
 fn wait_for_byte(

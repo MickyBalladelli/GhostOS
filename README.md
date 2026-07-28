@@ -314,6 +314,7 @@ Format the USB drive as GPT with a FAT32 partition. On macOS:
 diskutil list
 diskutil eraseDisk FAT32 SYNOS GPT /dev/disk5
 mkdir -p /Volumes/SYNOS/EFI/BOOT
+
 cp target/x86_64-unknown-uefi/release/synos-loader.efi \
     /Volumes/SYNOS/EFI/BOOT/BOOTX64.EFI
 sync

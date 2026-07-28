@@ -43,6 +43,21 @@ pub fn read_byte() -> Option<u8> {
     }
 }
 
+pub fn clear() {
+    while LOCKED
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        core::hint::spin_loop()
+    }
+
+    unsafe {
+        let console = &raw mut CONSOLE;
+        (*console).clear()
+    }
+    LOCKED.store(false, Ordering::Release);
+}
+
 struct Console {
     #[cfg(target_arch = "x86_64")]
     vga_column: usize,
@@ -78,6 +93,19 @@ impl Console {
                 framebuffer.write(byte)
             } else {
                 vga::write(byte, &mut self.vga_column)
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            serial::clear();
+            if let Some(framebuffer) = &mut self.framebuffer {
+                framebuffer.clear()
+            } else {
+                vga::clear();
+                self.vga_column = 0
             }
         }
     }
@@ -195,6 +223,17 @@ impl FramebufferConsole {
         }
     }
 
+    fn clear(&mut self) {
+        let pixels = self.height * self.stride;
+        unsafe {
+            for index in 0..pixels {
+                self.address.add(index).write_volatile(0)
+            }
+        }
+        self.column = 0;
+        self.row = 0
+    }
+
     fn write_pixel(&mut self, x: usize, y: usize, color: u32) {
         if x < self.width && y < self.height {
             unsafe {
@@ -255,9 +294,13 @@ fn glyph(byte: u8) -> [u8; 7] {
         b':' => [0, 4, 4, 0, 4, 4, 0],
         b';' => [0, 4, 4, 0, 4, 4, 8],
         b'=' => [0, 0, 31, 0, 31, 0, 0],
+        b'$' => [4, 15, 20, 14, 5, 30, 4],
         b'-' => [0, 0, 0, 31, 0, 0, 0],
         b'_' => [0, 0, 0, 0, 0, 0, 31],
         b'/' => [1, 2, 2, 4, 8, 8, 16],
+        b'\\' => [16, 8, 8, 4, 2, 2, 1],
+        b'|' => [4, 4, 4, 4, 4, 4, 4],
+        b'\'' => [4, 4, 8, 0, 0, 0, 0],
         b'(' => [2, 4, 8, 8, 8, 4, 2],
         b')' => [8, 4, 2, 2, 2, 4, 8],
         b'[' => [14, 8, 8, 8, 8, 8, 14],
@@ -307,6 +350,12 @@ mod serial {
             if attempts != 0 {
                 outb(COM1, byte)
             }
+        }
+    }
+
+    pub fn clear() {
+        for byte in b"\x1b[2J\x1b[H" {
+            write(*byte)
         }
     }
 
@@ -366,6 +415,14 @@ mod vga {
         if *column >= WIDTH * HEIGHT {
             scroll();
             *column = WIDTH * (HEIGHT - 1);
+        }
+    }
+
+    pub fn clear() {
+        unsafe {
+            for index in 0..(WIDTH * HEIGHT) {
+                BUFFER.add(index).write_volatile(COLOR | b' ' as u16)
+            }
         }
     }
 
