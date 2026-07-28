@@ -1,7 +1,22 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::task::AddressSpaceId;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct ChannelId(u32);
+
+impl ChannelId {
+    pub const fn new(raw: u32) -> Option<Self> {
+        if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -69,36 +84,49 @@ unsafe impl Sync for Slot {}
 /// Messages carry a shared-region descriptor instead of copying payload bytes.
 /// The sender and receiver address spaces must already map that region.
 pub struct Channel<const CAPACITY: usize> {
-    sender: AddressSpaceId,
-    receiver: AddressSpaceId,
+    id: ChannelId,
     enqueue_position: AtomicUsize,
     dequeue_position: AtomicUsize,
     slots: [Slot; CAPACITY],
 }
 
 impl<const CAPACITY: usize> Channel<CAPACITY> {
-    pub fn new(sender: AddressSpaceId, receiver: AddressSpaceId) -> Self {
+    pub fn new(id: ChannelId) -> Self {
         assert!(CAPACITY >= 2);
         Self {
-            sender,
-            receiver,
+            id,
             enqueue_position: AtomicUsize::new(0),
             dequeue_position: AtomicUsize::new(0),
             slots: core::array::from_fn(Slot::new),
         }
     }
 
-    pub const fn sender(&self) -> AddressSpaceId {
-        self.sender
+    pub const fn id(&self) -> ChannelId {
+        self.id
     }
 
-    pub const fn receiver(&self) -> AddressSpaceId {
-        self.receiver
-    }
+    pub fn try_send<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        buffer_authority: Option<CapabilityHandle>,
+        message: Message,
+    ) -> Result<(), IpcError> {
+        capabilities
+            .authorize(
+                caller,
+                endpoint,
+                CapabilityObject::IpcChannel(self.id),
+                Rights::SEND,
+            )
+            .map_err(|_| IpcError::AccessDenied)?;
 
-    pub fn try_send(&self, caller: AddressSpaceId, message: Message) -> Result<(), IpcError> {
-        if caller != self.sender {
-            return Err(IpcError::AccessDenied);
+        if let Some(buffer) = message.buffer {
+            let handle = buffer_authority.ok_or(IpcError::AccessDenied)?;
+            capabilities
+                .authorize_mapping(caller, handle, buffer.region, buffer.writable, false)
+                .map_err(|_| IpcError::AccessDenied)?;
         }
 
         let mut position = self.enqueue_position.load(Ordering::Relaxed);
@@ -133,10 +161,20 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         }
     }
 
-    pub fn try_receive(&self, caller: AddressSpaceId) -> Result<Message, IpcError> {
-        if caller != self.receiver {
-            return Err(IpcError::AccessDenied);
-        }
+    pub fn try_receive<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+    ) -> Result<Message, IpcError> {
+        capabilities
+            .authorize(
+                caller,
+                endpoint,
+                CapabilityObject::IpcChannel(self.id),
+                Rights::RECEIVE,
+            )
+            .map_err(|_| IpcError::AccessDenied)?;
 
         let mut position = self.dequeue_position.load(Ordering::Relaxed);
         loop {

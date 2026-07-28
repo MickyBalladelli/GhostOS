@@ -17,9 +17,9 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Implement Copy-on-Write (CoW) B-tree block structures for instant, zero-cost file versioning (`file.txt;1`, `file.txt;2`).
   - [x] Build OpenVMS-style version resolution into the VFS lookup pipeline (`path/to/file;version`).
   - [x] Design background block-sharing and retention garbage collection (`synfs_purged`).
-- [ ] **Implement Capability-Based Security**
-  - [ ] Replace POSIX root permissions with unforgeable, fine-grained object capability tokens.
-  - [ ] Build capability delegation models for memory mapping, process creation, and IPC channel authorization.
+- [x] **Implement Capability-Based Security**
+  - [x] Replace POSIX root permissions with unforgeable, fine-grained object capability tokens.
+  - [x] Build capability delegation models for memory mapping, process creation, and IPC channel authorization.
 
 ---
 

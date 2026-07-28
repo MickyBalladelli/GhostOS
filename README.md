@@ -58,6 +58,10 @@ isolated user address spaces.
 - `ipc` is a bounded, non-blocking MPMC queue. Messages contain small control
   words plus shared-region descriptors, so payload bytes stay in mapped pages
   instead of being copied through the kernel.
+- `capability` keeps 256 generation-checked object tokens and their derivation
+  links in fixed kernel memory. Address spaces must present fine-grained rights
+  for thread creation, memory mapping, and IPC. Delegation can only attenuate
+  rights, and a parent token can revoke its complete delegation subtree.
 
 This core has no driver, filesystem, network stack, dynamic allocator, or POSIX
 compatibility layer. Those are user-space services communicating over IPC.

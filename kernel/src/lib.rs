@@ -2,6 +2,7 @@
 
 mod allocator;
 mod arch;
+pub mod capability;
 mod console;
 pub mod ipc;
 pub mod scheduler;
@@ -11,6 +12,10 @@ use core::panic::PanicInfo;
 use synos_boot_protocol::BootInfo;
 
 pub use allocator::{AllocationError, EarlyFrameAllocator, FRAME_SIZE};
+pub use capability::{
+    CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityObject, CapabilitySpace,
+    MAX_CAPABILITIES, Rights,
+};
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
 pub use task::{
     AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,
@@ -47,7 +52,8 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     let scheduler = Scheduler::new();
 
     println!(
-        "paging, interrupts, IPC, and scheduler ready ({} thread slots, clock={})",
+        "paging, interrupts, capabilities, IPC, and scheduler ready ({} capability slots, {} thread slots, clock={})",
+        MAX_CAPABILITIES,
         task::MAX_THREADS,
         scheduler.clock()
     );

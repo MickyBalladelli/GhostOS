@@ -1,3 +1,4 @@
+use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::task::{
     AddressSpaceId, Context, ExecutionMode, MAX_THREADS, SchedulingPolicy, Thread, ThreadId,
     ThreadState,
@@ -9,6 +10,7 @@ pub enum SchedulerError {
     InvalidThread,
     InvalidContext,
     InvalidExecutionMode,
+    AccessDenied,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,14 +38,26 @@ impl Scheduler {
         }
     }
 
-    pub fn create(
+    pub fn create<const MAX_CAPABILITIES: usize>(
         &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
         address_space: AddressSpaceId,
         mode: ExecutionMode,
         policy: SchedulingPolicy,
         entry: usize,
         stack_top: usize,
     ) -> Result<ThreadId, SchedulerError> {
+        capabilities
+            .authorize(
+                caller,
+                authority,
+                CapabilityObject::AddressSpace(address_space),
+                Rights::CREATE,
+            )
+            .map_err(|_| SchedulerError::AccessDenied)?;
+
         if entry == 0 || stack_top == 0 {
             return Err(SchedulerError::InvalidContext);
         }
