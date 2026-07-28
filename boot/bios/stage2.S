@@ -4,6 +4,8 @@
 
 .set BOOT_INFO, 0x7000
 .set MEMORY_REGIONS, BOOT_INFO + 72
+.set VBE_CONTROLLER, 0x5000
+.set VBE_MODE_INFO, 0x5200
 .set KERNEL_SEGMENT, 0x1000
 .set KERNEL_ADDRESS, 0x100000
 .set KERNEL_SECTORS, 512
@@ -20,6 +22,7 @@ _start:
 
     call enable_a20
     call build_boot_info
+    call setup_vesa
     call load_kernel
     call enter_long_mode
 
@@ -44,6 +47,14 @@ build_boot_info:
     movl $0, BOOT_INFO + 20
     movl $0, BOOT_INFO + 24
     movl $0, BOOT_INFO + 28
+    movl $0, BOOT_INFO + 32
+    movl $0, BOOT_INFO + 36
+    movl $0, BOOT_INFO + 40
+    movl $0, BOOT_INFO + 44
+    movl $0, BOOT_INFO + 48
+    movl $0, BOOT_INFO + 52
+    movl $0, BOOT_INFO + 56
+    movl $0, BOOT_INFO + 60
     movl $0, BOOT_INFO + 64
     movl $0, BOOT_INFO + 68
 
@@ -81,6 +92,69 @@ e820_continue:
 
 e820_done:
     movl %ebp, BOOT_INFO + 64
+    ret
+
+setup_vesa:
+    movl $0x32454256, VBE_CONTROLLER
+    movw $0x4f00, %ax
+    movw $VBE_CONTROLLER, %di
+    int $0x10
+    cmpw $0x004f, %ax
+    jne vesa_done
+
+    movzwl VBE_CONTROLLER + 16, %eax
+    shll $4, %eax
+    movzwl VBE_CONTROLLER + 14, %edx
+    addl %edx, %eax
+    movl %eax, mode_list_pointer
+
+vesa_scan_mode:
+    movl mode_list_pointer, %esi
+    movw (%esi), %cx
+    cmpw $0xffff, %cx
+    je vesa_done
+    addl $2, mode_list_pointer
+    movw %cx, selected_mode
+
+    movw $0x4f01, %ax
+    movw $VBE_MODE_INFO, %di
+    int $0x10
+    cmpw $0x004f, %ax
+    jne vesa_scan_mode
+    movw VBE_MODE_INFO, %ax
+    andw $0x0081, %ax
+    cmpw $0x0081, %ax
+    jne vesa_scan_mode
+    cmpb $32, VBE_MODE_INFO + 25
+    jne vesa_scan_mode
+    cmpb $6, VBE_MODE_INFO + 27
+    jne vesa_scan_mode
+
+    movw $0x4f02, %ax
+    movw selected_mode, %bx
+    orw $0x4000, %bx
+    int $0x10
+    cmpw $0x004f, %ax
+    jne vesa_done
+
+    movl VBE_MODE_INFO + 40, %eax
+    movl %eax, BOOT_INFO + 32
+    movl $0, BOOT_INFO + 36
+    movzwl VBE_MODE_INFO + 16, %eax
+    movzwl VBE_MODE_INFO + 20, %ecx
+    imull %ecx, %eax
+    movl %eax, BOOT_INFO + 40
+    movl $0, BOOT_INFO + 44
+    movzwl VBE_MODE_INFO + 18, %eax
+    movl %eax, BOOT_INFO + 48
+    movzwl VBE_MODE_INFO + 20, %eax
+    movl %eax, BOOT_INFO + 52
+    movzwl VBE_MODE_INFO + 16, %eax
+    shrl $2, %eax
+    movl %eax, BOOT_INFO + 56
+    movl $2, BOOT_INFO + 60
+
+vesa_done:
     ret
 
 load_kernel:
@@ -219,4 +293,7 @@ disk_segment:
     .word 0
 disk_lba:
     .quad 0
-
+mode_list_pointer:
+    .long 0
+selected_mode:
+    .word 0

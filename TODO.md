@@ -24,10 +24,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 2. Legacy PC Hardware, Dual-Boot & Storage Co-Existence
-- [ ] **Legacy x86 PC Drivers**
-  - [ ] Add basic PCI bus enumeration and generic AHCI/NVMe storage drivers.
-  - [ ] Write driver hooks for standard Intel/Realtek Gigabit Ethernet NICs for bare-metal multi-PC networking.
-  - [ ] Implement fallback framebuffer display outputs (VGA/VESA/GOP).
+- [x] **Legacy x86 PC Drivers**
+  - [x] Add basic PCI bus enumeration and generic AHCI/NVMe storage drivers.
+  - [x] Write driver hooks for standard Intel/Realtek Gigabit Ethernet NICs for bare-metal multi-PC networking.
+  - [x] Implement fallback framebuffer display outputs (VGA/VESA/GOP).
 - [ ] **Dual-Boot & Storage Co-Existence**
   - [ ] Implement UEFI chainloading (`synos_loader.efi`) for Windows Boot Manager and GRUB.
   - [ ] Support loopback image booting (`synos.img`) directly from NTFS/EXT4 partitions without repartitioning.

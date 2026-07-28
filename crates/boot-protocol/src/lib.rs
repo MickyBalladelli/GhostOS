@@ -3,6 +3,8 @@
 pub const BOOT_INFO_MAGIC: u64 = 0x5359_4e4f_5342_4f4f;
 pub const BOOT_INFO_VERSION: u32 = 1;
 pub const MAX_MEMORY_REGIONS: usize = 128;
+pub const FRAMEBUFFER_PIXEL_RGB: u32 = 1;
+pub const FRAMEBUFFER_PIXEL_BGR: u32 = 2;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

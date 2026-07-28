@@ -2,7 +2,10 @@
 #![no_main]
 
 use core::ffi::c_void;
-use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind, MemoryRegion};
+use synos_boot_protocol::{
+    BootInfo, BootMethod, FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB,
+    FramebufferInfo, MemoryKind, MemoryRegion,
+};
 
 type EfiHandle = *mut c_void;
 type EfiStatus = usize;
@@ -29,6 +32,11 @@ type GetMemoryMap = unsafe extern "efiapi" fn(
 
 type ExitBootServices =
     unsafe extern "efiapi" fn(image_handle: EfiHandle, map_key: usize) -> EfiStatus;
+type LocateProtocol = unsafe extern "efiapi" fn(
+    protocol: *const EfiGuid,
+    registration: *mut c_void,
+    interface: *mut *mut c_void,
+) -> EfiStatus;
 
 type TextReset =
     unsafe extern "efiapi" fn(output: *mut EfiSimpleTextOutput, extended: bool) -> EfiStatus;
@@ -77,6 +85,8 @@ struct EfiBootServices {
     get_memory_map: GetMemoryMap,
     before_exit_boot_services: [usize; 21],
     exit_boot_services: ExitBootServices,
+    after_exit_boot_services: [usize; 10],
+    locate_protocol: LocateProtocol,
 }
 
 #[repr(C)]
@@ -103,6 +113,49 @@ struct EfiMemoryDescriptor {
     number_of_pages: u64,
     attributes: u64,
 }
+
+#[repr(C)]
+struct EfiGuid {
+    data1: u32,
+    data2: u16,
+    data3: u16,
+    data4: [u8; 8],
+}
+
+#[repr(C)]
+struct EfiGraphicsOutput {
+    query_mode: usize,
+    set_mode: usize,
+    blt: usize,
+    mode: *mut EfiGraphicsOutputMode,
+}
+
+#[repr(C)]
+struct EfiGraphicsOutputMode {
+    max_mode: u32,
+    mode: u32,
+    info: *mut EfiGraphicsOutputModeInfo,
+    size_of_info: usize,
+    framebuffer_base: u64,
+    framebuffer_size: usize,
+}
+
+#[repr(C)]
+struct EfiGraphicsOutputModeInfo {
+    version: u32,
+    horizontal_resolution: u32,
+    vertical_resolution: u32,
+    pixel_format: u32,
+    pixel_information: [u32; 4],
+    pixels_per_scan_line: u32,
+}
+
+const GRAPHICS_OUTPUT_PROTOCOL: EfiGuid = EfiGuid {
+    data1: 0x9042_a9de,
+    data2: 0x23dc,
+    data3: 0x4a38,
+    data4: [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a],
+};
 
 static mut MEMORY_MAP: [u8; MEMORY_MAP_CAPACITY] = [0; MEMORY_MAP_CAPACITY];
 static mut BOOT_INFO: BootInfo = BootInfo::empty(BootMethod::Uefi);
@@ -132,6 +185,7 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
         write_text(output, "\r\n\r\nPreparing memory map...\r\n");
         write_text(output, "Starting SynOS kernel...\r\n");
         write_text(output, "Firmware services will now stop.\r\n");
+        let framebuffer = locate_framebuffer(services);
 
         let mut last_status = 1;
         for attempt in 0..4 {
@@ -158,6 +212,7 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
 
             let boot_info = &raw mut BOOT_INFO;
             *boot_info = BootInfo::empty(BootMethod::Uefi);
+            (*boot_info).framebuffer = framebuffer;
             fill_memory_map(&mut *boot_info, map_size, descriptor_size);
 
             last_status = ((*services).exit_boot_services)(image, map_key);
@@ -169,6 +224,44 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
         write_failure(output, "ExitBootServices failed", last_status);
         wait_for_key(input);
         last_status
+    }
+}
+
+unsafe fn locate_framebuffer(services: *mut EfiBootServices) -> FramebufferInfo {
+    let mut interface = core::ptr::null_mut();
+    let status = unsafe {
+        ((*services).locate_protocol)(
+            &GRAPHICS_OUTPUT_PROTOCOL,
+            core::ptr::null_mut(),
+            &mut interface,
+        )
+    };
+    if status != EFI_SUCCESS || interface.is_null() {
+        return FramebufferInfo::EMPTY
+    }
+
+    let graphics = interface.cast::<EfiGraphicsOutput>();
+    let mode = unsafe { (*graphics).mode };
+    if mode.is_null() {
+        return FramebufferInfo::EMPTY
+    }
+    let info = unsafe { (*mode).info };
+    if info.is_null() || unsafe { (*mode).framebuffer_base } == 0 {
+        return FramebufferInfo::EMPTY
+    }
+
+    let pixel_format = match unsafe { (*info).pixel_format } {
+        0 => FRAMEBUFFER_PIXEL_RGB,
+        1 => FRAMEBUFFER_PIXEL_BGR,
+        _ => return FramebufferInfo::EMPTY,
+    };
+    FramebufferInfo {
+        address: unsafe { (*mode).framebuffer_base },
+        size: unsafe { (*mode).framebuffer_size as u64 },
+        width: unsafe { (*info).horizontal_resolution },
+        height: unsafe { (*info).vertical_resolution },
+        stride: unsafe { (*info).pixels_per_scan_line },
+        pixel_format,
     }
 }
 

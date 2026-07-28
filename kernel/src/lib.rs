@@ -23,7 +23,7 @@ pub use task::{
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
-    console::init();
+    console::init(boot_info.framebuffer);
     println!("SynOS kernel bootstrap");
 
     if !boot_info.is_valid() {

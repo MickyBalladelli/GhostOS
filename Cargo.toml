@@ -2,12 +2,14 @@
 resolver = "3"
 members = [
     "crates/boot-protocol",
+    "crates/legacy-pc-drivers",
     "crates/synfs",
     "kernel",
     "boot/uefi",
 ]
 default-members = [
     "crates/boot-protocol",
+    "crates/legacy-pc-drivers",
     "crates/synfs",
     "kernel",
 ]

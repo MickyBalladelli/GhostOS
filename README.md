@@ -66,6 +66,19 @@ isolated user address spaces.
 This core has no driver, filesystem, network stack, dynamic allocator, or POSIX
 compatibility layer. Those are user-space services communicating over IPC.
 
+## Legacy x86 PC drivers
+
+The `synos-legacy-pc-drivers` crate provides heap-free Ring 3 driver building
+blocks. It enumerates conventional PCI configuration space, identifies AHCI and
+NVMe controllers, prepares their DMA queues and commands, and exposes descriptor
+ring hooks for Intel E1000-family and Realtek RTL8169-family Ethernet devices.
+Port and MMIO access remain capability-controlled by the platform service.
+
+On legacy BIOS machines, stage 2 selects a 32-bit linear VESA mode when one is
+available. On UEFI machines, the loader passes the current GOP framebuffer.
+The early kernel console writes there and falls back to VGA text mode when no
+linear framebuffer was supplied. COM1 remains active in every case.
+
 ## SynFS day-one core
 
 `synos-synfs` is a `no_std`, fixed-capacity filesystem core for the Ring 3
