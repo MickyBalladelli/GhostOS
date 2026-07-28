@@ -23,6 +23,7 @@ impl Principal {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LogicalScope {
     Process(u64),
+    Job(u64),
     Group(u64),
     System,
     Cluster,
@@ -236,9 +237,25 @@ impl<const CAPACITY: usize, const ACLS: usize> LogicalNameTable<CAPACITY, ACLS> 
         group: Option<u64>,
         name: &str,
     ) -> Result<ResolvedLogicalName, LogicalError> {
+        self.resolve_scoped(caller, process, None, group, name)
+    }
+
+    pub fn resolve_scoped(
+        &self,
+        caller: Principal,
+        process: u64,
+        job: Option<u64>,
+        group: Option<u64>,
+        name: &str,
+    ) -> Result<ResolvedLogicalName, LogicalError> {
         let name = LogicalName::new(name).map_err(map_name_error)?;
         if let Some(result) = self.resolve_at(caller, LogicalScope::Process(process), name)? {
             return Ok(result);
+        }
+        if let Some(job) = job {
+            if let Some(result) = self.resolve_at(caller, LogicalScope::Job(job), name)? {
+                return Ok(result);
+            }
         }
         if let Some(group) = group {
             if let Some(result) = self.resolve_at(caller, LogicalScope::Group(group), name)? {
@@ -265,7 +282,7 @@ impl<const CAPACITY: usize, const ACLS: usize> LogicalNameTable<CAPACITY, ACLS> 
             let visible = match entry.scope {
                 LogicalScope::Process(owner) => owner == process,
                 LogicalScope::System => true,
-                LogicalScope::Group(_) | LogicalScope::Cluster => false,
+                LogicalScope::Job(_) | LogicalScope::Group(_) | LogicalScope::Cluster => false,
             };
             if !visible {
                 return Ok(());
@@ -279,7 +296,7 @@ impl<const CAPACITY: usize, const ACLS: usize> LogicalNameTable<CAPACITY, ACLS> 
             match entry.scope {
                 LogicalScope::Process(_) => fast_path.insert_process(entry.name, entry.target),
                 LogicalScope::System => fast_path.insert_system(entry.name, entry.target),
-                LogicalScope::Group(_) | LogicalScope::Cluster => Ok(()),
+                LogicalScope::Job(_) | LogicalScope::Group(_) | LogicalScope::Cluster => Ok(()),
             }
         });
         if result.is_err() {
@@ -315,6 +332,7 @@ impl<const CAPACITY: usize, const ACLS: usize> LogicalNameTable<CAPACITY, ACLS> 
     ) -> Result<(), LogicalError> {
         let allowed = match scope {
             LogicalScope::Process(process) => caller.raw() == process,
+            LogicalScope::Job(job) => caller.raw() == job || caller == self.administrator,
             LogicalScope::Group(_) | LogicalScope::System | LogicalScope::Cluster => {
                 caller == self.administrator
             }

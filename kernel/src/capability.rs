@@ -116,6 +116,7 @@ pub enum CapabilityObject {
     AddressSpace(AddressSpaceId),
     IpcChannel(ChannelId),
     DistributedResource(ResourceId),
+    LogicalNamespace { scope: u8, id: u64 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,6 +133,10 @@ pub struct CapabilityLinks {
     pub parent: Option<CapabilityHandle>,
     pub first_child: Option<CapabilityHandle>,
     pub next_sibling: Option<CapabilityHandle>,
+}
+
+pub trait CapabilityRevocationHook {
+    fn revoke(&mut self, capability: CapabilityInfo);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -298,6 +303,27 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         )
     }
 
+    /// Permanently remove rights from an owned handle.
+    pub fn drop_rights(
+        &mut self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+        rights: Rights,
+    ) -> Result<Rights, CapabilityError> {
+        let slot = self.valid_slot(handle)?;
+        let info = self.entries[slot].info;
+        if info.owner != caller {
+            return Err(CapabilityError::AccessDenied)
+        }
+        let remaining = Rights::from_bits(info.rights.bits() & !rights.bits())
+            .expect("masked capability rights");
+        if remaining.is_empty() {
+            return Err(CapabilityError::EmptyRights)
+        }
+        self.entries[slot].info.rights = remaining;
+        Ok(remaining)
+    }
+
     pub fn authorize(
         &self,
         caller: AddressSpaceId,
@@ -374,6 +400,29 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         let mut revoked = 0;
         for (slot, descendant) in descendants.iter().enumerate() {
             if *descendant {
+                self.vacate(slot);
+                revoked += 1
+            }
+        }
+        Ok(revoked)
+    }
+
+    /// Revoke descendants and notify the mapper/fabric before handles vanish.
+    pub fn revoke_with_hook<H: CapabilityRevocationHook>(
+        &mut self,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        hook: &mut H,
+    ) -> Result<usize, CapabilityError> {
+        self.authorize_handle(caller, authority, Rights::REVOKE)?;
+        let mut descendants = [false; CAPACITY];
+        for (slot, descendant) in descendants.iter_mut().enumerate() {
+            *descendant = self.entries[slot].occupied && self.is_descendant(slot, authority)
+        }
+        let mut revoked = 0;
+        for (slot, descendant) in descendants.iter().enumerate() {
+            if *descendant {
+                hook.revoke(self.entries[slot].info);
                 self.vacate(slot);
                 revoked += 1
             }

@@ -138,7 +138,7 @@ and named resources. Lock requests require a matching resource capability,
 conflicts queue in FIFO order, and all locks from a failed cluster node can be
 released together.
 
-`synos-system-model` provides process, group, system, and cluster logical-name
+`synos-system-model` provides process, job, group, system, and cluster logical-name
 scopes. Entries target files, devices, or IPC channels and use owner-controlled
 ACLs. Its command dictionary accepts positional arguments and DCL-style
 qualifiers, validates Boolean, integer, and text values before dispatch, and
@@ -203,6 +203,30 @@ memory enters it as untyped tokens, user-space managers retype non-overlapping
 ranges, and parent/child/sibling CDT links live beside each protected resource
 descriptor. Authorized process and system logical names are published to
 epoch-protected atomic hash pages for Ring 3 lookup.
+
+## Authentication, authorization, and identity
+
+`synos-auth` is the heap-free Ring 3 identity core. Its fixed authorization
+database holds local and node-local user records with passkey, TPM 2.0, and SSH
+public credentials. Authentication uses one-shot challenges and a platform
+crypto verifier. A successful session builds the kernel-owned execution
+persona and mints only the configured initial capability set into the login
+address space.
+
+Kernel personas carry dynamic rights identifiers such as `LLM_OPERATOR`,
+`NETWORK_INBOUND`, and `BATCH_JOB`. A process may suspend, restore, or
+permanently drop its own rights. Logical-name access now includes JOB scope and
+passes through both its OpenVMS-style ACL and a scoped kernel capability.
+Zero-copy IPC can delegate an object handle while attenuating its rights, and
+capability revocation hooks notify memory and fabric owners before descendants
+are removed from the derivation tree.
+
+Cross-node authority uses wire-encoded HMAC-SHA256 capability tokens. Tokens
+bind issuer, borrower, resource, transport, expiry, and revocation epoch;
+Macaroon-style caveats can only narrow them. Remote DSM faults require both a
+valid memory token and the matching live DLM epoch. Resource owners can lend
+bounded RAM, VRAM, or compute units, then revoke the loan and request immediate
+remote unmapping, DSM invalidation, or compute stop.
 
 ## LLM memory runtime
 

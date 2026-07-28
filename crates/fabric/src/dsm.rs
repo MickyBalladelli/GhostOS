@@ -1,4 +1,4 @@
-use crate::{Access, Error, NodeId, PAGE_SIZE, PageFault};
+use crate::{Access, AddressRange, Error, NodeId, PAGE_SIZE, PageFault};
 
 pub const SYNOS_DSM_ETHERTYPE: u16 = 0x88b5;
 pub const FRAME_DATA_BYTES: usize = 1400;
@@ -239,6 +239,16 @@ pub struct SoftwareDlmLease {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RemotePageAuthority {
+    pub subject: NodeId,
+    pub range: AddressRange,
+    pub read: bool,
+    pub write: bool,
+    pub lease_epoch: u32,
+    pub expires_at_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoherenceAction {
     MapLocal {
         writable: bool,
@@ -364,6 +374,40 @@ impl<const CAPACITY: usize> CoherenceDirectory<CAPACITY> {
                 writable: fault.access == Access::Write,
             }),
         }
+    }
+
+    /// Authorize a cross-node page fault before touching DSM state.
+    ///
+    /// The cryptographic token layer creates this short-lived authority. The
+    /// DLM epoch check fences revoked or stale tokens cluster-wide.
+    pub fn begin_remote_fault(
+        &mut self,
+        requester: NodeId,
+        fault: PageFault,
+        authority: RemotePageAuthority,
+        now_us: u64,
+    ) -> Result<CoherenceAction, Error> {
+        let access_allowed = match fault.access {
+            Access::Read => authority.read,
+            Access::Write => authority.write,
+            Access::Execute => false,
+        };
+        if authority.subject != requester
+            || !authority.range.contains(fault.page_address())
+            || !access_allowed
+            || now_us >= authority.expires_at_us
+        {
+            return Err(Error::NotOwner)
+        }
+        let entry = self.entry(fault.page_address())?;
+        let lease = entry.lease.ok_or(Error::ExpiredLease)?;
+        if lease.owner != requester
+            || lease.epoch != authority.lease_epoch
+            || now_us >= lease.expires_at_us
+        {
+            return Err(Error::ExpiredLease)
+        }
+        self.begin_fault(requester, fault, now_us)
     }
 
     pub fn grant_lease(

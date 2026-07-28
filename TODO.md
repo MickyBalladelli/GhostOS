@@ -117,24 +117,24 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 9. Authentication, Authorization & Identity Services
-- [ ] **Ring 3 Identity Daemon (`synos-authd`)**
-  - [ ] Implement user-space identity management for initial credential verification (Passkeys, TPM 2.0, SSH keys) bypassing legacy PAM/shadow architectures.
-  - [ ] Issue root capability tokens during session instantiation, passing initial capability sets to the login process.
-  - [ ] Integrate lightweight `SYSUAF.DAT`-style authorization databases for local and node-local multi-user credential storage.
-- [ ] **Capability-Based Object Authorization**
-  - [ ] Eliminate root (UID 0) and global ambient authority in favor of unforgeable seL4-style capability tokens for all resources.
-  - [ ] Implement capability delegation and attenuation semantics over zero-copy IPC (e.g., stripping write/execute capabilities before handing off handles).
-  - [ ] Support transparent, microkernel-enforced capability revocation via derivation tree tracking.
-- [ ] **OpenVMS Rights Identifiers & Personas**
-  - [ ] Implement dynamic Rights Identifiers (e.g., `LLM_OPERATOR`, `NETWORK_INBOUND`, `BATCH_JOB`) assigned to active process execution contexts.
-  - [ ] Build capability dropping system calls allowing processes to dynamically remove or suspend active rights identifiers (`SET RIGHTS_LIST/DISABLE`) before executing untrusted code.
-  - [ ] Implement Scoped Logical Name Table access controls (`PROCESS`, `JOB`, `GROUP`, `SYSTEM`) backed by Capability ACLs.
-- [ ] **Distributed Multi-Node Authorization**
-  - [ ] Support cross-node capability delegation over CXL 3.0 fabrics and Layer-2 Ethernet using cryptographic capability tokens (e.g., Macaroons / Amoeba capabilities).
-  - [ ] Integrate with Distributed Lock Manager (DLM) to enforce cluster-wide lease controls and prevent unauthorized remote page faults (#PF) on Software DSM targets.
-- [ ] **Owner-Delegated Resource Lending**
-    - [ ] Build capability attenuation primitives enabling node owners to issue restricted, time-bound memory/compute tokens to remote cluster users.
-    - [ ] Implement transparent microkernel revocation hooks allowing resource providers to reclaim remote-mapped RAM/VRAM instantly.
+- [x] **Ring 3 Identity Daemon (`synos-authd`)**
+  - [x] Implement user-space identity management for initial credential verification (Passkeys, TPM 2.0, SSH keys) bypassing legacy PAM/shadow architectures.
+  - [x] Issue root capability tokens during session instantiation, passing initial capability sets to the login process.
+  - [x] Integrate lightweight `SYSUAF.DAT`-style authorization databases for local and node-local multi-user credential storage.
+- [x] **Capability-Based Object Authorization**
+  - [x] Eliminate root (UID 0) and global ambient authority in favor of unforgeable seL4-style capability tokens for all resources.
+  - [x] Implement capability delegation and attenuation semantics over zero-copy IPC (e.g., stripping write/execute capabilities before handing off handles).
+  - [x] Support transparent, microkernel-enforced capability revocation via derivation tree tracking.
+- [x] **OpenVMS Rights Identifiers & Personas**
+  - [x] Implement dynamic Rights Identifiers (e.g., `LLM_OPERATOR`, `NETWORK_INBOUND`, `BATCH_JOB`) assigned to active process execution contexts.
+  - [x] Build capability dropping system calls allowing processes to dynamically remove or suspend active rights identifiers (`SET RIGHTS_LIST/DISABLE`) before executing untrusted code.
+  - [x] Implement Scoped Logical Name Table access controls (`PROCESS`, `JOB`, `GROUP`, `SYSTEM`) backed by Capability ACLs.
+- [x] **Distributed Multi-Node Authorization**
+  - [x] Support cross-node capability delegation over CXL 3.0 fabrics and Layer-2 Ethernet using cryptographic capability tokens (e.g., Macaroons / Amoeba capabilities).
+  - [x] Integrate with Distributed Lock Manager (DLM) to enforce cluster-wide lease controls and prevent unauthorized remote page faults (#PF) on Software DSM targets.
+- [x] **Owner-Delegated Resource Lending**
+    - [x] Build capability attenuation primitives enabling node owners to issue restricted, time-bound memory/compute tokens to remote cluster users.
+    - [x] Implement transparent microkernel revocation hooks allowing resource providers to reclaim remote-mapped RAM/VRAM instantly.
 
 
 ---

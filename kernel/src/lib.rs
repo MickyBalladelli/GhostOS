@@ -12,6 +12,7 @@ pub mod dlm;
 pub mod ipc;
 #[allow(unsafe_code)]
 pub mod page_fault;
+pub mod persona;
 pub mod scheduler;
 pub mod task;
 
@@ -21,13 +22,16 @@ use synos_boot_protocol::BootInfo;
 pub use allocator::{AllocationError, EarlyFrameAllocator, FRAME_SIZE};
 pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
-    CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,
+    CapabilityRevocationHook, CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,
 };
 pub use dlm::{
     DistributedLockManager, LockError, LockGrant, LockHandle, LockMode, LockOwner, LockRange,
     NodeId, ResourceId, ResourceKind, ResourceName,
 };
 pub use page_fault::{PageFault, PageFaultHandler, PageFaultHandlerError};
+pub use persona::{
+    ExecutionPersona, IdentityId, PersonaError, RightIdentifier, MAX_PERSONA_RIGHTS,
+};
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
 pub use task::{
     AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,

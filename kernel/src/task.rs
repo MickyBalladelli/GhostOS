@@ -1,3 +1,5 @@
+use crate::persona::ExecutionPersona;
+
 pub const MAX_THREADS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +86,7 @@ pub struct Thread {
     pub mode: ExecutionMode,
     pub state: ThreadState,
     pub policy: SchedulingPolicy,
+    pub persona: ExecutionPersona,
     pub context: Context,
     pub wake_at: u64,
     pub switches: u64,
@@ -96,6 +99,7 @@ impl Thread {
         mode: ExecutionMode::Kernel,
         state: ThreadState::Vacant,
         policy: SchedulingPolicy::Cooperative,
+        persona: ExecutionPersona::anonymous(),
         context: Context::new(0, 0),
         wake_at: 0,
         switches: 0,

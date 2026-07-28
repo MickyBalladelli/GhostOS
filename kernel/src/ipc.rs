@@ -47,6 +47,13 @@ pub struct Message {
     pub words: [u64; 4],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityTransfer {
+    pub delegated: CapabilityHandle,
+    pub receiver: AddressSpaceId,
+    pub rights: Rights,
+}
+
 impl Message {
     pub const EMPTY: Self = Self {
         label: 0,
@@ -209,6 +216,49 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         }
 
         self.enqueue(message)
+    }
+
+    /// Atomically attenuate a capability and attach its handle to a zero-copy
+    /// IPC message. The delegated handle is placed in word 3.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_send_delegated<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &mut CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        buffer_authority: Option<CapabilityHandle>,
+        source: CapabilityHandle,
+        receiver: AddressSpaceId,
+        rights: Rights,
+        mut message: Message,
+    ) -> Result<CapabilityTransfer, IpcError> {
+        capabilities
+            .authorize(
+                caller,
+                endpoint,
+                CapabilityObject::IpcChannel(self.id),
+                Rights::SEND,
+            )
+            .map_err(|_| IpcError::AccessDenied)?;
+        if let Some(buffer) = message.buffer {
+            let handle = buffer_authority.ok_or(IpcError::AccessDenied)?;
+            capabilities
+                .authorize_mapping(caller, handle, buffer.region, buffer.writable, false)
+                .map_err(|_| IpcError::AccessDenied)?
+        }
+        let delegated = capabilities
+            .delegate(caller, source, receiver, rights)
+            .map_err(|_| IpcError::AccessDenied)?;
+        message.words[3] = delegated.raw();
+        if let Err(error) = self.enqueue(message) {
+            let _ = capabilities.delete(receiver, delegated);
+            return Err(error)
+        }
+        Ok(CapabilityTransfer {
+            delegated,
+            receiver,
+            rights,
+        })
     }
 
     /// Validate capabilities once, then use the mapped ring without syscalls.

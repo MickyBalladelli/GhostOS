@@ -1,4 +1,5 @@
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
+use crate::persona::{ExecutionPersona, PersonaError, RightIdentifier};
 use crate::task::{
     AddressSpaceId, Context, ExecutionMode, MAX_THREADS, SchedulingPolicy, Thread, ThreadId,
     ThreadState,
@@ -93,6 +94,7 @@ impl Scheduler {
             mode,
             state: ThreadState::Ready,
             policy,
+            persona: ExecutionPersona::anonymous(),
             context: Context::new(entry, stack_top),
             wake_at: 0,
             switches: 0,
@@ -121,6 +123,67 @@ impl Scheduler {
     pub fn context_mut(&mut self, id: ThreadId) -> Result<&mut Context, SchedulerError> {
         let slot = self.slot(id)?;
         Ok(&mut self.threads[slot].context)
+    }
+
+    pub fn install_persona<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        id: ThreadId,
+        persona: ExecutionPersona,
+    ) -> Result<(), SchedulerError> {
+        let slot = self.slot(id)?;
+        let address_space = self.threads[slot].address_space;
+        capabilities
+            .authorize(
+                caller,
+                authority,
+                CapabilityObject::AddressSpace(address_space),
+                Rights::CREATE,
+            )
+            .map_err(|_| SchedulerError::AccessDenied)?;
+        self.threads[slot].persona = persona;
+        Ok(())
+    }
+
+    pub fn disable_right(
+        &mut self,
+        caller: AddressSpaceId,
+        id: ThreadId,
+        right: RightIdentifier,
+    ) -> Result<(), SchedulerError> {
+        let slot = self.owned_thread(caller, id)?;
+        self.threads[slot]
+            .persona
+            .disable(right)
+            .map_err(map_persona_error)
+    }
+
+    pub fn enable_right(
+        &mut self,
+        caller: AddressSpaceId,
+        id: ThreadId,
+        right: RightIdentifier,
+    ) -> Result<(), SchedulerError> {
+        let slot = self.owned_thread(caller, id)?;
+        self.threads[slot]
+            .persona
+            .enable(right)
+            .map_err(map_persona_error)
+    }
+
+    pub fn drop_right(
+        &mut self,
+        caller: AddressSpaceId,
+        id: ThreadId,
+        right: RightIdentifier,
+    ) -> Result<(), SchedulerError> {
+        let slot = self.owned_thread(caller, id)?;
+        self.threads[slot]
+            .persona
+            .drop_right(right)
+            .map_err(map_persona_error)
     }
 
     pub fn dispatch(&mut self) -> Option<ContextSwitch> {
@@ -214,6 +277,18 @@ impl Scheduler {
         Ok(slot)
     }
 
+    fn owned_thread(
+        &self,
+        caller: AddressSpaceId,
+        id: ThreadId,
+    ) -> Result<usize, SchedulerError> {
+        let slot = self.slot(id)?;
+        if self.threads[slot].address_space != caller {
+            return Err(SchedulerError::AccessDenied)
+        }
+        Ok(slot)
+    }
+
     fn pick_next(&mut self) -> Option<ThreadId> {
         if let Some(realtime) = self.pick_realtime() {
             return Some(realtime);
@@ -269,6 +344,10 @@ impl Scheduler {
             _ => false,
         }
     }
+}
+
+fn map_persona_error(_: PersonaError) -> SchedulerError {
+    SchedulerError::AccessDenied
 }
 
 impl Default for Scheduler {
