@@ -12,6 +12,9 @@ pub struct Keyboard {
     control: bool,
     caps_lock: bool,
     extended: bool,
+    pending: [u8; 4],
+    pending_start: usize,
+    pending_count: usize,
 }
 
 impl Keyboard {
@@ -22,59 +25,64 @@ impl Keyboard {
             control: false,
             caps_lock: false,
             extended: false,
+            pending: [0; 4],
+            pending_start: 0,
+            pending_count: 0,
         };
-        unsafe {
-            initialize_controller()
-        }
+        unsafe { initialize_controller() }
         keyboard
     }
 
     pub fn read_byte(&mut self) -> Option<u8> {
+        if self.pending_count != 0 {
+            return self.take_pending();
+        }
+
         let status = unsafe { inb(STATUS_PORT) };
         if status & OUTPUT_FULL == 0 {
-            return None
+            return None;
         }
 
         let scan_code = unsafe { inb(DATA_PORT) };
         if status & AUXILIARY_DATA != 0 {
-            return None
+            return None;
         }
         if scan_code == 0xe0 {
             self.extended = true;
-            return None
+            return None;
         }
         if matches!(scan_code, 0xfa | 0xfe) {
-            return None
+            return None;
         }
 
         let released = scan_code & 0x80 != 0;
         let code = scan_code & 0x7f;
         if self.extended {
             self.extended = false;
-            return self.decode_extended(code, released)
+            return self.decode_extended(code, released);
         }
 
         match code {
             0x1d => {
                 self.control = !released;
-                return None
+                return None;
             }
             0x2a => {
                 self.left_shift = !released;
-                return None
+                return None;
             }
             0x36 => {
                 self.right_shift = !released;
-                return None
+                return None;
             }
             0x3a if !released => {
                 self.caps_lock = !self.caps_lock;
-                return None
+                return None;
             }
             _ => {}
         }
         if released {
-            return None
+            return None;
         }
 
         match code {
@@ -90,29 +98,57 @@ impl Keyboard {
     fn decode_extended(&mut self, code: u8, released: bool) -> Option<u8> {
         if code == 0x1d {
             self.control = !released;
-            return None
+            return None;
         }
         if released {
-            return None
+            return None;
         }
         match code {
             0x1c => Some(b'\r'),
-            0x53 => Some(127),
+            0x47 => self.queue_sequence(b"\x1b[H"),
+            0x48 => self.queue_sequence(b"\x1b[A"),
+            0x4b => self.queue_sequence(b"\x1b[D"),
+            0x4d => self.queue_sequence(b"\x1b[C"),
+            0x4f => self.queue_sequence(b"\x1b[F"),
+            0x50 => self.queue_sequence(b"\x1b[B"),
+            0x53 => self.queue_sequence(b"\x1b[3~"),
             _ => None,
         }
+    }
+
+    fn queue_sequence(&mut self, sequence: &[u8]) -> Option<u8> {
+        for byte in sequence.iter().copied() {
+            if self.pending_count == self.pending.len() {
+                break;
+            }
+            let index = (self.pending_start + self.pending_count) % self.pending.len();
+            self.pending[index] = byte;
+            self.pending_count += 1
+        }
+        self.take_pending()
+    }
+
+    fn take_pending(&mut self) -> Option<u8> {
+        if self.pending_count == 0 {
+            return None;
+        }
+        let byte = self.pending[self.pending_start];
+        self.pending_start = (self.pending_start + 1) % self.pending.len();
+        self.pending_count -= 1;
+        Some(byte)
     }
 
     fn decode_character(&self, code: u8) -> Option<u8> {
         if let Some(letter) = letter(code) {
             if self.control {
-                return Some(letter & 0x1f)
+                return Some(letter & 0x1f);
             }
             let uppercase = self.shifted() ^ self.caps_lock;
             return Some(if uppercase {
                 letter.to_ascii_uppercase()
             } else {
                 letter
-            })
+            });
         }
 
         let (plain, shifted) = symbol(code)?;
@@ -187,7 +223,7 @@ unsafe fn initialize_controller() {
     unsafe {
         for _ in 0..32 {
             if inb(STATUS_PORT) & OUTPUT_FULL == 0 {
-                break
+                break;
             }
             let _ = inb(DATA_PORT);
         }
@@ -204,7 +240,7 @@ unsafe fn initialize_controller() {
 unsafe fn wait_for_input_buffer() -> bool {
     for _ in 0..100_000 {
         if unsafe { inb(STATUS_PORT) } & INPUT_FULL == 0 {
-            return true
+            return true;
         }
         core::hint::spin_loop()
     }

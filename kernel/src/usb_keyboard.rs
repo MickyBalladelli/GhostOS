@@ -1,7 +1,5 @@
 use core::ptr::{read_volatile, write_volatile};
-use synos_legacy_pc_drivers::pci::{
-    Bar, ConfigAccess, PortConfig, enumerate,
-};
+use synos_legacy_pc_drivers::pci::{Bar, ConfigAccess, PortConfig, enumerate};
 
 const TRB_COUNT: usize = 256;
 const EVENT_COUNT: usize = 256;
@@ -98,20 +96,12 @@ impl ProducerRing {
 
     unsafe fn push(&mut self, mut trb: Trb) {
         trb.control = (trb.control & !1) | self.cycle;
-        unsafe {
-            write_volatile(self.address.add(self.index), trb)
-        }
+        unsafe { write_volatile(self.address.add(self.index), trb) }
         self.index += 1;
         if self.index == TRB_COUNT - 1 {
             let address = self.address as u64;
-            let link = Trb::new(
-                address,
-                0,
-                (6 << 10) | (1 << 1) | self.cycle,
-            );
-            unsafe {
-                write_volatile(self.address.add(TRB_COUNT - 1), link)
-            }
+            let link = Trb::new(address, 0, (6 << 10) | (1 << 1) | self.cycle);
+            unsafe { write_volatile(self.address.add(TRB_COUNT - 1), link) }
             self.index = 0;
             self.cycle ^= 1
         }
@@ -169,23 +159,26 @@ impl UsbKeyboard {
             let byte = self.pending[self.pending_start];
             self.pending_start = (self.pending_start + 1) % self.pending.len();
             self.pending_count -= 1;
-            return Some(byte)
+            return Some(byte);
         }
 
         let report = unsafe { self.controller.poll_report()? };
         let modifiers = report[0];
         for usage in report[2..8].iter().copied().filter(|usage| *usage != 0) {
             if self.previous.contains(&usage) {
-                continue
+                continue;
             }
             if usage == 0x39 {
                 self.caps_lock = !self.caps_lock;
-                continue
+                continue;
+            }
+            if let Some(sequence) = navigation_sequence(usage) {
+                self.queue_sequence(sequence);
+                continue;
             }
             if let Some(byte) = hid_usage(usage, modifiers, self.caps_lock) {
                 if self.pending_count < self.pending.len() {
-                    let index =
-                        (self.pending_start + self.pending_count) % self.pending.len();
+                    let index = (self.pending_start + self.pending_count) % self.pending.len();
                     self.pending[index] = byte;
                     self.pending_count += 1
                 }
@@ -197,6 +190,17 @@ impl UsbKeyboard {
             None
         } else {
             self.read_byte()
+        }
+    }
+
+    fn queue_sequence(&mut self, sequence: &[u8]) {
+        for byte in sequence.iter().copied() {
+            if self.pending_count == self.pending.len() {
+                return;
+            }
+            let index = (self.pending_start + self.pending_count) % self.pending.len();
+            self.pending[index] = byte;
+            self.pending_count += 1
         }
     }
 }
@@ -221,27 +225,22 @@ impl Xhci {
             _ => return None,
         };
         if mmio == 0 {
-            return None
+            return None;
         }
 
         let command = unsafe { config.read_u32(device.address, 0x04) };
-        unsafe {
-            config.write_u32(device.address, 0x04, command | 0x6)
-        }
+        unsafe { config.write_u32(device.address, 0x04, command | 0x6) }
 
         let capability = mmio as *mut u8;
         let capability_length = unsafe { read8(capability, 0) } as usize;
         let parameters1 = unsafe { read32(capability, 0x04) };
         let parameters2 = unsafe { read32(capability, 0x08) };
-        let scratchpads =
-            (((parameters2 >> 21) & 0x1f) << 5) | ((parameters2 >> 27) & 0x1f);
+        let scratchpads = (((parameters2 >> 21) & 0x1f) << 5) | ((parameters2 >> 27) & 0x1f);
         if scratchpads != 0 {
-            return None
+            return None;
         }
         let hcc = unsafe { read32(capability, 0x10) };
-        unsafe {
-            legacy_handoff(capability, hcc)
-        }
+        unsafe { legacy_handoff(capability, hcc) }
 
         let doorbell_offset = unsafe { read32(capability, 0x14) } & !3;
         let runtime_offset = unsafe { read32(capability, 0x18) } & !0x1f;
@@ -253,15 +252,9 @@ impl Xhci {
             max_ports: (parameters1 >> 24) as u8,
             event_index: 0,
             event_cycle: 1,
-            command: unsafe {
-                ProducerRing::new((&raw mut COMMAND_RING.0).cast::<Trb>())
-            },
-            ep0: unsafe {
-                ProducerRing::new((&raw mut EP0_RING.0).cast::<Trb>())
-            },
-            interrupt: unsafe {
-                ProducerRing::new((&raw mut INTERRUPT_RING.0).cast::<Trb>())
-            },
+            command: unsafe { ProducerRing::new((&raw mut COMMAND_RING.0).cast::<Trb>()) },
+            ep0: unsafe { ProducerRing::new((&raw mut EP0_RING.0).cast::<Trb>()) },
+            interrupt: unsafe { ProducerRing::new((&raw mut INTERRUPT_RING.0).cast::<Trb>()) },
             slot_id: 0,
             endpoint_id: 0,
             interrupt_packet_size: 0,
@@ -275,17 +268,17 @@ impl Xhci {
             let command = read32(self.operational, 0x00) & !1;
             write32(self.operational, 0x00, command);
             if !wait_for(self.operational, 0x04, 1, 1) {
-                return None
+                return None;
             }
 
             write32(self.operational, 0x00, command | (1 << 1));
             if !wait_for(self.operational, 0x00, 1 << 1, 0)
                 || !wait_for(self.operational, 0x04, 1 << 11, 0)
             {
-                return None
+                return None;
             }
             if read32(self.operational, 0x08) & 1 == 0 {
-                return None
+                return None;
             }
 
             let command_address = (&raw const COMMAND_RING.0) as u64;
@@ -307,7 +300,7 @@ impl Xhci {
             write32(self.operational, 0x04, u32::MAX);
             write32(self.operational, 0x00, command | 1);
             if !wait_for(self.operational, 0x04, 1, 0) {
-                return None
+                return None;
             }
         }
         Some(())
@@ -318,56 +311,44 @@ impl Xhci {
             let register = 0x400 + port as usize * 0x10;
             let mut port_status = unsafe { read32(self.operational, register) };
             if port_status & 1 == 0 {
-                continue
+                continue;
             }
             if port_status & (1 << 9) == 0 {
-                unsafe {
-                    write32(self.operational, register, port_status | (1 << 9))
-                }
+                unsafe { write32(self.operational, register, port_status | (1 << 9)) }
             }
-            unsafe {
-                write32(self.operational, register, port_status | (1 << 4))
-            }
+            unsafe { write32(self.operational, register, port_status | (1 << 4)) }
             let mut reset_done = false;
             for _ in 0..2_000_000 {
                 port_status = unsafe { read32(self.operational, register) };
                 if port_status & (1 << 4) == 0 && port_status & (1 << 1) != 0 {
                     reset_done = true;
-                    break
+                    break;
                 }
                 core::hint::spin_loop()
             }
             if !reset_done {
-                continue
+                continue;
             }
 
             let speed = ((port_status >> 10) & 0xf) as u8;
             if unsafe { self.configure_device(port + 1, speed) }.is_some() {
-                return Some(())
+                return Some(());
             }
-            unsafe {
-                self.release_slot()
-            }
+            unsafe { self.release_slot() }
         }
         None
     }
 
     unsafe fn configure_device(&mut self, root_port: u8, speed: u8) -> Option<()> {
-        let event = unsafe {
-            self.command(Trb::new(0, 0, TYPE_ENABLE_SLOT << 10))?
-        };
+        let event = unsafe { self.command(Trb::new(0, 0, TYPE_ENABLE_SLOT << 10))? };
         self.slot_id = (event.trb.control >> 24) as u8;
         if self.slot_id == 0 {
-            return None
+            return None;
         }
 
         unsafe {
             DCBAA.0[self.slot_id as usize] = (&raw const DEVICE_CONTEXT.0) as u64;
-            core::ptr::write_bytes(
-                (&raw mut INPUT_CONTEXT.0).cast::<u8>(),
-                0,
-                CONTEXT_BYTES,
-            );
+            core::ptr::write_bytes((&raw mut INPUT_CONTEXT.0).cast::<u8>(), 0, CONTEXT_BYTES);
         }
         let max_packet = match speed {
             3 => 64,
@@ -383,11 +364,9 @@ impl Xhci {
             ))?;
         }
 
-        let descriptor_length = unsafe {
-            self.control_in(0x80, 6, 0x0100, 0, 18)?
-        };
+        let descriptor_length = unsafe { self.control_in(0x80, 6, 0x0100, 0, 18)? };
         if descriptor_length < 8 {
-            return None
+            return None;
         }
         let actual_max_packet = unsafe { CONTROL_BUFFER.0[7] } as u16;
         if actual_max_packet != 0 && actual_max_packet != max_packet {
@@ -396,31 +375,20 @@ impl Xhci {
                 self.command(Trb::new(
                     (&raw const INPUT_CONTEXT.0) as u64,
                     0,
-                    (TYPE_EVALUATE_CONTEXT << 10)
-                        | (self.slot_id as u32) << 24,
+                    (TYPE_EVALUATE_CONTEXT << 10) | (self.slot_id as u32) << 24,
                 ))?;
             }
         }
 
-        let header_length = unsafe {
-            self.control_in(0x80, 6, 0x0200, 0, 9)?
-        };
+        let header_length = unsafe { self.control_in(0x80, 6, 0x0200, 0, 9)? };
         if header_length < 9 {
-            return None
+            return None;
         }
-        let total_length = unsafe {
-            u16::from_le_bytes([CONTROL_BUFFER.0[2], CONTROL_BUFFER.0[3]])
-        } as usize;
+        let total_length =
+            unsafe { u16::from_le_bytes([CONTROL_BUFFER.0[2], CONTROL_BUFFER.0[3]]) } as usize;
         let configuration_value = unsafe { CONTROL_BUFFER.0[5] };
-        let fetched = unsafe {
-            self.control_in(
-                0x80,
-                6,
-                0x0200,
-                0,
-                total_length.min(BUFFER_BYTES) as u16,
-            )?
-        };
+        let fetched =
+            unsafe { self.control_in(0x80, 6, 0x0200, 0, total_length.min(BUFFER_BYTES) as u16)? };
         let (interface, endpoint, packet_size, interval) =
             unsafe { find_keyboard_descriptor(fetched)? };
 
@@ -433,12 +401,7 @@ impl Xhci {
         Some(())
     }
 
-    unsafe fn prepare_address_context(
-        &self,
-        root_port: u8,
-        speed: u8,
-        max_packet: u16,
-    ) {
+    unsafe fn prepare_address_context(&self, root_port: u8, speed: u8, max_packet: u16) {
         unsafe {
             clear_input_context();
             context_write(0, 1, (1 << 0) | (1 << 1));
@@ -446,11 +409,7 @@ impl Xhci {
             context_write(slot, 0, (speed as u32) << 20 | 1 << 27);
             context_write(slot, 1, (root_port as u32) << 16);
             let endpoint = self.context_size * 2;
-            context_write(
-                endpoint,
-                1,
-                3 << 1 | 4 << 3 | (max_packet as u32) << 16,
-            );
+            context_write(endpoint, 1, 3 << 1 | 4 << 3 | (max_packet as u32) << 16);
             let ring = self.ep0.dequeue();
             context_write(endpoint, 2, ring as u32);
             context_write(endpoint, 3, (ring >> 32) as u32);
@@ -463,11 +422,7 @@ impl Xhci {
             clear_input_context();
             context_write(0, 1, 1 << 1);
             let endpoint = self.context_size * 2;
-            context_write(
-                endpoint,
-                1,
-                3 << 1 | 4 << 3 | (max_packet as u32) << 16,
-            );
+            context_write(endpoint, 1, 3 << 1 | 4 << 3 | (max_packet as u32) << 16);
             let ring = self.ep0.dequeue();
             context_write(endpoint, 2, ring as u32);
             context_write(endpoint, 3, (ring >> 32) as u32);
@@ -483,31 +438,24 @@ impl Xhci {
     ) -> Option<()> {
         let number = endpoint & 0x0f;
         if number == 0 || endpoint & 0x80 == 0 {
-            return None
+            return None;
         }
         self.endpoint_id = number.saturating_mul(2).saturating_add(1);
         self.interrupt_packet_size = packet_size;
         unsafe {
             clear_input_context();
-            context_write(
-                0,
-                1,
-                (1 << 0) | (1 << self.endpoint_id),
-            );
+            context_write(0, 1, (1 << 0) | (1 << self.endpoint_id));
             let slot = self.context_size;
             core::ptr::copy_nonoverlapping(
                 (&raw const DEVICE_CONTEXT.0).cast::<u8>(),
-                (&raw mut INPUT_CONTEXT.0)
-                    .cast::<u8>()
-                    .add(slot),
+                (&raw mut INPUT_CONTEXT.0).cast::<u8>().add(slot),
                 self.context_size,
             );
             let current_slot = context_read(slot, 0);
             context_write(
                 slot,
                 0,
-                (current_slot & !(0x1f << 27))
-                    | (self.endpoint_id as u32) << 27,
+                (current_slot & !(0x1f << 27)) | (self.endpoint_id as u32) << 27,
             );
             let context = self.context_size * (self.endpoint_id as usize + 1);
             context_write(
@@ -515,24 +463,15 @@ impl Xhci {
                 0,
                 (interval.saturating_sub(1).min(15) as u32) << 16,
             );
-            context_write(
-                context,
-                1,
-                3 << 1 | 7 << 3 | (packet_size as u32) << 16,
-            );
+            context_write(context, 1, 3 << 1 | 7 << 3 | (packet_size as u32) << 16);
             let ring = (&raw const INTERRUPT_RING.0) as u64 | 1;
             context_write(context, 2, ring as u32);
             context_write(context, 3, (ring >> 32) as u32);
-            context_write(
-                context,
-                4,
-                packet_size as u32 | (packet_size as u32) << 16,
-            );
+            context_write(context, 4, packet_size as u32 | (packet_size as u32) << 16);
             self.command(Trb::new(
                 (&raw const INPUT_CONTEXT.0) as u64,
                 0,
-                (TYPE_CONFIGURE_ENDPOINT << 10)
-                    | (self.slot_id as u32) << 24,
+                (TYPE_CONFIGURE_ENDPOINT << 10) | (self.slot_id as u32) << 24,
             ))?;
         }
         Some(())
@@ -540,7 +479,7 @@ impl Xhci {
 
     unsafe fn release_slot(&mut self) {
         if self.slot_id == 0 {
-            return
+            return;
         }
         let slot = self.slot_id;
         let _ = unsafe {
@@ -550,9 +489,7 @@ impl Xhci {
                 (TYPE_DISABLE_SLOT << 10) | (slot as u32) << 24,
             ))
         };
-        unsafe {
-            DCBAA.0[slot as usize] = 0
-        }
+        unsafe { DCBAA.0[slot as usize] = 0 }
         self.slot_id = 0
     }
 
@@ -565,18 +502,8 @@ impl Xhci {
         length: u16,
     ) -> Option<usize> {
         unsafe {
-            core::ptr::write_bytes(
-                (&raw mut CONTROL_BUFFER.0).cast::<u8>(),
-                0,
-                BUFFER_BYTES,
-            );
-            let setup = setup_packet(
-                request_type,
-                request,
-                value,
-                index,
-                length,
-            );
+            core::ptr::write_bytes((&raw mut CONTROL_BUFFER.0).cast::<u8>(), 0, BUFFER_BYTES);
+            let setup = setup_packet(request_type, request, value, index, length);
             self.ep0.push(Trb::new(
                 setup,
                 8,
@@ -587,15 +514,12 @@ impl Xhci {
                 length as u32,
                 (TYPE_DATA_STAGE << 10) | (1 << 16),
             ));
-            self.ep0.push(Trb::new(
-                0,
-                0,
-                (TYPE_STATUS_STAGE << 10) | (1 << 5),
-            ));
+            self.ep0
+                .push(Trb::new(0, 0, (TYPE_STATUS_STAGE << 10) | (1 << 5)));
             self.ring_doorbell(self.endpoint_id_for_control());
             let event = self.wait_event(TYPE_TRANSFER_EVENT)?;
             if !completion_ok(event.trb.completion_code()) {
-                return None
+                return None;
             }
             Some(length as usize - (event.trb.status & 0x00ff_ffff) as usize)
         }
@@ -610,11 +534,8 @@ impl Xhci {
     ) -> Option<()> {
         unsafe {
             let setup = setup_packet(request_type, request, value, index, 0);
-            self.ep0.push(Trb::new(
-                setup,
-                8,
-                (TYPE_SETUP_STAGE << 10) | (1 << 6),
-            ));
+            self.ep0
+                .push(Trb::new(setup, 8, (TYPE_SETUP_STAGE << 10) | (1 << 6)));
             self.ep0.push(Trb::new(
                 0,
                 0,
@@ -657,7 +578,7 @@ impl Xhci {
             || !completion_ok(event.trb.completion_code())
             || (event.trb.control >> 24) as u8 != self.slot_id
         {
-            return None
+            return None;
         }
         let mut report = [0; 8];
         unsafe {
@@ -683,7 +604,7 @@ impl Xhci {
         for _ in 0..10_000_000 {
             if let Some(event) = unsafe { self.next_event() } {
                 if event.trb.trb_type() == event_type {
-                    return Some(event)
+                    return Some(event);
                 }
             }
             core::hint::spin_loop()
@@ -699,7 +620,7 @@ impl Xhci {
         };
         let trb = unsafe { read_volatile(pointer) };
         if trb.control & 1 != self.event_cycle {
-            return None
+            return None;
         }
 
         self.event_index += 1;
@@ -712,20 +633,12 @@ impl Xhci {
                 .cast::<Trb>()
                 .add(self.event_index) as u64
         };
-        unsafe {
-            write64(self.runtime.add(0x20), 0x18, dequeue | (1 << 3))
-        }
+        unsafe { write64(self.runtime.add(0x20), 0x18, dequeue | (1 << 3)) }
         Some(Event { trb })
     }
 }
 
-fn setup_packet(
-    request_type: u8,
-    request: u8,
-    value: u16,
-    index: u16,
-    length: u16,
-) -> u64 {
+fn setup_packet(request_type: u8, request: u8, value: u16, index: u16, length: u16) -> u64 {
     request_type as u64
         | (request as u64) << 8
         | (value as u64) << 16
@@ -733,16 +646,14 @@ fn setup_packet(
         | (length as u64) << 48
 }
 
-unsafe fn find_keyboard_descriptor(
-    length: usize,
-) -> Option<(u8, u8, u16, u8)> {
+unsafe fn find_keyboard_descriptor(length: usize) -> Option<(u8, u8, u16, u8)> {
     let mut offset = 0;
     let mut keyboard_interface = None;
     while offset + 2 <= length {
         let descriptor_length = unsafe { CONTROL_BUFFER.0[offset] } as usize;
         let descriptor_type = unsafe { CONTROL_BUFFER.0[offset + 1] };
         if descriptor_length < 2 || offset + descriptor_length > length {
-            break
+            break;
         }
         if descriptor_type == 4 && descriptor_length >= 9 {
             let class = unsafe { CONTROL_BUFFER.0[offset + 5] };
@@ -753,26 +664,15 @@ unsafe fn find_keyboard_descriptor(
             } else {
                 None
             }
-        } else if descriptor_type == 5
-            && descriptor_length >= 7
-            && keyboard_interface.is_some()
-        {
+        } else if descriptor_type == 5 && descriptor_length >= 7 && keyboard_interface.is_some() {
             let endpoint = unsafe { CONTROL_BUFFER.0[offset + 2] };
             let attributes = unsafe { CONTROL_BUFFER.0[offset + 3] };
             if endpoint & 0x80 != 0 && attributes & 3 == 3 {
                 let packet_size = unsafe {
-                    u16::from_le_bytes([
-                        CONTROL_BUFFER.0[offset + 4],
-                        CONTROL_BUFFER.0[offset + 5],
-                    ])
+                    u16::from_le_bytes([CONTROL_BUFFER.0[offset + 4], CONTROL_BUFFER.0[offset + 5]])
                 } & 0x7ff;
                 let interval = unsafe { CONTROL_BUFFER.0[offset + 6] };
-                return Some((
-                    keyboard_interface?,
-                    endpoint,
-                    packet_size,
-                    interval,
-                ))
+                return Some((keyboard_interface?, endpoint, packet_size, interval));
             }
         }
         offset += descriptor_length
@@ -786,13 +686,13 @@ fn hid_usage(usage: u8, modifiers: u8, caps_lock: bool) -> Option<u8> {
     if (0x04..=0x1d).contains(&usage) {
         let letter = b'a' + usage - 0x04;
         if controlled {
-            return Some(letter & 0x1f)
+            return Some(letter & 0x1f);
         }
         return Some(if shifted ^ caps_lock {
             letter.to_ascii_uppercase()
         } else {
             letter
-        })
+        });
     }
 
     match usage {
@@ -822,6 +722,19 @@ fn hid_usage(usage: u8, modifiers: u8, caps_lock: bool) -> Option<u8> {
     }
 }
 
+fn navigation_sequence(usage: u8) -> Option<&'static [u8]> {
+    match usage {
+        0x4a => Some(b"\x1b[H"),
+        0x4c => Some(b"\x1b[3~"),
+        0x4d => Some(b"\x1b[F"),
+        0x4f => Some(b"\x1b[C"),
+        0x50 => Some(b"\x1b[D"),
+        0x51 => Some(b"\x1b[B"),
+        0x52 => Some(b"\x1b[A"),
+        _ => None,
+    }
+}
+
 fn completion_ok(code: u8) -> bool {
     matches!(code, COMPLETION_SUCCESS | COMPLETION_SHORT_PACKET)
 }
@@ -834,33 +747,15 @@ unsafe fn clear_dma() {
         core::ptr::write_bytes((&raw mut INTERRUPT_RING.0).cast::<u8>(), 0, 4096);
         core::ptr::write_bytes((&raw mut DCBAA.0).cast::<u8>(), 0, 4096);
         core::ptr::write_bytes((&raw mut ERST.0).cast::<u8>(), 0, 4096);
-        core::ptr::write_bytes(
-            (&raw mut DEVICE_CONTEXT.0).cast::<u8>(),
-            0,
-            4096,
-        );
+        core::ptr::write_bytes((&raw mut DEVICE_CONTEXT.0).cast::<u8>(), 0, 4096);
         clear_input_context();
-        core::ptr::write_bytes(
-            (&raw mut CONTROL_BUFFER.0).cast::<u8>(),
-            0,
-            4096,
-        );
-        core::ptr::write_bytes(
-            (&raw mut REPORT_BUFFER.0).cast::<u8>(),
-            0,
-            4096,
-        )
+        core::ptr::write_bytes((&raw mut CONTROL_BUFFER.0).cast::<u8>(), 0, 4096);
+        core::ptr::write_bytes((&raw mut REPORT_BUFFER.0).cast::<u8>(), 0, 4096)
     }
 }
 
 unsafe fn clear_input_context() {
-    unsafe {
-        core::ptr::write_bytes(
-            (&raw mut INPUT_CONTEXT.0).cast::<u8>(),
-            0,
-            CONTEXT_BYTES,
-        )
-    }
+    unsafe { core::ptr::write_bytes((&raw mut INPUT_CONTEXT.0).cast::<u8>(), 0, CONTEXT_BYTES) }
 }
 
 unsafe fn context_write(context: usize, dword: usize, value: u32) {
@@ -890,38 +785,31 @@ unsafe fn legacy_handoff(capability: *mut u8, hcc: u32) {
     let mut offset = ((hcc >> 16) * 4) as usize;
     for _ in 0..64 {
         if offset == 0 {
-            return
+            return;
         }
         let header = unsafe { read32(capability, offset) };
         if header & 0xff == 1 {
-            unsafe {
-                write32(capability, offset, header | (1 << 24))
-            }
+            unsafe { write32(capability, offset, header | (1 << 24)) }
             for _ in 0..1_000_000 {
                 if unsafe { read32(capability, offset) } & (1 << 16) == 0 {
-                    return
+                    return;
                 }
                 core::hint::spin_loop()
             }
-            return
+            return;
         }
         let next = ((header >> 8) & 0xff) as usize;
         if next == 0 {
-            return
+            return;
         }
         offset += next * 4
     }
 }
 
-unsafe fn wait_for(
-    base: *mut u8,
-    offset: usize,
-    mask: u32,
-    expected: u32,
-) -> bool {
+unsafe fn wait_for(base: *mut u8, offset: usize, mask: u32, expected: u32) -> bool {
     for _ in 0..10_000_000 {
         if unsafe { read32(base, offset) } & mask == expected {
-            return true
+            return true;
         }
         core::hint::spin_loop()
     }
@@ -937,13 +825,9 @@ unsafe fn read32(base: *mut u8, offset: usize) -> u32 {
 }
 
 unsafe fn write32(base: *mut u8, offset: usize, value: u32) {
-    unsafe {
-        write_volatile(base.add(offset).cast::<u32>(), value)
-    }
+    unsafe { write_volatile(base.add(offset).cast::<u32>(), value) }
 }
 
 unsafe fn write64(base: *mut u8, offset: usize, value: u64) {
-    unsafe {
-        write_volatile(base.add(offset).cast::<u64>(), value)
-    }
+    unsafe { write_volatile(base.add(offset).cast::<u64>(), value) }
 }
