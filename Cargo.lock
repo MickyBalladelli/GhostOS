@@ -7,6 +7,10 @@ name = "synos-boot-protocol"
 version = "0.1.0"
 
 [[package]]
+name = "synos-host-filesystems"
+version = "0.1.0"
+
+[[package]]
 name = "synos-kernel"
 version = "0.1.0"
 dependencies = [

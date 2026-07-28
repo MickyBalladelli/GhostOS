@@ -40,6 +40,16 @@ cargo uefi --release
 The EFI executable is written under
 `target/x86_64-unknown-uefi/release/synos-loader.efi`.
 
+Build a portable loopback image:
+
+```sh
+cargo uefi --release
+./scripts/build-portable-image.sh
+```
+
+This needs `dosfstools` and `mtools`. The result is
+`build/portable/synos.img`.
+
 The AArch64 backend programs `TTBR0_EL1`; the RISC-V backend programs an Sv39
 root through `satp`. Platform-specific firmware entry shims for those machines
 can hand their memory map to the same `kernel_entry`.
@@ -190,6 +200,32 @@ silently returning to another operating system.
 
 After rebuilding, always replace `EFI/BOOT/BOOTX64.EFI` on the USB drive with
 the new `synos-loader.efi`.
+
+## Dual boot without repartitioning
+
+The UEFI loader presents a boot menu for SynOS, Windows Boot Manager, and GRUB.
+It searches every firmware-visible EFI System Partition for the standard
+Windows path and common GRUB paths. A selected child loader runs through UEFI
+`LoadImage`/`StartImage`; SynOS does not alter firmware boot variables.
+
+To keep SynOS as one ordinary file on an existing EXT4 or NTFS partition, copy
+`build/portable/synos.img` to the partition root and add the contents of
+`boot/grub/grub.cfg` to the host GRUB configuration. GRUB finds the file,
+mounts it as a loopback FAT image, and starts its fallback UEFI loader. No
+partition-table change is needed.
+
+## Read-only host filesystems
+
+`synos-host-filesystems` is a heap-free Ring 3 storage building block. It scans
+MBR and GPT partition tables, detects FAT32, EXT4, and NTFS volumes, resolves
+paths, and provides bounded positional file reads. FAT long names, EXT4 extent
+trees, NTFS MFT data runs, large directory indexes, resident data, sparse data,
+and non-resident data are supported.
+
+The public `ReadAt` device contract has no write operation. Host volumes
+therefore stay read-only even if a caller has a storage-controller capability.
+EXT4 journal replay and NTFS compressed, encrypted, or deduplicated files are
+not supported; put model weights in ordinary uncompressed files.
 
 ### Serial console
 

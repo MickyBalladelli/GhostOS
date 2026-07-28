@@ -1,15 +1,17 @@
 #![no_std]
 #![no_main]
 
+mod chainload;
+
 use core::ffi::c_void;
 use synos_boot_protocol::{
     BootInfo, BootMethod, FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB,
     FramebufferInfo, MemoryKind, MemoryRegion,
 };
 
-type EfiHandle = *mut c_void;
-type EfiStatus = usize;
-const EFI_SUCCESS: EfiStatus = 0;
+pub(crate) type EfiHandle = *mut c_void;
+pub(crate) type EfiStatus = usize;
+pub(crate) const EFI_SUCCESS: EfiStatus = 0;
 const EFI_NOT_READY: EfiStatus = 0x8000_0000_0000_0006;
 const MEMORY_MAP_CAPACITY: usize = 32 * 1024;
 
@@ -32,6 +34,33 @@ type GetMemoryMap = unsafe extern "efiapi" fn(
 
 type ExitBootServices =
     unsafe extern "efiapi" fn(image_handle: EfiHandle, map_key: usize) -> EfiStatus;
+pub(crate) type HandleProtocol = unsafe extern "efiapi" fn(
+    handle: EfiHandle,
+    protocol: *const EfiGuid,
+    interface: *mut *mut c_void,
+) -> EfiStatus;
+pub(crate) type FreePool = unsafe extern "efiapi" fn(buffer: *mut c_void) -> EfiStatus;
+pub(crate) type LocateHandleBuffer = unsafe extern "efiapi" fn(
+    search_type: u32,
+    protocol: *const EfiGuid,
+    search_key: *mut c_void,
+    handle_count: *mut usize,
+    handles: *mut *mut EfiHandle,
+) -> EfiStatus;
+pub(crate) type LoadImage = unsafe extern "efiapi" fn(
+    boot_policy: bool,
+    parent_image_handle: EfiHandle,
+    device_path: *const c_void,
+    source_buffer: *const c_void,
+    source_size: usize,
+    image_handle: *mut EfiHandle,
+) -> EfiStatus;
+pub(crate) type StartImage = unsafe extern "efiapi" fn(
+    image_handle: EfiHandle,
+    exit_data_size: *mut usize,
+    exit_data: *mut *mut u16,
+) -> EfiStatus;
+pub(crate) type UnloadImage = unsafe extern "efiapi" fn(image_handle: EfiHandle) -> EfiStatus;
 type LocateProtocol = unsafe extern "efiapi" fn(
     protocol: *const EfiGuid,
     registration: *mut c_void,
@@ -73,19 +102,48 @@ struct EfiSimpleTextInput {
 }
 
 #[repr(C)]
-struct EfiInputKey {
+pub(crate) struct EfiInputKey {
     scan_code: u16,
     unicode_char: u16,
 }
 
 #[repr(C)]
-struct EfiBootServices {
+pub(crate) struct EfiBootServices {
     header: EfiTableHeader,
     before_get_memory_map: [usize; 4],
     get_memory_map: GetMemoryMap,
-    before_exit_boot_services: [usize; 21],
+    allocate_pool: usize,
+    pub(crate) free_pool: FreePool,
+    create_event: usize,
+    set_timer: usize,
+    wait_for_event: usize,
+    signal_event: usize,
+    close_event: usize,
+    check_event: usize,
+    install_protocol_interface: usize,
+    reinstall_protocol_interface: usize,
+    uninstall_protocol_interface: usize,
+    pub(crate) handle_protocol: HandleProtocol,
+    reserved: usize,
+    register_protocol_notify: usize,
+    locate_handle: usize,
+    locate_device_path: usize,
+    install_configuration_table: usize,
+    pub(crate) load_image: LoadImage,
+    pub(crate) start_image: StartImage,
+    exit: usize,
+    pub(crate) unload_image: UnloadImage,
     exit_boot_services: ExitBootServices,
-    after_exit_boot_services: [usize; 10],
+    get_next_monotonic_count: usize,
+    stall: usize,
+    set_watchdog_timer: usize,
+    connect_controller: usize,
+    disconnect_controller: usize,
+    open_protocol: usize,
+    close_protocol: usize,
+    open_protocol_information: usize,
+    protocols_per_handle: usize,
+    pub(crate) locate_handle_buffer: LocateHandleBuffer,
     locate_protocol: LocateProtocol,
 }
 
@@ -115,11 +173,11 @@ struct EfiMemoryDescriptor {
 }
 
 #[repr(C)]
-struct EfiGuid {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [u8; 8],
+pub(crate) struct EfiGuid {
+    pub(crate) data1: u32,
+    pub(crate) data2: u16,
+    pub(crate) data3: u16,
+    pub(crate) data4: [u8; 8],
 }
 
 #[repr(C)]
@@ -177,11 +235,32 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
 
         ((*output).reset)(output, false);
         ((*output).clear_screen)(output);
-        write_text(output, "SynOS bare-metal bootstrap\r\n");
-        write_text(output, "==========================\r\n\r\n");
-        write_text(output, "UEFI loader is ready.\r\n");
-        write_text(output, "Press any key to boot SynOS...");
-        wait_for_key(input);
+        loop {
+            write_text(output, "SynOS boot manager\r\n");
+            write_text(output, "==================\r\n\r\n");
+            write_text(output, "1  Boot SynOS\r\n");
+            write_text(output, "2  Windows Boot Manager\r\n");
+            write_text(output, "3  GRUB\r\n\r\n");
+            write_text(output, "Choose 1, 2, or 3: ");
+
+            match wait_for_choice(input) {
+                '1' => break,
+                '2' => {
+                    write_text(output, "\r\nStarting Windows Boot Manager...\r\n");
+                    let status = chainload::windows(image, services);
+                    write_chainload_result(output, input, status)
+                }
+                '3' => {
+                    write_text(output, "\r\nSearching for GRUB...\r\n");
+                    let status = chainload::grub(image, services);
+                    write_chainload_result(output, input, status)
+                }
+                _ => {}
+            }
+
+            ((*output).clear_screen)(output);
+        }
+
         write_text(output, "\r\n\r\nPreparing memory map...\r\n");
         write_text(output, "Starting SynOS kernel...\r\n");
         write_text(output, "Firmware services will now stop.\r\n");
@@ -308,6 +387,38 @@ unsafe fn write_failure(output: *mut EfiSimpleTextOutput, message: &str, status:
     }
 }
 
+unsafe fn write_chainload_result(
+    output: *mut EfiSimpleTextOutput,
+    input: *mut EfiSimpleTextInput,
+    status: EfiStatus,
+) {
+    unsafe {
+        if status == EFI_SUCCESS {
+            write_text(output, "\r\nBoot target returned to SynOS.")
+        } else {
+            write_text(output, "\r\nCould not start boot target.\r\nEFI status: 0x");
+            write_hex(output, status)
+        }
+        write_text(output, "\r\nPress any key for the SynOS menu.\r\n");
+        wait_for_key(input)
+    }
+}
+
+unsafe fn write_hex(output: *mut EfiSimpleTextOutput, value: usize) {
+    let mut hex = [0u16; 17];
+    for index in 0..16 {
+        let shift = (15 - index) * 4;
+        let digit = ((value >> shift) & 0xf) as u8;
+        hex[index] = match digit {
+            0..=9 => (b'0' + digit) as u16,
+            _ => (b'A' + digit - 10) as u16,
+        };
+    }
+    unsafe {
+        ((*output).output_string)(output, hex.as_ptr());
+    }
+}
+
 unsafe fn wait_for_key(input: *mut EfiSimpleTextInput) {
     unsafe {
         ((*input).reset)(input, false);
@@ -324,6 +435,27 @@ unsafe fn wait_for_key(input: *mut EfiSimpleTextInput) {
         }
         if status != EFI_NOT_READY {
             return
+        }
+        core::hint::spin_loop()
+    }
+}
+
+unsafe fn wait_for_choice(input: *mut EfiSimpleTextInput) -> char {
+    unsafe {
+        ((*input).reset)(input, false);
+    }
+
+    loop {
+        let mut key = EfiInputKey {
+            scan_code: 0,
+            unicode_char: 0,
+        };
+        let status = unsafe { ((*input).read_key_stroke)(input, &mut key) };
+        if status == EFI_SUCCESS {
+            return char::from_u32(key.unicode_char as u32).unwrap_or('\0')
+        }
+        if status != EFI_NOT_READY {
+            return '\0'
         }
         core::hint::spin_loop()
     }

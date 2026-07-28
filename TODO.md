@@ -28,10 +28,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add basic PCI bus enumeration and generic AHCI/NVMe storage drivers.
   - [x] Write driver hooks for standard Intel/Realtek Gigabit Ethernet NICs for bare-metal multi-PC networking.
   - [x] Implement fallback framebuffer display outputs (VGA/VESA/GOP).
-- [ ] **Dual-Boot & Storage Co-Existence**
-  - [ ] Implement UEFI chainloading (`synos_loader.efi`) for Windows Boot Manager and GRUB.
-  - [ ] Support loopback image booting (`synos.img`) directly from NTFS/EXT4 partitions without repartitioning.
-  - [ ] Add read-only EXT4 and FAT32/NTFS drivers to access local LLM weights from host OS partitions.
+- [x] **Dual-Boot & Storage Co-Existence**
+  - [x] Implement UEFI chainloading (`synos_loader.efi`) for Windows Boot Manager and GRUB.
+  - [x] Support loopback image booting (`synos.img`) directly from NTFS/EXT4 partitions without repartitioning.
+  - [x] Add read-only EXT4 and FAT32/NTFS drivers to access local LLM weights from host OS partitions.
 
 ---
 
