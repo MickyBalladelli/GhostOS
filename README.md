@@ -327,7 +327,6 @@ On Linux, after creating and mounting a FAT32 EFI System Partition:
 mkdir -p /Volumes/SYNOS/EFI/BOOT
 cp target/x86_64-unknown-uefi/release/synos-loader.efi \
   /Volumes/SYNOS/EFI/BOOT/BOOTX64.EFI
-
 sync
 diskutil eject /dev/disk5
 ```
