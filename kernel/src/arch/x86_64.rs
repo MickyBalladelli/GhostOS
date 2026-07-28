@@ -149,7 +149,7 @@ pub mod interrupts {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn interrupt_dispatch(vector: u64, error_code: u64) {
+    extern "sysv64" fn interrupt_dispatch(vector: u64, error_code: u64) {
         if vector == 14 {
             let fault_address: u64;
             unsafe {
