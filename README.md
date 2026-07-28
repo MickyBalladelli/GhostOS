@@ -421,3 +421,14 @@ not supported; put model weights in ordinary uncompressed files.
 
 COM1 uses 38400 baud, 8 data bits, no parity, and 1 stop bit. A USB-to-serial
 adapter connected to the target machine can capture the earliest boot output.
+
+
+### SynOS-shell commands
+
+````
+
+HELP
+SHOW SYSTEM
+REBOOT
+
+```
