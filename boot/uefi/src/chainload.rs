@@ -102,31 +102,40 @@ struct DevicePathHeader {
 static mut DEVICE_PATH_BUFFER: [u8; DEVICE_PATH_BUFFER_SIZE] =
     [0; DEVICE_PATH_BUFFER_SIZE];
 
+#[derive(Clone, Copy)]
+enum Attempt {
+    Missing(EfiStatus),
+    Started(EfiStatus),
+}
+
 pub(crate) unsafe fn windows(
     image: EfiHandle,
     services: *mut EfiBootServices,
 ) -> EfiStatus {
-    unsafe { start_path(image, services, WINDOWS_PATH) }
+    match unsafe { start_path(image, services, WINDOWS_PATH) } {
+        Attempt::Missing(status) | Attempt::Started(status) => status,
+    }
 }
 
 pub(crate) unsafe fn grub(
     image: EfiHandle,
     services: *mut EfiBootServices,
 ) -> EfiStatus {
+    let mut last_status = EFI_NOT_FOUND;
     for path in GRUB_PATHS {
-        let status = unsafe { start_path(image, services, path) };
-        if status != EFI_NOT_FOUND {
-            return status
+        match unsafe { start_path(image, services, path) } {
+            Attempt::Started(status) => return status,
+            Attempt::Missing(status) => last_status = status,
         }
     }
-    EFI_NOT_FOUND
+    last_status
 }
 
 unsafe fn start_path(
     parent_image: EfiHandle,
     services: *mut EfiBootServices,
     path: &[u16],
-) -> EfiStatus {
+) -> Attempt {
     let mut loaded_image_interface = core::ptr::null_mut();
     let status = unsafe {
         ((*services).handle_protocol)(
@@ -136,17 +145,20 @@ unsafe fn start_path(
         )
     };
     if status != EFI_SUCCESS || loaded_image_interface.is_null() {
-        return status
+        return Attempt::Missing(status)
     }
 
     let loaded_image = loaded_image_interface.cast::<EfiLoadedImage>();
     let device_handle = unsafe { (*loaded_image).device_handle };
-    let status = unsafe {
+    let first_attempt = unsafe {
         start_on_device(parent_image, services, device_handle, path)
     };
-    if status == EFI_SUCCESS {
-        return status
+    if let Attempt::Started(_) = first_attempt {
+        return first_attempt
     }
+    let Attempt::Missing(status) = first_attempt else {
+        unreachable!()
+    };
 
     let mut handle_count = 0;
     let mut handles = core::ptr::null_mut();
@@ -160,26 +172,26 @@ unsafe fn start_path(
         )
     };
     if locate_status != EFI_SUCCESS || handles.is_null() {
-        return status
+        return Attempt::Missing(status)
     }
 
-    let mut last_status = status;
+    let mut last_attempt = Attempt::Missing(status);
     for index in 0..handle_count {
         let candidate = unsafe { *handles.add(index) };
         if candidate == device_handle {
             continue
         }
-        last_status = unsafe {
+        last_attempt = unsafe {
             start_on_device(parent_image, services, candidate, path)
         };
-        if last_status == EFI_SUCCESS {
+        if matches!(last_attempt, Attempt::Started(_)) {
             break
         }
     }
     unsafe {
         ((*services).free_pool)(handles.cast());
     }
-    last_status
+    last_attempt
 }
 
 unsafe fn start_on_device(
@@ -187,7 +199,7 @@ unsafe fn start_on_device(
     services: *mut EfiBootServices,
     device_handle: EfiHandle,
     path: &[u16],
-) -> EfiStatus {
+) -> Attempt {
     let mut device_path_interface = core::ptr::null_mut();
     let status = unsafe {
         ((*services).handle_protocol)(
@@ -197,12 +209,12 @@ unsafe fn start_on_device(
         )
     };
     if status != EFI_SUCCESS || device_path_interface.is_null() {
-        return status
+        return Attempt::Missing(status)
     }
 
     let full_path = unsafe { build_device_path(device_path_interface.cast(), path) };
     let Some(full_path) = full_path else {
-        return EFI_NOT_FOUND
+        return Attempt::Missing(EFI_NOT_FOUND)
     };
 
     let mut child_image = core::ptr::null_mut();
@@ -217,7 +229,7 @@ unsafe fn start_on_device(
         )
     };
     if status != EFI_SUCCESS {
-        return status
+        return Attempt::Missing(status)
     }
 
     let mut exit_data_size = 0;
@@ -228,7 +240,7 @@ unsafe fn start_on_device(
     unsafe {
         ((*services).unload_image)(child_image);
     }
-    status
+    Attempt::Started(status)
 }
 
 unsafe fn build_device_path(
