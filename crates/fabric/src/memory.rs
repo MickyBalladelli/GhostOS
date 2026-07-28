@@ -1,0 +1,602 @@
+use crate::{Access, AddressRange, Error, NodeId, PAGE_SIZE};
+
+pub const DEFAULT_POOL_CAPACITY: usize = 64;
+pub const DEFAULT_LEASE_CAPACITY: usize = 256;
+pub const DEFAULT_PAGE_TRACKING_CAPACITY: usize = 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryKind {
+    Ram,
+    Vram,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Transport {
+    Local,
+    Cxl,
+    Layer2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct PoolId(u32);
+
+impl PoolId {
+    pub const fn new(raw: u32) -> Option<Self> {
+        if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryPool {
+    pub id: PoolId,
+    pub node: NodeId,
+    pub mirror: Option<NodeId>,
+    pub kind: MemoryKind,
+    pub transport: Transport,
+    /// Cluster-global addresses exposed to callers.
+    pub global: AddressRange,
+    /// Address at the owning node or CXL device.
+    pub backing_start: u64,
+    pub latency_ns: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolvedAddress {
+    pub node: NodeId,
+    pub transport: Transport,
+    pub backing_address: u64,
+    pub failed_over: bool,
+}
+
+#[derive(Clone, Copy)]
+struct PageOverride {
+    global_page: u64,
+    target_pool: PoolId,
+    target_backing_page: u64,
+}
+
+pub struct GlobalAddressSpace<
+    const POOLS: usize = DEFAULT_POOL_CAPACITY,
+    const OVERRIDES: usize = DEFAULT_PAGE_TRACKING_CAPACITY,
+> {
+    pools: [Option<MemoryPool>; POOLS],
+    overrides: [Option<PageOverride>; OVERRIDES],
+    failed_nodes: u64,
+}
+
+impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERRIDES> {
+    pub const fn new() -> Self {
+        Self {
+            pools: [None; POOLS],
+            overrides: [None; OVERRIDES],
+            failed_nodes: 0,
+        }
+    }
+
+    pub fn add_pool(&mut self, pool: MemoryPool) -> Result<(), Error> {
+        if pool.global.start % PAGE_SIZE != 0
+            || pool.global.length % PAGE_SIZE != 0
+            || pool.backing_start % PAGE_SIZE != 0
+            || pool.latency_ns == 0
+        {
+            return Err(Error::Alignment)
+        }
+        if self.pools.iter().flatten().any(|existing| {
+            existing.id == pool.id
+                || existing.global.overlaps(pool.global)
+                || (existing.node == pool.node
+                    && existing.backing_start
+                        < pool.backing_start.saturating_add(pool.global.length)
+                    && pool.backing_start
+                        < existing.backing_start.saturating_add(existing.global.length))
+        }) {
+            return Err(Error::AddressConflict)
+        }
+        let slot = self
+            .pools
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(Error::Capacity)?;
+        *slot = Some(pool);
+        Ok(())
+    }
+
+    pub fn pools(&self) -> impl Iterator<Item = &MemoryPool> {
+        self.pools.iter().flatten()
+    }
+
+    pub fn pool(&self, id: PoolId) -> Option<&MemoryPool> {
+        self.pools().find(|pool| pool.id == id)
+    }
+
+    pub fn resolve(&self, global_address: u64) -> Result<ResolvedAddress, Error> {
+        let global_page = global_address & !(PAGE_SIZE - 1);
+        let page_offset = global_address & (PAGE_SIZE - 1);
+        if let Some(redirect) = self
+            .overrides
+            .iter()
+            .flatten()
+            .find(|entry| entry.global_page == global_page)
+        {
+            let pool = self.pool(redirect.target_pool).ok_or(Error::InvalidAddress)?;
+            return self.resolve_node(
+                pool,
+                redirect.target_backing_page + page_offset,
+            )
+        }
+        let pool = self
+            .pools()
+            .find(|pool| pool.global.contains(global_address))
+            .ok_or(Error::InvalidAddress)?;
+        self.resolve_node(
+            pool,
+            pool.backing_start + global_address - pool.global.start,
+        )
+    }
+
+    pub fn mark_node_failed(&mut self, node: NodeId) -> Result<(), Error> {
+        let bit = node_bit(node).ok_or(Error::Capacity)?;
+        self.failed_nodes |= bit;
+        Ok(())
+    }
+
+    pub fn mark_node_alive(&mut self, node: NodeId) -> Result<(), Error> {
+        let bit = node_bit(node).ok_or(Error::Capacity)?;
+        self.failed_nodes &= !bit;
+        Ok(())
+    }
+
+    pub fn is_node_failed(&self, node: NodeId) -> bool {
+        node_bit(node).is_some_and(|bit| self.failed_nodes & bit != 0)
+    }
+
+    pub fn redirect_page(
+        &mut self,
+        global_page: u64,
+        target_pool: PoolId,
+        target_backing_page: u64,
+    ) -> Result<(), Error> {
+        if global_page % PAGE_SIZE != 0 || target_backing_page % PAGE_SIZE != 0 {
+            return Err(Error::Alignment)
+        }
+        let target = self.pool(target_pool).ok_or(Error::DeviceNotFound)?;
+        if target_backing_page < target.backing_start
+            || target_backing_page.saturating_add(PAGE_SIZE)
+                > target.backing_start.saturating_add(target.global.length)
+        {
+            return Err(Error::InvalidAddress)
+        }
+        let slot_index = self
+            .overrides
+            .iter()
+            .position(|entry| entry.is_some_and(|item| item.global_page == global_page))
+            .or_else(|| self.overrides.iter().position(Option::is_none))
+            .ok_or(Error::Capacity)?;
+        self.overrides[slot_index] = Some(PageOverride {
+            global_page,
+            target_pool,
+            target_backing_page,
+        });
+        Ok(())
+    }
+
+    fn resolve_node(
+        &self,
+        pool: &MemoryPool,
+        backing_address: u64,
+    ) -> Result<ResolvedAddress, Error> {
+        if !self.is_node_failed(pool.node) {
+            return Ok(ResolvedAddress {
+                node: pool.node,
+                transport: pool.transport,
+                backing_address,
+                failed_over: false,
+            })
+        }
+        let mirror = pool.mirror.ok_or(Error::NodeFailed)?;
+        if self.is_node_failed(mirror) {
+            return Err(Error::NodeFailed)
+        }
+        Ok(ResolvedAddress {
+            node: mirror,
+            transport: pool.transport,
+            backing_address,
+            failed_over: true,
+        })
+    }
+}
+
+impl<const POOLS: usize, const OVERRIDES: usize> Default
+    for GlobalAddressSpace<POOLS, OVERRIDES>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+const fn node_bit(node: NodeId) -> Option<u64> {
+    let raw = node.raw();
+    if raw > 64 { None } else { Some(1 << (raw - 1)) }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LeaseRights(u8);
+
+impl LeaseRights {
+    pub const READ: Self = Self(1);
+    pub const WRITE: Self = Self(2);
+    pub const READ_WRITE: Self = Self(3);
+
+    pub const fn permits(self, access: Access) -> bool {
+        match access {
+            Access::Read => self.0 & Self::READ.0 != 0,
+            Access::Write => self.0 & Self::WRITE.0 != 0,
+            Access::Execute => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct LeaseHandle(u64);
+
+impl LeaseHandle {
+    const fn from_parts(slot: usize, generation: u32) -> Self {
+        Self((generation as u64) << 32 | slot as u64)
+    }
+
+    const fn slot(self) -> usize {
+        self.0 as u32 as usize
+    }
+
+    const fn generation(self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Lease {
+    occupied: bool,
+    generation: u32,
+    owner: NodeId,
+    pool: PoolId,
+    range: AddressRange,
+    rights: LeaseRights,
+    expires_at_us: u64,
+}
+
+impl Lease {
+    const VACANT: Self = Self {
+        occupied: false,
+        generation: 0,
+        owner: NodeId::LOCAL,
+        pool: PoolId(0),
+        range: AddressRange {
+            start: 0,
+            length: 1,
+        },
+        rights: LeaseRights::READ,
+        expires_at_us: 0,
+    };
+}
+
+/// Dynamic, generation-checked leases over global RAM or VRAM ranges.
+pub struct LeaseTable<const CAPACITY: usize = DEFAULT_LEASE_CAPACITY> {
+    leases: [Lease; CAPACITY],
+}
+
+impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            leases: [Lease::VACANT; CAPACITY],
+        }
+    }
+
+    pub fn allocate<const POOLS: usize, const OVERRIDES: usize>(
+        &mut self,
+        space: &GlobalAddressSpace<POOLS, OVERRIDES>,
+        owner: NodeId,
+        pool_id: PoolId,
+        length: u64,
+        alignment: u64,
+        rights: LeaseRights,
+        now_us: u64,
+        duration_us: u64,
+    ) -> Result<(LeaseHandle, AddressRange), Error> {
+        self.expire(now_us);
+        let pool = space.pool(pool_id).ok_or(Error::DeviceNotFound)?;
+        if length == 0
+            || alignment < PAGE_SIZE
+            || !alignment.is_power_of_two()
+            || length % PAGE_SIZE != 0
+            || duration_us == 0
+        {
+            return Err(Error::Alignment)
+        }
+        let mut cursor = align_up(pool.global.start, alignment).ok_or(Error::InvalidRange)?;
+        let pool_end = pool.global.end();
+        loop {
+            let end = cursor.checked_add(length).ok_or(Error::InvalidRange)?;
+            if end > pool_end {
+                return Err(Error::Capacity)
+            }
+            let candidate = AddressRange {
+                start: cursor,
+                length,
+            };
+            let conflict = self
+                .leases
+                .iter()
+                .filter(|lease| lease.occupied && lease.pool == pool_id)
+                .filter(|lease| lease.range.overlaps(candidate))
+                .max_by_key(|lease| lease.range.end());
+            if let Some(conflict) = conflict {
+                cursor = align_up(conflict.range.end(), alignment)
+                    .ok_or(Error::InvalidRange)?;
+                continue
+            }
+            let slot_index = self
+                .leases
+                .iter()
+                .position(|lease| !lease.occupied)
+                .ok_or(Error::Capacity)?;
+            let generation = self.leases[slot_index].generation.wrapping_add(1).max(1);
+            self.leases[slot_index] = Lease {
+                occupied: true,
+                generation,
+                owner,
+                pool: pool_id,
+                range: candidate,
+                rights,
+                expires_at_us: now_us.saturating_add(duration_us),
+            };
+            return Ok((
+                LeaseHandle::from_parts(slot_index, generation),
+                candidate,
+            ))
+        }
+    }
+
+    pub fn authorize(
+        &self,
+        handle: LeaseHandle,
+        owner: NodeId,
+        address: u64,
+        access: Access,
+        now_us: u64,
+    ) -> Result<(), Error> {
+        let lease = self.valid(handle)?;
+        if lease.owner != owner {
+            return Err(Error::NotOwner)
+        }
+        if now_us >= lease.expires_at_us {
+            return Err(Error::ExpiredLease)
+        }
+        if !lease.range.contains(address) || !lease.rights.permits(access) {
+            return Err(Error::NotOwner)
+        }
+        Ok(())
+    }
+
+    pub fn renew(
+        &mut self,
+        handle: LeaseHandle,
+        owner: NodeId,
+        now_us: u64,
+        duration_us: u64,
+    ) -> Result<(), Error> {
+        let slot = self.valid_slot(handle)?;
+        let lease = &mut self.leases[slot];
+        if lease.owner != owner {
+            return Err(Error::NotOwner)
+        }
+        if now_us >= lease.expires_at_us {
+            lease.occupied = false;
+            return Err(Error::ExpiredLease)
+        }
+        if duration_us == 0 {
+            return Err(Error::InvalidRange)
+        }
+        lease.expires_at_us = now_us.saturating_add(duration_us);
+        Ok(())
+    }
+
+    pub fn release(&mut self, handle: LeaseHandle, owner: NodeId) -> Result<(), Error> {
+        let slot = self.valid_slot(handle)?;
+        if self.leases[slot].owner != owner {
+            return Err(Error::NotOwner)
+        }
+        self.leases[slot].occupied = false;
+        Ok(())
+    }
+
+    pub fn release_node(&mut self, node: NodeId) -> usize {
+        let mut released = 0;
+        for lease in &mut self.leases {
+            if lease.occupied && lease.owner == node {
+                lease.occupied = false;
+                released += 1
+            }
+        }
+        released
+    }
+
+    pub fn expire(&mut self, now_us: u64) -> usize {
+        let mut expired = 0;
+        for lease in &mut self.leases {
+            if lease.occupied && now_us >= lease.expires_at_us {
+                lease.occupied = false;
+                expired += 1
+            }
+        }
+        expired
+    }
+
+    fn valid(&self, handle: LeaseHandle) -> Result<&Lease, Error> {
+        Ok(&self.leases[self.valid_slot(handle)?])
+    }
+
+    fn valid_slot(&self, handle: LeaseHandle) -> Result<usize, Error> {
+        let slot = handle.slot();
+        let lease = self.leases.get(slot).ok_or(Error::LeaseNotFound)?;
+        if !lease.occupied || lease.generation != handle.generation() {
+            return Err(Error::LeaseNotFound)
+        }
+        Ok(slot)
+    }
+}
+
+impl<const CAPACITY: usize> Default for LeaseTable<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn align_up(value: u64, alignment: u64) -> Option<u64> {
+    let mask = alignment - 1;
+    match value.checked_add(mask) {
+        Some(sum) => Some(sum & !mask),
+        None => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Migration {
+    pub global_page: u64,
+    pub source: PoolId,
+    pub target: PoolId,
+    pub target_backing_page: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PageMetric {
+    global_page: u64,
+    reads: u32,
+    writes: u32,
+    latency_total_ns: u64,
+    samples: u32,
+}
+
+impl PageMetric {
+    const EMPTY: Self = Self {
+        global_page: u64::MAX,
+        reads: 0,
+        writes: 0,
+        latency_total_ns: 0,
+        samples: 0,
+    };
+}
+
+/// Bounded access sampler that recommends migration to a lower-latency pool.
+pub struct MigrationPlanner<const CAPACITY: usize = DEFAULT_PAGE_TRACKING_CAPACITY> {
+    metrics: [PageMetric; CAPACITY],
+    hot_accesses: u32,
+    latency_saving_ns: u32,
+}
+
+impl<const CAPACITY: usize> MigrationPlanner<CAPACITY> {
+    pub const fn new(hot_accesses: u32, latency_saving_ns: u32) -> Self {
+        Self {
+            metrics: [PageMetric::EMPTY; CAPACITY],
+            hot_accesses,
+            latency_saving_ns,
+        }
+    }
+
+    pub fn record(
+        &mut self,
+        global_address: u64,
+        access: Access,
+        latency_ns: u32,
+    ) -> Result<(), Error> {
+        let page = global_address & !(PAGE_SIZE - 1);
+        let slot_index = self
+            .metrics
+            .iter()
+            .position(|metric| metric.global_page == page)
+            .or_else(|| {
+                self.metrics
+                    .iter()
+                    .position(|metric| metric.global_page == u64::MAX)
+            })
+            .ok_or(Error::Capacity)?;
+        let slot = &mut self.metrics[slot_index];
+        if slot.global_page == u64::MAX {
+            slot.global_page = page
+        }
+        match access {
+            Access::Read | Access::Execute => slot.reads = slot.reads.saturating_add(1),
+            Access::Write => slot.writes = slot.writes.saturating_add(1),
+        }
+        slot.latency_total_ns = slot.latency_total_ns.saturating_add(latency_ns as u64);
+        slot.samples = slot.samples.saturating_add(1);
+        Ok(())
+    }
+
+    pub fn recommend<const POOLS: usize, const OVERRIDES: usize>(
+        &self,
+        space: &GlobalAddressSpace<POOLS, OVERRIDES>,
+        global_page: u64,
+    ) -> Option<Migration> {
+        let metric = self
+            .metrics
+            .iter()
+            .find(|metric| metric.global_page == global_page)?;
+        if metric.reads.saturating_add(metric.writes) < self.hot_accesses || metric.samples == 0 {
+            return None
+        }
+        let source = space
+            .pools()
+            .find(|pool| pool.global.contains(global_page))?;
+        let observed = (metric.latency_total_ns / metric.samples as u64) as u32;
+        let target = space
+            .pools()
+            .filter(|pool| {
+                pool.id != source.id
+                    && pool.kind == source.kind
+                    && pool.global.length >= PAGE_SIZE
+                    && !space.is_node_failed(pool.node)
+            })
+            .min_by_key(|pool| pool.latency_ns)?;
+        if target.latency_ns.saturating_add(self.latency_saving_ns) >= observed {
+            return None
+        }
+        Some(Migration {
+            global_page,
+            source: source.id,
+            target: target.id,
+            target_backing_page: target.backing_start,
+        })
+    }
+
+    /// Atomically changes future resolution after the caller copies and
+    /// verifies the page through its selected transport.
+    pub fn commit<const POOLS: usize, const OVERRIDES: usize>(
+        &mut self,
+        space: &mut GlobalAddressSpace<POOLS, OVERRIDES>,
+        migration: Migration,
+    ) -> Result<(), Error> {
+        space.redirect_page(
+            migration.global_page,
+            migration.target,
+            migration.target_backing_page,
+        )?;
+        if let Some(metric) = self
+            .metrics
+            .iter_mut()
+            .find(|metric| metric.global_page == migration.global_page)
+        {
+            *metric = PageMetric::EMPTY
+        }
+        Ok(())
+    }
+}

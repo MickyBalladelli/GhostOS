@@ -10,6 +10,8 @@ pub mod capability;
 mod console;
 pub mod dlm;
 pub mod ipc;
+#[allow(unsafe_code)]
+pub mod page_fault;
 pub mod scheduler;
 pub mod task;
 
@@ -25,6 +27,7 @@ pub use dlm::{
     DistributedLockManager, LockError, LockGrant, LockHandle, LockMode, LockOwner, NodeId,
     ResourceId, ResourceKind, ResourceName,
 };
+pub use page_fault::{PageFault, PageFaultHandler, PageFaultHandlerError};
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
 pub use task::{
     AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,

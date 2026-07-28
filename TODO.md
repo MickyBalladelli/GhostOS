@@ -63,18 +63,18 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 5. Hardware Fabric & Clustering Modes
-- [ ] **CXL 3.0 / 3.1 Hardware Fabric (Modern Target)**
-  - [ ] Write CXL component register (HDM) drivers to discover and map Type-3 memory devices on boot.
-  - [ ] Implement hardware-assisted dynamic memory lease allocation.
-- [ ] **Software-Defined Distributed Shared Memory (Legacy Target)**
-  - [ ] Implement `#PF` (Page Fault) traps to fetch memory pages over raw layer-2 Ethernet packets between legacy PCs.
-  - [ ] Enforce page-level cache coherence across PCs using software DLM lease locks.
-- [ ] **Global Address Space & Memory Pooling**
-  - [ ] Expose all cluster RAM and VRAM as a single, 64-bit unified address space regardless of hardware transport layer.
-  - [ ] Implement background memory page migration based on access patterns and network latency metrics.
-- [ ] **Active-Active Fault Tolerance**
-  - [ ] Build sub-millisecond heartbeat monitors over network interfaces.
-  - [ ] Support transparent page redirection to mirrored memory nodes on physical hardware failure.
+- [x] **CXL 3.0 / 3.1 Hardware Fabric (Modern Target)**
+  - [x] Write CXL component register (HDM) drivers to discover and map Type-3 memory devices on boot.
+  - [x] Implement hardware-assisted dynamic memory lease allocation.
+- [x] **Software-Defined Distributed Shared Memory (Legacy Target)**
+  - [x] Implement `#PF` (Page Fault) traps to fetch memory pages over raw layer-2 Ethernet packets between legacy PCs.
+  - [x] Enforce page-level cache coherence across PCs using software DLM lease locks.
+- [x] **Global Address Space & Memory Pooling**
+  - [x] Expose all cluster RAM and VRAM as a single, 64-bit unified address space regardless of hardware transport layer.
+  - [x] Implement background memory page migration based on access patterns and network latency metrics.
+- [x] **Active-Active Fault Tolerance**
+  - [x] Build sub-millisecond heartbeat monitors over network interfaces.
+  - [x] Support transparent page redirection to mirrored memory nodes on physical hardware failure.
 
 ---
 

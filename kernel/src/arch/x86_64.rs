@@ -150,6 +150,20 @@ pub mod interrupts {
 
     #[unsafe(no_mangle)]
     extern "C" fn interrupt_dispatch(vector: u64, error_code: u64) {
+        if vector == 14 {
+            let fault_address: u64;
+            unsafe {
+                asm!(
+                    "mov {}, cr2",
+                    out(reg) fault_address,
+                    options(nomem, nostack, preserves_flags)
+                );
+            }
+            let fault = synos_fabric::PageFault::from_x86_error(fault_address, error_code);
+            if crate::page_fault::dispatch(fault) {
+                return
+            }
+        }
         if vector < 32 {
             println!("cpu exception vector={vector} error={error_code:#x}");
             if vector != 3 {

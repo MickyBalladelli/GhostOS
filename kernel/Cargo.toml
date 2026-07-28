@@ -14,4 +14,5 @@ path = "src/main.rs"
 
 [dependencies]
 synos-boot-protocol = { path = "../crates/boot-protocol" }
+synos-fabric = { path = "../crates/fabric" }
 synos-status = { path = "../crates/status" }

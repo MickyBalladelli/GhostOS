@@ -154,6 +154,30 @@ filesystem, driver, command, and system-model errors. It keeps the OpenVMS
 odd-value success convention while exposing facility, code, severity, and flag
 fields without platform-sized error values.
 
+## Hardware fabric and clustering
+
+`synos-fabric` gives CXL and legacy Ethernet clusters one bounded, heap-free
+memory control plane. Its CXL 3.0/3.1 path accepts endpoints discovered through
+PCI CXL DVSECs, validates Type-3 devices, and programs HDM decoder component
+registers through an isolated MMIO boundary. Generation-checked leases allocate
+aligned RAM or VRAM ranges and expire or release automatically when a node
+fails.
+
+The global address map resolves local RAM, CXL memory, remote layer-2 memory,
+and VRAM through the same 64-bit address contract. A bounded sampler recommends
+hot-page migration when observed latency justifies it; committing a verified
+copy redirects later resolutions without changing its global address.
+
+On legacy x86, the kernel can install a `#PF` resolver. The DSM protocol
+fragments 4 KiB pages into raw Ethernet payloads under EtherType `0x88b5`,
+rejects stale or malformed fragments, and grants read or exclusive mappings
+only under live software DLM leases. Writers invalidate all remote sharers
+before gaining a writable mapping.
+
+Cluster heartbeats can run below one millisecond. A failure decision marks the
+node unavailable, revokes its memory leases and coherence ownership, and makes
+every mirrored pool resolve through its surviving node.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase
