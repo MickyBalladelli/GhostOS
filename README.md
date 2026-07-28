@@ -62,6 +62,19 @@ isolated user address spaces.
 This core has no driver, filesystem, network stack, dynamic allocator, or POSIX
 compatibility layer. Those are user-space services communicating over IPC.
 
+## SynFS day-one core
+
+`synos-synfs` is a `no_std`, fixed-capacity filesystem core for the Ring 3
+SynFS service. Metadata lives in immutable Copy-on-Write B+tree blocks. A write
+creates the next file version, so `notes.txt`, `notes.txt;0`, and the highest
+numbered version resolve to the latest contents while `notes.txt;1` selects an
+exact immutable version.
+
+File data is split into content-matched blocks. Unchanged tails are shared
+between versions, and a failed or superseded tree update cannot damage the
+committed root. `SynfsPurged` applies bounded per-file retention work, then
+mark-and-sweep collection reclaims tombstoned data and abandoned CoW branches.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase

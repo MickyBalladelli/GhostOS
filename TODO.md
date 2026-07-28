@@ -13,10 +13,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Keep the SynOS core strictly in Ring 0; move all drivers, file systems, and network stacks to user space (Ring 3).
   - [x] Write asynchronous, zero-copy Inter-Process Communication (IPC) primitives for ultra-low latency messaging.
   - [x] Implement cooperative and real-time thread scheduling primitives.
-- [ ] **Native Versioned Filesystem (SynFS - Day 1 Core)**
-  - [ ] Implement Copy-on-Write (CoW) B-tree block structures for instant, zero-cost file versioning (`file.txt;1`, `file.txt;2`).
-  - [ ] Build OpenVMS-style version resolution into the VFS lookup pipeline (`path/to/file;version`).
-  - [ ] Design background block-sharing and retention garbage collection (`synfs_purged`).
+- [x] **Native Versioned Filesystem (SynFS - Day 1 Core)**
+  - [x] Implement Copy-on-Write (CoW) B-tree block structures for instant, zero-cost file versioning (`file.txt;1`, `file.txt;2`).
+  - [x] Build OpenVMS-style version resolution into the VFS lookup pipeline (`path/to/file;version`).
+  - [x] Design background block-sharing and retention garbage collection (`synfs_purged`).
 - [ ] **Implement Capability-Based Security**
   - [ ] Replace POSIX root permissions with unforgeable, fine-grained object capability tokens.
   - [ ] Build capability delegation models for memory mapping, process creation, and IPC channel authorization.

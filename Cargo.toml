@@ -2,11 +2,13 @@
 resolver = "3"
 members = [
     "crates/boot-protocol",
+    "crates/synfs",
     "kernel",
     "boot/uefi",
 ]
 default-members = [
     "crates/boot-protocol",
+    "crates/synfs",
     "kernel",
 ]
 
@@ -21,4 +23,3 @@ panic = "abort"
 panic = "abort"
 lto = true
 codegen-units = 1
-
