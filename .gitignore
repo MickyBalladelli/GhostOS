@@ -1,0 +1,28 @@
+# Rust and local build output
+/build/
+/target/
+*.o
+*.bin
+*.img
+*.efi
+
+# Runtime output
+*.log
+*.trace
+*.dump
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db

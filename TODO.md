@@ -5,10 +5,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 1. Core SynOS Kernel Architecture & SynFS (Phase 1)
-- [ ] **Establish Bare-Metal Bootstrapping**
-  - [ ] Implement UEFI and Legacy BIOS (MBR) handoff logic in Rust (`#![no_std]`).
-  - [ ] Set up early boot allocators, CPU interrupt handlers, and serial/VGA logging (`_start` entrypoint).
-  - [ ] Configure hardware-level page tables (x86_64 `CR3` / ARM `TTBR0` / RISC-V `satp`).
+- [x] **Establish Bare-Metal Bootstrapping**
+  - [x] Implement UEFI and Legacy BIOS (MBR) handoff logic in Rust (`#![no_std]`).
+  - [x] Set up early boot allocators, CPU interrupt handlers, and serial/VGA logging (`_start` entrypoint).
+  - [x] Configure hardware-level page tables (x86_64 `CR3` / ARM `TTBR0` / RISC-V `satp`).
 - [ ] **Build Minimal Microkernel Core (<15k LOC)**
   - [ ] Keep the SynOS core strictly in Ring 0; move all drivers, file systems, and network stacks to user space (Ring 3).
   - [ ] Write asynchronous, zero-copy Inter-Process Communication (IPC) primitives for ultra-low latency messaging.

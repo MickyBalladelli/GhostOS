@@ -1,0 +1,11 @@
+[alias]
+kernel-x86 = "build -p synos-kernel --target x86_64-unknown-none"
+uefi = "build -p synos-uefi --target x86_64-unknown-uefi"
+
+[target.x86_64-unknown-none]
+rustflags = [
+    "-Ccode-model=kernel",
+    "-Cno-redzone=yes",
+    "-Crelocation-model=static",
+    "-Clink-arg=-no-pie",
+]

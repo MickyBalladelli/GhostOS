@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/boot-protocol",
+    "kernel",
+    "boot/uefi",
+]
+default-members = [
+    "crates/boot-protocol",
+    "kernel",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+
