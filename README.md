@@ -196,6 +196,20 @@ When one node drops, a memory degradation handle resumes from the last committed
 token, resolves mirrored model and KV memory through the fabric, and can seed a
 replacement journal replica without changing the request identity.
 
+## Target platforms and emulation
+
+The platform kit under `platforms` defines evidence-gated profiles for two
+consumer PCs, a local QEMU/KVM cluster, switched CXL racks, and PCIe or NVLink
+GPU fabrics. A target counts as qualified only when its captured boot,
+inventory, fabric, migration, and failover evidence passes
+`scripts/qualify-platform.sh`.
+
+On Linux, `scripts/qemu-cluster.sh` launches two or more q35 guests with unique
+E1000 NICs on one multicast Ethernet bus. Every guest receives a QEMU CXL
+Type-3 endpoint and an `ivshmem-plain` region shared by all guests. The
+companion failure-injection command terminates one selected node so heartbeat,
+lease cleanup, mirrored redirection, and inference recovery can be observed.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase

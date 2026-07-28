@@ -1,0 +1,44 @@
+schema_version = 1
+
+[legacy_two_node]
+minimum_nodes = 2
+boot = "bare-metal"
+network = ["Intel E1000 family", "Realtek RTL8169 family"]
+required_operations = [
+    "heartbeat",
+    "remote-page-fetch",
+    "write-invalidation",
+    "owner-power-loss",
+    "mirror-failover",
+]
+
+[qemu_cluster]
+minimum_nodes = 2
+machine = "q35,cxl=on"
+network = "QEMU socket multicast with E1000"
+memory = ["CXL Type-3 volatile memory", "ivshmem-plain"]
+failure_injection = "terminate one QEMU node"
+
+[enterprise_cxl]
+minimum_nodes = 2
+minimum_type3_endpoints = 2
+requires_switch = true
+required_operations = [
+    "HDM-decoder-commit",
+    "dynamic-lease",
+    "page-migration",
+    "endpoint-removal",
+    "mirrored-redirection",
+]
+
+[enterprise_gpu]
+minimum_nodes = 2
+minimum_accelerators = 2
+interconnect = ["PCIe peer memory", "NVLink"]
+required_operations = [
+    "VRAM-pool-registration",
+    "peer-memory-access",
+    "page-migration",
+    "accelerator-removal",
+    "request-recovery",
+]

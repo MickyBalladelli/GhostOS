@@ -89,12 +89,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 7. Target Platforms & Emulation
-- [ ] **Legacy Hardware Testbed**
-  - [ ] Test bare-metal two-node Ethernet clustering using standard consumer PCs.
-- [ ] **Local Emulation Sandbox**
-  - [ ] Configure multi-instance QEMU/KVM environments using emulated CXL devices (`ivshmem`) for local development.
-- [ ] **Enterprise Hardware Targets**
-  - [ ] Validate SynOS on rack-scale CXL switched nodes and PCIe/NVLink fabric AI clusters.
+- [x] **Legacy Hardware Testbed**
+  - [x] Test bare-metal two-node Ethernet clustering using standard consumer PCs.
+- [x] **Local Emulation Sandbox**
+  - [x] Configure multi-instance QEMU/KVM environments using emulated CXL devices (`ivshmem`) for local development.
+- [x] **Enterprise Hardware Targets**
+  - [x] Validate SynOS on rack-scale CXL switched nodes and PCIe/NVLink fabric AI clusters.
 
 ---
 
