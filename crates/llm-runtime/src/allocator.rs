@@ -2,7 +2,7 @@ use synos_fabric::{
     Access, AddressRange, NodeId, PAGE_SIZE, PageFault,
     memory::{
         GlobalAddressSpace, LeaseHandle, LeaseRights, LeaseTable, MemoryKind,
-        LeaseOwner, ResolvedAddress, Transport,
+        LeaseOwner, MemoryMapping, ResolvedAddress, Transport,
     },
 };
 
@@ -141,6 +141,7 @@ pub struct ModelAddress {
     pub allocation_offset: u64,
     pub lease: LeaseHandle,
     pub resolved: ResolvedAddress,
+    pub mapping: MemoryMapping,
 }
 
 /// Presents many physical fabric leases as one contiguous process allocation.
@@ -316,12 +317,14 @@ impl<const ALLOCATIONS: usize, const EXTENTS: usize> UnifiedAllocator<ALLOCATION
             .ok_or(Error::AllocationNotFound)?;
         let fabric_address = extent.fabric.start + offset - extent.logical_offset;
         leases.authorize(extent.lease, entry.owner, fabric_address, access, now_us)?;
+        let mapping = space.resolve_mapping(fabric_address)?;
         Ok(ModelAddress {
             virtual_address: entry.virtual_range.start + offset,
             fabric_address,
             allocation_offset: offset,
             lease: extent.lease,
-            resolved: space.resolve(fabric_address)?,
+            resolved: mapping.source(),
+            mapping,
         })
     }
 

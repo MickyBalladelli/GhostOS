@@ -70,6 +70,101 @@ pub struct RecordRead {
     pub bytes_read: usize,
 }
 
+/// Generation-checked kernel capability authorizing a read-only RMS mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct RmsMapHandle(u64);
+
+impl RmsMapHandle {
+    /// Convert a handle after the kernel has mapped its immutable SynFS pages.
+    pub const fn from_capability(raw: u64) -> Option<Self> {
+        if raw >> 32 == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MappedRecordInfo {
+    pub capability: RmsMapHandle,
+    pub descriptor: RecordDescriptor,
+    pub record_count: u32,
+    pub byte_length: usize,
+}
+
+/// In-process, zero-copy parser for capability-mapped immutable RMS pages.
+///
+/// The RMS daemon validates the capability and maps the current CoW data
+/// snapshot read-only. Record parsing and indexed lookup then need no IPC.
+pub struct MappedRecordFile<'a> {
+    info: MappedRecordInfo,
+    bytes: &'a [u8],
+}
+
+impl<'a> MappedRecordFile<'a> {
+    pub fn open(capability: RmsMapHandle, bytes: &'a [u8]) -> Result<Self, RmsError> {
+        let (descriptor, record_count) = decode_header(bytes)?;
+        let mut cursor = HEADER_BYTES;
+        for position in 0..record_count {
+            let record = next_record(bytes, &mut cursor)?;
+            validate_record(descriptor, record, position)?;
+        }
+        if cursor != bytes.len() {
+            return Err(RmsError::NotRecordFile);
+        }
+        Ok(Self {
+            info: MappedRecordInfo {
+                capability,
+                descriptor,
+                record_count,
+                byte_length: bytes.len(),
+            },
+            bytes,
+        })
+    }
+
+    pub const fn info(&self) -> MappedRecordInfo {
+        self.info
+    }
+
+    pub fn record(&self, selector: RecordSelector<'_>) -> Result<&'a [u8], RmsError> {
+        if matches!(selector, RecordSelector::Key(_))
+            && matches!(
+                self.info.descriptor.organization,
+                RecordOrganization::Sequential
+            )
+        {
+            return Err(RmsError::InvalidSelector);
+        }
+        let mut cursor = HEADER_BYTES;
+        for position in 0..self.info.record_count {
+            let record = next_record(self.bytes, &mut cursor)?;
+            let selected = match selector {
+                RecordSelector::Position(wanted) => position == wanted,
+                RecordSelector::Key(wanted) => {
+                    let RecordOrganization::Indexed(index) = self.info.descriptor.organization
+                    else {
+                        return Err(RmsError::InvalidSelector);
+                    };
+                    let start = index.key_offset as usize;
+                    let end = start + index.key_length as usize;
+                    wanted == &record[start..end]
+                }
+            };
+            if selected {
+                return Ok(record);
+            }
+        }
+        Err(RmsError::RecordNotFound)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RmsError {
     BufferTooSmall { required: usize },

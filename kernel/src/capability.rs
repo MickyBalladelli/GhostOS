@@ -4,6 +4,7 @@ use crate::task::AddressSpaceId;
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_CAPABILITIES: usize = 256;
+const NO_DESCRIPTOR: usize = usize::MAX;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -83,7 +84,34 @@ impl Rights {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalRange {
+    pub start: u64,
+    pub length: u64,
+}
+
+impl PhysicalRange {
+    pub const fn new(start: u64, length: u64) -> Option<Self> {
+        if length == 0 || start.checked_add(length).is_none() {
+            None
+        } else {
+            Some(Self { start, length })
+        }
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        other.start >= self.start
+            && other.start.saturating_add(other.length) <= self.start.saturating_add(self.length)
+    }
+
+    pub const fn overlaps(self, other: Self) -> bool {
+        self.start < other.start.saturating_add(other.length)
+            && other.start < self.start.saturating_add(self.length)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilityObject {
+    UntypedMemory(PhysicalRange),
     MemoryRegion(SharedRegionId),
     AddressSpace(AddressSpaceId),
     IpcChannel(ChannelId),
@@ -96,6 +124,14 @@ pub struct CapabilityInfo {
     pub object: CapabilityObject,
     pub rights: Rights,
     pub parent: Option<CapabilityHandle>,
+    pub backing: Option<PhysicalRange>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityLinks {
+    pub parent: Option<CapabilityHandle>,
+    pub first_child: Option<CapabilityHandle>,
+    pub next_sibling: Option<CapabilityHandle>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -121,13 +157,17 @@ impl IntoStatus for CapabilityError {
 }
 
 #[derive(Clone, Copy)]
-struct CapabilityEntry {
+#[repr(C, align(64))]
+struct CapabilityDescriptorPage {
     generation: u32,
     occupied: bool,
     info: CapabilityInfo,
+    parent_slot: usize,
+    first_child: usize,
+    next_sibling: usize,
 }
 
-impl CapabilityEntry {
+impl CapabilityDescriptorPage {
     const VACANT: Self = Self {
         generation: 0,
         occupied: false,
@@ -136,7 +176,11 @@ impl CapabilityEntry {
             object: CapabilityObject::AddressSpace(AddressSpaceId::KERNEL),
             rights: Rights::NONE,
             parent: None,
+            backing: None,
         },
+        parent_slot: NO_DESCRIPTOR,
+        first_child: NO_DESCRIPTOR,
+        next_sibling: NO_DESCRIPTOR,
     };
 }
 
@@ -145,13 +189,13 @@ impl CapabilityEntry {
 /// User code only receives generation-checked handles. Ownership, object
 /// identity, rights, and derivation links remain in protected kernel memory.
 pub struct CapabilitySpace<const CAPACITY: usize = MAX_CAPABILITIES> {
-    entries: [CapabilityEntry; CAPACITY],
+    entries: [CapabilityDescriptorPage; CAPACITY],
 }
 
 impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
     pub const fn new() -> Self {
         Self {
-            entries: [CapabilityEntry::VACANT; CAPACITY],
+            entries: [CapabilityDescriptorPage::VACANT; CAPACITY],
         }
     }
 
@@ -162,7 +206,71 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         object: CapabilityObject,
         rights: Rights,
     ) -> Result<CapabilityHandle, CapabilityError> {
-        self.insert(owner, object, rights, None)
+        self.insert(owner, object, rights, None, None)
+    }
+
+    /// Seed physical memory as an untyped token for a user-space manager.
+    pub fn mint_untyped(
+        &mut self,
+        owner: AddressSpaceId,
+        memory: PhysicalRange,
+        rights: Rights,
+    ) -> Result<CapabilityHandle, CapabilityError> {
+        self.insert(
+            owner,
+            CapabilityObject::UntypedMemory(memory),
+            rights,
+            None,
+            Some(memory),
+        )
+    }
+
+    /// Retype part of an untyped token into a shared-memory resource.
+    ///
+    /// No kernel heap is used. The CDT node and physical backing metadata live
+    /// in the fixed resource descriptor slot itself.
+    pub fn retype_memory(
+        &mut self,
+        caller: AddressSpaceId,
+        source: CapabilityHandle,
+        new_owner: AddressSpaceId,
+        region: SharedRegionId,
+        memory: PhysicalRange,
+        rights: Rights,
+    ) -> Result<CapabilityHandle, CapabilityError> {
+        let source_info = self.authorize_handle(caller, source, Rights::CREATE)?;
+        let CapabilityObject::UntypedMemory(untyped) = source_info.object else {
+            return Err(CapabilityError::AccessDenied);
+        };
+        if rights.is_empty() || !source_info.rights.contains(rights) {
+            return Err(if rights.is_empty() {
+                CapabilityError::EmptyRights
+            } else {
+                CapabilityError::RightsEscalation
+            });
+        }
+        if !untyped.contains(memory) {
+            return Err(CapabilityError::AccessDenied);
+        }
+        let source_slot = self.valid_slot(source)?;
+        if self.entries.iter().enumerate().any(|(slot, entry)| {
+            slot != source_slot
+                && entry.occupied
+                && self.is_descendant(slot, source)
+                && entry
+                    .info
+                    .backing
+                    .is_some_and(|backing| backing.overlaps(memory))
+        }) {
+            return Err(CapabilityError::AccessDenied);
+        }
+        self.insert(
+            new_owner,
+            CapabilityObject::MemoryRegion(region),
+            rights,
+            Some(source),
+            Some(memory),
+        )
     }
 
     /// Give another address space a child capability with equal or fewer rights.
@@ -181,7 +289,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             return Err(CapabilityError::RightsEscalation);
         }
 
-        self.insert(new_owner, source_info.object, rights, Some(source))
+        self.insert(
+            new_owner,
+            source_info.object,
+            rights,
+            Some(source),
+            source_info.backing,
+        )
     }
 
     pub fn authorize(
@@ -229,6 +343,21 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         self.authorize_handle(caller, handle, Rights::NONE)
     }
 
+    pub fn links(
+        &self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+    ) -> Result<CapabilityLinks, CapabilityError> {
+        self.authorize_handle(caller, handle, Rights::NONE)?;
+        let slot = self.valid_slot(handle)?;
+        let entry = &self.entries[slot];
+        Ok(CapabilityLinks {
+            parent: entry.info.parent,
+            first_child: self.handle_for_slot(entry.first_child),
+            next_sibling: self.handle_for_slot(entry.next_sibling),
+        })
+    }
+
     /// Revoke every capability derived from `authority`, preserving authority.
     pub fn revoke(
         &mut self,
@@ -245,7 +374,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         let mut revoked = 0;
         for (slot, descendant) in descendants.iter().enumerate() {
             if *descendant {
-                self.entries[slot].occupied = false;
+                self.vacate(slot);
                 revoked += 1
             }
         }
@@ -261,7 +390,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         self.authorize_handle(caller, handle, Rights::NONE)?;
         let revoked = self.revoke_descendants_unchecked(handle);
         let slot = self.valid_slot(handle)?;
-        self.entries[slot].occupied = false;
+        self.vacate(slot);
         Ok(revoked + 1)
     }
 
@@ -279,6 +408,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         object: CapabilityObject,
         rights: Rights,
         parent: Option<CapabilityHandle>,
+        backing: Option<PhysicalRange>,
     ) -> Result<CapabilityHandle, CapabilityError> {
         if rights.is_empty() {
             return Err(CapabilityError::EmptyRights);
@@ -290,7 +420,16 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             .ok_or(CapabilityError::Full)?;
         let generation = self.entries[slot].generation.wrapping_add(1).max(1);
         let handle = CapabilityHandle::from_parts(slot, generation);
-        self.entries[slot] = CapabilityEntry {
+        let parent_slot = match parent {
+            Some(handle) => self.valid_slot(handle)?,
+            None => NO_DESCRIPTOR,
+        };
+        let next_sibling = if parent_slot == NO_DESCRIPTOR {
+            NO_DESCRIPTOR
+        } else {
+            self.entries[parent_slot].first_child
+        };
+        self.entries[slot] = CapabilityDescriptorPage {
             generation,
             occupied: true,
             info: CapabilityInfo {
@@ -298,8 +437,15 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
                 object,
                 rights,
                 parent,
+                backing,
             },
+            parent_slot,
+            first_child: NO_DESCRIPTOR,
+            next_sibling,
         };
+        if parent_slot != NO_DESCRIPTOR {
+            self.entries[parent_slot].first_child = slot
+        }
         Ok(handle)
     }
 
@@ -346,6 +492,40 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         false
     }
 
+    fn handle_for_slot(&self, slot: usize) -> Option<CapabilityHandle> {
+        self.entries
+            .get(slot)
+            .filter(|entry| entry.occupied)
+            .map(|entry| CapabilityHandle::from_parts(slot, entry.generation))
+    }
+
+    fn vacate(&mut self, slot: usize) {
+        let parent = self.entries[slot].parent_slot;
+        let sibling = self.entries[slot].next_sibling;
+        if let Some(parent_entry) = self.entries.get(parent) {
+            let mut child = parent_entry.first_child;
+            if child == slot {
+                self.entries[parent].first_child = sibling
+            } else {
+                for _ in 0..CAPACITY {
+                    if child == NO_DESCRIPTOR {
+                        break;
+                    }
+                    let next = self.entries[child].next_sibling;
+                    if next == slot {
+                        self.entries[child].next_sibling = sibling;
+                        break;
+                    }
+                    child = next;
+                }
+            }
+        }
+        self.entries[slot].occupied = false;
+        self.entries[slot].parent_slot = NO_DESCRIPTOR;
+        self.entries[slot].first_child = NO_DESCRIPTOR;
+        self.entries[slot].next_sibling = NO_DESCRIPTOR;
+    }
+
     fn revoke_descendants_unchecked(&mut self, authority: CapabilityHandle) -> usize {
         let mut descendants = [false; CAPACITY];
         for (slot, descendant) in descendants.iter_mut().enumerate() {
@@ -355,7 +535,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         let mut revoked = 0;
         for (slot, descendant) in descendants.iter().enumerate() {
             if *descendant {
-                self.entries[slot].occupied = false;
+                self.vacate(slot);
                 revoked += 1
             }
         }

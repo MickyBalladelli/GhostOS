@@ -20,12 +20,12 @@ use synos_boot_protocol::BootInfo;
 
 pub use allocator::{AllocationError, EarlyFrameAllocator, FRAME_SIZE};
 pub use capability::{
-    CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityObject, CapabilitySpace,
-    MAX_CAPABILITIES, Rights,
+    CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
+    CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,
 };
 pub use dlm::{
-    DistributedLockManager, LockError, LockGrant, LockHandle, LockMode, LockOwner, NodeId,
-    ResourceId, ResourceKind, ResourceName,
+    DistributedLockManager, LockError, LockGrant, LockHandle, LockMode, LockOwner, LockRange,
+    NodeId, ResourceId, ResourceKind, ResourceName,
 };
 pub use page_fault::{PageFault, PageFaultHandler, PageFaultHandlerError};
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};

@@ -178,6 +178,32 @@ Cluster heartbeats can run below one millisecond. A failure decision marks the
 node unavailable, revokes its memory leases and coherence ownership, and makes
 every mirrored pool resolve through its surviving node.
 
+## Architectural risk mitigations
+
+Fabric resolution now preserves transport semantics: local RAM and CXL HDM
+windows are direct cache-coherent mappings, while layer-2 pools issue 4 KiB
+remote-page requests into a tiered NUMA cache. The unified allocator detects
+sequential read streams and feeds future non-local pages to a bounded
+asynchronous prefetch queue.
+
+Applications capability-map IPC rings once, then exchange records with daemons
+using lock-free atomic operations. SynFS can bind a read capability to an
+immutable CoW tree generation and expose its data pages directly; the
+`MappedRecordFile` runtime validates and searches RMS records in-process without
+per-record IPC or copying.
+
+DLM leases may cover a whole object or an exact byte range. Disjoint ranges
+make progress independently, overlapping waiters remain ordered, and epochs
+prevent stale lease renewal. `EpochRcu` publishes read-heavy cluster snapshots
+without reader locks and delays reclamation until registered readers pass a
+quiescent state.
+
+The bootstrap capability space remains fixed-size and heap-free. Physical
+memory enters it as untyped tokens, user-space managers retype non-overlapping
+ranges, and parent/child/sibling CDT links live beside each protected resource
+descriptor. Authorized process and system logical names are published to
+epoch-protected atomic hash pages for Ring 3 lookup.
+
 ## LLM memory runtime
 
 `synos-llm` presents many local and CXL fabric leases as one contiguous virtual

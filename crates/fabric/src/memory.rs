@@ -53,6 +53,39 @@ pub struct ResolvedAddress {
     pub failed_over: bool,
 }
 
+/// How a resolved fabric address may be consumed by the page mapper.
+///
+/// Local and CXL memory are directly mapped. Layer-2 memory is never exposed
+/// as coherent RAM: it is fetched as a complete page into a local NUMA cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryMapping {
+    Direct(ResolvedAddress),
+    RemotePage {
+        source: ResolvedAddress,
+        global_page: u64,
+        backing_page: u64,
+        bytes: u32,
+    },
+}
+
+impl MemoryMapping {
+    pub const fn source(self) -> ResolvedAddress {
+        match self {
+            Self::Direct(source) | Self::RemotePage { source, .. } => source,
+        }
+    }
+
+    pub const fn is_cache_coherent(self) -> bool {
+        matches!(
+            self,
+            Self::Direct(ResolvedAddress {
+                transport: Transport::Local | Transport::Cxl,
+                ..
+            })
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PageOverride {
     global_page: u64,
@@ -138,6 +171,23 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
             pool,
             pool.backing_start + global_address - pool.global.start,
         )
+    }
+
+    /// Preserve transport semantics for the page mapper.
+    ///
+    /// CXL HDM windows remain direct mappings. Ethernet pools return a
+    /// page-aligned block request for the local NUMA page cache.
+    pub fn resolve_mapping(&self, global_address: u64) -> Result<MemoryMapping, Error> {
+        let source = self.resolve(global_address)?;
+        match source.transport {
+            Transport::Local | Transport::Cxl => Ok(MemoryMapping::Direct(source)),
+            Transport::Layer2 => Ok(MemoryMapping::RemotePage {
+                source,
+                global_page: global_address & !(PAGE_SIZE - 1),
+                backing_page: source.backing_address & !(PAGE_SIZE - 1),
+                bytes: PAGE_SIZE as u32,
+            }),
+        }
     }
 
     pub fn mark_node_failed(&mut self, node: NodeId) -> Result<(), Error> {

@@ -1,3 +1,4 @@
+use crate::logical_fast::LogicalFastPath;
 use crate::{Error as ModelError, LogicalName};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
@@ -249,6 +250,44 @@ impl<const CAPACITY: usize, const ACLS: usize> LogicalNameTable<CAPACITY, ACLS> 
         }
         self.resolve_at(caller, LogicalScope::Cluster, name)?
             .ok_or(LogicalError::NotFound)
+    }
+
+    /// Publish authorized process and system aliases into atomic read-only
+    /// pages used by the Ring 3 resolver fast path.
+    pub fn refresh_fast_path<const PROCESS: usize, const SYSTEM: usize>(
+        &self,
+        caller: Principal,
+        process: u64,
+        fast_path: &LogicalFastPath<PROCESS, SYSTEM>,
+    ) -> Result<u64, LogicalError> {
+        fast_path.begin_publish(process);
+        let result = self.entries.iter().flatten().try_for_each(|entry| {
+            let visible = match entry.scope {
+                LogicalScope::Process(owner) => owner == process,
+                LogicalScope::System => true,
+                LogicalScope::Group(_) | LogicalScope::Cluster => false,
+            };
+            if !visible {
+                return Ok(());
+            }
+            let index = self
+                .find(entry.scope, entry.name)
+                .ok_or(LogicalError::NotFound)?;
+            if self.authorize(index, caller, LogicalRights::READ).is_err() {
+                return Ok(());
+            }
+            match entry.scope {
+                LogicalScope::Process(_) => fast_path.insert_process(entry.name, entry.target),
+                LogicalScope::System => fast_path.insert_system(entry.name, entry.target),
+                LogicalScope::Group(_) | LogicalScope::Cluster => Ok(()),
+            }
+        });
+        if result.is_err() {
+            fast_path.abort_publish()
+        } else {
+            fast_path.finish_publish()
+        }
+        result.map(|()| fast_path.epoch())
     }
 
     fn resolve_at(

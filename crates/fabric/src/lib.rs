@@ -7,6 +7,7 @@ pub mod cluster;
 pub mod cxl;
 pub mod dsm;
 pub mod memory;
+pub mod rcu;
 
 pub const PAGE_SIZE: u64 = 4096;
 

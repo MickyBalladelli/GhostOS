@@ -6,6 +6,7 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 pub mod allocator;
 pub mod inference;
 pub mod kv_cache;
+pub mod prefetch;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {

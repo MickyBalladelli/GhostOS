@@ -208,6 +208,62 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                 .map_err(|_| IpcError::AccessDenied)?;
         }
 
+        self.enqueue(message)
+    }
+
+    /// Validate capabilities once, then use the mapped ring without syscalls.
+    pub fn map_sender<'a, const MAX_CAPABILITIES: usize>(
+        &'a self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        ring_memory: CapabilityHandle,
+        ring_region: SharedRegionId,
+    ) -> Result<MappedSender<'a, CAPACITY>, IpcError> {
+        capabilities
+            .authorize(
+                caller,
+                endpoint,
+                CapabilityObject::IpcChannel(self.id),
+                Rights::SEND,
+            )
+            .map_err(|_| IpcError::AccessDenied)?;
+        capabilities
+            .authorize_mapping(caller, ring_memory, ring_region, true, false)
+            .map_err(|_| IpcError::AccessDenied)?;
+        Ok(MappedSender {
+            channel: self,
+            ring_region,
+        })
+    }
+
+    /// Validate capabilities once, then consume the read-only shared ring.
+    pub fn map_receiver<'a, const MAX_CAPABILITIES: usize>(
+        &'a self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        ring_memory: CapabilityHandle,
+        ring_region: SharedRegionId,
+    ) -> Result<MappedReceiver<'a, CAPACITY>, IpcError> {
+        capabilities
+            .authorize(
+                caller,
+                endpoint,
+                CapabilityObject::IpcChannel(self.id),
+                Rights::RECEIVE,
+            )
+            .map_err(|_| IpcError::AccessDenied)?;
+        capabilities
+            .authorize_mapping(caller, ring_memory, ring_region, false, false)
+            .map_err(|_| IpcError::AccessDenied)?;
+        Ok(MappedReceiver {
+            channel: self,
+            ring_region,
+        })
+    }
+
+    fn enqueue(&self, message: Message) -> Result<(), IpcError> {
         let mut position = self.enqueue_position.load(Ordering::Relaxed);
         loop {
             let slot = &self.slots[position % CAPACITY];
@@ -252,6 +308,10 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
             )
             .map_err(|_| IpcError::AccessDenied)?;
 
+        self.dequeue()
+    }
+
+    fn dequeue(&self) -> Result<Message, IpcError> {
         let mut position = self.dequeue_position.load(Ordering::Relaxed);
         loop {
             let slot = &self.slots[position % CAPACITY];
@@ -287,5 +347,46 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
             .load(Ordering::Acquire)
             .wrapping_sub(self.dequeue_position.load(Ordering::Acquire))
             .min(CAPACITY)
+    }
+}
+
+/// Direct producer view over a capability-mapped shared-memory ring.
+///
+/// Setup enters the kernel once. Steady-state sends are atomic memory
+/// operations and may only reference the ring's own mapped region.
+pub struct MappedSender<'a, const CAPACITY: usize> {
+    channel: &'a Channel<CAPACITY>,
+    ring_region: SharedRegionId,
+}
+
+impl<const CAPACITY: usize> MappedSender<'_, CAPACITY> {
+    pub fn try_send(&self, message: Message) -> Result<(), IpcError> {
+        if message
+            .buffer
+            .is_some_and(|buffer| buffer.region != self.ring_region)
+        {
+            return Err(IpcError::AccessDenied);
+        }
+        self.channel.enqueue(message)
+    }
+
+    pub const fn region(&self) -> SharedRegionId {
+        self.ring_region
+    }
+}
+
+/// Direct consumer view over the read-only side of a shared-memory ring.
+pub struct MappedReceiver<'a, const CAPACITY: usize> {
+    channel: &'a Channel<CAPACITY>,
+    ring_region: SharedRegionId,
+}
+
+impl<const CAPACITY: usize> MappedReceiver<'_, CAPACITY> {
+    pub fn try_receive(&self) -> Result<Message, IpcError> {
+        self.channel.dequeue()
+    }
+
+    pub const fn region(&self) -> SharedRegionId {
+        self.ring_region
     }
 }

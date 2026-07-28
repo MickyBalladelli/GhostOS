@@ -7,6 +7,7 @@ use synos_synfs::{Error as SynFsError, SynFs};
 
 pub mod command;
 pub mod logical;
+pub mod logical_fast;
 
 pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_DEPENDENCIES: usize = 8;

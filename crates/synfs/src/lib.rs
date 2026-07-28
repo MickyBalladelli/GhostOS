@@ -8,8 +8,8 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 mod rms;
 
 pub use rms::{
-    IndexDefinition, RecordDescriptor, RecordFileInfo, RecordFormat, RecordOrganization,
-    RecordRead, RecordSelector, RmsError,
+    IndexDefinition, MappedRecordFile, MappedRecordInfo, RecordDescriptor, RecordFileInfo,
+    RecordFormat, RecordOrganization, RecordRead, RecordSelector, RmsError, RmsMapHandle,
 };
 
 pub const BLOCK_SIZE: usize = 4096;
@@ -271,12 +271,16 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
     }
 
     fn get(&self, id: BlockId) -> Result<Block, Error> {
+        Ok(*self.get_ref(id)?)
+    }
+
+    fn get_ref(&self, id: BlockId) -> Result<&Block, Error> {
         if !id.is_some() {
             return Err(Error::Corrupt)
         }
         self.slots
             .get(id.0 as usize - 1)
-            .and_then(|slot| slot.block)
+            .and_then(|slot| slot.block.as_ref())
             .ok_or(Error::Corrupt)
     }
 
@@ -330,6 +334,72 @@ pub struct GcReport {
     pub freed_blocks: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MappedFilePage<'a> {
+    pub file_offset: u64,
+    pub bytes: &'a [u8],
+    pub checksum: u64,
+}
+
+/// Capability-tied view over one immutable CoW B-tree generation.
+pub struct ReadOnlySnapshot<'a, const MAX_BLOCKS: usize> {
+    capability: RmsMapHandle,
+    generation: u64,
+    filesystem: &'a SynFs<MAX_BLOCKS>,
+}
+
+impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
+    pub const fn capability(&self) -> RmsMapHandle {
+        self.capability
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn lookup(&self, path: &str) -> Result<FileVersion, Error> {
+        self.filesystem.lookup(path)
+    }
+
+    /// Visit immutable file pages directly, without copying through a daemon.
+    pub fn visit_file_pages(
+        &self,
+        path: &str,
+        mut visitor: impl FnMut(MappedFilePage<'a>),
+    ) -> Result<FileVersion, Error> {
+        let file = self.filesystem.lookup(path)?;
+        let record = self
+            .filesystem
+            .find_record(FileKey {
+                file: file.file,
+                version: file.version,
+            })?
+            .ok_or(Error::Corrupt)?;
+        let mut id = record.data;
+        let mut file_offset = 0_u64;
+        while id.is_some() {
+            let Block::Data(block) = self.filesystem.arena.get_ref(id)? else {
+                return Err(Error::Corrupt)
+            };
+            let length = block.len as usize;
+            if length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
+                return Err(Error::Corrupt)
+            }
+            visitor(MappedFilePage {
+                file_offset,
+                bytes: &block.bytes[..length],
+                checksum: block.checksum,
+            });
+            file_offset = file_offset.saturating_add(length as u64);
+            id = block.next;
+        }
+        if file_offset != file.size {
+            return Err(Error::Corrupt)
+        }
+        Ok(file)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Split {
     separator: FileKey,
@@ -372,6 +442,18 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub const fn capacity(&self) -> usize {
         MAX_BLOCKS
+    }
+
+    /// Bind a validated kernel capability to the current immutable tree root.
+    pub const fn mapped_snapshot(
+        &self,
+        capability: RmsMapHandle,
+    ) -> ReadOnlySnapshot<'_, MAX_BLOCKS> {
+        ReadOnlySnapshot {
+            capability,
+            generation: self.generation,
+            filesystem: self,
+        }
     }
 
     pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
