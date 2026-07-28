@@ -295,47 +295,7 @@ running them.
 There are two different boot methods. The current build does not make one
 hybrid USB that supports both.
 
-### Legacy BIOS
 
-Use this method on an x86_64 computer with Legacy Boot or CSM enabled. Secure
-Boot must be disabled.
-
-Build the image:
-
-```sh
-./scripts/build-bios-image.sh
-```
-
-Do not copy individual files to the USB drive. Write the complete
-`build/bios/synos-bios.img` image to the whole drive, not to a partition.
-
-On macOS:
-
-```sh
-diskutil list
-diskutil unmountDisk /dev/diskN
-sudo dd if=build/bios/synos-bios.img of=/dev/rdiskN bs=4m
-sync
-diskutil eject /dev/diskN
-```
-
-Replace `diskN` with the USB drive.
-
-On Linux:
-
-```sh
-lsblk -p
-sudo umount /dev/sdX1
-sudo dd if=build/bios/synos-bios.img of=/dev/sdX bs=4M status=progress conv=fsync
-sudo eject /dev/sdX
-```
-
-Replace `sdX` with the whole USB drive. Unmount every mounted partition if the
-drive has more than one.
-
-Boot the computer's one-time boot menu and choose the USB drive under its
-Legacy or CSM entry. A successful start prints `SynOS kernel bootstrap` on VGA
-and COM1 serial.
 
 ### UEFI
 
@@ -385,6 +345,50 @@ silently returning to another operating system.
 After rebuilding, always replace `EFI/BOOT/BOOTX64.EFI` on the USB drive with
 the new `synos-loader.efi`.
 
+
+### Legacy BIOS
+
+Use this method on an x86_64 computer with Legacy Boot or CSM enabled. Secure
+Boot must be disabled.
+
+Build the image:
+
+```sh
+./scripts/build-bios-image.sh
+```
+
+Do not copy individual files to the USB drive. Write the complete
+`build/bios/synos-bios.img` image to the whole drive, not to a partition.
+
+On macOS:
+
+```sh
+diskutil list
+diskutil unmountDisk /dev/diskN
+sudo dd if=build/bios/synos-bios.img of=/dev/rdiskN bs=4m
+sync
+diskutil eject /dev/diskN
+```
+
+Replace `diskN` with the USB drive.
+
+On Linux:
+
+```sh
+lsblk -p
+sudo umount /dev/sdX1
+sudo dd if=build/bios/synos-bios.img of=/dev/sdX bs=4M status=progress conv=fsync
+sudo eject /dev/sdX
+```
+
+Replace `sdX` with the whole USB drive. Unmount every mounted partition if the
+drive has more than one.
+
+Boot the computer's one-time boot menu and choose the USB drive under its
+Legacy or CSM entry. A successful start prints `SynOS kernel bootstrap` on VGA
+and COM1 serial.
+
+
 ## Dual boot without repartitioning
 
 The UEFI loader presents a boot menu for SynOS, Windows Boot Manager, and GRUB.
@@ -410,6 +414,7 @@ The public `ReadAt` device contract has no write operation. Host volumes
 therefore stay read-only even if a caller has a storage-controller capability.
 EXT4 journal replay and NTFS compressed, encrypted, or deduplicated files are
 not supported; put model weights in ordinary uncompressed files.
+
 
 ### Serial console
 
