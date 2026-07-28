@@ -178,6 +178,24 @@ Cluster heartbeats can run below one millisecond. A failure decision marks the
 node unavailable, revokes its memory leases and coherence ownership, and makes
 every mirrored pool resolve through its surviving node.
 
+## LLM memory runtime
+
+`synos-llm` presents many local and CXL fabric leases as one contiguous virtual
+model allocation. Allocations use 64-bit sizes, may span multiple-terabyte
+extents, and resolve page faults without exposing tensor or pipeline placement
+to the model framework.
+
+KV caches grow in stable token-addressed segments. The allocator fills local
+RAM first, then CXL, then layer-2 memory, while requiring a mirror for every KV
+segment. Existing token addresses do not move when a long-context request
+needs another segment.
+
+Each inference request has a checksummed recovery record on two journal nodes.
+A token checkpoint becomes committed only after both copies acknowledge it.
+When one node drops, a memory degradation handle resumes from the last committed
+token, resolves mirrored model and KV memory through the fabric, and can seed a
+replacement journal replica without changing the request identity.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase

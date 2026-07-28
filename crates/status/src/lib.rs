@@ -115,4 +115,5 @@ pub mod facility {
     pub const DLM: u16 = 8;
     pub const RMS: u16 = 9;
     pub const FABRIC: u16 = 10;
+    pub const LLM: u16 = 11;
 }

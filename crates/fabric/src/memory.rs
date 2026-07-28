@@ -83,6 +83,7 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
             || pool.global.length % PAGE_SIZE != 0
             || pool.backing_start % PAGE_SIZE != 0
             || pool.latency_ns == 0
+            || pool.mirror == Some(pool.node)
         {
             return Err(Error::Alignment)
         }
@@ -242,6 +243,12 @@ impl LeaseRights {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LeaseOwner {
+    Node(NodeId),
+    Service(u64),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct LeaseHandle(u64);
 
@@ -267,7 +274,7 @@ impl LeaseHandle {
 struct Lease {
     occupied: bool,
     generation: u32,
-    owner: NodeId,
+    owner: LeaseOwner,
     pool: PoolId,
     range: AddressRange,
     rights: LeaseRights,
@@ -278,7 +285,7 @@ impl Lease {
     const VACANT: Self = Self {
         occupied: false,
         generation: 0,
-        owner: NodeId::LOCAL,
+        owner: LeaseOwner::Node(NodeId::LOCAL),
         pool: PoolId(0),
         range: AddressRange {
             start: 0,
@@ -304,7 +311,7 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
     pub fn allocate<const POOLS: usize, const OVERRIDES: usize>(
         &mut self,
         space: &GlobalAddressSpace<POOLS, OVERRIDES>,
-        owner: NodeId,
+        owner: LeaseOwner,
         pool_id: PoolId,
         length: u64,
         alignment: u64,
@@ -366,10 +373,63 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
         }
     }
 
+    pub fn largest_free_range<const POOLS: usize, const OVERRIDES: usize>(
+        &mut self,
+        space: &GlobalAddressSpace<POOLS, OVERRIDES>,
+        pool_id: PoolId,
+        alignment: u64,
+        now_us: u64,
+    ) -> Result<AddressRange, Error> {
+        self.expire(now_us);
+        let pool = space.pool(pool_id).ok_or(Error::DeviceNotFound)?;
+        if alignment < PAGE_SIZE || !alignment.is_power_of_two() {
+            return Err(Error::Alignment)
+        }
+        let mut cursor = align_up(pool.global.start, alignment).ok_or(Error::InvalidRange)?;
+        let mut largest = AddressRange {
+            start: cursor,
+            length: 0,
+        };
+        while cursor < pool.global.end() {
+            let next = self
+                .leases
+                .iter()
+                .filter(|lease| {
+                    lease.occupied
+                        && lease.pool == pool_id
+                        && lease.range.end() > cursor
+                })
+                .min_by_key(|lease| lease.range.start);
+            let gap_end = next
+                .map(|lease| lease.range.start)
+                .unwrap_or_else(|| pool.global.end());
+            if gap_end > cursor {
+                let length = (gap_end - cursor) / PAGE_SIZE * PAGE_SIZE;
+                if length > largest.length {
+                    largest = AddressRange {
+                        start: cursor,
+                        length,
+                    }
+                }
+            }
+            let Some(lease) = next else { break };
+            cursor = align_up(
+                core::cmp::max(cursor, lease.range.end()),
+                alignment,
+            )
+            .ok_or(Error::InvalidRange)?;
+        }
+        if largest.length == 0 {
+            Err(Error::Capacity)
+        } else {
+            Ok(largest)
+        }
+    }
+
     pub fn authorize(
         &self,
         handle: LeaseHandle,
-        owner: NodeId,
+        owner: LeaseOwner,
         address: u64,
         access: Access,
         now_us: u64,
@@ -390,7 +450,7 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
     pub fn renew(
         &mut self,
         handle: LeaseHandle,
-        owner: NodeId,
+        owner: LeaseOwner,
         now_us: u64,
         duration_us: u64,
     ) -> Result<(), Error> {
@@ -410,7 +470,7 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
         Ok(())
     }
 
-    pub fn release(&mut self, handle: LeaseHandle, owner: NodeId) -> Result<(), Error> {
+    pub fn release(&mut self, handle: LeaseHandle, owner: LeaseOwner) -> Result<(), Error> {
         let slot = self.valid_slot(handle)?;
         if self.leases[slot].owner != owner {
             return Err(Error::NotOwner)
@@ -422,7 +482,7 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
     pub fn release_node(&mut self, node: NodeId) -> usize {
         let mut released = 0;
         for lease in &mut self.leases {
-            if lease.occupied && lease.owner == node {
+            if lease.occupied && lease.owner == LeaseOwner::Node(node) {
                 lease.occupied = false;
                 released += 1
             }

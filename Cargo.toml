@@ -8,6 +8,7 @@ members = [
     "crates/status",
     "crates/synfs",
     "crates/fabric",
+    "crates/llm-runtime",
     "crates/system-model",
     "kernel",
     "boot/uefi",
@@ -20,6 +21,7 @@ default-members = [
     "crates/status",
     "crates/synfs",
     "crates/fabric",
+    "crates/llm-runtime",
     "crates/system-model",
     "kernel",
 ]

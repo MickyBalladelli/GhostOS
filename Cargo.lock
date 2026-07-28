@@ -37,6 +37,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-llm"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-platform-io"
 version = "0.1.0"
 dependencies = [

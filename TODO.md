@@ -79,12 +79,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 6. Large Language Model (LLM) Enablement
-- [ ] **Single-Node Execution Paradigm**
-  - [ ] Enable framework-free, multi-terabyte memory allocations on SynOS without manual Tensor/Pipeline parallelism code.
-- [ ] **Cluster-Wide Dynamic KV-Cache Pooling**
-  - [ ] Allow real-time KV-cache allocation across remote CXL nodes or networked PCs during long-context inference runs.
-- [ ] **Zero-Downtime Failover**
-  - [ ] Guarantee inference request persistence during node drops through transparent memory degradation handles.
+- [x] **Single-Node Execution Paradigm**
+  - [x] Enable framework-free, multi-terabyte memory allocations on SynOS without manual Tensor/Pipeline parallelism code.
+- [x] **Cluster-Wide Dynamic KV-Cache Pooling**
+  - [x] Allow real-time KV-cache allocation across remote CXL nodes or networked PCs during long-context inference runs.
+- [x] **Zero-Downtime Failover**
+  - [x] Guarantee inference request persistence during node drops through transparent memory degradation handles.
 
 ---
 
