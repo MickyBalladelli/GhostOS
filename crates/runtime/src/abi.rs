@@ -1,0 +1,121 @@
+use synos_ipc::SharedBuffer;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u16)]
+pub enum Operation {
+    Yield = 1,
+    ClockNow = 2,
+    Wait = 3,
+    Wake = 4,
+    ThreadSpawn = 5,
+    ThreadJoin = 6,
+    ThreadExit = 7,
+    MemoryMap = 8,
+    MemoryUnmap = 9,
+    IpcMap = 10,
+    IpcNotify = 11,
+    SynFsOpen = 12,
+    SynFsClose = 13,
+    SynFsRead = 14,
+    SynFsWrite = 15,
+    SynFsMetadata = 16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct Request {
+    pub operation: u16,
+    pub flags: u16,
+    pub reserved: u32,
+    pub capability: u64,
+    pub arguments: [u64; 6],
+}
+
+impl Request {
+    pub const fn new(operation: Operation) -> Self {
+        Self {
+            operation: operation as u16,
+            flags: 0,
+            reserved: 0,
+            capability: 0,
+            arguments: [0; 6],
+        }
+    }
+
+    pub const fn with_capability(mut self, capability: Capability) -> Self {
+        self.capability = capability.raw();
+        self
+    }
+
+    pub const fn with_buffer(mut self, buffer: SharedBuffer) -> Self {
+        self.arguments[0] = buffer.region.raw() as u64;
+        self.arguments[1] = buffer.offset as u64;
+        self.arguments[2] = buffer.length as u64;
+        self.arguments[3] = buffer.writable as u64;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct Response {
+    pub status: u32,
+    pub flags: u32,
+    pub values: [u64; 4],
+}
+
+impl Response {
+    pub const EMPTY: Self = Self {
+        status: 0,
+        flags: 0,
+        values: [0; 4],
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct Capability(u64);
+
+impl Capability {
+    pub const fn from_raw(raw: u64) -> Option<Self> {
+        if raw >> 32 == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+pub trait SystemCall {
+    fn call(&self, request: Request) -> Response;
+}
+
+pub type GateFn = unsafe extern "C" fn(*const Request, *mut Response);
+
+#[derive(Clone, Copy)]
+pub struct NativeGate {
+    gate: GateFn,
+}
+
+impl NativeGate {
+    /// Creates a call gate supplied by the SynOS process loader.
+    ///
+    /// # Safety
+    ///
+    /// `gate` must obey the SynOS system-call ABI for the life of this value.
+    pub const unsafe fn new(gate: GateFn) -> Self {
+        Self { gate }
+    }
+}
+
+impl SystemCall for NativeGate {
+    fn call(&self, request: Request) -> Response {
+        let mut response = Response::EMPTY;
+        unsafe { (self.gate)(&request, &mut response) }
+        response
+    }
+}

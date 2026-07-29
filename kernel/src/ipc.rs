@@ -1,47 +1,12 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::task::AddressSpaceId;
+use synos_ipc::{Envelope, Ring, RingError};
 use synos_observability::{
     CorrelationId, EventField, EventKind, field, next_correlation_id, trace,
 };
 use synos_status::{IntoStatus, Severity, Status, facility};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(transparent)]
-pub struct ChannelId(u32);
-
-impl ChannelId {
-    pub const fn new(raw: u32) -> Option<Self> {
-        if raw == 0 { None } else { Some(Self(raw)) }
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(transparent)]
-pub struct SharedRegionId(u32);
-
-impl SharedRegionId {
-    pub const fn new(raw: u32) -> Option<Self> {
-        if raw == 0 { None } else { Some(Self(raw)) }
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SharedBuffer {
-    pub region: SharedRegionId,
-    pub offset: u32,
-    pub length: u32,
-    pub writable: bool,
-}
+pub use synos_ipc::{ChannelId, SharedBuffer, SharedRegionId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Message {
@@ -67,6 +32,28 @@ impl Message {
     };
 }
 
+impl From<Message> for Envelope {
+    fn from(message: Message) -> Self {
+        Self {
+            correlation: message.correlation.raw(),
+            label: message.label,
+            buffer: message.buffer,
+            words: message.words,
+        }
+    }
+}
+
+impl From<Envelope> for Message {
+    fn from(envelope: Envelope) -> Self {
+        Self {
+            correlation: CorrelationId::from_raw(envelope.correlation),
+            label: envelope.label,
+            buffer: envelope.buffer,
+            words: envelope.words,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IpcError {
     Full,
@@ -85,115 +72,13 @@ impl IntoStatus for IpcError {
     }
 }
 
-struct Slot {
-    sequence: AtomicUsize,
-    message: AtomicMessage,
-}
-
-impl Slot {
-    const fn new(sequence: usize) -> Self {
-        Self {
-            sequence: AtomicUsize::new(sequence),
-            message: AtomicMessage::new(),
-        }
-    }
-}
-
-struct AtomicMessage {
-    correlation_low: AtomicU64,
-    correlation_high: AtomicU64,
-    label: AtomicU64,
-    buffer_present: AtomicBool,
-    buffer_region: AtomicU32,
-    buffer_offset: AtomicU32,
-    buffer_length: AtomicU32,
-    buffer_writable: AtomicBool,
-    words: [AtomicU64; 4],
-}
-
-impl AtomicMessage {
-    const fn new() -> Self {
-        Self {
-            correlation_low: AtomicU64::new(0),
-            correlation_high: AtomicU64::new(0),
-            label: AtomicU64::new(0),
-            buffer_present: AtomicBool::new(false),
-            buffer_region: AtomicU32::new(0),
-            buffer_offset: AtomicU32::new(0),
-            buffer_length: AtomicU32::new(0),
-            buffer_writable: AtomicBool::new(false),
-            words: [
-                AtomicU64::new(0),
-                AtomicU64::new(0),
-                AtomicU64::new(0),
-                AtomicU64::new(0),
-            ],
-        }
-    }
-
-    fn write(&self, message: Message) {
-        self.correlation_low
-            .store(message.correlation.raw() as u64, Ordering::Relaxed);
-        self.correlation_high.store(
-            (message.correlation.raw() >> 64) as u64,
-            Ordering::Relaxed,
-        );
-        self.label.store(message.label, Ordering::Relaxed);
-        if let Some(buffer) = message.buffer {
-            self.buffer_region
-                .store(buffer.region.raw(), Ordering::Relaxed);
-            self.buffer_offset.store(buffer.offset, Ordering::Relaxed);
-            self.buffer_length.store(buffer.length, Ordering::Relaxed);
-            self.buffer_writable
-                .store(buffer.writable, Ordering::Relaxed);
-            self.buffer_present.store(true, Ordering::Relaxed)
-        } else {
-            self.buffer_present.store(false, Ordering::Relaxed)
-        }
-        for (word, value) in self.words.iter().zip(message.words) {
-            word.store(value, Ordering::Relaxed)
-        }
-    }
-
-    fn read(&self) -> Message {
-        let buffer = if self.buffer_present.load(Ordering::Relaxed) {
-            SharedRegionId::new(self.buffer_region.load(Ordering::Relaxed)).map(|region| {
-                SharedBuffer {
-                    region,
-                    offset: self.buffer_offset.load(Ordering::Relaxed),
-                    length: self.buffer_length.load(Ordering::Relaxed),
-                    writable: self.buffer_writable.load(Ordering::Relaxed),
-                }
-            })
-        } else {
-            None
-        };
-        let mut words = [0; 4];
-        for (value, word) in words.iter_mut().zip(&self.words) {
-            *value = word.load(Ordering::Relaxed)
-        }
-        Message {
-            correlation: CorrelationId::from_raw(
-                self.correlation_low.load(Ordering::Relaxed) as u128
-                    | ((self.correlation_high.load(Ordering::Relaxed) as u128)
-                        << 64),
-            ),
-            label: self.label.load(Ordering::Relaxed),
-            buffer,
-            words,
-        }
-    }
-}
-
 /// A bounded, non-blocking MPMC channel.
 ///
 /// Messages carry a shared-region descriptor instead of copying payload bytes.
 /// The sender and receiver address spaces must already map that region.
 pub struct Channel<const CAPACITY: usize> {
     id: ChannelId,
-    enqueue_position: AtomicUsize,
-    dequeue_position: AtomicUsize,
-    slots: [Slot; CAPACITY],
+    ring: Ring<CAPACITY>,
 }
 
 impl<const CAPACITY: usize> Channel<CAPACITY> {
@@ -201,9 +86,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         assert!(CAPACITY >= 2);
         Self {
             id,
-            enqueue_position: AtomicUsize::new(0),
-            dequeue_position: AtomicUsize::new(0),
-            slots: core::array::from_fn(Slot::new),
+            ring: Ring::new(),
         }
     }
 
@@ -272,7 +155,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         message.words[3] = delegated.raw();
         if let Err(error) = self.enqueue(message) {
             let _ = capabilities.delete(receiver, delegated);
-            return Err(error)
+            return Err(error);
         }
         Ok(CapabilityTransfer {
             delegated,
@@ -337,41 +220,18 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         if message.correlation.is_none() {
             message.correlation = next_correlation_id(1)
         }
-        let mut position = self.enqueue_position.load(Ordering::Relaxed);
-        loop {
-            let slot = &self.slots[position % CAPACITY];
-            let sequence = slot.sequence.load(Ordering::Acquire);
-            let difference = sequence.wrapping_sub(position) as isize;
-
-            if difference == 0 {
-                match self.enqueue_position.compare_exchange_weak(
-                    position,
-                    position.wrapping_add(1),
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => {
-                        slot.message.write(message);
-                        slot.sequence
-                            .store(position.wrapping_add(1), Ordering::Release);
-                        trace!(
-                            EventKind::Ipc,
-                            EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
-                            EventField::identifier(
-                                field::OPERATION,
-                                message.correlation.raw(),
-                            ),
-                        );
-                        return Ok(());
-                    }
-                    Err(observed) => position = observed,
-                }
-            } else if difference < 0 {
-                return Err(IpcError::Full);
-            } else {
-                position = self.enqueue_position.load(Ordering::Relaxed)
-            }
-        }
+        self.ring
+            .try_send(message.into())
+            .map_err(|error| match error {
+                RingError::Full => IpcError::Full,
+                RingError::Empty => unreachable!(),
+            })?;
+        trace!(
+            EventKind::Ipc,
+            EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
+            EventField::identifier(field::OPERATION, message.correlation.raw()),
+        );
+        Ok(())
     }
 
     pub fn try_receive<const MAX_CAPABILITIES: usize>(
@@ -393,41 +253,17 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
     }
 
     fn dequeue(&self) -> Result<Message, IpcError> {
-        let mut position = self.dequeue_position.load(Ordering::Relaxed);
-        loop {
-            let slot = &self.slots[position % CAPACITY];
-            let sequence = slot.sequence.load(Ordering::Acquire);
-            let expected = position.wrapping_add(1);
-            let difference = sequence.wrapping_sub(expected) as isize;
-
-            if difference == 0 {
-                match self.dequeue_position.compare_exchange_weak(
-                    position,
-                    expected,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => {
-                        let message = slot.message.read();
-                        slot.sequence
-                            .store(position.wrapping_add(CAPACITY), Ordering::Release);
-                        return Ok(message);
-                    }
-                    Err(observed) => position = observed,
-                }
-            } else if difference < 0 {
-                return Err(IpcError::Empty);
-            } else {
-                position = self.dequeue_position.load(Ordering::Relaxed)
-            }
-        }
+        self.ring
+            .try_receive()
+            .map(Message::from)
+            .map_err(|error| match error {
+                RingError::Empty => IpcError::Empty,
+                RingError::Full => unreachable!(),
+            })
     }
 
     pub fn pending(&self) -> usize {
-        self.enqueue_position
-            .load(Ordering::Acquire)
-            .wrapping_sub(self.dequeue_position.load(Ordering::Acquire))
-            .min(CAPACITY)
+        self.ring.pending()
     }
 }
 

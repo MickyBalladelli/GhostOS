@@ -363,6 +363,29 @@ commands and complete pipelines enter a system-wide bounded job queue with
 priorities, start times, dependencies, retry limits, worker leases,
 cancellation, and lost-worker recovery.
 
+## Rust toolchain and runtime
+
+Ring 3 Rust programs target `targets/x86_64-unknown-synos.json` or
+`targets/aarch64-unknown-synos.json`. Both targets produce position-independent
+static images with abort-on-panic behavior.
+
+`synos-runtime` provides the native `sys::synos` platform contract used by the
+SynOS `std` port. The loader installs one call gate and an initial capability
+set. Files, threads, wait words, clocks, memory mappings, IPC endpoints, and
+SynFS objects therefore use generation-checked handles instead of an ambient
+Unix syscall namespace.
+
+`synos-ipc` owns the shared MPMC ring used by Ring 0 and Ring 3. Fixed envelopes
+move through atomics while structured payloads stay in capability-mapped pages.
+`zerocopy` validates typed views over those pages, and `SharedArena` archives
+messages without heap allocation.
+
+Legacy C and C++ components can opt into `synos-posix-compat`. It maintains a
+bounded process-local file-descriptor table and translates open, close, read,
+write, seek, and clock operations into SynFS capabilities and shared-buffer
+descriptors. Its C contract is in
+`crates/posix-compat/include/synos_posix.h`.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase

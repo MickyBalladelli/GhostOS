@@ -201,13 +201,13 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 12. Rust Toolchain, Runtime & System Ecosystem
-- [ ] **Custom Rust Target & `std` Platform Layer**
-  - [ ] Define the `x86_64-unknown-synos` and `aarch64-unknown-synos` target specifications.
-  - [ ] Implement a native `std::sys::synos` backend mapping Rust primitives directly to SynOS capabilities, zero-copy IPC, and SynFS.
-- [ ] **Zero-Copy IPC Crate (`synos-ipc`)**
-  - [ ] Build a high-performance IPC library using `zerocopy`/`rkyv` for zero-allocation structured message passing between Ring 3 daemons and Ring 0.
-- [ ] **C / FFI Compatibility Layer**
-  - [ ] Provide an optional `synos-posix-compat` crate for running legacy C/C++ code (e.g., C-based LLM backends) via light syscall translation.
+- [x] **Custom Rust Target & `std` Platform Layer**
+  - [x] Define the `x86_64-unknown-synos` and `aarch64-unknown-synos` target specifications.
+  - [x] Implement a native `std::sys::synos` backend mapping Rust primitives directly to SynOS capabilities, zero-copy IPC, and SynFS.
+- [x] **Zero-Copy IPC Crate (`synos-ipc`)**
+  - [x] Build a high-performance IPC library using `zerocopy`/`rkyv` for zero-allocation structured message passing between Ring 3 daemons and Ring 0.
+- [x] **C / FFI Compatibility Layer**
+  - [x] Provide an optional `synos-posix-compat` crate for running legacy C/C++ code (e.g., C-based LLM backends) via light syscall translation.
 
 ---
 
