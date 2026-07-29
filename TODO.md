@@ -237,11 +237,11 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 16. Pure-Rust AI Compute Engine & GPU Abstraction
-- [ ] **Native ML Framework Bindings (`synos-compute`)**
-  - [ ] Port pure-Rust ML runtimes (Candle / Burn) to target `std::sys::synos` natively.
-  - [ ] Implement direct zero-copy tensor mapping between SynOS IPC memory pages and compute runtimes.
-- [ ] **User-Space Accelerator Interfaces**
-  - [ ] Build Ring 3 PCIe/Vulkan driver abstractions for GPU/NPU compute offloading.
+- [x] **Native ML Framework Bindings (`synos-compute`)**
+  - [x] Port pure-Rust ML runtimes (Candle / Burn) to target `std::sys::synos` natively.
+  - [x] Implement direct zero-copy tensor mapping between SynOS IPC memory pages and compute runtimes.
+- [x] **User-Space Accelerator Interfaces**
+  - [x] Build Ring 3 PCIe/Vulkan driver abstractions for GPU/NPU compute offloading.
 
 ---
 

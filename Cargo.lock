@@ -118,6 +118,16 @@ name = "synos-boot-protocol"
 version = "0.1.0"
 
 [[package]]
+name = "synos-compute"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-legacy-pc-drivers",
+ "synos-platform-io",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-fabric"
 version = "0.1.0"
 dependencies = [

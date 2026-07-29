@@ -287,6 +287,20 @@ When one node drops, a memory degradation handle resumes from the last committed
 token, resolves mirrored model and KV memory through the fabric, and can seed a
 replacement journal replica without changing the request identity.
 
+## Pure-Rust AI compute
+
+`synos-compute` gives Candle and Burn a small native SynOS runtime contract
+without a C, C++, CUDA, or POSIX dependency. Fixed-rank tensor metadata points
+directly into capability-mapped IPC regions; read-only and writable views
+borrow those pages in place and validate shape, stride, bounds, alignment, and
+access before a framework or device sees them.
+
+GPU and NPU work stays in isolated Ring 3 drivers. PCI display and processing
+accelerators become bounded device descriptors with capability-controlled BAR,
+interrupt, and doorbell operations. Frameworks submit SPIR-V/Vulkan or native
+compute kernels through generation-checked asynchronous queues, and tensor
+bindings continue to name the original shared pages instead of staging copies.
+
 ## Target platforms and emulation
 
 The platform kit under `platforms` defines evidence-gated profiles for two

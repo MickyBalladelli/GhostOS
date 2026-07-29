@@ -63,6 +63,7 @@ impl ServiceName {
 pub enum ServiceKind {
     StorageDriver,
     NetworkDriver,
+    AcceleratorDriver,
     System,
 }
 
