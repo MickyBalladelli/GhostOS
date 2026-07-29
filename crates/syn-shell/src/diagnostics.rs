@@ -13,6 +13,9 @@ use crate::{
 pub const SHOW_MEMORY_ROUTE: u16 = 1;
 pub const SHOW_PROCESS_ROUTE: u16 = 2;
 pub const MONITOR_ROUTE: u16 = 3;
+pub const SHOW_DISK_ROUTE: u16 = 4;
+pub const SHOW_CPU_ROUTE: u16 = 5;
+pub const SHOW_USERS_ROUTE: u16 = 6;
 pub const DEFAULT_DIAGNOSTIC_QUEUE: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,6 +38,41 @@ pub struct ClusterSnapshot {
     pub heartbeat_period_us: u64,
     pub remote_pages: u64,
     pub migrations: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiskSnapshot {
+    pub capacity_bytes: u64,
+    pub allocated_bytes: u64,
+    pub synfs_used_bytes: u64,
+    pub cow_overhead_bytes: u64,
+    pub retained_versions: u64,
+    pub checkpoints: u64,
+    pub nvme_devices: u64,
+    pub cxl_devices: u64,
+    pub degraded_devices: u64,
+    pub failed_devices: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CpuSnapshot {
+    pub sample_period_us: u64,
+    pub capacity_us: u64,
+    pub microkernel_us: u64,
+    pub user_daemon_us: u64,
+    pub dsm_fault_us: u64,
+    pub idle_us: u64,
+    pub context_switches: u64,
+    pub dsm_faults: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UsersSnapshot {
+    pub visible_users: u64,
+    pub sessions: u64,
+    pub local_sessions: u64,
+    pub remote_sessions: u64,
+    pub processes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,6 +117,9 @@ pub struct MonitorSnapshot {
 
 pub trait DiagnosticSource {
     fn memory(&mut self, cluster: bool) -> Result<MemorySnapshot, Status>;
+    fn disk(&mut self, cluster: bool) -> Result<DiskSnapshot, Status>;
+    fn cpu(&mut self, cluster: bool) -> Result<CpuSnapshot, Status>;
+    fn users(&mut self, cluster: bool) -> Result<UsersSnapshot, Status>;
     fn cluster(&mut self) -> Result<ClusterSnapshot, Status>;
     fn process(&mut self, pid: Option<u64>) -> Result<ProcessSnapshot, Status>;
     fn monitor(
@@ -105,6 +146,24 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-PROCESS", &[pid])
             .map_err(|_| Error::InvalidValue)?,
         RouteId::new(SHOW_PROCESS_ROUTE).expect("nonzero route"),
+    )?;
+
+    registry.register(
+        CommandSpec::new("SHOW-DISK", &[cluster])
+            .map_err(|_| Error::InvalidValue)?,
+        RouteId::new(SHOW_DISK_ROUTE).expect("nonzero route"),
+    )?;
+
+    registry.register(
+        CommandSpec::new("SHOW-CPU", &[cluster])
+            .map_err(|_| Error::InvalidValue)?,
+        RouteId::new(SHOW_CPU_ROUTE).expect("nonzero route"),
+    )?;
+
+    registry.register(
+        CommandSpec::new("SHOW-USERS", &[cluster])
+            .map_err(|_| Error::InvalidValue)?,
+        RouteId::new(SHOW_USERS_ROUTE).expect("nonzero route"),
     )?;
 
     let interval =
@@ -223,6 +282,18 @@ impl<Source: DiagnosticSource, const CAPACITY: usize>
                 let pid = unsigned(command.get("PID"))?;
                 process_output(self.source.process(pid)?)
             }
+            SHOW_DISK_ROUTE => {
+                let cluster = boolean(command.get("CLUSTER"))?;
+                disk_output(self.source.disk(cluster)?)
+            }
+            SHOW_CPU_ROUTE => {
+                let cluster = boolean(command.get("CLUSTER"))?;
+                cpu_output(self.source.cpu(cluster)?)
+            }
+            SHOW_USERS_ROUTE => {
+                let cluster = boolean(command.get("CLUSTER"))?;
+                users_output(self.source.users(cluster)?)
+            }
             MONITOR_ROUTE => {
                 let interval = unsigned(command.get("INTERVAL"))?.unwrap_or(1_000_000);
                 let samples = unsigned(command.get("SAMPLES"))?.unwrap_or(1);
@@ -337,6 +408,92 @@ fn process_output(snapshot: ProcessSnapshot) -> Result<StructuredOutput, Status>
         "cpu-time-us",
         OutputValue::Unsigned(snapshot.cpu_time_us),
     )?;
+    Ok(output)
+}
+
+fn disk_output(snapshot: DiskSnapshot) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert(&mut output, "capacity-bytes", OutputValue::Unsigned(snapshot.capacity_bytes))?;
+    insert(&mut output, "allocated-bytes", OutputValue::Unsigned(snapshot.allocated_bytes))?;
+    insert(&mut output, "synfs-used-bytes", OutputValue::Unsigned(snapshot.synfs_used_bytes))?;
+    insert(
+        &mut output,
+        "cow-overhead-bytes",
+        OutputValue::Unsigned(snapshot.cow_overhead_bytes),
+    )?;
+    insert(
+        &mut output,
+        "retained-versions",
+        OutputValue::Unsigned(snapshot.retained_versions),
+    )?;
+    insert(&mut output, "checkpoints", OutputValue::Unsigned(snapshot.checkpoints))?;
+    insert(&mut output, "nvme-devices", OutputValue::Unsigned(snapshot.nvme_devices))?;
+    insert(&mut output, "cxl-devices", OutputValue::Unsigned(snapshot.cxl_devices))?;
+    insert(
+        &mut output,
+        "degraded-devices",
+        OutputValue::Unsigned(snapshot.degraded_devices),
+    )?;
+    insert(
+        &mut output,
+        "failed-devices",
+        OutputValue::Unsigned(snapshot.failed_devices),
+    )?;
+    Ok(output)
+}
+
+fn cpu_output(snapshot: CpuSnapshot) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert(
+        &mut output,
+        "sample-period-us",
+        OutputValue::Unsigned(snapshot.sample_period_us),
+    )?;
+    insert(&mut output, "capacity-us", OutputValue::Unsigned(snapshot.capacity_us))?;
+    insert(
+        &mut output,
+        "microkernel-us",
+        OutputValue::Unsigned(snapshot.microkernel_us),
+    )?;
+    insert(
+        &mut output,
+        "user-daemon-us",
+        OutputValue::Unsigned(snapshot.user_daemon_us),
+    )?;
+    insert(
+        &mut output,
+        "dsm-fault-us",
+        OutputValue::Unsigned(snapshot.dsm_fault_us),
+    )?;
+    insert(&mut output, "idle-us", OutputValue::Unsigned(snapshot.idle_us))?;
+    insert(
+        &mut output,
+        "context-switches",
+        OutputValue::Unsigned(snapshot.context_switches),
+    )?;
+    insert(&mut output, "dsm-faults", OutputValue::Unsigned(snapshot.dsm_faults))?;
+    Ok(output)
+}
+
+fn users_output(snapshot: UsersSnapshot) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert(
+        &mut output,
+        "visible-users",
+        OutputValue::Unsigned(snapshot.visible_users),
+    )?;
+    insert(&mut output, "sessions", OutputValue::Unsigned(snapshot.sessions))?;
+    insert(
+        &mut output,
+        "local-sessions",
+        OutputValue::Unsigned(snapshot.local_sessions),
+    )?;
+    insert(
+        &mut output,
+        "remote-sessions",
+        OutputValue::Unsigned(snapshot.remote_sessions),
+    )?;
+    insert(&mut output, "processes", OutputValue::Unsigned(snapshot.processes))?;
     Ok(output)
 }
 

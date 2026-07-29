@@ -276,6 +276,22 @@ enum PageState {
     Exclusive,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DsmPageState {
+    Invalid,
+    Shared,
+    Exclusive,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DsmPageInfo {
+    pub page_address: u64,
+    pub state: DsmPageState,
+    pub owner: Option<NodeId>,
+    pub sharers: u64,
+    pub lease: Option<SoftwareDlmLease>,
+}
+
 #[derive(Clone, Copy)]
 struct CoherenceEntry {
     page_address: u64,
@@ -485,6 +501,23 @@ impl<const CAPACITY: usize> CoherenceDirectory<CAPACITY> {
             changed += 1
         }
         Ok(changed)
+    }
+
+    pub fn pages(&self) -> impl Iterator<Item = DsmPageInfo> + '_ {
+        self.pages
+            .iter()
+            .filter(|entry| entry.page_address != u64::MAX)
+            .map(|entry| DsmPageInfo {
+                page_address: entry.page_address,
+                state: match entry.state {
+                    PageState::Invalid => DsmPageState::Invalid,
+                    PageState::Shared => DsmPageState::Shared,
+                    PageState::Exclusive => DsmPageState::Exclusive,
+                },
+                owner: entry.owner,
+                sharers: entry.sharers,
+                lease: entry.lease,
+            })
     }
 
     fn entry(&mut self, page_address: u64) -> Result<&mut CoherenceEntry, Error> {

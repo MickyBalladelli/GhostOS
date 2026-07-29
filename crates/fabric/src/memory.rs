@@ -414,6 +414,16 @@ impl LeaseHandle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LeaseInfo {
+    pub handle: LeaseHandle,
+    pub owner: LeaseOwner,
+    pub pool: PoolId,
+    pub range: AddressRange,
+    pub rights: LeaseRights,
+    pub expires_at_us: u64,
+}
+
 #[derive(Clone, Copy)]
 struct Lease {
     occupied: bool,
@@ -642,6 +652,21 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
             .iter()
             .filter(|lease| lease.occupied && lease.pool == pool)
             .count()
+    }
+
+    pub fn leases(&self) -> impl Iterator<Item = LeaseInfo> + '_ {
+        self.leases
+            .iter()
+            .enumerate()
+            .filter(|(_, lease)| lease.occupied)
+            .map(|(slot, lease)| LeaseInfo {
+                handle: LeaseHandle::from_parts(slot, lease.generation),
+                owner: lease.owner,
+                pool: lease.pool,
+                range: lease.range,
+                rights: lease.rights,
+                expires_at_us: lease.expires_at_us,
+            })
     }
 
     pub fn revoke_pool(&mut self, pool: PoolId) -> usize {

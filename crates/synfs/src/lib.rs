@@ -355,6 +355,19 @@ pub struct GcReport {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SynFsDiagnostics {
+    pub generation: u64,
+    pub capacity_blocks: usize,
+    pub allocated_blocks: usize,
+    pub live_blocks: usize,
+    pub cow_snapshot_blocks: usize,
+    pub retained_versions: u64,
+    pub retained_bytes: u64,
+    pub file_count: u64,
+    pub checkpoints: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct CheckpointId(u64);
 
@@ -608,6 +621,54 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub const fn capacity(&self) -> usize {
         MAX_BLOCKS
+    }
+
+    /// Read-only accounting for `SHOW DISK`.
+    ///
+    /// `cow_snapshot_blocks` counts blocks reachable only through pinned
+    /// checkpoint roots. Unreachable arena garbage is excluded from live and
+    /// snapshot usage while remaining visible in `allocated_blocks`.
+    pub fn diagnostics(&self) -> Result<SynFsDiagnostics, Error> {
+        let mut current = [false; MAX_BLOCKS];
+        self.mark_reachable(self.root, &mut current)?;
+
+        let mut all_live = current;
+        for checkpoint in self.checkpoints.iter().flatten() {
+            self.mark_reachable(checkpoint.root, &mut all_live)?
+        }
+
+        let live_blocks = all_live.iter().filter(|marked| **marked).count();
+        let cow_snapshot_blocks = all_live
+            .iter()
+            .zip(current.iter())
+            .filter(|(live, current)| **live && !**current)
+            .count();
+        let mut retained_versions = 0u64;
+        let mut retained_bytes = 0u64;
+        let mut file_count = 0u64;
+        let mut previous_file = None;
+        let mut ordinal = 0u32;
+        while let Some(record) = self.record_at(self.root, ordinal)? {
+            retained_versions = retained_versions.saturating_add(1);
+            retained_bytes = retained_bytes.saturating_add(record.size);
+            if previous_file != Some(record.key.file) {
+                file_count = file_count.saturating_add(1);
+                previous_file = Some(record.key.file)
+            }
+            ordinal = ordinal.saturating_add(1)
+        }
+
+        Ok(SynFsDiagnostics {
+            generation: self.generation,
+            capacity_blocks: MAX_BLOCKS,
+            allocated_blocks: self.arena.used(),
+            live_blocks,
+            cow_snapshot_blocks,
+            retained_versions,
+            retained_bytes,
+            file_count,
+            checkpoints: self.checkpoints.iter().flatten().count(),
+        })
     }
 
     pub fn transaction(&mut self) -> SynFsTransaction<'_, MAX_BLOCKS> {
@@ -969,6 +1030,42 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             live_blocks,
             freed_blocks,
         }
+    }
+
+    fn mark_reachable(
+        &self,
+        root: BlockId,
+        marked: &mut [bool; MAX_BLOCKS],
+    ) -> Result<(), Error> {
+        if !root.is_some() {
+            return Ok(())
+        }
+        let mut pending = [BlockId::NONE; MAX_BLOCKS];
+        let mut pending_len = 0;
+        mark_pending(root, marked, &mut pending, &mut pending_len);
+        while pending_len != 0 {
+            pending_len -= 1;
+            let id = pending[pending_len];
+            match self.arena.get(id)? {
+                Block::Data(data) if data.next.is_some() => {
+                    mark_pending(data.next, marked, &mut pending, &mut pending_len)
+                }
+                Block::Tree(TreeBlock::Leaf(leaf)) => {
+                    for record in &leaf.records[..leaf.len as usize] {
+                        if !record.deleted && record.data.is_some() {
+                            mark_pending(record.data, marked, &mut pending, &mut pending_len)
+                        }
+                    }
+                }
+                Block::Tree(TreeBlock::Branch(branch)) => {
+                    for child in &branch.children[..=branch.len as usize] {
+                        mark_pending(*child, marked, &mut pending, &mut pending_len)
+                    }
+                }
+                Block::Data(_) => {}
+            }
+        }
+        Ok(())
     }
 
     fn store_data(&mut self, contents: &[u8]) -> Result<BlockId, Error> {

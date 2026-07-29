@@ -510,6 +510,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-inspect"
+version = "0.1.0"
+dependencies = [
+ "syn-shell",
+ "synos-fabric",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-ipc"
 version = "0.1.0"
 dependencies = [

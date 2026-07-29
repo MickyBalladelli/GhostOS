@@ -1,0 +1,212 @@
+use synos_fabric::NodeId;
+use synos_synfs::{
+    BLOCK_SIZE, DeviceHealth as SynFsDeviceHealth, PoolLayout, StorageClass,
+    StoragePoolAdmin, SynFs,
+};
+
+use crate::{InspectError, Name};
+
+pub const MAX_STORAGE_DEVICES: usize = 32;
+pub const MAX_SYNFS_VOLUMES: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageKind {
+    Nvme,
+    CxlPersistentMemory,
+    NetworkBlock,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceHealth {
+    Online,
+    Degraded,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StorageDeviceSample {
+    pub id: u64,
+    pub node: NodeId,
+    pub kind: StorageKind,
+    pub health: DeviceHealth,
+    pub capacity_bytes: u64,
+    pub allocated_bytes: u64,
+    pub media_errors: u64,
+    pub temperature_millicelsius: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SynFsVolumeSample {
+    pub id: u64,
+    pub node: NodeId,
+    pub name: Name<32>,
+    pub generation: u64,
+    pub capacity_bytes: u64,
+    pub used_bytes: u64,
+    pub cow_overhead_bytes: u64,
+    pub retained_versions: u64,
+    pub checkpoints: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct StorageReport {
+    sampled_at_us: u64,
+    devices: [Option<StorageDeviceSample>; MAX_STORAGE_DEVICES],
+    volumes: [Option<SynFsVolumeSample>; MAX_SYNFS_VOLUMES],
+}
+
+impl StorageReport {
+    pub const fn new() -> Self {
+        Self {
+            sampled_at_us: 0,
+            devices: [None; MAX_STORAGE_DEVICES],
+            volumes: [None; MAX_SYNFS_VOLUMES],
+        }
+    }
+
+    pub const fn sampled_at_us(&self) -> u64 {
+        self.sampled_at_us
+    }
+
+    pub fn set_sampled_at_us(&mut self, sampled_at_us: u64) {
+        self.sampled_at_us = sampled_at_us
+    }
+
+    pub fn devices(&self) -> impl Iterator<Item = StorageDeviceSample> + '_ {
+        self.devices.iter().flatten().copied()
+    }
+
+    pub fn volumes(&self) -> impl Iterator<Item = SynFsVolumeSample> + '_ {
+        self.volumes.iter().flatten().copied()
+    }
+
+    pub fn push_device(&mut self, sample: StorageDeviceSample) -> Result<(), InspectError> {
+        if sample.id == 0
+            || sample.capacity_bytes == 0
+            || sample.allocated_bytes > sample.capacity_bytes
+            || self.devices().any(|entry| entry.id == sample.id)
+        {
+            return Err(InspectError::InvalidSample)
+        }
+        insert(&mut self.devices, sample)
+    }
+
+    pub fn push_volume(&mut self, sample: SynFsVolumeSample) -> Result<(), InspectError> {
+        if sample.id == 0
+            || sample.capacity_bytes == 0
+            || sample.used_bytes > sample.capacity_bytes
+            || sample.cow_overhead_bytes > sample.used_bytes
+            || self.volumes().any(|entry| entry.id == sample.id)
+        {
+            return Err(InspectError::InvalidSample)
+        }
+        insert(&mut self.volumes, sample)
+    }
+
+    pub fn push_synfs<const BLOCKS: usize>(
+        &mut self,
+        id: u64,
+        node: NodeId,
+        name: &str,
+        filesystem: &SynFs<BLOCKS>,
+    ) -> Result<(), InspectError> {
+        let diagnostics = filesystem
+            .diagnostics()
+            .map_err(|_| InspectError::InvalidSample)?;
+        self.push_volume(SynFsVolumeSample {
+            id,
+            node,
+            name: Name::new(name)?,
+            generation: diagnostics.generation,
+            capacity_bytes: (diagnostics.capacity_blocks as u64)
+                .saturating_mul(BLOCK_SIZE as u64),
+            used_bytes: (diagnostics.live_blocks as u64)
+                .saturating_mul(BLOCK_SIZE as u64),
+            cow_overhead_bytes: (diagnostics.cow_snapshot_blocks as u64)
+                .saturating_mul(BLOCK_SIZE as u64),
+            retained_versions: diagnostics.retained_versions,
+            checkpoints: diagnostics.checkpoints as u32,
+        })
+    }
+
+    pub fn append_pool_admin<const DEVICES: usize, const POOLS: usize>(
+        &mut self,
+        node: NodeId,
+        admin: &StoragePoolAdmin<DEVICES, POOLS>,
+    ) -> Result<(), InspectError> {
+        for device in admin.devices() {
+            let allocated_blocks = admin
+                .pools()
+                .filter(|pool| pool.members().any(|member| member == device.id))
+                .fold(0u64, |allocated, pool| {
+                    let device_blocks = match pool.layout {
+                        PoolLayout::Stripe => pool
+                            .allocated_blocks
+                            .saturating_add(pool.member_count() as u64 - 1)
+                            / pool.member_count() as u64,
+                        PoolLayout::Mirror => pool.allocated_blocks,
+                    };
+                    allocated.saturating_add(device_blocks)
+                });
+            self.push_device(StorageDeviceSample {
+                id: device.id.raw(),
+                node,
+                kind: match device.class {
+                    StorageClass::Nvme => StorageKind::Nvme,
+                    StorageClass::CxlPersistentMemory => {
+                        StorageKind::CxlPersistentMemory
+                    }
+                    StorageClass::NetworkBlock => StorageKind::NetworkBlock,
+                },
+                health: match device.health {
+                    SynFsDeviceHealth::Online => DeviceHealth::Online,
+                    SynFsDeviceHealth::Draining => DeviceHealth::Degraded,
+                    SynFsDeviceHealth::Failed => DeviceHealth::Failed,
+                },
+                capacity_bytes: device
+                    .capacity_blocks
+                    .saturating_mul(device.block_size as u64),
+                allocated_bytes: allocated_blocks
+                    .saturating_mul(device.block_size as u64),
+                media_errors: 0,
+                temperature_millicelsius: 0,
+            })?
+        }
+        Ok(())
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::new()
+    }
+
+    pub(crate) fn retain_node(&mut self, node: NodeId) {
+        for entry in &mut self.devices {
+            if entry.is_some_and(|sample| sample.node != node) {
+                *entry = None
+            }
+        }
+        for entry in &mut self.volumes {
+            if entry.is_some_and(|sample| sample.node != node) {
+                *entry = None
+            }
+        }
+    }
+}
+
+impl Default for StorageReport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn insert<T: Copy, const CAPACITY: usize>(
+    entries: &mut [Option<T>; CAPACITY],
+    sample: T,
+) -> Result<(), InspectError> {
+    let slot = entries
+        .iter_mut()
+        .find(|entry| entry.is_none())
+        .ok_or(InspectError::Capacity)?;
+    *slot = Some(sample);
+    Ok(())
+}

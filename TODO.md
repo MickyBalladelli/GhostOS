@@ -395,14 +395,14 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 32. System Inspection & Diagnostics (`syn-inspect`)
-- [ ] **Memory & Fabric Inspection (`SHOW MEMORY`)**
-  - [ ] Build capability-restricted memory diagnostic tools detailing local RAM, CXL fabric leases, and remote Software DSM page allocations.
-- [ ] **Storage & SynFS Volume Diagnostics (`SHOW DISK`)**
-  - [ ] Implement disk usage inspection tools detailing CoW B-tree snapshot overhead, file version retentions, and NVMe/CXL storage health.
-- [ ] **Processor & Cluster Activity (`SHOW CPU`)**
-  - [ ] Build compute diagnostic tools measuring microkernel execution, user daemons, and Software DSM page-fault overhead.
-- [ ] **Session & Process Visibility (`SHOW USERS` / `SHOW PROCESS`)**
-  - [ ] Implement user and session tracking with capability-restricted views (`CAP_AUDIT_WORLD` required for full cluster visibility).
+- [x] **Memory & Fabric Inspection (`SHOW MEMORY`)**
+  - [x] Build capability-restricted memory diagnostic tools detailing local RAM, CXL fabric leases, and remote Software DSM page allocations.
+- [x] **Storage & SynFS Volume Diagnostics (`SHOW DISK`)**
+  - [x] Implement disk usage inspection tools detailing CoW B-tree snapshot overhead, file version retentions, and NVMe/CXL storage health.
+- [x] **Processor & Cluster Activity (`SHOW CPU`)**
+  - [x] Build compute diagnostic tools measuring microkernel execution, user daemons, and Software DSM page-fault overhead.
+- [x] **Session & Process Visibility (`SHOW USERS` / `SHOW PROCESS`)**
+  - [x] Implement user and session tracking with capability-restricted views (`CAP_AUDIT_WORLD` required for full cluster visibility).
 
 ---
 
