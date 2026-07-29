@@ -1,0 +1,33 @@
+# Rust build output (built inside Docker)
+/target/
+/build/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker files (don't need these in context)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed at build time)
+*.md
+!README.md
+
+# CI / config
+.env
+.env.*
+!docker-compose.yml

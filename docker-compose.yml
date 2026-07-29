@@ -1,0 +1,30 @@
+services:
+  synos:
+    build: .
+    image: synos:latest
+    container_name: synos
+    ports:
+      - "5900:5900"
+    environment:
+      - SYNOS_QEMU_ACCEL=tcg
+      - SYNOS_GUEST_MEMORY=512M
+    stdin_open: true
+    tty: true
+    # Override the default command to use single-node mode.
+    command: [ "single" ]
+
+  synos-cluster:
+    build: .
+    image: synos:latest
+    container_name: synos-cluster
+    ports:
+      - "5900-5907:5900-5907"
+    environment:
+      - SYNOS_QEMU_ACCEL=tcg
+      - SYNOS_GUEST_MEMORY=512M
+      - SYNOS_CLUSTER_NODES=3
+    stdin_open: true
+    tty: true
+    profiles:
+      - cluster
+    command: [ "cluster" ]

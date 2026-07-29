@@ -260,6 +260,70 @@ Type-3 endpoint and an `ivshmem-plain` region shared by all guests. The
 companion failure-injection command terminates one selected node so heartbeat,
 lease cleanup, mirrored redirection, and inference recovery can be observed.
 
+## Docker-based local testing
+
+A multi-stage Docker image builds SynOS from source and bundles QEMU so you can
+run a bootable SynOS guest on any Docker host without installing Rust, clang,
+or QEMU locally. The guest exposes a VNC display; connect with any VNC client
+to see the SynOS console.
+
+### Quick start — single node
+
+```sh
+# Build the Docker image (takes several minutes on first run)
+docker build -t synos:latest .
+
+# Launch a single SynOS guest with serial on stdout + VNC on :0
+docker run --rm -it -p 5900:5900 synos single
+```
+
+Open a VNC client to `localhost:5900` (password is empty). Press Ctrl-C to stop
+the guest.
+
+### Docker Compose
+
+```sh
+# Single node (foreground, Ctrl-C to stop)
+docker compose up synos
+
+# Three-node CXL cluster
+docker compose --profile cluster up synos-cluster
+```
+
+### Cluster mode
+
+```sh
+# 2–8 node cluster with CXL fabric and shared ivshmem region
+docker run --rm -it \
+  -p 5900-5907:5900-5907 \
+  -e SYNOS_CLUSTER_NODES=3 \
+  synos cluster
+```
+
+Each node receives its own VNC display starting at port 5900. Serial logs for
+every node are written to `/tmp/synos-qemu/node-*.serial.log` inside the
+container.
+
+### Environment variables
+
+| Variable               | Default                              | Description                              |
+| ---------------------- | ------------------------------------ | ---------------------------------------- |
+| `SYNOS_DISK_IMAGE`     | `/synos/build/bios/synos-bios.img`   | Path to the raw disk image               |
+| `SYNOS_CLUSTER_NODES`  | `1`                                  | Number of cluster guests (2–8)           |
+| `SYNOS_GUEST_MEMORY`   | `512M`                               | RAM per guest                            |
+| `SYNOS_VNC_BASE`       | `5900`                               | Starting VNC port                        |
+| `SYNOS_QEMU_ACCEL`     | `tcg`                                | QEMU accelerator: `tcg` or `kvm`         |
+| `SYNOS_QEMU_EXTRA`     | (empty)                              | Extra flags appended to QEMU             |
+
+### Platform notes
+
+- On Linux with `/dev/kvm` accessible, set `SYNOS_QEMU_ACCEL=kvm` for
+  near-native speed.
+- On macOS and Windows, TCG software emulation is used. Performance is adequate
+  for interactive shell testing.
+- The Docker image includes both the BIOS raw image and the portable UEFI image;
+  set `SYNOS_DISK_IMAGE` to `/synos/build/portable/synos.img` to boot via UEFI.
+
 ## Native interactive shell
 
 `syn-shell` is a heap-free Ring 3 shell core. Its UTF-8 line editor provides
