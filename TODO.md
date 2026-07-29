@@ -344,10 +344,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 29. Embedded Scripting & Wasm Extension Runtime
-- [ ] **Pure-Rust Embedded Engine (Rhai Integration)**
-  - [ ] Embed `Rhai` for fast, memory-safe system automation and service scripting without binary re-compilation.
-- [ ] **Sandboxed WebAssembly Scripting (`synos-wasm-script`)**
-  - [ ] Provide a zero-trust Wasm script engine (`wasmtime`/`wasmi`) for executing untrusted user/agent code with fine-grained capability restrictions.
+- [x] **Pure-Rust Embedded Engine (Rhai Integration)**
+  - [x] Embed `Rhai` for fast, memory-safe system automation and service scripting without binary re-compilation.
+- [x] **Sandboxed WebAssembly Scripting (`synos-wasm-script`)**
+  - [x] Provide a zero-trust Wasm script engine (`wasmtime`/`wasmi`) for executing untrusted user/agent code with fine-grained capability restrictions.
 
 ---
 

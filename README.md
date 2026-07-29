@@ -243,6 +243,22 @@ ACLs. `$STATUS`, `IF SUCCESS`, `IF FAILURE`, `SET ON`, `SET NOON`, and
 `ON ERROR THEN` provide deterministic condition handling without host shell
 exit-code conventions.
 
+## Embedded scripting and Wasm extensions
+
+`synos-embedded-script` embeds Rhai for service automation. Each evaluation has
+hard limits for source size, instructions, recursion, expression depth,
+functions, variables, collections, strings, and queued work. Scripts can only
+enqueue operations named in their capability list; the owning service validates
+and performs those requests after evaluation.
+
+`synos-wasm-script` runs untrusted binary Wasm through the pure-Rust Wasmi
+interpreter. It exposes no WASI filesystem, network, environment, or clock.
+Each invocation gets strict compile limits, a module-size and fuel budget,
+bounded memory/table resources, and a small numeric host ABI guarded by
+per-operation capability masks. Missing imports, denied operations, resource
+growth, bad entry signatures, and fuel exhaustion fail without widening guest
+authority.
+
 ## Hardware fabric and clustering
 
 `synos-fabric` gives CXL and legacy Ethernet clusters one bounded, heap-free
