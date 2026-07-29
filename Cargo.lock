@@ -397,6 +397,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-agent-bridge"
+version = "0.1.0"
+dependencies = [
+ "syn-script",
+ "syn-shell",
+ "synos-auth",
+ "synos-fabric",
+ "synos-kernel",
+ "synos-status",
+ "synos-synfs",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-app"
 version = "0.1.0"
 dependencies = [

@@ -361,12 +361,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 31. AI Agent Native Script Execution (`synos-agent-bridge`)
-- [ ] **Automated Tool Schema Reflection**
-  - [ ] Dynamically generate JSON-Schema tool definitions from `syn-script` command signatures for LLM function calling.
-- [ ] **Transactional CoW Execution Engine**
-  - [ ] Implement `RUN /SANDBOX` execution modes using SynFS Copy-on-Write snapshots to dry-run agent scripts safely before committing changes.
-- [ ] **Automatic Agent Capability Attenuation**
-  - [ ] Mint single-use, time-bound capability tokens tailored specifically to the scope of the agent's intended task.
+- [x] **Automated Tool Schema Reflection**
+  - [x] Dynamically generate JSON-Schema tool definitions from `syn-script` command signatures for LLM function calling.
+- [x] **Transactional CoW Execution Engine**
+  - [x] Implement `RUN /SANDBOX` execution modes using SynFS Copy-on-Write snapshots to dry-run agent scripts safely before committing changes.
+- [x] **Automatic Agent Capability Attenuation**
+  - [x] Mint single-use, time-bound capability tokens tailored specifically to the scope of the agent's intended task.
 
 
 ┌──────────────────────────────────────────────────────────────────┐

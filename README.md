@@ -252,6 +252,15 @@ then either discard it or atomically publish the whole transaction. Dropped and
 failed sandboxes always restore the original generation, and every finish
 returns a base/staged/result generation receipt.
 
+`synos-agent-bridge` joins those primitives into the native AI execution
+boundary. It exports live command schemas, derives short-lived capabilities
+sealed to one agent and exact task rights, and consumes each grant once through
+a fixed replay ledger. `RUN /SANDBOX` always discards its private SynFS root;
+an approved normal run publishes that root only after successful script
+completion and a write-authorized token. A prepared run can be inspected before
+approval, so commit publishes the exact validated root without rerunning agent
+commands.
+
 ## Embedded scripting and Wasm extensions
 
 `synos-embedded-script` embeds Rhai for service automation. Each evaluation has

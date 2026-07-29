@@ -1,0 +1,19 @@
+[package]
+name = "synos-agent-bridge"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Native capability-scoped AI agent script execution for SynOS"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+syn-shell = { path = "../syn-shell" }
+syn-script = { path = "../syn-script" }
+synos-auth = { path = "../auth" }
+synos-fabric = { path = "../fabric" }
+synos-kernel = { path = "../../kernel" }
+synos-status = { path = "../status" }
+synos-synfs = { path = "../synfs" }
+synos-system-model = { path = "../system-model" }
