@@ -440,6 +440,33 @@ write, seek, and clock operations into SynFS capabilities and shared-buffer
 descriptors. Its C contract is in
 `crates/posix-compat/include/synos_posix.h`.
 
+## Rust package toolchain
+
+`cargo-synos` builds Ring 3 programs for either SynOS target, builds the required
+`core` and `alloc` libraries from the pinned `rust-src`, and creates signed
+binary bundles:
+
+```sh
+cargo install --path tools/cargo-synos
+cargo synos package \
+  --bin example-service \
+  --target x86_64 \
+  --release \
+  --key package-signing.key \
+  --output example-service.synpkg
+```
+
+The key file contains either 32 raw bytes or 64 hexadecimal characters.
+`--dependency` pins another package by its 64-character SHA-256 ID. The
+standalone `build` and `bundle` commands expose each half of the workflow.
+
+The heap-free `synos-pkg` daemon rejects bundles from unknown trust keys,
+validates the signature and payload digest, and installs payloads and manifests
+under SHA-256-derived SynFS names. A bounded `SystemConfiguration` declares the
+complete logical-name-to-package mapping. Activation first validates every
+package and dependency, then commits one new `system/root.manifest` version, so
+readers see either the old root or the complete new root.
+
 ## Boot from USB
 
 This bootstrap is experimental. Use a spare USB drive. The commands below erase

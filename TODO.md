@@ -246,10 +246,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 17. Rust Ecosystem Toolchain & Package Distribution
-- [ ] **Cargo Extension (`cargo-synos`)**
-  - [ ] Build toolchain utilities for automated cross-compiling, manifest signing, and binary bundle generation.
-- [ ] **Hermetic Package Daemon (`synos-pkg`)**
-  - [ ] Implement content-addressed package management backing declarative system configurations on SynFS.
+- [x] **Cargo Extension (`cargo-synos`)**
+  - [x] Build toolchain utilities for automated cross-compiling, manifest signing, and binary bundle generation.
+- [x] **Hermetic Package Daemon (`synos-pkg`)**
+  - [x] Implement content-addressed package management backing declarative system configurations on SynFS.
 
 ---
 

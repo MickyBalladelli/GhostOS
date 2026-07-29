@@ -13,3 +13,10 @@ Until these target names ship with Rust, build `core`, `alloc`, and the SynOS
 `std` port from `rust-src` with the corresponding JSON specification. Keep the
 PAL revision pinned to the Rust channel in `rust-toolchain.toml`, because
 `std::sys` is compiler-internal.
+
+The `cargo-synos` extension automates the custom-target and `build-std` flags:
+
+```sh
+cargo install --path tools/cargo-synos
+cargo synos build --target x86_64 --package my-service
+```
