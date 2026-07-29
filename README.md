@@ -171,6 +171,16 @@ between versions, and a failed or superseded tree update cannot damage the
 committed root. `SynfsPurged` applies bounded per-file retention work, then
 mark-and-sweep collection reclaims tombstoned data and abandoned CoW branches.
 
+`StoragePoolAdmin` combines NVMe namespaces, CXL persistent-memory regions, and
+network block targets into striped or fault-domain-separated mirrored pools. It
+supports device registration, pool creation and growth, draining/failure health
+changes, allocation accounting, safe detach, and degraded/offline reporting.
+
+SynFS checkpoints pin immutable tree roots across later writes and garbage
+collection. The `synos-backup` worker streams every live file version from one
+checkpoint into a checksummed `SYNBACK1` archive through bounded cooperative
+polls, then releases the root after the caller commits the completed backup.
+
 ## OpenVMS feature core
 
 The kernel DLM implements the six OpenVMS lock modes for shared-memory, file,

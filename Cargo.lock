@@ -122,6 +122,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-backup"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-boot-protocol"
 version = "0.1.0"
 

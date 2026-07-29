@@ -6,10 +6,16 @@ use core::fmt;
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 mod rms;
+mod pool;
 
 pub use rms::{
     IndexDefinition, MappedRecordFile, MappedRecordInfo, RecordDescriptor, RecordFileInfo,
     RecordFormat, RecordOrganization, RecordRead, RecordSelector, RmsError, RmsMapHandle,
+};
+pub use pool::{
+    BlockPlacement, DeviceHealth, MAX_POOL_MEMBERS, MAX_POOL_NAME_BYTES, PoolHealth,
+    PoolLayout, PoolName, StorageClass, StorageDevice, StorageDeviceId, StoragePool,
+    StoragePoolAdmin, StoragePoolError, StoragePoolId,
 };
 
 pub const BLOCK_SIZE: usize = 4096;
@@ -17,6 +23,7 @@ pub const DATA_BYTES: usize = BLOCK_SIZE - 16;
 pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_KEYS: usize = 7;
 pub const MAX_RETENTION_RULES: usize = 16;
+pub const MAX_CHECKPOINTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -27,6 +34,8 @@ pub enum Error {
     InvalidVersion,
     NotFound,
     OutOfSpace,
+    CheckpointNotFound,
+    TooManyCheckpoints,
     TooManyRetentionRules,
     VersionOverflow,
 }
@@ -34,8 +43,10 @@ pub enum Error {
 impl IntoStatus for Error {
     fn status(self) -> Status {
         match self {
-            Self::NotFound => Status::NOT_FOUND,
-            Self::OutOfSpace | Self::TooManyRetentionRules => Status::NO_SPACE,
+            Self::NotFound | Self::CheckpointNotFound => Status::NOT_FOUND,
+            Self::OutOfSpace | Self::TooManyCheckpoints | Self::TooManyRetentionRules => {
+                Status::NO_SPACE
+            }
             Self::Corrupt => Status::CORRUPT,
             Self::InvalidPath | Self::InvalidVersion => Status::INVALID_ARGUMENT,
             Self::BufferTooSmall { .. } => {
@@ -335,6 +346,28 @@ pub struct GcReport {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct CheckpointId(u64);
+
+impl CheckpointId {
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CheckpointInfo {
+    pub id: CheckpointId,
+    pub generation: u64,
+}
+
+#[derive(Clone, Copy)]
+struct Checkpoint {
+    info: CheckpointInfo,
+    root: BlockId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MappedFilePage<'a> {
     pub file_offset: u64,
     pub bytes: &'a [u8],
@@ -345,6 +378,7 @@ pub struct MappedFilePage<'a> {
 pub struct ReadOnlySnapshot<'a, const MAX_BLOCKS: usize> {
     capability: RmsMapHandle,
     generation: u64,
+    root: BlockId,
     filesystem: &'a SynFs<MAX_BLOCKS>,
 }
 
@@ -358,7 +392,29 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
     }
 
     pub fn lookup(&self, path: &str) -> Result<FileVersion, Error> {
-        self.filesystem.lookup(path)
+        self.filesystem.lookup_at(self.root, path)
+    }
+
+    /// Return one live file version by its stable in-snapshot ordinal.
+    pub fn file_at(&self, index: u32) -> Result<Option<FileVersion>, Error> {
+        self.filesystem
+            .record_at(self.root, index)
+            .map(|record| record.map(Into::into))
+    }
+
+    /// Read a range from one file version without leaving the checkpoint tree.
+    pub fn read_file_at(
+        &self,
+        index: u32,
+        offset: u64,
+        destination: &mut [u8],
+    ) -> Result<usize, Error> {
+        let record = self
+            .filesystem
+            .record_at(self.root, index)?
+            .ok_or(Error::NotFound)?;
+        self.filesystem
+            .read_record_range(record, offset, destination)
     }
 
     /// Visit immutable file pages directly, without copying through a daemon.
@@ -367,10 +423,10 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         path: &str,
         mut visitor: impl FnMut(MappedFilePage<'a>),
     ) -> Result<FileVersion, Error> {
-        let file = self.filesystem.lookup(path)?;
+        let file = self.filesystem.lookup_at(self.root, path)?;
         let record = self
             .filesystem
-            .find_record(FileKey {
+            .find_record_at(self.root, FileKey {
                 file: file.file,
                 version: file.version,
             })?
@@ -421,6 +477,8 @@ pub struct SynFs<const MAX_BLOCKS: usize> {
     arena: BlockArena<MAX_BLOCKS>,
     root: BlockId,
     generation: u64,
+    checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
+    next_checkpoint: u64,
 }
 
 impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
@@ -429,6 +487,8 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             arena: BlockArena::new(),
             root: BlockId::NONE,
             generation: 0,
+            checkpoints: [None; MAX_CHECKPOINTS],
+            next_checkpoint: 1,
         }
     }
 
@@ -452,8 +512,61 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         ReadOnlySnapshot {
             capability,
             generation: self.generation,
+            root: self.root,
             filesystem: self,
         }
+    }
+
+    /// Pin the current CoW root so later writes and collection cannot change it.
+    pub fn create_checkpoint(&mut self) -> Result<CheckpointInfo, Error> {
+        let slot = self
+            .checkpoints
+            .iter_mut()
+            .find(|checkpoint| checkpoint.is_none())
+            .ok_or(Error::TooManyCheckpoints)?;
+        let id = CheckpointId(self.next_checkpoint);
+        self.next_checkpoint = self
+            .next_checkpoint
+            .checked_add(1)
+            .ok_or(Error::VersionOverflow)?;
+        let checkpoint = Checkpoint {
+            info: CheckpointInfo {
+                id,
+                generation: self.generation,
+            },
+            root: self.root,
+        };
+        *slot = Some(checkpoint);
+        Ok(checkpoint.info)
+    }
+
+    pub fn checkpoint_info(&self, id: CheckpointId) -> Result<CheckpointInfo, Error> {
+        self.find_checkpoint(id)
+            .map(|checkpoint| checkpoint.info)
+    }
+
+    pub fn checkpoint_snapshot(
+        &self,
+        id: CheckpointId,
+        capability: RmsMapHandle,
+    ) -> Result<ReadOnlySnapshot<'_, MAX_BLOCKS>, Error> {
+        let checkpoint = self.find_checkpoint(id)?;
+        Ok(ReadOnlySnapshot {
+            capability,
+            generation: checkpoint.info.generation,
+            root: checkpoint.root,
+            filesystem: self,
+        })
+    }
+
+    pub fn release_checkpoint(&mut self, id: CheckpointId) -> Result<(), Error> {
+        let slot = self
+            .checkpoints
+            .iter_mut()
+            .find(|checkpoint| checkpoint.is_some_and(|value| value.info.id == id))
+            .ok_or(Error::CheckpointNotFound)?;
+        *slot = None;
+        Ok(())
     }
 
     pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
@@ -500,11 +613,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn lookup(&self, path: &str) -> Result<FileVersion, Error> {
+        self.lookup_at(self.root, path)
+    }
+
+    fn lookup_at(&self, root: BlockId, path: &str) -> Result<FileVersion, Error> {
         let path = VersionedPath::parse(path)?;
         let record = match path.version {
-            VersionSelector::Latest => self.latest_record(path.file)?,
+            VersionSelector::Latest => self.latest_record_at(root, path.file)?,
             VersionSelector::Exact(version) => {
-                self.find_record(FileKey {
+                self.find_record_at(root, FileKey {
                     file: path.file,
                     version,
                 })?
@@ -623,6 +740,16 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             pending[0] = self.root;
             marked[self.root.0 as usize - 1] = true;
             pending_len = 1;
+        }
+        for checkpoint in self.checkpoints.iter().flatten() {
+            if checkpoint.root.is_some() {
+                mark_pending(
+                    checkpoint.root,
+                    &mut marked,
+                    &mut pending,
+                    &mut pending_len,
+                )
+            }
         }
 
         while pending_len != 0 {
@@ -823,10 +950,18 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn find_record(&self, key: FileKey) -> Result<Option<FileRecord>, Error> {
-        if !self.root.is_some() {
+        self.find_record_at(self.root, key)
+    }
+
+    fn find_record_at(
+        &self,
+        root: BlockId,
+        key: FileKey,
+    ) -> Result<Option<FileRecord>, Error> {
+        if !root.is_some() {
             return Ok(None)
         }
-        let mut id = self.root;
+        let mut id = root;
         loop {
             match self.arena.get(id)? {
                 Block::Tree(TreeBlock::Leaf(leaf)) => {
@@ -844,14 +979,22 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn latest_record(&self, file: FileName) -> Result<Option<FileRecord>, Error> {
-        if !self.root.is_some() {
+        self.latest_record_at(self.root, file)
+    }
+
+    fn latest_record_at(
+        &self,
+        root: BlockId,
+        file: FileName,
+    ) -> Result<Option<FileRecord>, Error> {
+        if !root.is_some() {
             return Ok(None)
         }
         let key = FileKey {
             file,
             version: u32::MAX,
         };
-        let mut id = self.root;
+        let mut id = root;
         loop {
             match self.arena.get(id)? {
                 Block::Tree(TreeBlock::Leaf(leaf)) => {
@@ -905,6 +1048,97 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let mut oldest = None;
         visit(self, self.root, file, &mut count, &mut oldest)?;
         Ok((count, oldest))
+    }
+
+    fn find_checkpoint(&self, id: CheckpointId) -> Result<Checkpoint, Error> {
+        self.checkpoints
+            .iter()
+            .flatten()
+            .find(|checkpoint| checkpoint.info.id == id)
+            .copied()
+            .ok_or(Error::CheckpointNotFound)
+    }
+
+    fn record_at(&self, root: BlockId, wanted: u32) -> Result<Option<FileRecord>, Error> {
+        fn visit<const MAX_BLOCKS: usize>(
+            fs: &SynFs<MAX_BLOCKS>,
+            id: BlockId,
+            wanted: u32,
+            ordinal: &mut u32,
+        ) -> Result<Option<FileRecord>, Error> {
+            match fs.arena.get(id)? {
+                Block::Tree(TreeBlock::Leaf(leaf)) => {
+                    for record in &leaf.records[..leaf.len as usize] {
+                        if record.deleted {
+                            continue
+                        }
+                        if *ordinal == wanted {
+                            return Ok(Some(*record))
+                        }
+                        *ordinal = ordinal.saturating_add(1)
+                    }
+                    Ok(None)
+                }
+                Block::Tree(TreeBlock::Branch(branch)) => {
+                    for child in &branch.children[..=branch.len as usize] {
+                        if let Some(record) = visit(fs, *child, wanted, ordinal)? {
+                            return Ok(Some(record))
+                        }
+                    }
+                    Ok(None)
+                }
+                Block::Data(_) => Err(Error::Corrupt),
+            }
+        }
+
+        if !root.is_some() {
+            return Ok(None)
+        }
+        visit(self, root, wanted, &mut 0)
+    }
+
+    fn read_record_range(
+        &self,
+        record: FileRecord,
+        offset: u64,
+        destination: &mut [u8],
+    ) -> Result<usize, Error> {
+        if offset > record.size {
+            return Err(Error::InvalidVersion)
+        }
+        let available = record.size - offset;
+        let wanted = destination.len().min(
+            usize::try_from(available).map_err(|_| Error::BufferTooSmall {
+                required: usize::MAX,
+            })?,
+        );
+        let mut id = record.data;
+        let mut block_start = 0_u64;
+        let mut copied = 0;
+        while id.is_some() && copied < wanted {
+            let Block::Data(block) = self.arena.get(id)? else {
+                return Err(Error::Corrupt)
+            };
+            let length = block.len as usize;
+            if length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
+                return Err(Error::Corrupt)
+            }
+            let block_end = block_start.saturating_add(length as u64);
+            if offset < block_end {
+                let start = usize::try_from(offset.saturating_sub(block_start))
+                    .map_err(|_| Error::Corrupt)?;
+                let amount = (length - start).min(wanted - copied);
+                destination[copied..copied + amount]
+                    .copy_from_slice(&block.bytes[start..start + amount]);
+                copied += amount
+            }
+            block_start = block_end;
+            id = block.next
+        }
+        if copied != wanted {
+            return Err(Error::Corrupt)
+        }
+        Ok(copied)
     }
 
     fn tombstone(&mut self, id: BlockId, key: FileKey) -> Result<BlockId, Error> {

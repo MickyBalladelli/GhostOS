@@ -254,10 +254,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 18. Volume Management & Disaster Recovery
-- [ ] **Storage Pool Administration**
-  - [ ] Implement SynFS storage pool management for NVMe, CXL persistent memory, and network blocks.
-- [ ] **OpenVMS-Inspired Backup Tool (`synos-backup`)**
-  - [ ] Implement volume checkpointing and background streaming using SynFS Copy-on-Write snapshot trees.
+- [x] **Storage Pool Administration**
+  - [x] Implement SynFS storage pool management for NVMe, CXL persistent memory, and network blocks.
+- [x] **OpenVMS-Inspired Backup Tool (`synos-backup`)**
+  - [x] Implement volume checkpointing and background streaming using SynFS Copy-on-Write snapshot trees.
 
 ---
 
