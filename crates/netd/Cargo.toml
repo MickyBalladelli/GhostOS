@@ -1,0 +1,18 @@
+[package]
+name = "synos-netd"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+smoltcp = { version = "0.13.1", default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "proto-ipv6",
+    "socket-tcp",
+] }
+synos-ipc = { path = "../ipc" }
+synos-status = { path = "../status" }

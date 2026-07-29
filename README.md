@@ -113,6 +113,19 @@ NVMe controllers, prepares their DMA queues and commands, and exposes descriptor
 ring hooks for Intel E1000-family and Realtek RTL8169-family Ethernet devices.
 Port and MMIO access remain capability-controlled by the platform service.
 
+## User-space async networking
+
+`synos-netd` is a heap-free Ring 3 TCP/IP service built on `smoltcp`. NIC
+drivers loan fixed packet slots to the stack, so ingress and egress frames stay
+in their original buffers while queue ownership changes. Polling accepts an
+ingress budget to keep network work bounded under load.
+
+Applications submit socket operations through shared IPC rings. Each channel
+has an authenticated principal and a maximum rights mask; every socket token is
+generation-checked, owner-bound, and separately authorizes listen, connect,
+send, receive, inspect, and close operations. Payload descriptors are validated
+against capability-mapped shared regions before the daemon touches them.
+
 On legacy BIOS machines, stage 2 selects a 32-bit linear VESA mode when one is
 available. On UEFI machines, the loader passes the current GOP framebuffer.
 The early kernel console writes there and falls back to VGA text mode when no

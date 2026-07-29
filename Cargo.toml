@@ -17,6 +17,7 @@ members = [
     "crates/syn-shell",
     "crates/system-model",
     "crates/auth",
+    "crates/netd",
     "kernel",
     "boot/uefi",
 ]
@@ -37,6 +38,7 @@ default-members = [
     "crates/syn-shell",
     "crates/system-model",
     "crates/auth",
+    "crates/netd",
     "kernel",
 ]
 

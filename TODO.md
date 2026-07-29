@@ -221,9 +221,9 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 14. User-Space Async Networking
-- [ ] **Ring 3 Network Daemon (`synos-netd`)**
-  - [ ] Build a pure-Rust user-space TCP/IP stack (`smoltcp`-backed) with zero-copy packet queues.
-  - [ ] Expose capability-authenticated sockets via IPC shared-memory ring buffers.
+- [x] **Ring 3 Network Daemon (`synos-netd`)**
+  - [x] Build a pure-Rust user-space TCP/IP stack (`smoltcp`-backed) with zero-copy packet queues.
+  - [x] Expose capability-authenticated sockets via IPC shared-memory ring buffers.
 
 ---
 
