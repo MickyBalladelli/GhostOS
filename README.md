@@ -228,6 +228,19 @@ valid memory token and the matching live DLM epoch. Resource owners can lend
 bounded RAM, VRAM, or compute units, then revoke the loan and request immediate
 remote unmapping, DSM invalidation, or compute stop.
 
+## Multi-cluster federation and sandboxing
+
+Clusters discover peers through signed, expiring gateway announcements and
+reject replayed epochs and nonces. Signed offers trade bounded CPU, RAM, and
+VRAM leases over the transports advertised by that peer. A lending cluster can
+send an authenticated revocation with a deadline below one millisecond.
+
+Borrowed workloads run in kernel `BlindMicroSilo` scopes. Host process trees,
+SynFS mounts, network sockets, and federation controls are always invisible.
+CXL-IDE and SEV, TDX, or CCA memory encryption are required when the platform
+advertises them; otherwise kernel page isolation remains active. Federation
+epochs fence stale DLM locks after expiry, revocation, or cluster failover.
+
 ## LLM memory runtime
 
 `synos-llm` presents many local and CXL fabric leases as one contiguous virtual

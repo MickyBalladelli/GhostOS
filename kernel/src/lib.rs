@@ -10,6 +10,7 @@ pub mod capability;
 mod console;
 pub mod dlm;
 pub mod ipc;
+pub mod micro_silo;
 #[allow(unsafe_code)]
 mod keyboard;
 #[allow(unsafe_code)]
@@ -31,8 +32,13 @@ pub use capability::{
     CapabilityRevocationHook, CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,
 };
 pub use dlm::{
-    DistributedLockManager, LockError, LockGrant, LockHandle, LockMode, LockOwner, LockRange,
-    NodeId, ResourceId, ResourceKind, ResourceName,
+    DistributedLockManager, FederationClusterId, FederationFenceTable, LockError, LockGrant,
+    LockHandle, LockMode, LockOwner, LockRange, NodeId, ResourceId, ResourceKind, ResourceName,
+    DEFAULT_FEDERATION_CAPACITY,
+};
+pub use micro_silo::{
+    BlindMicroSilo, ConfidentialCpu, HardwareIsolation, MemoryProtection, SiloError,
+    SiloMemoryRange, SiloObject, SiloOperation, MAX_SILO_MEMORY_RANGES,
 };
 pub use page_fault::{PageFault, PageFaultHandler, PageFaultHandlerError};
 pub use persona::{

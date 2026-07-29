@@ -88,6 +88,10 @@ impl<const CAPACITY: usize> ResourceLender<CAPACITY> {
         }
     }
 
+    pub const fn provider(&self) -> NodeId {
+        self.provider
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn lend_memory(
         &mut self,

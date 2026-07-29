@@ -140,15 +140,15 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 10. Multi-Cluster Federation & Cross-Cluster Sandboxing
-- [ ] **Inter-Cluster Capability Exchanges ("Cluster of Clusters")**
-  - [ ] Implement inter-cluster cryptographic discovery protocols to federate distinct SynOS clusters without centralized management plane dependencies.
-  - [ ] Build multi-cluster resource trading primitives allowing Cluster A to lease idle CPU/RAM/VRAM capacity from Cluster B.
-- [ ] **Zero-Knowledge Micro-Silo Sandboxing**
-  - [ ] Enforce strict "Blind Sandbox" isolation scopes for cross-cluster workloads: tenant processes on borrowed nodes cannot inspect host process trees, local SynFS mountpoints, or host network sockets.
-  - [ ] Leverage CXL-IDE and CPU hardware isolation (e.g., AMD SEV / Intel TDX / ARM CCA) where available to encrypt borrowed memory frames in-transit and at-rest.
-- [ ] **Cross-Cluster Lease Arbitration & Preemption**
-  - [ ] Implement sub-millisecond inter-cluster revocation signals to allow lending clusters to reclaim borrowed hardware instantly when local priority workloads wake up.
-  - [ ] Extend the Distributed Lock Manager (DLM) with cross-cluster epoch fencing to prevent stale reads or split-brain states when inter-cluster leases expire.
+- [x] **Inter-Cluster Capability Exchanges ("Cluster of Clusters")**
+  - [x] Implement inter-cluster cryptographic discovery protocols to federate distinct SynOS clusters without centralized management plane dependencies.
+  - [x] Build multi-cluster resource trading primitives allowing Cluster A to lease idle CPU/RAM/VRAM capacity from Cluster B.
+- [x] **Zero-Knowledge Micro-Silo Sandboxing**
+  - [x] Enforce strict "Blind Sandbox" isolation scopes for cross-cluster workloads: tenant processes on borrowed nodes cannot inspect host process trees, local SynFS mountpoints, or host network sockets.
+  - [x] Leverage CXL-IDE and CPU hardware isolation (e.g., AMD SEV / Intel TDX / ARM CCA) where available to encrypt borrowed memory frames in-transit and at-rest.
+- [x] **Cross-Cluster Lease Arbitration & Preemption**
+  - [x] Implement sub-millisecond inter-cluster revocation signals to allow lending clusters to reclaim borrowed hardware instantly when local priority workloads wake up.
+  - [x] Extend the Distributed Lock Manager (DLM) with cross-cluster epoch fencing to prevent stale reads or split-brain states when inter-cluster leases expire.
 
 ┌─────────────────────────┐               ┌─────────────────────────┐
 │       CLUSTER A         │               │       CLUSTER B         │

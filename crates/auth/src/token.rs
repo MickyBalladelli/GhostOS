@@ -10,6 +10,26 @@ impl CapabilityKey {
     pub const fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
+
+    pub(crate) fn authenticate(self, message: &[u8]) -> Result<[u8; 32], TokenError> {
+        if message.len() > 64 {
+            return Err(TokenError::Invalid)
+        }
+        Ok(hmac_sha256(&self.0, message))
+    }
+
+    pub(crate) fn verify_authenticator(
+        self,
+        message: &[u8],
+        authenticator: &[u8; 32],
+    ) -> Result<(), TokenError> {
+        let expected = self.authenticate(message)?;
+        if constant_time_equal(&expected, authenticator) {
+            Ok(())
+        } else {
+            Err(TokenError::InvalidSignature)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,6 +40,18 @@ impl TransportRights {
     pub const CXL: Self = Self(1);
     pub const LAYER2: Self = Self(2);
     pub const ALL: Self = Self(Self::CXL.0 | Self::LAYER2.0);
+
+    pub const fn from_bits(bits: u8) -> Option<Self> {
+        if bits != 0 && bits & !Self::ALL.0 == 0 {
+            Some(Self(bits))
+        } else {
+            None
+        }
+    }
+
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
 
     pub const fn contains(self, required: Self) -> bool {
         self.0 & required.0 == required.0
@@ -213,7 +245,7 @@ impl CryptographicCapability {
         let issuer = NodeId::new(read_u32(&input, 8)).ok_or(TokenError::Invalid)?;
         let subject = NodeId::new(read_u32(&input, 12)).ok_or(TokenError::Invalid)?;
         let rights = Rights::from_bits(read_u16(&input, 24)).ok_or(TokenError::Invalid)?;
-        let transports = TransportRights(input[26]);
+        let transports = TransportRights::from_bits(input[26]).ok_or(TokenError::Invalid)?;
         let mut caveats = [None; MAX_CAPABILITY_CAVEATS];
         for (index, slot) in caveats.iter_mut().enumerate() {
             let offset = 64 + index * 24;
@@ -230,7 +262,8 @@ impl CryptographicCapability {
                     Some(NodeId::new(raw_subject).ok_or(TokenError::Invalid)?)
                 },
                 rights: caveat_rights,
-                transports: TransportRights(input[offset + 1]),
+                transports: TransportRights::from_bits(input[offset + 1])
+                    .ok_or(TokenError::Invalid)?,
                 expires_at_us: read_u64(&input, offset + 8),
             })
         }
