@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package synos.inference.v1;
+
+service Inference {
+  rpc Complete(CompletionRequest) returns (stream CompletionResponse);
+}
+
+enum CompletionKind {
+  TEXT = 0;
+  CHAT = 1;
+}
+
+message CompletionRequest {
+  string model = 1;
+  string prompt = 2;
+  uint32 max_tokens = 3;
+  bool stream = 4;
+  CompletionKind kind = 5;
+}
+
+message CompletionResponse {
+  uint64 id = 1;
+  string model = 2;
+  string text = 3;
+  uint32 prompt_tokens = 4;
+  uint32 completion_tokens = 5;
+  bool finished = 6;
+}

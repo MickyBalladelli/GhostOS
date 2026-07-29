@@ -373,6 +373,25 @@ When one node drops, a memory degradation handle resumes from the last committed
 token, resolves mirrored model and KV memory through the fabric, and can seed a
 replacement journal replica without changing the request identity.
 
+## High-level AI execution
+
+`synos-inference` is the bounded, `no_std` Ring 3 service layer above
+`synos-llm`. Its transport-neutral gateway accepts OpenAI-compatible model,
+text-completion, and chat-completion requests, emits JSON or server-sent
+completion chunks, and also accepts length-prefixed gRPC/protobuf records.
+`synos-netd` can carry it now; the native HTTP stack can bind it without
+changing model execution.
+
+The cluster inference service registers models already mapped in pooled memory.
+Each request reserves a mirrored, growable KV cache in RAM or VRAM, starts a
+dual-journal recovery ledger, and exposes explicit acknowledge, token
+checkpoint, node-failure, replica-repair, and completion transitions.
+
+Long-running agents use `AgentSnapshotter` to write checksummed execution
+images as immutable SynFS file versions on a fixed interval. The newest image
+pins its complete CoW filesystem generation for crash-consistent stack
+recovery, while earlier state versions remain addressable for rollback.
+
 ## Pure-Rust AI compute
 
 `synos-compute` gives Candle and Burn a small native SynOS runtime contract

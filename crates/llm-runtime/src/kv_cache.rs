@@ -52,6 +52,7 @@ struct CacheEntry<const SEGMENTS: usize> {
     generation: u32,
     request: Option<RequestId>,
     owner: NodeId,
+    memory_kind: MemoryKind,
     bytes_per_token: u64,
     reserved_tokens: u64,
     committed_tokens: u64,
@@ -65,6 +66,7 @@ impl<const SEGMENTS: usize> CacheEntry<SEGMENTS> {
         generation: 0,
         request: None,
         owner: NodeId::LOCAL,
+        memory_kind: MemoryKind::Ram,
         bytes_per_token: 0,
         reserved_tokens: 0,
         committed_tokens: 0,
@@ -119,6 +121,39 @@ impl<const CACHES: usize, const SEGMENTS: usize> KvCachePool<CACHES, SEGMENTS> {
         now_us: u64,
         lease_duration_us: u64,
     ) -> Result<KvCacheInfo, Error> {
+        self.open_in_memory(
+            request,
+            owner,
+            MemoryKind::Ram,
+            bytes_per_token,
+            initial_tokens,
+            allocator,
+            space,
+            leases,
+            now_us,
+            lease_duration_us,
+        )
+    }
+
+    pub fn open_in_memory<
+        const ALLOCATIONS: usize,
+        const EXTENTS: usize,
+        const POOLS: usize,
+        const OVERRIDES: usize,
+        const LEASES: usize,
+    >(
+        &mut self,
+        request: RequestId,
+        owner: NodeId,
+        memory_kind: MemoryKind,
+        bytes_per_token: u64,
+        initial_tokens: u64,
+        allocator: &mut UnifiedAllocator<ALLOCATIONS, EXTENTS>,
+        space: &GlobalAddressSpace<POOLS, OVERRIDES>,
+        leases: &mut LeaseTable<LEASES>,
+        now_us: u64,
+        lease_duration_us: u64,
+    ) -> Result<KvCacheInfo, Error> {
         if bytes_per_token == 0 || initial_tokens == 0 {
             return Err(Error::InvalidRange)
         }
@@ -141,7 +176,7 @@ impl<const CACHES: usize, const SEGMENTS: usize> KvCachePool<CACHES, SEGMENTS> {
             PAGE_SIZE,
             AllocationPolicy::resilient_cluster(
                 owner,
-                MemoryKind::Ram,
+                memory_kind,
                 request.raw(),
             ),
             now_us,
@@ -164,6 +199,7 @@ impl<const CACHES: usize, const SEGMENTS: usize> KvCachePool<CACHES, SEGMENTS> {
             generation,
             request: Some(request),
             owner,
+            memory_kind,
             bytes_per_token,
             reserved_tokens: initial_tokens,
             committed_tokens: 0,
@@ -203,7 +239,7 @@ impl<const CACHES: usize, const SEGMENTS: usize> KvCachePool<CACHES, SEGMENTS> {
             PAGE_SIZE,
             AllocationPolicy::resilient_cluster(
                 entry.owner,
-                MemoryKind::Ram,
+                entry.memory_kind,
                 entry.request.ok_or(Error::CacheNotFound)?.raw(),
             ),
             now_us,

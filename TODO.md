@@ -319,10 +319,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 26. High-Level AI Execution & Agent Pipelines
-- [ ] **Native LLM Service Gateway (`synos-inference`)**
-  - [ ] Build a user-space OpenAI/gRPC-compatible API server using pooled cluster RAM/VRAM for KV-cache allocation.
-- [ ] **Persistent Agent Execution State**
-  - [ ] Provide continuous CoW snapshotting for long-running AI agent stacks and execution states.
+- [x] **Native LLM Service Gateway (`synos-inference`)**
+  - [x] Build a user-space OpenAI/gRPC-compatible API server using pooled cluster RAM/VRAM for KV-cache allocation.
+- [x] **Persistent Agent Execution State**
+  - [x] Provide continuous CoW snapshotting for long-running AI agent stacks and execution states.
 
 ---
 

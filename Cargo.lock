@@ -185,6 +185,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-inference"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-llm",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-init"
 version = "0.1.0"
 dependencies = [
