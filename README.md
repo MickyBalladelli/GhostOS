@@ -311,6 +311,23 @@ valid memory token and the matching live DLM epoch. Resource owners can lend
 bounded RAM, VRAM, or compute units, then revoke the loan and request immediate
 remote unmapping, DSM invalidation, or compute stop.
 
+## Native applications and actor runtimes
+
+`synos-app` defines the bounded `App.toml` application contract. A manifest
+names an immutable image, application kind, node placement, restart policy, and
+up to 16 exact capability requests. Before registration, the Ring 3 application
+supervisor intersects those requests with an administrator policy. Missing
+required resources, wrong object kinds, and rights escalation stop the spawn;
+optional unavailable resources are omitted. Each restart fences the old process
+and receives a fresh generation and only the approved capability set.
+
+`synos-actors` gives local and distributed processes one actor API. Local
+mailboxes use native IPC channels. Remote actor references use page-aligned
+Software DSM mailboxes carrying a live write authority and DLM lease epoch.
+Message routing, remote supervisor selection, process spawning, replies, and
+stops are handled by the actor system, so actor code does not construct network
+packets or choose a transport.
+
 ## Multi-cluster federation and sandboxing
 
 Clusters discover peers through signed, expiring gateway announcements and

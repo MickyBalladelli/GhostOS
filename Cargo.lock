@@ -111,6 +111,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-actors"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-ipc",
+ "synos-status",
+]
+
+[[package]]
+name = "synos-app"
+version = "0.1.0"
+dependencies = [
+ "synos-init",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-auth"
 version = "0.1.0"
 dependencies = [

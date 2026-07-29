@@ -303,10 +303,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 24. Native Application Model & Service Runtimes
-- [ ] **Declarative Application Manifests (`App.toml`)**
-  - [ ] Implement capability-constrained app manifest specifications and supervisor spawning logic.
-- [ ] **Distributed Actor Framework (`synos-actors`)**
-  - [ ] Build a pure-Rust actor system using native IPC and Software DSM for multi-node process orchestration without manual networking boilerplate.
+- [x] **Declarative Application Manifests (`App.toml`)**
+  - [x] Implement capability-constrained app manifest specifications and supervisor spawning logic.
+- [x] **Distributed Actor Framework (`synos-actors`)**
+  - [x] Build a pure-Rust actor system using native IPC and Software DSM for multi-node process orchestration without manual networking boilerplate.
 
 ---
 

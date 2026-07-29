@@ -1,0 +1,25 @@
+schema = 1
+
+[application]
+name = "telemetry-agent"
+image = "8f4710e4c7d14872b920acbe7d104a31"
+kind = "service"
+
+[runtime]
+placement = "any"
+restart = "on-failure"
+max_restarts = 5
+window_us = 60_000_000
+initial_backoff_us = 10_000
+max_backoff_us = 1_000_000
+
+[[capability]]
+resource = "observability:events"
+kind = "ipc"
+rights = ["send"]
+
+[[capability]]
+resource = "telemetry:scratch"
+kind = "shared-memory"
+rights = ["read", "write", "map"]
+required = false
