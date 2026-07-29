@@ -7,8 +7,9 @@ license.workspace = true
 [[bin]]
 name = "synos-loader"
 path = "src/main.rs"
+test = false
+bench = false
 
 [dependencies]
 synos-boot-protocol = { path = "../../crates/boot-protocol" }
 synos-kernel = { path = "../../kernel" }
-

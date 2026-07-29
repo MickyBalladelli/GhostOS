@@ -120,3 +120,6 @@ pub mod facility {
     pub const NETWORK: u16 = 13;
     pub const COMPUTE: u16 = 14;
 }
+
+#[cfg(test)]
+mod tests;

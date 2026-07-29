@@ -11,7 +11,17 @@ mod console;
 pub mod dlm;
 pub mod ipc;
 pub mod micro_silo;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 #[allow(unsafe_code)]
+mod keyboard;
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+)))]
+#[path = "keyboard_stub.rs"]
 mod keyboard;
 #[allow(unsafe_code)]
 pub mod page_fault;
@@ -20,7 +30,17 @@ pub mod scheduler;
 #[allow(unsafe_code)]
 mod shell;
 pub mod task;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 #[allow(unsafe_code)]
+mod usb_keyboard;
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+)))]
+#[path = "usb_keyboard_stub.rs"]
 mod usb_keyboard;
 
 use core::panic::PanicInfo;
@@ -104,8 +124,7 @@ pub fn halt() -> ! {
     }
 }
 
-#[panic_handler]
-fn panic(info: &PanicInfo<'_>) -> ! {
+pub fn panic_report(info: &PanicInfo<'_>) -> ! {
     println!("KERNEL PANIC: {info}");
     halt()
 }
@@ -127,3 +146,6 @@ macro_rules! println {
         $crate::print!("\n")
     }};
 }
+
+#[cfg(test)]
+mod tests;

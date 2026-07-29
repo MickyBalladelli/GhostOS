@@ -54,6 +54,18 @@ The AArch64 backend programs `TTBR0_EL1`; the RISC-V backend programs an Sv39
 root through `satp`. Platform-specific firmware entry shims for those machines
 can hand their memory map to the same `kernel_entry`.
 
+## Test
+
+Run the host-side unit tests for the default workspace members:
+
+```sh
+cargo test
+```
+
+The bare-metal kernel and UEFI entry binaries are not test harnesses. Their
+reusable logic is tested through the kernel library with host-safe hardware
+stubs.
+
 ## Microkernel core
 
 The Ring 0 crate contains only boot, memory, interrupt, IPC, and scheduling

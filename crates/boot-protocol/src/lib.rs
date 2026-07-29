@@ -116,3 +116,6 @@ impl BootInfo {
             && self.memory_region_count <= MAX_MEMORY_REGIONS
     }
 }
+
+#[cfg(test)]
+mod tests;

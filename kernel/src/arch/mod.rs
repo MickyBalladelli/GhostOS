@@ -1,16 +1,34 @@
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "none", target_os = "uefi")
+))]
 #[path = "aarch64.rs"]
 mod current;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(
+    target_arch = "riscv64",
+    any(target_os = "none", target_os = "uefi")
+))]
 #[path = "riscv64.rs"]
 mod current;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 #[path = "x86_64.rs"]
 mod current;
 #[cfg(not(any(
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    target_arch = "x86_64"
+    all(
+        target_arch = "aarch64",
+        any(target_os = "none", target_os = "uefi")
+    ),
+    all(
+        target_arch = "riscv64",
+        any(target_os = "none", target_os = "uefi")
+    ),
+    all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    )
 )))]
 #[path = "unsupported.rs"]
 mod current;

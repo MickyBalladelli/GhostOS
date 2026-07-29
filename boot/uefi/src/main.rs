@@ -5,6 +5,7 @@
 mod chainload;
 
 use core::ffi::c_void;
+use core::panic::PanicInfo;
 use synos_boot_protocol::{
     BootInfo, BootMethod, FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB,
     FramebufferInfo, MemoryKind, MemoryRegion,
@@ -15,6 +16,11 @@ pub(crate) type EfiStatus = usize;
 pub(crate) const EFI_SUCCESS: EfiStatus = 0;
 const EFI_NOT_READY: EfiStatus = 0x8000_0000_0000_0006;
 const MEMORY_MAP_CAPACITY: usize = 32 * 1024;
+
+#[panic_handler]
+fn panic(info: &PanicInfo<'_>) -> ! {
+    synos_kernel::panic_report(info)
+}
 
 #[repr(C)]
 struct EfiTableHeader {
