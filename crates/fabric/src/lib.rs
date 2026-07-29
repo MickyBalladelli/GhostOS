@@ -42,6 +42,7 @@ pub enum Error {
     InvalidRange,
     LeaseNotFound,
     NodeFailed,
+    NodeNotFenced,
     NotOwner,
     Unsupported,
 }
@@ -60,6 +61,10 @@ impl IntoStatus for Error {
             }
             Self::NodeFailed => {
                 Status::new(Severity::Error, facility::FABRIC, 2, 0)
+                    .expect("valid fabric status")
+            }
+            Self::NodeNotFenced => {
+                Status::new(Severity::Error, facility::FABRIC, 4, 0)
                     .expect("valid fabric status")
             }
             Self::DecoderCommitFailed => {

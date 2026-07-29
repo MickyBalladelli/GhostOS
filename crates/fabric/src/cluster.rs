@@ -188,19 +188,32 @@ pub struct RecoverySummary {
     pub coherence_pages_recovered: usize,
 }
 
+/// Read-only proof that the failed node can no longer issue DSM traffic.
+///
+/// The kernel DLM implements this after membership fencing completes. Recovery
+/// must not release leases while a partitioned node can still write memory.
+pub trait NodeIsolation {
+    fn is_node_isolated(&self, node: NodeId) -> bool;
+}
+
 /// Applies one failure decision to address routing, memory leases, and page
 /// coherence. Pools with mirrors resolve to the mirror immediately afterward.
 pub fn recover_failed_node<
+    I: NodeIsolation,
     const POOLS: usize,
     const OVERRIDES: usize,
     const LEASES: usize,
     const PAGES: usize,
 >(
     failure: NodeFailure,
+    isolation: &I,
     space: &mut GlobalAddressSpace<POOLS, OVERRIDES>,
     leases: &mut LeaseTable<LEASES>,
     coherence: &mut CoherenceDirectory<PAGES>,
 ) -> Result<RecoverySummary, Error> {
+    if !isolation.is_node_isolated(failure.node) {
+        return Err(Error::NodeNotFenced)
+    }
     space.mark_node_failed(failure.node)?;
     Ok(RecoverySummary {
         failed_node: failure.node,

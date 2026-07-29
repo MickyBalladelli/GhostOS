@@ -228,10 +228,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 15. Service Isolation & Fault Recovery
-- [ ] **Supervisor Service (`synos-init`)**
-  - [ ] Implement dynamic driver recovery in Rust: catch panics/crashes in Ring 3 storage or network drivers and restart them without disrupting other services.
-- [ ] **Cluster Panic & Node Isolation**
-  - [ ] Implement eviction and fencing logic in the Distributed Lock Manager (DLM) to isolate dropped nodes safely during software DSM memory operations.
+- [x] **Supervisor Service (`synos-init`)**
+  - [x] Implement dynamic driver recovery in Rust: catch panics/crashes in Ring 3 storage or network drivers and restart them without disrupting other services.
+- [x] **Cluster Panic & Node Isolation**
+  - [x] Implement eviction and fencing logic in the Distributed Lock Manager (DLM) to isolate dropped nodes safely during software DSM memory operations.
 
 
 ---

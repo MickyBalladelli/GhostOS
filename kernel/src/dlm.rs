@@ -7,6 +7,7 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 pub const MAX_RESOURCE_NAME_BYTES: usize = 64;
 pub const DEFAULT_LOCK_CAPACITY: usize = 256;
 pub const DEFAULT_FEDERATION_CAPACITY: usize = 32;
+pub const DEFAULT_NODE_FENCE_CAPACITY: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -19,6 +20,162 @@ impl NodeId {
 
     pub const fn raw(self) -> u32 {
         self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NodeFenceState {
+    Active,
+    Fencing,
+    Isolated,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodeFenceToken {
+    node: NodeId,
+    epoch: u64,
+}
+
+impl NodeFenceToken {
+    pub const fn node(self) -> NodeId {
+        self.node
+    }
+
+    pub const fn epoch(self) -> u64 {
+        self.epoch
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NodeFence {
+    node: Option<NodeId>,
+    epoch: u64,
+    state: NodeFenceState,
+}
+
+impl NodeFence {
+    const VACANT: Self = Self {
+        node: None,
+        epoch: 0,
+        state: NodeFenceState::Isolated,
+    };
+}
+
+/// Membership epochs and two-phase isolation state for cluster nodes.
+///
+/// `begin_eviction` rejects the old membership epoch immediately. The fencing
+/// transport then blocks the node's NIC/CXL access and calls
+/// `confirm_isolated`. Only confirmed nodes may have DLM or DSM leases moved.
+pub struct NodeFenceTable<const CAPACITY: usize = DEFAULT_NODE_FENCE_CAPACITY> {
+    nodes: [NodeFence; CAPACITY],
+}
+
+impl<const CAPACITY: usize> NodeFenceTable<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            nodes: [NodeFence::VACANT; CAPACITY],
+        }
+    }
+
+    pub fn admit(&mut self, node: NodeId, epoch: u64) -> Result<(), LockError> {
+        if epoch == 0 {
+            return Err(LockError::InvalidEpoch);
+        }
+        if let Some(entry) = self.nodes.iter_mut().find(|entry| entry.node == Some(node)) {
+            if entry.state != NodeFenceState::Isolated || epoch <= entry.epoch {
+                return Err(LockError::StaleEpoch);
+            }
+            entry.epoch = epoch;
+            entry.state = NodeFenceState::Active;
+            return Ok(());
+        }
+        let entry = self
+            .nodes
+            .iter_mut()
+            .find(|entry| entry.node.is_none())
+            .ok_or(LockError::Capacity)?;
+        *entry = NodeFence {
+            node: Some(node),
+            epoch,
+            state: NodeFenceState::Active,
+        };
+        Ok(())
+    }
+
+    pub fn begin_eviction(
+        &mut self,
+        node: NodeId,
+        expected_epoch: u64,
+    ) -> Result<NodeFenceToken, LockError> {
+        let entry = self
+            .nodes
+            .iter_mut()
+            .find(|entry| entry.node == Some(node))
+            .ok_or(LockError::NodeNotFound)?;
+        if entry.state != NodeFenceState::Active || entry.epoch != expected_epoch {
+            return Err(LockError::StaleEpoch);
+        }
+        entry.epoch = entry.epoch.checked_add(1).ok_or(LockError::InvalidEpoch)?;
+        entry.state = NodeFenceState::Fencing;
+        Ok(NodeFenceToken {
+            node,
+            epoch: entry.epoch,
+        })
+    }
+
+    pub fn confirm_isolated(&mut self, token: NodeFenceToken) -> Result<(), LockError> {
+        let entry = self
+            .nodes
+            .iter_mut()
+            .find(|entry| entry.node == Some(token.node))
+            .ok_or(LockError::NodeNotFound)?;
+        if entry.state != NodeFenceState::Fencing || entry.epoch != token.epoch {
+            return Err(LockError::StaleEpoch);
+        }
+        entry.state = NodeFenceState::Isolated;
+        Ok(())
+    }
+
+    pub fn validate(&self, node: NodeId, epoch: u64) -> Result<(), LockError> {
+        if self.nodes.iter().any(|entry| {
+            entry.node == Some(node)
+                && entry.state == NodeFenceState::Active
+                && entry.epoch == epoch
+        }) {
+            Ok(())
+        } else {
+            Err(LockError::StaleEpoch)
+        }
+    }
+
+    pub fn state(&self, node: NodeId) -> Option<NodeFenceState> {
+        self.nodes
+            .iter()
+            .find(|entry| entry.node == Some(node))
+            .map(|entry| entry.state)
+    }
+
+    pub fn epoch(&self, node: NodeId) -> Option<u64> {
+        self.nodes
+            .iter()
+            .find(|entry| entry.node == Some(node))
+            .map(|entry| entry.epoch)
+    }
+
+    pub fn is_isolated(&self, node: NodeId) -> bool {
+        self.state(node) == Some(NodeFenceState::Isolated)
+    }
+}
+
+impl<const CAPACITY: usize> Default for NodeFenceTable<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const CAPACITY: usize> synos_fabric::cluster::NodeIsolation for NodeFenceTable<CAPACITY> {
+    fn is_node_isolated(&self, node: synos_fabric::NodeId) -> bool {
+        NodeId::new(node.raw()).is_some_and(|node| self.is_isolated(node))
     }
 }
 
@@ -291,6 +448,8 @@ pub enum LockError {
     InvalidResource,
     InvalidRange,
     InvalidEpoch,
+    NodeNotFound,
+    NodeNotIsolated,
     NotOwner,
     Expired,
     StaleEpoch,
@@ -314,6 +473,8 @@ impl IntoStatus for LockError {
             Self::Expired => (Severity::Warning, 6),
             Self::InvalidEpoch => (Severity::Error, 7),
             Self::StaleEpoch => (Severity::Error, 8),
+            Self::NodeNotFound => (Severity::Error, 9),
+            Self::NodeNotIsolated => (Severity::Error, 10),
             Self::AccessDenied | Self::NotOwner => return Status::ACCESS_DENIED,
         };
         Status::new(severity, facility::DLM, code, 0).expect("valid DLM status")
@@ -334,6 +495,7 @@ struct LockEntry {
     range: LockRange,
     lease_epoch: u64,
     expires_at_us: u64,
+    node_epoch: u64,
     federation_cluster: Option<FederationClusterId>,
     federation_epoch: u64,
 }
@@ -358,6 +520,7 @@ impl LockEntry {
         range: LockRange::WholeObject,
         lease_epoch: 0,
         expires_at_us: 0,
+        node_epoch: 0,
         federation_cluster: None,
         federation_epoch: 0,
     };
@@ -503,6 +666,7 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
             range,
             lease_epoch: 1,
             expires_at_us,
+            node_epoch: 0,
             federation_cluster: None,
             federation_epoch: 0,
         };
@@ -522,6 +686,40 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         mode: LockMode,
     ) -> Result<(), LockError> {
         let slot = self.owned_slot(handle, owner)?;
+        if self.locks[slot].node_epoch != 0 {
+            return Err(LockError::InvalidEpoch);
+        }
+        let resource = self.locks[slot].resource;
+        capabilities.authorize(
+            owner.address_space,
+            authority,
+            CapabilityObject::DistributedResource(resource),
+            mode.required_rights(),
+        )?;
+        let range = self.locks[slot].range;
+        if !self.locks[slot].granted || !self.can_grant(resource, range, mode, Some(slot)) {
+            return Err(LockError::WouldBlock);
+        }
+        self.locks[slot].mode = mode;
+        self.promote(resource);
+        Ok(())
+    }
+
+    pub fn convert_node<const CAPABILITIES: usize, const NODES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<CAPABILITIES>,
+        authority: CapabilityHandle,
+        owner: LockOwner,
+        node_epoch: u64,
+        handle: LockHandle,
+        mode: LockMode,
+        fences: &NodeFenceTable<NODES>,
+    ) -> Result<(), LockError> {
+        fences.validate(owner.node, node_epoch)?;
+        let slot = self.owned_slot(handle, owner)?;
+        if self.locks[slot].node_epoch != node_epoch {
+            return Err(LockError::StaleEpoch);
+        }
         let resource = self.locks[slot].resource;
         capabilities.authorize(
             owner.address_space,
@@ -557,10 +755,92 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
             return Err(LockError::InvalidRange);
         }
         let slot = self.owned_slot(handle, owner)?;
-        if self.locks[slot].federation_cluster.is_some() {
+        if self.locks[slot].federation_cluster.is_some() || self.locks[slot].node_epoch != 0 {
             return Err(LockError::InvalidEpoch);
         }
         self.renew_slot(slot, expected_epoch, now_us, duration_us)
+    }
+
+    /// Acquire a DSM lease from a node in the current membership epoch.
+    ///
+    /// Once eviction starts, `fences.validate` fails immediately even while
+    /// the physical NIC/CXL fence is still being applied.
+    #[allow(clippy::too_many_arguments)]
+    pub fn acquire_node_range<const CAPABILITIES: usize, const NODES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<CAPABILITIES>,
+        authority: CapabilityHandle,
+        owner: LockOwner,
+        node_epoch: u64,
+        resource: ResourceId,
+        kind: ResourceKind,
+        name: ResourceName,
+        range: LockRange,
+        mode: LockMode,
+        wait: bool,
+        now_us: u64,
+        lease_duration_us: u64,
+        fences: &NodeFenceTable<NODES>,
+    ) -> Result<LockGrant, LockError> {
+        fences.validate(owner.node, node_epoch)?;
+        let grant = self.acquire_range(
+            capabilities,
+            authority,
+            owner,
+            resource,
+            kind,
+            name,
+            range,
+            mode,
+            wait,
+            now_us,
+            lease_duration_us,
+        )?;
+        let handle = match grant {
+            LockGrant::Granted(handle) | LockGrant::Queued(handle) => handle,
+        };
+        let slot = self.valid_slot(handle)?;
+        self.locks[slot].node_epoch = node_epoch;
+        Ok(grant)
+    }
+
+    pub fn renew_node<const NODES: usize>(
+        &mut self,
+        owner: LockOwner,
+        handle: LockHandle,
+        node_epoch: u64,
+        expected_lease_epoch: u64,
+        now_us: u64,
+        duration_us: u64,
+        fences: &NodeFenceTable<NODES>,
+    ) -> Result<u64, LockError> {
+        if duration_us == 0 {
+            return Err(LockError::InvalidRange);
+        }
+        fences.validate(owner.node, node_epoch)?;
+        let slot = self.owned_slot(handle, owner)?;
+        if self.locks[slot].node_epoch != node_epoch
+            || self.locks[slot].federation_cluster.is_some()
+        {
+            return Err(LockError::StaleEpoch);
+        }
+        self.renew_slot(slot, expected_lease_epoch, now_us, duration_us)
+    }
+
+    pub fn validate_node_lease<const NODES: usize>(
+        &self,
+        handle: LockHandle,
+        now_us: u64,
+        fences: &NodeFenceTable<NODES>,
+    ) -> Result<(), LockError> {
+        let entry = self.locks[self.valid_slot(handle)?];
+        if !entry.granted || entry.expires_at_us <= now_us {
+            return Err(LockError::Expired);
+        }
+        if entry.node_epoch == 0 {
+            return Err(LockError::InvalidEpoch);
+        }
+        fences.validate(entry.owner.node, entry.node_epoch)
     }
 
     pub fn renew_federated<const FEDERATIONS: usize>(
@@ -687,8 +967,15 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         expired
     }
 
-    /// Remove locks held or queued by a failed cluster node.
-    pub fn release_node(&mut self, node: NodeId) -> usize {
+    /// Remove locks held or queued by a node only after fencing is confirmed.
+    pub fn evict_node<const NODES: usize>(
+        &mut self,
+        node: NodeId,
+        fences: &NodeFenceTable<NODES>,
+    ) -> Result<usize, LockError> {
+        if !fences.is_isolated(node) {
+            return Err(LockError::NodeNotIsolated);
+        }
         let mut removed = 0;
         for entry in &mut self.locks {
             if entry.occupied && entry.owner.node == node {
@@ -697,7 +984,7 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
             }
         }
         self.promote_all();
-        removed
+        Ok(removed)
     }
 
     pub fn is_granted(&self, handle: LockHandle) -> Result<bool, LockError> {

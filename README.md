@@ -126,6 +126,21 @@ generation-checked, owner-bound, and separately authorizes listen, connect,
 send, receive, inspect, and close operations. Payload descriptors are validated
 against capability-mapped shared regions before the daemon touches them.
 
+## Service isolation and fault recovery
+
+`synos-init` supervises fixed-capacity Ring 3 storage, network, and system
+services. A panic or protection fault fences only the dead process' capabilities,
+IPC endpoints, DMA mappings, and interrupts. The service then restarts with a
+new generation after bounded exponential backoff; unrelated services remain
+running.
+
+Cluster failure recovery uses two-phase DLM fencing. Heartbeat failure first
+advances the node's membership epoch, making old lease requests and renewals
+stale. After the transport confirms NIC and CXL isolation, the DLM may evict
+the node's locks and the DSM layer may release its memory leases and recover
+page ownership. DSM recovery rejects nodes that have not reached the isolated
+state.
+
 On legacy BIOS machines, stage 2 selects a 32-bit linear VESA mode when one is
 available. On UEFI machines, the loader passes the current GOP framebuffer.
 The early kernel console writes there and falls back to VGA text mode when no

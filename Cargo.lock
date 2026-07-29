@@ -133,6 +133,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-init"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
 name = "synos-ipc"
 version = "0.1.0"
 dependencies = [

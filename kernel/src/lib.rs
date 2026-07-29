@@ -34,8 +34,9 @@ pub use capability::{
 };
 pub use dlm::{
     DistributedLockManager, FederationClusterId, FederationFenceTable, LockError, LockGrant,
-    LockHandle, LockMode, LockOwner, LockRange, NodeId, ResourceId, ResourceKind, ResourceName,
-    DEFAULT_FEDERATION_CAPACITY,
+    LockHandle, LockMode, LockOwner, LockRange, NodeFenceState, NodeFenceTable, NodeFenceToken,
+    NodeId, ResourceId, ResourceKind, ResourceName, DEFAULT_FEDERATION_CAPACITY,
+    DEFAULT_NODE_FENCE_CAPACITY,
 };
 pub use micro_silo::{
     BlindMicroSilo, ConfidentialCpu, HardwareIsolation, MemoryProtection, SiloError,
