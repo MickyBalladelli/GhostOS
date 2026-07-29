@@ -374,6 +374,7 @@ dependencies = [
  "synos-ipc",
  "synos-kernel",
  "synos-status",
+ "synos-synfs",
  "synos-system-model",
 ]
 

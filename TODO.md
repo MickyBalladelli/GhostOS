@@ -352,10 +352,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 30. AI Agent Orchestration & Deterministic Execution
-- [ ] **Dry-Run CoW Sandboxing**
-  - [ ] Implement isolated CoW execution environments for AI-generated scripts to validate system operations before committing changes.
-- [ ] **Structured LLM Function Reflection**
-  - [ ] Automatically export system script command signatures as structured tool-calling schemas for AI agents.
+- [x] **Dry-Run CoW Sandboxing**
+  - [x] Implement isolated CoW execution environments for AI-generated scripts to validate system operations before committing changes.
+- [x] **Structured LLM Function Reflection**
+  - [x] Automatically export system script command signatures as structured tool-calling schemas for AI agents.
 
 
 ---

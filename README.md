@@ -243,6 +243,15 @@ ACLs. `$STATUS`, `IF SUCCESS`, `IF FAILURE`, `SET ON`, `SET NOON`, and
 `ON ERROR THEN` provide deterministic condition handling without host shell
 exit-code conventions.
 
+For agent-generated procedures, `syn-script` reflects the live typed command
+registry into deterministic function-tool JSON schemas. Function names map
+back to command routes without stringly typed dispatch. `SandboxExecutor`
+drives each typed pipeline command exactly once through a handler bound to an
+exclusive private SynFS root: the agent can read and validate staged state,
+then either discard it or atomically publish the whole transaction. Dropped and
+failed sandboxes always restore the original generation, and every finish
+returns a base/staged/result generation receipt.
+
 ## Embedded scripting and Wasm extensions
 
 `synos-embedded-script` embeds Rhai for service automation. Each evaluation has

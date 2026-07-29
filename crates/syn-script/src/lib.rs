@@ -7,7 +7,9 @@ use synos_system_model::logical::LogicalError;
 
 pub mod context;
 pub mod parser;
+pub mod reflection;
 pub mod runtime;
+pub mod sandbox;
 pub mod wire;
 
 pub use context::{
@@ -18,7 +20,11 @@ pub use parser::{
     CapabilityAttenuation, Condition, ErrorPolicy, ExitStatus, LogicalDefinition, LogicalDeletion,
     LogicalScopeSpec, Script, Statement, StatementKind, SymbolLiteral,
 };
+pub use reflection::ToolSchemaExporter;
 pub use runtime::{ScriptEngine, ScriptEvent};
+pub use sandbox::{
+    CowSandbox, SandboxCommandHandler, SandboxDecision, SandboxExecutor, SandboxReceipt,
+};
 pub use syn_shell::Text;
 
 pub const MAX_SCRIPT_STATEMENTS: usize = 64;
@@ -40,6 +46,9 @@ pub enum Error {
     InvalidValue,
     LineTooLong,
     Logical(LogicalError),
+    Filesystem(synos_synfs::Error),
+    SchemaBufferTooSmall { required: usize },
+    SchemaNameCollision,
     Shell(syn_shell::Error),
     Token(TokenError),
     UnterminatedQuote,
@@ -52,13 +61,15 @@ impl IntoStatus for Error {
     fn status(self) -> Status {
         match self {
             Self::Logical(error) => error.status(),
+            Self::Filesystem(error) => error.status(),
             Self::Shell(error) => error.status(),
             Self::Token(TokenError::AccessDenied | TokenError::RightsEscalation) => {
                 Status::ACCESS_DENIED
             }
-            Self::Token(TokenError::CaveatCapacity) | Self::Capacity | Self::WireBufferTooSmall => {
-                Status::NO_SPACE
-            }
+            Self::Token(TokenError::CaveatCapacity)
+            | Self::Capacity
+            | Self::SchemaBufferTooSmall { .. }
+            | Self::WireBufferTooSmall => Status::NO_SPACE,
             Self::AlreadyRunning => Status::BUSY,
             Self::Inactive => Status::NOT_FOUND,
             Self::WireCorrupt => Status::CORRUPT,
@@ -72,6 +83,7 @@ impl IntoStatus for Error {
             | Self::InvalidScope
             | Self::InvalidStatus
             | Self::InvalidValue
+            | Self::SchemaNameCollision
             | Self::LineTooLong
             | Self::Token(TokenError::Invalid | TokenError::InvalidSignature)
             | Self::UnterminatedQuote => {
@@ -90,6 +102,12 @@ impl From<syn_shell::Error> for Error {
 impl From<LogicalError> for Error {
     fn from(error: LogicalError) -> Self {
         Self::Logical(error)
+    }
+}
+
+impl From<synos_synfs::Error> for Error {
+    fn from(error: synos_synfs::Error) -> Self {
+        Self::Filesystem(error)
     }
 }
 

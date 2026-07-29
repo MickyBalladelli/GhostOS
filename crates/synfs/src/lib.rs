@@ -505,6 +505,23 @@ pub struct SynFsTransaction<'a, const MAX_BLOCKS: usize> {
 }
 
 impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
+    /// Current private CoW generation, including staged changes.
+    pub const fn generation(&self) -> u64 {
+        self.filesystem.generation
+    }
+
+    pub const fn operations(&self) -> u32 {
+        self.operations
+    }
+
+    pub fn lookup(&self, path: &str) -> Result<FileVersion, Error> {
+        self.filesystem.lookup(path)
+    }
+
+    pub fn read(&self, path: &str, destination: &mut [u8]) -> Result<ReadResult, Error> {
+        self.filesystem.read(path, destination)
+    }
+
     pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
         if self.failed {
             return Err(Error::TransactionAborted)

@@ -77,14 +77,14 @@ impl Program {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Registration {
-    spec: CommandSpec,
-    route: RouteId,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommandRegistration {
+    pub spec: CommandSpec,
+    pub route: RouteId,
 }
 
 pub struct CommandRegistry<const CAPACITY: usize = DEFAULT_REGISTRY_CAPACITY> {
-    commands: [Option<Registration>; CAPACITY],
+    commands: [Option<CommandRegistration>; CAPACITY],
 }
 
 impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
@@ -109,8 +109,13 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             .iter_mut()
             .find(|entry| entry.is_none())
             .ok_or(Error::Capacity)?;
-        *slot = Some(Registration { spec, route });
+        *slot = Some(CommandRegistration { spec, route });
         Ok(())
+    }
+
+    /// Commands in stable registration order for schema reflection.
+    pub fn registrations(&self) -> impl Iterator<Item = CommandRegistration> + '_ {
+        self.commands.iter().flatten().copied()
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, Error> {
