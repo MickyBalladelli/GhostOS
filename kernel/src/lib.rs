@@ -26,6 +26,8 @@ mod keyboard;
 #[allow(unsafe_code)]
 pub mod page_fault;
 pub mod persona;
+#[allow(unsafe_code)]
+mod power;
 pub mod scheduler;
 #[allow(unsafe_code)]
 mod shell;
@@ -98,6 +100,13 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     }
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
+    let acpi = power::discover(boot_info);
+    if let Some(platform) = acpi {
+        let _ = power::enable(&platform);
+        println!("ACPI power and thermal tables ready")
+    } else {
+        println!("ACPI tables unavailable; platform fallback active")
+    }
     info!(
         EventKind::Boot,
         EventField::unsigned(field::OPERATION, 2),
@@ -115,7 +124,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         task::MAX_THREADS,
         scheduler.clock()
     );
-    shell::run(boot_info, scheduler.clock())
+    shell::run(boot_info, scheduler.clock(), acpi)
 }
 
 pub fn halt() -> ! {

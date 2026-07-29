@@ -6,24 +6,32 @@ use syn_shell::{
     render::{OutputFormat, render},
 };
 use synos_boot_protocol::{BootInfo, BootMethod};
+use synos_power::AcpiPlatform;
 use synos_status::Status;
 use synos_system_model::command::{CommandSpec, OutputText, OutputValue, StructuredOutput};
 
 const HELP_ROUTE: u16 = 1;
 const SHOW_SYSTEM_ROUTE: u16 = 2;
 const REBOOT_ROUTE: u16 = 3;
-const COMMAND_CAPACITY: usize = 3;
+const SHUTDOWN_ROUTE: u16 = 4;
+const COMMAND_CAPACITY: usize = 4;
 const HISTORY_CAPACITY: usize = 8;
 
-pub fn run(boot_info: &'static BootInfo, scheduler_clock: u64) -> ! {
+pub fn run(
+    boot_info: &'static BootInfo,
+    scheduler_clock: u64,
+    acpi: Option<AcpiPlatform>,
+) -> ! {
     let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
     register(&mut registry, "HELP", HELP_ROUTE);
     register(&mut registry, "SHOW-SYSTEM", SHOW_SYSTEM_ROUTE);
     register(&mut registry, "REBOOT", REBOOT_ROUTE);
+    register(&mut registry, "SHUTDOWN", SHUTDOWN_ROUTE);
 
     let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
     let mut interpreter = Interpreter::new();
-    let mut executor = KernelExecutor::new(boot_info, scheduler_clock);
+    let mut executor =
+        KernelExecutor::new(boot_info, scheduler_clock, acpi.is_some());
     let mut keyboard = crate::keyboard::Keyboard::new();
     let mut usb_keyboard = crate::usb_keyboard::UsbKeyboard::new();
     let mut input = VtInput::new();
@@ -33,7 +41,7 @@ pub fn run(boot_info: &'static BootInfo, scheduler_clock: u64) -> ! {
     prompt();
 
     loop {
-        let byte = wait_for_byte(&mut keyboard, &mut usb_keyboard);
+        let byte = wait_for_byte(&mut keyboard, &mut usb_keyboard, acpi.as_ref());
         if ignore_line_feed && byte == b'\n' {
             ignore_line_feed = false;
             continue;
@@ -54,7 +62,13 @@ pub fn run(boot_info: &'static BootInfo, scheduler_clock: u64) -> ! {
             Ok(EditorAction::Submit(line)) => {
                 crate::println!();
                 if !line.as_str().trim().is_empty() {
-                    execute_line(line.as_str(), &registry, &mut interpreter, &mut executor)
+                    execute_line(
+                        line.as_str(),
+                        &registry,
+                        &mut interpreter,
+                        &mut executor,
+                        acpi.as_ref(),
+                    )
                 }
                 prompt()
             }
@@ -86,6 +100,7 @@ fn execute_line(
     registry: &CommandRegistry<COMMAND_CAPACITY>,
     interpreter: &mut Interpreter,
     executor: &mut KernelExecutor,
+    acpi: Option<&AcpiPlatform>,
 ) {
     let program = match registry.parse(line) {
         Ok(program) => program,
@@ -134,7 +149,10 @@ fn execute_line(
     }
 
     if executor.take_reboot_requested() {
-        reboot()
+        crate::power::reboot(acpi)
+    }
+    if executor.take_shutdown_requested() {
+        crate::power::shutdown(acpi)
     }
 }
 
@@ -255,6 +273,7 @@ impl VtInput {
 fn wait_for_byte(
     keyboard: &mut crate::keyboard::Keyboard,
     usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
+    acpi: Option<&AcpiPlatform>,
 ) -> u8 {
     loop {
         if let Some(byte) = keyboard.read_byte() {
@@ -269,6 +288,9 @@ fn wait_for_byte(
         if let Some(byte) = crate::console::read_byte() {
             return byte;
         }
+        if acpi.is_some_and(crate::power::power_button_pressed) {
+            crate::power::shutdown(acpi)
+        }
         crate::arch::halt()
     }
 }
@@ -277,20 +299,28 @@ struct KernelExecutor {
     boot_method: BootMethod,
     memory_region_count: usize,
     scheduler_clock: u64,
+    acpi_ready: bool,
     generation: u64,
     completion: Option<(u64, Result<StructuredOutput, Status>)>,
     reboot_requested: bool,
+    shutdown_requested: bool,
 }
 
 impl KernelExecutor {
-    fn new(boot_info: &BootInfo, scheduler_clock: u64) -> Self {
+    fn new(
+        boot_info: &BootInfo,
+        scheduler_clock: u64,
+        acpi_ready: bool,
+    ) -> Self {
         Self {
             boot_method: boot_info.method,
             memory_region_count: boot_info.memory_region_count,
             scheduler_clock,
+            acpi_ready,
             generation: 0,
             completion: None,
             reboot_requested: false,
+            shutdown_requested: false,
         }
     }
 
@@ -299,13 +329,18 @@ impl KernelExecutor {
             HELP_ROUTE => self.help(),
             SHOW_SYSTEM_ROUTE => self.show_system(),
             REBOOT_ROUTE => self.request_reboot(),
+            SHUTDOWN_ROUTE => self.request_shutdown(),
             _ => Err(Status::NOT_FOUND),
         }
     }
 
     fn help(&self) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
-        insert_text(&mut output, "commands", "HELP, SHOW SYSTEM, REBOOT")?;
+        insert_text(
+            &mut output,
+            "commands",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN",
+        )?;
         Ok(output)
     }
 
@@ -331,6 +366,11 @@ impl KernelExecutor {
             "scheduler-clock",
             OutputValue::Unsigned(self.scheduler_clock),
         )?;
+        insert_text(
+            &mut output,
+            "acpi",
+            if self.acpi_ready { "ready" } else { "unavailable" },
+        )?;
         insert_text(&mut output, "shell", "ready")?;
         Ok(output)
     }
@@ -344,6 +384,17 @@ impl KernelExecutor {
 
     fn take_reboot_requested(&mut self) -> bool {
         core::mem::take(&mut self.reboot_requested)
+    }
+
+    fn request_shutdown(&mut self) -> Result<StructuredOutput, Status> {
+        self.shutdown_requested = true;
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "action", "shutting-down")?;
+        Ok(output)
+    }
+
+    fn take_shutdown_requested(&mut self) -> bool {
+        core::mem::take(&mut self.shutdown_requested)
     }
 }
 
@@ -415,47 +466,4 @@ const fn architecture() -> &'static str {
     {
         "unknown"
     }
-}
-
-fn reboot() -> ! {
-    crate::println!("Rebooting SynOS...");
-
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        core::arch::asm!("cli", options(nomem, nostack));
-        let mut attempts = 100_000;
-        while attempts != 0 && inb(0x64) & 0x02 != 0 {
-            attempts -= 1;
-            core::hint::spin_loop()
-        }
-        outb(0x64, 0xfe)
-    }
-
-    crate::halt()
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn outb(port: u16, value: u8) {
-    unsafe {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") port,
-            in("al") value,
-            options(nomem, nostack)
-        )
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn inb(port: u16) -> u8 {
-    let value: u8;
-    unsafe {
-        core::arch::asm!(
-            "in al, dx",
-            out("al") value,
-            in("dx") port,
-            options(nomem, nostack)
-        )
-    }
-    value
 }

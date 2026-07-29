@@ -13,4 +13,7 @@ pub mod storage;
 
 pub use ethernet::{EthernetAdapter, EthernetKind};
 pub use pci::{Bar, ConfigAccess, PciAddress, PciDevice};
-pub use storage::{StorageController, StorageKind};
+pub use storage::{
+    MAX_NVME_NAMESPACES, NvmeNamespace, NvmeNamespaceState, NvmeRegistry,
+    StorageController, StorageKind,
+};

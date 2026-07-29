@@ -228,6 +228,22 @@ Cluster heartbeats can run below one millisecond. A failure decision marks the
 node unavailable, revokes its memory leases and coherence ownership, and makes
 every mirrored pool resolve through its surviving node.
 
+## Power and hardware lifecycle
+
+The UEFI loader passes the ACPI RSDP into the kernel. `synos-power` validates
+RSDP, RSDT/XSDT, FADT, and DSDT checksums without allocation, reads fixed-event
+and reset registers, extracts `_S5` shutdown values and static thermal trip
+points, and applies hysteresis-based throttling or emergency shutdown policy.
+The kernel enables ACPI mode, handles the physical power button, and exposes
+ACPI-backed `SHUTDOWN` and `REBOOT` commands with the legacy reset fallback.
+
+CXL Type-3 devices and NVMe namespaces have explicit online, draining, and
+removed lifecycle states. CXL pool draining blocks new memory leases and
+refuses removal while leases remain. NVMe draining blocks new SynFS
+allocations and refuses removal while a storage pool still claims the device.
+HDM decoders and NVMe controllers expose quiesce operations for the final
+hardware detach.
+
 ## Architectural risk mitigations
 
 Fabric resolution now preserves transport semantics: local RAM and CXL HDM
@@ -620,5 +636,6 @@ adapter connected to the target machine can capture the earliest boot output.
 HELP
 SHOW SYSTEM
 REBOOT
+SHUTDOWN
 
 ```

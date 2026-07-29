@@ -36,6 +36,8 @@ impl StorageController {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DriverError {
+    Busy,
+    Capacity,
     InvalidRegisterBase,
     InvalidQueue,
     InvalidRequest,
@@ -47,6 +49,8 @@ pub enum DriverError {
 impl IntoStatus for DriverError {
     fn status(self) -> Status {
         let (severity, code) = match self {
+            Self::Busy => return Status::BUSY,
+            Self::Capacity => return Status::NO_SPACE,
             Self::InvalidRegisterBase => (Severity::Error, 10),
             Self::InvalidQueue => (Severity::Error, 11),
             Self::InvalidRequest => (Severity::Error, 12),
@@ -367,6 +371,154 @@ impl Default for AhciCommandTable {
 const NVME_CC_ENABLE: u32 = 1;
 const NVME_CSTS_READY: u32 = 1;
 const NVME_CSTS_FATAL: u32 = 1 << 1;
+pub const MAX_NVME_NAMESPACES: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NvmeNamespaceState {
+    Online,
+    Draining,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NvmeNamespace {
+    pub controller: crate::pci::PciAddress,
+    pub namespace_id: u32,
+    pub capacity_blocks: u64,
+    pub block_size: u32,
+    pub state: NvmeNamespaceState,
+}
+
+pub struct NvmeRegistry<const CAPACITY: usize = MAX_NVME_NAMESPACES> {
+    namespaces: [Option<NvmeNamespace>; CAPACITY],
+}
+
+impl<const CAPACITY: usize> NvmeRegistry<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            namespaces: [None; CAPACITY],
+        }
+    }
+
+    pub fn discover(
+        &mut self,
+        controller: crate::pci::PciAddress,
+        namespace_id: u32,
+        capacity_blocks: u64,
+        block_size: u32,
+    ) -> Result<NvmeNamespace, DriverError> {
+        if namespace_id == 0
+            || capacity_blocks == 0
+            || block_size < 512
+            || !block_size.is_power_of_two()
+        {
+            return Err(DriverError::InvalidRequest)
+        }
+        let namespace = NvmeNamespace {
+            controller,
+            namespace_id,
+            capacity_blocks,
+            block_size,
+            state: NvmeNamespaceState::Online,
+        };
+        if let Some(slot) = self.namespaces.iter_mut().find(|entry| {
+            entry.is_some_and(|existing| {
+                existing.controller == controller
+                    && existing.namespace_id == namespace_id
+            })
+        }) {
+            *slot = Some(namespace);
+            return Ok(namespace)
+        }
+        let slot = self
+            .namespaces
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(DriverError::Capacity)?;
+        *slot = Some(namespace);
+        Ok(namespace)
+    }
+
+    pub fn namespaces(&self) -> impl Iterator<Item = &NvmeNamespace> {
+        self.namespaces.iter().flatten()
+    }
+
+    pub fn find(
+        &self,
+        controller: crate::pci::PciAddress,
+        namespace_id: u32,
+    ) -> Option<&NvmeNamespace> {
+        self.namespaces().find(|namespace| {
+            namespace.controller == controller
+                && namespace.namespace_id == namespace_id
+        })
+    }
+
+    pub fn begin_remove(
+        &mut self,
+        controller: crate::pci::PciAddress,
+        namespace_id: u32,
+    ) -> Result<NvmeNamespace, DriverError> {
+        let namespace = self
+            .namespaces
+            .iter_mut()
+            .flatten()
+            .find(|namespace| {
+                namespace.controller == controller
+                    && namespace.namespace_id == namespace_id
+            })
+            .ok_or(DriverError::NoDevice)?;
+        if namespace.state == NvmeNamespaceState::Draining {
+            return Err(DriverError::Busy)
+        }
+        namespace.state = NvmeNamespaceState::Draining;
+        Ok(*namespace)
+    }
+
+    pub fn cancel_remove(
+        &mut self,
+        controller: crate::pci::PciAddress,
+        namespace_id: u32,
+    ) -> Result<(), DriverError> {
+        let namespace = self
+            .namespaces
+            .iter_mut()
+            .flatten()
+            .find(|namespace| {
+                namespace.controller == controller
+                    && namespace.namespace_id == namespace_id
+            })
+            .ok_or(DriverError::NoDevice)?;
+        namespace.state = NvmeNamespaceState::Online;
+        Ok(())
+    }
+
+    pub fn complete_remove(
+        &mut self,
+        controller: crate::pci::PciAddress,
+        namespace_id: u32,
+    ) -> Result<NvmeNamespace, DriverError> {
+        let slot = self
+            .namespaces
+            .iter_mut()
+            .find(|entry| {
+                entry.is_some_and(|namespace| {
+                    namespace.controller == controller
+                        && namespace.namespace_id == namespace_id
+                })
+            })
+            .ok_or(DriverError::NoDevice)?;
+        if slot.is_none_or(|namespace| namespace.state != NvmeNamespaceState::Draining) {
+            return Err(DriverError::Busy)
+        }
+        slot.take().ok_or(DriverError::NoDevice)
+    }
+}
+
+impl<const CAPACITY: usize> Default for NvmeRegistry<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[repr(C)]
 struct NvmeRegisters {
@@ -412,6 +564,11 @@ impl NvmeController {
             );
             wait_clear(&registers.controller_status, NVME_CSTS_READY, spin_limit)
         }
+    }
+
+    /// Stop new commands and wait for the controller to leave the ready state.
+    pub fn quiesce(&mut self, spin_limit: usize) -> Result<(), DriverError> {
+        self.reset(spin_limit)
     }
 
     pub fn configure_admin_queue(

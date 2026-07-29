@@ -167,6 +167,8 @@ struct EfiSystemTable {
     standard_error: *mut c_void,
     runtime_services: *mut c_void,
     boot_services: *mut EfiBootServices,
+    number_of_table_entries: usize,
+    configuration_table: *const EfiConfigurationTable,
 }
 
 #[repr(C)]
@@ -180,11 +182,18 @@ struct EfiMemoryDescriptor {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct EfiGuid {
     pub(crate) data1: u32,
     pub(crate) data2: u16,
     pub(crate) data3: u16,
     pub(crate) data4: [u8; 8],
+}
+
+#[repr(C)]
+struct EfiConfigurationTable {
+    vendor_guid: EfiGuid,
+    vendor_table: *const c_void,
 }
 
 #[repr(C)]
@@ -220,6 +229,18 @@ const GRAPHICS_OUTPUT_PROTOCOL: EfiGuid = EfiGuid {
     data2: 0x23dc,
     data3: 0x4a38,
     data4: [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a],
+};
+const ACPI_20_TABLE: EfiGuid = EfiGuid {
+    data1: 0x8868_e871,
+    data2: 0xe4f1,
+    data3: 0x11d3,
+    data4: [0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81],
+};
+const ACPI_10_TABLE: EfiGuid = EfiGuid {
+    data1: 0xeb9d_2d30,
+    data2: 0x2d88,
+    data3: 0x11d3,
+    data4: [0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d],
 };
 
 static mut MEMORY_MAP: [u8; MEMORY_MAP_CAPACITY] = [0; MEMORY_MAP_CAPACITY];
@@ -272,6 +293,7 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
         }
 
         let framebuffer = locate_framebuffer(services);
+        let rsdp_address = locate_rsdp(system_table);
 
         let mut last_status = 1;
         for attempt in 0..4 {
@@ -299,6 +321,7 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
             let boot_info = &raw mut BOOT_INFO;
             *boot_info = BootInfo::empty(BootMethod::Uefi);
             (*boot_info).framebuffer = framebuffer;
+            (*boot_info).rsdp_address = rsdp_address;
             fill_memory_map(&mut *boot_info, map_size, descriptor_size);
 
             last_status = ((*services).exit_boot_services)(image, map_key);
@@ -311,6 +334,25 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
         wait_for_key(input);
         last_status
     }
+}
+
+unsafe fn locate_rsdp(system_table: *const EfiSystemTable) -> u64 {
+    let count = unsafe { (*system_table).number_of_table_entries }.min(4096);
+    let tables = unsafe { (*system_table).configuration_table };
+    if tables.is_null() {
+        return 0
+    }
+    let mut acpi_v1 = 0;
+    for index in 0..count {
+        let table = unsafe { &*tables.add(index) };
+        if table.vendor_guid == ACPI_20_TABLE {
+            return table.vendor_table as u64
+        }
+        if table.vendor_guid == ACPI_10_TABLE {
+            acpi_v1 = table.vendor_table as u64
+        }
+    }
+    acpi_v1
 }
 
 unsafe fn locate_framebuffer(services: *mut EfiBootServices) -> FramebufferInfo {

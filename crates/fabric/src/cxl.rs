@@ -63,6 +63,13 @@ impl Endpoint {
 pub struct DiscoveredDevice {
     pub endpoint: Endpoint,
     pub decoder_count: u8,
+    pub state: DeviceState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceState {
+    Online,
+    Draining,
 }
 
 pub struct Registry<const CAPACITY: usize = MAX_CXL_DEVICES> {
@@ -95,6 +102,7 @@ impl<const CAPACITY: usize> Registry<CAPACITY> {
             self.devices[index] = Some(DiscoveredDevice {
                 endpoint,
                 decoder_count,
+                state: DeviceState::Online,
             });
             return Ok(index)
         }
@@ -106,6 +114,7 @@ impl<const CAPACITY: usize> Registry<CAPACITY> {
         self.devices[index] = Some(DiscoveredDevice {
             endpoint,
             decoder_count,
+            state: DeviceState::Online,
         });
         Ok(index)
     }
@@ -117,6 +126,45 @@ impl<const CAPACITY: usize> Registry<CAPACITY> {
     pub fn find_serial(&self, serial: u64) -> Option<&DiscoveredDevice> {
         self.devices()
             .find(|device| device.endpoint.serial == serial)
+    }
+
+    pub fn begin_remove(&mut self, serial: u64) -> Result<DiscoveredDevice, Error> {
+        let device = self
+            .devices
+            .iter_mut()
+            .flatten()
+            .find(|device| device.endpoint.serial == serial)
+            .ok_or(Error::DeviceNotFound)?;
+        if device.state == DeviceState::Draining {
+            return Err(Error::Busy)
+        }
+        device.state = DeviceState::Draining;
+        Ok(*device)
+    }
+
+    pub fn cancel_remove(&mut self, serial: u64) -> Result<(), Error> {
+        let device = self
+            .devices
+            .iter_mut()
+            .flatten()
+            .find(|device| device.endpoint.serial == serial)
+            .ok_or(Error::DeviceNotFound)?;
+        device.state = DeviceState::Online;
+        Ok(())
+    }
+
+    pub fn complete_remove(&mut self, serial: u64) -> Result<DiscoveredDevice, Error> {
+        let slot = self
+            .devices
+            .iter_mut()
+            .find(|entry| {
+                entry.is_some_and(|device| device.endpoint.serial == serial)
+            })
+            .ok_or(Error::DeviceNotFound)?;
+        if slot.is_none_or(|device| device.state != DeviceState::Draining) {
+            return Err(Error::Busy)
+        }
+        slot.take().ok_or(Error::DeviceNotFound)
     }
 }
 
@@ -256,6 +304,35 @@ impl ComponentRegisters {
                 return Err(Error::DecoderCommitFailed)
             }
             if status & Self::COMMITTED != 0 {
+                return Ok(())
+            }
+            if spin_limit == 0 {
+                return Err(Error::DecoderCommitFailed)
+            }
+            spin_limit -= 1;
+            core::hint::spin_loop()
+        }
+    }
+
+    pub fn disable_decoder(
+        &mut self,
+        decoder: u8,
+        mut spin_limit: usize,
+    ) -> Result<(), Error> {
+        if decoder >= self.decoder_count()? {
+            return Err(Error::InvalidDevice)
+        }
+        let offset = self
+            .hdm_offset
+            .checked_add(Self::DECODER_BASE + decoder as usize * Self::DECODER_STRIDE)
+            .ok_or(Error::InvalidDevice)?;
+        let control = self.read(offset + Self::CONTROL);
+        if control & (1 << 8) != 0 {
+            return Err(Error::Busy)
+        }
+        self.write(offset + Self::CONTROL, 0);
+        loop {
+            if self.read(offset + Self::CONTROL) & Self::COMMITTED == 0 {
                 return Ok(())
             }
             if spin_limit == 0 {

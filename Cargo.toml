@@ -22,6 +22,7 @@ members = [
     "crates/netd",
     "crates/init",
     "crates/pkg",
+    "crates/power",
     "tools/cargo-synos",
     "kernel",
     "boot/uefi",
@@ -48,6 +49,7 @@ default-members = [
     "crates/netd",
     "crates/init",
     "crates/pkg",
+    "crates/power",
     "kernel",
 ]
 

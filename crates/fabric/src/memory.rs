@@ -116,6 +116,7 @@ pub struct GlobalAddressSpace<
     const OVERRIDES: usize = DEFAULT_PAGE_TRACKING_CAPACITY,
 > {
     pools: [Option<MemoryPool>; POOLS],
+    draining: [bool; POOLS],
     overrides: [Option<PageOverride>; OVERRIDES],
     failed_nodes: u64,
 }
@@ -124,6 +125,7 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
     pub const fn new() -> Self {
         Self {
             pools: [None; POOLS],
+            draining: [false; POOLS],
             overrides: [None; OVERRIDES],
             failed_nodes: 0,
         }
@@ -156,6 +158,54 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
             .ok_or(Error::Capacity)?;
         *slot = Some(pool);
         Ok(())
+    }
+
+    pub fn begin_pool_drain(&mut self, id: PoolId) -> Result<(), Error> {
+        let index = self
+            .pools
+            .iter()
+            .position(|entry| entry.is_some_and(|pool| pool.id == id))
+            .ok_or(Error::DeviceNotFound)?;
+        self.draining[index] = true;
+        Ok(())
+    }
+
+    pub fn cancel_pool_drain(&mut self, id: PoolId) -> Result<(), Error> {
+        let index = self
+            .pools
+            .iter()
+            .position(|entry| entry.is_some_and(|pool| pool.id == id))
+            .ok_or(Error::DeviceNotFound)?;
+        self.draining[index] = false;
+        Ok(())
+    }
+
+    pub fn is_pool_draining(&self, id: PoolId) -> bool {
+        self.pools
+            .iter()
+            .position(|entry| entry.is_some_and(|pool| pool.id == id))
+            .is_some_and(|index| self.draining[index])
+    }
+
+    pub fn remove_pool(&mut self, id: PoolId) -> Result<MemoryPool, Error> {
+        let index = self
+            .pools
+            .iter()
+            .position(|entry| entry.is_some_and(|pool| pool.id == id))
+            .ok_or(Error::DeviceNotFound)?;
+        if !self.draining[index] {
+            return Err(Error::Busy)
+        }
+        let pool = self.pools[index].take().ok_or(Error::DeviceNotFound)?;
+        self.draining[index] = false;
+        for redirect in &mut self.overrides {
+            if redirect.is_some_and(|entry| {
+                entry.target_pool == id || pool.global.contains(entry.global_page)
+            }) {
+                *redirect = None
+            }
+        }
+        Ok(pool)
     }
 
     pub fn pools(&self) -> impl Iterator<Item = &MemoryPool> {
@@ -415,6 +465,9 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
     ) -> Result<(LeaseHandle, AddressRange), Error> {
         self.expire(now_us);
         let pool = space.pool(pool_id).ok_or(Error::DeviceNotFound)?;
+        if space.is_pool_draining(pool_id) {
+            return Err(Error::Busy)
+        }
         if length == 0
             || alignment < PAGE_SIZE
             || !alignment.is_power_of_two()
@@ -582,6 +635,24 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
             }
         }
         released
+    }
+
+    pub fn active_for_pool(&self, pool: PoolId) -> usize {
+        self.leases
+            .iter()
+            .filter(|lease| lease.occupied && lease.pool == pool)
+            .count()
+    }
+
+    pub fn revoke_pool(&mut self, pool: PoolId) -> usize {
+        let mut revoked = 0;
+        for lease in &mut self.leases {
+            if lease.occupied && lease.pool == pool {
+                lease.occupied = false;
+                revoked += 1
+            }
+        }
+        revoked
     }
 
     pub fn expire(&mut self, now_us: u64) -> usize {

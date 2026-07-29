@@ -262,10 +262,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 19. Power & Hardware Lifecycle Management
-- [ ] **ACPI & Thermal Subsystem**
-  - [ ] Integrate pure-Rust ACPI parsing for hardware event handling, thermal throttling, and power state control (shutdown/reboot).
-- [ ] **Dynamic Hot-Plug Support**
-  - [ ] Support on-the-fly CXL memory module and NVMe storage insertion/removal events.
+- [x] **ACPI & Thermal Subsystem**
+  - [x] Integrate pure-Rust ACPI parsing for hardware event handling, thermal throttling, and power state control (shutdown/reboot).
+- [x] **Dynamic Hot-Plug Support**
+  - [x] Support on-the-fly CXL memory module and NVMe storage insertion/removal events.
 
 ---
 
