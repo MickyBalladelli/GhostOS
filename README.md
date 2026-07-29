@@ -456,6 +456,25 @@ commands and complete pipelines enter a system-wide bounded job queue with
 priorities, start times, dependencies, retry limits, worker leases,
 cancellation, and lost-worker recovery.
 
+## Cross-platform client SDKs
+
+`synos-client-sdk` is a `no_std`, allocation-free client and frontend gateway
+contract for macOS, iOS, Android, and WebAssembly. Its versioned `SYRP` frames
+carry optional 192-byte cryptographic capabilities and provide typed RPCs for
+cluster snapshots, job submission, and capability delegation. Platform code
+implements one `RpcTransport` round trip, so native HTTP stacks and browser
+`fetch` can share the same protocol without pulling sockets or an executor into
+the SDK.
+
+`FrontendGateway` decodes and bounds-checks requests before calling a
+policy-owning `GatewayService`. Malformed input never reaches service handlers,
+and remote failures return stable protocol status codes.
+
+`clients/apple` contains a shared Swift implementation and SwiftUI control
+surface for macOS 14+ and iOS 17+. It displays node health and resource use,
+submits bounded jobs, and requests restricted capability grants through a TLS
+HTTP gateway.
+
 ## Rust toolchain and runtime
 
 Ring 3 Rust programs target `targets/x86_64-unknown-synos.json` or

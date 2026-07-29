@@ -24,6 +24,7 @@ members = [
     "crates/pkg",
     "crates/power",
     "crates/synos-top",
+    "crates/client-sdk",
     "tools/cargo-synos",
     "kernel",
     "boot/uefi",
@@ -52,6 +53,7 @@ default-members = [
     "crates/pkg",
     "crates/power",
     "crates/synos-top",
+    "crates/client-sdk",
     "kernel",
 ]
 

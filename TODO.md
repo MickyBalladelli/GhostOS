@@ -277,10 +277,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 21. Cross-Platform Client SDKs & Frontend Gateways
-- [ ] **Multi-Platform Rust Client SDK (`synos-client-sdk`)**
-  - [ ] Build a cross-platform library (supporting macOS, iOS, Android, and WebAssembly) for remote capability exchange and RPCs.
-- [ ] **Native Mobile & macOS Control Applications**
-  - [ ] Develop native apps (Swift/SwiftUI) for cluster state monitoring, job submission, and capability handle delegation.
+- [x] **Multi-Platform Rust Client SDK (`synos-client-sdk`)**
+  - [x] Build a cross-platform library (supporting macOS, iOS, Android, and WebAssembly) for remote capability exchange and RPCs.
+- [x] **Native Mobile & macOS Control Applications**
+  - [x] Develop native apps (Swift/SwiftUI) for cluster state monitoring, job submission, and capability handle delegation.
 
 ---
 

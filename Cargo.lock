@@ -134,6 +134,15 @@ name = "synos-boot-protocol"
 version = "0.1.0"
 
 [[package]]
+name = "synos-client-sdk"
+version = "0.1.0"
+dependencies = [
+ "synos-auth",
+ "synos-fabric",
+ "synos-kernel",
+]
+
+[[package]]
 name = "synos-compute"
 version = "0.1.0"
 dependencies = [
