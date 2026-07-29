@@ -2,6 +2,9 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
 
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::task::AddressSpaceId;
+use synos_observability::{
+    CorrelationId, EventField, EventKind, field, next_correlation_id, trace,
+};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,6 +45,7 @@ pub struct SharedBuffer {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Message {
+    pub correlation: CorrelationId,
     pub label: u64,
     pub buffer: Option<SharedBuffer>,
     pub words: [u64; 4],
@@ -56,6 +60,7 @@ pub struct CapabilityTransfer {
 
 impl Message {
     pub const EMPTY: Self = Self {
+        correlation: CorrelationId::NONE,
         label: 0,
         buffer: None,
         words: [0; 4],
@@ -95,6 +100,8 @@ impl Slot {
 }
 
 struct AtomicMessage {
+    correlation_low: AtomicU64,
+    correlation_high: AtomicU64,
     label: AtomicU64,
     buffer_present: AtomicBool,
     buffer_region: AtomicU32,
@@ -107,6 +114,8 @@ struct AtomicMessage {
 impl AtomicMessage {
     const fn new() -> Self {
         Self {
+            correlation_low: AtomicU64::new(0),
+            correlation_high: AtomicU64::new(0),
             label: AtomicU64::new(0),
             buffer_present: AtomicBool::new(false),
             buffer_region: AtomicU32::new(0),
@@ -123,6 +132,12 @@ impl AtomicMessage {
     }
 
     fn write(&self, message: Message) {
+        self.correlation_low
+            .store(message.correlation.raw() as u64, Ordering::Relaxed);
+        self.correlation_high.store(
+            (message.correlation.raw() >> 64) as u64,
+            Ordering::Relaxed,
+        );
         self.label.store(message.label, Ordering::Relaxed);
         if let Some(buffer) = message.buffer {
             self.buffer_region
@@ -158,6 +173,11 @@ impl AtomicMessage {
             *value = word.load(Ordering::Relaxed)
         }
         Message {
+            correlation: CorrelationId::from_raw(
+                self.correlation_low.load(Ordering::Relaxed) as u128
+                    | ((self.correlation_high.load(Ordering::Relaxed) as u128)
+                        << 64),
+            ),
             label: self.label.load(Ordering::Relaxed),
             buffer,
             words,
@@ -313,7 +333,10 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         })
     }
 
-    fn enqueue(&self, message: Message) -> Result<(), IpcError> {
+    fn enqueue(&self, mut message: Message) -> Result<(), IpcError> {
+        if message.correlation.is_none() {
+            message.correlation = next_correlation_id(1)
+        }
         let mut position = self.enqueue_position.load(Ordering::Relaxed);
         loop {
             let slot = &self.slots[position % CAPACITY];
@@ -331,6 +354,14 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                         slot.message.write(message);
                         slot.sequence
                             .store(position.wrapping_add(1), Ordering::Release);
+                        trace!(
+                            EventKind::Ipc,
+                            EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
+                            EventField::identifier(
+                                field::OPERATION,
+                                message.correlation.raw(),
+                            ),
+                        );
                         return Ok(());
                     }
                     Err(observed) => position = observed,

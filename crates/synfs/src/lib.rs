@@ -517,6 +517,41 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub fn read(&self, path: &str, destination: &mut [u8]) -> Result<ReadResult, Error> {
         let file = self.lookup(path)?;
+        self.read_file_version(file, destination)
+    }
+
+    pub fn read_version(
+        &self,
+        path: &str,
+        version: u32,
+        destination: &mut [u8],
+    ) -> Result<ReadResult, Error> {
+        if version == 0 {
+            return Err(Error::InvalidVersion)
+        }
+        let file_name = FileName::new(path)?;
+        let record = self
+            .find_record(FileKey {
+                file: file_name,
+                version,
+            })?
+            .filter(|record| !record.deleted)
+            .ok_or(Error::NotFound)?;
+        self.read_file_version(record.into(), destination)
+    }
+
+    pub fn retained_version_span(
+        &self,
+        path: &str,
+    ) -> Result<(u32, Option<u32>), Error> {
+        self.version_span(FileName::new(path)?)
+    }
+
+    fn read_file_version(
+        &self,
+        file: FileVersion,
+        destination: &mut [u8],
+    ) -> Result<ReadResult, Error> {
         let required = usize::try_from(file.size).map_err(|_| Error::Corrupt)?;
         if destination.len() < required {
             return Err(Error::BufferTooSmall { required })

@@ -1,6 +1,7 @@
 use crate::dlm::ResourceId;
 use crate::ipc::{ChannelId, SharedRegionId};
 use crate::task::AddressSpaceId;
+use synos_observability::{EventField, Level, audit_event, field};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_CAPABILITIES: usize = 256;
@@ -321,6 +322,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             return Err(CapabilityError::EmptyRights)
         }
         self.entries[slot].info.rights = remaining;
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::OPERATION, 4),
+            EventField::unsigned(field::CAPABILITY, handle.raw()),
+            EventField::unsigned(field::CALLER, caller.raw() as u64),
+            EventField::unsigned(field::RIGHTS, remaining.bits() as u64),
+        );
         Ok(remaining)
     }
 
@@ -404,6 +412,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
                 revoked += 1
             }
         }
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::OPERATION, 2),
+            EventField::unsigned(field::CAPABILITY, authority.raw()),
+            EventField::unsigned(field::CALLER, caller.raw() as u64),
+            EventField::unsigned(field::LENGTH, revoked as u64),
+        );
         Ok(revoked)
     }
 
@@ -427,6 +442,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
                 revoked += 1
             }
         }
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::OPERATION, 2),
+            EventField::unsigned(field::CAPABILITY, authority.raw()),
+            EventField::unsigned(field::CALLER, caller.raw() as u64),
+            EventField::unsigned(field::LENGTH, revoked as u64),
+        );
         Ok(revoked)
     }
 
@@ -440,6 +462,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         let revoked = self.revoke_descendants_unchecked(handle);
         let slot = self.valid_slot(handle)?;
         self.vacate(slot);
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::OPERATION, 2),
+            EventField::unsigned(field::CAPABILITY, handle.raw()),
+            EventField::unsigned(field::CALLER, caller.raw() as u64),
+            EventField::unsigned(field::LENGTH, (revoked + 1) as u64),
+        );
         Ok(revoked + 1)
     }
 
@@ -495,6 +524,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         if parent_slot != NO_DESCRIPTOR {
             self.entries[parent_slot].first_child = slot
         }
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::OPERATION, 1),
+            EventField::unsigned(field::CAPABILITY, handle.raw()),
+            EventField::unsigned(field::OWNER, owner.raw() as u64),
+            EventField::unsigned(field::RIGHTS, rights.bits() as u64),
+        );
         Ok(handle)
     }
 
@@ -504,11 +540,37 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         handle: CapabilityHandle,
         required: Rights,
     ) -> Result<CapabilityInfo, CapabilityError> {
-        let slot = self.valid_slot(handle)?;
+        let slot = match self.valid_slot(handle) {
+            Ok(slot) => slot,
+            Err(error) => {
+                audit_event!(
+                    Level::Warn,
+                    EventField::unsigned(field::OPERATION, 3),
+                    EventField::unsigned(field::CAPABILITY, handle.raw()),
+                    EventField::unsigned(field::CALLER, caller.raw() as u64),
+                    EventField::status(error.status()),
+                );
+                return Err(error)
+            }
+        };
         let info = self.entries[slot].info;
         if info.owner != caller || !info.rights.contains(required) {
+            audit_event!(
+                Level::Warn,
+                EventField::unsigned(field::OPERATION, 3),
+                EventField::unsigned(field::CAPABILITY, handle.raw()),
+                EventField::unsigned(field::CALLER, caller.raw() as u64),
+                EventField::status(Status::ACCESS_DENIED),
+            );
             return Err(CapabilityError::AccessDenied);
         }
+        audit_event!(
+            Level::Trace,
+            EventField::unsigned(field::OPERATION, 3),
+            EventField::unsigned(field::CAPABILITY, handle.raw()),
+            EventField::unsigned(field::CALLER, caller.raw() as u64),
+            EventField::status(Status::NORMAL),
+        );
         Ok(info)
     }
 

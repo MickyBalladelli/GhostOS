@@ -16,6 +16,7 @@ path = "src/main.rs"
 synos-boot-protocol = { path = "../crates/boot-protocol" }
 synos-fabric = { path = "../crates/fabric" }
 synos-legacy-pc-drivers = { path = "../crates/legacy-pc-drivers" }
+synos-observability = { path = "../crates/observability" }
 syn-shell = { path = "../crates/syn-shell" }
 synos-status = { path = "../crates/status" }
 synos-system-model = { path = "../crates/system-model" }

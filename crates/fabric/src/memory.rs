@@ -1,4 +1,8 @@
 use crate::{Access, AddressRange, Error, NodeId, PAGE_SIZE};
+use synos_observability::{
+    CorrelationId, EventField, EventKind, Level, TraceEvent, emit, field,
+    next_correlation_id,
+};
 
 pub const DEFAULT_POOL_CAPACITY: usize = 64;
 pub const DEFAULT_LEASE_CAPACITY: usize = 256;
@@ -59,9 +63,13 @@ pub struct ResolvedAddress {
 /// as coherent RAM: it is fetched as a complete page into a local NUMA cache.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryMapping {
-    Direct(ResolvedAddress),
+    Direct {
+        source: ResolvedAddress,
+        correlation: CorrelationId,
+    },
     RemotePage {
         source: ResolvedAddress,
+        correlation: CorrelationId,
         global_page: u64,
         backing_page: u64,
         bytes: u32,
@@ -71,17 +79,27 @@ pub enum MemoryMapping {
 impl MemoryMapping {
     pub const fn source(self) -> ResolvedAddress {
         match self {
-            Self::Direct(source) | Self::RemotePage { source, .. } => source,
+            Self::Direct { source, .. } | Self::RemotePage { source, .. } => source,
+        }
+    }
+
+    pub const fn correlation(self) -> CorrelationId {
+        match self {
+            Self::Direct { correlation, .. }
+            | Self::RemotePage { correlation, .. } => correlation,
         }
     }
 
     pub const fn is_cache_coherent(self) -> bool {
         matches!(
             self,
-            Self::Direct(ResolvedAddress {
-                transport: Transport::Local | Transport::Cxl,
+            Self::Direct {
+                source: ResolvedAddress {
+                    transport: Transport::Local | Transport::Cxl,
+                    ..
+                },
                 ..
-            })
+            }
         )
     }
 }
@@ -179,15 +197,41 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
     /// page-aligned block request for the local NUMA page cache.
     pub fn resolve_mapping(&self, global_address: u64) -> Result<MemoryMapping, Error> {
         let source = self.resolve(global_address)?;
-        match source.transport {
-            Transport::Local | Transport::Cxl => Ok(MemoryMapping::Direct(source)),
-            Transport::Layer2 => Ok(MemoryMapping::RemotePage {
+        let correlation = match source.transport {
+            Transport::Local => CorrelationId::NONE,
+            Transport::Cxl | Transport::Layer2 => {
+                next_correlation_id(source.node.raw())
+            }
+        };
+        let mapping = match source.transport {
+            Transport::Local | Transport::Cxl => MemoryMapping::Direct {
                 source,
+                correlation,
+            },
+            Transport::Layer2 => MemoryMapping::RemotePage {
+                source,
+                correlation,
                 global_page: global_address & !(PAGE_SIZE - 1),
                 backing_page: source.backing_address & !(PAGE_SIZE - 1),
                 bytes: PAGE_SIZE as u32,
-            }),
+            },
+        };
+        if !correlation.is_none() {
+            emit(
+                TraceEvent::new(Level::Trace, EventKind::RemoteMemory)
+                    .on_node(source.node.raw())
+                    .correlated(correlation)
+                    .with_field(EventField::unsigned(
+                        field::ADDRESS,
+                        global_address,
+                    ))
+                    .with_field(EventField::unsigned(
+                        field::OPERATION,
+                        source.transport as u64,
+                    )),
+            )
         }
+        Ok(mapping)
     }
 
     pub fn mark_node_failed(&mut self, node: NodeId) -> Result<(), Error> {

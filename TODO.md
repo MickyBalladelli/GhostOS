@@ -164,19 +164,19 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 11. System Diagnostics, Observability & Auditing
-- [ ] **Bare-Metal Boot Logging (Phase 1)**
-  - [ ] Implement early-boot raw serial port (COM1/16550 UART) and VGA framebuffer fallback writers (`#![no_std]`).
-  - [ ] Build a lock-free, zero-allocation ring-buffer queue for early kernel initialization traces before memory allocators online.
-- [ ] **Structured Trace Subsystem (Ring 0 / Native)**
-  - [ ] Create a zero-allocation structured tracing engine (`trace!`, `info!`, `warn!`, `error!`) passing typed event payloads instead of formatted string buffers.
-  - [ ] Assign unique 128-bit correlation IDs to asynchronous IPC messages and remote memory accesses for distributed tracing across CXL and Ethernet nodes.
-- [ ] **Ring 3 Log & Audit Daemon (`synos-logd`)**
-  - [ ] Implement a user-space logging daemon consuming kernel ring buffers via zero-copy IPC shared memory pages.
-  - [ ] Stream structured logs to SynFS binary journal streams (`SYS$LOG:SYSTEM.JOURNAL;1`) with automated background CoW retention rotation.
-  - [ ] Add an OpenVMS-style Operator Communication Manager (OPCOM) interface allowing real-time terminal broadcasts for critical system alarms.
-- [ ] **Security Auditing & Audit Analysis Utility**
-  - [ ] Build a dedicated, immutable security audit pipeline (`$AUDIT_EVENT`) recording capability grants, revocations, and authentication checks.
-  - [ ] Create a structured log query utility (`analyze/audit` CLI tool) to filter binary system traces by time window, capability handle, cluster node ID, or error status.
+- [x] **Bare-Metal Boot Logging (Phase 1)**
+  - [x] Implement early-boot raw serial port (COM1/16550 UART) and VGA framebuffer fallback writers (`#![no_std]`).
+  - [x] Build a lock-free, zero-allocation ring-buffer queue for early kernel initialization traces before memory allocators online.
+- [x] **Structured Trace Subsystem (Ring 0 / Native)**
+  - [x] Create a zero-allocation structured tracing engine (`trace!`, `info!`, `warn!`, `error!`) passing typed event payloads instead of formatted string buffers.
+  - [x] Assign unique 128-bit correlation IDs to asynchronous IPC messages and remote memory accesses for distributed tracing across CXL and Ethernet nodes.
+- [x] **Ring 3 Log & Audit Daemon (`synos-logd`)**
+  - [x] Implement a user-space logging daemon consuming kernel ring buffers via zero-copy IPC shared memory pages.
+  - [x] Stream structured logs to SynFS binary journal streams (`SYS$LOG:SYSTEM.JOURNAL;1`) with automated background CoW retention rotation.
+  - [x] Add an OpenVMS-style Operator Communication Manager (OPCOM) interface allowing real-time terminal broadcasts for critical system alarms.
+- [x] **Security Auditing & Audit Analysis Utility**
+  - [x] Build a dedicated, immutable security audit pipeline (`$AUDIT_EVENT`) recording capability grants, revocations, and authentication checks.
+  - [x] Create a structured log query utility (`analyze/audit` CLI tool) to filter binary system traces by time window, capability handle, cluster node ID, or error status.
   
 
 

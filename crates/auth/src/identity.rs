@@ -3,6 +3,7 @@ use synos_kernel::{
     AddressSpaceId, CapabilityHandle, CapabilityObject, CapabilitySpace, ExecutionPersona,
     IdentityId, RightIdentifier, Rights,
 };
+use synos_observability::{EventField, Level, audit_event, field};
 
 pub const MAX_USERNAME_BYTES: usize = 32;
 pub const MAX_CREDENTIAL_BYTES: usize = 96;
@@ -442,8 +443,22 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             &challenge.bytes(),
             response,
         ) {
+            audit_event!(
+                Level::Warn,
+                EventField::unsigned(field::AUTH_ACTION, 1),
+                EventField::unsigned(field::IDENTITY, record.identity.raw()),
+                EventField::unsigned(field::CALLER, login_address_space.raw() as u64),
+                EventField::status(synos_status::Status::ACCESS_DENIED),
+            );
             return Err(AuthError::VerificationFailed)
         }
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::AUTH_ACTION, 1),
+            EventField::unsigned(field::IDENTITY, record.identity.raw()),
+            EventField::unsigned(field::CALLER, login_address_space.raw() as u64),
+            EventField::status(synos_status::Status::NORMAL),
+        );
         Ok(Session {
             record,
             login_address_space,

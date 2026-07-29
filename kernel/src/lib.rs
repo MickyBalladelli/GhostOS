@@ -25,6 +25,7 @@ mod usb_keyboard;
 
 use core::panic::PanicInfo;
 use synos_boot_protocol::BootInfo;
+use synos_observability::{EventField, EventKind, field, info};
 
 pub use allocator::{AllocationError, EarlyFrameAllocator, FRAME_SIZE};
 pub use capability::{
@@ -53,6 +54,10 @@ pub use task::{
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     console::init(boot_info.framebuffer);
+    info!(
+        EventKind::Boot,
+        EventField::unsigned(field::OPERATION, 1),
+    );
     println!("SynOS kernel bootstrap");
 
     if !boot_info.is_valid() {
@@ -72,6 +77,14 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     }
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
+    info!(
+        EventKind::Boot,
+        EventField::unsigned(field::OPERATION, 2),
+        EventField::unsigned(
+            field::LENGTH,
+            boot_info.memory_region_count as u64,
+        ),
+    );
 
     let scheduler = Scheduler::new();
 

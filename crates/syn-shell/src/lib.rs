@@ -3,6 +3,7 @@
 
 use synos_status::{IntoStatus, Severity, Status, facility};
 
+pub mod audit;
 pub mod diagnostics;
 pub mod editor;
 pub mod interpreter;

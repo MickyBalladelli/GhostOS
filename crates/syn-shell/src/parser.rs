@@ -199,6 +199,12 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name.push_str(noun)?;
             first_argument = 2;
             attached = qualifiers.map(Text::new).transpose()?
+        } else if let Some((analyze, noun)) = verb.as_str().split_once('/') {
+            if !analyze.eq_ignore_ascii_case("ANALYZE") || noun.is_empty() {
+                return Err(Error::InvalidSyntax)
+            }
+            command_name.push_str("ANALYZE-")?;
+            command_name.push_str(noun)?
         } else {
             command_name.push_str(verb.as_str())?
         }

@@ -6,6 +6,7 @@ version = 4
 name = "syn-shell"
 version = "0.1.0"
 dependencies = [
+ "synos-observability",
  "synos-status",
  "synos-system-model",
 ]
@@ -16,6 +17,8 @@ version = "0.1.0"
 dependencies = [
  "synos-fabric",
  "synos-kernel",
+ "synos-observability",
+ "synos-status",
  "synos-system-model",
 ]
 
@@ -27,6 +30,7 @@ version = "0.1.0"
 name = "synos-fabric"
 version = "0.1.0"
 dependencies = [
+ "synos-observability",
  "synos-status",
 ]
 
@@ -45,6 +49,7 @@ dependencies = [
  "synos-boot-protocol",
  "synos-fabric",
  "synos-legacy-pc-drivers",
+ "synos-observability",
  "synos-status",
  "synos-system-model",
 ]
@@ -61,6 +66,22 @@ name = "synos-llm"
 version = "0.1.0"
 dependencies = [
  "synos-fabric",
+ "synos-status",
+]
+
+[[package]]
+name = "synos-logd"
+version = "0.1.0"
+dependencies = [
+ "synos-observability",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
+name = "synos-observability"
+version = "0.1.0"
+dependencies = [
  "synos-status",
 ]
 
