@@ -294,9 +294,9 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 23. Mobile & Remote Security Gateways
-- [ ] **Remote Token Attenuation & Passkey Auth**
-  - [ ] Implement remote capability token issuing with strict scope limits for untrusted frontend devices.
-  - [ ] Integrate WebAuthn / Passkeys / Device Biometrics into `synos-authd` for remote administrative access.
+- [x] **Remote Token Attenuation & Passkey Auth**
+  - [x] Implement remote capability token issuing with strict scope limits for untrusted frontend devices.
+  - [x] Integrate WebAuthn / Passkeys / Device Biometrics into `synos-authd` for remote administrative access.
 
 
 

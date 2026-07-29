@@ -157,6 +157,10 @@ impl CryptographicCapability {
             .unwrap_or(self.subject)
     }
 
+    pub fn subject_is_sealed(&self) -> bool {
+        self.caveats().any(|caveat| caveat.subject.is_some())
+    }
+
     /// Add a restriction without possessing the issuer key.
     pub fn attenuate(mut self, caveat: CapabilityCaveat) -> Result<Self, TokenError> {
         if caveat.rights.is_empty()
@@ -165,6 +169,7 @@ impl CryptographicCapability {
                 .effective_transports()
                 .contains(caveat.transports)
             || caveat.expires_at_us > self.effective_expiry()
+            || (caveat.subject.is_some() && self.subject_is_sealed())
         {
             return Err(TokenError::RightsEscalation)
         }
@@ -187,7 +192,8 @@ impl CryptographicCapability {
         now_us: u64,
         current_epoch: u64,
     ) -> Result<(), TokenError> {
-        if subject != self.effective_subject()
+        if !self.has_valid_caveat_chain()
+            || subject != self.effective_subject()
             || !self.effective_rights().contains(required)
             || !self.effective_transports().contains(transport)
             || now_us < self.not_before_us
@@ -205,6 +211,38 @@ impl CryptographicCapability {
         } else {
             Err(TokenError::InvalidSignature)
         }
+    }
+
+    fn has_valid_caveat_chain(&self) -> bool {
+        let mut saw_empty = false;
+        let mut subject_caveats = 0;
+        let mut rights = self.rights;
+        let mut transports = self.transports;
+        let mut expiry = self.expires_at_us;
+        for entry in self.caveats {
+            let Some(caveat) = entry else {
+                saw_empty = true;
+                continue
+            };
+            if saw_empty
+                || caveat.rights.is_empty()
+                || !rights.contains(caveat.rights)
+                || !transports.contains(caveat.transports)
+                || caveat.expires_at_us > expiry
+            {
+                return false
+            }
+            if caveat.subject.is_some() {
+                subject_caveats += 1;
+                if subject_caveats > 1 {
+                    return false
+                }
+            }
+            rights = caveat.rights;
+            transports = caveat.transports;
+            expiry = caveat.expires_at_us;
+        }
+        true
     }
 
     pub fn encode(self) -> [u8; Self::WIRE_BYTES] {
@@ -249,8 +287,10 @@ impl CryptographicCapability {
         let mut caveats = [None; MAX_CAPABILITY_CAVEATS];
         for (index, slot) in caveats.iter_mut().enumerate() {
             let offset = 64 + index * 24;
-            if input[offset] == 0 {
-                continue
+            match input[offset] {
+                0 => continue,
+                1 => {}
+                _ => return Err(TokenError::Invalid),
             }
             let caveat_rights =
                 Rights::from_bits(read_u16(&input, offset + 2)).ok_or(TokenError::Invalid)?;
@@ -269,7 +309,7 @@ impl CryptographicCapability {
         }
         let mut tag = [0; 32];
         tag.copy_from_slice(&input[160..192]);
-        Ok(Self {
+        let token = Self {
             issuer,
             subject,
             resource: read_u64(&input, 16),
@@ -281,7 +321,17 @@ impl CryptographicCapability {
             nonce: read_u64(&input, 56),
             caveats,
             tag,
-        })
+        };
+        if token.resource == 0
+            || token.rights.is_empty()
+            || token.expires_at_us <= token.not_before_us
+            || token.revocation_epoch == 0
+            || token.nonce == 0
+            || !token.has_valid_caveat_chain()
+        {
+            return Err(TokenError::Invalid)
+        }
+        Ok(token)
     }
 
     fn base_bytes(&self) -> [u8; 64] {

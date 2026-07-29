@@ -82,6 +82,7 @@ pub struct Credential {
     pub kind: CredentialKind,
     public_material: [u8; MAX_CREDENTIAL_BYTES],
     public_material_length: u8,
+    sign_count: u32,
 }
 
 impl Credential {
@@ -100,11 +101,26 @@ impl Credential {
             kind,
             public_material: stored,
             public_material_length: public_material.len() as u8,
+            sign_count: 0,
         })
+    }
+
+    pub fn new_passkey(
+        id: CredentialId,
+        cose_public_key: &[u8],
+        sign_count: u32,
+    ) -> Result<Self, AuthError> {
+        let mut credential = Self::new(id, CredentialKind::Passkey, cose_public_key)?;
+        credential.sign_count = sign_count;
+        Ok(credential)
     }
 
     pub fn public_material(&self) -> &[u8] {
         &self.public_material[..self.public_material_length as usize]
+    }
+
+    pub const fn sign_count(&self) -> u32 {
+        self.sign_count
     }
 }
 
@@ -208,6 +224,42 @@ impl UserRecord {
 
     fn credential(&self, id: CredentialId) -> Option<Credential> {
         self.credentials().find(|credential| credential.id == id)
+    }
+
+    pub fn record_passkey_use(
+        &mut self,
+        id: CredentialId,
+        sign_count: u32,
+    ) -> Result<(), AuthError> {
+        let credential = self
+            .credentials
+            .iter_mut()
+            .flatten()
+            .find(|credential| credential.id == id)
+            .ok_or(AuthError::CredentialNotFound)?;
+        if credential.kind != CredentialKind::Passkey {
+            return Err(AuthError::InvalidRecord)
+        }
+        if credential.sign_count != 0
+            && sign_count != 0
+            && sign_count <= credential.sign_count
+        {
+            return Err(AuthError::VerificationFailed)
+        }
+        if sign_count != 0 {
+            credential.sign_count = sign_count
+        }
+        Ok(())
+    }
+
+    pub fn passkey_sign_count(&self, id: CredentialId) -> Result<u32, AuthError> {
+        let credential = self
+            .credential(id)
+            .ok_or(AuthError::CredentialNotFound)?;
+        if credential.kind != CredentialKind::Passkey {
+            return Err(AuthError::InvalidRecord)
+        }
+        Ok(credential.sign_count)
     }
 }
 
@@ -379,6 +431,25 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         now_us: u64,
         lifetime_us: u64,
     ) -> Result<AuthenticationChallenge, AuthError> {
+        self.begin_authentication_for_kind(
+            username,
+            node,
+            credential,
+            None,
+            now_us,
+            lifetime_us,
+        )
+    }
+
+    pub(crate) fn begin_authentication_for_kind(
+        &mut self,
+        username: &str,
+        node: NodeId,
+        credential: CredentialId,
+        required_kind: Option<CredentialKind>,
+        now_us: u64,
+        lifetime_us: u64,
+    ) -> Result<AuthenticationChallenge, AuthError> {
         if lifetime_us == 0 {
             return Err(AuthError::InvalidChallenge)
         }
@@ -392,9 +463,12 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             .database
             .login_record(username, node)
             .ok_or(AuthError::UserNotFound)?;
-        record
+        let selected = record
             .credential(credential)
             .ok_or(AuthError::CredentialNotFound)?;
+        if required_kind.is_some_and(|kind| kind != selected.kind) {
+            return Err(AuthError::CredentialNotFound)
+        }
         self.next_nonce = self.next_nonce.wrapping_add(1).max(1);
         let challenge = AuthenticationChallenge {
             identity: record.identity,

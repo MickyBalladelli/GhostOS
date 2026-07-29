@@ -279,6 +279,23 @@ crypto verifier. A successful session builds the kernel-owned execution
 persona and mints only the configured initial capability set into the login
 address space.
 
+Remote administration uses a stricter WebAuthn path. The daemon binds each
+one-shot assertion to a server-supplied 256-bit ceremony nonce, frontend device,
+relying-party ID, HTTPS origin, credential, and expiry. It requires both
+authenticator user-presence and user-verification flags, so a platform passkey
+must complete its device biometric or PIN check. COSE signature and
+`clientDataJSON` validation stay behind a platform crypto boundary, while
+`synos-auth` enforces ceremony type, origin and RP hashes, bounded inputs, and
+monotonic authenticator counters.
+
+The remote security gateway issues capabilities only after that passkey
+session. Trusted code installs an exact resource allowlist; the frontend may
+request only a subset of its safe rights and a lifetime of at most five
+minutes. Issued tokens are bound to the authenticated device, restricted to
+Layer 2, capped by the passkey session expiry, sealed against subject rebinding,
+and fenced by a gateway revocation epoch. Remote tokens can never carry map,
+create, delegate, or revoke rights.
+
 Kernel personas carry dynamic rights identifiers such as `LLM_OPERATOR`,
 `NETWORK_INBOUND`, and `BATCH_JOB`. A process may suspend, restore, or
 permanently drop its own rights. Logical-name access now includes JOB scope and
