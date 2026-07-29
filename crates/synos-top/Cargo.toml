@@ -1,0 +1,11 @@
+[package]
+name = "synos-top"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+synos-fabric = { path = "../fabric" }

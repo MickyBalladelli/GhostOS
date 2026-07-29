@@ -476,6 +476,24 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         self.entries.iter().filter(|entry| entry.occupied).count()
     }
 
+    /// Snapshot every live descriptor for trusted diagnostics such as
+    /// `synos-top`. User-space visibility is still decided by the service that
+    /// owns this kernel capability space.
+    pub fn entries(
+        &self,
+    ) -> impl Iterator<Item = (CapabilityHandle, CapabilityInfo)> + '_ {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.occupied)
+            .map(|(slot, entry)| {
+                (
+                    CapabilityHandle::from_parts(slot, entry.generation),
+                    entry.info,
+                )
+            })
+    }
+
     pub const fn capacity(&self) -> usize {
         CAPACITY
     }

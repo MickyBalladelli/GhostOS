@@ -270,8 +270,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 20. Cluster Topology Visualization
-- [ ] **Visual System & Fabric Monitor (`synos-top`)**
-  - [ ] Build a terminal/framebuffer dashboard visualizing cluster RAM/VRAM heatmaps, remote DSM page fault latency, and dynamic capability graphs in real time.
+- [x] **Visual System & Fabric Monitor (`synos-top`)**
+  - [x] Build a terminal/framebuffer dashboard visualizing cluster RAM/VRAM heatmaps, remote DSM page fault latency, and dynamic capability graphs in real time.
 
 
 ---

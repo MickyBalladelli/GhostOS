@@ -438,6 +438,19 @@ SHOW PROCESS 42
 MONITOR /INTERVAL=250000 /SAMPLES=20
 ```
 
+## Cluster topology monitor
+
+`synos-top` is a heap-free real-time dashboard core. It renders per-node RAM
+and VRAM heatmaps, p50/p99 remote DSM page-fault latency, and the live
+capability derivation tree. Its fixed-rate sampler keeps the last coherent
+snapshot when a telemetry read fails.
+
+The renderer emits one ANSI stream for serial terminals and the kernel's VGA
+or GOP framebuffer console. A logarithmic per-node latency tracker calculates
+interval percentiles without allocation. Trusted diagnostics can enumerate
+live kernel capability descriptors through `CapabilitySpace::entries`; the
+serving process remains responsible for filtering what a caller may see.
+
 The asynchronous interpreter never waits inside command dispatch. Background
 commands and complete pipelines enter a system-wide bounded job queue with
 priorities, start times, dependencies, retry limits, worker leases,

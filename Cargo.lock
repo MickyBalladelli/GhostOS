@@ -289,6 +289,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-top"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+]
+
+[[package]]
 name = "synos-uefi"
 version = "0.1.0"
 dependencies = [
