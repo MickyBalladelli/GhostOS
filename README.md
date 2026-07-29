@@ -475,6 +475,31 @@ surface for macOS 14+ and iOS 17+. It displays node health and resource use,
 submits bounded jobs, and requests restricted capability grants through a TLS
 HTTP gateway.
 
+## Remote console and display
+
+`synos-webterm` provides a heap-free VT100/VT420/DECterm terminal model for
+browser and native clients. It handles UTF-8, cursor and scrolling regions,
+erase and insertion operations, SGR colors and attributes, DEC private modes,
+and OSC framing. Dirty rows become fixed WebGPU cell instances, allowing a
+WebAssembly frontend to update only changed GPU buffer ranges.
+
+Its Ring 3 SSH gate accepts public-key proofs through a platform authentication
+trait, requires an authenticated shell capability before opening `syn-shell`,
+and binds every generation-checked session to its principal. Terminal resize,
+bounded input, output polling, and close operations stay transport-independent.
+
+`synos-remote-display` moves capture surfaces through explicit available,
+capturing, encoding, and in-flight lease states. NV12, P010, RGBA, and BGRA
+planes remain in capability-mapped shared memory. The AV1 encoder boundary
+returns another shared descriptor, and the RFC 9364 RTP packetizer creates
+scatter/gather views into that bitstream instead of copying payload bytes.
+
+The display daemon negotiates AV1-only WebRTC media sessions, validates
+expiring view/input grants, tracks RTP sequence and SSRC state, and applies
+loss, latency, and acknowledged-bitrate feedback. Keyframe requests and
+adaptive encoder settings keep the path suitable for low-latency phones,
+tablets, and desktop browsers.
+
 ## Rust toolchain and runtime
 
 Ring 3 Rust programs target `targets/x86_64-unknown-synos.json` or

@@ -285,11 +285,11 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 22. Remote Console & Remote Desktop Subsystems
-- [ ] **WebAssembly Terminal & SSH Gateway (`synos-webterm`)**
-  - [ ] Implement a high-performance WebAssembly/WebGPU terminal frontend (`syn-shell`) and an SSH daemon in Ring 3.
-  - [ ] Preserve VT100/VT420/DECterm terminal handling for remote admin access.
-- [ ] **Headless Low-Latency Display Streaming (`synos-remote-display`)**
-  - [ ] Build a zero-copy WebRTC/AV1 streaming daemon for remoting GUI/dashboard interfaces to phones, tablets, and desktop browsers.
+- [x] **WebAssembly Terminal & SSH Gateway (`synos-webterm`)**
+  - [x] Implement a high-performance WebAssembly/WebGPU terminal frontend (`syn-shell`) and an SSH daemon in Ring 3.
+  - [x] Preserve VT100/VT420/DECterm terminal handling for remote admin access.
+- [x] **Headless Low-Latency Display Streaming (`synos-remote-display`)**
+  - [x] Build a zero-copy WebRTC/AV1 streaming daemon for remoting GUI/dashboard interfaces to phones, tablets, and desktop browsers.
 
 ---
 

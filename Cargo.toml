@@ -25,6 +25,8 @@ members = [
     "crates/power",
     "crates/synos-top",
     "crates/client-sdk",
+    "crates/synos-webterm",
+    "crates/synos-remote-display",
     "tools/cargo-synos",
     "kernel",
     "boot/uefi",
@@ -54,6 +56,8 @@ default-members = [
     "crates/power",
     "crates/synos-top",
     "crates/client-sdk",
+    "crates/synos-webterm",
+    "crates/synos-remote-display",
     "kernel",
 ]
 

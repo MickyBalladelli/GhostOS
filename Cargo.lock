@@ -271,6 +271,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-remote-display"
+version = "0.1.0"
+dependencies = [
+ "synos-platform-io",
+]
+
+[[package]]
 name = "synos-runtime"
 version = "0.1.0"
 dependencies = [
@@ -310,6 +317,13 @@ version = "0.1.0"
 dependencies = [
  "synos-boot-protocol",
  "synos-kernel",
+]
+
+[[package]]
+name = "synos-webterm"
+version = "0.1.0"
+dependencies = [
+ "syn-shell",
 ]
 
 [[package]]
