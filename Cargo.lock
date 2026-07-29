@@ -185,6 +185,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-http"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-netd",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-inference"
 version = "0.1.0"
 dependencies = [

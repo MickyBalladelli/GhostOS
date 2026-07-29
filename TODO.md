@@ -327,8 +327,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 27. Web Application & Microservices Layer
-- [ ] **Async HTTP / gRPC Stack (`synos-http`)**
-  - [ ] Provide lightweight native web server primitives (`axum`/`hyper` ports) bound directly to `synos-netd` and capability checks.
+- [x] **Async HTTP / gRPC Stack (`synos-http`)**
+  - [x] Provide lightweight native web server primitives (`axum`/`hyper` ports) bound directly to `synos-netd` and capability checks.
 
 
 ---

@@ -138,6 +138,21 @@ generation-checked, owner-bound, and separately authorizes listen, connect,
 send, receive, inspect, and close operations. Payload descriptors are validated
 against capability-mapped shared regions before the daemon touches them.
 
+## Web applications and microservices
+
+`synos-http` provides heap-free HTTP/1 request parsing, response encoding, and a
+fixed-capacity method/path router for Ring 3 services. Routes carry web-service
+rights, so the authenticated principal and attenuated grant are checked before
+handler dispatch. Its gRPC layer validates `application/grpc` requests, applies
+the same route rights, and frames bounded protobuf messages without reflection
+or allocation.
+
+The asynchronous HTTP server owns no raw network backend. It submits bounded
+open, listen, receive, send, and close operations through `synos-netd` IPC
+rings, and every operation carries the generation-checked socket capability
+returned by that daemon. Callers drive both services cooperatively and provide
+capability-mapped request and response buffers.
+
 ## Service isolation and fault recovery
 
 `synos-init` supervises fixed-capacity Ring 3 storage, network, and system

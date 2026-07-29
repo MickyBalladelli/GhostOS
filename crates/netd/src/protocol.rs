@@ -121,6 +121,45 @@ impl SocketRequest {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SocketResponse {
+    pub correlation: u128,
+    pub status: Status,
+    pub capability: Option<SocketCapability>,
+    pub value: u64,
+    pub buffer: Option<SharedBuffer>,
+}
+
+impl SocketResponse {
+    pub fn decode(envelope: Envelope) -> Result<Self, ProtocolError> {
+        if envelope.label != SOCKET_RESPONSE_SCHEMA {
+            return Err(ProtocolError::InvalidSchema);
+        }
+        if envelope.words[0] != SOCKET_PROTOCOL_VERSION as u64 {
+            return Err(ProtocolError::InvalidVersion);
+        }
+        let status = Status::from_raw(
+            u32::try_from(envelope.words[1]).map_err(|_| ProtocolError::InvalidOperation)?,
+        )
+        .ok_or(ProtocolError::InvalidOperation)?;
+        let capability = if envelope.words[2] == 0 {
+            None
+        } else {
+            Some(
+                SocketCapability::from_raw(envelope.words[2])
+                    .ok_or(ProtocolError::InvalidCapability)?,
+            )
+        };
+        Ok(Self {
+            correlation: envelope.correlation,
+            status,
+            capability,
+            value: envelope.words[3],
+            buffer: envelope.buffer,
+        })
+    }
+}
+
 pub const fn socket_response(
     correlation: u128,
     status: Status,
