@@ -10,7 +10,8 @@ mod pool;
 
 pub use rms::{
     IndexDefinition, MappedRecordFile, MappedRecordInfo, RecordDescriptor, RecordFileInfo,
-    RecordFormat, RecordOrganization, RecordRead, RecordSelector, RmsError, RmsMapHandle,
+    RecordFormat, RecordImageBuilder, RecordIter, RecordOrganization, RecordRead, RecordSelector,
+    RmsError, RmsMapHandle,
 };
 pub use pool::{
     BlockPlacement, DeviceHealth, MAX_POOL_MEMBERS, MAX_POOL_NAME_BYTES, PoolHealth,
@@ -35,6 +36,7 @@ pub enum Error {
     NotFound,
     OutOfSpace,
     CheckpointNotFound,
+    TransactionAborted,
     TooManyCheckpoints,
     TooManyRetentionRules,
     VersionOverflow,
@@ -49,6 +51,7 @@ impl IntoStatus for Error {
             }
             Self::Corrupt => Status::CORRUPT,
             Self::InvalidPath | Self::InvalidVersion => Status::INVALID_ARGUMENT,
+            Self::TransactionAborted => Status::BUSY,
             Self::BufferTooSmall { .. } => {
                 Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
                     .expect("valid filesystem status")
@@ -340,6 +343,12 @@ pub struct ReadResult {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransactionCommit {
+    pub generation: u64,
+    pub operations: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GcReport {
     pub live_blocks: usize,
     pub freed_blocks: usize,
@@ -481,6 +490,86 @@ pub struct SynFs<const MAX_BLOCKS: usize> {
     next_checkpoint: u64,
 }
 
+/// An atomic group of SynFS B+tree changes.
+///
+/// New data and tree paths remain unreachable from the committed root until
+/// `commit` is called. Dropping an unfinished transaction restores the prior
+/// root and reclaims its abandoned CoW blocks.
+pub struct SynFsTransaction<'a, const MAX_BLOCKS: usize> {
+    filesystem: &'a mut SynFs<MAX_BLOCKS>,
+    original_root: BlockId,
+    original_generation: u64,
+    operations: u32,
+    committed: bool,
+    failed: bool,
+}
+
+impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
+    pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
+        if self.failed {
+            return Err(Error::TransactionAborted)
+        }
+        let file = match self.filesystem.write_uncommitted(path, contents) {
+            Ok(file) => file,
+            Err(error) => {
+                self.failed = true;
+                return Err(error)
+            }
+        };
+        self.operations = match self.operations.checked_add(1) {
+            Some(operations) => operations,
+            None => {
+                self.failed = true;
+                return Err(Error::VersionOverflow)
+            }
+        };
+        Ok(file)
+    }
+
+    pub fn delete(&mut self, path: &str) -> Result<FileVersion, Error> {
+        if self.failed {
+            return Err(Error::TransactionAborted)
+        }
+        let file = match self.filesystem.delete_uncommitted(path) {
+            Ok(file) => file,
+            Err(error) => {
+                self.failed = true;
+                return Err(error)
+            }
+        };
+        self.operations = match self.operations.checked_add(1) {
+            Some(operations) => operations,
+            None => {
+                self.failed = true;
+                return Err(Error::VersionOverflow)
+            }
+        };
+        Ok(file)
+    }
+
+    pub fn commit(mut self) -> Result<TransactionCommit, Error> {
+        if self.failed {
+            return Err(Error::TransactionAborted)
+        }
+        self.committed = true;
+        Ok(TransactionCommit {
+            generation: self.filesystem.generation,
+            operations: self.operations,
+        })
+    }
+}
+
+impl<const MAX_BLOCKS: usize> Drop for SynFsTransaction<'_, MAX_BLOCKS> {
+    fn drop(&mut self) {
+        if self.committed {
+            return
+        }
+        self.filesystem.root = self.original_root;
+        self.filesystem.generation = self.original_generation;
+        self.filesystem.collect_garbage();
+    }
+}
+
 impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     pub const fn new() -> Self {
         Self {
@@ -502,6 +591,17 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub const fn capacity(&self) -> usize {
         MAX_BLOCKS
+    }
+
+    pub fn transaction(&mut self) -> SynFsTransaction<'_, MAX_BLOCKS> {
+        SynFsTransaction {
+            original_root: self.root,
+            original_generation: self.generation,
+            filesystem: self,
+            operations: 0,
+            committed: false,
+            failed: false,
+        }
     }
 
     /// Bind a validated kernel capability to the current immutable tree root.
@@ -570,24 +670,32 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
+        let result = self.write_uncommitted(path, contents);
+        if result == Err(Error::OutOfSpace) {
+            self.collect_garbage();
+            return self.write_uncommitted(path, contents)
+        }
+        if result.is_err() {
+            self.collect_garbage();
+        }
+        result
+    }
+
+    fn write_uncommitted(
+        &mut self,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<FileVersion, Error> {
         let parsed = VersionedPath::parse(path)?;
         if parsed.version != VersionSelector::Latest || path.contains(';') {
             return Err(Error::InvalidVersion)
         }
 
         let version = self
-            .latest_record(parsed.file)?
+            .last_record(parsed.file)?
             .map_or(Ok(1), |record| record.key.version.checked_add(1).ok_or(Error::VersionOverflow))?;
         let created_at = self.generation.saturating_add(1);
-        let mut result = self.write_inner(parsed.file, version, created_at, contents);
-        if result == Err(Error::OutOfSpace) {
-            self.collect_garbage();
-            result = self.write_inner(parsed.file, version, created_at, contents);
-        }
-        if result.is_err() {
-            self.collect_garbage();
-        }
-        result
+        self.write_inner(parsed.file, version, created_at, contents)
     }
 
     fn write_inner(
@@ -608,6 +716,50 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         };
         let root = self.insert(self.root, record)?;
         self.root = root;
+        self.generation = created_at;
+        Ok(record.into())
+    }
+
+    /// Create a new tombstone version. Older snapshots keep seeing their data.
+    pub fn delete(&mut self, path: &str) -> Result<FileVersion, Error> {
+        let result = self.delete_uncommitted(path);
+        if result == Err(Error::OutOfSpace) {
+            self.collect_garbage();
+            return self.delete_uncommitted(path)
+        }
+        if result.is_err() {
+            self.collect_garbage();
+        }
+        result
+    }
+
+    fn delete_uncommitted(&mut self, path: &str) -> Result<FileVersion, Error> {
+        let parsed = VersionedPath::parse(path)?;
+        if parsed.version != VersionSelector::Latest || path.contains(';') {
+            return Err(Error::InvalidVersion)
+        }
+        let previous = self
+            .last_record(parsed.file)?
+            .filter(|record| !record.deleted)
+            .ok_or(Error::NotFound)?;
+        let version = previous
+            .key
+            .version
+            .checked_add(1)
+            .ok_or(Error::VersionOverflow)?;
+        let created_at = self.generation.saturating_add(1);
+        let record = FileRecord {
+            key: FileKey {
+                file: parsed.file,
+                version,
+            },
+            size: 0,
+            data: BlockId::NONE,
+            checksum: checksum(&[]),
+            created_at,
+            deleted: true,
+        };
+        self.root = self.insert(self.root, record)?;
         self.generation = created_at;
         Ok(record.into())
     }
@@ -978,11 +1130,21 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
     }
 
-    fn latest_record(&self, file: FileName) -> Result<Option<FileRecord>, Error> {
-        self.latest_record_at(self.root, file)
+    fn last_record(&self, file: FileName) -> Result<Option<FileRecord>, Error> {
+        self.last_record_at(self.root, file)
     }
 
     fn latest_record_at(
+        &self,
+        root: BlockId,
+        file: FileName,
+    ) -> Result<Option<FileRecord>, Error> {
+        Ok(self
+            .last_record_at(root, file)?
+            .filter(|record| !record.deleted))
+    }
+
+    fn last_record_at(
         &self,
         root: BlockId,
         file: FileName,
@@ -1001,7 +1163,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                     return Ok(leaf.records[..leaf.len as usize]
                         .iter()
                         .rev()
-                        .find(|record| record.key.file == file && !record.deleted)
+                        .find(|record| record.key.file == file)
                         .copied())
                 }
                 Block::Tree(TreeBlock::Branch(branch)) => {

@@ -133,6 +133,14 @@ impl<'a> MappedRecordFile<'a> {
         self.info
     }
 
+    pub fn records(&self) -> RecordIter<'a> {
+        RecordIter {
+            bytes: self.bytes,
+            remaining: self.info.record_count,
+            cursor: HEADER_BYTES,
+        }
+    }
+
     pub fn record(&self, selector: RecordSelector<'_>) -> Result<&'a [u8], RmsError> {
         if matches!(selector, RecordSelector::Key(_))
             && matches!(
@@ -165,12 +173,119 @@ impl<'a> MappedRecordFile<'a> {
     }
 }
 
+pub struct RecordIter<'a> {
+    bytes: &'a [u8],
+    remaining: u32,
+    cursor: usize,
+}
+
+impl<'a> Iterator for RecordIter<'a> {
+    type Item = Result<&'a [u8], RmsError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None
+        }
+        self.remaining -= 1;
+        Some(next_record(self.bytes, &mut self.cursor))
+    }
+}
+
+/// Incremental serializer for an immutable RMS record image.
+pub struct RecordImageBuilder<'a> {
+    descriptor: RecordDescriptor,
+    record_count: u32,
+    written: u32,
+    cursor: usize,
+    bytes: &'a mut [u8],
+}
+
+impl<'a> RecordImageBuilder<'a> {
+    pub fn new(
+        descriptor: RecordDescriptor,
+        record_count: u32,
+        bytes: &'a mut [u8],
+    ) -> Result<Self, RmsError> {
+        let descriptor = descriptor.validate()?;
+        if bytes.len() < HEADER_BYTES {
+            return Err(RmsError::BufferTooSmall {
+                required: HEADER_BYTES,
+            })
+        }
+        encode_header(&mut bytes[..HEADER_BYTES], descriptor, record_count);
+        Ok(Self {
+            descriptor,
+            record_count,
+            written: 0,
+            cursor: HEADER_BYTES,
+            bytes,
+        })
+    }
+
+    pub fn push(&mut self, record: &[u8]) -> Result<(), RmsError> {
+        if self.written >= self.record_count {
+            return Err(RmsError::InvalidRecord {
+                position: self.written,
+            })
+        }
+        validate_record(self.descriptor, record, self.written)?;
+        self.validate_unique_key(record)?;
+        let required = self
+            .cursor
+            .checked_add(2 + record.len())
+            .ok_or(RmsError::BufferTooSmall {
+                required: usize::MAX,
+            })?;
+        if self.bytes.len() < required {
+            return Err(RmsError::BufferTooSmall { required })
+        }
+        self.bytes[self.cursor..self.cursor + 2]
+            .copy_from_slice(&(record.len() as u16).to_le_bytes());
+        self.cursor += 2;
+        self.bytes[self.cursor..self.cursor + record.len()].copy_from_slice(record);
+        self.cursor += record.len();
+        self.written += 1;
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<&'a [u8], RmsError> {
+        if self.written != self.record_count {
+            return Err(RmsError::IncompleteImage {
+                expected: self.record_count,
+                written: self.written,
+            })
+        }
+        Ok(&self.bytes[..self.cursor])
+    }
+
+    fn validate_unique_key(&self, record: &[u8]) -> Result<(), RmsError> {
+        let RecordOrganization::Indexed(index) = self.descriptor.organization else {
+            return Ok(())
+        };
+        if !index.unique {
+            return Ok(())
+        }
+        let start = index.key_offset as usize;
+        let end = start + index.key_length as usize;
+        let key = &record[start..end];
+        let mut cursor = HEADER_BYTES;
+        for _ in 0..self.written {
+            let existing = next_record(&self.bytes[..self.cursor], &mut cursor)?;
+            if &existing[start..end] == key {
+                return Err(RmsError::DuplicateKey)
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RmsError {
     BufferTooSmall { required: usize },
     DuplicateKey,
     File(Error),
     InvalidDescriptor,
+    IncompleteImage { expected: u32, written: u32 },
     InvalidRecord { position: u32 },
     InvalidSelector,
     NotRecordFile,
@@ -193,7 +308,10 @@ impl IntoStatus for RmsError {
             Self::DuplicateKey => {
                 Status::new(Severity::Error, facility::RMS, 2, 0).expect("valid RMS status")
             }
-            Self::InvalidDescriptor | Self::InvalidRecord { .. } | Self::InvalidSelector => {
+            Self::IncompleteImage { .. }
+            | Self::InvalidDescriptor
+            | Self::InvalidRecord { .. }
+            | Self::InvalidSelector => {
                 Status::INVALID_ARGUMENT
             }
             Self::NotRecordFile => {

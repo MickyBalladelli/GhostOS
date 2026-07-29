@@ -199,6 +199,20 @@ versions. Callers supply serialization scratch space and can select records by
 position or indexed key; flat byte-stream files continue to use `write` and
 `read`.
 
+`synos-rms` adds the application-facing record API. `RecordFile` supports
+create, read, insert, update, and delete operations, while `StructuredRecord`
+lets applications bind their own bounded binary codecs. Record selectors can
+be resolved to stable ordinal ranges and protected through `DlmRecordLocks`;
+the native DLM binding maps read/update access to protected-read/protected-write
+locks and uses one-byte ranges to avoid unrelated-record contention.
+
+The same crate provides a fixed-capacity embedded key-value database. Binary
+keys are encoded into the SynFS B+tree namespace, values remain normal
+versioned CoW files, and mapped snapshots expose immutable value pages without
+copying. Bounded transactions stage operations without a heap and publish one
+new SynFS root only after every put and delete succeeds. Dropped or failed
+transactions restore the old root and reclaim abandoned blocks.
+
 `synos-status` defines the common 32-bit condition layout used by kernel,
 filesystem, driver, command, and system-model errors. It keeps the OpenVMS
 odd-value success convention while exposing facility, code, severity, and flag

@@ -311,10 +311,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 25. Application Data Layer & Native RMS
-- [ ] **Rust Record Management API (`synos-rms`)**
-  - [ ] Build idiomatic Rust bindings for OpenVMS-style indexed (ISAM) files, structured data records, and DLM-backed record-level locking.
-- [ ] **Embedded CoW Database Engine**
-  - [ ] Implement zero-copy key-value and transaction storage libraries optimized for SynFS B-trees.
+- [x] **Rust Record Management API (`synos-rms`)**
+  - [x] Build idiomatic Rust bindings for OpenVMS-style indexed (ISAM) files, structured data records, and DLM-backed record-level locking.
+- [x] **Embedded CoW Database Engine**
+  - [x] Implement zero-copy key-value and transaction storage libraries optimized for SynFS B-trees.
 
 ---
 
