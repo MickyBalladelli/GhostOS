@@ -233,6 +233,16 @@ filesystem, driver, command, and system-model errors. It keeps the OpenVMS
 odd-value success convention while exposing facility, code, severity, and flag
 fields without platform-sized error values.
 
+`syn-script` builds native command procedures on those primitives. It compiles
+bounded DCL-style statements, validates every pipeline stage against the typed
+command registry, and passes structured output records between stages through
+checksummed shared-memory IPC payloads. Scripts can define scoped logical
+names, create typed symbols, and attenuate cryptographic capability tokens;
+logical-name changes still pass through both namespace capabilities and entry
+ACLs. `$STATUS`, `IF SUCCESS`, `IF FAILURE`, `SET ON`, `SET NOON`, and
+`ON ERROR THEN` provide deterministic condition handling without host shell
+exit-code conventions.
+
 ## Hardware fabric and clustering
 
 `synos-fabric` gives CXL and legacy Ethernet clusters one bounded, heap-free

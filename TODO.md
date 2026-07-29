@@ -334,12 +334,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 28. Native Command Scripting (`syn-script`)
-- [ ] **Structured Pipeline Engine**
-  - [ ] Build a strongly-typed script interpreter passing structured Rust objects through IPC channels instead of raw text streams.
-- [ ] **Capability & Logical Name Control**
-  - [ ] Implement native syntax for Logical Name manipulation, symbol creation, and capability token attenuation.
-- [ ] **OpenVMS DCL-Style Status Handling**
-  - [ ] Enforce `$STATUS`-driven error propagation and conditional execution primitives.
+- [x] **Structured Pipeline Engine**
+  - [x] Build a strongly-typed script interpreter passing structured Rust objects through IPC channels instead of raw text streams.
+- [x] **Capability & Logical Name Control**
+  - [x] Implement native syntax for Logical Name manipulation, symbol creation, and capability token attenuation.
+- [x] **OpenVMS DCL-Style Status Handling**
+  - [x] Enforce `$STATUS`-driven error propagation and conditional execution primitives.
 
 ---
 

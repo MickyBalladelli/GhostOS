@@ -102,6 +102,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn-script"
+version = "0.1.0"
+dependencies = [
+ "syn-shell",
+ "synos-auth",
+ "synos-fabric",
+ "synos-ipc",
+ "synos-kernel",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
 name = "syn-shell"
 version = "0.1.0"
 dependencies = [

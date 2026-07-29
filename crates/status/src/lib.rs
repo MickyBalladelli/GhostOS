@@ -119,6 +119,7 @@ pub mod facility {
     pub const SHELL: u16 = 12;
     pub const NETWORK: u16 = 13;
     pub const COMPUTE: u16 = 14;
+    pub const SCRIPT: u16 = 15;
 }
 
 #[cfg(test)]
