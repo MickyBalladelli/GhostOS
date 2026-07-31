@@ -1,0 +1,13 @@
+//! Network device emulation (e1000 and virtio-net).
+
+pub mod e1000;
+pub mod virtio;
+
+pub use e1000::{
+    E1000, E1000_CLASS, E1000_DEVICE_ID, E1000_MMIO_SIZE, E1000_PROG_IF, E1000_SUBCLASS,
+    E1000_VENDOR_ID,
+};
+pub use virtio::{
+    VirtioNet, VIRTIO_NET_CLASS, VIRTIO_NET_DEVICE_ID, VIRTIO_NET_PCI_BAR0_SIZE,
+    VIRTIO_NET_PROG_IF, VIRTIO_NET_SUBCLASS, VIRTIO_NET_VENDOR_ID,
+};

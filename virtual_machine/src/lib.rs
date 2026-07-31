@@ -3,16 +3,18 @@ pub mod memory;
 pub mod devices;
 pub mod firmware;
 pub mod boot;
+pub mod net;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::Mmu;
+pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
-    Ahci, ApicTrigger, Device, DiskImage, Hpet, InterruptController, LocalApic, Nvme,
-    PciDeviceId, PciHostBridge, Pit, PortBus, PortDevice, Serial16550, AHCI_ABAR_SIZE,
-    AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID, APIC_BASE_DEFAULT,
-    APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR, NVME_BAR0_SIZE, NVME_CLASS,
-    NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID, PCIE_ECAM_BASE_DEFAULT,
-    PIT_CH0_PORT, PIT_PORT_COUNT,
+    Ahci, ApicTrigger, Device, DiskImage, E1000, E1000_MMIO_SIZE, Hpet, InterruptController,
+    LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit, PortBus, PortDevice, Serial16550, VirtioNet,
+    AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
+    APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR,
+    NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
+    PCIE_ECAM_BASE_DEFAULT, PIT_CH0_PORT, PIT_PORT_COUNT,
 };
 pub use firmware::bios::{Bios, BiosContext};
 pub use boot::Loader;
@@ -32,6 +34,8 @@ pub const PCIE_ECAM_SIZE: u64 = 256 * 32 * 8 * 4096;
 pub const AHCI_MMIO_BASE: u64 = 0xF100_0000;
 /// NVMe controller BAR0 aperture base.
 pub const NVME_MMIO_BASE: u64 = 0xF110_0000;
+pub const E1000_MMIO_BASE: u64 = 0xF120_0000;
+pub const VIRTIO_NET_IO_BASE: u16 = 0x5000;
 
 pub struct VmConfig {
     pub memory_size: usize,
@@ -66,6 +70,8 @@ pub struct Vm {
     hpet: Rc<RefCell<Hpet>>,
     ahci: Rc<RefCell<Ahci>>,
     nvme: Rc<RefCell<Nvme>>,
+    e1000: Rc<RefCell<E1000>>,
+    virtio_net: Rc<RefCell<VirtioNet>>,
     bios: Bios,
     config: VmConfig,
 }
@@ -162,6 +168,49 @@ impl Vm {
         pci.borrow_mut().set_bar_size(0, 5, 0, 0, NVME_BAR0_SIZE as u32).ok();
         pci.borrow_mut().write_config(0, 5, 0, 0x10, NVME_MMIO_BASE as u32);
 
+        // Networking: e1000 + virtio-net on a loopback hub.
+        let hub = Rc::new(RefCell::new(LoopbackHub::new()));
+        let e1000_mac = MacAddress::synos_default(0x56);
+        let virtio_mac = MacAddress::synos_default(0x57);
+        let e1000 =
+            Rc::new(RefCell::new(E1000::new(e1000_mac)));
+        e1000.borrow_mut().attach_apic(apic.clone());
+        e1000.borrow_mut().set_irq_vector(0x2D);
+        e1000.borrow_mut().attach_backend(Box::new(
+            LoopbackPort::new(hub.clone(), 0, e1000_mac),
+        ));
+        mmu.attach_mmio(E1000_MMIO_BASE, E1000_MMIO_SIZE, Box::new(e1000.clone()));
+        pci.borrow_mut().add_device(
+            0, 6, 0,
+            PciDeviceId {
+                vendor: 0x8086, device: 0x100E, revision: 0x03,
+                prog_if: 0x00, subclass: 0x00, class: 0x02,
+            },
+        );
+        pci.borrow_mut()
+            .set_bar_size(0, 6, 0, 0, E1000_MMIO_SIZE as u32)
+            .ok();
+        pci.borrow_mut()
+            .write_config(0, 6, 0, 0x10, E1000_MMIO_BASE as u32);
+
+        let virtio_net = Rc::new(RefCell::new(VirtioNet::new(virtio_mac)));
+        virtio_net.borrow_mut().attach_apic(apic.clone());
+        virtio_net.borrow_mut().set_irq_vector(0x2E);
+        virtio_net.borrow_mut().attach_backend(Box::new(
+            LoopbackPort::new(hub.clone(), 1, virtio_mac),
+        ));
+        ports.attach(VIRTIO_NET_IO_BASE, 0x20, Box::new(virtio_net.clone()));
+        pci.borrow_mut().add_device(
+            0, 7, 0,
+            PciDeviceId {
+                vendor: 0x1AF4, device: 0x1000, revision: 0x01,
+                prog_if: 0x00, subclass: 0x00, class: 0x02,
+            },
+        );
+        pci.borrow_mut().set_bar_size(0, 7, 0, 0, 0x100).ok();
+        pci.borrow_mut()
+            .write_config(0, 7, 0, 0x10, VIRTIO_NET_IO_BASE as u32 | 0x1);
+
         let mut cpu = Cpu::new();
         cpu.attach_apic(apic.clone());
 
@@ -176,6 +225,8 @@ impl Vm {
             hpet,
             ahci,
             nvme,
+            e1000,
+            virtio_net,
             bios: Bios::new(),
             config,
         }
@@ -197,9 +248,8 @@ impl Vm {
                 &mut self.bios.context,
             )?;
 
-            // Deferred storage DMA: process AHCI/NVMe commands issued during
-            // the step, then poll timers and deliver interrupts.
-            self.poll_storage();
+            // Deferred DMA for storage and NICs issued during the step.
+            self.poll_devices();
 
             let now_ns = started.elapsed().as_nanos() as u64;
             self.poll_apic(now_ns)?;
@@ -213,17 +263,19 @@ impl Vm {
         Ok(())
     }
 
-    /// Process storage-controller commands issued during the last CPU step.
-    /// This runs outside the executor's `&mut Mmu` borrow so the controllers
-    /// can DMA directly into guest physical memory.
-    fn poll_storage(&mut self) {
+    /// Process deferred DMA for storage controllers and NICs issued during
+    /// the last CPU step. Runs outside the executor's `&mut Mmu` borrow so
+    /// devices can DMA directly into guest physical memory.
+    fn poll_devices(&mut self) {
         if self.ahci.borrow().has_pending() {
-            let mut ahci = self.ahci.borrow_mut();
-            ahci.poll_dma(&mut self.mmu);
+            self.ahci.borrow_mut().poll_dma(&mut self.mmu);
         }
         if self.nvme.borrow().has_pending() {
-            let mut nvme = self.nvme.borrow_mut();
-            nvme.poll_dma(&mut self.mmu);
+            self.nvme.borrow_mut().poll_dma(&mut self.mmu);
+        }
+        self.e1000.borrow_mut().poll(&mut self.mmu);
+        if self.virtio_net.borrow().has_pending() {
+            self.virtio_net.borrow_mut().poll(&mut self.mmu);
         }
     }
 

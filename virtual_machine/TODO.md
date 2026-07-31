@@ -44,11 +44,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Block device image file parser (RAW, VHD, QCOW2)
   - [x] DMA transfer implementation
 
-- [ ] **Networking**
-  - [ ] Intel e1000 NIC emulation
-  - [ ] virtio-net device emulation
-  - [ ] Packet buffer management
-  - [ ] MAC address handling
+- [x] **Networking**
+  - [x] Intel e1000 NIC emulation
+  - [x] virtio-net device emulation
+  - [x] Packet buffer management
+  - [x] MAC address handling
 
 - [ ] **Display**
   - [ ] VGA text mode emulator

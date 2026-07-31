@@ -5,6 +5,7 @@
 mod apic;
 mod hpet;
 mod interrupt_controller;
+pub mod net;
 mod pit;
 mod serial;
 pub mod storage;
@@ -17,6 +18,7 @@ pub use interrupt_controller::{IdtGate, InterruptController};
 pub use pit::{
     Pit, PIT_CH0_PORT, PIT_CH1_PORT, PIT_CH2_PORT, PIT_CMD_PORT, PIT_FREQUENCY_HZ, PIT_PORT_COUNT,
 };
+pub use net::{E1000, E1000_MMIO_SIZE, VirtioNet};
 pub use serial::Serial16550;
 pub use storage::{
     Ahci, DiskFormat, DiskImage, Nvme, AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF,
