@@ -1,5 +1,45 @@
 use std::collections::BTreeMap;
 
+/// A decoded IDT gate descriptor (16 bytes in guest memory).
+#[derive(Clone, Copy, Debug)]
+pub struct IdtGate {
+    /// 16-bit selector.
+    pub selector: u16,
+    /// 16-bit attributes / type field (P, DPL, TYPE).
+    pub type_attr: u16,
+    /// 64-bit handler offset.
+    pub offset: u64,
+    /// IST index (0 means "not used").
+    pub ist: u8,
+}
+
+impl IdtGate {
+    /// Decode a 16-byte IDT descriptor.
+    pub fn decode(raw: &[u8; 16]) -> Self {
+        let offset_lo = u16::from_le_bytes([raw[0], raw[1]]) as u64;
+        let selector = u16::from_le_bytes([raw[2], raw[3]]);
+        let ist = raw[4] & 0x07;
+        let type_attr = u16::from_le_bytes([raw[5], raw[6]]);
+        let offset_mid = u16::from_le_bytes([raw[7], raw[8]]) as u64;
+        let offset_hi = u32::from_le_bytes([raw[9], raw[10], raw[11], raw[12]]) as u64;
+        let offset = offset_lo | (offset_mid << 16) | (offset_hi << 32);
+        Self {
+            selector,
+            type_attr,
+            offset,
+            ist,
+        }
+    }
+
+    pub fn present(&self) -> bool {
+        self.type_attr & (1 << 15) != 0
+    }
+
+    pub fn dpl(&self) -> u8 {
+        ((self.type_attr >> 13) & 0x03) as u8
+    }
+}
+
 pub struct InterruptController {
     idt_base: u64,
     idt_limit: u16,
@@ -28,14 +68,17 @@ impl InterruptController {
         self.idt_limit = limit;
     }
 
-    pub fn get_idt_entry(&self, vector: u8) -> u64 {
-        if vector as usize >= 256 {
-            return 0;
+    /// Physical address of the IDT entry for `vector`, or `None` when the IDT
+    /// has not been installed yet.
+    pub fn idt_entry_address(&self, vector: u8) -> Option<u64> {
+        if self.idt_base == 0 || (vector as u32 * 16 + 16) > (self.idt_limit as u32 + 1) {
+            return None;
         }
-        
-        let entry_size: u64 = 16;
-        let offset = self.idt_base + ((vector as usize) as u64 * entry_size);
-        offset
+        Some(self.idt_base + (vector as u64) * 16)
+    }
+
+    pub fn get_idt_entry(&self, vector: u8) -> u64 {
+        self.idt_entry_address(vector).unwrap_or(0)
     }
 
     pub fn map_irq(&mut self, irq: u8, vector: u8) {
@@ -57,5 +100,11 @@ impl InterruptController {
 
     pub fn is_mapped(&self) -> bool {
         self.pic_mapped
+    }
+}
+
+impl Default for InterruptController {
+    fn default() -> Self {
+        Self::new()
     }
 }

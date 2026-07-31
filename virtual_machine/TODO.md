@@ -11,11 +11,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Implement exception/interrupt handling (IDT, IRQ vectors)
   - [x] Add CPU state management (registers, flags, segment registers)
 
-- [ ] **Memory Management Unit (MMU)**
-  - [ ] Implement physical memory allocator (frame-based)
-  - [ ] Build page table manager (PML4, PDPT, PD, PT levels)
-  - [ ] Add memory-mapped I/O support for devices
-  - [ ] Implement memory protection and access validation
+- [x] **Memory Management Unit (MMU)**
+  - [x] Implement physical memory allocator (frame-based)
+  - [x] Build page table manager (PML4, PDPT, PD, PT levels)
+  - [x] Add memory-mapped I/O support for devices
+  - [x] Implement memory protection and access validation
 
 ### 2. Hardware Emulation
 

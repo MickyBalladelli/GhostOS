@@ -1,4 +1,4 @@
-use crate::cpu::Cpu;
+use crate::cpu::CpuState;
 use crate::memory::Mmu;
 
 pub struct BiosContext {
@@ -35,7 +35,12 @@ impl BiosContext {
         self.ega = [0; 32 * 4];
     }
 
-    pub fn call_int(&mut self, int_num: u8, _cpu: &mut Cpu, _mmu: &mut Mmu) -> Result<(), BiosError> {
+    pub fn call_int(
+        &mut self,
+        int_num: u8,
+        _cpu: &mut CpuState,
+        _mmu: &mut Mmu,
+    ) -> Result<(), BiosError> {
         match int_num {
             0x10 => self.video_service(),
             0x13 => self.disk_service(),
@@ -104,7 +109,7 @@ impl Bios {
         }
     }
 
-    pub fn init(&mut self, _mmu: &mut Mmu, _cpu: &mut Cpu) -> Result<(), BiosError> {
+    pub fn init(&mut self, _mmu: &mut Mmu, _cpu: &mut CpuState) -> Result<(), BiosError> {
         self.context.init_bios()?;
         Ok(())
     }

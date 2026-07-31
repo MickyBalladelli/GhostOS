@@ -1,0 +1,169 @@
+//! Interrupt controller: IDT management, IRQ routing, and descriptor decoding.
+
+use std::collections::BTreeMap;
+
+/// A decoded x86 IDT gate descriptor (16 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdtGate {
+    pub offset: u64,
+    pub selector: u16,
+    pub type_attr: u8,
+    pub ist: u8,
+}
+
+impl IdtGate {
+    /// Decode a 16-byte IDT descriptor (little endian) into an `IdtGate`.
+    pub fn decode(raw: &[u8; 16]) -> Self {
+        let offset = u64::from_le_bytes([
+            raw[0], raw[1], raw[2], raw[3], raw[6], raw[7], raw[8], raw[9],
+        ]);
+        let selector = u16::from_le_bytes([raw[2], raw[3]]);
+        let type_attr = raw[5];
+        let ist = raw[4] & 0x07;
+        Self {
+            offset,
+            selector,
+            type_attr,
+            ist,
+        }
+    }
+
+    pub fn present(&self) -> bool {
+        self.type_attr & 0x80 != 0
+    }
+
+    pub fn is_trap_or_interrupt(&self) -> bool {
+        let t = (self.type_attr >> 3) & 0x0F;
+        matches!(t, 0xE | 0xF)
+    }
+
+    pub fn dpl(&self) -> u8 {
+        (self.type_attr >> 5) & 0x03
+    }
+}
+
+/// Manages the IDT location, IRQ→vector routing, and PIC remapping state.
+pub struct InterruptController {
+    idt_base: u64,
+    idt_limit: u16,
+    irq_routing: BTreeMap<u8, u8>,
+    pic_mapped: bool,
+}
+
+impl InterruptController {
+    pub fn new() -> Self {
+        Self {
+            idt_base: 0,
+            idt_limit: 0,
+            irq_routing: BTreeMap::new(),
+            pic_mapped: false,
+        }
+    }
+
+    pub fn init(&mut self) {
+        self.idt_base = 0;
+        self.idt_limit = 0;
+        self.pic_mapped = false;
+        self.irq_routing.clear();
+    }
+
+    pub fn set_idt(&mut self, base: u64, limit: u16) {
+        self.idt_base = base;
+        self.idt_limit = limit;
+    }
+
+    pub fn idt_base(&self) -> u64 {
+        self.idt_base
+    }
+
+    pub fn idt_limit(&self) -> u16 {
+        self.idt_limit
+    }
+
+    /// Address in guest memory of the descriptor for `vector`, or `None` if
+    /// the vector lies outside the current IDT limit.
+    pub fn idt_entry_address(&self, vector: u8) -> Option<u64> {
+        let index = vector as u64;
+        if index >= self.idt_limit as u64 / 16 {
+            return None;
+        }
+        Some(self.idt_base + index * 16)
+    }
+
+    pub fn map_irq(&mut self, irq: u8, vector: u8) {
+        self.irq_routing.insert(irq, vector);
+    }
+
+    pub fn handle_irq(&mut self, irq: u8) -> Option<u8> {
+        self.irq_routing.get(&irq).copied()
+    }
+
+    pub fn remap_pic(&mut self) {
+        self.pic_mapped = true;
+    }
+
+    pub fn reset(&mut self) {
+        self.irq_routing.clear();
+        self.pic_mapped = false;
+        self.idt_base = 0;
+        self.idt_limit = 0;
+    }
+
+    pub fn is_mapped(&self) -> bool {
+        self.pic_mapped
+    }
+}
+
+impl Default for InterruptController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idt_gate_decoding() {
+        let mut raw = [0u8; 16];
+        raw[0..2].copy_from_slice(&0xDEF0u16.to_le_bytes());
+        raw[2..4].copy_from_slice(&0x08u16.to_le_bytes());
+        raw[4] = 0; // IST
+        raw[5] = 0x8E; // present, DPL0, 64-bit interrupt gate
+        raw[6..8].copy_from_slice(&0x9ABCu16.to_le_bytes());
+        raw[8..10].copy_from_slice(&0x5678u16.to_le_bytes());
+        raw[10..12].copy_from_slice(&0x1234u16.to_le_bytes());
+
+        let gate = IdtGate::decode(&raw);
+        assert_eq!(gate.offset, 0x1234_5678_9ABC_DEF0);
+        assert_eq!(gate.selector, 0x08);
+        assert!(gate.present());
+        assert!(gate.is_trap_or_interrupt());
+        assert_eq!(gate.dpl(), 0);
+        assert_eq!(gate.ist, 0);
+    }
+
+    #[test]
+    fn idt_entry_address_bounds() {
+        let mut ic = InterruptController::new();
+        ic.set_idt(0x1000, 32 * 16);
+        assert_eq!(ic.idt_entry_address(0), Some(0x1000));
+        assert_eq!(ic.idt_entry_address(31), Some(0x1000 + 31 * 16));
+        assert_eq!(ic.idt_entry_address(32), None);
+    }
+
+    #[test]
+    fn irq_routing() {
+        let mut ic = InterruptController::new();
+        ic.map_irq(0, 0x20);
+        ic.map_irq(1, 0x21);
+        assert_eq!(ic.handle_irq(0), Some(0x20));
+        assert_eq!(ic.handle_irq(15), None);
+        ic.remap_pic();
+        assert!(ic.is_mapped());
+        ic.reset();
+        assert!(!ic.is_mapped());
+        assert_eq!(ic.handle_irq(0), None);
+    }
+}
