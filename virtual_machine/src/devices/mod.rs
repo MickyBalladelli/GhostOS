@@ -2,9 +2,13 @@
 //! Express host bridge with ECAM (MMCONFIG) configuration space, bus
 //! enumeration, BAR sizing probes, and PCIe capability blocks.
 
+mod apic;
 mod interrupt_controller;
 mod serial;
 
+pub use apic::{
+    ApicTrigger, LocalApic, IA32_APIC_BASE_MSR, LVT_MASK, APIC_BASE_DEFAULT, APIC_SIZE,
+};
 pub use interrupt_controller::{IdtGate, InterruptController};
 pub use serial::Serial16550;
 

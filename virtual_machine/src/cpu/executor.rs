@@ -4,7 +4,7 @@
 
 use crate::cpu::decoder::{DecodedInstruction, MemoryOperand, Operand};
 use crate::cpu::{CpuError, CpuMode, CpuState, PrivilegeLevel};
-use crate::devices::{DeviceError, InterruptController, PortBus};
+use crate::devices::{DeviceError, InterruptController, LocalApic, PortBus, IA32_APIC_BASE_MSR};
 use crate::firmware::bios::BiosContext;
 use crate::memory::{MemoryError, Mmu};
 
@@ -19,6 +19,9 @@ const SF: u64 = 1 << 7;
 const IF: u64 = 1 << 9;
 const DF: u64 = 1 << 10;
 const OF: u64 = 1 << 11;
+
+/// `IA32_APIC_BASE` MSR number as a u64 (match patterns cannot cast).
+const IA32_APIC_BASE_MSR_U64: u64 = IA32_APIC_BASE_MSR as u64;
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -430,6 +433,7 @@ impl InstructionExecutor {
         intc: &mut InterruptController,
         ports: &mut PortBus,
         bios: &mut BiosContext,
+        apic: Option<&mut LocalApic>,
     ) -> Result<(), CpuError> {
         match instruction.mnemonic {
             "NOP" | "LFENCE" | "MFENCE" | "SFENCE" | "INVD" | "WBINVD" | "INVLPG"
@@ -487,7 +491,7 @@ impl InstructionExecutor {
                 self.execute_string(instruction, state, mmu, ports)?
             }
             "IN" | "OUT" => self.execute_io(instruction, state, ports)?,
-            "WRMSR" | "RDMSR" => self.execute_msr(instruction, state, mmu)?,
+            "WRMSR" | "RDMSR" => self.execute_msr(instruction, state, mmu, apic)?,
             "SYSCALL" | "SYSRET" => self.execute_syscall(instruction, state, mmu)?,
             "SYSENTER" | "SYSEXIT" => {
                 state.rip = instruction.next_ip;
@@ -518,10 +522,13 @@ impl InstructionExecutor {
             }
             "CLI" => {
                 state.rflags &= !IF;
+                state.interrupt_shadow = false;
                 state.rip = instruction.next_ip;
             }
             "STI" => {
                 state.rflags |= IF;
+                // Interrupts are held for one instruction after STI.
+                state.interrupt_shadow = true;
                 state.rip = instruction.next_ip;
             }
             "CBW" | "CWDE" | "CDQE" | "CWD" | "CDQ" | "CQO" => {
@@ -1599,6 +1606,7 @@ impl InstructionExecutor {
         ins: &DecodedInstruction,
         state: &mut CpuState,
         mmu: &mut Mmu,
+        apic: Option<&mut LocalApic>,
     ) -> Result<(), CpuError> {
         let msr = state.rcx & 0xFFFF_FFFF;
         let value = ((state.rdx & 0xFFFF_FFFF) << 32) | (state.rax & 0xFFFF_FFFF);
@@ -1616,16 +1624,27 @@ impl InstructionExecutor {
                 0xC000_0100 => state.fs_base = value,
                 0xC000_0101 => state.gs_base = value,
                 0xC000_0102 => { /* KERNEL_GS_BASE - ignored */ }
+                // IA32_APIC_BASE routes to the shared local APIC so the MSR
+                // view and the MMIO view stay in sync.
+                IA32_APIC_BASE_MSR_U64 => {
+                    if let Some(apic) = apic {
+                        apic.set_apic_base_msr(value);
+                    }
+                }
                 _ => { /* Unknown MSRs are accepted and ignored. */ }
             },
             "RDMSR" => {
-                let v = match msr {
-                    0xC000_0080 => state.efer,
-                    0xC000_0081 => state.star,
-                    0xC000_0082 => state.lstar,
-                    0xC000_0100 => state.fs_base,
-                    0xC000_0101 => state.gs_base,
-                    _ => 0,
+                let v = if msr == IA32_APIC_BASE_MSR_U64 {
+                    apic.map(|a| a.apic_base_msr()).unwrap_or(0)
+                } else {
+                    match msr {
+                        0xC000_0080 => state.efer,
+                        0xC000_0081 => state.star,
+                        0xC000_0082 => state.lstar,
+                        0xC000_0100 => state.fs_base,
+                        0xC000_0101 => state.gs_base,
+                        _ => 0,
+                    }
                 };
                 state.rax = (state.rax & !0xFFFF_FFFF) | (v & 0xFFFF_FFFF);
                 state.rdx = (state.rdx & !0xFFFF_FFFF) | ((v >> 32) & 0xFFFF_FFFF);

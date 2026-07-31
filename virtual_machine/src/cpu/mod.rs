@@ -2,9 +2,11 @@
 
 use crate::cpu::decoder::{InstructionDecoder, InstructionDecodeError};
 use crate::cpu::executor::InstructionExecutor;
-use crate::devices::{IdtGate, InterruptController, PortBus};
+use crate::devices::{IdtGate, InterruptController, LocalApic, PortBus};
 use crate::firmware::bios::BiosContext;
 use crate::memory::Mmu;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const CR0_PE_FLAG: u64 = 1 << 0;
 const CR0_PG_FLAG: u64 = 1 << 31;
@@ -69,6 +71,9 @@ pub struct CpuState {
     pub fs_base: u64,
     pub gs_base: u64,
     pub halted: bool,
+    /// STI interrupt-enable shadow: maskable interrupts are held for one
+    /// instruction after STI, matching real hardware.
+    pub interrupt_shadow: bool,
 }
 
 impl Default for CpuState {
@@ -124,6 +129,7 @@ impl Default for CpuState {
             fs_base: 0,
             gs_base: 0,
             halted: false,
+            interrupt_shadow: false,
         }
     }
 }
@@ -514,6 +520,7 @@ pub struct Cpu {
     pub state: CpuState,
     decoder: InstructionDecoder,
     executor: InstructionExecutor,
+    apic: Option<Rc<RefCell<LocalApic>>>,
 }
 
 impl Cpu {
@@ -522,7 +529,14 @@ impl Cpu {
             state: CpuState::default(),
             decoder: InstructionDecoder::new(),
             executor: InstructionExecutor::new(),
+            apic: None,
         }
+    }
+
+    /// Attach the shared local APIC so `wrmsr`/`rdmsr` can route the
+    /// `IA32_APIC_BASE` MSR to the same device exposed via MMIO.
+    pub fn attach_apic(&mut self, apic: Rc<RefCell<LocalApic>>) {
+        self.apic = Some(apic);
     }
 
     pub fn reset(&mut self) {
@@ -541,12 +555,28 @@ impl Cpu {
             return Ok(());
         }
 
+        // The STI window covers exactly one instruction: clear it before the
+        // next instruction executes so a pending maskable interrupt may be
+        // delivered on the following step.
+        self.state.interrupt_shadow = false;
+
         let ip = self.state.rip;
         let instruction = self.decoder.decode(ip, mmu).map_err(CpuError::from)?;
-        // Destructure so we don't borrow `self` twice.
+        // Take an owned handle to the shared APIC before borrowing `state`
+        // so the borrow checker sees disjoint sources (state field vs. the
+        // Rc'd device behind the APIC field).
+        let apic_rc = self.apic.clone();
+        let mut apic = apic_rc.as_ref().map(|a| a.borrow_mut());
         let state = &mut self.state;
-        self.executor
-            .execute(&instruction, state, mmu, intc, ports, bios)?;
+        self.executor.execute(
+            &instruction,
+            state,
+            mmu,
+            intc,
+            ports,
+            bios,
+            apic.as_deref_mut(),
+        )?;
         Ok(())
     }
 

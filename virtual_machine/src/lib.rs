@@ -7,8 +7,8 @@ pub mod boot;
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::Mmu;
 pub use devices::{
-    InterruptController, Device, PortBus, Serial16550, PciHostBridge, PciDeviceId,
-    PCIE_ECAM_BASE_DEFAULT,
+    ApicTrigger, InterruptController, LocalApic, Device, PortBus, Serial16550, PciHostBridge,
+    PciDeviceId, APIC_BASE_DEFAULT, APIC_SIZE, IA32_APIC_BASE_MSR, PCIE_ECAM_BASE_DEFAULT,
 };
 pub use firmware::bios::{Bios, BiosContext};
 pub use boot::Loader;
@@ -52,6 +52,7 @@ pub struct Vm {
     interrupt_controller: InterruptController,
     ports: PortBus,
     pci: Rc<RefCell<PciHostBridge>>,
+    apic: Rc<RefCell<LocalApic>>,
     bios: Bios,
     config: VmConfig,
 }
@@ -78,12 +79,21 @@ impl Vm {
         // loads/stores to the configuration space hit the same bridge.
         mmu.attach_mmio(PCIE_ECAM_BASE_DEFAULT, PCIE_ECAM_SIZE, Box::new(pci.clone()));
 
+        // One local APIC (BSP id 0) shared between the CPU (for the
+        // IA32_APIC_BASE MSR path) and the MMU (for the xAPIC MMIO path).
+        let apic: Rc<RefCell<LocalApic>> = Rc::new(RefCell::new(LocalApic::new(0)));
+        mmu.attach_mmio(APIC_BASE_DEFAULT, APIC_SIZE, Box::new(apic.clone()));
+
+        let mut cpu = Cpu::new();
+        cpu.attach_apic(apic.clone());
+
         Self {
-            cpu: Cpu::new(),
+            cpu,
             mmu,
             interrupt_controller: InterruptController::new(),
             ports,
             pci,
+            apic,
             bios: Bios::new(),
             config,
         }
@@ -96,6 +106,7 @@ impl Vm {
 
         println!("Starting CPU emulation...");
 
+        let started = std::time::Instant::now();
         loop {
             self.cpu.step(
                 &mut self.mmu,
@@ -103,6 +114,9 @@ impl Vm {
                 &mut self.ports,
                 &mut self.bios.context,
             )?;
+
+            let now_ns = started.elapsed().as_nanos() as u64;
+            self.poll_apic(now_ns)?;
 
             if self.cpu.state.halted {
                 println!("CPU halted");
@@ -113,12 +127,42 @@ impl Vm {
         Ok(())
     }
 
+    /// Advance the local APIC timer and deliver the highest-priority pending
+    /// vector when the CPU can take an interrupt (IF set, outside the STI
+    /// shadow window).
+    fn poll_apic(&mut self, now_ns: u64) -> Result<(), VmError> {
+        // Timer is advanced against host time; the count-down wraps into the
+        // IRR priority queue on expiry.
+        self.apic.borrow_mut().advance(now_ns);
+
+        let pending = self.apic.borrow_mut().pending_vector();
+        let Some(vector) = pending else {
+            return Ok(());
+        };
+
+        // Maskable interrupts are only taken when the guest has sti'd and is
+        // outside the one-instruction STI shadow window.
+        if self.cpu.state.rflags & (1 << 9) == 0 || self.cpu.state.interrupt_shadow {
+            return Ok(());
+        }
+
+        self.apic.borrow_mut().accept_pending(vector);
+        self.cpu
+            .handle_interrupt(
+                vector,
+                &mut self.mmu,
+                &mut self.interrupt_controller,
+            )?;
+        Ok(())
+    }
+
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.mmu.reset();
         self.interrupt_controller.reset();
         self.ports.reset();
         self.pci.borrow_mut().reset();
+        self.apic.borrow_mut().reset();
         self.bios.reset();
     }
 
@@ -142,6 +186,11 @@ impl Vm {
     /// config path and the ECAM/MMCONFIG path use the same bridge).
     pub fn pci(&self) -> Rc<RefCell<PciHostBridge>> {
         self.pci.clone()
+    }
+
+    /// Shared handle to the local APIC (MMIO and IA32_APIC_BASE MSR paths).
+    pub fn apic(&self) -> Rc<RefCell<LocalApic>> {
+        self.apic.clone()
     }
 
     pub fn config(&self) -> &VmConfig {

@@ -22,7 +22,14 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 - [x] **Chipset & Bus**
   - [x] Implement PCI Express host bridge
   - [x] Add PCI bus enumeration and configuration space
-  - [ ] Build interrupt controller (APIC) emulation
+  - [x] Build interrupt controller (APIC) emulation
+    - [x] Memory-mapped xAPIC register file (0xFEE0_0000, 4 KiB)
+    - [x] IA32_APIC_BASE MSR (0x1B) routing (wrmsr/rdmsr)
+    - [x] IRR/ISR/TMR priority queues with TPR/PPR filtering
+    - [x] EOI, ICR self-IPI delivery, six-entry LVT (timer, thermal,
+          perfmon, LINT0, LINT1, error)
+    - [x] Count-down timer with programmable divide configuration
+    - [x] IF-gated and STI-shadow interrupt delivery in the VM loop
   - [ ] Implement HPET timer and PIT
 
 - [ ] **Storage Controllers**
@@ -177,6 +184,7 @@ virtual_machine/
 │   │   └── paging.rs
 │   ├── devices/             # Device emulations
 │   │   ├── mod.rs
+│   │   ├── apic.rs          # Local APIC (xAPIC)
 │   │   ├── pci.rs
 │   │   ├── ahci.rs
 │   │   ├── e1000.rs
