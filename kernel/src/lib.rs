@@ -14,7 +14,8 @@ pub mod micro_silo;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
-))]
+))
+]
 #[allow(unsafe_code)]
 mod keyboard;
 #[cfg(not(all(
@@ -32,10 +33,12 @@ pub mod scheduler;
 #[allow(unsafe_code)]
 mod shell;
 pub mod task;
+pub mod monitor;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
-))]
+))
+]
 #[allow(unsafe_code)]
 mod usb_keyboard;
 #[cfg(not(all(
@@ -72,6 +75,10 @@ pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
 pub use task::{
     AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,
 };
+
+static SCHEDULER: Scheduler = Scheduler::new();
+static DLM: DistributedLockManager = DistributedLockManager::new();
+static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
@@ -116,15 +123,13 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         ),
     );
 
-    let scheduler = Scheduler::new();
-
     println!(
         "paging, interrupts, capabilities, IPC, and scheduler ready ({} capability slots, {} thread slots, clock={})",
         MAX_CAPABILITIES,
         task::MAX_THREADS,
-        scheduler.clock()
+        SCHEDULER.clock()
     );
-    shell::run(boot_info, scheduler.clock(), acpi)
+    shell::run(boot_info, &SCHEDULER, &DLM, &NODE_FENCES, SCHEDULER.clock(), acpi)
 }
 
 pub fn halt() -> ! {

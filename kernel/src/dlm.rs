@@ -482,22 +482,22 @@ impl IntoStatus for LockError {
 }
 
 #[derive(Clone, Copy)]
-struct LockEntry {
-    occupied: bool,
-    generation: u32,
-    resource: ResourceId,
-    kind: ResourceKind,
-    name: ResourceName,
-    owner: LockOwner,
-    mode: LockMode,
-    granted: bool,
-    sequence: u64,
-    range: LockRange,
-    lease_epoch: u64,
-    expires_at_us: u64,
-    node_epoch: u64,
-    federation_cluster: Option<FederationClusterId>,
-    federation_epoch: u64,
+pub struct LockEntry {
+    pub occupied: bool,
+    pub generation: u32,
+    pub resource: ResourceId,
+    pub kind: ResourceKind,
+    pub name: ResourceName,
+    pub owner: LockOwner,
+    pub mode: LockMode,
+    pub granted: bool,
+    pub sequence: u64,
+    pub range: LockRange,
+    pub lease_epoch: u64,
+    pub expires_at_us: u64,
+    pub node_epoch: u64,
+    pub federation_cluster: Option<FederationClusterId>,
+    pub federation_epoch: u64,
 }
 
 impl LockEntry {
@@ -1006,6 +1006,14 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
 
     pub fn used(&self) -> usize {
         self.locks.iter().filter(|entry| entry.occupied).count()
+    }
+
+    pub fn lock(&self, index: usize) -> Option<&LockEntry> {
+        self.locks.get(index)
+    }
+
+    pub fn lock_mut(&mut self, index: usize) -> Option<&mut LockEntry> {
+        self.locks.get_mut(index)
     }
 
     fn can_grant(

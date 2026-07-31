@@ -407,10 +407,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 33. Interactive Cluster Monitor Utility (`MONITOR`)
-- [ ] **Terminal/Framebuffer Monitor Suite (`MONITOR PROCESSES / TOPCPU`)**
-  - [ ] Build a real-time visual monitor providing live bar graphs and metrics for CPU, RAM, IPC traffic, and active jobs.
-- [ ] **Distributed Memory & Lock Heatmap (`MONITOR DSM`)**
-  - [ ] Render inter-node memory access heatmaps, software DSM page-fault latencies, and DLM lock lease contention.
+- [x] **Terminal/Framebuffer Monitor Suite (`MONITOR PROCESSES / TOPCPU`)**
+  - [x] Build a real-time visual monitor providing live bar graphs and metrics for CPU, RAM, IPC traffic, and active jobs.
+- [x] **Distributed Memory & Lock Heatmap (`MONITOR DSM`)**
+  - [x] Render inter-node memory access heatmaps, software DSM page-fault latencies, and DLM lock lease contention.
 
 ---
 

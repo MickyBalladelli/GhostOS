@@ -9,16 +9,27 @@ use synos_boot_protocol::{BootInfo, BootMethod};
 use synos_power::AcpiPlatform;
 use synos_status::Status;
 use synos_system_model::command::{CommandSpec, OutputText, OutputValue, StructuredOutput};
+use crate::monitor::{MonitorState, MonitorView};
+use crate::scheduler::Scheduler;
+use crate::dlm::{DistributedLockManager, NodeFenceTable, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
 
 const HELP_ROUTE: u16 = 1;
 const SHOW_SYSTEM_ROUTE: u16 = 2;
 const REBOOT_ROUTE: u16 = 3;
 const SHUTDOWN_ROUTE: u16 = 4;
-const COMMAND_CAPACITY: usize = 4;
+const MONITOR_ROUTE: u16 = 5;
+const SHOW_PROCESSES_ROUTE: u16 = 6;
+const TOP_CPU_ROUTE: u16 = 7;
+const SHOW_MEMORY_ROUTE: u16 = 8;
+const SHOW_DSM_ROUTE: u16 = 9;
+const COMMAND_CAPACITY: usize = 10;
 const HISTORY_CAPACITY: usize = 8;
 
 pub fn run(
     boot_info: &'static BootInfo,
+    scheduler: &'static Scheduler,
+    dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
+    node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
     scheduler_clock: u64,
     acpi: Option<AcpiPlatform>,
 ) -> ! {
@@ -27,11 +38,16 @@ pub fn run(
     register(&mut registry, "SHOW-SYSTEM", SHOW_SYSTEM_ROUTE);
     register(&mut registry, "REBOOT", REBOOT_ROUTE);
     register(&mut registry, "SHUTDOWN", SHUTDOWN_ROUTE);
+    register(&mut registry, "MONITOR", MONITOR_ROUTE);
+    register(&mut registry, "SHOW-PROCESSES", SHOW_PROCESSES_ROUTE);
+    register(&mut registry, "TOP-CPU", TOP_CPU_ROUTE);
+    register(&mut registry, "SHOW-MEMORY", SHOW_MEMORY_ROUTE);
+    register(&mut registry, "SHOW-DSM", SHOW_DSM_ROUTE);
 
     let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
     let mut interpreter = Interpreter::new();
     let mut executor =
-        KernelExecutor::new(boot_info, scheduler_clock, acpi.is_some());
+        KernelExecutor::new(boot_info, scheduler, dlm, node_fences, scheduler_clock, acpi.is_some());
     let mut keyboard = crate::keyboard::Keyboard::new();
     let mut usb_keyboard = crate::usb_keyboard::UsbKeyboard::new();
     let mut input = VtInput::new();
@@ -177,7 +193,7 @@ fn banner() {
     crate::println!("\x1b[1;94m{}", r" | (___  _   _ _ __| |  | | (___");
     crate::println!("\x1b[1;34m{}", r"  \___ \| | | | '_ \ |  | |\___ \");
     crate::println!("\x1b[1;35m{}", r"  ____) | |_| | | | | |__| |____) |");
-    crate::println!("\x1b[1;95m{}", r" |_____/ \__, |_| |_|\____/|_____/");
+    crate::println!("\x1b[1;95m{}", r" |_____/ \__, |_| |_\____/|_____/");
     crate::println!("\x1b[1;36m{}", r"          __/ |");
     crate::println!("\x1b[1;96m{}", r"         |___/");
     crate::println!();
@@ -304,11 +320,17 @@ struct KernelExecutor {
     completion: Option<(u64, Result<StructuredOutput, Status>)>,
     reboot_requested: bool,
     shutdown_requested: bool,
+    monitor: MonitorState,
+    scheduler: &'static Scheduler,
+    dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
 }
 
 impl KernelExecutor {
     fn new(
         boot_info: &BootInfo,
+        scheduler: &'static Scheduler,
+        dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
+        _node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
         scheduler_clock: u64,
         acpi_ready: bool,
     ) -> Self {
@@ -321,6 +343,9 @@ impl KernelExecutor {
             completion: None,
             reboot_requested: false,
             shutdown_requested: false,
+            monitor: MonitorState::new(),
+            scheduler,
+            dlm,
         }
     }
 
@@ -330,6 +355,11 @@ impl KernelExecutor {
             SHOW_SYSTEM_ROUTE => self.show_system(),
             REBOOT_ROUTE => self.request_reboot(),
             SHUTDOWN_ROUTE => self.request_shutdown(),
+            MONITOR_ROUTE => self.monitor_view(),
+            SHOW_PROCESSES_ROUTE => self.show_processes(),
+            TOP_CPU_ROUTE => self.top_cpu(),
+            SHOW_MEMORY_ROUTE => self.show_memory(),
+            SHOW_DSM_ROUTE => self.show_dsm(),
             _ => Err(Status::NOT_FOUND),
         }
     }
@@ -339,7 +369,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN",
+            "HELP, SHOW-SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW-PROCESSES, TOP-CPU, SHOW-MEMORY, SHOW-DSM",
         )?;
         Ok(output)
     }
@@ -372,6 +402,7 @@ impl KernelExecutor {
             if self.acpi_ready { "ready" } else { "unavailable" },
         )?;
         insert_text(&mut output, "shell", "ready")?;
+        insert_text(&mut output, "monitor", "active")?;
         Ok(output)
     }
 
@@ -395,6 +426,101 @@ impl KernelExecutor {
 
     fn take_shutdown_requested(&mut self) -> bool {
         core::mem::take(&mut self.shutdown_requested)
+    }
+
+    fn monitor_view(&mut self) -> Result<StructuredOutput, Status> {
+        self.monitor.update();
+        let view = self.monitor.current_view();
+        let view_str = match view {
+            MonitorView::Processes => "processes",
+            MonitorView::TopCpu => "top-cpu",
+            MonitorView::Dsm => "dsm",
+            MonitorView::Memory => "memory",
+        };
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "view", view_str)?;
+        Ok(output)
+    }
+
+    fn show_processes(&self) -> Result<StructuredOutput, Status> {
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "view", "processes")?;
+        let processes = MonitorState::get_processes(self.scheduler);
+        crate::println!("\x1b[1;36m=== PROCESSES ===\x1b[0m");
+        crate::println!("THREAD       STATE      SWITCHES SPACE     POLICY     ");
+        let mut idx: u64 = 0;
+        for proc in processes.iter() {
+            if let Some(p) = proc {
+                let state_str = match p.state {
+                    crate::task::ThreadState::Vacant => "VACANT",
+                    crate::task::ThreadState::Ready => "READY",
+                    crate::task::ThreadState::Running => "RUNNING",
+                    crate::task::ThreadState::Blocked => "BLOCKED",
+                    crate::task::ThreadState::Sleeping => "SLEEPING",
+                };
+                let policy_str = match p.policy {
+                    crate::task::SchedulingPolicy::Cooperative => "COOP",
+                    crate::task::SchedulingPolicy::Realtime { priority: _, .. } => "RT",
+                };
+                crate::println!("{} {:<10} {:<8} {:<8} {:<10}",
+                    p.thread_id.raw(),
+                    state_str,
+                    p.switches,
+                    p.address_space.raw(),
+                    policy_str
+                );
+                idx += 1;
+            }
+        }
+        crate::println!("Total: {} processes", idx);
+        Ok(output)
+    }
+
+    fn top_cpu(&mut self) -> Result<StructuredOutput, Status> {
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "view", "cpu")?;
+        let top = MonitorState::get_top_cpu(self.scheduler, &mut self.monitor.cpu_history);
+        crate::println!("\x1b[1;32m=== TOP CPU ===\x1b[0m");
+        crate::println!("THREAD       SWITCHES     UTIL%    ");
+        let mut idx: u64 = 0;
+        for cpu in top.iter() {
+            crate::println!("{} {:<10} {}%",
+                cpu.thread_id.raw(),
+                cpu.switches,
+                cpu.util_percent
+            );
+            idx += 1;
+        }
+        crate::println!("Total: {} threads", idx);
+        Ok(output)
+    }
+
+    fn show_memory(&self) -> Result<StructuredOutput, Status> {
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "view", "memory")?;
+        crate::println!("\x1b[1;34m=== MEMORY ===\x1b[0m");
+        crate::println!("Memory monitor - use SHOW MEMORY command");
+        Ok(output)
+    }
+
+    fn show_dsm(&self) -> Result<StructuredOutput, Status> {
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "view", "dsm")?;
+        let locks = MonitorState::get_lock_contentions(self.dlm);
+        crate::println!("\x1b[1;33m=== DSM LOCKS ===\x1b[0m");
+        crate::println!("RESOURCE     GRANTED  QUEUED   OWNER     ");
+        let mut idx: u64 = 0;
+        for lock in locks.iter() {
+            crate::println!("{} {} {} {:?}",
+                lock.resource_id.raw(),
+                lock.granted,
+                lock.queued,
+                lock.owner_node
+            );
+            idx += 1;
+        }
+        crate::println!("Total: {} locks", idx);
+        Ok(output)
     }
 }
 
