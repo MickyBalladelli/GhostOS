@@ -3,13 +3,19 @@
 //! enumeration, BAR sizing probes, and PCIe capability blocks.
 
 mod apic;
+mod hpet;
 mod interrupt_controller;
+mod pit;
 mod serial;
 
 pub use apic::{
     ApicTrigger, LocalApic, IA32_APIC_BASE_MSR, LVT_MASK, APIC_BASE_DEFAULT, APIC_SIZE,
 };
+pub use hpet::{Hpet, HPET_BASE_DEFAULT, HPET_SIZE, HPET_TIMER_COUNT};
 pub use interrupt_controller::{IdtGate, InterruptController};
+pub use pit::{
+    Pit, PIT_CH0_PORT, PIT_CH1_PORT, PIT_CH2_PORT, PIT_CMD_PORT, PIT_FREQUENCY_HZ, PIT_PORT_COUNT,
+};
 pub use serial::Serial16550;
 
 use std::cell::RefCell;

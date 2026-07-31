@@ -30,7 +30,13 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
           perfmon, LINT0, LINT1, error)
     - [x] Count-down timer with programmable divide configuration
     - [x] IF-gated and STI-shadow interrupt delivery in the VM loop
-  - [ ] Implement HPET timer and PIT
+  - [x] Implement HPET timer and PIT
+    - [x] 8254 PIT with three counters on I/O ports 0x40-0x43
+    - [x] PIT modes 0-5, count latching, read-back, BCD
+    - [x] PIT channel 0 wired to APIC vector 0x20 (IRQ0)
+    - [x] HPET with 64-bit counter, 32 timers, periodic/one-shot mode
+    - [x] HPET at ACPI base 0xFED0_0000 with legacy route to APIC
+    - [x] Both driven from the VM host-time loop
 
 - [ ] **Storage Controllers**
   - [ ] AHCI controller emulation for SATA drives
@@ -185,6 +191,8 @@ virtual_machine/
 │   ├── devices/             # Device emulations
 │   │   ├── mod.rs
 │   │   ├── apic.rs          # Local APIC (xAPIC)
+│   │   ├── pit.rs           # 8254 Programmable Interval Timer
+│   │   ├── hpet.rs          # High Precision Event Timer
 │   │   ├── pci.rs
 │   │   ├── ahci.rs
 │   │   ├── e1000.rs

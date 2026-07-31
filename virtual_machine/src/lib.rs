@@ -7,8 +7,9 @@ pub mod boot;
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::Mmu;
 pub use devices::{
-    ApicTrigger, InterruptController, LocalApic, Device, PortBus, Serial16550, PciHostBridge,
-    PciDeviceId, APIC_BASE_DEFAULT, APIC_SIZE, IA32_APIC_BASE_MSR, PCIE_ECAM_BASE_DEFAULT,
+    ApicTrigger, Device, Hpet, InterruptController, LocalApic, PciDeviceId, PciHostBridge, Pit,
+    PortBus, PortDevice, Serial16550, APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE,
+    IA32_APIC_BASE_MSR, PCIE_ECAM_BASE_DEFAULT, PIT_CH0_PORT, PIT_PORT_COUNT,
 };
 pub use firmware::bios::{Bios, BiosContext};
 pub use boot::Loader;
@@ -53,6 +54,8 @@ pub struct Vm {
     ports: PortBus,
     pci: Rc<RefCell<PciHostBridge>>,
     apic: Rc<RefCell<LocalApic>>,
+    pit: Rc<RefCell<Pit>>,
+    hpet: Rc<RefCell<Hpet>>,
     bios: Bios,
     config: VmConfig,
 }
@@ -84,6 +87,22 @@ impl Vm {
         let apic: Rc<RefCell<LocalApic>> = Rc::new(RefCell::new(LocalApic::new(0)));
         mmu.attach_mmio(APIC_BASE_DEFAULT, APIC_SIZE, Box::new(apic.clone()));
 
+        // 8254 PIT on the legacy I/O ports 0x40..0x43. Channel 0 maps to
+        // ISA IRQ0 which the I/O APIC redirects to APIC vector 0x20 in the
+        // default PC-compatible interrupt table.
+        let pit: Rc<RefCell<Pit>> = Rc::new(RefCell::new(Pit::new()));
+        pit.borrow_mut().attach_apic(apic.clone());
+        pit.borrow_mut().set_irq0_vector(0x20);
+        ports.attach(PIT_CH0_PORT, PIT_PORT_COUNT, Box::new(pit.clone()));
+
+        // HPET at the ACPI base 0xFED0_0000. Legacy-replacement interrupts
+        // from timers 0/1 are routed to APIC vector 0x20 (IRQ0) and 0x21
+        // (IRQ1) matching the IA-PC compatibility table.
+        let hpet: Rc<RefCell<Hpet>> = Rc::new(RefCell::new(Hpet::new()));
+        hpet.borrow_mut().attach_apic(apic.clone());
+        hpet.borrow_mut().set_legacy_vector(0x20);
+        mmu.attach_mmio(HPET_BASE_DEFAULT, HPET_SIZE, Box::new(hpet.clone()));
+
         let mut cpu = Cpu::new();
         cpu.attach_apic(apic.clone());
 
@@ -94,6 +113,8 @@ impl Vm {
             ports,
             pci,
             apic,
+            pit,
+            hpet,
             bios: Bios::new(),
             config,
         }
@@ -127,12 +148,14 @@ impl Vm {
         Ok(())
     }
 
-    /// Advance the local APIC timer and deliver the highest-priority pending
-    /// vector when the CPU can take an interrupt (IF set, outside the STI
-    /// shadow window).
+    /// Advance the local APIC timer plus the PIT/HPET timebase and deliver
+    /// the highest-priority pending vector when the CPU can take an interrupt
+    /// (IF set, outside the STI shadow window).
     fn poll_apic(&mut self, now_ns: u64) -> Result<(), VmError> {
-        // Timer is advanced against host time; the count-down wraps into the
-        // IRR priority queue on expiry.
+        // Each timer is advanced against host time; expired counters signal
+        // their APIC vector, which lands in the IRR priority queue.
+        self.pit.borrow_mut().advance(now_ns);
+        self.hpet.borrow_mut().advance(now_ns);
         self.apic.borrow_mut().advance(now_ns);
 
         let pending = self.apic.borrow_mut().pending_vector();
@@ -163,6 +186,8 @@ impl Vm {
         self.ports.reset();
         self.pci.borrow_mut().reset();
         self.apic.borrow_mut().reset();
+        self.pit.borrow_mut().reset();
+        self.hpet.borrow_mut().reset();
         self.bios.reset();
     }
 
@@ -191,6 +216,16 @@ impl Vm {
     /// Shared handle to the local APIC (MMIO and IA32_APIC_BASE MSR paths).
     pub fn apic(&self) -> Rc<RefCell<LocalApic>> {
         self.apic.clone()
+    }
+
+    /// Shared handle to the 8254 PIT (port-mapped at 0x40..0x43).
+    pub fn pit(&self) -> Rc<RefCell<Pit>> {
+        self.pit.clone()
+    }
+
+    /// Shared handle to the HPET (MMIO at 0xFED0_0000).
+    pub fn hpet(&self) -> Rc<RefCell<Hpet>> {
+        self.hpet.clone()
     }
 
     pub fn config(&self) -> &VmConfig {
