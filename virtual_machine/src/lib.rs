@@ -7,9 +7,12 @@ pub mod boot;
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::Mmu;
 pub use devices::{
-    ApicTrigger, Device, Hpet, InterruptController, LocalApic, PciDeviceId, PciHostBridge, Pit,
-    PortBus, PortDevice, Serial16550, APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE,
-    IA32_APIC_BASE_MSR, PCIE_ECAM_BASE_DEFAULT, PIT_CH0_PORT, PIT_PORT_COUNT,
+    Ahci, ApicTrigger, Device, DiskImage, Hpet, InterruptController, LocalApic, Nvme,
+    PciDeviceId, PciHostBridge, Pit, PortBus, PortDevice, Serial16550, AHCI_ABAR_SIZE,
+    AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID, APIC_BASE_DEFAULT,
+    APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR, NVME_BAR0_SIZE, NVME_CLASS,
+    NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID, PCIE_ECAM_BASE_DEFAULT,
+    PIT_CH0_PORT, PIT_PORT_COUNT,
 };
 pub use firmware::bios::{Bios, BiosContext};
 pub use boot::Loader;
@@ -24,6 +27,11 @@ pub const PCI_CONFIG_PORT_SIZE: u16 = 8;
 
 /// Size of the ECAM (MMCONFIG) aperture: 256 buses * 32 devices * 8 funcs * 4 KiB.
 pub const PCIE_ECAM_SIZE: u64 = 256 * 32 * 8 * 4096;
+
+/// AHCI controller ABAR (BAR5) aperture base.
+pub const AHCI_MMIO_BASE: u64 = 0xF100_0000;
+/// NVMe controller BAR0 aperture base.
+pub const NVME_MMIO_BASE: u64 = 0xF110_0000;
 
 pub struct VmConfig {
     pub memory_size: usize,
@@ -56,6 +64,8 @@ pub struct Vm {
     apic: Rc<RefCell<LocalApic>>,
     pit: Rc<RefCell<Pit>>,
     hpet: Rc<RefCell<Hpet>>,
+    ahci: Rc<RefCell<Ahci>>,
+    nvme: Rc<RefCell<Nvme>>,
     bios: Bios,
     config: VmConfig,
 }
@@ -103,6 +113,55 @@ impl Vm {
         hpet.borrow_mut().set_legacy_vector(0x20);
         mmu.attach_mmio(HPET_BASE_DEFAULT, HPET_SIZE, Box::new(hpet.clone()));
 
+        // -------------------------------------------------------------------
+        // Storage controllers
+        // -------------------------------------------------------------------
+
+        // AHCI SATA HBA at device 4, function 0. BAR5 (ABAR) is memory
+        // mapped at AHCI_MMIO_BASE (4 KiB) and interrupts to vector 0x2B
+        // (ISA IRQ11 remapped by the I/O APIC).
+        let ahci: Rc<RefCell<Ahci>> = Rc::new(RefCell::new(Ahci::new()));
+        ahci.borrow_mut().attach_apic(apic.clone());
+        ahci.borrow_mut().set_irq_vector(0x2B);
+        mmu.attach_mmio(AHCI_MMIO_BASE, AHCI_ABAR_SIZE, Box::new(ahci.clone()));
+        pci.borrow_mut().add_device(
+            0,
+            4,
+            0,
+            PciDeviceId {
+                vendor: AHCI_VENDOR_ID,
+                device: AHCI_DEVICE_ID,
+                revision: 0x01,
+                prog_if: AHCI_PROG_IF,
+                subclass: AHCI_SUBCLASS,
+                class: AHCI_CLASS,
+            },
+        );
+        pci.borrow_mut().set_bar_size(0, 4, 0, 5, AHCI_ABAR_SIZE as u32).ok();
+        pci.borrow_mut().write_config(0, 4, 0, 0x10 + 5 * 4, AHCI_MMIO_BASE as u32);
+
+        // NVMe controller at device 5, function 0. BAR0 is memory mapped at
+        // NVME_MMIO_BASE (8 KiB) and interrupts to vector 0x31 (IRQ17).
+        let nvme: Rc<RefCell<Nvme>> = Rc::new(RefCell::new(Nvme::new()));
+        nvme.borrow_mut().attach_apic(apic.clone());
+        nvme.borrow_mut().set_irq_vector(0x31);
+        mmu.attach_mmio(NVME_MMIO_BASE, NVME_BAR0_SIZE, Box::new(nvme.clone()));
+        pci.borrow_mut().add_device(
+            0,
+            5,
+            0,
+            PciDeviceId {
+                vendor: NVME_VENDOR_ID,
+                device: NVME_DEVICE_ID,
+                revision: 0x01,
+                prog_if: NVME_PROG_IF,
+                subclass: NVME_SUBCLASS,
+                class: NVME_CLASS,
+            },
+        );
+        pci.borrow_mut().set_bar_size(0, 5, 0, 0, NVME_BAR0_SIZE as u32).ok();
+        pci.borrow_mut().write_config(0, 5, 0, 0x10, NVME_MMIO_BASE as u32);
+
         let mut cpu = Cpu::new();
         cpu.attach_apic(apic.clone());
 
@@ -115,6 +174,8 @@ impl Vm {
             apic,
             pit,
             hpet,
+            ahci,
+            nvme,
             bios: Bios::new(),
             config,
         }
@@ -136,6 +197,10 @@ impl Vm {
                 &mut self.bios.context,
             )?;
 
+            // Deferred storage DMA: process AHCI/NVMe commands issued during
+            // the step, then poll timers and deliver interrupts.
+            self.poll_storage();
+
             let now_ns = started.elapsed().as_nanos() as u64;
             self.poll_apic(now_ns)?;
 
@@ -146,6 +211,20 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    /// Process storage-controller commands issued during the last CPU step.
+    /// This runs outside the executor's `&mut Mmu` borrow so the controllers
+    /// can DMA directly into guest physical memory.
+    fn poll_storage(&mut self) {
+        if self.ahci.borrow().has_pending() {
+            let mut ahci = self.ahci.borrow_mut();
+            ahci.poll_dma(&mut self.mmu);
+        }
+        if self.nvme.borrow().has_pending() {
+            let mut nvme = self.nvme.borrow_mut();
+            nvme.poll_dma(&mut self.mmu);
+        }
     }
 
     /// Advance the local APIC timer plus the PIT/HPET timebase and deliver
@@ -188,6 +267,8 @@ impl Vm {
         self.apic.borrow_mut().reset();
         self.pit.borrow_mut().reset();
         self.hpet.borrow_mut().reset();
+        self.ahci.borrow_mut().reset();
+        self.nvme.borrow_mut().reset();
         self.bios.reset();
     }
 
@@ -226,6 +307,16 @@ impl Vm {
     /// Shared handle to the HPET (MMIO at 0xFED0_0000).
     pub fn hpet(&self) -> Rc<RefCell<Hpet>> {
         self.hpet.clone()
+    }
+
+    /// Shared handle to the AHCI SATA host controller.
+    pub fn ahci(&self) -> Rc<RefCell<Ahci>> {
+        self.ahci.clone()
+    }
+
+    /// Shared handle to the NVMe controller.
+    pub fn nvme(&self) -> Rc<RefCell<Nvme>> {
+        self.nvme.clone()
     }
 
     pub fn config(&self) -> &VmConfig {

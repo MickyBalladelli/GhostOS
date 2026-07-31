@@ -7,6 +7,7 @@ mod hpet;
 mod interrupt_controller;
 mod pit;
 mod serial;
+pub mod storage;
 
 pub use apic::{
     ApicTrigger, LocalApic, IA32_APIC_BASE_MSR, LVT_MASK, APIC_BASE_DEFAULT, APIC_SIZE,
@@ -17,6 +18,11 @@ pub use pit::{
     Pit, PIT_CH0_PORT, PIT_CH1_PORT, PIT_CH2_PORT, PIT_CMD_PORT, PIT_FREQUENCY_HZ, PIT_PORT_COUNT,
 };
 pub use serial::Serial16550;
+pub use storage::{
+    Ahci, DiskFormat, DiskImage, Nvme, AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF,
+    AHCI_SUBCLASS, AHCI_VENDOR_ID, NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF,
+    NVME_SUBCLASS, NVME_VENDOR_ID,
+};
 
 use std::cell::RefCell;
 use std::fmt;

@@ -38,11 +38,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
     - [x] HPET at ACPI base 0xFED0_0000 with legacy route to APIC
     - [x] Both driven from the VM host-time loop
 
-- [ ] **Storage Controllers**
-  - [ ] AHCI controller emulation for SATA drives
-  - [ ] NVMe controller emulation for PCIe devices
-  - [ ] Block device image file parser (RAW, VHD, QCOW2)
-  - [ ] DMA transfer implementation
+- [x] **Storage Controllers**
+  - [x] AHCI controller emulation for SATA drives
+  - [x] NVMe controller emulation for PCIe devices
+  - [x] Block device image file parser (RAW, VHD, QCOW2)
+  - [x] DMA transfer implementation
 
 - [ ] **Networking**
   - [ ] Intel e1000 NIC emulation
