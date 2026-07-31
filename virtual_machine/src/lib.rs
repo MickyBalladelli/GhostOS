@@ -238,6 +238,7 @@ impl Vm {
 
         let mut bios = Bios::new();
         bios.context.set_display(display.clone());
+        bios.set_memory_size(config.memory_size);
 
         Self {
             cpu,

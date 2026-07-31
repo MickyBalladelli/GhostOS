@@ -1,6 +1,9 @@
 pub mod bios;
 
-pub use bios::{Bios, BiosContext, BiosState, BiosError};
+pub use bios::{
+    Bios, BiosContext, BiosError, BiosState, BIOS_ENTRY_LINEAR, BIOS_ROM_BASE, BIOS_ROM_SIZE,
+    MBR_LOAD_ADDR, RESET_VECTOR_LINEAR,
+};
 
 #[derive(Debug)]
 pub enum FirmwareError {

@@ -58,11 +58,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ### 3. Firmware & Boot Support
 
-- [ ] **BIOS Implementation**
-  - [ ] 16-bit real mode entry point
-  - [ ] POST (Power-On Self Test) sequence
-  - [ ] MBR boot sector loading
-  - [ ] INT 10h, INT 13h, INT 15h BIOS services
+- [x] **BIOS Implementation**
+    - [x] 16-bit real mode entry point
+  - [x] POST (Power-On Self Test) sequence
+  - [x] MBR boot sector loading
+  - [x] INT 10h, INT 13h, INT 15h BIOS services
 
 - [ ] **UEFI Implementation**
   - [ ] UEFI firmware initialization
