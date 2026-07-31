@@ -19,9 +19,9 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ### 2. Hardware Emulation
 
-- [ ] **Chipset & Bus**
-  - [ ] Implement PCI Express host bridge
-  - [ ] Add PCI bus enumeration and configuration space
+- [x] **Chipset & Bus**
+  - [x] Implement PCI Express host bridge
+  - [x] Add PCI bus enumeration and configuration space
   - [ ] Build interrupt controller (APIC) emulation
   - [ ] Implement HPET timer and PIT
 
