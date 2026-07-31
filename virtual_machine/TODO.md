@@ -5,11 +5,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 ---
 
 ## 1. Core VM Architecture
-- [ ] **CPU Emulation Core**
-  - [ ] Implement x86_64 instruction decoder and executor
-  - [ ] Add support for protected mode and long mode transitions
-  - [ ] Implement exception/interrupt handling (IDT, IRQ vectors)
-  - [ ] Add CPU state management (registers, flags, segment registers)
+- [x] **CPU Emulation Core**
+  - [x] Implement x86_64 instruction decoder and executor
+  - [x] Add support for protected mode and long mode transitions
+  - [x] Implement exception/interrupt handling (IDT, IRQ vectors)
+  - [x] Add CPU state management (registers, flags, segment registers)
 
 - [ ] **Memory Management Unit (MMU)**
   - [ ] Implement physical memory allocator (frame-based)
