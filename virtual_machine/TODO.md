@@ -50,11 +50,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Packet buffer management
   - [x] MAC address handling
 
-- [ ] **Display**
-  - [ ] VGA text mode emulator
-  - [ ] VESA framebuffer emulator
-  - [ ] UEFI Graphics Output Protocol (GOP)
-  - [ ] Simple cursor and palette management
+- [x] **Display**
+  - [x] VGA text mode emulator
+  - [x] VESA framebuffer emulator
+  - [x] UEFI Graphics Output Protocol (GOP)
+  - [x] Simple cursor and palette management
 
 ### 3. Firmware & Boot Support
 
@@ -223,4 +223,3 @@ cargo build --release
     --initrd ../kernel/build/bios/initrd.img \
     --memory 128M \
     --append "console=serial0"
-```

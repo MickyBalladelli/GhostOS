@@ -3,6 +3,7 @@
 //! enumeration, BAR sizing probes, and PCIe capability blocks.
 
 mod apic;
+mod display;
 mod hpet;
 mod interrupt_controller;
 pub mod net;
@@ -17,6 +18,12 @@ pub use hpet::{Hpet, HPET_BASE_DEFAULT, HPET_SIZE, HPET_TIMER_COUNT};
 pub use interrupt_controller::{IdtGate, InterruptController};
 pub use pit::{
     Pit, PIT_CH0_PORT, PIT_CH1_PORT, PIT_CH2_PORT, PIT_CMD_PORT, PIT_FREQUENCY_HZ, PIT_PORT_COUNT,
+};
+pub use display::{
+    DisplayState, GopMode, GopPixelFormat, UefiGop, VesaFbDevice, VgaPorts, VgaTextDevice,
+    VideoMode, VBE_MODE_COUNT, VBE_MODES, VESA_FB_SIZE, VESA_LFB_BASE, VGA_CELLS, VGA_COLS,
+    VGA_CRTC_DATA, VGA_CRTC_INDEX, VGA_DAC_DATA, VGA_DAC_READ_INDEX, VGA_DAC_WRITE_INDEX,
+    VGA_INPUT_STATUS, VGA_PORT_BASE, VGA_PORT_COUNT, VGA_ROWS, VGA_TEXT_BASE, VGA_TEXT_SIZE,
 };
 pub use net::{E1000, E1000_MMIO_SIZE, VirtioNet};
 pub use serial::Serial16550;

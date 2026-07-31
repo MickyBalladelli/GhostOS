@@ -9,12 +9,15 @@ pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::Mmu;
 pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
-    Ahci, ApicTrigger, Device, DiskImage, E1000, E1000_MMIO_SIZE, Hpet, InterruptController,
-    LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit, PortBus, PortDevice, Serial16550, VirtioNet,
+    Ahci, ApicTrigger, Device, DiskImage, DisplayState, E1000, E1000_MMIO_SIZE, GopMode,
+    GopPixelFormat, Hpet, InterruptController, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
+    PortBus, PortDevice, Serial16550, UefiGop, VesaFbDevice, VgaPorts, VgaTextDevice, VideoMode,
+    VirtioNet,
     AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
     APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR,
     NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
-    PCIE_ECAM_BASE_DEFAULT, PIT_CH0_PORT, PIT_PORT_COUNT,
+    PCIE_ECAM_BASE_DEFAULT, PIT_CH0_PORT, PIT_PORT_COUNT, VBE_MODES, VESA_FB_SIZE, VESA_LFB_BASE,
+    VGA_PORT_BASE, VGA_PORT_COUNT, VGA_TEXT_BASE, VGA_TEXT_SIZE,
 };
 pub use firmware::bios::{Bios, BiosContext};
 pub use boot::Loader;
@@ -72,6 +75,7 @@ pub struct Vm {
     nvme: Rc<RefCell<Nvme>>,
     e1000: Rc<RefCell<E1000>>,
     virtio_net: Rc<RefCell<VirtioNet>>,
+    display: Rc<RefCell<DisplayState>>,
     bios: Bios,
     config: VmConfig,
 }
@@ -214,6 +218,27 @@ impl Vm {
         let mut cpu = Cpu::new();
         cpu.attach_apic(apic.clone());
 
+        // Display: shared VGA text buffer + VESA LFB + VGA controller ports.
+        let display: Rc<RefCell<DisplayState>> = Rc::new(RefCell::new(DisplayState::new()));
+        mmu.attach_mmio(
+            VGA_TEXT_BASE,
+            VGA_TEXT_SIZE as u64,
+            Box::new(VgaTextDevice::new(display.clone())),
+        );
+        mmu.attach_mmio(
+            VESA_LFB_BASE,
+            VESA_FB_SIZE as u64,
+            Box::new(VesaFbDevice::new(display.clone())),
+        );
+        ports.attach(
+            VGA_PORT_BASE,
+            VGA_PORT_COUNT,
+            Box::new(VgaPorts::new(display.clone())),
+        );
+
+        let mut bios = Bios::new();
+        bios.context.set_display(display.clone());
+
         Self {
             cpu,
             mmu,
@@ -227,7 +252,8 @@ impl Vm {
             nvme,
             e1000,
             virtio_net,
-            bios: Bios::new(),
+            display,
+            bios,
             config,
         }
     }
@@ -321,6 +347,7 @@ impl Vm {
         self.hpet.borrow_mut().reset();
         self.ahci.borrow_mut().reset();
         self.nvme.borrow_mut().reset();
+        self.display.borrow_mut().reset();
         self.bios.reset();
     }
 
@@ -369,6 +396,11 @@ impl Vm {
     /// Shared handle to the NVMe controller.
     pub fn nvme(&self) -> Rc<RefCell<Nvme>> {
         self.nvme.clone()
+    }
+
+    /// Shared handle to the display state (VGA text, VESA LFB, palette).
+    pub fn display(&self) -> Rc<RefCell<DisplayState>> {
+        self.display.clone()
     }
 
     pub fn config(&self) -> &VmConfig {

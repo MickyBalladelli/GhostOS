@@ -1,11 +1,15 @@
 use crate::cpu::CpuState;
+use crate::devices::DisplayState;
 use crate::memory::Mmu;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct BiosContext {
     pub state: BiosState,
     pub ivt: [u16; 256],
     pub bda: [u8; 256],
     pub ega: [u8; 32 * 4],
+    display: Rc<RefCell<DisplayState>>,
 }
 
 impl BiosContext {
@@ -15,7 +19,16 @@ impl BiosContext {
             ivt: [0; 256],
             bda: [0; 256],
             ega: [0; 32 * 4],
+            display: Rc::new(RefCell::new(DisplayState::new())),
         }
+    }
+
+    pub fn set_display(&mut self, display: Rc<RefCell<DisplayState>>) {
+        self.display = display;
+    }
+
+    pub fn display(&self) -> Rc<RefCell<DisplayState>> {
+        self.display.clone()
     }
 
     pub fn init_bios(&mut self) -> Result<(), BiosError> {
@@ -38,11 +51,11 @@ impl BiosContext {
     pub fn call_int(
         &mut self,
         int_num: u8,
-        _cpu: &mut CpuState,
-        _mmu: &mut Mmu,
+        cpu: &mut CpuState,
+        mmu: &mut Mmu,
     ) -> Result<(), BiosError> {
         match int_num {
-            0x10 => self.video_service(),
+            0x10 => self.video_service(cpu, mmu),
             0x13 => self.disk_service(),
             0x15 => self.system_service(),
             0x16 => self.keyboard_service(),
@@ -50,7 +63,8 @@ impl BiosContext {
         }
     }
 
-    fn video_service(&mut self) -> Result<(), BiosError> {
+    fn video_service(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) -> Result<(), BiosError> {
+        self.display.borrow_mut().int10(cpu, mmu);
         Ok(())
     }
 
