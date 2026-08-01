@@ -370,13 +370,27 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
         for word in words[first_argument..word_count].iter().flatten() {
             let raw = word.as_str();
-            if let Some(qualifier) = raw
-                .strip_prefix("--")
-                .or_else(|| raw.strip_prefix('/'))
-            {
+            let long_qualifier = raw.strip_prefix("--");
+            let slash_qualifier = raw
+                .strip_prefix('/')
+                .filter(|qualifier| is_known_qualifier(&registration.spec, qualifier));
+            if let Some(qualifier) = long_qualifier.or(slash_qualifier) {
                 self.insert_qualifier(
                     &registration.spec,
                     qualifier,
+                    &mut arguments,
+                )?
+            } else if raw.starts_with('/')
+                && registration
+                    .spec
+                    .arguments()
+                    .filter(|argument| argument.positional)
+                    .nth(positional)
+                    .is_none()
+            {
+                self.insert_qualifier(
+                    &registration.spec,
+                    raw.strip_prefix('/').ok_or(Error::InvalidSyntax)?,
                     &mut arguments,
                 )?
             } else {
@@ -474,6 +488,21 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             prefix.ok_or(Error::UnknownCommand)
         }
     }
+}
+
+fn is_known_qualifier(command: &CommandSpec, qualifier: &str) -> bool {
+    let (name, _) = qualifier
+        .split_once('=')
+        .map_or((qualifier, None), |(name, value)| (name, Some(value)));
+    command
+        .arguments()
+        .any(|spec| spec.name.as_str().eq_ignore_ascii_case(name))
+        || name.strip_prefix("NO").is_some_and(|positive| {
+            command.arguments().any(|spec| {
+                spec.kind == ArgumentKind::Boolean
+                    && spec.name.as_str().eq_ignore_ascii_case(positive)
+            })
+        })
 }
 
 impl<const CAPACITY: usize> Default for CommandRegistry<CAPACITY> {

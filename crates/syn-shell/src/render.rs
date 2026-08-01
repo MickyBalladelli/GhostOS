@@ -83,7 +83,7 @@ fn render_default_directory(
 fn render_directory(
     output: &StructuredOutput,
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
-    const ENTRY_FIELDS: [[&str; 5]; 5] = [
+    const ENTRY_FIELDS: [[&str; 5]; 6] = [
         [
             "entry-0-name",
             "entry-0-type",
@@ -118,6 +118,13 @@ fn render_directory(
             "entry-4-size",
             "entry-4-version",
             "entry-4-link-count",
+        ],
+        [
+            "entry-5-name",
+            "entry-5-type",
+            "entry-5-size",
+            "entry-5-version",
+            "entry-5-link-count",
         ],
     ];
 

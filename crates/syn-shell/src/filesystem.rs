@@ -11,6 +11,7 @@ use crate::{
 
 pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_DIRECTORY_PAGE_ENTRIES: usize = 32;
+pub const MAX_VISIBLE_DIRECTORY_ENTRIES: usize = 6;
 pub const MAX_TYPE_OUTPUT_BYTES: usize = 4096;
 
 pub const DIRECTORY_ROUTE: u16 = 32;
@@ -18,6 +19,7 @@ pub const CREATE_FILE_ROUTE: u16 = 33;
 pub const TYPE_ROUTE: u16 = 34;
 pub const SET_DEFAULT_ROUTE: u16 = 35;
 pub const SHOW_DEFAULT_ROUTE: u16 = 36;
+pub const MKDIR_ROUTE: u16 = 37;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Path {
@@ -268,20 +270,22 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
         .map_err(|_| Error::InvalidValue)?;
     let recursive = ArgumentSpec::new("RECURSIVE", ArgumentKind::Boolean, false, false)
         .map_err(|_| Error::InvalidValue)?;
-    let directory = CommandSpec::new("DIRECTORY", &[path, create, recursive])
+    let continuation = ArgumentSpec::new("CONTINUATION", ArgumentKind::Integer, false, false)
+        .map_err(|_| Error::InvalidValue)?;
+    let required_path = ArgumentSpec::new("PATH", ArgumentKind::Text, true, true)
+        .map_err(|_| Error::InvalidValue)?;
+    let directory = CommandSpec::new("DIRECTORY", &[path, create, recursive, continuation])
         .map_err(|_| Error::InvalidValue)?;
     registry.register(directory, route(DIRECTORY_ROUTE))?;
     registry.register(
-        CommandSpec::new("MKDIR", &[path, recursive]).map_err(|_| Error::InvalidValue)?,
-        route(DIRECTORY_ROUTE),
+        CommandSpec::new("MKDIR", &[required_path, recursive]).map_err(|_| Error::InvalidValue)?,
+        route(MKDIR_ROUTE),
     )?;
     registry.register(
-        CommandSpec::new("LS", &[path]).map_err(|_| Error::InvalidValue)?,
+        CommandSpec::new("LS", &[path, continuation]).map_err(|_| Error::InvalidValue)?,
         route(DIRECTORY_ROUTE),
     )?;
 
-    let required_path = ArgumentSpec::new("PATH", ArgumentKind::Text, true, true)
-        .map_err(|_| Error::InvalidValue)?;
     registry.register(
         CommandSpec::new("CREATE", &[required_path]).map_err(|_| Error::InvalidValue)?,
         route(CREATE_FILE_ROUTE),
@@ -426,9 +430,28 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         self.execute(command)
     }
 
+    pub fn list_directory_page(
+        &mut self,
+        command: CommandCall,
+        continuation: Option<u32>,
+        output: &mut DirectoryPage,
+    ) -> Result<Path, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        if path.as_str().contains(';') {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let continuation = continuation.or(integer(command.get("CONTINUATION"))?);
+        self.source.list(path.as_str(), continuation, output)?;
+        Ok(path)
+    }
+
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         match command.route.raw() {
             DIRECTORY_ROUTE => self.directory(command),
+            MKDIR_ROUTE => self.mkdir(command),
             CREATE_FILE_ROUTE => self.create_file(command),
             TYPE_ROUTE => self.type_file(command),
             SET_DEFAULT_ROUTE => self.set_default(command),
@@ -452,8 +475,23 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             return metadata_output("created", metadata);
         }
         let mut page = DirectoryPage::new();
-        self.source.list(path.as_str(), None, &mut page)?;
-        directory_output(path, page)
+        let continuation = integer(command.get("CONTINUATION"))?;
+        self.source.list(path.as_str(), continuation, &mut page)?;
+        directory_output(path, page, continuation)
+    }
+
+    fn mkdir(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        if path.as_str().contains(';') {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let metadata = self
+            .source
+            .create_directory(path.as_str(), boolean(command.get("RECURSIVE"))?)?;
+        metadata_output("created", metadata)
     }
 
     fn create_file(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
@@ -529,6 +567,16 @@ fn boolean(value: Option<Value>) -> Result<bool, Status> {
     }
 }
 
+fn integer(value: Option<Value>) -> Result<Option<u32>, Status> {
+    match value {
+        None => Ok(None),
+        Some(Value::Integer(value)) => u32::try_from(value)
+            .map(Some)
+            .map_err(|_| Status::INVALID_ARGUMENT),
+        _ => Err(Status::INVALID_ARGUMENT),
+    }
+}
+
 fn metadata_output(label: &str, metadata: FileMetadata) -> Result<StructuredOutput, Status> {
     let mut output = StructuredOutput::new(Status::NORMAL);
     insert_text(&mut output, "operation", label)?;
@@ -548,7 +596,11 @@ fn metadata_output(label: &str, metadata: FileMetadata) -> Result<StructuredOutp
     Ok(output)
 }
 
-fn directory_output(path: Path, page: DirectoryPage) -> Result<StructuredOutput, Status> {
+fn directory_output(
+    path: Path,
+    page: DirectoryPage,
+    continuation: Option<u32>,
+) -> Result<StructuredOutput, Status> {
     let mut output = StructuredOutput::new(Status::NORMAL);
     insert_text(&mut output, "path", path.as_str())?;
     insert(
@@ -556,16 +608,31 @@ fn directory_output(path: Path, page: DirectoryPage) -> Result<StructuredOutput,
         "entry-count",
         OutputValue::Unsigned(page.len() as u64),
     )?;
-    if let Some(next) = page.next {
+    let has_more = page.next.is_some() || page.len() > MAX_VISIBLE_DIRECTORY_ENTRIES;
+    let visible_entries = if has_more {
+        MAX_VISIBLE_DIRECTORY_ENTRIES - 1
+    } else {
+        MAX_VISIBLE_DIRECTORY_ENTRIES
+    };
+    if has_more {
+        let next = if page.len() > visible_entries {
+            continuation
+                .unwrap_or(0)
+                .checked_add(visible_entries as u32)
+                .ok_or(Status::NO_SPACE)?
+        } else {
+            page.next.ok_or(Status::NO_SPACE)?
+        };
         insert(&mut output, "next", OutputValue::Unsigned(next as u64))?;
     }
-    for (index, entry) in page.entries().take(5).enumerate() {
+    for (index, entry) in page.entries().take(visible_entries).enumerate() {
         let prefix = match index {
             0 => "entry-0-",
             1 => "entry-1-",
             2 => "entry-2-",
             3 => "entry-3-",
-            _ => "entry-4-",
+            4 => "entry-4-",
+            _ => "entry-5-",
         };
         let mut name = Text::<32>::empty();
         name.push_str(prefix).map_err(|_| Status::NO_SPACE)?;

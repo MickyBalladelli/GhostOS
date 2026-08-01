@@ -2,11 +2,11 @@ use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
     filesystem::{
-        DirectoryEntry as ShellDirectoryEntry, EntryType, FileMetadata, FileOutput,
+        DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType, FileMetadata, FileOutput,
         FilesystemExecutor, FilesystemSource, Path as ShellPath,
     },
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
-    parser::{CommandCall, CommandRegistry, RouteId},
+    parser::{CommandCall, CommandRegistry, RouteId, Value},
     render::{OutputFormat, render},
 };
 use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind};
@@ -96,6 +96,8 @@ pub fn run(
                         &registry,
                         &mut interpreter,
                         &mut executor,
+                        &mut keyboard,
+                        &mut usb_keyboard,
                         acpi.as_ref(),
                     )
                 }
@@ -130,6 +132,8 @@ fn execute_line(
     registry: &CommandRegistry<COMMAND_CAPACITY>,
     interpreter: &mut Interpreter,
     executor: &mut KernelExecutor,
+    keyboard: &mut crate::keyboard::Keyboard,
+    usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
     acpi: Option<&AcpiPlatform>,
 ) {
     let program = match registry.parse(line) {
@@ -150,6 +154,19 @@ fn execute_line(
     };
     if program.background {
         crate::println!("shell error: background jobs not ready");
+        return;
+    }
+
+    if program.stage_count() == 1
+        && program
+            .stage(0)
+            .is_some_and(is_full_directory_command)
+    {
+        if let Some(command) = program.stage(0) {
+            if let Err(status) = executor.print_directory(command, keyboard, usb_keyboard) {
+                crate::println!("command failed: status={:#x}", status.raw())
+            }
+        }
         return;
     }
 
@@ -240,6 +257,39 @@ fn execute_line(
 
 fn prompt() {
     crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
+}
+
+fn is_full_directory_command(command: CommandCall) -> bool {
+    if command.command.as_str().eq_ignore_ascii_case("LS") {
+        return true
+    }
+    command.command.as_str().eq_ignore_ascii_case("DIRECTORY")
+        && !matches!(command.get("CREATE"), Some(Value::Boolean(true)))
+}
+
+fn directory_cancelled(
+    keyboard: &mut crate::keyboard::Keyboard,
+    usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
+) -> bool {
+    if matches!(keyboard.read_byte(), Some(3)) {
+        return true
+    }
+    if usb_keyboard
+        .as_mut()
+        .and_then(crate::usb_keyboard::UsbKeyboard::read_byte)
+        .is_some_and(|byte| byte == 3)
+    {
+        return true
+    }
+    matches!(crate::console::read_byte(), Some(3))
+}
+
+fn entry_type_name(entry_type: EntryType) -> &'static str {
+    match entry_type {
+        EntryType::File => "FILE",
+        EntryType::Directory => "DIRECTORY",
+        EntryType::Symlink => "SYMLINK",
+    }
 }
 
 fn complete_line(
@@ -636,6 +686,52 @@ impl KernelExecutor {
         }
     }
 
+    fn print_directory(
+        &mut self,
+        command: CommandCall,
+        keyboard: &mut crate::keyboard::Keyboard,
+        usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
+    ) -> Result<(), Status> {
+        let mut continuation = None;
+        let mut printed_header = false;
+        let mut printed_entries = false;
+
+        loop {
+            let mut page = DirectoryPage::new();
+            let path = self
+                .filesystem
+                .list_directory_page(command, continuation, &mut page)?;
+            if !printed_header {
+                crate::println!("Directory: {}", path.as_str());
+                crate::println!();
+                crate::println!("NAME                  TYPE        SIZE  VERSION  LINKS");
+                printed_header = true;
+            }
+            for entry in page.entries() {
+                if directory_cancelled(keyboard, usb_keyboard) {
+                    crate::println!("^C");
+                    return Ok(())
+                }
+                crate::println!(
+                    "{:<20}  {:<10}  {:>8}  {:>7}  {:>5}",
+                    entry.name.as_str(),
+                    entry_type_name(entry.file_type),
+                    entry.size,
+                    entry.version,
+                    entry.link_count,
+                );
+                printed_entries = true;
+            }
+            let Some(next) = page.next else { break };
+            continuation = Some(next);
+        }
+
+        if !printed_entries {
+            crate::println!("(empty)");
+        }
+        Ok(())
+    }
+
     fn help(&self) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(
@@ -652,7 +748,7 @@ impl KernelExecutor {
         crate::println!("  CREATE             Create a file");
         crate::println!("  DIRECTORY          List a directory");
         crate::println!("  HELP               Show this help");
-        crate::println!("  LS                 List a directory");
+        crate::println!("  LS                 List all directory entries (Ctrl-C stops)");
         crate::println!("  MKDIR              Create a directory");
         crate::println!("  MONITOR            Cycle monitor view");
         crate::println!("  PWD                Show the default directory");
