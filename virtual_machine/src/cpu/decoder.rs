@@ -377,7 +377,12 @@ impl InstructionDecoder {
                 };
                 ins.operands = vec![
                     Operand::Register(0),
-                    Operand::Immediate(Self::read_imm(mmu, pos, imm_size, false)?),
+                    Operand::Immediate(Self::read_imm(
+                        mmu,
+                        pos,
+                        imm_size,
+                        opsize == 64 && imm_size == 4,
+                    )?),
                 ];
                 return Ok(());
             }};
@@ -526,7 +531,12 @@ impl InstructionDecoder {
                 } else {
                     4
                 };
-                let imm = Self::read_imm(mmu, pos, imm_size, op == 0x83)?;
+                let imm = Self::read_imm(
+                    mmu,
+                    pos,
+                    imm_size,
+                    op == 0x83 || (op == 0x81 && opsize == 64),
+                )?;
                 ins.mnemonic = group1_mnemonic(digit);
                 ins.operands = vec![rm, Operand::Immediate(imm)];
                 return Ok(());
