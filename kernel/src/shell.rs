@@ -498,12 +498,21 @@ impl FilesystemSource for KernelFilesystem {
         }
         output.clear();
         let start = continuation.unwrap_or(0) as usize;
-        for (index, file) in self.files.iter().flatten().enumerate().skip(start) {
+        let mut index = 0usize;
+        for slot in self.files.iter() {
+            let Some(file) = slot else {
+                continue
+            };
+            let current = index;
+            index += 1;
+            if current < start {
+                continue
+            }
             if Self::parent(file.path.as_str()) != path {
                 continue
             }
             if output.len() == syn_shell::filesystem::MAX_DIRECTORY_PAGE_ENTRIES {
-                output.next = Some(index as u32);
+                output.next = Some(current as u32);
                 break
             }
             let name = file.path.as_str().rsplit('/').next().unwrap_or("");
