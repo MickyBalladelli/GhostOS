@@ -378,6 +378,10 @@ pub struct SynFsDiagnostics {
 pub struct CheckpointId(u64);
 
 impl CheckpointId {
+    pub const fn from_raw(raw: u64) -> Option<Self> {
+        if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
     pub const fn raw(self) -> u64 {
         self.0
     }
@@ -879,6 +883,27 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     pub fn read(&self, path: &str, destination: &mut [u8]) -> Result<ReadResult, Error> {
         let file = self.lookup(path)?;
         self.read_file_version(file, destination)
+    }
+
+    /// Read a bounded range without requiring the caller to allocate a full
+    /// file-sized buffer.
+    pub fn read_at(
+        &self,
+        path: &str,
+        offset: u64,
+        destination: &mut [u8],
+    ) -> Result<ReadResult, Error> {
+        let file = self.lookup(path)?;
+        let bytes_read = self.read_record_range(
+            self.find_record(FileKey {
+                file: file.file,
+                version: file.version,
+            })?
+            .ok_or(Error::Corrupt)?,
+            offset,
+            destination,
+        )?;
+        Ok(ReadResult { file, bytes_read })
     }
 
     pub fn read_version(

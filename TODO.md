@@ -31,10 +31,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Connect SynFS block allocation and `StoragePoolAdmin` placement to real NVMe, AHCI, CXL, and network-block I/O.
   - [x] Add bounded asynchronous block read, write, flush, and discard requests with completion handling.
   - [x] Handle device failure, degraded mirrors, hot removal, and pool rebuilds during filesystem I/O.
-- [ ] **Ring 3 Filesystem Daemon**
-  - [ ] Build `synos-fsd` as the user-space owner of SynFS volumes, mounts, transactions, checkpoints, and garbage collection.
-  - [ ] Define the IPC protocol for open, close, read, write, metadata, delete, rename, directory listing, and snapshot operations.
-  - [ ] Enforce per-process file capabilities and read/write/delete/administration rights.
+- [x] **Ring 3 Filesystem Daemon**
+  - [x] Build `synos-fsd` as the user-space owner of SynFS volumes, mounts, transactions, checkpoints, and garbage collection.
+  - [x] Define the IPC protocol for open, close, read, write, metadata, delete, rename, directory listing, and snapshot operations.
+  - [x] Enforce per-process file capabilities and read/write/delete/administration rights.
 - [ ] **Kernel and Runtime Wiring**
   - [ ] Dispatch the SynFS operations from the runtime ABI through kernel IPC to `synos-fsd`.
   - [ ] Validate shared buffers, capabilities, offsets, lengths, and operation flags at every boundary.

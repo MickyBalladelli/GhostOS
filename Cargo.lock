@@ -477,6 +477,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-fsd"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-host-filesystems"
 version = "0.1.0"
 dependencies = [
