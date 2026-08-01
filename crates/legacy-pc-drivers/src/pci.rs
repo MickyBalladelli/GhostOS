@@ -23,6 +23,7 @@ impl PciAddress {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     const fn config_key(self, offset: u8) -> u32 {
         1 << 31
             | (self.bus as u32) << 16
