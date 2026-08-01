@@ -549,10 +549,10 @@ impl<
         if read_only_mount && requested.contains(FileRights::WRITE) {
             return Err(DaemonError::ReadOnly);
         }
-        let exists = self.filesystem.lookup(path).is_ok();
-        if exists && flags.contains(Flags::CREATE) && flags.contains(Flags::EXCLUSIVE) {
-            return Err(DaemonError::File(SynFsError::AlreadyExists))
+        if flags.contains(Flags::CREATE) && flags.contains(Flags::EXCLUSIVE) {
+            return self.create_file_with_name(process, authority, name, read_only_mount);
         }
+        let exists = self.filesystem.lookup(path).is_ok();
         if !exists && !flags.contains(Flags::CREATE) {
             return Err(DaemonError::NotFound);
         }
@@ -563,6 +563,72 @@ impl<
             self.ensure_writable(process, authority)?;
             self.filesystem.write(path, &[])?;
         }
+        let metadata = self.filesystem.lookup(path)?;
+        if flags.contains(Flags::CREATE) && metadata.file_type != FileType::Regular {
+            return Err(DaemonError::File(SynFsError::NotDirectory));
+        }
+        self.open_file_handle(
+            process,
+            name,
+            requested,
+            read_only_mount,
+            flags.contains(Flags::APPEND),
+            metadata,
+        )
+    }
+
+    pub fn create_file(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        path: &str,
+    ) -> Result<FileInfo, DaemonError> {
+        if path.contains(';') {
+            return Err(DaemonError::InvalidPath);
+        }
+        let name = Name::from_str(path)?;
+        let read_only_mount = self.path_is_read_only(path)?;
+        self.create_file_with_name(process, authority, name, read_only_mount)
+    }
+
+    fn create_file_with_name(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        name: Name,
+        read_only_mount: bool,
+    ) -> Result<FileInfo, DaemonError> {
+        self.authorize_process(process, authority, FileRights::WRITE)?;
+        if read_only_mount {
+            return Err(DaemonError::ReadOnly);
+        }
+        if !self.open_files.iter().any(|slot| !slot.occupied) {
+            return Err(DaemonError::HandleExhausted);
+        }
+        if self.filesystem.lookup(name.as_str()).is_ok() {
+            return Err(DaemonError::File(SynFsError::AlreadyExists));
+        }
+        self.filesystem.write(name.as_str(), &[])?;
+        let metadata = self.filesystem.lookup(name.as_str())?;
+        self.open_file_handle(
+            process,
+            name,
+            FileRights::READ.union(FileRights::WRITE),
+            false,
+            false,
+            metadata,
+        )
+    }
+
+    fn open_file_handle(
+        &mut self,
+        process: ProcessId,
+        name: Name,
+        rights: FileRights,
+        read_only_mount: bool,
+        append: bool,
+        metadata: synos_synfs::FileVersion,
+    ) -> Result<FileInfo, DaemonError> {
         let (index, slot) = self
             .open_files
             .iter_mut()
@@ -573,11 +639,10 @@ impl<
         slot.occupied = true;
         slot.owner = process;
         slot.path = name;
-        slot.rights = requested;
+        slot.rights = rights;
         slot.read_only_mount = read_only_mount;
-        slot.append = flags.contains(Flags::APPEND);
+        slot.append = append;
         let capability = token(index, slot.generation);
-        let metadata = self.filesystem.lookup(path)?;
         Ok(FileInfo {
             capability,
             file: metadata.file,
@@ -585,11 +650,21 @@ impl<
             size: metadata.size,
             checksum: metadata.checksum,
             created_at: metadata.created_at,
-            rights: requested,
+            rights,
             file_type: metadata.file_type,
             link_count: metadata.link_count,
             mode: metadata.mode,
         })
+    }
+
+    fn path_is_read_only(&self, path: &str) -> Result<bool, DaemonError> {
+        let namespace_read_only = path
+            .starts_with('/')
+            .then(|| self.namespace.is_read_only(path))
+            .transpose()
+            .map_err(DaemonError::Namespace)?
+            .unwrap_or(false);
+        Ok(self.mount_is_read_only(path) || namespace_read_only)
     }
 
     pub fn close(&mut self, process: ProcessId, capability: Capability) -> Result<(), DaemonError> {

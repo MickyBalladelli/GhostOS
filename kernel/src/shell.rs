@@ -621,7 +621,17 @@ impl FilesystemSource for KernelFilesystem {
     }
 
     fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status> {
-        if !self.directory_exists(Self::parent(path))? {
+        if path == "/" {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let parent = Self::parent(path);
+        if self
+            .find(parent)
+            .is_some_and(|file| file.file_type != EntryType::Directory)
+        {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        if !self.directory_exists(parent)? {
             return Err(Status::NOT_FOUND)
         }
         self.insert(path, EntryType::File).map(Self::metadata)

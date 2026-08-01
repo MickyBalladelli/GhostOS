@@ -176,6 +176,14 @@ impl ShellSession {
         if path.is_empty() {
             return Err(Status::INVALID_ARGUMENT);
         }
+        if path != "/"
+            && (path.ends_with('/') || path.as_bytes().windows(2).any(|pair| pair == b"//"))
+        {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        if path.contains('\\') || path.contains('\0') {
+            return Err(Status::INVALID_ARGUMENT);
+        }
         let mut source = Text::<{ MAX_PATH_BYTES * 2 + 1 }>::empty();
         if !path.starts_with('/') {
             source
@@ -190,7 +198,8 @@ impl ShellSession {
         source
             .push_str(path)
             .map_err(|_| Status::INVALID_ARGUMENT)?;
-        canonicalize(source.as_str())
+        let resolved = canonicalize(source.as_str())?;
+        Path::new(resolved.as_str())
     }
 
     pub fn set_default<S: FilesystemSource>(
@@ -495,7 +504,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
-        if path.as_str().contains(';') {
+        if path.as_str() == "/" || path.as_str().contains(';') {
             return Err(Status::INVALID_ARGUMENT)
         }
         metadata_output("created", self.source.create_file(path.as_str())?)

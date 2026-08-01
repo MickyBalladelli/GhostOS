@@ -82,12 +82,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Report already-existing paths, missing parents, read-only mounts, quota exhaustion, and non-directory parents.
   - [x] Return the created directory metadata and make it visible immediately to subsequent listings.
 
-- [ ] **Create a File**
+- [x] **Create a File**
   - [x] Add a dedicated create-file operation or command using exclusive-create semantics.
-  - [ ] Support absolute and relative file paths and creation in the active default directory.
-  - [ ] Enforce parent-directory write capability and regular-file type checks.
-  - [ ] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.
-  - [ ] Return a file capability or metadata result that can be consumed by later commands.
+  - [x] Support absolute and relative file paths and creation in the active default directory.
+  - [x] Enforce parent-directory write capability and regular-file type checks.
+  - [x] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.
+  - [x] Return a file capability or metadata result that can be consumed by later commands.
 
 - [ ] **Type a File**
   - [x] Add a `TYPE` command that opens a file read-only and reads it in bounded chunks.
