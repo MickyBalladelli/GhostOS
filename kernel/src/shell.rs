@@ -153,18 +153,20 @@ fn execute_line(
         human_memory_output,
         human_dsm_output,
         human_cpu_output,
+        human_monitor_output,
     ) =
         if program.stage_count() == 1 {
             match program.stage(0).map(|stage| stage.route.raw()) {
-                Some(HELP_ROUTE) => (true, false, false, false, false),
-                Some(SHOW_SYSTEM_ROUTE) => (false, true, false, false, false),
-                Some(SHOW_MEMORY_ROUTE) => (false, false, true, false, false),
-                Some(SHOW_DSM_ROUTE) => (false, false, false, true, false),
-                Some(TOP_CPU_ROUTE) => (false, false, false, false, true),
-                _ => (false, false, false, false, false),
+                Some(HELP_ROUTE) => (true, false, false, false, false, false),
+                Some(SHOW_SYSTEM_ROUTE) => (false, true, false, false, false, false),
+                Some(SHOW_MEMORY_ROUTE) => (false, false, true, false, false, false),
+                Some(SHOW_DSM_ROUTE) => (false, false, false, true, false, false),
+                Some(TOP_CPU_ROUTE) => (false, false, false, false, true, false),
+                Some(MONITOR_ROUTE) => (false, false, false, false, false, true),
+                _ => (false, false, false, false, false, false),
             }
         } else {
-            (false, false, false, false, false)
+            (false, false, false, false, false, false)
         };
 
     if human_help_output {
@@ -200,7 +202,7 @@ fn execute_line(
         match interpreter.poll(executor) {
             Ok(InterpreterEvent::Pending) => crate::arch::halt(),
             Ok(InterpreterEvent::Complete(output)) => {
-                if !human_memory_output && !human_dsm_output {
+                if !human_memory_output && !human_dsm_output && !human_monitor_output {
                     match render(&output, OutputFormat::List) {
                         Ok(text) => crate::print!("{}", text.as_str()),
                         Err(error) => crate::println!("shell output error: {error:?}"),
@@ -573,15 +575,14 @@ impl KernelExecutor {
     fn monitor_view(&mut self) -> Result<StructuredOutput, Status> {
         self.monitor.update();
         let view = self.monitor.current_view();
-        let view_str = match view {
-            MonitorView::Processes => "processes",
-            MonitorView::TopCpu => "top-cpu",
-            MonitorView::Dsm => "dsm",
-            MonitorView::Memory => "memory",
+        let output = match view {
+            MonitorView::Processes => self.show_processes(),
+            MonitorView::TopCpu => self.top_cpu(),
+            MonitorView::Dsm => self.show_dsm(),
+            MonitorView::Memory => self.show_memory(),
         };
-        let mut output = StructuredOutput::new(Status::NORMAL);
-        insert_text(&mut output, "view", view_str)?;
-        Ok(output)
+        self.monitor.switch_view();
+        output
     }
 
     fn show_processes(&self) -> Result<StructuredOutput, Status> {
