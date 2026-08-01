@@ -118,6 +118,7 @@ fn register(registry: &mut CommandRegistry<COMMAND_CAPACITY>, name: &str, route:
         .expect("kernel command registry has capacity")
 }
 
+#[inline(never)]
 fn execute_line(
     line: &str,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
@@ -160,6 +161,10 @@ fn execute_line(
 
     if human_system_output {
         executor.print_system();
+        return
+    }
+    if human_memory_output {
+        executor.print_memory();
         return
     }
 
@@ -618,6 +623,11 @@ impl KernelExecutor {
             "memory-regions",
             OutputValue::Unsigned(self.memory_region_count as u64),
         )?;
+        self.print_memory();
+        Ok(output)
+    }
+
+    fn print_memory(&self) {
         crate::println!("\x1b[1;34m=== MEMORY ===\x1b[0m");
         crate::println!("  Total:     {}", memory_size(self.memory_total_bytes));
         crate::println!(
@@ -645,7 +655,6 @@ impl KernelExecutor {
             crate::println!("    Used:      {}", memory_size(used_bytes));
             crate::println!("    Available: {}", memory_size(available_bytes));
         }
-        Ok(output)
     }
 
     fn show_dsm(&self) -> Result<StructuredOutput, Status> {

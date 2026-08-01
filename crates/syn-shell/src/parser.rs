@@ -291,7 +291,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         words: &[Option<Text<MAX_TOKEN_BYTES>>; MAX_STAGE_WORDS],
         word_count: usize,
     ) -> Result<CommandCall, Error> {
-        let verb = words[0].ok_or(Error::InvalidSyntax)?;
+        let verb = words[0].as_ref().ok_or(Error::InvalidSyntax)?;
         let mut command_name = Text::<MAX_COMMAND_NAME_BYTES>::empty();
         let mut first_argument = 1usize;
         let mut attached: Option<Text<MAX_TOKEN_BYTES>> = None;
@@ -302,13 +302,11 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             if word_count < 2 {
                 return Err(Error::MissingArgument)
             }
-            let object = words[1].ok_or(Error::InvalidSyntax)?;
-            let (noun, qualifiers) = object
-                .as_str()
-                .split_once('/')
-                .map_or((object.as_str(), None), |(noun, rest)| {
-                    (noun, Some(rest))
-                });
+            let object = words[1].as_ref().ok_or(Error::InvalidSyntax)?;
+            let (noun, qualifiers) = match object.as_str().split_once('/') {
+                Some((noun, rest)) => (noun, Some(rest)),
+                None => (object.as_str(), None),
+            };
             if noun.is_empty() {
                 return Err(Error::InvalidSyntax)
             }
