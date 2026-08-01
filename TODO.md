@@ -75,12 +75,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Render stable, human-readable directory output and structured output for pipelines.
   - [x] Enforce directory read permission and distinguish an empty directory from a missing or non-directory path.
 
-- [ ] **Create a Folder**
+- [x] **Create a Folder**
   - [x] Wire `DIRECTORY/CREATE` or `MKDIR` command parsing to the filesystem daemon.
-  - [ ] Support creation at absolute and relative paths, including an explicit recursive-parent option.
-  - [ ] Enforce parent-directory write and administration capabilities.
-  - [ ] Report already-existing paths, missing parents, read-only mounts, quota exhaustion, and non-directory parents.
-  - [ ] Return the created directory metadata and make it visible immediately to subsequent listings.
+  - [x] Support creation at absolute and relative paths, including an explicit recursive-parent option.
+  - [x] Enforce parent-directory write and administration capabilities.
+  - [x] Report already-existing paths, missing parents, read-only mounts, quota exhaustion, and non-directory parents.
+  - [x] Return the created directory metadata and make it visible immediately to subsequent listings.
 
 - [ ] **Create a File**
   - [x] Add a dedicated create-file operation or command using exclusive-create semantics.

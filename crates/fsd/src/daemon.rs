@@ -687,7 +687,11 @@ impl<
         path: &str,
         recursive: bool,
     ) -> Result<FileInfo, DaemonError> {
-        self.authorize_process(process, authority, FileRights::WRITE)?;
+        self.authorize_process(
+            process,
+            authority,
+            FileRights::WRITE.union(FileRights::ADMIN),
+        )?;
         let path = Name::from_str(path)?;
         if self.mount_is_read_only(path.as_str()) {
             return Err(DaemonError::ReadOnly);
@@ -1106,8 +1110,9 @@ impl<
                     request.flags.contains(Flags::RECURSIVE),
                 )?;
                 Ok(Response::success()
-                    .with_value(0, info.version as u64)
-                    .with_value(1, info.created_at))
+                    .with_value(0, info.size)
+                    .with_value(1, info.version as u64)
+                    .with_value(2, info.created_at))
             }
             Operation::Rmdir => {
                 let path = input_name(buffer)?;

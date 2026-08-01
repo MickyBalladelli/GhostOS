@@ -91,11 +91,18 @@ impl<S: SystemCall> Runtime<S> {
         })
     }
 
-    pub fn create_directory(&self, path: SharedBuffer, recursive: bool) -> Result<(), Error> {
+    pub fn create_directory(
+        &self,
+        path: SharedBuffer,
+        recursive: bool,
+    ) -> Result<Metadata, Error> {
         let mut request = Request::new(Operation::SynFsMkdir).with_buffer(path);
         request.flags = if recursive { 1 << 8 } else { 0 };
-        self.execute(request)?;
-        Ok(())
+        let response = self.execute(request)?;
+        Ok(Metadata {
+            length: response.values[0],
+            version: u32::try_from(response.values[1]).map_err(|_| Error::InvalidResponse)?,
+        })
     }
 
     pub fn list_directory(
