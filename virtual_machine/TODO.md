@@ -84,11 +84,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Virtio-console (serial output)
   - [x] Virtio-rng (random number generator)
 
-- [ ] **Guest Utilities**
-  - [ ] Serial port output for debugging
-  - [ ] Keyboard input handling
-  - [ ] Mouse input (PS/2 or USB)
-  - [ ] Debug port (COM1/16550) emulation
+- [x] **Guest Utilities**
+  - [x] Serial port output for debugging
+  - [x] Keyboard input handling
+  - [x] Mouse input (PS/2 or USB)
+  - [x] Debug port (COM1/16550) emulation
 
 ### 5. Testing & Integration
 

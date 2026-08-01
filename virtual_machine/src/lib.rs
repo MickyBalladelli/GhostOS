@@ -11,7 +11,8 @@ pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
     Ahci, ApicTrigger, Device, DiskImage, DisplayState, E1000, E1000_MMIO_SIZE, GopMode,
     GopPixelFormat, Hpet, InterruptController, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
-    PortBus, PortDevice, Serial16550, UefiGop, VesaFbDevice, VgaPorts, VgaTextDevice, VideoMode,
+    PortBus, PortDevice, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
+    VgaTextDevice, VideoMode, PS2_DATA_PORT, PS2_PORT_COUNT, PS2_STATUS_PORT,
     VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
     AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
     APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR,
@@ -83,6 +84,8 @@ pub struct Vm {
     mmu: Mmu,
     interrupt_controller: InterruptController,
     ports: PortBus,
+    serial: Option<Rc<RefCell<Serial16550>>>,
+    ps2: Rc<RefCell<Ps2Controller>>,
     pci: Rc<RefCell<PciHostBridge>>,
     apic: Rc<RefCell<LocalApic>>,
     pit: Rc<RefCell<Pit>>,
@@ -111,10 +114,20 @@ impl Vm {
         // 0xCF8/0xCFC config ports and the ECAM (MMCONFIG) memory aperture.
         let pci: Rc<RefCell<PciHostBridge>> = Rc::new(RefCell::new(PciHostBridge::new()));
 
+        let apic: Rc<RefCell<LocalApic>> = Rc::new(RefCell::new(LocalApic::new(0)));
         let mut ports = PortBus::new();
-        if config.enable_serial {
-            ports.attach(COM1_PORT, 8, Box::new(Serial16550::new(COM1_PORT)));
-        }
+        let serial = if config.enable_serial {
+            let serial = Rc::new(RefCell::new(Serial16550::new(COM1_PORT)));
+            serial.borrow_mut().attach_apic(apic.clone());
+            serial.borrow_mut().set_irq_vector(0x24);
+            ports.attach(COM1_PORT, 8, Box::new(serial.clone()));
+            Some(serial)
+        } else {
+            None
+        };
+        let ps2 = Rc::new(RefCell::new(Ps2Controller::new()));
+        ps2.borrow_mut().attach_apic(apic.clone());
+        ports.attach(PS2_DATA_PORT, 5, Box::new(ps2.clone()));
         ports.attach(PCI_CONFIG_PORT, PCI_CONFIG_PORT_SIZE, Box::new(pci.clone()));
 
         // ECAM aperture is memory-mapped; route it through the MMU so guest
@@ -123,7 +136,6 @@ impl Vm {
 
         // One local APIC (BSP id 0) shared between the CPU (for the
         // IA32_APIC_BASE MSR path) and the MMU (for the xAPIC MMIO path).
-        let apic: Rc<RefCell<LocalApic>> = Rc::new(RefCell::new(LocalApic::new(0)));
         mmu.attach_mmio(APIC_BASE_DEFAULT, APIC_SIZE, Box::new(apic.clone()));
 
         // 8254 PIT on the legacy I/O ports 0x40..0x43. Channel 0 maps to
@@ -363,6 +375,8 @@ impl Vm {
             mmu,
             interrupt_controller: InterruptController::new(),
             ports,
+            serial,
+            ps2,
             pci,
             apic,
             pit,
@@ -640,6 +654,34 @@ impl Vm {
     /// Shared handle to the legacy Virtio random-number generator.
     pub fn virtio_rng(&self) -> Rc<RefCell<VirtioRng>> {
         self.virtio_rng.clone()
+    }
+
+    /// Shared handle to the emulated COM1 UART, when serial output is enabled.
+    pub fn serial(&self) -> Option<Rc<RefCell<Serial16550>>> {
+        self.serial.clone()
+    }
+
+    /// Shared handle to the PS/2 keyboard and mouse controller.
+    pub fn ps2(&self) -> Rc<RefCell<Ps2Controller>> {
+        self.ps2.clone()
+    }
+
+    pub fn queue_serial_input(&mut self, bytes: &[u8]) {
+        if let Some(serial) = &self.serial {
+            serial.borrow_mut().push_input(bytes)
+        }
+    }
+
+    pub fn queue_keyboard_scancode(&mut self, scancode: u8) {
+        self.ps2.borrow_mut().push_keyboard_scancode(scancode)
+    }
+
+    pub fn queue_mouse_packet(&mut self, packet: [u8; 3]) {
+        self.ps2.borrow_mut().push_mouse_packet(packet)
+    }
+
+    pub fn queue_mouse_motion(&mut self, dx: i16, dy: i16, buttons: u8) {
+        self.ps2.borrow_mut().push_mouse_motion(dx, dy, buttons)
     }
 
     /// Shared handle to the display state (VGA text, VESA LFB, palette).
