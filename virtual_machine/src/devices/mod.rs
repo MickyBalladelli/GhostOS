@@ -9,6 +9,7 @@ mod interrupt_controller;
 pub mod net;
 mod pit;
 mod serial;
+pub mod virtio;
 pub mod storage;
 
 pub use apic::{
@@ -27,6 +28,13 @@ pub use display::{
 };
 pub use net::{E1000, E1000_MMIO_SIZE, VirtioNet};
 pub use serial::Serial16550;
+pub use virtio::{
+    VirtioBlk, VirtioConsole, VirtioRng, VIRTIO_BLK_CLASS, VIRTIO_BLK_DEVICE_ID,
+    VIRTIO_BLK_PROG_IF, VIRTIO_BLK_SUBCLASS, VIRTIO_CONSOLE_CLASS, VIRTIO_CONSOLE_DEVICE_ID,
+    VIRTIO_CONSOLE_PROG_IF, VIRTIO_CONSOLE_SUBCLASS, VIRTIO_PCI_BAR0_SIZE,
+    VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_CLASS, VIRTIO_RNG_DEVICE_ID, VIRTIO_RNG_PROG_IF,
+    VIRTIO_RNG_SUBCLASS,
+};
 pub use storage::{
     Ahci, DiskFormat, DiskImage, Nvme, AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF,
     AHCI_SUBCLASS, AHCI_VENDOR_ID, NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF,

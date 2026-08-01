@@ -12,12 +12,16 @@ pub use devices::{
     Ahci, ApicTrigger, Device, DiskImage, DisplayState, E1000, E1000_MMIO_SIZE, GopMode,
     GopPixelFormat, Hpet, InterruptController, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
     PortBus, PortDevice, Serial16550, UefiGop, VesaFbDevice, VgaPorts, VgaTextDevice, VideoMode,
-    VirtioNet,
+    VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
     AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
     APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR,
     NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
     PCIE_ECAM_BASE_DEFAULT, PIT_CH0_PORT, PIT_PORT_COUNT, VBE_MODES, VESA_FB_SIZE, VESA_LFB_BASE,
-    VGA_PORT_BASE, VGA_PORT_COUNT, VGA_TEXT_BASE, VGA_TEXT_SIZE,
+    VGA_PORT_BASE, VGA_PORT_COUNT, VGA_TEXT_BASE, VGA_TEXT_SIZE, VIRTIO_BLK_CLASS,
+    VIRTIO_BLK_DEVICE_ID, VIRTIO_BLK_PROG_IF, VIRTIO_BLK_SUBCLASS, VIRTIO_CONSOLE_CLASS,
+    VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_PROG_IF, VIRTIO_CONSOLE_SUBCLASS,
+    VIRTIO_PCI_BAR0_SIZE, VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_CLASS, VIRTIO_RNG_DEVICE_ID,
+    VIRTIO_RNG_PROG_IF, VIRTIO_RNG_SUBCLASS,
 };
 pub use firmware::bios::{Bios, BiosContext};
 pub use firmware::uefi::{
@@ -46,6 +50,9 @@ pub const AHCI_MMIO_BASE: u64 = 0xF100_0000;
 pub const NVME_MMIO_BASE: u64 = 0xF110_0000;
 pub const E1000_MMIO_BASE: u64 = 0xF120_0000;
 pub const VIRTIO_NET_IO_BASE: u16 = 0x5000;
+pub const VIRTIO_BLK_IO_BASE: u16 = 0x5100;
+pub const VIRTIO_CONSOLE_IO_BASE: u16 = 0x5200;
+pub const VIRTIO_RNG_IO_BASE: u16 = 0x5300;
 
 pub struct VmConfig {
     pub memory_size: usize,
@@ -84,6 +91,9 @@ pub struct Vm {
     nvme: Rc<RefCell<Nvme>>,
     e1000: Rc<RefCell<E1000>>,
     virtio_net: Rc<RefCell<VirtioNet>>,
+    virtio_blk: Rc<RefCell<VirtioBlk>>,
+    virtio_console: Rc<RefCell<VirtioConsole>>,
+    virtio_rng: Rc<RefCell<VirtioRng>>,
     display: Rc<RefCell<DisplayState>>,
     bios: Bios,
     config: VmConfig,
@@ -212,7 +222,11 @@ impl Vm {
         virtio_net.borrow_mut().attach_backend(Box::new(
             LoopbackPort::new(hub.clone(), 1, virtio_mac),
         ));
-        ports.attach(VIRTIO_NET_IO_BASE, 0x20, Box::new(virtio_net.clone()));
+        ports.attach(
+            VIRTIO_NET_IO_BASE,
+            VIRTIO_PCI_BAR0_SIZE as u16,
+            Box::new(virtio_net.clone()),
+        );
         pci.borrow_mut().add_device(
             0, 7, 0,
             PciDeviceId {
@@ -223,6 +237,90 @@ impl Vm {
         pci.borrow_mut().set_bar_size(0, 7, 0, 0, 0x100).ok();
         pci.borrow_mut()
             .write_config(0, 7, 0, 0x10, VIRTIO_NET_IO_BASE as u32 | 0x1);
+
+        // The remaining legacy Virtio devices share the same port BAR layout.
+        // Each receives its own PCI function and interrupt vector so a guest
+        // can use block, console, and entropy services independently.
+        let virtio_blk = Rc::new(RefCell::new(VirtioBlk::new()));
+        virtio_blk.borrow_mut().attach_apic(apic.clone());
+        virtio_blk.borrow_mut().set_irq_vector(0x32);
+        ports.attach(
+            VIRTIO_BLK_IO_BASE,
+            VIRTIO_PCI_BAR0_SIZE as u16,
+            Box::new(virtio_blk.clone()),
+        );
+        pci.borrow_mut().add_device(
+            0,
+            8,
+            0,
+            PciDeviceId {
+                vendor: VIRTIO_PCI_VENDOR_ID,
+                device: VIRTIO_BLK_DEVICE_ID,
+                revision: 0x01,
+                prog_if: VIRTIO_BLK_PROG_IF,
+                subclass: VIRTIO_BLK_SUBCLASS,
+                class: VIRTIO_BLK_CLASS,
+            },
+        );
+        pci.borrow_mut()
+            .set_bar_size(0, 8, 0, 0, VIRTIO_PCI_BAR0_SIZE as u32)
+            .ok();
+        pci.borrow_mut()
+            .write_config(0, 8, 0, 0x10, VIRTIO_BLK_IO_BASE as u32 | 0x1);
+
+        let virtio_console = Rc::new(RefCell::new(VirtioConsole::new()));
+        virtio_console.borrow_mut().attach_apic(apic.clone());
+        virtio_console.borrow_mut().set_irq_vector(0x33);
+        ports.attach(
+            VIRTIO_CONSOLE_IO_BASE,
+            VIRTIO_PCI_BAR0_SIZE as u16,
+            Box::new(virtio_console.clone()),
+        );
+        pci.borrow_mut().add_device(
+            0,
+            9,
+            0,
+            PciDeviceId {
+                vendor: VIRTIO_PCI_VENDOR_ID,
+                device: VIRTIO_CONSOLE_DEVICE_ID,
+                revision: 0x01,
+                prog_if: VIRTIO_CONSOLE_PROG_IF,
+                subclass: VIRTIO_CONSOLE_SUBCLASS,
+                class: VIRTIO_CONSOLE_CLASS,
+            },
+        );
+        pci.borrow_mut()
+            .set_bar_size(0, 9, 0, 0, VIRTIO_PCI_BAR0_SIZE as u32)
+            .ok();
+        pci.borrow_mut()
+            .write_config(0, 9, 0, 0x10, VIRTIO_CONSOLE_IO_BASE as u32 | 0x1);
+
+        let virtio_rng = Rc::new(RefCell::new(VirtioRng::new()));
+        virtio_rng.borrow_mut().attach_apic(apic.clone());
+        virtio_rng.borrow_mut().set_irq_vector(0x34);
+        ports.attach(
+            VIRTIO_RNG_IO_BASE,
+            VIRTIO_PCI_BAR0_SIZE as u16,
+            Box::new(virtio_rng.clone()),
+        );
+        pci.borrow_mut().add_device(
+            0,
+            10,
+            0,
+            PciDeviceId {
+                vendor: VIRTIO_PCI_VENDOR_ID,
+                device: VIRTIO_RNG_DEVICE_ID,
+                revision: 0x01,
+                prog_if: VIRTIO_RNG_PROG_IF,
+                subclass: VIRTIO_RNG_SUBCLASS,
+                class: VIRTIO_RNG_CLASS,
+            },
+        );
+        pci.borrow_mut()
+            .set_bar_size(0, 10, 0, 0, VIRTIO_PCI_BAR0_SIZE as u32)
+            .ok();
+        pci.borrow_mut()
+            .write_config(0, 10, 0, 0x10, VIRTIO_RNG_IO_BASE as u32 | 0x1);
 
         let mut cpu = Cpu::new();
         cpu.attach_apic(apic.clone());
@@ -273,6 +371,9 @@ impl Vm {
             nvme,
             e1000,
             virtio_net,
+            virtio_blk,
+            virtio_console,
+            virtio_rng,
             display,
             bios,
             config,
@@ -419,6 +520,15 @@ impl Vm {
         if self.virtio_net.borrow().has_pending() {
             self.virtio_net.borrow_mut().poll(&mut self.mmu);
         }
+        if self.virtio_blk.borrow().has_pending() {
+            self.virtio_blk.borrow_mut().poll(&mut self.mmu);
+        }
+        if self.virtio_console.borrow().has_pending() {
+            self.virtio_console.borrow_mut().poll(&mut self.mmu);
+        }
+        if self.virtio_rng.borrow().has_pending() {
+            self.virtio_rng.borrow_mut().poll(&mut self.mmu);
+        }
     }
 
     /// Advance the local APIC timer plus the PIT/HPET timebase and deliver
@@ -463,6 +573,9 @@ impl Vm {
         self.hpet.borrow_mut().reset();
         self.ahci.borrow_mut().reset();
         self.nvme.borrow_mut().reset();
+        self.virtio_blk.borrow_mut().reset();
+        self.virtio_console.borrow_mut().reset();
+        self.virtio_rng.borrow_mut().reset();
         self.display.borrow_mut().reset();
         self.bios.reset();
     }
@@ -512,6 +625,21 @@ impl Vm {
     /// Shared handle to the NVMe controller.
     pub fn nvme(&self) -> Rc<RefCell<Nvme>> {
         self.nvme.clone()
+    }
+
+    /// Shared handle to the legacy Virtio block device.
+    pub fn virtio_blk(&self) -> Rc<RefCell<VirtioBlk>> {
+        self.virtio_blk.clone()
+    }
+
+    /// Shared handle to the legacy Virtio console device.
+    pub fn virtio_console(&self) -> Rc<RefCell<VirtioConsole>> {
+        self.virtio_console.clone()
+    }
+
+    /// Shared handle to the legacy Virtio random-number generator.
+    pub fn virtio_rng(&self) -> Rc<RefCell<VirtioRng>> {
+        self.virtio_rng.clone()
     }
 
     /// Shared handle to the display state (VGA text, VESA LFB, palette).

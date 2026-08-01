@@ -20,6 +20,8 @@ const REG_QUEUE_SIZE: u16 = 0x0C;
 const REG_QUEUE_SEL: u16 = 0x0E;
 const REG_QUEUE_NOTIFY: u16 = 0x10;
 const REG_STATUS: u16 = 0x12;
+const REG_ISR_STATUS: u16 = 0x13;
+const REG_CONFIG: u16 = 0x14;
 
 const DEVICE_FEATURES: u32 = (1 << 5) | (1 << 16); // VIRTIO_NET_F_MAC | STATUS
 
@@ -39,6 +41,7 @@ pub struct VirtioNet {
     queue_enabled: [bool; 2],
     avail_last: [u16; 2],
     used_count: [u16; 2],
+    interrupt_status: u8,
     pending_rx: PacketQueue,
     poll_pending: bool,
     apic: Option<Rc<RefCell<LocalApic>>>,
@@ -57,6 +60,7 @@ impl VirtioNet {
             queue_enabled: [false; 2],
             avail_last: [0; 2],
             used_count: [0; 2],
+            interrupt_status: 0,
             pending_rx: PacketQueue::new(MAX_RX_BACKLOG, ETHERNET_FRAME_MAX * 2),
             poll_pending: false,
             apic: None,
@@ -95,18 +99,28 @@ impl VirtioNet {
     }
 
     fn used_base(&self, q: u16) -> u64 {
-        self.avail_base(q) + 6 + (2 + QUEUE_SIZE as u64) * 2
+        let avail_end = self.avail_base(q) + 4 + QUEUE_SIZE as u64 * 2;
+        (avail_end + 3) & !3
     }
 
-    fn read_io(&self, port: u16) -> u32 {
+    fn read_io(&mut self, port: u16) -> u64 {
         let off = (port & (VIRTIO_NET_PCI_BAR0_SIZE as u16 - 1)) as u16;
         match off {
-            REG_DEVICE_FEATURES => DEVICE_FEATURES,
-            REG_GUEST_FEATURES => self.guest_features,
-            REG_QUEUE_PFN => self.queue_pfn,
-            REG_QUEUE_SIZE => QUEUE_SIZE as u32,
-            REG_QUEUE_SEL => self.queue_sel as u32,
-            REG_STATUS => self.status as u32,
+            REG_DEVICE_FEATURES => DEVICE_FEATURES as u64,
+            REG_GUEST_FEATURES => self.guest_features as u64,
+            REG_QUEUE_PFN => self.queue_pfn as u64,
+            REG_QUEUE_SIZE => QUEUE_SIZE as u64,
+            REG_QUEUE_SEL => self.queue_sel as u64,
+            REG_STATUS => self.status as u64,
+            REG_ISR_STATUS => {
+                let status = self.interrupt_status;
+                self.interrupt_status = 0;
+                status as u64
+            }
+            REG_CONFIG..=0x19 => {
+                let index = (off - REG_CONFIG) as usize;
+                self.mac.to_bytes()[index] as u64
+            }
             _ => 0,
         }
     }
@@ -126,7 +140,17 @@ impl VirtioNet {
             REG_QUEUE_NOTIFY => {
                 self.poll_pending = true;
             }
-            REG_STATUS => self.status = value as u8,
+            REG_STATUS => {
+                self.status = value as u8;
+                if self.status == 0 {
+                    self.queue_pfn = 0;
+                    self.queue_enabled = [false; 2];
+                    self.avail_last = [0; 2];
+                    self.used_count = [0; 2];
+                    self.interrupt_status = 0;
+                    self.poll_pending = false;
+                }
+            }
             _ => {}
         }
     }
@@ -196,7 +220,16 @@ impl VirtioNet {
             if let Some(backend) = &mut self.backend {
                 let _ = backend.transmit(&packet);
             }
+            let used_slot = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
+            let used_off = self.used_base(QUEUE_TX) + 4 + used_slot * 8;
+            let mut entry = [0u8; 8];
+            entry[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
+            entry[4..8].copy_from_slice(&(len as u32).to_le_bytes());
+            if !Self::dma_write(mmu, used_off, &entry) {
+                break;
+            }
             self.used_count[q] = self.used_count[q].wrapping_add(1);
+            let _ = Self::dma_write(mmu, self.used_base(QUEUE_TX) + 2, &self.used_count[q].to_le_bytes());
         }
         self.check_interrupt();
     }
@@ -233,7 +266,7 @@ impl VirtioNet {
             let mut entry = [0u8; 8];
             entry[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
             entry[4..8].copy_from_slice(&(frame.len() as u32).to_le_bytes());
-            let used_off = used + (self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1)) * 8;
+            let used_off = used + 4 + (self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1)) * 8;
             if !Self::dma_write(mmu, used_off, &entry) {
                 break;
             }
@@ -248,6 +281,7 @@ impl VirtioNet {
     }
 
     fn check_interrupt(&mut self) {
+        self.interrupt_status |= 1;
         if self.irq_vector != 0 {
             if let Some(apic) = &self.apic {
                 apic.borrow_mut().signal(self.irq_vector, ApicTrigger::Edge);
@@ -271,14 +305,14 @@ impl VirtioNet {
 
 impl PortDevice for VirtioNet {
     fn read(&mut self, port: u16, size: u8) -> Result<u64, DeviceError> {
-        if size != 4 {
+        if size != 1 && size != 2 && size != 4 {
             return Err(DeviceError::UnsupportedSize);
         }
-        Ok(self.read_io(port) as u64)
+        Ok(self.read_io(port))
     }
 
     fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
-        if size != 4 {
+        if size != 1 && size != 2 && size != 4 {
             return Err(DeviceError::UnsupportedSize);
         }
         self.write_io(port, value as u32);

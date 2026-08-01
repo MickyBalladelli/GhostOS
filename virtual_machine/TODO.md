@@ -78,11 +78,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ### 4. Device Drivers (Guest-side)
 
-- [ ] **Virtio Devices**
-  - [ ] Virtio-blk (block device)
-  - [ ] Virtio-net (network)
-  - [ ] Virtio-console (serial output)
-  - [ ] Virtio-rng (random number generator)
+- [x] **Virtio Devices**
+  - [x] Virtio-blk (block device)
+  - [x] Virtio-net (network)
+  - [x] Virtio-console (serial output)
+  - [x] Virtio-rng (random number generator)
 
 - [ ] **Guest Utilities**
   - [ ] Serial port output for debugging
