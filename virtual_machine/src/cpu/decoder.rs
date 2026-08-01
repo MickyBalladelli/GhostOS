@@ -788,7 +788,7 @@ impl InstructionDecoder {
                 } else if opsize == 16 {
                     Self::read_imm(mmu, pos, 2, false)?
                 } else {
-                    Self::read_imm(mmu, pos, 4, false)?
+                    Self::read_imm(mmu, pos, 4, opsize == 64)?
                 };
                 ins.operands = vec![rm, Operand::Immediate(imm)];
                 return Ok(());

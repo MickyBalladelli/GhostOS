@@ -208,13 +208,18 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         let mut command_name = Text::<MAX_COMMAND_NAME_BYTES>::empty();
         if first.as_str().eq_ignore_ascii_case("SHOW")
             || first.as_str().eq_ignore_ascii_case("SHO")
+            || first.as_str().eq_ignore_ascii_case("TOP")
         {
             let object = words[1].ok_or(Error::MissingArgument)?;
             let noun = object
                 .as_str()
                 .split_once('/')
                 .map_or(object.as_str(), |(noun, _)| noun);
-            command_name.push_str("SHOW-")?;
+            command_name.push_str(if first.as_str().eq_ignore_ascii_case("TOP") {
+                "TOP-"
+            } else {
+                "SHOW-"
+            })?;
             command_name.push_str(noun)?;
         } else if let Some((analyze, noun)) = first.as_str().split_once('/') {
             if !starts_with_ignore_ascii_case("ANALYZE", analyze) || noun.is_empty() {
@@ -298,6 +303,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
         if verb.as_str().eq_ignore_ascii_case("SHOW")
             || verb.as_str().eq_ignore_ascii_case("SHO")
+            || verb.as_str().eq_ignore_ascii_case("TOP")
         {
             if word_count < 2 {
                 return Err(Error::MissingArgument)
@@ -310,7 +316,11 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             if noun.is_empty() {
                 return Err(Error::InvalidSyntax)
             }
-            command_name.push_str("SHOW-")?;
+            command_name.push_str(if verb.as_str().eq_ignore_ascii_case("TOP") {
+                "TOP-"
+            } else {
+                "SHOW-"
+            })?;
             command_name.push_str(noun)?;
             first_argument = 2;
             attached = qualifiers.map(Text::new).transpose()?
