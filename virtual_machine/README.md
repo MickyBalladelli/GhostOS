@@ -27,6 +27,34 @@ cargo build --release
 Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
 bounded run or `--integration` to run the SynOS integration checks.
 
+## Documentation and examples
+
+Read the guides in this order:
+
+1. [Architecture](docs/ARCHITECTURE.md) — VM lifecycle, memory map, and
+   device topology.
+2. [Device emulation](docs/DEVICE_EMULATION.md) — MMIO, port I/O, DMA, and
+   existing device families.
+3. [Adding a device](docs/ADDING_A_DEVICE.md) — wiring a new device into the
+   VM safely.
+4. [Performance tuning](docs/PERFORMANCE.md) — translated blocks, profiling,
+   and cache settings.
+
+Runnable examples live in [`examples/`](examples/):
+
+- `bash examples/minimal-bios.sh` boots a kernel with BIOS and serial output.
+- `bash examples/multicore-bios.sh` shows the `--cpus 2` machine setting.
+- `bash examples/virtio-net-bios.sh` boots with the virtio-net guest argument
+  and a bounded run.
+- `cargo run --release --example storage-bios -- --help` shows how to attach a
+  RAW, fixed VHD, or QCOW2 image to AHCI, NVMe, or virtio-blk.
+
+The default VM has a virtio-net device connected to an in-memory loopback
+backend. The storage example attaches a disk for guest I/O. The current CLI
+does not implement PXE network boot or firmware boot directly from AHCI/NVMe;
+those examples exercise device bring-up while the kernel is loaded by the
+host-side SynOS loader.
+
 ## Architecture
 
 ```

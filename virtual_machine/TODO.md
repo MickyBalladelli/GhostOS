@@ -138,17 +138,17 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ## 8. Documentation & Examples
 
-- [ ] **Developer Documentation**
-  - [ ] Architecture overview
-  - [ ] Device emulation guide
-  - [ ] Adding new device support
-  - [ ] Performance tuning guide
+- [x] **Developer Documentation**
+  - [x] Architecture overview
+  - [x] Device emulation guide
+  - [x] Adding new device support
+  - [x] Performance tuning guide
 
-- [ ] **SynOS Boot Examples**
-  - [ ] Minimal boot configuration
-  - [ ] Multi-core boot setup
-  - [ ] Network boot via virtio-net
-  - [ ] Storage boot via AHCI/NVMe
+- [x] **SynOS Boot Examples**
+  - [x] Minimal boot configuration
+  - [x] Multi-core boot setup
+  - [x] Network boot via virtio-net
+  - [x] Storage boot via AHCI/NVMe
 
 ---
 
