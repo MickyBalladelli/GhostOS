@@ -164,7 +164,11 @@ fn execute_line(
     {
         if let Some(command) = program.stage(0) {
             if let Err(status) = executor.print_directory(command, keyboard, usb_keyboard) {
-                crate::println!("command failed: status={:#x}", status.raw())
+                crate::println!(
+                    "command failed: {} (status={:#x})",
+                    status_reason(status),
+                    status.raw()
+                )
             }
         }
         return;
@@ -233,7 +237,11 @@ fn execute_line(
                 }
             }
             Ok(InterpreterEvent::Failed(status)) => {
-                crate::println!("command failed: status={:#x}", status.raw())
+                crate::println!(
+                    "command failed: {} (status={:#x})",
+                    status_reason(status),
+                    status.raw()
+                )
             }
             Ok(InterpreterEvent::Cancelled) => crate::println!("command cancelled"),
             Ok(InterpreterEvent::Submitted(job)) => {
@@ -493,7 +501,7 @@ impl KernelFilesystem {
 
     fn insert(&mut self, path: &str, file_type: EntryType) -> Result<KernelFile, Status> {
         if self.find(path).is_some() {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::ALREADY_EXISTS)
         }
         let slot = self
             .files
@@ -513,9 +521,21 @@ impl KernelFilesystem {
     }
 
     fn parent(path: &str) -> &str {
-        path.rsplit_once('/').map_or("/", |(parent, _)| {
-            if parent.is_empty() { "/" } else { parent }
-        })
+        let path = path.trim_end_matches('/');
+        let Some(separator) = path.rfind('/') else { return "/" };
+        let parent = path[..separator].trim_end_matches('/');
+        if parent.is_empty() { "/" } else { parent }
+    }
+
+    fn ensure_parent_directories(&mut self, path: &str) -> Result<(), Status> {
+        if self.directory_exists(path)? {
+            return Ok(())
+        }
+        let parent = Self::parent(path);
+        if parent != "/" {
+            self.ensure_parent_directories(parent)?;
+        }
+        self.insert(path, EntryType::Directory).map(|_| ())
     }
 
     fn metadata(file: KernelFile) -> FileMetadata {
@@ -580,9 +600,21 @@ impl FilesystemSource for KernelFilesystem {
     fn create_directory(
         &mut self,
         path: &str,
-        _recursive: bool,
+        recursive: bool,
     ) -> Result<FileMetadata, Status> {
-        if path == "/" || !self.directory_exists(Self::parent(path))? {
+        if path == "/" {
+            return Err(Status::NOT_FOUND)
+        }
+        if let Some(existing) = self.find(path) {
+            return if existing.file_type == EntryType::Directory {
+                Ok(Self::metadata(existing))
+            } else {
+                Err(Status::ALREADY_EXISTS)
+            }
+        }
+        if recursive {
+            self.ensure_parent_directories(Self::parent(path))?;
+        } else if !self.directory_exists(Self::parent(path))? {
             return Err(Status::NOT_FOUND)
         }
         self.insert(path, EntryType::Directory).map(Self::metadata)
@@ -1087,6 +1119,22 @@ impl CommandExecutor for KernelExecutor {
 fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result<(), Status> {
     let text = OutputText::new(value).map_err(|_| Status::NO_SPACE)?;
     insert(output, name, OutputValue::Text(text))
+}
+
+fn status_reason(status: Status) -> &'static str {
+    if status == Status::INVALID_ARGUMENT {
+        "invalid argument"
+    } else if status == Status::NOT_FOUND {
+        "path not found"
+    } else if status == Status::ALREADY_EXISTS {
+        "path already exists"
+    } else if status == Status::NO_SPACE {
+        "no space left"
+    } else if status == Status::ACCESS_DENIED {
+        "access denied"
+    } else {
+        "unknown error"
+    }
 }
 
 fn insert(output: &mut StructuredOutput, name: &str, value: OutputValue) -> Result<(), Status> {

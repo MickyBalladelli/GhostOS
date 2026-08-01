@@ -220,7 +220,7 @@ fn canonicalize(source: &str) -> Result<Path, Status> {
     let mut result = Path::ROOT;
     let mut component_starts = [0usize; MAX_PATH_BYTES / 2 + 1];
     let mut component_count = 0;
-    let mut cursor = 0;
+    let mut cursor = 1;
 
     for component in source.split('/') {
         if component.is_empty() || component == "." {
@@ -244,10 +244,6 @@ fn canonicalize(source: &str) -> Result<Path, Status> {
             .ok_or(Status::INVALID_ARGUMENT)?;
         if end > MAX_PATH_BYTES {
             return Err(Status::INVALID_ARGUMENT);
-        }
-        if cursor == 0 {
-            result.bytes[0] = b'/';
-            cursor = 1;
         }
         if cursor > 1 {
             result.bytes[cursor] = b'/';
@@ -489,9 +485,8 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         if path.as_str().contains(';') {
             return Err(Status::INVALID_ARGUMENT)
         }
-        let metadata = self
-            .source
-            .create_directory(path.as_str(), boolean(command.get("RECURSIVE"))?)?;
+        boolean(command.get("RECURSIVE"))?;
+        let metadata = self.source.create_directory(path.as_str(), true)?;
         metadata_output("created", metadata)
     }
 

@@ -50,6 +50,8 @@ impl Status {
         Self::new(Severity::Fatal, facility::SYSTEM, 6, 0).expect("valid status");
     pub const BUSY: Self =
         Self::new(Severity::Warning, facility::SYSTEM, 7, 0).expect("valid status");
+    pub const ALREADY_EXISTS: Self =
+        Self::new(Severity::Error, facility::FILESYSTEM, 2, 0).expect("valid status");
 
     pub const fn new(severity: Severity, facility: u16, code: u16, flags: u8) -> Option<Self> {
         if facility as u32 > FACILITY_MASK || code as u32 > CODE_MASK || flags as u32 > FLAGS_MASK {
