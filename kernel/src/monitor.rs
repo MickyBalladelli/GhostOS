@@ -268,9 +268,14 @@ impl MonitorState {
         }
     }
 
-    pub fn render_memory(output: &mut dyn core::fmt::Write) {
+    pub fn render_memory(
+        available_bytes: u64,
+        used_bytes: u64,
+        output: &mut dyn core::fmt::Write,
+    ) {
         let _ = writeln!(output, "\x1b[1;34m=== MEMORY ===\x1b[0m");
-        let _ = writeln!(output, "Memory monitor - use SHOW MEMORY command");
+        let _ = writeln!(output, "Available: {} bytes", available_bytes);
+        let _ = writeln!(output, "Used:      {} bytes", used_bytes);
     }
 }
 

@@ -5,7 +5,7 @@ use syn_shell::{
     parser::{CommandCall, CommandRegistry, RouteId},
     render::{OutputFormat, render},
 };
-use synos_boot_protocol::{BootInfo, BootMethod};
+use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind};
 use synos_power::AcpiPlatform;
 use synos_status::Status;
 use synos_system_model::command::{CommandSpec, OutputText, OutputValue, StructuredOutput};
@@ -137,6 +137,8 @@ fn execute_line(
         return;
     }
 
+    let human_memory_output = line.trim().eq_ignore_ascii_case("SHOW MEMORY");
+
     match interpreter.start_program(program, executor) {
         Ok(InterpreterEvent::Started) => {}
         Ok(_) => {
@@ -152,10 +154,14 @@ fn execute_line(
     while interpreter.is_running() {
         match interpreter.poll(executor) {
             Ok(InterpreterEvent::Pending) => crate::arch::halt(),
-            Ok(InterpreterEvent::Complete(output)) => match render(&output, OutputFormat::List) {
-                Ok(text) => crate::print!("{}", text.as_str()),
-                Err(error) => crate::println!("shell output error: {error:?}"),
-            },
+            Ok(InterpreterEvent::Complete(output)) => {
+                if !human_memory_output {
+                    match render(&output, OutputFormat::List) {
+                        Ok(text) => crate::print!("{}", text.as_str()),
+                        Err(error) => crate::println!("shell output error: {error:?}"),
+                    }
+                }
+            }
             Ok(InterpreterEvent::Failed(status)) => {
                 crate::println!("command failed: status={:#x}", status.raw())
             }
@@ -319,6 +325,9 @@ fn wait_for_byte(
 struct KernelExecutor {
     boot_method: BootMethod,
     memory_region_count: usize,
+    memory_total_bytes: u64,
+    memory_available_bytes: u64,
+    memory_used_bytes: u64,
     scheduler_clock: u64,
     acpi_ready: bool,
     generation: u64,
@@ -339,9 +348,22 @@ impl KernelExecutor {
         scheduler_clock: u64,
         acpi_ready: bool,
     ) -> Self {
+        let memory_total_bytes = boot_info
+            .regions()
+            .iter()
+            .fold(0u64, |total, region| total.saturating_add(region.length));
+        let memory_available_bytes = boot_info
+            .regions()
+            .iter()
+            .filter(|region| region.kind == MemoryKind::Usable)
+            .fold(0u64, |total, region| total.saturating_add(region.length));
+
         Self {
             boot_method: boot_info.method,
             memory_region_count: boot_info.memory_region_count,
+            memory_total_bytes,
+            memory_available_bytes,
+            memory_used_bytes: memory_total_bytes.saturating_sub(memory_available_bytes),
             scheduler_clock,
             acpi_ready,
             generation: 0,
@@ -520,8 +542,41 @@ impl KernelExecutor {
     fn show_memory(&self) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "memory")?;
+        insert(
+            &mut output,
+            "total-bytes",
+            OutputValue::Unsigned(self.memory_total_bytes),
+        )?;
+        insert(
+            &mut output,
+            "available-bytes",
+            OutputValue::Unsigned(self.memory_available_bytes),
+        )?;
+        insert(
+            &mut output,
+            "used-bytes",
+            OutputValue::Unsigned(self.memory_used_bytes),
+        )?;
+        insert(
+            &mut output,
+            "memory-regions",
+            OutputValue::Unsigned(self.memory_region_count as u64),
+        )?;
         crate::println!("\x1b[1;34m=== MEMORY ===\x1b[0m");
-        crate::println!("Memory monitor - use SHOW MEMORY command");
+        crate::println!("  Total:     {}", memory_size(self.memory_total_bytes));
+        crate::println!(
+            "  Used:      {}  ({:>4}.{}%)",
+            memory_size(self.memory_used_bytes),
+            memory_percent(self.memory_used_bytes, self.memory_total_bytes) / 10,
+            memory_percent(self.memory_used_bytes, self.memory_total_bytes) % 10,
+        );
+        crate::println!(
+            "  Available: {}  ({:>4}.{}%)",
+            memory_size(self.memory_available_bytes),
+            memory_percent(self.memory_available_bytes, self.memory_total_bytes) / 10,
+            memory_percent(self.memory_available_bytes, self.memory_total_bytes) % 10,
+        );
+        crate::println!("  Regions:   {}", self.memory_region_count);
         Ok(output)
     }
 
@@ -592,6 +647,49 @@ fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result
 fn insert(output: &mut StructuredOutput, name: &str, value: OutputValue) -> Result<(), Status> {
     output.insert(name, value).map_err(|_| Status::NO_SPACE)
 }
+
+fn memory_size(bytes: u64) -> MemorySize {
+    let (divisor, unit) = if bytes >= BYTES_PER_GIB {
+        (BYTES_PER_GIB, "GiB")
+    } else if bytes >= BYTES_PER_MIB {
+        (BYTES_PER_MIB, "MiB")
+    } else if bytes >= BYTES_PER_KIB {
+        (BYTES_PER_KIB, "KiB")
+    } else {
+        (1, "bytes")
+    };
+    let whole = bytes / divisor;
+    let tenth = bytes % divisor * 10 + divisor / 2;
+    if tenth >= divisor {
+        MemorySize(whole + 1, 0, bytes, unit)
+    } else {
+        MemorySize(whole, tenth / divisor, bytes, unit)
+    }
+}
+
+fn memory_percent(value: u64, total: u64) -> u64 {
+    if total == 0 {
+        0
+    } else {
+        value.saturating_mul(1000) / total
+    }
+}
+
+struct MemorySize(u64, u64, u64, &'static str);
+
+impl core::fmt::Display for MemorySize {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.3 == "bytes" {
+            write!(formatter, "{} bytes", self.2)
+        } else {
+            write!(formatter, "{}.{} {} ({} bytes)", self.0, self.1, self.3, self.2)
+        }
+    }
+}
+
+const BYTES_PER_KIB: u64 = 1024;
+const BYTES_PER_MIB: u64 = 1024 * 1024;
+const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 
 const fn architecture() -> &'static str {
     #[cfg(target_arch = "x86_64")]
