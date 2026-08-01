@@ -19,6 +19,9 @@ pub enum Operation {
     SynFsRead = 14,
     SynFsWrite = 15,
     SynFsMetadata = 16,
+    SynFsMkdir = 17,
+    SynFsRmdir = 18,
+    SynFsLink = 19,
 }
 
 impl Operation {
@@ -40,6 +43,9 @@ impl Operation {
             14 => Some(Self::SynFsRead),
             15 => Some(Self::SynFsWrite),
             16 => Some(Self::SynFsMetadata),
+            17 => Some(Self::SynFsMkdir),
+            18 => Some(Self::SynFsRmdir),
+            19 => Some(Self::SynFsLink),
             _ => None,
         }
     }

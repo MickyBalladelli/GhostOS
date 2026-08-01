@@ -12,7 +12,7 @@ const TYPE_MAP_TREE: u8 = 1;
 const TYPE_MAP_BRANCH: u8 = 2;
 const TYPE_MAP_DATA: u8 = 3;
 
-pub const VOLUME_FORMAT_VERSION: u16 = 1;
+pub const VOLUME_FORMAT_VERSION: u16 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VolumeGeometry {
@@ -36,6 +36,7 @@ struct Superblock {
     next_checkpoint: u64,
     checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
     type_map_checksum: u64,
+    limits: VolumeLimits,
 }
 
 struct Encoder<'a> {
@@ -152,6 +153,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             next_checkpoint: 1,
             checkpoints: [None; MAX_CHECKPOINTS],
             type_map_checksum: checksum(&type_map_bytes::<MAX_BLOCKS>()),
+            limits: VolumeLimits::UNLIMITED,
         };
         let map = type_map_bytes::<MAX_BLOCKS>();
         write_type_map::<MAX_BLOCKS>(image, 0, &map)?;
@@ -275,6 +277,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             next_checkpoint: self.next_checkpoint,
             checkpoints: self.checkpoints,
             type_map_checksum: checksum(&map),
+            limits: self.limits,
         };
         write_superblock::<MAX_BLOCKS>(image, bank, superblock)?;
         self.volume_bank = bank;
@@ -326,6 +329,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             next_checkpoint: self.next_checkpoint,
             checkpoints: self.checkpoints,
             type_map_checksum: checksum(&map),
+            limits: self.limits,
         };
         encode_superblock::<MAX_BLOCKS>(&mut scratch, superblock)?;
         device
@@ -409,7 +413,19 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                             return Err(Error::Corrupt);
                         }
                     } else {
-                        self.validate_data(record.data, record.size, record.checksum)?;
+                        if record.link_count == 0 {
+                            return Err(Error::Corrupt);
+                        }
+                        match record.file_type {
+                            FileType::Directory => {
+                                if record.size != 0 || record.data.is_some() {
+                                    return Err(Error::Corrupt);
+                                }
+                            }
+                            FileType::Regular | FileType::Symlink => {
+                                self.validate_data(record.data, record.size, record.checksum)?;
+                            }
+                        }
                     }
                 }
             }
@@ -620,6 +636,9 @@ fn encode_superblock<const MAX_BLOCKS: usize>(
         }
         offset += 24;
     }
+    put_u64(block, 464, superblock.limits.max_bytes);
+    put_u64(block, 472, superblock.limits.max_files);
+    put_u64(block, 480, superblock.limits.max_blocks as u64);
     let header_checksum = checksum(&block[..SUPERBLOCK_CHECKSUM_OFFSET]);
     put_u64(block, SUPERBLOCK_CHECKSUM_OFFSET, header_checksum);
     Ok(())
@@ -676,6 +695,11 @@ fn read_superblock<const MAX_BLOCKS: usize>(
         next_checkpoint: u64_at(block, 48),
         checkpoints,
         type_map_checksum: u64_at(block, 64),
+        limits: VolumeLimits {
+            max_bytes: u64_at(block, 464),
+            max_files: u64_at(block, 472),
+            max_blocks: usize::try_from(u64_at(block, 480)).map_err(|_| Error::Corrupt)?,
+        },
     }))
 }
 
@@ -701,6 +725,7 @@ fn load_bank<const MAX_BLOCKS: usize>(
         root: superblock.root,
         generation: superblock.generation,
         checkpoints: superblock.checkpoints,
+        limits: superblock.limits,
         next_checkpoint: superblock.next_checkpoint,
         volume_bank: bank,
         volume_sequence: superblock.sequence,
@@ -829,7 +854,9 @@ fn encode_record(encoder: &mut Encoder<'_>, record: FileRecord) -> Result<(), Er
     encoder.put_u64(record.checksum)?;
     encoder.put_u64(record.created_at)?;
     encoder.put_u8(record.deleted as u8)?;
-    encoder.put_bytes(&[0; 7])
+    encoder.put_u8(record.file_type as u8)?;
+    encoder.put_u32(record.link_count)?;
+    encoder.put_u16(record.mode)
 }
 
 fn decode_record(decoder: &mut Decoder<'_>) -> Result<FileRecord, Error> {
@@ -839,7 +866,14 @@ fn decode_record(decoder: &mut Decoder<'_>) -> Result<FileRecord, Error> {
     let checksum = decoder.get_u64()?;
     let created_at = decoder.get_u64()?;
     let deleted = decoder.get_u8()?;
-    decoder.get_bytes(7)?;
+    let raw_file_type = decoder.get_u8()?;
+    let file_type = if raw_file_type == 0 {
+        FileType::Regular
+    } else {
+        FileType::from_raw(raw_file_type).ok_or(Error::Corrupt)?
+    };
+    let raw_link_count = decoder.get_u32()?;
+    let mode = decoder.get_u16()?;
     if deleted > 1 {
         return Err(Error::Corrupt);
     }
@@ -850,6 +884,9 @@ fn decode_record(decoder: &mut Decoder<'_>) -> Result<FileRecord, Error> {
         checksum,
         created_at,
         deleted: deleted != 0,
+        file_type,
+        link_count: if raw_link_count == 0 { 1 } else { raw_link_count },
+        mode,
     })
 }
 

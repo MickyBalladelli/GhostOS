@@ -23,6 +23,9 @@ pub enum Operation {
     Unmount = 13,
     MountList = 14,
     GarbageCollect = 15,
+    Mkdir = 16,
+    Rmdir = 17,
+    Link = 18,
 }
 
 impl Operation {
@@ -43,6 +46,9 @@ impl Operation {
             13 => Some(Self::Unmount),
             14 => Some(Self::MountList),
             15 => Some(Self::GarbageCollect),
+            16 => Some(Self::Mkdir),
+            17 => Some(Self::Rmdir),
+            18 => Some(Self::Link),
             _ => None,
         }
     }
@@ -65,6 +71,7 @@ impl Flags {
     pub const DELETE: Self = Self(1 << 5);
     pub const ADMIN: Self = Self(1 << 6);
     pub const READ_ONLY: Self = Self(1 << 7);
+    pub const RECURSIVE: Self = Self(1 << 8);
 
     pub const fn from_bits(bits: u16) -> Self {
         Self(bits)

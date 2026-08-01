@@ -39,10 +39,13 @@ pub enum Error {
     AlreadyExists,
     BufferTooSmall { required: usize },
     Corrupt,
+    DirectoryNotEmpty,
     InvalidPath,
     InvalidVersion,
     NotFound,
+    NotDirectory,
     OutOfSpace,
+    QuotaExceeded,
     CheckpointNotFound,
     TransactionAborted,
     TooManyCheckpoints,
@@ -59,7 +62,10 @@ impl IntoStatus for Error {
                 Status::NO_SPACE
             }
             Self::Corrupt => Status::CORRUPT,
-            Self::InvalidPath | Self::InvalidVersion => Status::INVALID_ARGUMENT,
+            Self::InvalidPath
+            | Self::InvalidVersion
+            | Self::NotDirectory
+            | Self::DirectoryNotEmpty => Status::INVALID_ARGUMENT,
             Self::TransactionAborted => Status::BUSY,
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
                 .expect("valid filesystem status"),
@@ -69,8 +75,43 @@ impl IntoStatus for Error {
                 .expect("valid filesystem status"),
             Self::Io => Status::new(Severity::Error, facility::FILESYSTEM, 4, 0)
                 .expect("valid filesystem status"),
+            Self::QuotaExceeded => Status::NO_SPACE,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum FileType {
+    Regular = 1,
+    Directory = 2,
+    Symlink = 3,
+}
+
+impl FileType {
+    pub const fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Regular),
+            2 => Some(Self::Directory),
+            3 => Some(Self::Symlink),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VolumeLimits {
+    pub max_bytes: u64,
+    pub max_files: u64,
+    pub max_blocks: usize,
+}
+
+impl VolumeLimits {
+    pub const UNLIMITED: Self = Self {
+        max_bytes: u64::MAX,
+        max_files: u64::MAX,
+        max_blocks: usize::MAX,
+    };
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -86,8 +127,12 @@ impl FileName {
             || value.len() > MAX_PATH_BYTES
             || value.contains(&0)
             || value.contains(&b';')
+            || value[0] == b'/' && value.len() == 1
             || value.ends_with(b"/")
             || value.windows(2).any(|pair| pair == b"//")
+            || value
+                .split(|byte| *byte == b'/')
+                .any(|component| component == b"." || component == b"..")
         {
             return Err(Error::InvalidPath);
         }
@@ -192,6 +237,9 @@ struct FileRecord {
     checksum: u64,
     created_at: u64,
     deleted: bool,
+    file_type: FileType,
+    link_count: u32,
+    mode: u16,
 }
 
 impl FileRecord {
@@ -208,6 +256,9 @@ impl FileRecord {
         checksum: 0,
         created_at: 0,
         deleted: false,
+        file_type: FileType::Regular,
+        link_count: 0,
+        mode: 0,
     };
 }
 
@@ -340,6 +391,33 @@ pub struct FileVersion {
     pub size: u64,
     pub checksum: u64,
     pub created_at: u64,
+    pub file_type: FileType,
+    pub link_count: u32,
+    pub mode: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectoryEntry {
+    pub name: FileName,
+    pub file_type: FileType,
+    pub size: u64,
+    pub version: u32,
+    pub link_count: u32,
+    pub mode: u16,
+}
+
+impl DirectoryEntry {
+    pub const EMPTY: Self = Self {
+        name: FileName {
+            bytes: [0; MAX_PATH_BYTES],
+            len: 0,
+        },
+        file_type: FileType::Regular,
+        size: 0,
+        version: 0,
+        link_count: 0,
+        mode: 0,
+    };
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -371,6 +449,10 @@ pub struct SynFsDiagnostics {
     pub retained_bytes: u64,
     pub file_count: u64,
     pub checkpoints: usize,
+    pub free_blocks: usize,
+    pub free_bytes: u64,
+    pub max_bytes: u64,
+    pub max_files: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -432,6 +514,14 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         self.filesystem
             .record_at(self.root, index)
             .map(|record| record.map(Into::into))
+    }
+
+    pub fn list_directory(
+        &self,
+        path: &str,
+        entries: &mut [DirectoryEntry],
+    ) -> Result<usize, Error> {
+        self.filesystem.list_directory_at(self.root, path, entries)
     }
 
     /// Read a range from one file version without leaving the checkpoint tree.
@@ -512,6 +602,7 @@ pub struct SynFs<const MAX_BLOCKS: usize> {
     arena: BlockArena<MAX_BLOCKS>,
     root: BlockId,
     generation: u64,
+    limits: VolumeLimits,
     checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
     next_checkpoint: u64,
     volume_bank: usize,
@@ -592,6 +683,66 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
         Ok(file)
     }
 
+    pub fn create_directory(&mut self, path: &str, recursive: bool) -> Result<FileVersion, Error> {
+        if self.failed {
+            return Err(Error::TransactionAborted)
+        }
+        let result = self.filesystem.create_directory(path, recursive);
+        match result {
+            Ok(file) => {
+                self.operations = self.operations.checked_add(1).ok_or_else(|| {
+                    self.failed = true;
+                    Error::VersionOverflow
+                })?;
+                Ok(file)
+            }
+            Err(error) => {
+                self.failed = true;
+                Err(error)
+            }
+        }
+    }
+
+    pub fn remove_directory(&mut self, path: &str) -> Result<FileVersion, Error> {
+        if self.failed {
+            return Err(Error::TransactionAborted)
+        }
+        let result = self.filesystem.remove_directory(path);
+        match result {
+            Ok(file) => {
+                self.operations = self.operations.checked_add(1).ok_or_else(|| {
+                    self.failed = true;
+                    Error::VersionOverflow
+                })?;
+                Ok(file)
+            }
+            Err(error) => {
+                self.failed = true;
+                Err(error)
+            }
+        }
+    }
+
+    pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
+        if self.failed {
+            return Err(Error::TransactionAborted)
+        }
+        let result = self.filesystem.rename_uncommitted(old_path, new_path);
+        match result {
+            Ok(file) => {
+                self.operations = self.operations.checked_add(1).ok_or_else(|| {
+                    self.failed = true;
+                    Error::VersionOverflow
+                })?;
+                Ok(file)
+            }
+            Err(error) => {
+                self.failed = true;
+                Err(error)
+            }
+        }
+    }
+
     pub fn commit(mut self) -> Result<TransactionCommit, Error> {
         if self.failed {
             return Err(Error::TransactionAborted);
@@ -621,6 +772,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             arena: BlockArena::new(),
             root: BlockId::NONE,
             generation: 0,
+            limits: VolumeLimits::UNLIMITED,
             checkpoints: [None; MAX_CHECKPOINTS],
             next_checkpoint: 1,
             volume_bank: 1,
@@ -638,6 +790,33 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub const fn capacity(&self) -> usize {
         MAX_BLOCKS
+    }
+
+    pub const fn limits(&self) -> VolumeLimits {
+        self.limits
+    }
+
+    pub fn set_limits(&mut self, limits: VolumeLimits) -> Result<(), Error> {
+        if limits.max_blocks > MAX_BLOCKS {
+            return Err(Error::QuotaExceeded);
+        }
+        let diagnostics = self.diagnostics()?;
+        if diagnostics.retained_bytes > limits.max_bytes
+            || diagnostics.file_count > limits.max_files
+            || self.arena.used() > limits.max_blocks
+        {
+            return Err(Error::QuotaExceeded);
+        }
+        self.limits = limits;
+        Ok(())
+    }
+
+    pub fn free_blocks(&self) -> usize {
+        self.limits.max_blocks.min(MAX_BLOCKS).saturating_sub(self.arena.used())
+    }
+
+    pub fn free_bytes(&self) -> u64 {
+        (self.free_blocks() as u64).saturating_mul(BLOCK_SIZE as u64)
     }
 
     /// Read-only accounting for `SHOW DISK`.
@@ -685,6 +864,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             retained_bytes,
             file_count,
             checkpoints: self.checkpoints.iter().flatten().count(),
+            free_blocks: self.free_blocks(),
+            free_bytes: self.free_bytes(),
+            max_bytes: self.limits.max_bytes,
+            max_files: self.limits.max_files,
         })
     }
 
@@ -781,7 +964,13 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             return Err(Error::InvalidVersion);
         }
 
-        let version = self.last_record(parsed.file)?.map_or(Ok(1), |record| {
+        let previous = self.last_record(parsed.file)?;
+        if previous.is_some_and(|record| record.file_type == FileType::Directory && !record.deleted) {
+            return Err(Error::NotDirectory);
+        }
+        self.require_parent_directory(parsed.file)?;
+        self.enforce_limits(contents.len() as u64, previous.is_none())?;
+        let version = previous.map_or(Ok(1), |record| {
             record
                 .key
                 .version
@@ -800,18 +989,355 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         contents: &[u8],
     ) -> Result<FileVersion, Error> {
         let data = self.store_data(contents)?;
+        self.insert_record(
+            file,
+            version,
+            created_at,
+            contents.len() as u64,
+            data,
+            checksum(contents),
+            FileType::Regular,
+            1,
+            0o666,
+        )
+    }
+
+    fn insert_record(
+        &mut self,
+        file: FileName,
+        version: u32,
+        created_at: u64,
+        size: u64,
+        data: BlockId,
+        record_checksum: u64,
+        file_type: FileType,
+        link_count: u32,
+        mode: u16,
+    ) -> Result<FileVersion, Error> {
         let record = FileRecord {
             key: FileKey { file, version },
-            size: contents.len() as u64,
+            size,
             data,
-            checksum: checksum(contents),
+            checksum: record_checksum,
             created_at,
             deleted: false,
+            file_type,
+            link_count: link_count.max(1),
+            mode,
         };
         let root = self.insert(self.root, record)?;
         self.root = root;
         self.generation = created_at;
         Ok(record.into())
+    }
+
+    pub fn create_directory(&mut self, path: &str, recursive: bool) -> Result<FileVersion, Error> {
+        let file = FileName::new(path)?;
+        if self.latest_record_at(self.root, file)?.is_some() {
+            return Err(Error::AlreadyExists);
+        }
+        if recursive {
+            let bytes = file.as_bytes();
+            let mut end = 0;
+            while let Some(relative) = bytes[end..].iter().position(|byte| *byte == b'/') {
+                let boundary = end + relative;
+                if boundary != 0 {
+                    let prefix = core::str::from_utf8(&bytes[..boundary]).map_err(|_| Error::InvalidPath)?;
+                    if self.latest_record_at(self.root, FileName::new(prefix)?)?.is_none() {
+                        self.create_directory(prefix, false)?;
+                    }
+                }
+                end = boundary + 1;
+            }
+        }
+        self.require_parent_directory(file)?;
+        self.enforce_limits(0, true)?;
+        let version = self.next_version(file)?;
+        self.insert_record(
+            file,
+            version,
+            self.generation.saturating_add(1),
+            0,
+            BlockId::NONE,
+            checksum(&[]),
+            FileType::Directory,
+            1,
+            0o777,
+        )
+    }
+
+    pub fn remove_directory(&mut self, path: &str) -> Result<FileVersion, Error> {
+        let file = FileName::new(path)?;
+        let directory = self.latest_record_at(self.root, file)?.ok_or(Error::NotFound)?;
+        if directory.file_type != FileType::Directory {
+            return Err(Error::NotDirectory);
+        }
+        let mut ordinal = 0;
+        while let Some(record) = self.record_at(self.root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            let Some(rest) = record.key.file.as_str().strip_prefix(file.as_str())
+                .and_then(|rest| rest.strip_prefix('/')) else {
+                continue;
+            };
+            if !rest.contains('/')
+                && self.latest_record_at(self.root, record.key.file)? == Some(record)
+            {
+                return Err(Error::DirectoryNotEmpty);
+            }
+        }
+        self.tombstone_latest(file, directory)
+    }
+
+    pub fn link(&mut self, existing: &str, new_path: &str) -> Result<FileVersion, Error> {
+        let source = self.lookup_record(existing)?;
+        if source.file_type == FileType::Directory {
+            return Err(Error::NotDirectory);
+        }
+        let target = FileName::new(new_path)?;
+        if self.latest_record_at(self.root, target)?.is_some() {
+            return Err(Error::AlreadyExists);
+        }
+        self.require_parent_directory(target)?;
+        self.enforce_limits(0, true)?;
+        let version = self.next_version(target)?;
+        self.insert_record(
+            target,
+            version,
+            self.generation.saturating_add(1),
+            source.size,
+            source.data,
+            source.checksum,
+            source.file_type,
+            source.link_count.saturating_add(1),
+            source.mode,
+        )
+    }
+
+    pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
+        let mut transaction = self.transaction();
+        let file = transaction.rename(old_path, new_path)?;
+        transaction.commit()?;
+        Ok(file)
+    }
+
+    fn rename_uncommitted(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
+        let old = FileName::new(old_path)?;
+        let new = FileName::new(new_path)?;
+        let source = self.lookup_record(old.as_str())?;
+        if self.latest_record_at(self.root, new)?.is_some() {
+            return Err(Error::AlreadyExists);
+        }
+        if new.as_str().starts_with(old.as_str())
+            && new.as_bytes().get(old.as_bytes().len()) == Some(&b'/')
+        {
+            return Err(Error::InvalidPath);
+        }
+        self.require_parent_directory(new)?;
+        let mut first = None;
+        let mut moved = 0;
+        loop {
+            let mut ordinal = 0;
+            let mut candidate = None;
+            while let Some(record) = self.record_at(self.root, ordinal)? {
+                ordinal = ordinal.saturating_add(1);
+                let is_source = record.key.file == old
+                    || (source.file_type == FileType::Directory
+                        && record.key.file.as_str().starts_with(old.as_str())
+                        && record.key.file.as_bytes().get(old.as_bytes().len()) == Some(&b'/'));
+                if is_source && self.latest_record_at(self.root, record.key.file)? == Some(record) {
+                    candidate = Some(record);
+                    break;
+                }
+            }
+            let Some(record) = candidate else {
+                break
+            };
+            let target = Self::renamed_name(old, new, record.key.file)?;
+            if self.latest_record_at(self.root, target)?.is_some() {
+                return Err(Error::AlreadyExists);
+            }
+            let version = self.next_version(target)?;
+            let moved_file = self.insert_record(
+                target,
+                version,
+                self.generation.saturating_add(1),
+                record.size,
+                record.data,
+                record.checksum,
+                record.file_type,
+                record.link_count,
+                record.mode,
+            )?;
+            self.root = self.tombstone(self.root, record.key)?;
+            first = Some(first.unwrap_or(moved_file));
+            moved += 1;
+        }
+        if moved == 0 {
+            return Err(Error::NotFound)
+        }
+        Ok(first.expect("rename moved one record"))
+    }
+
+    fn renamed_name(old: FileName, new: FileName, current: FileName) -> Result<FileName, Error> {
+        let suffix = current
+            .as_str()
+            .strip_prefix(old.as_str())
+            .and_then(|value| value.strip_prefix('/'))
+            .unwrap_or("");
+        let mut bytes = [0; MAX_PATH_BYTES];
+        let new_length = new.as_bytes().len();
+        let separator = usize::from(!suffix.is_empty());
+        let total = new_length
+            .checked_add(separator)
+            .and_then(|length| length.checked_add(suffix.len()))
+            .ok_or(Error::InvalidPath)?;
+        if total > MAX_PATH_BYTES {
+            return Err(Error::InvalidPath)
+        }
+        bytes[..new_length].copy_from_slice(new.as_bytes());
+        if separator != 0 {
+            bytes[new_length] = b'/';
+            bytes[new_length + 1..total].copy_from_slice(suffix.as_bytes());
+        }
+        FileName::new(core::str::from_utf8(&bytes[..total]).map_err(|_| Error::InvalidPath)?)
+    }
+
+    pub fn list_directory(&self, path: &str, entries: &mut [DirectoryEntry]) -> Result<usize, Error> {
+        self.list_directory_at(self.root, path, entries)
+    }
+
+    fn list_directory_at(
+        &self,
+        root: BlockId,
+        path: &str,
+        entries: &mut [DirectoryEntry],
+    ) -> Result<usize, Error> {
+        if !self.is_directory_path_at(root, path)? {
+            return Err(Error::NotDirectory);
+        }
+        let mut written = 0;
+        let mut ordinal = 0;
+        while let Some(record) = self.record_at(root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            if self.latest_record_at(root, record.key.file)? != Some(record) {
+                continue;
+            }
+            let Some(name) = (if path == "/" {
+                Some(record.key.file.as_str().strip_prefix('/').unwrap_or(record.key.file.as_str()))
+            } else {
+                record
+                    .key.file
+                    .as_str()
+                    .strip_prefix(path)
+                    .and_then(|rest| rest.strip_prefix('/'))
+            }) else {
+                continue;
+            };
+            if name.contains('/') {
+                continue;
+            }
+            if entries.get(written).is_none() {
+                return Err(Error::BufferTooSmall {
+                    required: written.saturating_add(1),
+                });
+            }
+            entries[written] = DirectoryEntry {
+                name: FileName::new(name)?,
+                file_type: record.file_type,
+                size: record.size,
+                version: record.key.version,
+                link_count: record.link_count,
+                mode: record.mode,
+            };
+            written += 1;
+        }
+        Ok(written)
+    }
+
+    fn lookup_record(&self, path: &str) -> Result<FileRecord, Error> {
+        let parsed = VersionedPath::parse(path)?;
+        let record = match parsed.version {
+            VersionSelector::Latest => self.latest_record_at(self.root, parsed.file),
+            VersionSelector::Exact(version) => self.find_record(FileKey {
+                file: parsed.file,
+                version,
+            }),
+        }?
+        .filter(|record| !record.deleted)
+        .ok_or(Error::NotFound)?;
+        Ok(record)
+    }
+
+    fn next_version(&self, file: FileName) -> Result<u32, Error> {
+        self.last_record(file)?.map_or(Ok(1), |record| {
+            record
+                .key
+                .version
+                .checked_add(1)
+                .ok_or(Error::VersionOverflow)
+        })
+    }
+
+    fn require_parent_directory(&self, file: FileName) -> Result<(), Error> {
+        let Some(separator) = file.as_bytes().iter().rposition(|byte| *byte == b'/') else {
+            return Ok(());
+        };
+        if separator == 0 {
+            return Ok(())
+        }
+        let parent = FileName::new(core::str::from_utf8(&file.as_bytes()[..separator]).map_err(|_| Error::InvalidPath)?)?;
+        let record = self.latest_record_at(self.root, parent)?.ok_or(Error::NotFound)?;
+        if record.file_type != FileType::Directory {
+            return Err(Error::NotDirectory);
+        }
+        Ok(())
+    }
+
+    fn is_directory_path_at(&self, root: BlockId, path: &str) -> Result<bool, Error> {
+        if path == "/" {
+            return Ok(true)
+        }
+        let parsed = VersionedPath::parse(path)?;
+        Ok(self
+            .latest_record_at(root, parsed.file)?
+            .is_some_and(|record| record.file_type == FileType::Directory))
+    }
+
+    fn tombstone_latest(&mut self, file: FileName, previous: FileRecord) -> Result<FileVersion, Error> {
+        let version = previous
+            .key
+            .version
+            .checked_add(1)
+            .ok_or(Error::VersionOverflow)?;
+        let record = FileRecord {
+            key: FileKey { file, version },
+            size: 0,
+            data: BlockId::NONE,
+            checksum: checksum(&[]),
+            created_at: self.generation.saturating_add(1),
+            deleted: true,
+            file_type: previous.file_type,
+            link_count: previous.link_count.saturating_sub(1),
+            mode: previous.mode,
+        };
+        self.root = self.insert(self.root, record)?;
+        self.generation = record.created_at;
+        Ok(record.into())
+    }
+
+    fn enforce_limits(&self, additional_bytes: u64, new_file: bool) -> Result<(), Error> {
+        if self.arena.used() >= self.limits.max_blocks
+            || self.arena.used() >= MAX_BLOCKS
+        {
+            return Err(Error::QuotaExceeded);
+        }
+        let diagnostics = self.diagnostics()?;
+        if diagnostics.retained_bytes.saturating_add(additional_bytes) > self.limits.max_bytes
+            || (new_file && diagnostics.file_count >= self.limits.max_files)
+        {
+            return Err(Error::QuotaExceeded);
+        }
+        Ok(())
     }
 
     /// Create a new tombstone version. Older snapshots keep seeing their data.
@@ -836,6 +1362,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             .last_record(parsed.file)?
             .filter(|record| !record.deleted)
             .ok_or(Error::NotFound)?;
+        if previous.file_type == FileType::Directory {
+            return Err(Error::NotDirectory);
+        }
         let version = previous
             .key
             .version
@@ -852,6 +1381,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             checksum: checksum(&[]),
             created_at,
             deleted: true,
+            file_type: previous.file_type,
+            link_count: previous.link_count.saturating_sub(1),
+            mode: previous.mode,
         };
         self.root = self.insert(self.root, record)?;
         self.generation = created_at;
@@ -935,6 +1467,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         file: FileVersion,
         destination: &mut [u8],
     ) -> Result<ReadResult, Error> {
+        if file.file_type == FileType::Directory {
+            return Err(Error::NotDirectory);
+        }
         let required = usize::try_from(file.size).map_err(|_| Error::Corrupt)?;
         if destination.len() < required {
             return Err(Error::BufferTooSmall { required });
@@ -1385,6 +1920,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         offset: u64,
         destination: &mut [u8],
     ) -> Result<usize, Error> {
+        if record.file_type == FileType::Directory {
+            return Err(Error::NotDirectory);
+        }
         if offset > record.size {
             return Err(Error::InvalidVersion);
         }
@@ -1458,6 +1996,9 @@ impl From<FileRecord> for FileVersion {
             size: record.size,
             checksum: record.checksum,
             created_at: record.created_at,
+            file_type: record.file_type,
+            link_count: record.link_count,
+            mode: record.mode,
         }
     }
 }

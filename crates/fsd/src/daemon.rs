@@ -4,8 +4,8 @@ use host_filesystems::{FileSystemKind, Partition};
 use synos_ipc::{Envelope, SharedBuffer};
 use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
-    CheckpointInfo, Error as SynFsError, SynFs, SynFsDiagnostics, SynFsTransaction,
-    TransactionCommit,
+    CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, SynFs, SynFsDiagnostics,
+    SynFsTransaction, TransactionCommit,
 };
 
 use crate::namespace::{
@@ -21,6 +21,7 @@ pub const DEFAULT_MAX_OPEN_FILES: usize = 256;
 pub const DEFAULT_MAX_SNAPSHOTS: usize = 16;
 pub const DEFAULT_MAX_MOUNTS: usize = 16;
 pub const DEFAULT_SCRATCH_BYTES: usize = MAX_IPC_BUFFER_BYTES;
+const MAX_DIRECTORY_ENTRIES: usize = 256;
 const MAX_NAME_BYTES: usize = synos_synfs::MAX_PATH_BYTES;
 const ROOT_MOUNT_NAME: &str = "SYS$ROOT";
 const INTERNAL_MAPPING_CAPABILITY: u64 = 1 << 32;
@@ -107,6 +108,9 @@ pub struct FileInfo {
     pub checksum: u64,
     pub created_at: u64,
     pub rights: FileRights,
+    pub file_type: FileType,
+    pub link_count: u32,
+    pub mode: u16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -388,7 +392,19 @@ impl<
         const SCRATCH_BYTES: usize,
     > Daemon<MAX_BLOCKS, MAX_PROCESSES, MAX_OPEN_FILES, MAX_SNAPSHOTS, MAX_MOUNTS, SCRATCH_BYTES>
 {
-    pub fn new(filesystem: SynFs<MAX_BLOCKS>) -> Result<Self, DaemonError> {
+    pub fn new(mut filesystem: SynFs<MAX_BLOCKS>) -> Result<Self, DaemonError> {
+        for path in ["/packages", "/logs", "/data", "/tmp"] {
+            match filesystem.lookup(path) {
+                Ok(metadata) if metadata.file_type != FileType::Directory => {
+                    return Err(DaemonError::File(SynFsError::NotDirectory))
+                }
+                Err(SynFsError::NotFound) => {
+                    filesystem.create_directory(path, true)?;
+                }
+                Ok(_) => {}
+                Err(error) => return Err(DaemonError::File(error)),
+            }
+        }
         let root = Name::from_str(ROOT_MOUNT_NAME)?;
         let mut mounts = [MountSlot::EMPTY; MAX_MOUNTS];
         if MAX_MOUNTS == 0 {
@@ -567,6 +583,9 @@ impl<
             checksum: metadata.checksum,
             created_at: metadata.created_at,
             rights: requested,
+            file_type: metadata.file_type,
+            link_count: metadata.link_count,
+            mode: metadata.mode,
         })
     }
 
@@ -638,6 +657,9 @@ impl<
             checksum: metadata.checksum,
             created_at: metadata.created_at,
             rights: slot.rights,
+            file_type: metadata.file_type,
+            link_count: metadata.link_count,
+            mode: metadata.mode,
         })
     }
 
@@ -653,6 +675,75 @@ impl<
         let path = self.open_files[index].path;
         self.filesystem.delete(path.as_str())?;
         Ok(())
+    }
+
+    pub fn create_directory(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        path: &str,
+        recursive: bool,
+    ) -> Result<FileInfo, DaemonError> {
+        self.authorize_process(process, authority, FileRights::WRITE)?;
+        let path = Name::from_str(path)?;
+        if self.mount_is_read_only(path.as_str()) {
+            return Err(DaemonError::ReadOnly);
+        }
+        let metadata = self.filesystem.create_directory(path.as_str(), recursive)?;
+        Ok(FileInfo {
+            capability: authority,
+            file: metadata.file,
+            version: metadata.version,
+            size: metadata.size,
+            checksum: metadata.checksum,
+            created_at: metadata.created_at,
+            rights: FileRights::READ.union(FileRights::WRITE),
+            file_type: metadata.file_type,
+            link_count: metadata.link_count,
+            mode: metadata.mode,
+        })
+    }
+
+    pub fn remove_directory(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        path: &str,
+    ) -> Result<(), DaemonError> {
+        self.authorize_process(process, authority, FileRights::DELETE)?;
+        let path = Name::from_str(path)?;
+        if self.mount_is_read_only(path.as_str()) {
+            return Err(DaemonError::ReadOnly);
+        }
+        self.filesystem.remove_directory(path.as_str())?;
+        Ok(())
+    }
+
+    pub fn link(
+        &mut self,
+        process: ProcessId,
+        capability: Capability,
+        new_path: &str,
+    ) -> Result<FileInfo, DaemonError> {
+        let index = self.file_index(process, capability, FileRights::READ)?;
+        if self.open_files[index].read_only_mount {
+            return Err(DaemonError::ReadOnly);
+        }
+        let old_path = self.open_files[index].path;
+        let new_path = Name::from_str(new_path)?;
+        let metadata = self.filesystem.link(old_path.as_str(), new_path.as_str())?;
+        Ok(FileInfo {
+            capability,
+            file: metadata.file,
+            version: metadata.version,
+            size: metadata.size,
+            checksum: metadata.checksum,
+            created_at: metadata.created_at,
+            rights: self.open_files[index].rights,
+            file_type: metadata.file_type,
+            link_count: metadata.link_count,
+            mode: metadata.mode,
+        })
     }
 
     pub fn rename(
@@ -674,18 +765,8 @@ impl<
         if self.filesystem.lookup(new_path.as_str()).is_ok() {
             return Err(DaemonError::File(SynFsError::AlreadyExists));
         }
-        let old = self.filesystem.lookup(old_path.as_str())?;
-        let old_size = usize::try_from(old.size).map_err(|_| DaemonError::ScratchTooSmall {
-            required: usize::MAX,
-        })?;
-        if old_size > SCRATCH_BYTES {
-            return Err(DaemonError::ScratchTooSmall { required: old_size });
-        }
-        self.filesystem
-            .read(old_path.as_str(), &mut self.scratch[..old_size])?;
         let mut transaction = self.filesystem.transaction();
-        transaction.write(new_path.as_str(), &self.scratch[..old_size])?;
-        transaction.delete(old_path.as_str())?;
+        transaction.rename(old_path.as_str(), new_path.as_str())?;
         transaction.commit()?;
         self.open_files[index].path = new_path;
         Ok(())
@@ -1007,6 +1088,38 @@ impl<
                     .with_value(0, report.freed_blocks as u64)
                     .with_value(1, report.live_blocks as u64))
             }
+            Operation::Mkdir => {
+                let path = input_name(buffer)?;
+                let info = self.create_directory(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    path.as_str(),
+                    request.flags.contains(Flags::RECURSIVE),
+                )?;
+                Ok(Response::success()
+                    .with_value(0, info.version as u64)
+                    .with_value(1, info.created_at))
+            }
+            Operation::Rmdir => {
+                let path = input_name(buffer)?;
+                self.remove_directory(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    path.as_str(),
+                )?;
+                Ok(Response::success())
+            }
+            Operation::Link => {
+                let new_path = input_name(buffer)?;
+                let info = self.link(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    new_path.as_str(),
+                )?;
+                Ok(Response::success()
+                    .with_value(0, info.version as u64)
+                    .with_value(1, info.size))
+            }
         }
     }
 
@@ -1113,22 +1226,20 @@ impl<
         prefix: &str,
         output: &mut [u8],
     ) -> Result<usize, DaemonError> {
+        let path = if prefix.is_empty() { "/" } else { prefix };
+        let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
+        let count = snapshot.list_directory(path, &mut entries)?;
         let mut written = 0;
-        let mut index = 0;
-        while let Some(file) = snapshot.file_at(index)? {
-            index = index.saturating_add(1);
-            if !file.file.as_str().starts_with(prefix) {
-                continue;
-            }
-            let required = file.file.as_bytes().len() + 1;
+        for entry in entries.iter().take(count) {
+            let required = entry.name.as_bytes().len() + 1;
             if written + required > output.len() {
                 return Err(DaemonError::BufferTooSmall {
                     required: written + required,
                 });
             }
-            output[written..written + file.file.as_bytes().len()]
-                .copy_from_slice(file.file.as_bytes());
-            written += file.file.as_bytes().len();
+            output[written..written + entry.name.as_bytes().len()]
+                .copy_from_slice(entry.name.as_bytes());
+            written += entry.name.as_bytes().len();
             output[written] = b'\n';
             written += 1;
         }
@@ -1303,6 +1414,9 @@ fn validate_buffer(
             | Operation::SnapshotList
             | Operation::Mount
             | Operation::MountList
+            | Operation::Mkdir
+            | Operation::Rmdir
+            | Operation::Link
     );
     if !needs_buffer {
         if descriptor.is_some() || buffer.is_some() {
@@ -1318,10 +1432,10 @@ fn validate_buffer(
     if descriptor.region.raw() == 0 {
         return Err(DaemonError::Protocol(ProtocolError::InvalidBuffer));
     }
-    let expected_writable = matches!(
-        operation,
+        let expected_writable = matches!(
+            operation,
         Operation::Read | Operation::List | Operation::SnapshotList | Operation::MountList
-    );
+        );
     if descriptor.writable != expected_writable {
         return Err(DaemonError::Protocol(ProtocolError::InvalidBuffer));
     }

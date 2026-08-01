@@ -13,3 +13,8 @@ mount capabilities.
 The IPC request uses one kernel-validated shared buffer. Paths are UTF-8;
 rename uses `old-path\0new-path`; listing buffers use an optional NUL-terminated
 prefix and are overwritten with newline-separated paths.
+
+Directories have typed metadata and immediate-child listing. `Mkdir`, `Rmdir`,
+and `Link` use the same bounded shared-buffer protocol. SynFS stores hard-link
+metadata, quotas, free-space counters, and per-volume limits in the persistent
+volume format.

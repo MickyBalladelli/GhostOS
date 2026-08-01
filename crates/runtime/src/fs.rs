@@ -78,4 +78,25 @@ impl<S: SystemCall> Runtime<S> {
             version: u32::try_from(response.values[1]).map_err(|_| Error::InvalidResponse)?,
         })
     }
+
+    pub fn create_directory(&self, path: SharedBuffer, recursive: bool) -> Result<(), Error> {
+        let mut request = Request::new(Operation::SynFsMkdir).with_buffer(path);
+        request.flags = if recursive { 1 << 8 } else { 0 };
+        self.execute(request)?;
+        Ok(())
+    }
+
+    pub fn remove_directory(&self, path: SharedBuffer) -> Result<(), Error> {
+        self.execute(Request::new(Operation::SynFsRmdir).with_buffer(path))?;
+        Ok(())
+    }
+
+    pub fn link(&self, file: File, new_path: SharedBuffer) -> Result<(), Error> {
+        self.execute(
+            Request::new(Operation::SynFsLink)
+                .with_capability(file.capability)
+                .with_buffer(new_path),
+        )?;
+        Ok(())
+    }
 }

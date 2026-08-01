@@ -43,9 +43,9 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define the logical namespace and mount table for the immutable SynFS root, package store, logs, user data, and temporary storage.
   - [x] Mount and activate the SynFS root during user-space service startup.
   - [x] Expose read-only Ext4, FAT32, and NTFS host volumes through controlled mount capabilities.
-- [ ] **Directories and Metadata**
-  - [ ] Add directory records, listing, directory creation/removal, rename, links, and file type metadata.
-  - [ ] Add quotas, retention policy enforcement, free-space accounting, and per-volume limits.
+- [x] **Directories and Metadata**
+  - [x] Add directory records, listing, directory creation/removal, rename, links, and file type metadata.
+  - [x] Add quotas, retention policy enforcement, free-space accounting, and per-volume limits.
 - [ ] **Validation and Operations**
   - [ ] Test persistence and recovery with real disk images and simulated power loss.
   - [ ] Fuzz path parsing, B-tree records, on-disk blocks, mount detection, and corrupted metadata.

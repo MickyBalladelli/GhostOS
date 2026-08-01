@@ -14,7 +14,6 @@ use synos_runtime::{Operation, Request, Response};
 use synos_status::Status;
 
 pub const MAX_FILESYSTEM_PROCESSES: usize = 64;
-const MAX_RUNTIME_FLAGS: u16 = 0x1f;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FilesystemIdentity {
@@ -413,7 +412,10 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsClose
             | Operation::SynFsRead
             | Operation::SynFsWrite
-            | Operation::SynFsMetadata => self.dispatch_filesystem(caller, operation, request),
+            | Operation::SynFsMetadata
+            | Operation::SynFsMkdir
+            | Operation::SynFsRmdir
+            | Operation::SynFsLink => self.dispatch_filesystem(caller, operation, request),
             _ => Err(RuntimeDispatchError::InvalidRequest),
         }
     }
@@ -437,11 +439,14 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             Operation::SynFsRead => FsdOperation::Read,
             Operation::SynFsWrite => FsdOperation::Write,
             Operation::SynFsMetadata => FsdOperation::Metadata,
+            Operation::SynFsMkdir => FsdOperation::Mkdir,
+            Operation::SynFsRmdir => FsdOperation::Rmdir,
+            Operation::SynFsLink => FsdOperation::Link,
             _ => return Err(RuntimeDispatchError::InvalidRequest),
         };
 
         let capability = match operation {
-            Operation::SynFsOpen => {
+            Operation::SynFsOpen | Operation::SynFsMkdir | Operation::SynFsRmdir => {
                 if request.capability != 0 {
                     return Err(RuntimeDispatchError::InvalidRequest)
                 }
@@ -452,7 +457,13 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         };
         let flags = match operation {
             Operation::SynFsOpen => {
-                if request.flags & !MAX_RUNTIME_FLAGS != 0 {
+                if request.flags & !0x1f != 0 {
+                    return Err(RuntimeDispatchError::InvalidRequest)
+                }
+                FsdFlags::from_bits(request.flags)
+            }
+            Operation::SynFsMkdir => {
+                if request.flags & !(1 << 8) != 0 {
                     return Err(RuntimeDispatchError::InvalidRequest)
                 }
                 FsdFlags::from_bits(request.flags)
@@ -460,7 +471,11 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             _ if request.flags == 0 => FsdFlags::from_bits(0),
             _ => return Err(RuntimeDispatchError::InvalidRequest),
         };
-        if operation == Operation::SynFsOpen {
+        if operation == Operation::SynFsOpen
+            || operation == Operation::SynFsMkdir
+            || operation == Operation::SynFsRmdir
+            || operation == Operation::SynFsLink
+        {
             if request.arguments[4] != 0 || request.arguments[5] != 0 {
                 return Err(RuntimeDispatchError::InvalidRequest)
             }
@@ -506,7 +521,12 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
     ) -> Result<Option<SharedBuffer>, RuntimeDispatchError> {
         let needs_buffer = matches!(
             operation,
-            Operation::SynFsOpen | Operation::SynFsRead | Operation::SynFsWrite
+            Operation::SynFsOpen
+                | Operation::SynFsRead
+                | Operation::SynFsWrite
+                | Operation::SynFsMkdir
+                | Operation::SynFsRmdir
+                | Operation::SynFsLink
         );
         let has_descriptor = request.arguments[0] != 0
             || request.arguments[1] != 0
@@ -574,7 +594,11 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                     return Err(RuntimeDispatchError::TransportFailure)
                 }
             }
-            Operation::SynFsClose | Operation::SynFsMetadata => {}
+            Operation::SynFsClose
+            | Operation::SynFsMetadata
+            | Operation::SynFsMkdir
+            | Operation::SynFsRmdir
+            | Operation::SynFsLink => {}
             _ => return Err(RuntimeDispatchError::InvalidRequest),
         }
         Ok(response)
