@@ -70,11 +70,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] UEFI boot services (LoadImage, StartImage, etc.)
   - [x] Runtime services (GetVariable, SetVariable, etc.)
 
-- [ ] **Boot Integration**
-  - [ ] SynOS kernel image loading
-  - [ ] Multiboot specification support
-  - [ ] Kernel entry point handoff
-  - [ ] Boot parameter passing (initrd, cmdline, etc.)
+- [x] **Boot Integration**
+  - [x] SynOS kernel image loading
+  - [x] Multiboot specification support
+  - [x] Kernel entry point handoff
+  - [x] Boot parameter passing (initrd, cmdline, etc.)
 
 ### 4. Device Drivers (Guest-side)
 

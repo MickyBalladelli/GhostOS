@@ -38,10 +38,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-boot-protocol"
+version = "0.1.0"
+
+[[package]]
 name = "synos-vm"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "synos-boot-protocol",
  "thiserror",
 ]
 

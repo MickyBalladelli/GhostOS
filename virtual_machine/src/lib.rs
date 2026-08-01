@@ -26,10 +26,12 @@ pub use firmware::uefi::{
 };
 pub use firmware::FirmwareMode;
 pub use boot::Loader;
+pub use boot::{framebuffer_info, LoaderError, KERNEL_LOAD_ADDR};
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use synos_boot_protocol::BootMethod;
 
 pub const COM1_PORT: u16 = 0x3F8;
 pub const PCI_CONFIG_PORT: u16 = 0xCF8;
@@ -313,7 +315,9 @@ impl Vm {
 
         match self.config.firmware {
             FirmwareMode::Bios => {
-                let _ = self.bios.init(&mut self.mmu, &mut self.cpu.state);
+                self.bios
+                    .init(&mut self.mmu, &mut self.cpu.state)
+                    .map_err(|_| VmError::BootFailure)?;
             }
             FirmwareMode::Uefi => {
                 // UEFI init: build the SystemTable/boot/runtime services,
@@ -326,6 +330,10 @@ impl Vm {
                     return Err(VmError::InvalidConfiguration);
                 }
             }
+        }
+
+        if self.config.kernel_path.is_some() {
+            self.boot_kernel()?;
         }
 
         println!("Starting CPU emulation...");
@@ -352,6 +360,49 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    fn boot_kernel(&mut self) -> Result<(), VmError> {
+        if self.config.firmware == FirmwareMode::Uefi {
+            return Err(VmError::InvalidConfiguration);
+        }
+
+        let kernel_path = self
+            .config
+            .kernel_path
+            .as_ref()
+            .ok_or(VmError::InvalidConfiguration)?;
+        let mut loader = Loader::new();
+        loader
+            .load_kernel(kernel_path)
+            .map_err(loader_error_to_vm)?;
+        if let Some(initrd_path) = self.config.initrd_path.as_ref() {
+            loader
+                .load_initrd(initrd_path)
+                .map_err(loader_error_to_vm)?;
+        }
+        loader.set_cmdline(self.config.boot_args.clone());
+        loader
+            .load_to_memory(&mut self.mmu, KERNEL_LOAD_ADDR)
+            .map_err(loader_error_to_vm)?;
+
+        let gop = self.display.borrow().gop();
+        let framebuffer = framebuffer_info(&gop);
+        let method = match self.config.firmware {
+            FirmwareMode::Bios => BootMethod::Bios,
+            FirmwareMode::Uefi => BootMethod::Uefi,
+        };
+        loader
+            .install_boot_parameters(
+                &mut self.mmu,
+                self.config.memory_size,
+                method,
+                framebuffer,
+            )
+            .map_err(loader_error_to_vm)?;
+        loader
+            .handoff(&mut self.cpu, &mut self.mmu)
+            .map_err(loader_error_to_vm)
     }
 
     /// Process deferred DMA for storage controllers and NICs issued during
@@ -493,5 +544,12 @@ pub enum VmError {
 impl From<CpuError> for VmError {
     fn from(e: CpuError) -> Self {
         VmError::CpuError(e)
+    }
+}
+
+fn loader_error_to_vm(error: crate::boot::LoaderError) -> VmError {
+    match error {
+        crate::boot::LoaderError::CpuError(error) => VmError::CpuError(error),
+        _ => VmError::KernelLoadError,
     }
 }

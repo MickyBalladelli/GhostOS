@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use synos_vm::{FirmwareMode, Vm, VmConfig};
 
 fn main() {
@@ -35,6 +36,24 @@ fn main() {
             "--memory" => {
                 if let Some(size) = args.get(i + 1) {
                     config.memory_size = parse_memory(size).unwrap_or(config.memory_size);
+                    i += 1;
+                }
+            }
+            "--kernel" => {
+                if let Some(path) = args.get(i + 1) {
+                    config.kernel_path = Some(PathBuf::from(path));
+                    i += 1;
+                }
+            }
+            "--initrd" => {
+                if let Some(path) = args.get(i + 1) {
+                    config.initrd_path = Some(PathBuf::from(path));
+                    i += 1;
+                }
+            }
+            "--append" => {
+                if let Some(args) = args.get(i + 1) {
+                    config.boot_args = args.clone();
                     i += 1;
                 }
             }
