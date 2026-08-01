@@ -495,20 +495,25 @@ impl KernelExecutor {
     }
 
     fn print_system(&self) {
-        crate::println!("name=SynOS");
-        crate::println!("architecture={}", architecture());
+        crate::println!("\x1b[1;36m=== SYSTEM ===\x1b[0m");
+        crate::println!("  Name:              SynOS");
+        crate::println!("  Architecture:      {}", architecture());
         crate::println!(
-            "boot-method={}",
+            "  Boot method:       {}",
             match self.boot_method {
                 BootMethod::Bios => "BIOS",
                 BootMethod::Uefi => "UEFI",
             }
         );
-        crate::println!("memory-regions={}", self.memory_region_count);
-        crate::println!("scheduler-clock={}", self.scheduler_clock);
-        crate::println!("acpi={}", if self.acpi_ready { "ready" } else { "unavailable" });
-        crate::println!("shell=ready");
-        crate::println!("monitor=active")
+        crate::println!("  Memory regions:    {}", self.memory_region_count);
+        crate::println!("  Scheduler clock:   {}", self.scheduler_clock);
+        crate::println!(
+            "  ACPI:              {}",
+            if self.acpi_ready { "ready" } else { "unavailable" }
+        );
+        crate::println!("  Shell:             ready");
+        crate::println!("  Monitor:           active");
+        crate::println!()
     }
 
     fn request_reboot(&mut self) -> Result<StructuredOutput, Status> {
