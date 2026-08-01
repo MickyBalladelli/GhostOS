@@ -665,6 +665,7 @@ impl KernelExecutor {
         crate::println!("  TYPE               Show file contents");
         crate::println!("  SET DEFAULT        Change the default directory");
         crate::println!("  SHOW DEFAULT       Show the default directory");
+        crate::println!("  PWD                Show the default directory");
         crate::println!();
         crate::println!("Unique command prefixes are accepted.");
     }

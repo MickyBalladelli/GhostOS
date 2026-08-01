@@ -29,6 +29,9 @@ fn render_list(
     if is_directory_output(output) {
         return render_directory(output)
     }
+    if is_default_directory_output(output) {
+        return render_default_directory(output)
+    }
 
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
@@ -56,6 +59,25 @@ fn is_directory_output(output: &StructuredOutput) -> bool {
     output
         .fields()
         .any(|field| field.name.as_str() == "entry-count")
+}
+
+fn is_default_directory_output(output: &StructuredOutput) -> bool {
+    output
+        .fields()
+        .any(|field| field.name.as_str() == "default-directory")
+}
+
+fn render_default_directory(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str("Current directory: ")?;
+    if let Some(directory) = find_value(output, "default-directory") {
+        write_value(&mut rendered, directory, false)?;
+    }
+    rendered.push_str("\n")?;
+    Ok(rendered)
 }
 
 fn render_directory(

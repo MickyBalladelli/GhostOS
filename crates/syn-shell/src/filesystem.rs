@@ -303,6 +303,10 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
     registry.register(
         CommandSpec::new("SHOW-DEFAULT", &[]).map_err(|_| Error::InvalidValue)?,
         route(SHOW_DEFAULT_ROUTE),
+    )?;
+    registry.register(
+        CommandSpec::new("PWD", &[]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_DEFAULT_ROUTE),
     )
 }
 
