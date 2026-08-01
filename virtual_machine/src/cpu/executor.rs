@@ -520,6 +520,7 @@ impl InstructionExecutor {
             "XADD" => self.execute_xadd(instruction, state, mmu)?,
             "CMOVCC" => self.execute_cmovcc(instruction, state, mmu)?,
             "SETCC" => self.execute_setcc(instruction, state, mmu)?,
+            "BT" => self.execute_bit_test(instruction, state, mmu)?,
             "BSF" | "BSR" => self.execute_bit_scan(instruction, state, mmu)?,
             "CLC" => {
                 state.rflags &= !CF;
@@ -1858,6 +1859,40 @@ impl InstructionExecutor {
             (bit_count(ins.opsize) - 1) - (v.leading_zeros() as u64)
         };
         write_operand(ins, state, mmu, &dst, idx)?;
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
+    fn execute_bit_test(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+        mmu: &mut Mmu,
+    ) -> Result<(), CpuError> {
+        if ins.operands.len() < 2 {
+            state.rip = ins.next_ip;
+            return Ok(());
+        }
+
+        let bits = ins.opsize as u64;
+        let index = read_operand(ins, state, mmu, &ins.operands[1])?;
+        let bit = index & (bits - 1);
+        let value = match &ins.operands[0] {
+            Operand::Memory(mem) => {
+                let size = operand_bytes(ins.opsize);
+                let address = effective_address(ins, state, mem)
+                    .wrapping_add(segment_base(state, mem.segment))
+                    .wrapping_add((index / bits).wrapping_mul(size as u64));
+                mmu.read_from_addr(address, size).map_err(mem_err)?
+            }
+            target => read_operand(ins, state, mmu, target)?,
+        };
+
+        if value & (1u64 << bit) != 0 {
+            state.rflags |= CF;
+        } else {
+            state.rflags &= !CF;
+        }
         state.rip = ins.next_ip;
         Ok(())
     }

@@ -1270,6 +1270,14 @@ impl InstructionDecoder {
                 return Ok(());
             }
 
+            0xA3 => {
+                ins.mnemonic = "BT";
+                let (reg, rm) =
+                    self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, false)?;
+                ins.operands = vec![rm, Operand::Register(reg)];
+                return Ok(());
+            }
+
             0xC0 | 0xC1 => {
                 ins.mnemonic = "XADD";
                 let width = if op2 == 0xC0 { 8 } else { opsize };
