@@ -27,10 +27,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define on-disk superblocks, format versioning, root-generation records, and checksums.
   - [x] Add load, flush, and recovery paths so `SynFs` survives reboot instead of starting from an empty in-memory arena.
   - [x] Add crash-safe commit ordering and a filesystem consistency checker.
-- [ ] **Block-Device Integration**
-  - [ ] Connect SynFS block allocation and `StoragePoolAdmin` placement to real NVMe, AHCI, CXL, and network-block I/O.
-  - [ ] Add bounded asynchronous block read, write, flush, and discard requests with completion handling.
-  - [ ] Handle device failure, degraded mirrors, hot removal, and pool rebuilds during filesystem I/O.
+- [x] **Block-Device Integration**
+  - [x] Connect SynFS block allocation and `StoragePoolAdmin` placement to real NVMe, AHCI, CXL, and network-block I/O.
+  - [x] Add bounded asynchronous block read, write, flush, and discard requests with completion handling.
+  - [x] Handle device failure, degraded mirrors, hot removal, and pool rebuilds during filesystem I/O.
 - [ ] **Ring 3 Filesystem Daemon**
   - [ ] Build `synos-fsd` as the user-space owner of SynFS volumes, mounts, transactions, checkpoints, and garbage collection.
   - [ ] Define the IPC protocol for open, close, read, write, metadata, delete, rename, directory listing, and snapshot operations.

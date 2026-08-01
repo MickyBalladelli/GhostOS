@@ -46,7 +46,7 @@ impl PoolName {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         {
-            return Err(StoragePoolError::InvalidName)
+            return Err(StoragePoolError::InvalidName);
         }
         let mut bytes = [0; MAX_POOL_NAME_BYTES];
         bytes[..name.len()].copy_from_slice(name.as_bytes());
@@ -57,19 +57,22 @@ impl PoolName {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.length as usize])
-            .expect("PoolName invariant")
+        core::str::from_utf8(&self.bytes[..self.length as usize]).expect("PoolName invariant")
     }
 }
 
 impl fmt::Debug for PoolName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("PoolName").field(&self.as_str()).finish()
+        formatter
+            .debug_tuple("PoolName")
+            .field(&self.as_str())
+            .finish()
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageClass {
+    Ahci,
     Nvme,
     CxlPersistentMemory,
     NetworkBlock,
@@ -95,11 +98,12 @@ pub struct StorageDevice {
 
 impl StorageDevice {
     fn validate(self) -> Result<Self, StoragePoolError> {
-        if self.capacity_blocks == 0
+        if self.id.raw() == 0
+            || self.capacity_blocks == 0
             || self.block_size < 512
             || !self.block_size.is_power_of_two()
         {
-            return Err(StoragePoolError::InvalidDevice)
+            return Err(StoragePoolError::InvalidDevice);
         }
         Ok(self)
     }
@@ -204,10 +208,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
         }
     }
 
-    pub fn register_device(
-        &mut self,
-        device: StorageDevice,
-    ) -> Result<(), StoragePoolError> {
+    pub fn register_device(&mut self, device: StorageDevice) -> Result<(), StoragePoolError> {
         let device = device.validate()?;
         if self
             .devices
@@ -215,7 +216,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             .flatten()
             .any(|existing| existing.id == device.id)
         {
-            return Err(StoragePoolError::AlreadyExists)
+            return Err(StoragePoolError::AlreadyExists);
         }
         let slot = self
             .devices
@@ -236,7 +237,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             .flatten()
             .any(|pool| pool.members().any(|member| member == id))
         {
-            return Err(StoragePoolError::DeviceAlreadyClaimed)
+            return Err(StoragePoolError::DeviceAlreadyClaimed);
         }
         let slot = self
             .devices
@@ -266,7 +267,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             || members.len() > MAX_POOL_MEMBERS
             || (layout == PoolLayout::Mirror && members.len() < 2)
         {
-            return Err(StoragePoolError::InvalidLayout)
+            return Err(StoragePoolError::InvalidLayout);
         }
         if self
             .pools
@@ -274,7 +275,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             .flatten()
             .any(|pool| pool.id == id || pool.name.as_str() == name)
         {
-            return Err(StoragePoolError::AlreadyExists)
+            return Err(StoragePoolError::AlreadyExists);
         }
 
         let mut selected = [None; MAX_POOL_MEMBERS];
@@ -282,7 +283,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
         let mut member_capacity = u64::MAX;
         for (index, member) in members.iter().copied().enumerate() {
             if members[..index].contains(&member) {
-                return Err(StoragePoolError::DuplicateMember)
+                return Err(StoragePoolError::DuplicateMember);
             }
             if self
                 .pools
@@ -290,14 +291,14 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
                 .flatten()
                 .any(|pool| pool.members().any(|claimed| claimed == member))
             {
-                return Err(StoragePoolError::DeviceAlreadyClaimed)
+                return Err(StoragePoolError::DeviceAlreadyClaimed);
             }
             let device = self.device(member)?;
             if device.health != DeviceHealth::Online {
-                return Err(StoragePoolError::DeviceFailed)
+                return Err(StoragePoolError::DeviceFailed);
             }
             if block_size.is_some_and(|size| size != device.block_size) {
-                return Err(StoragePoolError::IncompatibleBlockSize)
+                return Err(StoragePoolError::IncompatibleBlockSize);
             }
             if layout == PoolLayout::Mirror
                 && members[..index].iter().copied().any(|other| {
@@ -305,7 +306,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
                         .is_ok_and(|existing| existing.fault_domain == device.fault_domain)
                 })
             {
-                return Err(StoragePoolError::FaultDomainConflict)
+                return Err(StoragePoolError::FaultDomainConflict);
             }
             block_size = Some(device.block_size);
             member_capacity = member_capacity.min(device.capacity_blocks);
@@ -337,17 +338,14 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
         Ok(pool)
     }
 
-    pub fn destroy_pool(
-        &mut self,
-        id: StoragePoolId,
-    ) -> Result<StoragePool, StoragePoolError> {
+    pub fn destroy_pool(&mut self, id: StoragePoolId) -> Result<StoragePool, StoragePoolError> {
         let slot = self
             .pools
             .iter_mut()
             .find(|entry| entry.is_some_and(|pool| pool.id == id))
             .ok_or(StoragePoolError::PoolNotFound)?;
         if slot.is_some_and(|pool| pool.allocated_blocks != 0) {
-            return Err(StoragePoolError::Busy)
+            return Err(StoragePoolError::Busy);
         }
         slot.take().ok_or(StoragePoolError::PoolNotFound)
     }
@@ -359,10 +357,10 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
     ) -> Result<StoragePool, StoragePoolError> {
         let current = self.pool(id)?;
         if current.member_count as usize == MAX_POOL_MEMBERS {
-            return Err(StoragePoolError::RegistryFull)
+            return Err(StoragePoolError::RegistryFull);
         }
         if current.allocated_blocks != 0 {
-            return Err(StoragePoolError::Busy)
+            return Err(StoragePoolError::Busy);
         }
         if self
             .pools
@@ -370,29 +368,29 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             .flatten()
             .any(|pool| pool.members().any(|member| member == device_id))
         {
-            return Err(StoragePoolError::DeviceAlreadyClaimed)
+            return Err(StoragePoolError::DeviceAlreadyClaimed);
         }
         let device = self.device(device_id)?;
         if device.health != DeviceHealth::Online {
-            return Err(StoragePoolError::DeviceFailed)
+            return Err(StoragePoolError::DeviceFailed);
         }
         if device.block_size != current.block_size {
-            return Err(StoragePoolError::IncompatibleBlockSize)
+            return Err(StoragePoolError::IncompatibleBlockSize);
         }
         if current.layout == PoolLayout::Mirror {
             if device.capacity_blocks < current.capacity_blocks {
-                return Err(StoragePoolError::NoSpace)
+                return Err(StoragePoolError::NoSpace);
             }
             if current.members().any(|member| {
                 self.device(member)
                     .is_ok_and(|existing| existing.fault_domain == device.fault_domain)
             }) {
-                return Err(StoragePoolError::FaultDomainConflict)
+                return Err(StoragePoolError::FaultDomainConflict);
             }
         } else {
             let member_capacity = current.capacity_blocks / current.member_count as u64;
             if device.capacity_blocks < member_capacity {
-                return Err(StoragePoolError::NoSpace)
+                return Err(StoragePoolError::NoSpace);
             }
         }
 
@@ -400,12 +398,59 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
         pool.members[pool.member_count as usize] = Some(device_id);
         pool.member_count += 1;
         if pool.layout == PoolLayout::Stripe {
-            let member_capacity =
-                pool.capacity_blocks / (pool.member_count as u64 - 1);
+            let member_capacity = pool.capacity_blocks / (pool.member_count as u64 - 1);
             pool.capacity_blocks = member_capacity
                 .checked_mul(pool.member_count as u64)
                 .ok_or(StoragePoolError::CapacityOverflow)?
         }
+        Ok(*pool)
+    }
+
+    /// Replace a failed mirror member without dropping the pool's allocation.
+    /// The new member is added as an online rebuild target.
+    pub fn replace_device(
+        &mut self,
+        id: StoragePoolId,
+        failed_id: StorageDeviceId,
+        replacement_id: StorageDeviceId,
+    ) -> Result<StoragePool, StoragePoolError> {
+        let current = self.pool(id)?;
+        if current.layout != PoolLayout::Mirror {
+            return Err(StoragePoolError::InvalidLayout);
+        }
+        let index = current
+            .members()
+            .position(|member| member == failed_id)
+            .ok_or(StoragePoolError::DeviceNotFound)?;
+        let failed = self.device(failed_id)?;
+        if failed.health == DeviceHealth::Online {
+            return Err(StoragePoolError::Busy);
+        }
+        if self
+            .pools
+            .iter()
+            .flatten()
+            .any(|pool| pool.members().any(|member| member == replacement_id))
+        {
+            return Err(StoragePoolError::DeviceAlreadyClaimed);
+        }
+        let replacement = self.device(replacement_id)?;
+        if replacement.health != DeviceHealth::Online
+            || replacement.block_size != current.block_size
+            || replacement.capacity_blocks < current.capacity_blocks
+        {
+            return Err(StoragePoolError::InvalidDevice);
+        }
+        if current.members().enumerate().any(|(member_index, member)| {
+            member_index != index
+                && self
+                    .device(member)
+                    .is_ok_and(|device| device.fault_domain == replacement.fault_domain)
+        }) {
+            return Err(StoragePoolError::FaultDomainConflict);
+        }
+        let pool = self.pool_mut(id)?;
+        pool.members[index] = Some(replacement_id);
         Ok(*pool)
     }
 
@@ -420,18 +465,17 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             PoolLayout::Mirror => 2,
         };
         if current.member_count as usize <= minimum_members {
-            return Err(StoragePoolError::InvalidLayout)
+            return Err(StoragePoolError::InvalidLayout);
         }
         if current.layout == PoolLayout::Stripe && current.allocated_blocks != 0 {
-            return Err(StoragePoolError::Busy)
+            return Err(StoragePoolError::Busy);
         }
         let Some(index) = current.members().position(|member| member == device_id) else {
-            return Err(StoragePoolError::DeviceNotFound)
+            return Err(StoragePoolError::DeviceNotFound);
         };
         let new_capacity = match current.layout {
             PoolLayout::Stripe => {
-                let member_capacity =
-                    current.capacity_blocks / current.member_count as u64;
+                let member_capacity = current.capacity_blocks / current.member_count as u64;
                 member_capacity
                     .checked_mul(current.member_count as u64 - 1)
                     .ok_or(StoragePoolError::CapacityOverflow)?
@@ -445,7 +489,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
                 })?,
         };
         if current.allocated_blocks > new_capacity {
-            return Err(StoragePoolError::Busy)
+            return Err(StoragePoolError::Busy);
         }
 
         let pool = self.pool_mut(id)?;
@@ -466,12 +510,12 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
     ) -> Result<BlockPlacement, StoragePoolError> {
         let pool = self.pool(id)?;
         if logical_block >= pool.capacity_blocks {
-            return Err(StoragePoolError::NoSpace)
+            return Err(StoragePoolError::NoSpace);
         }
         let (member_index, device_block) = match pool.layout {
             PoolLayout::Stripe => {
                 if replica != 0 {
-                    return Err(StoragePoolError::InvalidLayout)
+                    return Err(StoragePoolError::InvalidLayout);
                 }
                 (
                     (logical_block % pool.member_count as u64) as usize,
@@ -480,14 +524,14 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             }
             PoolLayout::Mirror => {
                 if replica >= pool.member_count {
-                    return Err(StoragePoolError::InvalidLayout)
+                    return Err(StoragePoolError::InvalidLayout);
                 }
                 (replica as usize, logical_block)
             }
         };
         let device = pool.members[member_index].ok_or(StoragePoolError::InvalidLayout)?;
         if self.device(device)?.health == DeviceHealth::Failed {
-            return Err(StoragePoolError::DeviceFailed)
+            return Err(StoragePoolError::DeviceFailed);
         }
         Ok(BlockPlacement {
             device,
@@ -497,23 +541,19 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
     }
 
     /// Reserve a contiguous logical tail range and return its first block.
-    pub fn allocate(
-        &mut self,
-        id: StoragePoolId,
-        blocks: u64,
-    ) -> Result<u64, StoragePoolError> {
+    pub fn allocate(&mut self, id: StoragePoolId, blocks: u64) -> Result<u64, StoragePoolError> {
         if blocks == 0 {
-            return Err(StoragePoolError::NoSpace)
+            return Err(StoragePoolError::NoSpace);
         }
         if self.pool_health(id)? == PoolHealth::Offline {
-            return Err(StoragePoolError::DeviceFailed)
+            return Err(StoragePoolError::DeviceFailed);
         }
         let current = self.pool(id)?;
         if current.members().any(|member| {
             self.device(member)
                 .is_ok_and(|device| device.health == DeviceHealth::Draining)
         }) {
-            return Err(StoragePoolError::Busy)
+            return Err(StoragePoolError::Busy);
         }
         let pool = self.pool_mut(id)?;
         let start = pool.allocated_blocks;
@@ -536,7 +576,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             .checked_add(blocks)
             .ok_or(StoragePoolError::InvalidDevice)?;
         if end != pool.allocated_blocks {
-            return Err(StoragePoolError::Busy)
+            return Err(StoragePoolError::Busy);
         }
         pool.allocated_blocks = pool
             .allocated_blocks
@@ -571,10 +611,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
         self.pools.iter().flatten().copied()
     }
 
-    pub fn pool_health(
-        &self,
-        id: StoragePoolId,
-    ) -> Result<PoolHealth, StoragePoolError> {
+    pub fn pool_health(&self, id: StoragePoolId) -> Result<PoolHealth, StoragePoolError> {
         let pool = self.pool(id)?;
         let online = pool
             .members()
@@ -600,10 +637,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
         })
     }
 
-    fn device_mut(
-        &mut self,
-        id: StorageDeviceId,
-    ) -> Result<&mut StorageDevice, StoragePoolError> {
+    fn device_mut(&mut self, id: StorageDeviceId) -> Result<&mut StorageDevice, StoragePoolError> {
         self.devices
             .iter_mut()
             .flatten()
@@ -611,10 +645,7 @@ impl<const DEVICES: usize, const POOLS: usize> StoragePoolAdmin<DEVICES, POOLS> 
             .ok_or(StoragePoolError::DeviceNotFound)
     }
 
-    fn pool_mut(
-        &mut self,
-        id: StoragePoolId,
-    ) -> Result<&mut StoragePool, StoragePoolError> {
+    fn pool_mut(&mut self, id: StoragePoolId) -> Result<&mut StoragePool, StoragePoolError> {
         self.pools
             .iter_mut()
             .flatten()

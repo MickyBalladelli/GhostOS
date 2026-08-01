@@ -5,21 +5,27 @@ use core::cmp::Ordering;
 use core::fmt;
 use synos_status::{IntoStatus, Severity, Status, facility};
 
-mod rms;
+mod block;
 mod pool;
+mod rms;
 mod volume;
 
+pub use block::{
+    BlockCompletion, BlockDevice, BlockIoError, BlockIoQueue, BlockIoResult, BlockOperation,
+    BlockRequest, BlockRequestToken, BlockStore, DEFAULT_BLOCK_IO_QUEUE, MAX_BLOCK_IO_BYTES,
+    StoragePoolIo,
+};
+pub use pool::{
+    BlockPlacement, DeviceHealth, MAX_POOL_MEMBERS, MAX_POOL_NAME_BYTES, PoolHealth, PoolLayout,
+    PoolName, StorageClass, StorageDevice, StorageDeviceId, StoragePool, StoragePoolAdmin,
+    StoragePoolError, StoragePoolId,
+};
 pub use rms::{
     IndexDefinition, MappedRecordFile, MappedRecordInfo, RecordDescriptor, RecordFileInfo,
     RecordFormat, RecordImageBuilder, RecordIter, RecordOrganization, RecordRead, RecordSelector,
     RmsError, RmsMapHandle,
 };
-pub use pool::{
-    BlockPlacement, DeviceHealth, MAX_POOL_MEMBERS, MAX_POOL_NAME_BYTES, PoolHealth,
-    PoolLayout, PoolName, StorageClass, StorageDevice, StorageDeviceId, StoragePool,
-    StoragePoolAdmin, StoragePoolError, StoragePoolId,
-};
-pub use volume::{VolumeCommit, VolumeGeometry, VOLUME_FORMAT_VERSION};
+pub use volume::{VOLUME_FORMAT_VERSION, VolumeCommit, VolumeGeometry};
 
 pub const BLOCK_SIZE: usize = 4096;
 pub const DATA_BYTES: usize = BLOCK_SIZE - 16;
@@ -42,6 +48,7 @@ pub enum Error {
     TooManyCheckpoints,
     TooManyRetentionRules,
     VersionOverflow,
+    Io,
 }
 
 impl IntoStatus for Error {
@@ -54,18 +61,14 @@ impl IntoStatus for Error {
             Self::Corrupt => Status::CORRUPT,
             Self::InvalidPath | Self::InvalidVersion => Status::INVALID_ARGUMENT,
             Self::TransactionAborted => Status::BUSY,
-            Self::BufferTooSmall { .. } => {
-                Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
-                    .expect("valid filesystem status")
-            }
-            Self::AlreadyExists => {
-                Status::new(Severity::Error, facility::FILESYSTEM, 2, 0)
-                    .expect("valid filesystem status")
-            }
-            Self::VersionOverflow => {
-                Status::new(Severity::Fatal, facility::FILESYSTEM, 3, 0)
-                    .expect("valid filesystem status")
-            }
+            Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
+                .expect("valid filesystem status"),
+            Self::AlreadyExists => Status::new(Severity::Error, facility::FILESYSTEM, 2, 0)
+                .expect("valid filesystem status"),
+            Self::VersionOverflow => Status::new(Severity::Fatal, facility::FILESYSTEM, 3, 0)
+                .expect("valid filesystem status"),
+            Self::Io => Status::new(Severity::Error, facility::FILESYSTEM, 4, 0)
+                .expect("valid filesystem status"),
         }
     }
 }
@@ -86,7 +89,7 @@ impl FileName {
             || value.ends_with(b"/")
             || value.windows(2).any(|pair| pair == b"//")
         {
-            return Err(Error::InvalidPath)
+            return Err(Error::InvalidPath);
         }
 
         let mut bytes = [0; MAX_PATH_BYTES];
@@ -108,7 +111,10 @@ impl FileName {
 
 impl fmt::Debug for FileName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("FileName").field(&self.as_str()).finish()
+        formatter
+            .debug_tuple("FileName")
+            .field(&self.as_str())
+            .finish()
     }
 }
 
@@ -142,15 +148,13 @@ impl VersionedPath {
             return Ok(Self {
                 file: FileName::new(path)?,
                 version: VersionSelector::Latest,
-            })
+            });
         };
 
         if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(Error::InvalidVersion)
+            return Err(Error::InvalidVersion);
         }
-        let version = suffix
-            .parse::<u32>()
-            .map_err(|_| Error::InvalidVersion)?;
+        let version = suffix.parse::<u32>().map_err(|_| Error::InvalidVersion)?;
         Ok(Self {
             file: FileName::new(file)?,
             version: if version == 0 {
@@ -292,7 +296,7 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
 
     fn get_ref(&self, id: BlockId) -> Result<&Block, Error> {
         if !id.is_some() {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         }
         self.slots
             .get(id.0 as usize - 1)
@@ -316,7 +320,7 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
             .iter()
             .position(|slot| slot.block == Some(Block::Data(block)))
         {
-            return Ok(BlockId(index as u32 + 1))
+            return Ok(BlockId(index as u32 + 1));
         }
         self.allocate(Block::Data(block))
     }
@@ -450,20 +454,23 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         let file = self.filesystem.lookup_at(self.root, path)?;
         let record = self
             .filesystem
-            .find_record_at(self.root, FileKey {
-                file: file.file,
-                version: file.version,
-            })?
+            .find_record_at(
+                self.root,
+                FileKey {
+                    file: file.file,
+                    version: file.version,
+                },
+            )?
             .ok_or(Error::Corrupt)?;
         let mut id = record.data;
         let mut file_offset = 0_u64;
         while id.is_some() {
             let Block::Data(block) = self.filesystem.arena.get_ref(id)? else {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             };
             let length = block.len as usize;
             if length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             visitor(MappedFilePage {
                 file_offset,
@@ -474,7 +481,7 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
             id = block.next;
         }
         if file_offset != file.size {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         }
         Ok(file)
     }
@@ -541,20 +548,20 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
 
     pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
         if self.failed {
-            return Err(Error::TransactionAborted)
+            return Err(Error::TransactionAborted);
         }
         let file = match self.filesystem.write_uncommitted(path, contents) {
             Ok(file) => file,
             Err(error) => {
                 self.failed = true;
-                return Err(error)
+                return Err(error);
             }
         };
         self.operations = match self.operations.checked_add(1) {
             Some(operations) => operations,
             None => {
                 self.failed = true;
-                return Err(Error::VersionOverflow)
+                return Err(Error::VersionOverflow);
             }
         };
         Ok(file)
@@ -562,20 +569,20 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
 
     pub fn delete(&mut self, path: &str) -> Result<FileVersion, Error> {
         if self.failed {
-            return Err(Error::TransactionAborted)
+            return Err(Error::TransactionAborted);
         }
         let file = match self.filesystem.delete_uncommitted(path) {
             Ok(file) => file,
             Err(error) => {
                 self.failed = true;
-                return Err(error)
+                return Err(error);
             }
         };
         self.operations = match self.operations.checked_add(1) {
             Some(operations) => operations,
             None => {
                 self.failed = true;
-                return Err(Error::VersionOverflow)
+                return Err(Error::VersionOverflow);
             }
         };
         Ok(file)
@@ -583,7 +590,7 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
 
     pub fn commit(mut self) -> Result<TransactionCommit, Error> {
         if self.failed {
-            return Err(Error::TransactionAborted)
+            return Err(Error::TransactionAborted);
         }
         self.committed = true;
         Ok(TransactionCommit {
@@ -596,7 +603,7 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
 impl<const MAX_BLOCKS: usize> Drop for SynFsTransaction<'_, MAX_BLOCKS> {
     fn drop(&mut self) {
         if self.committed {
-            return
+            return;
         }
         self.filesystem.root = self.original_root;
         self.filesystem.generation = self.original_generation;
@@ -725,8 +732,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn checkpoint_info(&self, id: CheckpointId) -> Result<CheckpointInfo, Error> {
-        self.find_checkpoint(id)
-            .map(|checkpoint| checkpoint.info)
+        self.find_checkpoint(id).map(|checkpoint| checkpoint.info)
     }
 
     pub fn checkpoint_snapshot(
@@ -757,7 +763,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let result = self.write_uncommitted(path, contents);
         if result == Err(Error::OutOfSpace) {
             self.collect_garbage();
-            return self.write_uncommitted(path, contents)
+            return self.write_uncommitted(path, contents);
         }
         if result.is_err() {
             self.collect_garbage();
@@ -765,19 +771,19 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         result
     }
 
-    fn write_uncommitted(
-        &mut self,
-        path: &str,
-        contents: &[u8],
-    ) -> Result<FileVersion, Error> {
+    fn write_uncommitted(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
         let parsed = VersionedPath::parse(path)?;
         if parsed.version != VersionSelector::Latest || path.contains(';') {
-            return Err(Error::InvalidVersion)
+            return Err(Error::InvalidVersion);
         }
 
-        let version = self
-            .last_record(parsed.file)?
-            .map_or(Ok(1), |record| record.key.version.checked_add(1).ok_or(Error::VersionOverflow))?;
+        let version = self.last_record(parsed.file)?.map_or(Ok(1), |record| {
+            record
+                .key
+                .version
+                .checked_add(1)
+                .ok_or(Error::VersionOverflow)
+        })?;
         let created_at = self.generation.saturating_add(1);
         self.write_inner(parsed.file, version, created_at, contents)
     }
@@ -809,7 +815,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let result = self.delete_uncommitted(path);
         if result == Err(Error::OutOfSpace) {
             self.collect_garbage();
-            return self.delete_uncommitted(path)
+            return self.delete_uncommitted(path);
         }
         if result.is_err() {
             self.collect_garbage();
@@ -820,7 +826,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     fn delete_uncommitted(&mut self, path: &str) -> Result<FileVersion, Error> {
         let parsed = VersionedPath::parse(path)?;
         if parsed.version != VersionSelector::Latest || path.contains(';') {
-            return Err(Error::InvalidVersion)
+            return Err(Error::InvalidVersion);
         }
         let previous = self
             .last_record(parsed.file)?
@@ -856,13 +862,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let path = VersionedPath::parse(path)?;
         let record = match path.version {
             VersionSelector::Latest => self.latest_record_at(root, path.file)?,
-            VersionSelector::Exact(version) => {
-                self.find_record_at(root, FileKey {
-                    file: path.file,
-                    version,
-                })?
-                .filter(|record| !record.deleted)
-            }
+            VersionSelector::Exact(version) => self
+                .find_record_at(
+                    root,
+                    FileKey {
+                        file: path.file,
+                        version,
+                    },
+                )?
+                .filter(|record| !record.deleted),
         }
         .ok_or(Error::NotFound)?;
         Ok(record.into())
@@ -880,7 +888,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         destination: &mut [u8],
     ) -> Result<ReadResult, Error> {
         if version == 0 {
-            return Err(Error::InvalidVersion)
+            return Err(Error::InvalidVersion);
         }
         let file_name = FileName::new(path)?;
         let record = self
@@ -893,10 +901,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.read_file_version(record.into(), destination)
     }
 
-    pub fn retained_version_span(
-        &self,
-        path: &str,
-    ) -> Result<(u32, Option<u32>), Error> {
+    pub fn retained_version_span(&self, path: &str) -> Result<(u32, Option<u32>), Error> {
         self.version_span(FileName::new(path)?)
     }
 
@@ -907,7 +912,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     ) -> Result<ReadResult, Error> {
         let required = usize::try_from(file.size).map_err(|_| Error::Corrupt)?;
         if destination.len() < required {
-            return Err(Error::BufferTooSmall { required })
+            return Err(Error::BufferTooSmall { required });
         }
 
         let record = self
@@ -920,21 +925,21 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let mut offset = 0;
         while id.is_some() {
             let Block::Data(block) = self.arena.get(id)? else {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             };
             let length = block.len as usize;
             if length > DATA_BYTES
                 || offset + length > required
                 || checksum(&block.bytes[..length]) != block.checksum
             {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             destination[offset..offset + length].copy_from_slice(&block.bytes[..length]);
             offset += length;
             id = block.next;
         }
         if offset != required || checksum(&destination[..offset]) != record.checksum {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         }
 
         Ok(ReadResult {
@@ -946,14 +951,14 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     /// Tombstones at most `limit` old versions and returns the number changed.
     pub fn purge(&mut self, path: &str, keep_latest: u32, limit: usize) -> Result<usize, Error> {
         if keep_latest == 0 {
-            return Err(Error::InvalidVersion)
+            return Err(Error::InvalidVersion);
         }
         let file = FileName::new(path)?;
         let mut purged = 0;
         while purged < limit {
             let (count, oldest) = self.version_span(file)?;
             if count <= keep_latest {
-                break
+                break;
             }
             let key = FileKey {
                 file,
@@ -979,12 +984,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
         for checkpoint in self.checkpoints.iter().flatten() {
             if checkpoint.root.is_some() {
-                mark_pending(
-                    checkpoint.root,
-                    &mut marked,
-                    &mut pending,
-                    &mut pending_len,
-                )
+                mark_pending(checkpoint.root, &mut marked, &mut pending, &mut pending_len)
             }
         }
 
@@ -992,7 +992,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             pending_len -= 1;
             let id = pending[pending_len];
             let Ok(block) = self.arena.get(id) else {
-                continue
+                continue;
             };
             match block {
                 Block::Data(data) if data.next.is_some() => {
@@ -1001,12 +1001,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 Block::Tree(TreeBlock::Leaf(leaf)) => {
                     for record in &leaf.records[..leaf.len as usize] {
                         if !record.deleted && record.data.is_some() {
-                            mark_pending(
-                                record.data,
-                                &mut marked,
-                                &mut pending,
-                                &mut pending_len,
-                            );
+                            mark_pending(record.data, &mut marked, &mut pending, &mut pending_len);
                         }
                     }
                 }
@@ -1023,7 +1018,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let mut freed_blocks = 0;
         for (index, slot) in self.arena.slots.iter_mut().enumerate() {
             if slot.block.is_none() {
-                continue
+                continue;
             }
             if marked[index] {
                 live_blocks += 1
@@ -1038,13 +1033,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
     }
 
-    fn mark_reachable(
-        &self,
-        root: BlockId,
-        marked: &mut [bool; MAX_BLOCKS],
-    ) -> Result<(), Error> {
+    fn mark_reachable(&self, root: BlockId, marked: &mut [bool; MAX_BLOCKS]) -> Result<(), Error> {
         if !root.is_some() {
-            return Ok(())
+            return Ok(());
         }
         let mut pending = [BlockId::NONE; MAX_BLOCKS];
         let mut pending_len = 0;
@@ -1094,20 +1085,19 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             let mut leaf = Leaf::EMPTY;
             leaf.len = 1;
             leaf.records[0] = record;
-            return self.arena.allocate(Block::Tree(TreeBlock::Leaf(leaf)))
+            return self.arena.allocate(Block::Tree(TreeBlock::Leaf(leaf)));
         }
 
         let inserted = self.insert_node(root, record)?;
         let Some(split) = inserted.split else {
-            return Ok(inserted.left)
+            return Ok(inserted.left);
         };
         let mut branch = Branch::EMPTY;
         branch.len = 1;
         branch.keys[0] = split.separator;
         branch.children[0] = inserted.left;
         branch.children[1] = split.right;
-        self.arena
-            .allocate(Block::Tree(TreeBlock::Branch(branch)))
+        self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
     }
 
     fn insert_node(&mut self, id: BlockId, record: FileRecord) -> Result<Inserted, Error> {
@@ -1124,7 +1114,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             .binary_search_by_key(&record.key, |item| item.key)
             .unwrap_or_else(|position| position);
         if position < len && leaf.records[position].key == record.key {
-            return Err(Error::AlreadyExists)
+            return Err(Error::AlreadyExists);
         }
 
         let mut records = [FileRecord::EMPTY; MAX_KEYS + 1];
@@ -1135,10 +1125,8 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             let mut updated = Leaf::EMPTY;
             updated.len = (len + 1) as u8;
             updated.records[..=len].copy_from_slice(&records[..=len]);
-            let left = self
-                .arena
-                .allocate(Block::Tree(TreeBlock::Leaf(updated)))?;
-            return Ok(Inserted { left, split: None })
+            let left = self.arena.allocate(Block::Tree(TreeBlock::Leaf(updated)))?;
+            return Ok(Inserted { left, split: None });
         }
 
         let middle = records.len() / 2;
@@ -1194,7 +1182,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             let left = self
                 .arena
                 .allocate(Block::Tree(TreeBlock::Branch(updated)))?;
-            return Ok(Inserted { left, split: None })
+            return Ok(Inserted { left, split: None });
         }
 
         let middle = new_len / 2;
@@ -1207,8 +1195,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let mut right_branch = Branch::EMPTY;
         right_branch.len = right_len as u8;
         right_branch.keys[..right_len].copy_from_slice(&keys[middle + 1..new_len]);
-        right_branch.children[..=right_len]
-            .copy_from_slice(&children[middle + 1..=new_len]);
+        right_branch.children[..=right_len].copy_from_slice(&children[middle + 1..=new_len]);
         let left = self
             .arena
             .allocate(Block::Tree(TreeBlock::Branch(left_branch)))?;
@@ -1225,13 +1212,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.find_record_at(self.root, key)
     }
 
-    fn find_record_at(
-        &self,
-        root: BlockId,
-        key: FileKey,
-    ) -> Result<Option<FileRecord>, Error> {
+    fn find_record_at(&self, root: BlockId, key: FileKey) -> Result<Option<FileRecord>, Error> {
         if !root.is_some() {
-            return Ok(None)
+            return Ok(None);
         }
         let mut id = root;
         loop {
@@ -1240,7 +1223,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                     return Ok(leaf.records[..leaf.len as usize]
                         .binary_search_by_key(&key, |record| record.key)
                         .ok()
-                        .map(|index| leaf.records[index]))
+                        .map(|index| leaf.records[index]));
                 }
                 Block::Tree(TreeBlock::Branch(branch)) => {
                     id = branch.children[child_index(&branch, key)]
@@ -1254,23 +1237,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.last_record_at(self.root, file)
     }
 
-    fn latest_record_at(
-        &self,
-        root: BlockId,
-        file: FileName,
-    ) -> Result<Option<FileRecord>, Error> {
+    fn latest_record_at(&self, root: BlockId, file: FileName) -> Result<Option<FileRecord>, Error> {
         Ok(self
             .last_record_at(root, file)?
             .filter(|record| !record.deleted))
     }
 
-    fn last_record_at(
-        &self,
-        root: BlockId,
-        file: FileName,
-    ) -> Result<Option<FileRecord>, Error> {
+    fn last_record_at(&self, root: BlockId, file: FileName) -> Result<Option<FileRecord>, Error> {
         if !root.is_some() {
-            return Ok(None)
+            return Ok(None);
         }
         let key = FileKey {
             file,
@@ -1284,7 +1259,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         .iter()
                         .rev()
                         .find(|record| record.key.file == file)
-                        .copied())
+                        .copied());
                 }
                 Block::Tree(TreeBlock::Branch(branch)) => {
                     id = branch.children[child_index(&branch, key)]
@@ -1324,7 +1299,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
 
         if !self.root.is_some() {
-            return Ok((0, None))
+            return Ok((0, None));
         }
         let mut count = 0;
         let mut oldest = None;
@@ -1352,10 +1327,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 Block::Tree(TreeBlock::Leaf(leaf)) => {
                     for record in &leaf.records[..leaf.len as usize] {
                         if record.deleted {
-                            continue
+                            continue;
                         }
                         if *ordinal == wanted {
-                            return Ok(Some(*record))
+                            return Ok(Some(*record));
                         }
                         *ordinal = ordinal.saturating_add(1)
                     }
@@ -1364,7 +1339,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 Block::Tree(TreeBlock::Branch(branch)) => {
                     for child in &branch.children[..=branch.len as usize] {
                         if let Some(record) = visit(fs, *child, wanted, ordinal)? {
-                            return Ok(Some(record))
+                            return Ok(Some(record));
                         }
                     }
                     Ok(None)
@@ -1374,7 +1349,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
 
         if !root.is_some() {
-            return Ok(None)
+            return Ok(None);
         }
         visit(self, root, wanted, &mut 0)
     }
@@ -1386,24 +1361,26 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         destination: &mut [u8],
     ) -> Result<usize, Error> {
         if offset > record.size {
-            return Err(Error::InvalidVersion)
+            return Err(Error::InvalidVersion);
         }
         let available = record.size - offset;
-        let wanted = destination.len().min(
-            usize::try_from(available).map_err(|_| Error::BufferTooSmall {
-                required: usize::MAX,
-            })?,
-        );
+        let wanted = destination
+            .len()
+            .min(
+                usize::try_from(available).map_err(|_| Error::BufferTooSmall {
+                    required: usize::MAX,
+                })?,
+            );
         let mut id = record.data;
         let mut block_start = 0_u64;
         let mut copied = 0;
         while id.is_some() && copied < wanted {
             let Block::Data(block) = self.arena.get(id)? else {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             };
             let length = block.len as usize;
             if length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             let block_end = block_start.saturating_add(length as u64);
             if offset < block_end {
@@ -1418,7 +1395,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             id = block.next
         }
         if copied != wanted {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         }
         Ok(copied)
     }
@@ -1435,8 +1412,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             Block::Tree(TreeBlock::Branch(mut branch)) => {
                 let index = child_index(&branch, key);
                 branch.children[index] = self.tombstone(branch.children[index], key)?;
-                self.arena
-                    .allocate(Block::Tree(TreeBlock::Branch(branch)))
+                self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
             }
             Block::Data(_) => Err(Error::Corrupt),
         }
@@ -1481,13 +1457,13 @@ fn mark_pending<const MAX_BLOCKS: usize>(
     pending_len: &mut usize,
 ) {
     let Some(index) = id.0.checked_sub(1).map(|index| index as usize) else {
-        return
+        return;
     };
     let Some(is_marked) = marked.get_mut(index) else {
-        return
+        return;
     };
     if *is_marked {
-        return
+        return;
     }
     *is_marked = true;
     pending[*pending_len] = id;
@@ -1523,7 +1499,7 @@ impl SynfsPurged {
 
     pub fn add_rule(&mut self, path: &str, keep_latest: u32) -> Result<(), Error> {
         if keep_latest == 0 {
-            return Err(Error::InvalidVersion)
+            return Err(Error::InvalidVersion);
         }
         let slot = self
             .rules
@@ -1549,7 +1525,7 @@ impl SynfsPurged {
             self.cursor = (self.cursor + 1) % MAX_RETENTION_RULES;
             visited += 1;
             let Some(rule) = self.rules[index] else {
-                continue
+                continue;
             };
             versions_purged += fs.purge(rule.file.as_str(), rule.keep_latest, 1)?;
         }

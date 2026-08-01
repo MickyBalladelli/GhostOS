@@ -1,16 +1,15 @@
 use syn_shell::{
     Text,
     diagnostics::{
-        ClusterSnapshot, CpuSnapshot, DiagnosticSource, DiskSnapshot,
-        MemorySnapshot, MonitorSnapshot, ProcessSnapshot,
-        ProcessState as ShellProcessState, UsersSnapshot,
+        ClusterSnapshot, CpuSnapshot, DiagnosticSource, DiskSnapshot, MemorySnapshot,
+        MonitorSnapshot, ProcessSnapshot, ProcessState as ShellProcessState, UsersSnapshot,
     },
 };
 use synos_status::Status;
 
 use crate::{
-    DeviceHealth, InspectCapability, InspectionProvider, InspectionService,
-    ProcessId, ProcessState, StorageKind, View,
+    DeviceHealth, InspectCapability, InspectionProvider, InspectionService, ProcessId,
+    ProcessState, StorageKind, View,
 };
 
 pub struct ShellInspectionSource<Provider> {
@@ -65,16 +64,18 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
         let free_bytes = report
             .nodes()
             .fold(0u64, |total, node| total.saturating_add(node.free_bytes));
-        let cxl_bytes = report
-            .cxl_leases()
-            .fold(0u64, |total, lease| total.saturating_add(lease.range.length));
+        let cxl_bytes = report.cxl_leases().fold(0u64, |total, lease| {
+            total.saturating_add(lease.range.length)
+        });
         let layer2_bytes = report.dsm_allocations().fold(0u64, |total, allocation| {
             total.saturating_add(allocation.range.length)
         });
         Ok(MemorySnapshot {
             total_bytes,
             free_bytes,
-            local_bytes: total_bytes.saturating_sub(cxl_bytes).saturating_sub(layer2_bytes),
+            local_bytes: total_bytes
+                .saturating_sub(cxl_bytes)
+                .saturating_sub(layer2_bytes),
             cxl_bytes,
             layer2_bytes,
             vram_bytes: 0,
@@ -101,11 +102,14 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
             failed_devices: 0,
         };
         for device in report.devices() {
-            snapshot.capacity_bytes =
-                snapshot.capacity_bytes.saturating_add(device.capacity_bytes);
-            snapshot.allocated_bytes =
-                snapshot.allocated_bytes.saturating_add(device.allocated_bytes);
+            snapshot.capacity_bytes = snapshot
+                .capacity_bytes
+                .saturating_add(device.capacity_bytes);
+            snapshot.allocated_bytes = snapshot
+                .allocated_bytes
+                .saturating_add(device.allocated_bytes);
             match device.kind {
+                StorageKind::Ahci => {}
                 StorageKind::Nvme => {
                     snapshot.nvme_devices = snapshot.nvme_devices.saturating_add(1)
                 }
@@ -117,8 +121,7 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
             match device.health {
                 DeviceHealth::Online => {}
                 DeviceHealth::Degraded => {
-                    snapshot.degraded_devices =
-                        snapshot.degraded_devices.saturating_add(1)
+                    snapshot.degraded_devices = snapshot.degraded_devices.saturating_add(1)
                 }
                 DeviceHealth::Failed => {
                     snapshot.failed_devices = snapshot.failed_devices.saturating_add(1)
@@ -126,16 +129,16 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
             }
         }
         for volume in report.volumes() {
-            snapshot.synfs_used_bytes =
-                snapshot.synfs_used_bytes.saturating_add(volume.used_bytes);
+            snapshot.synfs_used_bytes = snapshot.synfs_used_bytes.saturating_add(volume.used_bytes);
             snapshot.cow_overhead_bytes = snapshot
                 .cow_overhead_bytes
                 .saturating_add(volume.cow_overhead_bytes);
             snapshot.retained_versions = snapshot
                 .retained_versions
                 .saturating_add(volume.retained_versions);
-            snapshot.checkpoints =
-                snapshot.checkpoints.saturating_add(volume.checkpoints as u64)
+            snapshot.checkpoints = snapshot
+                .checkpoints
+                .saturating_add(volume.checkpoints as u64)
         }
         Ok(snapshot)
     }
@@ -158,15 +161,13 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
         for node in report.nodes() {
             snapshot.sample_period_us = snapshot.sample_period_us.max(node.sample_period_us);
             snapshot.capacity_us = snapshot.capacity_us.saturating_add(node.capacity_us());
-            snapshot.microkernel_us =
-                snapshot.microkernel_us.saturating_add(node.microkernel_us);
-            snapshot.user_daemon_us =
-                snapshot.user_daemon_us.saturating_add(node.user_daemon_us);
-            snapshot.dsm_fault_us =
-                snapshot.dsm_fault_us.saturating_add(node.dsm_fault_us);
+            snapshot.microkernel_us = snapshot.microkernel_us.saturating_add(node.microkernel_us);
+            snapshot.user_daemon_us = snapshot.user_daemon_us.saturating_add(node.user_daemon_us);
+            snapshot.dsm_fault_us = snapshot.dsm_fault_us.saturating_add(node.dsm_fault_us);
             snapshot.idle_us = snapshot.idle_us.saturating_add(node.idle_us);
-            snapshot.context_switches =
-                snapshot.context_switches.saturating_add(node.context_switches);
+            snapshot.context_switches = snapshot
+                .context_switches
+                .saturating_add(node.context_switches);
             snapshot.dsm_faults = snapshot.dsm_faults.saturating_add(node.dsm_faults)
         }
         Ok(snapshot)
@@ -226,11 +227,7 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
         })
     }
 
-    fn monitor(
-        &mut self,
-        interval_us: u64,
-        samples: u64,
-    ) -> Result<MonitorSnapshot, Status> {
+    fn monitor(&mut self, interval_us: u64, samples: u64) -> Result<MonitorSnapshot, Status> {
         let cpu = self.cpu(false)?;
         let memory = self.memory(false)?;
         let busy = cpu.capacity_us.saturating_sub(cpu.idle_us);

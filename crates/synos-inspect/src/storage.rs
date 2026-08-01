@@ -1,7 +1,7 @@
 use synos_fabric::NodeId;
 use synos_synfs::{
-    BLOCK_SIZE, DeviceHealth as SynFsDeviceHealth, PoolLayout, StorageClass,
-    StoragePoolAdmin, SynFs,
+    BLOCK_SIZE, DeviceHealth as SynFsDeviceHealth, PoolLayout, StorageClass, StoragePoolAdmin,
+    SynFs,
 };
 
 use crate::{InspectError, Name};
@@ -11,6 +11,7 @@ pub const MAX_SYNFS_VOLUMES: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageKind {
+    Ahci,
     Nvme,
     CxlPersistentMemory,
     NetworkBlock,
@@ -86,7 +87,7 @@ impl StorageReport {
             || sample.allocated_bytes > sample.capacity_bytes
             || self.devices().any(|entry| entry.id == sample.id)
         {
-            return Err(InspectError::InvalidSample)
+            return Err(InspectError::InvalidSample);
         }
         insert(&mut self.devices, sample)
     }
@@ -98,7 +99,7 @@ impl StorageReport {
             || sample.cow_overhead_bytes > sample.used_bytes
             || self.volumes().any(|entry| entry.id == sample.id)
         {
-            return Err(InspectError::InvalidSample)
+            return Err(InspectError::InvalidSample);
         }
         insert(&mut self.volumes, sample)
     }
@@ -118,10 +119,8 @@ impl StorageReport {
             node,
             name: Name::new(name)?,
             generation: diagnostics.generation,
-            capacity_bytes: (diagnostics.capacity_blocks as u64)
-                .saturating_mul(BLOCK_SIZE as u64),
-            used_bytes: (diagnostics.live_blocks as u64)
-                .saturating_mul(BLOCK_SIZE as u64),
+            capacity_bytes: (diagnostics.capacity_blocks as u64).saturating_mul(BLOCK_SIZE as u64),
+            used_bytes: (diagnostics.live_blocks as u64).saturating_mul(BLOCK_SIZE as u64),
             cow_overhead_bytes: (diagnostics.cow_snapshot_blocks as u64)
                 .saturating_mul(BLOCK_SIZE as u64),
             retained_versions: diagnostics.retained_versions,
@@ -140,10 +139,11 @@ impl StorageReport {
                 .filter(|pool| pool.members().any(|member| member == device.id))
                 .fold(0u64, |allocated, pool| {
                     let device_blocks = match pool.layout {
-                        PoolLayout::Stripe => pool
-                            .allocated_blocks
-                            .saturating_add(pool.member_count() as u64 - 1)
-                            / pool.member_count() as u64,
+                        PoolLayout::Stripe => {
+                            pool.allocated_blocks
+                                .saturating_add(pool.member_count() as u64 - 1)
+                                / pool.member_count() as u64
+                        }
                         PoolLayout::Mirror => pool.allocated_blocks,
                     };
                     allocated.saturating_add(device_blocks)
@@ -152,10 +152,9 @@ impl StorageReport {
                 id: device.id.raw(),
                 node,
                 kind: match device.class {
+                    StorageClass::Ahci => StorageKind::Ahci,
                     StorageClass::Nvme => StorageKind::Nvme,
-                    StorageClass::CxlPersistentMemory => {
-                        StorageKind::CxlPersistentMemory
-                    }
+                    StorageClass::CxlPersistentMemory => StorageKind::CxlPersistentMemory,
                     StorageClass::NetworkBlock => StorageKind::NetworkBlock,
                 },
                 health: match device.health {
@@ -166,8 +165,7 @@ impl StorageReport {
                 capacity_bytes: device
                     .capacity_blocks
                     .saturating_mul(device.block_size as u64),
-                allocated_bytes: allocated_blocks
-                    .saturating_mul(device.block_size as u64),
+                allocated_bytes: allocated_blocks.saturating_mul(device.block_size as u64),
                 media_errors: 0,
                 temperature_millicelsius: 0,
             })?

@@ -1,4 +1,5 @@
 use super::*;
+use crate::block::BlockStore;
 
 const SUPERBLOCK_MAGIC: &[u8; 8] = b"SYNFSVOL";
 const TYPE_MAP_MAGIC: &[u8; 8] = b"SYNFSMAP";
@@ -67,7 +68,10 @@ impl<'a> Encoder<'a> {
     }
 
     fn put_bytes(&mut self, value: &[u8]) -> Result<(), Error> {
-        let end = self.position.checked_add(value.len()).ok_or(Error::Corrupt)?;
+        let end = self
+            .position
+            .checked_add(value.len())
+            .ok_or(Error::Corrupt)?;
         let destination = self
             .bytes
             .get_mut(self.position..end)
@@ -158,6 +162,27 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Self::format(image)
     }
 
+    /// Format a volume image and persist it through a block provider.
+    pub fn format_to_device<D: BlockStore>(image: &mut [u8], device: &mut D) -> Result<(), Error> {
+        Self::format(image)?;
+        device
+            .reserve(Self::volume_blocks() as u64)
+            .map_err(|_| Error::Io)?;
+        let result = (|| {
+            for block in 0..Self::volume_blocks() {
+                let start = block * BLOCK_SIZE;
+                device
+                    .write_block(block as u64, &image[start..start + BLOCK_SIZE])
+                    .map_err(|_| Error::Io)?;
+            }
+            device.flush().map_err(|_| Error::Io)
+        })();
+        if result.is_err() {
+            let _ = device.release(Self::volume_blocks() as u64);
+        }
+        result
+    }
+
     pub fn load(image: &[u8]) -> Result<Self, Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
         let first = read_superblock::<MAX_BLOCKS>(image, 0)?;
@@ -175,6 +200,30 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Self::load(image)
     }
 
+    /// Read a complete persistent volume into the caller's staging image.
+    pub fn load_from_device<D: BlockStore>(
+        image: &mut [u8],
+        device: &mut D,
+    ) -> Result<Self, Error> {
+        require_image_size::<MAX_BLOCKS>(image)?;
+        device
+            .reserve(Self::volume_blocks() as u64)
+            .map_err(|_| Error::Io)?;
+        let result = (|| {
+            for block in 0..Self::volume_blocks() {
+                let start = block * BLOCK_SIZE;
+                device
+                    .read_block(block as u64, &mut image[start..start + BLOCK_SIZE])
+                    .map_err(|_| Error::Io)?;
+            }
+            Self::load(image)
+        })();
+        if result.is_err() {
+            let _ = device.release(Self::volume_blocks() as u64);
+        }
+        result
+    }
+
     pub fn recover(image: &[u8]) -> Result<Self, Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
         let first = read_superblock::<MAX_BLOCKS>(image, 0)?;
@@ -188,11 +237,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         };
         match load_bank::<MAX_BLOCKS>(image, candidate.0, candidate.1) {
             Ok(filesystem) => Ok(filesystem),
-            Err(_) => candidate
-                .2
-                .map_or(Err(Error::Corrupt), |superblock| {
-                    load_bank::<MAX_BLOCKS>(image, 1 - candidate.0, superblock)
-                }),
+            Err(_) => candidate.2.map_or(Err(Error::Corrupt), |superblock| {
+                load_bank::<MAX_BLOCKS>(image, 1 - candidate.0, superblock)
+            }),
         }
     }
 
@@ -203,7 +250,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     pub fn flush(&mut self, image: &mut [u8]) -> Result<VolumeCommit, Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
         if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         }
         self.check_consistency()?;
         let next_sequence = self
@@ -238,12 +285,79 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         })
     }
 
+    /// Persist the inactive generation directly to a block provider. The
+    /// superblock is written last and the provider is flushed before the new
+    /// generation becomes active, preserving the existing two-bank recovery
+    /// protocol across power loss.
+    pub fn flush_to_device<D: BlockStore>(
+        &mut self,
+        device: &mut D,
+    ) -> Result<VolumeCommit, Error> {
+        if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
+            return Err(Error::Corrupt);
+        }
+        self.check_consistency()?;
+        let next_sequence = self
+            .volume_sequence
+            .checked_add(1)
+            .ok_or(Error::VersionOverflow)?;
+        let bank = 1 - self.volume_bank;
+        let base = generation_offset::<MAX_BLOCKS>(bank) / BLOCK_SIZE;
+        let map = bank_type_map::<MAX_BLOCKS>(&self.arena);
+        let mut scratch = [0; BLOCK_SIZE];
+        device
+            .write_block((base + 1) as u64, &map)
+            .map_err(|_| Error::Io)?;
+        for (index, slot) in self.arena.slots.iter().enumerate() {
+            scratch.fill(0);
+            match slot.block {
+                None => {}
+                Some(Block::Tree(tree)) => encode_tree(&mut scratch, tree)?,
+                Some(Block::Data(data)) => encode_data(&mut scratch, data),
+            }
+            device
+                .write_block((base + 2 + index) as u64, &scratch)
+                .map_err(|_| Error::Io)?;
+        }
+        let superblock = Superblock {
+            sequence: next_sequence,
+            generation: self.generation,
+            root: self.root,
+            next_checkpoint: self.next_checkpoint,
+            checkpoints: self.checkpoints,
+            type_map_checksum: checksum(&map),
+        };
+        encode_superblock::<MAX_BLOCKS>(&mut scratch, superblock)?;
+        device
+            .write_block(base as u64, &scratch)
+            .map_err(|_| Error::Io)?;
+        device.flush().map_err(|_| Error::Io)?;
+        self.volume_bank = bank;
+        self.volume_sequence = next_sequence;
+        Ok(VolumeCommit {
+            sequence: next_sequence,
+            generation: self.generation,
+        })
+    }
+
+    /// Discard both on-device generation banks after the caller has removed
+    /// the volume. This is explicit because discard is destructive.
+    pub fn discard_from_device<D: BlockStore>(device: &mut D) -> Result<(), Error> {
+        for block in 0..Self::volume_blocks() {
+            device.discard_block(block as u64).map_err(|_| Error::Io)?;
+        }
+        device.flush().map_err(|_| Error::Io)?;
+        device
+            .release(Self::volume_blocks() as u64)
+            .map_err(|_| Error::Io)
+    }
+
     pub fn check_consistency(&self) -> Result<(), Error> {
         let mut seen = [false; MAX_BLOCKS];
         self.validate_root(self.root, &mut seen)?;
         for checkpoint in self.checkpoints.iter().flatten() {
             if checkpoint.info.id.raw() == 0 || checkpoint.info.generation > self.generation {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             let mut seen = [false; MAX_BLOCKS];
             self.validate_root(checkpoint.root, &mut seen)?;
@@ -255,13 +369,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.check_consistency()
     }
 
-    fn validate_root(
-        &self,
-        root: BlockId,
-        seen: &mut [bool; MAX_BLOCKS],
-    ) -> Result<(), Error> {
+    fn validate_root(&self, root: BlockId, seen: &mut [bool; MAX_BLOCKS]) -> Result<(), Error> {
         if !root.is_some() {
-            return Ok(())
+            return Ok(());
         }
         self.validate_tree(root, seen)
     }
@@ -269,21 +379,21 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     fn validate_tree(&self, id: BlockId, seen: &mut [bool; MAX_BLOCKS]) -> Result<(), Error> {
         let index = block_index::<MAX_BLOCKS>(id)?;
         if seen[index] {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         }
         seen[index] = true;
         let Block::Tree(tree) = self.arena.get(id)? else {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         };
         match tree {
             TreeBlock::Leaf(leaf) => {
                 let length = usize::from(leaf.len);
                 if length == 0 || length > MAX_KEYS {
-                    return Err(Error::Corrupt)
+                    return Err(Error::Corrupt);
                 }
                 for pair in leaf.records[..length].windows(2) {
                     if pair[0].key >= pair[1].key {
-                        return Err(Error::Corrupt)
+                        return Err(Error::Corrupt);
                     }
                 }
                 for record in &leaf.records[..length] {
@@ -292,11 +402,11 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         || usize::from(record.key.file.len) > MAX_PATH_BYTES
                         || record.created_at > self.generation
                     {
-                        return Err(Error::Corrupt)
+                        return Err(Error::Corrupt);
                     }
                     if record.deleted {
                         if record.size != 0 || record.data.is_some() {
-                            return Err(Error::Corrupt)
+                            return Err(Error::Corrupt);
                         }
                     } else {
                         self.validate_data(record.data, record.size, record.checksum)?;
@@ -306,11 +416,11 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             TreeBlock::Branch(branch) => {
                 let length = usize::from(branch.len);
                 if length == 0 || length > MAX_KEYS {
-                    return Err(Error::Corrupt)
+                    return Err(Error::Corrupt);
                 }
                 for pair in branch.keys[..length].windows(2) {
                     if pair[0] >= pair[1] {
-                        return Err(Error::Corrupt)
+                        return Err(Error::Corrupt);
                     }
                 }
                 for child in &branch.children[..=length] {
@@ -321,7 +431,12 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Ok(())
     }
 
-    fn validate_data(&self, first: BlockId, size: u64, expected_checksum: u64) -> Result<(), Error> {
+    fn validate_data(
+        &self,
+        first: BlockId,
+        size: u64,
+        expected_checksum: u64,
+    ) -> Result<(), Error> {
         let mut id = first;
         let mut total = 0u64;
         let mut data_checksum = 0xcbf29ce484222325_u64;
@@ -329,15 +444,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         while id.is_some() {
             let index = block_index::<MAX_BLOCKS>(id)?;
             if seen[index] {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             seen[index] = true;
             let Block::Data(data) = self.arena.get(id)? else {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             };
             let length = usize::from(data.len);
             if length > DATA_BYTES || checksum(&data.bytes[..length]) != data.checksum {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             for byte in &data.bytes[..length] {
                 data_checksum ^= *byte as u64;
@@ -347,7 +462,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             id = data.next;
         }
         if total != size || data_checksum != expected_checksum {
-            return Err(Error::Corrupt)
+            return Err(Error::Corrupt);
         }
         Ok(())
     }
@@ -357,14 +472,13 @@ fn require_image_size<const MAX_BLOCKS: usize>(image: &[u8]) -> Result<(), Error
     if image.len() < SynFs::<MAX_BLOCKS>::volume_bytes() {
         return Err(Error::BufferTooSmall {
             required: SynFs::<MAX_BLOCKS>::volume_bytes(),
-        })
+        });
     }
     Ok(())
 }
 
 fn block_index<const MAX_BLOCKS: usize>(id: BlockId) -> Result<usize, Error> {
-    id.0
-        .checked_sub(1)
+    id.0.checked_sub(1)
         .map(|index| index as usize)
         .filter(|index| *index < MAX_BLOCKS)
         .ok_or(Error::Corrupt)
@@ -380,7 +494,7 @@ fn block_slice<'a, const MAX_BLOCKS: usize>(
     index: usize,
 ) -> Result<&'a [u8], Error> {
     if bank > 1 || index >= MAX_BLOCKS {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     let start = generation_offset::<MAX_BLOCKS>(bank) + (index + 2) * BLOCK_SIZE;
     image.get(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)
@@ -392,10 +506,12 @@ fn block_slice_mut<'a, const MAX_BLOCKS: usize>(
     index: usize,
 ) -> Result<&'a mut [u8], Error> {
     if bank > 1 || index >= MAX_BLOCKS {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     let start = generation_offset::<MAX_BLOCKS>(bank) + (index + 2) * BLOCK_SIZE;
-    image.get_mut(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)
+    image
+        .get_mut(start..start + BLOCK_SIZE)
+        .ok_or(Error::Corrupt)
 }
 
 fn type_map_bytes<const MAX_BLOCKS: usize>() -> [u8; BLOCK_SIZE] {
@@ -432,7 +548,7 @@ fn write_type_map<const MAX_BLOCKS: usize>(
     map: &[u8; BLOCK_SIZE],
 ) -> Result<(), Error> {
     if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     let start = generation_offset::<MAX_BLOCKS>(bank) + BLOCK_SIZE;
     image
@@ -448,12 +564,12 @@ fn read_type_map<const MAX_BLOCKS: usize>(
     expected_checksum: u64,
 ) -> Result<[u8; BLOCK_SIZE], Error> {
     if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     let start = generation_offset::<MAX_BLOCKS>(bank) + BLOCK_SIZE;
     let bytes = image.get(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)?;
     if &bytes[..TYPE_MAP_MAGIC.len()] != TYPE_MAP_MAGIC || checksum(bytes) != expected_checksum {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     let mut map = [0; BLOCK_SIZE];
     map.copy_from_slice(bytes);
@@ -466,7 +582,19 @@ fn write_superblock<const MAX_BLOCKS: usize>(
     superblock: Superblock,
 ) -> Result<(), Error> {
     let start = generation_offset::<MAX_BLOCKS>(bank);
-    let block = image.get_mut(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)?;
+    let block = image
+        .get_mut(start..start + BLOCK_SIZE)
+        .ok_or(Error::Corrupt)?;
+    encode_superblock::<MAX_BLOCKS>(block, superblock)
+}
+
+fn encode_superblock<const MAX_BLOCKS: usize>(
+    block: &mut [u8],
+    superblock: Superblock,
+) -> Result<(), Error> {
+    if block.len() < BLOCK_SIZE {
+        return Err(Error::Corrupt);
+    }
     block.fill(0);
     block[..8].copy_from_slice(SUPERBLOCK_MAGIC);
     put_u16(block, 8, VOLUME_FORMAT_VERSION);
@@ -477,7 +605,11 @@ fn write_superblock<const MAX_BLOCKS: usize>(
     put_u64(block, 32, superblock.generation);
     put_u32(block, 40, superblock.root.0);
     put_u64(block, 48, superblock.next_checkpoint);
-    put_u32(block, 56, superblock.checkpoints.iter().flatten().count() as u32);
+    put_u32(
+        block,
+        56,
+        superblock.checkpoints.iter().flatten().count() as u32,
+    );
     put_u64(block, 64, superblock.type_map_checksum);
     let mut offset = 80;
     for checkpoint in superblock.checkpoints {
@@ -500,7 +632,7 @@ fn read_superblock<const MAX_BLOCKS: usize>(
     let start = generation_offset::<MAX_BLOCKS>(bank);
     let block = image.get(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)?;
     if &block[..SUPERBLOCK_MAGIC.len()] != SUPERBLOCK_MAGIC {
-        return Ok(None)
+        return Ok(None);
     }
     if u16_at(block, 8) != VOLUME_FORMAT_VERSION
         || u16_at(block, 10) != SUPERBLOCK_HEADER_BYTES
@@ -509,15 +641,15 @@ fn read_superblock<const MAX_BLOCKS: usize>(
         || u64_at(block, SUPERBLOCK_CHECKSUM_OFFSET)
             != checksum(&block[..SUPERBLOCK_CHECKSUM_OFFSET])
     {
-        return Ok(None)
+        return Ok(None);
     }
     let checkpoint_count = u32_at(block, 56) as usize;
     if u64_at(block, 24) == 0 || checkpoint_count > MAX_CHECKPOINTS || u64_at(block, 48) == 0 {
-        return Ok(None)
+        return Ok(None);
     }
     let root = BlockId(u32_at(block, 40));
     if root.is_some() && root.0 as usize > MAX_BLOCKS {
-        return Ok(None)
+        return Ok(None);
     }
     let mut checkpoints = [None; MAX_CHECKPOINTS];
     let mut offset = 80;
@@ -526,7 +658,7 @@ fn read_superblock<const MAX_BLOCKS: usize>(
         let generation = u64_at(block, offset + 8);
         let root = BlockId(u32_at(block, offset + 16));
         if id == 0 || root.0 as usize > MAX_BLOCKS {
-            return Ok(None)
+            return Ok(None);
         }
         *slot = Some(Checkpoint {
             info: CheckpointInfo {
@@ -591,7 +723,7 @@ fn decode_data(source: &[u8]) -> Result<Block, Error> {
     let mut bytes = [0; DATA_BYTES];
     bytes.copy_from_slice(source.get(16..16 + DATA_BYTES).ok_or(Error::Corrupt)?);
     if usize::from(len) > DATA_BYTES || checksum(&bytes[..usize::from(len)]) != u64_at(source, 8) {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     Ok(Block::Data(DataBlock {
         next,
@@ -636,13 +768,12 @@ fn encode_tree(destination: &mut [u8], tree: TreeBlock) -> Result<(), Error> {
 
 fn decode_tree<const MAX_BLOCKS: usize>(source: &[u8]) -> Result<Block, Error> {
     if &source[..4] != TREE_MAGIC || source[5] != TREE_FORMAT_VERSION {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     let payload_len = usize::from(u16_at(source, 6));
-    if payload_len > BLOCK_SIZE - 16
-        || checksum(&source[16..16 + payload_len]) != u64_at(source, 8)
+    if payload_len > BLOCK_SIZE - 16 || checksum(&source[16..16 + payload_len]) != u64_at(source, 8)
     {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     let mut decoder = Decoder::new(&source[16..16 + payload_len]);
     match source[4] {
@@ -650,7 +781,7 @@ fn decode_tree<const MAX_BLOCKS: usize>(source: &[u8]) -> Result<Block, Error> {
             let len = decoder.get_u8()?;
             decoder.get_bytes(3)?;
             if usize::from(len) > MAX_KEYS {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             let mut leaf = Leaf::EMPTY;
             leaf.len = len;
@@ -663,7 +794,7 @@ fn decode_tree<const MAX_BLOCKS: usize>(source: &[u8]) -> Result<Block, Error> {
             let len = decoder.get_u8()?;
             decoder.get_bytes(3)?;
             if usize::from(len) > MAX_KEYS {
-                return Err(Error::Corrupt)
+                return Err(Error::Corrupt);
             }
             let mut branch = Branch::EMPTY;
             branch.len = len;
@@ -710,7 +841,7 @@ fn decode_record(decoder: &mut Decoder<'_>) -> Result<FileRecord, Error> {
     let deleted = decoder.get_u8()?;
     decoder.get_bytes(7)?;
     if deleted > 1 {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     Ok(FileRecord {
         key,
@@ -734,7 +865,7 @@ fn decode_file_name(decoder: &mut Decoder<'_>) -> Result<FileName, Error> {
     if usize::from(len) > MAX_PATH_BYTES
         || core::str::from_utf8(&source[..usize::from(len)]).is_err()
     {
-        return Err(Error::Corrupt)
+        return Err(Error::Corrupt);
     }
     bytes.copy_from_slice(source);
     Ok(FileName { bytes, len })
