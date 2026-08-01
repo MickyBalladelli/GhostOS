@@ -49,6 +49,29 @@ Pass `--initrd <PATH>` only when you have a separate initrd image.
 Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
 bounded run or `--integration` to run the SynOS integration checks.
 
+### Interactive terminal
+
+When stdin and stdout are TTYs, an unbounded VM run attaches the host terminal
+to the guest serial console automatically:
+
+```bash
+./target/release/synos-vm --kernel ../build/bios/kernel.bin \
+  --append "console=serial0"
+```
+
+Use `--interactive` or `--non-interactive` to choose the terminal behavior
+explicitly. `--non-interactive` keeps pipe input usable without changing TTY
+settings. Select `--serial-port com1`, `--serial-port com2`, or a hex I/O base;
+COM1 (`0x3f8`) is the default. Guests using the PS/2 keyboard path can use
+`--input ps2` instead of the default `--input serial`.
+
+Input is passed through as terminal bytes, including Enter, Tab, Ctrl-D, and
+ANSI escape sequences. Backspace is normalized to BS. Ctrl-C is a host escape
+and stops the VM. EOF sends Ctrl-D and stops the host session. Guest serial
+output passes through to stdout with prompt flushing. Guest ACPI poweroff and
+reboot requests end the session cleanly. `--steps <COUNT>` remains the bounded,
+non-interactive instruction-run mode.
+
 ## Documentation and examples
 
 Read the guides in this order:

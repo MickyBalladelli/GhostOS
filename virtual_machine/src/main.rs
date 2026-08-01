@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use synos_vm::{run_synos_integration, FirmwareMode, Vm, VmConfig};
+use synos_vm::{
+    run_synos_integration, FirmwareMode, TerminalExit, TerminalInputMode, TerminalSession, Vm,
+    VmConfig, COM1_PORT, COM2_PORT,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -8,6 +11,8 @@ struct Cli {
     config: VmConfig,
     efi_path: Option<PathBuf>,
     integration: bool,
+    terminal: Option<bool>,
+    input_mode: TerminalInputMode,
 }
 
 enum ParseResult {
@@ -45,6 +50,8 @@ where
     let mut config = VmConfig::default();
     let mut efi_path = None;
     let mut integration = false;
+    let mut terminal = None;
+    let mut input_mode = TerminalInputMode::Serial;
     let mut args = args.into_iter().peekable();
 
     while let Some(arg) = args.next() {
@@ -86,6 +93,19 @@ where
             }
             "--serial" => config.enable_serial = true,
             "--no-serial" => config.enable_serial = false,
+            "--serial-port" => {
+                let value = next_value(&mut args, "--serial-port")?;
+                config.serial_port = parse_serial_port(&value)?;
+            }
+            "--interactive" | "--terminal" => terminal = Some(true),
+            "--non-interactive" | "--no-terminal" => terminal = Some(false),
+            "--input" => {
+                input_mode = match next_value(&mut args, "--input")?.to_ascii_lowercase().as_str() {
+                    "serial" => TerminalInputMode::Serial,
+                    "ps2" | "keyboard" => TerminalInputMode::Ps2,
+                    value => return Err(format!("invalid input mode `{value}`; use `serial` or `ps2`")),
+                };
+            }
             "--integration" => integration = true,
             value if value.starts_with('-') => {
                 return Err(format!("unknown option `{value}`"));
@@ -100,11 +120,22 @@ where
     if integration && config.kernel_path.is_none() {
         return Err("--integration requires --kernel <path>".to_string());
     }
+    if terminal == Some(true)
+        && input_mode == TerminalInputMode::Serial
+        && !config.enable_serial
+    {
+        return Err("--interactive requires serial output".to_string());
+    }
+    if terminal == Some(true) && config.max_steps.is_some() {
+        return Err("--interactive cannot be combined with --steps".to_string());
+    }
 
     Ok(ParseResult::Run(Cli {
         config,
         efi_path,
         integration,
+        terminal,
+        input_mode,
     }))
 }
 
@@ -170,11 +201,25 @@ fn parse_memory(value: &str) -> Option<usize> {
         .filter(|size| *size > 0)
 }
 
+fn parse_serial_port(value: &str) -> Result<u16, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "com1" => Ok(COM1_PORT),
+        "com2" => Ok(COM2_PORT),
+        value => {
+            let value = value.strip_prefix("0x").unwrap_or(value);
+            u16::from_str_radix(value, 16)
+                .map_err(|_| format!("invalid serial port `{value}`"))
+        }
+    }
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     println!("SynOS Virtual Machine");
     println!("=====================");
 
     let config = cli.config;
+    let terminal_mode = cli.terminal;
+    let input_mode = cli.input_mode;
     let efi_image = cli
         .efi_path
         .map(|path| {
@@ -222,7 +267,20 @@ fn run(cli: Cli) -> Result<(), String> {
         );
         Ok(())
     } else {
-        vm.run().map_err(|error| format!("VM error: {error:?}"))
+        println!("Starting CPU emulation...");
+        let terminal = TerminalSession::new(terminal_mode)
+            .map_err(|error| format!("terminal error: {error}"))?;
+        let exit = vm
+            .run_with_terminal_mode(&terminal, input_mode)
+            .map_err(|error| format!("VM error: {error:?}"))?;
+        drop(terminal);
+        match exit {
+            TerminalExit::HostInterrupt => println!("\nVM stopped by Ctrl-C"),
+            TerminalExit::Eof => println!("\nVM input reached EOF"),
+            TerminalExit::GuestShutdown => println!("\nGuest powered off"),
+            TerminalExit::GuestReboot => println!("\nGuest requested reboot"),
+        }
+        Ok(())
     };
 
     result
@@ -248,6 +306,10 @@ Machine options:
   -c, --cpus <COUNT>        Number of guest CPUs
       --serial              Enable COM1 serial output (default)
       --no-serial            Disable COM1 serial output
+      --serial-port <PORT>   Serial port: com1, com2, or a hex I/O base
+      --interactive          Force raw interactive terminal mode
+      --non-interactive      Disable raw mode; keep pipe input usable
+      --input <MODE>         Host input path: serial (default) or ps2
       --steps <COUNT>       Run a bounded number of instructions
 
 Commands:

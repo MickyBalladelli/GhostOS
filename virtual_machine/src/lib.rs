@@ -7,6 +7,7 @@ pub mod net;
 pub mod integration;
 pub mod execution;
 pub mod snapshot;
+pub mod terminal;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -14,7 +15,7 @@ pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
     Ahci, ApicTrigger, Device, DiskImage, DisplayState, E1000, E1000_MMIO_SIZE, GopMode,
     GopPixelFormat, Hpet, InterruptController, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
-    PortBus, PortDevice, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
+    PortBus, PortDevice, PowerControl, PowerState, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
     VgaTextDevice, VideoMode, PS2_DATA_PORT, PS2_PORT_COUNT, PS2_STATUS_PORT,
     VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
     AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
@@ -22,6 +23,7 @@ pub use devices::{
     NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
     PCIE_ECAM_BASE_DEFAULT, PIT_CH0_PORT, PIT_PORT_COUNT, VBE_MODES, VESA_FB_SIZE, VESA_LFB_BASE,
     VGA_PORT_BASE, VGA_PORT_COUNT, VGA_TEXT_BASE, VGA_TEXT_SIZE, VIRTIO_BLK_CLASS,
+    POWER_CONTROL_PORT,
     VIRTIO_BLK_DEVICE_ID, VIRTIO_BLK_PROG_IF, VIRTIO_BLK_SUBCLASS, VIRTIO_CONSOLE_CLASS,
     VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_PROG_IF, VIRTIO_CONSOLE_SUBCLASS,
     VIRTIO_PCI_BAR0_SIZE, VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_CLASS, VIRTIO_RNG_DEVICE_ID,
@@ -40,6 +42,10 @@ pub use execution::{
     BlockProfile, ExecutionEngine, ExecutionEngineConfig, ExecutionStats,
 };
 pub use snapshot::{SnapshotChain, SnapshotDiff, SnapshotError, SnapshotId, VmSnapshot};
+pub use terminal::{
+    ascii_to_scancodes, TerminalError, TerminalExit, TerminalInput, TerminalInputMode,
+    TerminalSession,
+};
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -47,6 +53,7 @@ use std::rc::Rc;
 use synos_boot_protocol::BootMethod;
 
 pub const COM1_PORT: u16 = 0x3F8;
+pub const COM2_PORT: u16 = 0x2F8;
 pub const PCI_CONFIG_PORT: u16 = 0xCF8;
 pub const PCI_CONFIG_PORT_SIZE: u16 = 8;
 
@@ -70,6 +77,7 @@ pub struct VmConfig {
     pub boot_args: String,
     pub smp_cores: usize,
     pub enable_serial: bool,
+    pub serial_port: u16,
     pub firmware: FirmwareMode,
     pub max_steps: Option<u64>,
 }
@@ -83,6 +91,7 @@ impl Default for VmConfig {
             boot_args: String::new(),
             smp_cores: 1,
             enable_serial: true,
+            serial_port: COM1_PORT,
             firmware: FirmwareMode::Bios,
             max_steps: None,
         }
@@ -95,6 +104,7 @@ pub struct Vm {
     interrupt_controller: InterruptController,
     ports: PortBus,
     serial: Option<Rc<RefCell<Serial16550>>>,
+    power_state: Rc<RefCell<PowerState>>,
     ps2: Rc<RefCell<Ps2Controller>>,
     pci: Rc<RefCell<PciHostBridge>>,
     apic: Rc<RefCell<LocalApic>>,
@@ -127,11 +137,17 @@ impl Vm {
 
         let apic: Rc<RefCell<LocalApic>> = Rc::new(RefCell::new(LocalApic::new(0)));
         let mut ports = PortBus::new();
+        let power_state = Rc::new(RefCell::new(PowerState::Running));
+        ports.attach(
+            POWER_CONTROL_PORT,
+            4,
+            Box::new(PowerControl::new(power_state.clone())),
+        );
         let serial = if config.enable_serial {
-            let serial = Rc::new(RefCell::new(Serial16550::new(COM1_PORT)));
+            let serial = Rc::new(RefCell::new(Serial16550::new(config.serial_port)));
             serial.borrow_mut().attach_apic(apic.clone());
             serial.borrow_mut().set_irq_vector(0x24);
-            ports.attach(COM1_PORT, 8, Box::new(serial.clone()));
+            ports.attach(config.serial_port, 8, Box::new(serial.clone()));
             Some(serial)
         } else {
             None
@@ -387,6 +403,7 @@ impl Vm {
             interrupt_controller: InterruptController::new(),
             ports,
             serial,
+            power_state,
             ps2,
             pci,
             apic,
@@ -504,6 +521,60 @@ impl Vm {
         let started = std::time::Instant::now();
         loop {
             self.step_cpu(&started, usize::MAX)?;
+
+            if self.cpu.state.halted {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+    }
+
+    /// Run with a host terminal attached to the configured serial port.
+    /// Input is polled between guest execution batches, so a halted guest
+    /// remains alive and can be woken by a serial or PS/2 interrupt.
+    pub fn run_with_terminal(
+        &mut self,
+        terminal: &TerminalSession,
+    ) -> Result<TerminalExit, VmError> {
+        self.run_with_terminal_mode(terminal, TerminalInputMode::Serial)
+    }
+
+    pub fn run_with_terminal_mode(
+        &mut self,
+        terminal: &TerminalSession,
+        input_mode: TerminalInputMode,
+    ) -> Result<TerminalExit, VmError> {
+        self.initialize()?;
+
+        let started = std::time::Instant::now();
+        loop {
+            let input = terminal.poll().map_err(|_| VmError::IoError)?;
+            for byte in input.bytes {
+                match input_mode {
+                    TerminalInputMode::Serial => self.queue_serial_input(&[byte]),
+                    TerminalInputMode::Ps2 => {
+                        for scancode in ascii_to_scancodes(byte) {
+                            self.queue_keyboard_scancode(scancode)
+                        }
+                    }
+                }
+            }
+
+            self.step_cpu(&started, 256)?;
+            self.flush_serial_output();
+            terminal.flush_output().map_err(|_| VmError::IoError)?;
+
+            if input.host_interrupt {
+                return Ok(TerminalExit::HostInterrupt)
+            }
+            if input.eof {
+                return Ok(TerminalExit::Eof)
+            }
+
+            match *self.power_state.borrow() {
+                PowerState::Running => {}
+                PowerState::Shutdown => return Ok(TerminalExit::GuestShutdown),
+                PowerState::Reboot => return Ok(TerminalExit::GuestReboot),
+            }
 
             if self.cpu.state.halted {
                 std::thread::sleep(std::time::Duration::from_millis(1));
@@ -739,6 +810,16 @@ impl Vm {
         if let Some(serial) = &self.serial {
             serial.borrow_mut().push_input(bytes)
         }
+    }
+
+    pub fn flush_serial_output(&mut self) {
+        if let Some(serial) = &self.serial {
+            serial.borrow_mut().flush()
+        }
+    }
+
+    pub fn power_state(&self) -> PowerState {
+        *self.power_state.borrow()
     }
 
     pub fn queue_keyboard_scancode(&mut self, scancode: u8) {

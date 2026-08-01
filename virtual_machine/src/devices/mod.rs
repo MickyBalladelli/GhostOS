@@ -10,6 +10,7 @@ mod interrupt_controller;
 pub mod net;
 mod pit;
 mod serial;
+mod power;
 pub mod virtio;
 pub mod storage;
 
@@ -30,6 +31,7 @@ pub use display::{
 };
 pub use net::{E1000, E1000_MMIO_SIZE, VirtioNet};
 pub use serial::Serial16550;
+pub use power::{PowerControl, PowerState, POWER_CONTROL_PORT};
 pub use virtio::{
     VirtioBlk, VirtioConsole, VirtioRng, VIRTIO_BLK_CLASS, VIRTIO_BLK_DEVICE_ID,
     VIRTIO_BLK_PROG_IF, VIRTIO_BLK_SUBCLASS, VIRTIO_CONSOLE_CLASS, VIRTIO_CONSOLE_DEVICE_ID,

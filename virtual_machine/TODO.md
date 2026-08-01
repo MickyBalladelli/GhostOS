@@ -128,44 +128,44 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [ ] Live migration support (future)
   - [ ] Monitor console access
 
-- [ ] **Interactive SynOS Terminal**
-  - [ ] Define the terminal contract: use the guest COM1 serial console as the
+- [x] **Interactive SynOS Terminal**
+  - [x] Define the terminal contract: use the guest COM1 serial console as the
         first interactive path, with VGA/framebuffer output remaining available
         for future graphical terminals.
-  - [ ] Add terminal CLI options for enabling/disabling the terminal, choosing
+  - [x] Add terminal CLI options for enabling/disabling the terminal, choosing
         the serial port, and running non-interactively for scripts and CI.
-  - [ ] Detect whether stdin/stdout are attached to a TTY. Keep pipe and file
+  - [x] Detect whether stdin/stdout are attached to a TTY. Keep pipe and file
         execution usable without raw-terminal setup.
-  - [ ] Put the host terminal in raw, non-canonical mode so every key reaches
+  - [x] Put the host terminal in raw, non-canonical mode so every key reaches
         the guest immediately. Save and restore the original settings.
-  - [ ] Restore terminal settings on normal exit, Ctrl-C, EOF, VM error, and
+  - [x] Restore terminal settings on normal exit, Ctrl-C, EOF, VM error, and
         panic. Never leave the host shell in raw mode.
-  - [ ] Read host stdin without blocking the VM execution loop. Forward bytes
+  - [x] Read host stdin without blocking the VM execution loop. Forward bytes
         to the emulated COM1 receive FIFO through `Vm::queue_serial_input`.
-  - [ ] Handle Enter, Backspace, Tab, Ctrl-C, Ctrl-D, Escape sequences, and
+  - [x] Handle Enter, Backspace, Tab, Ctrl-C, Ctrl-D, Escape sequences, and
         EOF. Define which controls stay host-side and which reach SynOS.
-  - [ ] Keep guest serial output connected to host stdout. Flush promptly and
+  - [x] Keep guest serial output connected to host stdout. Flush promptly and
         prevent input handling from corrupting displayed output.
-  - [ ] Add ANSI/VT pass-through or a clear policy so prompts, colors, cursor
+  - [x] Add ANSI/VT pass-through or a clear policy so prompts, colors, cursor
         movement, and backspace behavior display correctly.
-  - [ ] Make the VM event loop poll stdin, devices, timers, and APIC interrupts
+  - [x] Make the VM event loop poll stdin, devices, timers, and APIC interrupts
         while the guest executes or waits in `HLT`.
-  - [ ] Wake a halted guest when an accepted serial or keyboard interrupt
+  - [x] Wake a halted guest when an accepted serial or keyboard interrupt
         arrives. Do not treat guest `HLT` as process shutdown.
-  - [ ] Add a clean guest shutdown path for poweroff and reboot, while Ctrl-C
+  - [x] Add a clean guest shutdown path for poweroff and reboot, while Ctrl-C
         remains a host escape.
-  - [ ] Add PS/2 keyboard injection for guests that do not use
+  - [x] Add PS/2 keyboard injection for guests that do not use
         `console=serial0`.
-  - [ ] Add a terminal-session abstraction owning stdin polling, input
+  - [x] Add a terminal-session abstraction owning stdin polling, input
         translation, output flushing, terminal state, and cleanup.
-  - [ ] Keep terminal code outside device emulation. It may call public VM
+  - [x] Keep terminal code outside device emulation. It may call public VM
         input/output APIs but must not reach into CPU internals.
-  - [ ] Add manual smoke checks: boot to the prompt, type `help`, run a
+  - [x] Add manual smoke checks: boot to the prompt, type `help`, run a
         command, verify output, test Backspace and Ctrl-C, leave the prompt
         idle in `HLT`, then wake it with input.
-  - [ ] Add automated CLI checks for piped input/output, TTY cleanup after an
+  - [x] Add automated CLI checks for piped input/output, TTY cleanup after an
         error, EOF handling, and guest shutdown.
-  - [ ] Document the interactive command and explain interactive versus
+  - [x] Document the interactive command and explain interactive versus
         bounded `--steps` runs.
 
 - [x] **Snapshot & State**

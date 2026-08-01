@@ -103,6 +103,11 @@ impl Serial16550 {
         std::mem::take(&mut self.output)
     }
 
+    /// Flush bytes waiting in the transmit FIFO.
+    pub fn flush(&mut self) {
+        self.flush_output()
+    }
+
     fn signal_receive_irq(&mut self) {
         if self.ier & 0x01 == 0 {
             return
