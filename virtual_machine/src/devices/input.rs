@@ -42,6 +42,7 @@ pub struct Ps2Controller {
     mouse_enabled: bool,
     mouse_streaming: bool,
     apic: Option<Rc<RefCell<LocalApic>>>,
+    pending_irq: Option<u8>,
     keyboard_irq_vector: u8,
     mouse_irq_vector: u8,
 }
@@ -49,7 +50,7 @@ pub struct Ps2Controller {
 impl Ps2Controller {
     pub fn new() -> Self {
         Self {
-            command_byte: 0x45,
+            command_byte: 0x44,
             output: VecDeque::new(),
             expecting_command_byte: false,
             expecting_mouse_command: false,
@@ -57,6 +58,7 @@ impl Ps2Controller {
             mouse_enabled: false,
             mouse_streaming: false,
             apic: None,
+            pending_irq: None,
             keyboard_irq_vector: KEYBOARD_IRQ_VECTOR,
             mouse_irq_vector: MOUSE_IRQ_VECTOR,
         }
@@ -140,10 +142,22 @@ impl Ps2Controller {
             } else {
                 self.keyboard_irq_vector
             };
-            if let Some(apic) = &self.apic {
-                apic.borrow_mut().signal(vector, ApicTrigger::Edge);
-            }
+            self.signal_irq(vector)
         }
+    }
+
+    fn signal_irq(&mut self, vector: u8) {
+        let Some(apic) = &self.apic else { return };
+        if let Ok(mut apic) = apic.try_borrow_mut() {
+            apic.signal(vector, ApicTrigger::Edge)
+        } else {
+            self.pending_irq = Some(vector)
+        }
+    }
+
+    pub fn poll_interrupt(&mut self) {
+        let Some(vector) = self.pending_irq.take() else { return };
+        self.signal_irq(vector)
     }
 
     fn handle_keyboard_command(&mut self, command: u8) {

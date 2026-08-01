@@ -655,6 +655,7 @@ impl Vm {
     /// the last CPU step. Runs outside the executor's `&mut Mmu` borrow so
     /// devices can DMA directly into guest physical memory.
     fn poll_devices(&mut self) {
+        self.ps2.borrow_mut().poll_interrupt();
         if self.ahci.borrow().has_pending() {
             self.ahci.borrow_mut().poll_dma(&mut self.mmu);
         }
@@ -807,6 +808,9 @@ impl Vm {
     }
 
     pub fn queue_serial_input(&mut self, bytes: &[u8]) {
+        if !bytes.is_empty() {
+            self.cpu.state.halted = false
+        }
         if let Some(serial) = &self.serial {
             serial.borrow_mut().push_input(bytes)
         }
@@ -823,6 +827,7 @@ impl Vm {
     }
 
     pub fn queue_keyboard_scancode(&mut self, scancode: u8) {
+        self.cpu.state.halted = false;
         self.ps2.borrow_mut().push_keyboard_scancode(scancode)
     }
 

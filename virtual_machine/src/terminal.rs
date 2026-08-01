@@ -239,18 +239,19 @@ enum RawMode {
 impl RawMode {
     #[cfg(unix)]
     fn enter() -> Result<Self, TerminalError> {
-        use std::process::Command;
-
-        let saved = Command::new("stty")
+        let saved = stty_command()
             .arg("-g")
             .output()
             .map_err(TerminalError::Io)?;
         if !saved.status.success() {
-            return Err(TerminalError::RawMode("cannot read terminal settings".to_string()))
+            return Err(TerminalError::RawMode(stty_error(
+                "cannot read terminal settings",
+                &saved.stderr,
+            )))
         }
         let saved = String::from_utf8_lossy(&saved.stdout).trim().to_string();
-        let status = Command::new("stty")
-            .args(["raw", "-echo", "min", "0", "time", "0"])
+        let status = stty_command()
+            .args(["raw", "-echo", "min", "1", "time", "0"])
             .status()
             .map_err(TerminalError::Io)?;
         if !status.success() {
@@ -265,11 +266,29 @@ impl RawMode {
     }
 }
 
+#[cfg(unix)]
+fn stty_command() -> std::process::Command {
+    let mut command = std::process::Command::new("stty");
+    #[cfg(target_os = "macos")]
+    command.args(["-f", "/dev/tty"]);
+    command
+}
+
+#[cfg(unix)]
+fn stty_error(context: &str, stderr: &[u8]) -> String {
+    let detail = String::from_utf8_lossy(stderr).trim().to_string();
+    if detail.is_empty() {
+        context.to_string()
+    } else {
+        format!("{context}: {detail}")
+    }
+}
+
 impl Drop for RawMode {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Self::Unix { saved } = self {
-            let _ = std::process::Command::new("stty").arg(saved).status();
+            let _ = stty_command().arg(saved).status();
         }
     }
 }

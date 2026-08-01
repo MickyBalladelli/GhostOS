@@ -55,8 +55,10 @@ When stdin and stdout are TTYs, an unbounded VM run attaches the host terminal
 to the guest serial console automatically:
 
 ```bash
-./target/release/synos-vm --kernel ../build/bios/kernel.bin \
-  --append "console=serial0"
+./target/release/synos-vm \
+  --kernel ../build/bios/kernel.bin \
+  --append "console=serial0" \
+  --interactive
 ```
 
 Use `--interactive` or `--non-interactive` to choose the terminal behavior

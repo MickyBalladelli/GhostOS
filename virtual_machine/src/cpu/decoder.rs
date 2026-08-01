@@ -183,7 +183,7 @@ impl InstructionDecoder {
         }
 
         let is_64 = addrsize == 64;
-        let mut base = rm;
+        let mut base = Some(rm);
         let mut index: Option<u8> = None;
         let mut scale: u8 = 1;
         let mut displacement: i32 = 0;
@@ -219,15 +219,15 @@ impl InstructionDecoder {
             if bas == 0b101 && mod_ == 0b00 {
                 // No base register; disp32 follows.
                 displacement = Self::rd32(mmu, pos)? as i32;
-                base = 0;
+                base = None;
             } else {
-                base = bas;
+                base = Some(bas);
                 if rex.b {
-                    base += 8;
+                    base = base.map(|base| base + 8);
                 }
             }
         } else if rex.b {
-            base += 8;
+            base = base.map(|base| base + 8);
         }
 
         if mod_ == 0b01 {
@@ -237,13 +237,7 @@ impl InstructionDecoder {
         }
 
         Ok(Operand::Memory(MemoryOperand {
-            base: if base == 0 && mod_ == 0 && rm != 0b100 && rm != 0b101 {
-                Some(0) // [rax]
-            } else if base == 0 && mod_ == 0 {
-                None
-            } else {
-                Some(base)
-            },
+            base,
             index,
             scale,
             displacement,
@@ -1208,7 +1202,6 @@ impl InstructionDecoder {
             }
             0xB7 => {
                 ins.mnemonic = "MOVZX";
-                ins.opsize = 16;
                 let (reg, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, 16, addrsize, segment, false)?;
                 ins.operands = vec![Operand::Register(reg), rm];
@@ -1223,7 +1216,6 @@ impl InstructionDecoder {
             }
             0xBF => {
                 ins.mnemonic = "MOVSX";
-                ins.opsize = 16;
                 let (reg, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, 16, addrsize, segment, false)?;
                 ins.operands = vec![Operand::Register(reg), rm];

@@ -1583,7 +1583,11 @@ impl InstructionExecutor {
         state: &mut CpuState,
         ports: &mut PortBus,
     ) -> Result<(), CpuError> {
-        let port = match ins.operands.get(1) {
+        let port_operand = match ins.mnemonic {
+            "OUT" => ins.operands.first(),
+            _ => ins.operands.get(1),
+        };
+        let port = match port_operand {
             Some(Operand::Immediate(v)) => *v as u16,
             Some(Operand::Register(2)) => state.rdx as u16,
             _ => 0,
@@ -1605,7 +1609,7 @@ impl InstructionExecutor {
                 state.set_reg_size(reg, size, v);
             }
             "OUT" => {
-                let v = match ins.operands.first() {
+                let v = match ins.operands.get(1) {
                     Some(Operand::Register(0)) => state.reg_size(0, size),
                     Some(Operand::Immediate(v)) => *v,
                     _ => 0,
