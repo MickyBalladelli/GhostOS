@@ -509,6 +509,7 @@ impl InstructionExecutor {
                 self.execute_string(instruction, state, mmu, ports)?
             }
             "IN" | "OUT" => self.execute_io(instruction, state, ports)?,
+            "CPUID" => self.execute_cpuid(instruction, state)?,
             "WRMSR" | "RDMSR" => self.execute_msr(instruction, state, mmu, apic)?,
             "SYSCALL" | "SYSRET" => self.execute_syscall(instruction, state, mmu)?,
             "SYSENTER" | "SYSEXIT" => {
@@ -1620,6 +1621,27 @@ impl InstructionExecutor {
     // ------------------------------------------------------------------
     // MSRs
     // ------------------------------------------------------------------
+
+    fn execute_cpuid(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+    ) -> Result<(), CpuError> {
+        let leaf = state.rax as u32;
+        let (eax, ebx, ecx, edx): (u32, u32, u32, u32) = match leaf {
+            0 => (1, 0x534F_6E53, 0x20204D56, 0x0000_0000), // "SynOSVM  "
+            1 => (0x0000_0601, 0, 0, (1 << 4) | (1 << 25) | (1 << 26) | (1 << 29)),
+            0x8000_0000 => (0x8000_0001, 0, 0, 0),
+            0x8000_0001 => (0, 0, 0, (1 << 26) | (1 << 29)),
+            _ => (0, 0, 0, 0),
+        };
+        state.rax = eax as u64;
+        state.rbx = ebx as u64;
+        state.rcx = ecx as u64;
+        state.rdx = edx as u64;
+        state.rip = ins.next_ip;
+        Ok(())
+    }
 
     fn execute_msr(
         &self,

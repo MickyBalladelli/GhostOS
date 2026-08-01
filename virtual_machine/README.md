@@ -11,18 +11,32 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ## Building
 
+Run these commands from the `virtual_machine/` directory. The plain
+`cargo build` command creates `target/debug/synos-vm`; the usage example below
+uses the release binary.
+
 ```bash
 cargo build --release
 ```
 
 ## Usage
 
+From the repository root, build the BIOS kernel first:
+
 ```bash
-./target/release/synos-vm --kernel ../kernel/build/bios/kernel.bin \
-    --initrd ../kernel/build/bios/initrd.img \
+./scripts/build-bios-image.sh
+```
+
+Then run the VM from the `virtual_machine/` directory. The BIOS build creates
+`build/bios/kernel.bin`; it does not create an initrd by default.
+
+```bash
+./target/release/synos-vm --kernel ../build/bios/kernel.bin \
     --memory 128M \
     --append "console=serial0"
 ```
+
+Pass `--initrd <PATH>` only when you have a separate initrd image.
 
 Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
 bounded run or `--integration` to run the SynOS integration checks.

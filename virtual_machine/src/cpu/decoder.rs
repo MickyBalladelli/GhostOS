@@ -376,7 +376,11 @@ impl InstructionDecoder {
                 if $size8 {
                     ins.opsize = 8;
                 }
-                let imm_size = if ins.opsize == 16 { 2 } else { 4 };
+                let imm_size = match ins.opsize {
+                    8 => 1,
+                    16 => 2,
+                    _ => 4,
+                };
                 ins.operands = vec![
                     Operand::Register(0),
                     Operand::Immediate(Self::read_imm(mmu, pos, imm_size, false)?),
@@ -1141,6 +1145,10 @@ impl InstructionDecoder {
             }
             0x35 => {
                 ins.mnemonic = "SYSEXIT";
+                return Ok(());
+            }
+            0xA2 => {
+                ins.mnemonic = "CPUID";
                 return Ok(());
             }
 
