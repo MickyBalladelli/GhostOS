@@ -64,11 +64,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] MBR boot sector loading
   - [x] INT 10h, INT 13h, INT 15h BIOS services
 
-- [ ] **UEFI Implementation**
-  - [ ] UEFI firmware initialization
-  - [ ] EFI application loading
-  - [ ] UEFI boot services (LoadImage, StartImage, etc.)
-  - [ ] Runtime services (GetVariable, SetVariable, etc.)
+- [x] **UEFI Implementation**
+  - [x] UEFI firmware initialization
+  - [x] EFI application loading
+  - [x] UEFI boot services (LoadImage, StartImage, etc.)
+  - [x] Runtime services (GetVariable, SetVariable, etc.)
 
 - [ ] **Boot Integration**
   - [ ] SynOS kernel image loading

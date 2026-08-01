@@ -20,6 +20,11 @@ pub use devices::{
     VGA_PORT_BASE, VGA_PORT_COUNT, VGA_TEXT_BASE, VGA_TEXT_SIZE,
 };
 pub use firmware::bios::{Bios, BiosContext};
+pub use firmware::uefi::{
+    UefiContext, UefiError, UefiState, UEFI_CALL_VECTOR, UEFI_CHILD_IMAGE_BASE, UEFI_IMAGE_BASE,
+    UEFI_MEMORY_MAP_BASE, UEFI_MEMORY_MAP_SIZE, UEFI_STACK_TOP, UEFI_TABLES_BASE,
+};
+pub use firmware::FirmwareMode;
 pub use boot::Loader;
 
 use std::cell::RefCell;
@@ -47,6 +52,7 @@ pub struct VmConfig {
     pub boot_args: String,
     pub smp_cores: usize,
     pub enable_serial: bool,
+    pub firmware: FirmwareMode,
 }
 
 impl Default for VmConfig {
@@ -58,6 +64,7 @@ impl Default for VmConfig {
             boot_args: String::new(),
             smp_cores: 1,
             enable_serial: true,
+            firmware: FirmwareMode::Bios,
         }
     }
 }
@@ -240,6 +247,17 @@ impl Vm {
         bios.context.set_display(display.clone());
         bios.set_memory_size(config.memory_size);
 
+        // When UEFI firmware is selected, construct a shared UEFI context
+        // reachable from both the VM (for init/EFI image config) and the CPU
+        // executor (via the INT 0xE0 firmware-call vector routed through the
+        // BIOS context).
+        if config.firmware == FirmwareMode::Uefi {
+            let mut uefi = UefiContext::new();
+            uefi.set_display(display.clone());
+            uefi.set_memory_size(config.memory_size);
+            bios.context.uefi = Some(uefi);
+        }
+
         Self {
             cpu,
             mmu,
@@ -259,10 +277,56 @@ impl Vm {
         }
     }
 
+    /// Set the firmware mode (BIOS or UEFI) before calling `run`.
+    pub fn set_firmware_mode(&mut self, mode: FirmwareMode) {
+        self.config.firmware = mode;
+        if mode == FirmwareMode::Uefi {
+            if self.bios.context.uefi.is_none() {
+                let mut uefi = UefiContext::new();
+                uefi.set_display(self.display.clone());
+                uefi.set_memory_size(self.config.memory_size);
+                self.bios.context.uefi = Some(uefi);
+            }
+        } else {
+            self.bios.context.uefi = None;
+        }
+    }
+
+    /// Provide an EFI application image (PE32+) for UEFI boot.
+    pub fn set_efi_application(&mut self, image: Vec<u8>) {
+        if let Some(uefi) = self.bios.context.uefi.as_mut() {
+            uefi.set_efi_application(image);
+        }
+    }
+
+    /// Mutable access to the UEFI firmware context (only valid in UEFI mode).
+    pub fn uefi(&self) -> Option<&UefiContext> {
+        self.bios.context.uefi.as_ref()
+    }
+
+    pub fn uefi_mut(&mut self) -> Option<&mut UefiContext> {
+        self.bios.context.uefi.as_mut()
+    }
+
     pub fn run(&mut self) -> Result<(), VmError> {
         println!("Initializing VM...");
 
-        let _ = self.bios.init(&mut self.mmu, &mut self.cpu.state);
+        match self.config.firmware {
+            FirmwareMode::Bios => {
+                let _ = self.bios.init(&mut self.mmu, &mut self.cpu.state);
+            }
+            FirmwareMode::Uefi => {
+                // UEFI init: build the SystemTable/boot/runtime services,
+                // map RAM identity, take the CPU to 64-bit long mode, and
+                // start the configured EFI application (if any).
+                if let Some(uefi) = self.bios.context.uefi.as_mut() {
+                    uefi.init(&mut self.mmu, &mut self.cpu.state)
+                        .map_err(|_| VmError::BootFailure)?;
+                } else {
+                    return Err(VmError::InvalidConfiguration);
+                }
+            }
+        }
 
         println!("Starting CPU emulation...");
 

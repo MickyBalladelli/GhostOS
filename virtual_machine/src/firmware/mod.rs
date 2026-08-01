@@ -1,8 +1,13 @@
 pub mod bios;
+pub mod uefi;
 
 pub use bios::{
     Bios, BiosContext, BiosError, BiosState, BIOS_ENTRY_LINEAR, BIOS_ROM_BASE, BIOS_ROM_SIZE,
     MBR_LOAD_ADDR, RESET_VECTOR_LINEAR,
+};
+pub use uefi::{
+    UefiContext, UefiError, UefiState, UEFI_CALL_VECTOR, UEFI_CHILD_IMAGE_BASE, UEFI_IMAGE_BASE,
+    UEFI_MEMORY_MAP_BASE, UEFI_MEMORY_MAP_SIZE, UEFI_STACK_TOP, UEFI_TABLES_BASE,
 };
 
 #[derive(Debug)]
@@ -32,9 +37,16 @@ pub struct Firmware {
 
 impl Firmware {
     pub fn new(mode: FirmwareMode) -> Self {
+        let mut context = BiosContext::new();
+        if mode == FirmwareMode::Uefi {
+            let mut uefi = UefiContext::new();
+            uefi.set_display(context.display());
+            uefi.set_memory_size(context.memory_size());
+            context.uefi = Some(uefi);
+        }
         Self {
             mode,
-            context: BiosContext::new(),
+            context,
         }
     }
 

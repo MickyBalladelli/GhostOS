@@ -2,6 +2,7 @@
 
 use crate::cpu::{CpuMode, CpuState, PrivilegeLevel, SegmentRegister};
 use crate::devices::DisplayState;
+use crate::firmware::uefi::{UefiContext, UEFI_CALL_VECTOR};
 use crate::memory::Mmu;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -47,6 +48,9 @@ pub struct BiosContext {
     display: Rc<RefCell<DisplayState>>,
     boot_image: Option<Vec<u8>>,
     memory_size: usize,
+    /// UEFI firmware context, shared with the executor through `call_int`
+    /// so vector 0xE0 (UEFI service dispatch) reaches the boot services.
+    pub uefi: Option<UefiContext>,
 }
 
 impl BiosContext {
@@ -59,11 +63,15 @@ impl BiosContext {
             display: Rc::new(RefCell::new(DisplayState::new())),
             boot_image: None,
             memory_size: 128 * 1024 * 1024,
+            uefi: None,
         }
     }
 
     pub fn set_display(&mut self, display: Rc<RefCell<DisplayState>>) {
-        self.display = display;
+        self.display = display.clone();
+        if let Some(uefi) = &mut self.uefi {
+            uefi.set_display(display);
+        }
     }
 
     pub fn display(&self) -> Rc<RefCell<DisplayState>> {
@@ -76,6 +84,9 @@ impl BiosContext {
 
     pub fn set_memory_size(&mut self, size: usize) {
         self.memory_size = size;
+        if let Some(uefi) = &mut self.uefi {
+            uefi.set_memory_size(size);
+        }
     }
 
     pub fn memory_size(&self) -> usize {
@@ -88,6 +99,12 @@ impl BiosContext {
     }
 
     pub fn init_uefi(&mut self) -> Result<(), BiosError> {
+        if self.uefi.is_none() {
+            let mut uefi = UefiContext::new();
+            uefi.set_display(self.display.clone());
+            uefi.set_memory_size(self.memory_size);
+            self.uefi = Some(uefi);
+        }
         self.state = BiosState::UefiInitialized;
         Ok(())
     }
@@ -97,6 +114,9 @@ impl BiosContext {
         self.ivt = [0; 256];
         self.bda = [0; 256];
         self.ega = [0; 32 * 4];
+        if let Some(uefi) = &mut self.uefi {
+            uefi.reset();
+        }
     }
 
     pub fn call_int(
@@ -105,6 +125,15 @@ impl BiosContext {
         cpu: &mut CpuState,
         mmu: &mut Mmu,
     ) -> Result<(), BiosError> {
+        // UEFI service dispatch: the firmware emits `int 0xE0` inside each
+        // boot/runtime service stub (mov eax,id; int 0xE0; ret). Route it to
+        // the UEFI context when UEFI firmware is active, otherwise ignore.
+        if int_num == UEFI_CALL_VECTOR {
+            if let Some(uefi) = &mut self.uefi {
+                uefi.dispatch(cpu, mmu);
+            }
+            return Ok(());
+        }
         match int_num {
             0x10 => self.video_service(cpu, mmu),
             0x13 => self.disk_service(cpu, mmu),
