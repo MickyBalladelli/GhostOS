@@ -6,6 +6,11 @@ use synos_power::{
     PowerController, PowerIo, PowerState,
 };
 
+#[cfg(target_arch = "x86_64")]
+const VM_POWER_CONTROL_PORT: u16 = 0x604;
+#[cfg(target_arch = "x86_64")]
+const VM_SOFT_OFF_VALUE: u16 = (5 << 10) | (1 << 13);
+
 struct PhysicalAcpiMemory<'a> {
     boot_info: &'a BootInfo,
 }
@@ -65,10 +70,15 @@ pub fn power_button_pressed(platform: &AcpiPlatform) -> bool {
 
 pub fn shutdown(platform: Option<&AcpiPlatform>) -> ! {
     crate::println!("Shutting down SynOS...");
-    if let Some(platform) = platform {
+    let acpi_requested = if let Some(platform) = platform {
         let mut controller = PowerController::new(*platform, PlatformIo);
         let _ = controller.enable_acpi(1_000_000);
-        let _ = controller.request(PowerState::SoftOff);
+        controller.request(PowerState::SoftOff).is_ok()
+    } else {
+        false
+    };
+    if !acpi_requested {
+        request_vm_shutdown()
     }
     crate::halt()
 }
@@ -93,6 +103,13 @@ pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
 }
 
 struct PlatformIo;
+
+fn request_vm_shutdown() {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        out_u16(VM_POWER_CONTROL_PORT, VM_SOFT_OFF_VALUE)
+    }
+}
 
 impl PowerIo for PlatformIo {
     fn read(&mut self, register: GenericAddress) -> Result<u64, AcpiError> {
