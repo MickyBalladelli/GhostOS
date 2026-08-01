@@ -518,9 +518,20 @@ impl Vm {
 
         println!("Starting CPU emulation...");
 
-        let started = std::time::Instant::now();
+        let mut started = std::time::Instant::now();
         loop {
             self.step_cpu(&started, usize::MAX)?;
+
+            match self.power_state() {
+                PowerState::Running => {}
+                PowerState::Shutdown => return Ok(()),
+                PowerState::Reboot => {
+                    self.reset();
+                    self.initialize()?;
+                    started = std::time::Instant::now();
+                    continue
+                }
+            }
 
             if self.cpu.state.halted {
                 std::thread::sleep(std::time::Duration::from_millis(1));
@@ -545,7 +556,7 @@ impl Vm {
     ) -> Result<TerminalExit, VmError> {
         self.initialize()?;
 
-        let started = std::time::Instant::now();
+        let mut started = std::time::Instant::now();
         loop {
             let input = terminal.poll().map_err(|_| VmError::IoError)?;
             for byte in input.bytes {
@@ -570,10 +581,15 @@ impl Vm {
                 return Ok(TerminalExit::Eof)
             }
 
-            match *self.power_state.borrow() {
+            match self.power_state() {
                 PowerState::Running => {}
                 PowerState::Shutdown => return Ok(TerminalExit::GuestShutdown),
-                PowerState::Reboot => return Ok(TerminalExit::GuestReboot),
+                PowerState::Reboot => {
+                    self.reset();
+                    self.initialize()?;
+                    started = std::time::Instant::now();
+                    continue
+                }
             }
 
             if self.cpu.state.halted {

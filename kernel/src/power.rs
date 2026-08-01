@@ -9,6 +9,8 @@ use synos_power::{
 #[cfg(target_arch = "x86_64")]
 const VM_POWER_CONTROL_PORT: u16 = 0x604;
 #[cfg(target_arch = "x86_64")]
+const VM_REBOOT_VALUE: u16 = 1 << 13;
+#[cfg(target_arch = "x86_64")]
 const VM_SOFT_OFF_VALUE: u16 = (5 << 10) | (1 << 13);
 
 struct PhysicalAcpiMemory<'a> {
@@ -85,8 +87,15 @@ pub fn shutdown(platform: Option<&AcpiPlatform>) -> ! {
 
 pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
     crate::println!("Rebooting SynOS...");
-    if let Some(platform) = platform {
-        let _ = PowerController::new(*platform, PlatformIo).request(PowerState::Reboot);
+    let acpi_requested = if let Some(platform) = platform {
+        let mut controller = PowerController::new(*platform, PlatformIo);
+        let _ = controller.enable_acpi(1_000_000);
+        controller.request(PowerState::Reboot).is_ok()
+    } else {
+        false
+    };
+    if !acpi_requested {
+        request_vm_reboot()
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -103,6 +112,13 @@ pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
 }
 
 struct PlatformIo;
+
+fn request_vm_reboot() {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        out_u16(VM_POWER_CONTROL_PORT, VM_REBOOT_VALUE)
+    }
+}
 
 fn request_vm_shutdown() {
     #[cfg(target_arch = "x86_64")]
