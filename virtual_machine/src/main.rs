@@ -275,10 +275,7 @@ fn run(cli: Cli) -> Result<(), String> {
             .map_err(|error| format!("VM error: {error:?}"))?;
         drop(terminal);
         match exit {
-            TerminalExit::HostInterrupt => println!("\nVM stopped by Ctrl-C"),
-            TerminalExit::Eof => println!("\nVM input reached EOF"),
             TerminalExit::GuestShutdown => println!("\nGuest powered off"),
-            TerminalExit::GuestReboot => println!("\nGuest requested reboot"),
         }
         Ok(())
     };

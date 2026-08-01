@@ -153,7 +153,7 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Wake a halted guest when an accepted serial or keyboard interrupt
         arrives. Do not treat guest `HLT` as process shutdown.
   - [x] Add a clean guest shutdown path for poweroff and reboot, while Ctrl-C
-        remains a host escape.
+        is delivered to the guest shell without stopping the VM.
   - [x] Add PS/2 keyboard injection for guests that do not use
         `console=serial0`.
   - [x] Add a terminal-session abstraction owning stdin polling, input

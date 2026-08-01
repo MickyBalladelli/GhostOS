@@ -36,16 +36,11 @@ enum InputEvent {
 #[derive(Debug, Default)]
 pub struct TerminalInput {
     pub bytes: Vec<u8>,
-    pub host_interrupt: bool,
-    pub eof: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalExit {
-    HostInterrupt,
-    Eof,
     GuestShutdown,
-    GuestReboot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +105,6 @@ impl TerminalSession {
             match event {
                 InputEvent::Bytes(bytes) => translate_input(&bytes, &mut input),
                 InputEvent::Eof => {
-                    input.eof = true;
                     input.bytes.push(0x04)
                 }
                 InputEvent::Error(error) => return Err(TerminalError::Io(error)),
@@ -128,8 +122,9 @@ impl TerminalSession {
 fn translate_input(bytes: &[u8], input: &mut TerminalInput) {
     for &byte in bytes {
         match byte {
-            // Ctrl-C is a host escape. It never reaches SynOS.
-            0x03 => input.host_interrupt = true,
+            // Ctrl-C belongs to the guest shell. It cancels the current input
+            // without stopping the VM.
+            0x03 => input.bytes.push(0x03),
             // TTYs commonly report Backspace as DEL; SynOS serial consoles
             // conventionally consume BS.
             0x7F => input.bytes.push(0x08),

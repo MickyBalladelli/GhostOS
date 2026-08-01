@@ -72,11 +72,11 @@ COM1 (`0x3f8`) is the default. Guests using the PS/2 keyboard path can use
 `--input ps2` instead of the default `--input serial`.
 
 Input is passed through as terminal bytes, including Enter, Tab, Ctrl-D, and
-ANSI escape sequences. Backspace is normalized to BS. Ctrl-C is a host escape
-and stops the VM. EOF sends Ctrl-D and stops the host session. Guest serial
-output passes through to stdout with prompt flushing. Guest ACPI poweroff
-requests end the session cleanly, while reboot requests reset and boot the guest
-again. `--steps <COUNT>` remains the bounded,
+ANSI escape sequences. Backspace is normalized to BS. Ctrl-C is sent to the
+guest shell and does not stop the VM. EOF sends Ctrl-D to the guest. Only guest
+ACPI poweroff ends the session; reboot requests reset and boot the guest again.
+Guest serial output passes through to stdout with prompt flushing.
+`--steps <COUNT>` remains the bounded,
 non-interactive instruction-run mode.
 
 ## Documentation and examples

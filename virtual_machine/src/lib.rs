@@ -574,13 +574,6 @@ impl Vm {
             self.flush_serial_output();
             terminal.flush_output().map_err(|_| VmError::IoError)?;
 
-            if input.host_interrupt {
-                return Ok(TerminalExit::HostInterrupt)
-            }
-            if input.eof {
-                return Ok(TerminalExit::Eof)
-            }
-
             match self.power_state() {
                 PowerState::Running => {}
                 PowerState::Shutdown => return Ok(TerminalExit::GuestShutdown),
