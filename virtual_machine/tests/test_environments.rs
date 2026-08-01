@@ -121,6 +121,20 @@ fn qemu_smp_boot() {
     assert_boot_output(&output, 2);
 }
 
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_root_filesystem_io() {
+    let Some(output) = run_qemu_boot(1) else {
+        return;
+    };
+    assert_boot_output(&output, 1);
+    assert!(
+        output.contains("SynFS root mounted")
+            && output.contains("application I/O validated"),
+        "QEMU did not validate root filesystem I/O; serial output was: {output:?}"
+    );
+}
+
 fn qemu_image() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SYNOS_QEMU_IMAGE") {
         return Some(PathBuf::from(path));

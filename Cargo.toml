@@ -82,6 +82,7 @@ default-members = [
     "crates/synos-remote-display",
     "kernel",
 ]
+exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"

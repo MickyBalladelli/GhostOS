@@ -1,0 +1,44 @@
+[package]
+name = "synos-fuzz"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+synos-fsd = { path = "../crates/fsd" }
+synos-host-filesystems = { path = "../crates/host-filesystems" }
+synos-synfs = { path = "../crates/synfs" }
+
+[[bin]]
+name = "path"
+path = "fuzz_targets/path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "volume"
+path = "fuzz_targets/volume.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "operations"
+path = "fuzz_targets/operations.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mount"
+path = "fuzz_targets/mount.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
