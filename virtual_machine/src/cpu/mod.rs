@@ -13,13 +13,13 @@ const CR0_PG_FLAG: u64 = 1 << 31;
 const EFER_LME_FLAG: u64 = 1 << 8;
 const EFER_LMA_FLAG: u64 = 1 << 10;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PrivilegeLevel {
     Ring0,
     Ring3,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CpuMode {
     Real16,
     Protected16,
@@ -561,7 +561,35 @@ impl Cpu {
         self.state.interrupt_shadow = false;
 
         let ip = self.state.rip;
-        let instruction = self.decoder.decode(ip, mmu).map_err(CpuError::from)?;
+        let instruction = self.decode_instruction(ip, mmu)?;
+        self.execute_decoded(&instruction, mmu, intc, ports, bios)
+    }
+
+    /// Decode one instruction without executing it. The execution engine
+    /// uses this to build and cache straight-line translation blocks.
+    pub fn decode_instruction(
+        &self,
+        ip: u64,
+        mmu: &Mmu,
+    ) -> Result<crate::cpu::decoder::DecodedInstruction, CpuError> {
+        self.decoder.decode(ip, mmu).map_err(CpuError::from)
+    }
+
+    /// Prepare the architectural state for one instruction boundary.
+    pub fn prepare_instruction(&mut self) {
+        self.state.interrupt_shadow = false;
+    }
+
+    /// Execute a previously decoded instruction. Callers must ensure that
+    /// the instruction still starts at the current RIP.
+    pub fn execute_decoded(
+        &mut self,
+        instruction: &crate::cpu::decoder::DecodedInstruction,
+        mmu: &mut Mmu,
+        intc: &mut InterruptController,
+        ports: &mut PortBus,
+        bios: &mut BiosContext,
+    ) -> Result<(), CpuError> {
         // Take an owned handle to the shared APIC before borrowing `state`
         // so the borrow checker sees disjoint sources (state field vs. the
         // Rc'd device behind the APIC field).
@@ -569,7 +597,7 @@ impl Cpu {
         let mut apic = apic_rc.as_ref().map(|a| a.borrow_mut());
         let state = &mut self.state;
         self.executor.execute(
-            &instruction,
+            instruction,
             state,
             mmu,
             intc,

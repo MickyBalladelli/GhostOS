@@ -202,6 +202,10 @@ pub struct Mmu {
     ram: Vec<u8>,
     allocator: FrameAllocator,
     mmio: Vec<MmioRegion>,
+    /// Monotonically increasing version for guest RAM writes. Translation
+    /// caches use it to discard decoded code after self-modifying writes or
+    /// DMA.
+    code_version: u64,
     // Identity/physical mappings the CPU sets up for bootstrap. Key: physical
     // frame address, value: PageFlags.
     identity: HashMap<u64, PageFlags>,
@@ -241,6 +245,7 @@ impl Mmu {
             allocator: FrameAllocator::new(size),
             ram,
             mmio: Vec::new(),
+            code_version: 0,
             identity: HashMap::new(),
             paging_enabled: false,
             cr3: 0,
@@ -250,6 +255,11 @@ impl Mmu {
 
     pub fn ram_size(&self) -> usize {
         self.ram.len()
+    }
+
+    /// Version of guest RAM used by the CPU translation cache.
+    pub fn code_version(&self) -> u64 {
+        self.code_version
     }
 
     pub fn allocator(&self) -> &FrameAllocator {
@@ -347,6 +357,7 @@ impl Mmu {
             return Err(MemoryError::InvalidAddress);
         }
         self.ram[start..end].copy_from_slice(&value.to_le_bytes()[..size]);
+        self.code_version = self.code_version.wrapping_add(1);
         Ok(())
     }
 
@@ -418,6 +429,7 @@ impl Mmu {
                 return Err(MemoryError::InvalidAddress);
             }
             self.ram[start..end].copy_from_slice(&bytes[offset..offset + chunk]);
+            self.code_version = self.code_version.wrapping_add(1);
             offset += chunk;
         }
         Ok(())
@@ -449,6 +461,7 @@ impl Mmu {
             }
             if (phys as usize) < self.ram.len() {
                 self.ram[phys as usize] = value;
+                self.code_version = self.code_version.wrapping_add(1);
                 return Ok(());
             }
             return Err(MemoryError::InvalidAddress);
@@ -458,6 +471,7 @@ impl Mmu {
         }
         if (addr as usize) < self.ram.len() {
             self.ram[addr as usize] = value;
+            self.code_version = self.code_version.wrapping_add(1);
             Ok(())
         } else {
             Err(MemoryError::InvalidAddress)
@@ -523,6 +537,7 @@ impl Mmu {
             return Err(MemoryError::InvalidAddress);
         }
         self.ram[start..end].copy_from_slice(bytes);
+        self.code_version = self.code_version.wrapping_add(1);
         Ok(())
     }
 
@@ -699,6 +714,7 @@ impl Mmu {
     pub fn reset(&mut self) {
         self.allocator.reset();
         self.ram.fill(0);
+        self.code_version = 0;
         self.identity.clear();
         self.paging_enabled = false;
         self.cr3 = 0;

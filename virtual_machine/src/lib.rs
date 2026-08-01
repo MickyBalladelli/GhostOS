@@ -5,6 +5,7 @@ pub mod firmware;
 pub mod boot;
 pub mod net;
 pub mod integration;
+pub mod execution;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::Mmu;
@@ -34,6 +35,9 @@ pub use firmware::FirmwareMode;
 pub use boot::Loader;
 pub use boot::{framebuffer_info, LoaderError, KERNEL_LOAD_ADDR};
 pub use integration::{run_synos_integration, IntegrationError, SynosIntegrationReport};
+pub use execution::{
+    BlockProfile, ExecutionEngine, ExecutionEngineConfig, ExecutionStats,
+};
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -103,6 +107,7 @@ pub struct Vm {
     virtio_rng: Rc<RefCell<VirtioRng>>,
     display: Rc<RefCell<DisplayState>>,
     bios: Bios,
+    execution: ExecutionEngine,
     config: VmConfig,
 }
 
@@ -394,6 +399,7 @@ impl Vm {
             virtio_rng,
             display,
             bios,
+            execution: ExecutionEngine::new(),
             config,
         }
     }
@@ -458,22 +464,32 @@ impl Vm {
         Ok(())
     }
 
-    fn step_cpu(&mut self, started: &std::time::Instant) -> Result<(), VmError> {
-        if let Err(error) = self.cpu.step(
+    fn step_cpu(
+        &mut self,
+        started: &std::time::Instant,
+        max_instructions: usize,
+    ) -> Result<usize, VmError> {
+        let executed = match self.execution.execute(
+            &mut self.cpu,
             &mut self.mmu,
             &mut self.interrupt_controller,
             &mut self.ports,
             &mut self.bios.context,
+            max_instructions,
         ) {
-            eprintln!("CPU error at RIP 0x{:016x}", self.cpu.state.rip);
-            return Err(error.into());
-        }
+            Ok(executed) => executed,
+            Err(error) => {
+                eprintln!("CPU error at RIP 0x{:016x}", self.cpu.state.rip);
+                return Err(error.into());
+            }
+        };
 
         // Deferred DMA for storage and NICs issued during the step.
         self.poll_devices();
 
         let now_ns = started.elapsed().as_nanos() as u64;
-        self.poll_apic(now_ns)
+        self.poll_apic(now_ns)?;
+        Ok(executed)
     }
 
     /// Run the VM until the guest halts.
@@ -484,7 +500,7 @@ impl Vm {
 
         let started = std::time::Instant::now();
         loop {
-            self.step_cpu(&started)?;
+            self.step_cpu(&started, usize::MAX)?;
 
             if self.cpu.state.halted {
                 println!("CPU halted");
@@ -504,8 +520,12 @@ impl Vm {
         let started = std::time::Instant::now();
         let mut steps = 0;
         while steps < max_steps && !self.cpu.state.halted {
-            self.step_cpu(&started)?;
-            steps += 1;
+            let remaining = (max_steps - steps).min(usize::MAX as u64) as usize;
+            let executed = self.step_cpu(&started, remaining)?;
+            if executed == 0 {
+                break;
+            }
+            steps += executed as u64;
         }
         Ok(VmRunReport {
             steps,
@@ -615,6 +635,7 @@ impl Vm {
 
     pub fn reset(&mut self) {
         self.cpu.reset();
+        self.execution.reset();
         self.mmu.reset();
         self.interrupt_controller.reset();
         self.ports.reset();
@@ -637,6 +658,14 @@ impl Vm {
 
     pub fn cpu_mut(&mut self) -> &mut Cpu {
         &mut self.cpu
+    }
+
+    pub fn execution(&self) -> &ExecutionEngine {
+        &self.execution
+    }
+
+    pub fn execution_mut(&mut self) -> &mut ExecutionEngine {
+        &mut self.execution
     }
 
     pub fn mmu(&self) -> &Mmu {
