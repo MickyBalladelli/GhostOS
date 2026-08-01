@@ -122,8 +122,8 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ## 7. CLI & Management
 
-- [ ] **Command-Line Interface**
-  - [ ] VM configuration via CLI arguments
+- [x] **Command-Line Interface**
+  - [x] VM configuration via CLI arguments
   - [ ] Snapshot save/restore functionality
   - [ ] Live migration support (future)
   - [ ] Monitor console access

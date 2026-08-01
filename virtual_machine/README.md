@@ -24,6 +24,9 @@ cargo build --release
     --append "console=serial0"
 ```
 
+Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
+bounded run or `--integration` to run the SynOS integration checks.
+
 ## Architecture
 
 ```
