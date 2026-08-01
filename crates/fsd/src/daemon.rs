@@ -1,14 +1,19 @@
 use core::fmt;
 
+use host_filesystems::{FileSystemKind, Partition};
 use synos_ipc::{Envelope, SharedBuffer};
-use synos_status::{IntoStatus, Severity, Status, facility};
+use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
     CheckpointInfo, Error as SynFsError, SynFs, SynFsDiagnostics, SynFsTransaction,
     TransactionCommit,
 };
 
+use crate::namespace::{
+    HostMountAuthority, MountCapability, Namespace, NamespaceError, RootActivation, RootFilesystem,
+};
+
 use crate::protocol::{
-    Capability, Flags, MAX_IPC_BUFFER_BYTES, Operation, ProcessId, ProtocolError, Request, Response,
+    Capability, Flags, Operation, ProcessId, ProtocolError, Request, Response, MAX_IPC_BUFFER_BYTES,
 };
 
 pub const DEFAULT_MAX_PROCESSES: usize = 64;
@@ -152,6 +157,7 @@ pub enum DaemonError {
     InvalidPath,
     InvalidRename,
     ScratchTooSmall { required: usize },
+    Namespace(NamespaceError),
     File(SynFsError),
 }
 
@@ -185,6 +191,20 @@ impl IntoStatus for DaemonError {
             Self::NotFound => Status::NOT_FOUND,
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
                 .expect("valid filesystem status"),
+            Self::Namespace(error) => match error {
+                NamespaceError::InvalidPath | NamespaceError::InvalidPartition => {
+                    Status::INVALID_ARGUMENT
+                }
+                NamespaceError::Capacity => Status::NO_SPACE,
+                NamespaceError::InvalidCapability | NamespaceError::AccessDenied => {
+                    Status::ACCESS_DENIED
+                }
+                NamespaceError::AlreadyMounted => Status::INVALID_ARGUMENT,
+                NamespaceError::RootBusy => Status::ACCESS_DENIED,
+                NamespaceError::Inactive
+                | NamespaceError::AlreadyActive
+                | NamespaceError::NotFound => Status::NOT_FOUND,
+            },
             Self::File(error) => error.status(),
         }
     }
@@ -208,6 +228,7 @@ impl fmt::Display for DaemonError {
             Self::InvalidPath => "invalid filesystem path",
             Self::InvalidRename => "invalid rename payload",
             Self::ScratchTooSmall { .. } => "daemon scratch space is too small",
+            Self::Namespace(_) => "invalid filesystem namespace operation",
             Self::File(_) => "SynFS operation failed",
         })
     }
@@ -353,17 +374,19 @@ pub struct Daemon<
     snapshots: [SnapshotSlot; MAX_SNAPSHOTS],
     mounts: [MountSlot; MAX_MOUNTS],
     next_mount_id: u32,
+    namespace: Namespace<MAX_MOUNTS>,
+    root_activation: RootActivation,
     scratch: [u8; SCRATCH_BYTES],
 }
 
 impl<
-    const MAX_BLOCKS: usize,
-    const MAX_PROCESSES: usize,
-    const MAX_OPEN_FILES: usize,
-    const MAX_SNAPSHOTS: usize,
-    const MAX_MOUNTS: usize,
-    const SCRATCH_BYTES: usize,
-> Daemon<MAX_BLOCKS, MAX_PROCESSES, MAX_OPEN_FILES, MAX_SNAPSHOTS, MAX_MOUNTS, SCRATCH_BYTES>
+        const MAX_BLOCKS: usize,
+        const MAX_PROCESSES: usize,
+        const MAX_OPEN_FILES: usize,
+        const MAX_SNAPSHOTS: usize,
+        const MAX_MOUNTS: usize,
+        const SCRATCH_BYTES: usize,
+    > Daemon<MAX_BLOCKS, MAX_PROCESSES, MAX_OPEN_FILES, MAX_SNAPSHOTS, MAX_MOUNTS, SCRATCH_BYTES>
 {
     pub fn new(filesystem: SynFs<MAX_BLOCKS>) -> Result<Self, DaemonError> {
         let root = Name::from_str(ROOT_MOUNT_NAME)?;
@@ -378,6 +401,10 @@ impl<
             name: root,
             read_only: false,
         };
+        let mut namespace = Namespace::new();
+        let root_activation = RootFilesystem::new()
+            .activate(&mut namespace, filesystem.generation())
+            .map_err(|_| DaemonError::MountExhausted)?;
         Ok(Self {
             filesystem,
             processes: [ProcessSlot::EMPTY; MAX_PROCESSES],
@@ -385,6 +412,8 @@ impl<
             snapshots: [SnapshotSlot::EMPTY; MAX_SNAPSHOTS],
             mounts,
             next_mount_id: 2,
+            namespace,
+            root_activation,
             scratch: [0; SCRATCH_BYTES],
         })
     }
@@ -395,6 +424,42 @@ impl<
 
     pub fn filesystem_mut(&mut self) -> &mut SynFs<MAX_BLOCKS> {
         &mut self.filesystem
+    }
+
+    /// Namespace and root mounts are activated as part of daemon startup.
+    pub fn namespace(&self) -> &Namespace<MAX_MOUNTS> {
+        &self.namespace
+    }
+
+    pub fn root_activation(&self) -> RootActivation {
+        self.root_activation
+    }
+
+    /// Mount a host partition with the boot-issued host-mount authority.
+    /// Host filesystem sources are always read-only.
+    pub fn mount_host(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        host_authority: HostMountAuthority,
+        path: &str,
+        filesystem: FileSystemKind,
+        partition: Partition,
+    ) -> Result<(crate::namespace::MountInfo, MountCapability), DaemonError> {
+        self.authorize_process(process, authority, FileRights::ADMIN)?;
+        self.namespace
+            .mount_host(host_authority, path, filesystem, partition)
+            .map_err(DaemonError::Namespace)
+    }
+
+    pub fn unmount_host(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        mount: MountCapability,
+    ) -> Result<(), DaemonError> {
+        self.authorize_process(process, authority, FileRights::ADMIN)?;
+        self.namespace.unmount(mount).map_err(DaemonError::Namespace)
     }
 
     pub fn register_process(
@@ -458,7 +523,13 @@ impl<
         if path.contains(';') {
             return Err(DaemonError::InvalidPath);
         }
-        let read_only_mount = self.mount_is_read_only(path);
+        let namespace_read_only = path
+            .starts_with('/')
+            .then(|| self.namespace.is_read_only(path))
+            .transpose()
+            .map_err(DaemonError::Namespace)?
+            .unwrap_or(false);
+        let read_only_mount = self.mount_is_read_only(path) || namespace_read_only;
         if read_only_mount && requested.contains(FileRights::WRITE) {
             return Err(DaemonError::ReadOnly);
         }
@@ -1013,19 +1084,28 @@ impl<
     fn list_mounts(&self, output: &mut [u8]) -> Result<usize, DaemonError> {
         let mut written = 0;
         for mount in self.mounts.iter().filter(|mount| mount.occupied) {
-            let required = mount.name.as_bytes().len() + 1;
-            if written + required > output.len() {
-                return Err(DaemonError::BufferTooSmall {
-                    required: written + required,
-                });
-            }
-            output[written..written + mount.name.as_bytes().len()]
-                .copy_from_slice(mount.name.as_bytes());
-            written += mount.name.as_bytes().len();
-            output[written] = b'\n';
-            written += 1;
+            written = Self::append_mount_name(written, mount.name.as_bytes(), output)?;
+        }
+        for mount in self.namespace.mounts() {
+            written = Self::append_mount_name(written, mount.path.as_bytes(), output)?;
         }
         Ok(written)
+    }
+
+    fn append_mount_name(
+        written: usize,
+        name: &[u8],
+        output: &mut [u8],
+    ) -> Result<usize, DaemonError> {
+        let required = name.len() + 1;
+        if written + required > output.len() {
+            return Err(DaemonError::BufferTooSmall {
+                required: written + required,
+            });
+        }
+        output[written..written + name.len()].copy_from_slice(name);
+        output[written + name.len()] = b'\n';
+        Ok(written + required)
     }
 
     fn write_snapshot_listing<const BLOCKS: usize>(
@@ -1160,13 +1240,13 @@ impl<
 }
 
 impl<
-    const MAX_BLOCKS: usize,
-    const MAX_PROCESSES: usize,
-    const MAX_OPEN_FILES: usize,
-    const MAX_SNAPSHOTS: usize,
-    const MAX_MOUNTS: usize,
-    const SCRATCH_BYTES: usize,
-> Default
+        const MAX_BLOCKS: usize,
+        const MAX_PROCESSES: usize,
+        const MAX_OPEN_FILES: usize,
+        const MAX_SNAPSHOTS: usize,
+        const MAX_MOUNTS: usize,
+        const SCRATCH_BYTES: usize,
+    > Default
     for Daemon<MAX_BLOCKS, MAX_PROCESSES, MAX_OPEN_FILES, MAX_SNAPSHOTS, MAX_MOUNTS, SCRATCH_BYTES>
 {
     fn default() -> Self {

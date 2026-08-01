@@ -39,10 +39,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Dispatch the SynFS operations from the runtime ABI through kernel IPC to `synos-fsd`.
   - [x] Validate shared buffers, capabilities, offsets, lengths, and operation flags at every boundary.
   - [x] Complete file descriptor behavior for create, truncate, append, seek, close, concurrent access, and error reporting.
-- [ ] **Namespace and Root Filesystem**
-  - [ ] Define the logical namespace and mount table for the immutable SynFS root, package store, logs, user data, and temporary storage.
-  - [ ] Mount and activate the SynFS root during user-space service startup.
-  - [ ] Expose read-only Ext4, FAT32, and NTFS host volumes through controlled mount capabilities.
+- [x] **Namespace and Root Filesystem**
+  - [x] Define the logical namespace and mount table for the immutable SynFS root, package store, logs, user data, and temporary storage.
+  - [x] Mount and activate the SynFS root during user-space service startup.
+  - [x] Expose read-only Ext4, FAT32, and NTFS host volumes through controlled mount capabilities.
 - [ ] **Directories and Metadata**
   - [ ] Add directory records, listing, directory creation/removal, rename, links, and file type metadata.
   - [ ] Add quotas, retention policy enforcement, free-space accounting, and per-volume limits.
