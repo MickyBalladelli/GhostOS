@@ -119,7 +119,7 @@ fn execute_line(
     acpi: Option<&AcpiPlatform>,
 ) {
     if line.eq_ignore_ascii_case("SHOW SYSTEM")
-        || line.eq_ignore_ascii_case("SHOW-SYSTEM")
+        || line.eq_ignore_ascii_case("SHOW SYSTEM")
     {
         executor.print_system();
         return
@@ -195,14 +195,12 @@ fn redraw<const HISTORY: usize>(editor: &LineEditor<HISTORY>) {
 
 fn banner() {
     crate::console::clear();
-    crate::println!("\x1b[1;36m   _____             ____   _____");
-    crate::println!("\x1b[1;96m{}", r"  / ____|           / __ \ / ____|");
-    crate::println!("\x1b[1;94m{}", r" | (___  _   _ _ __| |  | | (___");
-    crate::println!("\x1b[1;34m{}", r"  \___ \| | | | '_ \ |  | |\___ \");
-    crate::println!("\x1b[1;35m{}", r"  ____) | |_| | | | | |__| |____) |");
-    crate::println!("\x1b[1;95m{}", r" |_____/ \__, |_| |_\____/|_____/");
-    crate::println!("\x1b[1;36m{}", r"          __/ |");
-    crate::println!("\x1b[1;96m{}", r"         |___/");
+    crate::println!("\x1b[1;36m{}", r"   _____             ____  _____");
+    crate::println!("\x1b[1;96m{}", r"  / ___/__  ______  / __ \/ ___/");
+    crate::println!("\x1b[1;94m{}", r"  \__ \/ / / / __ \/ / / /\__ \ ");
+    crate::println!("\x1b[1;34m{}", r" ___/ / /_/ / / / / /_/ /___/ /");
+    crate::println!("\x1b[1;35m{}", r"/____/\__, /_/ /_/\____//____/");
+    crate::println!("\x1b[1;95m{}", r"     /____/                     ");
     crate::println!();
     crate::println!("\x1b[90m  SYNCHRONOUS NETWORK OPERATING SYSTEM // VT100 ONLINE\x1b[0m");
     crate::println!("\x1b[34m  --------------------------------------------------------\x1b[0m");
@@ -376,7 +374,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW-SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW-PROCESSES, TOP-CPU, SHOW-MEMORY, SHOW-DSM",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM",
         )?;
         Ok(output)
     }

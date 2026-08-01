@@ -6,6 +6,7 @@
 //! virtqueue implementation below.
 
 use crate::devices::storage::DiskImage;
+use crate::devices::serial::write_host_console;
 use crate::devices::{ApicTrigger, Device, DeviceError, LocalApic, PortDevice};
 use crate::memory::Mmu;
 use std::cell::RefCell;
@@ -440,6 +441,7 @@ impl Default for VirtioBlk {
 pub struct VirtioConsole {
     transport: VirtioTransport,
     output: Vec<u8>,
+    host_last_was_cr: bool,
 }
 
 impl VirtioConsole {
@@ -447,6 +449,7 @@ impl VirtioConsole {
         Self {
             transport: VirtioTransport::new(),
             output: Vec::new(),
+            host_last_was_cr: false,
         }
     }
 
@@ -489,7 +492,7 @@ impl VirtioConsole {
                 completed = completed.saturating_add(bytes.len() as u32);
                 self.output.extend_from_slice(&bytes);
                 let mut stdout = std::io::stdout().lock();
-                let _ = stdout.write_all(&bytes);
+                let _ = write_host_console(&mut stdout, &bytes, &mut self.host_last_was_cr);
                 let _ = stdout.flush();
             }
             if self.output.len() > 1024 * 1024 {
@@ -528,6 +531,7 @@ impl VirtioConsole {
     pub fn reset(&mut self) {
         self.transport.reset();
         self.output.clear();
+        self.host_last_was_cr = false;
     }
 }
 

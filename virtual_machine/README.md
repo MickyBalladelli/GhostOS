@@ -33,6 +33,7 @@ Then run the VM from the `virtual_machine/` directory. The BIOS build creates
 
 The whole sequence of commands is: 
 ```bash
+# from the root folder
 ./scripts/build-bios-image.sh
 
 cd virtual_machine
@@ -42,6 +43,9 @@ cargo build --release
   --kernel ../build/bios/kernel.bin \
   --memory 128M \
   --append "console=serial0"
+
+cargo build --release
+
 ```
 
 Pass `--initrd <PATH>` only when you have a separate initrd image.

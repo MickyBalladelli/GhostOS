@@ -4,7 +4,7 @@ use super::{DeviceError, PortDevice};
 use super::{ApicTrigger, LocalApic};
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::Write;
+use std::io::{self, Write};
 use std::rc::Rc;
 
 const REG_DATA: u16 = 0x00;
@@ -24,6 +24,22 @@ const LSR_TRANSMIT_EMPTY: u8 = 0x40;
 
 const FIFO_SIZE: usize = 16;
 
+pub(crate) fn write_host_console<W: Write>(
+    output: &mut W,
+    bytes: &[u8],
+    previous_was_cr: &mut bool,
+) -> io::Result<()> {
+    let mut translated = Vec::with_capacity(bytes.len());
+    for &byte in bytes {
+        if byte == b'\n' && !*previous_was_cr {
+            translated.push(b'\r');
+        }
+        translated.push(byte);
+        *previous_was_cr = byte == b'\r';
+    }
+    output.write_all(&translated)
+}
+
 /// Emulated 16550 UART. Output is redirected to `std::io::stdout` so a guest
 /// kernel can print debug messages.
 pub struct Serial16550 {
@@ -40,6 +56,7 @@ pub struct Serial16550 {
     scratch: u8,
     tx_buffer: [u8; FIFO_SIZE],
     tx_count: usize,
+    host_last_was_cr: bool,
     rx_buffer: VecDeque<u8>,
     output: Vec<u8>,
     apic: Option<Rc<RefCell<LocalApic>>>,
@@ -62,6 +79,7 @@ impl Serial16550 {
             scratch: 0,
             tx_buffer: [0; FIFO_SIZE],
             tx_count: 0,
+            host_last_was_cr: false,
             rx_buffer: VecDeque::new(),
             output: Vec::new(),
             apic: None,
@@ -119,9 +137,11 @@ impl Serial16550 {
 
     fn flush_output(&mut self) {
         let mut stdout = std::io::stdout().lock();
-        for &b in &self.tx_buffer[..self.tx_count] {
-            let _ = stdout.write_all(&[b]);
-        }
+        let _ = write_host_console(
+            &mut stdout,
+            &self.tx_buffer[..self.tx_count],
+            &mut self.host_last_was_cr,
+        );
         let _ = stdout.flush();
         self.output.extend_from_slice(&self.tx_buffer[..self.tx_count]);
         if self.output.len() > 1024 * 1024 {
@@ -224,7 +244,7 @@ impl PortDevice for Serial16550 {
             }
             self.tx_buffer[self.tx_count] = v;
             self.tx_count += 1;
-            if v == b'\n' {
+            if matches!(v, b'\n' | b'\r') {
                 self.flush_output();
             }
         }
@@ -296,5 +316,24 @@ mod tests {
         assert_eq!(s.read(base + REG_DATA, 1).unwrap(), b'h' as u64);
         assert_eq!(s.read(base + REG_DATA, 1).unwrap(), b'i' as u64);
         assert_eq!(s.read(base + REG_LSR, 1).unwrap() & LSR_DATA_READY, 0);
+    }
+
+    #[test]
+    fn serial_flushes_output_on_carriage_return() {
+        let base = 0x3F8;
+        let mut s = Serial16550::new(base);
+        s.write(base + REG_DATA, b'\r' as u64, 1).unwrap();
+
+        assert_eq!(s.tx_count, 0);
+        assert_eq!(s.output(), b"\r");
+    }
+
+    #[test]
+    fn host_console_translates_lf_without_breaking_crlf() {
+        let mut output = Vec::new();
+        let mut previous_was_cr = false;
+        write_host_console(&mut output, b"one\ntwo\r\n", &mut previous_was_cr).unwrap();
+
+        assert_eq!(output, b"one\r\ntwo\r\n");
     }
 }
