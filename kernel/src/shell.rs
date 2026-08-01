@@ -649,23 +649,23 @@ impl KernelExecutor {
     fn print_help(&self) {
         crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
         crate::println!("COMMAND              DESCRIPTION");
-        crate::println!("  HELP               Show this help");
-        crate::println!("  SHOW SYSTEM        Show system status");
-        crate::println!("  REBOOT             Restart SynOS");
-        crate::println!("  SHUTDOWN           Power off SynOS");
-        crate::println!("  MONITOR            Cycle monitor view");
-        crate::println!("  SHOW PROCESSES     List running threads");
-        crate::println!("  TOP CPU            Show CPU activity");
-        crate::println!("  SHOW MEMORY        Show memory usage");
-        crate::println!("  SHOW DSM           Show DSM lock activity");
-        crate::println!("  DIRECTORY          List a directory");
-        crate::println!("  LS                 List a directory");
-        crate::println!("  DIRECTORY/CREATE   Create a directory");
         crate::println!("  CREATE             Create a file");
-        crate::println!("  TYPE               Show file contents");
+        crate::println!("  DIRECTORY          List a directory");
+        crate::println!("  HELP               Show this help");
+        crate::println!("  LS                 List a directory");
+        crate::println!("  MKDIR              Create a directory");
+        crate::println!("  MONITOR            Cycle monitor view");
+        crate::println!("  PWD                Show the default directory");
+        crate::println!("  REBOOT             Restart SynOS");
         crate::println!("  SET DEFAULT        Change the default directory");
         crate::println!("  SHOW DEFAULT       Show the default directory");
-        crate::println!("  PWD                Show the default directory");
+        crate::println!("  SHOW DSM           Show DSM lock activity");
+        crate::println!("  SHOW MEMORY        Show memory usage");
+        crate::println!("  SHOW PROCESSES     List running threads");
+        crate::println!("  SHOW SYSTEM        Show system status");
+        crate::println!("  SHUTDOWN           Power off SynOS");
+        crate::println!("  TOP CPU            Show CPU activity");
+        crate::println!("  TYPE               Show file contents");
         crate::println!();
         crate::println!("Unique command prefixes are accepted.");
     }
