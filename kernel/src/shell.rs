@@ -118,6 +118,13 @@ fn execute_line(
     executor: &mut KernelExecutor,
     acpi: Option<&AcpiPlatform>,
 ) {
+    if line.eq_ignore_ascii_case("SHOW SYSTEM")
+        || line.eq_ignore_ascii_case("SHOW-SYSTEM")
+    {
+        executor.print_system();
+        return
+    }
+
     let program = match registry.parse(line) {
         Ok(program) => program,
         Err(error) => {
@@ -404,6 +411,23 @@ impl KernelExecutor {
         insert_text(&mut output, "shell", "ready")?;
         insert_text(&mut output, "monitor", "active")?;
         Ok(output)
+    }
+
+    fn print_system(&self) {
+        crate::println!("name=SynOS");
+        crate::println!("architecture={}", architecture());
+        crate::println!(
+            "boot-method={}",
+            match self.boot_method {
+                BootMethod::Bios => "BIOS",
+                BootMethod::Uefi => "UEFI",
+            }
+        );
+        crate::println!("memory-regions={}", self.memory_region_count);
+        crate::println!("scheduler-clock={}", self.scheduler_clock);
+        crate::println!("acpi={}", if self.acpi_ready { "ready" } else { "unavailable" });
+        crate::println!("shell=ready");
+        crate::println!("monitor=active")
     }
 
     fn request_reboot(&mut self) -> Result<StructuredOutput, Status> {
