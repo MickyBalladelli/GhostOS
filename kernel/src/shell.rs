@@ -9,7 +9,7 @@ use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind};
 use synos_power::AcpiPlatform;
 use synos_status::Status;
 use synos_system_model::command::{CommandSpec, OutputText, OutputValue, StructuredOutput};
-use crate::monitor::{MonitorState, MonitorView};
+use crate::monitor::{MonitorState, MonitorView, MAX_LOCKS};
 use crate::scheduler::Scheduler;
 use crate::dlm::{DistributedLockManager, NodeFenceTable, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
 
@@ -138,6 +138,7 @@ fn execute_line(
     }
 
     let human_memory_output = line.trim().eq_ignore_ascii_case("SHOW MEMORY");
+    let human_dsm_output = line.trim().eq_ignore_ascii_case("SHOW DSM");
 
     match interpreter.start_program(program, executor) {
         Ok(InterpreterEvent::Started) => {}
@@ -155,7 +156,7 @@ fn execute_line(
         match interpreter.poll(executor) {
             Ok(InterpreterEvent::Pending) => crate::arch::halt(),
             Ok(InterpreterEvent::Complete(output)) => {
-                if !human_memory_output {
+                if !human_memory_output && !human_dsm_output {
                     match render(&output, OutputFormat::List) {
                         Ok(text) => crate::print!("{}", text.as_str()),
                         Err(error) => crate::println!("shell output error: {error:?}"),
@@ -595,22 +596,47 @@ impl KernelExecutor {
     }
 
     fn show_dsm(&self) -> Result<StructuredOutput, Status> {
+        let locks = MonitorState::get_lock_contentions(self.dlm);
+
+        let mut active_locks = 0u64;
+        let mut granted_locks = 0u64;
+        let mut queued_locks = 0u64;
+        for lock in locks.iter() {
+            if lock.resource_id.is_some() {
+                active_locks += 1;
+                granted_locks += lock.granted as u64;
+                queued_locks += lock.queued as u64;
+            }
+        }
+
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "dsm")?;
-        let locks = MonitorState::get_lock_contentions(self.dlm);
-        crate::println!("\x1b[1;33m=== DSM LOCKS ===\x1b[0m");
-        crate::println!("RESOURCE     GRANTED  QUEUED   OWNER     ");
-        let mut idx: u64 = 0;
+        insert(&mut output, "active-locks", OutputValue::Unsigned(active_locks))?;
+        insert(&mut output, "granted-locks", OutputValue::Unsigned(granted_locks))?;
+        insert(&mut output, "queued-locks", OutputValue::Unsigned(queued_locks))?;
+
+        crate::println!("\x1b[1;33m=== DISTRIBUTED SHARED MEMORY (DSM) LOCKS ===\x1b[0m");
+        crate::println!("Active locks: {} / {}", active_locks, MAX_LOCKS);
+        crate::println!("Granted:      {}", granted_locks);
+        crate::println!("Queued:       {}", queued_locks);
+
+        if active_locks == 0 {
+            crate::println!("No active DSM locks.");
+            return Ok(output)
+        }
+
+        crate::println!();
+        crate::println!("RESOURCE   STATE    QUEUED  OWNER NODE");
         for lock in locks.iter() {
-            crate::println!("{} {} {} {:?}",
-                lock.resource_id.raw(),
-                lock.granted,
+            let Some(resource_id) = lock.resource_id else { continue };
+            let state = if lock.granted != 0 { "GRANTED" } else { "WAITING" };
+            crate::println!("{:<10} {:<8} {:<7} {}",
+                resource_id.raw(),
+                state,
                 lock.queued,
                 lock.owner_node
             );
-            idx += 1;
         }
-        crate::println!("Total: {} locks", idx);
         Ok(output)
     }
 }

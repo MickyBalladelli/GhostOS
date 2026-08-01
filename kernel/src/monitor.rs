@@ -32,7 +32,7 @@ pub struct ProcessInfo {
 
 #[derive(Clone, Copy)]
 pub struct LockContention {
-    pub resource_id: ResourceId,
+    pub resource_id: Option<ResourceId>,
     pub granted: u8,
     pub queued: u8,
     pub owner_node: u32,
@@ -176,7 +176,7 @@ impl MonitorState {
 
     pub fn get_lock_contentions(dlm: &DistributedLockManager<MAX_LOCKS>) -> [LockContention; 8] {
         let mut result: [LockContention; 8] = [LockContention {
-            resource_id: ResourceId::new(0).unwrap(),
+            resource_id: None,
             granted: 0,
             queued: 0,
             owner_node: 0,
@@ -186,12 +186,12 @@ impl MonitorState {
             if let Some(entry) = dlm.lock(i) {
                 if entry.occupied {
                     let granted_count = if entry.granted { 1 } else { 0 };
-                    let queued_count = 0;
+                    let queued_count = if entry.granted { 0 } else { 1 };
                     
                     let owner = entry.owner.node.raw();
                     
                     result[i % 8] = LockContention {
-                        resource_id: entry.resource,
+                        resource_id: Some(entry.resource),
                         granted: granted_count,
                         queued: queued_count,
                         owner_node: owner,
@@ -253,14 +253,14 @@ impl MonitorState {
     }
 
     pub fn render_dsm(dlm: &DistributedLockManager<MAX_LOCKS>, output: &mut dyn core::fmt::Write) {
-        let _ = writeln!(output, "\x1b[1;33m=== DSM LOCKS ===\x1b[0m");
+        let _ = writeln!(output, "\x1b[1;33m=== DISTRIBUTED SHARED MEMORY (DSM) LOCKS ===\x1b[0m");
         let _ = writeln!(output, "{:<12} {:<8} {:<8} {:<10}", 
             "RESOURCE", "GRANTED", "QUEUED", "OWNER");
         
         let locks = Self::get_lock_contentions(dlm);
         for lock in locks.iter() {
             let _ = writeln!(output, "{:<12} {:<8} {:<8} {:<10}",
-                write_resource_id(lock.resource_id),
+                lock.resource_id.map(write_resource_id).unwrap_or("----"),
                 lock.granted,
                 lock.queued,
                 lock.owner_node
