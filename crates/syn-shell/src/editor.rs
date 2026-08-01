@@ -13,6 +13,7 @@ pub enum Key {
     Delete,
     HistoryPrevious,
     HistoryNext,
+    Tab,
     Enter,
     Cancel,
 }
@@ -21,6 +22,7 @@ pub enum Key {
 pub enum EditorAction {
     None,
     Redraw,
+    Complete,
     Submit(Text<MAX_LINE_BYTES>),
     Cancel,
 }
@@ -65,6 +67,13 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
         self.cursor = 0;
         self.history_offset = None;
         self.draft.clear()
+    }
+
+    pub fn replace_line(&mut self, line: &str) -> Result<(), Error> {
+        let line = Text::new(line)?;
+        self.load(line);
+        self.history_offset = None;
+        Ok(())
     }
 
     pub fn handle(&mut self, key: Key) -> Result<EditorAction, Error> {
@@ -115,6 +124,7 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
                 self.history_next()?;
                 Ok(EditorAction::Redraw)
             }
+            Key::Tab => Ok(EditorAction::Complete),
             Key::Enter => {
                 let line = Text::new(self.line())?;
                 if !line.as_str().trim().is_empty() {

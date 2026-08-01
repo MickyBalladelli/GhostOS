@@ -1,5 +1,7 @@
 use syn_shell::{
     Error,
+    MAX_LINE_BYTES,
+    Text,
     editor::{EditorAction, Key, LineEditor},
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId},
@@ -75,6 +77,13 @@ pub fn run(
 
         match editor.handle(key) {
             Ok(EditorAction::Redraw) => redraw(&editor),
+            Ok(EditorAction::Complete) => {
+                if let Err(error) = complete_line(&mut editor, &registry) {
+                    crate::println!();
+                    crate::println!("shell completion error: {error:?}");
+                    redraw(&editor)
+                }
+            }
             Ok(EditorAction::Submit(line)) => {
                 crate::println!();
                 if !line.as_str().trim().is_empty() {
@@ -206,6 +215,40 @@ fn prompt() {
     crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
 }
 
+fn complete_line(
+    editor: &mut LineEditor<HISTORY_CAPACITY>,
+    registry: &CommandRegistry<COMMAND_CAPACITY>,
+) -> Result<(), Error> {
+    let suggestions = registry.suggestions(editor.line())?;
+    let mut match_count = 0;
+    let mut match_name = None;
+    for command in suggestions.commands() {
+        match_count += 1;
+        match_name = Some(command);
+    }
+
+    if match_count == 0 {
+        return Ok(())
+    }
+    if match_count > 1 {
+        crate::println!();
+        for command in suggestions.commands() {
+            print_command_suggestion(command.as_str());
+        }
+        redraw(editor);
+        return Ok(())
+    }
+
+    let command = match_name.expect("completion match invariant");
+    let mut completed = Text::<MAX_LINE_BYTES>::empty();
+    for byte in command.as_str().bytes() {
+        completed.push_char(if byte == b'-' { ' ' } else { byte as char })?;
+    }
+    editor.replace_line(completed.as_str())?;
+    redraw(editor);
+    Ok(())
+}
+
 fn print_command_suggestion(command: &str) {
     crate::print!("  ");
     for byte in command.bytes() {
@@ -268,6 +311,7 @@ impl VtInput {
                     None
                 }
                 b'\n' => Some(Key::Enter),
+                b'\t' => Some(Key::Tab),
                 8 | 127 => Some(Key::Backspace),
                 3 => Some(Key::Cancel),
                 0x20..=0x7e => Some(Key::Character(byte as char)),

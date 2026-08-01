@@ -399,12 +399,12 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
     fn find_registration(
         &self,
         command_name: &str,
-    ) -> Result<CommandRegistration, Error> {
+    ) -> Result<&CommandRegistration, Error> {
         let mut exact = None;
         let mut prefix = None;
         let mut ambiguous = false;
 
-        for entry in self.commands[..self.command_count].iter().flatten().copied() {
+        for entry in self.commands[..self.command_count].iter().flatten() {
             let name = entry.spec.name.as_str();
             if name.eq_ignore_ascii_case(command_name) {
                 exact = Some(entry);
