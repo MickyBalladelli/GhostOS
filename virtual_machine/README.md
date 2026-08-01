@@ -30,10 +30,18 @@ From the repository root, build the BIOS kernel first:
 Then run the VM from the `virtual_machine/` directory. The BIOS build creates
 `build/bios/kernel.bin`; it does not create an initrd by default.
 
+
+The whole sequence of commands is: 
 ```bash
-./target/release/synos-vm --kernel ../build/bios/kernel.bin \
-    --memory 128M \
-    --append "console=serial0"
+./scripts/build-bios-image.sh
+
+cd virtual_machine
+cargo build --release
+
+./target/release/synos-vm \
+  --kernel ../build/bios/kernel.bin \
+  --memory 128M \
+  --append "console=serial0"
 ```
 
 Pass `--initrd <PATH>` only when you have a separate initrd image.
