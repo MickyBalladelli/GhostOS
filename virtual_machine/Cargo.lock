@@ -59,6 +59,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-fsd"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-ipc"
 version = "0.1.0"
 dependencies = [
@@ -72,10 +81,12 @@ dependencies = [
  "syn-shell",
  "synos-boot-protocol",
  "synos-fabric",
+ "synos-fsd",
  "synos-ipc",
  "synos-legacy-pc-drivers",
  "synos-observability",
  "synos-power",
+ "synos-runtime",
  "synos-status",
  "synos-system-model",
 ]
@@ -102,6 +113,14 @@ dependencies = [
  "synos-legacy-pc-drivers",
  "synos-status",
  "synos-synfs",
+]
+
+[[package]]
+name = "synos-runtime"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-status",
 ]
 
 [[package]]

@@ -30,6 +30,7 @@ pub mod persona;
 #[allow(unsafe_code)]
 mod power;
 pub mod scheduler;
+pub mod runtime;
 #[allow(unsafe_code)]
 mod shell;
 pub mod task;

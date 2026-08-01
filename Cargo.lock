@@ -542,10 +542,12 @@ dependencies = [
  "syn-shell",
  "synos-boot-protocol",
  "synos-fabric",
+ "synos-fsd",
  "synos-ipc",
  "synos-legacy-pc-drivers",
  "synos-observability",
  "synos-power",
+ "synos-runtime",
  "synos-status",
  "synos-system-model",
 ]

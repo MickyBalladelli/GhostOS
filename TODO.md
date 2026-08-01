@@ -35,10 +35,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Build `synos-fsd` as the user-space owner of SynFS volumes, mounts, transactions, checkpoints, and garbage collection.
   - [x] Define the IPC protocol for open, close, read, write, metadata, delete, rename, directory listing, and snapshot operations.
   - [x] Enforce per-process file capabilities and read/write/delete/administration rights.
-- [ ] **Kernel and Runtime Wiring**
-  - [ ] Dispatch the SynFS operations from the runtime ABI through kernel IPC to `synos-fsd`.
-  - [ ] Validate shared buffers, capabilities, offsets, lengths, and operation flags at every boundary.
-  - [ ] Complete file descriptor behavior for create, truncate, append, seek, close, concurrent access, and error reporting.
+- [x] **Kernel and Runtime Wiring**
+  - [x] Dispatch the SynFS operations from the runtime ABI through kernel IPC to `synos-fsd`.
+  - [x] Validate shared buffers, capabilities, offsets, lengths, and operation flags at every boundary.
+  - [x] Complete file descriptor behavior for create, truncate, append, seek, close, concurrent access, and error reporting.
 - [ ] **Namespace and Root Filesystem**
   - [ ] Define the logical namespace and mount table for the immutable SynFS root, package store, logs, user data, and temporary storage.
   - [ ] Mount and activate the SynFS root during user-space service startup.

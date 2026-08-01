@@ -17,10 +17,12 @@ bench = false
 [dependencies]
 synos-boot-protocol = { path = "../crates/boot-protocol" }
 synos-fabric = { path = "../crates/fabric" }
+synos-fsd = { path = "../crates/fsd" }
 synos-legacy-pc-drivers = { path = "../crates/legacy-pc-drivers" }
 synos-ipc = { path = "../crates/ipc" }
 synos-observability = { path = "../crates/observability" }
 synos-power = { path = "../crates/power" }
 syn-shell = { path = "../crates/syn-shell" }
 synos-status = { path = "../crates/status" }
+synos-runtime = { path = "../crates/runtime" }
 synos-system-model = { path = "../crates/system-model" }

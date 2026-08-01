@@ -21,6 +21,30 @@ pub enum Operation {
     SynFsMetadata = 16,
 }
 
+impl Operation {
+    pub const fn from_raw(raw: u16) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Yield),
+            2 => Some(Self::ClockNow),
+            3 => Some(Self::Wait),
+            4 => Some(Self::Wake),
+            5 => Some(Self::ThreadSpawn),
+            6 => Some(Self::ThreadJoin),
+            7 => Some(Self::ThreadExit),
+            8 => Some(Self::MemoryMap),
+            9 => Some(Self::MemoryUnmap),
+            10 => Some(Self::IpcMap),
+            11 => Some(Self::IpcNotify),
+            12 => Some(Self::SynFsOpen),
+            13 => Some(Self::SynFsClose),
+            14 => Some(Self::SynFsRead),
+            15 => Some(Self::SynFsWrite),
+            16 => Some(Self::SynFsMetadata),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct Request {
