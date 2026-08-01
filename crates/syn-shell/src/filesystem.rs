@@ -275,6 +275,10 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
         CommandSpec::new("MKDIR", &[path, recursive]).map_err(|_| Error::InvalidValue)?,
         route(DIRECTORY_ROUTE),
     )?;
+    registry.register(
+        CommandSpec::new("LS", &[path]).map_err(|_| Error::InvalidValue)?,
+        route(DIRECTORY_ROUTE),
+    )?;
 
     let required_path = ArgumentSpec::new("PATH", ArgumentKind::Text, true, true)
         .map_err(|_| Error::InvalidValue)?;

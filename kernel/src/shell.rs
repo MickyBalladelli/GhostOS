@@ -659,6 +659,7 @@ impl KernelExecutor {
         crate::println!("  SHOW MEMORY        Show memory usage");
         crate::println!("  SHOW DSM           Show DSM lock activity");
         crate::println!("  DIRECTORY          List a directory");
+        crate::println!("  LS                 List a directory");
         crate::println!("  DIRECTORY/CREATE   Create a directory");
         crate::println!("  CREATE             Create a file");
         crate::println!("  TYPE               Show file contents");
