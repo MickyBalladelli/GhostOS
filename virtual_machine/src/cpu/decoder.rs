@@ -1233,7 +1233,7 @@ impl InstructionDecoder {
             0x90..=0x9F => {
                 ins.mnemonic = "SETCC";
                 ins.condition = (op2 - 0x90) as u8;
-                let (digit, rm) =
+                let (_digit, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, 8, addrsize, segment, true)?;
                 ins.operands = vec![rm];
                 return Ok(());

@@ -90,16 +90,16 @@ impl VirtioNet {
         self.poll_pending || !self.pending_rx.is_empty()
     }
 
-    fn desc_base(&self, q: u16) -> u64 {
+    fn desc_base(&self) -> u64 {
         (self.queue_pfn as u64) << 12
     }
 
-    fn avail_base(&self, q: u16) -> u64 {
-        self.desc_base(q) + QUEUE_SIZE as u64 * DESC_SIZE
+    fn avail_base(&self) -> u64 {
+        self.desc_base() + QUEUE_SIZE as u64 * DESC_SIZE
     }
 
-    fn used_base(&self, q: u16) -> u64 {
-        let avail_end = self.avail_base(q) + 4 + QUEUE_SIZE as u64 * 2;
+    fn used_base(&self) -> u64 {
+        let avail_end = self.avail_base() + 4 + QUEUE_SIZE as u64 * 2;
         (avail_end + 3) & !3
     }
 
@@ -190,7 +190,7 @@ impl VirtioNet {
 
     fn update_avail(&mut self, mmu: &Mmu, q: u16) {
         let mut buf = [0u8; 2];
-        if Self::dma_read(mmu, self.avail_base(q) + 2, &mut buf) {
+        if Self::dma_read(mmu, self.avail_base() + 2, &mut buf) {
             self.avail_last[q as usize] = u16::from_le_bytes(buf);
         }
     }
@@ -201,7 +201,7 @@ impl VirtioNet {
             return;
         }
         self.update_avail(mmu, QUEUE_TX);
-        let base = self.desc_base(QUEUE_TX);
+        let base = self.desc_base();
         while self.avail_last[q] != self.used_count[q] {
             let idx = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
             let mut desc = [0u8; 16];
@@ -221,7 +221,7 @@ impl VirtioNet {
                 let _ = backend.transmit(&packet);
             }
             let used_slot = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
-            let used_off = self.used_base(QUEUE_TX) + 4 + used_slot * 8;
+            let used_off = self.used_base() + 4 + used_slot * 8;
             let mut entry = [0u8; 8];
             entry[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
             entry[4..8].copy_from_slice(&(len as u32).to_le_bytes());
@@ -229,7 +229,7 @@ impl VirtioNet {
                 break;
             }
             self.used_count[q] = self.used_count[q].wrapping_add(1);
-            let _ = Self::dma_write(mmu, self.used_base(QUEUE_TX) + 2, &self.used_count[q].to_le_bytes());
+            let _ = Self::dma_write(mmu, self.used_base() + 2, &self.used_count[q].to_le_bytes());
         }
         self.check_interrupt();
     }
@@ -240,8 +240,8 @@ impl VirtioNet {
             return;
         }
         self.update_avail(mmu, QUEUE_RX);
-        let base = self.desc_base(QUEUE_RX);
-        let used = self.used_base(QUEUE_RX);
+        let base = self.desc_base();
+        let used = self.used_base();
         let mut delivered = 0u16;
         while self.avail_last[q] != self.used_count[q] {
             if self.pending_rx.is_empty() {
@@ -274,7 +274,7 @@ impl VirtioNet {
             delivered += 1;
         }
         if delivered > 0 {
-            let mut idx_buf = (self.used_count[q] as u32).to_le_bytes();
+            let idx_buf = (self.used_count[q] as u32).to_le_bytes();
             let _ = Self::dma_write(mmu, used + 2, &idx_buf[..2]);
             self.check_interrupt();
         }

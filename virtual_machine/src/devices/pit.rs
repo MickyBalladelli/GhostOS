@@ -27,7 +27,6 @@ const BCD_MASK: u8 = 0x01;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum AccessMode {
-    Latch = 0,
     Lsb = 1,
     Msb = 2,
     LsbMsb = 3,
@@ -78,14 +77,6 @@ impl Channel {
         }
     }
 
-    /// Latch both running count and status (used by read-back).
-    fn latch(&mut self) {
-        self.latch_count();
-        if self.latched_status.is_none() {
-            self.latched_status = Some(self.status_byte());
-        }
-    }
-
     fn status_byte(&self) -> u8 {
         let mut s = 0u8;
         if self.output {
@@ -125,7 +116,6 @@ impl Channel {
     /// Program one byte of the reload value using the channel's access mode.
     fn write_reload(&mut self, byte: u8) {
         match self.access {
-            AccessMode::Latch => {}
             AccessMode::Lsb => {
                 self.reload = (self.reload & 0xFF00) | byte as u16;
                 self.load_count();
@@ -166,7 +156,6 @@ impl Channel {
             match self.access {
                 AccessMode::Lsb => return (latched & 0xFF) as u8,
                 AccessMode::Msb => return (latched >> 8) as u8,
-                AccessMode::Latch => {}
                 AccessMode::LsbMsb => {
                     if self.rd_bytes == 0 {
                         self.rd_bytes = 1;
@@ -178,7 +167,6 @@ impl Channel {
             }
         }
         match self.access {
-            AccessMode::Latch => 0,
             AccessMode::Lsb => (self.count & 0xFF) as u8,
             AccessMode::Msb => (self.count >> 8) as u8,
             AccessMode::LsbMsb => {

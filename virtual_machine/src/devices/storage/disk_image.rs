@@ -33,12 +33,10 @@ const QCOW2_MAGIC: &[u8; 4] = b"QFI\xfb";
 
 /// Parsed QCOW2 header (versions 2 and 3 share the same header layout).
 struct QcowHeader {
-    version: u32,
     cluster_bits: u32,
     disk_size: u64,
     l1_table_offset: u64,
     l1_size: u32,
-    incompatible_features: u64,
     l2_bits: u32,
 }
 
@@ -59,7 +57,6 @@ struct QcowFile {
 struct VhdFile {
     file: File,
     disk_size: u64,
-    checksum_ok: bool,
     writable: bool,
 }
 
@@ -183,12 +180,16 @@ impl DiskImage {
             .map(|(_, b)| *b as u32)
             .sum();
         let checksum_ok = !sum == stored_checksum;
+        if !checksum_ok {
+            return Err(StorageError::InvalidImage(
+                "VHD footer checksum mismatch".to_string(),
+            ));
+        }
 
         file.seek(SeekFrom::Start(0))?;
         Ok(VhdFile {
             file,
             disk_size: current_size as u64,
-            checksum_ok,
             writable,
         })
     }
@@ -251,12 +252,10 @@ impl DiskImage {
         Ok(QcowFile {
             file,
             header: QcowHeader {
-                version,
                 cluster_bits,
                 disk_size: u64_at(24),
                 l1_table_offset,
                 l1_size,
-                incompatible_features: incompatible,
                 l2_bits,
             },
             cluster_size,

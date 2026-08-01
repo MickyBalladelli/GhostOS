@@ -36,12 +36,7 @@ const CONF_LEGACY_ROUTE: u32 = 0x2;
 
 const REG_CAP: u32 = 0x000;
 const REG_CONFIG: u32 = 0x010;
-const REG_COUNTER: u32 = 0x020; // 64-bit counter
 const REG_IRQ_STATUS: u32 = 0x030;
-
-const TIMER_CONFIG_CAP: u32 = 0x100;
-const TIMER_COMPARATOR: u32 = 0x108;
-const TIMER_IRQ_ROUTE: u32 = 0x110;
 
 // Timer config bits.
 const TIMER_TYPE_PERIODIC: u32 = 0x4;
@@ -52,8 +47,6 @@ struct HpetTimer {
     config: u32,
     comparator: u64,
     periodic_reload: u64,
-    /// Physical IRQ line (0-based) the timer is routed to on the I/O APIC.
-    irq: u8,
     /// True when the timer is currently armed/periodic.
     running: bool,
 }
@@ -66,7 +59,6 @@ impl HpetTimer {
             config: 0,
             comparator: 0,
             periodic_reload: 0,
-            irq: 0,
             running: false,
         }
     }
@@ -87,7 +79,10 @@ pub struct Hpet {
 impl Hpet {
     pub fn new() -> Self {
         Self {
-            cap: CAP_REVISION | ((HPET_TIMER_COUNT as u32 - 1) << 8) | CAP_COUNT_SIZE | CAP_LEGACY_ROUTE,
+            cap: CAP_REVISION
+                | (((HPET_TIMER_COUNT as u32 - 1) << 8) & CAP_NUM_TIMERS_MASK)
+                | CAP_COUNT_SIZE
+                | CAP_LEGACY_ROUTE,
             config: 0,
             counter: 0,
             timers: std::array::from_fn(|_| HpetTimer::new()),

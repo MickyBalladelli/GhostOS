@@ -175,27 +175,20 @@ impl Default for PortBus {
 // ---------------------------------------------------------------------------
 
 const PCI_VENDOR_ID: usize = 0x00;
-const PCI_COMMAND: usize = 0x04;
-const PCI_STATUS: usize = 0x06;
 const PCI_REVISION_ID: usize = 0x08;
 const PCI_PROG_IF: usize = 0x09;
 const PCI_HEADER_TYPE: usize = 0x0E;
 const PCI_CAPABILITIES_POINTER: usize = 0x34;
-const PCI_INTERRUPT_LINE: usize = 0x3C;
-const PCI_INTERRUPT_PIN: usize = 0x3D;
 const PCI_BASE_ADDRESS_0: usize = 0x10;
 
 // PCI-PCI bridge header registers
-const PCI_PRIMARY_BUS: usize = 0x18;
 const PCI_SECONDARY_BUS: usize = 0x19;
-const PCI_SUBORDINATE_BUS: usize = 0x1A;
 
 // PCIe capability block (capability id 0x10)
 const PCIE_CAP_ID: u8 = 0x10;
 const PCIE_CAP_OFFSET: usize = 0x40;
 const PCIE_TYPE_ENDPOINT: u8 = 0x0; // Dev/Port type 0 = PCIe endpoint
 
-const HEADER_TYPE_MASK: u8 = 0x7F;
 const HEADER_TYPE_MULTI_FUNCTION: u8 = 0x80;
 const HEADER_TYPE_NORMAL: u8 = 0x00;
 const HEADER_TYPE_BRIDGE: u8 = 0x01;

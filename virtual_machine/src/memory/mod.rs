@@ -168,18 +168,6 @@ impl Pte {
         self.raw & 1 != 0
     }
 
-    fn writable(&self) -> bool {
-        self.raw & 2 != 0
-    }
-
-    fn user(&self) -> bool {
-        self.raw & 4 != 0
-    }
-
-    fn nx(&self) -> bool {
-        self.raw & (1 << 63) != 0
-    }
-
     fn large(&self) -> bool {
         self.raw & 0x80 != 0
     }

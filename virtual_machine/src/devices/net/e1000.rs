@@ -6,7 +6,7 @@
 
 use crate::devices::{ApicTrigger, Device, DeviceError, LocalApic};
 use crate::memory::Mmu;
-use crate::net::{MacAddress, NetBackend, PacketQueue, ETHERNET_FRAME_MAX, ETHERNET_FRAME_MIN};
+use crate::net::{MacAddress, NetBackend, PacketQueue, ETHERNET_FRAME_MAX};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -44,7 +44,6 @@ const CTRL_RST: u32 = 1 << 26;
 const CTRL_SLU: u32 = 1 << 6;
 const STATUS_LU: u32 = 1 << 1;
 const RCTL_EN: u32 = 1 << 0;
-const RCTL_BAM: u32 = 1 << 15;
 const TCTL_EN: u32 = 1 << 0;
 
 // Interrupt cause bits.
@@ -54,7 +53,6 @@ const ICR_RXDW: u32 = 1 << 6;
 // EERD (EEPROM read) bits.
 const EERD_START: u32 = 1 << 0;
 const EERD_DONE: u32 = 1 << 4;
-const EERD_DATA_SHIFT: u32 = 16;
 
 const DESC_SIZE: u64 = 16;
 const MAX_RX_QUEUE: usize = 128;
@@ -76,9 +74,7 @@ pub struct E1000 {
     tdlen: u32,
     tdh: u32,
     tdt: u32,
-    mta: [u32; 128],
     pending_rx: PacketQueue,
-    promiscuous: bool,
     apic: Option<Rc<RefCell<LocalApic>>>,
     irq_vector: u8,
     backend: Option<Box<dyn NetBackend>>,
@@ -103,9 +99,7 @@ impl E1000 {
             tdlen: 0,
             tdh: 0,
             tdt: 0,
-            mta: [0; 128],
             pending_rx: PacketQueue::new(MAX_RX_QUEUE, ETHERNET_FRAME_MAX * 2),
-            promiscuous: false,
             apic: None,
             irq_vector: 0,
             backend: None,
@@ -133,10 +127,6 @@ impl E1000 {
         self.backend.as_ref().map(|b| b.link_up()).unwrap_or(true)
     }
 
-    fn promiscuous(&self) -> bool {
-        self.promiscuous
-    }
-
     fn register_offset(&self, addr: u64) -> usize {
         ((addr & (E1000_MMIO_SIZE - 1)) >> 2) as usize
     }
@@ -145,7 +135,7 @@ impl E1000 {
         match off {
             REG_CTRL => self.ctrl,
             REG_STATUS => (self.status() & !STATUS_LU) | if self.link_up() { STATUS_LU } else { 0 },
-            REG_EERD => 0x0000_0020, // done bit set for fast MAC read
+            REG_EERD => EERD_DONE, // done bit set for fast MAC read
             REG_ICR => self.icr,
             REG_IMS => self.ims,
             REG_RCTL => self.rctl,
@@ -172,14 +162,6 @@ impl E1000 {
 
     fn status(&self) -> u32 {
         0x8000_0000 | 0x20 // full duplex + tx off
-    }
-
-    fn eeprom_word(&self, addr: u32) -> u32 {
-        match addr {
-            0 => u32::from_le_bytes([self.mac.0[0], self.mac.0[1], self.mac.0[2], self.mac.0[3]]),
-            1 => u32::from_le_bytes([self.mac.0[4], self.mac.0[5], 0, 0]),
-            _ => 0,
-        }
     }
 
     fn write_dword(&mut self, off: usize, value: u32) {
