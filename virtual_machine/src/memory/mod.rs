@@ -2,10 +2,39 @@
 //! access validation.
 
 use crate::devices::{Device, DeviceError, MmioRegion};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const PAGE_SIZE: usize = 4096;
 pub const PAGE_SHIFT: u64 = 12;
+pub const LARGE_PAGE_2M: usize = 2 * 1024 * 1024;
+pub const LARGE_PAGE_1G: usize = 1024 * 1024 * 1024;
+
+/// Hardware page sizes supported by the page-table builder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LargePageSize {
+    TwoMiB,
+    OneGiB,
+}
+
+impl LargePageSize {
+    pub const fn bytes(self) -> usize {
+        match self {
+            Self::TwoMiB => LARGE_PAGE_2M,
+            Self::OneGiB => LARGE_PAGE_1G,
+        }
+    }
+}
+
+/// A compact view of the MMU's reclaimable and lazily committed memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryStats {
+    pub total_frames: usize,
+    pub free_frames: usize,
+    pub ballooned_frames: usize,
+    pub cow_pages: usize,
+    pub overcommitted_pages: usize,
+    pub overcommit_limit: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryError {
@@ -77,6 +106,24 @@ impl FrameAllocator {
         self.free.pop().map(|f| f as u64 * PAGE_SIZE as u64)
     }
 
+    fn alloc_excluding(&mut self, blocked: &HashSet<u64>) -> Option<u64> {
+        let mut skipped = Vec::new();
+        let result = loop {
+            let Some(frame) = self.free.pop() else {
+                self.free.extend(skipped);
+                return None;
+            };
+            let addr = frame as u64 * PAGE_SIZE as u64;
+            if blocked.contains(&addr) {
+                skipped.push(frame);
+            } else {
+                break Some(addr);
+            }
+        };
+        self.free.extend(skipped);
+        result
+    }
+
     pub fn alloc_zeroed(&mut self, ram: &mut [u8]) -> Option<u64> {
         let frame = self.alloc()?;
         let start = frame as usize;
@@ -89,6 +136,19 @@ impl FrameAllocator {
         let frame = (addr / PAGE_SIZE as u64) as usize;
         if frame < self.total_frames && !self.free.contains(&frame) {
             self.free.push(frame);
+        }
+    }
+
+    fn take(&mut self, addr: u64) -> bool {
+        if addr % PAGE_SIZE as u64 != 0 {
+            return false;
+        }
+        let frame = (addr / PAGE_SIZE as u64) as usize;
+        if let Some(index) = self.free.iter().position(|candidate| *candidate == frame) {
+            self.free.swap_remove(index);
+            true
+        } else {
+            false
         }
     }
 
@@ -129,6 +189,13 @@ impl Pte {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CowMapping {
+    phys: u64,
+    flags: PageFlags,
+    overcommitted: bool,
+}
+
 /// Resolves `virt` through a four-level page table whose root (PML4) is at
 /// physical address `cr3`, reading tables from guest RAM.
 fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> {
@@ -137,9 +204,7 @@ fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> 
         if addr.saturating_add(8) > mem.len() {
             return None;
         }
-        Some(u64::from_le_bytes(
-            mem[addr..addr + 8].try_into().unwrap(),
-        ))
+        Some(u64::from_le_bytes(mem[addr..addr + 8].try_into().unwrap()))
     };
 
     let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
@@ -190,10 +255,7 @@ fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> 
     }
 
     let offset = virt & (PAGE_SIZE as u64 - 1);
-    Some((
-        pte.phys() + offset,
-        PageFlags::from_bits_truncate(pte.raw),
-    ))
+    Some((pte.phys() + offset, PageFlags::from_bits_truncate(pte.raw)))
 }
 
 /// Central MMU: physical RAM, frame allocation, page tables, MMIO routing,
@@ -209,6 +271,16 @@ pub struct Mmu {
     // Identity/physical mappings the CPU sets up for bootstrap. Key: physical
     // frame address, value: PageFlags.
     identity: HashMap<u64, PageFlags>,
+    // Virtual pages participating in copy-on-write. The guest page tables are
+    // still authoritative; this side table supplies the write-fault action.
+    cow_pages: HashMap<u64, CowMapping>,
+    // Number of virtual mappings that refer to each 4 KiB physical frame.
+    mapped_frames: HashMap<u64, usize>,
+    mapped_pages: HashMap<u64, u64>,
+    ballooned_frames: HashSet<u64>,
+    zero_page: Option<u64>,
+    overcommitted_pages: usize,
+    overcommit_limit: usize,
     paging_enabled: bool,
     cr3: u64,
     privilege: bool, // false = kernel (ring 0), true = user (ring 3)
@@ -239,6 +311,7 @@ fn validate_flags(
 
 impl Mmu {
     pub fn new(size: usize) -> Self {
+        let total_frames = size / PAGE_SIZE;
         let mut ram = Vec::with_capacity(size);
         ram.resize(size, 0);
         Self {
@@ -247,6 +320,13 @@ impl Mmu {
             mmio: Vec::new(),
             code_version: 0,
             identity: HashMap::new(),
+            cow_pages: HashMap::new(),
+            mapped_frames: HashMap::new(),
+            mapped_pages: HashMap::new(),
+            ballooned_frames: HashSet::new(),
+            zero_page: None,
+            overcommitted_pages: 0,
+            overcommit_limit: total_frames.saturating_mul(4),
             paging_enabled: false,
             cr3: 0,
             privilege: false,
@@ -268,6 +348,87 @@ impl Mmu {
 
     pub fn allocator_mut(&mut self) -> &mut FrameAllocator {
         &mut self.allocator
+    }
+
+    pub fn memory_stats(&self) -> MemoryStats {
+        MemoryStats {
+            total_frames: self.allocator.total_frames(),
+            free_frames: self
+                .allocator
+                .free_frames()
+                .saturating_sub(self.ballooned_frames.len()),
+            ballooned_frames: self.ballooned_frames.len(),
+            cow_pages: self.cow_pages.len(),
+            overcommitted_pages: self.overcommitted_pages,
+            overcommit_limit: self.overcommit_limit,
+        }
+    }
+
+    /// Set the maximum number of virtual pages that may use lazy
+    /// overcommit. Existing mappings are not evicted when the limit shrinks.
+    pub fn set_overcommit_limit(&mut self, pages: usize) {
+        self.overcommit_limit = pages;
+    }
+
+    pub fn overcommit_limit(&self) -> usize {
+        self.overcommit_limit
+    }
+
+    pub fn overcommitted_pages(&self) -> usize {
+        self.overcommitted_pages
+    }
+
+    pub fn is_cow_page(&self, virt: u64) -> bool {
+        self.cow_pages
+            .contains_key(&(virt & !(PAGE_SIZE as u64 - 1)))
+    }
+
+    /// Return physical pages to the host through a balloon. Pages must not be
+    /// mapped or be the shared zero page.
+    pub fn balloon_inflate(&mut self, frames: &[u64]) -> Result<(), MemoryError> {
+        let ram_frame_end = self.allocator.total_frames() as u64 * PAGE_SIZE as u64;
+        for &frame in frames {
+            if frame % PAGE_SIZE as u64 != 0
+                || frame >= ram_frame_end
+                || self.zero_page == Some(frame)
+                || self.mapped_frames.get(&frame).copied().unwrap_or(0) != 0
+            {
+                return Err(MemoryError::AccessDenied);
+            }
+        }
+        for &frame in frames {
+            self.allocator.free(frame);
+            self.ballooned_frames.insert(frame);
+        }
+        Ok(())
+    }
+
+    /// Give ballooned pages back to the guest allocator.
+    pub fn balloon_deflate(&mut self, frames: &[u64]) -> Result<(), MemoryError> {
+        for &frame in frames {
+            if !self.ballooned_frames.contains(&frame) {
+                return Err(MemoryError::InvalidAddress);
+            }
+            if !self.allocator.take(frame) {
+                return Err(MemoryError::OutOfMemory);
+            }
+        }
+        for &frame in frames {
+            self.ballooned_frames.remove(&frame);
+        }
+        Ok(())
+    }
+
+    pub fn ballooned_frames(&self) -> usize {
+        self.ballooned_frames.len()
+    }
+
+    pub fn inflate_balloon(&mut self, frames: &[u64]) -> Result<(), MemoryError> {
+        self.balloon_inflate(frames)
+    }
+
+    pub fn deflate_balloon(&mut self, frames: &[u64]) -> Result<(), MemoryError> {
+        self.balloon_deflate(frames)
     }
 
     pub fn set_paging(&mut self, enabled: bool, cr3: u64) {
@@ -307,6 +468,126 @@ impl Mmu {
 
     fn find_mmio_mut(&mut self, addr: u64, size: u64) -> Option<&mut MmioRegion> {
         self.mmio.iter_mut().find(|r| r.contains(addr, size))
+    }
+
+    fn track_mapping(&mut self, virt: u64, phys: u64) {
+        let page = virt & !(PAGE_SIZE as u64 - 1);
+        let frame = phys & !(PAGE_SIZE as u64 - 1);
+        self.mapped_pages.insert(page, frame);
+        *self.mapped_frames.entry(frame).or_insert(0) += 1;
+        self.cow_pages.remove(&page);
+    }
+
+    fn untrack_mapping(&mut self, virt: u64, phys: u64) {
+        let page = virt & !(PAGE_SIZE as u64 - 1);
+        let frame = phys & !(PAGE_SIZE as u64 - 1);
+        self.mapped_pages.remove(&page);
+        if let Some(count) = self.mapped_frames.get_mut(&frame) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.mapped_frames.remove(&frame);
+            }
+        }
+        if let Some(mapping) = self.cow_pages.remove(&page) {
+            if mapping.overcommitted {
+                self.overcommitted_pages = self.overcommitted_pages.saturating_sub(1);
+            }
+        }
+    }
+
+    fn read_pte(&self, addr: u64) -> Result<Pte, MemoryError> {
+        let start = addr as usize;
+        let end = start.checked_add(8).ok_or(MemoryError::InvalidAddress)?;
+        if end > self.ram.len() {
+            return Err(MemoryError::InvalidAddress);
+        }
+        Ok(Pte {
+            raw: u64::from_le_bytes(self.ram[start..end].try_into().unwrap()),
+        })
+    }
+
+    fn write_pte(&mut self, addr: u64, pte: Pte) -> Result<(), MemoryError> {
+        let start = addr as usize;
+        let end = start.checked_add(8).ok_or(MemoryError::InvalidAddress)?;
+        if end > self.ram.len() {
+            return Err(MemoryError::InvalidAddress);
+        }
+        self.ram[start..end].copy_from_slice(&pte.raw.to_le_bytes());
+        Ok(())
+    }
+
+    fn update_page_mapping(
+        &mut self,
+        virt: u64,
+        phys: u64,
+        flags: PageFlags,
+    ) -> Result<(), MemoryError> {
+        let pml4e = self.read_pte(self.cr3 + ((virt >> 39) & 0x1FF) * 8)?;
+        if !pml4e.present() {
+            return Err(MemoryError::PageFault);
+        }
+        let pdpte_addr = pml4e.phys() + ((virt >> 30) & 0x1FF) * 8;
+        let pdpte = self.read_pte(pdpte_addr)?;
+        if !pdpte.present() || pdpte.large() {
+            return Err(MemoryError::PageFault);
+        }
+        let pde_addr = pdpte.phys() + ((virt >> 21) & 0x1FF) * 8;
+        let pde = self.read_pte(pde_addr)?;
+        if !pde.present() || pde.large() {
+            return Err(MemoryError::PageFault);
+        }
+        let pte_addr = pde.phys() + ((virt >> 12) & 0x1FF) * 8;
+        self.write_pte(
+            pte_addr,
+            Pte {
+                raw: phys | 0x001 | flags.bits(),
+            },
+        )
+    }
+
+    fn resolve_cow_page(&mut self, virt_page: u64) -> Result<(), MemoryError> {
+        let Some(mapping) = self.cow_pages.get(&virt_page).copied() else {
+            return Ok(());
+        };
+        let new_phys = self.alloc_zeroed_frame()?;
+        let old_start = mapping.phys as usize;
+        let new_start = new_phys as usize;
+        let old_end = old_start
+            .checked_add(PAGE_SIZE)
+            .ok_or(MemoryError::InvalidAddress)?;
+        let new_end = new_start
+            .checked_add(PAGE_SIZE)
+            .ok_or(MemoryError::InvalidAddress)?;
+        if old_end > self.ram.len() || new_end > self.ram.len() {
+            self.free_frame(new_phys);
+            return Err(MemoryError::InvalidAddress);
+        }
+        let page = self.ram[old_start..old_end].to_vec();
+        self.ram[new_start..new_end].copy_from_slice(&page);
+        self.update_page_mapping(virt_page, new_phys, mapping.flags | PageFlags::WRITABLE)?;
+        self.untrack_mapping(virt_page, mapping.phys);
+        self.track_mapping(virt_page, new_phys);
+        self.cow_pages.remove(&virt_page);
+        Ok(())
+    }
+
+    fn prepare_write(&mut self, addr: u64, size: u64) -> Result<(), MemoryError> {
+        if size == 0 {
+            return Ok(());
+        }
+        let end = addr.checked_add(size - 1).ok_or(MemoryError::PageFault)?;
+        let mut page = addr & !(PAGE_SIZE as u64 - 1);
+        let last_page = end & !(PAGE_SIZE as u64 - 1);
+        loop {
+            self.resolve_cow_page(page)?;
+            if page == last_page {
+                break;
+            }
+            page = page
+                .checked_add(PAGE_SIZE as u64)
+                .ok_or(MemoryError::PageFault)?;
+        }
+        Ok(())
     }
 
     fn physical_address(
@@ -368,9 +649,7 @@ impl Mmu {
     pub fn read_from_addr(&self, addr: u64, size: u8) -> Result<u64, MemoryError> {
         let phys = self.physical_address(addr, AccessKind::Read, size as u64)?;
         if let Some(region) = self.find_mmio(phys, size as u64) {
-            return region
-                .read(addr, size)
-                .map_err(|_| MemoryError::MmioError);
+            return region.read(addr, size).map_err(|_| MemoryError::MmioError);
         }
         self.ram_read(phys, size as usize)
     }
@@ -378,6 +657,7 @@ impl Mmu {
     /// Write `value` (low `size` bytes) to a (possibly translated) address.
     /// MMIO regions receive the write; RAM gets a plain store.
     pub fn write_to_addr(&mut self, addr: u64, value: u64, size: u8) -> Result<(), MemoryError> {
+        self.prepare_write(addr, size as u64)?;
         let phys = self.physical_address(addr, AccessKind::Write, size as u64)?;
         if let Some(region) = self.find_mmio_mut(phys, size as u64) {
             return region
@@ -419,6 +699,7 @@ impl Mmu {
             let addr = virt + offset as u64;
             let remaining = len - offset;
             let chunk = remaining.min(PAGE_SIZE - (addr as usize & (PAGE_SIZE - 1)));
+            self.prepare_write(addr, chunk as u64)?;
             let phys = self.physical_address(addr, AccessKind::Write, chunk as u64)?;
             if self.find_mmio(phys, chunk as u64).is_some() {
                 return Err(MemoryError::AccessDenied);
@@ -441,7 +722,7 @@ impl Mmu {
             if let Some(region) = self.find_mmio(phys, 1) {
                 return Ok(region.read(addr, 1)? as u8);
             }
-            return Ok(self.ram[phys as usize]);
+            return self.ram_read(phys, 1).map(|value| value as u8);
         }
         if let Some(region) = self.find_mmio(addr, 1) {
             return Ok(region.read(addr, 1)? as u8);
@@ -454,6 +735,7 @@ impl Mmu {
     }
 
     pub fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError> {
+        self.prepare_write(addr, 1)?;
         if self.paging_enabled || !self.identity.is_empty() {
             let phys = self.physical_address(addr, AccessKind::Write, 1)?;
             if self.find_mmio(phys, 1).is_some() {
@@ -513,18 +795,30 @@ impl Mmu {
 
     /// Allocate a physical frame from the allocator.
     pub fn alloc_frame(&mut self) -> Result<u64, MemoryError> {
-        self.allocator.alloc().ok_or(MemoryError::OutOfMemory)
+        self.allocator
+            .alloc_excluding(&self.ballooned_frames)
+            .ok_or(MemoryError::OutOfMemory)
     }
 
     /// Allocate a zeroed physical frame from the allocator.
     pub fn alloc_zeroed_frame(&mut self) -> Result<u64, MemoryError> {
-        self.allocator
-            .alloc_zeroed(&mut self.ram)
-            .ok_or(MemoryError::OutOfMemory)
+        let frame = self.alloc_frame()?;
+        let start = frame as usize;
+        let end = start + PAGE_SIZE;
+        if end > self.ram.len() {
+            self.allocator.free(frame);
+            return Err(MemoryError::InvalidAddress);
+        }
+        self.ram[start..end].fill(0);
+        Ok(frame)
     }
 
     /// Free a physical frame back to the allocator.
     pub fn free_frame(&mut self, addr: u64) {
+        if self.zero_page == Some(addr) {
+            return;
+        }
+        self.ballooned_frames.remove(&addr);
         self.allocator.free(addr);
     }
 
@@ -532,7 +826,9 @@ impl Mmu {
     /// the kernel image at a physical address regardless of paging state.
     pub fn write_phys(&mut self, phys: u64, bytes: &[u8]) -> Result<(), MemoryError> {
         let start = phys as usize;
-        let end = start.checked_add(bytes.len()).ok_or(MemoryError::InvalidAddress)?;
+        let end = start
+            .checked_add(bytes.len())
+            .ok_or(MemoryError::InvalidAddress)?;
         if end > self.ram.len() {
             return Err(MemoryError::InvalidAddress);
         }
@@ -577,7 +873,166 @@ impl Mmu {
     /// Map one virtual page to one physical frame using guest-visible page
     /// tables stored in RAM. Returns the physical frame allocated for the
     /// page-table entries if new tables were needed.
-    pub fn map_page(
+    pub fn map_page(&mut self, virt: u64, phys: u64, flags: PageFlags) -> Result<(), MemoryError> {
+        if virt & (PAGE_SIZE as u64 - 1) != 0 || phys & (PAGE_SIZE as u64 - 1) != 0 {
+            return Err(MemoryError::AlignmentError);
+        }
+        if let Some(old_phys) = self.mapped_pages.get(&virt).copied() {
+            self.untrack_mapping(virt, old_phys);
+        }
+        self.page_tables_map(virt, phys, flags)
+            .map(|()| self.track_mapping(virt, phys))
+    }
+
+    /// Map a 2 MiB or 1 GiB hardware large page.
+    pub fn map_large_page(
+        &mut self,
+        virt: u64,
+        phys: u64,
+        size: LargePageSize,
+        flags: PageFlags,
+    ) -> Result<(), MemoryError> {
+        let page_size = size.bytes() as u64;
+        if virt % page_size != 0 || phys % page_size != 0 {
+            return Err(MemoryError::AlignmentError);
+        }
+        let end = phys
+            .checked_add(page_size)
+            .ok_or(MemoryError::InvalidAddress)?;
+        if end > self.ram.len() as u64 {
+            return Err(MemoryError::InvalidAddress);
+        }
+        self.page_tables_map_large(virt, phys, size, flags)
+    }
+
+    pub fn map_2mb_page(
+        &mut self,
+        virt: u64,
+        phys: u64,
+        flags: PageFlags,
+    ) -> Result<(), MemoryError> {
+        self.map_large_page(virt, phys, LargePageSize::TwoMiB, flags)
+    }
+
+    pub fn map_1gb_page(
+        &mut self,
+        virt: u64,
+        phys: u64,
+        flags: PageFlags,
+    ) -> Result<(), MemoryError> {
+        self.map_large_page(virt, phys, LargePageSize::OneGiB, flags)
+    }
+
+    /// Map a read-only demand-zero page. The page consumes no private frame
+    /// until the guest writes to it, making sparse address spaces cheap.
+    pub fn map_overcommit_page(&mut self, virt: u64, flags: PageFlags) -> Result<(), MemoryError> {
+        if virt & (PAGE_SIZE as u64 - 1) != 0 {
+            return Err(MemoryError::AlignmentError);
+        }
+        let replacing_overcommit = self
+            .cow_pages
+            .get(&virt)
+            .map(|mapping| mapping.overcommitted)
+            .unwrap_or(false);
+        if self.overcommitted_pages >= self.overcommit_limit && !replacing_overcommit {
+            return Err(MemoryError::OutOfMemory);
+        }
+        let zero_page = match self.zero_page {
+            Some(page) => page,
+            None => {
+                let page = self.alloc_zeroed_frame()?;
+                self.zero_page = Some(page);
+                page
+            }
+        };
+        if let Some(old_phys) = self.mapped_pages.get(&virt).copied() {
+            self.untrack_mapping(virt, old_phys);
+        }
+        let cow_flags = (flags | PageFlags::PRESENT) & !PageFlags::WRITABLE;
+        self.page_tables_map(virt, zero_page, cow_flags)?;
+        self.track_mapping(virt, zero_page);
+        self.cow_pages.insert(
+            virt,
+            CowMapping {
+                phys: zero_page,
+                flags: cow_flags,
+                overcommitted: true,
+            },
+        );
+        self.overcommitted_pages += 1;
+        Ok(())
+    }
+
+    pub fn map_lazy_page(&mut self, virt: u64, flags: PageFlags) -> Result<(), MemoryError> {
+        self.map_overcommit_page(virt, flags)
+    }
+
+    /// Share a 4 KiB mapping between two virtual addresses. The source and
+    /// destination become read-only and the first write to either gets a
+    /// private copy.
+    pub fn clone_cow_page(&mut self, source: u64, destination: u64) -> Result<(), MemoryError> {
+        if source & (PAGE_SIZE as u64 - 1) != 0 || destination & (PAGE_SIZE as u64 - 1) != 0 {
+            return Err(MemoryError::AlignmentError);
+        }
+        let source_phys = self
+            .mapped_pages
+            .get(&source)
+            .copied()
+            .or_else(|| {
+                walk_page_table(&self.ram, self.cr3, source)
+                    .map(|(phys, _)| phys & !(PAGE_SIZE as u64 - 1))
+            })
+            .ok_or(MemoryError::PageFault)?;
+        if source_phys as usize > self.ram.len().saturating_sub(PAGE_SIZE) {
+            return Err(MemoryError::AccessDenied);
+        }
+        let source_overcommitted = self
+            .cow_pages
+            .get(&source)
+            .map(|mapping| mapping.overcommitted)
+            .unwrap_or(false);
+        let source_flags = self
+            .cow_pages
+            .get(&source)
+            .map(|mapping| mapping.flags)
+            .or_else(|| walk_page_table(&self.ram, self.cr3, source).map(|(_, flags)| flags))
+            .ok_or(MemoryError::PageFault)?;
+        let source_was_tracked = self.mapped_pages.contains_key(&source);
+        if let Some(old_phys) = self.mapped_pages.get(&source).copied() {
+            self.update_page_mapping(source, old_phys, source_flags & !PageFlags::WRITABLE)?;
+        }
+        if let Some(old_phys) = self.mapped_pages.get(&destination).copied() {
+            self.untrack_mapping(destination, old_phys);
+        }
+        let cow_flags = (source_flags | PageFlags::PRESENT) & !PageFlags::WRITABLE;
+        self.page_tables_map(destination, source_phys, cow_flags)?;
+        if !source_was_tracked {
+            self.track_mapping(source, source_phys);
+        }
+        self.track_mapping(destination, source_phys);
+        self.cow_pages.insert(
+            source,
+            CowMapping {
+                phys: source_phys,
+                flags: cow_flags,
+                overcommitted: source_overcommitted,
+            },
+        );
+        self.cow_pages.insert(
+            destination,
+            CowMapping {
+                phys: source_phys,
+                flags: cow_flags,
+                overcommitted: source_overcommitted,
+            },
+        );
+        if source_overcommitted {
+            self.overcommitted_pages += 1;
+        }
+        Ok(())
+    }
+
+    pub fn map_cow_page(
         &mut self,
         virt: u64,
         phys: u64,
@@ -586,14 +1041,35 @@ impl Mmu {
         if virt & (PAGE_SIZE as u64 - 1) != 0 || phys & (PAGE_SIZE as u64 - 1) != 0 {
             return Err(MemoryError::AlignmentError);
         }
-        self.page_tables_map(virt, phys, flags)
+        if phys as usize > self.ram.len().saturating_sub(PAGE_SIZE) {
+            return Err(MemoryError::InvalidAddress);
+        }
+        if let Some(old_phys) = self.mapped_pages.get(&virt).copied() {
+            self.untrack_mapping(virt, old_phys);
+        }
+        let cow_flags = (flags | PageFlags::PRESENT) & !PageFlags::WRITABLE;
+        self.page_tables_map(virt, phys, cow_flags)?;
+        self.track_mapping(virt, phys);
+        self.cow_pages.insert(
+            virt,
+            CowMapping {
+                phys,
+                flags: cow_flags,
+                overcommitted: false,
+            },
+        );
+        Ok(())
     }
 
     pub fn unmap_page(&mut self, virt: u64) -> Result<(), MemoryError> {
         if virt & (PAGE_SIZE as u64 - 1) != 0 {
             return Err(MemoryError::AlignmentError);
         }
-        self.page_tables_unmap(virt)
+        self.page_tables_unmap(virt)?;
+        if let Some(old_phys) = self.mapped_pages.get(&virt).copied() {
+            self.untrack_mapping(virt, old_phys);
+        }
+        Ok(())
     }
 
     fn page_tables_map(
@@ -614,59 +1090,82 @@ impl Mmu {
         let pt_idx = (virt >> 12) & 0x1FF;
 
         let pml4e_addr = cr3 + pml4_idx * 8;
-        let pml4e = Pte {
-            raw: self.ram[(pml4e_addr as usize)..(pml4e_addr as usize + 8)]
-                .try_into()
-                .map(u64::from_le_bytes)
-                .unwrap(),
-        };
-        let pdpt_addr = if pml4e.present() {
-            pml4e.phys()
-        } else {
-            let f = self.alloc_zeroed_frame()?;
-            self.ram[(pml4e_addr as usize)..(pml4e_addr as usize + 8)]
-                .copy_from_slice(&(f | 0x007).to_le_bytes());
-            f
-        };
+        let pml4e = self.read_pte(pml4e_addr)?;
+        let pdpt_addr = self.ensure_table(pml4e_addr, pml4e)?;
 
         let pdpte_addr = pdpt_addr + pdpt_idx * 8;
-        let pdpte = Pte {
-            raw: self.ram[(pdpte_addr as usize)..(pdpte_addr as usize + 8)]
-                .try_into()
-                .map(u64::from_le_bytes)
-                .unwrap(),
-        };
-        let pd_addr = if pdpte.present() {
-            pdpte.phys()
-        } else {
-            let f = self.alloc_zeroed_frame()?;
-            self.ram[(pdpte_addr as usize)..(pdpte_addr as usize + 8)]
-                .copy_from_slice(&(f | 0x007).to_le_bytes());
-            f
-        };
+        let pdpte = self.read_pte(pdpte_addr)?;
+        if pdpte.present() && pdpte.large() {
+            return Err(MemoryError::AccessDenied);
+        }
+        let pd_addr = self.ensure_table(pdpte_addr, pdpte)?;
 
         let pde_addr = pd_addr + pd_idx * 8;
-        let pde = Pte {
-            raw: self.ram[(pde_addr as usize)..(pde_addr as usize + 8)]
-                .try_into()
-                .map(u64::from_le_bytes)
-                .unwrap(),
-        };
-        let pt_addr = if pde.present() {
-            pde.phys()
-        } else {
-            let f = self.alloc_zeroed_frame()?;
-            self.ram[(pde_addr as usize)..(pde_addr as usize + 8)]
-                .copy_from_slice(&(f | 0x007).to_le_bytes());
-            f
-        };
+        let pde = self.read_pte(pde_addr)?;
+        if pde.present() && pde.large() {
+            return Err(MemoryError::AccessDenied);
+        }
+        let pt_addr = self.ensure_table(pde_addr, pde)?;
 
         let pte_addr = pt_addr + pt_idx * 8;
         // Force PRESENT so the mapping is usable, but respect the caller's
         // writable/user/NX bits for permission enforcement.
-        let pte = phys | 0x001 | flags.bits();
-        self.ram[(pte_addr as usize)..(pte_addr as usize + 8)].copy_from_slice(&pte.to_le_bytes());
-        Ok(())
+        self.write_pte(
+            pte_addr,
+            Pte {
+                raw: phys | 0x001 | flags.bits(),
+            },
+        )
+    }
+
+    fn ensure_table(&mut self, entry_addr: u64, entry: Pte) -> Result<u64, MemoryError> {
+        if entry.present() {
+            return Ok(entry.phys());
+        }
+        let frame = self.alloc_zeroed_frame()?;
+        self.write_pte(entry_addr, Pte { raw: frame | 0x007 })?;
+        Ok(frame)
+    }
+
+    fn page_tables_map_large(
+        &mut self,
+        virt: u64,
+        phys: u64,
+        size: LargePageSize,
+        flags: PageFlags,
+    ) -> Result<(), MemoryError> {
+        let mut cr3 = self.cr3;
+        if cr3 == 0 {
+            cr3 = self.alloc_zeroed_frame()?;
+            self.cr3 = cr3;
+        }
+        let pml4e_addr = cr3 + ((virt >> 39) & 0x1FF) * 8;
+        let pml4e = self.read_pte(pml4e_addr)?;
+        let pdpt = self.ensure_table(pml4e_addr, pml4e)?;
+        let pdpte_addr = pdpt + ((virt >> 30) & 0x1FF) * 8;
+
+        match size {
+            LargePageSize::OneGiB => self.write_pte(
+                pdpte_addr,
+                Pte {
+                    raw: phys | 0x081 | flags.bits(),
+                },
+            ),
+            LargePageSize::TwoMiB => {
+                let pdpte = self.read_pte(pdpte_addr)?;
+                if pdpte.present() && pdpte.large() {
+                    return Err(MemoryError::AccessDenied);
+                }
+                let pd = self.ensure_table(pdpte_addr, pdpte)?;
+                let pde_addr = pd + ((virt >> 21) & 0x1FF) * 8;
+                self.write_pte(
+                    pde_addr,
+                    Pte {
+                        raw: phys | 0x081 | flags.bits(),
+                    },
+                )
+            }
+        }
     }
 
     fn page_tables_unmap(&mut self, virt: u64) -> Result<(), MemoryError> {
@@ -678,36 +1177,30 @@ impl Mmu {
         let pd_idx = ((virt >> 21) & 0x1FF) as usize;
         let pt_idx = ((virt >> 12) & 0x1FF) as usize;
 
-        let read = |mem: &[u8], addr: u64| -> Option<u64> {
-            let a = addr as usize;
-            if a + 8 > mem.len() {
-                return None;
-            }
-            Some(u64::from_le_bytes(mem[a..a + 8].try_into().ok()?))
-        };
-
-        let pml4e = read(&self.ram, self.cr3 + (pml4_idx as u64) * 8)
-            .ok_or(MemoryError::InvalidAddress)?;
-        let pml4e = Pte { raw: pml4e };
+        let pml4e = self.read_pte(self.cr3 + (pml4_idx as u64) * 8)?;
         if !pml4e.present() {
             return Ok(());
         }
-        let pdpte = read(&self.ram, pml4e.phys() + (pdpt_idx as u64) * 8)
-            .ok_or(MemoryError::InvalidAddress)?;
-        let pdpte = Pte { raw: pdpte };
+        let pdpte_addr = pml4e.phys() + (pdpt_idx as u64) * 8;
+        let pdpte = self.read_pte(pdpte_addr)?;
         if !pdpte.present() {
             return Ok(());
         }
-        let pde = read(&self.ram, pdpte.phys() + (pd_idx as u64) * 8)
-            .ok_or(MemoryError::InvalidAddress)?;
-        let pde = Pte { raw: pde };
-        if !pde.present() || pde.large() {
+        if pdpte.large() {
+            self.write_pte(pdpte_addr, Pte { raw: 0 })?;
+            return Ok(());
+        }
+        let pde_addr = pdpte.phys() + (pd_idx as u64) * 8;
+        let pde = self.read_pte(pde_addr)?;
+        if !pde.present() {
+            return Ok(());
+        }
+        if pde.large() {
+            self.write_pte(pde_addr, Pte { raw: 0 })?;
             return Ok(());
         }
         let pte_addr = pde.phys() + (pt_idx as u64) * 8;
-        if (pte_addr as usize) + 8 <= self.ram.len() {
-            self.ram[pte_addr as usize..pte_addr as usize + 8].fill(0);
-        }
+        self.write_pte(pte_addr, Pte { raw: 0 })?;
         Ok(())
     }
 
@@ -716,6 +1209,12 @@ impl Mmu {
         self.ram.fill(0);
         self.code_version = 0;
         self.identity.clear();
+        self.cow_pages.clear();
+        self.mapped_frames.clear();
+        self.mapped_pages.clear();
+        self.ballooned_frames.clear();
+        self.zero_page = None;
+        self.overcommitted_pages = 0;
         self.paging_enabled = false;
         self.cr3 = 0;
         self.privilege = false;
@@ -772,14 +1271,21 @@ mod tests {
     fn physical_read_write() {
         let mut mmu = Mmu::new(1 << 20);
         mmu.write_phys(0x1000, &[0xDE, 0xAD, 0xBE, 0xEF]).unwrap();
-        assert_eq!(mmu.read_phys(0x1000, 4).unwrap(), vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(
+            mmu.read_phys(0x1000, 4).unwrap(),
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
     }
 
     #[test]
     fn identity_map_permissions() {
         let mut mmu = Mmu::new(1 << 20);
-        mmu.identity_map_range(0, PAGE_SIZE as u64, PageFlags::PRESENT | PageFlags::WRITABLE)
-            .unwrap();
+        mmu.identity_map_range(
+            0,
+            PAGE_SIZE as u64,
+            PageFlags::PRESENT | PageFlags::WRITABLE,
+        )
+        .unwrap();
         mmu.write_byte(0x100, 0x42).unwrap();
         assert_eq!(mmu.read_byte(0x100).unwrap(), 0x42);
 
@@ -821,7 +1327,8 @@ mod tests {
         // Unmapped page faults.
         assert_eq!(mmu.read_byte(0x0000_3000), Err(MemoryError::PageFault));
         // Non-writable mapping rejects writes but allows reads.
-        mmu.map_page(0x0000_4000, 0x0000_3000, PageFlags::PRESENT).unwrap();
+        mmu.map_page(0x0000_4000, 0x0000_3000, PageFlags::PRESENT)
+            .unwrap();
         assert_eq!(
             mmu.write_byte(0x0000_4000, 0xFF),
             Err(MemoryError::AccessDenied)

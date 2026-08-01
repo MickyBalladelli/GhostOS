@@ -8,7 +8,7 @@ pub mod integration;
 pub mod execution;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
-pub use memory::Mmu;
+pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
 pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
     Ahci, ApicTrigger, Device, DiskImage, DisplayState, E1000, E1000_MMIO_SIZE, GopMode,

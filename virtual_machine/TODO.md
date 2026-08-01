@@ -112,11 +112,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Translation cache management
   - [x] Execution profiling hooks
 
-- [ ] **Memory Efficiency**
-  - [ ] Copy-on-write for memory pages
-  - [ ] Memory ballooning support
-  - [ ] Large page support (2MB, 1GB)
-  - [ ] Memory overcommit handling
+- [x] **Memory Efficiency**
+  - [x] Copy-on-write for memory pages
+  - [x] Memory ballooning support
+  - [x] Large page support (2MB, 1GB)
+  - [x] Memory overcommit handling
 
 ---
 
