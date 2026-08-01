@@ -324,6 +324,7 @@ fn wait_for_byte(
 
 struct KernelExecutor {
     boot_method: BootMethod,
+    memory_regions: &'static [synos_boot_protocol::MemoryRegion],
     memory_region_count: usize,
     memory_total_bytes: u64,
     memory_available_bytes: u64,
@@ -341,7 +342,7 @@ struct KernelExecutor {
 
 impl KernelExecutor {
     fn new(
-        boot_info: &BootInfo,
+        boot_info: &'static BootInfo,
         scheduler: &'static Scheduler,
         dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
         _node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
@@ -360,6 +361,7 @@ impl KernelExecutor {
 
         Self {
             boot_method: boot_info.method,
+            memory_regions: boot_info.regions(),
             memory_region_count: boot_info.memory_region_count,
             memory_total_bytes,
             memory_available_bytes,
@@ -577,6 +579,18 @@ impl KernelExecutor {
             memory_percent(self.memory_available_bytes, self.memory_total_bytes) % 10,
         );
         crate::println!("  Regions:   {}", self.memory_region_count);
+        crate::println!();
+        for (index, region) in self.memory_regions.iter().enumerate() {
+            let available_bytes = region_available_bytes(region.kind, region.length);
+            let used_bytes = region_used_bytes(region.kind, region.length);
+            crate::println!(
+                "  Region {}: {}",
+                index,
+                memory_kind_name(region.kind),
+            );
+            crate::println!("    Used:      {}", memory_size(used_bytes));
+            crate::println!("    Available: {}", memory_size(available_bytes));
+        }
         Ok(output)
     }
 
@@ -690,6 +704,26 @@ impl core::fmt::Display for MemorySize {
 const BYTES_PER_KIB: u64 = 1024;
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
+
+fn region_available_bytes(kind: MemoryKind, length: u64) -> u64 {
+    if kind == MemoryKind::Usable { length } else { 0 }
+}
+
+fn region_used_bytes(kind: MemoryKind, length: u64) -> u64 {
+    if kind == MemoryKind::Usable { 0 } else { length }
+}
+
+const fn memory_kind_name(kind: MemoryKind) -> &'static str {
+    match kind {
+        MemoryKind::Usable => "USABLE",
+        MemoryKind::Reserved => "RESERVED",
+        MemoryKind::AcpiReclaimable => "ACPI RECLAIMABLE",
+        MemoryKind::AcpiNonVolatile => "ACPI NONVOLATILE",
+        MemoryKind::Bootloader => "BOOTLOADER",
+        MemoryKind::Kernel => "KERNEL",
+        MemoryKind::Framebuffer => "FRAMEBUFFER",
+    }
+}
 
 const fn architecture() -> &'static str {
     #[cfg(target_arch = "x86_64")]
