@@ -28,7 +28,8 @@ const IA32_APIC_BASE_MSR_U64: u64 = IA32_APIC_BASE_MSR as u64;
 // ---------------------------------------------------------------------------
 
 #[inline]
-fn operand_mask(size: u8) -> u64 {
+fn operand_mask(bits: u8) -> u64 {
+    let size = bits / 8;
     match size {
         1 => 0xFF,
         2 => 0xFFFF,
@@ -38,7 +39,8 @@ fn operand_mask(size: u8) -> u64 {
 }
 
 #[inline]
-fn sign_bit(size: u8) -> u64 {
+fn sign_bit(bits: u8) -> u64 {
+    let size = bits / 8;
     match size {
         1 => 0x80,
         2 => 0x8000,
@@ -48,8 +50,19 @@ fn sign_bit(size: u8) -> u64 {
 }
 
 #[inline]
-fn bit_count(size: u8) -> u64 {
-    (size * 8) as u64
+fn bit_count(bits: u8) -> u64 {
+    bits as u64
+}
+
+#[inline]
+fn operand_bytes(bits: u8) -> u8 {
+    match bits {
+        8 => 1,
+        16 => 2,
+        32 => 4,
+        64 => 8,
+        _ => bits / 8,
+    }
 }
 
 #[inline]
@@ -156,7 +169,7 @@ fn read_operand(
     mmu: &Mmu,
     op: &Operand,
 ) -> Result<u64, CpuError> {
-    read_operand_sized(ins, state, mmu, op, ins.opsize)
+    read_operand_sized(ins, state, mmu, op, operand_bytes(ins.opsize))
 }
 
 fn write_operand(
@@ -166,15 +179,16 @@ fn write_operand(
     op: &Operand,
     value: u64,
 ) -> Result<(), CpuError> {
+    let size = operand_bytes(ins.opsize);
     match op {
         Operand::Register(r) => {
-            state.set_reg_size(*r, ins.opsize, value);
+            state.set_reg_size(*r, size, value);
             Ok(())
         }
         Operand::Memory(mem) => {
             let addr = effective_address(ins, state, mem)
                 .wrapping_add(segment_base(state, mem.segment));
-            mmu.write_to_addr(addr, value, ins.opsize).map_err(mem_err)
+            mmu.write_to_addr(addr, value, size).map_err(mem_err)
         }
         _ => Ok(()),
     }
@@ -302,7 +316,11 @@ fn alu_logic(state: &mut CpuState, result: u64, size: u8) -> u64 {
 fn alu_inc_dec(state: &mut CpuState, value: u64, size: u8, increment: bool) -> u64 {
     let mask = operand_mask(size);
     let a128 = (value & mask) as u128;
-    let r128 = if increment { a128 + 1 } else { a128 - 1 };
+    let r128 = if increment {
+        a128.wrapping_add(1)
+    } else {
+        a128.wrapping_sub(1)
+    };
     let r = (r128 & mask as u128) as u64;
     let sign = sign_bit(size) as u128;
 
@@ -498,6 +516,8 @@ impl InstructionExecutor {
             }
             "XCHG" => self.execute_xchg(instruction, state, mmu)?,
             "CMPXCHG" => self.execute_cmpxchg(instruction, state, mmu)?,
+            "XADD" => self.execute_xadd(instruction, state, mmu)?,
+            "CMOVCC" => self.execute_cmovcc(instruction, state, mmu)?,
             "SETCC" => self.execute_setcc(instruction, state, mmu)?,
             "BSF" | "BSR" => self.execute_bit_scan(instruction, state, mmu)?,
             "CLC" => {
@@ -568,14 +588,14 @@ impl InstructionExecutor {
             }
             (Operand::Register(reg), Some(Operand::ControlRegister(cr))) => {
                 let v = read_cr(state, *cr);
-                state.set_reg_size(*reg, ins.opsize, v);
+                state.set_reg_size(*reg, operand_bytes(ins.opsize), v);
             }
             (Operand::Register(reg), Some(Operand::DebugRegister(dr))) => {
                 let v = state.debug_reg(*dr);
-                state.set_reg_size(*reg, ins.opsize, v);
+                state.set_reg_size(*reg, operand_bytes(ins.opsize), v);
             }
             (Operand::DebugRegister(dr), Some(Operand::Register(reg))) => {
-                let v = state.reg_size(*reg, ins.opsize);
+                let v = state.reg_size(*reg, operand_bytes(ins.opsize));
                 // Debug registers are stored as 0; ignore writes.
                 let _ = (dr, v);
             }
@@ -609,7 +629,7 @@ impl InstructionExecutor {
             (ins.operands.first(), ins.operands.get(1))
         {
             let addr = effective_address(ins, state, mem);
-            state.set_reg_size(*reg, ins.opsize, addr);
+            state.set_reg_size(*reg, operand_bytes(ins.opsize), addr);
         }
         state.rip = ins.next_ip;
         Ok(())
@@ -977,7 +997,7 @@ impl InstructionExecutor {
         }
         match &ins.operands[0] {
             Operand::Register(r) => {
-                let v = state.reg_size(*r, ins.opsize);
+                let v = state.reg_size(*r, operand_bytes(ins.opsize));
                 push_value(state, mmu, v, size)?;
             }
             Operand::Immediate(v) => {
@@ -1506,7 +1526,7 @@ impl InstructionExecutor {
             } else if is_cmps {
                 let a = mmu.read_from_addr(rsi, step as u8).map_err(mem_err)?;
                 let b = mmu.read_from_addr(rdi, step as u8).map_err(mem_err)?;
-                let _ = alu_sub(state, a, b, step as u8, 0);
+                let _ = alu_sub(state, a, b, (step * 8) as u8, 0);
                 rsi = (rsi as i64 + delta) as u64;
                 rdi = (rdi as i64 + delta) as u64;
                 if rep == Some(true) && state.rflags & ZF == 0 {
@@ -1523,7 +1543,7 @@ impl InstructionExecutor {
                     _ => state.rax,
                 };
                 let b = mmu.read_from_addr(rdi, step as u8).map_err(mem_err)?;
-                let _ = alu_sub(state, a, b, step as u8, 0);
+                let _ = alu_sub(state, a, b, (step * 8) as u8, 0);
                 rdi = (rdi as i64 + delta) as u64;
                 if rep == Some(true) && state.rflags & ZF == 0 {
                     break;
@@ -1733,6 +1753,27 @@ impl InstructionExecutor {
         Ok(())
     }
 
+    fn execute_xadd(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+        mmu: &mut Mmu,
+    ) -> Result<(), CpuError> {
+        if ins.operands.len() < 2 {
+            state.rip = ins.next_ip;
+            return Ok(());
+        }
+        let dst = ins.operands[0].clone();
+        let src = ins.operands[1].clone();
+        let old_dst = read_operand(ins, state, mmu, &dst)?;
+        let src_value = read_operand(ins, state, mmu, &src)?;
+        let result = alu_add(state, old_dst, src_value, ins.opsize, 0);
+        write_operand(ins, state, mmu, &dst, result)?;
+        write_operand(ins, state, mmu, &src, old_dst)?;
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
     fn execute_setcc(
         &self,
         ins: &DecodedInstruction,
@@ -1742,6 +1783,25 @@ impl InstructionExecutor {
         let op = ins.operands[0].clone();
         let v = if condition_met(state, ins.condition) { 1u64 } else { 0 };
         write_operand(ins, state, mmu, &op, v)?;
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
+    fn execute_cmovcc(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+        mmu: &mut Mmu,
+    ) -> Result<(), CpuError> {
+        if ins.operands.len() < 2 {
+            state.rip = ins.next_ip;
+            return Ok(());
+        }
+        let value = read_operand(ins, state, mmu, &ins.operands[1])?;
+        if condition_met(state, ins.condition) {
+            let destination = ins.operands[0].clone();
+            write_operand(ins, state, mmu, &destination, value)?;
+        }
         state.rip = ins.next_ip;
         Ok(())
     }
@@ -1899,7 +1959,7 @@ impl InstructionExecutor {
 
 fn write_operand_sized(state: &mut CpuState, op: &Operand, size: u8, value: u64) {
     if let Operand::Register(r) = op {
-        state.set_reg_size(*r, size, value);
+        state.set_reg_size(*r, operand_bytes(size), value);
     }
 }
 

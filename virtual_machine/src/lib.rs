@@ -4,6 +4,7 @@ pub mod devices;
 pub mod firmware;
 pub mod boot;
 pub mod net;
+pub mod integration;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::Mmu;
@@ -32,6 +33,7 @@ pub use firmware::uefi::{
 pub use firmware::FirmwareMode;
 pub use boot::Loader;
 pub use boot::{framebuffer_info, LoaderError, KERNEL_LOAD_ADDR};
+pub use integration::{run_synos_integration, IntegrationError, SynosIntegrationReport};
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -63,6 +65,7 @@ pub struct VmConfig {
     pub smp_cores: usize,
     pub enable_serial: bool,
     pub firmware: FirmwareMode,
+    pub max_steps: Option<u64>,
 }
 
 impl Default for VmConfig {
@@ -75,6 +78,7 @@ impl Default for VmConfig {
             smp_cores: 1,
             enable_serial: true,
             firmware: FirmwareMode::Bios,
+            max_steps: None,
         }
     }
 }
@@ -425,7 +429,7 @@ impl Vm {
         self.bios.context.uefi.as_mut()
     }
 
-    pub fn run(&mut self) -> Result<(), VmError> {
+    fn initialize(&mut self) -> Result<(), VmError> {
         println!("Initializing VM...");
 
         match self.config.firmware {
@@ -451,22 +455,36 @@ impl Vm {
             self.boot_kernel()?;
         }
 
+        Ok(())
+    }
+
+    fn step_cpu(&mut self, started: &std::time::Instant) -> Result<(), VmError> {
+        if let Err(error) = self.cpu.step(
+            &mut self.mmu,
+            &mut self.interrupt_controller,
+            &mut self.ports,
+            &mut self.bios.context,
+        ) {
+            eprintln!("CPU error at RIP 0x{:016x}", self.cpu.state.rip);
+            return Err(error.into());
+        }
+
+        // Deferred DMA for storage and NICs issued during the step.
+        self.poll_devices();
+
+        let now_ns = started.elapsed().as_nanos() as u64;
+        self.poll_apic(now_ns)
+    }
+
+    /// Run the VM until the guest halts.
+    pub fn run(&mut self) -> Result<(), VmError> {
+        self.initialize()?;
+
         println!("Starting CPU emulation...");
 
         let started = std::time::Instant::now();
         loop {
-            self.cpu.step(
-                &mut self.mmu,
-                &mut self.interrupt_controller,
-                &mut self.ports,
-                &mut self.bios.context,
-            )?;
-
-            // Deferred DMA for storage and NICs issued during the step.
-            self.poll_devices();
-
-            let now_ns = started.elapsed().as_nanos() as u64;
-            self.poll_apic(now_ns)?;
+            self.step_cpu(&started)?;
 
             if self.cpu.state.halted {
                 println!("CPU halted");
@@ -475,6 +493,25 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    /// Run a finite number of guest instructions and return the resulting
+    /// CPU position. This is the bounded bring-up entry point for SynOS
+    /// integration checks; a kernel that waits for input can be inspected
+    /// without leaving a host process running forever.
+    pub fn run_for_steps(&mut self, max_steps: u64) -> Result<VmRunReport, VmError> {
+        self.initialize()?;
+        let started = std::time::Instant::now();
+        let mut steps = 0;
+        while steps < max_steps && !self.cpu.state.halted {
+            self.step_cpu(&started)?;
+            steps += 1;
+        }
+        Ok(VmRunReport {
+            steps,
+            halted: self.cpu.state.halted,
+            rip: self.cpu.state.rip,
+        })
     }
 
     fn boot_kernel(&mut self) -> Result<(), VmError> {
@@ -709,6 +746,13 @@ pub enum VmError {
     InvalidConfiguration,
     KernelLoadError,
     BootFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmRunReport {
+    pub steps: u64,
+    pub halted: bool,
+    pub rip: u64,
 }
 
 impl From<CpuError> for VmError {

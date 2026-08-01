@@ -324,6 +324,9 @@ impl Mmu {
     }
 
     fn ram_read(&self, phys: u64, size: usize) -> Result<u64, MemoryError> {
+        if size > 8 {
+            return Err(MemoryError::InvalidAddress);
+        }
         let start = phys as usize;
         let end = start.checked_add(size).ok_or(MemoryError::InvalidAddress)?;
         if end > self.ram.len() {
@@ -335,6 +338,9 @@ impl Mmu {
     }
 
     fn ram_write(&mut self, phys: u64, value: u64, size: usize) -> Result<(), MemoryError> {
+        if size > 8 {
+            return Err(MemoryError::InvalidAddress);
+        }
         let start = phys as usize;
         let end = start.checked_add(size).ok_or(MemoryError::InvalidAddress)?;
         if end > self.ram.len() {

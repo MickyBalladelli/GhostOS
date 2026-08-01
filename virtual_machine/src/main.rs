@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use synos_vm::{FirmwareMode, Vm, VmConfig};
+use synos_vm::{run_synos_integration, FirmwareMode, Vm, VmConfig};
 
 fn main() {
     println!("SynOS Virtual Machine");
@@ -7,6 +7,7 @@ fn main() {
 
     let mut config = VmConfig::default();
     let mut efi_image: Option<Vec<u8>> = None;
+    let mut integration = false;
 
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -57,9 +58,46 @@ fn main() {
                     i += 1;
                 }
             }
+            "--steps" => {
+                if let Some(steps) = args.get(i + 1) {
+                    config.max_steps = steps.parse().ok();
+                    i += 1;
+                }
+            }
+            "--integration" => integration = true,
             _ => {}
         }
         i += 1;
+    }
+
+    if integration {
+        let steps = config.max_steps.unwrap_or(10_000_000);
+        match run_synos_integration(config, steps) {
+            Ok(report) => {
+                println!(
+                    "SynOS integration: boot={} paging={} scheduler={} capabilities={} ipc={} ({} steps)",
+                    report.kernel_booted,
+                    report.paging_ready,
+                    report.scheduler_ready,
+                    report.capabilities_ready,
+                    report.ipc_ready,
+                    report.vm.steps,
+                );
+                if !report.kernel_booted
+                    || !report.paging_ready
+                    || !report.scheduler_ready
+                    || !report.capabilities_ready
+                    || !report.ipc_ready
+                {
+                    std::process::exit(1);
+                }
+                return;
+            }
+            Err(error) => {
+                eprintln!("SynOS integration error: {:?}", error);
+                std::process::exit(1);
+            }
+        }
     }
 
     let mut vm = Vm::with_config(config);
@@ -67,7 +105,21 @@ fn main() {
         vm.set_efi_application(img);
     }
 
-    if let Err(e) = vm.run() {
+    let result = if let Some(steps) = vm.config().max_steps {
+        match vm.run_for_steps(steps) {
+            Ok(report) => {
+                println!(
+                    "VM stopped after {} steps at RIP 0x{:016x} (halted={})",
+                    report.steps, report.rip, report.halted
+                );
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        vm.run()
+    };
+    if let Err(e) = result {
         eprintln!("VM Error: {:?}", e);
     }
 }

@@ -38,8 +38,90 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn-shell"
+version = "0.1.0"
+dependencies = [
+ "synos-observability",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-boot-protocol"
 version = "0.1.0"
+
+[[package]]
+name = "synos-fabric"
+version = "0.1.0"
+dependencies = [
+ "synos-observability",
+ "synos-status",
+]
+
+[[package]]
+name = "synos-ipc"
+version = "0.1.0"
+dependencies = [
+ "zerocopy",
+]
+
+[[package]]
+name = "synos-kernel"
+version = "0.1.0"
+dependencies = [
+ "syn-shell",
+ "synos-boot-protocol",
+ "synos-fabric",
+ "synos-ipc",
+ "synos-legacy-pc-drivers",
+ "synos-observability",
+ "synos-power",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
+name = "synos-legacy-pc-drivers"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
+name = "synos-observability"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
+name = "synos-power"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-legacy-pc-drivers",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
+name = "synos-status"
+version = "0.1.0"
+
+[[package]]
+name = "synos-synfs"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
+name = "synos-system-model"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+ "synos-synfs",
+]
 
 [[package]]
 name = "synos-vm"
@@ -47,6 +129,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "synos-boot-protocol",
+ "synos-kernel",
  "thiserror",
 ]
 
@@ -75,3 +158,23 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "zerocopy"
+version = "0.8.55"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5a105cd7b140f6eeec8acff2ea38135d3cab283ada58540f629fe51e46696eb"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.55"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fe976fb70c78cd64cccfe3a6fc142244e8a77b70959b30faf9d0ac37ee228eb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]

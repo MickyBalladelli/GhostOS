@@ -11,6 +11,7 @@ description = "A lightweight virtual machine for testing SynOS"
 bitflags = "2.4"
 thiserror = "1.0"
 synos-boot-protocol = { path = "../crates/boot-protocol" }
+synos-kernel = { path = "../kernel" }
 
 [dev-dependencies]
 

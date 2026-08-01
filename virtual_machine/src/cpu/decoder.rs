@@ -675,6 +675,20 @@ impl InstructionDecoder {
                 ];
                 return Ok(());
             }
+            0xA8 => {
+                ins.mnemonic = "TEST";
+                ins.opsize = 8;
+                let immediate = Self::read_imm(mmu, pos, 1, false)?;
+                ins.operands = vec![Operand::Register(0), Operand::Immediate(immediate)];
+                return Ok(());
+            }
+            0xA9 => {
+                ins.mnemonic = "TEST";
+                let immediate_size = if opsize == 16 { 2 } else { 4 };
+                let immediate = Self::read_imm(mmu, pos, immediate_size, opsize == 64)?;
+                ins.operands = vec![Operand::Register(0), Operand::Immediate(immediate)];
+                return Ok(());
+            }
 
             0xA4 => {
                 ins.mnemonic = "MOVSB";
@@ -1086,6 +1100,16 @@ impl InstructionDecoder {
         let addrsize = ins.addrsize;
 
         match op2 {
+            0x1F => {
+                // Multi-byte NOP: consume the ModR/M and optional address
+                // bytes, but do not touch the referenced memory.
+                let _ = self.decode_modrm_operands(
+                    mmu, pos, rex, opsize, addrsize, segment, true,
+                )?;
+                ins.mnemonic = "NOP";
+                ins.operands = vec![];
+                return Ok(());
+            }
             0x80..=0x8F => {
                 ins.mnemonic = "JCC";
                 ins.condition = (op2 - 0x80) as u8;
@@ -1246,6 +1270,18 @@ impl InstructionDecoder {
                 return Ok(());
             }
 
+            0xC0 | 0xC1 => {
+                ins.mnemonic = "XADD";
+                let width = if op2 == 0xC0 { 8 } else { opsize };
+                if op2 == 0xC0 {
+                    ins.opsize = 8;
+                }
+                let (reg, rm) =
+                    self.decode_modrm_operands(mmu, pos, rex, width, addrsize, segment, false)?;
+                ins.operands = vec![rm, Operand::Register(reg)];
+                return Ok(());
+            }
+
             0xAE => {
                 let (digit, rm) =
                     self.decode_modrm_operands(mmu, pos, Rex::default(), opsize, addrsize, 0, true)?;
@@ -1262,6 +1298,16 @@ impl InstructionDecoder {
                 } else {
                     ins.operands = vec![rm];
                 }
+                return Ok(());
+            }
+
+            0x40..=0x4F => {
+                ins.mnemonic = "CMOVCC";
+                ins.condition = (op2 - 0x40) as u8;
+                let (reg, rm) = self.decode_modrm_operands(
+                    mmu, pos, rex, opsize, addrsize, segment, false,
+                )?;
+                ins.operands = vec![Operand::Register(reg), rm];
                 return Ok(());
             }
 

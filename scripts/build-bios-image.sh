@@ -35,12 +35,12 @@ if [ "$stage2_size" -gt 8192 ]; then
     exit 1
 fi
 
-if [ "$kernel_size" -gt 262144 ]; then
-    echo "kernel exceeds its 512-sector BIOS reservation" >&2
+if [ "$kernel_size" -gt 327680 ]; then
+    echo "kernel exceeds its 640-sector BIOS reservation" >&2
     exit 1
 fi
 
-dd if=/dev/zero of="$build_dir/synos-bios.img" bs=512 count=529 status=none
+dd if=/dev/zero of="$build_dir/synos-bios.img" bs=512 count=657 status=none
 dd if="$build_dir/stage1.bin" of="$build_dir/synos-bios.img" conv=notrunc status=none
 dd if="$build_dir/stage2.bin" of="$build_dir/synos-bios.img" bs=512 seek=1 conv=notrunc status=none
 dd if="$build_dir/kernel.bin" of="$build_dir/synos-bios.img" bs=512 seek=17 conv=notrunc status=none
