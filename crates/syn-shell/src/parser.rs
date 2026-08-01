@@ -617,19 +617,10 @@ impl<'a> Lexer<'a> {
     fn word(&mut self) -> Result<Text<MAX_TOKEN_BYTES>, Error> {
         let mut word = Text::empty();
         let mut quote = None;
-        let mut escaped = false;
 
         while let Some(current) = self.peek() {
-            if escaped {
-                word.push_char(current)?;
-                self.advance(current);
-                escaped = false;
-                continue
-            }
             if current == '\\' {
-                self.advance(current);
-                escaped = true;
-                continue
+                return Err(Error::InvalidSyntax)
             }
             if let Some(expected) = quote {
                 self.advance(current);
@@ -651,7 +642,7 @@ impl<'a> Lexer<'a> {
             word.push_char(current)?;
             self.advance(current)
         }
-        if quote.is_some() || escaped {
+        if quote.is_some() {
             return Err(Error::UnterminatedQuote)
         }
         if word.is_empty() {

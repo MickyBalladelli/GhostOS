@@ -32,6 +32,12 @@ fn render_list(
     if is_default_directory_output(output) {
         return render_default_directory(output)
     }
+    if is_created_directory_output(output) {
+        return render_created_directory(output)
+    }
+    if is_metadata_output(output) {
+        return render_metadata(output)
+    }
 
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
@@ -65,6 +71,83 @@ fn is_default_directory_output(output: &StructuredOutput) -> bool {
     output
         .fields()
         .any(|field| field.name.as_str() == "default-directory")
+}
+
+fn is_metadata_output(output: &StructuredOutput) -> bool {
+    output
+        .fields()
+        .any(|field| field.name.as_str() == "operation")
+}
+
+fn is_created_directory_output(output: &StructuredOutput) -> bool {
+    matches!(find_value(output, "operation"), Some(OutputValue::Text(value)) if value.as_str() == "created")
+        && is_directory_output_type(output)
+}
+
+fn render_created_directory(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    if let Some(path) = find_value(output, "path") {
+        write_value(&mut rendered, path, false)?;
+    }
+    rendered.push_str(" was created\n")?;
+    Ok(rendered)
+}
+
+fn render_metadata(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+
+    const FIELDS: [(&str, &str); 6] = [
+        ("Operation", "operation"),
+        ("Path", "path"),
+        ("Type", "type"),
+        ("Size", "size"),
+        ("Version", "version"),
+        ("Link count", "link-count"),
+    ];
+
+    for (label, field) in FIELDS {
+        if field == "size" && is_directory_output_type(output) {
+            continue
+        }
+        let Some(value) = find_value(output, field) else {
+            continue
+        };
+        render_labeled_value(&mut rendered, label, value)?;
+    }
+
+    for field in output.fields() {
+        if FIELDS.iter().any(|(_, name)| *name == field.name.as_str()) {
+            continue
+        }
+        render_labeled_value(&mut rendered, field.name.as_str(), field.value)?;
+    }
+
+    Ok(rendered)
+}
+
+fn render_labeled_value(
+    rendered: &mut Text<MAX_RENDERED_OUTPUT_BYTES>,
+    label: &str,
+    value: OutputValue,
+) -> Result<(), Error> {
+    write!(rendered, "{label:<10}: ").map_err(|_| Error::Capacity)?;
+    write_value(rendered, value, false)?;
+    rendered.push_str("\n")?;
+    Ok(())
+}
+
+fn is_directory_output_type(output: &StructuredOutput) -> bool {
+    find_value(output, "type").is_some_and(is_directory_value)
+}
+
+fn is_directory_value(value: OutputValue) -> bool {
+    matches!(value, OutputValue::Text(value) if value.as_str() == "DIRECTORY")
 }
 
 fn render_default_directory(
@@ -180,7 +263,11 @@ fn render_directory(
         rendered.push_str("  ")?;
         write_table_value(&mut rendered, file_type, 10, false)?;
         rendered.push_str("  ")?;
-        write_table_value(&mut rendered, size, 8, true)?;
+        if is_directory_value(file_type) {
+            write_table_text(&mut rendered, "-", 8, true)?;
+        } else {
+            write_table_value(&mut rendered, size, 8, true)?;
+        }
         rendered.push_str("  ")?;
         write_table_value(&mut rendered, version, 7, true)?;
         rendered.push_str("  ")?;

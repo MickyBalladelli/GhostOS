@@ -42,6 +42,7 @@ impl Path {
         if bytes.is_empty()
             || bytes.len() > MAX_PATH_BYTES
             || bytes.contains(&0)
+            || bytes.contains(&b'\\')
             || (bytes.len() > 1 && bytes.ends_with(b"/"))
             || bytes.windows(2).any(|pair| pair == b"//")
         {
