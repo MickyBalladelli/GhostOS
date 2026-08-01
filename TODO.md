@@ -51,6 +51,59 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Fuzz path parsing, B-tree records, on-disk blocks, mount detection, and corrupted metadata.
   - [ ] Add QEMU boot coverage proving that the root filesystem mounts and applications can read and write files.
 
+### Filesystem User Workflow Checklist
+
+- [ ] **Shell Command Surface**
+  - [ ] Define command names, aliases, abbreviations, positional arguments, and qualifiers for `DIRECTORY`, `CREATE`, `TYPE`, and `SET DEFAULT`.
+  - [ ] Register filesystem commands with the shell command dictionary and assign stable execution routes.
+  - [ ] Add structured output schemas for directory entries, created files, file contents, and the active default directory.
+  - [ ] Return clear status messages for missing paths, invalid paths, permissions, read-only mounts, existing files, and non-directory targets.
+
+- [ ] **Path Resolution and Default Directory**
+  - [ ] Add a per-process or per-session default directory initialized to the SynFS root.
+  - [ ] Resolve relative paths against the caller's default directory before sending filesystem requests.
+  - [ ] Canonicalize absolute and relative paths while preventing traversal outside the mounted namespace.
+  - [ ] Validate that a new default directory exists and is a directory before changing session state.
+  - [ ] Add `SET DEFAULT` and a short `CD` alias, and expose the active directory in the shell prompt or `SHOW DEFAULT` output.
+  - [ ] Preserve default-directory state across command execution and reject stale or unauthorized directory capabilities.
+
+- [ ] **List Files in a Folder**
+  - [ ] Add a runtime filesystem API for listing a directory through a capability-authenticated request.
+  - [ ] Support absolute paths, relative paths, and the current default directory as list targets.
+  - [ ] Return typed entries with names, file types, sizes, versions, and link metadata instead of newline-only names.
+  - [ ] Add bounded pagination or continuation state when a directory listing exceeds the shared buffer.
+  - [ ] Render stable, human-readable directory output and structured output for pipelines.
+  - [ ] Enforce directory read permission and distinguish an empty directory from a missing or non-directory path.
+
+- [ ] **Create a Folder**
+  - [ ] Wire `DIRECTORY/CREATE` or `MKDIR` command parsing to the filesystem daemon.
+  - [ ] Support creation at absolute and relative paths, including an explicit recursive-parent option.
+  - [ ] Enforce parent-directory write and administration capabilities.
+  - [ ] Report already-existing paths, missing parents, read-only mounts, quota exhaustion, and non-directory parents.
+  - [ ] Return the created directory metadata and make it visible immediately to subsequent listings.
+
+- [ ] **Create a File**
+  - [ ] Add a dedicated create-file operation or command using exclusive-create semantics.
+  - [ ] Support absolute and relative file paths and creation in the active default directory.
+  - [ ] Enforce parent-directory write capability and regular-file type checks.
+  - [ ] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.
+  - [ ] Return a file capability or metadata result that can be consumed by later commands.
+
+- [ ] **Type a File**
+  - [ ] Add a `TYPE` command that opens a file read-only and reads it in bounded chunks.
+  - [ ] Support absolute and relative paths plus explicit SynFS version selectors.
+  - [ ] Stream text safely through shell output without exceeding fixed buffers.
+  - [ ] Define binary-file behavior and an option for byte-safe or encoded output.
+  - [ ] Close the file capability on success, failure, cancellation, and partial reads.
+  - [ ] Enforce read capability and report directories, missing files, corrupt versions, and I/O failures correctly.
+
+- [ ] **End-to-End Filesystem Shell Validation**
+  - [ ] Add parser coverage for every command, alias, qualifier, relative path, quoted path, and invalid argument combination.
+  - [ ] Add daemon and runtime integration coverage for capability checks, buffer limits, pagination, and error mapping.
+  - [ ] Add a persistence flow proving that created directories, files, contents, and default-directory behavior survive restart where applicable.
+  - [ ] Add QEMU boot coverage for listing, creating a directory, creating a file, typing its contents, and changing the default directory.
+  - [ ] Document the command examples and expected structured output in the shell and filesystem READMEs.
+
 ---
 
 ## 2. Legacy PC Hardware, Dual-Boot & Storage Co-Existence
