@@ -1,8 +1,8 @@
 //! Packet backends: the pluggable [`NetBackend`] trait and a two-port
 //! loopback hub connecting the emulated NICs.
 
-use crate::net::packet::{pad_frame, NetError, ETHERNET_FRAME_MAX, ETHERNET_HEADER_LEN};
 use crate::net::mac::{mac_matches, MacAddress};
+use crate::net::packet::{pad_frame, NetError, ETHERNET_FRAME_MAX, ETHERNET_HEADER_LEN};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -23,7 +23,10 @@ pub struct LoopbackHub {
 
 impl LoopbackHub {
     pub fn new() -> Self {
-        Self { queues: [VecDeque::new(), VecDeque::new()], up: true }
+        Self {
+            queues: [VecDeque::new(), VecDeque::new()],
+            up: true,
+        }
     }
 
     fn deliver(&mut self, from: usize, packet: &[u8]) -> Result<(), NetError> {
@@ -55,7 +58,12 @@ pub struct LoopbackPort {
 impl LoopbackPort {
     pub fn new(hub: Rc<RefCell<LoopbackHub>>, index: usize, mac: MacAddress) -> Self {
         assert!(index < 2, "loopback hub has exactly two ports");
-        Self { hub, index, mac, promiscuous: false }
+        Self {
+            hub,
+            index,
+            mac,
+            promiscuous: false,
+        }
     }
 
     pub fn mac(&self) -> MacAddress {
@@ -71,9 +79,6 @@ impl NetBackend for LoopbackPort {
         if packet.len() < ETHERNET_HEADER_LEN {
             return Err(NetError::Truncated);
         }
-        if !mac_matches(&packet[..6], &self.mac, self.promiscuous) {
-            return Ok(());
-        }
         self.hub.borrow_mut().deliver(self.index, packet)
     }
 
@@ -81,7 +86,15 @@ impl NetBackend for LoopbackPort {
         if !self.hub.borrow().up {
             return Err(NetError::LinkDown);
         }
-        Ok(self.hub.borrow_mut().queues[self.index].pop_front())
+        let mut hub = self.hub.borrow_mut();
+        while let Some(packet) = hub.queues[self.index].pop_front() {
+            if packet.len() >= ETHERNET_HEADER_LEN
+                && mac_matches(&packet[..6], &self.mac, self.promiscuous)
+            {
+                return Ok(Some(packet));
+            }
+        }
+        Ok(None)
     }
 
     fn link_up(&self) -> bool {
