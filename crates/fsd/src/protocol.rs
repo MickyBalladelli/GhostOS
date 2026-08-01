@@ -72,6 +72,7 @@ impl Flags {
     pub const ADMIN: Self = Self(1 << 6);
     pub const READ_ONLY: Self = Self(1 << 7);
     pub const RECURSIVE: Self = Self(1 << 8);
+    pub const EXCLUSIVE: Self = Self(1 << 9);
 
     pub const fn from_bits(bits: u16) -> Self {
         Self(bits)

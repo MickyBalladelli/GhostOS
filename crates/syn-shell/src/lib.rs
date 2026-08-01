@@ -6,6 +6,7 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 pub mod audit;
 pub mod diagnostics;
 pub mod editor;
+pub mod filesystem;
 pub mod interpreter;
 pub mod jobs;
 pub mod parser;

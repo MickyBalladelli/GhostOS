@@ -11,6 +11,7 @@ impl OpenOptions {
     pub const CREATE: Self = Self(1 << 2);
     pub const TRUNCATE: Self = Self(1 << 3);
     pub const APPEND: Self = Self(1 << 4);
+    pub const EXCLUSIVE: Self = Self(1 << 9);
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -30,6 +31,17 @@ pub struct File {
 pub struct Metadata {
     pub length: u64,
     pub version: u32,
+}
+
+/// Bytes returned by `list_directory` use the bounded SynFS directory wire
+/// format. The caller owns the shared buffer and can decode each record while
+/// following the returned continuation offset.
+pub const DIRECTORY_RECORD_HEADER_BYTES: usize = 22;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectoryPage {
+    pub bytes: usize,
+    pub next: u64,
 }
 
 impl File {
@@ -84,6 +96,30 @@ impl<S: SystemCall> Runtime<S> {
         request.flags = if recursive { 1 << 8 } else { 0 };
         self.execute(request)?;
         Ok(())
+    }
+
+    pub fn list_directory(
+        &self,
+        path_and_output: SharedBuffer,
+        continuation: u64,
+    ) -> Result<DirectoryPage, Error> {
+        let mut request = Request::new(Operation::SynFsList).with_buffer(path_and_output);
+        request.arguments[4] = continuation;
+        let response = self.execute(request)?;
+        Ok(DirectoryPage {
+            bytes: usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)?,
+            next: response.values[1],
+        })
+    }
+
+    pub fn create_file(&self, path: SharedBuffer) -> Result<(File, Metadata), Error> {
+        let options = OpenOptions::READ
+            .union(OpenOptions::WRITE)
+            .union(OpenOptions::CREATE)
+            .union(OpenOptions::EXCLUSIVE);
+        let file = self.open(path, options)?;
+        let metadata = self.metadata(file)?;
+        Ok((file, metadata))
     }
 
     pub fn remove_directory(&self, path: SharedBuffer) -> Result<(), Error> {

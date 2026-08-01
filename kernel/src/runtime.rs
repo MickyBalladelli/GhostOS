@@ -413,6 +413,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsRead
             | Operation::SynFsWrite
             | Operation::SynFsMetadata
+            | Operation::SynFsList
             | Operation::SynFsMkdir
             | Operation::SynFsRmdir
             | Operation::SynFsLink => self.dispatch_filesystem(caller, operation, request),
@@ -439,6 +440,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             Operation::SynFsRead => FsdOperation::Read,
             Operation::SynFsWrite => FsdOperation::Write,
             Operation::SynFsMetadata => FsdOperation::Metadata,
+            Operation::SynFsList => FsdOperation::List,
             Operation::SynFsMkdir => FsdOperation::Mkdir,
             Operation::SynFsRmdir => FsdOperation::Rmdir,
             Operation::SynFsLink => FsdOperation::Link,
@@ -446,7 +448,10 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         };
 
         let capability = match operation {
-            Operation::SynFsOpen | Operation::SynFsMkdir | Operation::SynFsRmdir => {
+            Operation::SynFsOpen
+            | Operation::SynFsList
+            | Operation::SynFsMkdir
+            | Operation::SynFsRmdir => {
                 if request.capability != 0 {
                     return Err(RuntimeDispatchError::InvalidRequest)
                 }
@@ -457,7 +462,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         };
         let flags = match operation {
             Operation::SynFsOpen => {
-                if request.flags & !0x1f != 0 {
+                if request.flags & !0x21f != 0 {
                     return Err(RuntimeDispatchError::InvalidRequest)
                 }
                 FsdFlags::from_bits(request.flags)
@@ -479,7 +484,10 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             if request.arguments[4] != 0 || request.arguments[5] != 0 {
                 return Err(RuntimeDispatchError::InvalidRequest)
             }
-        } else if operation == Operation::SynFsRead || operation == Operation::SynFsWrite {
+        } else if operation == Operation::SynFsRead
+            || operation == Operation::SynFsWrite
+            || operation == Operation::SynFsList
+        {
             if request.arguments[5] != 0 {
                 return Err(RuntimeDispatchError::InvalidRequest)
             }
@@ -524,6 +532,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             Operation::SynFsOpen
                 | Operation::SynFsRead
                 | Operation::SynFsWrite
+                | Operation::SynFsList
                 | Operation::SynFsMkdir
                 | Operation::SynFsRmdir
                 | Operation::SynFsLink
@@ -553,7 +562,8 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             return Err(RuntimeDispatchError::InvalidBuffer)
         }
         let writable = request.arguments[3] != 0;
-        let expected_writable = operation == Operation::SynFsRead;
+        let expected_writable = operation == Operation::SynFsRead
+            || operation == Operation::SynFsList;
         if writable != expected_writable {
             return Err(RuntimeDispatchError::InvalidBuffer)
         }
@@ -587,6 +597,14 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 }
             }
             Operation::SynFsRead | Operation::SynFsWrite => {
+                let length = buffer
+                    .map(|buffer| buffer.length as u64)
+                    .ok_or(RuntimeDispatchError::InvalidBuffer)?;
+                if response.values[0] > length {
+                    return Err(RuntimeDispatchError::TransportFailure)
+                }
+            }
+            Operation::SynFsList => {
                 let length = buffer
                     .map(|buffer| buffer.length as u64)
                     .ok_or(RuntimeDispatchError::InvalidBuffer)?;

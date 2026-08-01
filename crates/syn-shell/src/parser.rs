@@ -209,24 +209,32 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         if first.as_str().eq_ignore_ascii_case("SHOW")
             || first.as_str().eq_ignore_ascii_case("SHO")
             || first.as_str().eq_ignore_ascii_case("TOP")
+            || first.as_str().eq_ignore_ascii_case("SET")
         {
             let object = words[1].ok_or(Error::MissingArgument)?;
             let noun = object
                 .as_str()
                 .split_once('/')
                 .map_or(object.as_str(), |(noun, _)| noun);
-            command_name.push_str(if first.as_str().eq_ignore_ascii_case("TOP") {
+            let prefix = if first.as_str().eq_ignore_ascii_case("TOP") {
                 "TOP-"
+            } else if first.as_str().eq_ignore_ascii_case("SET") {
+                "SET-"
             } else {
                 "SHOW-"
-            })?;
+            };
+            command_name.push_str(prefix)?;
             command_name.push_str(noun)?;
-        } else if let Some((analyze, noun)) = first.as_str().split_once('/') {
-            if !starts_with_ignore_ascii_case("ANALYZE", analyze) || noun.is_empty() {
+        } else if let Some((verb, noun)) = first.as_str().split_once('/') {
+            if noun.is_empty() {
                 return Err(Error::InvalidSyntax)
             }
-            command_name.push_str("ANALYZE-")?;
-            command_name.push_str(noun)?;
+            if starts_with_ignore_ascii_case("ANALYZE", verb) {
+                command_name.push_str("ANALYZE-")?;
+                command_name.push_str(noun)?;
+            } else {
+                command_name.push_str(verb)?;
+            }
         } else {
             command_name.push_str(first.as_str())?;
         }
@@ -304,6 +312,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         if verb.as_str().eq_ignore_ascii_case("SHOW")
             || verb.as_str().eq_ignore_ascii_case("SHO")
             || verb.as_str().eq_ignore_ascii_case("TOP")
+            || verb.as_str().eq_ignore_ascii_case("SET")
         {
             if word_count < 2 {
                 return Err(Error::MissingArgument)
@@ -316,20 +325,28 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             if noun.is_empty() {
                 return Err(Error::InvalidSyntax)
             }
-            command_name.push_str(if verb.as_str().eq_ignore_ascii_case("TOP") {
+            let prefix = if verb.as_str().eq_ignore_ascii_case("TOP") {
                 "TOP-"
+            } else if verb.as_str().eq_ignore_ascii_case("SET") {
+                "SET-"
             } else {
                 "SHOW-"
-            })?;
+            };
+            command_name.push_str(prefix)?;
             command_name.push_str(noun)?;
             first_argument = 2;
             attached = qualifiers.map(Text::new).transpose()?
-        } else if let Some((analyze, noun)) = verb.as_str().split_once('/') {
-            if !starts_with_ignore_ascii_case("ANALYZE", analyze) || noun.is_empty() {
+        } else if let Some((verb_name, qualifier)) = verb.as_str().split_once('/') {
+            if qualifier.is_empty() {
                 return Err(Error::InvalidSyntax)
             }
-            command_name.push_str("ANALYZE-")?;
-            command_name.push_str(noun)?
+            if starts_with_ignore_ascii_case("ANALYZE", verb_name) {
+                command_name.push_str("ANALYZE-")?;
+                command_name.push_str(qualifier)?
+            } else {
+                command_name.push_str(verb_name)?;
+                attached = Some(Text::new(qualifier)?)
+            }
         } else {
             command_name.push_str(verb.as_str())?
         }

@@ -536,7 +536,7 @@ impl<
             return Err(DaemonError::AccessDenied);
         }
         let name = Name::from_str(path)?;
-        if path.contains(';') {
+        if path.contains(';') && requested.contains(FileRights::WRITE) {
             return Err(DaemonError::InvalidPath);
         }
         let namespace_read_only = path
@@ -550,6 +550,9 @@ impl<
             return Err(DaemonError::ReadOnly);
         }
         let exists = self.filesystem.lookup(path).is_ok();
+        if exists && flags.contains(Flags::CREATE) && flags.contains(Flags::EXCLUSIVE) {
+            return Err(DaemonError::File(SynFsError::AlreadyExists))
+        }
         if !exists && !flags.contains(Flags::CREATE) {
             return Err(DaemonError::NotFound);
         }
@@ -1013,9 +1016,12 @@ impl<
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
                     prefix.as_str(),
+                    request.offset as usize,
                     output,
                 )?;
-                Ok(Response::success().with_value(0, bytes as u64))
+                Ok(Response::success()
+                    .with_value(0, bytes.0 as u64)
+                    .with_value(1, bytes.1 as u64))
             }
             Operation::SnapshotCreate => {
                 let info = self.snapshot_create(
@@ -1044,9 +1050,12 @@ impl<
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
                     prefix.as_str(),
+                    request.offset as usize,
                     output,
                 )?;
-                Ok(Response::success().with_value(0, bytes as u64))
+                Ok(Response::success()
+                    .with_value(0, bytes.0 as u64)
+                    .with_value(1, bytes.1 as u64))
             }
             Operation::Mount => {
                 let name = input_name(buffer)?;
@@ -1159,8 +1168,9 @@ impl<
         process: ProcessId,
         authority: Capability,
         prefix: &str,
+        continuation: usize,
         output: &mut [u8],
-    ) -> Result<usize, DaemonError> {
+    ) -> Result<(usize, usize), DaemonError> {
         self.authorize_process(process, authority, FileRights::READ)?;
         let checkpoint = self.filesystem.create_checkpoint()?;
         let listing = {
@@ -1168,7 +1178,9 @@ impl<
                 .filesystem
                 .checkpoint_snapshot(checkpoint.id, rms_capability())
             {
-                Ok(snapshot) => Self::write_snapshot_listing(&snapshot, prefix, output),
+                Ok(snapshot) => {
+                    Self::write_snapshot_listing(&snapshot, prefix, continuation, output)
+                }
                 Err(error) => Err(DaemonError::File(error)),
             }
         };
@@ -1185,13 +1197,19 @@ impl<
         process: ProcessId,
         capability: Capability,
         prefix: &str,
+        continuation: usize,
         output: &mut [u8],
-    ) -> Result<usize, DaemonError> {
+    ) -> Result<(usize, usize), DaemonError> {
         let index = self.snapshot_index(process, capability)?;
         let snapshot = self
             .filesystem
             .checkpoint_snapshot(self.snapshots[index].checkpoint.id, rms_capability())?;
-        Ok(Self::write_snapshot_listing(&snapshot, prefix, output)?)
+        Ok(Self::write_snapshot_listing(
+            &snapshot,
+            prefix,
+            continuation,
+            output,
+        )?)
     }
 
     fn list_mounts(&self, output: &mut [u8]) -> Result<usize, DaemonError> {
@@ -1224,26 +1242,44 @@ impl<
     fn write_snapshot_listing<const BLOCKS: usize>(
         snapshot: &synos_synfs::ReadOnlySnapshot<'_, BLOCKS>,
         prefix: &str,
+        continuation: usize,
         output: &mut [u8],
-    ) -> Result<usize, DaemonError> {
+    ) -> Result<(usize, usize), DaemonError> {
         let path = if prefix.is_empty() { "/" } else { prefix };
         let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
         let count = snapshot.list_directory(path, &mut entries)?;
         let mut written = 0;
-        for entry in entries.iter().take(count) {
-            let required = entry.name.as_bytes().len() + 1;
+        let mut next = 0;
+        let mut stopped_for_buffer = false;
+        for (index, entry) in entries.iter().take(count).enumerate().skip(continuation) {
+            let name = entry.name.as_bytes();
+            let required = 22 + name.len();
             if written + required > output.len() {
-                return Err(DaemonError::BufferTooSmall {
-                    required: written + required,
-                });
+                if written == 0 {
+                    return Err(DaemonError::BufferTooSmall { required })
+                }
+                next = index;
+                stopped_for_buffer = true;
+                break
             }
-            output[written..written + entry.name.as_bytes().len()]
-                .copy_from_slice(entry.name.as_bytes());
-            written += entry.name.as_bytes().len();
-            output[written] = b'\n';
-            written += 1;
+            let name_length = u16::try_from(name.len()).map_err(|_| DaemonError::InvalidPath)?;
+            output[written..written + 2].copy_from_slice(&name_length.to_le_bytes());
+            output[written + 2] = entry.file_type as u8;
+            output[written + 3] = 0;
+            output[written + 4..written + 12].copy_from_slice(&entry.size.to_le_bytes());
+            output[written + 12..written + 16].copy_from_slice(&entry.version.to_le_bytes());
+            output[written + 16..written + 20]
+                .copy_from_slice(&entry.link_count.to_le_bytes());
+            output[written + 20..written + 22].copy_from_slice(&entry.mode.to_le_bytes());
+            output[written + 22..written + required].copy_from_slice(name);
+            written += required;
+            next = index + 1;
         }
-        Ok(written)
+        if stopped_for_buffer || next < count {
+            Ok((written, next))
+        } else {
+            Ok((written, 0))
+        }
     }
 
     fn ensure_writable(

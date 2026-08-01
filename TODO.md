@@ -53,44 +53,44 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 ### Filesystem User Workflow Checklist
 
-- [ ] **Shell Command Surface**
-  - [ ] Define command names, aliases, abbreviations, positional arguments, and qualifiers for `DIRECTORY`, `CREATE`, `TYPE`, and `SET DEFAULT`.
-  - [ ] Register filesystem commands with the shell command dictionary and assign stable execution routes.
-  - [ ] Add structured output schemas for directory entries, created files, file contents, and the active default directory.
+- [x] **Shell Command Surface**
+  - [x] Define command names, aliases, abbreviations, positional arguments, and qualifiers for `DIRECTORY`, `CREATE`, `TYPE`, and `SET DEFAULT`.
+  - [x] Register filesystem commands with the shell command dictionary and assign stable execution routes.
+  - [x] Add structured output schemas for directory entries, created files, file contents, and the active default directory.
   - [ ] Return clear status messages for missing paths, invalid paths, permissions, read-only mounts, existing files, and non-directory targets.
 
 - [ ] **Path Resolution and Default Directory**
-  - [ ] Add a per-process or per-session default directory initialized to the SynFS root.
-  - [ ] Resolve relative paths against the caller's default directory before sending filesystem requests.
-  - [ ] Canonicalize absolute and relative paths while preventing traversal outside the mounted namespace.
-  - [ ] Validate that a new default directory exists and is a directory before changing session state.
-  - [ ] Add `SET DEFAULT` and a short `CD` alias, and expose the active directory in the shell prompt or `SHOW DEFAULT` output.
-  - [ ] Preserve default-directory state across command execution and reject stale or unauthorized directory capabilities.
+  - [x] Add a per-process or per-session default directory initialized to the SynFS root.
+  - [x] Resolve relative paths against the caller's default directory before sending filesystem requests.
+  - [x] Canonicalize absolute and relative paths while preventing traversal outside the mounted namespace.
+  - [x] Validate that a new default directory exists and is a directory before changing session state.
+  - [x] Add `SET DEFAULT` and a short `CD` alias, and expose the active directory in the shell prompt or `SHOW DEFAULT` output.
+  - [x] Preserve default-directory state across command execution and reject stale or unauthorized directory capabilities.
 
 - [ ] **List Files in a Folder**
-  - [ ] Add a runtime filesystem API for listing a directory through a capability-authenticated request.
-  - [ ] Support absolute paths, relative paths, and the current default directory as list targets.
-  - [ ] Return typed entries with names, file types, sizes, versions, and link metadata instead of newline-only names.
-  - [ ] Add bounded pagination or continuation state when a directory listing exceeds the shared buffer.
-  - [ ] Render stable, human-readable directory output and structured output for pipelines.
-  - [ ] Enforce directory read permission and distinguish an empty directory from a missing or non-directory path.
+  - [x] Add a runtime filesystem API for listing a directory through a capability-authenticated request.
+  - [x] Support absolute paths, relative paths, and the current default directory as list targets.
+  - [x] Return typed entries with names, file types, sizes, versions, and link metadata instead of newline-only names.
+  - [x] Add bounded pagination or continuation state when a directory listing exceeds the shared buffer.
+  - [x] Render stable, human-readable directory output and structured output for pipelines.
+  - [x] Enforce directory read permission and distinguish an empty directory from a missing or non-directory path.
 
 - [ ] **Create a Folder**
-  - [ ] Wire `DIRECTORY/CREATE` or `MKDIR` command parsing to the filesystem daemon.
+  - [x] Wire `DIRECTORY/CREATE` or `MKDIR` command parsing to the filesystem daemon.
   - [ ] Support creation at absolute and relative paths, including an explicit recursive-parent option.
   - [ ] Enforce parent-directory write and administration capabilities.
   - [ ] Report already-existing paths, missing parents, read-only mounts, quota exhaustion, and non-directory parents.
   - [ ] Return the created directory metadata and make it visible immediately to subsequent listings.
 
 - [ ] **Create a File**
-  - [ ] Add a dedicated create-file operation or command using exclusive-create semantics.
+  - [x] Add a dedicated create-file operation or command using exclusive-create semantics.
   - [ ] Support absolute and relative file paths and creation in the active default directory.
   - [ ] Enforce parent-directory write capability and regular-file type checks.
   - [ ] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.
   - [ ] Return a file capability or metadata result that can be consumed by later commands.
 
 - [ ] **Type a File**
-  - [ ] Add a `TYPE` command that opens a file read-only and reads it in bounded chunks.
+  - [x] Add a `TYPE` command that opens a file read-only and reads it in bounded chunks.
   - [ ] Support absolute and relative paths plus explicit SynFS version selectors.
   - [ ] Stream text safely through shell output without exceeding fixed buffers.
   - [ ] Define binary-file behavior and an option for byte-safe or encoded output.

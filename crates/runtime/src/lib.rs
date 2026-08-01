@@ -10,7 +10,7 @@ mod thread;
 use synos_status::Status;
 
 pub use abi::{Capability, GateFn, NativeGate, Operation, Request, Response, SystemCall};
-pub use fs::{File, Metadata, OpenOptions};
+pub use fs::{DirectoryPage, File, Metadata, OpenOptions, DIRECTORY_RECORD_HEADER_BYTES};
 pub use ipc::{IpcAccess, IpcMapping};
 pub use thread::{Thread, ThreadStart, WaitWord};
 
