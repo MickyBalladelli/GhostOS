@@ -83,19 +83,51 @@ pub struct CommandRegistration {
     pub route: RouteId,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommandSuggestions<const CAPACITY: usize> {
+    names: [Option<LogicalName>; CAPACITY],
+    count: usize,
+}
+
+impl<const CAPACITY: usize> CommandSuggestions<CAPACITY> {
+    fn new() -> Self {
+        Self {
+            names: [None; CAPACITY],
+            count: 0,
+        }
+    }
+
+    pub fn commands(&self) -> impl Iterator<Item = LogicalName> + '_ {
+        self.names[..self.count].iter().flatten().copied()
+    }
+
+    fn push(&mut self, name: LogicalName) -> Result<(), Error> {
+        let slot = self
+            .names
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(Error::Capacity)?;
+        *slot = Some(name);
+        self.count += 1;
+        Ok(())
+    }
+}
+
 pub struct CommandRegistry<const CAPACITY: usize = DEFAULT_REGISTRY_CAPACITY> {
     commands: [Option<CommandRegistration>; CAPACITY],
+    command_count: usize,
 }
 
 impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
     pub const fn new() -> Self {
         Self {
             commands: [None; CAPACITY],
+            command_count: 0,
         }
     }
 
     pub fn register(&mut self, spec: CommandSpec, route: RouteId) -> Result<(), Error> {
-        if self.commands.iter().flatten().any(|entry| {
+        if self.commands[..self.command_count].iter().flatten().any(|entry| {
             entry
                 .spec
                 .name
@@ -104,18 +136,72 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         }) {
             return Err(Error::InvalidValue)
         }
-        let slot = self
-            .commands
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(Error::Capacity)?;
-        *slot = Some(CommandRegistration { spec, route });
+        if self.command_count == CAPACITY {
+            return Err(Error::Capacity)
+        }
+        self.commands[self.command_count] = Some(CommandRegistration { spec, route });
+        self.command_count += 1;
         Ok(())
     }
 
     /// Commands in stable registration order for schema reflection.
     pub fn registrations(&self) -> impl Iterator<Item = CommandRegistration> + '_ {
-        self.commands.iter().flatten().copied()
+        self.commands[..self.command_count].iter().flatten().copied()
+    }
+
+    pub fn suggestions(
+        &self,
+        input: &str,
+    ) -> Result<CommandSuggestions<CAPACITY>, Error> {
+        let mut lexer = Lexer::new(input);
+        let mut words: [Option<Text<MAX_TOKEN_BYTES>>; 2] = [None; 2];
+        let mut word_count = 0;
+
+        while let Some(lexeme) = lexer.next()? {
+            match lexeme {
+                Lexeme::Word(word) => {
+                    if word_count == words.len() {
+                        break
+                    }
+                    words[word_count] = Some(word);
+                    word_count += 1
+                }
+                Lexeme::Pipe | Lexeme::Background => break,
+            }
+        }
+
+        let first = words[0].ok_or(Error::InvalidSyntax)?;
+        let mut command_name = Text::<MAX_COMMAND_NAME_BYTES>::empty();
+        if first.as_str().eq_ignore_ascii_case("SHOW")
+            || first.as_str().eq_ignore_ascii_case("SHO")
+        {
+            let object = words[1].ok_or(Error::MissingArgument)?;
+            let noun = object
+                .as_str()
+                .split_once('/')
+                .map_or(object.as_str(), |(noun, _)| noun);
+            command_name.push_str("SHOW-")?;
+            command_name.push_str(noun)?;
+        } else if let Some((analyze, noun)) = first.as_str().split_once('/') {
+            if !starts_with_ignore_ascii_case("ANALYZE", analyze) || noun.is_empty() {
+                return Err(Error::InvalidSyntax)
+            }
+            command_name.push_str("ANALYZE-")?;
+            command_name.push_str(noun)?;
+        } else {
+            command_name.push_str(first.as_str())?;
+        }
+
+        let mut suggestions = CommandSuggestions::new();
+        for entry in self.commands[..self.command_count].iter().flatten() {
+            if starts_with_ignore_ascii_case(
+                entry.spec.name.as_str(),
+                command_name.as_str(),
+            ) {
+                suggestions.push(entry.spec.name)?
+            }
+        }
+        Ok(suggestions)
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, Error> {
@@ -186,7 +272,9 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         let mut first_argument = 1usize;
         let mut attached: Option<Text<MAX_TOKEN_BYTES>> = None;
 
-        if verb.as_str().eq_ignore_ascii_case("SHOW") {
+        if verb.as_str().eq_ignore_ascii_case("SHOW")
+            || verb.as_str().eq_ignore_ascii_case("SHO")
+        {
             if word_count < 2 {
                 return Err(Error::MissingArgument)
             }
@@ -205,7 +293,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             first_argument = 2;
             attached = qualifiers.map(Text::new).transpose()?
         } else if let Some((analyze, noun)) = verb.as_str().split_once('/') {
-            if !analyze.eq_ignore_ascii_case("ANALYZE") || noun.is_empty() {
+            if !starts_with_ignore_ascii_case("ANALYZE", analyze) || noun.is_empty() {
                 return Err(Error::InvalidSyntax)
             }
             command_name.push_str("ANALYZE-")?;
@@ -214,18 +302,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name.push_str(verb.as_str())?
         }
 
-        let registration = self
-            .commands
-            .iter()
-            .flatten()
-            .find(|entry| {
-                entry
-                    .spec
-                    .name
-                    .as_str()
-                    .eq_ignore_ascii_case(command_name.as_str())
-            })
-            .ok_or(Error::UnknownCommand)?;
+        let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];
         let mut positional = 0usize;
 
@@ -318,6 +395,36 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         };
         insert_argument(arguments, spec, raw)
     }
+
+    fn find_registration(
+        &self,
+        command_name: &str,
+    ) -> Result<CommandRegistration, Error> {
+        let mut exact = None;
+        let mut prefix = None;
+        let mut ambiguous = false;
+
+        for entry in self.commands[..self.command_count].iter().flatten().copied() {
+            let name = entry.spec.name.as_str();
+            if name.eq_ignore_ascii_case(command_name) {
+                exact = Some(entry);
+            } else if starts_with_ignore_ascii_case(name, command_name) {
+                if prefix.is_some() {
+                    ambiguous = true;
+                } else {
+                    prefix = Some(entry);
+                }
+            }
+        }
+
+        if let Some(entry) = exact {
+            Ok(entry)
+        } else if ambiguous {
+            Err(Error::AmbiguousCommand)
+        } else {
+            prefix.ok_or(Error::UnknownCommand)
+        }
+    }
 }
 
 impl<const CAPACITY: usize> Default for CommandRegistry<CAPACITY> {
@@ -374,6 +481,12 @@ fn insert_argument(
 
 fn names_equal(left: LogicalName, right: LogicalName) -> bool {
     left.as_str().eq_ignore_ascii_case(right.as_str())
+}
+
+fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
+    value
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

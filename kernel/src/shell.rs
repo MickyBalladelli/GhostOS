@@ -118,15 +118,17 @@ fn execute_line(
     executor: &mut KernelExecutor,
     acpi: Option<&AcpiPlatform>,
 ) {
-    if line.eq_ignore_ascii_case("SHOW SYSTEM")
-        || line.eq_ignore_ascii_case("SHOW SYSTEM")
-    {
-        executor.print_system();
-        return
-    }
-
     let program = match registry.parse(line) {
         Ok(program) => program,
+        Err(Error::AmbiguousCommand) => {
+            crate::println!("shell error: ambiguous command");
+            if let Ok(suggestions) = registry.suggestions(line) {
+                for command in suggestions.commands() {
+                    print_command_suggestion(command.as_str());
+                }
+            }
+            return;
+        }
         Err(error) => {
             crate::println!("shell error: {error:?}");
             return;
@@ -137,8 +139,22 @@ fn execute_line(
         return;
     }
 
-    let human_memory_output = line.trim().eq_ignore_ascii_case("SHOW MEMORY");
-    let human_dsm_output = line.trim().eq_ignore_ascii_case("SHOW DSM");
+    let (human_system_output, human_memory_output, human_dsm_output) =
+        if program.stage_count() == 1 {
+            match program.stage(0).map(|stage| stage.route.raw()) {
+                Some(SHOW_SYSTEM_ROUTE) => (true, false, false),
+                Some(SHOW_MEMORY_ROUTE) => (false, true, false),
+                Some(SHOW_DSM_ROUTE) => (false, false, true),
+                _ => (false, false, false),
+            }
+        } else {
+            (false, false, false)
+        };
+
+    if human_system_output {
+        executor.print_system();
+        return
+    }
 
     match interpreter.start_program(program, executor) {
         Ok(InterpreterEvent::Started) => {}
@@ -188,6 +204,14 @@ fn execute_line(
 
 fn prompt() {
     crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
+}
+
+fn print_command_suggestion(command: &str) {
+    crate::print!("  ");
+    for byte in command.bytes() {
+        crate::print!("{}", if byte == b'-' { ' ' } else { byte as char });
+    }
+    crate::println!();
 }
 
 fn redraw<const HISTORY: usize>(editor: &LineEditor<HISTORY>) {
@@ -399,7 +423,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM; unique command prefixes accepted",
         )?;
         Ok(output)
     }

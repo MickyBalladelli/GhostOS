@@ -32,6 +32,7 @@ pub enum Error {
     TokenTooLong,
     TooManyArguments,
     TooManyStages,
+    AmbiguousCommand,
     UnknownArgument,
     UnknownCommand,
     UnterminatedQuote,
@@ -52,6 +53,7 @@ impl IntoStatus for Error {
             Self::InvalidHandle
             | Self::InvalidSyntax
             | Self::InvalidValue
+            | Self::AmbiguousCommand
             | Self::MissingArgument
             | Self::NoActiveCommand
             | Self::TokenTooLong
