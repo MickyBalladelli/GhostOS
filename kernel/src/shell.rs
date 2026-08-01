@@ -147,19 +147,30 @@ fn execute_line(
         return;
     }
 
-    let (human_system_output, human_memory_output, human_dsm_output, human_cpu_output) =
+    let (
+        human_help_output,
+        human_system_output,
+        human_memory_output,
+        human_dsm_output,
+        human_cpu_output,
+    ) =
         if program.stage_count() == 1 {
             match program.stage(0).map(|stage| stage.route.raw()) {
-                Some(SHOW_SYSTEM_ROUTE) => (true, false, false, false),
-                Some(SHOW_MEMORY_ROUTE) => (false, true, false, false),
-                Some(SHOW_DSM_ROUTE) => (false, false, true, false),
-                Some(TOP_CPU_ROUTE) => (false, false, false, true),
-                _ => (false, false, false, false),
+                Some(HELP_ROUTE) => (true, false, false, false, false),
+                Some(SHOW_SYSTEM_ROUTE) => (false, true, false, false, false),
+                Some(SHOW_MEMORY_ROUTE) => (false, false, true, false, false),
+                Some(SHOW_DSM_ROUTE) => (false, false, false, true, false),
+                Some(TOP_CPU_ROUTE) => (false, false, false, false, true),
+                _ => (false, false, false, false, false),
             }
         } else {
-            (false, false, false, false)
+            (false, false, false, false, false)
         };
 
+    if human_help_output {
+        executor.print_help();
+        return
+    }
     if human_system_output {
         executor.print_system();
         return
@@ -465,6 +476,22 @@ impl KernelExecutor {
             "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM; unique command prefixes accepted",
         )?;
         Ok(output)
+    }
+
+    fn print_help(&self) {
+        crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
+        crate::println!("COMMAND              DESCRIPTION");
+        crate::println!("  HELP               Show this help");
+        crate::println!("  SHOW SYSTEM        Show system status");
+        crate::println!("  REBOOT             Restart SynOS");
+        crate::println!("  SHUTDOWN           Power off SynOS");
+        crate::println!("  MONITOR            Cycle monitor view");
+        crate::println!("  SHOW PROCESSES     List running threads");
+        crate::println!("  TOP CPU            Show CPU activity");
+        crate::println!("  SHOW MEMORY        Show memory usage");
+        crate::println!("  SHOW DSM           Show DSM lock activity");
+        crate::println!();
+        crate::println!("Unique command prefixes are accepted.");
     }
 
     fn show_system(&self) -> Result<StructuredOutput, Status> {
