@@ -27,7 +27,7 @@ pub enum CpuMode {
     Long64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CpuState {
     pub rax: u64,
     pub rbx: u64,
@@ -134,7 +134,7 @@ impl Default for CpuState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SegmentRegister {
     pub selector: u16,
     pub base: u64,
@@ -142,7 +142,7 @@ pub struct SegmentRegister {
     pub attributes: u16,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DescriptorTableRegister {
     pub base: u64,
     pub limit: u16,

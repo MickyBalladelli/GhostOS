@@ -47,6 +47,14 @@ pub struct InterruptController {
     pic_mapped: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterruptControllerState {
+    pub idt_base: u64,
+    pub idt_limit: u16,
+    pub irq_routing: Vec<(u8, u64)>,
+    pub pic_mapped: bool,
+}
+
 impl InterruptController {
     pub fn new() -> Self {
         Self {
@@ -61,6 +69,22 @@ impl InterruptController {
         self.idt_base = 0x1000;
         self.idt_limit = 0;
         self.pic_mapped = false;
+    }
+
+    pub(crate) fn snapshot_state(&self) -> InterruptControllerState {
+        InterruptControllerState {
+            idt_base: self.idt_base,
+            idt_limit: self.idt_limit,
+            irq_routing: self.irq_routing.iter().map(|(&irq, &vector)| (irq, vector)).collect(),
+            pic_mapped: self.pic_mapped,
+        }
+    }
+
+    pub(crate) fn restore_state(&mut self, state: &InterruptControllerState) {
+        self.idt_base = state.idt_base;
+        self.idt_limit = state.idt_limit;
+        self.irq_routing = state.irq_routing.iter().copied().collect();
+        self.pic_mapped = state.pic_mapped;
     }
 
     pub fn set_idt(&mut self, base: u64, limit: u16) {

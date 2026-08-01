@@ -128,11 +128,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [ ] Live migration support (future)
   - [ ] Monitor console access
 
-- [ ] **Snapshot & State**
-  - [ ] VM state serialization
-  - [ ] Checkpoint/restore implementation
-  - [ ] Diff-based snapshotting
-  - [ ] Snapshot chain management
+- [x] **Snapshot & State**
+  - [x] VM state serialization
+  - [x] Checkpoint/restore implementation
+  - [x] Diff-based snapshotting
+  - [x] Snapshot chain management
 
 ---
 

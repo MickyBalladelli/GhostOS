@@ -196,6 +196,27 @@ struct CowMapping {
     overcommitted: bool,
 }
 
+/// Serializable MMU state. MMIO registrations are owned by the VM topology
+/// and are not replaced during restore; their guest-visible RAM and mapping
+/// state is restored here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MmuState {
+    pub ram: Vec<u8>,
+    pub free_frames: Vec<usize>,
+    pub code_version: u64,
+    pub identity: Vec<(u64, u64)>,
+    pub cow_pages: Vec<(u64, u64, u64, bool)>,
+    pub mapped_frames: Vec<(u64, usize)>,
+    pub mapped_pages: Vec<(u64, u64)>,
+    pub ballooned_frames: Vec<u64>,
+    pub zero_page: Option<u64>,
+    pub overcommitted_pages: usize,
+    pub overcommit_limit: usize,
+    pub paging_enabled: bool,
+    pub cr3: u64,
+    pub privilege: bool,
+}
+
 /// Resolves `virt` through a four-level page table whose root (PML4) is at
 /// physical address `cr3`, reading tables from guest RAM.
 fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> {
@@ -335,6 +356,84 @@ impl Mmu {
 
     pub fn ram_size(&self) -> usize {
         self.ram.len()
+    }
+
+    pub(crate) fn snapshot_state(&self) -> MmuState {
+        MmuState {
+            ram: self.ram.clone(),
+            free_frames: self.allocator.free.clone(),
+            code_version: self.code_version,
+            identity: self
+                .identity
+                .iter()
+                .map(|(&address, &flags)| (address, flags.bits()))
+                .collect(),
+            cow_pages: self
+                .cow_pages
+                .iter()
+                .map(|(&virt, mapping)| {
+                    (virt, mapping.phys, mapping.flags.bits(), mapping.overcommitted)
+                })
+                .collect(),
+            mapped_frames: self
+                .mapped_frames
+                .iter()
+                .map(|(&frame, &count)| (frame, count))
+                .collect(),
+            mapped_pages: self
+                .mapped_pages
+                .iter()
+                .map(|(&page, &frame)| (page, frame))
+                .collect(),
+            ballooned_frames: self.ballooned_frames.iter().copied().collect(),
+            zero_page: self.zero_page,
+            overcommitted_pages: self.overcommitted_pages,
+            overcommit_limit: self.overcommit_limit,
+            paging_enabled: self.paging_enabled,
+            cr3: self.cr3,
+            privilege: self.privilege,
+        }
+    }
+
+    pub(crate) fn restore_state(&mut self, state: &MmuState) -> Result<(), MemoryError> {
+        if state.ram.len() != self.ram.len()
+            || state.free_frames.iter().any(|&frame| frame >= self.allocator.total_frames)
+        {
+            return Err(MemoryError::InvalidAddress);
+        }
+
+        self.ram.clone_from(&state.ram);
+        self.allocator.free = state.free_frames.clone();
+        self.code_version = state.code_version;
+        self.identity = state
+            .identity
+            .iter()
+            .map(|&(address, flags)| (address, PageFlags::from_bits_truncate(flags)))
+            .collect();
+        self.cow_pages = state
+            .cow_pages
+            .iter()
+            .map(|&(virt, phys, flags, overcommitted)| {
+                (
+                    virt,
+                    CowMapping {
+                        phys,
+                        flags: PageFlags::from_bits_truncate(flags),
+                        overcommitted,
+                    },
+                )
+            })
+            .collect();
+        self.mapped_frames = state.mapped_frames.iter().copied().collect();
+        self.mapped_pages = state.mapped_pages.iter().copied().collect();
+        self.ballooned_frames = state.ballooned_frames.iter().copied().collect();
+        self.zero_page = state.zero_page;
+        self.overcommitted_pages = state.overcommitted_pages;
+        self.overcommit_limit = state.overcommit_limit;
+        self.paging_enabled = state.paging_enabled;
+        self.cr3 = state.cr3;
+        self.privilege = state.privilege;
+        Ok(())
     }
 
     /// Version of guest RAM used by the CPU translation cache.

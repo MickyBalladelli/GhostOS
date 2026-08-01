@@ -6,6 +6,7 @@ pub mod boot;
 pub mod net;
 pub mod integration;
 pub mod execution;
+pub mod snapshot;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -38,6 +39,7 @@ pub use integration::{run_synos_integration, IntegrationError, SynosIntegrationR
 pub use execution::{
     BlockProfile, ExecutionEngine, ExecutionEngineConfig, ExecutionStats,
 };
+pub use snapshot::{SnapshotChain, SnapshotDiff, SnapshotError, SnapshotId, VmSnapshot};
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -757,6 +759,36 @@ impl Vm {
 
     pub fn config(&self) -> &VmConfig {
         &self.config
+    }
+
+    /// Capture a checkpoint of guest execution and memory state.
+    pub fn snapshot(&self) -> VmSnapshot {
+        VmSnapshot::capture(self)
+    }
+
+    /// Alias for [`Self::snapshot`] using checkpoint terminology.
+    pub fn checkpoint(&self) -> VmSnapshot {
+        self.snapshot()
+    }
+
+    /// Restore a checkpoint captured from a VM with the same RAM size.
+    pub fn restore_snapshot(&mut self, snapshot: &VmSnapshot) -> Result<(), SnapshotError> {
+        snapshot.restore_into(self)
+    }
+
+    /// Alias for [`Self::restore_snapshot`].
+    pub fn restore(&mut self, snapshot: &VmSnapshot) -> Result<(), SnapshotError> {
+        self.restore_snapshot(snapshot)
+    }
+
+    /// Save a checkpoint to the versioned binary snapshot format.
+    pub fn save_snapshot(&self, path: impl AsRef<std::path::Path>) -> Result<(), SnapshotError> {
+        self.snapshot().save(path)
+    }
+
+    /// Load a checkpoint from disk.
+    pub fn load_snapshot(path: impl AsRef<std::path::Path>) -> Result<VmSnapshot, SnapshotError> {
+        VmSnapshot::load(path)
     }
 }
 

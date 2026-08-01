@@ -164,6 +164,38 @@ pub struct LocalApic {
     timer_fired: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalApicState {
+    pub base: u64,
+    pub enabled: bool,
+    pub id: u32,
+    pub version: u32,
+    pub tpr: u32,
+    pub ppr: u32,
+    pub ldr: u32,
+    pub dfr: u32,
+    pub svr: u32,
+    pub irr: [u32; 8],
+    pub isr: [u32; 8],
+    pub tmr: [u32; 8],
+    pub level_pending: [u32; 8],
+    pub esr: u32,
+    pub icr_hi: u32,
+    pub icr_lo: u32,
+    pub lvt_timer: u32,
+    pub lvt_thermal: u32,
+    pub lvt_perfmon: u32,
+    pub lvt_lint0: u32,
+    pub lvt_lint1: u32,
+    pub lvt_error: u32,
+    pub timer_initial_count: u32,
+    pub timer_current_count: u32,
+    pub timer_divide: u32,
+    pub timer_running: bool,
+    pub timer_last_ns: Option<u64>,
+    pub timer_fired: bool,
+}
+
 impl LocalApic {
     /// Create a local APIC with APIC ID `id` (0 for the BSP).
     pub fn new(id: u8) -> Self {
@@ -210,6 +242,72 @@ impl LocalApic {
             v |= 1 << 11; // APIC enable (xAPIC)
         }
         v
+    }
+
+    pub(crate) fn snapshot_state(&self) -> LocalApicState {
+        LocalApicState {
+            base: self.base,
+            enabled: self.enabled,
+            id: self.id,
+            version: self.version,
+            tpr: self.tpr,
+            ppr: self.ppr,
+            ldr: self.ldr,
+            dfr: self.dfr,
+            svr: self.svr,
+            irr: self.irr,
+            isr: self.isr,
+            tmr: self.tmr,
+            level_pending: self.level_pending,
+            esr: self.esr,
+            icr_hi: self.icr_hi,
+            icr_lo: self.icr_lo,
+            lvt_timer: self.lvt_timer,
+            lvt_thermal: self.lvt_thermal,
+            lvt_perfmon: self.lvt_perfmon,
+            lvt_lint0: self.lvt_lint0,
+            lvt_lint1: self.lvt_lint1,
+            lvt_error: self.lvt_error,
+            timer_initial_count: self.timer_initial_count,
+            timer_current_count: self.timer_current_count,
+            timer_divide: self.timer_divide,
+            timer_running: self.timer_running,
+            timer_last_ns: self.timer_last_ns,
+            timer_fired: self.timer_fired,
+        }
+    }
+
+    pub(crate) fn restore_state(&mut self, state: &LocalApicState) {
+        self.base = state.base;
+        self.enabled = state.enabled;
+        self.id = state.id;
+        self.version = state.version;
+        self.tpr = state.tpr;
+        self.ppr = state.ppr;
+        self.ldr = state.ldr;
+        self.dfr = state.dfr;
+        self.svr = state.svr;
+        self.irr = state.irr;
+        self.isr = state.isr;
+        self.tmr = state.tmr;
+        self.level_pending = state.level_pending;
+        self.esr = state.esr;
+        self.icr_hi = state.icr_hi;
+        self.icr_lo = state.icr_lo;
+        self.lvt_timer = state.lvt_timer;
+        self.lvt_thermal = state.lvt_thermal;
+        self.lvt_perfmon = state.lvt_perfmon;
+        self.lvt_lint0 = state.lvt_lint0;
+        self.lvt_lint1 = state.lvt_lint1;
+        self.lvt_error = state.lvt_error;
+        self.timer_initial_count = state.timer_initial_count;
+        self.timer_current_count = state.timer_current_count;
+        self.timer_divide = state.timer_divide;
+        self.timer_running = state.timer_running;
+        // Host monotonic timestamps are not part of guest time. Re-seed the
+        // timer on the next VM tick after restore while keeping its count.
+        self.timer_last_ns = None;
+        self.timer_fired = state.timer_fired;
     }
 
     /// Write the `IA32_APIC_BASE` MSR. x2APIC mode requests are downgraded to
