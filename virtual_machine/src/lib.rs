@@ -494,7 +494,8 @@ impl Vm {
         Ok(executed)
     }
 
-    /// Run the VM until the guest halts.
+    /// Run the VM until the host stops it. Guest HLT instructions wait for
+    /// an interrupt while device and timer polling continues.
     pub fn run(&mut self) -> Result<(), VmError> {
         self.initialize()?;
 
@@ -505,12 +506,9 @@ impl Vm {
             self.step_cpu(&started, usize::MAX)?;
 
             if self.cpu.state.halted {
-                println!("CPU halted");
-                break;
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
         }
-
-        Ok(())
     }
 
     /// Run a finite number of guest instructions and return the resulting
@@ -521,11 +519,14 @@ impl Vm {
         self.initialize()?;
         let started = std::time::Instant::now();
         let mut steps = 0;
-        while steps < max_steps && !self.cpu.state.halted {
+        while steps < max_steps {
             let remaining = (max_steps - steps).min(usize::MAX as u64) as usize;
             let executed = self.step_cpu(&started, remaining)?;
             if executed == 0 {
-                break;
+                if self.cpu.state.halted {
+                    break;
+                }
+                continue;
             }
             steps += executed as u64;
         }

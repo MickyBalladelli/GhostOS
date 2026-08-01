@@ -474,6 +474,9 @@ impl CpuState {
         mmu: &mut Mmu,
         intc: &mut InterruptController,
     ) -> Result<(), CpuError> {
+        // HLT is a wait state, not a terminal CPU state. Any accepted
+        // external interrupt wakes the processor before entering its handler.
+        self.halted = false;
         self.deliver(vector, None, false, mmu, intc)
     }
 
