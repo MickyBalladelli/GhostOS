@@ -414,6 +414,10 @@ impl<Source: FilesystemSource, const CAPACITY: usize> CommandExecutor
 }
 
 impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source, CAPACITY> {
+    pub fn execute_command(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        self.execute(command)
+    }
+
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         match command.route.raw() {
             DIRECTORY_ROUTE => self.directory(command),

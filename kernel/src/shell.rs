@@ -1,6 +1,10 @@
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
+    filesystem::{
+        DirectoryEntry as ShellDirectoryEntry, EntryType, FileMetadata, FileOutput,
+        FilesystemExecutor, FilesystemSource, Path as ShellPath,
+    },
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId},
     render::{OutputFormat, render},
@@ -22,7 +26,7 @@ const SHOW_PROCESSES_ROUTE: u16 = 6;
 const TOP_CPU_ROUTE: u16 = 7;
 const SHOW_MEMORY_ROUTE: u16 = 8;
 const SHOW_DSM_ROUTE: u16 = 9;
-const COMMAND_CAPACITY: usize = 10;
+const COMMAND_CAPACITY: usize = 18;
 const HISTORY_CAPACITY: usize = 8;
 
 pub fn run(
@@ -43,6 +47,8 @@ pub fn run(
     register(&mut registry, "TOP-CPU", TOP_CPU_ROUTE);
     register(&mut registry, "SHOW-MEMORY", SHOW_MEMORY_ROUTE);
     register(&mut registry, "SHOW-DSM", SHOW_DSM_ROUTE);
+    syn_shell::filesystem::register_filesystem_commands(&mut registry)
+        .expect("kernel filesystem command registry has capacity");
 
     let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
     let mut interpreter = Interpreter::new();
@@ -399,6 +405,152 @@ fn wait_for_byte(
     }
 }
 
+const KERNEL_FILE_CAPACITY: usize = 16;
+const KERNEL_FILE_BYTES: usize = 1024;
+
+#[derive(Clone, Copy)]
+struct KernelFile {
+    path: ShellPath,
+    file_type: EntryType,
+    bytes: [u8; KERNEL_FILE_BYTES],
+    length: usize,
+    version: u32,
+    link_count: u32,
+}
+
+struct KernelFilesystem {
+    files: [Option<KernelFile>; KERNEL_FILE_CAPACITY],
+}
+
+impl KernelFilesystem {
+    fn new() -> Self {
+        let mut filesystem = Self {
+            files: [None; KERNEL_FILE_CAPACITY],
+        };
+        for path in ["/packages", "/logs", "/data", "/tmp"] {
+            let _ = filesystem.insert(path, EntryType::Directory);
+        }
+        filesystem
+    }
+
+    fn find(&self, path: &str) -> Option<KernelFile> {
+        self.files
+            .iter()
+            .flatten()
+            .find(|file| file.path.as_str() == path)
+            .copied()
+    }
+
+    fn insert(&mut self, path: &str, file_type: EntryType) -> Result<KernelFile, Status> {
+        if self.find(path).is_some() {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let slot = self
+            .files
+            .iter_mut()
+            .find(|file| file.is_none())
+            .ok_or(Status::NO_SPACE)?;
+        let file = KernelFile {
+            path: ShellPath::new(path)?,
+            file_type,
+            bytes: [0; KERNEL_FILE_BYTES],
+            length: 0,
+            version: 1,
+            link_count: 1,
+        };
+        *slot = Some(file);
+        Ok(file)
+    }
+
+    fn parent(path: &str) -> &str {
+        path.rsplit_once('/').map_or("/", |(parent, _)| {
+            if parent.is_empty() { "/" } else { parent }
+        })
+    }
+
+    fn metadata(file: KernelFile) -> FileMetadata {
+        FileMetadata {
+            path: file.path,
+            file_type: file.file_type,
+            size: file.length as u64,
+            version: file.version,
+            link_count: file.link_count,
+        }
+    }
+}
+
+impl FilesystemSource for KernelFilesystem {
+    fn directory_exists(&mut self, path: &str) -> Result<bool, Status> {
+        Ok(path == "/"
+            || self
+                .find(path)
+                .is_some_and(|file| file.file_type == EntryType::Directory))
+    }
+
+    fn list(
+        &mut self,
+        path: &str,
+        continuation: Option<u32>,
+        output: &mut syn_shell::filesystem::DirectoryPage,
+    ) -> Result<(), Status> {
+        if !self.directory_exists(path)? {
+            return Err(Status::NOT_FOUND)
+        }
+        output.clear();
+        let start = continuation.unwrap_or(0) as usize;
+        for (index, file) in self.files.iter().flatten().enumerate().skip(start) {
+            if Self::parent(file.path.as_str()) != path {
+                continue
+            }
+            if output.len() == syn_shell::filesystem::MAX_DIRECTORY_PAGE_ENTRIES {
+                output.next = Some(index as u32);
+                break
+            }
+            let name = file.path.as_str().rsplit('/').next().unwrap_or("");
+            output.push(ShellDirectoryEntry {
+                name: ShellPath::new(name)?,
+                file_type: file.file_type,
+                size: file.length as u64,
+                version: file.version,
+                link_count: file.link_count,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn create_directory(
+        &mut self,
+        path: &str,
+        _recursive: bool,
+    ) -> Result<FileMetadata, Status> {
+        if path == "/" || !self.directory_exists(Self::parent(path))? {
+            return Err(Status::NOT_FOUND)
+        }
+        self.insert(path, EntryType::Directory).map(Self::metadata)
+    }
+
+    fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status> {
+        if !self.directory_exists(Self::parent(path))? {
+            return Err(Status::NOT_FOUND)
+        }
+        self.insert(path, EntryType::File).map(Self::metadata)
+    }
+
+    fn type_file(
+        &mut self,
+        path: &str,
+        _binary: bool,
+        output: &mut dyn FileOutput,
+    ) -> Result<FileMetadata, Status> {
+        let file = self.find(path).ok_or(Status::NOT_FOUND)?;
+        if file.file_type != EntryType::File {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        output.write(&file.bytes[..file.length])?;
+        Ok(Self::metadata(file))
+    }
+}
+
 struct KernelExecutor {
     boot_method: BootMethod,
     memory_regions: &'static [synos_boot_protocol::MemoryRegion],
@@ -415,6 +567,7 @@ struct KernelExecutor {
     monitor: MonitorState,
     scheduler: &'static Scheduler,
     dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
+    filesystem: FilesystemExecutor<KernelFilesystem>,
 }
 
 impl KernelExecutor {
@@ -452,6 +605,7 @@ impl KernelExecutor {
             monitor: MonitorState::new(),
             scheduler,
             dlm,
+            filesystem: FilesystemExecutor::new(KernelFilesystem::new()),
         }
     }
 
@@ -466,6 +620,9 @@ impl KernelExecutor {
             TOP_CPU_ROUTE => self.top_cpu(),
             SHOW_MEMORY_ROUTE => self.show_memory(),
             SHOW_DSM_ROUTE => self.show_dsm(),
+            route if route >= syn_shell::filesystem::DIRECTORY_ROUTE => {
+                self.filesystem.execute_command(command)
+            }
             _ => Err(Status::NOT_FOUND),
         }
     }
@@ -475,7 +632,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM; unique command prefixes accepted",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, TYPE, SET DEFAULT; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -492,6 +649,12 @@ impl KernelExecutor {
         crate::println!("  TOP CPU            Show CPU activity");
         crate::println!("  SHOW MEMORY        Show memory usage");
         crate::println!("  SHOW DSM           Show DSM lock activity");
+        crate::println!("  DIRECTORY          List a directory");
+        crate::println!("  DIRECTORY/CREATE   Create a directory");
+        crate::println!("  CREATE             Create a file");
+        crate::println!("  TYPE               Show file contents");
+        crate::println!("  SET DEFAULT        Change the default directory");
+        crate::println!("  SHOW DEFAULT       Show the default directory");
         crate::println!();
         crate::println!("Unique command prefixes are accepted.");
     }
