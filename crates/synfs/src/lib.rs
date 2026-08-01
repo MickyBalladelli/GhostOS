@@ -7,6 +7,7 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 
 mod rms;
 mod pool;
+mod volume;
 
 pub use rms::{
     IndexDefinition, MappedRecordFile, MappedRecordInfo, RecordDescriptor, RecordFileInfo,
@@ -18,6 +19,7 @@ pub use pool::{
     PoolLayout, PoolName, StorageClass, StorageDevice, StorageDeviceId, StoragePool,
     StoragePoolAdmin, StoragePoolError, StoragePoolId,
 };
+pub use volume::{VolumeCommit, VolumeGeometry, VOLUME_FORMAT_VERSION};
 
 pub const BLOCK_SIZE: usize = 4096;
 pub const DATA_BYTES: usize = BLOCK_SIZE - 16;
@@ -501,6 +503,8 @@ pub struct SynFs<const MAX_BLOCKS: usize> {
     generation: u64,
     checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
     next_checkpoint: u64,
+    volume_bank: usize,
+    volume_sequence: u64,
 }
 
 /// An atomic group of SynFS B+tree changes.
@@ -608,6 +612,8 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             generation: 0,
             checkpoints: [None; MAX_CHECKPOINTS],
             next_checkpoint: 1,
+            volume_bank: 1,
+            volume_sequence: 0,
         }
     }
 

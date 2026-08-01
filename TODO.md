@@ -23,10 +23,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 ### Filesystem Completion Checklist
 
-- [ ] **Persistent SynFS Volume Format**
-  - [ ] Define on-disk superblocks, format versioning, root-generation records, and checksums.
-  - [ ] Add load, flush, and recovery paths so `SynFs` survives reboot instead of starting from an empty in-memory arena.
-  - [ ] Add crash-safe commit ordering and a filesystem consistency checker.
+- [x] **Persistent SynFS Volume Format**
+  - [x] Define on-disk superblocks, format versioning, root-generation records, and checksums.
+  - [x] Add load, flush, and recovery paths so `SynFs` survives reboot instead of starting from an empty in-memory arena.
+  - [x] Add crash-safe commit ordering and a filesystem consistency checker.
 - [ ] **Block-Device Integration**
   - [ ] Connect SynFS block allocation and `StoragePoolAdmin` placement to real NVMe, AHCI, CXL, and network-block I/O.
   - [ ] Add bounded asynchronous block read, write, flush, and discard requests with completion handling.

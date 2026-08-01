@@ -1,0 +1,779 @@
+use super::*;
+
+const SUPERBLOCK_MAGIC: &[u8; 8] = b"SYNFSVOL";
+const TYPE_MAP_MAGIC: &[u8; 8] = b"SYNFSMAP";
+const TREE_MAGIC: &[u8; 4] = b"SYNT";
+const TREE_FORMAT_VERSION: u8 = 1;
+const SUPERBLOCK_CHECKSUM_OFFSET: usize = BLOCK_SIZE - 8;
+const SUPERBLOCK_HEADER_BYTES: u16 = 512;
+const TYPE_MAP_EMPTY: u8 = 0;
+const TYPE_MAP_TREE: u8 = 1;
+const TYPE_MAP_BRANCH: u8 = 2;
+const TYPE_MAP_DATA: u8 = 3;
+
+pub const VOLUME_FORMAT_VERSION: u16 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VolumeGeometry {
+    pub block_size: usize,
+    pub blocks_per_generation: usize,
+    pub total_blocks: usize,
+    pub total_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VolumeCommit {
+    pub sequence: u64,
+    pub generation: u64,
+}
+
+#[derive(Clone, Copy)]
+struct Superblock {
+    sequence: u64,
+    generation: u64,
+    root: BlockId,
+    next_checkpoint: u64,
+    checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
+    type_map_checksum: u64,
+}
+
+struct Encoder<'a> {
+    bytes: &'a mut [u8],
+    position: usize,
+}
+
+impl<'a> Encoder<'a> {
+    fn new(bytes: &'a mut [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn put_u8(&mut self, value: u8) -> Result<(), Error> {
+        let slot = self.bytes.get_mut(self.position).ok_or(Error::Corrupt)?;
+        *slot = value;
+        self.position += 1;
+        Ok(())
+    }
+
+    fn put_u16(&mut self, value: u16) -> Result<(), Error> {
+        self.put_bytes(&value.to_le_bytes())
+    }
+
+    fn put_u32(&mut self, value: u32) -> Result<(), Error> {
+        self.put_bytes(&value.to_le_bytes())
+    }
+
+    fn put_u64(&mut self, value: u64) -> Result<(), Error> {
+        self.put_bytes(&value.to_le_bytes())
+    }
+
+    fn put_bytes(&mut self, value: &[u8]) -> Result<(), Error> {
+        let end = self.position.checked_add(value.len()).ok_or(Error::Corrupt)?;
+        let destination = self
+            .bytes
+            .get_mut(self.position..end)
+            .ok_or(Error::Corrupt)?;
+        destination.copy_from_slice(value);
+        self.position = end;
+        Ok(())
+    }
+}
+
+struct Decoder<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> Decoder<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn get_u8(&mut self) -> Result<u8, Error> {
+        let value = *self.bytes.get(self.position).ok_or(Error::Corrupt)?;
+        self.position += 1;
+        Ok(value)
+    }
+
+    fn get_u16(&mut self) -> Result<u16, Error> {
+        let mut bytes = [0; 2];
+        bytes.copy_from_slice(self.get_bytes(2)?);
+        Ok(u16::from_le_bytes(bytes))
+    }
+
+    fn get_u32(&mut self) -> Result<u32, Error> {
+        let mut bytes = [0; 4];
+        bytes.copy_from_slice(self.get_bytes(4)?);
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn get_u64(&mut self) -> Result<u64, Error> {
+        let mut bytes = [0; 8];
+        bytes.copy_from_slice(self.get_bytes(8)?);
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn get_bytes(&mut self, length: usize) -> Result<&'a [u8], Error> {
+        let end = self.position.checked_add(length).ok_or(Error::Corrupt)?;
+        let value = self.bytes.get(self.position..end).ok_or(Error::Corrupt)?;
+        self.position = end;
+        Ok(value)
+    }
+}
+
+impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
+    pub const fn volume_bytes() -> usize {
+        Self::volume_blocks().saturating_mul(BLOCK_SIZE)
+    }
+
+    pub const fn volume_blocks() -> usize {
+        2usize.saturating_mul(MAX_BLOCKS.saturating_add(2))
+    }
+
+    pub const fn volume_geometry() -> VolumeGeometry {
+        VolumeGeometry {
+            block_size: BLOCK_SIZE,
+            blocks_per_generation: MAX_BLOCKS.saturating_add(2),
+            total_blocks: Self::volume_blocks(),
+            total_bytes: Self::volume_bytes(),
+        }
+    }
+
+    pub fn format(image: &mut [u8]) -> Result<(), Error> {
+        require_image_size::<MAX_BLOCKS>(image)?;
+        image.fill(0);
+        let empty = Superblock {
+            sequence: 1,
+            generation: 0,
+            root: BlockId::NONE,
+            next_checkpoint: 1,
+            checkpoints: [None; MAX_CHECKPOINTS],
+            type_map_checksum: checksum(&type_map_bytes::<MAX_BLOCKS>()),
+        };
+        let map = type_map_bytes::<MAX_BLOCKS>();
+        write_type_map::<MAX_BLOCKS>(image, 0, &map)?;
+        write_superblock::<MAX_BLOCKS>(image, 0, empty)
+    }
+
+    pub fn format_volume(image: &mut [u8]) -> Result<(), Error> {
+        Self::format(image)
+    }
+
+    pub fn load(image: &[u8]) -> Result<Self, Error> {
+        require_image_size::<MAX_BLOCKS>(image)?;
+        let first = read_superblock::<MAX_BLOCKS>(image, 0)?;
+        let second = read_superblock::<MAX_BLOCKS>(image, 1)?;
+        let (bank, superblock) = match (first, second) {
+            (Some(left), Some(right)) if right.sequence > left.sequence => (1, right),
+            (Some(left), _) => (0, left),
+            (None, Some(right)) => (1, right),
+            (None, None) => return Err(Error::Corrupt),
+        };
+        load_bank::<MAX_BLOCKS>(image, bank, superblock)
+    }
+
+    pub fn load_volume(image: &[u8]) -> Result<Self, Error> {
+        Self::load(image)
+    }
+
+    pub fn recover(image: &[u8]) -> Result<Self, Error> {
+        require_image_size::<MAX_BLOCKS>(image)?;
+        let first = read_superblock::<MAX_BLOCKS>(image, 0)?;
+        let second = read_superblock::<MAX_BLOCKS>(image, 1)?;
+        let candidate = match (first, second) {
+            (Some(left), Some(right)) if right.sequence > left.sequence => (1, right, Some(left)),
+            (Some(left), Some(right)) => (0, left, Some(right)),
+            (Some(left), None) => (0, left, None),
+            (None, Some(right)) => (1, right, None),
+            (None, None) => return Err(Error::Corrupt),
+        };
+        match load_bank::<MAX_BLOCKS>(image, candidate.0, candidate.1) {
+            Ok(filesystem) => Ok(filesystem),
+            Err(_) => candidate
+                .2
+                .map_or(Err(Error::Corrupt), |superblock| {
+                    load_bank::<MAX_BLOCKS>(image, 1 - candidate.0, superblock)
+                }),
+        }
+    }
+
+    pub fn recover_volume(image: &[u8]) -> Result<Self, Error> {
+        Self::recover(image)
+    }
+
+    pub fn flush(&mut self, image: &mut [u8]) -> Result<VolumeCommit, Error> {
+        require_image_size::<MAX_BLOCKS>(image)?;
+        if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
+            return Err(Error::Corrupt)
+        }
+        self.check_consistency()?;
+        let next_sequence = self
+            .volume_sequence
+            .checked_add(1)
+            .ok_or(Error::VersionOverflow)?;
+        let bank = 1 - self.volume_bank;
+        let map = bank_type_map::<MAX_BLOCKS>(&self.arena);
+        write_type_map::<MAX_BLOCKS>(image, bank, &map)?;
+        for (index, slot) in self.arena.slots.iter().enumerate() {
+            let destination = block_slice_mut::<MAX_BLOCKS>(image, bank, index)?;
+            match slot.block {
+                None => destination.fill(0),
+                Some(Block::Tree(tree)) => encode_tree(destination, tree)?,
+                Some(Block::Data(data)) => encode_data(destination, data),
+            }
+        }
+        let superblock = Superblock {
+            sequence: next_sequence,
+            generation: self.generation,
+            root: self.root,
+            next_checkpoint: self.next_checkpoint,
+            checkpoints: self.checkpoints,
+            type_map_checksum: checksum(&map),
+        };
+        write_superblock::<MAX_BLOCKS>(image, bank, superblock)?;
+        self.volume_bank = bank;
+        self.volume_sequence = next_sequence;
+        Ok(VolumeCommit {
+            sequence: next_sequence,
+            generation: self.generation,
+        })
+    }
+
+    pub fn check_consistency(&self) -> Result<(), Error> {
+        let mut seen = [false; MAX_BLOCKS];
+        self.validate_root(self.root, &mut seen)?;
+        for checkpoint in self.checkpoints.iter().flatten() {
+            if checkpoint.info.id.raw() == 0 || checkpoint.info.generation > self.generation {
+                return Err(Error::Corrupt)
+            }
+            let mut seen = [false; MAX_BLOCKS];
+            self.validate_root(checkpoint.root, &mut seen)?;
+        }
+        Ok(())
+    }
+
+    pub fn consistency_check(&self) -> Result<(), Error> {
+        self.check_consistency()
+    }
+
+    fn validate_root(
+        &self,
+        root: BlockId,
+        seen: &mut [bool; MAX_BLOCKS],
+    ) -> Result<(), Error> {
+        if !root.is_some() {
+            return Ok(())
+        }
+        self.validate_tree(root, seen)
+    }
+
+    fn validate_tree(&self, id: BlockId, seen: &mut [bool; MAX_BLOCKS]) -> Result<(), Error> {
+        let index = block_index::<MAX_BLOCKS>(id)?;
+        if seen[index] {
+            return Err(Error::Corrupt)
+        }
+        seen[index] = true;
+        let Block::Tree(tree) = self.arena.get(id)? else {
+            return Err(Error::Corrupt)
+        };
+        match tree {
+            TreeBlock::Leaf(leaf) => {
+                let length = usize::from(leaf.len);
+                if length == 0 || length > MAX_KEYS {
+                    return Err(Error::Corrupt)
+                }
+                for pair in leaf.records[..length].windows(2) {
+                    if pair[0].key >= pair[1].key {
+                        return Err(Error::Corrupt)
+                    }
+                }
+                for record in &leaf.records[..length] {
+                    if record.key.version == 0
+                        || record.key.file.len == 0
+                        || usize::from(record.key.file.len) > MAX_PATH_BYTES
+                        || record.created_at > self.generation
+                    {
+                        return Err(Error::Corrupt)
+                    }
+                    if record.deleted {
+                        if record.size != 0 || record.data.is_some() {
+                            return Err(Error::Corrupt)
+                        }
+                    } else {
+                        self.validate_data(record.data, record.size, record.checksum)?;
+                    }
+                }
+            }
+            TreeBlock::Branch(branch) => {
+                let length = usize::from(branch.len);
+                if length == 0 || length > MAX_KEYS {
+                    return Err(Error::Corrupt)
+                }
+                for pair in branch.keys[..length].windows(2) {
+                    if pair[0] >= pair[1] {
+                        return Err(Error::Corrupt)
+                    }
+                }
+                for child in &branch.children[..=length] {
+                    self.validate_tree(*child, seen)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_data(&self, first: BlockId, size: u64, expected_checksum: u64) -> Result<(), Error> {
+        let mut id = first;
+        let mut total = 0u64;
+        let mut data_checksum = 0xcbf29ce484222325_u64;
+        let mut seen = [false; MAX_BLOCKS];
+        while id.is_some() {
+            let index = block_index::<MAX_BLOCKS>(id)?;
+            if seen[index] {
+                return Err(Error::Corrupt)
+            }
+            seen[index] = true;
+            let Block::Data(data) = self.arena.get(id)? else {
+                return Err(Error::Corrupt)
+            };
+            let length = usize::from(data.len);
+            if length > DATA_BYTES || checksum(&data.bytes[..length]) != data.checksum {
+                return Err(Error::Corrupt)
+            }
+            for byte in &data.bytes[..length] {
+                data_checksum ^= *byte as u64;
+                data_checksum = data_checksum.wrapping_mul(0x100000001b3);
+            }
+            total = total.checked_add(length as u64).ok_or(Error::Corrupt)?;
+            id = data.next;
+        }
+        if total != size || data_checksum != expected_checksum {
+            return Err(Error::Corrupt)
+        }
+        Ok(())
+    }
+}
+
+fn require_image_size<const MAX_BLOCKS: usize>(image: &[u8]) -> Result<(), Error> {
+    if image.len() < SynFs::<MAX_BLOCKS>::volume_bytes() {
+        return Err(Error::BufferTooSmall {
+            required: SynFs::<MAX_BLOCKS>::volume_bytes(),
+        })
+    }
+    Ok(())
+}
+
+fn block_index<const MAX_BLOCKS: usize>(id: BlockId) -> Result<usize, Error> {
+    id.0
+        .checked_sub(1)
+        .map(|index| index as usize)
+        .filter(|index| *index < MAX_BLOCKS)
+        .ok_or(Error::Corrupt)
+}
+
+fn generation_offset<const MAX_BLOCKS: usize>(bank: usize) -> usize {
+    bank * (MAX_BLOCKS + 2) * BLOCK_SIZE
+}
+
+fn block_slice<'a, const MAX_BLOCKS: usize>(
+    image: &'a [u8],
+    bank: usize,
+    index: usize,
+) -> Result<&'a [u8], Error> {
+    if bank > 1 || index >= MAX_BLOCKS {
+        return Err(Error::Corrupt)
+    }
+    let start = generation_offset::<MAX_BLOCKS>(bank) + (index + 2) * BLOCK_SIZE;
+    image.get(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)
+}
+
+fn block_slice_mut<'a, const MAX_BLOCKS: usize>(
+    image: &'a mut [u8],
+    bank: usize,
+    index: usize,
+) -> Result<&'a mut [u8], Error> {
+    if bank > 1 || index >= MAX_BLOCKS {
+        return Err(Error::Corrupt)
+    }
+    let start = generation_offset::<MAX_BLOCKS>(bank) + (index + 2) * BLOCK_SIZE;
+    image.get_mut(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)
+}
+
+fn type_map_bytes<const MAX_BLOCKS: usize>() -> [u8; BLOCK_SIZE] {
+    let mut map = [0; BLOCK_SIZE];
+    map[..TYPE_MAP_MAGIC.len()].copy_from_slice(TYPE_MAP_MAGIC);
+    map
+}
+
+fn bank_type_map<const MAX_BLOCKS: usize>(arena: &BlockArena<MAX_BLOCKS>) -> [u8; BLOCK_SIZE] {
+    let mut map = type_map_bytes::<MAX_BLOCKS>();
+    for (index, slot) in arena.slots.iter().enumerate() {
+        let kind = match slot.block {
+            None => TYPE_MAP_EMPTY,
+            Some(Block::Tree(TreeBlock::Leaf(_))) => TYPE_MAP_TREE,
+            Some(Block::Tree(TreeBlock::Branch(_))) => TYPE_MAP_BRANCH,
+            Some(Block::Data(_)) => TYPE_MAP_DATA,
+        };
+        let byte = 8 + index / 4;
+        let shift = (index % 4) * 2;
+        map[byte] |= kind << shift;
+    }
+    map
+}
+
+fn map_kind(map: &[u8; BLOCK_SIZE], index: usize) -> u8 {
+    let byte = 8 + index / 4;
+    let shift = (index % 4) * 2;
+    (map[byte] >> shift) & 0x03
+}
+
+fn write_type_map<const MAX_BLOCKS: usize>(
+    image: &mut [u8],
+    bank: usize,
+    map: &[u8; BLOCK_SIZE],
+) -> Result<(), Error> {
+    if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
+        return Err(Error::Corrupt)
+    }
+    let start = generation_offset::<MAX_BLOCKS>(bank) + BLOCK_SIZE;
+    image
+        .get_mut(start..start + BLOCK_SIZE)
+        .ok_or(Error::Corrupt)?
+        .copy_from_slice(map);
+    Ok(())
+}
+
+fn read_type_map<const MAX_BLOCKS: usize>(
+    image: &[u8],
+    bank: usize,
+    expected_checksum: u64,
+) -> Result<[u8; BLOCK_SIZE], Error> {
+    if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
+        return Err(Error::Corrupt)
+    }
+    let start = generation_offset::<MAX_BLOCKS>(bank) + BLOCK_SIZE;
+    let bytes = image.get(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)?;
+    if &bytes[..TYPE_MAP_MAGIC.len()] != TYPE_MAP_MAGIC || checksum(bytes) != expected_checksum {
+        return Err(Error::Corrupt)
+    }
+    let mut map = [0; BLOCK_SIZE];
+    map.copy_from_slice(bytes);
+    Ok(map)
+}
+
+fn write_superblock<const MAX_BLOCKS: usize>(
+    image: &mut [u8],
+    bank: usize,
+    superblock: Superblock,
+) -> Result<(), Error> {
+    let start = generation_offset::<MAX_BLOCKS>(bank);
+    let block = image.get_mut(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)?;
+    block.fill(0);
+    block[..8].copy_from_slice(SUPERBLOCK_MAGIC);
+    put_u16(block, 8, VOLUME_FORMAT_VERSION);
+    put_u16(block, 10, SUPERBLOCK_HEADER_BYTES);
+    put_u32(block, 12, BLOCK_SIZE as u32);
+    put_u64(block, 16, MAX_BLOCKS as u64);
+    put_u64(block, 24, superblock.sequence);
+    put_u64(block, 32, superblock.generation);
+    put_u32(block, 40, superblock.root.0);
+    put_u64(block, 48, superblock.next_checkpoint);
+    put_u32(block, 56, superblock.checkpoints.iter().flatten().count() as u32);
+    put_u64(block, 64, superblock.type_map_checksum);
+    let mut offset = 80;
+    for checkpoint in superblock.checkpoints {
+        if let Some(checkpoint) = checkpoint {
+            put_u64(block, offset, checkpoint.info.id.raw());
+            put_u64(block, offset + 8, checkpoint.info.generation);
+            put_u32(block, offset + 16, checkpoint.root.0);
+        }
+        offset += 24;
+    }
+    let header_checksum = checksum(&block[..SUPERBLOCK_CHECKSUM_OFFSET]);
+    put_u64(block, SUPERBLOCK_CHECKSUM_OFFSET, header_checksum);
+    Ok(())
+}
+
+fn read_superblock<const MAX_BLOCKS: usize>(
+    image: &[u8],
+    bank: usize,
+) -> Result<Option<Superblock>, Error> {
+    let start = generation_offset::<MAX_BLOCKS>(bank);
+    let block = image.get(start..start + BLOCK_SIZE).ok_or(Error::Corrupt)?;
+    if &block[..SUPERBLOCK_MAGIC.len()] != SUPERBLOCK_MAGIC {
+        return Ok(None)
+    }
+    if u16_at(block, 8) != VOLUME_FORMAT_VERSION
+        || u16_at(block, 10) != SUPERBLOCK_HEADER_BYTES
+        || u32_at(block, 12) != BLOCK_SIZE as u32
+        || u64_at(block, 16) != MAX_BLOCKS as u64
+        || u64_at(block, SUPERBLOCK_CHECKSUM_OFFSET)
+            != checksum(&block[..SUPERBLOCK_CHECKSUM_OFFSET])
+    {
+        return Ok(None)
+    }
+    let checkpoint_count = u32_at(block, 56) as usize;
+    if u64_at(block, 24) == 0 || checkpoint_count > MAX_CHECKPOINTS || u64_at(block, 48) == 0 {
+        return Ok(None)
+    }
+    let root = BlockId(u32_at(block, 40));
+    if root.is_some() && root.0 as usize > MAX_BLOCKS {
+        return Ok(None)
+    }
+    let mut checkpoints = [None; MAX_CHECKPOINTS];
+    let mut offset = 80;
+    for slot in checkpoints.iter_mut().take(checkpoint_count) {
+        let id = u64_at(block, offset);
+        let generation = u64_at(block, offset + 8);
+        let root = BlockId(u32_at(block, offset + 16));
+        if id == 0 || root.0 as usize > MAX_BLOCKS {
+            return Ok(None)
+        }
+        *slot = Some(Checkpoint {
+            info: CheckpointInfo {
+                id: CheckpointId(id),
+                generation,
+            },
+            root,
+        });
+        offset += 24;
+    }
+    Ok(Some(Superblock {
+        sequence: u64_at(block, 24),
+        generation: u64_at(block, 32),
+        root,
+        next_checkpoint: u64_at(block, 48),
+        checkpoints,
+        type_map_checksum: u64_at(block, 64),
+    }))
+}
+
+fn load_bank<const MAX_BLOCKS: usize>(
+    image: &[u8],
+    bank: usize,
+    superblock: Superblock,
+) -> Result<SynFs<MAX_BLOCKS>, Error> {
+    let map = read_type_map::<MAX_BLOCKS>(image, bank, superblock.type_map_checksum)?;
+    let mut arena = BlockArena::new();
+    for index in 0..MAX_BLOCKS {
+        let block = block_slice::<MAX_BLOCKS>(image, bank, index)?;
+        let decoded = match map_kind(&map, index) {
+            TYPE_MAP_EMPTY => None,
+            TYPE_MAP_TREE | TYPE_MAP_BRANCH => Some(decode_tree::<MAX_BLOCKS>(block)?),
+            TYPE_MAP_DATA => Some(decode_data(block)?),
+            _ => return Err(Error::Corrupt),
+        };
+        arena.slots[index].block = decoded;
+    }
+    let filesystem = SynFs {
+        arena,
+        root: superblock.root,
+        generation: superblock.generation,
+        checkpoints: superblock.checkpoints,
+        next_checkpoint: superblock.next_checkpoint,
+        volume_bank: bank,
+        volume_sequence: superblock.sequence,
+    };
+    filesystem.check_consistency()?;
+    Ok(filesystem)
+}
+
+fn encode_data(destination: &mut [u8], data: DataBlock) {
+    destination.fill(0);
+    put_u32(destination, 0, data.next.0);
+    put_u16(destination, 4, data.len);
+    put_u64(destination, 8, data.checksum);
+    destination[16..].copy_from_slice(&data.bytes);
+}
+
+fn decode_data(source: &[u8]) -> Result<Block, Error> {
+    let next = BlockId(u32_at(source, 0));
+    let len = u16_at(source, 4);
+    let mut bytes = [0; DATA_BYTES];
+    bytes.copy_from_slice(source.get(16..16 + DATA_BYTES).ok_or(Error::Corrupt)?);
+    if usize::from(len) > DATA_BYTES || checksum(&bytes[..usize::from(len)]) != u64_at(source, 8) {
+        return Err(Error::Corrupt)
+    }
+    Ok(Block::Data(DataBlock {
+        next,
+        len,
+        checksum: u64_at(source, 8),
+        bytes,
+    }))
+}
+
+fn encode_tree(destination: &mut [u8], tree: TreeBlock) -> Result<(), Error> {
+    destination.fill(0);
+    destination[..4].copy_from_slice(TREE_MAGIC);
+    destination[5] = TREE_FORMAT_VERSION;
+    let (kind, position) = match tree {
+        TreeBlock::Leaf(leaf) => {
+            let mut encoder = Encoder::new(&mut destination[16..]);
+            encoder.put_u8(leaf.len)?;
+            encoder.put_bytes(&[0; 3])?;
+            for record in &leaf.records {
+                encode_record(&mut encoder, *record)?;
+            }
+            (TYPE_MAP_TREE, encoder.position)
+        }
+        TreeBlock::Branch(branch) => {
+            let mut encoder = Encoder::new(&mut destination[16..]);
+            encoder.put_u8(branch.len)?;
+            encoder.put_bytes(&[0; 3])?;
+            for key in &branch.keys {
+                encode_key(&mut encoder, *key)?;
+            }
+            for child in &branch.children {
+                encoder.put_u32(child.0)?;
+            }
+            (TYPE_MAP_TREE + 1, encoder.position)
+        }
+    };
+    destination[4] = kind;
+    put_u16(destination, 6, position as u16);
+    put_u64(destination, 8, checksum(&destination[16..16 + position]));
+    Ok(())
+}
+
+fn decode_tree<const MAX_BLOCKS: usize>(source: &[u8]) -> Result<Block, Error> {
+    if &source[..4] != TREE_MAGIC || source[5] != TREE_FORMAT_VERSION {
+        return Err(Error::Corrupt)
+    }
+    let payload_len = usize::from(u16_at(source, 6));
+    if payload_len > BLOCK_SIZE - 16
+        || checksum(&source[16..16 + payload_len]) != u64_at(source, 8)
+    {
+        return Err(Error::Corrupt)
+    }
+    let mut decoder = Decoder::new(&source[16..16 + payload_len]);
+    match source[4] {
+        TYPE_MAP_TREE => {
+            let len = decoder.get_u8()?;
+            decoder.get_bytes(3)?;
+            if usize::from(len) > MAX_KEYS {
+                return Err(Error::Corrupt)
+            }
+            let mut leaf = Leaf::EMPTY;
+            leaf.len = len;
+            for record in &mut leaf.records {
+                *record = decode_record(&mut decoder)?;
+            }
+            Ok(Block::Tree(TreeBlock::Leaf(leaf)))
+        }
+        TYPE_MAP_BRANCH => {
+            let len = decoder.get_u8()?;
+            decoder.get_bytes(3)?;
+            if usize::from(len) > MAX_KEYS {
+                return Err(Error::Corrupt)
+            }
+            let mut branch = Branch::EMPTY;
+            branch.len = len;
+            for key in &mut branch.keys {
+                *key = decode_key(&mut decoder)?;
+            }
+            for child in &mut branch.children {
+                *child = BlockId(decoder.get_u32()?);
+            }
+            Ok(Block::Tree(TreeBlock::Branch(branch)))
+        }
+        _ => Err(Error::Corrupt),
+    }
+}
+
+fn encode_key(encoder: &mut Encoder<'_>, key: FileKey) -> Result<(), Error> {
+    encode_file_name(encoder, key.file)?;
+    encoder.put_u32(key.version)
+}
+
+fn decode_key(decoder: &mut Decoder<'_>) -> Result<FileKey, Error> {
+    Ok(FileKey {
+        file: decode_file_name(decoder)?,
+        version: decoder.get_u32()?,
+    })
+}
+
+fn encode_record(encoder: &mut Encoder<'_>, record: FileRecord) -> Result<(), Error> {
+    encode_key(encoder, record.key)?;
+    encoder.put_u64(record.size)?;
+    encoder.put_u32(record.data.0)?;
+    encoder.put_u64(record.checksum)?;
+    encoder.put_u64(record.created_at)?;
+    encoder.put_u8(record.deleted as u8)?;
+    encoder.put_bytes(&[0; 7])
+}
+
+fn decode_record(decoder: &mut Decoder<'_>) -> Result<FileRecord, Error> {
+    let key = decode_key(decoder)?;
+    let size = decoder.get_u64()?;
+    let data = BlockId(decoder.get_u32()?);
+    let checksum = decoder.get_u64()?;
+    let created_at = decoder.get_u64()?;
+    let deleted = decoder.get_u8()?;
+    decoder.get_bytes(7)?;
+    if deleted > 1 {
+        return Err(Error::Corrupt)
+    }
+    Ok(FileRecord {
+        key,
+        size,
+        data,
+        checksum,
+        created_at,
+        deleted: deleted != 0,
+    })
+}
+
+fn encode_file_name(encoder: &mut Encoder<'_>, file: FileName) -> Result<(), Error> {
+    encoder.put_u16(file.len)?;
+    encoder.put_bytes(&file.bytes)
+}
+
+fn decode_file_name(decoder: &mut Decoder<'_>) -> Result<FileName, Error> {
+    let len = decoder.get_u16()?;
+    let mut bytes = [0; MAX_PATH_BYTES];
+    let source = decoder.get_bytes(MAX_PATH_BYTES)?;
+    if usize::from(len) > MAX_PATH_BYTES
+        || core::str::from_utf8(&source[..usize::from(len)]).is_err()
+    {
+        return Err(Error::Corrupt)
+    }
+    bytes.copy_from_slice(source);
+    Ok(FileName { bytes, len })
+}
+
+fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes())
+}
+
+fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes())
+}
+
+fn put_u64(bytes: &mut [u8], offset: usize, value: u64) {
+    bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes())
+}
+
+fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
+fn u64_at(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+        bytes[offset + 4],
+        bytes[offset + 5],
+        bytes[offset + 6],
+        bytes[offset + 7],
+    ])
+}
