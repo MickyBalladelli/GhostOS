@@ -822,3 +822,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Support zero-downtime, sub-millisecond system state swaps using SynFS snapshot trees (`synos-reconfigure`).
 - [ ] **TPM-Signed Configuration Enforcers**
   - [ ] Require cryptographic signatures on declarative configuration updates before committing state changes across nodes.
+
+
+- [ ] **Uptime command**
+  - [ ] Display is easy to read format the amount of time since the machine last rebooted 
