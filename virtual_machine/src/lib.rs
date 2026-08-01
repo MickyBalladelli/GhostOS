@@ -521,6 +521,7 @@ impl Vm {
         let mut started = std::time::Instant::now();
         loop {
             self.step_cpu(&started, usize::MAX)?;
+            self.return_if_guest_panicked()?;
 
             match self.power_state() {
                 PowerState::Running => {}
@@ -573,6 +574,7 @@ impl Vm {
             self.step_cpu(&started, 256)?;
             self.flush_serial_output();
             terminal.flush_output().map_err(|_| VmError::IoError)?;
+            self.return_if_guest_panicked()?;
 
             match self.power_state() {
                 PowerState::Running => {}
@@ -602,6 +604,7 @@ impl Vm {
         while steps < max_steps {
             let remaining = (max_steps - steps).min(usize::MAX as u64) as usize;
             let executed = self.step_cpu(&started, remaining)?;
+            self.return_if_guest_panicked()?;
             if executed == 0 {
                 if self.cpu.state.halted {
                     break;
@@ -835,6 +838,21 @@ impl Vm {
         *self.power_state.borrow()
     }
 
+    fn return_if_guest_panicked(&self) -> Result<(), VmError> {
+        let Some(serial) = &self.serial else {
+            return Ok(())
+        };
+        let output = serial.borrow();
+        if output
+            .output()
+            .windows(b"KERNEL PANIC".len())
+            .any(|window| window == b"KERNEL PANIC")
+        {
+            return Err(VmError::GuestPanic)
+        }
+        Ok(())
+    }
+
     pub fn queue_keyboard_scancode(&mut self, scancode: u8) {
         self.cpu.state.halted = false;
         self.ps2.borrow_mut().push_keyboard_scancode(scancode)
@@ -897,6 +915,7 @@ impl Default for Vm {
 #[derive(Debug)]
 pub enum VmError {
     CpuError(CpuError),
+    GuestPanic,
     MemoryError,
     BiosError,
     IoError,

@@ -70,8 +70,27 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
     }
 
     pub fn replace_line(&mut self, line: &str) -> Result<(), Error> {
-        let line = Text::new(line)?;
-        self.load(line);
+        if line.len() > MAX_LINE_BYTES {
+            return Err(Error::LineTooLong)
+        }
+        self.bytes[..line.len()].copy_from_slice(line.as_bytes());
+        self.len = line.len();
+        self.cursor = self.len;
+        self.history_offset = None;
+        Ok(())
+    }
+
+    pub fn replace_command(&mut self, command: &str) -> Result<(), Error> {
+        self.len = 0;
+        for byte in command.bytes() {
+            let byte = if byte == b'-' { b' ' } else { byte };
+            if self.len == MAX_LINE_BYTES {
+                return Err(Error::LineTooLong)
+            }
+            self.bytes[self.len] = byte;
+            self.len += 1;
+        }
+        self.cursor = self.len;
         self.history_offset = None;
         Ok(())
     }

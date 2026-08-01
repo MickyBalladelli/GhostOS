@@ -153,6 +153,40 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         &self,
         input: &str,
     ) -> Result<CommandSuggestions<CAPACITY>, Error> {
+        let command_name = self.command_prefix(input)?;
+
+        let mut suggestions = CommandSuggestions::new();
+        for entry in self.commands[..self.command_count].iter().flatten() {
+            if starts_with_ignore_ascii_case(
+                entry.spec.name.as_str(),
+                command_name.as_str(),
+            ) {
+                suggestions.push(entry.spec.name)?
+            }
+        }
+        Ok(suggestions)
+    }
+
+    pub fn unique_suggestion(
+        &self,
+        input: &str,
+    ) -> Result<Option<&LogicalName>, Error> {
+        let command_name = self.command_prefix(input)?;
+        let mut match_name = None;
+        let mut match_count = 0;
+        for entry in self.commands[..self.command_count].iter().flatten() {
+            if starts_with_ignore_ascii_case(
+                entry.spec.name.as_str(),
+                command_name.as_str(),
+            ) {
+                match_count += 1;
+                match_name = Some(&entry.spec.name);
+            }
+        }
+        Ok(if match_count == 1 { match_name } else { None })
+    }
+
+    fn command_prefix(&self, input: &str) -> Result<Text<MAX_COMMAND_NAME_BYTES>, Error> {
         let mut lexer = Lexer::new(input);
         let mut words: [Option<Text<MAX_TOKEN_BYTES>>; 2] = [None; 2];
         let mut word_count = 0;
@@ -191,17 +225,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         } else {
             command_name.push_str(first.as_str())?;
         }
-
-        let mut suggestions = CommandSuggestions::new();
-        for entry in self.commands[..self.command_count].iter().flatten() {
-            if starts_with_ignore_ascii_case(
-                entry.spec.name.as_str(),
-                command_name.as_str(),
-            ) {
-                suggestions.push(entry.spec.name)?
-            }
-        }
-        Ok(suggestions)
+        Ok(command_name)
     }
 
     pub fn parse(&self, input: &str) -> Result<Program, Error> {

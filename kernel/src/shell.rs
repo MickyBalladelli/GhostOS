@@ -1,7 +1,5 @@
 use syn_shell::{
     Error,
-    MAX_LINE_BYTES,
-    Text,
     editor::{EditorAction, Key, LineEditor},
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId},
@@ -219,33 +217,20 @@ fn complete_line(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
 ) -> Result<(), Error> {
-    let suggestions = registry.suggestions(editor.line())?;
-    let mut match_count = 0;
-    let mut match_name = None;
-    for command in suggestions.commands() {
-        match_count += 1;
-        match_name = Some(command);
-    }
-
-    if match_count == 0 {
+    if let Some(command) = registry.unique_suggestion(editor.line())? {
+        editor.replace_command(command.as_str())?;
+        redraw(editor);
         return Ok(())
     }
-    if match_count > 1 {
+
+    let suggestions = registry.suggestions(editor.line())?;
+    if suggestions.commands().count() > 1 {
         crate::println!();
         for command in suggestions.commands() {
             print_command_suggestion(command.as_str());
         }
         redraw(editor);
-        return Ok(())
     }
-
-    let command = match_name.expect("completion match invariant");
-    let mut completed = Text::<MAX_LINE_BYTES>::empty();
-    for byte in command.as_str().bytes() {
-        completed.push_char(if byte == b'-' { ' ' } else { byte as char })?;
-    }
-    editor.replace_line(completed.as_str())?;
-    redraw(editor);
     Ok(())
 }
 
