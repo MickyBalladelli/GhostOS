@@ -147,16 +147,17 @@ fn execute_line(
         return;
     }
 
-    let (human_system_output, human_memory_output, human_dsm_output) =
+    let (human_system_output, human_memory_output, human_dsm_output, human_cpu_output) =
         if program.stage_count() == 1 {
             match program.stage(0).map(|stage| stage.route.raw()) {
-                Some(SHOW_SYSTEM_ROUTE) => (true, false, false),
-                Some(SHOW_MEMORY_ROUTE) => (false, true, false),
-                Some(SHOW_DSM_ROUTE) => (false, false, true),
-                _ => (false, false, false),
+                Some(SHOW_SYSTEM_ROUTE) => (true, false, false, false),
+                Some(SHOW_MEMORY_ROUTE) => (false, true, false, false),
+                Some(SHOW_DSM_ROUTE) => (false, false, true, false),
+                Some(TOP_CPU_ROUTE) => (false, false, false, true),
+                _ => (false, false, false, false),
             }
         } else {
-            (false, false, false)
+            (false, false, false, false)
         };
 
     if human_system_output {
@@ -165,6 +166,10 @@ fn execute_line(
     }
     if human_memory_output {
         executor.print_memory();
+        return
+    }
+    if human_cpu_output {
+        executor.print_top_cpu();
         return
     }
 
@@ -589,20 +594,55 @@ impl KernelExecutor {
     fn top_cpu(&mut self) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "cpu")?;
+        self.print_top_cpu();
+        Ok(output)
+    }
+
+    fn print_top_cpu(&mut self) {
         let top = MonitorState::get_top_cpu(self.scheduler, &mut self.monitor.cpu_history);
         crate::println!("\x1b[1;32m=== TOP CPU ===\x1b[0m");
-        crate::println!("THREAD       SWITCHES     UTIL%    ");
+        crate::println!("THREAD     OWNER        SPACE    STATE    POLICY  CPU%  SWITCHES");
         let mut idx: u64 = 0;
-        for cpu in top.iter() {
-            crate::println!("{} {:<10} {}%",
-                cpu.thread_id.raw(),
-                cpu.switches,
-                cpu.util_percent
-            );
+        for cpu in top.iter().flatten() {
+            let state = match cpu.state {
+                crate::task::ThreadState::Ready => "READY",
+                crate::task::ThreadState::Running => "RUNNING",
+                crate::task::ThreadState::Blocked => "BLOCKED",
+                crate::task::ThreadState::Sleeping => "SLEEPING",
+                crate::task::ThreadState::Vacant => "VACANT",
+            };
+            let policy = match cpu.policy {
+                crate::task::SchedulingPolicy::Cooperative => "COOP",
+                crate::task::SchedulingPolicy::Realtime { .. } => "RT",
+            };
+            if cpu.owner == 0 {
+                crate::println!("{:08x}  {:<12}  0x{:04x}  {:<8} {:<7} {:>3}%  {:>8}",
+                    cpu.thread_id.raw(),
+                    "anonymous",
+                    cpu.address_space.raw(),
+                    state,
+                    policy,
+                    cpu.util_percent,
+                    cpu.switches,
+                );
+            } else {
+                crate::println!("{:08x}  id:{:<8}  0x{:04x}  {:<8} {:<7} {:>3}%  {:>8}",
+                    cpu.thread_id.raw(),
+                    cpu.owner,
+                    cpu.address_space.raw(),
+                    state,
+                    policy,
+                    cpu.util_percent,
+                    cpu.switches,
+                );
+            }
             idx += 1;
         }
+        if idx == 0 {
+            crate::println!("No active threads.");
+        }
         crate::println!("Total: {} threads", idx);
-        Ok(output)
+        crate::println!("CPU% is scheduler activity share since the last sample.");
     }
 
     fn show_memory(&self) -> Result<StructuredOutput, Status> {

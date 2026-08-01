@@ -18,6 +18,10 @@ pub enum MonitorView {
 pub struct CpuUsage {
     pub thread_id: ThreadId,
     pub switches: u64,
+    pub owner: u64,
+    pub address_space: AddressSpaceId,
+    pub state: ThreadState,
+    pub policy: SchedulingPolicy,
     pub util_percent: u8,
 }
 
@@ -121,7 +125,10 @@ impl MonitorState {
         result
     }
 
-    fn sort_by_key(arr: &mut [(ThreadId, u64)], key_fn: impl Fn(&(ThreadId, u64)) -> u64) {
+    fn sort_by_key(
+        arr: &mut [(ThreadId, u64, u64)],
+        key_fn: impl Fn(&(ThreadId, u64, u64)) -> u64,
+    ) {
         for i in 0..arr.len() {
             for j in (i + 1)..arr.len() {
                 if key_fn(&arr[j]) > key_fn(&arr[i]) {
@@ -131,44 +138,62 @@ impl MonitorState {
         }
     }
 
-    pub fn get_top_cpu(scheduler: &Scheduler, history: &mut [CpuHistoryEntry; MAX_THREADS]) -> [CpuUsage; 8] {
-        let mut cpu_threads: [(ThreadId, u64); MAX_THREADS] = [(ThreadId::from_parts(0, 0), 0); MAX_THREADS];
+    pub fn get_top_cpu(
+        scheduler: &Scheduler,
+        history: &mut [CpuHistoryEntry; MAX_THREADS],
+    ) -> [Option<CpuUsage>; 8] {
+        let mut cpu_threads: [(ThreadId, u64, u64); MAX_THREADS] =
+            [(ThreadId::from_parts(0, 0), 0, 0); MAX_THREADS];
+        let mut active_count = 0;
         
         for i in 0..MAX_THREADS {
             if let Ok(thread) = scheduler.thread(ThreadId::from_parts(i, 1)) {
                 if thread.state != ThreadState::Vacant {
-                    cpu_threads[i] = (thread.id, thread.switches);
+                    let history_entry = &mut history[thread.id.slot()];
+                    let delta = thread.switches.saturating_sub(history_entry.prev_switches);
+                    history_entry.prev_switches = thread.switches;
+                    history_entry.samples[history_entry.sample_idx] = (delta.min(100)) as u8;
+                    history_entry.sample_idx = (history_entry.sample_idx + 1) % 10;
+                    let activity = history_entry
+                        .samples
+                        .iter()
+                        .map(|sample| *sample as u64)
+                        .sum::<u64>()
+                        / 10;
+                    cpu_threads[active_count] = (thread.id, thread.switches, activity);
+                    active_count += 1;
                 }
             }
         }
         
-        Self::sort_by_key(&mut cpu_threads, |t| t.1);
+        Self::sort_by_key(&mut cpu_threads[..active_count], |thread| thread.2);
+        let total_activity = cpu_threads[..active_count]
+            .iter()
+            .map(|thread| thread.2)
+            .sum::<u64>();
         
-        let mut result: [CpuUsage; 8] = [CpuUsage {
-            thread_id: ThreadId::from_parts(0, 0),
-            switches: 0,
-            util_percent: 0,
-        }; 8];
+        let mut result: [Option<CpuUsage>; 8] = [None; 8];
         
-        for i in 0..8.min(cpu_threads.len()) {
-            let (id, switches) = cpu_threads[i];
-            let slot = id.slot();
-            let h = &mut history[slot];
-            
-            let delta = switches.saturating_sub(h.prev_switches);
-            h.prev_switches = switches;
-            
-            h.samples[h.sample_idx] = (delta as u8).min(100);
-            h.sample_idx = (h.sample_idx + 1) % 10;
-            
-            let sum: u8 = h.samples.iter().sum();
-            let util = sum / 10;
-            
-            result[i] = CpuUsage {
-                thread_id: id,
-                switches,
-                util_percent: util,
+        for (index, (id, switches, activity)) in cpu_threads[..active_count]
+            .iter()
+            .take(8)
+            .enumerate()
+        {
+            let Ok(thread) = scheduler.thread(*id) else { continue };
+            let util = if total_activity == 0 {
+                0
+            } else {
+                (activity.saturating_mul(100) / total_activity).min(100) as u8
             };
+            result[index] = Some(CpuUsage {
+                thread_id: *id,
+                switches: *switches,
+                owner: thread.persona.identity().raw(),
+                address_space: thread.address_space,
+                state: thread.state,
+                policy: thread.policy,
+                util_percent: util,
+            });
         }
         
         result
@@ -243,7 +268,7 @@ impl MonitorState {
             "THREAD", "SWITCHES", "UTIL%");
         
         let top = Self::get_top_cpu(scheduler, history);
-        for cpu in top.iter() {
+        for cpu in top.iter().flatten() {
             let _ = writeln!(output, "{:<12} {:<10} {:<3}%",
                 write_thread_id(cpu.thread_id),
                 cpu.switches,
