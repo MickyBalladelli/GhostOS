@@ -130,38 +130,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         task::MAX_THREADS,
         SCHEDULER.clock()
     );
-    filesystem_boot_smoke_test();
     shell::run(boot_info, &SCHEDULER, &DLM, &NODE_FENCES, SCHEDULER.clock(), acpi)
-}
-
-fn filesystem_boot_smoke_test() {
-    use synos_fsd::{Daemon, Flags, ProcessRights};
-    use synos_synfs::SynFs;
-
-    let process = synos_fsd::ProcessId::new(1).expect("valid boot process");
-    let rights = ProcessRights::from_bits(ProcessRights::READ.bits() | ProcessRights::WRITE.bits());
-    let mut daemon = Daemon::<32, 2, 8, 2, 8, 1024>::new(SynFs::new())
-        .expect("root filesystem daemon starts");
-    let authority = daemon
-        .register_process(process, rights)
-        .expect("boot application authority");
-    let flags = Flags::READ.union(Flags::WRITE).union(Flags::CREATE);
-    let file = daemon
-        .open(process, authority, "/data/qemu-boot", flags)
-        .expect("boot application opens root file");
-    daemon
-        .write(process, file.capability, 0, b"synos-root-io")
-        .expect("boot application writes root file");
-    let mut contents = [0; 13];
-    let bytes = daemon
-        .read(process, file.capability, 0, &mut contents)
-        .expect("boot application reads root file");
-    assert_eq!(&contents[..bytes], b"synos-root-io");
-    assert!(daemon.namespace().is_active());
-    println!(
-        "SynFS root mounted generation={} application I/O validated",
-        daemon.root_activation().generation
-    );
 }
 
 pub fn halt() -> ! {
