@@ -5,7 +5,7 @@ use crate::{Error, Text};
 pub const MAX_EDITOR_BYTES: usize = 16 * 1024;
 pub const MAX_EDITOR_NAME_BYTES: usize = 192;
 pub const MAX_EDITOR_STATUS_BYTES: usize = 512;
-const EDITOR_BANNER_ROWS: usize = 2;
+const EDITOR_BANNER_ROWS: usize = 1;
 const EDITOR_FOOTER_ROWS: usize = 1;
 
 use super::editor::Key;
@@ -288,26 +288,14 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
                 .map_err(|_| Error::Capacity)?;
             self.render_line(&mut output, self.scroll_row + row, columns)?;
         }
-        let banner = self.banner_line()?;
-        write!(
-            output,
-            "\x1b[{};1H\x1b[2K\x1b[7m",
-            content_rows + 1
-        )
-        .map_err(|_| Error::Capacity)?;
-        write_status_line(&mut output, columns, &banner)?;
         let options = self.options_line()?;
-        write!(
-            output,
-            "\x1b[{};1H\x1b[2K\x1b[0m",
-            content_rows + 2
-        )
-        .map_err(|_| Error::Capacity)?;
-        write_status_line(&mut output, columns, &options)?;
-        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
-            .map_err(|_| Error::Capacity)?;
         let status = self.status_line()?;
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows - 1)
+            .map_err(|_| Error::Capacity)?;
         write_status_line(&mut output, columns, &status)?;
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[0m", rows)
+            .map_err(|_| Error::Capacity)?;
+        write_status_line(&mut output, columns, &options)?;
         let cursor_row = self.cursor_line().saturating_sub(self.scroll_row).min(content_rows - 1);
         let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
         write!(
@@ -338,7 +326,7 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         }
 
         let mut output = Text::empty();
-        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows - 1)
             .map_err(|_| Error::Capacity)?;
         let status = self.status_line()?;
         write_status_line(&mut output, columns, &status)?;
@@ -382,7 +370,7 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         self.render_line(&mut output, self.scroll_row + screen_row, columns)?;
         output.push_str("\x1b[K\x1b[0m")?;
         let status = self.status_line()?;
-        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows - 1)
             .map_err(|_| Error::Capacity)?;
         write_status_line(&mut output, columns, &status)?;
         let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
@@ -705,10 +693,7 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
             self.line_count(),
             self.line_number(),
             self.column_number(),
-            match self.mode {
-                EditorMode::Insert => "INSERT",
-                EditorMode::Command => "COMMAND",
-            },
+            mode_name(self.mode),
             if self.is_dirty() { "  MODIFIED" } else { "" },
         )
         .map_err(|_| Error::Capacity)?;
@@ -716,18 +701,6 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
             status.push_str("  SELECTED")?;
         }
         Ok(status)
-    }
-
-    fn banner_line(&self) -> Result<Text<MAX_EDITOR_STATUS_BYTES>, Error> {
-        let mut banner = Text::<MAX_EDITOR_STATUS_BYTES>::empty();
-        write!(
-            banner,
-            " EDIT {}  MODE:{}",
-            file_name(self.name.as_str()),
-            mode_name(self.mode),
-        )
-        .map_err(|_| Error::Capacity)?;
-        Ok(banner)
     }
 
     fn options_line(&self) -> Result<Text<MAX_EDITOR_STATUS_BYTES>, Error> {
@@ -940,7 +913,7 @@ mod tests {
         assert_eq!(editor.handle(Key::Resize).unwrap(), FileEditorAction::Redraw);
 
         let rendered = editor.render::<4096>(80, 4).unwrap();
-        assert!(rendered.as_str().contains("EDIT view  MODE:COMMAND"));
+        assert!(rendered.as_str().contains("EDIT view  SIZE:"));
         assert!(rendered.as_str().contains("COMMAND: I insert  S save  E save+exit  Q quit"));
         assert!(rendered.as_str().contains("VERSION:2"));
         assert!(rendered.as_str().contains("SELECTED"));

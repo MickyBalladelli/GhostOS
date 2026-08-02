@@ -918,6 +918,18 @@ impl VtInput {
         self.advance_now(byte)
     }
 
+    fn escape_pending(&self) -> bool {
+        self.state == VtInputState::Escape
+    }
+
+    fn flush_escape(&mut self) -> Option<Key> {
+        if !self.escape_pending() {
+            return None
+        }
+        self.state = VtInputState::Ground;
+        Some(Key::Escape)
+    }
+
     fn advance_now(&mut self, byte: u8) -> Option<Key> {
         match self.state {
             VtInputState::Ground => match byte {
@@ -1024,23 +1036,28 @@ impl VtInput {
     }
 }
 
+fn read_available_byte(
+    keyboard: &mut crate::keyboard::Keyboard,
+    usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
+) -> Option<u8> {
+    keyboard
+        .read_byte()
+        .or_else(|| {
+            usb_keyboard
+                .as_mut()
+                .and_then(crate::usb_keyboard::UsbKeyboard::read_byte)
+        })
+        .or_else(crate::console::read_byte)
+}
+
 fn wait_for_byte(
     keyboard: &mut crate::keyboard::Keyboard,
     usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
     acpi: Option<&AcpiPlatform>,
 ) -> u8 {
     loop {
-        if let Some(byte) = keyboard.read_byte() {
-            return byte;
-        }
-        if let Some(byte) = usb_keyboard
-            .as_mut()
-            .and_then(crate::usb_keyboard::UsbKeyboard::read_byte)
-        {
-            return byte;
-        }
-        if let Some(byte) = crate::console::read_byte() {
-            return byte;
+        if let Some(byte) = read_available_byte(keyboard, usb_keyboard) {
+            return byte
         }
         if acpi.is_some_and(crate::power::power_button_pressed) {
             crate::power::shutdown(acpi)
@@ -1740,7 +1757,15 @@ impl KernelExecutor {
         let mut confirming_conflict = None;
         loop {
             let byte = wait_for_byte(keyboard, usb_keyboard, acpi);
-            let Some(key) = input.advance(byte) else {
+            let mut key = input.advance(byte);
+            if key.is_none() && input.escape_pending() {
+                key = read_available_byte(keyboard, usb_keyboard)
+                    .and_then(|next| input.advance(next));
+                if key.is_none() {
+                    key = input.flush_escape();
+                }
+            }
+            let Some(key) = key else {
                 continue
             };
 
