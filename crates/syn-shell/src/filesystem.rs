@@ -25,6 +25,7 @@ pub const MKDIR_ROUTE: u16 = 37;
 pub const LINK_ROUTE: u16 = 38;
 pub const SHOW_LINKS_ROUTE: u16 = 39;
 pub const DELETE_ROUTE: u16 = 40;
+pub const EDIT_ROUTE: u16 = 41;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Path {
@@ -281,6 +282,10 @@ pub trait FilesystemSource {
         binary: bool,
         output: &mut dyn FileOutput,
     ) -> Result<FileMetadata, Status>;
+
+    fn save_file(&mut self, _path: &str, _contents: &[u8]) -> Result<FileMetadata, Status> {
+        Err(Status::NOT_FOUND)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -481,6 +486,14 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
         CommandSpec::new("DELETE", &[required_path]).map_err(|_| Error::InvalidValue)?,
         route(DELETE_ROUTE),
     )?;
+    registry.register(
+        CommandSpec::new("EDIT", &[required_path]).map_err(|_| Error::InvalidValue)?,
+        route(EDIT_ROUTE),
+    )?;
+    registry.register(
+        CommandSpec::new("EDT", &[required_path]).map_err(|_| Error::InvalidValue)?,
+        route(EDIT_ROUTE),
+    )?;
     Ok(())
 }
 
@@ -676,6 +689,30 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             .resolve(path_value.as_ref().map(Text::as_str))?;
         let binary = boolean(command.get("BINARY"))?;
         self.source.type_file(path.as_str(), binary, output)
+    }
+
+    pub fn edit_file_load(
+        &mut self,
+        command: CommandCall,
+        output: &mut dyn FileOutput,
+    ) -> Result<FileMetadata, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        self.source.type_file(path.as_str(), false, output)
+    }
+
+    pub fn edit_file_save(
+        &mut self,
+        command: CommandCall,
+        contents: &[u8],
+    ) -> Result<FileMetadata, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        self.source.save_file(path.as_str(), contents)
     }
 
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {

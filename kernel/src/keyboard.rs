@@ -105,12 +105,12 @@ impl Keyboard {
         }
         match code {
             0x1c => Some(b'\r'),
-            0x47 => self.queue_sequence(b"\x1b[H"),
-            0x48 => self.queue_sequence(b"\x1b[A"),
-            0x4b => self.queue_sequence(b"\x1b[D"),
-            0x4d => self.queue_sequence(b"\x1b[C"),
+            0x47 => self.queue_sequence(if self.shifted() { b"\x1b[1;2H" } else { b"\x1b[H" }),
+            0x48 => self.queue_sequence(if self.shifted() { b"\x1b[1;2A" } else { b"\x1b[A" }),
+            0x4b => self.queue_sequence(if self.shifted() { b"\x1b[1;2D" } else { b"\x1b[D" }),
+            0x4d => self.queue_sequence(if self.shifted() { b"\x1b[1;2C" } else { b"\x1b[C" }),
             0x4f => self.queue_sequence(b"\x1b[F"),
-            0x50 => self.queue_sequence(b"\x1b[B"),
+            0x50 => self.queue_sequence(if self.shifted() { b"\x1b[1;2B" } else { b"\x1b[B" }),
             0x53 => self.queue_sequence(b"\x1b[3~"),
             _ => None,
         }

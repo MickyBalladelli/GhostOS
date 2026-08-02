@@ -7,14 +7,26 @@ pub enum Key {
     Character(char),
     Left,
     Right,
+    Up,
+    Down,
     Home,
     End,
+    ShiftLeft,
+    ShiftRight,
+    ShiftUp,
+    ShiftDown,
+    PageUp,
+    PageDown,
     Backspace,
     Delete,
     HistoryPrevious,
     HistoryNext,
     Tab,
     Enter,
+    Escape,
+    Save,
+    SaveExit,
+    DiscardExit,
     Cancel,
 }
 
@@ -111,6 +123,18 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
                 if self.cursor < self.len {
                     self.cursor = next_boundary(&self.bytes, self.cursor, self.len)
                 }
+                Ok(EditorAction::Redraw)
+            }
+            Key::Up => {
+                self.history_previous()?;
+                Ok(EditorAction::Redraw)
+            }
+            Key::Down => {
+                self.history_next()?;
+                Ok(EditorAction::Redraw)
+            }
+            Key::ShiftLeft | Key::ShiftRight | Key::ShiftUp | Key::ShiftDown | Key::PageUp
+            | Key::PageDown | Key::Escape | Key::Save | Key::SaveExit | Key::DiscardExit => {
                 Ok(EditorAction::Redraw)
             }
             Key::Home => {

@@ -1,6 +1,7 @@
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
+    file_editor::{FileEditor, FileEditorAction},
     filesystem::{
         DeleteMetadata, DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType,
         FileMetadata, FileOutput, FilesystemExecutor, FilesystemSource, LinkPage,
@@ -30,6 +31,7 @@ const SHOW_MEMORY_ROUTE: u16 = 8;
 const SHOW_DSM_ROUTE: u16 = 9;
 const COMMAND_CAPACITY: usize = 24;
 const HISTORY_CAPACITY: usize = 8;
+const EDITOR_RENDER_BYTES: usize = 16 * 1024;
 
 pub fn run(
     boot_info: &'static BootInfo,
@@ -193,6 +195,23 @@ fn execute_line(
         return;
     }
 
+    if program.stage_count() == 1
+        && program
+            .stage(0)
+            .is_some_and(is_full_edit_command)
+    {
+        if let Some(command) = program.stage(0) {
+            if let Err(status) = executor.edit_file(command, keyboard, usb_keyboard, acpi) {
+                crate::println!(
+                    "command failed: {} (status={:#x})",
+                    status_reason(status),
+                    status.raw()
+                )
+            }
+        }
+        return;
+    }
+
     let (
         human_help_output,
         human_system_output,
@@ -282,6 +301,27 @@ fn execute_line(
     }
 }
 
+fn render_file_editor<const CAPACITY: usize>(
+    editor: &mut FileEditor<CAPACITY>,
+) -> Result<(), Status> {
+    let (columns, rows) = crate::console::terminal_size();
+    let rendered = editor
+        .render::<EDITOR_RENDER_BYTES>(columns, rows)
+        .map_err(|_| Status::NO_SPACE)?;
+    crate::print!("{}", rendered.as_str());
+    Ok(())
+}
+
+fn report_editor_error(status: Status) {
+    let (_, rows) = crate::console::terminal_size();
+    crate::print!(
+        "\x1b[{};1H\x1b[2K\x1b[31mSave failed: {} ({:#x})\x1b[0m",
+        rows,
+        status_reason(status),
+        status.raw(),
+    );
+}
+
 fn prompt() {
     crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
 }
@@ -296,6 +336,11 @@ fn is_full_directory_command(command: CommandCall) -> bool {
 
 fn is_full_type_command(command: CommandCall) -> bool {
     command.command.as_str().eq_ignore_ascii_case("TYPE")
+}
+
+fn is_full_edit_command(command: CommandCall) -> bool {
+    command.command.as_str().eq_ignore_ascii_case("EDIT")
+        || command.command.as_str().eq_ignore_ascii_case("EDT")
 }
 
 fn directory_cancelled(
@@ -322,6 +367,32 @@ struct TypeConsoleOutput<'a> {
     pending: [u8; 4],
     pending_len: usize,
     cancelled: bool,
+}
+
+struct EditBufferOutput<const CAPACITY: usize> {
+    bytes: [u8; CAPACITY],
+    len: usize,
+}
+
+impl<const CAPACITY: usize> EditBufferOutput<CAPACITY> {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; CAPACITY],
+            len: 0,
+        }
+    }
+}
+
+impl<const CAPACITY: usize> FileOutput for EditBufferOutput<CAPACITY> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), Status> {
+        let end = self.len.checked_add(bytes.len()).ok_or(Status::NO_SPACE)?;
+        if end > CAPACITY {
+            return Err(Status::NO_SPACE)
+        }
+        self.bytes[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
 }
 
 impl<'a> TypeConsoleOutput<'a> {
@@ -572,6 +643,8 @@ fn supports_file_completion(command: &str) -> bool {
             | "DELETE"
             | "SHOW-LINKS"
             | "LINK"
+            | "EDIT"
+            | "EDT"
     )
 }
 
@@ -685,6 +758,9 @@ enum VtInputState {
 struct VtInput {
     state: VtInputState,
     parameter: u16,
+    modifier: u16,
+    after_separator: bool,
+    pending: Option<u8>,
 }
 
 impl VtInput {
@@ -692,10 +768,23 @@ impl VtInput {
         Self {
             state: VtInputState::Ground,
             parameter: 0,
+            modifier: 0,
+            after_separator: false,
+            pending: None,
         }
     }
 
     fn advance(&mut self, byte: u8) -> Option<Key> {
+        if let Some(pending) = self.pending.take() {
+            if let Some(key) = self.advance_now(pending) {
+                self.pending = Some(byte);
+                return Some(key)
+            }
+        }
+        self.advance_now(byte)
+    }
+
+    fn advance_now(&mut self, byte: u8) -> Option<Key> {
         match self.state {
             VtInputState::Ground => match byte {
                 0x1b => {
@@ -705,28 +794,47 @@ impl VtInput {
                 b'\n' => Some(Key::Enter),
                 b'\t' => Some(Key::Tab),
                 8 | 127 => Some(Key::Backspace),
+                19 => Some(Key::Save),
+                24 => Some(Key::DiscardExit),
+                26 => Some(Key::SaveExit),
                 3 => Some(Key::Cancel),
                 0x20..=0x7e => Some(Key::Character(byte as char)),
                 _ => None,
             },
             VtInputState::Escape => {
                 self.parameter = 0;
+                self.modifier = 0;
+                self.after_separator = false;
                 match byte {
                     b'[' => self.state = VtInputState::Csi,
                     b'O' => self.state = VtInputState::Ss3,
-                    _ => self.state = VtInputState::Ground,
+                    _ => {
+                        self.state = VtInputState::Ground;
+                        self.pending = Some(byte);
+                        return Some(Key::Escape)
+                    }
                 }
                 None
             }
             VtInputState::Csi => match byte {
                 b'0'..=b'9' => {
-                    self.parameter = self
-                        .parameter
-                        .saturating_mul(10)
-                        .saturating_add((byte - b'0') as u16);
+                    if self.after_separator {
+                        self.modifier = self
+                            .modifier
+                            .saturating_mul(10)
+                            .saturating_add((byte - b'0') as u16);
+                    } else {
+                        self.parameter = self
+                            .parameter
+                            .saturating_mul(10)
+                            .saturating_add((byte - b'0') as u16);
+                    }
                     None
                 }
-                b';' => None,
+                b';' => {
+                    self.after_separator = true;
+                    None
+                }
                 _ => {
                     self.state = VtInputState::Ground;
                     self.navigation_key(byte)
@@ -740,17 +848,20 @@ impl VtInput {
     }
 
     fn navigation_key(&self, byte: u8) -> Option<Key> {
+        let shifted = self.modifier == 2;
         match byte {
-            b'A' => Some(Key::HistoryPrevious),
-            b'B' => Some(Key::HistoryNext),
-            b'C' => Some(Key::Right),
-            b'D' => Some(Key::Left),
+            b'A' => Some(if shifted { Key::ShiftUp } else { Key::Up }),
+            b'B' => Some(if shifted { Key::ShiftDown } else { Key::Down }),
+            b'C' => Some(if shifted { Key::ShiftRight } else { Key::Right }),
+            b'D' => Some(if shifted { Key::ShiftLeft } else { Key::Left }),
             b'H' => Some(Key::Home),
             b'F' => Some(Key::End),
             b'~' => match self.parameter {
                 1 | 7 => Some(Key::Home),
                 3 => Some(Key::Delete),
                 4 | 8 => Some(Key::End),
+                5 => Some(Key::PageUp),
+                6 => Some(Key::PageDown),
                 _ => None,
             },
             _ => None,
@@ -1195,6 +1306,43 @@ impl FilesystemSource for KernelFilesystem {
         }
         Ok(self.metadata(file))
     }
+
+    fn save_file(&mut self, path: &str, contents: &[u8]) -> Result<FileMetadata, Status> {
+        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
+        if path == "/" || contents.len() > KERNEL_FILE_BYTES {
+            return Err(Status::NO_SPACE)
+        }
+        let selected = match version {
+            None | Some(0) => self.find(path),
+            Some(version) => self.find_version(path, version),
+        }
+        .ok_or(Status::NOT_FOUND)?;
+        if selected.file_type != EntryType::File {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        if version.is_some_and(|version| version != 0 && version != selected.version) {
+            return Err(Status::NOT_FOUND)
+        }
+        let next_version = self
+            .files
+            .iter()
+            .flatten()
+            .filter(|file| file.path.as_str() == path && !file.deleted)
+            .map(|file| file.version)
+            .max()
+            .ok_or(Status::CORRUPT)?
+            .checked_add(1)
+            .ok_or(Status::CORRUPT)?;
+        let saved = self.insert_version(path, EntryType::File, next_version)?;
+        let object = self
+            .objects
+            .get_mut(saved.object_id.checked_sub(1).ok_or(Status::CORRUPT)? as usize)
+            .and_then(Option::as_mut)
+            .ok_or(Status::CORRUPT)?;
+        object.bytes[..contents.len()].copy_from_slice(contents);
+        object.length = contents.len();
+        Ok(self.metadata(saved))
+    }
 }
 
 struct KernelExecutor {
@@ -1352,12 +1500,98 @@ impl KernelExecutor {
         }
     }
 
+    fn edit_file(
+        &mut self,
+        command: CommandCall,
+        keyboard: &mut crate::keyboard::Keyboard,
+        usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
+        acpi: Option<&AcpiPlatform>,
+    ) -> Result<(), Status> {
+        let mut contents = EditBufferOutput::<KERNEL_FILE_BYTES>::new();
+        let metadata = self.filesystem.edit_file_load(command, &mut contents)?;
+        let mut editor = FileEditor::<KERNEL_FILE_BYTES>::new(
+            metadata.path.as_str(),
+            metadata.version,
+            &contents.bytes[..contents.len],
+        )
+        .map_err(|_| Status::INVALID_ARGUMENT)?;
+
+        crate::print!("\x1b[?1049h\x1b[2J\x1b[H");
+        render_file_editor(&mut editor)?;
+        let mut input = VtInput::new();
+        let mut confirming_discard = false;
+        loop {
+            let byte = wait_for_byte(keyboard, usb_keyboard, acpi);
+            let Some(key) = input.advance(byte) else {
+                continue
+            };
+
+            if confirming_discard {
+                match key {
+                    Key::Character('y') | Key::Character('Y') => {
+                        confirming_discard = false;
+                        if editor.confirm_discard(true) == FileEditorAction::DiscardExit {
+                            break
+                        }
+                    }
+                    Key::Character('n') | Key::Character('N') | Key::Escape => {
+                        confirming_discard = false;
+                    }
+                    _ => {}
+                }
+                render_file_editor(&mut editor)?;
+                continue
+            }
+
+            match editor
+                .handle(key)
+                .map_err(|_| Status::INVALID_ARGUMENT)?
+            {
+                FileEditorAction::None => {}
+                FileEditorAction::Redraw => render_file_editor(&mut editor)?,
+                FileEditorAction::Save => {
+                    if editor.is_dirty() {
+                        match self.filesystem.edit_file_save(command, editor.bytes()) {
+                            Ok(metadata) => editor.mark_saved(metadata.version),
+                            Err(status) => report_editor_error(status),
+                        }
+                    }
+                    render_file_editor(&mut editor)?;
+                }
+                FileEditorAction::SaveExit => {
+                    if editor.is_dirty() {
+                        match self.filesystem.edit_file_save(command, editor.bytes()) {
+                            Ok(metadata) => editor.mark_saved(metadata.version),
+                            Err(status) => {
+                                report_editor_error(status);
+                                render_file_editor(&mut editor)?;
+                                continue
+                            }
+                        }
+                    }
+                    break
+                }
+                FileEditorAction::PromptDiscard => {
+                    confirming_discard = true;
+                    let (_, rows) = crate::console::terminal_size();
+                    crate::print!(
+                        "\x1b[{};1H\x1b[2K\x1b[33mUnsaved changes. Discard? [y/N] \x1b[0m",
+                        rows,
+                    );
+                }
+                FileEditorAction::DiscardExit => break,
+            }
+        }
+        crate::print!("\x1b[?25l\x1b[?1049l");
+        Ok(())
+    }
+
     fn help(&self) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, DELETE, TYPE, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, DELETE, TYPE, EDIT, EDT, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -1368,6 +1602,7 @@ impl KernelExecutor {
         crate::println!("  CREATE             Create a file");
         crate::println!("  DELETE             Delete a file or link");
         crate::println!("  DIRECTORY          List a directory");
+        crate::println!("  EDIT               Full-screen file editor (EDT alias)");
         crate::println!("  HELP               Show this help");
         crate::println!("  LINK               Create a hard link");
         crate::println!("  SHOW LINKS         List hard-link paths");
@@ -1385,6 +1620,10 @@ impl KernelExecutor {
         crate::println!("  SHUTDOWN           Power off SynOS");
         crate::println!("  TOP CPU            Show CPU activity");
         crate::println!("  TYPE               Show file contents");
+        crate::println!();
+        crate::println!("EDIT keys: Ctrl-S save, Ctrl-Z save and exit, Ctrl-X discard and exit.");
+        crate::println!("  Insert text normally; Enter adds a line; Shift-arrows select text.");
+        crate::println!("  Escape enters command mode: I insert, S save, E save/exit, Q discard.");
         crate::println!();
         crate::println!("Unique command prefixes are accepted.");
     }

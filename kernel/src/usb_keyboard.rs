@@ -172,7 +172,7 @@ impl UsbKeyboard {
                 self.caps_lock = !self.caps_lock;
                 continue;
             }
-            if let Some(sequence) = navigation_sequence(usage) {
+            if let Some(sequence) = navigation_sequence(usage, modifiers & 0x22 != 0) {
                 self.queue_sequence(sequence);
                 continue;
             }
@@ -722,15 +722,15 @@ fn hid_usage(usage: u8, modifiers: u8, caps_lock: bool) -> Option<u8> {
     }
 }
 
-fn navigation_sequence(usage: u8) -> Option<&'static [u8]> {
+fn navigation_sequence(usage: u8, shifted: bool) -> Option<&'static [u8]> {
     match usage {
         0x4a => Some(b"\x1b[H"),
         0x4c => Some(b"\x1b[3~"),
         0x4d => Some(b"\x1b[F"),
-        0x4f => Some(b"\x1b[C"),
-        0x50 => Some(b"\x1b[D"),
-        0x51 => Some(b"\x1b[B"),
-        0x52 => Some(b"\x1b[A"),
+        0x4f => Some(if shifted { b"\x1b[1;2C" } else { b"\x1b[C" }),
+        0x50 => Some(if shifted { b"\x1b[1;2D" } else { b"\x1b[D" }),
+        0x51 => Some(if shifted { b"\x1b[1;2B" } else { b"\x1b[B" }),
+        0x52 => Some(if shifted { b"\x1b[1;2A" } else { b"\x1b[A" }),
         _ => None,
     }
 }

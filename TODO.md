@@ -113,6 +113,27 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Close the file capability on success, failure, cancellation, and partial reads.
   - [x] Enforce read capability and report directories, missing files, corrupt versions, and I/O failures correctly.
 
+- [ ] **Full-Screen File Editor (`EDIT` / `EDT`)
+  - [x] Define `EDIT file[;version]` syntax, the `EDT` alias, default-directory resolution, and behavior for missing files, directories, binary files, and read-only files.
+  - [x] Define SynFS version semantics: open the latest version by default, allow an explicit version for editing, and save changes as a new version without mutating the original.
+  - [x] Add an editor session state machine for the open file capability, edit buffer, cursor, viewport, selection, dirty state, mode, and exit result.
+  - [x] Load file contents through bounded filesystem reads and represent text as editable lines with safe limits for line length, file size, line count, and UTF-8 boundaries.
+  - [x] Support insert mode with character insertion, backspace, delete, cursor movement, Home/End, line movement, and `Enter` to split the current line.
+  - [ ] Support joining lines, deleting selected text, copying/cutting/pasting selected text, and selecting text with Shift plus cursor movement. Selection and deletion work; clipboard support remains.
+  - [x] Add a small EDT-inspired command mode and document the keymap for save-and-exit, exit-without-saving, cancel, navigation, and mode switching.
+  - [x] Reserve the last terminal row for a status line and render the editor into all remaining rows using the live terminal width and height.
+  - [ ] Handle terminal resize events while preserving the buffer, cursor, selection, dirty state, and scroll position where possible. The kernel rereads terminal dimensions on redraw; remote resize wiring remains.
+  - [x] Render the status line with file name, byte size, line count, SynFS version, cursor line/column, current mode, selection state, and a modified marker.
+  - [x] Render cursor visibility, selection highlighting, long-line scrolling, tabs, non-printing characters, and safe redraws through the existing VT100/VT420 terminal path.
+  - [x] Define save behavior for empty files, trailing newlines, newline encoding, invalid UTF-8, maximum file size, quota exhaustion, and write failures.
+  - [ ] Save through a crash-safe SynFS transaction, verify the committed version, refresh the status line, and keep the editor open when saving fails.
+  - [ ] Detect stale source versions or concurrent updates before save and require an explicit conflict decision instead of silently overwriting data.
+  - [ ] Prompt before discarding unsaved changes and make both save-and-exit and exit-without-saving restore terminal modes and release file capabilities.
+  - [ ] Return stable shell status and structured output for opened, saved, discarded, cancelled, conflicted, and failed edit sessions.
+  - [ ] Add parser, editor-buffer, keymap, selection, scrolling, resize, rendering, UTF-8, save/versioning, failure-recovery, capability, and terminal integration coverage.
+  - [ ] Add QEMU and remote-terminal coverage proving that a file can be opened, edited, saved as a new version, reopened, and exited without saving.
+  - [ ] Document the `EDIT`/`EDT` workflow, keymap, status line, version behavior, save prompts, and examples in the shell and filesystem READMEs.
+
 - [ ] **Manage File Links**
   - [x] Add a `LINK source target` command and register aliases and qualifiers.
   - [x] Resolve source and target paths from absolute paths, relative paths, and the active default directory.

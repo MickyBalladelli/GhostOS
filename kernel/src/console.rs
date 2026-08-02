@@ -60,6 +60,28 @@ pub fn clear() {
     LOCKED.store(false, Ordering::Release);
 }
 
+pub fn terminal_size() -> (usize, usize) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        while LOCKED
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop()
+        }
+        let size = unsafe {
+            let console = &raw const CONSOLE;
+            (*console).terminal_size()
+        };
+        LOCKED.store(false, Ordering::Release);
+        size
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        (80, 25)
+    }
+}
+
 struct Console {
     #[cfg(target_arch = "x86_64")]
     vga: VgaConsole,
@@ -125,6 +147,15 @@ impl Console {
                 self.vga.clear()
             }
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn terminal_size(&self) -> (usize, usize) {
+        self.framebuffer
+            .as_ref()
+            .map_or((80, 25), |framebuffer| {
+                (framebuffer.columns(), framebuffer.rows())
+            })
     }
 }
 
