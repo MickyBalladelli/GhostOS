@@ -284,43 +284,85 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         }
         write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
             .map_err(|_| Error::Capacity)?;
-        let mut status = Text::<MAX_EDITOR_STATUS_BYTES>::empty();
-        write!(
-            status,
-            " EDIT {}  SIZE:{}  VERSION:{}  LINES:{}  CURSOR:{}:{}  MODE:{}{}",
-            self.name.as_str(),
-            self.len,
-            self.version,
-            self.line_count(),
-            self.line_number(),
-            self.column_number(),
-            match self.mode {
-                EditorMode::Insert => "INSERT",
-                EditorMode::Command => "COMMAND",
-            },
-            if self.is_dirty() { "  MODIFIED" } else { "" },
-        )
-        .map_err(|_| Error::Capacity)?;
-        if self.selected().is_some() {
-            status.push_str("  SELECTED")?;
-        }
-        let mut used = 0;
-        for character in status.as_str().chars() {
-            if used == columns {
-                break
-            }
-            output.push_char(character)?;
-            used += 1;
-        }
-        for _ in used..columns {
-            output.push_char(' ')?;
-        }
+        let status = self.status_line()?;
+        write_status_line(&mut output, columns, &status)?;
         let cursor_row = self.cursor_line().saturating_sub(self.scroll_row).min(content_rows - 1);
         let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
         write!(
             output,
             "\x1b[{};{}H\x1b[0m\x1b[?25h",
             cursor_row + 1,
+            cursor_column + 1,
+        )
+        .map_err(|_| Error::Capacity)?;
+        Ok(output)
+    }
+
+    /// Redraw only the status line and cursor when navigation stays in the
+    /// current viewport. A full render is returned when scrolling is needed.
+    pub fn render_cursor<const OUTPUT: usize>(
+        &mut self,
+        columns: usize,
+        rows: usize,
+    ) -> Result<Text<OUTPUT>, Error> {
+        if columns == 0 || rows < 2 {
+            return Err(Error::InvalidValue)
+        }
+        let content_rows = rows - 1;
+        let previous_scroll = (self.scroll_row, self.scroll_column);
+        self.ensure_visible(columns, content_rows);
+        if previous_scroll != (self.scroll_row, self.scroll_column) {
+            return self.render(columns, rows)
+        }
+
+        let mut output = Text::empty();
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
+            .map_err(|_| Error::Capacity)?;
+        let status = self.status_line()?;
+        write_status_line(&mut output, columns, &status)?;
+        let cursor_row = self.cursor_line().saturating_sub(self.scroll_row).min(content_rows - 1);
+        let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
+        write!(
+            output,
+            "\x1b[0m\x1b[{};{}H",
+            cursor_row + 1,
+            cursor_column + 1,
+        )
+        .map_err(|_| Error::Capacity)?;
+        Ok(output)
+    }
+
+    /// Repaint the active line without clearing it first. This keeps ordinary
+    /// character insertion from flashing the whole editor surface.
+    pub fn render_line_update<const OUTPUT: usize>(
+        &mut self,
+        columns: usize,
+        rows: usize,
+    ) -> Result<Text<OUTPUT>, Error> {
+        if columns == 0 || rows < 2 {
+            return Err(Error::InvalidValue)
+        }
+        let content_rows = rows - 1;
+        let previous_scroll = (self.scroll_row, self.scroll_column);
+        self.ensure_visible(columns, content_rows);
+        if previous_scroll != (self.scroll_row, self.scroll_column) {
+            return self.render(columns, rows)
+        }
+
+        let screen_row = self.cursor_line().saturating_sub(self.scroll_row).min(content_rows - 1);
+        let mut output = Text::empty();
+        write!(output, "\x1b[{};1H", screen_row + 1).map_err(|_| Error::Capacity)?;
+        self.render_line(&mut output, self.scroll_row + screen_row, columns)?;
+        output.push_str("\x1b[K\x1b[0m")?;
+        let status = self.status_line()?;
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
+            .map_err(|_| Error::Capacity)?;
+        write_status_line(&mut output, columns, &status)?;
+        let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
+        write!(
+            output,
+            "\x1b[0m\x1b[{};{}H",
+            screen_row + 1,
             cursor_column + 1,
         )
         .map_err(|_| Error::Capacity)?;
@@ -477,10 +519,25 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
 
     fn move_vertical(&mut self, amount: isize, selecting: bool) {
         self.finish_movement(selecting);
-        let current_line = self.cursor_line();
-        let target_line = (current_line as isize + amount).max(1) as usize;
         let column = self.cursor_column();
-        let start = self.line_start_for_number(target_line);
+        let mut start = self.line_start(self.cursor);
+        let steps = amount.saturating_abs() as usize;
+        if amount < 0 {
+            for _ in 0..steps {
+                if start == 0 {
+                    break
+                }
+                start = self.line_start(start - 1);
+            }
+        } else {
+            for _ in 0..steps {
+                let end = self.line_end(start);
+                if end == self.len {
+                    break
+                }
+                start = end + 1;
+            }
+        }
         let end = self.line_end(start);
         self.cursor = offset_for_column(&self.bytes[start..end], column) + start;
     }
@@ -609,6 +666,30 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         }
         Ok(())
     }
+
+    fn status_line(&self) -> Result<Text<MAX_EDITOR_STATUS_BYTES>, Error> {
+        let mut status = Text::<MAX_EDITOR_STATUS_BYTES>::empty();
+        write!(
+            status,
+            " EDIT {}  SIZE:{}  VERSION:{}  LINES:{}  CURSOR:{}:{}  MODE:{}{}",
+            self.name.as_str(),
+            self.len,
+            self.version,
+            self.line_count(),
+            self.line_number(),
+            self.column_number(),
+            match self.mode {
+                EditorMode::Insert => "INSERT",
+                EditorMode::Command => "COMMAND",
+            },
+            if self.is_dirty() { "  MODIFIED" } else { "" },
+        )
+        .map_err(|_| Error::Capacity)?;
+        if self.selected().is_some() {
+            status.push_str("  SELECTED")?;
+        }
+        Ok(status)
+    }
 }
 
 impl<const CAPACITY: usize> Default for FileEditor<CAPACITY> {
@@ -646,6 +727,25 @@ fn checksum(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(1_099_511_628_211);
     }
     hash
+}
+
+fn write_status_line<const OUTPUT: usize>(
+    output: &mut Text<OUTPUT>,
+    columns: usize,
+    status: &Text<MAX_EDITOR_STATUS_BYTES>,
+) -> Result<(), Error> {
+    let mut used = 0;
+    for character in status.as_str().chars() {
+        if used == columns {
+            break
+        }
+        output.push_char(character)?;
+        used += 1;
+    }
+    for _ in used..columns {
+        output.push_char(' ')?;
+    }
+    Ok(())
 }
 
 fn offset_for_column(bytes: &[u8], column: usize) -> usize {
@@ -690,6 +790,18 @@ mod tests {
         assert_eq!(editor.bytes(), b"ab");
         editor.handle(Key::Character('é')).unwrap();
         assert_eq!(core::str::from_utf8(editor.bytes()).unwrap(), "éab");
+    }
+
+    #[test]
+    fn vertical_navigation_uses_adjacent_lines_and_preserves_column() {
+        let mut editor = FileEditor::<32>::new("/data/note", 1, b"one\ntwo\nsix").unwrap();
+        editor.handle(Key::End).unwrap();
+        editor.handle(Key::Down).unwrap();
+        assert_eq!(editor.cursor(), 7);
+        editor.handle(Key::Down).unwrap();
+        assert_eq!(editor.cursor(), 11);
+        editor.handle(Key::Up).unwrap();
+        assert_eq!(editor.cursor(), 7);
     }
 
     #[test]

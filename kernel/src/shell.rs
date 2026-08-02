@@ -1,7 +1,7 @@
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
-    file_editor::{FileEditor, FileEditorAction},
+    file_editor::{EditorMode, FileEditor, FileEditorAction},
     filesystem::{
         DeleteMetadata, DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType,
         FileMetadata, FileOutput, FilesystemExecutor, FilesystemSource, LinkPage,
@@ -317,6 +317,73 @@ fn render_file_editor<const CAPACITY: usize>(
         .map_err(|_| Status::NO_SPACE)?;
     crate::print!("{}", rendered.as_str());
     Ok(())
+}
+
+fn render_file_editor_cursor<const CAPACITY: usize>(
+    editor: &mut FileEditor<CAPACITY>,
+) -> Result<(), Status> {
+    let (columns, rows) = crate::console::terminal_size();
+    let rendered = editor
+        .render_cursor::<EDITOR_RENDER_BYTES>(columns, rows)
+        .map_err(|_| Status::NO_SPACE)?;
+    crate::print!("{}", rendered.as_str());
+    Ok(())
+}
+
+fn render_file_editor_line<const CAPACITY: usize>(
+    editor: &mut FileEditor<CAPACITY>,
+) -> Result<(), Status> {
+    let (columns, rows) = crate::console::terminal_size();
+    let rendered = editor
+        .render_line_update::<EDITOR_RENDER_BYTES>(columns, rows)
+        .map_err(|_| Status::NO_SPACE)?;
+    crate::print!("{}", rendered.as_str());
+    Ok(())
+}
+
+fn is_cursor_only_edit_key(key: Key) -> bool {
+    matches!(
+        key,
+        Key::Left
+            | Key::Right
+            | Key::Up
+            | Key::Down
+            | Key::Home
+            | Key::End
+            | Key::PageUp
+            | Key::PageDown
+    )
+}
+
+fn is_line_only_edit_key<const CAPACITY: usize>(
+    editor: &FileEditor<CAPACITY>,
+    key: Key,
+) -> bool {
+    editor.mode() == EditorMode::Insert
+        && editor.selected().is_none()
+        && matches!(key, Key::Character(_) | Key::Tab)
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::{Key, VtInput};
+
+    fn decode(input: &mut VtInput, bytes: &[u8]) -> Key {
+        bytes
+            .iter()
+            .find_map(|byte| input.advance(*byte))
+            .expect("VT sequence produces a key")
+    }
+
+    #[test]
+    fn decodes_up_and_down_without_page_navigation() {
+        let mut input = VtInput::new();
+        assert_eq!(decode(&mut input, b"\x1b[A"), Key::Up);
+        assert_eq!(decode(&mut input, b"\x1b[B"), Key::Down);
+        assert_eq!(decode(&mut input, b"\x1bOA"), Key::Up);
+        assert_eq!(decode(&mut input, b"\x1bOB"), Key::Down);
+        assert_eq!(decode(&mut input, b"\x1b[6~"), Key::PageDown);
+    }
 }
 
 fn report_editor_error(status: Status) {
@@ -1727,6 +1794,12 @@ impl KernelExecutor {
             };
             match action {
                 FileEditorAction::None => {}
+                FileEditorAction::Redraw if is_cursor_only_edit_key(key) => {
+                    render_file_editor_cursor(editor)?
+                }
+                FileEditorAction::Redraw if is_line_only_edit_key(editor, key) => {
+                    render_file_editor_line(editor)?
+                }
                 FileEditorAction::Redraw => render_file_editor(editor)?,
                 FileEditorAction::Save | FileEditorAction::SaveExit => {
                     let save_exit = action == FileEditorAction::SaveExit;
