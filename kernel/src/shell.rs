@@ -588,6 +588,7 @@ struct KernelFile {
     version: u32,
     link_count: u32,
     object_id: u64,
+    is_link: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -666,6 +667,7 @@ impl KernelFilesystem {
             version,
             link_count: 1,
             object_id,
+            is_link: false,
         };
         self.next_object_id = self.next_object_id.saturating_add(1);
         *slot = Some(file);
@@ -698,6 +700,7 @@ impl KernelFilesystem {
             size: size as u64,
             version: file.version,
             link_count: self.link_count(file.object_id),
+            is_link: file.is_link,
         }
     }
 
@@ -765,6 +768,7 @@ impl FilesystemSource for KernelFilesystem {
                 size: self.object(*file).map_or(0, |object| object.length) as u64,
                 version: file.version,
                 link_count: self.link_count(file.object_id),
+                is_link: file.is_link,
             })?;
         }
         Ok(())
@@ -848,6 +852,7 @@ impl FilesystemSource for KernelFilesystem {
         linked.path = ShellPath::new(target)?;
         linked.version = 1;
         linked.link_count = 1;
+        linked.is_link = true;
         *slot = Some(linked);
         Ok(self.metadata(linked))
     }
@@ -997,12 +1002,11 @@ impl KernelExecutor {
                 crate::println!("Directory: {}", path.as_str());
                 crate::println!();
                 crate::println!(
-                    "{:<20}  {:<10}  {:>8}  {:>7}  {:>10}",
+                    "{:<20}  {:<10}  {:>8}  {:>7}",
                     "NAME",
                     "TYPE",
                     "SIZE",
                     "VERSION",
-                    "HARD LINKS",
                 );
                 printed_header = true;
             }
@@ -1012,12 +1016,11 @@ impl KernelExecutor {
                     return Ok(())
                 }
                 crate::println!(
-                    "{:<20}  {:<10}  {:>8}  {:>7}  {:>10}",
+                    "{:<20}  {:<10}  {:>8}  {:>7}",
                     entry.name.as_str(),
-                    entry_type_name(entry.file_type),
+                    if entry.is_link { "LINK" } else { entry_type_name(entry.file_type) },
                     entry.size,
                     entry.version,
-                    entry.link_count,
                 );
                 printed_entries = true;
             }

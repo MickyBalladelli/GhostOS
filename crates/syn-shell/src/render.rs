@@ -107,13 +107,12 @@ fn render_metadata(
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
 
-    const FIELDS: [(&str, &str); 6] = [
+    const FIELDS: [(&str, &str); 5] = [
         ("Operation", "operation"),
         ("Path", "path"),
         ("Type", "type"),
         ("Size", "size"),
         ("Version", "version"),
-        ("Link count", "link-count"),
     ];
 
     for (label, field) in FIELDS {
@@ -171,48 +170,42 @@ fn render_default_directory(
 fn render_directory(
     output: &StructuredOutput,
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
-    const ENTRY_FIELDS: [[&str; 5]; 6] = [
+    const ENTRY_FIELDS: [[&str; 4]; 6] = [
         [
             "entry-0-name",
             "entry-0-type",
             "entry-0-size",
             "entry-0-version",
-            "entry-0-link-count",
         ],
         [
             "entry-1-name",
             "entry-1-type",
             "entry-1-size",
             "entry-1-version",
-            "entry-1-link-count",
         ],
         [
             "entry-2-name",
             "entry-2-type",
             "entry-2-size",
             "entry-2-version",
-            "entry-2-link-count",
         ],
         [
             "entry-3-name",
             "entry-3-type",
             "entry-3-size",
             "entry-3-version",
-            "entry-3-link-count",
         ],
         [
             "entry-4-name",
             "entry-4-type",
             "entry-4-size",
             "entry-4-version",
-            "entry-4-link-count",
         ],
         [
             "entry-5-name",
             "entry-5-type",
             "entry-5-size",
             "entry-5-version",
-            "entry-5-link-count",
         ],
     ];
 
@@ -243,8 +236,6 @@ fn render_directory(
     write_table_text(&mut rendered, "SIZE", 8, true)?;
     rendered.push_str("  ")?;
     write_table_text(&mut rendered, "VERSION", 7, true)?;
-    rendered.push_str("  ")?;
-    write_table_text(&mut rendered, "HARD LINKS", 10, true)?;
     rendered.push_str("\n")?;
 
     for fields in ENTRY_FIELDS {
@@ -260,10 +251,6 @@ fn render_directory(
         let Some(version) = find_value(output, fields[3]) else {
             continue
         };
-        let Some(link_count) = find_value(output, fields[4]) else {
-            continue
-        };
-
         write_table_text(&mut rendered, name.as_str(), name_width, false)?;
         rendered.push_str("  ")?;
         write_table_value(&mut rendered, file_type, 10, false)?;
@@ -275,8 +262,6 @@ fn render_directory(
         }
         rendered.push_str("  ")?;
         write_table_value(&mut rendered, version, 7, true)?;
-        rendered.push_str("  ")?;
-        write_table_value(&mut rendered, link_count, 10, true)?;
         rendered.push_str("\n")?;
         rendered_entries += 1;
     }

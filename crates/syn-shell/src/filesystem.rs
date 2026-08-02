@@ -109,6 +109,7 @@ pub struct FileMetadata {
     pub size: u64,
     pub version: u32,
     pub link_count: u32,
+    pub is_link: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -118,6 +119,7 @@ pub struct DirectoryEntry {
     pub size: u64,
     pub version: u32,
     pub link_count: u32,
+    pub is_link: bool,
 }
 
 pub struct DirectoryPage {
@@ -763,17 +765,16 @@ fn metadata_output(label: &str, metadata: FileMetadata) -> Result<StructuredOutp
     let mut output = StructuredOutput::new(Status::NORMAL);
     insert_text(&mut output, "operation", label)?;
     insert_text(&mut output, "path", metadata.path.as_str())?;
-    insert_text(&mut output, "type", metadata.file_type.as_str())?;
+    insert_text(
+        &mut output,
+        "type",
+        if metadata.is_link { "LINK" } else { metadata.file_type.as_str() },
+    )?;
     insert(&mut output, "size", OutputValue::Unsigned(metadata.size))?;
     insert(
         &mut output,
         "version",
         OutputValue::Unsigned(metadata.version as u64),
-    )?;
-    insert(
-        &mut output,
-        "link-count",
-        OutputValue::Unsigned(metadata.link_count as u64),
     )?;
     Ok(output)
 }
@@ -827,7 +828,11 @@ fn directory_output(
         let mut field = Text::<64>::empty();
         field.push_str(prefix).map_err(|_| Status::NO_SPACE)?;
         field.push_str("type").map_err(|_| Status::NO_SPACE)?;
-        insert_text(&mut output, field.as_str(), entry.file_type.as_str())?;
+        insert_text(
+            &mut output,
+            field.as_str(),
+            if entry.is_link { "LINK" } else { entry.file_type.as_str() },
+        )?;
         let mut field = Text::<64>::empty();
         field.push_str(prefix).map_err(|_| Status::NO_SPACE)?;
         field.push_str("size").map_err(|_| Status::NO_SPACE)?;
@@ -847,11 +852,6 @@ fn directory_output(
         let mut field = Text::<64>::empty();
         field.push_str(prefix).map_err(|_| Status::NO_SPACE)?;
         field.push_str("link-count").map_err(|_| Status::NO_SPACE)?;
-        insert(
-            &mut output,
-            field.as_str(),
-            OutputValue::Unsigned(entry.link_count as u64),
-        )?;
     }
     Ok(output)
 }
