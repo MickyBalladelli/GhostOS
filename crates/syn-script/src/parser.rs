@@ -482,6 +482,8 @@ fn parse_rights(input: &str) -> Result<Rights, Error> {
             Rights::DELEGATE
         } else if raw.eq_ignore_ascii_case("REVOKE") {
             Rights::REVOKE
+        } else if raw.eq_ignore_ascii_case("CONTROL") {
+            Rights::CONTROL
         } else {
             return Err(Error::InvalidCapability);
         };

@@ -296,6 +296,34 @@ impl<const CAPACITY: usize> JobQueue<CAPACITY> {
         Ok(())
     }
 
+    /// Stop is the command-facing name for owner-guarded job cancellation.
+    pub fn stop(&mut self, id: JobId, owner: JobOwner) -> Result<(), Error> {
+        self.cancel(id, owner)
+    }
+
+    /// Adjust a queued or running job's dispatch priority. The owner token is
+    /// required so another session cannot retune or starve the job.
+    pub fn set_priority(
+        &mut self,
+        id: JobId,
+        owner: JobOwner,
+        priority: u8,
+    ) -> Result<(), Error> {
+        let slot = self.valid_slot(id)?;
+        let entry = &mut self.jobs[slot];
+        if entry.owner != owner {
+            return Err(Error::NotOwner)
+        }
+        if priority == 0 {
+            return Err(Error::InvalidValue)
+        }
+        if matches!(entry.state, JobState::Completed | JobState::Failed | JobState::Cancelled) {
+            return Err(Error::InvalidHandle)
+        }
+        entry.priority = priority;
+        Ok(())
+    }
+
     pub fn info(&self, id: JobId) -> Result<JobInfo, Error> {
         let entry = &self.jobs[self.valid_slot(id)?];
         Ok(JobInfo {

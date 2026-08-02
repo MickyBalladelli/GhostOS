@@ -77,7 +77,7 @@ pub use task::{
     AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,
 };
 
-static SCHEDULER: Scheduler = Scheduler::new();
+static mut SCHEDULER: Scheduler = Scheduler::new();
 static DLM: DistributedLockManager = DistributedLockManager::new();
 static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
 
@@ -124,13 +124,15 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         ),
     );
 
+    let scheduler = unsafe { &mut *core::ptr::addr_of_mut!(SCHEDULER) };
+    let scheduler_clock = scheduler.clock();
     println!(
         "paging, interrupts, capabilities, IPC, and scheduler ready ({} capability slots, {} thread slots, clock={})",
         MAX_CAPABILITIES,
         task::MAX_THREADS,
-        SCHEDULER.clock()
+        scheduler_clock
     );
-    shell::run(boot_info, &SCHEDULER, &DLM, &NODE_FENCES, SCHEDULER.clock(), acpi)
+    shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
 }
 
 pub fn halt() -> ! {

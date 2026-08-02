@@ -53,7 +53,9 @@ impl Rights {
     pub const RECEIVE: Self = Self(1 << 6);
     pub const DELEGATE: Self = Self(1 << 7);
     pub const REVOKE: Self = Self(1 << 8);
-    pub const ALL: Self = Self((1 << 9) - 1);
+    /// Permit administrative control of a process or task.
+    pub const CONTROL: Self = Self(1 << 9);
+    pub const ALL: Self = Self((1 << 10) - 1);
 
     pub const fn from_bits(bits: u16) -> Option<Self> {
         if bits & !Self::ALL.0 == 0 {
@@ -115,6 +117,8 @@ pub enum CapabilityObject {
     UntypedMemory(PhysicalRange),
     MemoryRegion(SharedRegionId),
     AddressSpace(AddressSpaceId),
+    Thread(crate::task::ThreadId),
+    SystemControl,
     IpcChannel(ChannelId),
     DistributedResource(ResourceId),
     LogicalNamespace { scope: u8, id: u64 },
@@ -452,6 +456,23 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         Ok(revoked)
     }
 
+    /// Revoke a distributed-memory capability subtree after checking that the
+    /// authority names the requested remote resource.
+    pub fn revoke_remote_memory(
+        &mut self,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        resource: ResourceId,
+    ) -> Result<usize, CapabilityError> {
+        self.authorize(
+            caller,
+            authority,
+            CapabilityObject::DistributedResource(resource),
+            Rights::REVOKE,
+        )?;
+        self.revoke_descendants(caller, authority)
+    }
+
     /// Drop an owned handle and all authority derived from it.
     pub fn delete(
         &mut self,
@@ -669,6 +690,33 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             }
         }
         revoked
+    }
+
+    fn revoke_descendants(
+        &mut self,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+    ) -> Result<usize, CapabilityError> {
+        let mut descendants = [false; CAPACITY];
+        for (slot, descendant) in descendants.iter_mut().enumerate() {
+            *descendant = self.entries[slot].occupied && self.is_descendant(slot, authority)
+        }
+
+        let mut revoked = 0;
+        for (slot, descendant) in descendants.iter().enumerate() {
+            if *descendant {
+                self.vacate(slot);
+                revoked += 1
+            }
+        }
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::OPERATION, 2),
+            EventField::unsigned(field::CAPABILITY, authority.raw()),
+            EventField::unsigned(field::CALLER, caller.raw() as u64),
+            EventField::unsigned(field::LENGTH, revoked as u64),
+        );
+        Ok(revoked)
     }
 }
 

@@ -3,7 +3,8 @@ use synos_fabric::{
     dsm::{RemotePageAuthority, SoftwareDlmLease},
 };
 use synos_kernel::{
-    CapabilityInfo, CapabilityObject, CapabilityRevocationHook, Rights,
+    AddressSpaceId, CapabilityHandle, CapabilityInfo, CapabilityObject, CapabilityRevocationHook,
+    CapabilitySpace, Rights,
 };
 
 use crate::token::{
@@ -296,6 +297,35 @@ impl<const CAPACITY: usize> ResourceLender<CAPACITY> {
         loan.epoch = loan.epoch.wrapping_add(1).max(1);
         let action = revocation_action(*loan);
         self.queue_revocation(action);
+        Ok(action)
+    }
+
+    /// Revoke a remote memory loan only through a matching kernel resource
+    /// capability carrying REVOKE. The loan epoch is advanced before the
+    /// capability subtree is removed, so already-issued remote tokens fail
+    /// validation immediately.
+    pub fn revoke_with_capability<const CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &mut CapabilitySpace<CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        resource: u64,
+    ) -> Result<RevocationAction, LendingError> {
+        let resource_id = synos_kernel::ResourceId::new(resource)
+            .ok_or(LendingError::Invalid)?;
+        capabilities
+            .authorize(
+                caller,
+                authority,
+                CapabilityObject::DistributedResource(resource_id),
+                Rights::REVOKE,
+            )
+            .map_err(|_| LendingError::AccessDenied)?;
+        self.loan(resource)?;
+        let action = self.revoke(resource)?;
+        capabilities
+            .revoke_remote_memory(caller, authority, resource_id)
+            .map_err(|_| LendingError::AccessDenied)?;
         Ok(action)
     }
 

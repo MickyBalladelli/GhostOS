@@ -15,9 +15,13 @@ use syn_shell::{
 use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind};
 use synos_power::AcpiPlatform;
 use synos_status::{IntoStatus, Status};
-use synos_system_model::command::{CommandSpec, OutputText, OutputValue, StructuredOutput};
+use synos_system_model::command::{
+    ArgumentKind, ArgumentSpec, CommandSpec, OutputText, OutputValue, StructuredOutput,
+};
+use crate::capability::{CapabilityObject, CapabilitySpace, Rights};
 use crate::monitor::{MonitorState, MonitorView, MAX_LOCKS};
 use crate::scheduler::Scheduler;
+use crate::task::{AddressSpaceId, ThreadId};
 use crate::dlm::{DistributedLockManager, NodeFenceTable, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
 
 const HELP_ROUTE: u16 = 1;
@@ -29,7 +33,9 @@ const SHOW_PROCESSES_ROUTE: u16 = 6;
 const TOP_CPU_ROUTE: u16 = 7;
 const SHOW_MEMORY_ROUTE: u16 = 8;
 const SHOW_DSM_ROUTE: u16 = 9;
-const COMMAND_CAPACITY: usize = 24;
+const STOP_JOB_ROUTE: u16 = 10;
+const SET_PROCESS_ROUTE: u16 = 11;
+const COMMAND_CAPACITY: usize = 26;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
 
@@ -42,7 +48,7 @@ enum EditExit {
 
 pub fn run(
     boot_info: &'static BootInfo,
-    scheduler: &'static Scheduler,
+    scheduler: &'static mut Scheduler,
     dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
     node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
     scheduler_clock: u64,
@@ -58,6 +64,7 @@ pub fn run(
     register(&mut registry, "TOP-CPU", TOP_CPU_ROUTE);
     register(&mut registry, "SHOW-MEMORY", SHOW_MEMORY_ROUTE);
     register(&mut registry, "SHOW-DSM", SHOW_DSM_ROUTE);
+    register_control_commands(&mut registry);
     syn_shell::filesystem::register_filesystem_commands(&mut registry)
         .expect("kernel filesystem command registry has capacity");
 
@@ -134,6 +141,28 @@ fn register(registry: &mut CommandRegistry<COMMAND_CAPACITY>, name: &str, route:
     let route = RouteId::new(route).expect("nonzero kernel route");
     registry
         .register(command, route)
+        .expect("kernel command registry has capacity")
+}
+
+fn register_control_commands(registry: &mut CommandRegistry<COMMAND_CAPACITY>) {
+    let job = ArgumentSpec::new("JOB", ArgumentKind::Text, true, true)
+        .expect("valid STOP JOB argument");
+    let id = ArgumentSpec::new("ID", ArgumentKind::Integer, true, true)
+        .expect("valid process id argument");
+    let priority = ArgumentSpec::new("PRIORITY", ArgumentKind::Integer, true, false)
+        .expect("valid priority argument");
+    registry
+        .register(
+            CommandSpec::new("STOP", &[job, id]).expect("valid STOP command"),
+            RouteId::new(STOP_JOB_ROUTE).expect("valid STOP route"),
+        )
+        .expect("kernel command registry has capacity");
+    registry
+        .register(
+            CommandSpec::new("SET-PROCESS", &[id, priority])
+                .expect("valid SET PROCESS command"),
+            RouteId::new(SET_PROCESS_ROUTE).expect("valid SET PROCESS route"),
+        )
         .expect("kernel command registry has capacity")
 }
 
@@ -1563,7 +1592,9 @@ struct KernelExecutor {
     reboot_requested: bool,
     shutdown_requested: bool,
     monitor: MonitorState,
-    scheduler: &'static Scheduler,
+    scheduler: &'static mut Scheduler,
+    capabilities: CapabilitySpace,
+    control_authority: crate::CapabilityHandle,
     dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
     filesystem: FilesystemExecutor<KernelFilesystem>,
 }
@@ -1571,7 +1602,7 @@ struct KernelExecutor {
 impl KernelExecutor {
     fn new(
         boot_info: &'static BootInfo,
-        scheduler: &'static Scheduler,
+        scheduler: &'static mut Scheduler,
         dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
         _node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
         scheduler_clock: u64,
@@ -1586,6 +1617,15 @@ impl KernelExecutor {
             .iter()
             .filter(|region| region.kind == MemoryKind::Usable)
             .fold(0u64, |total, region| total.saturating_add(region.length));
+
+        let mut capabilities = CapabilitySpace::new();
+        let control_authority = capabilities
+            .mint_root(
+                AddressSpaceId::KERNEL,
+                CapabilityObject::SystemControl,
+                Rights::CONTROL,
+            )
+            .expect("kernel control capability");
 
         Self {
             boot_method: boot_info.method,
@@ -1602,6 +1642,8 @@ impl KernelExecutor {
             shutdown_requested: false,
             monitor: MonitorState::new(),
             scheduler,
+            capabilities,
+            control_authority,
             dlm,
             filesystem: FilesystemExecutor::new(KernelFilesystem::new()),
         }
@@ -1618,6 +1660,8 @@ impl KernelExecutor {
             TOP_CPU_ROUTE => self.top_cpu(),
             SHOW_MEMORY_ROUTE => self.show_memory(),
             SHOW_DSM_ROUTE => self.show_dsm(),
+            STOP_JOB_ROUTE => self.stop_job(command),
+            SET_PROCESS_ROUTE => self.set_process(command),
             route if route >= syn_shell::filesystem::DIRECTORY_ROUTE => {
                 self.filesystem.execute_command(command)
             }
@@ -1881,7 +1925,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, DELETE, TYPE, EDIT, EDT, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, STOP JOB, SET PROCESS, DIRECTORY, CREATE, DELETE, TYPE, EDIT, EDT, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -1908,6 +1952,8 @@ impl KernelExecutor {
         crate::println!("  SHOW PROCESSES     List running threads");
         crate::println!("  SHOW SYSTEM        Show system status");
         crate::println!("  SHUTDOWN           Power off SynOS");
+        crate::println!("  STOP JOB <id>      Stop a process with control capability");
+        crate::println!("  SET PROCESS <id> /PRIORITY=<1-255>  Set process priority");
         crate::println!("  TOP CPU            Show CPU activity");
         crate::println!("  TYPE               Show file contents");
         crate::println!();
@@ -1989,6 +2035,51 @@ impl KernelExecutor {
         self.shutdown_requested = true;
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "action", "shutting-down")?;
+        Ok(output)
+    }
+
+    fn stop_job(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        if !matches!(
+            command.get("JOB"),
+            Some(Value::Text(value)) if value.as_str().eq_ignore_ascii_case("JOB")
+        ) {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let id = thread_id(command.get("ID"))?;
+        self.scheduler
+            .terminate(
+                &self.capabilities,
+                AddressSpaceId::KERNEL,
+                self.control_authority,
+                id,
+            )
+            .map_err(|error| error.status())?;
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "action", "stopped")?;
+        insert(&mut output, "job", OutputValue::Unsigned(id.raw() as u64))?;
+        Ok(output)
+    }
+
+    fn set_process(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let id = thread_id(command.get("ID"))?;
+        let priority = priority(command.get("PRIORITY"))?;
+        self.scheduler
+            .set_priority(
+                &self.capabilities,
+                AddressSpaceId::KERNEL,
+                self.control_authority,
+                id,
+                priority,
+            )
+            .map_err(|error| error.status())?;
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "action", "priority-updated")?;
+        insert(&mut output, "process", OutputValue::Unsigned(id.raw() as u64))?;
+        insert(
+            &mut output,
+            "priority",
+            OutputValue::Unsigned(priority as u64),
+        )?;
         Ok(output)
     }
 
@@ -2241,6 +2332,26 @@ impl CommandExecutor for KernelExecutor {
 fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result<(), Status> {
     let text = OutputText::new(value).map_err(|_| Status::NO_SPACE)?;
     insert(output, name, OutputValue::Text(text))
+}
+
+fn thread_id(value: Option<Value>) -> Result<ThreadId, Status> {
+    let Value::Integer(raw) = value.ok_or(Status::INVALID_ARGUMENT)? else {
+        return Err(Status::INVALID_ARGUMENT)
+    };
+    if raw < 0 || raw > u32::MAX as i64 {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    ThreadId::new(raw as u32).ok_or(Status::INVALID_ARGUMENT)
+}
+
+fn priority(value: Option<Value>) -> Result<u8, Status> {
+    let Value::Integer(raw) = value.ok_or(Status::INVALID_ARGUMENT)? else {
+        return Err(Status::INVALID_ARGUMENT)
+    };
+    if !(1..=u8::MAX as i64).contains(&raw) {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    Ok(raw as u8)
 }
 
 fn status_reason(status: Status) -> &'static str {

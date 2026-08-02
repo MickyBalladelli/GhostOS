@@ -12,6 +12,7 @@ pub enum SchedulerError {
     InvalidThread,
     InvalidContext,
     InvalidExecutionMode,
+    InvalidPriority,
     AccessDenied,
 }
 
@@ -20,7 +21,10 @@ impl IntoStatus for SchedulerError {
         match self {
             Self::Full => Status::NO_SPACE,
             Self::AccessDenied => Status::ACCESS_DENIED,
-            Self::InvalidThread | Self::InvalidContext | Self::InvalidExecutionMode => {
+            Self::InvalidThread
+            | Self::InvalidContext
+            | Self::InvalidExecutionMode
+            | Self::InvalidPriority => {
                 Status::new(Severity::Error, facility::KERNEL, 3, 0)
                     .expect("valid scheduler status")
             }
@@ -102,12 +106,56 @@ impl Scheduler {
         Ok(id)
     }
 
-    pub fn remove(&mut self, id: ThreadId) -> Result<(), SchedulerError> {
-        let slot = self.slot(id)?;
+    /// Stop a task after proving control over the exact task or its address
+    /// space. The capability is checked before the task is removed.
+    pub fn stop<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        id: ThreadId,
+    ) -> Result<(), SchedulerError> {
+        let slot = self.authorized_control(capabilities, caller, authority, id)?;
         if self.current == Some(id) {
             self.current = None
         }
         self.threads[slot] = Thread::VACANT;
+        Ok(())
+    }
+
+    /// Terminate is the explicit process-control spelling of [`Self::stop`].
+    pub fn terminate<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        id: ThreadId,
+    ) -> Result<(), SchedulerError> {
+        self.stop(capabilities, caller, authority, id)
+    }
+
+    /// Change a task's dynamic realtime priority under the same control
+    /// capability used by STOP. Priorities are one (lowest) through 255.
+    pub fn set_priority<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        id: ThreadId,
+        priority: u8,
+    ) -> Result<(), SchedulerError> {
+        if priority == 0 {
+            return Err(SchedulerError::InvalidPriority)
+        }
+        let slot = self.authorized_control(capabilities, caller, authority, id)?;
+        let deadline = match self.threads[slot].policy {
+            SchedulingPolicy::Realtime { deadline, .. } => deadline,
+            SchedulingPolicy::Cooperative => 0,
+        };
+        self.threads[slot].policy = SchedulingPolicy::Realtime {
+            priority,
+            deadline,
+        };
         Ok(())
     }
 
@@ -287,6 +335,40 @@ impl Scheduler {
             return Err(SchedulerError::AccessDenied)
         }
         Ok(slot)
+    }
+
+    fn authorized_control<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        id: ThreadId,
+    ) -> Result<usize, SchedulerError> {
+        let slot = self.slot(id)?;
+        let address_space = self.threads[slot].address_space;
+        let exact = capabilities.authorize(
+            caller,
+            authority,
+            CapabilityObject::Thread(id),
+            Rights::CONTROL,
+        );
+        if exact.is_ok()
+            || capabilities
+                .authorize(
+                    caller,
+                    authority,
+                    CapabilityObject::AddressSpace(address_space),
+                    Rights::CONTROL,
+                )
+                .is_ok()
+            || capabilities
+                .authorize(caller, authority, CapabilityObject::SystemControl, Rights::CONTROL)
+                .is_ok()
+        {
+            Ok(slot)
+        } else {
+            Err(SchedulerError::AccessDenied)
+        }
     }
 
     fn pick_next(&mut self) -> Option<ThreadId> {

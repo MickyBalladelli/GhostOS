@@ -31,6 +31,14 @@ impl ThreadId {
         self.0
     }
 
+    pub const fn new(raw: u32) -> Option<Self> {
+        if raw == 0 || raw >> 16 == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
+    }
+
     pub(crate) const fn slot(self) -> usize {
         (self.0 & 0xffff) as usize
     }

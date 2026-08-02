@@ -567,8 +567,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 34. Capability-Guarded System Control
-- [ ] **Process Control & Task Management (`STOP / JOB`, `SET PROCESS`)**
-  - [ ] Implement capability-guarded utilities to terminate jobs, adjust dynamic priorities, or revoke remote memory tokens safely.
+- [x] **Process Control & Task Management (`STOP / JOB`, `SET PROCESS`)**
+  - [x] Implement capability-guarded utilities to terminate jobs, adjust dynamic priorities, or revoke remote memory tokens safely.
 
 
 ---
