@@ -846,6 +846,49 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
         let (base_path, version) = split_version_selector(path.as_str())?;
+        if contains_wildcard(base_path) {
+            let mut matches = PathCompletionPage::new();
+            expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+            if matches.len() == 0 {
+                return Err(Status::NOT_FOUND)
+            }
+            output.clear();
+            let start = continuation.unwrap_or(0) as usize;
+            let mut next_match = start;
+            for matched in matches.entries().skip(start) {
+                let (matched_path, selected_version) = split_version_selector(matched.as_str())?;
+                let Some((parent, name)) = matched_path.rsplit_once('/') else {
+                    return Err(Status::NOT_FOUND)
+                };
+                let parent = if parent.is_empty() { "/" } else { parent };
+                let mut source_continuation = None;
+                loop {
+                    let mut page = DirectoryPage::new();
+                    self.source
+                        .list(parent, source_continuation, &mut page)?;
+                    for entry in page.entries() {
+                        if entry.name.as_str() != name
+                            || !selected_version
+                                .map_or(true, |version| version == 0 || version == entry.version)
+                        {
+                            continue
+                        }
+                        if output.len() == MAX_DIRECTORY_PAGE_ENTRIES {
+                            output.next = Some(next_match.saturating_add(1) as u32);
+                            return Ok(path)
+                        }
+                        output.push(entry)?;
+                    }
+                    let Some(next) = page.next else { break };
+                    source_continuation = Some(next);
+                }
+                next_match += 1;
+            }
+            if output.len() == 0 {
+                return Err(Status::NOT_FOUND)
+            }
+            return Ok(path)
+        }
         if version.is_none() && self.source.directory_exists(base_path)? {
             let continuation = continuation.or(integer(command.get("CONTINUATION"))?);
             self.source.list(base_path, continuation, output)?;
