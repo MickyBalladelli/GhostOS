@@ -722,7 +722,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
-        self.source.type_file(path.as_str(), false, output)
+        self.open_edit_file(path.as_str(), output)
     }
 
     pub fn edit_file_save(
@@ -799,12 +799,35 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
         let mut sink = EditOpenSink::new();
-        let metadata = self.source.type_file(path.as_str(), false, &mut sink)?;
+        let metadata = self.open_edit_file(path.as_str(), &mut sink)?;
         core::str::from_utf8(&sink.bytes[..sink.len]).map_err(|_| Status::INVALID_ARGUMENT)?;
         if metadata.file_type != EntryType::File || metadata.size != sink.len as u64 {
             return Err(Status::CORRUPT)
         }
         metadata_output("opened", metadata)
+    }
+
+    fn open_edit_file(
+        &mut self,
+        path: &str,
+        output: &mut dyn FileOutput,
+    ) -> Result<FileMetadata, Status> {
+        match self.source.type_file(path, false, output) {
+            Ok(metadata) => Ok(metadata),
+            Err(Status::NOT_FOUND) => {
+                let (base_path, version) = split_version_selector(path)?;
+                if version.is_some_and(|version| version != 0) {
+                    return Err(Status::NOT_FOUND)
+                }
+                match self.source.create_file(base_path) {
+                    Ok(_) | Err(Status::ALREADY_EXISTS) => {
+                        self.source.type_file(base_path, false, output)
+                    }
+                    Err(status) => Err(status),
+                }
+            }
+            Err(status) => Err(status),
+        }
     }
 
     fn directory(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
