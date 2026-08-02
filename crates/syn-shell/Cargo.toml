@@ -9,5 +9,6 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-observability = { path = "../observability" }
+synos-path-pattern = { path = "../path-pattern" }
 synos-status = { path = "../status" }
 synos-system-model = { path = "../system-model" }

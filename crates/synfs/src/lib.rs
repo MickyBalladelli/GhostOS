@@ -5,6 +5,8 @@ use core::cmp::Ordering;
 use core::fmt;
 use synos_status::{IntoStatus, Severity, Status, facility};
 
+pub use synos_path_pattern::{MAX_PATTERN_BYTES, Pattern, PatternError};
+
 mod block;
 mod pool;
 mod rms;
@@ -544,6 +546,43 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         entries: &mut [DirectoryEntry],
     ) -> Result<usize, Error> {
         self.filesystem.list_directory_at(self.root, path, entries)
+    }
+
+    pub fn expand_paths<const CAPACITY: usize>(
+        &self,
+        pattern: &str,
+        output: &mut [Option<FileName>; CAPACITY],
+    ) -> Result<usize, Error> {
+        let pattern = Pattern::parse(pattern).map_err(|_| Error::InvalidPath)?;
+        output.fill(None);
+        let mut written = 0;
+        let mut ordinal = 0;
+        while let Some(record) = self.filesystem.record_at(self.root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            if self.filesystem.latest_record_at(self.root, record.key.file)? != Some(record)
+                || !pattern.matches(record.key.file.as_str())
+            {
+                continue
+            }
+            if written == CAPACITY {
+                return Err(Error::BufferTooSmall {
+                    required: written.saturating_add(1),
+                })
+            }
+            if output[..written].iter().flatten().any(|path| *path == record.key.file) {
+                continue
+            }
+            let insert_at = output[..written]
+                .iter()
+                .position(|path| path.is_some_and(|path| path > record.key.file))
+                .unwrap_or(written);
+            for index in (insert_at..written).rev() {
+                output[index + 1] = output[index];
+            }
+            output[insert_at] = Some(record.key.file);
+            written += 1;
+        }
+        Ok(written)
     }
 
     /// Read a range from one file version without leaving the checkpoint tree.
@@ -1244,6 +1283,47 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub fn list_directory(&self, path: &str, entries: &mut [DirectoryEntry]) -> Result<usize, Error> {
         self.list_directory_at(self.root, path, entries)
+    }
+
+    /// Expand a bounded wildcard over live latest names in this generation.
+    /// Results are sorted by canonical path and never include retained-only
+    /// versions or deleted records.
+    pub fn expand_paths<const CAPACITY: usize>(
+        &self,
+        pattern: &str,
+        output: &mut [Option<FileName>; CAPACITY],
+    ) -> Result<usize, Error> {
+        let pattern = Pattern::parse(pattern).map_err(|_| Error::InvalidPath)?;
+        output.fill(None);
+        let mut written = 0;
+        let mut ordinal = 0;
+        while let Some(record) = self.record_at(self.root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            if record.deleted
+                || self.latest_record_at(self.root, record.key.file)? != Some(record)
+                || !pattern.matches(record.key.file.as_str())
+            {
+                continue
+            }
+            if output[..written].iter().flatten().any(|path| *path == record.key.file) {
+                continue
+            }
+            if written == CAPACITY {
+                return Err(Error::BufferTooSmall {
+                    required: written.saturating_add(1),
+                })
+            }
+            let insert_at = output[..written]
+                .iter()
+                .position(|path| path.is_some_and(|path| path > record.key.file))
+                .unwrap_or(written);
+            for index in (insert_at..written).rev() {
+                output[index + 1] = output[index];
+            }
+            output[insert_at] = Some(record.key.file);
+            written += 1;
+        }
+        Ok(written)
     }
 
     pub fn list_links(&self, path: &str, entries: &mut [LinkEntry]) -> Result<usize, Error> {

@@ -10,5 +10,6 @@ path = "src/lib.rs"
 [dependencies]
 host-filesystems = { package = "synos-host-filesystems", path = "../host-filesystems" }
 synos-ipc = { path = "../ipc" }
+synos-path-pattern = { path = "../path-pattern" }
 synos-status = { path = "../status" }
 synos-synfs = { path = "../synfs" }

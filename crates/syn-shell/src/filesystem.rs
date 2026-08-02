@@ -1,4 +1,5 @@
 use synos_status::Status;
+use synos_path_pattern::{Pattern, PatternError, unescape};
 use synos_system_model::command::{
     ArgumentKind, ArgumentSpec, CommandSpec, OutputText, OutputValue, StructuredOutput,
 };
@@ -50,7 +51,6 @@ impl Path {
         if bytes.is_empty()
             || bytes.len() > MAX_PATH_BYTES
             || bytes.contains(&0)
-            || bytes.contains(&b'\\')
             || (bytes.len() > 1 && bytes.ends_with(b"/"))
             || bytes.windows(2).any(|pair| pair == b"//")
         {
@@ -169,12 +169,21 @@ impl PathCompletionPage {
             .entries
             .iter()
             .flatten()
-            .any(|entry| entry.as_str().eq_ignore_ascii_case(path.as_str()))
+            .any(|entry| entry.as_str() == path.as_str())
         {
             return Ok(())
         }
-        let slot = self.entries.get_mut(self.count).ok_or(Status::NO_SPACE)?;
-        *slot = Some(path);
+        if self.count == self.entries.len() {
+            return Err(Status::NO_SPACE)
+        }
+        let insert_at = self.entries[..self.count]
+            .iter()
+            .position(|entry| entry.is_some_and(|entry| entry.as_str() > path.as_str()))
+            .unwrap_or(self.count);
+        for index in (insert_at..self.count).rev() {
+            self.entries[index + 1] = self.entries[index];
+        }
+        self.entries[insert_at] = Some(path);
         self.count += 1;
         Ok(())
     }
@@ -211,6 +220,18 @@ impl LinkPage {
         *slot = Some(path);
         self.count += 1;
         Ok(())
+    }
+
+    pub fn push_unique(&mut self, path: Path) -> Result<(), Status> {
+        if self
+            .entries
+            .iter()
+            .flatten()
+            .any(|entry| entry.as_str() == path.as_str())
+        {
+            return Ok(())
+        }
+        self.push(path)
     }
 
     pub fn entries(&self) -> impl Iterator<Item = Path> + '_ {
@@ -262,6 +283,13 @@ pub trait FilesystemSource {
         _output: &mut PathCompletionPage,
     ) -> Result<(), Status> {
         Err(Status::NOT_FOUND)
+    }
+    fn expand(
+        &mut self,
+        pattern: &str,
+        output: &mut PathCompletionPage,
+    ) -> Result<(), Status> {
+        expand_pattern(self, pattern, output)
     }
     fn list(
         &mut self,
@@ -352,9 +380,10 @@ impl ShellSession {
         {
             return Err(Status::INVALID_ARGUMENT);
         }
-        if path_without_version.contains('\\') || path_without_version.contains('\0') {
+        if path_without_version.contains('\0') {
             return Err(Status::INVALID_ARGUMENT);
         }
+        Pattern::parse(path_without_version).map_err(pattern_status)?;
         let mut source = Text::<{ MAX_PATH_BYTES * 2 + 1 }>::empty();
         if !path_without_version.starts_with('/') {
             source
@@ -390,10 +419,11 @@ impl ShellSession {
         source: &mut S,
         path: &str,
     ) -> Result<Path, Status> {
-        if path.contains(';') {
+        if path.contains(';') || contains_wildcard(path) {
             return Err(Status::INVALID_ARGUMENT);
         }
         let resolved = self.resolve(Some(path))?;
+        let resolved = literal_path(resolved.as_str())?;
         if !source.directory_exists(resolved.as_str())? {
             return Err(Status::NOT_FOUND);
         }
@@ -448,6 +478,87 @@ fn canonicalize(source: &str) -> Result<Path, Status> {
         component_count += 1;
     }
     Ok(result)
+}
+
+const MAX_WILDCARD_SCAN: usize = 4096;
+
+fn pattern_status(error: PatternError) -> Status {
+    match error {
+        PatternError::TooLong => Status::NO_SPACE,
+        PatternError::Empty
+        | PatternError::InvalidPath
+        | PatternError::TrailingEscape
+        | PatternError::UnterminatedClass
+        | PatternError::EmptyClass
+        | PatternError::InvalidRange => Status::INVALID_ARGUMENT,
+    }
+}
+
+fn literal_path(value: &str) -> Result<Path, Status> {
+    let mut bytes = [0; MAX_PATH_BYTES];
+    let length = unescape(value, &mut bytes).map_err(pattern_status)?;
+    let value = core::str::from_utf8(&bytes[..length]).map_err(|_| Status::INVALID_ARGUMENT)?;
+    Path::new(value)
+}
+
+fn child_path(directory: &str, name: &str) -> Result<Path, Status> {
+    let mut path = Text::<{ MAX_PATH_BYTES }>::empty();
+    if directory == "/" {
+        path.push_char('/').map_err(|_| Status::NO_SPACE)?;
+    } else {
+        path.push_str(directory).map_err(|_| Status::NO_SPACE)?;
+        path.push_char('/').map_err(|_| Status::NO_SPACE)?;
+    }
+    path.push_str(name).map_err(|_| Status::NO_SPACE)?;
+    Path::new(path.as_str())
+}
+
+fn expand_pattern<S: FilesystemSource + ?Sized>(
+    source: &mut S,
+    pattern: &str,
+    output: &mut PathCompletionPage,
+) -> Result<(), Status> {
+    let pattern = Pattern::parse(pattern).map_err(pattern_status)?;
+    if !pattern.has_magic() {
+        return output.push(literal_path(pattern.as_str())?)
+    }
+    output.clear();
+    let mut scanned = 0;
+    expand_directory(source, pattern, "/", output, 0, &mut scanned)
+}
+
+fn expand_directory<S: FilesystemSource + ?Sized>(
+    source: &mut S,
+    pattern: Pattern<'_>,
+    directory: &str,
+    output: &mut PathCompletionPage,
+    depth: usize,
+    scanned: &mut usize,
+) -> Result<(), Status> {
+    if depth >= MAX_PATH_BYTES / 2 {
+        return Err(Status::NO_SPACE)
+    }
+    let mut continuation = None;
+    loop {
+        let mut page = DirectoryPage::new();
+        source.list(directory, continuation, &mut page)?;
+        for entry in page.entries() {
+            *scanned = scanned.saturating_add(1);
+            if *scanned > MAX_WILDCARD_SCAN {
+                return Err(Status::NO_SPACE)
+            }
+            let child = child_path(directory, entry.name.as_str())?;
+            if pattern.matches(child.as_str()) {
+                output.push(child)?;
+            }
+            if entry.file_type == EntryType::Directory {
+                expand_directory(source, pattern, child.as_str(), output, depth + 1, scanned)?;
+            }
+        }
+        let Some(next) = page.next else { break };
+        continuation = Some(next);
+    }
+    Ok(())
 }
 
 pub fn register_filesystem_commands<const CAPACITY: usize>(
@@ -580,6 +691,15 @@ impl FileOutput for TypeBuffer {
         self.len += copied;
         self.truncated |= copied != bytes.len();
         Ok(())
+    }
+}
+
+impl TypeBuffer {
+    fn separator(&mut self, path: &str) -> Result<(), Status> {
+        const SEPARATOR: &[u8] = b"\n\n--- ";
+        self.write(SEPARATOR)?;
+        self.write(path.as_bytes())?;
+        self.write(b" ---\n")
     }
 }
 
@@ -851,13 +971,24 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
+        let create = boolean(command.get("CREATE"))?;
+        let recursive = boolean(command.get("RECURSIVE"))?;
         if path.as_str().contains(';') {
             return Err(Status::INVALID_ARGUMENT)
         }
-        if boolean(command.get("CREATE"))? {
+        if contains_wildcard(path.as_str()) {
+            if create || recursive {
+                return Err(Status::INVALID_ARGUMENT)
+            }
+            let mut matches = PathCompletionPage::new();
+            expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+            return wildcard_output("directory", matches);
+        }
+        let path = literal_path(path.as_str())?;
+        if create {
             let metadata = self
                 .source
-                .create_directory(path.as_str(), boolean(command.get("RECURSIVE"))?)?;
+                .create_directory(path.as_str(), recursive)?;
             return metadata_output("created", metadata);
         }
         let mut page = DirectoryPage::new();
@@ -871,10 +1002,11 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
-        if path.as_str().contains(';') {
+        if path.as_str().contains(';') || contains_wildcard(path.as_str()) {
             return Err(Status::INVALID_ARGUMENT)
         }
         boolean(command.get("RECURSIVE"))?;
+        let path = literal_path(path.as_str())?;
         let metadata = self.source.create_directory(path.as_str(), true)?;
         metadata_output("created", metadata)
     }
@@ -896,6 +1028,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
                 Status::INVALID_ARGUMENT
             })
         }
+        let path = literal_path(path.as_str())?;
         self.source.remove_directory(path.as_str())?;
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "operation", "removed")?;
@@ -908,9 +1041,13 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
-        if path.as_str() == "/" || path.as_str().contains(';') {
+        if path.as_str() == "/"
+            || path.as_str().contains(';')
+            || contains_wildcard(path.as_str())
+        {
             return Err(Status::INVALID_ARGUMENT)
         }
+        let path = literal_path(path.as_str())?;
         metadata_output("created", self.source.create_file(path.as_str())?)
     }
 
@@ -920,11 +1057,36 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
         let binary = boolean(command.get("BINARY"))?;
+        let mut matches = PathCompletionPage::new();
+        expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+        if matches.len() == 0 {
+            return Err(Status::NOT_FOUND)
+        }
         let mut contents = TypeBuffer::new(binary);
-        let metadata = self
-            .source
-            .type_file(path.as_str(), binary, &mut contents)?;
+        let mut metadata = None;
+        for (index, matched) in matches.entries().enumerate() {
+            if index != 0 {
+                contents.separator(matched.as_str())?;
+            }
+            let current = self
+                .source
+                .type_file(matched.as_str(), binary, &mut contents)?;
+            metadata = Some(current);
+        }
+        let metadata = metadata.ok_or(Status::NOT_FOUND)?;
         let mut output = metadata_output("file", metadata)?;
+        insert(
+            &mut output,
+            "match-count",
+            OutputValue::Unsigned(matches.len() as u64),
+        )?;
+        for (index, matched) in matches.entries().enumerate().take(8) {
+            let mut field = Text::<64>::empty();
+            field.push_str("match-").map_err(|_| Status::NO_SPACE)?;
+            write_u32(&mut field, index as u32)?;
+            field.push_str("-path").map_err(|_| Status::NO_SPACE)?;
+            insert_text(&mut output, field.as_str(), matched.as_str())?;
+        }
         let visible = core::str::from_utf8(&contents.bytes[..contents.len])
             .map_err(|_| Status::INVALID_ARGUMENT)?;
         let visible = truncate_utf8(visible, 255);
@@ -953,8 +1115,22 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         if path.as_str() == "/" {
             return Err(Status::INVALID_ARGUMENT);
         }
-        let deleted = self.source.delete(path.as_str())?;
+        let mut matches = PathCompletionPage::new();
+        expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+        if matches.len() == 0 {
+            return Err(Status::NOT_FOUND)
+        }
+        let mut deleted = None;
+        for matched in matches.entries() {
+            deleted = Some(self.source.delete(matched.as_str())?);
+        }
+        let deleted = deleted.ok_or(Status::NOT_FOUND)?;
         let mut output = metadata_output("deleted", deleted.file)?;
+        insert(
+            &mut output,
+            "match-count",
+            OutputValue::Unsigned(matches.len() as u64),
+        )?;
         insert(
             &mut output,
             "shared-data-reachable",
@@ -968,6 +1144,11 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let target = text(command.get("TARGET")).ok_or(Status::INVALID_ARGUMENT)?;
         let source = self.session.resolve(Some(source.as_str()))?;
         let target = self.session.resolve(Some(target.as_str()))?;
+        if contains_wildcard(source.as_str()) || contains_wildcard(target.as_str()) {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let source = literal_path(source.as_str())?;
+        let target = literal_path(target.as_str())?;
         if split_version_selector(target.as_str())?.1.is_some() || target.as_str() == "/" {
             return Err(Status::INVALID_ARGUMENT)
         }
@@ -981,9 +1162,27 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(text(command.get("PATH")).as_ref().map(Text::as_str))?;
+        let mut matches = PathCompletionPage::new();
+        expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+        if matches.len() == 0 {
+            return Err(Status::NOT_FOUND)
+        }
         let mut links = LinkPage::new();
-        let metadata = self.source.list_links(path.as_str(), &mut links)?;
+        let mut metadata = None;
+        for matched in matches.entries() {
+            let mut current = LinkPage::new();
+            metadata = Some(self.source.list_links(matched.as_str(), &mut current)?);
+            for link in current.entries() {
+                links.push_unique(link)?;
+            }
+        }
+        let metadata = metadata.ok_or(Status::NOT_FOUND)?;
         let mut output = metadata_output("links", metadata)?;
+        insert(
+            &mut output,
+            "match-count",
+            OutputValue::Unsigned(matches.len() as u64),
+        )?;
         for (index, link) in links.entries().enumerate() {
             let mut field = Text::<64>::empty();
             field.push_str("link-").map_err(|_| Status::NO_SPACE)?;
@@ -1194,6 +1393,24 @@ fn directory_output(
     Ok(output)
 }
 
+fn wildcard_output(label: &str, matches: PathCompletionPage) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", label)?;
+    insert(
+        &mut output,
+        "match-count",
+        OutputValue::Unsigned(matches.len() as u64),
+    )?;
+    for (index, path) in matches.entries().enumerate().take(8) {
+        let mut field = Text::<64>::empty();
+        field.push_str("match-").map_err(|_| Status::NO_SPACE)?;
+        write_u32(&mut field, index as u32)?;
+        field.push_str("-path").map_err(|_| Status::NO_SPACE)?;
+        insert_text(&mut output, field.as_str(), path.as_str())?;
+    }
+    Ok(output)
+}
+
 fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result<(), Status> {
     insert(
         output,
@@ -1207,7 +1424,31 @@ fn insert(output: &mut StructuredOutput, name: &str, value: OutputValue) -> Resu
 }
 
 fn contains_wildcard(path: &str) -> bool {
-    path.bytes().any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']'))
+    Pattern::parse(path).map_or(true, |pattern| pattern.has_magic())
+}
+
+fn expand_paths<S: FilesystemSource + ?Sized>(
+    source: &mut S,
+    path: &str,
+    output: &mut PathCompletionPage,
+) -> Result<(), Status> {
+    let (base, version) = split_version_selector(path)?;
+    let pattern = Pattern::parse(base).map_err(pattern_status)?;
+    if !pattern.has_magic() {
+        return output.push(literal_path(path)?);
+    }
+    source.expand(base, output)?;
+    if let Some(version) = version.filter(|version| *version != 0) {
+        for entry in output.entries.iter_mut().take(output.count) {
+            let Some(path) = *entry else { continue };
+            let mut value = Text::<{ MAX_PATH_BYTES }>::empty();
+            value.push_str(path.as_str()).map_err(|_| Status::NO_SPACE)?;
+            value.push_char(';').map_err(|_| Status::NO_SPACE)?;
+            write_u32(&mut value, version)?;
+            *entry = Some(Path::new(value.as_str())?);
+        }
+    }
+    Ok(())
 }
 
 fn is_path_or_descendant(path: &str, candidate: &str) -> bool {

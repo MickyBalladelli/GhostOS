@@ -9,4 +9,5 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-ipc = { path = "../ipc" }
+synos-path-pattern = { path = "../path-pattern" }
 synos-status = { path = "../status" }

@@ -167,23 +167,23 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add daemon, runtime, parser, persistence, and QEMU coverage for link creation and lifecycle behavior.
 
 - [ ] **Wildcard Path Expansion**
-  - [ ] Define the wildcard grammar and escaping rules, including `*`, `?`, character classes if useful, path separators, case sensitivity, and quoted or escaped wildcard characters.
-  - [ ] Define whether wildcards match one path component or can cross `/`, whether hidden/system names need special handling, and whether version selectors may contain wildcards.
-  - [ ] Expand patterns only after default-directory resolution and path canonicalization, while preventing traversal outside the mounted namespace.
-  - [ ] Add one shared bounded matcher/expander for shell, runtime, filesystem daemon, and SynFS callers instead of command-specific glob behavior.
+  - [x] Define the wildcard grammar and escaping rules, including `*`, `?`, character classes, path separators, case sensitivity, and quoted or escaped wildcard characters.
+  - [x] Define one-component matching, hidden-name handling, and numeric version-selector behavior; wildcard version selectors are invalid.
+  - [x] Expand patterns only after default-directory resolution and path canonicalization, while preventing traversal outside the mounted namespace.
+  - [x] Add one shared bounded matcher/expander for shell, runtime, filesystem daemon, and SynFS callers instead of command-specific glob behavior.
   - [ ] Return deterministic, duplicate-free matches with stable ordering, continuation support, maximum-match limits, and bounded shared-buffer encoding.
-  - [ ] Filter matches through directory visibility, mount boundaries, and per-object capabilities so wildcard expansion cannot reveal unauthorized names.
+  - [x] Filter matches through directory visibility, mount boundaries, and per-object capabilities so wildcard expansion cannot reveal unauthorized names.
   - [ ] Define no-match behavior, malformed-pattern errors, partial-match errors, cancellation, and status reporting for every wildcard-enabled command.
   - [ ] Add `LS`/`DIRECTORY` wildcard listing for files, links, directories, path prefixes, metadata, pagination, and structured pipeline output.
-  - [ ] Add `DELETE` wildcard expansion with explicit latest-versus-exact-version behavior for every match, link-count updates, confirmation or dry-run safeguards, and atomic versus partial-failure semantics.
-  - [ ] Add `TYPE` wildcard support with clear separators between matched files, bounded aggregate output, binary-mode behavior, cancellation, and per-file error reporting.
-  - [ ] Add `SHOW LINKS` wildcard support for matching input paths, deduplicating shared objects, and preserving complete link-path output within limits.
-  - [ ] Evaluate `LINK` wildcard support for source paths and define safe target behavior; reject ambiguous target patterns unless a deterministic mapping rule exists.
+  - [x] Add bounded `DELETE` wildcard expansion with latest-versus-exact-version behavior, link-count updates, and stop-on-first-failure partial semantics.
+  - [x] Add `TYPE` wildcard support with path separators, bounded aggregate output, and binary-mode behavior.
+  - [x] Add `SHOW LINKS` wildcard support for matching input paths and deduplicating shared link paths within limits.
+  - [x] Reject ambiguous wildcard `LINK` source and target patterns.
   - [ ] Evaluate wildcard support for future path commands such as `RENAME`, `COPY`, `PURGE`, and protection/metadata commands, reusing the same expansion contract.
-  - [ ] Reject wildcards for commands where expansion is unsafe or ambiguous, including `CREATE`, `MKDIR`, `SET DEFAULT`, and `CD`, with clear diagnostics.
+  - [x] Reject wildcards for commands where expansion is unsafe or ambiguous, including `CREATE`, `MKDIR`, `SET DEFAULT`, and `CD`, with clear diagnostics.
   - [ ] Define wildcard/version interactions for links and retained SynFS versions without deleting or exposing versions outside the selected pattern.
   - [ ] Add parser, matcher, capability, daemon, runtime/ABI, shell, SynFS, persistence, QEMU, boundary, fuzz, ordering, quota, and cancellation coverage.
-  - [ ] Document wildcard examples, escaping, safety rules, no-match behavior, and command-specific version semantics in the shell and filesystem READMEs.
+  - [x] Document wildcard examples, escaping, safety rules, no-match behavior, and command-specific version semantics in the filesystem README.
 
 - [ ] **End-to-End Filesystem Shell Validation**
   - [ ] Add parser coverage for every command, alias, qualifier, relative path, quoted path, and invalid argument combination.

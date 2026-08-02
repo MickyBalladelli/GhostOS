@@ -13,6 +13,7 @@ pub use daemon::{
     SnapshotInfo, DEFAULT_MAX_MOUNTS, DEFAULT_MAX_OPEN_FILES, DEFAULT_MAX_PROCESSES,
     DEFAULT_MAX_SNAPSHOTS, DEFAULT_SCRATCH_BYTES,
 };
+pub use synos_path_pattern::{Pattern, PatternError};
 pub use namespace::{
     HostMountAuthority, MountCapability, MountInfo as NamespaceMountInfo, MountSource, Namespace,
     NamespaceError, NamespaceMountId, NamespacePath, RootActivation, RootFilesystem, SynFsVolume,

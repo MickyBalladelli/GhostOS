@@ -31,3 +31,20 @@ and `DELETE path;0` remove the latest live version; `DELETE path;N` removes
 only version `N`. The response reports the deleted version, file type,
 remaining link count, and whether the shared data is still reachable. A hard
 link deletion removes only that directory entry.
+
+Wildcard paths use `*` for zero or more characters in one component, `?` for
+one character, and bracket classes such as `[a-z]` or `[!a]`. Matching is
+case-sensitive, includes hidden names, and never crosses `/`. A backslash
+escapes a wildcard; quoted wildcard characters are escaped by the shell.
+Patterns are resolved from the active default directory before expansion.
+Matches are canonical, duplicate-free, sorted, and bounded. No match returns
+`NOT_FOUND`; malformed patterns return `INVALID_ARGUMENT`; scan or output
+limits return `NO_SPACE`.
+
+`DIRECTORY`/`LS`, `TYPE`, `DELETE`, and `SHOW LINKS` accept wildcard paths.
+`DELETE` uses the latest live version unless a numeric `;N` selector is added
+to the pattern, and stops at the first failed match after earlier matches were
+committed. `TYPE` separates matched files with a path header. `LINK`, `MKDIR`,
+`CREATE`, `RMDIR`, `SET DEFAULT`, and `CD` reject wildcard paths because their
+target mapping is ambiguous or unsafe. Wildcards in version selectors are not
+valid.

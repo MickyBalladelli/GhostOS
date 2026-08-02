@@ -772,13 +772,21 @@ impl<'a> Lexer<'a> {
 
         while let Some(current) = self.peek() {
             if current == '\\' {
-                return Err(Error::InvalidSyntax)
+                self.advance(current);
+                let escaped = self.peek().ok_or(Error::InvalidSyntax)?;
+                word.push_char('\\')?;
+                word.push_char(escaped)?;
+                self.advance(escaped);
+                continue
             }
             if let Some(expected) = quote {
                 self.advance(current);
                 if current == expected {
                     quote = None
                 } else {
+                    if matches!(current, '*' | '?' | '[' | ']' | '\\') {
+                        word.push_char('\\')?;
+                    }
                     word.push_char(current)?
                 }
                 continue

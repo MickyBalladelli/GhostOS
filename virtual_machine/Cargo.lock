@@ -42,6 +42,7 @@ name = "syn-shell"
 version = "0.1.0"
 dependencies = [
  "synos-observability",
+ "synos-path-pattern",
  "synos-status",
  "synos-system-model",
 ]
@@ -64,6 +65,7 @@ version = "0.1.0"
 dependencies = [
  "synos-host-filesystems",
  "synos-ipc",
+ "synos-path-pattern",
  "synos-status",
  "synos-synfs",
 ]
@@ -114,6 +116,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-path-pattern"
+version = "0.1.0"
+
+[[package]]
 name = "synos-power"
 version = "0.1.0"
 dependencies = [
@@ -128,6 +134,7 @@ name = "synos-runtime"
 version = "0.1.0"
 dependencies = [
  "synos-ipc",
+ "synos-path-pattern",
  "synos-status",
 ]
 
@@ -139,6 +146,7 @@ version = "0.1.0"
 name = "synos-synfs"
 version = "0.1.0"
 dependencies = [
+ "synos-path-pattern",
  "synos-status",
 ]
 

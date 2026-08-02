@@ -2,6 +2,7 @@ use core::fmt;
 
 use host_filesystems::{FileSystemKind, Partition};
 use synos_ipc::{Envelope, SharedBuffer};
+use synos_path_pattern::Pattern;
 use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
     CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, LinkEntry, SynFs,
@@ -799,10 +800,25 @@ impl<
             FileRights::DELETE.union(FileRights::WRITE).union(FileRights::ADMIN),
         )?;
         let path = Name::from_str(path)?;
-        if self.path_is_read_only(path.as_str())? {
-            return Err(DaemonError::ReadOnly);
+        let pattern = Pattern::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let mut matches = [None; MAX_DIRECTORY_ENTRIES];
+        let match_count = if pattern.has_magic() {
+            self.filesystem.expand_paths(path.as_str(), &mut matches)?
+        } else {
+            matches[0] = Some(synos_synfs::FileName::new(path.as_str())?);
+            1
+        };
+        if match_count == 0 {
+            return Err(DaemonError::NotFound)
         }
-        let deleted = self.filesystem.delete(path.as_str())?;
+        let mut deleted = None;
+        for matched in matches[..match_count].iter().flatten() {
+            if self.path_is_read_only(matched.as_str())? {
+                return Err(DaemonError::ReadOnly);
+            }
+            deleted = Some(self.filesystem.delete(matched.as_str())?);
+        }
+        let deleted = deleted.ok_or(DaemonError::NotFound)?;
         Ok(DeleteInfo {
             file: FileInfo {
                 capability: authority,
@@ -938,33 +954,51 @@ impl<
     ) -> Result<(FileInfo, usize), DaemonError> {
         self.authorize_process(process, authority, FileRights::READ)?;
         let path = Name::from_str(path)?;
-        let metadata = self.filesystem.lookup(path.as_str())?;
-        let mut entries = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
-        let count = self.filesystem.list_links(path.as_str(), &mut entries)?;
-        let mut written = 0;
-        for entry in entries.iter().take(count) {
-            let suffix = if entry.version == 0 {
-                0
-            } else {
-                1 + digits(entry.version)
-            };
-            let required = entry.path.as_bytes().len() + suffix + 1;
-            if written + required > output.len() {
-                return Err(DaemonError::BufferTooSmall {
-                    required: written + required,
-                });
-            }
-            let end = written + entry.path.as_bytes().len();
-            output[written..end].copy_from_slice(entry.path.as_bytes());
-            written = end;
-            if entry.version != 0 {
-                output[written] = b';';
-                written += 1;
-                written += write_decimal(&mut output[written..], entry.version);
-            }
-            output[written] = b'\n';
-            written += 1;
+        let pattern = Pattern::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let mut matches = [None; MAX_DIRECTORY_ENTRIES];
+        let match_count = if pattern.has_magic() {
+            self.filesystem.expand_paths(path.as_str(), &mut matches)?
+        } else {
+            matches[0] = Some(synos_synfs::FileName::new(path.as_str())?);
+            1
+        };
+        if match_count == 0 {
+            return Err(DaemonError::NotFound)
         }
+        let mut metadata = None;
+        let mut written = 0;
+        for matched in matches[..match_count].iter().flatten() {
+            let current = self.filesystem.lookup(matched.as_str())?;
+            metadata = Some(current);
+            let mut entries = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
+            let count = self.filesystem.list_links(matched.as_str(), &mut entries)?;
+            for entry in entries.iter().take(count) {
+                let suffix = if entry.version == 0 { 0 } else { 1 + digits(entry.version) };
+                let required = entry.path.as_bytes().len() + suffix + 1;
+                let duplicate = output[..written]
+                    .split(|byte| *byte == b'\n')
+                    .any(|line| line == entry.path.as_bytes());
+                if duplicate {
+                    continue
+                }
+                if written + required > output.len() {
+                    return Err(DaemonError::BufferTooSmall {
+                        required: written + required,
+                    });
+                }
+                let end = written + entry.path.as_bytes().len();
+                output[written..end].copy_from_slice(entry.path.as_bytes());
+                written = end;
+                if entry.version != 0 {
+                    output[written] = b';';
+                    written += 1;
+                    written += write_decimal(&mut output[written..], entry.version);
+                }
+                output[written] = b'\n';
+                written += 1;
+            }
+        }
+        let metadata = metadata.ok_or(DaemonError::NotFound)?;
         Ok((
             FileInfo {
                 capability: authority,
@@ -1507,7 +1541,27 @@ impl<
     ) -> Result<(usize, usize), DaemonError> {
         let path = if prefix.is_empty() { "/" } else { prefix };
         let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
-        let count = snapshot.list_directory(path, &mut entries)?;
+        let count = if Pattern::parse(path)
+            .map_err(|_| DaemonError::InvalidPath)?
+            .has_magic()
+        {
+            let mut matches = [None; MAX_DIRECTORY_ENTRIES];
+            let count = snapshot.expand_paths(path, &mut matches)?;
+            for (index, matched) in matches[..count].iter().flatten().enumerate() {
+                let file = snapshot.lookup(matched.as_str())?;
+                entries[index] = DirectoryEntry {
+                    name: *matched,
+                    file_type: file.file_type,
+                    size: file.size,
+                    version: file.version,
+                    link_count: file.link_count,
+                    mode: file.mode,
+                };
+            }
+            count
+        } else {
+            snapshot.list_directory(path, &mut entries)?
+        };
         let mut written = 0;
         let mut next = 0;
         let mut stopped_for_buffer = false;
