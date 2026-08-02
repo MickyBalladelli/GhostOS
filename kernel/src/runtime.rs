@@ -634,8 +634,12 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             Operation::SynFsClose
             | Operation::SynFsMetadata
             | Operation::SynFsMkdir
-            | Operation::SynFsRmdir
             | Operation::SynFsLink => {}
+            Operation::SynFsRmdir => {
+                if response.values[3] > 1 {
+                    return Err(RuntimeDispatchError::TransportFailure)
+                }
+            }
             Operation::SynFsDelete => {
                 if response.values[0] > u64::from(u32::MAX)
                     || response.values[1] > 3

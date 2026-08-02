@@ -11,7 +11,8 @@ use synos_status::Status;
 
 pub use abi::{Capability, GateFn, NativeGate, Operation, Request, Response, SystemCall};
 pub use fs::{
-    DirectoryPage, File, LinkMetadata, Metadata, OpenOptions, DIRECTORY_RECORD_HEADER_BYTES,
+    DirectoryPage, DirectoryRemovalMetadata, File, LinkMetadata, Metadata, OpenOptions,
+    DIRECTORY_RECORD_HEADER_BYTES,
 };
 pub use ipc::{IpcAccess, IpcMapping};
 pub use thread::{Thread, ThreadStart, WaitWord};

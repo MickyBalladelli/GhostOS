@@ -34,6 +34,14 @@ pub struct Metadata {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectoryRemovalMetadata {
+    pub length: u64,
+    pub version: u32,
+    pub removal_generation: u64,
+    pub storage_reclamation_pending: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LinkMetadata {
     pub length: u64,
     pub version: u32,
@@ -144,9 +152,20 @@ impl<S: SystemCall> Runtime<S> {
         Ok((file, metadata))
     }
 
-    pub fn remove_directory(&self, path: SharedBuffer) -> Result<(), Error> {
-        self.execute(Request::new(Operation::SynFsRmdir).with_buffer(path))?;
-        Ok(())
+    pub fn remove_directory(
+        &self,
+        path: SharedBuffer,
+    ) -> Result<DirectoryRemovalMetadata, Error> {
+        let response = self.execute(Request::new(Operation::SynFsRmdir).with_buffer(path))?;
+        if response.values[3] > 1 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(DirectoryRemovalMetadata {
+            length: response.values[0],
+            version: u32::try_from(response.values[1]).map_err(|_| Error::InvalidResponse)?,
+            removal_generation: response.values[2],
+            storage_reclamation_pending: response.values[3] != 0,
+        })
     }
 
     pub fn delete(&self, path: SharedBuffer) -> Result<DeleteMetadata, Error> {

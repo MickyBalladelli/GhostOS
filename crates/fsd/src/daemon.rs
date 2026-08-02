@@ -115,6 +115,13 @@ pub struct FileInfo {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectoryRemovalInfo {
+    pub file: FileInfo,
+    pub removal_generation: u64,
+    pub storage_reclamation_pending: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeleteInfo {
     pub file: FileInfo,
     pub shared_data_reachable: bool,
@@ -849,14 +856,37 @@ impl<
         process: ProcessId,
         authority: Capability,
         path: &str,
-    ) -> Result<(), DaemonError> {
-        self.authorize_process(process, authority, FileRights::DELETE)?;
+    ) -> Result<DirectoryRemovalInfo, DaemonError> {
+        self.authorize_process(
+            process,
+            authority,
+            FileRights::DELETE.union(FileRights::WRITE).union(FileRights::ADMIN),
+        )?;
         let path = Name::from_str(path)?;
-        if self.mount_is_read_only(path.as_str()) {
+        if path.as_str() == "/" || self.is_mount_root(path.as_str()) {
+            return Err(DaemonError::AccessDenied);
+        }
+        if self.path_is_read_only(path.as_str())? {
             return Err(DaemonError::ReadOnly);
         }
-        self.filesystem.remove_directory(path.as_str())?;
-        Ok(())
+        let removed = self.filesystem.remove_directory(path.as_str())?;
+        let removal_generation = self.filesystem.diagnostics()?.generation;
+        Ok(DirectoryRemovalInfo {
+            file: FileInfo {
+                capability: authority,
+                file: removed.file,
+                version: removed.version,
+                size: removed.size,
+                checksum: removed.checksum,
+                created_at: removed.created_at,
+                rights: FileRights::DELETE,
+                file_type: removed.file_type,
+                link_count: removed.link_count,
+                mode: removed.mode,
+            },
+            removal_generation,
+            storage_reclamation_pending: true,
+        })
     }
 
     pub fn link(
@@ -1321,12 +1351,16 @@ impl<
             }
             Operation::Rmdir => {
                 let path = input_name(buffer)?;
-                self.remove_directory(
+                let removed = self.remove_directory(
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
                     path.as_str(),
                 )?;
-                Ok(Response::success())
+                Ok(Response::success()
+                    .with_value(0, removed.file.size)
+                    .with_value(1, removed.file.version as u64)
+                    .with_value(2, removed.removal_generation)
+                    .with_value(3, removed.storage_reclamation_pending as u64))
             }
             Operation::Link => {
                 let new_path = input_name(buffer)?;
@@ -1621,6 +1655,12 @@ impl<
                         .strip_prefix(mount.name.as_str())
                         .is_some_and(|rest| rest.starts_with(':') || rest.starts_with('/')))
         })
+    }
+
+    fn is_mount_root(&self, path: &str) -> bool {
+        self.namespace
+            .resolve(path)
+            .is_ok_and(|mount| mount.path.as_str() == path)
     }
 }
 

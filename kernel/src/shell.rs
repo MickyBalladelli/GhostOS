@@ -3,8 +3,9 @@ use syn_shell::{
     editor::{EditorAction, Key, LineEditor},
     file_editor::{EditorMode, FileEditor, FileEditorAction},
     filesystem::{
-        DeleteMetadata, DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType,
-        FileMetadata, FileOutput, FilesystemExecutor, FilesystemSource, LinkPage,
+        DeleteMetadata, DirectoryEntry as ShellDirectoryEntry, DirectoryPage,
+        DirectoryRemovalMetadata, EntryType, FileMetadata, FileOutput, FilesystemExecutor,
+        FilesystemSource, LinkPage,
         Path as ShellPath, PathCompletionPage,
     },
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
@@ -1410,6 +1411,41 @@ impl FilesystemSource for KernelFilesystem {
             .map(|file| self.metadata(file))
     }
 
+    fn remove_directory(&mut self, path: &str) -> Result<DirectoryRemovalMetadata, Status> {
+        if path == "/" {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let selected = self.find(path).ok_or(Status::NOT_FOUND)?;
+        if selected.file_type != EntryType::Directory {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        if self
+            .files
+            .iter()
+            .flatten()
+            .any(|file| !file.deleted && Self::parent(file.path.as_str()) == path)
+        {
+            return Err(Status::DIRECTORY_NOT_EMPTY)
+        }
+        let slot = self
+            .files
+            .iter_mut()
+            .find(|file| {
+                file.is_some_and(|file| {
+                    file.path == selected.path
+                        && file.version == selected.version
+                        && !file.deleted
+                })
+            })
+            .ok_or(Status::CORRUPT)?;
+        slot.as_mut().ok_or(Status::CORRUPT)?.deleted = true;
+        Ok(DirectoryRemovalMetadata {
+            directory: self.metadata(selected),
+            removal_generation: selected.version as u64,
+            storage_reclamation_pending: false,
+        })
+    }
+
     fn delete(&mut self, path: &str) -> Result<DeleteMetadata, Status> {
         let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
         if path == "/" {
@@ -1962,7 +1998,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, STOP JOB, SET PROCESS, DIRECTORY, CREATE, DELETE, TYPE, EDIT, EDT, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, STOP JOB, SET PROCESS, DIRECTORY, CREATE, DELETE, RMDIR, TYPE, EDIT, EDT, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -1979,6 +2015,7 @@ impl KernelExecutor {
         crate::println!("  SHOW LINKS         List hard-link paths");
         crate::println!("  LS                 List all directory entries (Ctrl-C stops)");
         crate::println!("  MKDIR              Create a directory");
+        crate::println!("  RMDIR              Remove an empty directory (RD alias)");
         crate::println!("  MONITOR            Cycle monitor view");
         crate::println!("  PWD                Show the default directory");
         crate::println!("  REBOOT             Restart SynOS");
@@ -2404,6 +2441,8 @@ fn status_reason(status: Status) -> &'static str {
         "access denied"
     } else if status == Status::CONFLICT {
         "file changed since edit began"
+    } else if status == Status::DIRECTORY_NOT_EMPTY {
+        "directory is not empty"
     } else {
         "unknown error"
     }

@@ -27,6 +27,7 @@ pub const LINK_ROUTE: u16 = 38;
 pub const SHOW_LINKS_ROUTE: u16 = 39;
 pub const DELETE_ROUTE: u16 = 40;
 pub const EDIT_ROUTE: u16 = 41;
+pub const RMDIR_ROUTE: u16 = 42;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Path {
@@ -120,6 +121,13 @@ pub struct FileMetadata {
 pub struct DeleteMetadata {
     pub file: FileMetadata,
     pub shared_data_reachable: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectoryRemovalMetadata {
+    pub directory: FileMetadata,
+    pub removal_generation: u64,
+    pub storage_reclamation_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -263,6 +271,9 @@ pub trait FilesystemSource {
     ) -> Result<(), Status>;
     fn create_directory(&mut self, path: &str, recursive: bool) -> Result<FileMetadata, Status>;
     fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status>;
+    fn remove_directory(&mut self, _path: &str) -> Result<DirectoryRemovalMetadata, Status> {
+        Err(Status::NOT_FOUND)
+    }
     fn delete(&mut self, _path: &str) -> Result<DeleteMetadata, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -458,6 +469,10 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
     registry.register(
         CommandSpec::new("MKDIR", &[required_path, recursive]).map_err(|_| Error::InvalidValue)?,
         route(MKDIR_ROUTE),
+    )?;
+    registry.register(
+        CommandSpec::new("RMDIR", &[required_path]).map_err(|_| Error::InvalidValue)?,
+        route(RMDIR_ROUTE),
     )?;
     registry.register(
         CommandSpec::new("LS", &[path, continuation]).map_err(|_| Error::InvalidValue)?,
@@ -781,6 +796,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         match command.route.raw() {
             DIRECTORY_ROUTE => self.directory(command),
             MKDIR_ROUTE => self.mkdir(command),
+            RMDIR_ROUTE => self.remove_directory(command),
             CREATE_FILE_ROUTE => self.create_file(command),
             TYPE_ROUTE => self.type_file(command),
             SET_DEFAULT_ROUTE => self.set_default(command),
@@ -861,6 +877,30 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         boolean(command.get("RECURSIVE"))?;
         let metadata = self.source.create_directory(path.as_str(), true)?;
         metadata_output("created", metadata)
+    }
+
+    fn remove_directory(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let path_value = text(command.get("PATH")).ok_or(Status::INVALID_ARGUMENT)?;
+        let path = self.session.resolve(Some(path_value.as_str()))?;
+        if path.as_str() == "/"
+            || path.as_str().contains(';')
+            || contains_wildcard(path.as_str())
+            || is_path_or_descendant(path.as_str(), self.session.default_directory().as_str())
+        {
+            return Err(if is_path_or_descendant(
+                path.as_str(),
+                self.session.default_directory().as_str(),
+            ) {
+                Status::ACCESS_DENIED
+            } else {
+                Status::INVALID_ARGUMENT
+            })
+        }
+        self.source.remove_directory(path.as_str())?;
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "operation", "removed")?;
+        insert_text(&mut output, "path", path.as_str())?;
+        Ok(output)
     }
 
     fn create_file(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
@@ -1166,6 +1206,18 @@ fn insert(output: &mut StructuredOutput, name: &str, value: OutputValue) -> Resu
     output.insert(name, value).map_err(|_| Status::NO_SPACE)
 }
 
+fn contains_wildcard(path: &str) -> bool {
+    path.bytes().any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']'))
+}
+
+fn is_path_or_descendant(path: &str, candidate: &str) -> bool {
+    candidate == path
+        || path == "/"
+        || candidate
+            .strip_prefix(path)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 impl core::fmt::Debug for ShellSession {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
@@ -1295,6 +1347,17 @@ mod tests {
             Ok(Self::metadata(path, EntryType::File, 0, self.version))
         }
 
+        fn remove_directory(&mut self, path: &str) -> Result<DirectoryRemovalMetadata, Status> {
+            if path != "/data" {
+                return Err(Status::NOT_FOUND)
+            }
+            Ok(DirectoryRemovalMetadata {
+                directory: Self::metadata(path, EntryType::Directory, 0, 1),
+                removal_generation: 2,
+                storage_reclamation_pending: true,
+            })
+        }
+
         fn type_file(
             &mut self,
             path: &str,
@@ -1336,6 +1399,13 @@ mod tests {
         let mut registry = CommandRegistry::<16>::new();
         register_filesystem_commands(&mut registry).expect("filesystem commands");
         registry.parse(line).expect("valid filesystem command").stage(0).expect("command stage")
+    }
+
+    fn output_value(output: &StructuredOutput, name: &str) -> Option<OutputValue> {
+        output
+            .fields()
+            .find(|field| field.name.as_str() == name)
+            .map(|field| field.value)
     }
 
     #[test]
@@ -1391,5 +1461,38 @@ mod tests {
             .expect("explicit retry succeeds");
         assert_eq!(metadata.version, 2);
         assert_eq!(&executor.source().bytes[..executor.source().len], b"replacement");
+    }
+
+    #[test]
+    fn rmdir_alias_removes_directory_and_reports_removal_metadata() {
+        let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"", 1));
+        let output = executor
+            .execute_command(command("RD /data"))
+            .expect("RD removes the directory");
+
+        assert_eq!(output.status(), Status::NORMAL);
+        assert_eq!(
+            output_value(&output, "operation"),
+            Some(OutputValue::Text(OutputText::new("removed").unwrap()))
+        );
+        assert_eq!(
+            output_value(&output, "path"),
+            Some(OutputValue::Text(OutputText::new("/data").unwrap()))
+        );
+        assert_eq!(
+            output.fields().count(),
+            2
+        );
+    }
+
+    #[test]
+    fn rmdir_rejects_the_current_default_directory() {
+        let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"", 1));
+        executor.session.default_directory = Path::new("/data").expect("valid default path");
+
+        assert_eq!(
+            executor.execute_command(command("RMDIR /data")),
+            Err(Status::ACCESS_DENIED)
+        );
     }
 }

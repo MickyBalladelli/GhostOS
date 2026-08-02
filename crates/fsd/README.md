@@ -15,9 +15,16 @@ rename uses `old-path\0new-path`; listing buffers use an optional NUL-terminated
 prefix and are overwritten with newline-separated paths.
 
 Directories have typed metadata and immediate-child listing. `Mkdir`, `Rmdir`,
-and `Link` use the same bounded shared-buffer protocol. SynFS stores hard-link
-metadata, quotas, free-space counters, and per-volume limits in the persistent
-volume format.
+and `Link` use the same bounded shared-buffer protocol. `Rmdir` requires delete,
+write, and administration authority, rejects mount roots, and removes only empty
+directories. Its response reports directory size, version, removal generation,
+and whether storage reclamation is pending. SynFS stores hard-link metadata,
+quotas, free-space counters, and per-volume limits in the persistent volume
+format.
+
+The shell exposes `RMDIR path` and the `RD` alias. Paths are resolved from the
+active default directory; `/`, version selectors, wildcards, non-directories,
+non-empty directories, and the active default directory are rejected.
 
 `Delete` accepts a path with an optional SynFS version selector. `DELETE path`
 and `DELETE path;0` remove the latest live version; `DELETE path;N` removes

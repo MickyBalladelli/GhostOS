@@ -54,6 +54,8 @@ impl Status {
         Self::new(Severity::Error, facility::FILESYSTEM, 2, 0).expect("valid status");
     pub const CONFLICT: Self =
         Self::new(Severity::Warning, facility::FILESYSTEM, 3, 0).expect("valid status");
+    pub const DIRECTORY_NOT_EMPTY: Self =
+        Self::new(Severity::Error, facility::FILESYSTEM, 5, 0).expect("valid status");
 
     pub const fn new(severity: Severity, facility: u16, code: u16, flags: u8) -> Option<Self> {
         if facility as u32 > FACILITY_MASK || code as u32 > CODE_MASK || flags as u32 > FLAGS_MASK {

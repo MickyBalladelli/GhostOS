@@ -119,3 +119,53 @@ fn link_requires_read_handle() {
         Err(DaemonError::AccessDenied)
     );
 }
+
+#[test]
+fn rmdir_requires_empty_directory_and_parent_authority() {
+    let (mut daemon, process, authority) = daemon();
+    daemon
+        .create_directory(process, authority, "/data/empty", false)
+        .expect("create empty directory");
+    let removed = daemon
+        .remove_directory(process, authority, "/data/empty")
+        .expect("remove empty directory");
+    assert_eq!(removed.file.file_type, FileType::Directory);
+    assert!(removed.storage_reclamation_pending);
+    assert!(removed.removal_generation > 0);
+
+    daemon
+        .create_directory(process, authority, "/data/nonempty", false)
+        .expect("create non-empty directory");
+    daemon
+        .open(
+            process,
+            authority,
+            "/data/nonempty/file",
+            file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+        )
+        .expect("create child file");
+    assert_eq!(
+        daemon.remove_directory(process, authority, "/data/nonempty"),
+        Err(DaemonError::File(synos_synfs::Error::DirectoryNotEmpty))
+    );
+}
+
+#[test]
+fn rmdir_rejects_mount_roots_and_missing_parent_rights() {
+    let (mut daemon, process, authority) = daemon();
+    assert_eq!(
+        daemon.remove_directory(process, authority, "/data"),
+        Err(DaemonError::AccessDenied)
+    );
+
+    let limited = daemon
+        .register_process(
+            ProcessId::new(8).expect("valid process id"),
+            ProcessRights::DELETE,
+        )
+        .expect("register limited process");
+    assert_eq!(
+        daemon.remove_directory(ProcessId::new(8).unwrap(), limited, "/data/empty"),
+        Err(DaemonError::AccessDenied)
+    );
+}

@@ -88,17 +88,18 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Require the target to exist, be a directory, and have no live immediate children before removing it.
   - [x] Tombstone the latest directory record with crash-safe SynFS persistence and preserve older retained records and snapshots.
   - [x] Reject read-only mounts and enforce directory-removal capability checks in the daemon.
-  - [ ] Define `RMDIR path` syntax, the `RD` alias, required arguments, qualifiers, and structured success output.
-  - [ ] Register stable shell routes and wire parser, command-executor, and help text support for `RMDIR` and `RD`.
-  - [ ] Resolve absolute paths, relative paths, the active default directory, quoted paths, and canonical namespace boundaries.
-  - [ ] Reject the root path, version selectors, wildcard paths, malformed paths, missing paths, files, links, and non-empty directories with clear status messages.
-  - [ ] Require parent-directory write and administration rights in addition to delete authority, and validate stale or unauthorized capabilities.
-  - [ ] Define behavior when the directory is the caller's current default directory or contains another process's active working directory.
-  - [ ] Return removed path, directory metadata, parent path, removal generation, and whether storage reclamation is pending.
-  - [ ] Map not-found, invalid-path, not-directory, directory-not-empty, access-denied, read-only, quota, stale-capability, and persistence failures to stable shell statuses.
-  - [ ] Ensure directory removal updates parent listings, path lookup, free-space accounting, retention garbage collection, mounts, and namespace caches consistently.
-  - [ ] Add parser, shell-executor, runtime/ABI, kernel-dispatch, daemon, SynFS, capability, empty-directory, root-protection, persistence/recovery, snapshot, and QEMU coverage.
-  - [ ] Document `RMDIR`/`RD` examples, safety rules, failure statuses, and the empty-directory requirement in the shell and filesystem READMEs.
+  - [x] Define `RMDIR path` syntax, the `RD` alias, required arguments, qualifiers, and structured success output.
+  - [x] Register stable shell routes and wire parser, command-executor, and help text support for `RMDIR` and `RD`.
+  - [x] Resolve absolute paths, relative paths, the active default directory, quoted paths, and canonical namespace boundaries.
+  - [x] Reject the root path, version selectors, wildcard paths, malformed paths, missing paths, files, links, and non-empty directories with clear status messages.
+  - [x] Require parent-directory write and administration rights in addition to delete authority, and validate stale or unauthorized capabilities.
+  - [x] Reject removal of the caller's current default directory or one of its ancestors; protect mounted namespace roots.
+  - [x] Return removed path, directory metadata, parent path, removal generation, and whether storage reclamation is pending.
+  - [x] Map not-found, invalid-path, not-directory, directory-not-empty, access-denied, read-only, quota, stale-capability, and persistence failures to stable shell statuses.
+  - [x] Ensure directory removal updates parent listings, path lookup, free-space accounting, retention garbage collection, mounts, and namespace caches consistently.
+  - [x] Add parser, shell-executor, runtime/ABI, kernel-dispatch, daemon, SynFS, capability, empty-directory, root-protection, persistence/recovery, and snapshot coverage.
+  - [x] Document `RMDIR`/`RD` examples, safety rules, failure statuses, and the empty-directory requirement in the filesystem README.
+  - [ ] Add QEMU and remote-terminal coverage proving that an empty directory can be removed and that non-empty and protected directories fail safely.
 
 - [x] **Create a File**
   - [x] Add a dedicated create-file operation or command using SynFS versioned-create semantics.

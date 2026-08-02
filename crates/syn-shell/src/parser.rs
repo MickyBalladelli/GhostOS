@@ -360,6 +360,8 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             || command_name.as_str().eq_ignore_ascii_case("RM")
         {
             command_name = Text::new("DELETE")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("RD") {
+            command_name = Text::new("RMDIR")?;
         }
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];

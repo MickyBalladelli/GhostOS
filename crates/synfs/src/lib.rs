@@ -62,10 +62,10 @@ impl IntoStatus for Error {
                 Status::NO_SPACE
             }
             Self::Corrupt => Status::CORRUPT,
-            Self::InvalidPath
-            | Self::InvalidVersion
-            | Self::NotDirectory
-            | Self::DirectoryNotEmpty => Status::INVALID_ARGUMENT,
+            Self::InvalidPath | Self::InvalidVersion | Self::NotDirectory => {
+                Status::INVALID_ARGUMENT
+            }
+            Self::DirectoryNotEmpty => Status::DIRECTORY_NOT_EMPTY,
             Self::TransactionAborted => Status::BUSY,
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
                 .expect("valid filesystem status"),
