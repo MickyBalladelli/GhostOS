@@ -579,11 +579,38 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
-        if path.as_str().contains(';') {
-            return Err(Status::INVALID_ARGUMENT)
+        let (base_path, version) = split_version_selector(path.as_str())?;
+        if version.is_none() && self.source.directory_exists(base_path)? {
+            let continuation = continuation.or(integer(command.get("CONTINUATION"))?);
+            self.source.list(base_path, continuation, output)?;
+            return Ok(path)
         }
+
+        let Some((parent, name)) = base_path.rsplit_once('/') else {
+            return Err(Status::NOT_FOUND)
+        };
+        let parent = if parent.is_empty() { "/" } else { parent };
         let continuation = continuation.or(integer(command.get("CONTINUATION"))?);
-        self.source.list(path.as_str(), continuation, output)?;
+        let mut source_continuation = continuation;
+        output.clear();
+        loop {
+            let mut page = DirectoryPage::new();
+            self.source
+                .list(parent, source_continuation, &mut page)?;
+            for entry in page.entries() {
+                if entry.name.as_str() != name
+                    || !version.map_or(true, |version| version == 0 || version == entry.version)
+                {
+                    continue
+                }
+                output.push(entry)?;
+            }
+            let Some(next) = page.next else { break };
+            source_continuation = Some(next);
+        }
+        if output.len() == 0 {
+            return Err(Status::NOT_FOUND)
+        }
         Ok(path)
     }
 

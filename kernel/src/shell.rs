@@ -9,6 +9,7 @@ use syn_shell::{
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId, Value},
     render::{OutputFormat, render},
+    Text, MAX_LINE_BYTES,
 };
 use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind};
 use synos_power::AcpiPlatform;
@@ -83,7 +84,7 @@ pub fn run(
         match editor.handle(key) {
             Ok(EditorAction::Redraw) => redraw(&editor),
             Ok(EditorAction::Complete) => {
-                if let Err(error) = complete_line(&mut editor, &registry) {
+                if let Err(error) = complete_line(&mut editor, &registry, &mut executor) {
                     crate::println!();
                     crate::println!("shell completion error: {error:?}");
                     redraw(&editor)
@@ -419,10 +420,13 @@ fn entry_type_name(entry_type: EntryType) -> &'static str {
 fn complete_line(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
+    executor: &mut KernelExecutor,
 ) -> Result<(), Error> {
-    if let Some(command) = registry.unique_suggestion(editor.line())? {
-        editor.replace_command(command.as_str())?;
-        redraw(editor);
+    if complete_file(editor, registry, executor)? {
+        return Ok(())
+    }
+
+    if expand_command(editor, registry)? {
         return Ok(())
     }
 
@@ -435,6 +439,206 @@ fn complete_line(
         redraw(editor);
     }
     Ok(())
+}
+
+fn complete_file(
+    editor: &mut LineEditor<HISTORY_CAPACITY>,
+    registry: &CommandRegistry<COMMAND_CAPACITY>,
+    executor: &mut KernelExecutor,
+) -> Result<bool, Error> {
+    let line = editor.line();
+    let Some(command) = registry.unique_suggestion(line)? else {
+        return Ok(false)
+    };
+    if !supports_file_completion(command.as_str()) {
+        return Ok(false)
+    }
+
+    let Some(command_span) = command_span(line) else {
+        return Ok(false)
+    };
+    let (word_start, word_end) = current_word(line, editor.cursor());
+    if word_start < command_span.1 {
+        return Ok(false)
+    }
+
+    let word = &line[word_start..word_end];
+    let (directory_input, candidate_prefix, leaf) = match word.rsplit_once('/') {
+        Some((prefix, leaf)) => {
+            let directory = if prefix.is_empty() { "/" } else { prefix };
+            (Some(directory), &word[..word.len() - leaf.len()], leaf)
+        }
+        None => (None, "", word),
+    };
+    let directory = match executor.filesystem.session().resolve(directory_input) {
+        Ok(directory) if !directory.as_str().contains(';') => directory,
+        _ => return Ok(false),
+    };
+
+    let mut matches: [Option<ShellPath>; 2] = [None; 2];
+    let mut match_count = 0;
+    let mut continuation = None;
+    loop {
+        let mut page = DirectoryPage::new();
+        if executor
+            .filesystem
+            .source_mut()
+            .list(directory.as_str(), continuation, &mut page)
+            .is_err()
+        {
+            return Ok(false)
+        }
+        for entry in page.entries() {
+            if !starts_with_ignore_ascii_case(entry.name.as_str(), leaf) {
+                continue
+            }
+            if matches[..match_count]
+                .iter()
+                .flatten()
+                .any(|name| name.as_str().eq_ignore_ascii_case(entry.name.as_str()))
+            {
+                continue
+            }
+            if match_count < matches.len() {
+                matches[match_count] = Some(entry.name);
+                match_count += 1;
+            }
+        }
+        if match_count == matches.len() || page.next.is_none() {
+            break
+        }
+        continuation = page.next;
+    }
+
+    if match_count == 0 {
+        return Ok(false)
+    }
+
+    if match_count == 1 {
+        let Some(name) = matches[0] else {
+            return Ok(false)
+        };
+        let mut replacement = Text::<MAX_LINE_BYTES>::empty();
+        replacement.push_str(candidate_prefix)?;
+        replacement.push_str(name.as_str())?;
+        replace_span(editor, word_start, word_end, replacement.as_str())?;
+        redraw(editor);
+    } else {
+        crate::println!();
+        for name in matches[..match_count].iter().flatten() {
+            let mut suggestion = Text::<MAX_LINE_BYTES>::empty();
+            suggestion.push_str(candidate_prefix)?;
+            suggestion.push_str(name.as_str())?;
+            crate::println!("  {}", suggestion.as_str());
+        }
+        redraw(editor);
+    }
+    Ok(true)
+}
+
+fn expand_command(
+    editor: &mut LineEditor<HISTORY_CAPACITY>,
+    registry: &CommandRegistry<COMMAND_CAPACITY>,
+) -> Result<bool, Error> {
+    let line = editor.line();
+    let Some(command) = registry.unique_suggestion(line)? else {
+        return Ok(false)
+    };
+    let Some((start, end)) = command_span(line) else {
+        return Ok(false)
+    };
+    let mut replacement = Text::<MAX_LINE_BYTES>::empty();
+    for byte in command.as_str().bytes() {
+        replacement.push_char(if byte == b'-' { ' ' } else { byte as char })?;
+    }
+    if line[start..end].eq_ignore_ascii_case(replacement.as_str()) {
+        return Ok(false)
+    }
+    replace_span(editor, start, end, replacement.as_str())?;
+    redraw(editor);
+    Ok(true)
+}
+
+fn supports_file_completion(command: &str) -> bool {
+    matches!(
+        command,
+        "LS"
+            | "DIRECTORY"
+            | "MKDIR"
+            | "CD"
+            | "SET-DEFAULT"
+            | "TYPE"
+            | "CREATE"
+            | "DELETE"
+            | "SHOW-LINKS"
+            | "LINK"
+    )
+}
+
+fn replace_span(
+    editor: &mut LineEditor<HISTORY_CAPACITY>,
+    start: usize,
+    end: usize,
+    replacement: &str,
+) -> Result<(), Error> {
+    let line = editor.line();
+    let mut updated = Text::<MAX_LINE_BYTES>::empty();
+    updated.push_str(&line[..start])?;
+    updated.push_str(replacement)?;
+    updated.push_str(&line[end..])?;
+    editor.replace_line(updated.as_str())
+}
+
+fn command_span(line: &str) -> Option<(usize, usize)> {
+    let first = word_span(line, 0)?;
+    let first_word = &line[first.0..first.1];
+    if matches!(
+        first_word,
+        value if value.eq_ignore_ascii_case("SHOW")
+            || value.eq_ignore_ascii_case("TOP")
+            || value.eq_ignore_ascii_case("SET")
+    ) {
+        if let Some(second) = word_span(line, first.1) {
+            return Some((first.0, second.1))
+        }
+    }
+    Some(first)
+}
+
+fn current_word(line: &str, cursor: usize) -> (usize, usize) {
+    let cursor = cursor.min(line.len());
+    let bytes = line.as_bytes();
+    let mut start = cursor;
+    while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
+        start -= 1
+    }
+    let mut end = cursor;
+    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+        end += 1
+    }
+    (start, end)
+}
+
+fn word_span(line: &str, offset: usize) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let mut start = offset.min(bytes.len());
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1
+    }
+    if start == bytes.len() {
+        return None
+    }
+    let mut end = start;
+    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+        end += 1
+    }
+    Some((start, end))
+}
+
+fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
+    value
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
 }
 
 fn print_command_suggestion(command: &str) {
