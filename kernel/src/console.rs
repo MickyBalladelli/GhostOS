@@ -1,13 +1,17 @@
 use core::fmt::{self, Write};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use synos_boot_protocol::FramebufferInfo;
 #[cfg(target_arch = "x86_64")]
 use synos_boot_protocol::{FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB};
 
 static LOCKED: AtomicBool = AtomicBool::new(false);
+static REMOTE_COLUMNS: AtomicUsize = AtomicUsize::new(0);
+static REMOTE_ROWS: AtomicUsize = AtomicUsize::new(0);
 static mut CONSOLE: Console = Console::new();
 
 pub fn init(framebuffer: FramebufferInfo) {
+    REMOTE_COLUMNS.store(0, Ordering::Relaxed);
+    REMOTE_ROWS.store(0, Ordering::Relaxed);
     // Safety: early boot is single-threaded and this is the only initialization.
     unsafe {
         let console = &raw mut CONSOLE;
@@ -61,6 +65,12 @@ pub fn clear() {
 }
 
 pub fn terminal_size() -> (usize, usize) {
+    let remote_columns = REMOTE_COLUMNS.load(Ordering::Acquire);
+    let remote_rows = REMOTE_ROWS.load(Ordering::Acquire);
+    if remote_columns != 0 && remote_rows != 0 {
+        return (remote_columns, remote_rows)
+    }
+
     #[cfg(target_arch = "x86_64")]
     {
         while LOCKED
@@ -80,6 +90,14 @@ pub fn terminal_size() -> (usize, usize) {
     {
         (80, 25)
     }
+}
+
+pub fn set_remote_terminal_size(columns: usize, rows: usize) {
+    if columns == 0 || rows == 0 {
+        return
+    }
+    REMOTE_COLUMNS.store(columns, Ordering::Release);
+    REMOTE_ROWS.store(rows, Ordering::Release)
 }
 
 struct Console {

@@ -1,6 +1,7 @@
 //! Host terminal session for the guest serial console.
 
 use std::io::{self, IsTerminal, Read, Write};
+use std::cell::Cell;
 use std::sync::mpsc::{self, Receiver};
 
 #[derive(Debug)]
@@ -53,6 +54,8 @@ pub enum TerminalInputMode {
 pub struct TerminalSession {
     events: Receiver<InputEvent>,
     _raw_mode: RawMode,
+    has_terminal: bool,
+    last_size: Cell<Option<(u16, u16)>>,
 }
 
 impl TerminalSession {
@@ -94,11 +97,20 @@ impl TerminalSession {
         Ok(Self {
             events,
             _raw_mode: raw_mode,
+            has_terminal: is_tty,
+            last_size: Cell::new(None),
         })
     }
 
     /// Drain available host input without blocking the VM execution loop.
     pub fn poll(&self) -> Result<TerminalInput, TerminalError> {
+        self.poll_for_mode(TerminalInputMode::Serial)
+    }
+
+    pub fn poll_for_mode(
+        &self,
+        input_mode: TerminalInputMode,
+    ) -> Result<TerminalInput, TerminalError> {
         let mut input = TerminalInput::default();
 
         while let Ok(event) = self.events.try_recv() {
@@ -108,6 +120,21 @@ impl TerminalSession {
                     input.bytes.push(0x04)
                 }
                 InputEvent::Error(error) => return Err(TerminalError::Io(error)),
+            }
+        }
+
+        if input_mode == TerminalInputMode::Serial
+            && self.has_terminal
+            && (!input.bytes.is_empty() || self.last_size.get().is_none())
+        {
+            if let Some((rows, columns)) = terminal_size() {
+                let size = (rows, columns);
+                if self.last_size.get() != Some(size) {
+                    let mut resized = format!("\x1b[8;{};{}t", rows, columns).into_bytes();
+                    resized.extend(input.bytes);
+                    input.bytes = resized;
+                    self.last_size.set(Some(size));
+                }
             }
         }
 
@@ -132,6 +159,22 @@ fn translate_input(bytes: &[u8], input: &mut TerminalInput) {
             byte => input.bytes.push(byte),
         }
     }
+}
+
+#[cfg(unix)]
+fn terminal_size() -> Option<(u16, u16)> {
+    let output = stty_command().arg("size").output().ok()?;
+    if !output.status.success() {
+        return None
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let mut values = text.split_whitespace().map(|value| value.parse::<u16>().ok());
+    Some((values.next()??, values.next()??))
+}
+
+#[cfg(not(unix))]
+fn terminal_size() -> Option<(u16, u16)> {
+    None
 }
 
 /// Convert one ASCII byte to PS/2 set-1 make/break bytes.

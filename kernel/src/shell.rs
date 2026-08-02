@@ -78,6 +78,7 @@ pub fn run(
     let mut ignore_line_feed = false;
 
     banner();
+    request_terminal_size();
     prompt();
 
     loop {
@@ -95,6 +96,9 @@ pub fn run(
             }
             _ => input.advance(byte),
         };
+        if let Some((columns, rows)) = input.take_resize() {
+            crate::console::set_remote_terminal_size(columns, rows)
+        }
         let Some(key) = key else { continue };
 
         match editor.handle(key) {
@@ -348,6 +352,10 @@ fn render_file_editor<const CAPACITY: usize>(
     Ok(())
 }
 
+fn request_terminal_size() {
+    crate::print!("\x1b[18t")
+}
+
 fn render_file_editor_cursor<const CAPACITY: usize>(
     editor: &mut FileEditor<CAPACITY>,
 ) -> Result<(), Status> {
@@ -412,6 +420,13 @@ mod input_tests {
         assert_eq!(decode(&mut input, b"\x1bOA"), Key::Up);
         assert_eq!(decode(&mut input, b"\x1bOB"), Key::Down);
         assert_eq!(decode(&mut input, b"\x1b[6~"), Key::PageDown);
+    }
+
+    #[test]
+    fn decodes_resize_dimensions() {
+        let mut input = VtInput::new();
+        assert_eq!(decode(&mut input, b"\x1b[8;30;120t"), Key::Resize);
+        assert_eq!(input.take_resize(), Some((120, 30)));
     }
 }
 
@@ -896,9 +911,10 @@ struct VtInput {
     state: VtInputState,
     parameter: u16,
     modifier: u16,
+    third_parameter: u16,
     separators: u8,
-    after_separator: bool,
     pending: Option<u8>,
+    pending_resize: Option<(usize, usize)>,
     utf8: [u8; 4],
     utf8_len: usize,
     utf8_expected: usize,
@@ -910,9 +926,10 @@ impl VtInput {
             state: VtInputState::Ground,
             parameter: 0,
             modifier: 0,
+            third_parameter: 0,
             separators: 0,
-            after_separator: false,
             pending: None,
+            pending_resize: None,
             utf8: [0; 4],
             utf8_len: 0,
             utf8_expected: 0,
@@ -949,6 +966,10 @@ impl VtInput {
 
     fn escape_pending(&self) -> bool {
         self.state == VtInputState::Escape
+    }
+
+    fn take_resize(&mut self) -> Option<(usize, usize)> {
+        self.pending_resize.take()
     }
 
     fn flush_escape(&mut self) -> Option<Key> {
@@ -997,8 +1018,8 @@ impl VtInput {
             VtInputState::Escape => {
                 self.parameter = 0;
                 self.modifier = 0;
+                self.third_parameter = 0;
                 self.separators = 0;
-                self.after_separator = false;
                 match byte {
                     b'[' => self.state = VtInputState::Csi,
                     b'O' => self.state = VtInputState::Ss3,
@@ -1012,22 +1033,25 @@ impl VtInput {
             }
             VtInputState::Csi => match byte {
                 b'0'..=b'9' => {
-                    if self.after_separator {
-                        self.modifier = self
-                            .modifier
-                            .saturating_mul(10)
-                            .saturating_add((byte - b'0') as u16);
-                    } else {
-                        self.parameter = self
-                            .parameter
-                            .saturating_mul(10)
-                            .saturating_add((byte - b'0') as u16);
+                    let value = (byte - b'0') as u16;
+                    match self.separators {
+                        0 => {
+                            self.parameter = self.parameter.saturating_mul(10).saturating_add(value)
+                        }
+                        1 => {
+                            self.modifier = self.modifier.saturating_mul(10).saturating_add(value)
+                        }
+                        _ => {
+                            self.third_parameter = self
+                                .third_parameter
+                                .saturating_mul(10)
+                                .saturating_add(value)
+                        }
                     }
                     None
                 }
                 b';' => {
                     self.separators = self.separators.saturating_add(1);
-                    self.after_separator = true;
                     None
                 }
                 _ => {
@@ -1042,7 +1066,7 @@ impl VtInput {
         }
     }
 
-    fn navigation_key(&self, byte: u8) -> Option<Key> {
+    fn navigation_key(&mut self, byte: u8) -> Option<Key> {
         let shifted = self.modifier == 2;
         match byte {
             b'A' => Some(if shifted { Key::ShiftUp } else { Key::Up }),
@@ -1051,7 +1075,16 @@ impl VtInput {
             b'D' => Some(if shifted { Key::ShiftLeft } else { Key::Left }),
             b'H' => Some(if shifted { Key::ShiftHome } else { Key::Home }),
             b'F' => Some(if shifted { Key::ShiftEnd } else { Key::End }),
-            b't' if self.parameter == 8 && self.separators >= 2 => Some(Key::Resize),
+            b't' if self.parameter == 8 && self.separators >= 2 => {
+                let rows = self.modifier as usize;
+                let columns = self.third_parameter as usize;
+                if rows == 0 || columns == 0 {
+                    None
+                } else {
+                    self.pending_resize = Some((columns, rows));
+                    Some(Key::Resize)
+                }
+            }
             b'~' => match self.parameter {
                 1 | 7 => Some(if shifted { Key::ShiftHome } else { Key::Home }),
                 3 => Some(Key::Delete),
@@ -1765,6 +1798,7 @@ impl KernelExecutor {
         .map_err(|_| Status::INVALID_ARGUMENT)?;
 
         crate::print!("\x1b[?1049h\x1b[2J\x1b[H");
+        request_terminal_size();
         let result = self.run_edit_session(&mut editor, command, keyboard, usb_keyboard, acpi);
         restore_editor_terminal();
         match result {
@@ -1812,6 +1846,9 @@ impl KernelExecutor {
             let Some(key) = key else {
                 continue
             };
+            if let Some((columns, rows)) = input.take_resize() {
+                crate::console::set_remote_terminal_size(columns, rows)
+            }
 
             if let Some(exit) = confirming_discard {
                 match key {

@@ -559,7 +559,9 @@ impl Vm {
 
         let mut started = std::time::Instant::now();
         loop {
-            let input = terminal.poll().map_err(|_| VmError::IoError)?;
+            let input = terminal
+                .poll_for_mode(input_mode)
+                .map_err(|_| VmError::IoError)?;
             for byte in input.bytes {
                 match input_mode {
                     TerminalInputMode::Serial => self.queue_serial_input(&[byte]),

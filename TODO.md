@@ -122,7 +122,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Support joining lines, deleting selected text, copying/cutting/pasting selected text, and selecting text with Shift plus cursor movement.
   - [x] Add a small EDT-inspired command mode and document the keymap for save-and-exit, exit-without-saving, cancel, navigation, and mode switching.
   - [x] Reserve the last terminal row for a status line and render the editor into all remaining rows using the live terminal width and height.
-  - [ ] Handle terminal resize events while preserving the buffer, cursor, selection, dirty state, and scroll position where possible. The kernel rereads terminal dimensions on redraw; remote resize wiring remains.
+  - [x] Handle terminal resize events while preserving the buffer, cursor, selection, dirty state, and scroll position where possible. The kernel rereads terminal dimensions on redraw, including remote terminal size updates.
   - [x] Render the status line with file name, byte size, line count, SynFS version, cursor line/column, current mode, selection state, and a modified marker.
   - [x] Render cursor visibility, selection highlighting, long-line scrolling, tabs, non-printing characters, and safe redraws through the existing VT100/VT420 terminal path.
   - [x] Define save behavior for empty files, trailing newlines, newline encoding, invalid UTF-8, maximum file size, quota exhaustion, and write failures.

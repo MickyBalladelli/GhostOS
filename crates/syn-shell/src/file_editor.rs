@@ -5,7 +5,6 @@ use crate::{Error, Text};
 pub const MAX_EDITOR_BYTES: usize = 16 * 1024;
 pub const MAX_EDITOR_NAME_BYTES: usize = 192;
 pub const MAX_EDITOR_STATUS_BYTES: usize = 512;
-const EDITOR_BANNER_ROWS: usize = 1;
 const EDITOR_FOOTER_ROWS: usize = 1;
 
 use super::editor::Key;
@@ -96,13 +95,17 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         &self.clipboard[..self.clipboard_len]
     }
 
+    pub const fn scroll_position(&self) -> (usize, usize) {
+        (self.scroll_row, self.scroll_column)
+    }
+
     pub fn resize(&mut self, columns: usize, rows: usize) -> Result<(), Error> {
-        if columns == 0 || rows < EDITOR_BANNER_ROWS + EDITOR_FOOTER_ROWS + 1 {
+        if columns == 0 || rows < EDITOR_FOOTER_ROWS + 1 {
             return Err(Error::InvalidValue)
         }
         self.ensure_visible(
             columns,
-            rows - EDITOR_BANNER_ROWS - EDITOR_FOOTER_ROWS,
+            rows - EDITOR_FOOTER_ROWS,
         );
         Ok(())
     }
@@ -275,11 +278,8 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         columns: usize,
         rows: usize,
     ) -> Result<Text<OUTPUT>, Error> {
-        if columns == 0 || rows < EDITOR_BANNER_ROWS + EDITOR_FOOTER_ROWS + 1 {
-            return Err(Error::InvalidValue)
-        }
-        let content_rows = rows - EDITOR_BANNER_ROWS - EDITOR_FOOTER_ROWS;
-        self.ensure_visible(columns, content_rows);
+        self.resize(columns, rows)?;
+        let content_rows = rows - EDITOR_FOOTER_ROWS;
 
         let mut output = Text::empty();
         output.push_str("\x1b[?25l")?;
@@ -288,14 +288,10 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
                 .map_err(|_| Error::Capacity)?;
             self.render_line(&mut output, self.scroll_row + row, columns)?;
         }
-        let options = self.options_line()?;
         let status = self.status_line()?;
-        write!(output, "\x1b[{};1H\x1b[7m", rows - 1)
+        write!(output, "\x1b[{};1H\x1b[7m", rows)
             .map_err(|_| Error::Capacity)?;
         write_status_line(&mut output, columns, &status)?;
-        write!(output, "\x1b[{};1H\x1b[2K\x1b[0m", rows)
-            .map_err(|_| Error::Capacity)?;
-        write_status_line(&mut output, columns, &options)?;
         let cursor_row = self.cursor_line().saturating_sub(self.scroll_row).min(content_rows - 1);
         let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
         write!(
@@ -315,18 +311,15 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         columns: usize,
         rows: usize,
     ) -> Result<Text<OUTPUT>, Error> {
-        if columns == 0 || rows < EDITOR_BANNER_ROWS + EDITOR_FOOTER_ROWS + 1 {
-            return Err(Error::InvalidValue)
-        }
-        let content_rows = rows - EDITOR_BANNER_ROWS - EDITOR_FOOTER_ROWS;
         let previous_scroll = (self.scroll_row, self.scroll_column);
-        self.ensure_visible(columns, content_rows);
+        self.resize(columns, rows)?;
+        let content_rows = rows - EDITOR_FOOTER_ROWS;
         if previous_scroll != (self.scroll_row, self.scroll_column) {
             return self.render(columns, rows)
         }
 
         let mut output = Text::empty();
-        write!(output, "\x1b[{};1H\x1b[7m", rows - 1)
+        write!(output, "\x1b[{};1H\x1b[7m", rows)
             .map_err(|_| Error::Capacity)?;
         let status = self.status_line()?;
         write_status_line(&mut output, columns, &status)?;
@@ -349,12 +342,9 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         columns: usize,
         rows: usize,
     ) -> Result<Text<OUTPUT>, Error> {
-        if columns == 0 || rows < EDITOR_BANNER_ROWS + EDITOR_FOOTER_ROWS + 1 {
-            return Err(Error::InvalidValue)
-        }
-        let content_rows = rows - EDITOR_BANNER_ROWS - EDITOR_FOOTER_ROWS;
         let previous_scroll = (self.scroll_row, self.scroll_column);
-        self.ensure_visible(columns, content_rows);
+        self.resize(columns, rows)?;
+        let content_rows = rows - EDITOR_FOOTER_ROWS;
         if previous_scroll != (self.scroll_row, self.scroll_column) {
             return self.render(columns, rows)
         }
@@ -370,7 +360,7 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         self.render_line(&mut output, self.scroll_row + screen_row, columns)?;
         output.push_str("\x1b[K\x1b[0m")?;
         let status = self.status_line()?;
-        write!(output, "\x1b[{};1H\x1b[7m", rows - 1)
+        write!(output, "\x1b[{};1H\x1b[7m", rows)
             .map_err(|_| Error::Capacity)?;
         write_status_line(&mut output, columns, &status)?;
         let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
@@ -703,18 +693,6 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         Ok(status)
     }
 
-    fn options_line(&self) -> Result<Text<MAX_EDITOR_STATUS_BYTES>, Error> {
-        let mut options = Text::<MAX_EDITOR_STATUS_BYTES>::empty();
-        options.push_str(match self.mode {
-            EditorMode::Insert => {
-                " INSERT: type  ESC command  Ctrl-S save  Ctrl-Z save+exit  Ctrl-X discard+exit"
-            }
-            EditorMode::Command => {
-                " COMMAND: I insert  S save  E save+exit  Q quit  Y copy  X cut  P paste"
-            }
-        })?;
-        Ok(options)
-    }
 }
 
 impl<const CAPACITY: usize> Default for FileEditor<CAPACITY> {
@@ -914,10 +892,11 @@ mod tests {
 
         let rendered = editor.render::<4096>(80, 4).unwrap();
         assert!(rendered.as_str().contains("EDIT view  SIZE:"));
-        assert!(rendered.as_str().contains("COMMAND: I insert  S save  E save+exit  Q quit"));
         assert!(rendered.as_str().contains("VERSION:2"));
         assert!(rendered.as_str().contains("SELECTED"));
         assert!(rendered.as_str().contains("\x1b[7m"));
+        assert!(rendered.as_str().contains("\x1b[4;1H\x1b[7m"));
+        assert!(!rendered.as_str().contains("\x1b[3;1H\x1b[7m"));
 
         let mut long_line = FileEditor::<32>::new("/data/long", 1, b"0123456789").unwrap();
         long_line.handle(Key::End).unwrap();
@@ -925,5 +904,34 @@ mod tests {
         assert!(rendered.as_str().contains("789"));
         assert_eq!(FileEditor::<8>::new("/data/view", 1, b"x").unwrap().resize(0, 3), Err(crate::Error::InvalidValue));
         assert_eq!(long_line.resize(4, 1), Err(crate::Error::InvalidValue));
+    }
+
+    #[test]
+    fn resize_preserves_buffer_cursor_selection_dirty_and_scroll() {
+        let mut editor = FileEditor::<128>::new(
+            "/data/resize",
+            3,
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        )
+        .unwrap();
+        editor.handle(Key::End).unwrap();
+        editor.handle(Key::Character('!')).unwrap();
+        editor.handle(Key::ShiftLeft).unwrap();
+        let bytes = editor.bytes().to_vec();
+        let cursor = editor.cursor();
+        let selection = editor.selected();
+        let scroll = {
+            editor.render::<4096>(10, 4).unwrap();
+            editor.scroll_position()
+        };
+
+        assert!(editor.is_dirty());
+        editor.resize(20, 8).unwrap();
+
+        assert_eq!(editor.bytes(), bytes.as_slice());
+        assert_eq!(editor.cursor(), cursor);
+        assert_eq!(editor.selected(), selection);
+        assert!(editor.is_dirty());
+        assert_eq!(editor.scroll_position(), scroll);
     }
 }
