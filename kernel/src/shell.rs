@@ -1998,7 +1998,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, STOP JOB, SET PROCESS, DIRECTORY, CREATE, DELETE, RMDIR, TYPE, EDIT, EDT, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
+            "CREATE, DELETE, DIRECTORY, EDIT, EDT, HELP, LINK, LS, MKDIR, MONITOR, PWD, REBOOT, RMDIR, SET DEFAULT, SET PROCESS, SHOW DEFAULT, SHOW DSM, SHOW LINKS, SHOW MEMORY, SHOW PROCESSES, SHOW SYSTEM, SHUTDOWN, STOP JOB, TOP CPU, TYPE; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -2012,22 +2012,22 @@ impl KernelExecutor {
         crate::println!("  EDIT               Full-screen file editor (EDT alias)");
         crate::println!("  HELP               Show this help");
         crate::println!("  LINK               Create a hard link");
-        crate::println!("  SHOW LINKS         List hard-link paths");
         crate::println!("  LS                 List all directory entries (Ctrl-C stops)");
         crate::println!("  MKDIR              Create a directory");
-        crate::println!("  RMDIR              Remove an empty directory (RD alias)");
         crate::println!("  MONITOR            Cycle monitor view");
         crate::println!("  PWD                Show the default directory");
         crate::println!("  REBOOT             Restart SynOS");
+        crate::println!("  RMDIR              Remove an empty directory (RD alias)");
         crate::println!("  SET DEFAULT        Change the default directory");
+        crate::println!("  SET PROCESS <id> /PRIORITY=<1-255>  Set process priority");
         crate::println!("  SHOW DEFAULT       Show the default directory");
         crate::println!("  SHOW DSM           Show DSM lock activity");
+        crate::println!("  SHOW LINKS         List hard-link paths");
         crate::println!("  SHOW MEMORY        Show memory usage");
         crate::println!("  SHOW PROCESSES     List running threads");
         crate::println!("  SHOW SYSTEM        Show system status");
         crate::println!("  SHUTDOWN           Power off SynOS");
         crate::println!("  STOP JOB <id>      Stop a process with control capability");
-        crate::println!("  SET PROCESS <id> /PRIORITY=<1-255>  Set process priority");
         crate::println!("  TOP CPU            Show CPU activity");
         crate::println!("  TYPE               Show file contents");
         crate::println!();
