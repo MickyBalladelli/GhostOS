@@ -12,6 +12,7 @@ use crate::{
 pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_DIRECTORY_PAGE_ENTRIES: usize = 32;
 pub const MAX_LINK_PAGE_ENTRIES: usize = 16;
+pub const MAX_PATH_COMPLETION_MATCHES: usize = 2;
 pub const MAX_VISIBLE_DIRECTORY_ENTRIES: usize = 6;
 pub const MAX_TYPE_OUTPUT_BYTES: usize = 4096;
 
@@ -135,6 +136,48 @@ pub struct DirectoryPage {
     pub next: Option<u32>,
 }
 
+pub struct PathCompletionPage {
+    entries: [Option<Path>; MAX_PATH_COMPLETION_MATCHES],
+    count: usize,
+}
+
+impl PathCompletionPage {
+    pub const fn new() -> Self {
+        Self {
+            entries: [None; MAX_PATH_COMPLETION_MATCHES],
+            count: 0,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries = [None; MAX_PATH_COMPLETION_MATCHES];
+        self.count = 0
+    }
+
+    pub fn push(&mut self, path: Path) -> Result<(), Status> {
+        if self
+            .entries
+            .iter()
+            .flatten()
+            .any(|entry| entry.as_str().eq_ignore_ascii_case(path.as_str()))
+        {
+            return Ok(())
+        }
+        let slot = self.entries.get_mut(self.count).ok_or(Status::NO_SPACE)?;
+        *slot = Some(path);
+        self.count += 1;
+        Ok(())
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = Path> + '_ {
+        self.entries[..self.count].iter().flatten().copied()
+    }
+
+    pub const fn len(&self) -> usize {
+        self.count
+    }
+}
+
 pub struct LinkPage {
     entries: [Option<Path>; MAX_LINK_PAGE_ENTRIES],
     count: usize,
@@ -202,6 +245,14 @@ pub trait FileOutput {
 
 pub trait FilesystemSource {
     fn directory_exists(&mut self, path: &str) -> Result<bool, Status>;
+    fn complete(
+        &mut self,
+        _directory: &str,
+        _prefix: &str,
+        _output: &mut PathCompletionPage,
+    ) -> Result<(), Status> {
+        Err(Status::NOT_FOUND)
+    }
     fn list(
         &mut self,
         path: &str,

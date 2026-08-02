@@ -4,7 +4,7 @@ use syn_shell::{
     filesystem::{
         DeleteMetadata, DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType,
         FileMetadata, FileOutput, FilesystemExecutor, FilesystemSource, LinkPage,
-        Path as ShellPath,
+        Path as ShellPath, PathCompletionPage,
     },
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId, Value},
@@ -475,47 +475,23 @@ fn complete_file(
         _ => return Ok(false),
     };
 
-    let mut matches: [Option<ShellPath>; 2] = [None; 2];
-    let mut match_count = 0;
-    let mut continuation = None;
-    loop {
-        let mut page = DirectoryPage::new();
-        if executor
-            .filesystem
-            .source_mut()
-            .list(directory.as_str(), continuation, &mut page)
-            .is_err()
-        {
-            return Ok(false)
-        }
-        for entry in page.entries() {
-            if !starts_with_ignore_ascii_case(entry.name.as_str(), leaf) {
-                continue
-            }
-            if matches[..match_count]
-                .iter()
-                .flatten()
-                .any(|name| name.as_str().eq_ignore_ascii_case(entry.name.as_str()))
-            {
-                continue
-            }
-            if match_count < matches.len() {
-                matches[match_count] = Some(entry.name);
-                match_count += 1;
-            }
-        }
-        if match_count == matches.len() || page.next.is_none() {
-            break
-        }
-        continuation = page.next;
+    let mut matches = PathCompletionPage::new();
+    if executor
+        .filesystem
+        .source_mut()
+        .complete(directory.as_str(), leaf, &mut matches)
+        .is_err()
+    {
+        return Ok(false)
     }
+    let match_count = matches.len();
 
     if match_count == 0 {
         return Ok(false)
     }
 
     if match_count == 1 {
-        let Some(name) = matches[0] else {
+        let Some(name) = matches.entries().next() else {
             return Ok(false)
         };
         let mut replacement = Text::<MAX_LINE_BYTES>::empty();
@@ -525,7 +501,7 @@ fn complete_file(
         redraw(editor);
     } else {
         crate::println!();
-        for name in matches[..match_count].iter().flatten() {
+        for name in matches.entries() {
             let mut suggestion = Text::<MAX_LINE_BYTES>::empty();
             suggestion.push_str(candidate_prefix)?;
             suggestion.push_str(name.as_str())?;
@@ -938,6 +914,32 @@ impl FilesystemSource for KernelFilesystem {
             || self
                 .find(path)
                 .is_some_and(|file| file.file_type == EntryType::Directory))
+    }
+
+    fn complete(
+        &mut self,
+        directory: &str,
+        prefix: &str,
+        output: &mut PathCompletionPage,
+    ) -> Result<(), Status> {
+        if !self.directory_exists(directory)? {
+            return Err(Status::NOT_FOUND)
+        }
+        output.clear();
+        for file in self.files.iter().flatten() {
+            if file.deleted || Self::parent(file.path.as_str()) != directory {
+                continue
+            }
+            let name = file.path.as_str().rsplit('/').next().unwrap_or("");
+            if !starts_with_ignore_ascii_case(name, prefix) {
+                continue
+            }
+            output.push(ShellPath::new(name)?)?;
+            if output.len() == syn_shell::filesystem::MAX_PATH_COMPLETION_MATCHES {
+                break
+            }
+        }
+        Ok(())
     }
 
     fn list(
