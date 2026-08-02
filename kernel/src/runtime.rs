@@ -417,7 +417,8 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsMkdir
             | Operation::SynFsRmdir
             | Operation::SynFsLink
-            | Operation::SynFsLinks => self.dispatch_filesystem(caller, operation, request),
+            | Operation::SynFsLinks
+            | Operation::SynFsDelete => self.dispatch_filesystem(caller, operation, request),
             _ => Err(RuntimeDispatchError::InvalidRequest),
         }
     }
@@ -446,6 +447,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             Operation::SynFsRmdir => FsdOperation::Rmdir,
             Operation::SynFsLink => FsdOperation::Link,
             Operation::SynFsLinks => FsdOperation::Links,
+            Operation::SynFsDelete => FsdOperation::Delete,
             _ => return Err(RuntimeDispatchError::InvalidRequest),
         };
 
@@ -454,7 +456,8 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsList
             | Operation::SynFsMkdir
             | Operation::SynFsRmdir
-            | Operation::SynFsLinks => {
+            | Operation::SynFsLinks
+            | Operation::SynFsDelete => {
                 if request.capability != 0 {
                     return Err(RuntimeDispatchError::InvalidRequest)
                 }
@@ -484,6 +487,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             || operation == Operation::SynFsRmdir
             || operation == Operation::SynFsLink
             || operation == Operation::SynFsLinks
+            || operation == Operation::SynFsDelete
         {
             if request.arguments[4] != 0 || request.arguments[5] != 0 {
                 return Err(RuntimeDispatchError::InvalidRequest)
@@ -534,13 +538,14 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         let needs_buffer = matches!(
             operation,
             Operation::SynFsOpen
-                | Operation::SynFsRead
-                | Operation::SynFsWrite
-                | Operation::SynFsList
-                | Operation::SynFsMkdir
-                | Operation::SynFsRmdir
-                | Operation::SynFsLink
-                | Operation::SynFsLinks
+            | Operation::SynFsRead
+            | Operation::SynFsWrite
+            | Operation::SynFsList
+            | Operation::SynFsMkdir
+            | Operation::SynFsRmdir
+            | Operation::SynFsLink
+            | Operation::SynFsLinks
+            | Operation::SynFsDelete
         );
         let has_descriptor = request.arguments[0] != 0
             || request.arguments[1] != 0
@@ -631,6 +636,15 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsMkdir
             | Operation::SynFsRmdir
             | Operation::SynFsLink => {}
+            Operation::SynFsDelete => {
+                if response.values[0] > u64::from(u32::MAX)
+                    || response.values[1] > 3
+                    || response.values[2] > u64::from(u32::MAX)
+                    || response.values[3] > 1
+                {
+                    return Err(RuntimeDispatchError::TransportFailure)
+                }
+            }
             _ => return Err(RuntimeDispatchError::InvalidRequest),
         }
         Ok(response)

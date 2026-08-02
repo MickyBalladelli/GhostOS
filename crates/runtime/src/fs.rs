@@ -40,6 +40,14 @@ pub struct LinkMetadata {
     pub link_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeleteMetadata {
+    pub version: u32,
+    pub file_type: u8,
+    pub remaining_link_count: u32,
+    pub shared_data_reachable: bool,
+}
+
 /// Bytes returned by `list_directory` use the bounded SynFS directory wire
 /// format. The caller owns the shared buffer and can decode each record while
 /// following the returned continuation offset.
@@ -139,6 +147,23 @@ impl<S: SystemCall> Runtime<S> {
     pub fn remove_directory(&self, path: SharedBuffer) -> Result<(), Error> {
         self.execute(Request::new(Operation::SynFsRmdir).with_buffer(path))?;
         Ok(())
+    }
+
+    pub fn delete(&self, path: SharedBuffer) -> Result<DeleteMetadata, Error> {
+        let response = self.execute(Request::new(Operation::SynFsDelete).with_buffer(path))?;
+        let file_type = u8::try_from(response.values[1]).map_err(|_| Error::InvalidResponse)?;
+        if !matches!(file_type, 1..=3)
+            || response.values[3] > 1
+            || response.values[2] > u64::from(u32::MAX)
+        {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(DeleteMetadata {
+            version: u32::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)?,
+            file_type,
+            remaining_link_count: response.values[2] as u32,
+            shared_data_reachable: response.values[3] != 0,
+        })
     }
 
     pub fn link(&self, file: File, new_path: SharedBuffer) -> Result<(), Error> {

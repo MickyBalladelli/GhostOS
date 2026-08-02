@@ -2,8 +2,9 @@ use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
     filesystem::{
-        DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType, FileMetadata, FileOutput,
-        FilesystemExecutor, FilesystemSource, LinkPage, Path as ShellPath,
+        DeleteMetadata, DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType,
+        FileMetadata, FileOutput, FilesystemExecutor, FilesystemSource, LinkPage,
+        Path as ShellPath,
     },
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId, Value},
@@ -26,7 +27,7 @@ const SHOW_PROCESSES_ROUTE: u16 = 6;
 const TOP_CPU_ROUTE: u16 = 7;
 const SHOW_MEMORY_ROUTE: u16 = 8;
 const SHOW_DSM_ROUTE: u16 = 9;
-const COMMAND_CAPACITY: usize = 20;
+const COMMAND_CAPACITY: usize = 24;
 const HISTORY_CAPACITY: usize = 8;
 
 pub fn run(
@@ -589,6 +590,7 @@ struct KernelFile {
     link_count: u32,
     object_id: u64,
     is_link: bool,
+    deleted: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -620,7 +622,7 @@ impl KernelFilesystem {
         self.files
             .iter()
             .flatten()
-            .filter(|file| file.path.as_str() == path)
+            .filter(|file| file.path.as_str() == path && !file.deleted)
             .max_by_key(|file| file.version)
             .copied()
     }
@@ -629,7 +631,7 @@ impl KernelFilesystem {
         self.files
             .iter()
             .flatten()
-            .find(|file| file.path.as_str() == path && file.version == version)
+            .find(|file| file.path.as_str() == path && file.version == version && !file.deleted)
             .copied()
     }
 
@@ -668,6 +670,7 @@ impl KernelFilesystem {
             link_count: 1,
             object_id,
             is_link: false,
+            deleted: false,
         };
         self.next_object_id = self.next_object_id.saturating_add(1);
         *slot = Some(file);
@@ -749,6 +752,9 @@ impl FilesystemSource for KernelFilesystem {
             let Some(file) = slot else {
                 continue
             };
+            if file.deleted {
+                continue
+            }
             let current = index;
             index += 1;
             if current < start {
@@ -812,12 +818,58 @@ impl FilesystemSource for KernelFilesystem {
         if !self.directory_exists(parent)? {
             return Err(Status::NOT_FOUND)
         }
-        let version = match self.find(path) {
-            None => 1,
-            Some(file) => file.version.checked_add(1).ok_or(Status::CORRUPT)?,
-        };
+        let version = self
+            .files
+            .iter()
+            .flatten()
+            .filter(|file| file.path.as_str() == path)
+            .map(|file| file.version)
+            .max()
+            .map_or(Ok(1), |version| {
+                version.checked_add(1).ok_or(Status::CORRUPT)
+            })?;
         self.insert_version(path, EntryType::File, version)
             .map(|file| self.metadata(file))
+    }
+
+    fn delete(&mut self, path: &str) -> Result<DeleteMetadata, Status> {
+        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
+        if path == "/" {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let selected = self
+            .files
+            .iter()
+            .flatten()
+            .filter(|file| {
+                file.path.as_str() == path
+                    && !file.deleted
+                    && version.map_or(true, |version| version == 0 || file.version == version)
+            })
+            .max_by_key(|file| file.version)
+            .copied()
+            .ok_or(Status::NOT_FOUND)?;
+        if selected.file_type == EntryType::Directory {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let shared_before = self.link_count(selected.object_id);
+        let slot = self
+            .files
+            .iter_mut()
+            .find(|file| {
+                file.is_some_and(|file| {
+                    file.path == selected.path && file.version == selected.version
+                })
+            })
+            .ok_or(Status::CORRUPT)?;
+        slot.as_mut().ok_or(Status::CORRUPT)?.deleted = true;
+        let mut deleted = selected;
+        deleted.is_link |= shared_before > 1;
+        deleted.link_count = self.link_count(selected.object_id);
+        Ok(DeleteMetadata {
+            file: self.metadata(deleted),
+            shared_data_reachable: deleted.link_count != 0,
+        })
     }
 
     fn link(&mut self, source: &str, target: &str) -> Result<FileMetadata, Status> {
@@ -866,6 +918,9 @@ impl FilesystemSource for KernelFilesystem {
         .ok_or(Status::NOT_FOUND)?;
         output.clear();
         for file in self.files.iter().flatten() {
+            if file.deleted {
+                continue
+            }
             if file.object_id != selected.object_id
                 || !self
                     .find(file.path.as_str())
@@ -1067,7 +1122,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, TYPE, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, DELETE, TYPE, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -1076,6 +1131,7 @@ impl KernelExecutor {
         crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
         crate::println!("COMMAND              DESCRIPTION");
         crate::println!("  CREATE             Create a file");
+        crate::println!("  DELETE             Delete a file or link");
         crate::println!("  DIRECTORY          List a directory");
         crate::println!("  HELP               Show this help");
         crate::println!("  LINK               Create a hard link");

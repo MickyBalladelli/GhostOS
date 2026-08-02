@@ -355,6 +355,11 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name = Text::new("LINK")?;
         } else if command_name.as_str().eq_ignore_ascii_case("LINKS") {
             command_name = Text::new("SHOW-LINKS")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("DEL")
+            || command_name.as_str().eq_ignore_ascii_case("ERASE")
+            || command_name.as_str().eq_ignore_ascii_case("RM")
+        {
+            command_name = Text::new("DELETE")?;
         }
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];

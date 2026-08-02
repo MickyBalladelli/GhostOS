@@ -23,6 +23,7 @@ pub const SHOW_DEFAULT_ROUTE: u16 = 36;
 pub const MKDIR_ROUTE: u16 = 37;
 pub const LINK_ROUTE: u16 = 38;
 pub const SHOW_LINKS_ROUTE: u16 = 39;
+pub const DELETE_ROUTE: u16 = 40;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Path {
@@ -110,6 +111,12 @@ pub struct FileMetadata {
     pub version: u32,
     pub link_count: u32,
     pub is_link: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeleteMetadata {
+    pub file: FileMetadata,
+    pub shared_data_reachable: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -203,6 +210,9 @@ pub trait FilesystemSource {
     ) -> Result<(), Status>;
     fn create_directory(&mut self, path: &str, recursive: bool) -> Result<FileMetadata, Status>;
     fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status>;
+    fn delete(&mut self, _path: &str) -> Result<DeleteMetadata, Status> {
+        Err(Status::NOT_FOUND)
+    }
     fn link(&mut self, _source: &str, _target: &str) -> Result<FileMetadata, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -416,6 +426,10 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-LINKS", &[links_path]).map_err(|_| Error::InvalidValue)?,
         route(SHOW_LINKS_ROUTE),
     )?;
+    registry.register(
+        CommandSpec::new("DELETE", &[required_path]).map_err(|_| Error::InvalidValue)?,
+        route(DELETE_ROUTE),
+    )?;
     Ok(())
 }
 
@@ -596,6 +610,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             SHOW_DEFAULT_ROUTE => self.default_output(),
             LINK_ROUTE => self.link(command),
             SHOW_LINKS_ROUTE => self.show_links(command),
+            DELETE_ROUTE => self.delete(command),
             _ => Err(Status::NOT_FOUND),
         }
     }
@@ -673,6 +688,22 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             &mut output,
             "truncated",
             OutputValue::Boolean(contents.truncated || visible.len() != contents.len),
+        )?;
+        Ok(output)
+    }
+
+    fn delete(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let path_value = text(command.get("PATH")).ok_or(Status::INVALID_ARGUMENT)?;
+        let path = self.session.resolve(Some(path_value.as_str()))?;
+        if path.as_str() == "/" {
+            return Err(Status::INVALID_ARGUMENT);
+        }
+        let deleted = self.source.delete(path.as_str())?;
+        let mut output = metadata_output("deleted", deleted.file)?;
+        insert(
+            &mut output,
+            "shared-data-reachable",
+            OutputValue::Boolean(deleted.shared_data_reachable),
         )?;
         Ok(output)
     }

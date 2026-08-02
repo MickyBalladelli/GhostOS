@@ -67,7 +67,7 @@ fn link_keeps_data_alive_through_write_delete_and_rename() {
             .metadata(process, alias.capability)
             .unwrap()
             .link_count,
-        1
+        2
     );
 
     daemon
@@ -88,10 +88,10 @@ fn link_keeps_data_alive_through_write_delete_and_rename() {
     let (_, bytes) = daemon
         .list_links(process, authority, "/data/renamed", &mut links)
         .expect("list remaining link");
-    assert_eq!(&links[..bytes], b"/data/renamed\n");
+    assert_eq!(&links[..bytes], b"/data/renamed\n/data/source\n");
     assert_eq!(
-        daemon.filesystem().lookup("/data/source"),
-        Err(synos_synfs::Error::NotFound)
+        daemon.filesystem().lookup("/data/source").unwrap().version,
+        1
     );
     assert_eq!(
         daemon
@@ -99,7 +99,7 @@ fn link_keeps_data_alive_through_write_delete_and_rename() {
             .lookup("/data/renamed")
             .unwrap()
             .link_count,
-        1
+        2
     );
 }
 

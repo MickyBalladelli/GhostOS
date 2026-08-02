@@ -194,16 +194,17 @@ fn persists_link_lifecycle_and_shared_data() {
     drop(disk);
 
     let filesystem = read_state(image_path.path());
-    assert_eq!(filesystem.lookup("/data/source"), Err(Error::NotFound));
+    assert_eq!(filesystem.lookup("/data/source").unwrap().version, 1);
     let mut contents = [0; 12];
     filesystem
         .read("/data/renamed", &mut contents)
         .expect("read recovered link");
     assert_eq!(&contents, b"old contents");
     let mut links = [synos_synfs::LinkEntry::EMPTY; 2];
-    assert_eq!(filesystem.list_links("/data/renamed", &mut links), Ok(1));
+    assert_eq!(filesystem.list_links("/data/renamed", &mut links), Ok(2));
     assert_eq!(links[0].path.as_str(), "/data/renamed");
-    assert_eq!(filesystem.lookup("/data/renamed").unwrap().link_count, 1);
+    assert_eq!(links[1].path.as_str(), "/data/source");
+    assert_eq!(filesystem.lookup("/data/renamed").unwrap().link_count, 2);
     filesystem.check_consistency().expect("consistent linked image");
 }
 

@@ -18,3 +18,9 @@ Directories have typed metadata and immediate-child listing. `Mkdir`, `Rmdir`,
 and `Link` use the same bounded shared-buffer protocol. SynFS stores hard-link
 metadata, quotas, free-space counters, and per-volume limits in the persistent
 volume format.
+
+`Delete` accepts a path with an optional SynFS version selector. `DELETE path`
+and `DELETE path;0` remove the latest live version; `DELETE path;N` removes
+only version `N`. The response reports the deleted version, file type,
+remaining link count, and whether the shared data is still reachable. A hard
+link deletion removes only that directory entry.

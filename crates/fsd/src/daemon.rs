@@ -115,6 +115,12 @@ pub struct FileInfo {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeleteInfo {
+    pub file: FileInfo,
+    pub shared_data_reachable: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SnapshotInfo {
     pub capability: Capability,
     pub generation: u64,
@@ -750,14 +756,61 @@ impl<
         &mut self,
         process: ProcessId,
         capability: Capability,
-    ) -> Result<(), DaemonError> {
+    ) -> Result<DeleteInfo, DaemonError> {
         let index = self.file_index(process, capability, FileRights::DELETE)?;
         if self.open_files[index].read_only_mount {
             return Err(DaemonError::ReadOnly);
         }
         let path = self.open_files[index].path;
-        self.filesystem.delete(path.as_str())?;
-        Ok(())
+        let deleted = self.filesystem.delete(path.as_str())?;
+        Ok(DeleteInfo {
+            file: FileInfo {
+                capability,
+                file: deleted.file,
+                version: deleted.version,
+                size: deleted.size,
+                checksum: deleted.checksum,
+                created_at: deleted.created_at,
+                rights: self.open_files[index].rights,
+                file_type: deleted.file_type,
+                link_count: deleted.link_count,
+                mode: deleted.mode,
+            },
+            shared_data_reachable: deleted.link_count != 0,
+        })
+    }
+
+    pub fn delete_path(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        path: &str,
+    ) -> Result<DeleteInfo, DaemonError> {
+        self.authorize_process(
+            process,
+            authority,
+            FileRights::DELETE.union(FileRights::WRITE).union(FileRights::ADMIN),
+        )?;
+        let path = Name::from_str(path)?;
+        if self.path_is_read_only(path.as_str())? {
+            return Err(DaemonError::ReadOnly);
+        }
+        let deleted = self.filesystem.delete(path.as_str())?;
+        Ok(DeleteInfo {
+            file: FileInfo {
+                capability: authority,
+                file: deleted.file,
+                version: deleted.version,
+                size: deleted.size,
+                checksum: deleted.checksum,
+                created_at: deleted.created_at,
+                rights: FileRights::DELETE,
+                file_type: deleted.file_type,
+                link_count: deleted.link_count,
+                mode: deleted.mode,
+            },
+            shared_data_reachable: deleted.link_count != 0,
+        })
     }
 
     pub fn create_directory(
@@ -1129,11 +1182,17 @@ impl<
                     .with_value(3, info.created_at))
             }
             Operation::Delete => {
-                self.delete(
+                let path = input_name(buffer)?;
+                let deleted = self.delete_path(
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    path.as_str(),
                 )?;
-                Ok(Response::success())
+                Ok(Response::success()
+                    .with_value(0, deleted.file.version as u64)
+                    .with_value(1, deleted.file.file_type as u64)
+                    .with_value(2, deleted.file.link_count as u64)
+                    .with_value(3, deleted.shared_data_reachable as u64))
             }
             Operation::Rename => {
                 let input = input_buffer(buffer)?;
@@ -1624,6 +1683,7 @@ fn validate_buffer(
         Operation::Open
             | Operation::Read
             | Operation::Write
+            | Operation::Delete
             | Operation::Rename
             | Operation::List
             | Operation::SnapshotList

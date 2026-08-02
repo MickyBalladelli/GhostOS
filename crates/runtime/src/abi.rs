@@ -24,6 +24,7 @@ pub enum Operation {
     SynFsLink = 19,
     SynFsList = 20,
     SynFsLinks = 21,
+    SynFsDelete = 22,
 }
 
 impl Operation {
@@ -50,6 +51,7 @@ impl Operation {
             19 => Some(Self::SynFsLink),
             20 => Some(Self::SynFsList),
             21 => Some(Self::SynFsLinks),
+            22 => Some(Self::SynFsDelete),
             _ => None,
         }
     }

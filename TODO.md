@@ -90,18 +90,18 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Return a file capability or metadata result that can be consumed by later commands.
 
 - [ ] **Delete a File or Link**
-  - [ ] Define `DELETE path[;version]` syntax, required arguments, aliases, and structured success output.
-  - [ ] Register a stable shell route and wire command parsing for absolute paths, relative paths, the active default directory, quoted paths, and invalid argument combinations.
-  - [ ] Resolve version selectors consistently with SynFS: no selector or `;0` deletes only the latest live version; an explicit `;N` deletes only version `N`.
-  - [ ] Reject the root path, directories, malformed selectors, missing paths, already-deleted versions, and versions that do not exist.
-  - [ ] Add the runtime filesystem API and ABI operation for path-based deletion, including bounded shared-buffer validation and response validation.
-  - [ ] Extend kernel IPC dispatch and the filesystem-daemon protocol so deletion carries the selected path/version and uses the caller's delete capability or authority safely.
-  - [ ] Enforce delete rights, parent-directory write/administration rights, capability ownership, namespace boundaries, and read-only mount restrictions.
-  - [ ] Implement exact-version deletion in SynFS without deleting other retained versions or breaking snapshot visibility, recovery, or copy-on-write commit ordering.
-  - [ ] Treat a hard link as a deletable directory entry: decrement shared link metadata, preserve file data and other names, and allow garbage collection only after the final live link is removed.
-  - [ ] Define behavior when deleting the latest version, an older version, the final link, or a link whose target has newer versions; keep link counts and lookup results consistent.
-  - [ ] Return deleted path, deleted version, file/link type, remaining link count, and whether shared data remains reachable.
-  - [ ] Map not-found, invalid-version, directory, access-denied, read-only, quota, stale-capability, and persistence failures to stable shell status messages.
+  - [x] Define `DELETE path[;version]` syntax, required arguments, aliases, and structured success output.
+  - [x] Register a stable shell route and wire command parsing for absolute paths, relative paths, the active default directory, quoted paths, and invalid argument combinations.
+  - [x] Resolve version selectors consistently with SynFS: no selector or `;0` deletes only the latest live version; an explicit `;N` deletes only version `N`.
+  - [x] Reject the root path, directories, malformed selectors, missing paths, already-deleted versions, and versions that do not exist.
+  - [x] Add the runtime filesystem API and ABI operation for path-based deletion, including bounded shared-buffer validation and response validation.
+  - [x] Extend kernel IPC dispatch and the filesystem-daemon protocol so deletion carries the selected path/version and uses the caller's delete capability or authority safely.
+  - [x] Enforce delete rights, parent-directory write/administration rights, capability ownership, namespace boundaries, and read-only mount restrictions.
+  - [x] Implement exact-version deletion in SynFS without deleting other retained versions or breaking snapshot visibility, recovery, or copy-on-write commit ordering.
+  - [x] Treat a hard link as a deletable directory entry: decrement shared link metadata, preserve file data and other names, and allow garbage collection only after the final live link is removed.
+  - [x] Define behavior when deleting the latest version, an older version, the final link, or a link whose target has newer versions; keep link counts and lookup results consistent.
+  - [x] Return deleted path, deleted version, file/link type, remaining link count, and whether shared data remains reachable.
+  - [x] Map not-found, invalid-version, directory, access-denied, read-only, quota, stale-capability, and persistence failures to stable shell status messages.
   - [ ] Add parser, shell-executor, runtime/ABI, kernel-dispatch, daemon, SynFS, link-lifecycle, snapshot, garbage-collection, persistence/recovery, and QEMU coverage.
   - [ ] Document examples for deleting the latest version, deleting an explicit version, deleting one link while retaining another, and deleting the final link.
 

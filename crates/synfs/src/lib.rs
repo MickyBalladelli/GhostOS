@@ -1114,7 +1114,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 return Err(Error::DirectoryNotEmpty);
             }
         }
-        self.tombstone_latest(file, directory)
+        self.tombstone_latest(directory)
     }
 
     pub fn link(&mut self, existing: &str, new_path: &str) -> Result<FileVersion, Error> {
@@ -1368,7 +1368,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 count = count.saturating_add(1);
             }
         }
-        Ok(count.max(1))
+        Ok(count)
     }
 
     fn require_parent_directory(&self, file: FileName) -> Result<(), Error> {
@@ -1396,27 +1396,12 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             .is_some_and(|record| record.file_type == FileType::Directory))
     }
 
-    fn tombstone_latest(&mut self, file: FileName, previous: FileRecord) -> Result<FileVersion, Error> {
-        let version = previous
-            .key
-            .version
-            .checked_add(1)
-            .ok_or(Error::VersionOverflow)?;
-        let record = FileRecord {
-            key: FileKey { file, version },
-            object_id: previous.object_id,
-            size: 0,
-            data: BlockId::NONE,
-            checksum: checksum(&[]),
-            created_at: self.generation.saturating_add(1),
-            deleted: true,
-            file_type: previous.file_type,
-            link_count: previous.link_count.saturating_sub(1),
-            mode: previous.mode,
-        };
-        self.root = self.insert(self.root, record)?;
-        self.generation = record.created_at;
-        Ok(record.into())
+    fn tombstone_latest(&mut self, previous: FileRecord) -> Result<FileVersion, Error> {
+        self.root = self.tombstone(self.root, previous.key)?;
+        self.generation = self.generation.saturating_add(1);
+        let mut deleted: FileVersion = previous.into();
+        deleted.link_count = self.link_count_at(self.root, previous.object_id)?;
+        Ok(deleted)
     }
 
     fn enforce_limits(&self, additional_bytes: u64, new_file: bool) -> Result<(), Error> {
@@ -1434,7 +1419,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Ok(())
     }
 
-    /// Create a new tombstone version. Older snapshots keep seeing their data.
+    /// Delete one live version. Older snapshots keep seeing their data.
     pub fn delete(&mut self, path: &str) -> Result<FileVersion, Error> {
         let result = self.delete_uncommitted(path);
         if result == Err(Error::OutOfSpace) {
@@ -1449,40 +1434,23 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     fn delete_uncommitted(&mut self, path: &str) -> Result<FileVersion, Error> {
         let parsed = VersionedPath::parse(path)?;
-        if parsed.version != VersionSelector::Latest || path.contains(';') {
-            return Err(Error::InvalidVersion);
-        }
-        let previous = self
-            .last_record(parsed.file)?
-            .filter(|record| !record.deleted)
-            .ok_or(Error::NotFound)?;
-        if previous.file_type == FileType::Directory {
-            return Err(Error::NotDirectory);
-        }
-        let version = previous
-            .key
-            .version
-            .checked_add(1)
-            .ok_or(Error::VersionOverflow)?;
-        let created_at = self.generation.saturating_add(1);
-        let record = FileRecord {
-            key: FileKey {
+        let selected = match parsed.version {
+            VersionSelector::Latest => self.latest_record_at(self.root, parsed.file),
+            VersionSelector::Exact(version) => self.find_record(FileKey {
                 file: parsed.file,
                 version,
-            },
-            object_id: previous.object_id,
-            size: 0,
-            data: BlockId::NONE,
-            checksum: checksum(&[]),
-            created_at,
-            deleted: true,
-            file_type: previous.file_type,
-            link_count: previous.link_count.saturating_sub(1),
-            mode: previous.mode,
-        };
-        self.root = self.insert(self.root, record)?;
-        self.generation = created_at;
-        Ok(record.into())
+            }),
+        }?
+        .filter(|record| !record.deleted)
+        .ok_or(Error::NotFound)?;
+        if selected.file_type == FileType::Directory {
+            return Err(Error::NotDirectory);
+        }
+        self.root = self.tombstone(self.root, selected.key)?;
+        self.generation = self.generation.saturating_add(1);
+        let mut deleted: FileVersion = selected.into();
+        deleted.link_count = self.link_count_at(self.root, selected.object_id)?;
+        Ok(deleted)
     }
 
     pub fn lookup(&self, path: &str) -> Result<FileVersion, Error> {
@@ -1899,9 +1867,20 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn latest_record_at(&self, root: BlockId, file: FileName) -> Result<Option<FileRecord>, Error> {
-        Ok(self
-            .last_record_at(root, file)?
-            .filter(|record| !record.deleted))
+        let mut ordinal = 0;
+        let mut latest = None;
+        while let Some(record) = self.record_at(root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            if record.key.file == file
+                && !record.deleted
+                && latest.map_or(true, |current: FileRecord| {
+                    current.key.version < record.key.version
+                })
+            {
+                latest = Some(record);
+            }
+        }
+        Ok(latest)
     }
 
     fn last_record_at(&self, root: BlockId, file: FileName) -> Result<Option<FileRecord>, Error> {
