@@ -89,13 +89,13 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.
   - [x] Return a file capability or metadata result that can be consumed by later commands.
 
-- [ ] **Type a File**
+- [x] **Type a File**
   - [x] Add a `TYPE` command that opens a file read-only and reads it in bounded chunks.
-  - [ ] Support absolute and relative paths plus explicit SynFS version selectors.
-  - [ ] Stream text safely through shell output without exceeding fixed buffers.
-  - [ ] Define binary-file behavior and an option for byte-safe or encoded output.
-  - [ ] Close the file capability on success, failure, cancellation, and partial reads.
-  - [ ] Enforce read capability and report directories, missing files, corrupt versions, and I/O failures correctly.
+  - [x] Support absolute and relative paths plus explicit SynFS version selectors.
+  - [x] Stream text safely through shell output without exceeding fixed buffers.
+  - [x] Define binary-file behavior and an option for byte-safe or encoded output.
+  - [x] Close the file capability on success, failure, cancellation, and partial reads.
+  - [x] Enforce read capability and report directories, missing files, corrupt versions, and I/O failures correctly.
 
 - [ ] **End-to-End Filesystem Shell Validation**
   - [ ] Add parser coverage for every command, alias, qualifier, relative path, quoted path, and invalid argument combination.
@@ -825,4 +825,4 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 
 - [ ] **Uptime command**
-  - [ ] Display is easy to read format the amount of time since the machine last rebooted 
+  - [ ] Display is easy to read format the amount of time since the machine last rebooted

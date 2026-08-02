@@ -61,6 +61,27 @@ impl Path {
     }
 }
 
+/// Split the optional OpenVMS/SynFS version selector from a path.
+///
+/// `;0` means the latest version. Any other numeric selector means an exact
+/// version. A selector is only valid at the end of the path.
+pub fn split_version_selector(path: &str) -> Result<(&str, Option<u32>), Status> {
+    let Some((file, suffix)) = path.rsplit_once(';') else {
+        return Ok((path, None))
+    };
+    if file.is_empty()
+        || file.contains(';')
+        || suffix.is_empty()
+        || !suffix.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let version = suffix
+        .parse::<u32>()
+        .map_err(|_| Status::INVALID_ARGUMENT)?;
+    Ok((file, Some(version)))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EntryType {
     File,
@@ -147,6 +168,10 @@ pub trait FilesystemSource {
     ) -> Result<(), Status>;
     fn create_directory(&mut self, path: &str, recursive: bool) -> Result<FileMetadata, Status>;
     fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status>;
+
+    /// Open the selected version read-only, stream bounded reads to `output`,
+    /// and close the handle before returning. Implementations must close the
+    /// handle when a read or output write fails too.
     fn type_file(
         &mut self,
         path: &str,
@@ -173,19 +198,24 @@ impl ShellSession {
 
     pub fn resolve(&self, path: Option<&str>) -> Result<Path, Status> {
         let path = path.unwrap_or(self.default_directory.as_str());
-        if path.is_empty() {
+        let (path_without_version, version) = split_version_selector(path)?;
+        if path_without_version.is_empty() {
             return Err(Status::INVALID_ARGUMENT);
         }
-        if path != "/"
-            && (path.ends_with('/') || path.as_bytes().windows(2).any(|pair| pair == b"//"))
+        if path_without_version != "/"
+            && (path_without_version.ends_with('/')
+                || path_without_version
+                    .as_bytes()
+                    .windows(2)
+                    .any(|pair| pair == b"//"))
         {
             return Err(Status::INVALID_ARGUMENT);
         }
-        if path.contains('\\') || path.contains('\0') {
+        if path_without_version.contains('\\') || path_without_version.contains('\0') {
             return Err(Status::INVALID_ARGUMENT);
         }
         let mut source = Text::<{ MAX_PATH_BYTES * 2 + 1 }>::empty();
-        if !path.starts_with('/') {
+        if !path_without_version.starts_with('/') {
             source
                 .push_str(self.default_directory.as_str())
                 .map_err(|_| Status::INVALID_ARGUMENT)?;
@@ -196,10 +226,22 @@ impl ShellSession {
             }
         }
         source
-            .push_str(path)
+            .push_str(path_without_version)
             .map_err(|_| Status::INVALID_ARGUMENT)?;
         let resolved = canonicalize(source.as_str())?;
-        Path::new(resolved.as_str())
+        let mut result = Text::<MAX_PATH_BYTES>::new(resolved.as_str())
+            .map_err(|_| Status::INVALID_ARGUMENT)?;
+        if let Some(version) = version {
+            result
+                .push_char(';')
+                .map_err(|_| Status::INVALID_ARGUMENT)?;
+            let mut version_text = Text::<10>::empty();
+            write_u32(&mut version_text, version)?;
+            result
+                .push_str(version_text.as_str())
+                .map_err(|_| Status::INVALID_ARGUMENT)?;
+        }
+        Path::new(result.as_str())
     }
 
     pub fn set_default<S: FilesystemSource>(
@@ -369,6 +411,26 @@ impl FileOutput for TypeBuffer {
     }
 }
 
+fn write_u32(output: &mut Text<10>, value: u32) -> Result<(), Status> {
+    let mut digits = [0; 10];
+    let mut value = value;
+    let mut count = 0;
+    loop {
+        digits[count] = b'0' + (value % 10) as u8;
+        count += 1;
+        value /= 10;
+        if value == 0 {
+            break
+        }
+    }
+    for digit in digits[..count].iter().rev() {
+        output
+            .push_char(*digit as char)
+            .map_err(|_| Status::NO_SPACE)?;
+    }
+    Ok(())
+}
+
 pub struct FilesystemExecutor<Source, const CAPACITY: usize = 16> {
     source: Source,
     session: ShellSession,
@@ -454,6 +516,19 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         Ok(path)
     }
 
+    pub fn type_file_stream(
+        &mut self,
+        command: CommandCall,
+        output: &mut dyn FileOutput,
+    ) -> Result<FileMetadata, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        let binary = boolean(command.get("BINARY"))?;
+        self.source.type_file(path.as_str(), binary, output)
+    }
+
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         match command.route.raw() {
             DIRECTORY_ROUTE => self.directory(command),
@@ -523,8 +598,13 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let mut output = metadata_output("file", metadata)?;
         let visible = core::str::from_utf8(&contents.bytes[..contents.len])
             .map_err(|_| Status::INVALID_ARGUMENT)?;
-        let visible = visible.get(..visible.len().min(192)).unwrap_or(visible);
+        let visible = truncate_utf8(visible, 255);
         insert_text(&mut output, "content", visible)?;
+        insert_text(
+            &mut output,
+            "encoding",
+            if binary { "hex" } else { "text" },
+        )?;
         insert(
             &mut output,
             "content-bytes",
@@ -555,6 +635,18 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         )?;
         Ok(output)
     }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    let end = value.len().min(max_bytes);
+    if end == value.len() {
+        return value
+    }
+    let mut boundary = end;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    &value[..boundary]
 }
 
 fn text(value: Option<Value>) -> Option<Text<{ crate::MAX_TOKEN_BYTES }>> {

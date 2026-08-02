@@ -174,6 +174,23 @@ fn execute_line(
         return;
     }
 
+    if program.stage_count() == 1
+        && program
+            .stage(0)
+            .is_some_and(is_full_type_command)
+    {
+        if let Some(command) = program.stage(0) {
+            if let Err(status) = executor.print_type(command, keyboard, usb_keyboard) {
+                crate::println!(
+                    "command failed: {} (status={:#x})",
+                    status_reason(status),
+                    status.raw()
+                )
+            }
+        }
+        return;
+    }
+
     let (
         human_help_output,
         human_system_output,
@@ -275,6 +292,10 @@ fn is_full_directory_command(command: CommandCall) -> bool {
         && !matches!(command.get("CREATE"), Some(Value::Boolean(true)))
 }
 
+fn is_full_type_command(command: CommandCall) -> bool {
+    command.command.as_str().eq_ignore_ascii_case("TYPE")
+}
+
 fn directory_cancelled(
     keyboard: &mut crate::keyboard::Keyboard,
     usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
@@ -290,6 +311,100 @@ fn directory_cancelled(
         return true
     }
     matches!(crate::console::read_byte(), Some(3))
+}
+
+struct TypeConsoleOutput<'a> {
+    keyboard: &'a mut crate::keyboard::Keyboard,
+    usb_keyboard: &'a mut Option<crate::usb_keyboard::UsbKeyboard>,
+    binary: bool,
+    pending: [u8; 4],
+    pending_len: usize,
+    cancelled: bool,
+}
+
+impl<'a> TypeConsoleOutput<'a> {
+    fn new(
+        keyboard: &'a mut crate::keyboard::Keyboard,
+        usb_keyboard: &'a mut Option<crate::usb_keyboard::UsbKeyboard>,
+        binary: bool,
+    ) -> Self {
+        Self {
+            keyboard,
+            usb_keyboard,
+            binary,
+            pending: [0; 4],
+            pending_len: 0,
+            cancelled: false,
+        }
+    }
+
+    fn finish(&mut self) -> Result<(), Status> {
+        if self.cancelled {
+            return Err(Status::BUSY)
+        }
+        if self.pending_len != 0 {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        Ok(())
+    }
+
+    fn print_text(text: &str) {
+        for character in text.chars() {
+            match character {
+                '\n' | '\r' | '\t' => crate::print!("{character}"),
+                character if character.is_control() => {
+                    crate::print!("\\u{:04x}", character as u32)
+                }
+                character => crate::print!("{character}"),
+            }
+        }
+    }
+}
+
+impl FileOutput for TypeConsoleOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), Status> {
+        if directory_cancelled(self.keyboard, self.usb_keyboard) {
+            self.cancelled = true;
+            return Err(Status::BUSY)
+        }
+        if self.binary {
+            for byte in bytes {
+                crate::print!("{:02x}", byte);
+            }
+            return Ok(())
+        }
+
+        let mut combined = [0; 132];
+        let combined_len = self.pending_len + bytes.len();
+        if combined_len > combined.len() {
+            return Err(Status::NO_SPACE)
+        }
+        combined[..self.pending_len].copy_from_slice(&self.pending[..self.pending_len]);
+        combined[self.pending_len..combined_len].copy_from_slice(bytes);
+        match core::str::from_utf8(&combined[..combined_len]) {
+            Ok(text) => {
+                Self::print_text(text);
+                self.pending_len = 0;
+                Ok(())
+            }
+            Err(error) if error.error_len().is_some() => Err(Status::INVALID_ARGUMENT),
+            Err(error) => {
+                let valid = error.valid_up_to();
+                let incomplete = combined_len - valid;
+                if incomplete > self.pending.len() {
+                    return Err(Status::INVALID_ARGUMENT)
+                }
+                if valid != 0 {
+                    let text = core::str::from_utf8(&combined[..valid])
+                        .map_err(|_| Status::INVALID_ARGUMENT)?;
+                    Self::print_text(text);
+                }
+                self.pending[..incomplete].copy_from_slice(&combined[valid..combined_len]);
+                self.pending_len = incomplete;
+                Ok(())
+            }
+        }
+    }
 }
 
 fn entry_type_name(entry_type: EntryType) -> &'static str {
@@ -643,11 +758,20 @@ impl FilesystemSource for KernelFilesystem {
         _binary: bool,
         output: &mut dyn FileOutput,
     ) -> Result<FileMetadata, Status> {
+        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
+        if path == "/" {
+            return Err(Status::INVALID_ARGUMENT)
+        }
         let file = self.find(path).ok_or(Status::NOT_FOUND)?;
         if file.file_type != EntryType::File {
             return Err(Status::INVALID_ARGUMENT)
         }
-        output.write(&file.bytes[..file.length])?;
+        if version.is_some_and(|version| version != 0 && version != file.version) {
+            return Err(Status::NOT_FOUND)
+        }
+        for chunk in file.bytes[..file.length].chunks(128) {
+            output.write(chunk)?;
+        }
         Ok(Self::metadata(file))
     }
 }
@@ -772,6 +896,34 @@ impl KernelExecutor {
             crate::println!("(empty)");
         }
         Ok(())
+    }
+
+    fn print_type(
+        &mut self,
+        command: CommandCall,
+        keyboard: &mut crate::keyboard::Keyboard,
+        usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
+    ) -> Result<(), Status> {
+        let binary = matches!(command.get("BINARY"), Some(Value::Boolean(true)));
+        let mut output = TypeConsoleOutput::new(keyboard, usb_keyboard, binary);
+        match self.filesystem.type_file_stream(command, &mut output) {
+            Ok(_) => match output.finish() {
+                Ok(()) => {
+                    crate::println!();
+                    Ok(())
+                }
+                Err(Status::BUSY) if output.cancelled => {
+                    crate::println!("^C");
+                    Ok(())
+                }
+                Err(status) => Err(status),
+            },
+            Err(Status::BUSY) if output.cancelled => {
+                crate::println!("^C");
+                Ok(())
+            }
+            Err(status) => Err(status),
+        }
     }
 
     fn help(&self) -> Result<StructuredOutput, Status> {
