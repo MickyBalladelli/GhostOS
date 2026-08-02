@@ -35,6 +35,9 @@ fn render_list(
     if is_created_output(output) {
         return render_created(output)
     }
+    if is_linked_output(output) {
+        return render_linked(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -83,6 +86,10 @@ fn is_created_output(output: &StructuredOutput) -> bool {
     matches!(find_value(output, "operation"), Some(OutputValue::Text(value)) if value.as_str() == "created")
 }
 
+fn is_linked_output(output: &StructuredOutput) -> bool {
+    matches!(find_value(output, "operation"), Some(OutputValue::Text(value)) if value.as_str() == "linked")
+}
+
 fn render_created(
     output: &StructuredOutput,
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
@@ -98,6 +105,20 @@ fn render_created(
         }
     }
     rendered.push_str(" was created\n")?;
+    Ok(rendered)
+}
+
+fn render_linked(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    if let (Some(target), Some(source)) = (find_value(output, "path"), find_value(output, "source")) {
+        write_value(&mut rendered, target, false)?;
+        rendered.push_str(" is now a link to ")?;
+        write_value(&mut rendered, source, false)?;
+        rendered.push_str("\n")?;
+    }
     Ok(rendered)
 }
 

@@ -685,7 +685,10 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         if split_version_selector(target.as_str())?.1.is_some() || target.as_str() == "/" {
             return Err(Status::INVALID_ARGUMENT)
         }
-        metadata_output("linked", self.source.link(source.as_str(), target.as_str())?)
+        let metadata = self.source.link(source.as_str(), target.as_str())?;
+        let mut output = metadata_output("linked", metadata)?;
+        insert_text(&mut output, "source", source.as_str())?;
+        Ok(output)
     }
 
     fn show_links(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
