@@ -1,8 +1,11 @@
 //! Host terminal session for the guest serial console.
 
-use std::io::{self, IsTerminal, Read, Write};
 use std::cell::Cell;
+use std::io::{self, IsTerminal, Read, Write};
 use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
+
+const TERMINAL_SIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum TerminalError {
@@ -56,6 +59,7 @@ pub struct TerminalSession {
     _raw_mode: RawMode,
     has_terminal: bool,
     last_size: Cell<Option<(u16, u16)>>,
+    last_size_probe: Cell<Option<Instant>>,
 }
 
 impl TerminalSession {
@@ -99,6 +103,7 @@ impl TerminalSession {
             _raw_mode: raw_mode,
             has_terminal: is_tty,
             last_size: Cell::new(None),
+            last_size_probe: Cell::new(None),
         })
     }
 
@@ -123,10 +128,16 @@ impl TerminalSession {
             }
         }
 
+        let now = Instant::now();
+        let size_probe_due = match self.last_size_probe.get() {
+            Some(last_probe) => now.duration_since(last_probe) >= TERMINAL_SIZE_POLL_INTERVAL,
+            None => true,
+        };
         if input_mode == TerminalInputMode::Serial
             && self.has_terminal
-            && (!input.bytes.is_empty() || self.last_size.get().is_none())
+            && (size_probe_due || !input.bytes.is_empty())
         {
+            self.last_size_probe.set(Some(now));
             if let Some((rows, columns)) = terminal_size() {
                 let size = (rows, columns);
                 if self.last_size.get() != Some(size) {

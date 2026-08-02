@@ -289,7 +289,7 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
             self.render_line(&mut output, self.scroll_row + row, columns)?;
         }
         let status = self.status_line()?;
-        write!(output, "\x1b[{};1H\x1b[7m", rows)
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
             .map_err(|_| Error::Capacity)?;
         write_status_line(&mut output, columns, &status)?;
         let cursor_row = self.cursor_line().saturating_sub(self.scroll_row).min(content_rows - 1);
@@ -319,7 +319,7 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         }
 
         let mut output = Text::empty();
-        write!(output, "\x1b[{};1H\x1b[7m", rows)
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
             .map_err(|_| Error::Capacity)?;
         let status = self.status_line()?;
         write_status_line(&mut output, columns, &status)?;
@@ -360,7 +360,7 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         self.render_line(&mut output, self.scroll_row + screen_row, columns)?;
         output.push_str("\x1b[K\x1b[0m")?;
         let status = self.status_line()?;
-        write!(output, "\x1b[{};1H\x1b[7m", rows)
+        write!(output, "\x1b[{};1H\x1b[2K\x1b[7m", rows)
             .map_err(|_| Error::Capacity)?;
         write_status_line(&mut output, columns, &status)?;
         let cursor_column = self.cursor_column().saturating_sub(self.scroll_column).min(columns - 1);
@@ -895,8 +895,8 @@ mod tests {
         assert!(rendered.as_str().contains("VERSION:2"));
         assert!(rendered.as_str().contains("SELECTED"));
         assert!(rendered.as_str().contains("\x1b[7m"));
-        assert!(rendered.as_str().contains("\x1b[4;1H\x1b[7m"));
-        assert!(!rendered.as_str().contains("\x1b[3;1H\x1b[7m"));
+        assert!(rendered.as_str().contains("\x1b[4;1H\x1b[2K\x1b[7m"));
+        assert!(!rendered.as_str().contains("\x1b[3;1H\x1b[2K\x1b[7m"));
 
         let mut long_line = FileEditor::<32>::new("/data/long", 1, b"0123456789").unwrap();
         long_line.handle(Key::End).unwrap();
