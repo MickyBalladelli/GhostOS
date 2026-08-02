@@ -14,7 +14,7 @@ use syn_shell::{
 };
 use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind};
 use synos_power::AcpiPlatform;
-use synos_status::Status;
+use synos_status::{IntoStatus, Status};
 use synos_system_model::command::{CommandSpec, OutputText, OutputValue, StructuredOutput};
 use crate::monitor::{MonitorState, MonitorView, MAX_LOCKS};
 use crate::scheduler::Scheduler;
@@ -32,6 +32,13 @@ const SHOW_DSM_ROUTE: u16 = 9;
 const COMMAND_CAPACITY: usize = 24;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
+
+#[derive(Clone, Copy)]
+enum EditExit {
+    Saved,
+    Discarded,
+    Cancelled,
+}
 
 pub fn run(
     boot_info: &'static BootInfo,
@@ -315,10 +322,44 @@ fn render_file_editor<const CAPACITY: usize>(
 fn report_editor_error(status: Status) {
     let (_, rows) = crate::console::terminal_size();
     crate::print!(
-        "\x1b[{};1H\x1b[2K\x1b[31mSave failed: {} ({:#x})\x1b[0m",
+        "\x1b[{};1H\x1b[2K\x1b[31mEDIT failed: {} ({:#x})\x1b[0m",
         rows,
         status_reason(status),
         status.raw(),
+    );
+}
+
+fn prompt_editor_discard() {
+    let (_, rows) = crate::console::terminal_size();
+    crate::print!(
+        "\x1b[{};1H\x1b[2K\x1b[33mUnsaved changes. Discard? [y/N] \x1b[0m",
+        rows,
+    );
+}
+
+fn prompt_editor_conflict() {
+    let (_, rows) = crate::console::terminal_size();
+    crate::print!(
+        "\x1b[{};1H\x1b[2K\x1b[33mFile changed. Save as new version anyway? [y/N] \x1b[0m",
+        rows,
+    );
+}
+
+fn restore_editor_terminal() {
+    crate::print!("\x1b[0m\x1b[?25h\x1b[?1049l");
+}
+
+fn editor_name<const CAPACITY: usize>(editor: &FileEditor<CAPACITY>) -> &str {
+    editor.name()
+}
+
+fn print_edit_result<const CAPACITY: usize>(operation: &str, editor: &FileEditor<CAPACITY>) {
+    crate::println!(
+        "EDIT operation={} status=SUCCESS path={} size={} version={}",
+        operation,
+        editor_name(editor),
+        editor.len(),
+        editor.version(),
     );
 }
 
@@ -747,7 +788,7 @@ fn banner() {
     crate::println!()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum VtInputState {
     Ground,
     Escape,
@@ -759,8 +800,12 @@ struct VtInput {
     state: VtInputState,
     parameter: u16,
     modifier: u16,
+    separators: u8,
     after_separator: bool,
     pending: Option<u8>,
+    utf8: [u8; 4],
+    utf8_len: usize,
+    utf8_expected: usize,
 }
 
 impl VtInput {
@@ -769,8 +814,12 @@ impl VtInput {
             state: VtInputState::Ground,
             parameter: 0,
             modifier: 0,
+            separators: 0,
             after_separator: false,
             pending: None,
+            utf8: [0; 4],
+            utf8_len: 0,
+            utf8_expected: 0,
         }
     }
 
@@ -780,6 +829,24 @@ impl VtInput {
                 self.pending = Some(byte);
                 return Some(key)
             }
+        }
+        if self.state == VtInputState::Ground && self.utf8_expected != 0 {
+            if byte & 0xc0 != 0x80 || self.utf8_len == self.utf8.len() {
+                self.utf8_len = 0;
+                self.utf8_expected = 0;
+                return None
+            }
+            self.utf8[self.utf8_len] = byte;
+            self.utf8_len += 1;
+            if self.utf8_len == self.utf8_expected {
+                let character = core::str::from_utf8(&self.utf8[..self.utf8_len])
+                    .ok()
+                    .and_then(|text| text.chars().next());
+                self.utf8_len = 0;
+                self.utf8_expected = 0;
+                return character.map(Key::Character)
+            }
+            return None
         }
         self.advance_now(byte)
     }
@@ -798,12 +865,31 @@ impl VtInput {
                 24 => Some(Key::DiscardExit),
                 26 => Some(Key::SaveExit),
                 3 => Some(Key::Cancel),
+                0xc2..=0xdf => {
+                    self.utf8[0] = byte;
+                    self.utf8_len = 1;
+                    self.utf8_expected = 2;
+                    None
+                }
+                0xe0..=0xef => {
+                    self.utf8[0] = byte;
+                    self.utf8_len = 1;
+                    self.utf8_expected = 3;
+                    None
+                }
+                0xf0..=0xf4 => {
+                    self.utf8[0] = byte;
+                    self.utf8_len = 1;
+                    self.utf8_expected = 4;
+                    None
+                }
                 0x20..=0x7e => Some(Key::Character(byte as char)),
                 _ => None,
             },
             VtInputState::Escape => {
                 self.parameter = 0;
                 self.modifier = 0;
+                self.separators = 0;
                 self.after_separator = false;
                 match byte {
                     b'[' => self.state = VtInputState::Csi,
@@ -832,6 +918,7 @@ impl VtInput {
                     None
                 }
                 b';' => {
+                    self.separators = self.separators.saturating_add(1);
                     self.after_separator = true;
                     None
                 }
@@ -854,12 +941,13 @@ impl VtInput {
             b'B' => Some(if shifted { Key::ShiftDown } else { Key::Down }),
             b'C' => Some(if shifted { Key::ShiftRight } else { Key::Right }),
             b'D' => Some(if shifted { Key::ShiftLeft } else { Key::Left }),
-            b'H' => Some(Key::Home),
-            b'F' => Some(Key::End),
+            b'H' => Some(if shifted { Key::ShiftHome } else { Key::Home }),
+            b'F' => Some(if shifted { Key::ShiftEnd } else { Key::End }),
+            b't' if self.parameter == 8 && self.separators >= 2 => Some(Key::Resize),
             b'~' => match self.parameter {
-                1 | 7 => Some(Key::Home),
+                1 | 7 => Some(if shifted { Key::ShiftHome } else { Key::Home }),
                 3 => Some(Key::Delete),
-                4 | 8 => Some(Key::End),
+                4 | 8 => Some(if shifted { Key::ShiftEnd } else { Key::End }),
                 5 => Some(Key::PageUp),
                 6 => Some(Key::PageDown),
                 _ => None,
@@ -1343,6 +1431,38 @@ impl FilesystemSource for KernelFilesystem {
         object.length = contents.len();
         Ok(self.metadata(saved))
     }
+
+    fn save_file_if_version(
+        &mut self,
+        path: &str,
+        expected_version: u32,
+        contents: &[u8],
+    ) -> Result<FileMetadata, Status> {
+        let (source_path, version) = syn_shell::filesystem::split_version_selector(path)?;
+        let selected = match version {
+            None | Some(0) => self.find(source_path),
+            Some(version) => self.find_version(source_path, version),
+        }
+        .ok_or(Status::NOT_FOUND)?;
+        if selected.version != expected_version {
+            return Err(Status::CONFLICT)
+        }
+        if version.is_none() || version == Some(0) {
+            let latest = self.find(source_path).ok_or(Status::NOT_FOUND)?;
+            if latest.version != expected_version {
+                return Err(Status::CONFLICT)
+            }
+        }
+        self.save_file(path, contents)
+    }
+
+    fn save_file_force(
+        &mut self,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<FileMetadata, Status> {
+        self.save_file(path, contents)
+    }
 }
 
 struct KernelExecutor {
@@ -1517,73 +1637,145 @@ impl KernelExecutor {
         .map_err(|_| Status::INVALID_ARGUMENT)?;
 
         crate::print!("\x1b[?1049h\x1b[2J\x1b[H");
-        render_file_editor(&mut editor)?;
+        let result = self.run_edit_session(&mut editor, command, keyboard, usb_keyboard, acpi);
+        restore_editor_terminal();
+        match result {
+            Ok(EditExit::Saved) => {
+                print_edit_result("SAVED", &editor);
+                Ok(())
+            }
+            Ok(EditExit::Discarded) => {
+                print_edit_result("DISCARDED", &editor);
+                Ok(())
+            }
+            Ok(EditExit::Cancelled) => {
+                print_edit_result("CANCELLED", &editor);
+                Ok(())
+            }
+            Err(status) => {
+                crate::println!("EDIT operation=FAILED status={:#x}", status.raw());
+                Err(status)
+            }
+        }
+    }
+
+    fn run_edit_session(
+        &mut self,
+        editor: &mut FileEditor<KERNEL_FILE_BYTES>,
+        command: CommandCall,
+        keyboard: &mut crate::keyboard::Keyboard,
+        usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
+        acpi: Option<&AcpiPlatform>,
+    ) -> Result<EditExit, Status> {
+        render_file_editor(editor)?;
         let mut input = VtInput::new();
-        let mut confirming_discard = false;
+        let mut confirming_discard = None;
+        let mut confirming_conflict = None;
         loop {
             let byte = wait_for_byte(keyboard, usb_keyboard, acpi);
             let Some(key) = input.advance(byte) else {
                 continue
             };
 
-            if confirming_discard {
+            if let Some(exit) = confirming_discard {
                 match key {
-                    Key::Character('y') | Key::Character('Y') => {
-                        confirming_discard = false;
-                        if editor.confirm_discard(true) == FileEditorAction::DiscardExit {
-                            break
-                        }
-                    }
+                    Key::Character('y') | Key::Character('Y') => return Ok(exit),
                     Key::Character('n') | Key::Character('N') | Key::Escape => {
-                        confirming_discard = false;
+                        confirming_discard = None;
+                        render_file_editor(editor)?;
                     }
                     _ => {}
                 }
-                render_file_editor(&mut editor)?;
                 continue
             }
 
-            match editor
-                .handle(key)
-                .map_err(|_| Status::INVALID_ARGUMENT)?
-            {
-                FileEditorAction::None => {}
-                FileEditorAction::Redraw => render_file_editor(&mut editor)?,
-                FileEditorAction::Save => {
-                    if editor.is_dirty() {
-                        match self.filesystem.edit_file_save(command, editor.bytes()) {
-                            Ok(metadata) => editor.mark_saved(metadata.version),
-                            Err(status) => report_editor_error(status),
-                        }
-                    }
-                    render_file_editor(&mut editor)?;
-                }
-                FileEditorAction::SaveExit => {
-                    if editor.is_dirty() {
-                        match self.filesystem.edit_file_save(command, editor.bytes()) {
-                            Ok(metadata) => editor.mark_saved(metadata.version),
+            if let Some(save_exit) = confirming_conflict {
+                match key {
+                    Key::Character('y') | Key::Character('Y') => {
+                        match self.filesystem.edit_file_force_save(command, editor.bytes()) {
+                            Ok(metadata) => {
+                                editor.mark_saved(metadata.version);
+                                confirming_conflict = None;
+                                if save_exit {
+                                    return Ok(EditExit::Saved)
+                                }
+                                render_file_editor(editor)?;
+                            }
                             Err(status) => {
+                                confirming_conflict = None;
+                                render_file_editor(editor)?;
                                 report_editor_error(status);
-                                render_file_editor(&mut editor)?;
-                                continue
                             }
                         }
                     }
-                    break
+                    Key::Character('n') | Key::Character('N') | Key::Escape => {
+                        confirming_conflict = None;
+                        render_file_editor(editor)?;
+                    }
+                    _ => {}
+                }
+                continue
+            }
+
+            let action = match editor.handle(key) {
+                Ok(action) => action,
+                Err(error) => {
+                    render_file_editor(editor)?;
+                    report_editor_error(error.status());
+                    continue
+                }
+            };
+            match action {
+                FileEditorAction::None => {}
+                FileEditorAction::Redraw => render_file_editor(editor)?,
+                FileEditorAction::Save | FileEditorAction::SaveExit => {
+                    let save_exit = action == FileEditorAction::SaveExit;
+                    if !editor.is_dirty() {
+                        if save_exit {
+                            return Ok(EditExit::Saved)
+                        }
+                        render_file_editor(editor)?;
+                        continue
+                    }
+                    match self
+                        .filesystem
+                        .edit_file_save_if_version(command, editor.version(), editor.bytes())
+                    {
+                        Ok(metadata) => {
+                            editor.mark_saved(metadata.version);
+                            if save_exit {
+                                return Ok(EditExit::Saved)
+                            }
+                            render_file_editor(editor)?;
+                        }
+                        Err(Status::CONFLICT) => {
+                            confirming_conflict = Some(save_exit);
+                            render_file_editor(editor)?;
+                            prompt_editor_conflict();
+                        }
+                        Err(status) => {
+                            render_file_editor(editor)?;
+                            report_editor_error(status);
+                        }
+                    }
                 }
                 FileEditorAction::PromptDiscard => {
-                    confirming_discard = true;
-                    let (_, rows) = crate::console::terminal_size();
-                    crate::print!(
-                        "\x1b[{};1H\x1b[2K\x1b[33mUnsaved changes. Discard? [y/N] \x1b[0m",
-                        rows,
-                    );
+                    confirming_discard = Some(if key == Key::Cancel {
+                        EditExit::Cancelled
+                    } else {
+                        EditExit::Discarded
+                    });
+                    prompt_editor_discard();
                 }
-                FileEditorAction::DiscardExit => break,
+                FileEditorAction::DiscardExit => {
+                    return Ok(if key == Key::Cancel {
+                        EditExit::Cancelled
+                    } else {
+                        EditExit::Discarded
+                    })
+                }
             }
         }
-        crate::print!("\x1b[?25l\x1b[?1049l");
-        Ok(())
     }
 
     fn help(&self) -> Result<StructuredOutput, Status> {
@@ -1623,7 +1815,9 @@ impl KernelExecutor {
         crate::println!();
         crate::println!("EDIT keys: Ctrl-S save, Ctrl-Z save and exit, Ctrl-X discard and exit.");
         crate::println!("  Insert text normally; Enter adds a line; Shift-arrows select text.");
+        crate::println!("  Shift-Home/End extend selection; Backspace/Delete remove selected text.");
         crate::println!("  Escape enters command mode: I insert, S save, E save/exit, Q discard.");
+        crate::println!("  Command mode: Y copy, X cut, P paste. Resize redraws the live terminal.");
         crate::println!();
         crate::println!("Unique command prefixes are accepted.");
     }
@@ -1962,6 +2156,8 @@ fn status_reason(status: Status) -> &'static str {
         "no space left"
     } else if status == Status::ACCESS_DENIED {
         "access denied"
+    } else if status == Status::CONFLICT {
+        "file changed since edit began"
     } else {
         "unknown error"
     }

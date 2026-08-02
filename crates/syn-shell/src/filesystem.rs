@@ -5,6 +5,7 @@ use synos_system_model::command::{
 
 use crate::{
     Error, Text,
+    file_editor::MAX_EDITOR_BYTES,
     interpreter::{CommandExecutor, ExecutionToken},
     parser::{CommandCall, CommandRegistry, RouteId, Value},
 };
@@ -285,6 +286,27 @@ pub trait FilesystemSource {
 
     fn save_file(&mut self, _path: &str, _contents: &[u8]) -> Result<FileMetadata, Status> {
         Err(Status::NOT_FOUND)
+    }
+
+    /// Publish contents as a new version only when the opened source version
+    /// is still current. Implementations must make the publish atomic and
+    /// return metadata for the committed version.
+    fn save_file_if_version(
+        &mut self,
+        path: &str,
+        _expected_version: u32,
+        contents: &[u8],
+    ) -> Result<FileMetadata, Status> {
+        self.save_file(path, contents)
+    }
+
+    /// Publish after the user explicitly accepts a stale-source conflict.
+    fn save_file_force(
+        &mut self,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<FileMetadata, Status> {
+        self.save_file(path, contents)
     }
 }
 
@@ -712,7 +734,47 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path = self
             .session
             .resolve(path_value.as_ref().map(Text::as_str))?;
-        self.source.save_file(path.as_str(), contents)
+        let (base_path, _) = split_version_selector(path.as_str())?;
+        let metadata = self.source.save_file(base_path, contents)?;
+        validate_saved_metadata(base_path, 0, contents, metadata)
+    }
+
+    pub fn edit_file_save_if_version(
+        &mut self,
+        command: CommandCall,
+        expected_version: u32,
+        contents: &[u8],
+    ) -> Result<FileMetadata, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        let (base_path, selected_version) = split_version_selector(path.as_str())?;
+        let save_path = if selected_version.is_some_and(|version| {
+            version != 0 && version == expected_version
+        }) {
+            path.as_str()
+        } else {
+            base_path
+        };
+        let metadata = self
+            .source
+            .save_file_if_version(save_path, expected_version, contents)?;
+        validate_saved_metadata(base_path, expected_version, contents, metadata)
+    }
+
+    pub fn edit_file_force_save(
+        &mut self,
+        command: CommandCall,
+        contents: &[u8],
+    ) -> Result<FileMetadata, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        let (base_path, _) = split_version_selector(path.as_str())?;
+        let metadata = self.source.save_file_force(base_path, contents)?;
+        validate_saved_metadata(base_path, 0, contents, metadata)
     }
 
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
@@ -726,8 +788,23 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             LINK_ROUTE => self.link(command),
             SHOW_LINKS_ROUTE => self.show_links(command),
             DELETE_ROUTE => self.delete(command),
+            EDIT_ROUTE => self.edit(command),
             _ => Err(Status::NOT_FOUND),
         }
+    }
+
+    fn edit(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let path_value = text(command.get("PATH"));
+        let path = self
+            .session
+            .resolve(path_value.as_ref().map(Text::as_str))?;
+        let mut sink = EditOpenSink::new();
+        let metadata = self.source.type_file(path.as_str(), false, &mut sink)?;
+        core::str::from_utf8(&sink.bytes[..sink.len]).map_err(|_| Status::INVALID_ARGUMENT)?;
+        if metadata.file_type != EntryType::File || metadata.size != sink.len as u64 {
+            return Err(Status::CORRUPT)
+        }
+        metadata_output("opened", metadata)
     }
 
     fn directory(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
@@ -883,6 +960,50 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
         boundary -= 1;
     }
     &value[..boundary]
+}
+
+struct EditOpenSink {
+    bytes: [u8; MAX_EDITOR_BYTES],
+    len: usize,
+}
+
+impl EditOpenSink {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; MAX_EDITOR_BYTES],
+            len: 0,
+        }
+    }
+}
+
+impl FileOutput for EditOpenSink {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), Status> {
+        let end = self.len.checked_add(bytes.len()).ok_or(Status::NO_SPACE)?;
+        if end > self.bytes.len() {
+            return Err(Status::NO_SPACE)
+        }
+        self.bytes[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+}
+
+fn validate_saved_metadata(
+    requested_path: &str,
+    expected_version: u32,
+    contents: &[u8],
+    metadata: FileMetadata,
+) -> Result<FileMetadata, Status> {
+    let (requested_path, _) = split_version_selector(requested_path)?;
+    if metadata.path.as_str() != requested_path
+        || metadata.file_type != EntryType::File
+        || metadata.version == 0
+        || metadata.size != contents.len() as u64
+        || (expected_version != 0 && metadata.version <= expected_version)
+    {
+        return Err(Status::CORRUPT)
+    }
+    Ok(metadata)
 }
 
 fn text(value: Option<Value>) -> Option<Text<{ crate::MAX_TOKEN_BYTES }>> {

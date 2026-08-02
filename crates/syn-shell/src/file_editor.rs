@@ -35,6 +35,8 @@ pub struct FileEditor<const CAPACITY: usize = MAX_EDITOR_BYTES> {
     anchor: Option<usize>,
     scroll_row: usize,
     scroll_column: usize,
+    clipboard: [u8; CAPACITY],
+    clipboard_len: usize,
     name: Text<MAX_EDITOR_NAME_BYTES>,
     version: u32,
     saved_checksum: u64,
@@ -55,6 +57,8 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
             anchor: None,
             scroll_row: 0,
             scroll_column: 0,
+            clipboard: [0; CAPACITY],
+            clipboard_len: 0,
             name: Text::new(name)?,
             version,
             saved_checksum: checksum(contents),
@@ -64,6 +68,10 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes[..self.len]
+    }
+
+    pub fn name(&self) -> &str {
+        self.name.as_str()
     }
 
     pub const fn len(&self) -> usize {
@@ -80,6 +88,18 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
 
     pub const fn mode(&self) -> EditorMode {
         self.mode
+    }
+
+    pub fn clipboard(&self) -> &[u8] {
+        &self.clipboard[..self.clipboard_len]
+    }
+
+    pub fn resize(&mut self, columns: usize, rows: usize) -> Result<(), Error> {
+        if columns == 0 || rows < 2 {
+            return Err(Error::InvalidValue)
+        }
+        self.ensure_visible(columns, rows - 1);
+        Ok(())
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -135,6 +155,18 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
             Key::Character('s') if self.mode == EditorMode::Command => FileEditorAction::Save,
             Key::Character('e') if self.mode == EditorMode::Command => FileEditorAction::SaveExit,
             Key::Character('q') if self.mode == EditorMode::Command => self.request_discard(),
+            Key::Character('y') | Key::Character('Y') if self.mode == EditorMode::Command => {
+                self.copy_selection();
+                FileEditorAction::Redraw
+            }
+            Key::Character('x') | Key::Character('X') if self.mode == EditorMode::Command => {
+                self.cut_selection();
+                FileEditorAction::Redraw
+            }
+            Key::Character('p') | Key::Character('P') if self.mode == EditorMode::Command => {
+                self.paste()?;
+                FileEditorAction::Redraw
+            }
             Key::Character(value) if self.mode == EditorMode::Insert => {
                 self.insert_char(value)?;
                 FileEditorAction::Redraw
@@ -171,6 +203,14 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
                 self.move_end(false);
                 FileEditorAction::Redraw
             }
+            Key::ShiftHome => {
+                self.move_home(true);
+                FileEditorAction::Redraw
+            }
+            Key::ShiftEnd => {
+                self.move_end(true);
+                FileEditorAction::Redraw
+            }
             Key::ShiftLeft => {
                 self.move_left(true);
                 FileEditorAction::Redraw
@@ -195,6 +235,19 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
                 self.move_vertical(10, false);
                 FileEditorAction::Redraw
             }
+            Key::Copy => {
+                self.copy_selection();
+                FileEditorAction::Redraw
+            }
+            Key::Cut => {
+                self.cut_selection();
+                FileEditorAction::Redraw
+            }
+            Key::Paste => {
+                self.paste()?;
+                FileEditorAction::Redraw
+            }
+            Key::Resize => FileEditorAction::Redraw,
             Key::Backspace if self.mode == EditorMode::Insert => {
                 self.backspace();
                 FileEditorAction::Redraw
@@ -302,6 +355,59 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
         self.bytes.copy_within(self.cursor..self.len, self.cursor + bytes.len());
         self.bytes[self.cursor..self.cursor + bytes.len()].copy_from_slice(bytes);
         self.cursor = self.cursor.saturating_add(bytes.len());
+        self.len = end;
+        self.anchor = None;
+        Ok(())
+    }
+
+    fn copy_selection(&mut self) {
+        let Some((start, end)) = self.selected() else {
+            return
+        };
+        let length = end - start;
+        if length > self.clipboard.len() {
+            return
+        }
+        self.clipboard[..length].copy_from_slice(&self.bytes[start..end]);
+        self.clipboard_len = length;
+    }
+
+    fn cut_selection(&mut self) {
+        if self.selected().is_none() {
+            return
+        }
+        self.copy_selection();
+        if let Some((start, end)) = self.selected() {
+            self.remove(start, end);
+        }
+    }
+
+    fn paste(&mut self) -> Result<(), Error> {
+        if self.clipboard_len == 0 {
+            return Ok(())
+        }
+        let selection_length = self
+            .selected()
+            .map_or(0, |(start, end)| end.saturating_sub(start));
+        if self.clipboard_len > CAPACITY.saturating_sub(self.len).saturating_add(selection_length) {
+            return Err(Error::Capacity)
+        }
+        if let Some((start, end)) = self.selected() {
+            self.remove(start, end);
+        }
+        let end = self
+            .len
+            .checked_add(self.clipboard_len)
+            .ok_or(Error::Capacity)?;
+        if end > CAPACITY {
+            return Err(Error::Capacity)
+        }
+        self.bytes
+            .copy_within(self.cursor..self.len, self.cursor + self.clipboard_len);
+        for index in 0..self.clipboard_len {
+            self.bytes[self.cursor + index] = self.clipboard[index];
+        }
+        self.cursor += self.clipboard_len;
         self.len = end;
         self.anchor = None;
         Ok(())
@@ -483,7 +589,13 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
                 }
                 for _ in 0..width {
                     if column >= self.scroll_column && column < self.scroll_column + columns {
-                        output.push_char(if character == '\t' { ' ' } else { character })?;
+                        output.push_char(if character == '\t' {
+                            ' '
+                        } else if character.is_control() {
+                            '·'
+                        } else {
+                            character
+                        })?;
                     }
                     column += 1;
                 }
@@ -549,4 +661,45 @@ fn offset_for_column(bytes: &[u8], column: usize) -> usize {
         offset = next;
     }
     offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EditorMode, FileEditor, FileEditorAction};
+    use crate::editor::Key;
+
+    #[test]
+    fn selection_clipboard_and_cut_are_bounded() {
+        let mut editor = FileEditor::<32>::new("/data/note", 1, b"abc").unwrap();
+        editor.handle(Key::End).unwrap();
+        editor.handle(Key::ShiftLeft).unwrap();
+        editor.handle(Key::Escape).unwrap();
+        assert_eq!(editor.mode(), EditorMode::Command);
+        assert_eq!(editor.handle(Key::Character('y')).unwrap(), FileEditorAction::Redraw);
+        assert_eq!(editor.clipboard(), b"c");
+        editor.handle(Key::Character('x')).unwrap();
+        assert_eq!(editor.bytes(), b"ab");
+        editor.handle(Key::Character('p')).unwrap();
+        assert_eq!(editor.bytes(), b"abc");
+    }
+
+    #[test]
+    fn joining_lines_and_utf8_keep_valid_boundaries() {
+        let mut editor = FileEditor::<32>::new("/data/note", 1, "a\nb").unwrap();
+        editor.handle(Key::Delete).unwrap();
+        assert_eq!(editor.bytes(), b"ab");
+        editor.handle(Key::Character('é')).unwrap();
+        assert_eq!(core::str::from_utf8(editor.bytes()).unwrap(), "éab");
+    }
+
+    #[test]
+    fn resize_preserves_edit_state() {
+        let mut editor = FileEditor::<32>::new("/data/note", 1, b"one\ntwo").unwrap();
+        editor.handle(Key::End).unwrap();
+        editor.handle(Key::ShiftHome).unwrap();
+        let selection = editor.selected();
+        editor.resize(20, 8).unwrap();
+        assert_eq!(editor.selected(), selection);
+        assert!(!editor.is_dirty());
+    }
 }

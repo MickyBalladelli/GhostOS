@@ -564,6 +564,15 @@ SHOW PROCESS 42
 MONITOR /INTERVAL=250000 /SAMPLES=20
 ```
 
+EDIT file (also EDT) opens a bounded UTF-8 full-screen editor. It edits a
+selected version and saves as a new SynFS version; an omitted selector opens
+the latest version. Ctrl-S saves, Ctrl-Z saves and exits, and Ctrl-X discards
+and exits. Escape enters command mode: I inserts, S saves, E saves and exits,
+Q quits, while Y, X, and P copy, cut, and paste the current selection.
+Shift plus arrows or Home/End selects text. Unsaved changes prompt before
+discard. If another save reaches the file first, the editor reports a conflict
+and requires an explicit confirmation before publishing another version.
+
 ## Cluster topology monitor
 
 `synos-top` is a heap-free real-time dashboard core. It renders per-node RAM

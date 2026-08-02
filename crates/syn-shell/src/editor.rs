@@ -17,6 +17,8 @@ pub enum Key {
     ShiftDown,
     PageUp,
     PageDown,
+    ShiftHome,
+    ShiftEnd,
     Backspace,
     Delete,
     HistoryPrevious,
@@ -28,6 +30,10 @@ pub enum Key {
     SaveExit,
     DiscardExit,
     Cancel,
+    Copy,
+    Cut,
+    Paste,
+    Resize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -134,7 +140,17 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
                 Ok(EditorAction::Redraw)
             }
             Key::ShiftLeft | Key::ShiftRight | Key::ShiftUp | Key::ShiftDown | Key::PageUp
-            | Key::PageDown | Key::Escape | Key::Save | Key::SaveExit | Key::DiscardExit => {
+            | Key::PageDown
+            | Key::ShiftHome
+            | Key::ShiftEnd
+            | Key::Escape
+            | Key::Save
+            | Key::SaveExit
+            | Key::DiscardExit
+            | Key::Copy
+            | Key::Cut
+            | Key::Paste
+            | Key::Resize => {
                 Ok(EditorAction::Redraw)
             }
             Key::Home => {
