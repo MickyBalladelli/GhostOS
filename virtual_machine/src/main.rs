@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use synos_vm::{
@@ -214,10 +215,13 @@ fn parse_serial_port(value: &str) -> Result<u16, String> {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
-    println!("SynOS Virtual Machine");
-    println!("=====================");
-
     let config = cli.config;
+    if std::io::stdout().is_terminal() {
+        print!(
+            "\x1b]0;SynOS | {}\x07",
+            format_memory(config.memory_size)
+        );
+    }
     let terminal_mode = cli.terminal;
     let input_mode = cli.input_mode;
     let efi_image = cli
@@ -281,6 +285,22 @@ fn run(cli: Cli) -> Result<(), String> {
     };
 
     result
+}
+
+fn format_memory(bytes: usize) -> String {
+    const KIB: usize = 1024;
+    const MIB: usize = KIB * 1024;
+    const GIB: usize = MIB * 1024;
+
+    if bytes % GIB == 0 {
+        format!("{} GiB", bytes / GIB)
+    } else if bytes % MIB == 0 {
+        format!("{} MiB", bytes / MIB)
+    } else if bytes % KIB == 0 {
+        format!("{} KiB", bytes / KIB)
+    } else {
+        format!("{} bytes", bytes)
+    }
 }
 
 fn print_help() {
