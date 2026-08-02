@@ -550,7 +550,7 @@ impl<
             return Err(DaemonError::ReadOnly);
         }
         if flags.contains(Flags::CREATE) && flags.contains(Flags::EXCLUSIVE) {
-            return self.create_file_with_name(process, authority, name, read_only_mount);
+            return self.create_file_with_name(process, authority, name, read_only_mount, true);
         }
         let exists = self.filesystem.lookup(path).is_ok();
         if !exists && !flags.contains(Flags::CREATE) {
@@ -588,7 +588,7 @@ impl<
         }
         let name = Name::from_str(path)?;
         let read_only_mount = self.path_is_read_only(path)?;
-        self.create_file_with_name(process, authority, name, read_only_mount)
+        self.create_file_with_name(process, authority, name, read_only_mount, false)
     }
 
     fn create_file_with_name(
@@ -597,6 +597,7 @@ impl<
         authority: Capability,
         name: Name,
         read_only_mount: bool,
+        exclusive: bool,
     ) -> Result<FileInfo, DaemonError> {
         self.authorize_process(process, authority, FileRights::WRITE)?;
         if read_only_mount {
@@ -605,7 +606,7 @@ impl<
         if !self.open_files.iter().any(|slot| !slot.occupied) {
             return Err(DaemonError::HandleExhausted);
         }
-        if self.filesystem.lookup(name.as_str()).is_ok() {
+        if exclusive && self.filesystem.lookup(name.as_str()).is_ok() {
             return Err(DaemonError::File(SynFsError::AlreadyExists));
         }
         self.filesystem.write(name.as_str(), &[])?;

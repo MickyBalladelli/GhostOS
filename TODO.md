@@ -83,7 +83,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Return the created directory metadata and make it visible immediately to subsequent listings.
 
 - [x] **Create a File**
-  - [x] Add a dedicated create-file operation or command using exclusive-create semantics.
+  - [x] Add a dedicated create-file operation or command using SynFS versioned-create semantics.
   - [x] Support absolute and relative file paths and creation in the active default directory.
   - [x] Enforce parent-directory write capability and regular-file type checks.
   - [x] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.

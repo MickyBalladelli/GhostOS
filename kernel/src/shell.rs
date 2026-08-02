@@ -610,7 +610,16 @@ impl KernelFilesystem {
         self.files
             .iter()
             .flatten()
-            .find(|file| file.path.as_str() == path)
+            .filter(|file| file.path.as_str() == path)
+            .max_by_key(|file| file.version)
+            .copied()
+    }
+
+    fn find_version(&self, path: &str, version: u32) -> Option<KernelFile> {
+        self.files
+            .iter()
+            .flatten()
+            .find(|file| file.path.as_str() == path && file.version == version)
             .copied()
     }
 
@@ -618,6 +627,15 @@ impl KernelFilesystem {
         if self.find(path).is_some() {
             return Err(Status::ALREADY_EXISTS)
         }
+        self.insert_version(path, file_type, 1)
+    }
+
+    fn insert_version(
+        &mut self,
+        path: &str,
+        file_type: EntryType,
+        version: u32,
+    ) -> Result<KernelFile, Status> {
         let slot = self
             .files
             .iter_mut()
@@ -628,7 +646,7 @@ impl KernelFilesystem {
             file_type,
             bytes: [0; KERNEL_FILE_BYTES],
             length: 0,
-            version: 1,
+            version,
             link_count: 1,
         };
         *slot = Some(file);
@@ -688,6 +706,12 @@ impl FilesystemSource for KernelFilesystem {
             let Some(file) = slot else {
                 continue
             };
+            if self
+                .find(file.path.as_str())
+                .is_some_and(|latest| latest.version != file.version)
+            {
+                continue
+            }
             let current = index;
             index += 1;
             if current < start {
@@ -749,7 +773,12 @@ impl FilesystemSource for KernelFilesystem {
         if !self.directory_exists(parent)? {
             return Err(Status::NOT_FOUND)
         }
-        self.insert(path, EntryType::File).map(Self::metadata)
+        let version = match self.find(path) {
+            None => 1,
+            Some(file) => file.version.checked_add(1).ok_or(Status::CORRUPT)?,
+        };
+        self.insert_version(path, EntryType::File, version)
+            .map(Self::metadata)
     }
 
     fn type_file(
@@ -762,7 +791,11 @@ impl FilesystemSource for KernelFilesystem {
         if path == "/" {
             return Err(Status::INVALID_ARGUMENT)
         }
-        let file = self.find(path).ok_or(Status::NOT_FOUND)?;
+        let file = match version {
+            None | Some(0) => self.find(path),
+            Some(version) => self.find_version(path, version),
+        }
+        .ok_or(Status::NOT_FOUND)?;
         if file.file_type != EntryType::File {
             return Err(Status::INVALID_ARGUMENT)
         }
@@ -870,7 +903,7 @@ impl KernelExecutor {
             if !printed_header {
                 crate::println!("Directory: {}", path.as_str());
                 crate::println!();
-                crate::println!("NAME                  TYPE        SIZE  VERSION  LINKS");
+                crate::println!("NAME                  TYPE        SIZE  VERSION  HARD LINKS");
                 printed_header = true;
             }
             for entry in page.entries() {
@@ -879,7 +912,7 @@ impl KernelExecutor {
                     return Ok(())
                 }
                 crate::println!(
-                    "{:<20}  {:<10}  {:>8}  {:>7}  {:>5}",
+                    "{:<20}  {:<10}  {:>8}  {:>7}  {:>10}",
                     entry.name.as_str(),
                     entry_type_name(entry.file_type),
                     entry.size,

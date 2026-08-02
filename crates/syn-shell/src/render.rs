@@ -32,8 +32,8 @@ fn render_list(
     if is_default_directory_output(output) {
         return render_default_directory(output)
     }
-    if is_created_directory_output(output) {
-        return render_created_directory(output)
+    if is_created_output(output) {
+        return render_created(output)
     }
     if is_metadata_output(output) {
         return render_metadata(output)
@@ -79,18 +79,23 @@ fn is_metadata_output(output: &StructuredOutput) -> bool {
         .any(|field| field.name.as_str() == "operation")
 }
 
-fn is_created_directory_output(output: &StructuredOutput) -> bool {
+fn is_created_output(output: &StructuredOutput) -> bool {
     matches!(find_value(output, "operation"), Some(OutputValue::Text(value)) if value.as_str() == "created")
-        && is_directory_output_type(output)
 }
 
-fn render_created_directory(
+fn render_created(
     output: &StructuredOutput,
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
     if let Some(path) = find_value(output, "path") {
         write_value(&mut rendered, path, false)?;
+        if !is_directory_output_type(output) {
+            rendered.push_str(";")?;
+            if let Some(version) = find_value(output, "version") {
+                write_value(&mut rendered, version, false)?;
+            }
+        }
     }
     rendered.push_str(" was created\n")?;
     Ok(rendered)
@@ -239,7 +244,7 @@ fn render_directory(
     rendered.push_str("  ")?;
     write_table_text(&mut rendered, "VERSION", 7, true)?;
     rendered.push_str("  ")?;
-    write_table_text(&mut rendered, "LINKS", 5, true)?;
+    write_table_text(&mut rendered, "HARD LINKS", 10, true)?;
     rendered.push_str("\n")?;
 
     for fields in ENTRY_FIELDS {
@@ -271,7 +276,7 @@ fn render_directory(
         rendered.push_str("  ")?;
         write_table_value(&mut rendered, version, 7, true)?;
         rendered.push_str("  ")?;
-        write_table_value(&mut rendered, link_count, 5, true)?;
+        write_table_value(&mut rendered, link_count, 10, true)?;
         rendered.push_str("\n")?;
         rendered_entries += 1;
     }
