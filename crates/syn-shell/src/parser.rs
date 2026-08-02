@@ -54,6 +54,17 @@ impl CommandCall {
             .find(|argument| argument.name.as_str().eq_ignore_ascii_case(name))
             .map(|argument| argument.value)
     }
+
+    pub fn get_text(&self, name: &str) -> Option<&str> {
+        self.arguments
+            .iter()
+            .flatten()
+            .find(|argument| argument.name.as_str().eq_ignore_ascii_case(name))
+            .and_then(|argument| match &argument.value {
+                Value::Text(value) => Some(value.as_str()),
+                _ => None,
+            })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,6 +85,10 @@ impl Program {
 
     pub fn stage(&self, index: usize) -> Option<CommandCall> {
         self.stages.get(index).copied().flatten()
+    }
+
+    pub fn stage_ref(&self, index: usize) -> Option<&CommandCall> {
+        self.stages.get(index).and_then(Option::as_ref)
     }
 }
 
@@ -149,6 +164,13 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         self.commands[..self.command_count].iter().flatten().copied()
     }
 
+    pub fn registration(&self, name: &str) -> Option<&CommandRegistration> {
+        self.commands[..self.command_count]
+            .iter()
+            .flatten()
+            .find(|registration| registration.spec.name.as_str().eq_ignore_ascii_case(name))
+    }
+
     pub fn suggestions(
         &self,
         input: &str,
@@ -188,7 +210,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
     fn command_prefix(&self, input: &str) -> Result<Text<MAX_COMMAND_NAME_BYTES>, Error> {
         let mut lexer = Lexer::new(input);
-        let mut words: [Option<Text<MAX_TOKEN_BYTES>>; 2] = [None; 2];
+        let mut words: [Option<Text<MAX_TOKEN_BYTES>>; 3] = [None; 3];
         let mut word_count = 0;
 
         while let Some(lexeme) = lexer.next()? {
@@ -206,7 +228,24 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
         let first = words[0].ok_or(Error::InvalidSyntax)?;
         let mut command_name = Text::<MAX_COMMAND_NAME_BYTES>::empty();
-        if first.as_str().eq_ignore_ascii_case("SHOW")
+        if first.as_str().eq_ignore_ascii_case("HELP") {
+            command_name.push_str("HELP")?;
+            if let Some(target) = words[1].as_ref() {
+                command_name.clear();
+                command_name.push_str(target.as_str())?;
+                if matches!(
+                    target.as_str(),
+                    value if value.eq_ignore_ascii_case("SHOW")
+                        || value.eq_ignore_ascii_case("TOP")
+                        || value.eq_ignore_ascii_case("SET")
+                ) {
+                    if let Some(noun) = words[2].as_ref() {
+                        command_name.push_char('-')?;
+                        command_name.push_str(noun.as_str())?;
+                    }
+                }
+            }
+        } else if first.as_str().eq_ignore_ascii_case("SHOW")
             || first.as_str().eq_ignore_ascii_case("SHO")
             || first.as_str().eq_ignore_ascii_case("TOP")
             || first.as_str().eq_ignore_ascii_case("SET")
@@ -366,6 +405,30 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];
         let mut positional = 0usize;
+
+        if command_name.as_str().eq_ignore_ascii_case("HELP") && word_count > 1 {
+            if word_count > 3 {
+                return Err(Error::TooManyArguments)
+            }
+            let mut target = Text::<MAX_COMMAND_NAME_BYTES>::empty();
+            target.push_str(words[1].as_ref().ok_or(Error::InvalidSyntax)?.as_str())?;
+            if word_count == 3 {
+                target.push_char('-')?;
+                target.push_str(words[2].as_ref().ok_or(Error::InvalidSyntax)?.as_str())?;
+            }
+            let target_registration = self.find_registration(target.as_str())?;
+            let target_argument = registration
+                .spec
+                .arguments()
+                .find(|argument| argument.name.as_str().eq_ignore_ascii_case("COMMAND"))
+                .ok_or(Error::TooManyArguments)?;
+            insert_argument(
+                &mut arguments,
+                target_argument,
+                target_registration.spec.name.as_str(),
+            )?;
+            first_argument = word_count;
+        }
 
         if let Some(attached) = attached {
             for qualifier in attached.as_str().split('/') {

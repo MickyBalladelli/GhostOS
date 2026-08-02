@@ -56,7 +56,14 @@ pub fn run(
     acpi: Option<AcpiPlatform>,
 ) -> ! {
     let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
-    register(&mut registry, "HELP", HELP_ROUTE);
+    let help_target = ArgumentSpec::new("COMMAND", ArgumentKind::Text, false, true)
+        .expect("valid HELP command argument");
+    registry
+        .register(
+            CommandSpec::new("HELP", &[help_target]).expect("valid HELP command"),
+            RouteId::new(HELP_ROUTE).expect("nonzero HELP route"),
+        )
+        .expect("kernel command registry has capacity");
     register(&mut registry, "SHOW-SYSTEM", SHOW_SYSTEM_ROUTE);
     register(&mut registry, "REBOOT", REBOOT_ROUTE);
     register(&mut registry, "SHUTDOWN", SHUTDOWN_ROUTE);
@@ -204,7 +211,7 @@ fn execute_line(
 
     if program.stage_count() == 1
         && program
-            .stage(0)
+            .stage_ref(0)
             .is_some_and(is_full_directory_command)
     {
         if let Some(command) = program.stage(0) {
@@ -221,7 +228,7 @@ fn execute_line(
 
     if program.stage_count() == 1
         && program
-            .stage(0)
+            .stage_ref(0)
             .is_some_and(is_full_type_command)
     {
         if let Some(command) = program.stage(0) {
@@ -238,7 +245,7 @@ fn execute_line(
 
     if program.stage_count() == 1
         && program
-            .stage(0)
+            .stage_ref(0)
             .is_some_and(is_full_edit_command)
     {
         if let Some(command) = program.stage(0) {
@@ -262,7 +269,7 @@ fn execute_line(
         human_monitor_output,
     ) =
         if program.stage_count() == 1 {
-            match program.stage(0).map(|stage| stage.route.raw()) {
+            match program.stage_ref(0).map(|stage| stage.route.raw()) {
                 Some(HELP_ROUTE) => (true, false, false, false, false, false),
                 Some(SHOW_SYSTEM_ROUTE) => (false, true, false, false, false, false),
                 Some(SHOW_MEMORY_ROUTE) => (false, false, true, false, false, false),
@@ -276,7 +283,13 @@ fn execute_line(
         };
 
     if human_help_output {
-        executor.print_help();
+        if let Some(command) = program.stage_ref(0) {
+            if let Some(target) = command.get_text("COMMAND") {
+                executor.print_command_help(&registry, target);
+            } else {
+                executor.print_help(&registry);
+            }
+        }
         return
     }
     if human_system_output {
@@ -479,7 +492,7 @@ fn prompt() {
     crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
 }
 
-fn is_full_directory_command(command: CommandCall) -> bool {
+fn is_full_directory_command(command: &CommandCall) -> bool {
     if command.command.as_str().eq_ignore_ascii_case("LS") {
         return true
     }
@@ -487,11 +500,11 @@ fn is_full_directory_command(command: CommandCall) -> bool {
         && !matches!(command.get("CREATE"), Some(Value::Boolean(true)))
 }
 
-fn is_full_type_command(command: CommandCall) -> bool {
+fn is_full_type_command(command: &CommandCall) -> bool {
     command.command.as_str().eq_ignore_ascii_case("TYPE")
 }
 
-fn is_full_edit_command(command: CommandCall) -> bool {
+fn is_full_edit_command(command: &CommandCall) -> bool {
     command.command.as_str().eq_ignore_ascii_case("EDIT")
         || command.command.as_str().eq_ignore_ascii_case("EDT")
 }
@@ -771,7 +784,15 @@ fn expand_command(
     let Some((start, end)) = command_span(line) else {
         return Ok(false)
     };
+    let first = word_span(line, 0).ok_or(Error::InvalidSyntax)?;
+    let is_help = line[first.0..first.1].eq_ignore_ascii_case("HELP");
+    if is_help && word_span(line, first.1).is_none() {
+        return Ok(false)
+    }
     let mut replacement = Text::<MAX_LINE_BYTES>::empty();
+    if is_help {
+        replacement.push_str("HELP ")?;
+    }
     for byte in command.as_str().bytes() {
         replacement.push_char(if byte == b'-' { ' ' } else { byte as char })?;
     }
@@ -818,6 +839,19 @@ fn replace_span(
 fn command_span(line: &str) -> Option<(usize, usize)> {
     let first = word_span(line, 0)?;
     let first_word = &line[first.0..first.1];
+    if first_word.eq_ignore_ascii_case("HELP") {
+        let second = word_span(line, first.1)?;
+        let second_word = &line[second.0..second.1];
+        if matches!(
+            second_word,
+            value if value.eq_ignore_ascii_case("SHOW")
+                || value.eq_ignore_ascii_case("TOP")
+                || value.eq_ignore_ascii_case("SET")
+        ) {
+            return Some((first.0, word_span(line, second.1).map_or(second.1, |third| third.1)))
+        }
+        return Some((first.0, second.1))
+    }
     if matches!(
         first_word,
         value if value.eq_ignore_ascii_case("SHOW")
@@ -869,10 +903,22 @@ fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
 
 fn print_command_suggestion(command: &str) {
     crate::print!("  ");
+    print_display_command(command);
+    crate::println!();
+}
+
+fn print_display_command(command: &str) {
     for byte in command.bytes() {
         crate::print!("{}", if byte == b'-' { ' ' } else { byte as char });
     }
-    crate::println!();
+}
+
+fn argument_kind(kind: ArgumentKind) -> &'static str {
+    match kind {
+        ArgumentKind::Boolean => "BOOLEAN",
+        ArgumentKind::Integer => "INTEGER",
+        ArgumentKind::Text => "TEXT",
+    }
 }
 
 fn redraw<const HISTORY: usize>(editor: &LineEditor<HISTORY>) {
@@ -2003,34 +2049,16 @@ impl KernelExecutor {
         Ok(output)
     }
 
-    fn print_help(&self) {
+    fn print_help(&self, registry: &CommandRegistry<COMMAND_CAPACITY>) {
         crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
-        crate::println!("COMMAND              DESCRIPTION");
-        crate::println!("  CREATE             Create a file");
-        crate::println!("  DELETE             Delete a file or link");
-        crate::println!("  DIRECTORY          List a directory");
-        crate::println!("  EDIT               Full-screen file editor (EDT alias)");
-        crate::println!("  HELP               Show this help");
-        crate::println!("  LINK               Create a hard link");
-        crate::println!("  LS                 List all directory entries (Ctrl-C stops)");
-        crate::println!("  MKDIR              Create a directory");
-        crate::println!("  MONITOR            Cycle monitor view");
-        crate::println!("  PWD                Show the default directory");
-        crate::println!("  REBOOT             Restart SynOS");
-        crate::println!("  RMDIR              Remove an empty directory (RD alias)");
-        crate::println!("  SET DEFAULT        Change the default directory");
-        crate::println!("  SET PROCESS <id> /PRIORITY=<1-255>  Set process priority");
-        crate::println!("  SHOW DEFAULT       Show the default directory");
-        crate::println!("  SHOW DSM           Show DSM lock activity");
-        crate::println!("  SHOW LINKS         List hard-link paths");
-        crate::println!("  SHOW MEMORY        Show memory usage");
-        crate::println!("  SHOW PROCESSES     List running threads");
-        crate::println!("  SHOW SYSTEM        Show system status");
-        crate::println!("  SHUTDOWN           Power off SynOS");
-        crate::println!("  STOP JOB <id>      Stop a process with control capability");
-        crate::println!("  TOP CPU            Show CPU activity");
-        crate::println!("  TYPE               Show file contents");
+        crate::println!("COMMAND");
+        for registration in registry.registrations() {
+            crate::print!("  ");
+            print_display_command(registration.spec.name.as_str());
+            crate::println!();
+        }
         crate::println!();
+        crate::println!("Use HELP <COMMAND> for syntax and parameters.");
         crate::println!("EDIT keys: Ctrl-S save, Ctrl-Z save and exit, Ctrl-X discard and exit.");
         crate::println!("  Insert text normally; Enter adds a line; Shift-arrows select text.");
         crate::println!("  Shift-Home/End extend selection; Backspace/Delete remove selected text.");
@@ -2038,6 +2066,79 @@ impl KernelExecutor {
         crate::println!("  Command mode: Y copy, X cut, P paste. Resize redraws the live terminal.");
         crate::println!();
         crate::println!("Unique command prefixes are accepted.");
+    }
+
+    #[inline(never)]
+    fn print_command_help(
+        &self,
+        registry: &CommandRegistry<COMMAND_CAPACITY>,
+        command: &str,
+    ) {
+        let Some(registration) = registry.registration(command) else {
+            crate::println!("No help available for {command}.");
+            return
+        };
+
+        crate::print!("\x1b[1;36m=== HELP: ");
+        print_display_command(registration.spec.name.as_str());
+        crate::println!(" ===\x1b[0m");
+        crate::print!("SYNTAX: ");
+        print_display_command(registration.spec.name.as_str());
+        for argument in registration.spec.arguments().filter(|argument| argument.positional) {
+            if argument.required {
+                crate::print!(" <{}>", argument.name.as_str());
+            } else {
+                crate::print!(" [<{}>]", argument.name.as_str());
+            }
+        }
+        for argument in registration.spec.arguments().filter(|argument| !argument.positional) {
+            if argument.kind == ArgumentKind::Boolean {
+                if argument.required {
+                    crate::print!(" /{}", argument.name.as_str());
+                } else {
+                    crate::print!(" [/{}]", argument.name.as_str());
+                }
+            } else {
+                if argument.required {
+                    crate::print!(
+                        " /{}=<{}>",
+                        argument.name.as_str(),
+                        argument_kind(argument.kind)
+                    );
+                } else {
+                    crate::print!(
+                        " [/{}=<{}>]",
+                        argument.name.as_str(),
+                        argument_kind(argument.kind)
+                    );
+                }
+            }
+        }
+        crate::println!();
+        crate::println!("PARAMETERS:");
+        let mut has_boolean = false;
+        let mut has_arguments = false;
+        for argument in registration.spec.arguments() {
+            has_arguments = true;
+            has_boolean |= argument.kind == ArgumentKind::Boolean;
+            crate::print!("  ");
+            crate::print!("{}", argument.name.as_str());
+            crate::print!(" type={}", argument_kind(argument.kind));
+            crate::print!(
+                " {}",
+                if argument.required { "required" } else { "optional" }
+            );
+            crate::println!(
+                " {}",
+                if argument.positional { "positional" } else { "qualifier" }
+            );
+        }
+        if !has_arguments {
+            crate::println!("  none");
+        }
+        if has_boolean {
+            crate::println!("Boolean parameters accept TRUE, FALSE, YES, NO, 1, or 0.");
+        }
     }
 
     fn show_system(&self) -> Result<StructuredOutput, Status> {
