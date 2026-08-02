@@ -98,16 +98,16 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Enforce read capability and report directories, missing files, corrupt versions, and I/O failures correctly.
 
 - [ ] **Manage File Links**
-  - [ ] Add a `LINK source target` command and register aliases and qualifiers.
-  - [ ] Resolve source and target paths from absolute paths, relative paths, and the active default directory.
-  - [ ] Define whether linking selects the latest version or an explicit `;version`.
-  - [ ] Allow links only for supported non-directory file types and reject invalid versioned targets.
-  - [ ] Enforce source read plus target-parent write and administration capabilities.
-  - [ ] Share the underlying file data instead of copying it, with one consistent link count for every name.
-  - [ ] Report existing targets, missing parents, missing sources, read-only mounts, quota limits, and cross-volume links.
-  - [ ] Return the created link metadata, including target path, selected version, and link count.
-  - [ ] Add `SHOW LINKS` or equivalent output that lists every path linked to the same file, not only the count.
-  - [ ] Preserve link behavior across `TYPE`, delete, rename, version creation, persistence, and recovery.
+  - [x] Add a `LINK source target` command and register aliases and qualifiers.
+  - [x] Resolve source and target paths from absolute paths, relative paths, and the active default directory.
+  - [x] Define whether linking selects the latest version or an explicit `;version`.
+  - [x] Allow links only for supported non-directory file types and reject invalid versioned targets.
+  - [x] Enforce source read plus target-parent write and administration capabilities.
+  - [x] Share the underlying file data instead of copying it, with one consistent link count for every name.
+  - [x] Report existing targets, missing parents, missing sources, read-only mounts, quota limits, and cross-volume links.
+  - [x] Return the created link metadata, including target path, selected version, and link count.
+  - [x] Add `SHOW LINKS` or equivalent output that lists every path linked to the same file, not only the count.
+  - [x] Preserve link behavior across `TYPE`, delete, rename, version creation, persistence, and recovery.
   - [ ] Add daemon, runtime, parser, persistence, and QEMU coverage for link creation and lifecycle behavior.
 
 - [ ] **End-to-End Filesystem Shell Validation**

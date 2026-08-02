@@ -232,6 +232,7 @@ impl BlockId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileRecord {
     key: FileKey,
+    object_id: u64,
     size: u64,
     data: BlockId,
     checksum: u64,
@@ -251,6 +252,7 @@ impl FileRecord {
             },
             version: 0,
         },
+        object_id: 0,
         size: 0,
         data: BlockId::NONE,
         checksum: 0,
@@ -406,6 +408,21 @@ pub struct DirectoryEntry {
     pub mode: u16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkEntry {
+    pub path: FileName,
+    /// Zero means the current version. Non-zero means an explicit version
+    /// selector is needed to name this link.
+    pub version: u32,
+}
+
+impl LinkEntry {
+    pub const EMPTY: Self = Self {
+        path: DirectoryEntry::EMPTY.name,
+        version: 0,
+    };
+}
+
 impl DirectoryEntry {
     pub const EMPTY: Self = Self {
         name: FileName {
@@ -511,9 +528,14 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
 
     /// Return one live file version by its stable in-snapshot ordinal.
     pub fn file_at(&self, index: u32) -> Result<Option<FileVersion>, Error> {
-        self.filesystem
-            .record_at(self.root, index)
-            .map(|record| record.map(Into::into))
+        let Some(record) = self.filesystem.record_at(self.root, index)? else {
+            return Ok(None)
+        };
+        let mut file: FileVersion = record.into();
+        file.link_count = self
+            .filesystem
+            .link_count_at(self.root, record.object_id)?;
+        Ok(Some(file))
     }
 
     pub fn list_directory(
@@ -607,6 +629,7 @@ pub struct SynFs<const MAX_BLOCKS: usize> {
     next_checkpoint: u64,
     volume_bank: usize,
     volume_sequence: u64,
+    next_object_id: u64,
 }
 
 /// An atomic group of SynFS B+tree changes.
@@ -777,6 +800,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             next_checkpoint: 1,
             volume_bank: 1,
             volume_sequence: 0,
+            next_object_id: 1,
         }
     }
 
@@ -989,9 +1013,11 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         contents: &[u8],
     ) -> Result<FileVersion, Error> {
         let data = self.store_data(contents)?;
+        let object_id = self.allocate_object_id()?;
         self.insert_record(
             file,
             version,
+            object_id,
             created_at,
             contents.len() as u64,
             data,
@@ -1006,6 +1032,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         &mut self,
         file: FileName,
         version: u32,
+        object_id: u64,
         created_at: u64,
         size: u64,
         data: BlockId,
@@ -1016,6 +1043,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     ) -> Result<FileVersion, Error> {
         let record = FileRecord {
             key: FileKey { file, version },
+            object_id,
             size,
             data,
             checksum: record_checksum,
@@ -1056,6 +1084,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.insert_record(
             file,
             version,
+            0,
             self.generation.saturating_add(1),
             0,
             BlockId::NONE,
@@ -1090,10 +1119,14 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub fn link(&mut self, existing: &str, new_path: &str) -> Result<FileVersion, Error> {
         let source = self.lookup_record(existing)?;
-        if source.file_type == FileType::Directory {
+        if source.file_type == FileType::Directory || source.object_id == 0 {
             return Err(Error::NotDirectory);
         }
-        let target = FileName::new(new_path)?;
+        let parsed_target = VersionedPath::parse(new_path)?;
+        if parsed_target.version != VersionSelector::Latest || new_path.contains(';') {
+            return Err(Error::InvalidVersion);
+        }
+        let target = parsed_target.file;
         if self.latest_record_at(self.root, target)?.is_some() {
             return Err(Error::AlreadyExists);
         }
@@ -1103,6 +1136,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.insert_record(
             target,
             version,
+            source.object_id,
             self.generation.saturating_add(1),
             source.size,
             source.data,
@@ -1110,14 +1144,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             source.file_type,
             source.link_count.saturating_add(1),
             source.mode,
-        )
+        )?;
+        self.lookup(target.as_str())
     }
 
     pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
         let mut transaction = self.transaction();
-        let file = transaction.rename(old_path, new_path)?;
+        transaction.rename(old_path, new_path)?;
         transaction.commit()?;
-        Ok(file)
+        self.lookup(new_path)
     }
 
     fn rename_uncommitted(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
@@ -1160,6 +1195,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             let moved_file = self.insert_record(
                 target,
                 version,
+                record.object_id,
                 self.generation.saturating_add(1),
                 record.size,
                 record.data,
@@ -1206,6 +1242,36 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.list_directory_at(self.root, path, entries)
     }
 
+    pub fn list_links(&self, path: &str, entries: &mut [LinkEntry]) -> Result<usize, Error> {
+        let selected = self.lookup_record(path)?;
+        let mut written = 0;
+        let mut ordinal = 0;
+        while let Some(record) = self.record_at(self.root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            if record.object_id != selected.object_id
+                || record.deleted
+                || self.latest_record_at(self.root, record.key.file)? != Some(record)
+            {
+                continue;
+            }
+            if entries.get(written).is_none() {
+                return Err(Error::BufferTooSmall {
+                    required: written.saturating_add(1),
+                });
+            }
+            entries[written] = LinkEntry {
+                path: record.key.file,
+                version: if self.latest_record_at(self.root, record.key.file)? == Some(record) {
+                    0
+                } else {
+                    record.key.version
+                },
+            };
+            written += 1;
+        }
+        Ok(written)
+    }
+
     fn list_directory_at(
         &self,
         root: BlockId,
@@ -1219,7 +1285,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let mut ordinal = 0;
         while let Some(record) = self.record_at(root, ordinal)? {
             ordinal = ordinal.saturating_add(1);
-            if self.latest_record_at(root, record.key.file)? != Some(record) {
+            if record.deleted {
                 continue;
             }
             let Some(name) = (if path == "/" {
@@ -1246,7 +1312,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 file_type: record.file_type,
                 size: record.size,
                 version: record.key.version,
-                link_count: record.link_count,
+                link_count: self.link_count_at(root, record.object_id)?,
                 mode: record.mode,
             };
             written += 1;
@@ -1276,6 +1342,33 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 .checked_add(1)
                 .ok_or(Error::VersionOverflow)
         })
+    }
+
+    fn allocate_object_id(&mut self) -> Result<u64, Error> {
+        let object_id = self.next_object_id;
+        self.next_object_id = self
+            .next_object_id
+            .checked_add(1)
+            .ok_or(Error::VersionOverflow)?;
+        Ok(object_id)
+    }
+
+    fn link_count_at(&self, root: BlockId, object_id: u64) -> Result<u32, Error> {
+        if object_id == 0 {
+            return Ok(1);
+        }
+        let mut count = 0_u32;
+        let mut ordinal = 0;
+        while let Some(record) = self.record_at(root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            if record.object_id == object_id
+                && !record.deleted
+                && self.latest_record_at(root, record.key.file)? == Some(record)
+            {
+                count = count.saturating_add(1);
+            }
+        }
+        Ok(count.max(1))
     }
 
     fn require_parent_directory(&self, file: FileName) -> Result<(), Error> {
@@ -1311,6 +1404,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             .ok_or(Error::VersionOverflow)?;
         let record = FileRecord {
             key: FileKey { file, version },
+            object_id: previous.object_id,
             size: 0,
             data: BlockId::NONE,
             checksum: checksum(&[]),
@@ -1376,6 +1470,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 file: parsed.file,
                 version,
             },
+            object_id: previous.object_id,
             size: 0,
             data: BlockId::NONE,
             checksum: checksum(&[]),
@@ -1409,7 +1504,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 .filter(|record| !record.deleted),
         }
         .ok_or(Error::NotFound)?;
-        Ok(record.into())
+        let link_count = self.link_count_at(root, record.object_id)?;
+        let mut version: FileVersion = record.into();
+        version.link_count = link_count;
+        Ok(version)
     }
 
     pub fn read(&self, path: &str, destination: &mut [u8]) -> Result<ReadResult, Error> {
@@ -1455,7 +1553,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             })?
             .filter(|record| !record.deleted)
             .ok_or(Error::NotFound)?;
-        self.read_file_version(record.into(), destination)
+        let link_count = self.link_count_at(self.root, record.object_id)?;
+        let mut file: FileVersion = record.into();
+        file.link_count = link_count;
+        self.read_file_version(file, destination)
     }
 
     pub fn retained_version_span(&self, path: &str) -> Result<(u32, Option<u32>), Error> {

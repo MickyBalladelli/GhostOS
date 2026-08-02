@@ -4,12 +4,13 @@ use host_filesystems::{FileSystemKind, Partition};
 use synos_ipc::{Envelope, SharedBuffer};
 use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
-    CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, SynFs, SynFsDiagnostics,
-    SynFsTransaction, TransactionCommit,
+    CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, LinkEntry, SynFs,
+    SynFsDiagnostics, SynFsTransaction, TransactionCommit,
 };
 
 use crate::namespace::{
-    HostMountAuthority, MountCapability, Namespace, NamespaceError, RootActivation, RootFilesystem,
+    HostMountAuthority, MountCapability, MountSource, Namespace, NamespaceError, RootActivation,
+    RootFilesystem,
 };
 
 use crate::protocol::{
@@ -157,6 +158,7 @@ pub enum DaemonError {
     MountExhausted,
     NotFound,
     ReadOnly,
+    CrossVolume,
     BufferTooSmall { required: usize },
     InvalidPath,
     InvalidRename,
@@ -187,6 +189,7 @@ impl IntoStatus for DaemonError {
             | Self::AccessDenied
             | Self::InvalidCapability
             | Self::ReadOnly => Status::ACCESS_DENIED,
+            Self::CrossVolume => Status::INVALID_ARGUMENT,
             Self::CapabilityExhausted
             | Self::HandleExhausted
             | Self::SnapshotExhausted
@@ -228,6 +231,7 @@ impl fmt::Display for DaemonError {
             Self::MountExhausted => "mount table is full",
             Self::NotFound => "filesystem object not found",
             Self::ReadOnly => "filesystem is read-only",
+            Self::CrossVolume => "hard links cannot cross volumes",
             Self::BufferTooSmall { .. } => "shared buffer is too small",
             Self::InvalidPath => "invalid filesystem path",
             Self::InvalidRename => "invalid rename payload",
@@ -541,7 +545,7 @@ impl<
         }
         let namespace_read_only = path
             .starts_with('/')
-            .then(|| self.namespace.is_read_only(path))
+            .then(|| self.namespace.is_read_only(mount_path(path)))
             .transpose()
             .map_err(DaemonError::Namespace)?
             .unwrap_or(false);
@@ -809,11 +813,24 @@ impl<
         new_path: &str,
     ) -> Result<FileInfo, DaemonError> {
         let index = self.file_index(process, capability, FileRights::READ)?;
+        self.require_process_rights(
+            process,
+            FileRights::WRITE.union(FileRights::ADMIN),
+        )?;
         if self.open_files[index].read_only_mount {
             return Err(DaemonError::ReadOnly);
         }
         let old_path = self.open_files[index].path;
         let new_path = Name::from_str(new_path)?;
+        if self.path_is_read_only(new_path.as_str())? {
+            return Err(DaemonError::ReadOnly);
+        }
+        if !same_volume(
+            self.namespace.resolve(mount_path(old_path.as_str())),
+            self.namespace.resolve(mount_path(new_path.as_str())),
+        ) {
+            return Err(DaemonError::CrossVolume);
+        }
         let metadata = self.filesystem.link(old_path.as_str(), new_path.as_str())?;
         Ok(FileInfo {
             capability,
@@ -827,6 +844,59 @@ impl<
             link_count: metadata.link_count,
             mode: metadata.mode,
         })
+    }
+
+    pub fn list_links(
+        &self,
+        process: ProcessId,
+        authority: Capability,
+        path: &str,
+        output: &mut [u8],
+    ) -> Result<(FileInfo, usize), DaemonError> {
+        self.authorize_process(process, authority, FileRights::READ)?;
+        let path = Name::from_str(path)?;
+        let metadata = self.filesystem.lookup(path.as_str())?;
+        let mut entries = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
+        let count = self.filesystem.list_links(path.as_str(), &mut entries)?;
+        let mut written = 0;
+        for entry in entries.iter().take(count) {
+            let suffix = if entry.version == 0 {
+                0
+            } else {
+                1 + digits(entry.version)
+            };
+            let required = entry.path.as_bytes().len() + suffix + 1;
+            if written + required > output.len() {
+                return Err(DaemonError::BufferTooSmall {
+                    required: written + required,
+                });
+            }
+            let end = written + entry.path.as_bytes().len();
+            output[written..end].copy_from_slice(entry.path.as_bytes());
+            written = end;
+            if entry.version != 0 {
+                output[written] = b';';
+                written += 1;
+                written += write_decimal(&mut output[written..], entry.version);
+            }
+            output[written] = b'\n';
+            written += 1;
+        }
+        Ok((
+            FileInfo {
+                capability: authority,
+                file: metadata.file,
+                version: metadata.version,
+                size: metadata.size,
+                checksum: metadata.checksum,
+                created_at: metadata.created_at,
+                rights: FileRights::READ,
+                file_type: metadata.file_type,
+                link_count: metadata.link_count,
+                mode: metadata.mode,
+            },
+            written,
+        ))
     }
 
     pub fn rename(
@@ -1208,7 +1278,23 @@ impl<
                 )?;
                 Ok(Response::success()
                     .with_value(0, info.version as u64)
-                    .with_value(1, info.size))
+                    .with_value(1, info.size)
+                    .with_value(2, info.link_count as u64))
+            }
+            Operation::Links => {
+                let output = output_buffer(buffer)?;
+                let path_end = output
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(output.len());
+                let path = Name::from_bytes(&output[..path_end], false)?;
+                let (_, bytes) = self.list_links(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    path.as_str(),
+                    output,
+                )?;
+                Ok(Response::success().with_value(0, bytes as u64))
             }
         }
     }
@@ -1370,6 +1456,18 @@ impl<
     ) -> Result<(), DaemonError> {
         self.authorize_process(process, authority, FileRights::WRITE)
             .map(|_| ())
+    }
+
+    fn require_process_rights(
+        &self,
+        process: ProcessId,
+        required: FileRights,
+    ) -> Result<(), DaemonError> {
+        let index = self.process_index(process, None)?;
+        if !self.processes[index].rights.contains_file(required) {
+            return Err(DaemonError::AccessDenied);
+        }
+        Ok(())
     }
 
     fn authorize_process(
@@ -1534,6 +1632,7 @@ fn validate_buffer(
             | Operation::Mkdir
             | Operation::Rmdir
             | Operation::Link
+            | Operation::Links
     );
     if !needs_buffer {
         if descriptor.is_some() || buffer.is_some() {
@@ -1551,7 +1650,11 @@ fn validate_buffer(
     }
         let expected_writable = matches!(
             operation,
-        Operation::Read | Operation::List | Operation::SnapshotList | Operation::MountList
+        Operation::Read
+            | Operation::List
+            | Operation::Links
+            | Operation::SnapshotList
+            | Operation::MountList
         );
     if descriptor.writable != expected_writable {
         return Err(DaemonError::Protocol(ProtocolError::InvalidBuffer));
@@ -1562,4 +1665,54 @@ fn validate_buffer(
 fn rms_capability() -> synos_synfs::RmsMapHandle {
     synos_synfs::RmsMapHandle::from_capability(INTERNAL_MAPPING_CAPABILITY)
         .expect("internal mapping capability has a generation")
+}
+
+fn mount_path(path: &str) -> &str {
+    path.rsplit_once(';').map_or(path, |(path, _)| path)
+}
+
+fn same_volume(
+    left: Result<crate::namespace::MountInfo, NamespaceError>,
+    right: Result<crate::namespace::MountInfo, NamespaceError>,
+) -> bool {
+    let (Ok(left), Ok(right)) = (left, right) else {
+        return false
+    };
+    match (left.source, right.source) {
+        (
+            MountSource::SynFs { volume: left, .. },
+            MountSource::SynFs { volume: right, .. },
+        ) => left == right,
+        (
+            MountSource::Host {
+                filesystem: left_filesystem,
+                partition: left_partition,
+            },
+            MountSource::Host {
+                filesystem: right_filesystem,
+                partition: right_partition,
+            },
+        ) => left_filesystem == right_filesystem && left_partition == right_partition,
+        _ => false,
+    }
+}
+
+fn digits(mut value: u32) -> usize {
+    let mut count = 1;
+    while value >= 10 {
+        value /= 10;
+        count += 1;
+    }
+    count
+}
+
+fn write_decimal(destination: &mut [u8], mut value: u32) -> usize {
+    let count = digits(value);
+    let mut index = count;
+    while index != 0 {
+        index -= 1;
+        destination[index] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+    count
 }

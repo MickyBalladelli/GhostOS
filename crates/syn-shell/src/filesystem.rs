@@ -11,6 +11,7 @@ use crate::{
 
 pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_DIRECTORY_PAGE_ENTRIES: usize = 32;
+pub const MAX_LINK_PAGE_ENTRIES: usize = 16;
 pub const MAX_VISIBLE_DIRECTORY_ENTRIES: usize = 6;
 pub const MAX_TYPE_OUTPUT_BYTES: usize = 4096;
 
@@ -20,6 +21,8 @@ pub const TYPE_ROUTE: u16 = 34;
 pub const SET_DEFAULT_ROUTE: u16 = 35;
 pub const SHOW_DEFAULT_ROUTE: u16 = 36;
 pub const MKDIR_ROUTE: u16 = 37;
+pub const LINK_ROUTE: u16 = 38;
+pub const SHOW_LINKS_ROUTE: u16 = 39;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Path {
@@ -123,6 +126,36 @@ pub struct DirectoryPage {
     pub next: Option<u32>,
 }
 
+pub struct LinkPage {
+    entries: [Option<Path>; MAX_LINK_PAGE_ENTRIES],
+    count: usize,
+}
+
+impl LinkPage {
+    pub const fn new() -> Self {
+        Self {
+            entries: [None; MAX_LINK_PAGE_ENTRIES],
+            count: 0,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries = [None; MAX_LINK_PAGE_ENTRIES];
+        self.count = 0
+    }
+
+    pub fn push(&mut self, path: Path) -> Result<(), Status> {
+        let slot = self.entries.get_mut(self.count).ok_or(Status::NO_SPACE)?;
+        *slot = Some(path);
+        self.count += 1;
+        Ok(())
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = Path> + '_ {
+        self.entries[..self.count].iter().flatten().copied()
+    }
+}
+
 impl DirectoryPage {
     pub const fn new() -> Self {
         Self {
@@ -168,6 +201,13 @@ pub trait FilesystemSource {
     ) -> Result<(), Status>;
     fn create_directory(&mut self, path: &str, recursive: bool) -> Result<FileMetadata, Status>;
     fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status>;
+    fn link(&mut self, _source: &str, _target: &str) -> Result<FileMetadata, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn list_links(&mut self, _path: &str, _output: &mut LinkPage) -> Result<FileMetadata, Status> {
+        Err(Status::NOT_FOUND)
+    }
 
     /// Open the selected version read-only, stream bounded reads to `output`,
     /// and close the handle before returning. Implementations must close the
@@ -359,7 +399,22 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
     registry.register(
         CommandSpec::new("PWD", &[]).map_err(|_| Error::InvalidValue)?,
         route(SHOW_DEFAULT_ROUTE),
-    )
+    )?;
+    let source = ArgumentSpec::new("SOURCE", ArgumentKind::Text, true, true)
+        .map_err(|_| Error::InvalidValue)?;
+    let target = ArgumentSpec::new("TARGET", ArgumentKind::Text, true, true)
+        .map_err(|_| Error::InvalidValue)?;
+    registry.register(
+        CommandSpec::new("LINK", &[source, target]).map_err(|_| Error::InvalidValue)?,
+        route(LINK_ROUTE),
+    )?;
+    let links_path = ArgumentSpec::new("PATH", ArgumentKind::Text, false, true)
+        .map_err(|_| Error::InvalidValue)?;
+    registry.register(
+        CommandSpec::new("SHOW-LINKS", &[links_path]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_LINKS_ROUTE),
+    )?;
+    Ok(())
 }
 
 fn route(raw: u16) -> RouteId {
@@ -411,7 +466,7 @@ impl FileOutput for TypeBuffer {
     }
 }
 
-fn write_u32(output: &mut Text<10>, value: u32) -> Result<(), Status> {
+fn write_u32<const CAPACITY: usize>(output: &mut Text<CAPACITY>, value: u32) -> Result<(), Status> {
     let mut digits = [0; 10];
     let mut value = value;
     let mut count = 0;
@@ -537,6 +592,8 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             TYPE_ROUTE => self.type_file(command),
             SET_DEFAULT_ROUTE => self.set_default(command),
             SHOW_DEFAULT_ROUTE => self.default_output(),
+            LINK_ROUTE => self.link(command),
+            SHOW_LINKS_ROUTE => self.show_links(command),
             _ => Err(Status::NOT_FOUND),
         }
     }
@@ -615,6 +672,34 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             "truncated",
             OutputValue::Boolean(contents.truncated || visible.len() != contents.len),
         )?;
+        Ok(output)
+    }
+
+    fn link(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let source = text(command.get("SOURCE")).ok_or(Status::INVALID_ARGUMENT)?;
+        let target = text(command.get("TARGET")).ok_or(Status::INVALID_ARGUMENT)?;
+        let source = self.session.resolve(Some(source.as_str()))?;
+        let target = self.session.resolve(Some(target.as_str()))?;
+        if split_version_selector(target.as_str())?.1.is_some() || target.as_str() == "/" {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        metadata_output("linked", self.source.link(source.as_str(), target.as_str())?)
+    }
+
+    fn show_links(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let path = self
+            .session
+            .resolve(text(command.get("PATH")).as_ref().map(Text::as_str))?;
+        let mut links = LinkPage::new();
+        let metadata = self.source.list_links(path.as_str(), &mut links)?;
+        let mut output = metadata_output("links", metadata)?;
+        for (index, link) in links.entries().enumerate() {
+            let mut field = Text::<64>::empty();
+            field.push_str("link-").map_err(|_| Status::NO_SPACE)?;
+            write_u32(&mut field, index as u32)?;
+            field.push_str("-path").map_err(|_| Status::NO_SPACE)?;
+            insert_text(&mut output, field.as_str(), link.as_str())?;
+        }
         Ok(output)
     }
 

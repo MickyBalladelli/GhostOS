@@ -3,7 +3,7 @@ use syn_shell::{
     editor::{EditorAction, Key, LineEditor},
     filesystem::{
         DirectoryEntry as ShellDirectoryEntry, DirectoryPage, EntryType, FileMetadata, FileOutput,
-        FilesystemExecutor, FilesystemSource, Path as ShellPath,
+        FilesystemExecutor, FilesystemSource, LinkPage, Path as ShellPath,
     },
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId, Value},
@@ -26,7 +26,7 @@ const SHOW_PROCESSES_ROUTE: u16 = 6;
 const TOP_CPU_ROUTE: u16 = 7;
 const SHOW_MEMORY_ROUTE: u16 = 8;
 const SHOW_DSM_ROUTE: u16 = 9;
-const COMMAND_CAPACITY: usize = 18;
+const COMMAND_CAPACITY: usize = 20;
 const HISTORY_CAPACITY: usize = 8;
 
 pub fn run(
@@ -585,20 +585,29 @@ const KERNEL_FILE_BYTES: usize = 1024;
 struct KernelFile {
     path: ShellPath,
     file_type: EntryType,
-    bytes: [u8; KERNEL_FILE_BYTES],
-    length: usize,
     version: u32,
     link_count: u32,
+    object_id: u64,
+}
+
+#[derive(Clone, Copy)]
+struct KernelObject {
+    bytes: [u8; KERNEL_FILE_BYTES],
+    length: usize,
 }
 
 struct KernelFilesystem {
     files: [Option<KernelFile>; KERNEL_FILE_CAPACITY],
+    objects: [Option<KernelObject>; KERNEL_FILE_CAPACITY],
+    next_object_id: u64,
 }
 
 impl KernelFilesystem {
     fn new() -> Self {
         let mut filesystem = Self {
             files: [None; KERNEL_FILE_CAPACITY],
+            objects: [None; KERNEL_FILE_CAPACITY],
+            next_object_id: 1,
         };
         for path in ["/packages", "/logs", "/data", "/tmp"] {
             let _ = filesystem.insert(path, EntryType::Directory);
@@ -641,14 +650,24 @@ impl KernelFilesystem {
             .iter_mut()
             .find(|file| file.is_none())
             .ok_or(Status::NO_SPACE)?;
+        let object_id = self.next_object_id;
+        let object = self
+            .objects
+            .iter_mut()
+            .find(|object| object.is_none())
+            .ok_or(Status::NO_SPACE)?;
+        *object = Some(KernelObject {
+            bytes: [0; KERNEL_FILE_BYTES],
+            length: 0,
+        });
         let file = KernelFile {
             path: ShellPath::new(path)?,
             file_type,
-            bytes: [0; KERNEL_FILE_BYTES],
-            length: 0,
             version,
             link_count: 1,
+            object_id,
         };
+        self.next_object_id = self.next_object_id.saturating_add(1);
         *slot = Some(file);
         Ok(file)
     }
@@ -671,14 +690,35 @@ impl KernelFilesystem {
         self.insert(path, EntryType::Directory).map(|_| ())
     }
 
-    fn metadata(file: KernelFile) -> FileMetadata {
+    fn metadata(&self, file: KernelFile) -> FileMetadata {
+        let size = self.object(file).map_or(0, |object| object.length);
         FileMetadata {
             path: file.path,
             file_type: file.file_type,
-            size: file.length as u64,
+            size: size as u64,
             version: file.version,
-            link_count: file.link_count,
+            link_count: self.link_count(file.object_id),
         }
+    }
+
+    fn object(&self, file: KernelFile) -> Option<KernelObject> {
+        self.objects
+            .get(file.object_id.checked_sub(1)? as usize)
+            .copied()
+            .flatten()
+    }
+
+    fn link_count(&self, object_id: u64) -> u32 {
+        self.files
+            .iter()
+            .flatten()
+            .filter(|file| {
+                file.object_id == object_id
+                    && self
+                        .find(file.path.as_str())
+                        .is_some_and(|latest| latest.version == file.version)
+            })
+            .count() as u32
     }
 }
 
@@ -706,12 +746,6 @@ impl FilesystemSource for KernelFilesystem {
             let Some(file) = slot else {
                 continue
             };
-            if self
-                .find(file.path.as_str())
-                .is_some_and(|latest| latest.version != file.version)
-            {
-                continue
-            }
             let current = index;
             index += 1;
             if current < start {
@@ -728,9 +762,9 @@ impl FilesystemSource for KernelFilesystem {
             output.push(ShellDirectoryEntry {
                 name: ShellPath::new(name)?,
                 file_type: file.file_type,
-                size: file.length as u64,
+                size: self.object(*file).map_or(0, |object| object.length) as u64,
                 version: file.version,
-                link_count: file.link_count,
+                link_count: self.link_count(file.object_id),
             })?;
         }
         Ok(())
@@ -746,7 +780,7 @@ impl FilesystemSource for KernelFilesystem {
         }
         if let Some(existing) = self.find(path) {
             return if existing.file_type == EntryType::Directory {
-                Ok(Self::metadata(existing))
+                Ok(self.metadata(existing))
             } else {
                 Err(Status::ALREADY_EXISTS)
             }
@@ -756,7 +790,8 @@ impl FilesystemSource for KernelFilesystem {
         } else if !self.directory_exists(Self::parent(path))? {
             return Err(Status::NOT_FOUND)
         }
-        self.insert(path, EntryType::Directory).map(Self::metadata)
+        self.insert(path, EntryType::Directory)
+            .map(|file| self.metadata(file))
     }
 
     fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status> {
@@ -778,7 +813,64 @@ impl FilesystemSource for KernelFilesystem {
             Some(file) => file.version.checked_add(1).ok_or(Status::CORRUPT)?,
         };
         self.insert_version(path, EntryType::File, version)
-            .map(Self::metadata)
+            .map(|file| self.metadata(file))
+    }
+
+    fn link(&mut self, source: &str, target: &str) -> Result<FileMetadata, Status> {
+        let (source_path, version) = syn_shell::filesystem::split_version_selector(source)?;
+        if syn_shell::filesystem::split_version_selector(target)?.1.is_some()
+            || target == "/"
+            || self.find(target).is_some()
+        {
+            return Err(if self.find(target).is_some() {
+                Status::ALREADY_EXISTS
+            } else {
+                Status::INVALID_ARGUMENT
+            })
+        }
+        let source = match version {
+            None | Some(0) => self.find(source_path),
+            Some(version) => self.find_version(source_path, version),
+        }
+        .ok_or(Status::NOT_FOUND)?;
+        if source.file_type != EntryType::File {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        if !self.directory_exists(Self::parent(target))? {
+            return Err(Status::NOT_FOUND)
+        }
+        let slot = self
+            .files
+            .iter_mut()
+            .find(|file| file.is_none())
+            .ok_or(Status::NO_SPACE)?;
+        let mut linked = source;
+        linked.path = ShellPath::new(target)?;
+        linked.version = 1;
+        linked.link_count = 1;
+        *slot = Some(linked);
+        Ok(self.metadata(linked))
+    }
+
+    fn list_links(&mut self, path: &str, output: &mut LinkPage) -> Result<FileMetadata, Status> {
+        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
+        let selected = match version {
+            None | Some(0) => self.find(path),
+            Some(version) => self.find_version(path, version),
+        }
+        .ok_or(Status::NOT_FOUND)?;
+        output.clear();
+        for file in self.files.iter().flatten() {
+            if file.object_id != selected.object_id
+                || !self
+                    .find(file.path.as_str())
+                    .is_some_and(|latest| latest.version == file.version)
+            {
+                continue
+            }
+            output.push(file.path)?;
+        }
+        Ok(self.metadata(selected))
     }
 
     fn type_file(
@@ -802,10 +894,11 @@ impl FilesystemSource for KernelFilesystem {
         if version.is_some_and(|version| version != 0 && version != file.version) {
             return Err(Status::NOT_FOUND)
         }
-        for chunk in file.bytes[..file.length].chunks(128) {
+        let object = self.object(file).ok_or(Status::CORRUPT)?;
+        for chunk in object.bytes[..object.length].chunks(128) {
             output.write(chunk)?;
         }
-        Ok(Self::metadata(file))
+        Ok(self.metadata(file))
     }
 }
 
@@ -903,7 +996,14 @@ impl KernelExecutor {
             if !printed_header {
                 crate::println!("Directory: {}", path.as_str());
                 crate::println!();
-                crate::println!("NAME                  TYPE        SIZE  VERSION  HARD LINKS");
+                crate::println!(
+                    "{:<20}  {:<10}  {:>8}  {:>7}  {:>10}",
+                    "NAME",
+                    "TYPE",
+                    "SIZE",
+                    "VERSION",
+                    "HARD LINKS",
+                );
                 printed_header = true;
             }
             for entry in page.entries() {
@@ -964,7 +1064,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, TYPE, SET DEFAULT; unique command prefixes accepted",
+            "HELP, SHOW SYSTEM, REBOOT, SHUTDOWN, MONITOR, SHOW PROCESSES, TOP CPU, SHOW MEMORY, SHOW DSM, DIRECTORY, CREATE, TYPE, LINK, SHOW LINKS, SET DEFAULT; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -975,6 +1075,8 @@ impl KernelExecutor {
         crate::println!("  CREATE             Create a file");
         crate::println!("  DIRECTORY          List a directory");
         crate::println!("  HELP               Show this help");
+        crate::println!("  LINK               Create a hard link");
+        crate::println!("  SHOW LINKS         List hard-link paths");
         crate::println!("  LS                 List all directory entries (Ctrl-C stops)");
         crate::println!("  MKDIR              Create a directory");
         crate::println!("  MONITOR            Cycle monitor view");

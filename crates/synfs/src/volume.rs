@@ -12,7 +12,7 @@ const TYPE_MAP_TREE: u8 = 1;
 const TYPE_MAP_BRANCH: u8 = 2;
 const TYPE_MAP_DATA: u8 = 3;
 
-pub const VOLUME_FORMAT_VERSION: u16 = 2;
+pub const VOLUME_FORMAT_VERSION: u16 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VolumeGeometry {
@@ -37,6 +37,7 @@ struct Superblock {
     checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
     type_map_checksum: u64,
     limits: VolumeLimits,
+    next_object_id: u64,
 }
 
 struct Encoder<'a> {
@@ -154,6 +155,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             checkpoints: [None; MAX_CHECKPOINTS],
             type_map_checksum: checksum(&type_map_bytes::<MAX_BLOCKS>()),
             limits: VolumeLimits::UNLIMITED,
+            next_object_id: 1,
         };
         let map = type_map_bytes::<MAX_BLOCKS>();
         write_type_map::<MAX_BLOCKS>(image, 0, &map)?;
@@ -278,6 +280,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             checkpoints: self.checkpoints,
             type_map_checksum: checksum(&map),
             limits: self.limits,
+            next_object_id: self.next_object_id,
         };
         write_superblock::<MAX_BLOCKS>(image, bank, superblock)?;
         self.volume_bank = bank;
@@ -330,6 +333,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             checkpoints: self.checkpoints,
             type_map_checksum: checksum(&map),
             limits: self.limits,
+            next_object_id: self.next_object_id,
         };
         encode_superblock::<MAX_BLOCKS>(&mut scratch, superblock)?;
         device
@@ -627,6 +631,7 @@ fn encode_superblock<const MAX_BLOCKS: usize>(
         superblock.checkpoints.iter().flatten().count() as u32,
     );
     put_u64(block, 64, superblock.type_map_checksum);
+    put_u64(block, 72, superblock.next_object_id);
     let mut offset = 80;
     for checkpoint in superblock.checkpoints {
         if let Some(checkpoint) = checkpoint {
@@ -700,6 +705,7 @@ fn read_superblock<const MAX_BLOCKS: usize>(
             max_files: u64_at(block, 472),
             max_blocks: usize::try_from(u64_at(block, 480)).map_err(|_| Error::Corrupt)?,
         },
+        next_object_id: u64_at(block, 72).max(1),
     }))
 }
 
@@ -729,6 +735,7 @@ fn load_bank<const MAX_BLOCKS: usize>(
         next_checkpoint: superblock.next_checkpoint,
         volume_bank: bank,
         volume_sequence: superblock.sequence,
+        next_object_id: superblock.next_object_id,
     };
     filesystem.check_consistency()?;
     Ok(filesystem)
@@ -849,6 +856,7 @@ fn decode_key(decoder: &mut Decoder<'_>) -> Result<FileKey, Error> {
 
 fn encode_record(encoder: &mut Encoder<'_>, record: FileRecord) -> Result<(), Error> {
     encode_key(encoder, record.key)?;
+    encoder.put_u64(record.object_id)?;
     encoder.put_u64(record.size)?;
     encoder.put_u32(record.data.0)?;
     encoder.put_u64(record.checksum)?;
@@ -861,6 +869,7 @@ fn encode_record(encoder: &mut Encoder<'_>, record: FileRecord) -> Result<(), Er
 
 fn decode_record(decoder: &mut Decoder<'_>) -> Result<FileRecord, Error> {
     let key = decode_key(decoder)?;
+    let object_id = decoder.get_u64()?;
     let size = decoder.get_u64()?;
     let data = BlockId(decoder.get_u32()?);
     let checksum = decoder.get_u64()?;
@@ -879,6 +888,7 @@ fn decode_record(decoder: &mut Decoder<'_>) -> Result<FileRecord, Error> {
     }
     Ok(FileRecord {
         key,
+        object_id,
         size,
         data,
         checksum,

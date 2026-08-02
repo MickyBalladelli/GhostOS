@@ -26,6 +26,7 @@ pub enum Operation {
     Mkdir = 16,
     Rmdir = 17,
     Link = 18,
+    Links = 19,
 }
 
 impl Operation {
@@ -49,6 +50,7 @@ impl Operation {
             16 => Some(Self::Mkdir),
             17 => Some(Self::Rmdir),
             18 => Some(Self::Link),
+            19 => Some(Self::Links),
             _ => None,
         }
     }

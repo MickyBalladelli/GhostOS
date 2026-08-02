@@ -33,6 +33,13 @@ pub struct Metadata {
     pub version: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkMetadata {
+    pub length: u64,
+    pub version: u32,
+    pub link_count: u32,
+}
+
 /// Bytes returned by `list_directory` use the bounded SynFS directory wire
 /// format. The caller owns the shared buffer and can decode each record while
 /// following the returned continuation offset.
@@ -135,11 +142,32 @@ impl<S: SystemCall> Runtime<S> {
     }
 
     pub fn link(&self, file: File, new_path: SharedBuffer) -> Result<(), Error> {
-        self.execute(
+        self.link_metadata(file, new_path).map(|_| ())
+    }
+
+    pub fn link_metadata(
+        &self,
+        file: File,
+        new_path: SharedBuffer,
+    ) -> Result<LinkMetadata, Error> {
+        let response = self.execute(
             Request::new(Operation::SynFsLink)
                 .with_capability(file.capability)
                 .with_buffer(new_path),
         )?;
-        Ok(())
+        Ok(LinkMetadata {
+            version: u32::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)?,
+            length: response.values[1],
+            link_count: u32::try_from(response.values[2]).map_err(|_| Error::InvalidResponse)?,
+        })
+    }
+
+    pub fn list_links(&self, path_and_output: SharedBuffer) -> Result<usize, Error> {
+        self.execute(
+            Request::new(Operation::SynFsLinks).with_buffer(path_and_output),
+        )
+        .and_then(|response| {
+            usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)
+        })
     }
 }

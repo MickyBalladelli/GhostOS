@@ -351,6 +351,11 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name.push_str(verb.as_str())?
         }
 
+        if command_name.as_str().eq_ignore_ascii_case("LN") {
+            command_name = Text::new("LINK")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("LINKS") {
+            command_name = Text::new("SHOW-LINKS")?;
+        }
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];
         let mut positional = 0usize;

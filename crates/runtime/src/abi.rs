@@ -23,6 +23,7 @@ pub enum Operation {
     SynFsRmdir = 18,
     SynFsLink = 19,
     SynFsList = 20,
+    SynFsLinks = 21,
 }
 
 impl Operation {
@@ -48,6 +49,7 @@ impl Operation {
             18 => Some(Self::SynFsRmdir),
             19 => Some(Self::SynFsLink),
             20 => Some(Self::SynFsList),
+            21 => Some(Self::SynFsLinks),
             _ => None,
         }
     }
