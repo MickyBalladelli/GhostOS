@@ -818,16 +818,19 @@ impl FilesystemSource for KernelFilesystem {
         if !self.directory_exists(parent)? {
             return Err(Status::NOT_FOUND)
         }
-        let version = self
-            .files
-            .iter()
-            .flatten()
-            .filter(|file| file.path.as_str() == path)
-            .map(|file| file.version)
-            .max()
-            .map_or(Ok(1), |version| {
-                version.checked_add(1).ok_or(Status::CORRUPT)
-            })?;
+        let version = if self.find(path).is_none() {
+            1
+        } else {
+            self.files
+                .iter()
+                .flatten()
+                .filter(|file| file.path.as_str() == path)
+                .map(|file| file.version)
+                .max()
+                .map_or(Ok(1), |version| {
+                    version.checked_add(1).ok_or(Status::CORRUPT)
+                })?
+        };
         self.insert_version(path, EntryType::File, version)
             .map(|file| self.metadata(file))
     }

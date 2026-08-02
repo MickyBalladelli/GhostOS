@@ -1053,7 +1053,11 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             link_count: link_count.max(1),
             mode,
         };
-        let root = self.insert(self.root, record)?;
+        let root = if self.find_record(record.key)?.is_some_and(|existing| existing.deleted) {
+            self.replace(self.root, record.key, record)?
+        } else {
+            self.insert(self.root, record)?
+        };
         self.root = root;
         self.generation = created_at;
         Ok(record.into())
@@ -1335,6 +1339,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn next_version(&self, file: FileName) -> Result<u32, Error> {
+        if self.latest_record_at(self.root, file)?.is_none() {
+            return Ok(1);
+        }
         self.last_record(file)?.map_or(Ok(1), |record| {
             record
                 .key
@@ -1727,6 +1734,24 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         branch.children[0] = inserted.left;
         branch.children[1] = split.right;
         self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
+    }
+
+    fn replace(&mut self, id: BlockId, key: FileKey, record: FileRecord) -> Result<BlockId, Error> {
+        match self.arena.get(id)? {
+            Block::Tree(TreeBlock::Leaf(mut leaf)) => {
+                let index = leaf.records[..leaf.len as usize]
+                    .binary_search_by_key(&key, |item| item.key)
+                    .map_err(|_| Error::NotFound)?;
+                leaf.records[index] = record;
+                self.arena.allocate(Block::Tree(TreeBlock::Leaf(leaf)))
+            }
+            Block::Tree(TreeBlock::Branch(mut branch)) => {
+                let index = child_index(&branch, key);
+                branch.children[index] = self.replace(branch.children[index], key, record)?;
+                self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
+            }
+            Block::Data(_) => Err(Error::Corrupt),
+        }
     }
 
     fn insert_node(&mut self, id: BlockId, record: FileRecord) -> Result<Inserted, Error> {
