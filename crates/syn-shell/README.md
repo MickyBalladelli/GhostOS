@@ -21,8 +21,10 @@ cancels. Escape enters command mode:
 
 Arrow keys move the cursor. Shift plus arrows, Home, or End selects text.
 Backspace and Delete remove selected text or join adjacent lines. The bottom
-terminal row is a status line showing path, size, version, line count, cursor,
-mode, selection, and modification state.
+terminal row is a status line showing file name, size, version, line count,
+cursor, mode, selection, and modification state. The bottom three rows show
+the file-name and current-mode banner, the available commands for the active
+mode, and the status line.
 
 The editor accepts bounded UTF-8 text, preserves trailing newlines, redraws
 after a resize event, and keeps the session open after capacity, I/O, or save
