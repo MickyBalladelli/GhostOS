@@ -5,10 +5,14 @@
 
 use std::cell::RefCell;
 use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 use synos_vm::{DiskImage, LoopbackHub, LoopbackPort, MacAddress, NetBackend};
 
@@ -121,6 +125,20 @@ fn qemu_smp_boot() {
     assert_boot_output(&output, 2);
 }
 
+#[cfg(unix)]
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_link_lifecycle() {
+    let Some(output) = run_qemu_link_lifecycle() else {
+        return;
+    };
+    assert!(
+        output.contains("operation: linked") && output.contains("link-count: 3"),
+        "QEMU link lifecycle did not complete; serial output was: {output:?}"
+    );
+    assert!(output.contains("/data/source") && output.contains("/data/second"));
+}
+
 fn qemu_image() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SYNOS_QEMU_IMAGE") {
         return Some(PathBuf::from(path));
@@ -176,6 +194,110 @@ fn run_qemu_boot(vcpus: usize) -> Option<String> {
     let output = fs::read_to_string(&serial_path).unwrap_or_default();
     let _ = fs::remove_file(serial_path);
     Some(output)
+}
+
+#[cfg(unix)]
+fn run_qemu_link_lifecycle() -> Option<String> {
+    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+        eprintln!("QEMU link test skipped: set SYNOS_RUN_QEMU_TESTS=1 to enable");
+        return None;
+    }
+
+    let qemu = std::env::var_os("SYNOS_QEMU_BIN").unwrap_or_else(|| "qemu-system-x86_64".into());
+    let image = qemu_image().expect("locate repository root");
+    if !image.is_file() {
+        panic!("QEMU test image does not exist: {}", image.display());
+    }
+
+    let serial_path = temporary_path("qemu-link");
+    let qmp_path = serial_path.with_extension("qmp");
+    let mut child = Command::new(&qemu)
+        .args([
+            "-machine",
+            "q35",
+            "-cpu",
+            "max",
+            "-m",
+            "128M",
+            "-display",
+            "none",
+            "-monitor",
+            "none",
+            "-no-reboot",
+            "-no-shutdown",
+        ])
+        .arg("-qmp")
+        .arg(format!("unix:{},server=on,wait=off", qmp_path.display()))
+        .arg("-serial")
+        .arg(format!("file:{}", serial_path.display()))
+        .arg("-drive")
+        .arg(format!(
+            "file={},format=raw,if=ide,readonly=on",
+            image.display()
+        ))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap_or_else(|error| panic!("start QEMU `{}`: {error}", qemu.to_string_lossy()));
+
+    let deadline = Instant::now() + QEMU_BOOT_TIMEOUT;
+    let mut qmp = loop {
+        match UnixStream::connect(&qmp_path) {
+            Ok(stream) => break stream,
+            Err(_) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => panic!("connect QEMU QMP socket: {error}"),
+        }
+    };
+    qmp.set_read_timeout(Some(Duration::from_millis(250)))
+        .expect("set QMP timeout");
+    read_qmp_message(&mut qmp);
+    qmp_command(&mut qmp, "{\"execute\":\"qmp_capabilities\"}");
+
+    for command in [
+        "create /data/source",
+        "link /data/source /data/alias",
+        "link /data/alias /data/second",
+        "type /data/second",
+        "show links /data/second",
+    ] {
+        for key in command.bytes() {
+            let key = match key {
+                b'a'..=b'z' | b'0'..=b'9' => (key as char).to_string(),
+                b' ' => "spc".to_owned(),
+                b'/' => "slash".to_owned(),
+                _ => panic!("unsupported QEMU key in command"),
+            };
+            qmp_command(&mut qmp, &format!(
+                "{{\"execute\":\"human-monitor-command\",\"arguments\":{{\"command-line\":\"sendkey {key}\"}}}}"
+            ));
+        }
+        qmp_command(
+            &mut qmp,
+            "{\"execute\":\"human-monitor-command\",\"arguments\":{\"command-line\":\"sendkey ret\"}}",
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = child.kill();
+    let _ = child.wait();
+    fs::read_to_string(&serial_path).ok()
+}
+
+#[cfg(unix)]
+fn qmp_command(stream: &mut UnixStream, command: &str) {
+    stream
+        .write_all(format!("{command}\r\n").as_bytes())
+        .expect("write QMP command");
+    read_qmp_message(stream);
+}
+
+#[cfg(unix)]
+fn read_qmp_message(stream: &mut UnixStream) {
+    let mut buffer = [0; 4096];
+    let _ = stream.read(&mut buffer);
 }
 
 fn wait_for_qemu(child: &mut Child) {

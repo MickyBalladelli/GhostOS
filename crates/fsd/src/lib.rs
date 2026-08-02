@@ -5,6 +5,9 @@ mod daemon;
 mod namespace;
 mod protocol;
 
+#[cfg(test)]
+mod tests;
+
 pub use daemon::{
     Daemon, DaemonError, FileInfo, FileRights, GcReport, MountId, MountInfo, ProcessRights,
     SnapshotInfo, DEFAULT_MAX_MOUNTS, DEFAULT_MAX_OPEN_FILES, DEFAULT_MAX_PROCESSES,

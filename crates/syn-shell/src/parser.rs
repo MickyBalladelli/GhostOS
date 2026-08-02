@@ -516,6 +516,56 @@ impl<const CAPACITY: usize> Default for CommandRegistry<CAPACITY> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filesystem::{
+        LINK_ROUTE, SHOW_LINKS_ROUTE, register_filesystem_commands,
+    };
+
+    fn registry() -> CommandRegistry<16> {
+        let mut registry = CommandRegistry::new();
+        register_filesystem_commands(&mut registry).expect("register filesystem commands");
+        registry
+    }
+
+    fn text(value: Option<Value>) -> Text<MAX_TOKEN_BYTES> {
+        match value {
+            Some(Value::Text(value)) => value,
+            _ => panic!("expected text argument"),
+        }
+    }
+
+    #[test]
+    fn parses_link_aliases_and_versioned_source() {
+        let registry = registry();
+        let program = registry
+            .parse(r#"LN "/data/source;1" /data/alias"#)
+            .expect("parse link alias");
+        let call = program.stage(0).expect("link command");
+
+        assert_eq!(call.route.raw(), LINK_ROUTE);
+        assert_eq!(text(call.get("SOURCE")).as_str(), "/data/source;1");
+        assert_eq!(text(call.get("TARGET")).as_str(), "/data/alias");
+    }
+
+    #[test]
+    fn parses_show_links_alias_and_rejects_bad_arity() {
+        let registry = registry();
+        let program = registry.parse("LINKS /data/alias").expect("parse links alias");
+        assert_eq!(program.stage(0).unwrap().route.raw(), SHOW_LINKS_ROUTE);
+        assert_eq!(
+            text(program.stage(0).unwrap().get("PATH")).as_str(),
+            "/data/alias"
+        );
+        assert_eq!(registry.parse("LINK /data/source"), Err(Error::MissingArgument));
+        assert_eq!(
+            registry.parse("LINK /data/source /data/alias /data/extra"),
+            Err(Error::TooManyArguments)
+        );
+    }
+}
+
 fn insert_argument(
     arguments: &mut [Option<Argument>; MAX_COMMAND_ARGUMENTS],
     spec: ArgumentSpec,

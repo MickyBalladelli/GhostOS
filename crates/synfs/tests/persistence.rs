@@ -158,6 +158,56 @@ fn persists_to_real_disk_image() {
 }
 
 #[test]
+fn persists_link_lifecycle_and_shared_data() {
+    let image_path = TemporaryImage::new("link-lifecycle");
+    let mut disk = DiskImage::create(image_path.path());
+    let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+    SynFs::<MAX_BLOCKS>::format_to_device(&mut image, &mut disk).expect("format disk image");
+    let mut filesystem =
+        SynFs::<MAX_BLOCKS>::load_from_device(&mut image, &mut disk).expect("load image");
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+    filesystem
+        .write("/data/source", b"old contents")
+        .expect("write source");
+    assert_eq!(
+        filesystem.link("/data/source", "/data/alias").unwrap().link_count,
+        2
+    );
+
+    filesystem
+        .write("/data/source", b"new contents")
+        .expect("create source version");
+    let mut alias_contents = [0; 12];
+    filesystem
+        .read("/data/alias", &mut alias_contents)
+        .expect("read alias after source version");
+    assert_eq!(&alias_contents, b"old contents");
+    filesystem.delete("/data/source").expect("delete source name");
+    filesystem
+        .rename("/data/alias", "/data/renamed")
+        .expect("rename remaining link");
+    filesystem
+        .flush_to_device(&mut disk)
+        .expect("persist link lifecycle");
+    drop(disk);
+
+    let filesystem = read_state(image_path.path());
+    assert_eq!(filesystem.lookup("/data/source"), Err(Error::NotFound));
+    let mut contents = [0; 12];
+    filesystem
+        .read("/data/renamed", &mut contents)
+        .expect("read recovered link");
+    assert_eq!(&contents, b"old contents");
+    let mut links = [synos_synfs::LinkEntry::EMPTY; 2];
+    assert_eq!(filesystem.list_links("/data/renamed", &mut links), Ok(1));
+    assert_eq!(links[0].path.as_str(), "/data/renamed");
+    assert_eq!(filesystem.lookup("/data/renamed").unwrap().link_count, 1);
+    filesystem.check_consistency().expect("consistent linked image");
+}
+
+#[test]
 fn recovers_previous_generation_after_torn_commit() {
     let baseline_path = TemporaryImage::new("baseline");
     let trial_path = TemporaryImage::new("power-loss");

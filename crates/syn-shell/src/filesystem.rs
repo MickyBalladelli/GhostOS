@@ -779,6 +779,11 @@ fn metadata_output(label: &str, metadata: FileMetadata) -> Result<StructuredOutp
         "version",
         OutputValue::Unsigned(metadata.version as u64),
     )?;
+    insert(
+        &mut output,
+        "link-count",
+        OutputValue::Unsigned(metadata.link_count as u64),
+    )?;
     Ok(output)
 }
 

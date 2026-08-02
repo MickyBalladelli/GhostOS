@@ -108,7 +108,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Return the created link metadata, including target path, selected version, and link count.
   - [x] Add `SHOW LINKS` or equivalent output that lists every path linked to the same file, not only the count.
   - [x] Preserve link behavior across `TYPE`, delete, rename, version creation, persistence, and recovery.
-  - [ ] Add daemon, runtime, parser, persistence, and QEMU coverage for link creation and lifecycle behavior.
+  - [x] Add daemon, runtime, parser, persistence, and QEMU coverage for link creation and lifecycle behavior.
 
 - [ ] **End-to-End Filesystem Shell Validation**
   - [ ] Add parser coverage for every command, alias, qualifier, relative path, quoted path, and invalid argument combination.

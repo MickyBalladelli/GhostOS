@@ -171,3 +171,80 @@ impl<S: SystemCall> Runtime<S> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::cell::Cell;
+
+    use synos_ipc::{SharedRegionId, SharedBuffer};
+    use synos_status::Status;
+
+    use crate::Response;
+
+    use super::*;
+
+    struct MockSystemCall {
+        request: Cell<Request>,
+        response: Response,
+    }
+
+    impl SystemCall for MockSystemCall {
+        fn call(&self, request: Request) -> Response {
+            self.request.set(request);
+            self.response
+        }
+    }
+
+    fn buffer(writable: bool) -> SharedBuffer {
+        SharedBuffer {
+            region: SharedRegionId::new(3).expect("valid region"),
+            offset: 8,
+            length: 64,
+            writable,
+        }
+    }
+
+    #[test]
+    fn link_metadata_marshals_handle_and_target_buffer() {
+        let system = MockSystemCall {
+            request: Cell::new(Request::new(Operation::Yield)),
+            response: Response {
+                status: Status::NORMAL.raw(),
+                flags: 0,
+                values: [4, 12, 2, 0],
+            },
+        };
+        let runtime = Runtime::new(system);
+        let file = File {
+            capability: Capability::from_raw((9_u64 << 32) | 2).expect("valid capability"),
+        };
+        let metadata = runtime
+            .link_metadata(file, buffer(false))
+            .expect("link response");
+
+        assert_eq!(metadata.version, 4);
+        assert_eq!(metadata.length, 12);
+        assert_eq!(metadata.link_count, 2);
+        assert_eq!(runtime.system().request.get().operation, Operation::SynFsLink as u16);
+        assert_eq!(runtime.system().request.get().capability, file.capability.raw());
+        assert_eq!(runtime.system().request.get().arguments[3], 0);
+    }
+
+    #[test]
+    fn list_links_requires_a_writable_output_buffer() {
+        let system = MockSystemCall {
+            request: Cell::new(Request::new(Operation::Yield)),
+            response: Response {
+                status: Status::NORMAL.raw(),
+                flags: 0,
+                values: [23, 0, 0, 0],
+            },
+        };
+        let runtime = Runtime::new(system);
+        assert_eq!(runtime.list_links(buffer(true)), Ok(23));
+        let request = runtime.system().request.get();
+        assert_eq!(request.operation, Operation::SynFsLinks as u16);
+        assert_eq!(request.capability, 0);
+        assert_eq!(request.arguments[3], 1);
+    }
+}
