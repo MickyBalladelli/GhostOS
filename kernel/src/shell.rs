@@ -858,7 +858,7 @@ impl VtInput {
                     self.state = VtInputState::Escape;
                     None
                 }
-                b'\n' => Some(Key::Enter),
+                b'\n' | b'\r' => Some(Key::Enter),
                 b'\t' => Some(Key::Tab),
                 8 | 127 => Some(Key::Backspace),
                 19 => Some(Key::Save),
