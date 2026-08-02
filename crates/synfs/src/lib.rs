@@ -1339,10 +1339,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn next_version(&self, file: FileName) -> Result<u32, Error> {
-        if self.latest_record_at(self.root, file)?.is_none() {
-            return Ok(1);
-        }
-        self.last_record(file)?.map_or(Ok(1), |record| {
+        self.latest_record_at(self.root, file)?.map_or(Ok(1), |record| {
             record
                 .key
                 .version

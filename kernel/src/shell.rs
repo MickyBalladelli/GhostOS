@@ -824,7 +824,7 @@ impl FilesystemSource for KernelFilesystem {
             self.files
                 .iter()
                 .flatten()
-                .filter(|file| file.path.as_str() == path)
+                .filter(|file| file.path.as_str() == path && !file.deleted)
                 .map(|file| file.version)
                 .max()
                 .map_or(Ok(1), |version| {
@@ -861,7 +861,9 @@ impl FilesystemSource for KernelFilesystem {
             .iter_mut()
             .find(|file| {
                 file.is_some_and(|file| {
-                    file.path == selected.path && file.version == selected.version
+                    file.path == selected.path
+                        && file.version == selected.version
+                        && !file.deleted
                 })
             })
             .ok_or(Status::CORRUPT)?;
