@@ -235,3 +235,131 @@ impl<A: SshAuthenticator, B: ShellBackend, const SESSION_CAPACITY: usize>
         Ok(slot)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestAuthenticator {
+        principal: AuthenticatedPrincipal,
+    }
+
+    impl SshAuthenticator for TestAuthenticator {
+        fn authenticate(
+            &mut self,
+            _username: &str,
+            _public_key: &[u8],
+            _signature: &[u8],
+            _exchange_hash: &[u8],
+        ) -> Result<AuthenticatedPrincipal, SshError> {
+            Ok(self.principal)
+        }
+    }
+
+    struct TestShell {
+        next_handle: u32,
+        last_columns: u16,
+    }
+
+    impl ShellBackend for TestShell {
+        type Handle = u32;
+
+        fn open(
+            &mut self,
+            _principal: AuthenticatedPrincipal,
+            _terminal: TerminalSize,
+        ) -> Result<Self::Handle, SshError> {
+            self.next_handle += 1;
+            Ok(self.next_handle)
+        }
+
+        fn input(&mut self, _handle: Self::Handle, bytes: &[u8]) -> Result<usize, SshError> {
+            Ok(bytes.len())
+        }
+
+        fn resize(&mut self, _handle: Self::Handle, terminal: TerminalSize) -> Result<(), SshError> {
+            self.last_columns = terminal.columns;
+            Ok(())
+        }
+
+        fn output(&mut self, _handle: Self::Handle, bytes: &mut [u8]) -> Result<usize, SshError> {
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            bytes[0] = self.last_columns as u8;
+            Ok(1)
+        }
+
+        fn close(&mut self, _handle: Self::Handle) {}
+    }
+
+    fn terminal(columns: u16, rows: u16) -> TerminalSize {
+        TerminalSize::new(columns, rows).expect("valid terminal")
+    }
+
+    #[test]
+    fn authenticated_session_integrates_input_resize_output_and_close() {
+        let authenticator = TestAuthenticator {
+            principal: AuthenticatedPrincipal {
+                identity: 7,
+                shell_capability: 9,
+            },
+        };
+        let shell = TestShell {
+            next_handle: 0,
+            last_columns: 80,
+        };
+        let mut daemon = SshDaemon::<_, _, 1>::new(authenticator, shell);
+        let session = daemon
+            .open_public_key_session("caveman", b"key", b"sig", b"exchange", terminal(80, 24))
+            .expect("session opens");
+
+        assert_eq!(daemon.active_sessions(), 1);
+        assert_eq!(daemon.input(session, b"EDIT /note\n"), Ok(11));
+        daemon.resize(session, terminal(100, 30)).expect("resize");
+        let mut output = [0; 4];
+        assert_eq!(daemon.output(session, &mut output), Ok(1));
+        assert_eq!(output[0], 100);
+
+        daemon.close(session).expect("close");
+        assert_eq!(daemon.active_sessions(), 0);
+        assert_eq!(daemon.input(session, b"stale"), Err(SshError::InvalidSession));
+
+        let next = daemon
+            .open_public_key_session("caveman", b"key", b"sig", b"exchange", terminal(80, 24))
+            .expect("slot can be reused");
+        assert_ne!(next.raw(), session.raw());
+    }
+
+    #[test]
+    fn invalid_capabilities_and_session_inputs_are_rejected() {
+        let authenticator = TestAuthenticator {
+            principal: AuthenticatedPrincipal {
+                identity: 7,
+                shell_capability: 0,
+            },
+        };
+        let shell = TestShell {
+            next_handle: 0,
+            last_columns: 80,
+        };
+        let mut daemon = SshDaemon::<_, _, 1>::new(authenticator, shell);
+        assert_eq!(
+            daemon.open_public_key_session("caveman", b"key", b"sig", b"exchange", terminal(80, 24)),
+            Err(SshError::AccessDenied)
+        );
+        assert_eq!(
+            daemon.open_public_key_session("", b"key", b"sig", b"exchange", terminal(80, 24)),
+            Err(SshError::AuthenticationFailed)
+        );
+        assert_eq!(
+            daemon.open_public_key_session("caveman", b"key", b"sig", b"exchange", TerminalSize {
+                columns: 0,
+                rows: 24,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+            Err(SshError::InvalidTerminal)
+        );
+    }
+}

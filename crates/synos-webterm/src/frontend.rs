@@ -59,3 +59,37 @@ fn encode_cell(cell: Cell) -> GpuCell {
         attributes: cell.attributes.bits() as u32,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uploads_dirty_rows_once_and_preserves_cell_attributes() {
+        let mut terminal = Terminal::<2, 1>::new().unwrap();
+        terminal.write(b"A");
+        let mut cells = [GpuCell {
+            glyph: 0,
+            foreground: 0,
+            background: 0,
+            attributes: 0,
+        }; 2];
+
+        let range = WebGpuFrontend::encode_row(&mut terminal, 0, &mut cells)
+            .unwrap()
+            .expect("dirty row uploads");
+        assert_eq!(range, UploadRange { first_cell: 0, cell_count: 2 });
+        assert_eq!(cells[0].glyph, 'A' as u32);
+        assert!(!terminal.row_is_dirty(0));
+        assert_eq!(WebGpuFrontend::encode_row(&mut terminal, 0, &mut cells), Ok(None));
+        terminal.mark_all_dirty();
+        assert_eq!(
+            WebGpuFrontend::encode_row(&mut terminal, 0, &mut cells[..1]),
+            Err(UploadError::BufferTooSmall)
+        );
+        assert_eq!(
+            WebGpuFrontend::encode_row(&mut terminal, 1, &mut cells),
+            Err(UploadError::InvalidRow)
+        );
+    }
+}

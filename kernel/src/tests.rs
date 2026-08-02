@@ -92,6 +92,40 @@ fn deleted_slots_get_new_generation_handles() {
     );
 }
 
+#[test]
+fn mapped_editor_memory_requires_owner_and_requested_rights() {
+    let owner = address_space(1);
+    let other = address_space(2);
+    let region = SharedRegionId::new(7).expect("valid shared region");
+    let rights = Rights::READ
+        .union(Rights::WRITE)
+        .union(Rights::EXECUTE)
+        .union(Rights::MAP);
+    let mut capabilities = CapabilitySpace::<2>::new();
+    let memory = capabilities
+        .mint_root(owner, CapabilityObject::MemoryRegion(region), rights)
+        .expect("memory capability");
+
+    assert!(capabilities
+        .authorize_mapping(owner, memory, region, true, true)
+        .is_ok());
+    assert_eq!(
+        capabilities.authorize_mapping(other, memory, region, false, false),
+        Err(CapabilityError::AccessDenied)
+    );
+    assert_eq!(
+        capabilities.drop_rights(owner, memory, Rights::WRITE),
+        Ok(Rights::READ.union(Rights::EXECUTE).union(Rights::MAP))
+    );
+    assert!(capabilities
+        .authorize_mapping(owner, memory, region, false, true)
+        .is_ok());
+    assert_eq!(
+        capabilities.authorize_mapping(owner, memory, region, true, false),
+        Err(CapabilityError::AccessDenied)
+    );
+}
+
 struct RuntimeLinkIpc {
     request: Option<synos_fsd::Request>,
     buffer: Option<SharedBuffer>,

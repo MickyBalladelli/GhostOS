@@ -569,6 +569,33 @@ mod tests {
             Err(Error::TooManyArguments)
         );
     }
+
+    #[test]
+    fn parses_editor_aliases_qualifiers_and_pipelines() {
+        let registry = registry();
+        let edit = registry
+            .parse(r#"EDT "/data/notes;7" | TYPE /data/notes;7 /BINARY &"#)
+            .expect("parse editor pipeline");
+
+        assert_eq!(edit.stage_count(), 2);
+        assert!(edit.background);
+        assert_eq!(edit.stage(0).unwrap().route.raw(), crate::filesystem::EDIT_ROUTE);
+        assert_eq!(
+            text(edit.stage(0).unwrap().get("PATH")).as_str(),
+            "/data/notes;7"
+        );
+        assert_eq!(text(edit.stage(1).unwrap().get("PATH")).as_str(), "/data/notes;7");
+        assert_eq!(edit.stage(1).unwrap().get("BINARY"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn rejects_malformed_editor_input() {
+        let registry = registry();
+        assert_eq!(registry.parse("EDIT"), Err(Error::MissingArgument));
+        assert_eq!(registry.parse("EDIT /data/note /UNKNOWN"), Err(Error::UnknownArgument));
+        assert_eq!(registry.parse("EDIT \"/data/note"), Err(Error::UnterminatedQuote));
+        assert_eq!(registry.parse("EDIT /data/note |"), Err(Error::InvalidSyntax));
+    }
 }
 
 fn insert_argument(

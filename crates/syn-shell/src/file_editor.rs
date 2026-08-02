@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn joining_lines_and_utf8_keep_valid_boundaries() {
-        let mut editor = FileEditor::<32>::new("/data/note", 1, "a\nb").unwrap();
+        let mut editor = FileEditor::<32>::new("/data/note", 1, b"a\nb").unwrap();
         editor.handle(Key::Delete).unwrap();
         assert_eq!(editor.bytes(), b"ab");
         editor.handle(Key::Character('é')).unwrap();
@@ -701,5 +701,80 @@ mod tests {
         editor.resize(20, 8).unwrap();
         assert_eq!(editor.selected(), selection);
         assert!(!editor.is_dirty());
+    }
+
+    #[test]
+    fn keymap_modes_and_save_prompts_are_stable() {
+        let mut editor = FileEditor::<32>::new("/data/note", 4, b"old").unwrap();
+
+        assert_eq!(editor.handle(Key::Escape).unwrap(), FileEditorAction::Redraw);
+        assert_eq!(editor.mode(), EditorMode::Command);
+        assert_eq!(editor.handle(Key::Character('i')).unwrap(), FileEditorAction::Redraw);
+        assert_eq!(editor.mode(), EditorMode::Insert);
+        editor.handle(Key::End).unwrap();
+        editor.handle(Key::Character('!')).unwrap();
+        assert!(editor.is_dirty());
+
+        assert_eq!(editor.handle(Key::Save).unwrap(), FileEditorAction::Save);
+        assert_eq!(editor.handle(Key::SaveExit).unwrap(), FileEditorAction::SaveExit);
+        assert_eq!(editor.handle(Key::Cancel).unwrap(), FileEditorAction::PromptDiscard);
+        assert_eq!(editor.confirm_discard(false), FileEditorAction::Redraw);
+        assert_eq!(editor.confirm_discard(true), FileEditorAction::DiscardExit);
+
+        editor.mark_saved(5);
+        assert_eq!(editor.version(), 5);
+        assert!(!editor.is_dirty());
+        assert_eq!(editor.handle(Key::Cancel).unwrap(), FileEditorAction::DiscardExit);
+    }
+
+    #[test]
+    fn navigation_editing_and_capacity_errors_preserve_utf8() {
+        let mut editor = FileEditor::<32>::new("/data/note", 1, "éx\ny".as_bytes()).unwrap();
+        editor.handle(Key::Right).unwrap();
+        assert_eq!(editor.cursor(), 2);
+        editor.handle(Key::Backspace).unwrap();
+        assert_eq!(editor.bytes(), "x\ny".as_bytes());
+
+        editor.handle(Key::End).unwrap();
+        editor.handle(Key::Enter).unwrap();
+        editor.handle(Key::Character('z')).unwrap();
+        assert_eq!(editor.bytes(), b"x\nz\ny");
+        editor.handle(Key::Up).unwrap();
+        editor.handle(Key::Delete).unwrap();
+        assert_eq!(core::str::from_utf8(editor.bytes()).unwrap(), "xz\ny");
+
+        let mut full = FileEditor::<2>::new("/data/full", 1, b"ab").unwrap();
+        assert_eq!(full.handle(Key::Character('c')), Err(crate::Error::Capacity));
+        assert_eq!(full.bytes(), b"ab");
+        assert!(matches!(
+            FileEditor::<8>::new("/data/bad", 1, &[0xff]),
+            Err(crate::Error::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn resize_and_render_keep_scroll_status_and_selection() {
+        let mut editor = FileEditor::<64>::new("/data/view", 2, b"0123456789\nline\t\x01").unwrap();
+        editor.handle(Key::End).unwrap();
+        editor.handle(Key::ShiftHome).unwrap();
+        editor.handle(Key::Escape).unwrap();
+        assert_eq!(editor.mode(), EditorMode::Command);
+        let selection = editor.selected();
+        editor.resize(4, 3).unwrap();
+        assert_eq!(editor.selected(), selection);
+        assert_eq!(editor.handle(Key::Resize).unwrap(), FileEditorAction::Redraw);
+
+        let rendered = editor.render::<4096>(80, 4).unwrap();
+        assert!(rendered.as_str().contains("EDIT /data/view"));
+        assert!(rendered.as_str().contains("VERSION:2"));
+        assert!(rendered.as_str().contains("SELECTED"));
+        assert!(rendered.as_str().contains("\x1b[7m"));
+
+        let mut long_line = FileEditor::<32>::new("/data/long", 1, b"0123456789").unwrap();
+        long_line.handle(Key::End).unwrap();
+        let rendered = long_line.render::<4096>(4, 2).unwrap();
+        assert!(rendered.as_str().contains("789"));
+        assert_eq!(FileEditor::<8>::new("/data/view", 1, b"x").unwrap().resize(0, 3), Err(crate::Error::InvalidValue));
+        assert_eq!(long_line.resize(4, 1), Err(crate::Error::InvalidValue));
     }
 }

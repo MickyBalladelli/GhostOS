@@ -130,7 +130,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Detect stale source versions or concurrent updates before save and require an explicit conflict decision instead of silently overwriting data.
   - [x] Prompt before discarding unsaved changes and make both save-and-exit and exit-without-saving restore terminal modes and release file capabilities.
   - [x] Return stable shell status and structured output for opened, saved, discarded, cancelled, conflicted, and failed edit sessions.
-  - [ ] Add parser, editor-buffer, keymap, selection, scrolling, resize, rendering, UTF-8, save/versioning, failure-recovery, capability, and terminal integration coverage.
+  - [x] Add parser, editor-buffer, keymap, selection, scrolling, resize, rendering, UTF-8, save/versioning, failure-recovery, capability, and terminal integration coverage.
   - [ ] Add QEMU and remote-terminal coverage proving that a file can be opened, edited, saved as a new version, reopened, and exited without saving.
   - [x] Document the `EDIT`/`EDT` workflow, keymap, status line, version behavior, save prompts, and examples in the shell and project READMEs.
 

@@ -1186,3 +1186,210 @@ impl core::fmt::Write for Path {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Sink {
+        bytes: [u8; 64],
+        len: usize,
+    }
+
+    impl Sink {
+        const fn new() -> Self {
+            Self {
+                bytes: [0; 64],
+                len: 0,
+            }
+        }
+    }
+
+    impl FileOutput for Sink {
+        fn write(&mut self, bytes: &[u8]) -> Result<(), Status> {
+            let end = self.len.checked_add(bytes.len()).ok_or(Status::NO_SPACE)?;
+            if end > self.bytes.len() {
+                return Err(Status::NO_SPACE);
+            }
+            self.bytes[self.len..end].copy_from_slice(bytes);
+            self.len = end;
+            Ok(())
+        }
+    }
+
+    struct MockFilesystem {
+        bytes: [u8; 64],
+        len: usize,
+        version: u32,
+        present: bool,
+        conditional_failure: bool,
+        force_failure: bool,
+        saves: usize,
+    }
+
+    impl MockFilesystem {
+        fn new(contents: &[u8], version: u32) -> Self {
+            let mut filesystem = Self {
+                bytes: [0; 64],
+                len: contents.len(),
+                version,
+                present: true,
+                conditional_failure: false,
+                force_failure: false,
+                saves: 0,
+            };
+            filesystem.bytes[..contents.len()].copy_from_slice(contents);
+            filesystem
+        }
+
+        fn metadata(path: &str, file_type: EntryType, size: usize, version: u32) -> FileMetadata {
+            FileMetadata {
+                path: Path::new(path).expect("valid mock path"),
+                file_type,
+                size: size as u64,
+                version,
+                link_count: 1,
+                is_link: false,
+            }
+        }
+
+        fn publish(&mut self, path: &str, contents: &[u8]) -> Result<FileMetadata, Status> {
+            let (base_path, _) = split_version_selector(path)?;
+            if contents.len() > self.bytes.len() {
+                return Err(Status::NO_SPACE);
+            }
+            self.bytes[..contents.len()].copy_from_slice(contents);
+            self.len = contents.len();
+            self.version = self.version.saturating_add(1).max(1);
+            self.present = true;
+            self.saves += 1;
+            Ok(Self::metadata(base_path, EntryType::File, contents.len(), self.version))
+        }
+    }
+
+    impl FilesystemSource for MockFilesystem {
+        fn directory_exists(&mut self, path: &str) -> Result<bool, Status> {
+            Ok(path == "/" || path == "/data")
+        }
+
+        fn list(
+            &mut self,
+            _path: &str,
+            _continuation: Option<u32>,
+            output: &mut DirectoryPage,
+        ) -> Result<(), Status> {
+            output.clear();
+            Ok(())
+        }
+
+        fn create_directory(&mut self, path: &str, _recursive: bool) -> Result<FileMetadata, Status> {
+            Ok(Self::metadata(path, EntryType::Directory, 0, 1))
+        }
+
+        fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status> {
+            if self.present {
+                return Err(Status::ALREADY_EXISTS);
+            }
+            self.present = true;
+            self.version = 1;
+            Ok(Self::metadata(path, EntryType::File, 0, self.version))
+        }
+
+        fn type_file(
+            &mut self,
+            path: &str,
+            _binary: bool,
+            output: &mut dyn FileOutput,
+        ) -> Result<FileMetadata, Status> {
+            if !self.present {
+                return Err(Status::NOT_FOUND);
+            }
+            output.write(&self.bytes[..self.len])?;
+            Ok(Self::metadata(path, EntryType::File, self.len, self.version))
+        }
+
+        fn save_file(&mut self, path: &str, contents: &[u8]) -> Result<FileMetadata, Status> {
+            self.publish(path, contents)
+        }
+
+        fn save_file_if_version(
+            &mut self,
+            path: &str,
+            expected_version: u32,
+            contents: &[u8],
+        ) -> Result<FileMetadata, Status> {
+            if self.conditional_failure || expected_version != self.version {
+                return Err(Status::CONFLICT);
+            }
+            self.publish(path, contents)
+        }
+
+        fn save_file_force(&mut self, path: &str, contents: &[u8]) -> Result<FileMetadata, Status> {
+            if self.force_failure {
+                return Err(Status::NO_SPACE);
+            }
+            self.publish(path, contents)
+        }
+    }
+
+    fn command(line: &str) -> CommandCall {
+        let mut registry = CommandRegistry::<16>::new();
+        register_filesystem_commands(&mut registry).expect("filesystem commands");
+        registry.parse(line).expect("valid filesystem command").stage(0).expect("command stage")
+    }
+
+    #[test]
+    fn edit_load_creates_missing_file_and_preserves_versioned_contents() {
+        let mut filesystem = MockFilesystem::new(&[], 0);
+        filesystem.present = false;
+        let mut executor = FilesystemExecutor::<_, 16>::new(filesystem);
+        let mut sink = Sink::new();
+
+        let metadata = executor
+            .edit_file_load(command("EDIT /data/new-note"), &mut sink)
+            .expect("missing file is created for edit");
+
+        assert_eq!(metadata.version, 1);
+        assert_eq!(metadata.size, 0);
+        assert_eq!(sink.len, 0);
+        assert!(executor.source().present);
+    }
+
+    #[test]
+    fn conditional_save_publishes_a_new_version_and_detects_conflicts() {
+        let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"old", 1));
+        let metadata = executor
+            .edit_file_save_if_version(command("EDIT /data/note;1"), 1, b"new")
+            .expect("current version saves");
+
+        assert_eq!(metadata.path.as_str(), "/data/note");
+        assert_eq!(metadata.version, 2);
+        assert_eq!(&executor.source().bytes[..executor.source().len], b"new");
+
+        executor.source_mut().conditional_failure = true;
+        let result = executor.edit_file_save_if_version(command("EDIT /data/note"), 2, b"lost");
+        assert_eq!(result, Err(Status::CONFLICT));
+        assert_eq!(&executor.source().bytes[..executor.source().len], b"new");
+        assert_eq!(executor.source().version, 2);
+    }
+
+    #[test]
+    fn failed_save_keeps_source_intact_until_force_save_is_explicit() {
+        let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"old", 1));
+        executor.source_mut().force_failure = true;
+
+        assert_eq!(
+            executor.edit_file_force_save(command("EDIT /data/note"), b"replacement"),
+            Err(Status::NO_SPACE)
+        );
+        assert_eq!(&executor.source().bytes[..executor.source().len], b"old");
+        assert_eq!(executor.source().version, 1);
+
+        executor.source_mut().force_failure = false;
+        let metadata = executor
+            .edit_file_force_save(command("EDIT /data/note"), b"replacement")
+            .expect("explicit retry succeeds");
+        assert_eq!(metadata.version, 2);
+        assert_eq!(&executor.source().bytes[..executor.source().len], b"replacement");
+    }
+}

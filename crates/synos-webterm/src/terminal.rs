@@ -752,3 +752,56 @@ fn indexed_color(value: u16) -> Option<Color> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_utf8_styles_and_cursor_modes() {
+        let mut terminal = Terminal::<8, 3>::new().unwrap();
+        terminal.write("é".as_bytes());
+        assert_eq!(terminal.row(0).unwrap()[0].glyph, 'é' as u32);
+        assert_eq!(terminal.cursor().column, 1);
+
+        terminal.write(b"\x1b[31;1mA\x1b[0mB\x1b[?25l\x1b[?1h\x1b[?7l\x1b[4h");
+        let styled = terminal.row(0).unwrap()[1];
+        assert_eq!(styled.glyph, 'A' as u32);
+        assert_eq!(styled.foreground, Color::Red);
+        assert!(styled.attributes.contains(CellAttributes::BOLD));
+        assert_eq!(terminal.row(0).unwrap()[2].glyph, 'B' as u32);
+        assert!(!terminal.cursor().visible);
+        assert!(terminal.modes().application_cursor_keys);
+        assert!(!terminal.modes().automatic_wrap);
+        assert!(terminal.modes().insert);
+
+        terminal.write(b"\x1b[?25h");
+        assert!(terminal.cursor().visible);
+    }
+
+    #[test]
+    fn scrolling_regions_and_dirty_rows_are_deterministic() {
+        let mut terminal = Terminal::<5, 3>::new().unwrap();
+        terminal.write(b"one\ntwo\nthree\n");
+        assert_eq!(terminal.row(0).unwrap()[0].glyph, 't' as u32);
+        assert_eq!(terminal.row(1).unwrap()[0].glyph, 't' as u32);
+        assert_eq!(terminal.row(1).unwrap()[1].glyph, 'h' as u32);
+        assert_eq!(terminal.row(2).unwrap()[0], Cell::EMPTY);
+
+        terminal.mark_row_clean(0);
+        assert!(!terminal.row_is_dirty(0));
+        terminal.write(b"\x1b[2;3r\x1b[2;1Hdown\n");
+        assert!(terminal.row_is_dirty(0));
+        assert!(terminal.row_is_dirty(1));
+        assert!(terminal.row_is_dirty(2));
+        terminal.reset();
+        assert_eq!(terminal.cursor(), Cursor { column: 0, row: 0, visible: true });
+        assert_eq!(terminal.row(0).unwrap()[0], Cell::EMPTY);
+    }
+
+    #[test]
+    fn rejects_empty_terminals() {
+        assert!(matches!(Terminal::<0, 2>::new(), Err(TerminalError::EmptyGrid)));
+        assert!(matches!(Terminal::<2, 0>::new(), Err(TerminalError::EmptyGrid)));
+    }
+}
