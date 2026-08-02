@@ -89,6 +89,22 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.
   - [x] Return a file capability or metadata result that can be consumed by later commands.
 
+- [ ] **Delete a File or Link**
+  - [ ] Define `DELETE path[;version]` syntax, required arguments, aliases, and structured success output.
+  - [ ] Register a stable shell route and wire command parsing for absolute paths, relative paths, the active default directory, quoted paths, and invalid argument combinations.
+  - [ ] Resolve version selectors consistently with SynFS: no selector or `;0` deletes only the latest live version; an explicit `;N` deletes only version `N`.
+  - [ ] Reject the root path, directories, malformed selectors, missing paths, already-deleted versions, and versions that do not exist.
+  - [ ] Add the runtime filesystem API and ABI operation for path-based deletion, including bounded shared-buffer validation and response validation.
+  - [ ] Extend kernel IPC dispatch and the filesystem-daemon protocol so deletion carries the selected path/version and uses the caller's delete capability or authority safely.
+  - [ ] Enforce delete rights, parent-directory write/administration rights, capability ownership, namespace boundaries, and read-only mount restrictions.
+  - [ ] Implement exact-version deletion in SynFS without deleting other retained versions or breaking snapshot visibility, recovery, or copy-on-write commit ordering.
+  - [ ] Treat a hard link as a deletable directory entry: decrement shared link metadata, preserve file data and other names, and allow garbage collection only after the final live link is removed.
+  - [ ] Define behavior when deleting the latest version, an older version, the final link, or a link whose target has newer versions; keep link counts and lookup results consistent.
+  - [ ] Return deleted path, deleted version, file/link type, remaining link count, and whether shared data remains reachable.
+  - [ ] Map not-found, invalid-version, directory, access-denied, read-only, quota, stale-capability, and persistence failures to stable shell status messages.
+  - [ ] Add parser, shell-executor, runtime/ABI, kernel-dispatch, daemon, SynFS, link-lifecycle, snapshot, garbage-collection, persistence/recovery, and QEMU coverage.
+  - [ ] Document examples for deleting the latest version, deleting an explicit version, deleting one link while retaining another, and deleting the final link.
+
 - [x] **Type a File**
   - [x] Add a `TYPE` command that opens a file read-only and reads it in bounded chunks.
   - [x] Support absolute and relative paths plus explicit SynFS version selectors.
@@ -109,6 +125,25 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add `SHOW LINKS` or equivalent output that lists every path linked to the same file, not only the count.
   - [x] Preserve link behavior across `TYPE`, delete, rename, version creation, persistence, and recovery.
   - [x] Add daemon, runtime, parser, persistence, and QEMU coverage for link creation and lifecycle behavior.
+
+- [ ] **Wildcard Path Expansion**
+  - [ ] Define the wildcard grammar and escaping rules, including `*`, `?`, character classes if useful, path separators, case sensitivity, and quoted or escaped wildcard characters.
+  - [ ] Define whether wildcards match one path component or can cross `/`, whether hidden/system names need special handling, and whether version selectors may contain wildcards.
+  - [ ] Expand patterns only after default-directory resolution and path canonicalization, while preventing traversal outside the mounted namespace.
+  - [ ] Add one shared bounded matcher/expander for shell, runtime, filesystem daemon, and SynFS callers instead of command-specific glob behavior.
+  - [ ] Return deterministic, duplicate-free matches with stable ordering, continuation support, maximum-match limits, and bounded shared-buffer encoding.
+  - [ ] Filter matches through directory visibility, mount boundaries, and per-object capabilities so wildcard expansion cannot reveal unauthorized names.
+  - [ ] Define no-match behavior, malformed-pattern errors, partial-match errors, cancellation, and status reporting for every wildcard-enabled command.
+  - [ ] Add `LS`/`DIRECTORY` wildcard listing for files, links, directories, path prefixes, metadata, pagination, and structured pipeline output.
+  - [ ] Add `DELETE` wildcard expansion with explicit latest-versus-exact-version behavior for every match, link-count updates, confirmation or dry-run safeguards, and atomic versus partial-failure semantics.
+  - [ ] Add `TYPE` wildcard support with clear separators between matched files, bounded aggregate output, binary-mode behavior, cancellation, and per-file error reporting.
+  - [ ] Add `SHOW LINKS` wildcard support for matching input paths, deduplicating shared objects, and preserving complete link-path output within limits.
+  - [ ] Evaluate `LINK` wildcard support for source paths and define safe target behavior; reject ambiguous target patterns unless a deterministic mapping rule exists.
+  - [ ] Evaluate wildcard support for future path commands such as `RENAME`, `COPY`, `PURGE`, and protection/metadata commands, reusing the same expansion contract.
+  - [ ] Reject wildcards for commands where expansion is unsafe or ambiguous, including `CREATE`, `MKDIR`, `SET DEFAULT`, and `CD`, with clear diagnostics.
+  - [ ] Define wildcard/version interactions for links and retained SynFS versions without deleting or exposing versions outside the selected pattern.
+  - [ ] Add parser, matcher, capability, daemon, runtime/ABI, shell, SynFS, persistence, QEMU, boundary, fuzz, ordering, quota, and cancellation coverage.
+  - [ ] Document wildcard examples, escaping, safety rules, no-match behavior, and command-specific version semantics in the shell and filesystem READMEs.
 
 - [ ] **End-to-End Filesystem Shell Validation**
   - [ ] Add parser coverage for every command, alias, qualifier, relative path, quoted path, and invalid argument combination.
