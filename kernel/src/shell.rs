@@ -493,6 +493,12 @@ fn prompt() {
 }
 
 fn is_full_directory_command(command: &CommandCall) -> bool {
+    if command
+        .get_text("PATH")
+        .is_some_and(|path| path.bytes().any(|byte| matches!(byte, b'*' | b'?' | b'[')))
+    {
+        return false
+    }
     if command.command.as_str().eq_ignore_ascii_case("LS") {
         return true
     }

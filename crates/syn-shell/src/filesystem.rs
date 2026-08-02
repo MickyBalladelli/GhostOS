@@ -524,7 +524,43 @@ fn expand_pattern<S: FilesystemSource + ?Sized>(
     }
     output.clear();
     let mut scanned = 0;
-    expand_directory(source, pattern, "/", output, 0, &mut scanned)
+    let root = wildcard_root(pattern.as_str())?;
+    let recurse = wildcard_has_later_component(pattern.as_str());
+    expand_directory(source, pattern, root.as_str(), output, recurse, 0, &mut scanned)
+}
+
+fn wildcard_has_later_component(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index = index.saturating_add(2),
+            b'*' | b'?' | b'[' => return bytes[index..].contains(&b'/'),
+            _ => index += 1,
+        }
+    }
+    false
+}
+
+fn wildcard_root(pattern: &str) -> Result<Path, Status> {
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    let mut wildcard_start = None;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index = index.saturating_add(2),
+            b'*' | b'?' | b'[' => {
+                wildcard_start = Some(index);
+                break
+            }
+            _ => index += 1,
+        }
+    }
+    let wildcard_start = wildcard_start.ok_or(Status::INVALID_ARGUMENT)?;
+    let prefix = pattern[..wildcard_start].rsplit_once('/').map_or("/", |(prefix, _)| {
+        if prefix.is_empty() { "/" } else { prefix }
+    });
+    literal_path(prefix)
 }
 
 fn expand_directory<S: FilesystemSource + ?Sized>(
@@ -532,6 +568,7 @@ fn expand_directory<S: FilesystemSource + ?Sized>(
     pattern: Pattern<'_>,
     directory: &str,
     output: &mut PathCompletionPage,
+    recurse: bool,
     depth: usize,
     scanned: &mut usize,
 ) -> Result<(), Status> {
@@ -551,8 +588,16 @@ fn expand_directory<S: FilesystemSource + ?Sized>(
             if pattern.matches(child.as_str()) {
                 output.push(child)?;
             }
-            if entry.file_type == EntryType::Directory {
-                expand_directory(source, pattern, child.as_str(), output, depth + 1, scanned)?;
+            if recurse && entry.file_type == EntryType::Directory {
+                expand_directory(
+                    source,
+                    pattern,
+                    child.as_str(),
+                    output,
+                    recurse,
+                    depth + 1,
+                    scanned,
+                )?;
             }
         }
         let Some(next) = page.next else { break };
@@ -982,7 +1027,10 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             }
             let mut matches = PathCompletionPage::new();
             expand_paths(&mut self.source, path.as_str(), &mut matches)?;
-            return wildcard_output("directory", matches);
+            if matches.len() == 0 {
+                return Err(Status::NOT_FOUND)
+            }
+            return wildcard_output("directory", path.as_str(), matches);
         }
         let path = literal_path(path.as_str())?;
         if create {
@@ -1393,20 +1441,45 @@ fn directory_output(
     Ok(output)
 }
 
-fn wildcard_output(label: &str, matches: PathCompletionPage) -> Result<StructuredOutput, Status> {
+fn wildcard_output(
+    label: &str,
+    pattern: &str,
+    matches: PathCompletionPage,
+) -> Result<StructuredOutput, Status> {
     let mut output = StructuredOutput::new(Status::NORMAL);
     insert_text(&mut output, "operation", label)?;
+    insert_text(&mut output, "path", pattern)?;
+    insert(
+        &mut output,
+        "entry-count",
+        OutputValue::Unsigned(matches.len() as u64),
+    )?;
     insert(
         &mut output,
         "match-count",
         OutputValue::Unsigned(matches.len() as u64),
     )?;
-    for (index, path) in matches.entries().enumerate().take(8) {
+    for (index, path) in matches.entries().enumerate().take(6) {
         let mut field = Text::<64>::empty();
-        field.push_str("match-").map_err(|_| Status::NO_SPACE)?;
+        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
         write_u32(&mut field, index as u32)?;
-        field.push_str("-path").map_err(|_| Status::NO_SPACE)?;
+        field.push_str("-name").map_err(|_| Status::NO_SPACE)?;
         insert_text(&mut output, field.as_str(), path.as_str())?;
+        let mut field = Text::<64>::empty();
+        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
+        write_u32(&mut field, index as u32)?;
+        field.push_str("-type").map_err(|_| Status::NO_SPACE)?;
+        insert_text(&mut output, field.as_str(), "MATCH")?;
+        let mut field = Text::<64>::empty();
+        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
+        write_u32(&mut field, index as u32)?;
+        field.push_str("-size").map_err(|_| Status::NO_SPACE)?;
+        insert(&mut output, field.as_str(), OutputValue::Unsigned(0))?;
+        let mut field = Text::<64>::empty();
+        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
+        write_u32(&mut field, index as u32)?;
+        field.push_str("-version").map_err(|_| Status::NO_SPACE)?;
+        insert(&mut output, field.as_str(), OutputValue::Unsigned(0))?;
     }
     Ok(output)
 }
