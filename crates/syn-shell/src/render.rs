@@ -141,7 +141,7 @@ fn render_labeled_value(
     label: &str,
     value: OutputValue,
 ) -> Result<(), Error> {
-    write!(rendered, "{label:<10}: ").map_err(|_| Error::Capacity)?;
+    write!(rendered, "{label}: ").map_err(|_| Error::Capacity)?;
     write_value(rendered, value, false)?;
     rendered.push_str("\n")?;
     Ok(())
