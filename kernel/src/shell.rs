@@ -475,6 +475,30 @@ fn complete_file(
         _ => return Ok(false),
     };
 
+    let mut candidate_prefix_text = Text::<MAX_LINE_BYTES>::empty();
+    candidate_prefix_text.push_str(candidate_prefix)?;
+    let mut leaf_text = Text::<MAX_LINE_BYTES>::empty();
+    leaf_text.push_str(leaf)?;
+    complete_file_matches(
+        editor,
+        executor,
+        directory,
+        candidate_prefix_text.as_str(),
+        leaf_text.as_str(),
+        word_start,
+        word_end,
+    )
+}
+
+fn complete_file_matches(
+    editor: &mut LineEditor<HISTORY_CAPACITY>,
+    executor: &mut KernelExecutor,
+    directory: ShellPath,
+    candidate_prefix: &str,
+    leaf: &str,
+    word_start: usize,
+    word_end: usize,
+) -> Result<bool, Error> {
     let mut matches = PathCompletionPage::new();
     if executor
         .filesystem

@@ -12,7 +12,7 @@ use crate::{
 pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_DIRECTORY_PAGE_ENTRIES: usize = 32;
 pub const MAX_LINK_PAGE_ENTRIES: usize = 16;
-pub const MAX_PATH_COMPLETION_MATCHES: usize = 2;
+pub const MAX_PATH_COMPLETION_MATCHES: usize = MAX_DIRECTORY_PAGE_ENTRIES;
 pub const MAX_VISIBLE_DIRECTORY_ENTRIES: usize = 6;
 pub const MAX_TYPE_OUTPUT_BYTES: usize = 4096;
 
