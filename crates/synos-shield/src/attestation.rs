@@ -11,6 +11,9 @@ const QUOTE_BYTES: usize = 4 + 1 + 8 + DIGEST_BYTES * 2;
 pub enum HardwareRoot {
     Tpm2 = 1,
     TrustZone = 2,
+    AmdSevSnp = 3,
+    IntelTdx = 4,
+    NvidiaTee = 5,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

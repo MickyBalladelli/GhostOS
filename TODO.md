@@ -848,12 +848,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 51. Hardware-Rooted Confidential Computing & TEE Enclaves (`synos-confidential`)
-- [ ] **Hardware Enclave Binding**
-  - [ ] Implement support for CPU and GPU Trusted Execution Environments (AMD SEV-SNP, Intel TDX, NVIDIA TEE) to protect memory in-use across nodes.
-- [ ] **Attestation-Gated Capability Provisioning**
-  - [ ] Require cryptographic hardware attestation tokens before granting capabilities to shared Software DSM memory or inter-node IPC streams.
-- [ ] **Post-Quantum Fabric Encryption**
-  - [ ] Secure cross-node CXL and Ethernet page-fault traffic using post-quantum cryptographic primitives (ML-KEM/PQC).
+- [x] **Hardware Enclave Binding**
+  - [x] Implement support for CPU and GPU Trusted Execution Environments (AMD SEV-SNP, Intel TDX, NVIDIA TEE) to protect memory in-use across nodes.
+- [x] **Attestation-Gated Capability Provisioning**
+  - [x] Require cryptographic hardware attestation tokens before granting capabilities to shared Software DSM memory or inter-node IPC streams.
+- [x] **Post-Quantum Fabric Encryption**
+  - [x] Secure cross-node CXL and Ethernet page-fault traffic using post-quantum cryptographic primitives (ML-KEM/PQC).
 
 ---
 

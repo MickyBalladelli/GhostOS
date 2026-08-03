@@ -485,6 +485,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-confidential"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-ipc",
+ "synos-observability",
+ "synos-shield",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-debug"
 version = "0.1.0"
 dependencies = [

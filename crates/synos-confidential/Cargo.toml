@@ -1,0 +1,17 @@
+[package]
+name = "synos-confidential"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Hardware-rooted enclave admission and confidential fabric transport"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+synos-fabric = { path = "../fabric" }
+synos-ipc = { path = "../ipc" }
+synos-observability = { path = "../observability" }
+synos-shield = { path = "../synos-shield" }
+synos-status = { path = "../status" }
+synos-system-model = { path = "../system-model" }
