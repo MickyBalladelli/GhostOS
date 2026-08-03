@@ -483,6 +483,9 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                     .nth(positional)
                     .is_none()
             {
+                if raw[1..].contains('/') {
+                    return Err(Error::TooManyArguments);
+                }
                 self.insert_qualifier(
                     &registration.spec,
                     raw.strip_prefix('/').ok_or(Error::InvalidSyntax)?,

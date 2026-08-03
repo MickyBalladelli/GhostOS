@@ -39,7 +39,7 @@ fn memory_region_capacity_is_bounded() {
     let mut info = BootInfo::empty(BootMethod::Bios);
 
     for index in 0..MAX_MEMORY_REGIONS {
-        assert!(info.push_region(region(index as u64 * 0x1000, 0x1000)));
+        assert!(info.push_region(region((index as u64 + 1) * 0x1000, 0x1000)));
     }
 
     assert!(!info.push_region(region(0, 0x1000)));
@@ -122,7 +122,7 @@ fn property_region_capacity_is_stable_for_generated_counts() {
         let count = (entropy.next_u64() as usize) % (MAX_MEMORY_REGIONS * 2 + 1);
         let mut info = BootInfo::empty(BootMethod::Bios);
         for index in 0..count {
-            let accepted = info.push_region(region(index as u64 * 0x1000, 0x1000));
+            let accepted = info.push_region(region((index as u64 + 1) * 0x1000, 0x1000));
             if accepted != (index < MAX_MEMORY_REGIONS) {
                 return false;
             }

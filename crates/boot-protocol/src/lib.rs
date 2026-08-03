@@ -73,7 +73,9 @@ impl MemoryRegion {
     }
 
     pub fn is_valid(self) -> bool {
-        self.length != 0 && self.start.checked_add(self.length).is_some()
+        self.length != 0
+            && (self.start != 0 || self.kind == MemoryKind::Reserved)
+            && self.start.checked_add(self.length).is_some()
     }
 }
 

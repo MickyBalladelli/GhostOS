@@ -605,7 +605,7 @@ fn strip_comment(input: &str) -> Result<&str, Error> {
         }
         if matches!(character, '\'' | '"') {
             quote = Some(character);
-        } else if character == '!' {
+        } else if matches!(character, '!' | '#') {
             return Ok(&input[..offset]);
         }
     }

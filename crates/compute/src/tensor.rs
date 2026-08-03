@@ -3,6 +3,7 @@ use synos_ipc::{SharedBuffer, SharedRegionId};
 use crate::Error;
 
 pub const MAX_TENSOR_RANK: usize = 8;
+pub const MAX_TENSOR_ELEMENTS: u64 = u32::MAX as u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -54,7 +55,9 @@ impl TensorShape {
             rank: dimensions.len() as u8,
             dimensions: stored,
         };
-        shape.element_count()?;
+        if shape.element_count()? > MAX_TENSOR_ELEMENTS {
+            return Err(Error::InvalidShape);
+        }
         Ok(shape)
     }
 

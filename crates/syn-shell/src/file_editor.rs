@@ -479,6 +479,12 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
     fn delete_forward(&mut self) {
         if let Some((start, end)) = self.selected() {
             self.remove(start, end);
+        } else if self.cursor == self.line_start(self.cursor)
+            && self.line_end(self.cursor) < self.len
+        {
+            let line_end = self.line_end(self.cursor);
+            self.bytes.copy_within(line_end + 1..self.len, line_end);
+            self.len -= 1;
         } else if self.cursor < self.len {
             self.remove(self.cursor, next_boundary(&self.bytes, self.cursor, self.len));
         }
