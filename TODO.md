@@ -938,12 +938,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add `INVITE NODE`, `ACCEPT NODE`, `REJECT NODE`, `REMOVE NODE`, `DRAIN NODE`, `FENCE NODE`, and `REJOIN NODE` administration commands.
   - [x] Add cluster-aware command completion, confirmation prompts, dry-run mode, machine-readable output, and pipeline support.
 
-- [ ] **Cluster Identity & Persistent Metadata**
-  - [ ] Define immutable cluster IDs, human-readable names, aliases, generation numbers, creation time, owner, and lifecycle state.
-  - [ ] Persist cluster metadata, local membership intent, trusted peers, invitations, certificates, and active-cluster selection in SynFS.
-  - [ ] Prevent duplicate names or IDs and reject stale-generation, split-brain, and conflicting metadata updates.
-  - [ ] Support cluster rename, metadata export/import, snapshot, restore, and crash-safe transactional updates.
-  - [ ] Define lifecycle states for creating, pending admission, active, degraded, partitioned, draining, leaving, retired, and deleted clusters.
+- [x] **Cluster Identity & Persistent Metadata**
+  - [x] Define immutable cluster IDs, human-readable names, aliases, generation numbers, creation time, owner, and lifecycle state.
+  - [x] Persist cluster metadata, local membership intent, trusted peers, invitations, certificates, and active-cluster selection in SynFS.
+  - [x] Prevent duplicate names or IDs and reject stale-generation, split-brain, and conflicting metadata updates.
+  - [x] Support cluster rename, metadata export/import, snapshot, restore, and crash-safe transactional updates.
+  - [x] Define lifecycle states for creating, pending admission, active, degraded, partitioned, draining, leaving, retired, and deleted clusters.
 
 - [ ] **Cluster Creation & Bootstrap**
   - [ ] Implement local cluster creation without a central management server.

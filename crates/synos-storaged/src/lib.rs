@@ -3,6 +3,7 @@
 
 mod cache;
 mod capability;
+mod cluster;
 mod protocol;
 mod remote;
 mod service;
@@ -10,6 +11,14 @@ mod state;
 
 pub use cache::{CacheError, CacheMode, CowCache, RemoteFileBackend};
 pub use capability::{CapabilityError, StorageCapability, StorageRights};
+pub use cluster::{
+    Certificate, ClusterId, ClusterLifecycle, ClusterMetadata, ClusterMetadataCatalog,
+    ClusterMetadataError, ClusterMetadataSnapshot, ClusterPatch, Invitation, MembershipIntent,
+    MetadataText, TrustedPeer, CLUSTER_METADATA_FORMAT_VERSION, CLUSTER_METADATA_MAGIC,
+    CLUSTER_METADATA_STATE_FILE, CLUSTER_ID_BYTES, MAX_CERTIFICATES, MAX_CLUSTER_ALIASES,
+    MAX_CLUSTER_DESCRIPTION_BYTES, MAX_CLUSTER_NAME_BYTES, MAX_CLUSTERS, MAX_INVITATIONS,
+    MAX_TRUSTED_PEERS,
+};
 pub use protocol::{
     BlockTransport, Endpoint, EndpointError, FabricTransport, NfsMinorVersion, ObjectKey,
     Protocol, ProtocolFeatures, S3Range, SmbDialect,
