@@ -1089,14 +1089,14 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.6 Shell, Scripting, and Application Tests
 
-- [ ] Test every `syn-shell` command, alias, qualifier, argument type, help route, structured output schema, pipeline path, and status mapping.
-- [ ] Test shell parsing for quoting, escaping, whitespace, case, wildcards, version selectors, relative paths, invalid combinations, and bounded input.
-- [ ] Test shell workflows for directory, create, type, edit, link, delete, default directory, storage, network, cluster, diagnostics, jobs, and protection commands.
-- [ ] Test editor buffers, cursor movement, selection, copy/cut/paste, UTF-8, resize, scrolling, save-as-new-version, conflict detection, cancellation, and terminal restoration.
-- [ ] Test `syn-script` parsing, conditions, symbols, logical names, capability attenuation, exit statuses, comments, quoting, wire encoding, limits, and sandbox rejection.
-- [ ] Test embedded script and Wasm loading, host-call authorization, fuel/memory limits, deterministic execution, traps, cancellation, and cleanup.
-- [ ] Test application manifests, capability requests, placement, restart policies, supervisor state, crash recovery, and admission failures.
-- [ ] Test actors, jobs, queues, leases, cancellation, retries, failover, and exactly-once/idempotent behavior where promised.
+- [x] Test every `syn-shell` command, alias, qualifier, argument type, help route, structured output schema, pipeline path, and status mapping.
+- [x] Test shell parsing for quoting, escaping, whitespace, case, wildcards, version selectors, relative paths, invalid combinations, and bounded input.
+- [x] Test shell workflows for directory, create, type, edit, link, delete, default directory, storage, network, cluster, diagnostics, jobs, and protection commands.
+- [x] Test editor buffers, cursor movement, selection, copy/cut/paste, UTF-8, resize, scrolling, save-as-new-version, conflict detection, cancellation, and terminal restoration.
+- [x] Test `syn-script` parsing, conditions, symbols, logical names, capability attenuation, exit statuses, comments, quoting, wire encoding, limits, and sandbox rejection.
+- [x] Test embedded script and Wasm loading, host-call authorization, fuel/memory limits, deterministic execution, traps, cancellation, and cleanup.
+- [x] Test application manifests, capability requests, placement, restart policies, supervisor state, crash recovery, and admission failures.
+- [x] Test actors, jobs, queues, leases, cancellation, retries, failover, and exactly-once/idempotent behavior where promised.
 
 ### 59.7 Networking, Fabric, and Distributed-System Tests
 
