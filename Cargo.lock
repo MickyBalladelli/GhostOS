@@ -671,6 +671,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-shield"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-observability",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-status"
 version = "0.1.0"
 

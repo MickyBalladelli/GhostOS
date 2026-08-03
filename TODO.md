@@ -614,12 +614,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 37. Microkernel Cyber Defense & Runtime Protection (`synos-shield`)
-- [ ] **Sandboxed IPC & Behavior Tracing (`syn-probes`)**
-  - [ ] Build a zero-overhead Rust tracing probe framework to detect abnormal capability usage and unauthorized memory accesses.
-- [ ] **Memory Fabric & CXL Safeguards**
-  - [ ] Implement cryptographic frame signatures and page-fault rate-limiting to prevent Software DSM memory hijacking and remote DMA attacks.
-- [ ] **TPM & Hardware Attestation**
-  - [ ] Require cryptographic hardware attestation (TPM 2.0/TrustZone) before allowing new physical PCs/nodes into the cluster.
+- [x] **Sandboxed IPC & Behavior Tracing (`syn-probes`)
+  - [x] Build a zero-overhead Rust tracing probe framework to detect abnormal capability usage and unauthorized memory accesses.
+- [x] **Memory Fabric & CXL Safeguards**
+  - [x] Implement cryptographic frame signatures and page-fault rate-limiting to prevent Software DSM memory hijacking and remote DMA attacks.
+- [x] **TPM & Hardware Attestation**
+  - [x] Require cryptographic hardware attestation (TPM 2.0/TrustZone) before allowing new physical PCs/nodes into the cluster.
 
 ---
 
@@ -643,12 +643,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 37. Microkernel Cyber Defense & Runtime Protection (`synos-shield`)
-- [ ] **Sandboxed IPC & Behavior Tracing (`syn-probes`)**
-  - [ ] Build a zero-overhead Rust tracing probe framework to detect abnormal capability usage and unauthorized memory accesses.
-- [ ] **Memory Fabric & CXL Safeguards**
-  - [ ] Implement cryptographic frame signatures and page-fault rate-limiting to prevent Software DSM memory hijacking and remote DMA attacks.
-- [ ] **TPM & Hardware Attestation**
-  - [ ] Require cryptographic hardware attestation (TPM 2.0/TrustZone) before allowing new physical PCs/nodes into the cluster.
+- [x] **Sandboxed IPC & Behavior Tracing (`syn-probes`)
+  - [x] Build a zero-overhead Rust tracing probe framework to detect abnormal capability usage and unauthorized memory accesses.
+- [x] **Memory Fabric & CXL Safeguards**
+  - [x] Implement cryptographic frame signatures and page-fault rate-limiting to prevent Software DSM memory hijacking and remote DMA attacks.
+- [x] **TPM & Hardware Attestation**
+  - [x] Require cryptographic hardware attestation (TPM 2.0/TrustZone) before allowing new physical PCs/nodes into the cluster.
 
 ---
 
