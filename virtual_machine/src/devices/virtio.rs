@@ -13,6 +13,9 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::rc::Rc;
+
+const CONSOLE_OUTPUT_LIMIT: usize = 1024 * 1024;
+const CONSOLE_OUTPUT_COMPACTION_THRESHOLD: usize = CONSOLE_OUTPUT_LIMIT * 2;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const VIRTIO_PCI_VENDOR_ID: u16 = 0x1AF4;
@@ -495,8 +498,8 @@ impl VirtioConsole {
                 let _ = write_host_console(&mut stdout, &bytes, &mut self.host_last_was_cr);
                 let _ = stdout.flush();
             }
-            if self.output.len() > 1024 * 1024 {
-                let excess = self.output.len() - 1024 * 1024;
+            if self.output.len() > CONSOLE_OUTPUT_COMPACTION_THRESHOLD {
+                let excess = self.output.len() - CONSOLE_OUTPUT_LIMIT;
                 self.output.drain(..excess);
             }
             if self.transport.queue.complete(mmu, head, completed) {

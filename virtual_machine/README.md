@@ -11,9 +11,9 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ## Building
 
-Run these commands from the `virtual_machine/` directory. The plain
-`cargo build` command creates `target/debug/synos-vm`; the usage example below
-uses the release binary.
+Run these commands from the `virtual_machine/` directory. Because this crate
+belongs to the repository workspace, Cargo writes the binary to the workspace
+root at `../target/`.
 
 ```bash
 cargo build --release
@@ -39,7 +39,7 @@ The whole sequence of commands is:
 cd virtual_machine
 cargo build --release
 
-./target/release/synos-vm \
+../target/release/synos-vm \
   --kernel ../build/bios/kernel.bin \
   --memory 128M \
   --append "console=serial0"
@@ -59,7 +59,7 @@ When stdin and stdout are TTYs, an unbounded VM run attaches the host terminal
 to the guest serial console automatically:
 
 ```bash
-./target/release/synos-vm \
+../target/release/synos-vm \
   --kernel ../build/bios/kernel.bin \
   --append "console=serial0" \
   --interactive

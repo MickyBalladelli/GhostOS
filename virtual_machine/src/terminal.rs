@@ -3,6 +3,9 @@
 use std::cell::Cell;
 use std::io::{self, IsTerminal, Read, Write};
 use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
+
+const TERMINAL_SIZE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug)]
 pub enum TerminalError {
@@ -56,6 +59,7 @@ pub struct TerminalSession {
     _raw_mode: RawMode,
     has_terminal: bool,
     last_size: Cell<Option<(u16, u16)>>,
+    last_size_check: Cell<Option<Instant>>,
 }
 
 impl TerminalSession {
@@ -99,6 +103,7 @@ impl TerminalSession {
             _raw_mode: raw_mode,
             has_terminal: is_tty,
             last_size: Cell::new(None),
+            last_size_check: Cell::new(None),
         })
     }
 
@@ -123,10 +128,17 @@ impl TerminalSession {
             }
         }
 
+        let size_check_due = self.last_size.get().is_none()
+            || self
+                .last_size_check
+                .get()
+                .is_none_or(|last| last.elapsed() >= TERMINAL_SIZE_POLL_INTERVAL);
         if input_mode == TerminalInputMode::Serial
             && self.has_terminal
             && (!input.bytes.is_empty() || self.last_size.get().is_none())
+            && size_check_due
         {
+            self.last_size_check.set(Some(Instant::now()));
             if let Some((rows, columns)) = terminal_size() {
                 let size = (rows, columns);
                 if self.last_size.get() != Some(size) {

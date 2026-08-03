@@ -635,10 +635,7 @@ impl FramebufferConsole {
         let pixels = self.height * self.stride;
         let background = self.color(self.style.background);
         unsafe {
-            for index in shift..pixels {
-                let pixel = self.address.add(index).read_volatile();
-                self.address.add(index - shift).write_volatile(pixel)
-            }
+            core::ptr::copy(self.address.add(shift), self.address, pixels - shift);
             for index in (pixels - shift)..pixels {
                 self.address.add(index).write_volatile(background)
             }
@@ -1083,10 +1080,11 @@ impl VgaConsole {
 
     fn scroll(&self) {
         unsafe {
-            for index in Self::WIDTH..(Self::WIDTH * Self::HEIGHT) {
-                let value = vga::BUFFER.add(index).read_volatile();
-                vga::BUFFER.add(index - Self::WIDTH).write_volatile(value)
-            }
+            core::ptr::copy(
+                vga::BUFFER.add(Self::WIDTH),
+                vga::BUFFER,
+                Self::WIDTH * (Self::HEIGHT - 1),
+            );
         }
         for column in 0..Self::WIDTH {
             self.put_at(column, Self::HEIGHT - 1, b' ')

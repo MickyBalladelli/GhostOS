@@ -273,10 +273,10 @@ pub struct Mmu {
     ram: Vec<u8>,
     allocator: FrameAllocator,
     mmio: Vec<MmioRegion>,
-    /// Monotonically increasing version for guest RAM writes. Translation
-    /// caches use it to discard decoded code after self-modifying writes or
-    /// DMA.
+    /// Monotonically increasing version for writes to pages containing
+    /// translated guest code.
     code_version: u64,
+    translated_code_pages: HashSet<u64>,
     // Identity/physical mappings the CPU sets up for bootstrap. Key: physical
     // frame address, value: PageFlags.
     identity: HashMap<u64, PageFlags>,
@@ -328,6 +328,7 @@ impl Mmu {
             ram,
             mmio: Vec::new(),
             code_version: 0,
+            translated_code_pages: HashSet::new(),
             identity: HashMap::new(),
             cow_pages: HashMap::new(),
             mapped_frames: HashMap::new(),
@@ -393,6 +394,7 @@ impl Mmu {
         self.ram.clone_from(&state.ram);
         self.allocator.free = state.free_frames.clone();
         self.code_version = state.code_version;
+        self.translated_code_pages.clear();
         self.identity = state
             .identity
             .iter()
@@ -427,6 +429,48 @@ impl Mmu {
     /// Version of guest RAM used by the CPU translation cache.
     pub fn code_version(&self) -> u64 {
         self.code_version
+    }
+
+    pub(crate) fn mark_code_range(&mut self, virt: u64, len: usize) {
+        if len == 0 {
+            return
+        }
+        let end = virt.saturating_add(len.saturating_sub(1) as u64);
+        let mut page = virt & !(PAGE_SIZE as u64 - 1);
+        let last_page = end & !(PAGE_SIZE as u64 - 1);
+        loop {
+            if let Ok(phys) = self.physical_address(page, AccessKind::Read, 1) {
+                if self.find_mmio(phys, 1).is_none() && (phys as usize) < self.ram.len() {
+                    self.translated_code_pages
+                        .insert(phys & !(PAGE_SIZE as u64 - 1));
+                }
+            }
+            if page == last_page {
+                break
+            }
+            page = page.saturating_add(PAGE_SIZE as u64);
+        }
+    }
+
+    fn record_ram_write(&mut self, phys: u64, size: usize) {
+        if size == 0 {
+            return
+        }
+        let Some(end) = phys.checked_add(size.saturating_sub(1) as u64) else {
+            return
+        };
+        let mut page = phys & !(PAGE_SIZE as u64 - 1);
+        let last_page = end & !(PAGE_SIZE as u64 - 1);
+        loop {
+            if self.translated_code_pages.contains(&page) {
+                self.code_version = self.code_version.wrapping_add(1);
+                break
+            }
+            if page == last_page {
+                break
+            }
+            page = page.saturating_add(PAGE_SIZE as u64);
+        }
     }
 
     pub fn allocator(&self) -> &FrameAllocator {
@@ -725,7 +769,7 @@ impl Mmu {
             return Err(MemoryError::InvalidAddress);
         }
         self.ram[start..end].copy_from_slice(&value.to_le_bytes()[..size]);
-        self.code_version = self.code_version.wrapping_add(1);
+        self.record_ram_write(phys, size);
         Ok(())
     }
 
@@ -779,6 +823,38 @@ impl Mmu {
         Ok(out)
     }
 
+    /// Compare guest memory without allocating a temporary buffer.
+    pub fn bytes_equal(&self, virt: u64, expected: &[u8]) -> bool {
+        let mut offset = 0usize;
+        while offset < expected.len() {
+            let addr = virt.wrapping_add(offset as u64);
+            let remaining = expected.len() - offset;
+            let chunk = remaining.min(PAGE_SIZE - (addr as usize & (PAGE_SIZE - 1)));
+            let Ok(phys) = self.physical_address(addr, AccessKind::Read, chunk as u64) else {
+                return false
+            };
+            if let Some(region) = self.find_mmio(phys, chunk as u64) {
+                for index in 0..chunk {
+                    if region.read(addr + index as u64, 1).ok().map(|value| value as u8)
+                        != Some(expected[offset + index])
+                    {
+                        return false
+                    }
+                }
+            } else {
+                let start = phys as usize;
+                let Some(end) = start.checked_add(chunk) else {
+                    return false
+                };
+                if end > self.ram.len() || self.ram[start..end] != expected[offset..offset + chunk] {
+                    return false
+                }
+            }
+            offset += chunk;
+        }
+        true
+    }
+
     pub fn write_bytes(&mut self, virt: u64, bytes: &[u8]) -> Result<(), MemoryError> {
         let len = bytes.len();
         let mut offset = 0usize;
@@ -797,7 +873,7 @@ impl Mmu {
                 return Err(MemoryError::InvalidAddress);
             }
             self.ram[start..end].copy_from_slice(&bytes[offset..offset + chunk]);
-            self.code_version = self.code_version.wrapping_add(1);
+            self.record_ram_write(phys, chunk);
             offset += chunk;
         }
         Ok(())
@@ -830,7 +906,7 @@ impl Mmu {
             }
             if (phys as usize) < self.ram.len() {
                 self.ram[phys as usize] = value;
-                self.code_version = self.code_version.wrapping_add(1);
+                self.record_ram_write(phys, 1);
                 return Ok(());
             }
             return Err(MemoryError::InvalidAddress);
@@ -840,7 +916,7 @@ impl Mmu {
         }
         if (addr as usize) < self.ram.len() {
             self.ram[addr as usize] = value;
-            self.code_version = self.code_version.wrapping_add(1);
+            self.record_ram_write(addr, 1);
             Ok(())
         } else {
             Err(MemoryError::InvalidAddress)
@@ -920,7 +996,7 @@ impl Mmu {
             return Err(MemoryError::InvalidAddress);
         }
         self.ram[start..end].copy_from_slice(bytes);
-        self.code_version = self.code_version.wrapping_add(1);
+        self.record_ram_write(phys, bytes.len());
         Ok(())
     }
 
@@ -1295,6 +1371,7 @@ impl Mmu {
         self.allocator.reset();
         self.ram.fill(0);
         self.code_version = 0;
+        self.translated_code_pages.clear();
         self.identity.clear();
         self.cow_pages.clear();
         self.mapped_frames.clear();

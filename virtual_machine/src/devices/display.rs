@@ -427,7 +427,7 @@ impl DisplayState {
     }
 
     fn text_read(&self, addr: u64, size: u8) -> Result<u64, DeviceError> {
-        if size != 1 && size != 2 && size != 4 {
+        if !matches!(size, 1 | 2 | 4 | 8) {
             return Err(DeviceError::UnsupportedSize);
         }
         let off = Self::text_offset(addr);
@@ -442,7 +442,7 @@ impl DisplayState {
     }
 
     fn text_write(&mut self, addr: u64, value: u64, size: u8) -> Result<(), DeviceError> {
-        if size != 1 && size != 2 && size != 4 {
+        if !matches!(size, 1 | 2 | 4 | 8) {
             return Err(DeviceError::UnsupportedSize);
         }
         let off = Self::text_offset(addr);
@@ -474,7 +474,7 @@ impl DisplayState {
     }
 
     fn fb_read(&self, addr: u64, size: u8) -> Result<u64, DeviceError> {
-        if size != 1 && size != 2 && size != 4 {
+        if !matches!(size, 1 | 2 | 4 | 8) {
             return Err(DeviceError::UnsupportedSize);
         }
         let off = Self::fb_offset(addr);
@@ -489,7 +489,7 @@ impl DisplayState {
     }
 
     fn fb_write(&mut self, addr: u64, value: u64, size: u8) -> Result<(), DeviceError> {
-        if size != 1 && size != 2 && size != 4 {
+        if !matches!(size, 1 | 2 | 4 | 8) {
             return Err(DeviceError::UnsupportedSize);
         }
         let off = Self::fb_offset(addr);

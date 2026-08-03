@@ -50,7 +50,7 @@ pub use terminal::{
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use synos_boot_protocol::BootMethod;
+use synos_boot_protocol::{BootMethod, FramebufferInfo};
 
 pub const COM1_PORT: u16 = 0x3F8;
 pub const COM2_PORT: u16 = 0x2F8;
@@ -523,6 +523,7 @@ impl Vm {
         let mut started = std::time::Instant::now();
         loop {
             self.step_cpu(&started, usize::MAX)?;
+            self.flush_serial_output();
             self.return_if_guest_panicked()?;
 
             match self.power_state() {
@@ -577,7 +578,6 @@ impl Vm {
 
             self.step_cpu(&started, 256)?;
             self.flush_serial_output();
-            terminal.flush_output().map_err(|_| VmError::IoError)?;
             self.return_if_guest_panicked()?;
 
             match self.power_state() {
@@ -648,8 +648,12 @@ impl Vm {
             .load_to_memory(&mut self.mmu, KERNEL_LOAD_ADDR)
             .map_err(loader_error_to_vm)?;
 
-        let gop = self.display.borrow().gop();
-        let framebuffer = framebuffer_info(&gop);
+        let framebuffer = if Self::serial_console_requested(&self.config.boot_args) {
+            FramebufferInfo::EMPTY
+        } else {
+            let gop = self.display.borrow().gop();
+            framebuffer_info(&gop)
+        };
         let method = match self.config.firmware {
             FirmwareMode::Bios => BootMethod::Bios,
             FirmwareMode::Uefi => BootMethod::Uefi,
@@ -665,6 +669,12 @@ impl Vm {
         loader
             .handoff(&mut self.cpu, &mut self.mmu)
             .map_err(loader_error_to_vm)
+    }
+
+    fn serial_console_requested(boot_args: &str) -> bool {
+        boot_args
+            .split_ascii_whitespace()
+            .any(|argument| matches!(argument, "console=serial0" | "console=ttyS0"))
     }
 
     /// Process deferred DMA for storage controllers and NICs issued during

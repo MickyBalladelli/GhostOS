@@ -60,6 +60,7 @@ pub struct Serial16550 {
     tx_buffer: [u8; FIFO_SIZE],
     tx_count: usize,
     host_last_was_cr: bool,
+    host_output: Vec<u8>,
     rx_buffer: VecDeque<u8>,
     output: Vec<u8>,
     panic_marker_progress: usize,
@@ -85,6 +86,7 @@ impl Serial16550 {
             tx_buffer: [0; FIFO_SIZE],
             tx_count: 0,
             host_last_was_cr: false,
+            host_output: Vec::with_capacity(4096),
             rx_buffer: VecDeque::new(),
             output: Vec::new(),
             panic_marker_progress: 0,
@@ -134,7 +136,13 @@ impl Serial16550 {
 
     /// Flush bytes waiting in the transmit FIFO.
     pub fn flush(&mut self) {
-        self.flush_output()
+        self.flush_output();
+        if !self.host_output.is_empty() {
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(&self.host_output);
+            let _ = stdout.flush();
+            self.host_output.clear();
+        }
     }
 
     fn signal_receive_irq(&mut self) {
@@ -147,14 +155,16 @@ impl Serial16550 {
     }
 
     fn flush_output(&mut self) {
-        let mut stdout = std::io::stdout().lock();
+        if self.tx_count == 0 {
+            return
+        }
+
         let tx_count = self.tx_count;
         let _ = write_host_console(
-            &mut stdout,
+            &mut self.host_output,
             &self.tx_buffer[..tx_count],
             &mut self.host_last_was_cr,
         );
-        let _ = stdout.flush();
         self.output.extend_from_slice(&self.tx_buffer[..tx_count]);
         for index in 0..tx_count {
             self.observe_panic_marker(self.tx_buffer[index])

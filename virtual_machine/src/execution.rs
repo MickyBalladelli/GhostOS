@@ -11,7 +11,8 @@ use crate::cpu::{Cpu, CpuError, CpuMode, PrivilegeLevel};
 use crate::devices::{InterruptController, PortBus};
 use crate::firmware::bios::BiosContext;
 use crate::memory::Mmu;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 
 const DEFAULT_BLOCK_SIZE: usize = 32;
 const DEFAULT_HOT_THRESHOLD: u64 = 1_024;
@@ -39,7 +40,7 @@ impl Default for ExecutionEngineConfig {
             hot_threshold: DEFAULT_HOT_THRESHOLD,
             cache_capacity: DEFAULT_CACHE_CAPACITY,
             enable_jit: true,
-            enable_profiling: true,
+            enable_profiling: false,
         }
     }
 }
@@ -74,20 +75,40 @@ struct BlockKey {
 
 #[derive(Clone, Debug)]
 struct TranslationBlock {
-    instructions: Vec<DecodedInstruction>,
+    instructions: Rc<[DecodedInstruction]>,
     loop_block: bool,
     compiled: bool,
-    last_used: u64,
+    hot_executions: u64,
+    source_start: u64,
+    source_bytes: Rc<[u8]>,
+}
+
+impl TranslationBlock {
+    fn source_is_valid(&self, mmu: &Mmu) -> bool {
+        mmu.bytes_equal(self.source_start, self.source_bytes.as_ref())
+    }
+
+    fn instruction_source_is_valid(&self, instruction: &DecodedInstruction, mmu: &Mmu) -> bool {
+        let Some(offset) = instruction.ip.checked_sub(self.source_start) else {
+            return false
+        };
+        let offset = offset as usize;
+        let length = instruction.next_ip.saturating_sub(instruction.ip) as usize;
+        let Some(source) = self.source_bytes.get(offset..offset.saturating_add(length)) else {
+            return false
+        };
+        mmu.bytes_equal(instruction.ip, source)
+    }
 }
 
 /// Dynamic translation and execution engine used by [`crate::Vm`].
 pub struct ExecutionEngine {
     config: ExecutionEngineConfig,
     cache: HashMap<BlockKey, TranslationBlock>,
+    cache_order: VecDeque<BlockKey>,
     profiles: HashMap<u64, BlockProfile>,
     instruction_counts: HashMap<u64, u64>,
     stats: ExecutionStats,
-    clock: u64,
     observed_code_version: u64,
     profile_hook: Option<Box<dyn FnMut(&ExecutionStats)>>,
 }
@@ -101,10 +122,10 @@ impl ExecutionEngine {
         Self {
             config,
             cache: HashMap::new(),
+            cache_order: VecDeque::new(),
             profiles: HashMap::new(),
             instruction_counts: HashMap::new(),
             stats: ExecutionStats::default(),
-            clock: 0,
             observed_code_version: 0,
             profile_hook: None,
         }
@@ -153,12 +174,12 @@ impl ExecutionEngine {
         self.profiles.clear();
         self.instruction_counts.clear();
         self.stats = ExecutionStats::default();
-        self.clock = 0;
         self.observed_code_version = 0;
     }
 
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+        self.cache_order.clear();
     }
 
     /// Execute up to `max_instructions`, returning the number actually run.
@@ -178,8 +199,7 @@ impl ExecutionEngine {
             return Ok(0);
         }
 
-        self.invalidate_if_guest_code_changed(mmu);
-        self.clock = self.clock.wrapping_add(1);
+        let code_changed = self.invalidate_if_guest_code_changed(mmu);
 
         let key = BlockKey {
             rip: cpu.state.rip,
@@ -187,13 +207,18 @@ impl ExecutionEngine {
             privilege: cpu.state.privilege,
             cr3: cpu.state.cr3,
         };
-        let block = self.get_block(key, cpu, mmu)?;
+        let block = self.get_block(key, cpu, mmu, code_changed)?;
         let block_len = block.instructions.len().min(max_instructions);
         let mut executed = 0usize;
         let initial_code_version = mmu.code_version();
 
         for instruction in block.instructions.iter().take(block_len) {
             if cpu.state.halted || cpu.state.rip != instruction.ip {
+                break;
+            }
+            if mmu.code_version() != initial_code_version
+                && !block.instruction_source_is_valid(instruction, mmu)
+            {
                 break;
             }
 
@@ -203,8 +228,7 @@ impl ExecutionEngine {
             executed += 1;
             self.record_instruction(instruction.ip, key.rip, block.compiled);
 
-            if mmu.code_version() != initial_code_version
-                || cpu.state.mode != mode
+            if cpu.state.mode != mode
                 || is_block_boundary(instruction)
             {
                 break;
@@ -218,11 +242,13 @@ impl ExecutionEngine {
         Ok(executed)
     }
 
-    fn invalidate_if_guest_code_changed(&mut self, mmu: &Mmu) {
+    fn invalidate_if_guest_code_changed(&mut self, mmu: &Mmu) -> bool {
         let version = mmu.code_version();
         if version != self.observed_code_version {
-            self.cache.clear();
             self.observed_code_version = version;
+            true
+        } else {
+            false
         }
     }
 
@@ -230,41 +256,62 @@ impl ExecutionEngine {
         &mut self,
         key: BlockKey,
         cpu: &Cpu,
-        mmu: &Mmu,
+        mmu: &mut Mmu,
+        code_changed: bool,
     ) -> Result<TranslationBlock, CpuError> {
-        if let Some(block) = self.cache.get_mut(&key) {
-            self.stats.cache_hits += 1;
-            self.clock = self.clock.wrapping_add(1);
-            block.last_used = self.clock;
-            let profile = self.profiles.entry(key.rip).or_default();
-            profile.executions += 1;
-            if self.config.enable_jit
-                && block.loop_block
-                && !block.compiled
-                && profile.executions >= self.config.hot_threshold
-            {
-                block.compiled = true;
-                profile.compiled = true;
-                self.stats.compiled_blocks += 1;
+        let cached_block_is_valid = !code_changed
+            || self
+                .cache
+                .get(&key)
+                .is_some_and(|block| block.source_is_valid(mmu));
+        if cached_block_is_valid {
+            if let Some(block) = self.cache.get_mut(&key) {
+                self.stats.cache_hits += 1;
+                block.hot_executions = block.hot_executions.saturating_add(1);
+                if self.config.enable_profiling {
+                    let profile = self.profiles.entry(key.rip).or_default();
+                    profile.executions += 1;
+                }
+                if self.config.enable_jit
+                    && block.loop_block
+                    && !block.compiled
+                    && block.hot_executions >= self.config.hot_threshold
+                {
+                    block.compiled = true;
+                    if self.config.enable_profiling {
+                        if let Some(profile) = self.profiles.get_mut(&key.rip) {
+                            profile.compiled = true;
+                        }
+                    }
+                    self.stats.compiled_blocks += 1;
+                }
+                return Ok(block.clone());
             }
-            return Ok(block.clone());
+        } else {
+            self.cache.remove(&key);
+            self.cache_order.retain(|cached_key| *cached_key != key);
         }
 
         self.stats.cache_misses += 1;
-        let instructions = self.translate_block(key.rip, cpu, mmu)?;
+        let (instructions, source_bytes) = self.translate_block(key.rip, cpu, mmu)?;
+        let loop_block = is_loop_block(key.rip, &instructions);
         let block = TranslationBlock {
-            loop_block: is_loop_block(key.rip, &instructions),
-            instructions,
+            loop_block,
+            instructions: Rc::from(instructions.into_boxed_slice()),
             compiled: false,
-            last_used: self.clock,
+            hot_executions: 1,
+            source_start: key.rip,
+            source_bytes: Rc::from(source_bytes.into_boxed_slice()),
         };
         self.stats.translated_blocks += 1;
-        self.profiles.entry(key.rip).or_insert_with(|| BlockProfile {
-            start: key.rip,
-            ..BlockProfile::default()
-        });
-        if let Some(profile) = self.profiles.get_mut(&key.rip) {
-            profile.executions += 1;
+        if self.config.enable_profiling {
+            self.profiles.entry(key.rip).or_insert_with(|| BlockProfile {
+                start: key.rip,
+                ..BlockProfile::default()
+            });
+            if let Some(profile) = self.profiles.get_mut(&key.rip) {
+                profile.executions += 1;
+            }
         }
         self.insert_block(key, block.clone());
         Ok(block)
@@ -274,8 +321,8 @@ impl ExecutionEngine {
         &self,
         rip: u64,
         cpu: &Cpu,
-        mmu: &Mmu,
-    ) -> Result<Vec<DecodedInstruction>, CpuError> {
+        mmu: &mut Mmu,
+    ) -> Result<(Vec<DecodedInstruction>, Vec<u8>), CpuError> {
         let limit = self.config.max_block_instructions.max(1);
         let mut ip = rip;
         let mut instructions = Vec::with_capacity(limit);
@@ -288,23 +335,26 @@ impl ExecutionEngine {
                 break;
             }
         }
-        Ok(instructions)
+        let source_len = ip.wrapping_sub(rip) as usize;
+        let source_bytes = mmu
+            .read_bytes(rip, source_len)
+            .map_err(|_| CpuError::MemoryAccessError)?;
+        mmu.mark_code_range(rip, source_len);
+        Ok((instructions, source_bytes))
     }
 
     fn insert_block(&mut self, key: BlockKey, block: TranslationBlock) {
         let capacity = self.config.cache_capacity.max(1);
         if self.cache.len() >= capacity && !self.cache.contains_key(&key) {
-            if let Some(old_key) = self
-                .cache
-                .iter()
-                .min_by_key(|(_, block)| block.last_used)
-                .map(|(key, _)| *key)
-            {
-                self.cache.remove(&old_key);
-                self.stats.cache_evictions += 1;
+            while let Some(old_key) = self.cache_order.pop_front() {
+                if self.cache.remove(&old_key).is_some() {
+                    self.stats.cache_evictions += 1;
+                    break
+                }
             }
         }
         self.cache.insert(key, block);
+        self.cache_order.push_back(key);
     }
 
     fn record_instruction(&mut self, rip: u64, block_start: u64, compiled: bool) {
@@ -354,16 +404,6 @@ fn is_block_boundary(instruction: &DecodedInstruction) -> bool {
             | "LOOPE"
             | "LOOPNE"
             | "JRCXZ"
-            | "IN"
-            | "OUT"
-            | "INSB"
-            | "INSW"
-            | "INSD"
-            | "INSQ"
-            | "OUTSB"
-            | "OUTSW"
-            | "OUTSD"
-            | "OUTSQ"
             | "WRMSR"
             | "RDMSR"
             | "STI"
