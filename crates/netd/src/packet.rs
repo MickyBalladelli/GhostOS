@@ -78,6 +78,41 @@ impl<const CAPACITY: usize, const MTU: usize> PacketQueue<CAPACITY, MTU> {
         Ok(PacketReader { slot })
     }
 
+    /// Dequeues only frames accepted by the Ring 3 firewall callback. Rejected
+    /// frames are released immediately, so the packet storage stays zero-copy.
+    pub fn dequeue_filtered(
+        &mut self,
+        mut accept: impl FnMut(&[u8]) -> bool,
+    ) -> Result<PacketReader<'_, MTU>, PacketError> {
+        if CAPACITY == 0 {
+            return Err(PacketError::Empty)
+        }
+        let accepted = (0..CAPACITY).find_map(|distance| {
+            let index = (self.receive_cursor + distance) % CAPACITY;
+            let slot = &self.slots[index];
+            (slot.state == SlotState::Ready && accept(&slot.bytes[..slot.length]))
+                .then_some((distance, index))
+        });
+        for distance in 0..CAPACITY {
+            let index = (self.receive_cursor + distance) % CAPACITY;
+            let inspected = accepted.is_none_or(|(accepted_distance, _)| distance <= accepted_distance);
+            if inspected
+                && self.slots[index].state == SlotState::Ready
+                && accepted.is_none_or(|(_, accepted_index)| accepted_index != index)
+            {
+                self.slots[index].length = 0;
+                self.slots[index].state = SlotState::Free;
+            }
+        }
+        if let Some((_, index)) = accepted {
+            self.receive_cursor = (index + 1) % CAPACITY;
+            let slot = &mut self.slots[index];
+            slot.state = SlotState::Loaned;
+            return Ok(PacketReader { slot })
+        }
+        Err(PacketError::Empty)
+    }
+
     pub fn pending(&self) -> usize {
         self.slots
             .iter()

@@ -7,6 +7,7 @@ pub mod audit;
 pub mod diagnostics;
 pub mod editor;
 pub mod file_editor;
+pub mod firewall;
 pub mod filesystem;
 pub mod interpreter;
 pub mod jobs;

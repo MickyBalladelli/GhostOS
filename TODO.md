@@ -774,18 +774,18 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 48. Capability-Gated Network Firewall & Packet Filtering (`synos-firewall`)
-- [ ] **Ring 3 Zero-Copy Packet Filter**
-  - [ ] Build a capability-aware packet filtering daemon integrated directly into the `synos-netd` network stack.
-  - [ ] Implement stateless and stateful packet inspection rules for IP, TCP, and UDP traffic without requiring Ring 0 system context switches.
-- [ ] **Capability-Authenticated Connection Grants**
-  - [ ] Require processes to present valid network capability tokens before binding to local ports or opening outbound raw socket streams.
-  - [ ] Enforce automated rate-limiting and connection filtering on incoming network interface requests.
-- [ ] **Micro-Silo & Cross-Cluster Traffic Isolation**
-  - [ ] Implement automated network perimeter isolation rules for leased inter-cluster workloads (preventing borrowed tenant nodes from accessing host intranet subnets).
-  - [ ] Enforce cryptographic packet header signatures for intra-cluster CXL/Ethernet Software DSM memory fault packets to block unauthorized remote DMA or packet spoofing attacks.
-- [ ] **Declarative Firewall Rule Specifications**
-  - [ ] Extend the `syn-shell` command dictionary with network control commands (`SHOW FIREWALL`, `SET FIREWALL /RULE`).
-  - [ ] Store network security policies as immutable, versioned declarative files on SynFS (`SYS$SYSTEM:FIREWALL.POLICY;1`).
+- [x] **Ring 3 Zero-Copy Packet Filter**
+  - [x] Build a capability-aware packet filtering daemon integrated directly into the `synos-netd` network stack.
+  - [x] Implement stateless and stateful packet inspection rules for IP, TCP, and UDP traffic without requiring Ring 0 system context switches.
+- [x] **Capability-Authenticated Connection Grants**
+  - [x] Require processes to present valid network capability tokens before binding to local ports or opening outbound raw socket streams.
+  - [x] Enforce automated rate-limiting and connection filtering on incoming network interface requests.
+- [x] **Micro-Silo & Cross-Cluster Traffic Isolation**
+  - [x] Implement automated network perimeter isolation rules for leased inter-cluster workloads (preventing borrowed tenant nodes from accessing host intranet subnets).
+  - [x] Enforce cryptographic packet header signatures for intra-cluster CXL/Ethernet Software DSM memory fault packets to block unauthorized remote DMA or packet spoofing attacks.
+- [x] **Declarative Firewall Rule Specifications**
+  - [x] Extend the `syn-shell` command dictionary with network control commands (`SHOW FIREWALL`, `SET FIREWALL /RULE`).
+  - [x] Store network security policies as immutable, versioned declarative files on SynFS (`SYS$SYSTEM:FIREWALL.POLICY;1`).
 
 ---
 

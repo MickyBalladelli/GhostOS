@@ -37,7 +37,7 @@ const SHOW_DSM_ROUTE: u16 = 9;
 const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
 const SYNOS_ISOLATE_ROUTE: u16 = 12;
-const COMMAND_CAPACITY: usize = 28;
+const COMMAND_CAPACITY: usize = 30;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
 
@@ -76,6 +76,8 @@ pub fn run(
     register_control_commands(&mut registry);
     syn_shell::filesystem::register_filesystem_commands(&mut registry)
         .expect("kernel filesystem command registry has capacity");
+    syn_shell::firewall::register_firewall_commands(&mut registry)
+        .expect("kernel firewall command registry has capacity");
 
     let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
     let mut interpreter = Interpreter::new();
@@ -1739,6 +1741,8 @@ struct KernelExecutor {
     control_authority: crate::CapabilityHandle,
     dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
     filesystem: FilesystemExecutor<KernelFilesystem>,
+    firewall_policy_version: u64,
+    firewall_rule_count: u64,
 }
 
 impl KernelExecutor {
@@ -1788,6 +1792,8 @@ impl KernelExecutor {
             control_authority,
             dlm,
             filesystem: FilesystemExecutor::new(KernelFilesystem::new()),
+            firewall_policy_version: 1,
+            firewall_rule_count: 0,
         }
     }
 
@@ -1805,11 +1811,35 @@ impl KernelExecutor {
             STOP_JOB_ROUTE => self.stop_job(command),
             SET_PROCESS_ROUTE => self.set_process(command),
             SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
+            syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
+            syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
             route if route >= syn_shell::filesystem::DIRECTORY_ROUTE => {
                 self.filesystem.execute_command(command)
             }
             _ => Err(Status::NOT_FOUND),
         }
+    }
+
+    fn show_firewall(&self) -> Result<StructuredOutput, Status> {
+        syn_shell::firewall::firewall_output(syn_shell::firewall::FirewallView {
+            policy_version: self.firewall_policy_version,
+            rule_count: self.firewall_rule_count,
+            active_connections: 0,
+            dropped_packets: 0,
+            allowed_packets: 0,
+        })
+    }
+
+    fn set_firewall(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let Some(Value::Text(rule)) = command.get("RULE") else {
+            return Err(Status::INVALID_ARGUMENT)
+        };
+        if rule.is_empty() || self.firewall_rule_count >= 32 {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        self.firewall_rule_count += 1;
+        self.firewall_policy_version = self.firewall_policy_version.saturating_add(1);
+        self.show_firewall()
     }
 
     fn print_directory(

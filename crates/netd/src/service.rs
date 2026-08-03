@@ -3,6 +3,9 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::memory::{MemoryError, SharedMemory};
 use crate::protocol::{ProtocolError, SocketOperation, SocketRequest, socket_response};
+use crate::{CapabilityRight, Firewall, FirewallError};
+
+pub type DefaultFirewall = Firewall;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -91,6 +94,7 @@ pub enum SocketState {
 pub enum ServiceError {
     AccessDenied,
     Backend,
+    Firewall(FirewallError),
     CompletionFull,
     InvalidBuffer,
     InvalidCapability,
@@ -112,6 +116,10 @@ impl IntoStatus for ServiceError {
             | Self::InvalidRights => Status::INVALID_ARGUMENT,
             Self::Backend => Status::new(Severity::Error, facility::NETWORK, 1, 0)
                 .expect("valid network status"),
+            Self::Firewall(FirewallError::ExpiredCapability | FirewallError::InvalidCapability) => {
+                Status::ACCESS_DENIED
+            }
+            Self::Firewall(_) => Status::INVALID_ARGUMENT,
         }
     }
 }
@@ -258,13 +266,23 @@ pub struct ClientChannel<'a, const RING_CAPACITY: usize> {
 pub struct NetworkDaemon<B: SocketBackend, const SOCKET_CAPACITY: usize> {
     backend: B,
     sockets: SocketTable<B::Handle, SOCKET_CAPACITY>,
+    firewall: DefaultFirewall,
 }
 
 impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAPACITY> {
-    pub const fn new(backend: B) -> Self {
+    pub fn new(backend: B) -> Self {
         Self {
             backend,
             sockets: SocketTable::new(),
+            firewall: DefaultFirewall::new(crate::FirewallPolicy::new()),
+        }
+    }
+
+    pub fn with_firewall(backend: B, firewall: DefaultFirewall) -> Self {
+        Self {
+            backend,
+            sockets: SocketTable::new(),
+            firewall,
         }
     }
 
@@ -274,6 +292,14 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
 
     pub fn backend_mut(&mut self) -> &mut B {
         &mut self.backend
+    }
+
+    pub fn firewall(&self) -> &DefaultFirewall {
+        &self.firewall
+    }
+
+    pub fn firewall_mut(&mut self) -> &mut DefaultFirewall {
+        &mut self.firewall
     }
 
     /// Handles at most one request so the scheduler controls daemon latency.
@@ -345,6 +371,14 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
                 let (capability, handle) =
                     self.authorize(channel, request, SocketRights::LISTEN)?;
                 let port = port(request.argument0)?;
+                self.firewall
+                    .authorize_socket_endpoint(
+                        CapabilityRight::Listen,
+                        [0; 4],
+                        port,
+                        channel.allowed_rights.contains(SocketRights::LISTEN),
+                    )
+                    .map_err(ServiceError::Firewall)?;
                 self.backend.listen(handle, port)?;
                 Ok(OperationResult::capability(capability))
             }
@@ -355,6 +389,14 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
                     .map_err(|_| ServiceError::InvalidOperation)?
                     .to_be_bytes();
                 let port = port(request.argument1)?;
+                self.firewall
+                    .authorize_socket_endpoint(
+                        CapabilityRight::Connect,
+                        address,
+                        port,
+                        channel.allowed_rights.contains(SocketRights::CONNECT),
+                    )
+                    .map_err(ServiceError::Firewall)?;
                 self.backend.connect_ipv4(handle, address, port)?;
                 Ok(OperationResult::capability(capability))
             }
