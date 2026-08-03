@@ -12,6 +12,8 @@ libfuzzer-sys = "0.4"
 synos-fsd = { path = "../crates/fsd" }
 synos-host-filesystems = { path = "../crates/host-filesystems" }
 synos-synfs = { path = "../crates/synfs" }
+synos-http = { path = "../crates/http" }
+syn-script = { path = "../crates/syn-script" }
 
 [[bin]]
 name = "path"
@@ -37,6 +39,20 @@ bench = false
 [[bin]]
 name = "mount"
 path = "fuzz_targets/mount.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http"
+path = "fuzz_targets/http.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script"
+path = "fuzz_targets/script.rs"
 test = false
 doc = false
 bench = false

@@ -251,4 +251,29 @@ mod tests {
         assert_eq!(Pattern::parse("/data/[abc"), Err(PatternError::UnterminatedClass));
         assert_eq!(Pattern::parse("/data/foo\\"), Err(PatternError::TrailingEscape));
     }
+
+    #[test]
+    fn property_wildcards_never_cross_a_separator() {
+        use synos_test_support::property::{ascii, run_assert, Config};
+
+        run_assert("path-pattern.wildcard-separator", Config::new(0x59_3, 128), |_, _, entropy| {
+            let name = ascii(entropy, 32);
+            let Ok(pattern) = Pattern::parse("*") else { return false };
+            pattern.matches(&name) && !pattern.matches("a/b")
+        })
+        .expect("generated path cases satisfy wildcard contract");
+    }
+
+    #[test]
+    fn property_unescape_preserves_literal_bytes() {
+        use synos_test_support::property::{ascii, run_assert, Config};
+
+        run_assert("path-pattern.unescape", Config::new(0x59_3, 128), |_, _, entropy| {
+            let value = ascii(entropy, 32);
+            let mut output = [0; MAX_PATTERN_BYTES];
+            let Ok(length) = unescape(&value, &mut output) else { return false };
+            &output[..length] == value.as_bytes()
+        })
+        .expect("generated literal paths round-trip through unescape");
+    }
 }

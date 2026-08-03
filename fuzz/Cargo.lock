@@ -9,6 +9,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "cc"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -44,6 +56,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "heapless"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "jobserver"
 version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -68,6 +99,12 @@ dependencies = [
  "arbitrary",
  "cc",
 ]
+
+[[package]]
+name = "managed"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d"
 
 [[package]]
 name = "proc-macro2"
@@ -100,6 +137,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "smoltcp"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f73d40463bba65efc9adc6370b56df76d563cc46e2482bba58351b4afb7535e"
+dependencies = [
+ "bitflags",
+ "byteorder",
+ "cfg-if",
+ "heapless",
+ "managed",
+]
+
+[[package]]
+name = "stable_deref_trait"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -111,11 +167,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn-script"
+version = "0.1.0"
+dependencies = [
+ "syn-shell",
+ "synos-auth",
+ "synos-fabric",
+ "synos-ipc",
+ "synos-kernel",
+ "synos-status",
+ "synos-synfs",
+ "synos-system-model",
+]
+
+[[package]]
+name = "syn-shell"
+version = "0.1.0"
+dependencies = [
+ "synos-observability",
+ "synos-path-pattern",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
+name = "synos-auth"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-kernel",
+ "synos-observability",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
+name = "synos-boot-protocol"
+version = "0.1.0"
+
+[[package]]
+name = "synos-fabric"
+version = "0.1.0"
+dependencies = [
+ "synos-observability",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-fsd"
 version = "0.1.0"
 dependencies = [
  "synos-host-filesystems",
  "synos-ipc",
+ "synos-path-pattern",
  "synos-status",
  "synos-synfs",
 ]
@@ -125,8 +229,10 @@ name = "synos-fuzz"
 version = "0.1.0"
 dependencies = [
  "libfuzzer-sys",
+ "syn-script",
  "synos-fsd",
  "synos-host-filesystems",
+ "synos-http",
  "synos-synfs",
 ]
 
@@ -138,10 +244,82 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-http"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-netd",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-ipc"
 version = "0.1.0"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "synos-kernel"
+version = "0.1.0"
+dependencies = [
+ "syn-shell",
+ "synos-boot-protocol",
+ "synos-fabric",
+ "synos-fsd",
+ "synos-ipc",
+ "synos-legacy-pc-drivers",
+ "synos-observability",
+ "synos-power",
+ "synos-runtime",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
+name = "synos-legacy-pc-drivers"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
+name = "synos-netd"
+version = "0.1.0"
+dependencies = [
+ "smoltcp",
+ "synos-ipc",
+ "synos-status",
+]
+
+[[package]]
+name = "synos-observability"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
+name = "synos-path-pattern"
+version = "0.1.0"
+
+[[package]]
+name = "synos-power"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-legacy-pc-drivers",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
+name = "synos-runtime"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-path-pattern",
+ "synos-status",
 ]
 
 [[package]]
@@ -152,7 +330,16 @@ version = "0.1.0"
 name = "synos-synfs"
 version = "0.1.0"
 dependencies = [
+ "synos-path-pattern",
  "synos-status",
+]
+
+[[package]]
+name = "synos-system-model"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+ "synos-synfs",
 ]
 
 [[package]]

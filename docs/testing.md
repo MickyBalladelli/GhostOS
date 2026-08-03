@@ -127,6 +127,22 @@ corresponding compatibility decision.
 Tests must not depend on an unset variable having a hidden meaning. The test
 result records the variables that were actually used.
 
+## Unit and property tests
+
+Property tests use the deterministic runner in
+[`synos-test-support::property`](../crates/test-support/src/property.rs). A
+property receives a stable case seed and deterministic entropy. Failures print
+the seed and case as a replay command:
+
+```text
+SYNOS_PROPERTY_SEED=0x53594e4f535f5445 SYNOS_PROPERTY_CASE=7
+```
+
+Use `SYNOS_PROPERTY_CASES` to choose a bounded case count. Generated tests must
+cover the empty, minimum, maximum, malformed, capacity, overflow, and
+authorization boundaries relevant to the API. Reference models in the support
+crate cover FIFO queues, capability attenuation/revocation, and lease expiry.
+
 ## Names and evidence
 
 Inventory IDs are permanent names. Use lowercase dotted names:

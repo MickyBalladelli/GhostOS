@@ -24,3 +24,6 @@ pub use http::{
 pub use netd::{NetdClient, NetdError};
 pub use router::{Handler, RequestContext, Route, RouteError, Router, WebRights};
 pub use server::{HttpServer, SERVER_SOCKET_RIGHTS, ServerError, ServerEvent, ServerState};
+
+#[cfg(test)]
+mod tests;

@@ -50,3 +50,21 @@ fn memory_region_capacity_is_bounded() {
 fn memory_region_end_saturates() {
     assert_eq!(region(u64::MAX - 1, 8).end(), u64::MAX);
 }
+
+#[test]
+fn property_region_capacity_is_stable_for_generated_counts() {
+    use synos_test_support::property::{run_assert, Config};
+
+    run_assert("boot-protocol.region-capacity", Config::new(0x59_3, 128), |_, _, entropy| {
+        let count = (entropy.next_u64() as usize) % (MAX_MEMORY_REGIONS * 2 + 1);
+        let mut info = BootInfo::empty(BootMethod::Bios);
+        for index in 0..count {
+            let accepted = info.push_region(region(index as u64 * 0x1000, 0x1000));
+            if accepted != (index < MAX_MEMORY_REGIONS) {
+                return false;
+            }
+        }
+        info.regions().len() == count.min(MAX_MEMORY_REGIONS) && info.is_valid()
+    })
+    .expect("generated region counts preserve capacity invariants");
+}

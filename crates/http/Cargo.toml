@@ -12,3 +12,6 @@ path = "src/lib.rs"
 synos-ipc = { path = "../ipc" }
 synos-netd = { path = "../netd" }
 synos-status = { path = "../status" }
+
+[dev-dependencies]
+synos-test-support = { path = "../test-support" }

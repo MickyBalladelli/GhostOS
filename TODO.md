@@ -1053,13 +1053,13 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.3 Unit and Property Testing
 
-- [ ] Add unit tests for every module in `kernel`, `boot/uefi`, and every crate under `crates/`.
-- [ ] Test constructors, state transitions, capacity limits, integer overflow, alignment, empty values, maximum values, malformed values, and all documented error paths.
-- [ ] Add property tests for parsers, path matching, encoders/decoders, checksums, ID generation, rights attenuation, version selection, queue behavior, allocators, schedulers, and state machines.
-- [ ] Add round-trip tests for every serializable type: encode/decode, persist/load, snapshot/restore, and request/response pairs.
-- [ ] Add model tests for bounded queues, capability tables, leases, lock managers, schedulers, copy-on-write trees, memory maps, and cluster membership.
-- [ ] Add deterministic seed replay for every randomized or property test failure.
-- [ ] Add fuzz targets for every parser and untrusted byte boundary, including boot metadata, filesystem blocks, network packets, IPC messages, wire frames, manifests, scripts, HTTP, gRPC, and terminal input.
+- [x] Add unit tests for every module in `kernel`, `boot/uefi`, and every crate under `crates/`.
+- [x] Test constructors, state transitions, capacity limits, integer overflow, alignment, empty values, maximum values, malformed values, and all documented error paths.
+- [x] Add property tests for parsers, path matching, encoders/decoders, checksums, ID generation, rights attenuation, version selection, queue behavior, allocators, schedulers, and state machines.
+- [x] Add round-trip tests for every serializable type: encode/decode, persist/load, snapshot/restore, and request/response pairs.
+- [x] Add model tests for bounded queues, capability tables, leases, lock managers, schedulers, copy-on-write trees, memory maps, and cluster membership.
+- [x] Add deterministic seed replay for every randomized or property test failure.
+- [x] Add fuzz targets for every parser and untrusted byte boundary, including boot metadata, filesystem blocks, network packets, IPC messages, wire frames, manifests, scripts, HTTP, gRPC, and terminal input.
 
 ### 59.4 Kernel, Boot, Runtime, and Security Tests
 

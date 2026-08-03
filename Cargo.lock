@@ -476,6 +476,9 @@ dependencies = [
 [[package]]
 name = "synos-boot-protocol"
 version = "0.1.0"
+dependencies = [
+ "synos-test-support",
+]
 
 [[package]]
 name = "synos-client-sdk"
@@ -580,6 +583,7 @@ dependencies = [
  "synos-ipc",
  "synos-netd",
  "synos-status",
+ "synos-test-support",
 ]
 
 [[package]]
@@ -632,6 +636,7 @@ dependencies = [
  "synos-runtime",
  "synos-status",
  "synos-system-model",
+ "synos-test-support",
 ]
 
 [[package]]
@@ -695,6 +700,9 @@ dependencies = [
 [[package]]
 name = "synos-path-pattern"
 version = "0.1.0"
+dependencies = [
+ "synos-test-support",
+]
 
 [[package]]
 name = "synos-pkg"
@@ -793,6 +801,9 @@ dependencies = [
 [[package]]
 name = "synos-status"
 version = "0.1.0"
+dependencies = [
+ "synos-test-support",
+]
 
 [[package]]
 name = "synos-storaged"
@@ -812,6 +823,7 @@ version = "0.1.0"
 dependencies = [
  "synos-path-pattern",
  "synos-status",
+ "synos-test-support",
 ]
 
 [[package]]

@@ -12,6 +12,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
+pub mod property;
+
 pub const BLOCK_SIZE: usize = 512;
 pub const DEFAULT_SEED: u64 = 0x5359_4e4f_535f_5445;
 

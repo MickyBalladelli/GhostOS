@@ -199,3 +199,34 @@ fn runtime_link_dispatch_preserves_operation_and_buffer_direction() {
     );
     assert_eq!(dispatcher.filesystem().buffer, Some(links_buffer));
 }
+
+#[test]
+fn property_delegation_never_escalates_rights() {
+    use synos_test_support::property::{run_assert, Config};
+
+    run_assert("kernel.capability-attenuation", Config::new(0x59_3, 128), |_, _, entropy| {
+        let owner = address_space(1);
+        let borrower = address_space(2);
+        let object = CapabilityObject::AddressSpace(owner);
+        let mut capabilities = CapabilitySpace::<2>::new();
+        let Ok(authority) = capabilities.mint_root(owner, object, Rights::ALL) else { return false };
+        let Some(requested) = Rights::from_bits(((entropy.next_u64() as u16) & Rights::ALL.bits()) | Rights::READ.bits()) else { return false };
+        let Ok(delegated) = capabilities.delegate(owner, authority, borrower, requested) else { return false };
+        if capabilities
+            .authorize(borrower, delegated, object, requested)
+            .is_err()
+        {
+            return false;
+        }
+        let Some(extra) = Rights::from_bits((!requested.bits()) & Rights::ALL.bits()) else { return false };
+        if !extra.is_empty()
+            && capabilities
+                .authorize(borrower, delegated, object, extra)
+                .is_ok()
+        {
+            return false;
+        }
+        true
+    })
+    .expect("generated capability delegations remain attenuated");
+}

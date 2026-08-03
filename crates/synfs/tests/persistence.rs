@@ -282,3 +282,42 @@ fn rejects_short_disk_images() {
         Err(Error::BufferTooSmall { .. })
     ));
 }
+
+#[test]
+fn property_generated_operations_flush_and_recover() {
+    use synos_test_support::property::{bytes, run, Config};
+
+    run("synfs.flush-recover", Config::new(0x59_3, 32), |_, _, entropy| {
+        let mut filesystem = SynFs::<MAX_BLOCKS>::new();
+        let mut expected = Vec::new();
+        for index in 0..8 {
+            let path = format!("/data/property-{index}");
+            let contents = bytes(entropy, 96);
+            filesystem
+                .write(&path, &contents)
+                .map_err(|error| format!("write failed: {error:?}"))?;
+            expected.push((path, contents));
+        }
+
+        let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+        filesystem
+            .flush(&mut image)
+            .map_err(|error| format!("flush failed: {error:?}"))?;
+        let recovered = SynFs::<MAX_BLOCKS>::recover(&image)
+            .map_err(|error| format!("recover failed: {error:?}"))?;
+        recovered
+            .check_consistency()
+            .map_err(|error| format!("consistency failed: {error:?}"))?;
+        for (path, contents) in expected {
+            let mut output = vec![0; contents.len()];
+            let read = recovered
+                .read(&path, &mut output)
+                .map_err(|error| format!("read failed: {error:?}"))?;
+            if output != contents || read.bytes_read != contents.len() {
+                return Err(format!("recovered contents differ for {path}"));
+            }
+        }
+        Ok(())
+    })
+    .expect("generated SynFS operations recover deterministically");
+}

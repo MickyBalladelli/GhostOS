@@ -26,3 +26,6 @@ syn-shell = { path = "../crates/syn-shell" }
 synos-status = { path = "../crates/status" }
 synos-runtime = { path = "../crates/runtime" }
 synos-system-model = { path = "../crates/system-model" }
+
+[dev-dependencies]
+synos-test-support = { path = "../crates/test-support" }

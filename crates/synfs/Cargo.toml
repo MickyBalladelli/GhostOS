@@ -10,3 +10,6 @@ path = "src/lib.rs"
 [dependencies]
 synos-path-pattern = { path = "../path-pattern" }
 synos-status = { path = "../status" }
+
+[dev-dependencies]
+synos-test-support = { path = "../test-support" }

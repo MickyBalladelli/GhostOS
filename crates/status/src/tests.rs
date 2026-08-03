@@ -26,3 +26,24 @@ fn success_uses_openvms_low_bit_convention() {
     assert!(!Status::INVALID_ARGUMENT.is_success());
     assert!(!Status::BUSY.is_success());
 }
+
+#[test]
+fn property_valid_statuses_round_trip_their_raw_value() {
+    use synos_test_support::property::{run_assert, Config};
+
+    run_assert("status.raw-round-trip", Config::new(0x59_3, 256), |_, _, entropy| {
+        let severity = match (entropy.next_u64() % 5) as u8 {
+            0 => Severity::Warning,
+            1 => Severity::Success,
+            2 => Severity::Error,
+            3 => Severity::Information,
+            _ => Severity::Fatal,
+        };
+        let facility = (entropy.next_u64() % 0x1000) as u16;
+        let code = (entropy.next_u64() % 0x2000) as u16;
+        let flags = (entropy.next_u64() % 16) as u8;
+        let Some(status) = Status::new(severity, facility, code, flags) else { return false };
+        Status::from_raw(status.raw()) == Some(status)
+    })
+    .expect("generated status fields round-trip");
+}
