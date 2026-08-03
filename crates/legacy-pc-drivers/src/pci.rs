@@ -2,6 +2,7 @@
 use core::arch::asm;
 
 pub const INVALID_VENDOR: u16 = 0xffff;
+pub const PCIE_AER_EXTENDED_CAPABILITY: u16 = 0x0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciAddress {
@@ -73,6 +74,32 @@ pub struct PciDevice {
     pub interrupt_pin: u8,
 }
 
+/// Active PCIe Advanced Error Reporting status after capability masks are
+/// applied. The error status registers are write-one-to-clear on real PCIe
+/// devices.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcieAerStatus {
+    pub correctable: u32,
+    pub non_fatal: u32,
+    pub fatal: u32,
+}
+
+impl PcieAerStatus {
+    pub const NONE: Self = Self {
+        correctable: 0,
+        non_fatal: 0,
+        fatal: 0,
+    };
+
+    pub const fn has_error(self) -> bool {
+        self.correctable != 0 || self.non_fatal != 0 || self.fatal != 0
+    }
+
+    pub const fn requires_isolation(self) -> bool {
+        self.non_fatal != 0 || self.fatal != 0
+    }
+}
+
 impl PciDevice {
     pub const fn is_class(&self, class: u8, subclass: u8) -> bool {
         self.class == class && self.subclass == subclass
@@ -102,6 +129,16 @@ pub unsafe trait ConfigAccess {
     unsafe fn write_u32(&mut self, address: PciAddress, offset: u8, value: u32);
 }
 
+/// PCIe ECAM access for extended configuration space, including AER.
+///
+/// Conventional CF8/CFC access only reaches the first 256 bytes and therefore
+/// cannot safely implement this trait.
+pub unsafe trait ExtendedConfigAccess {
+    unsafe fn read_u32(&mut self, address: PciAddress, offset: u16) -> u32;
+
+    unsafe fn write_u32(&mut self, address: PciAddress, offset: u16, value: u32);
+}
+
 /// Enumerates all conventional PCI buses without allocating memory.
 pub fn enumerate<A, F>(access: &mut A, mut visit: F)
 where
@@ -117,7 +154,7 @@ where
             };
             let vendor = unsafe { access.read_u32(address, 0) } as u16;
             if vendor == INVALID_VENDOR {
-                continue
+                continue;
             }
 
             let header = unsafe { access.read_u32(address, 0x0c) };
@@ -141,14 +178,11 @@ where
     }
 }
 
-pub fn read_device<A: ConfigAccess>(
-    access: &mut A,
-    address: PciAddress,
-) -> Option<PciDevice> {
+pub fn read_device<A: ConfigAccess>(access: &mut A, address: PciAddress) -> Option<PciDevice> {
     let identity = unsafe { access.read_u32(address, 0) };
     let vendor_id = identity as u16;
     if vendor_id == INVALID_VENDOR {
-        return None
+        return None;
     }
 
     let class = unsafe { access.read_u32(address, 0x08) }.to_le_bytes();
@@ -162,13 +196,13 @@ pub fn read_device<A: ConfigAccess>(
             let low = unsafe { access.read_u32(address, offset) };
             if low == 0 {
                 index += 1;
-                continue
+                continue;
             }
 
             if low & 1 != 0 {
                 bars[index] = Bar::Io { port: low & !3 };
                 index += 1;
-                continue
+                continue;
             }
 
             let prefetchable = low & 8 != 0;
@@ -205,6 +239,70 @@ pub fn read_device<A: ConfigAccess>(
     })
 }
 
+/// Finds and samples the PCIe AER extended capability for a device.
+///
+/// Extended capabilities form a linked list starting at offset `0x100`.
+/// The bounded walk prevents malformed hardware from trapping a driver in a
+/// cycle.
+pub fn read_pcie_aer<A: ExtendedConfigAccess>(
+    access: &mut A,
+    address: PciAddress,
+) -> Option<PcieAerStatus> {
+    let mut offset = 0x100_u16;
+    for _ in 0..48 {
+        let header = unsafe { access.read_u32(address, offset) };
+        if header == 0 || header == u32::MAX {
+            return None;
+        }
+        let capability = (header & 0xffff) as u16;
+        if capability == PCIE_AER_EXTENDED_CAPABILITY {
+            let uncorrectable = unsafe { access.read_u32(address, offset + 0x04) };
+            let uncorrectable_mask = unsafe { access.read_u32(address, offset + 0x08) };
+            let severity = unsafe { access.read_u32(address, offset + 0x0c) };
+            let correctable = unsafe { access.read_u32(address, offset + 0x10) };
+            let correctable_mask = unsafe { access.read_u32(address, offset + 0x14) };
+            let active_uncorrectable = uncorrectable & !uncorrectable_mask;
+            return Some(PcieAerStatus {
+                correctable: correctable & !correctable_mask,
+                non_fatal: active_uncorrectable & !severity,
+                fatal: active_uncorrectable & severity,
+            });
+        }
+        let next = ((header >> 20) & 0xfff) as u16;
+        if next == 0 || next < 0x100 || next == offset {
+            return None;
+        }
+        offset = next
+    }
+    None
+}
+
+/// Clears sampled AER status bits using the PCIe write-one-to-clear contract.
+pub fn clear_pcie_aer<A: ExtendedConfigAccess>(access: &mut A, address: PciAddress) -> bool {
+    let mut offset = 0x100_u16;
+    for _ in 0..48 {
+        let header = unsafe { access.read_u32(address, offset) };
+        if header == 0 || header == u32::MAX {
+            return false;
+        }
+        if (header & 0xffff) as u16 == PCIE_AER_EXTENDED_CAPABILITY {
+            let uncorrectable = unsafe { access.read_u32(address, offset + 0x04) };
+            let correctable = unsafe { access.read_u32(address, offset + 0x10) };
+            unsafe {
+                access.write_u32(address, offset + 0x04, uncorrectable);
+                access.write_u32(address, offset + 0x10, correctable);
+            }
+            return true;
+        }
+        let next = ((header >> 20) & 0xfff) as u16;
+        if next == 0 || next < 0x100 || next == offset {
+            return false;
+        }
+        offset = next
+    }
+    false
+}
+
 /// Legacy x86 PCI mechanism #1 using ports CF8/CFC.
 ///
 /// The caller must hold the platform I/O-port capability while this value is
@@ -231,16 +329,12 @@ unsafe impl ConfigAccess for PortConfig {
 
 #[cfg(target_arch = "x86_64")]
 unsafe fn out_u32(port: u16, value: u32) {
-    unsafe {
-        asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack))
-    }
+    unsafe { asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack)) }
 }
 
 #[cfg(target_arch = "x86_64")]
 unsafe fn in_u32(port: u16) -> u32 {
     let value;
-    unsafe {
-        asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack))
-    }
+    unsafe { asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack)) }
     value
 }

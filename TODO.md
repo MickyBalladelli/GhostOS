@@ -727,13 +727,13 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 43. Hardware Diagnostics & RAS (Reliability, Availability, Serviceability)
-- [ ] **EDAC & CXL Error Telemetry**
-  - [ ] Implement real-time hardware ECC memory error logging and CXL poisoned flit handling to prevent memory corruption propagation in Software DSM.
-  - [ ] Support PCIe Advanced Error Reporting (AER) drivers to isolate failing bus segments.
-- [ ] **Thermal & Power Budget Arbitration**
-  - [ ] Build predictive workload eviction and down-throttling logic when a physical node approaches critical thermal or power thresholds.
-- [ ] **Persistent Memory Pool Management**
-  - [ ] Implement safe dirty-page tracking and flush pipelines for persistent memory pools (e.g., CXL Type 3 NVM) across power cycle events.
+- [x] **EDAC & CXL Error Telemetry**
+  - [x] Implement real-time hardware ECC memory error logging and CXL poisoned flit handling to prevent memory corruption propagation in Software DSM.
+  - [x] Support PCIe Advanced Error Reporting (AER) drivers to isolate failing bus segments.
+- [x] **Thermal & Power Budget Arbitration**
+  - [x] Build predictive workload eviction and down-throttling logic when a physical node approaches critical thermal or power thresholds.
+- [x] **Persistent Memory Pool Management**
+  - [x] Implement safe dirty-page tracking and flush pipelines for persistent memory pools (e.g., CXL Type 3 NVM) across power cycle events.
 
 ---
 

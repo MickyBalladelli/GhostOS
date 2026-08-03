@@ -658,6 +658,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-ras"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-legacy-pc-drivers",
+ "synos-observability",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-remote-display"
 version = "0.1.0"
 dependencies = [

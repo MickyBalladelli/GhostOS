@@ -1,0 +1,15 @@
+[package]
+name = "synos-ras"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+synos-fabric = { path = "../fabric" }
+synos-legacy-pc-drivers = { path = "../legacy-pc-drivers" }
+synos-observability = { path = "../observability" }
+synos-status = { path = "../status" }
+synos-synfs = { path = "../synfs" }
