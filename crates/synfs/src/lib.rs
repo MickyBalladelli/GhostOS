@@ -1075,13 +1075,22 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
         self.require_parent_directory(parsed.file)?;
         self.enforce_limits(contents.len() as u64, previous.is_none())?;
-        let version = previous.map_or(Ok(1), |record| {
-            record
+        let version = match previous {
+            Some(record)
+                if !record.deleted
+                    && record.key.version == 1
+                    && record.size == 0
+                    && !record.data.is_some() =>
+            {
+                record.key.version
+            }
+            Some(record) => record
                 .key
                 .version
                 .checked_add(1)
-                .ok_or(Error::VersionOverflow)
-        })?;
+                .ok_or(Error::VersionOverflow)?,
+            None => 1,
+        };
         let created_at = self.generation.saturating_add(1);
         let object_id = previous
             .filter(|record| !record.deleted)
@@ -1137,7 +1146,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             link_count: link_count.max(1),
             mode,
         };
-        let root = if self.find_record(record.key)?.is_some_and(|existing| existing.deleted) {
+        let root = if self.find_record(record.key)?.is_some() {
             self.replace(self.root, record.key, record)?
         } else {
             self.insert(self.root, record)?
@@ -1237,10 +1246,25 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
-        let mut transaction = self.transaction();
-        transaction.rename(old_path, new_path)?;
-        transaction.commit()?;
-        self.lookup(new_path)
+        let mut retried = false;
+        loop {
+            let result = (|| {
+                let mut transaction = self.transaction();
+                transaction.rename(old_path, new_path)?;
+                transaction.commit()
+            })();
+            match result {
+                Ok(_) => return self.lookup(new_path),
+                Err(Error::OutOfSpace) if !retried => {
+                    retried = true;
+                    self.collect_garbage();
+                }
+                Err(error) => {
+                    self.collect_garbage();
+                    return Err(error)
+                }
+            }
+        }
     }
 
     fn rename_uncommitted(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
@@ -1584,6 +1608,25 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub fn lookup(&self, path: &str) -> Result<FileVersion, Error> {
         self.lookup_at(self.root, path)
+    }
+
+    /// Count links that are current directory entries, excluding versions
+    /// visible only because a newer version was deleted.
+    pub fn current_link_count(&self, path: &str) -> Result<u32, Error> {
+        let selected = self.lookup_record(path)?;
+        let mut count = 0_u32;
+        let mut ordinal = 0;
+        while let Some(record) = self.record_at(self.root, ordinal)? {
+            ordinal = ordinal.saturating_add(1);
+            if record.object_id == selected.object_id
+                && !record.deleted
+                && self.latest_record_at(self.root, record.key.file)? == Some(record)
+                && self.last_record_at(self.root, record.key.file)? == Some(record)
+            {
+                count = count.saturating_add(1);
+            }
+        }
+        Ok(count)
     }
 
     fn lookup_at(&self, root: BlockId, path: &str) -> Result<FileVersion, Error> {
@@ -2197,6 +2240,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                     .binary_search_by_key(&key, |record| record.key)
                     .map_err(|_| Error::NotFound)?;
                 leaf.records[index].deleted = true;
+                leaf.records[index].size = 0;
+                leaf.records[index].data = BlockId::NONE;
+                leaf.records[index].checksum = checksum(&[]);
                 self.arena.allocate(Block::Tree(TreeBlock::Leaf(leaf)))
             }
             Block::Tree(TreeBlock::Branch(mut branch)) => {

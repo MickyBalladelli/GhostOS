@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn x86_fault_bits_preserve_access_and_protection_state() {
-        let fault = PageFault::from_x86_error(0x4000, (1 << 1) | (1 << 2) | (1 << 4));
+        let fault = PageFault::from_x86_error(0x4000, 1 | (1 << 1) | (1 << 2) | (1 << 4));
         assert_eq!(fault.virtual_address, 0x4000);
         assert_eq!(fault.access, Access::Write);
         assert!(fault.user);

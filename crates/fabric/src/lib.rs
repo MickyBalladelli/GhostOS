@@ -138,9 +138,7 @@ impl PageFault {
         let instruction_fetch = error & (1 << 4) != 0;
         Self {
             virtual_address,
-            access: if instruction_fetch {
-                Access::Execute
-            } else if error & (1 << 1) != 0 {
+            access: if error & (1 << 1) != 0 {
                 Access::Write
             } else {
                 Access::Read

@@ -6,30 +6,31 @@ use synos_synfs::{
 };
 
 const BLOCKS: usize = 128;
+const FORMAT_BLOCKS: usize = 16;
 
 #[test]
 fn format_generation_selection_and_checksum_validation() {
-    let geometry = SynFs::<BLOCKS>::volume_geometry();
+    let geometry = SynFs::<FORMAT_BLOCKS>::volume_geometry();
     assert_eq!(geometry.block_size, BLOCK_SIZE);
-    assert_eq!(geometry.total_bytes, SynFs::<BLOCKS>::volume_bytes());
-    assert_eq!(geometry.total_blocks, SynFs::<BLOCKS>::volume_blocks());
+    assert_eq!(geometry.total_bytes, SynFs::<FORMAT_BLOCKS>::volume_bytes());
+    assert_eq!(geometry.total_blocks, SynFs::<FORMAT_BLOCKS>::volume_blocks());
 
-    let mut image = vec![0; SynFs::<BLOCKS>::volume_bytes()];
-    SynFs::<BLOCKS>::format(&mut image).expect("format volume");
-    let mut filesystem = SynFs::<BLOCKS>::load(&image).expect("load formatted volume");
+    let mut image = vec![0; SynFs::<FORMAT_BLOCKS>::volume_bytes()];
+    SynFs::<FORMAT_BLOCKS>::format(&mut image).expect("format volume");
+    let mut filesystem = SynFs::<FORMAT_BLOCKS>::load(&image).expect("load formatted volume");
     filesystem.write("/state", b"generation one").expect("write first version");
     let first = filesystem.flush(&mut image).expect("flush first generation");
     filesystem.write("/state", b"generation two").expect("write second version");
     let second = filesystem.flush(&mut image).expect("flush second generation");
     assert!(second.sequence > first.sequence);
 
-    let recovered = SynFs::<BLOCKS>::load(&image).expect("select newest valid generation");
+    let recovered = SynFs::<FORMAT_BLOCKS>::load(&image).expect("select newest valid generation");
     assert_eq!(recovered.lookup("/state").expect("latest file").version, 2);
 
     let mut corrupt = image;
     corrupt[BLOCK_SIZE - 1] ^= 1;
-    corrupt[(BLOCKS + 2) * BLOCK_SIZE + BLOCK_SIZE - 1] ^= 1;
-    assert!(matches!(SynFs::<BLOCKS>::load(&corrupt), Err(Error::Corrupt)));
+    corrupt[(FORMAT_BLOCKS + 2) * BLOCK_SIZE + BLOCK_SIZE - 1] ^= 1;
+    assert!(matches!(SynFs::<FORMAT_BLOCKS>::load(&corrupt), Err(Error::Corrupt)));
 }
 
 #[test]
@@ -60,7 +61,7 @@ fn versions_directories_links_snapshots_and_retention_are_consistent() {
     assert_eq!(filesystem.lookup("/data/archive/alias").unwrap().link_count, 2);
 
     let snapshot = filesystem
-        .checkpoint_snapshot(checkpoint.id, synos_synfs::RmsMapHandle::from_capability(1).unwrap())
+        .checkpoint_snapshot(checkpoint.id, synos_synfs::RmsMapHandle::from_capability((1 << 32) | 1).unwrap())
         .expect("open checkpoint snapshot");
     let mut snapshot_contents = [0; 3];
     let mut copied = 0;
@@ -199,6 +200,7 @@ fn storage_queue_reports_device_io_and_completion_results() {
     io.register_device(device, StorageClass::Nvme, 4, BLOCK_SIZE as u32, 1, MemoryDevice::new(4))
         .expect("register device");
     io.create_pool(pool, "pool", PoolLayout::Stripe, &[device]).expect("create pool");
+    io.admin_mut().allocate(pool, 1).expect("allocate pool block");
     let mut queue = BlockIoQueue::<2>::new();
     queue.submit(BlockRequest::write(pool, 0, &[7; BLOCK_SIZE]).unwrap()).unwrap();
     assert_eq!(queue.dispatch(&mut io), 1);

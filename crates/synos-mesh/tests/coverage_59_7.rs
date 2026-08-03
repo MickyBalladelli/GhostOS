@@ -36,18 +36,18 @@ fn mesh_advertisements_round_trip_and_replay_is_rejected() {
 
 #[test]
 fn cow_delta_preserves_generation_and_rejects_conflicts() {
-    let mut base_fs = SynFs::<128>::new();
+    let mut base_fs = SynFs::<16>::new();
     base_fs.write("/NOTE.TXT", b"old").unwrap();
-    let base = base_fs.mapped_snapshot(RmsMapHandle::from_capability(1).unwrap());
-    let mut target_fs = SynFs::<128>::new();
+    let base = base_fs.mapped_snapshot(RmsMapHandle::from_capability(1 << 32).unwrap());
+    let mut target_fs = SynFs::<16>::new();
     target_fs.write("/NOTE.TXT", b"new").unwrap();
-    let target = target_fs.mapped_snapshot(RmsMapHandle::from_capability(1).unwrap());
+    let target = target_fs.mapped_snapshot(RmsMapHandle::from_capability(1 << 32).unwrap());
     let mut delta = CowDelta::<4, 16>::new(0, 0);
     synos_mesh::build_delta(&base, &target, &mut delta).unwrap();
     assert_eq!(delta.len(), 1);
     assert!(delta.target_generation() >= delta.base_generation());
 
-    let mut conflicting = SynFs::<128>::new();
+    let mut conflicting = SynFs::<16>::new();
     conflicting.write("/NOTE.TXT", b"local").unwrap();
     assert!(matches!(delta.apply(&mut conflicting, DeltaMode::RejectConflicts), Err(DeltaError::Conflict { .. })));
 }

@@ -223,7 +223,8 @@ impl<const CAPACITY: usize> HealthMonitor<CAPACITY> {
     ) -> Result<(), HealthError> {
         let slot = self.slot(token)?;
         let previous = slot.progress.swap(progress, Ordering::Relaxed);
-        if previous != progress || !slot.progress_seen.swap(true, Ordering::Relaxed) {
+        let was_seen = slot.progress_seen.swap(true, Ordering::Relaxed);
+        if previous != progress || !was_seen {
             slot.progress_at_us.store(now_us, Ordering::Relaxed);
         }
         slot.heartbeat_seen.store(true, Ordering::Relaxed);
@@ -239,7 +240,8 @@ impl<const CAPACITY: usize> HealthMonitor<CAPACITY> {
     ) -> Result<(), HealthError> {
         let slot = self.slot(token)?;
         let previous = slot.driver_progress.swap(progress, Ordering::Relaxed);
-        if previous != progress || !slot.driver_seen.swap(true, Ordering::Relaxed) {
+        let was_seen = slot.driver_seen.swap(true, Ordering::Relaxed);
+        if previous != progress || !was_seen {
             slot.driver_at_us.store(now_us, Ordering::Relaxed);
         }
         Ok(())

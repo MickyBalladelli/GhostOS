@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use synos_synfs::{BlockIoError, BlockStore, Error, StorageDeviceId, SynFs, BLOCK_SIZE};
 
-const MAX_BLOCKS: usize = 64;
+const MAX_BLOCKS: usize = 32;
+const PROPERTY_BLOCKS: usize = 32;
 
 struct DiskImage {
     file: File,
@@ -288,7 +289,10 @@ fn property_generated_operations_flush_and_recover() {
     use synos_test_support::property::{bytes, run, Config};
 
     run("synfs.flush-recover", Config::new(0x59_3, 32), |_, _, entropy| {
-        let mut filesystem = SynFs::<MAX_BLOCKS>::new();
+        let mut filesystem = SynFs::<PROPERTY_BLOCKS>::new();
+        filesystem
+            .create_directory("/data", true)
+            .map_err(|error| format!("directory creation failed: {error:?}"))?;
         let mut expected = Vec::new();
         for index in 0..8 {
             let path = format!("/data/property-{index}");
@@ -299,11 +303,11 @@ fn property_generated_operations_flush_and_recover() {
             expected.push((path, contents));
         }
 
-        let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+        let mut image = vec![0; SynFs::<PROPERTY_BLOCKS>::volume_bytes()];
         filesystem
             .flush(&mut image)
             .map_err(|error| format!("flush failed: {error:?}"))?;
-        let recovered = SynFs::<MAX_BLOCKS>::recover(&image)
+        let recovered = SynFs::<PROPERTY_BLOCKS>::recover(&image)
             .map_err(|error| format!("recover failed: {error:?}"))?;
         recovered
             .check_consistency()

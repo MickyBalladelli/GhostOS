@@ -275,8 +275,12 @@ pub fn apply_delta<const BLOCKS: usize, const OPS: usize, const MAX_BYTES: usize
             CowOperation::Delete { expected, .. }
             | CowOperation::RemoveDirectory { expected, .. } => Some(expected),
         };
-        if current != expected && mode == DeltaMode::PreferLocal {
-            skipped += 1;
+        if current != expected {
+            match mode {
+                DeltaMode::RejectConflicts => return Err(DeltaError::Conflict { path }),
+                DeltaMode::PreferLocal => skipped += 1,
+                DeltaMode::PreferRemote => apply[index] = true,
+            }
         } else {
             apply[index] = true;
         }

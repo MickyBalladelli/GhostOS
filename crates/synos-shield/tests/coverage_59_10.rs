@@ -12,7 +12,7 @@ use synos_shield::{
 #[test]
 fn shield_rules_deny_bad_memory_and_throttle_bursts() {
     let mut policy = ProbePolicy::new(100, 1);
-    policy.add_capability_rule(CapabilityRule { subject: 7, capability: 9, operations: Operation::MemoryRead.mask() }).unwrap();
+    policy.add_capability_rule(CapabilityRule { subject: 7, capability: 9, operations: Operation::MemoryRead.mask() | Operation::IpcSend.mask() }).unwrap();
     policy.add_memory_rule(MemoryRule::new(PAGE_SIZE, PAGE_SIZE, false, false).unwrap()).unwrap();
     let mut monitor = BehaviorMonitor::<_, 2>::new(ProbeRecorder::<4>::new(), policy).unwrap();
     let read = ProbeEvent::memory_access(10, NodeId::LOCAL, 7, 9, Operation::MemoryRead, PAGE_SIZE, 16);
@@ -73,7 +73,7 @@ fn executable_measurements_report_all_mismatches() {
     verifier.register_image(manifest).unwrap();
     verifier.bind_process(7, package, PAGE_SIZE).unwrap();
     assert_eq!(verifier.verify_page(7, PAGE_SIZE, bytes).unwrap().page_index, 0);
-    let report = verifier.audit_process(7, &[PageSample { address: PAGE_SIZE, bytes }, PageSample { address: PAGE_SIZE, bytes: b"tampered" }]).unwrap();
+    let report = verifier.audit_process(7, &[PageSample { address: PAGE_SIZE, bytes }, PageSample { address: PAGE_SIZE, bytes: b"tampered data" }]).unwrap();
     assert_eq!(report.pages_checked, 2);
     assert_eq!(report.mismatches, 1);
     assert_eq!(report.first_mismatch_address, Some(PAGE_SIZE));

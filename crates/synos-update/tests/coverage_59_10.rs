@@ -8,6 +8,8 @@ struct HealthCheckStub {
     fail: bool,
 }
 
+const BLOCKS: usize = 32;
+
 impl HealthCheck for HealthCheckStub {
     fn check<const BLOCKS: usize>(
         &mut self,
@@ -20,7 +22,7 @@ impl HealthCheck for HealthCheckStub {
 
 fn install<const PACKAGES: usize, const KEYS: usize>(
     daemon: &mut PackageDaemon<PACKAGES, KEYS>,
-    filesystem: &mut SynFs<256>,
+    filesystem: &mut SynFs<BLOCKS>,
     key: SigningKey,
     payload: &[u8],
 ) -> ContentId {
@@ -35,7 +37,7 @@ fn install<const PACKAGES: usize, const KEYS: usize>(
 #[test]
 fn atomic_updates_health_failures_rollback_and_revision_guards() {
     let key = SigningKey::new([4; 32]);
-    let mut filesystem = SynFs::<256>::new();
+    let mut filesystem = SynFs::<BLOCKS>::new();
     filesystem.create_directory("system/store", true).unwrap();
     filesystem.create_directory("system/manifests", true).unwrap();
     let mut daemon = PackageDaemon::<4, 2>::new();

@@ -761,6 +761,7 @@ impl<
         let index = self.file_index(process, capability, FileRights::READ)?;
         let slot = self.open_files[index];
         let metadata = self.filesystem.lookup(slot.path.as_str())?;
+        let link_count = self.filesystem.current_link_count(slot.path.as_str())?;
         Ok(FileInfo {
             capability,
             file: metadata.file,
@@ -770,7 +771,7 @@ impl<
             created_at: metadata.created_at,
             rights: slot.rights,
             file_type: metadata.file_type,
-            link_count: metadata.link_count,
+            link_count,
             mode: metadata.mode,
         })
     }
@@ -1050,9 +1051,7 @@ impl<
         if self.filesystem.lookup(new_path.as_str()).is_ok() {
             return Err(DaemonError::File(SynFsError::AlreadyExists));
         }
-        let mut transaction = self.filesystem.transaction();
-        transaction.rename(old_path.as_str(), new_path.as_str())?;
-        transaction.commit()?;
+        self.filesystem.rename(old_path.as_str(), new_path.as_str())?;
         self.open_files[index].path = new_path;
         Ok(())
     }

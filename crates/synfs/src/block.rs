@@ -554,6 +554,7 @@ where
         let mut successful = 0u8;
         let mut failed = 0u8;
         let mut first_error = None;
+        let mut pool_error = None;
         for replica in 0..replicas {
             let placement = match self
                 .admin
@@ -562,6 +563,7 @@ where
                 Ok(placement) => placement,
                 Err(StoragePoolError::DeviceFailed) => {
                     failed += 1;
+                    pool_error = Some(StoragePoolError::DeviceFailed);
                     continue;
                 }
                 Err(error) => return Err(BlockIoError::Pool(error)),
@@ -602,11 +604,14 @@ where
             }
         }
         if successful == 0 {
-            return Err(
-                first_error.map_or(BlockIoError::DeviceUnavailable, |device| {
-                    BlockIoError::DeviceIo { device }
-                }),
-            );
+            return Err(pool_error.map_or_else(
+                || {
+                    first_error.map_or(BlockIoError::DeviceUnavailable, |device| {
+                        BlockIoError::DeviceIo { device }
+                    })
+                },
+                BlockIoError::Pool,
+            ));
         }
         let bytes = if request.operation == BlockOperation::Discard {
             0

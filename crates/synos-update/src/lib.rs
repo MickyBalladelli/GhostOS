@@ -172,9 +172,6 @@ impl<const HISTORY: usize> UpdateManager<HISTORY> {
         plan: UpdatePlan,
         health_check: &mut H,
     ) -> Result<UpdateReceipt, UpdateError> {
-        if HISTORY == 0 || self.len() == HISTORY {
-            return Err(UpdateError::HistoryFull);
-        }
         if plan.revision() == 0 {
             return Err(UpdateError::InvalidPlan);
         }
@@ -187,6 +184,9 @@ impl<const HISTORY: usize> UpdateManager<HISTORY> {
         }
         if previous.is_some_and(|root| root.revision() == plan.revision()) {
             return Err(UpdateError::AlreadyActive);
+        }
+        if HISTORY == 0 || self.len() == HISTORY {
+            return Err(UpdateError::HistoryFull);
         }
 
         let checkpoint = filesystem
