@@ -1130,13 +1130,13 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.10 Update, Shield, Identity, and Supply-Chain Tests
 
-- [ ] Test authentication credentials, challenges, sessions, delegation, federation, expiry, replay resistance, lockout, and recovery.
-- [ ] Test cryptographic tokens, caveats, signatures, constant-time comparisons, malformed tokens, key rotation, revocation, and auditability.
-- [ ] Test confidential-computing attestation, policy decisions, enclave state, capability provisioning, key exchange, invalid evidence, and downgrade rejection.
-- [ ] Test runtime shield rules, quarantine, incident response, tamper detection, rate limits, and safe recovery.
-- [ ] Test atomic update planning, signature checks, compatibility checks, staged activation, rollback, crash recovery, and hot-swap safety.
-- [ ] Test declarative config parsing, schema validation, signed activation, diff output, transactional reconfigure, rollback, and conflicting updates.
-- [ ] Test package and boot supply-chain verification, hash mismatch, signature failure, dependency confusion, revoked artifacts, and reproducible build evidence.
+- [x] Test authentication credentials, challenges, sessions, delegation, federation, expiry, replay resistance, lockout, and recovery.
+- [x] Test cryptographic tokens, caveats, signatures, constant-time comparisons, malformed tokens, key rotation, revocation, and auditability.
+- [x] Test confidential-computing attestation, policy decisions, enclave state, capability provisioning, key exchange, invalid evidence, and downgrade rejection.
+- [x] Test runtime shield rules, quarantine, incident response, tamper detection, rate limits, and safe recovery.
+- [x] Test atomic update planning, signature checks, compatibility checks, staged activation, rollback, crash recovery, and hot-swap safety.
+- [x] Test declarative config parsing, schema validation, signed activation, diff output, transactional reconfigure, rollback, and conflicting updates.
+- [x] Test package and boot supply-chain verification, hash mismatch, signature failure, dependency confusion, revoked artifacts, and reproducible build evidence.
 
 ### 59.11 VM and QEMU Integration Matrix
 
