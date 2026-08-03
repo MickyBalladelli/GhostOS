@@ -54,6 +54,7 @@ members = [
     "crates/synos-remote-display",
     "crates/synos-mesh",
     "crates/synos-declarative",
+    "crates/test-support",
     "tools/cargo-synos",
     "kernel",
     "boot/uefi",

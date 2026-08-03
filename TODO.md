@@ -1043,13 +1043,13 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.2 Test Harness and Fixtures
 
-- [ ] Build shared deterministic fixtures for boot info, memory maps, capabilities, identities, node IDs, clocks, random sources, packets, disks, SynFS volumes, manifests, wire frames, and terminal input.
-- [ ] Build in-memory implementations for block I/O, network transport, IPC, clocks, entropy, attestation, storage, and accelerator drivers.
-- [ ] Build a failure-injection layer for torn writes, short buffers, dropped packets, duplicate packets, delayed interrupts, stale capabilities, node loss, corrupt metadata, allocation failure, and clock jumps.
-- [ ] Build a fixture reset/cleanup guard that leaves no files, sockets, processes, raw terminal modes, or QEMU instances behind after a failed test.
-- [ ] Make tests independent of wall-clock speed, host locale, host path layout, host endianness, CPU count, and test execution order.
-- [ ] Add golden fixtures for boot images, protocol frames, filesystem blocks, snapshots, audit records, package signatures, and terminal output.
-- [ ] Add a small test-support crate or shared test module without leaking test-only APIs into production builds.
+- [x] Build shared deterministic fixtures for boot info, memory maps, capabilities, identities, node IDs, clocks, random sources, packets, disks, SynFS volumes, manifests, wire frames, and terminal input.
+- [x] Build in-memory implementations for block I/O, network transport, IPC, clocks, entropy, attestation, storage, and accelerator drivers.
+- [x] Build a failure-injection layer for torn writes, short buffers, dropped packets, duplicate packets, delayed interrupts, stale capabilities, node loss, corrupt metadata, allocation failure, and clock jumps.
+- [x] Build a fixture reset/cleanup guard that leaves no files, sockets, processes, raw terminal modes, or QEMU instances behind after a failed test.
+- [x] Make tests independent of wall-clock speed, host locale, host path layout, host endianness, CPU count, and test execution order.
+- [x] Add golden fixtures for boot images, protocol frames, filesystem blocks, snapshots, audit records, package signatures, and terminal output.
+- [x] Add a small test-support crate or shared test module without leaking test-only APIs into production builds.
 
 ### 59.3 Unit and Property Testing
 

@@ -88,6 +88,26 @@ The `workspace` command is the intended full host command. Until the VM is
 promoted into the root workspace, run the `vm` command separately and keep its
 result in the same evidence bundle.
 
+## Shared harness
+
+[`synos-test-support`](../crates/test-support) is the test-only support crate.
+It is a workspace member but is deliberately absent from `default-members`,
+so production crates do not inherit test helpers. Add it only as a
+`dev-dependency` or use it from an integration test.
+
+`FixtureSet::new(seed)` supplies the common deterministic fixtures. Use
+`TestScope` when a test also owns external resources. The in-memory doubles
+cover block I/O, network transport, IPC, key/value storage, attestation, and
+accelerator queues. `FaultPlan` injects one-shot failures at named boundaries.
+The cleanup guard runs actions in reverse registration order and runs again on
+panic through `Drop`.
+
+Checked-in golden inputs live in
+`crates/test-support/golden/`: boot image bytes, protocol frames, filesystem
+blocks, snapshots, audit records, package signatures, and terminal output.
+Update a golden file only with a reason in the change description and a
+corresponding compatibility decision.
+
 ## Environment variables
 
 | Variable | Default | Use |

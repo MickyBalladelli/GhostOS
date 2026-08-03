@@ -823,6 +823,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-test-support"
+version = "0.1.0"
+
+[[package]]
 name = "synos-time-sync"
 version = "0.1.0"
 dependencies = [

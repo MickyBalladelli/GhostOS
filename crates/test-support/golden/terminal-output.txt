@@ -1,0 +1,3 @@
+SynOS test terminal
+operation: ready
+status: SUCCESS
