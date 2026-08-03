@@ -563,6 +563,7 @@ name = "synos-heal"
 version = "0.1.0"
 dependencies = [
  "synos-init",
+ "synos-ipc",
  "synos-observability",
  "synos-status",
  "synos-synfs",

@@ -1119,14 +1119,14 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.9 Observability, Audit, Debugging, and Recovery Tests
 
-- [ ] Test log formatting, severity filtering, bounded records, dropped-record counters, sink failure, flush, rotation, and restart behavior.
-- [ ] Test metrics, traces, event correlation, query parsing, cardinality limits, export, redaction, and unavailable-sink behavior.
-- [ ] Test audit records for authentication, authorization, filesystem, networking, cluster, patching, attestation, fencing, and destructive actions.
-- [ ] Test inspection and monitor output against stable structured schemas and terminal rendering snapshots.
-- [ ] Test debugger probes, GDB protocol, breakpoints, watchpoints, register/memory access, coredumps, symbol errors, and capability restrictions.
-- [ ] Test replay logs, deterministic restore, reverse stepping, divergent input detection, crash preservation, and bounded log retention.
-- [ ] Test self-healing restart policy, clean snapshot selection, state restore, connection preservation, hot patch validation, rollback, and repeated crash limits.
-- [ ] Test RAS prediction, error records, thermal/power events, recovery actions, alert deduplication, and hardware fault injection.
+- [x] Test log formatting, severity filtering, bounded records, dropped-record counters, sink failure, flush, rotation, and restart behavior.
+- [x] Test metrics, traces, event correlation, query parsing, cardinality limits, export, redaction, and unavailable-sink behavior.
+- [x] Test audit records for authentication, authorization, filesystem, networking, cluster, patching, attestation, fencing, and destructive actions.
+- [x] Test inspection and monitor output against stable structured schemas and terminal rendering snapshots.
+- [x] Test debugger probes, GDB protocol, breakpoints, watchpoints, register/memory access, coredumps, symbol errors, and capability restrictions.
+- [x] Test replay logs, deterministic restore, reverse stepping, divergent input detection, crash preservation, and bounded log retention.
+- [x] Test self-healing restart policy, clean snapshot selection, state restore, connection preservation, hot patch validation, rollback, and repeated crash limits.
+- [x] Test RAS prediction, error records, thermal/power events, recovery actions, alert deduplication, and hardware fault injection.
 
 ### 59.10 Update, Shield, Identity, and Supply-Chain Tests
 
