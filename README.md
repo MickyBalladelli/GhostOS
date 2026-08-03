@@ -565,6 +565,32 @@ SHOW OBSOLETE/CLUSTER
 MONITOR /INTERVAL=250000 /SAMPLES=20
 ```
 
+Cluster administration uses the same typed DCL surface. The cluster command
+registry keeps stable routes and emits structured records for pipelines and
+JSON rendering:
+
+```text
+SHOW CLUSTER/MEMBERS
+SHOW CLUSTER
+SHOW CLUSTER/TOPOLOGY
+SHOW CLUSTER/HEALTH
+SHOW CLUSTER/RESOURCES
+SHOW CLUSTER/CONFIG
+LIST CLUSTERS /FEDERATED /LIMIT=20 /PAGE=2
+CREATE CLUSTER compute /DESCRIPTION="local fabric" /QUORUM=3
+JOIN CLUSTER /INVITATION="token" /ENDPOINT="10.0.0.2"
+REMOVE NODE node-7 /FORCE /CONFIRM
+HELP SHOW CLUSTER
+```
+
+Two-word forms and canonical hyphenated forms are equivalent. Destructive
+cluster actions require `/CONFIRM`; `/FORCE` adds the stronger safety check.
+`SHOW CLUSTER` returns stable fields for identity, lifecycle status, leader,
+coordinator, membership counts, quorum, health, aggregate capacity, and
+control/data protocol versions. The `/MEMBERS` and `/TOPOLOGY` views expose
+bounded numbered records with continuation fields; `/HEALTH`, `/RESOURCES`,
+and `/CONFIG` expose typed aggregate snapshots.
+
 EDIT file (also EDT) opens a bounded UTF-8 full-screen editor. It edits a
 selected version and saves as a new SynFS version; an omitted selector opens
 the latest version. Ctrl-S saves, Ctrl-Z saves and exits, and Ctrl-X discards

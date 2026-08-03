@@ -4,6 +4,7 @@
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub mod audit;
+pub mod cluster;
 pub mod diagnostics;
 pub mod editor;
 pub mod file_editor;

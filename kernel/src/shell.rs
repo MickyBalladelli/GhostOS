@@ -42,6 +42,25 @@ const COMMAND_CAPACITY: usize = 30;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
 
+struct ShellLineRender {
+    line: Text<MAX_LINE_BYTES>,
+    cursor: usize,
+}
+
+impl ShellLineRender {
+    const fn new() -> Self {
+        Self {
+            line: Text::empty(),
+            cursor: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.line.clear();
+        self.cursor = 0;
+    }
+}
+
 #[derive(Clone, Copy)]
 enum EditExit {
     Saved,
@@ -89,6 +108,7 @@ pub fn run(
     let mut usb_keyboard = crate::usb_keyboard::UsbKeyboard::new();
     let mut input = VtInput::new();
     let mut ignore_line_feed = false;
+    let mut line_render = ShellLineRender::new();
 
     banner();
     request_terminal_size();
@@ -115,15 +135,23 @@ pub fn run(
         let Some(key) = key else { continue };
 
         match editor.handle(key) {
-            Ok(EditorAction::Redraw) => redraw(&editor),
+            Ok(EditorAction::Redraw) => redraw(&editor, &mut line_render),
             Ok(EditorAction::Complete) => {
-                if let Err(error) = complete_line(&mut editor, &registry, &mut executor) {
+                if let Err(error) = complete_line(
+                    &mut editor,
+                    &registry,
+                    &mut executor,
+                    &mut line_render,
+                ) {
                     crate::println!();
                     crate::println!("shell completion error: {error:?}");
-                    redraw(&editor)
+                    line_render.reset();
+                    prompt();
+                    redraw(&editor, &mut line_render)
                 }
             }
             Ok(EditorAction::Submit(line)) => {
+                line_render.reset();
                 crate::println!();
                 if !line.as_str().trim().is_empty() {
                     execute_line(
@@ -139,6 +167,7 @@ pub fn run(
                 prompt()
             }
             Ok(EditorAction::Cancel) => {
+                line_render.reset();
                 crate::println!("\x1b[91m^C\x1b[0m");
                 prompt()
             }
@@ -147,6 +176,7 @@ pub fn run(
                 crate::println!();
                 crate::println!("\x1b[91mshell input error:\x1b[0m {error:?}");
                 editor.clear();
+                line_render.reset();
                 prompt()
             }
         }
@@ -689,12 +719,13 @@ fn complete_line(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
     executor: &mut KernelExecutor,
+    line_render: &mut ShellLineRender,
 ) -> Result<(), Error> {
-    if complete_file(editor, registry, executor)? {
+    if complete_file(editor, registry, executor, line_render)? {
         return Ok(())
     }
 
-    if expand_command(editor, registry)? {
+    if expand_command(editor, registry, line_render)? {
         return Ok(())
     }
 
@@ -704,7 +735,9 @@ fn complete_line(
         for command in suggestions.commands() {
             print_command_suggestion(command.as_str());
         }
-        redraw(editor);
+        line_render.reset();
+        prompt();
+        redraw(editor, line_render);
     }
     Ok(())
 }
@@ -713,6 +746,7 @@ fn complete_file(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
     executor: &mut KernelExecutor,
+    line_render: &mut ShellLineRender,
 ) -> Result<bool, Error> {
     let line = editor.line();
     let Some(command) = registry.unique_suggestion(line)? else {
@@ -755,6 +789,7 @@ fn complete_file(
         leaf_text.as_str(),
         word_start,
         word_end,
+        line_render,
     )
 }
 
@@ -766,6 +801,7 @@ fn complete_file_matches(
     leaf: &str,
     word_start: usize,
     word_end: usize,
+    line_render: &mut ShellLineRender,
 ) -> Result<bool, Error> {
     let mut matches = PathCompletionPage::new();
     if executor
@@ -790,7 +826,7 @@ fn complete_file_matches(
         replacement.push_str(candidate_prefix)?;
         replacement.push_str(name.as_str())?;
         replace_span(editor, word_start, word_end, replacement.as_str())?;
-        redraw(editor);
+        redraw(editor, line_render);
     } else {
         crate::println!();
         for name in matches.entries() {
@@ -799,7 +835,9 @@ fn complete_file_matches(
             suggestion.push_str(name.as_str())?;
             crate::println!("  {}", suggestion.as_str());
         }
-        redraw(editor);
+        line_render.reset();
+        prompt();
+        redraw(editor, line_render);
     }
     Ok(true)
 }
@@ -807,6 +845,7 @@ fn complete_file_matches(
 fn expand_command(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
+    line_render: &mut ShellLineRender,
 ) -> Result<bool, Error> {
     let line = editor.line();
     let Some(command) = registry.unique_suggestion(line)? else {
@@ -831,7 +870,7 @@ fn expand_command(
         return Ok(false)
     }
     replace_span(editor, start, end, replacement.as_str())?;
-    redraw(editor);
+    redraw(editor, line_render);
     Ok(true)
 }
 
@@ -952,14 +991,46 @@ fn argument_kind(kind: ArgumentKind) -> &'static str {
     }
 }
 
-fn redraw<const HISTORY: usize>(editor: &LineEditor<HISTORY>) {
-    crate::print!("\r\x1b[2K");
-    prompt();
-    crate::print!("{}", editor.line());
-    let tail = editor.line().len().saturating_sub(editor.cursor());
-    if tail != 0 {
-        crate::print!("\x1b[{tail}D")
+fn redraw<const HISTORY: usize>(
+    editor: &LineEditor<HISTORY>,
+    rendered: &mut ShellLineRender,
+) {
+    let current = editor.line();
+    let previous = rendered.line.as_str();
+
+    if previous == current {
+        move_cursor(rendered.cursor, editor.cursor());
+    } else {
+        let common = common_prefix(previous, current);
+        move_cursor(rendered.cursor, common);
+        crate::print!("{}", &current[common..]);
+        crate::print!("\x1b[K");
+        move_cursor(current.len(), editor.cursor());
     }
+
+    rendered.line.clear();
+    let _ = rendered.line.push_str(current);
+    rendered.cursor = editor.cursor();
+}
+
+fn move_cursor(from: usize, to: usize) {
+    if from > to {
+        crate::print!("\x1b[{}D", from - to);
+    } else if to > from {
+        crate::print!("\x1b[{}C", to - from);
+    }
+}
+
+fn common_prefix(left: &str, right: &str) -> usize {
+    let mut index = 0;
+    let limit = core::cmp::min(left.len(), right.len());
+    while index < limit && left.as_bytes()[index] == right.as_bytes()[index] {
+        index += 1;
+    }
+    while index > 0 && right.as_bytes()[index - 1] & 0xc0 == 0x80 {
+        index -= 1;
+    }
+    index
 }
 
 fn banner() {

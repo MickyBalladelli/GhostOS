@@ -1,9 +1,9 @@
 use synos_system_model::{
-    LogicalName,
     command::{ArgumentKind, ArgumentSpec, CommandSpec, MAX_COMMAND_ARGUMENTS},
+    LogicalName,
 };
 
-use crate::{Error, MAX_TOKEN_BYTES, Text};
+use crate::{Error, Text, MAX_TOKEN_BYTES};
 
 pub const DEFAULT_REGISTRY_CAPACITY: usize = 64;
 pub const MAX_PIPELINE_STAGES: usize = 8;
@@ -16,7 +16,11 @@ pub struct RouteId(u16);
 
 impl RouteId {
     pub const fn new(raw: u16) -> Option<Self> {
-        if raw == 0 { None } else { Some(Self(raw)) }
+        if raw == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
     }
 
     pub const fn raw(self) -> u16 {
@@ -142,17 +146,21 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
     }
 
     pub fn register(&mut self, spec: CommandSpec, route: RouteId) -> Result<(), Error> {
-        if self.commands[..self.command_count].iter().flatten().any(|entry| {
-            entry
-                .spec
-                .name
-                .as_str()
-                .eq_ignore_ascii_case(spec.name.as_str())
-        }) {
-            return Err(Error::InvalidValue)
+        if self.commands[..self.command_count]
+            .iter()
+            .flatten()
+            .any(|entry| {
+                entry
+                    .spec
+                    .name
+                    .as_str()
+                    .eq_ignore_ascii_case(spec.name.as_str())
+            })
+        {
+            return Err(Error::InvalidValue);
         }
         if self.command_count == CAPACITY {
-            return Err(Error::Capacity)
+            return Err(Error::Capacity);
         }
         self.commands[self.command_count] = Some(CommandRegistration { spec, route });
         self.command_count += 1;
@@ -161,7 +169,10 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
     /// Commands in stable registration order for schema reflection.
     pub fn registrations(&self) -> impl Iterator<Item = CommandRegistration> + '_ {
-        self.commands[..self.command_count].iter().flatten().copied()
+        self.commands[..self.command_count]
+            .iter()
+            .flatten()
+            .copied()
     }
 
     pub fn registration(&self, name: &str) -> Option<&CommandRegistration> {
@@ -171,36 +182,24 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             .find(|registration| registration.spec.name.as_str().eq_ignore_ascii_case(name))
     }
 
-    pub fn suggestions(
-        &self,
-        input: &str,
-    ) -> Result<CommandSuggestions<CAPACITY>, Error> {
+    pub fn suggestions(&self, input: &str) -> Result<CommandSuggestions<CAPACITY>, Error> {
         let command_name = self.command_prefix(input)?;
 
         let mut suggestions = CommandSuggestions::new();
         for entry in self.commands[..self.command_count].iter().flatten() {
-            if starts_with_ignore_ascii_case(
-                entry.spec.name.as_str(),
-                command_name.as_str(),
-            ) {
+            if starts_with_ignore_ascii_case(entry.spec.name.as_str(), command_name.as_str()) {
                 suggestions.push(entry.spec.name)?
             }
         }
         Ok(suggestions)
     }
 
-    pub fn unique_suggestion(
-        &self,
-        input: &str,
-    ) -> Result<Option<&LogicalName>, Error> {
+    pub fn unique_suggestion(&self, input: &str) -> Result<Option<&LogicalName>, Error> {
         let command_name = self.command_prefix(input)?;
         let mut match_name = None;
         let mut match_count = 0;
         for entry in self.commands[..self.command_count].iter().flatten() {
-            if starts_with_ignore_ascii_case(
-                entry.spec.name.as_str(),
-                command_name.as_str(),
-            ) {
+            if starts_with_ignore_ascii_case(entry.spec.name.as_str(), command_name.as_str()) {
                 match_count += 1;
                 match_name = Some(&entry.spec.name);
             }
@@ -217,7 +216,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             match lexeme {
                 Lexeme::Word(word) => {
                     if word_count == words.len() {
-                        break
+                        break;
                     }
                     words[word_count] = Some(word);
                     word_count += 1
@@ -264,9 +263,13 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             };
             command_name.push_str(prefix)?;
             command_name.push_str(noun)?;
+        } else if let Some(cluster_command) =
+            dcl_cluster_command(first.as_str(), words[1].as_ref().map(Text::as_str))
+        {
+            command_name.push_str(cluster_command)?;
         } else if let Some((verb, noun)) = first.as_str().split_once('/') {
             if noun.is_empty() {
-                return Err(Error::InvalidSyntax)
+                return Err(Error::InvalidSyntax);
             }
             if starts_with_ignore_ascii_case("ANALYZE", verb) {
                 command_name.push_str("ANALYZE-")?;
@@ -282,8 +285,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
     pub fn parse(&self, input: &str) -> Result<Program, Error> {
         let mut lexer = Lexer::new(input);
-        let mut words: [Option<Text<MAX_TOKEN_BYTES>>; MAX_STAGE_WORDS] =
-            [None; MAX_STAGE_WORDS];
+        let mut words: [Option<Text<MAX_TOKEN_BYTES>>; MAX_STAGE_WORDS] = [None; MAX_STAGE_WORDS];
         let mut word_count = 0usize;
         let mut stages = [None; MAX_PIPELINE_STAGES];
         let mut stage_count = 0usize;
@@ -293,30 +295,29 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             match lexeme {
                 Lexeme::Word(word) => {
                     if background {
-                        return Err(Error::InvalidSyntax)
+                        return Err(Error::InvalidSyntax);
                     }
                     if word_count == MAX_STAGE_WORDS {
-                        return Err(Error::TooManyArguments)
+                        return Err(Error::TooManyArguments);
                     }
                     words[word_count] = Some(word);
                     word_count += 1
                 }
                 Lexeme::Pipe => {
                     if background || word_count == 0 {
-                        return Err(Error::InvalidSyntax)
+                        return Err(Error::InvalidSyntax);
                     }
                     if stage_count == MAX_PIPELINE_STAGES {
-                        return Err(Error::TooManyStages)
+                        return Err(Error::TooManyStages);
                     }
-                    stages[stage_count] =
-                        Some(self.parse_stage(&words, word_count)?);
+                    stages[stage_count] = Some(self.parse_stage(&words, word_count)?);
                     stage_count += 1;
                     words = [None; MAX_STAGE_WORDS];
                     word_count = 0
                 }
                 Lexeme::Background => {
                     if word_count == 0 {
-                        return Err(Error::InvalidSyntax)
+                        return Err(Error::InvalidSyntax);
                     }
                     background = true
                 }
@@ -324,10 +325,10 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         }
 
         if word_count == 0 {
-            return Err(Error::InvalidSyntax)
+            return Err(Error::InvalidSyntax);
         }
         if stage_count == MAX_PIPELINE_STAGES {
-            return Err(Error::TooManyStages)
+            return Err(Error::TooManyStages);
         }
         stages[stage_count] = Some(self.parse_stage(&words, word_count)?);
         stage_count += 1;
@@ -348,13 +349,27 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         let mut first_argument = 1usize;
         let mut attached: Option<Text<MAX_TOKEN_BYTES>> = None;
 
-        if verb.as_str().eq_ignore_ascii_case("SHOW")
+        if let Some(cluster_command) =
+            dcl_cluster_command(verb.as_str(), words[1].as_ref().map(Text::as_str))
+        {
+            let object = words[1].as_ref().ok_or(Error::MissingArgument)?;
+            let (noun, qualifiers) = match object.as_str().split_once('/') {
+                Some((noun, rest)) => (noun, Some(rest)),
+                None => (object.as_str(), None),
+            };
+            if noun.is_empty() {
+                return Err(Error::InvalidSyntax);
+            }
+            command_name.push_str(cluster_command)?;
+            first_argument = 2;
+            attached = qualifiers.map(Text::new).transpose()?
+        } else if verb.as_str().eq_ignore_ascii_case("SHOW")
             || verb.as_str().eq_ignore_ascii_case("SHO")
             || verb.as_str().eq_ignore_ascii_case("TOP")
             || verb.as_str().eq_ignore_ascii_case("SET")
         {
             if word_count < 2 {
-                return Err(Error::MissingArgument)
+                return Err(Error::MissingArgument);
             }
             let object = words[1].as_ref().ok_or(Error::InvalidSyntax)?;
             let (noun, qualifiers) = match object.as_str().split_once('/') {
@@ -362,7 +377,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 None => (object.as_str(), None),
             };
             if noun.is_empty() {
-                return Err(Error::InvalidSyntax)
+                return Err(Error::InvalidSyntax);
             }
             let prefix = if verb.as_str().eq_ignore_ascii_case("TOP") {
                 "TOP-"
@@ -377,7 +392,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             attached = qualifiers.map(Text::new).transpose()?
         } else if let Some((verb_name, qualifier)) = verb.as_str().split_once('/') {
             if qualifier.is_empty() {
-                return Err(Error::InvalidSyntax)
+                return Err(Error::InvalidSyntax);
             }
             if starts_with_ignore_ascii_case("ANALYZE", verb_name) {
                 command_name.push_str("ANALYZE-")?;
@@ -401,6 +416,12 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name = Text::new("DELETE")?;
         } else if command_name.as_str().eq_ignore_ascii_case("RD") {
             command_name = Text::new("RMDIR")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("CLUSTER") {
+            command_name = Text::new("SHOW-CLUSTER")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("LS-CLUSTERS") {
+            command_name = Text::new("LIST-CLUSTERS")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("REMOVE-CLUSTER") {
+            command_name = Text::new("DELETE-CLUSTER")?;
         }
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];
@@ -408,13 +429,20 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
         if command_name.as_str().eq_ignore_ascii_case("HELP") && word_count > 1 {
             if word_count > 3 {
-                return Err(Error::TooManyArguments)
+                return Err(Error::TooManyArguments);
             }
             let mut target = Text::<MAX_COMMAND_NAME_BYTES>::empty();
             target.push_str(words[1].as_ref().ok_or(Error::InvalidSyntax)?.as_str())?;
             if word_count == 3 {
                 target.push_char('-')?;
                 target.push_str(words[2].as_ref().ok_or(Error::InvalidSyntax)?.as_str())?;
+            }
+            if target.as_str().eq_ignore_ascii_case("CLUSTER") {
+                target = Text::new("SHOW-CLUSTER")?;
+            } else if target.as_str().eq_ignore_ascii_case("LS-CLUSTERS") {
+                target = Text::new("LIST-CLUSTERS")?;
+            } else if target.as_str().eq_ignore_ascii_case("REMOVE-CLUSTER") {
+                target = Text::new("DELETE-CLUSTER")?;
             }
             let target_registration = self.find_registration(target.as_str())?;
             let target_argument = registration
@@ -433,13 +461,9 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         if let Some(attached) = attached {
             for qualifier in attached.as_str().split('/') {
                 if qualifier.is_empty() {
-                    return Err(Error::InvalidSyntax)
+                    return Err(Error::InvalidSyntax);
                 }
-                self.insert_qualifier(
-                    &registration.spec,
-                    qualifier,
-                    &mut arguments,
-                )?
+                self.insert_qualifier(&registration.spec, qualifier, &mut arguments)?
             }
         }
 
@@ -450,11 +474,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 .strip_prefix('/')
                 .filter(|qualifier| is_known_qualifier(&registration.spec, qualifier));
             if let Some(qualifier) = long_qualifier.or(slash_qualifier) {
-                self.insert_qualifier(
-                    &registration.spec,
-                    qualifier,
-                    &mut arguments,
-                )?
+                self.insert_qualifier(&registration.spec, qualifier, &mut arguments)?
             } else if raw.starts_with('/')
                 && registration
                     .spec
@@ -487,7 +507,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                     .flatten()
                     .any(|value| names_equal(value.name, spec.name))
         }) {
-            return Err(Error::MissingArgument)
+            return Err(Error::MissingArgument);
         }
 
         Ok(CommandCall {
@@ -525,19 +545,16 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 })
                 .ok_or(Error::UnknownArgument)?;
             if explicit.is_some() {
-                return Err(Error::InvalidValue)
+                return Err(Error::InvalidValue);
             }
             (spec, "false")
         } else {
-            return Err(Error::UnknownArgument)
+            return Err(Error::UnknownArgument);
         };
         insert_argument(arguments, spec, raw)
     }
 
-    fn find_registration(
-        &self,
-        command_name: &str,
-    ) -> Result<&CommandRegistration, Error> {
+    fn find_registration(&self, command_name: &str) -> Result<&CommandRegistration, Error> {
         let mut exact = None;
         let mut prefix = None;
         let mut ambiguous = false;
@@ -562,6 +579,57 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
         } else {
             prefix.ok_or(Error::UnknownCommand)
         }
+    }
+}
+
+fn dcl_cluster_command(verb: &str, object: Option<&str>) -> Option<&'static str> {
+    let object = object?.split_once('/').map_or(object?, |(noun, _)| noun);
+    if (verb.eq_ignore_ascii_case("LIST") || verb.eq_ignore_ascii_case("LS"))
+        && object.eq_ignore_ascii_case("CLUSTERS")
+    {
+        Some("LIST-CLUSTERS")
+    } else if verb.eq_ignore_ascii_case("CREATE") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("CREATE-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("JOIN") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("JOIN-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("LEAVE") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("LEAVE-CLUSTER")
+    } else if (verb.eq_ignore_ascii_case("REMOVE") || verb.eq_ignore_ascii_case("DELETE"))
+        && object.eq_ignore_ascii_case("CLUSTER")
+    {
+        Some("DELETE-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("MODIFY") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("MODIFY-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("RENAME") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("RENAME-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("SET") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("SET-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("USE") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("USE-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("INVITE") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("INVITE-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("ACCEPT") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("ACCEPT-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("REJECT") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("REJECT-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("REMOVE") && object.eq_ignore_ascii_case("FEDERATION") {
+        Some("REMOVE-FEDERATION")
+    } else if verb.eq_ignore_ascii_case("INVITE") && object.eq_ignore_ascii_case("NODE") {
+        Some("INVITE-NODE")
+    } else if verb.eq_ignore_ascii_case("ACCEPT") && object.eq_ignore_ascii_case("NODE") {
+        Some("ACCEPT-NODE")
+    } else if verb.eq_ignore_ascii_case("REJECT") && object.eq_ignore_ascii_case("NODE") {
+        Some("REJECT-NODE")
+    } else if verb.eq_ignore_ascii_case("REMOVE") && object.eq_ignore_ascii_case("NODE") {
+        Some("REMOVE-NODE")
+    } else if verb.eq_ignore_ascii_case("DRAIN") && object.eq_ignore_ascii_case("NODE") {
+        Some("DRAIN-NODE")
+    } else if verb.eq_ignore_ascii_case("FENCE") && object.eq_ignore_ascii_case("NODE") {
+        Some("FENCE-NODE")
+    } else if verb.eq_ignore_ascii_case("REJOIN") && object.eq_ignore_ascii_case("NODE") {
+        Some("REJOIN-NODE")
+    } else {
+        None
     }
 }
 
@@ -590,9 +658,9 @@ impl<const CAPACITY: usize> Default for CommandRegistry<CAPACITY> {
 mod tests {
     use super::*;
     use crate::filesystem::{
-        CREATE_FILE_ROUTE, DIRECTORY_ROUTE, EDIT_ROUTE, LINK_ROUTE, MKDIR_ROUTE,
-        RMDIR_ROUTE, SET_DEFAULT_ROUTE, SHOW_DEFAULT_ROUTE, SHOW_LINKS_ROUTE, TYPE_ROUTE,
-        register_filesystem_commands,
+        register_filesystem_commands, CREATE_FILE_ROUTE, DIRECTORY_ROUTE, EDIT_ROUTE, LINK_ROUTE,
+        MKDIR_ROUTE, RMDIR_ROUTE, SET_DEFAULT_ROUTE, SHOW_DEFAULT_ROUTE, SHOW_LINKS_ROUTE,
+        TYPE_ROUTE,
     };
 
     fn registry() -> CommandRegistry<16> {
@@ -624,13 +692,18 @@ mod tests {
     #[test]
     fn parses_show_links_alias_and_rejects_bad_arity() {
         let registry = registry();
-        let program = registry.parse("LINKS /data/alias").expect("parse links alias");
+        let program = registry
+            .parse("LINKS /data/alias")
+            .expect("parse links alias");
         assert_eq!(program.stage(0).unwrap().route.raw(), SHOW_LINKS_ROUTE);
         assert_eq!(
             text(program.stage(0).unwrap().get("PATH")).as_str(),
             "/data/alias"
         );
-        assert_eq!(registry.parse("LINK /data/source"), Err(Error::MissingArgument));
+        assert_eq!(
+            registry.parse("LINK /data/source"),
+            Err(Error::MissingArgument)
+        );
         assert_eq!(
             registry.parse("LINK /data/source /data/alias /data/extra"),
             Err(Error::TooManyArguments)
@@ -646,29 +719,50 @@ mod tests {
 
         assert_eq!(edit.stage_count(), 2);
         assert!(edit.background);
-        assert_eq!(edit.stage(0).unwrap().route.raw(), crate::filesystem::EDIT_ROUTE);
+        assert_eq!(
+            edit.stage(0).unwrap().route.raw(),
+            crate::filesystem::EDIT_ROUTE
+        );
         assert_eq!(
             text(edit.stage(0).unwrap().get("PATH")).as_str(),
             "/data/notes;7"
         );
-        assert_eq!(text(edit.stage(1).unwrap().get("PATH")).as_str(), "/data/notes;7");
-        assert_eq!(edit.stage(1).unwrap().get("BINARY"), Some(Value::Boolean(true)));
+        assert_eq!(
+            text(edit.stage(1).unwrap().get("PATH")).as_str(),
+            "/data/notes;7"
+        );
+        assert_eq!(
+            edit.stage(1).unwrap().get("BINARY"),
+            Some(Value::Boolean(true))
+        );
     }
 
     #[test]
     fn rejects_malformed_editor_input() {
         let registry = registry();
         assert_eq!(registry.parse("EDIT"), Err(Error::MissingArgument));
-        assert_eq!(registry.parse("EDIT /data/note /UNKNOWN"), Err(Error::UnknownArgument));
-        assert_eq!(registry.parse("EDIT \"/data/note"), Err(Error::UnterminatedQuote));
-        assert_eq!(registry.parse("EDIT /data/note |"), Err(Error::InvalidSyntax));
+        assert_eq!(
+            registry.parse("EDIT /data/note /UNKNOWN"),
+            Err(Error::UnknownArgument)
+        );
+        assert_eq!(
+            registry.parse("EDIT \"/data/note"),
+            Err(Error::UnterminatedQuote)
+        );
+        assert_eq!(
+            registry.parse("EDIT /data/note |"),
+            Err(Error::InvalidSyntax)
+        );
     }
 
     #[test]
     fn parses_the_complete_filesystem_command_surface() {
         let registry = registry();
         let cases = [
-            ("DIRECTORY \"relative folder\" /CREATE /RECURSIVE", DIRECTORY_ROUTE),
+            (
+                "DIRECTORY \"relative folder\" /CREATE /RECURSIVE",
+                DIRECTORY_ROUTE,
+            ),
             ("LS /data /CONTINUATION=32", DIRECTORY_ROUTE),
             ("MKDIR /data/new /NORECURSIVE", MKDIR_ROUTE),
             ("RMDIR /data/old", RMDIR_ROUTE),
@@ -692,7 +786,11 @@ mod tests {
         ];
 
         for (line, route) in cases {
-            assert_eq!(registry.parse(line).unwrap().stage(0).unwrap().route.raw(), route, "{line}");
+            assert_eq!(
+                registry.parse(line).unwrap().stage(0).unwrap().route.raw(),
+                route,
+                "{line}"
+            );
         }
 
         let directory = registry
@@ -711,13 +809,31 @@ mod tests {
             .unwrap();
         assert_eq!(listing.get("CONTINUATION"), Some(Value::Integer(32)));
 
-        assert_eq!(registry.parse("DIRECTORY /data /CREATE extra"), Err(Error::TooManyArguments));
-        assert_eq!(registry.parse("DIRECTORY /data /CREATE /CREATE"), Err(Error::InvalidValue));
-        assert_eq!(registry.parse("TYPE /data/file /BINARY=maybe"), Err(Error::InvalidValue));
+        assert_eq!(
+            registry.parse("DIRECTORY /data /CREATE extra"),
+            Err(Error::TooManyArguments)
+        );
+        assert_eq!(
+            registry.parse("DIRECTORY /data /CREATE /CREATE"),
+            Err(Error::InvalidValue)
+        );
+        assert_eq!(
+            registry.parse("TYPE /data/file /BINARY=maybe"),
+            Err(Error::InvalidValue)
+        );
         assert_eq!(registry.parse("SET DEFAULT"), Err(Error::MissingArgument));
-        assert_eq!(registry.parse("CREATE /data/file /RECURSIVE"), Err(Error::UnknownArgument));
-        assert_eq!(registry.parse("RMDIR /data/a /data/b"), Err(Error::TooManyArguments));
-        assert_eq!(registry.parse("SHOW DEFAULT /UNKNOWN"), Err(Error::UnknownArgument));
+        assert_eq!(
+            registry.parse("CREATE /data/file /RECURSIVE"),
+            Err(Error::UnknownArgument)
+        );
+        assert_eq!(
+            registry.parse("RMDIR /data/a /data/b"),
+            Err(Error::TooManyArguments)
+        );
+        assert_eq!(
+            registry.parse("SHOW DEFAULT /UNKNOWN"),
+            Err(Error::UnknownArgument)
+        );
     }
 }
 
@@ -731,7 +847,7 @@ fn insert_argument(
         .flatten()
         .any(|value| names_equal(value.name, spec.name))
     {
-        return Err(Error::InvalidValue)
+        return Err(Error::InvalidValue);
     }
     let value = match spec.kind {
         ArgumentKind::Boolean => match raw {
@@ -751,9 +867,9 @@ fn insert_argument(
             }
             _ => return Err(Error::InvalidValue),
         },
-        ArgumentKind::Integer => Value::Integer(
-            raw.parse::<i64>().map_err(|_| Error::InvalidValue)?,
-        ),
+        ArgumentKind::Integer => {
+            Value::Integer(raw.parse::<i64>().map_err(|_| Error::InvalidValue)?)
+        }
         ArgumentKind::Text => Value::Text(Text::new(raw)?),
     };
     let slot = arguments
@@ -801,11 +917,11 @@ impl<'a> Lexer<'a> {
 
     fn next(&mut self) -> Result<Option<Lexeme>, Error> {
         if self.stopped {
-            return Ok(None)
+            return Ok(None);
         }
         self.skip_whitespace();
         let Some(current) = self.peek() else {
-            return Ok(None)
+            return Ok(None);
         };
         match current {
             '!' => {
@@ -835,7 +951,7 @@ impl<'a> Lexer<'a> {
                 word.push_char('\\')?;
                 word.push_char(escaped)?;
                 self.advance(escaped);
-                continue
+                continue;
             }
             if let Some(expected) = quote {
                 self.advance(current);
@@ -847,24 +963,24 @@ impl<'a> Lexer<'a> {
                     }
                     word.push_char(current)?
                 }
-                continue
+                continue;
             }
             if matches!(current, '\'' | '"') {
                 quote = Some(current);
                 self.advance(current);
-                continue
+                continue;
             }
             if current.is_ascii_whitespace() || matches!(current, '|' | '&') {
-                break
+                break;
             }
             word.push_char(current)?;
             self.advance(current)
         }
         if quote.is_some() {
-            return Err(Error::UnterminatedQuote)
+            return Err(Error::UnterminatedQuote);
         }
         if word.is_empty() {
-            return Err(Error::InvalidSyntax)
+            return Err(Error::InvalidSyntax);
         }
         Ok(word)
     }
@@ -872,7 +988,7 @@ impl<'a> Lexer<'a> {
     fn skip_whitespace(&mut self) {
         while let Some(current) = self.peek() {
             if !current.is_ascii_whitespace() {
-                break
+                break;
             }
             self.advance(current)
         }

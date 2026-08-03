@@ -925,10 +925,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 ## 58. Cluster Lifecycle & Administration
 
-- [ ] **Cluster Command Surface**
-  - [ ] Define DCL-style syntax, aliases, qualifiers, positional arguments, stable routes, help text, and structured output for all cluster commands.
-  - [ ] Add `SHOW CLUSTER` for the current cluster identity, status, leader/coordinator, membership, quorum, health, capacity, and protocol versions.
-  - [ ] Add `SHOW CLUSTER/MEMBERS`, `SHOW CLUSTER/TOPOLOGY`, `SHOW CLUSTER/HEALTH`, `SHOW CLUSTER/RESOURCES`, and `SHOW CLUSTER/CONFIG` views.
+- [x] **Cluster Command Surface**
+  - [x] Define DCL-style syntax, aliases, qualifiers, positional arguments, stable routes, help text, and structured output for all cluster commands.
+  - [x] Add `SHOW CLUSTER` for the current cluster identity, status, leader/coordinator, membership, quorum, health, capacity, and protocol versions.
+  - [x] Add `SHOW CLUSTER/MEMBERS`, `SHOW CLUSTER/TOPOLOGY`, `SHOW CLUSTER/HEALTH`, `SHOW CLUSTER/RESOURCES`, and `SHOW CLUSTER/CONFIG` views.
   - [ ] Add `LIST CLUSTERS` for discovered, trusted, joined, available, degraded, and federated clusters with filtering and pagination.
   - [ ] Add `CREATE CLUSTER name` with optional cluster ID, description, transport endpoints, admission policy, quorum policy, and initial administrator.
   - [ ] Add `JOIN CLUSTER` with invitation/token, endpoint, fingerprint, attestation, timeout, and approval qualifiers.
