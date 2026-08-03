@@ -919,3 +919,108 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 - [x] **Uptime command**
   - [x] Display is easy to read format the amount of time since the machine last rebooted
+
+
+---
+
+## 58. Cluster Lifecycle & Administration
+
+- [ ] **Cluster Command Surface**
+  - [ ] Define DCL-style syntax, aliases, qualifiers, positional arguments, stable routes, help text, and structured output for all cluster commands.
+  - [ ] Add `SHOW CLUSTER` for the current cluster identity, status, leader/coordinator, membership, quorum, health, capacity, and protocol versions.
+  - [ ] Add `SHOW CLUSTER/MEMBERS`, `SHOW CLUSTER/TOPOLOGY`, `SHOW CLUSTER/HEALTH`, `SHOW CLUSTER/RESOURCES`, and `SHOW CLUSTER/CONFIG` views.
+  - [ ] Add `LIST CLUSTERS` for discovered, trusted, joined, available, degraded, and federated clusters with filtering and pagination.
+  - [ ] Add `CREATE CLUSTER name` with optional cluster ID, description, transport endpoints, admission policy, quorum policy, and initial administrator.
+  - [ ] Add `JOIN CLUSTER` with invitation/token, endpoint, fingerprint, attestation, timeout, and approval qualifiers.
+  - [ ] Add `LEAVE CLUSTER` with drain, force, confirmation, and data-reconciliation safeguards.
+  - [ ] Add `REMOVE CLUSTER` or `DELETE CLUSTER` for retiring a cluster only after membership, lease, workload, and storage checks pass.
+  - [ ] Add `MODIFY CLUSTER`, `RENAME CLUSTER`, `SET CLUSTER`, and `USE CLUSTER` for safe configuration and active-target selection.
+  - [ ] Add `INVITE NODE`, `ACCEPT NODE`, `REJECT NODE`, `REMOVE NODE`, `DRAIN NODE`, `FENCE NODE`, and `REJOIN NODE` administration commands.
+  - [ ] Add cluster-aware command completion, confirmation prompts, dry-run mode, machine-readable output, and pipeline support.
+
+- [ ] **Cluster Identity & Persistent Metadata**
+  - [ ] Define immutable cluster IDs, human-readable names, aliases, generation numbers, creation time, owner, and lifecycle state.
+  - [ ] Persist cluster metadata, local membership intent, trusted peers, invitations, certificates, and active-cluster selection in SynFS.
+  - [ ] Prevent duplicate names or IDs and reject stale-generation, split-brain, and conflicting metadata updates.
+  - [ ] Support cluster rename, metadata export/import, snapshot, restore, and crash-safe transactional updates.
+  - [ ] Define lifecycle states for creating, pending admission, active, degraded, partitioned, draining, leaving, retired, and deleted clusters.
+
+- [ ] **Cluster Creation & Bootstrap**
+  - [ ] Implement local cluster creation without a central management server.
+  - [ ] Generate the cluster root identity, signing keys, admission policy, bootstrap token, initial quorum, and initial node record.
+  - [ ] Validate node capabilities, transport availability, protocol compatibility, clock health, and required hardware attestation before activation.
+  - [ ] Make creation idempotent and recoverable after interruption, reboot, or partial bootstrap.
+  - [ ] Publish signed bootstrap advertisements and allow an administrator to rotate or revoke bootstrap credentials.
+
+- [ ] **Join, Leave & Admission Workflow**
+  - [ ] Implement invitation creation, expiration, one-time use, scope restrictions, approval, rejection, and revocation.
+  - [ ] Discover candidate clusters through configured endpoints, local mesh gossip, mDNS, broadcast, and explicit addresses.
+  - [ ] Authenticate the joining node and cluster with mutual cryptographic identity, certificate/fingerprint checks, and TPM/TEE attestation.
+  - [ ] Negotiate protocol versions, capabilities, transports, address-space layout, feature flags, and security policy before admission.
+  - [ ] Add pending, approved, rejected, joined, draining, left, fenced, and expelled membership states with clear status reasons.
+  - [ ] Replicate membership changes with quorum acknowledgement and durable audit records.
+  - [ ] Drain workloads, release DLM leases, flush remote pages, reconcile SynFS deltas, revoke delegated capabilities, and close IPC streams before leave.
+  - [ ] Support safe forced leave and forced removal with fencing, epoch advancement, and explicit destructive-action authorization.
+  - [ ] Support rejoin after temporary loss without creating duplicate node identities or stale leases.
+
+- [ ] **Membership, Quorum & Consensus**
+  - [ ] Build a durable membership registry with node IDs, roles, endpoints, health, capacity, zones, racks, and last-seen generation.
+  - [ ] Define coordinator/leader election, witness support, quorum calculation, voting/non-voting members, and membership-change rules.
+  - [ ] Handle network partitions, asymmetric reachability, duplicate identities, stale advertisements, and split-brain prevention.
+  - [ ] Propagate membership epochs to DLM, Software DSM, balancer, scheduler, SynFS, and service supervisors.
+  - [ ] Provide read-only operation and clear degraded behavior when quorum is unavailable.
+
+- [ ] **Discovery, Connectivity & Topology**
+  - [ ] Implement signed cluster advertisements with cluster ID, node ID, endpoints, transports, versions, capabilities, and expiration.
+  - [ ] Support CXL, Ethernet, wireless, 5G, loopback, and tunneled transports with endpoint preference and failover.
+  - [ ] Maintain a live node/cluster topology graph with latency, bandwidth, reachability, route, zone, and transport details.
+  - [ ] Add endpoint rotation, NAT/relay support, MTU negotiation, connection retry, backoff, and offline discovery caching.
+  - [ ] Expose topology and connectivity diagnostics through shell, SDK, control apps, and structured telemetry.
+
+- [ ] **Cluster Security & Authorization**
+  - [ ] Define cluster administrator, operator, auditor, node owner, workload, and read-only roles.
+  - [ ] Require capability-authorized access for create, join, leave, remove, modify, invite, fence, and resource-management operations.
+  - [ ] Bind node admission to signed identities, hardware attestation, capability policies, and configurable trust roots.
+  - [ ] Encrypt and authenticate membership, control-plane, DLM, DSM, IPC, and telemetry traffic.
+  - [ ] Rotate cluster and node keys without downtime; revoke compromised nodes, invitations, certificates, and delegated capabilities.
+  - [ ] Audit every lifecycle, membership, authorization, configuration, fencing, and resource decision with correlation IDs.
+
+- [ ] **Cluster Resources & Workloads**
+  - [ ] Report aggregate and per-node CPU, RAM, VRAM, CXL, storage, network, accelerator, and lease capacity.
+  - [ ] Define placement, reservations, quotas, affinity/anti-affinity, labels, taints, priorities, and tenant boundaries.
+  - [ ] Allow workloads, actors, jobs, services, and remote sessions to target the active cluster or a selected member cluster.
+  - [ ] Coordinate admission, migration, draining, failover, preemption, and cancellation with `synos-balancerd` and `synos-actors`.
+  - [ ] Prevent new work on draining, fenced, degraded, or incompatible nodes and explain placement failures.
+
+- [ ] **Cross-Cluster Federation**
+  - [ ] Add explicit federation and unfederation workflows separate from intra-cluster node membership.
+  - [ ] Add `LIST CLUSTERS/FEDERATED`, `SHOW CLUSTER/FEDERATION`, `INVITE CLUSTER`, `ACCEPT CLUSTER`, `REJECT CLUSTER`, and `REMOVE FEDERATION`.
+  - [ ] Exchange scoped cluster capabilities and resource offers without exposing local identities, filesystems, processes, or sockets.
+  - [ ] Track federation state, trust scope, lease ownership, revocation epoch, expiration, and cross-cluster health.
+  - [ ] Enforce zero-trust admission, blind-sandbox isolation, lease preemption, and cross-cluster epoch fencing.
+
+- [ ] **Configuration & Declarative Management**
+  - [ ] Extend `System.toml` with cluster identity, discovery, membership, quorum, transport, security, resource, and federation settings.
+  - [ ] Validate configuration changes before activation and show a structured diff with affected nodes and services.
+  - [ ] Apply cluster configuration atomically with signed commits, quorum acknowledgement, rollback, and version history.
+  - [ ] Support staged changes, maintenance windows, per-node overrides, policy inheritance, and safe defaults.
+
+- [ ] **Failure Handling, Recovery & Operations**
+  - [ ] Detect node failure, cluster degradation, partition, quorum loss, clock skew, protocol mismatch, and stale state.
+  - [ ] Fence unsafe nodes before releasing or reassigning shared memory, storage, jobs, capabilities, and DLM leases.
+  - [ ] Reconcile membership, SynFS CoW deltas, logs, resource reservations, and workload state after recovery or rejoin.
+  - [ ] Provide operator actions for retry, resync, drain, recover, fence, un-fence, rollback, and abandon with safe guards.
+  - [ ] Preserve availability where safe and return stable `$STATUS` values explaining every blocked operation.
+
+- [ ] **APIs, Clients & Observability**
+  - [ ] Add cluster lifecycle and membership methods to the Rust client SDK, wire protocol, HTTP/gRPC gateway, and Swift client.
+  - [ ] Add structured schemas for cluster summaries, member lists, invitations, join/leave plans, topology, health, resources, and audit events.
+  - [ ] Add live subscriptions and bounded polling for membership, health, topology, resource, and lifecycle changes.
+  - [ ] Add cluster dashboards for identity, members, health, capacity, topology, pending admissions, alerts, and recent actions.
+  - [ ] Export metrics, traces, logs, audit events, and alerts per cluster, node, transport, workload, and operation.
+
+- [ ] **Validation & Documentation**
+  - [ ] Add parser, authorization, protocol, persistence, recovery, quorum, partition, fencing, and transport-failure coverage for every command.
+  - [ ] Add multi-node QEMU and remote-terminal scenarios for create, list, show, join, leave, remove, rejoin, federation, and recovery workflows.
+  - [ ] Test duplicate identity, expired invitation, revoked key, failed attestation, incompatible version, full cluster, no quorum, and split-brain cases.
+  - [ ] Document command examples, permissions, confirmation requirements, status codes, recovery procedures, and destructive-action safeguards.
