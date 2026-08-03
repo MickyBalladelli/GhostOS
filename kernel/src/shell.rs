@@ -2052,9 +2052,54 @@ impl KernelExecutor {
     fn print_help(&self, registry: &CommandRegistry<COMMAND_CAPACITY>) {
         crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
         crate::println!("COMMAND");
+
+        let mut commands = [None; COMMAND_CAPACITY];
+        let mut command_count = 0;
         for registration in registry.registrations() {
-            crate::print!("  ");
-            print_display_command(registration.spec.name.as_str());
+            commands[command_count] = Some(registration.spec.name);
+            command_count += 1;
+        }
+        for index in 1..command_count {
+            let Some(command) = commands[index] else { continue };
+            let mut position = index;
+            while position > 0
+                && commands[position - 1]
+                    .is_some_and(|previous| previous.as_str() > command.as_str())
+            {
+                commands[position] = commands[position - 1];
+                position -= 1;
+            }
+            commands[position] = Some(command);
+        }
+
+        let widest_command = commands[..command_count]
+            .iter()
+            .flatten()
+            .map(|command| command.as_str().len())
+            .max()
+            .unwrap_or(0);
+        let column_width = widest_command.saturating_add(2);
+        let (terminal_columns, _) = crate::console::terminal_size();
+        let column_count = core::cmp::max(1, terminal_columns / column_width.saturating_add(2))
+            .min(command_count);
+        let row_count = (command_count + column_count - 1) / column_count;
+
+        for row in 0..row_count {
+            for column in 0..column_count {
+                let index = row * column_count + column;
+                if index >= command_count {
+                    break
+                }
+
+                let Some(command) = commands[index] else { break };
+                crate::print!("  ");
+                print_display_command(command.as_str());
+                if index + 1 < command_count && column + 1 < column_count {
+                    for _ in command.as_str().len()..column_width {
+                        crate::print!(" ");
+                    }
+                }
+            }
             crate::println!();
         }
         crate::println!();
