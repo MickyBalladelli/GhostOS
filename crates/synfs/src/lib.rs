@@ -853,6 +853,22 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.generation
     }
 
+    /// Merge a cluster monotonic counter before starting a CoW update.
+    ///
+    /// A node may receive a larger counter from a peer after its last local
+    /// write. Advancing the private generation first prevents a stale node
+    /// from publishing a lower creation order after failover.
+    pub fn synchronize_generation(&mut self, cluster_counter: u64) -> Result<(), Error> {
+        if cluster_counter == 0 {
+            return Err(Error::InvalidVersion)
+        }
+        if cluster_counter == u64::MAX {
+            return Err(Error::VersionOverflow)
+        }
+        self.generation = self.generation.max(cluster_counter);
+        Ok(())
+    }
+
     pub fn used_blocks(&self) -> usize {
         self.arena.used()
     }

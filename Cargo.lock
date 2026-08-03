@@ -725,6 +725,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-time-sync"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+]
+
+[[package]]
 name = "synos-top"
 version = "0.1.0"
 dependencies = [

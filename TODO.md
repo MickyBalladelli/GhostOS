@@ -754,11 +754,11 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 46. Time Synchronization & Cluster Clock Alignment
-- [ ] **Sub-Microsecond PTP Engine (IEEE 1588)**
-  - [ ] Implement a user-space PTP daemon using hardware timestamps for precise clock alignment across Ethernet and CXL nodes.
-  - [ ] Guarantee absolute global event ordering for Distributed Lock Manager (DLM) operations and audit timestamps.
-- [ ] **Monotonic Epoch Counters**
-  - [ ] Sync hardware-backed monotonic counters across nodes to eliminate time-skew issues in SynFS Copy-on-Write versioning (`file.txt;1`).
+- [x] **Sub-Microsecond PTP Engine (IEEE 1588)**
+  - [x] Implement a user-space PTP daemon using hardware timestamps for precise clock alignment across Ethernet and CXL nodes.
+  - [x] Guarantee absolute global event ordering for Distributed Lock Manager (DLM) operations and audit timestamps.
+- [x] **Monotonic Epoch Counters**
+  - [x] Sync hardware-backed monotonic counters across nodes to eliminate time-skew issues in SynFS Copy-on-Write versioning (`file.txt;1`).
 
 ---
 
