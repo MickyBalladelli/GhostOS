@@ -546,6 +546,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-heal"
+version = "0.1.0"
+dependencies = [
+ "synos-init",
+ "synos-observability",
+ "synos-status",
+ "synos-synfs",
+ "synos-update",
+]
+
+[[package]]
 name = "synos-host-filesystems"
 version = "0.1.0"
 dependencies = [

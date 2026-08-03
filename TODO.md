@@ -878,12 +878,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 54. Self-Healing Daemon Supervisor (`synos-heal`)
-- [ ] **Ring 3 Telemetry & Health Monitoring**
-  - [ ] Implement lock-free health checks to detect deadlocks, driver stalls, or memory corruption in user-space system services.
-- [ ] **Instant CoW State Recovery**
-  - [ ] Automatically restart crashed Ring 3 daemons and restore their state from the latest clean SynFS Copy-on-Write snapshot in sub-milliseconds.
-- [ ] **Zero-Downtime Hot-Patching**
-  - [ ] Support live microkernel code updates and Ring 3 server binary swaps without dropping process connections or rebooting nodes.
+- [x] **Ring 3 Telemetry & Health Monitoring**
+  - [x] Implement lock-free health checks to detect deadlocks, driver stalls, or memory corruption in user-space system services.
+- [x] **Instant CoW State Recovery**
+  - [x] Automatically restart crashed Ring 3 daemons and restore their state from the latest clean SynFS Copy-on-Write snapshot in sub-milliseconds.
+- [x] **Zero-Downtime Hot-Patching**
+  - [x] Support live microkernel code updates and Ring 3 server binary swaps without dropping process connections or rebooting nodes.
 
 
 ---
