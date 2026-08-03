@@ -165,7 +165,10 @@ impl SharedTensor {
 
     pub fn validate(self) -> Result<Self, Error> {
         let required = self.layout.required_bytes()?;
-        if required > self.buffer.length as u64
+        let end = (self.buffer.offset as u64)
+            .checked_add(required)
+            .ok_or(Error::InvalidTensor)?;
+        if end > self.buffer.length as u64
             || self.buffer.offset as usize % self.layout.dtype.alignment() != 0
         {
             return Err(Error::InvalidTensor);

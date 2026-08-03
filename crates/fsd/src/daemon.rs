@@ -568,7 +568,14 @@ impl<
             return Err(DaemonError::ReadOnly);
         }
         if flags.contains(Flags::CREATE) && flags.contains(Flags::EXCLUSIVE) {
-            return self.create_file_with_name(process, authority, name, read_only_mount, true);
+            return self.create_file_with_name(
+                process,
+                authority,
+                name,
+                requested,
+                read_only_mount,
+                true,
+            );
         }
         let exists = self.filesystem.lookup(path).is_ok();
         if !exists && !flags.contains(Flags::CREATE) {
@@ -606,7 +613,14 @@ impl<
         }
         let name = Name::from_str(path)?;
         let read_only_mount = self.path_is_read_only(path)?;
-        self.create_file_with_name(process, authority, name, read_only_mount, false)
+        self.create_file_with_name(
+            process,
+            authority,
+            name,
+            FileRights::READ.union(FileRights::WRITE),
+            read_only_mount,
+            false,
+        )
     }
 
     fn create_file_with_name(
@@ -614,6 +628,7 @@ impl<
         process: ProcessId,
         authority: Capability,
         name: Name,
+        rights: FileRights,
         read_only_mount: bool,
         exclusive: bool,
     ) -> Result<FileInfo, DaemonError> {
@@ -632,7 +647,7 @@ impl<
         self.open_file_handle(
             process,
             name,
-            FileRights::READ.union(FileRights::WRITE),
+            rights,
             false,
             false,
             metadata,

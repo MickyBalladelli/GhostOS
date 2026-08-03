@@ -196,7 +196,9 @@ impl<const ENCLAVES: usize, const RANGES: usize, const CAPABILITIES: usize>
         now_us: u64,
     ) -> Result<ConfidentialCapability, Error> {
         let binding = self.binding(node).ok_or(Error::NotFound)?;
-        self.admission.require_admitted(node)?;
+        if !self.admission.is_admitted(node) {
+            return Err(Error::NotAdmitted);
+        }
         if let ProtectedResource::SharedDsm(range) = resource {
             if !binding.protects(range) {
                 return Err(Error::NotProtected)

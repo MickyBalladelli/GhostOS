@@ -1083,18 +1083,21 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 .ok_or(Error::VersionOverflow)
         })?;
         let created_at = self.generation.saturating_add(1);
-        self.write_inner(parsed.file, version, created_at, contents)
+        let object_id = previous
+            .filter(|record| !record.deleted)
+            .map_or_else(|| self.allocate_object_id(), |record| Ok(record.object_id))?;
+        self.write_inner(parsed.file, version, object_id, created_at, contents)
     }
 
     fn write_inner(
         &mut self,
         file: FileName,
         version: u32,
+        object_id: u64,
         created_at: u64,
         contents: &[u8],
     ) -> Result<FileVersion, Error> {
         let data = self.store_data(contents)?;
-        let object_id = self.allocate_object_id()?;
         self.insert_record(
             file,
             version,

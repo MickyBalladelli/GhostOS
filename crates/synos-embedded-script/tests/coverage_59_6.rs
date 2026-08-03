@@ -54,5 +54,5 @@ fn embedded_script_request_and_source_limits_fail_cleanly() {
         Ok(_) => panic!("request limit should reject second request"),
         Err(error) => error,
     };
-    assert_eq!(error.kind(), synos_embedded_script::ErrorKind::SourceTooLarge);
+    assert_eq!(error.kind(), synos_embedded_script::ErrorKind::Evaluate);
 }

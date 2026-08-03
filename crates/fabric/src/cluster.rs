@@ -100,7 +100,7 @@ impl<const CAPACITY: usize> HeartbeatMonitor<CAPACITY> {
             period_us,
             missed_limit,
             next_sequence: 1,
-            next_send_us: now_us,
+            next_send_us: now_us.saturating_add(period_us as u64),
             nodes: [NodeHealth::EMPTY; CAPACITY],
         })
     }

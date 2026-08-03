@@ -334,7 +334,7 @@ where
         }
         let mut payload = [0; MAX_PACKET_BYTES];
         let encoded = encode_bytes(&memory[..read], &mut payload)?;
-        self.write_reply(&payload[..encoded], output)
+        self.write_reply_with_checksum(&payload[..encoded], &memory[..read], output)
     }
 
     fn receive_memory(&mut self, bytes: &[u8], output: &mut [u8]) -> Result<usize, Error> {
@@ -414,6 +414,15 @@ where
     }
 
     fn write_reply(&self, payload: &[u8], output: &mut [u8]) -> Result<usize, Error> {
+        self.write_reply_with_checksum(payload, payload, output)
+    }
+
+    fn write_reply_with_checksum(
+        &self,
+        payload: &[u8],
+        checksum_payload: &[u8],
+        output: &mut [u8],
+    ) -> Result<usize, Error> {
         let required = payload.len() + 5;
         if output.len() < required {
             return Err(Error::BufferTooSmall { required });
@@ -422,7 +431,7 @@ where
         output[1] = b'$';
         output[2..2 + payload.len()].copy_from_slice(payload);
         output[2 + payload.len()] = b'#';
-        let checksum = payload
+        let checksum = checksum_payload
             .iter()
             .fold(0_u8, |sum, byte| sum.wrapping_add(*byte));
         output[3 + payload.len()] = hex(checksum >> 4);

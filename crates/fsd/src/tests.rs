@@ -2,10 +2,11 @@ use super::{
     Daemon, DaemonError, Flags, Operation, ProcessId, ProcessRights, Request,
     MAX_IPC_BUFFER_BYTES,
 };
+use alloc::vec;
 use synos_synfs::{FileType, SynFs};
 use synos_status::Status;
 
-type TestDaemon = Daemon<64, 4, 8, 4, 4, 4096>;
+type TestDaemon = Daemon<16, 4, 8, 4, 8, 4096>;
 
 fn daemon() -> (TestDaemon, ProcessId, super::Capability) {
     let mut daemon = TestDaemon::new(SynFs::new()).expect("create filesystem daemon");
@@ -227,7 +228,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
     );
     assert_eq!(response.status, Status::ACCESS_DENIED);
 
-    let mut oversized = [0; MAX_IPC_BUFFER_BYTES + 1];
+    let mut oversized = vec![0; MAX_IPC_BUFFER_BYTES + 1];
     let response = daemon.dispatch(
         Request::new(Operation::List, process).with_capability(authority),
         Some(&mut oversized),
