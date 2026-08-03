@@ -658,6 +658,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-mesh"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-netd"
 version = "0.1.0"
 dependencies = [

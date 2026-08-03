@@ -52,6 +52,7 @@ members = [
     "crates/client-sdk",
     "crates/synos-webterm",
     "crates/synos-remote-display",
+    "crates/synos-mesh",
     "tools/cargo-synos",
     "kernel",
     "boot/uefi",
@@ -108,6 +109,7 @@ default-members = [
     "crates/client-sdk",
     "crates/synos-webterm",
     "crates/synos-remote-display",
+    "crates/synos-mesh",
     "kernel",
 ]
 exclude = ["fuzz"]

@@ -899,12 +899,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 56. Edge-to-Cloud Dynamic Cluster Mesh (`synos-mesh`)
-- [ ] **Gossip-Based Node Discovery**
-  - [ ] Implement zero-configuration ad-hoc mesh discovery for edge devices over wireless, 5G, and local network interfaces.
-- [ ] **Disconnected CoW Delta Sync**
-  - [ ] Support offline execution on edge nodes with automatic SynFS Copy-on-Write state reconciliation when re-joining the main fabric.
-- [ ] **Asymmetric Offloading**
-  - [ ] Allow low-power edge targets to dynamically stream heavy compute workloads to enterprise CXL clusters.
+- [x] **Gossip-Based Node Discovery**
+  - [x] Implement zero-configuration ad-hoc mesh discovery for edge devices over wireless, 5G, and local network interfaces.
+- [x] **Disconnected CoW Delta Sync**
+  - [x] Support offline execution on edge nodes with automatic SynFS Copy-on-Write state reconciliation when re-joining the main fabric.
+- [x] **Asymmetric Offloading**
+  - [x] Allow low-power edge targets to dynamically stream heavy compute workloads to enterprise CXL clusters.
 
 ---
 
