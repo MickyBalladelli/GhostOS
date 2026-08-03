@@ -1,6 +1,9 @@
 use synos_fabric::{
     Access, NodeId, PAGE_SIZE,
-    memory::{GlobalAddressSpace, LeaseTable, MemoryKind},
+    memory::{
+        GlobalAddressSpace, LeaseTable, MemoryKind, Migration, MigrationCopy,
+        MigrationPlanner,
+    },
 };
 
 use crate::{
@@ -83,6 +86,15 @@ pub struct KvCacheInfo {
     pub reserved_tokens: u64,
     pub committed_tokens: u64,
     pub segment_count: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KvCacheRebalance {
+    pub cache: KvCacheHandle,
+    pub allocation: AllocationHandle,
+    pub allocation_offset: u64,
+    pub migration: Migration,
+    pub copy: MigrationCopy,
 }
 
 /// Growable KV cache whose segments may live in local, CXL, or layer-2 RAM.
@@ -328,6 +340,121 @@ impl<const CACHES: usize, const SEGMENTS: usize> KvCachePool<CACHES, SEGMENTS> {
             committed_tokens: entry.committed_tokens,
             segment_count: entry.segment_count,
         })
+    }
+
+    /// Return the next hot KV-cache page that should move to a lower-latency
+    /// pool. The cursor is a page ordinal across committed cache segments.
+    /// The returned copy descriptor lets the transport worker move and verify
+    /// the page before the caller commits the redirect.
+    pub fn next_rebalance<
+        const TRACKING: usize,
+        const ALLOCATIONS: usize,
+        const EXTENTS: usize,
+        const POOLS: usize,
+        const OVERRIDES: usize,
+        const LEASES: usize,
+    >(
+        &self,
+        handle: KvCacheHandle,
+        cursor: &mut u64,
+        planner: &MigrationPlanner<TRACKING>,
+        allocator: &UnifiedAllocator<ALLOCATIONS, EXTENTS>,
+        space: &GlobalAddressSpace<POOLS, OVERRIDES>,
+        leases: &LeaseTable<LEASES>,
+        now_us: u64,
+    ) -> Result<Option<KvCacheRebalance>, Error> {
+        let entry = self.entry(handle)?;
+        let committed_tokens = entry.committed_tokens;
+        let mut remaining_pages = *cursor;
+        for segment in entry.segments.iter().flatten() {
+            if segment.first_token >= committed_tokens {
+                break
+            }
+            let token_count = core::cmp::min(
+                segment.token_capacity,
+                committed_tokens - segment.first_token,
+            );
+            let bytes = allocation_bytes(entry.bytes_per_token, token_count)?;
+            let segment_pages = bytes
+                .checked_add(PAGE_SIZE - 1)
+                .ok_or(Error::InvalidRange)?
+                / PAGE_SIZE;
+            if remaining_pages >= segment_pages {
+                remaining_pages -= segment_pages;
+                continue
+            }
+            let allocation_offset = remaining_pages
+                .checked_mul(PAGE_SIZE)
+                .ok_or(Error::InvalidRange)?;
+            *cursor = cursor.saturating_add(1);
+            let address = allocator.resolve(
+                segment.allocation,
+                allocation_offset,
+                Access::Read,
+                now_us,
+                space,
+                leases,
+            )?;
+            if let Some(migration) = planner.recommend(space, address.fabric_address) {
+                let copy = space.begin_migration(migration)?;
+                return Ok(Some(KvCacheRebalance {
+                    cache: handle,
+                    allocation: segment.allocation,
+                    allocation_offset,
+                    migration,
+                    copy,
+                }))
+            }
+            remaining_pages = 0;
+        }
+        Ok(None)
+    }
+
+    /// Rebalance committed KV pages. The callback owns the actual copy for
+    /// CXL or DSM and must return true only after destination verification.
+    pub fn rebalance<
+        const TRACKING: usize,
+        const ALLOCATIONS: usize,
+        const EXTENTS: usize,
+        const POOLS: usize,
+        const OVERRIDES: usize,
+        const LEASES: usize,
+        F,
+    >(
+        &self,
+        handle: KvCacheHandle,
+        planner: &mut MigrationPlanner<TRACKING>,
+        allocator: &UnifiedAllocator<ALLOCATIONS, EXTENTS>,
+        space: &mut GlobalAddressSpace<POOLS, OVERRIDES>,
+        leases: &LeaseTable<LEASES>,
+        now_us: u64,
+        max_pages: usize,
+        mut copy_and_verify: F,
+    ) -> Result<usize, Error>
+    where
+        F: FnMut(MigrationCopy) -> Result<bool, Error>,
+    {
+        let mut cursor = 0;
+        let mut migrated = 0;
+        while migrated < max_pages {
+            let Some(plan) = self.next_rebalance(
+                handle,
+                &mut cursor,
+                planner,
+                allocator,
+                space,
+                leases,
+                now_us,
+            )?
+            else {
+                break
+            };
+            if copy_and_verify(plan.copy)? {
+                planner.commit(space, plan.migration)?;
+                migrated += 1
+            }
+        }
+        Ok(migrated)
     }
 
     pub fn close<

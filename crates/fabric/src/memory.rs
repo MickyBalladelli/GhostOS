@@ -57,6 +57,13 @@ pub struct ResolvedAddress {
     pub failed_over: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MigrationCopy {
+    pub migration: Migration,
+    pub source: ResolvedAddress,
+    pub target: ResolvedAddress,
+}
+
 /// How a resolved fabric address may be consumed by the page mapper.
 ///
 /// Local and CXL memory are directly mapped. Layer-2 memory is never exposed
@@ -216,6 +223,19 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
         self.pools().find(|pool| pool.id == id)
     }
 
+    /// Resolve the pool currently owning a page. This follows a committed
+    /// migration redirect, so a later migration never copies from stale
+    /// ownership metadata.
+    pub fn page_pool(&self, global_page: u64) -> Option<&MemoryPool> {
+        let global_page = global_page & !(PAGE_SIZE - 1);
+        self.overrides
+            .iter()
+            .flatten()
+            .find(|entry| entry.global_page == global_page)
+            .and_then(|entry| self.pool(entry.target_pool))
+            .or_else(|| self.pools().find(|pool| pool.global.contains(global_page)))
+    }
+
     pub fn resolve(&self, global_address: u64) -> Result<ResolvedAddress, Error> {
         let global_page = global_address & !(PAGE_SIZE - 1);
         let page_offset = global_address & (PAGE_SIZE - 1);
@@ -310,11 +330,24 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
             return Err(Error::Alignment)
         }
         let target = self.pool(target_pool).ok_or(Error::DeviceNotFound)?;
+        if self.is_pool_draining(target_pool) || self.is_node_failed(target.node) {
+            return Err(Error::Busy)
+        }
+        if self.page_pool(global_page).is_none() {
+            return Err(Error::InvalidAddress)
+        }
         if target_backing_page < target.backing_start
             || target_backing_page.saturating_add(PAGE_SIZE)
                 > target.backing_start.saturating_add(target.global.length)
         {
             return Err(Error::InvalidAddress)
+        }
+        if self.overrides.iter().flatten().any(|entry| {
+            entry.global_page != global_page
+                && entry.target_pool == target_pool
+                && entry.target_backing_page == target_backing_page
+        }) {
+            return Err(Error::Busy)
         }
         let slot_index = self
             .overrides
@@ -328,6 +361,66 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
             target_backing_page,
         });
         Ok(())
+    }
+
+    /// Prepare a page copy. The caller copies the page using the returned
+    /// transport addresses and calls `MigrationPlanner::commit` only after
+    /// verifying the destination contents.
+    pub fn begin_migration(&self, migration: Migration) -> Result<MigrationCopy, Error> {
+        let source_pool = self
+            .page_pool(migration.global_page)
+            .ok_or(Error::InvalidAddress)?;
+        if source_pool.id != migration.source {
+            return Err(Error::Busy)
+        }
+        let target_pool = self.pool(migration.target).ok_or(Error::DeviceNotFound)?;
+        if self.is_pool_draining(target_pool.id) || self.is_node_failed(target_pool.node) {
+            return Err(Error::Busy)
+        }
+        if self.overrides.iter().flatten().any(|entry| {
+            entry.global_page != migration.global_page
+                && entry.target_pool == migration.target
+                && entry.target_backing_page == migration.target_backing_page
+        }) {
+            return Err(Error::Busy)
+        }
+        let source = self.resolve(migration.global_page)?;
+        let target = self.resolve_backing(target_pool, migration.target_backing_page)?;
+        Ok(MigrationCopy {
+            migration,
+            source,
+            target,
+        })
+    }
+
+    fn resolve_backing(
+        &self,
+        pool: &MemoryPool,
+        backing_address: u64,
+    ) -> Result<ResolvedAddress, Error> {
+        if backing_address % PAGE_SIZE != 0
+            || backing_address < pool.backing_start
+            || backing_address.saturating_add(PAGE_SIZE)
+                > pool.backing_start.saturating_add(pool.global.length)
+        {
+            return Err(Error::InvalidAddress)
+        }
+        self.resolve_node(pool, backing_address)
+    }
+
+    fn free_backing_page(&self, pool: &MemoryPool) -> Option<u64> {
+        let end = pool.backing_start.checked_add(pool.global.length)?;
+        let mut page = pool.backing_start;
+        while page.checked_add(PAGE_SIZE)? <= end {
+            let used = self.overrides.iter().flatten().any(|entry| {
+                entry.target_pool == pool.id && entry.target_backing_page == page
+            });
+            if !used {
+                return Some(page)
+            }
+            page = page.checked_add(PAGE_SIZE)?;
+        }
+        None
     }
 
     fn resolve_node(
@@ -727,6 +820,15 @@ pub struct Migration {
     pub target_backing_page: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PageAccess {
+    pub global_page: u64,
+    pub reads: u32,
+    pub writes: u32,
+    pub average_latency_ns: u32,
+    pub samples: u32,
+}
+
 #[derive(Clone, Copy)]
 struct PageMetric {
     global_page: u64,
@@ -792,6 +894,20 @@ impl<const CAPACITY: usize> MigrationPlanner<CAPACITY> {
         Ok(())
     }
 
+    pub fn accesses(&self) -> impl Iterator<Item = PageAccess> + '_ {
+        self.metrics
+            .iter()
+            .filter(|metric| metric.global_page != u64::MAX && metric.samples != 0)
+            .map(|metric| PageAccess {
+                global_page: metric.global_page,
+                reads: metric.reads,
+                writes: metric.writes,
+                average_latency_ns: (metric.latency_total_ns / metric.samples as u64)
+                    .min(u64::from(u32::MAX)) as u32,
+                samples: metric.samples,
+            })
+    }
+
     pub fn recommend<const POOLS: usize, const OVERRIDES: usize>(
         &self,
         space: &GlobalAddressSpace<POOLS, OVERRIDES>,
@@ -804,27 +920,28 @@ impl<const CAPACITY: usize> MigrationPlanner<CAPACITY> {
         if metric.reads.saturating_add(metric.writes) < self.hot_accesses || metric.samples == 0 {
             return None
         }
-        let source = space
-            .pools()
-            .find(|pool| pool.global.contains(global_page))?;
-        let observed = (metric.latency_total_ns / metric.samples as u64) as u32;
+        let source = space.page_pool(global_page)?;
+        let observed = (metric.latency_total_ns / metric.samples as u64)
+            .min(u64::from(u32::MAX)) as u32;
         let target = space
             .pools()
             .filter(|pool| {
                 pool.id != source.id
                     && pool.kind == source.kind
                     && pool.global.length >= PAGE_SIZE
+                    && !space.is_pool_draining(pool.id)
                     && !space.is_node_failed(pool.node)
-            })
+                })
             .min_by_key(|pool| pool.latency_ns)?;
         if target.latency_ns.saturating_add(self.latency_saving_ns) >= observed {
             return None
         }
+        let target_backing_page = space.free_backing_page(target)?;
         Some(Migration {
             global_page,
             source: source.id,
             target: target.id,
-            target_backing_page: target.backing_start,
+            target_backing_page,
         })
     }
 
@@ -835,6 +952,7 @@ impl<const CAPACITY: usize> MigrationPlanner<CAPACITY> {
         space: &mut GlobalAddressSpace<POOLS, OVERRIDES>,
         migration: Migration,
     ) -> Result<(), Error> {
+        space.begin_migration(migration)?;
         space.redirect_page(
             migration.global_page,
             migration.target,
