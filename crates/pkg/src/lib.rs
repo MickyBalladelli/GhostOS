@@ -280,6 +280,7 @@ pub struct ConfigurationBinding {
 }
 
 /// Bounded declarative description of the complete active package root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SystemConfiguration {
     revision: u64,
     bindings: [Option<ConfigurationBinding>; DEFAULT_ROOT_BINDINGS],
@@ -401,6 +402,14 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
 
     pub const fn active_configuration(&self) -> Option<&RootManifest<DEFAULT_ROOT_BINDINGS>> {
         self.repository.active_root()
+    }
+
+    pub fn restore_configuration(
+        &mut self,
+        configuration: Option<RootManifest<DEFAULT_ROOT_BINDINGS>>,
+    ) -> Result<(), PackageError> {
+        self.repository.restore_root(configuration)?;
+        Ok(())
     }
 
     pub fn contains(&self, package: ContentId) -> bool {

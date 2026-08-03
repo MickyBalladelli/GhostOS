@@ -344,6 +344,22 @@ impl<const CAPACITY: usize> RootController<CAPACITY> {
         Ok(self.active.replace(manifest))
     }
 
+    pub fn restore<const PACKAGES: usize>(
+        &mut self,
+        manifest: Option<RootManifest<CAPACITY>>,
+        store: &PackageStore<PACKAGES>,
+    ) -> Result<(), Error> {
+        if let Some(manifest) = manifest {
+            if manifest.bindings().any(|binding| !store.contains(binding.package)) {
+                return Err(Error::PackageNotFound);
+            }
+            self.active = Some(manifest)
+        } else {
+            self.active = None
+        }
+        Ok(())
+    }
+
     fn validate<const PACKAGES: usize>(
         &self,
         manifest: &RootManifest<CAPACITY>,
@@ -500,6 +516,15 @@ impl<const PACKAGES: usize> SynFsRepository<PACKAGES> {
             .map_err(RepositoryError::SynFs)?;
         self.root
             .activate(manifest, &self.packages)
+            .map_err(RepositoryError::Model)
+    }
+
+    pub fn restore_root(
+        &mut self,
+        manifest: Option<RootManifest<DEFAULT_ROOT_BINDINGS>>,
+    ) -> Result<(), RepositoryError> {
+        self.root
+            .restore(manifest, &self.packages)
             .map_err(RepositoryError::Model)
     }
 }

@@ -693,6 +693,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-update"
+version = "0.1.0"
+dependencies = [
+ "synos-pkg",
+ "synos-status",
+ "synos-synfs",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-wasm-script"
 version = "0.1.0"
 dependencies = [

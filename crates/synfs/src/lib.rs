@@ -494,6 +494,12 @@ pub struct CheckpointInfo {
     pub generation: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RollbackInfo {
+    pub from_generation: u64,
+    pub to_generation: u64,
+}
+
 #[derive(Clone, Copy)]
 struct Checkpoint {
     info: CheckpointInfo,
@@ -1007,6 +1013,26 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             .ok_or(Error::CheckpointNotFound)?;
         *slot = None;
         Ok(())
+    }
+
+    /// Make a pinned checkpoint the live root in one pointer swap.
+    ///
+    /// The checkpoint stays pinned after this call so the caller can verify
+    /// and release it only after related state has been restored.
+    pub fn rollback_to_checkpoint(&mut self, id: CheckpointId) -> Result<RollbackInfo, Error> {
+        let checkpoint = self.find_checkpoint(id)?;
+        let info = RollbackInfo {
+            from_generation: self.generation,
+            to_generation: checkpoint.info.generation,
+        };
+        self.root = checkpoint.root;
+        self.generation = checkpoint.info.generation;
+        self.collect_garbage();
+        Ok(info)
+    }
+
+    pub fn restore_checkpoint(&mut self, id: CheckpointId) -> Result<RollbackInfo, Error> {
+        self.rollback_to_checkpoint(id)
     }
 
     pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
