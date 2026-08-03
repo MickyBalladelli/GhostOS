@@ -48,3 +48,27 @@ committed. `TYPE` separates matched files with a path header. `LINK`, `MKDIR`,
 `CREATE`, `RMDIR`, `SET DEFAULT`, and `CD` reject wildcard paths because their
 target mapping is ambiguous or unsafe. Wildcards in version selectors are not
 valid.
+
+## Shell validation workflow
+
+```text
+DIRECTORY /data
+MKDIR /data/work
+SET DEFAULT /data/work
+CREATE "daily note"
+TYPE "daily note"
+SHOW DEFAULT
+```
+
+Expected structured results include `operation`, `path`, `type`, `size`,
+`version`, and `link-count`. Directory results add typed `entry-N-name`,
+`entry-N-type`, `entry-N-size`, `entry-N-version`, and `entry-N-link-count`
+fields plus `next` for pagination. `TYPE` adds `content`, `content-bytes`,
+`encoding`, and `truncated`; default-directory commands return
+`default-directory`.
+
+The validation coverage checks parser rejection, capability authorization,
+bounded shared buffers, continuation pages, status mapping, and restart
+persistence. The ignored QEMU test uses `SYNOS_RUN_QEMU_TESTS=1` and checks the
+same listing, mkdir, create, type, and default-directory sequence on a booted
+guest.

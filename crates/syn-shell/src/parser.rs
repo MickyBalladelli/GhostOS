@@ -590,7 +590,9 @@ impl<const CAPACITY: usize> Default for CommandRegistry<CAPACITY> {
 mod tests {
     use super::*;
     use crate::filesystem::{
-        LINK_ROUTE, SHOW_LINKS_ROUTE, register_filesystem_commands,
+        CREATE_FILE_ROUTE, DIRECTORY_ROUTE, EDIT_ROUTE, LINK_ROUTE, MKDIR_ROUTE,
+        RMDIR_ROUTE, SET_DEFAULT_ROUTE, SHOW_DEFAULT_ROUTE, SHOW_LINKS_ROUTE, TYPE_ROUTE,
+        register_filesystem_commands,
     };
 
     fn registry() -> CommandRegistry<16> {
@@ -660,6 +662,62 @@ mod tests {
         assert_eq!(registry.parse("EDIT /data/note /UNKNOWN"), Err(Error::UnknownArgument));
         assert_eq!(registry.parse("EDIT \"/data/note"), Err(Error::UnterminatedQuote));
         assert_eq!(registry.parse("EDIT /data/note |"), Err(Error::InvalidSyntax));
+    }
+
+    #[test]
+    fn parses_the_complete_filesystem_command_surface() {
+        let registry = registry();
+        let cases = [
+            ("DIRECTORY \"relative folder\" /CREATE /RECURSIVE", DIRECTORY_ROUTE),
+            ("LS /data /CONTINUATION=32", DIRECTORY_ROUTE),
+            ("MKDIR /data/new /NORECURSIVE", MKDIR_ROUTE),
+            ("RMDIR /data/old", RMDIR_ROUTE),
+            ("RD /data/old", RMDIR_ROUTE),
+            ("CREATE \"relative file\"", CREATE_FILE_ROUTE),
+            ("TYPE \"relative file\" /BINARY", TYPE_ROUTE),
+            ("SET DEFAULT \"/data/work dir\"", SET_DEFAULT_ROUTE),
+            ("CD /data", SET_DEFAULT_ROUTE),
+            ("SHOW DEFAULT", SHOW_DEFAULT_ROUTE),
+            ("PWD", SHOW_DEFAULT_ROUTE),
+            ("LINK /data/source /data/alias", LINK_ROUTE),
+            ("LN /data/source /data/alias", LINK_ROUTE),
+            ("SHOW LINKS /data/alias", SHOW_LINKS_ROUTE),
+            ("LINKS /data/alias", SHOW_LINKS_ROUTE),
+            ("DELETE /data/file;3", crate::filesystem::DELETE_ROUTE),
+            ("DEL /data/file", crate::filesystem::DELETE_ROUTE),
+            ("ERASE /data/file", crate::filesystem::DELETE_ROUTE),
+            ("RM /data/file", crate::filesystem::DELETE_ROUTE),
+            ("EDIT /data/file", EDIT_ROUTE),
+            ("EDT /data/file;2", EDIT_ROUTE),
+        ];
+
+        for (line, route) in cases {
+            assert_eq!(registry.parse(line).unwrap().stage(0).unwrap().route.raw(), route, "{line}");
+        }
+
+        let directory = registry
+            .parse("DIRECTORY \"relative folder\" /CREATE /RECURSIVE")
+            .unwrap()
+            .stage(0)
+            .unwrap();
+        assert_eq!(text(directory.get("PATH")).as_str(), "relative folder");
+        assert_eq!(directory.get("CREATE"), Some(Value::Boolean(true)));
+        assert_eq!(directory.get("RECURSIVE"), Some(Value::Boolean(true)));
+
+        let listing = registry
+            .parse("LS /data /CONTINUATION=32")
+            .unwrap()
+            .stage(0)
+            .unwrap();
+        assert_eq!(listing.get("CONTINUATION"), Some(Value::Integer(32)));
+
+        assert_eq!(registry.parse("DIRECTORY /data /CREATE extra"), Err(Error::TooManyArguments));
+        assert_eq!(registry.parse("DIRECTORY /data /CREATE /CREATE"), Err(Error::InvalidValue));
+        assert_eq!(registry.parse("TYPE /data/file /BINARY=maybe"), Err(Error::InvalidValue));
+        assert_eq!(registry.parse("SET DEFAULT"), Err(Error::MissingArgument));
+        assert_eq!(registry.parse("CREATE /data/file /RECURSIVE"), Err(Error::UnknownArgument));
+        assert_eq!(registry.parse("RMDIR /data/a /data/b"), Err(Error::TooManyArguments));
+        assert_eq!(registry.parse("SHOW DEFAULT /UNKNOWN"), Err(Error::UnknownArgument));
     }
 }
 

@@ -1,5 +1,9 @@
-use super::{Daemon, DaemonError, Flags, ProcessId, ProcessRights};
+use super::{
+    Daemon, DaemonError, Flags, Operation, ProcessId, ProcessRights, Request,
+    MAX_IPC_BUFFER_BYTES,
+};
 use synos_synfs::{FileType, SynFs};
+use synos_status::Status;
 
 type TestDaemon = Daemon<64, 4, 8, 4, 4, 4096>;
 
@@ -168,4 +172,80 @@ fn rmdir_rejects_mount_roots_and_missing_parent_rights() {
         daemon.remove_directory(ProcessId::new(8).unwrap(), limited, "/data/empty"),
         Err(DaemonError::AccessDenied)
     );
+}
+
+#[test]
+fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses() {
+    let (mut daemon, process, authority) = daemon();
+    for path in ["/data/first", "/data/second"] {
+        let file = daemon
+            .open(
+                process,
+                authority,
+                path,
+                file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+            )
+            .expect("create workflow file");
+        daemon.close(process, file.capability).expect("close workflow file");
+    }
+
+    let mut listing = [0; 28];
+    listing[..5].copy_from_slice(b"/data");
+    let response = daemon.dispatch(
+        Request::new(Operation::List, process)
+            .with_capability(authority)
+            .with_offset(0),
+        Some(&mut listing),
+    );
+    assert_eq!(response.status, Status::NORMAL);
+    assert!(response.values[0] > 0);
+    assert_eq!(response.values[1], 1);
+    let first_name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
+    assert_eq!(&listing[22..22 + first_name_length], b"first");
+
+    listing.fill(0);
+    listing[..5].copy_from_slice(b"/data");
+    let response = daemon.dispatch(
+        Request::new(Operation::List, process)
+            .with_capability(authority)
+            .with_offset(1),
+        Some(&mut listing),
+    );
+    assert_eq!(response.status, Status::NORMAL);
+    assert_eq!(response.values[1], 0);
+    let second_name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
+    assert_eq!(&listing[22..22 + second_name_length], b"second");
+
+    let limited = daemon
+        .register_process(ProcessId::new(8).unwrap(), ProcessRights::WRITE)
+        .expect("register limited process");
+    let mut denied_listing = [0; 64];
+    denied_listing[..5].copy_from_slice(b"/data");
+    let response = daemon.dispatch(
+        Request::new(Operation::List, ProcessId::new(8).unwrap()).with_capability(limited),
+        Some(&mut denied_listing),
+    );
+    assert_eq!(response.status, Status::ACCESS_DENIED);
+
+    let mut oversized = [0; MAX_IPC_BUFFER_BYTES + 1];
+    let response = daemon.dispatch(
+        Request::new(Operation::List, process).with_capability(authority),
+        Some(&mut oversized),
+    );
+    assert_ne!(response.status, Status::NORMAL);
+
+    let mut invalid_path = *b"/data/../bad";
+    let response = daemon.dispatch(
+        Request::new(Operation::Mkdir, process)
+            .with_capability(authority)
+            .with_flags(Flags::RECURSIVE),
+        Some(&mut invalid_path),
+    );
+    assert_eq!(response.status, Status::INVALID_ARGUMENT);
+
+    let response = daemon.dispatch(
+        Request::new(Operation::List, process).with_capability(authority),
+        None,
+    );
+    assert_eq!(response.status, Status::INVALID_ARGUMENT);
 }

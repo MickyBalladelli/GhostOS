@@ -158,6 +158,40 @@ fn persists_to_real_disk_image() {
 }
 
 #[test]
+fn persists_filesystem_shell_workflow_objects_and_relative_target() {
+    let image_path = TemporaryImage::new("shell-workflow");
+    let mut disk = DiskImage::create(image_path.path());
+    let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+    SynFs::<MAX_BLOCKS>::format_to_device(&mut image, &mut disk).expect("format shell image");
+    let mut filesystem =
+        SynFs::<MAX_BLOCKS>::load_from_device(&mut image, &mut disk).expect("load shell image");
+
+    filesystem
+        .create_directory("/data/work", true)
+        .expect("create shell default directory");
+    filesystem
+        .write("/data/work/note", b"shell contents")
+        .expect("create shell workflow file");
+    filesystem
+        .flush_to_device(&mut disk)
+        .expect("persist shell workflow");
+    drop(disk);
+
+    let filesystem = read_state(image_path.path());
+    assert_eq!(
+        filesystem.lookup("/data/work").expect("recovered default directory").file_type,
+        synos_synfs::FileType::Directory
+    );
+    let mut contents = [0; 14];
+    let read = filesystem
+        .read("/data/work/note", &mut contents)
+        .expect("read recovered relative target");
+    assert_eq!(read.bytes_read, contents.len());
+    assert_eq!(&contents, b"shell contents");
+    filesystem.check_consistency().expect("consistent shell workflow image");
+}
+
+#[test]
 fn persists_link_lifecycle_and_shared_data() {
     let image_path = TemporaryImage::new("link-lifecycle");
     let mut disk = DiskImage::create(image_path.path());

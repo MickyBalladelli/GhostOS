@@ -1847,9 +1847,41 @@ mod tests {
         let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"", 1));
         executor.session.default_directory = Path::new("/data").expect("valid default path");
 
-        assert_eq!(
+        assert!(matches!(
             executor.execute_command(command("RMDIR /data")),
             Err(Status::ACCESS_DENIED)
+        ));
+    }
+
+    #[test]
+    fn default_directory_drives_relative_create_type_and_show_workflow() {
+        let mut filesystem = MockFilesystem::new(b"contents", 1);
+        filesystem.present = false;
+        let mut executor = FilesystemExecutor::<_, 16>::new(filesystem);
+
+        executor
+            .execute_command(command("MKDIR /data/work"))
+            .expect("create workflow directory");
+        executor
+            .execute_command(command("SET DEFAULT /data"))
+            .expect("set workflow default");
+        let created = executor
+            .execute_command(command("CREATE \"relative file\""))
+            .expect("create relative workflow file");
+        assert_eq!(
+            output_value(&created, "path"),
+            Some(OutputValue::Text(OutputText::new("/data/relative file").unwrap()))
         );
+
+        let shown = executor
+            .execute_command(command("PWD"))
+            .expect("show workflow default");
+        assert_eq!(
+            output_value(&shown, "default-directory"),
+            Some(OutputValue::Text(OutputText::new("/data").unwrap()))
+        );
+
+        let restarted = FilesystemExecutor::<_, 16>::new(executor.source);
+        assert_eq!(restarted.session().default_directory().as_str(), "/");
     }
 }

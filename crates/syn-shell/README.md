@@ -29,3 +29,24 @@ The editor accepts bounded UTF-8 text, preserves trailing newlines, redraws
 after a resize event, and keeps the session open after capacity, I/O, or save
 conflict errors. Successful shell results use stable operation, path, version,
 and size fields.
+
+## Filesystem shell workflow
+
+```text
+DIRECTORY /data
+MKDIR /data/work
+SET DEFAULT /data/work
+CREATE "daily note"
+TYPE "daily note"
+SHOW DEFAULT
+```
+
+Created objects return `operation`, `path`, `type`, `size`, `version`, and
+`link-count`. `DIRECTORY` returns typed `entry-N-*` fields and a numeric `next`
+continuation when more entries remain. `TYPE` also returns `content`,
+`content-bytes`, `encoding`, and `truncated`. `SET DEFAULT`, `CD`, `SHOW
+DEFAULT`, and `PWD` return `default-directory`.
+
+Missing paths return `NOT_FOUND`. Malformed paths, unknown qualifiers, extra
+arguments, and wildcards on create or default-directory commands return
+`INVALID_ARGUMENT` before filesystem I/O.

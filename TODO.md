@@ -185,12 +185,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Add parser, matcher, capability, daemon, runtime/ABI, shell, SynFS, persistence, QEMU, boundary, fuzz, ordering, quota, and cancellation coverage.
   - [x] Document wildcard examples, escaping, safety rules, no-match behavior, and command-specific version semantics in the filesystem README.
 
-- [ ] **End-to-End Filesystem Shell Validation**
-  - [ ] Add parser coverage for every command, alias, qualifier, relative path, quoted path, and invalid argument combination.
-  - [ ] Add daemon and runtime integration coverage for capability checks, buffer limits, pagination, and error mapping.
-  - [ ] Add a persistence flow proving that created directories, files, contents, and default-directory behavior survive restart where applicable.
-  - [ ] Add QEMU boot coverage for listing, creating a directory, creating a file, typing its contents, and changing the default directory.
-  - [ ] Document the command examples and expected structured output in the shell and filesystem READMEs.
+- [x] **End-to-End Filesystem Shell Validation**
+  - [x] Add parser coverage for every command, alias, qualifier, relative path, quoted path, and invalid argument combination.
+  - [x] Add daemon and runtime integration coverage for capability checks, buffer limits, pagination, and error mapping.
+  - [x] Add a persistence flow proving that created directories, files, contents, and default-directory behavior survive restart where applicable.
+  - [x] Add QEMU boot coverage for listing, creating a directory, creating a file, typing its contents, and changing the default directory.
+  - [x] Document the command examples and expected structured output in the shell and filesystem READMEs.
 
 ---
 

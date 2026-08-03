@@ -136,8 +136,12 @@ impl<S: SystemCall> Runtime<S> {
         let mut request = Request::new(Operation::SynFsList).with_buffer(path_and_output);
         request.arguments[4] = continuation;
         let response = self.execute(request)?;
+        let bytes = usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)?;
+        if bytes > path_and_output.length as usize || response.values[1] > u64::from(u32::MAX) {
+            return Err(Error::InvalidResponse)
+        }
         Ok(DirectoryPage {
-            bytes: usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)?,
+            bytes,
             next: response.values[1],
         })
     }
@@ -290,5 +294,37 @@ mod tests {
         assert_eq!(request.operation, Operation::SynFsLinks as u16);
         assert_eq!(request.capability, 0);
         assert_eq!(request.arguments[3], 1);
+    }
+
+    #[test]
+    fn list_directory_marshals_continuation_and_rejects_oversized_pages() {
+        let system = MockSystemCall {
+            request: Cell::new(Request::new(Operation::Yield)),
+            response: Response {
+                status: Status::NORMAL.raw(),
+                flags: 0,
+                values: [32, 7, 0, 0],
+            },
+        };
+        let runtime = Runtime::new(system);
+        let page = runtime
+            .list_directory(buffer(true), 5)
+            .expect("directory page");
+        assert_eq!(page.bytes, 32);
+        assert_eq!(page.next, 7);
+        let request = runtime.system().request.get();
+        assert_eq!(request.operation, Operation::SynFsList as u16);
+        assert_eq!(request.arguments[4], 5);
+
+        let system = MockSystemCall {
+            request: Cell::new(Request::new(Operation::Yield)),
+            response: Response {
+                status: Status::NORMAL.raw(),
+                flags: 0,
+                values: [65, 0, 0, 0],
+            },
+        };
+        let runtime = Runtime::new(system);
+        assert_eq!(runtime.list_directory(buffer(true), 0), Err(Error::InvalidResponse));
     }
 }

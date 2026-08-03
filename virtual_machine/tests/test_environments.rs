@@ -129,7 +129,16 @@ fn qemu_smp_boot() {
 #[test]
 #[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_link_lifecycle() {
-    let Some(output) = run_qemu_link_lifecycle() else {
+    let Some(output) = run_qemu_shell_commands(
+        "qemu-link",
+        &[
+            "create /data/source",
+            "link /data/source /data/alias",
+            "link /data/alias /data/second",
+            "type /data/second",
+            "show links /data/second",
+        ],
+    ) else {
         return;
     };
     assert!(
@@ -137,6 +146,43 @@ fn qemu_link_lifecycle() {
         "QEMU link lifecycle did not complete; serial output was: {output:?}"
     );
     assert!(output.contains("/data/source") && output.contains("/data/second"));
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_filesystem_shell_workflow() {
+    let Some(output) = run_qemu_shell_commands(
+        "qemu-filesystem-shell",
+        &[
+            "directory /data",
+            "mkdir /data/shell-e2e",
+            "create /data/shell-e2e/note",
+            "type /data/shell-e2e/note",
+            "set default /data/shell-e2e",
+            "show default",
+            "directory",
+            "type note",
+        ],
+    ) else {
+        return;
+    };
+    assert!(
+        output.contains("operation: created") && output.contains("/data/shell-e2e"),
+        "QEMU did not create the directory; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("/data/shell-e2e/note"),
+        "QEMU did not create and type the file; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("default-directory: /data/shell-e2e"),
+        "QEMU did not preserve the shell default directory; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("Directory: /data/shell-e2e"),
+        "QEMU did not list the default directory; serial output was: {output:?}"
+    );
 }
 
 fn qemu_image() -> Option<PathBuf> {
@@ -197,9 +243,9 @@ fn run_qemu_boot(vcpus: usize) -> Option<String> {
 }
 
 #[cfg(unix)]
-fn run_qemu_link_lifecycle() -> Option<String> {
+fn run_qemu_shell_commands(label: &str, commands: &[&str]) -> Option<String> {
     if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
-        eprintln!("QEMU link test skipped: set SYNOS_RUN_QEMU_TESTS=1 to enable");
+        eprintln!("QEMU shell test skipped: set SYNOS_RUN_QEMU_TESTS=1 to enable");
         return None;
     }
 
@@ -209,7 +255,7 @@ fn run_qemu_link_lifecycle() -> Option<String> {
         panic!("QEMU test image does not exist: {}", image.display());
     }
 
-    let serial_path = temporary_path("qemu-link");
+    let serial_path = temporary_path(label);
     let qmp_path = serial_path.with_extension("qmp");
     let mut child = Command::new(&qemu)
         .args([
@@ -255,13 +301,7 @@ fn run_qemu_link_lifecycle() -> Option<String> {
     read_qmp_message(&mut qmp);
     qmp_command(&mut qmp, "{\"execute\":\"qmp_capabilities\"}");
 
-    for command in [
-        "create /data/source",
-        "link /data/source /data/alias",
-        "link /data/alias /data/second",
-        "type /data/second",
-        "show links /data/second",
-    ] {
+    for command in commands {
         for key in command.bytes() {
             let key = match key {
                 b'a'..=b'z' | b'0'..=b'9' => (key as char).to_string(),
