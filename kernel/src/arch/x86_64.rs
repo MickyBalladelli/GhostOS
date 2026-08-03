@@ -71,6 +71,8 @@ pub mod interrupts {
     use core::sync::atomic::{AtomicU64, Ordering};
 
     const IDT_ENTRIES: usize = 256;
+    const PIT_DIVISOR: u16 = 1_193;
+    const PIT_TICK_US: u64 = 1_000;
     static mut IDT: [IdtEntry; IDT_ENTRIES] = [IdtEntry::MISSING; IDT_ENTRIES];
     static ISOLATED_CORES: AtomicU64 = AtomicU64::new(0);
 
@@ -136,6 +138,7 @@ pub mod interrupts {
     /// Must run once on the bootstrap processor while interrupts are disabled.
     pub unsafe fn init() {
         unsafe {
+            asm!("cli", options(nomem, nostack));
             let code_selector: u16;
             asm!("mov {0:x}, cs", out(reg) code_selector, options(nomem, nostack, preserves_flags));
 
@@ -144,6 +147,7 @@ pub mod interrupts {
             }
 
             remap_pic();
+            configure_pit();
             outb(0x21, 0xfc);
             outb(0xa1, 0xff);
 
@@ -194,6 +198,10 @@ pub mod interrupts {
 
         if (32..48).contains(&vector) {
             unsafe {
+                if vector == 32 {
+                    let scheduler = &mut *core::ptr::addr_of_mut!(crate::SCHEDULER);
+                    let _ = scheduler.tick(PIT_TICK_US);
+                }
                 if vector >= 40 {
                     outb(0xa0, 0x20);
                 }
@@ -220,6 +228,14 @@ pub mod interrupts {
             io_wait();
             outb(0xa1, 0x01);
             io_wait();
+        }
+    }
+
+    unsafe fn configure_pit() {
+        unsafe {
+            outb(0x43, 0x36);
+            outb(0x40, PIT_DIVISOR as u8);
+            outb(0x40, (PIT_DIVISOR >> 8) as u8);
         }
     }
 

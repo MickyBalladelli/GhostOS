@@ -433,10 +433,6 @@ impl CpuState {
                 .map_err(|_| CpuError::MemoryAccessError)
         };
 
-        push64(mmu, &mut new_rsp, old_rip)?;
-        push64(mmu, &mut new_rsp, old_cs as u64)?;
-        push64(mmu, &mut new_rsp, old_rflags)?;
-
         let new_privilege = if gate.dpl() == 0 {
             PrivilegeLevel::Ring0
         } else {
@@ -446,6 +442,10 @@ impl CpuState {
             push64(mmu, &mut new_rsp, old_ss as u64)?;
             push64(mmu, &mut new_rsp, old_rsp)?;
         }
+
+        push64(mmu, &mut new_rsp, old_rflags)?;
+        push64(mmu, &mut new_rsp, old_cs as u64)?;
+        push64(mmu, &mut new_rsp, old_rip)?;
 
         if let Some(code) = error_code {
             push64(mmu, &mut new_rsp, code)?;

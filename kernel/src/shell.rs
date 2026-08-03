@@ -37,6 +37,7 @@ const SHOW_DSM_ROUTE: u16 = 9;
 const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
 const SYNOS_ISOLATE_ROUTE: u16 = 12;
+const UPTIME_ROUTE: u16 = 13;
 const COMMAND_CAPACITY: usize = 30;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
@@ -73,6 +74,7 @@ pub fn run(
     register(&mut registry, "TOP-CPU", TOP_CPU_ROUTE);
     register(&mut registry, "SHOW-MEMORY", SHOW_MEMORY_ROUTE);
     register(&mut registry, "SHOW-DSM", SHOW_DSM_ROUTE);
+    register(&mut registry, "UPTIME", UPTIME_ROUTE);
     register_control_commands(&mut registry);
     syn_shell::filesystem::register_filesystem_commands(&mut registry)
         .expect("kernel filesystem command registry has capacity");
@@ -1808,6 +1810,7 @@ impl KernelExecutor {
             TOP_CPU_ROUTE => self.top_cpu(),
             SHOW_MEMORY_ROUTE => self.show_memory(),
             SHOW_DSM_ROUTE => self.show_dsm(),
+            UPTIME_ROUTE => self.uptime(),
             STOP_JOB_ROUTE => self.stop_job(command),
             SET_PROCESS_ROUTE => self.set_process(command),
             SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
@@ -2586,6 +2589,26 @@ impl KernelExecutor {
                 lock.owner_node
             );
         }
+        Ok(output)
+    }
+
+    fn uptime(&self) -> Result<StructuredOutput, Status> {
+        const SECONDS_PER_MINUTE: u64 = 60;
+        const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
+        const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+
+        let uptime_us = self.scheduler.clock();
+        let total_seconds = uptime_us / 1_000_000;
+        let days = total_seconds / SECONDS_PER_DAY;
+        let hours = (total_seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR;
+        let minutes = (total_seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
+        let seconds = total_seconds % SECONDS_PER_MINUTE;
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert(&mut output, "uptime-us", OutputValue::Unsigned(uptime_us))?;
+        insert(&mut output, "days", OutputValue::Unsigned(days))?;
+        insert(&mut output, "hours", OutputValue::Unsigned(hours))?;
+        insert(&mut output, "minutes", OutputValue::Unsigned(minutes))?;
+        insert(&mut output, "seconds", OutputValue::Unsigned(seconds))?;
         Ok(output)
     }
 }

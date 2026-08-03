@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 pub struct IdtGate {
     /// 16-bit selector.
     pub selector: u16,
-    /// 16-bit attributes / type field (P, DPL, TYPE).
-    pub type_attr: u16,
+    /// Gate type and attributes (P, DPL, TYPE).
+    pub type_attr: u8,
     /// 64-bit handler offset.
     pub offset: u64,
     /// IST index (0 means "not used").
@@ -19,9 +19,9 @@ impl IdtGate {
         let offset_lo = u16::from_le_bytes([raw[0], raw[1]]) as u64;
         let selector = u16::from_le_bytes([raw[2], raw[3]]);
         let ist = raw[4] & 0x07;
-        let type_attr = u16::from_le_bytes([raw[5], raw[6]]);
-        let offset_mid = u16::from_le_bytes([raw[7], raw[8]]) as u64;
-        let offset_hi = u32::from_le_bytes([raw[9], raw[10], raw[11], raw[12]]) as u64;
+        let type_attr = raw[5];
+        let offset_mid = u16::from_le_bytes([raw[6], raw[7]]) as u64;
+        let offset_hi = u32::from_le_bytes([raw[8], raw[9], raw[10], raw[11]]) as u64;
         let offset = offset_lo | (offset_mid << 16) | (offset_hi << 32);
         Self {
             selector,
@@ -32,11 +32,11 @@ impl IdtGate {
     }
 
     pub fn present(&self) -> bool {
-        self.type_attr & (1 << 15) != 0
+        self.type_attr & (1 << 7) != 0
     }
 
     pub fn dpl(&self) -> u8 {
-        ((self.type_attr >> 13) & 0x03) as u8
+        (self.type_attr >> 5) & 0x03
     }
 }
 
