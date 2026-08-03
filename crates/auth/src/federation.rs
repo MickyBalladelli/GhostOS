@@ -3,7 +3,9 @@ use synos_kernel::{FederationClusterId, Rights};
 
 use crate::{
     LendingError, LendingKind, LendingRights, ResourceLender, RevocationAction,
-    token::{CapabilityKey, CryptographicCapability, TokenError, TransportRights},
+    token::{
+        CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights,
+    },
 };
 
 pub const MAX_FEDERATED_PEERS: usize = 32;
@@ -79,6 +81,13 @@ impl DiscoveryAnnouncement {
     }
 
     pub fn verify(&self, key: CapabilityKey, now_us: u64) -> Result<(), FederationError> {
+        if self.epoch == 0
+            || self.nonce == 0
+            || self.expires_at_us <= self.issued_at_us
+            || TransportRights::from_bits(self.transports.bits()).is_none()
+        {
+            return Err(FederationError::Invalid);
+        }
         if now_us < self.issued_at_us || now_us >= self.expires_at_us {
             return Err(FederationError::Expired);
         }
@@ -276,6 +285,24 @@ impl FederatedResourceOffer {
     }
 
     pub fn verify(&self, key: CapabilityKey, now_us: u64) -> Result<(), FederationError> {
+        let expected_rights = match self.kind {
+            FederatedResourceKind::Cpu => Rights::EXECUTE,
+            FederatedResourceKind::Ram | FederatedResourceKind::Vram => {
+                Rights::READ.union(Rights::WRITE)
+            }
+        };
+        if self.resource == 0
+            || self.amount == 0
+            || self.epoch == 0
+            || self.expires_at_us == 0
+            || self.rights != expected_rights
+            || TransportRights::from_bits(self.transports.bits()).is_none()
+            || (self.kind == FederatedResourceKind::Cpu && self.address != 0)
+            || (self.kind != FederatedResourceKind::Cpu
+                && self.address.checked_add(self.amount).is_none())
+        {
+            return Err(FederationError::Invalid);
+        }
         if now_us >= self.expires_at_us {
             return Err(FederationError::Expired);
         }
@@ -338,6 +365,20 @@ pub struct FederatedLease {
     pub provider: ClusterId,
     pub federation_epoch: u64,
     pub capability: CryptographicCapability,
+}
+
+impl FederatedLease {
+    /// Restrict a lease before handing it to a tenant or delegated worker.
+    /// The issuer key is not needed because attenuation can only remove power.
+    pub fn attenuate(self, caveat: CapabilityCaveat) -> Result<Self, FederationError> {
+        Ok(Self {
+            capability: self
+                .capability
+                .attenuate(caveat)
+                .map_err(FederationError::Token)?,
+            ..self
+        })
+    }
 }
 
 pub fn accept_offer<const PEERS: usize, const LOANS: usize>(
@@ -439,7 +480,8 @@ impl RevocationSignal {
     ) -> Result<Self, FederationError> {
         if resource == 0
             || prior_epoch == 0
-            || next_epoch != prior_epoch.saturating_add(1)
+            || prior_epoch == u64::MAX
+            || next_epoch != prior_epoch + 1
             || deadline_us < sent_at_us
             || deadline_us - sent_at_us > MAX_REVOCATION_LATENCY_US
         {
@@ -470,6 +512,15 @@ impl RevocationSignal {
     ) -> Result<RevocationAction, FederationError> {
         key.verify_authenticator(&self.payload(), &self.authenticator)
             .map_err(FederationError::Token)?;
+        if self.resource == 0
+            || self.prior_epoch == 0
+            || self.prior_epoch == u64::MAX
+            || self.next_epoch != self.prior_epoch + 1
+            || self.deadline_us < self.sent_at_us
+            || self.deadline_us - self.sent_at_us > MAX_REVOCATION_LATENCY_US
+        {
+            return Err(FederationError::Invalid);
+        }
         if now_us < self.sent_at_us
             || now_us > self.deadline_us
             || active_lease.provider != self.provider

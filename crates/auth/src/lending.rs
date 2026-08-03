@@ -179,9 +179,14 @@ impl<const CAPACITY: usize> ResourceLender<CAPACITY> {
             .position(|loan| loan.is_none() || loan.is_some_and(|loan| !loan.active))
             .ok_or(LendingError::Capacity)?;
         let prior_epoch = self.loans[slot].map(|loan| loan.epoch).unwrap_or(0);
-        let epoch = prior_epoch.wrapping_add(1).max(1);
-        self.next_nonce = self.next_nonce.wrapping_add(1).max(1);
-        let expires_at_us = now_us.saturating_add(duration_us);
+        let epoch = prior_epoch.checked_add(1).ok_or(LendingError::Invalid)?;
+        self.next_nonce = self
+            .next_nonce
+            .checked_add(1)
+            .ok_or(LendingError::Invalid)?;
+        let expires_at_us = now_us
+            .checked_add(duration_us)
+            .ok_or(LendingError::Invalid)?;
         let token = CryptographicCapability::issue(
             self.key,
             self.provider,
@@ -294,10 +299,30 @@ impl<const CAPACITY: usize> ResourceLender<CAPACITY> {
             .ok_or(LendingError::NotFound)?;
         let loan = self.loans[slot].as_mut().expect("active loan");
         loan.active = false;
-        loan.epoch = loan.epoch.wrapping_add(1).max(1);
+        loan.epoch = loan.epoch.saturating_add(1).max(1);
         let action = revocation_action(*loan);
         self.queue_revocation(action);
         Ok(action)
+    }
+
+    /// Reclaim every loan whose deadline has passed and queue the required
+    /// remote cleanup actions for the fabric and compute runtimes.
+    pub fn expire(&mut self, now_us: u64) -> usize {
+        let mut expired = 0;
+        for index in 0..CAPACITY {
+            let Some(loan) = self.loans[index].as_mut() else {
+                continue
+            };
+            if !loan.active || now_us < loan.expires_at_us {
+                continue
+            }
+            loan.active = false;
+            loan.epoch = loan.epoch.saturating_add(1).max(1);
+            let action = revocation_action(*loan);
+            self.queue_revocation(action);
+            expired += 1;
+        }
+        expired
     }
 
     /// Revoke a remote memory loan only through a matching kernel resource
@@ -372,7 +397,7 @@ impl<const CAPACITY: usize> CapabilityRevocationHook for ResourceLender<CAPACITY
             }
             let loan = self.loans[index].as_mut().expect("matching loan");
             loan.active = false;
-            loan.epoch = loan.epoch.wrapping_add(1).max(1);
+            loan.epoch = loan.epoch.saturating_add(1).max(1);
             let action = revocation_action(*loan);
             self.queue_revocation(action)
         }

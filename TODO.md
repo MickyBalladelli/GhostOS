@@ -696,15 +696,15 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 41. Inter-Cluster Federated Load Balancing ("Cluster of Clusters")
-- [ ] **Capability Token-Gated Resource Leasing**
-  - [ ] Build cross-cluster resource discovery protocols enabling clusters to exchange cryptographic capability tokens (Macaroons/Amoeba) for idle CPU/RAM/VRAM leasing.
-  - [ ] Implement owner-delegated capability attenuation primitives to scope remote execution rights tightly.
-- [ ] **Zero-Knowledge Micro-Silo Sandboxing**
-  - [ ] Enforce strict "Blind Sandbox" isolation for leased cross-cluster workloads: tenant processes cannot view host process trees, local SynFS mounts, or local sockets.
-  - [ ] Integrate hardware-assisted frame encryption (AMD SEV / Intel TDX / ARM CCA / CXL-IDE) for borrowed memory frames in-transit and at-rest.
-- [ ] **Hard Preemption & Epoch Fencing**
-  - [ ] Implement sub-millisecond inter-cluster revocation signals enabling lending nodes to reclaim local hardware instantly.
-  - [ ] Extend the DLM with cross-cluster epoch fencing to isolate revoked execution contexts safely without split-brain anomalies.
+- [x] **Capability Token-Gated Resource Leasing**
+  - [x] Build cross-cluster resource discovery protocols enabling clusters to exchange cryptographic capability tokens (Macaroons/Amoeba) for idle CPU/RAM/VRAM leasing.
+  - [x] Implement owner-delegated capability attenuation primitives to scope remote execution rights tightly.
+- [x] **Zero-Knowledge Micro-Silo Sandboxing**
+  - [x] Enforce strict "Blind Sandbox" isolation for leased cross-cluster workloads: tenant processes cannot view host process trees, local SynFS mounts, or local sockets.
+  - [x] Integrate hardware-assisted frame encryption (AMD SEV / Intel TDX / ARM CCA / CXL-IDE) for borrowed memory frames in-transit and at-rest.
+- [x] **Hard Preemption & Epoch Fencing**
+  - [x] Implement sub-millisecond inter-cluster revocation signals enabling lending nodes to reclaim local hardware instantly.
+  - [x] Extend the DLM with cross-cluster epoch fencing to isolate revoked execution contexts safely without split-brain anomalies.
 
 ---
 
