@@ -423,9 +423,11 @@ dependencies = [
 name = "synos-auditd"
 version = "0.1.0"
 dependencies = [
+ "syn-script",
  "synos-fabric",
  "synos-pkg",
  "synos-status",
+ "synos-synfs",
  "synos-system-model",
 ]
 

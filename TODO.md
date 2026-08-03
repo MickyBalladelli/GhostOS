@@ -607,8 +607,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Build a background scanner matching package content hashes against security advisory databases (RustSec/OSV/CVE).
 - [x] **Obsolescence Inspection Utilities (`SHOW OBSOLETE`)**
   - [x] Implement administrative tools to display deprecated, unmaintained, or out-of-date binaries and driver packages across the cluster.
-- [ ] **AI-Assisted Patch Workflows**
-  - [ ] Enable AI agent integration to auto-generate patch application plans and dry-run updates in isolated CoW sandboxes before deployment.
+- [x] **AI-Assisted Patch Workflows**
+  - [x] Enable AI agent integration to auto-generate patch application plans and dry-run updates in isolated CoW sandboxes before deployment.
 
 
 ---

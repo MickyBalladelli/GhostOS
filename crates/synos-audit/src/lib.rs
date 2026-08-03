@@ -3,6 +3,15 @@
 
 use core::fmt;
 
+pub mod patch_workflow;
+
+pub use patch_workflow::{
+    DEFAULT_PATCH_PLAN_CAPACITY, FilesystemPatchApplier, MAX_PATCH_CONTENT_BYTES,
+    MAX_PATCH_PATH_BYTES, PatchAction, PatchApplier, PatchContents, PatchDecision,
+    PatchDryRunReport, PatchOutcome, PatchPath, PatchPlan, PatchPlanGenerator, PatchStep,
+    PatchWorkflow, PatchWorkflowError, PreparedPatchPlan,
+};
+
 use synos_fabric::NodeId;
 use synos_pkg::PackageDaemon;
 use synos_status::{IntoStatus, Status};
