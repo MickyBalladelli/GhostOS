@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-actors = { path = "../actors" }
+synos-auth = { path = "../auth" }
 synos-fabric = { path = "../fabric" }
 synos-kernel = { path = "../../kernel" }
 synos-status = { path = "../status" }

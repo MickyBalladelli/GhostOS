@@ -1,6 +1,14 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod topology;
+
+pub use topology::{
+    ArbitrationError, ArbitrationMatrix, ArbitrationPolicy, InterClusterGrant, IntraClusterGrant,
+    LoadBalancingTopology, MemoryProtection, PreemptionModel, PrimaryMechanism, SecurityMechanism,
+    TopologyArbiter, TrustScope, DEFAULT_ARBITRATION_NODE_CAPACITY,
+};
+
 use synos_actors::{
     ActorError, ActorId, ActorRef, ActorRuntime, ActorSpawnRequest, ActorSystem,
     DEFAULT_ACTOR_CAPACITY,

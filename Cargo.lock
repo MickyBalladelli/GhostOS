@@ -455,6 +455,7 @@ name = "synos-balancerd"
 version = "0.1.0"
 dependencies = [
  "synos-actors",
+ "synos-auth",
  "synos-fabric",
  "synos-kernel",
  "synos-status",

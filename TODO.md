@@ -710,6 +710,11 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 ## 42. Load Balancing Topology & Arbitration Matrix
 
+- [x] **Executable Topology Matrix**
+  - [x] Encode the trusted intra-cluster and zero-trust inter-cluster arbitration policies.
+  - [x] Use deterministic least-loaded local placement with cache-latency tie breaking.
+  - [x] Require cryptographic federated admission, hardware-encrypted memory, and epoch-fenced hard preemption for remote leases.
+
 | Feature | Intra-Cluster Load Balancing | Inter-Cluster Load Balancing |
 | :--- | :--- | :--- |
 | **Trust Scope** | Fully trusted within cluster boundary | Zero-Trust ("Cluster of Clusters") |
