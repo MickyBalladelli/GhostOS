@@ -595,8 +595,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ## 35. Atomic System Patching & Hot-Swapping (`synos-update`)
 - [x] **Declarative Atomic Updates & Instant Rollbacks**
   - [x] Implement content-addressed system state updates on SynFS, enabling zero-cost instant rollbacks if boot or service checks fail.
-- [ ] **Zero-Downtime Microservice Hot-Swapping**
-  - [ ] Build IPC descriptor inheritance hooks to replace running Ring 3 daemons/drivers on-the-fly without service interruption.
+- [x] **Zero-Downtime Microservice Hot-Swapping**
+  - [x] Build IPC descriptor inheritance hooks to replace running Ring 3 daemons/drivers on-the-fly without service interruption.
 - [ ] **Live Microkernel Patching**
   - [ ] Support safe Ring 0 function redirection for zero-reboot kernel security updates.
 

@@ -696,6 +696,8 @@ dependencies = [
 name = "synos-update"
 version = "0.1.0"
 dependencies = [
+ "synos-init",
+ "synos-ipc",
  "synos-pkg",
  "synos-status",
  "synos-synfs",

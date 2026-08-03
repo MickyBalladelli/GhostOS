@@ -1,6 +1,14 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+mod hotswap;
+
+pub use hotswap::{
+    HotSwapCoordinator, HotSwapError, HotSwapReceipt, HotSwapRequest, HotSwapRuntime,
+    ReplacementSpawnRequest, MAX_HOT_SWAP_DESCRIPTORS,
+};
+pub use synos_ipc::InheritableDescriptor;
+
 use synos_pkg::{PackageDaemon, PackageError, SystemConfiguration};
 use synos_status::{IntoStatus, Status};
 use synos_synfs::{CheckpointInfo, Error as SynFsError, SynFs};

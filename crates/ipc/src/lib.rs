@@ -36,6 +36,70 @@ impl SharedRegionId {
     }
 }
 
+pub const MAX_INHERITABLE_DESCRIPTORS: usize = 32;
+
+/// An IPC object that may be handed to a replacement Ring 3 process.
+///
+/// Inheritance duplicates the process attachment. It does not revoke the
+/// source attachment; the old process remains able to serve requests until
+/// the supervisor performs the atomic service switch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InheritableDescriptor {
+    Channel(ChannelId),
+    SharedRegion(SharedRegionId),
+}
+
+impl InheritableDescriptor {
+    pub const fn channel(raw: u32) -> Option<Self> {
+        match ChannelId::new(raw) {
+            Some(id) => Some(Self::Channel(id)),
+            None => None,
+        }
+    }
+
+    pub const fn shared_region(raw: u32) -> Option<Self> {
+        match SharedRegionId::new(raw) {
+            Some(id) => Some(Self::SharedRegion(id)),
+            None => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DescriptorInheritanceError {
+    Capacity,
+    Duplicate,
+}
+
+pub fn validate_inheritable_descriptors(
+    descriptors: &[InheritableDescriptor],
+) -> Result<(), DescriptorInheritanceError> {
+    if descriptors.len() > MAX_INHERITABLE_DESCRIPTORS {
+        return Err(DescriptorInheritanceError::Capacity);
+    }
+    for (index, descriptor) in descriptors.iter().enumerate() {
+        if descriptors[..index].contains(descriptor) {
+            return Err(DescriptorInheritanceError::Duplicate);
+        }
+    }
+    Ok(())
+}
+
+/// Ring 0 hook used by a hot-swap coordinator to duplicate IPC ownership.
+///
+/// Process IDs are raw here so the IPC crate stays independent from the
+/// process supervisor that owns them.
+pub trait DescriptorInheritance {
+    type Error;
+
+    fn inherit_descriptors(
+        &mut self,
+        source_process: u64,
+        target_process: u64,
+        descriptors: &[InheritableDescriptor],
+    ) -> Result<(), Self::Error>;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SharedBuffer {
     pub region: SharedRegionId,
