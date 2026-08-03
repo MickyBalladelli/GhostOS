@@ -1,0 +1,213 @@
+use synos_synfs::{
+    BlockDevice, BlockIoError, BlockIoQueue, BlockIoResult, BlockOperation, BlockRequest,
+    DeviceHealth, Error, PoolLayout, StorageClass, StorageDeviceId,
+    StoragePoolError, StoragePoolId, StoragePoolIo, SynFs, VersionSelector, VersionedPath,
+    VolumeLimits, BLOCK_SIZE, MAX_PATH_BYTES,
+};
+
+const BLOCKS: usize = 128;
+
+#[test]
+fn format_generation_selection_and_checksum_validation() {
+    let geometry = SynFs::<BLOCKS>::volume_geometry();
+    assert_eq!(geometry.block_size, BLOCK_SIZE);
+    assert_eq!(geometry.total_bytes, SynFs::<BLOCKS>::volume_bytes());
+    assert_eq!(geometry.total_blocks, SynFs::<BLOCKS>::volume_blocks());
+
+    let mut image = vec![0; SynFs::<BLOCKS>::volume_bytes()];
+    SynFs::<BLOCKS>::format(&mut image).expect("format volume");
+    let mut filesystem = SynFs::<BLOCKS>::load(&image).expect("load formatted volume");
+    filesystem.write("/state", b"generation one").expect("write first version");
+    let first = filesystem.flush(&mut image).expect("flush first generation");
+    filesystem.write("/state", b"generation two").expect("write second version");
+    let second = filesystem.flush(&mut image).expect("flush second generation");
+    assert!(second.sequence > first.sequence);
+
+    let recovered = SynFs::<BLOCKS>::load(&image).expect("select newest valid generation");
+    assert_eq!(recovered.lookup("/state").expect("latest file").version, 2);
+
+    let mut corrupt = image;
+    corrupt[BLOCK_SIZE - 1] ^= 1;
+    corrupt[(BLOCKS + 2) * BLOCK_SIZE + BLOCK_SIZE - 1] ^= 1;
+    assert!(matches!(SynFs::<BLOCKS>::load(&corrupt), Err(Error::Corrupt)));
+}
+
+#[test]
+fn versions_directories_links_snapshots_and_retention_are_consistent() {
+    let mut filesystem = SynFs::<BLOCKS>::new();
+    filesystem
+        .create_directory("/data/archive", true)
+        .expect("create directories");
+    filesystem
+        .write("/data/archive/log", b"old")
+        .expect("write version one");
+    let checkpoint = filesystem.create_checkpoint().expect("pin snapshot");
+    filesystem
+        .write("/data/archive/log", b"new")
+        .expect("write version two");
+    filesystem
+        .link("/data/archive/log", "/data/archive/alias")
+        .expect("create hard link");
+
+    let mut old = [0; 3];
+    filesystem
+        .read_version("/data/archive/log", 1, &mut old)
+        .expect("read exact old version");
+    assert_eq!(&old, b"old");
+    let mut latest = [0; 3];
+    filesystem.read("/data/archive/alias", &mut latest).expect("read link");
+    assert_eq!(&latest, b"new");
+    assert_eq!(filesystem.lookup("/data/archive/alias").unwrap().link_count, 2);
+
+    let snapshot = filesystem
+        .checkpoint_snapshot(checkpoint.id, synos_synfs::RmsMapHandle::from_capability(1).unwrap())
+        .expect("open checkpoint snapshot");
+    let mut snapshot_contents = [0; 3];
+    let mut copied = 0;
+    snapshot
+        .visit_file_pages("/data/archive/log", |page| {
+            snapshot_contents[copied..copied + page.bytes.len()].copy_from_slice(page.bytes);
+            copied += page.bytes.len();
+        })
+        .expect("read pinned old root");
+    assert_eq!(&snapshot_contents, b"old");
+
+    assert_eq!(filesystem.purge("/data/archive/log", 1, 8).unwrap(), 1);
+    assert_eq!(filesystem.lookup("/data/archive/log;1"), Err(Error::NotFound));
+    filesystem.release_checkpoint(checkpoint.id).expect("release snapshot");
+    let report = filesystem.collect_garbage();
+    assert!(report.freed_blocks > 0);
+    filesystem.check_consistency().expect("consistent retained tree");
+}
+
+#[test]
+fn path_limits_and_quotas_reject_unsafe_or_excessive_input() {
+    assert_eq!(VersionedPath::parse("/tmp/file;0").unwrap().version, VersionSelector::Latest);
+    assert_eq!(VersionedPath::parse("/tmp/file;7").unwrap().version, VersionSelector::Exact(7));
+    assert_eq!(VersionedPath::parse("/tmp/file;wat"), Err(Error::InvalidVersion));
+    assert_eq!(VersionedPath::parse("/tmp/file;").unwrap_err(), Error::InvalidVersion);
+    assert_eq!(VersionedPath::parse("/tmp/../file").unwrap_err(), Error::InvalidPath);
+
+    let too_long = "/x".repeat(MAX_PATH_BYTES);
+    assert_eq!(SynFs::<BLOCKS>::new().lookup(&too_long), Err(Error::InvalidPath));
+
+    let mut filesystem = SynFs::<BLOCKS>::new();
+    filesystem
+        .set_limits(VolumeLimits {
+            max_bytes: 3,
+            max_files: 1,
+            max_blocks: BLOCKS,
+        })
+        .expect("set quota");
+    filesystem.write("/one", b"123").expect("write within quota");
+    assert_eq!(filesystem.write("/two", b"x"), Err(Error::QuotaExceeded));
+    assert_eq!(filesystem.write("/one", b"1234"), Err(Error::QuotaExceeded));
+}
+
+#[derive(Clone, Debug)]
+struct MemoryDevice {
+    blocks: Vec<[u8; BLOCK_SIZE]>,
+    fail_reads: bool,
+    fail_writes: bool,
+}
+
+impl MemoryDevice {
+    fn new(blocks: usize) -> Self {
+        Self {
+            blocks: vec![[0; BLOCK_SIZE]; blocks],
+            fail_reads: false,
+            fail_writes: false,
+        }
+    }
+}
+
+impl BlockDevice for MemoryDevice {
+    fn read_block(&mut self, block: u64, output: &mut [u8]) -> Result<(), ()> {
+        if self.fail_reads || output.len() != BLOCK_SIZE {
+            return Err(())
+        }
+        output.copy_from_slice(self.blocks.get(block as usize).ok_or(())?);
+        Ok(())
+    }
+
+    fn write_block(&mut self, block: u64, input: &[u8]) -> Result<(), ()> {
+        if self.fail_writes || input.len() != BLOCK_SIZE {
+            return Err(())
+        }
+        self.blocks.get_mut(block as usize).ok_or(())?.copy_from_slice(input);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    fn discard_block(&mut self, block: u64) -> Result<(), ()> {
+        self.blocks.get_mut(block as usize).ok_or(())?.fill(0);
+        Ok(())
+    }
+}
+
+#[test]
+fn storage_pool_and_block_queue_cover_failure_and_mirror_rebuild_paths() {
+    let first = StorageDeviceId::new(1).unwrap();
+    let second = StorageDeviceId::new(2).unwrap();
+    let replacement = StorageDeviceId::new(3).unwrap();
+    let pool_id = StoragePoolId::new(1).unwrap();
+    let mut io = StoragePoolIo::<MemoryDevice, 4, 2>::new();
+    io.register_device(first, StorageClass::Nvme, 32, BLOCK_SIZE as u32, 1, MemoryDevice::new(32))
+        .expect("register first device");
+    io.register_device(second, StorageClass::Nvme, 32, BLOCK_SIZE as u32, 2, MemoryDevice::new(32))
+        .expect("register second device");
+    io.create_pool(pool_id, "mirror", PoolLayout::Mirror, &[first, second])
+        .expect("create mirror");
+    let start = io.admin_mut().allocate(pool_id, 2).expect("allocate mirror blocks");
+    assert_eq!(start, 0);
+    assert_eq!(io.admin().resolve_block(pool_id, 1, 1).unwrap().device, second);
+
+    io.admin_mut().set_device_health(second, DeviceHealth::Failed).unwrap();
+    assert_eq!(io.admin().pool_health(pool_id).unwrap(), synos_synfs::PoolHealth::Degraded);
+    assert_eq!(io.admin().resolve_block(pool_id, 0, 1), Err(StoragePoolError::DeviceFailed));
+    io.replace_device(
+        pool_id,
+        second,
+        replacement,
+        StorageClass::Nvme,
+        32,
+        BLOCK_SIZE as u32,
+        3,
+        MemoryDevice::new(32),
+    )
+    .expect("register replacement");
+    let mut scratch = [0; BLOCK_SIZE];
+    assert_eq!(io.rebuild_mirror(pool_id, replacement, 0, 2, &mut scratch).unwrap(), 2);
+
+    let mut queue = BlockIoQueue::<1>::new();
+    let request = BlockRequest::read(pool_id, 0);
+    let token = queue.submit(request).expect("submit block read");
+    assert_eq!(queue.submit(request), Err(BlockIoError::QueueFull));
+    assert_eq!(queue.cancel(token), Ok(()));
+    assert_eq!(queue.cancel(token), Err(BlockIoError::InvalidToken));
+    assert_eq!(BlockRequest::write(pool_id, 0, &[0; BLOCK_SIZE + 1]), Err(BlockIoError::InvalidRequest));
+}
+
+#[test]
+fn storage_queue_reports_device_io_and_completion_results() {
+    let device = StorageDeviceId::new(1).unwrap();
+    let pool = StoragePoolId::new(1).unwrap();
+    let mut io = StoragePoolIo::<MemoryDevice, 2, 1>::new();
+    io.register_device(device, StorageClass::Nvme, 4, BLOCK_SIZE as u32, 1, MemoryDevice::new(4))
+        .expect("register device");
+    io.create_pool(pool, "pool", PoolLayout::Stripe, &[device]).expect("create pool");
+    let mut queue = BlockIoQueue::<2>::new();
+    queue.submit(BlockRequest::write(pool, 0, &[7; BLOCK_SIZE]).unwrap()).unwrap();
+    assert_eq!(queue.dispatch(&mut io), 1);
+    let completion = queue.poll().expect("poll write completion");
+    assert_eq!(completion.result, Ok(BlockIoResult::Complete { bytes: BLOCK_SIZE as u16 }));
+
+    io.admin_mut().set_device_health(device, DeviceHealth::Failed).unwrap();
+    queue.submit(BlockRequest::read(pool, 0)).unwrap();
+    queue.dispatch(&mut io);
+    assert!(matches!(queue.poll().unwrap().result, Err(BlockIoError::Pool(StoragePoolError::DeviceFailed))));
+    assert_eq!(BlockOperation::Read, BlockOperation::Read);
+}

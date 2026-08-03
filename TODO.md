@@ -1076,16 +1076,16 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.5 SynFS, Storage, and Persistence Tests
 
-- [ ] Test SynFS formatting, superblocks, generation selection, checksums, block maps, B-tree insert/update/delete, version lookup, CoW sharing, links, directories, quotas, retention, and garbage collection.
-- [ ] Test file and directory operations through direct SynFS, `synos-fsd`, runtime ABI, kernel IPC, and shell layers.
-- [ ] Test exact-version reads/writes/deletes, latest-version behavior, snapshots, hard links, renames, mount roots, namespace boundaries, and default directories.
-- [ ] Test malformed paths, wildcards, UTF-8 limits, empty names, reserved names, traversal attempts, duplicate entries, and unauthorized visibility.
-- [ ] Test block-device short reads/writes, flush ordering, discard, device removal, degraded mirrors, rebuilds, quota exhaustion, and I/O errors.
-- [ ] Test torn commits at every write boundary, reboot recovery, previous-generation recovery, corrupted metadata, bad checksums, interrupted garbage collection, and consistency-checker diagnostics.
-- [ ] Test Ext4, FAT32, and NTFS read-only discovery with valid, truncated, corrupt, unsupported, and adversarial images.
-- [ ] Test RMS sequential/indexed records, locking, record corruption, concurrent readers/writers, and persistence.
-- [ ] Test package content addressing, dependency resolution, manifest validation, signature verification, revocation, rollback, and obsolescence handling.
-- [ ] Test backup, restore, export, import, deduplication, retention, encryption, and recovery after partial backup failure.
+- [x] Test SynFS formatting, superblocks, generation selection, checksums, block maps, B-tree insert/update/delete, version lookup, CoW sharing, links, directories, quotas, retention, and garbage collection.
+- [x] Test file and directory operations through direct SynFS, `synos-fsd`, runtime ABI, kernel IPC, and shell layers.
+- [x] Test exact-version reads/writes/deletes, latest-version behavior, snapshots, hard links, renames, mount roots, namespace boundaries, and default directories.
+- [x] Test malformed paths, wildcards, UTF-8 limits, empty names, reserved names, traversal attempts, duplicate entries, and unauthorized visibility.
+- [x] Test block-device short reads/writes, flush ordering, discard, device removal, degraded mirrors, rebuilds, quota exhaustion, and I/O errors.
+- [x] Test torn commits at every write boundary, reboot recovery, previous-generation recovery, corrupted metadata, bad checksums, interrupted garbage collection, and consistency-checker diagnostics.
+- [x] Test Ext4, FAT32, and NTFS read-only discovery with valid, truncated, corrupt, unsupported, and adversarial images.
+- [x] Test RMS sequential/indexed records, locking, record corruption, concurrent readers/writers, and persistence.
+- [x] Test package content addressing, dependency resolution, manifest validation, signature verification, revocation, rollback, and obsolescence handling.
+- [x] Test backup, restore, export, import, deduplication, retention, encryption, and recovery after partial backup failure.
 
 ### 59.6 Shell, Scripting, and Application Tests
 
