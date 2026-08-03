@@ -1024,3 +1024,160 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Add multi-node QEMU and remote-terminal scenarios for create, list, show, join, leave, remove, rejoin, federation, and recovery workflows.
   - [ ] Test duplicate identity, expired invitation, revoked key, failed attestation, incompatible version, full cluster, no quorum, and split-brain cases.
   - [ ] Document command examples, permissions, confirmation requirements, status codes, recovery procedures, and destructive-action safeguards.
+
+---
+
+## 59. Project-Wide Test Program
+
+Every new SynOS feature must land with tests in the same change. A feature is not complete when only the happy path works. Each feature needs a deterministic unit test, boundary/error tests, an integration test through its public API, and an end-to-end test when it crosses a process, device, boot, or cluster boundary.
+
+### 59.1 Test Rules and Test Inventory
+
+- [ ] Create `docs/testing.md` with the test contract, supported host platforms, required tools, environment variables, test tiers, and evidence format.
+- [ ] Create a machine-readable test inventory mapping every TODO feature to its unit, integration, QEMU, fault, fuzz, and performance tests.
+- [ ] Add a test checklist to every new feature section: parser/API, success path, invalid input, authorization, limits, persistence, recovery, observability, and compatibility.
+- [ ] Require every public type, operation, status code, wire message, and error variant to have at least one direct test and one boundary test.
+- [ ] Require every bug fix to add a regression test before the fix is marked complete.
+- [ ] Record known untestable hardware behavior as an explicit hardware-smoke test with required evidence; never count an unexecuted test as passing.
+- [ ] Define stable test names and test evidence paths so local runs and CI produce comparable results.
+
+### 59.2 Test Harness and Fixtures
+
+- [ ] Build shared deterministic fixtures for boot info, memory maps, capabilities, identities, node IDs, clocks, random sources, packets, disks, SynFS volumes, manifests, wire frames, and terminal input.
+- [ ] Build in-memory implementations for block I/O, network transport, IPC, clocks, entropy, attestation, storage, and accelerator drivers.
+- [ ] Build a failure-injection layer for torn writes, short buffers, dropped packets, duplicate packets, delayed interrupts, stale capabilities, node loss, corrupt metadata, allocation failure, and clock jumps.
+- [ ] Build a fixture reset/cleanup guard that leaves no files, sockets, processes, raw terminal modes, or QEMU instances behind after a failed test.
+- [ ] Make tests independent of wall-clock speed, host locale, host path layout, host endianness, CPU count, and test execution order.
+- [ ] Add golden fixtures for boot images, protocol frames, filesystem blocks, snapshots, audit records, package signatures, and terminal output.
+- [ ] Add a small test-support crate or shared test module without leaking test-only APIs into production builds.
+
+### 59.3 Unit and Property Testing
+
+- [ ] Add unit tests for every module in `kernel`, `boot/uefi`, and every crate under `crates/`.
+- [ ] Test constructors, state transitions, capacity limits, integer overflow, alignment, empty values, maximum values, malformed values, and all documented error paths.
+- [ ] Add property tests for parsers, path matching, encoders/decoders, checksums, ID generation, rights attenuation, version selection, queue behavior, allocators, schedulers, and state machines.
+- [ ] Add round-trip tests for every serializable type: encode/decode, persist/load, snapshot/restore, and request/response pairs.
+- [ ] Add model tests for bounded queues, capability tables, leases, lock managers, schedulers, copy-on-write trees, memory maps, and cluster membership.
+- [ ] Add deterministic seed replay for every randomized or property test failure.
+- [ ] Add fuzz targets for every parser and untrusted byte boundary, including boot metadata, filesystem blocks, network packets, IPC messages, wire frames, manifests, scripts, HTTP, gRPC, and terminal input.
+
+### 59.4 Kernel, Boot, Runtime, and Security Tests
+
+- [ ] Test boot protocol magic, version, alignment, region ordering, framebuffer data, malformed records, capacity limits, and unknown enum values.
+- [ ] Test BIOS stage 1/stage 2 loading, sector limits, bad signatures, truncated kernels, invalid entry points, and kernel handoff arguments.
+- [ ] Test UEFI loader discovery, PE/COFF validation, protocol handoff, memory-map creation, initrd/cmdline passing, chainload failure, and runtime service failure.
+- [ ] Test allocator initialization, frame reuse, page-table creation, mapping/unmapping, large pages, permissions, copy-on-write, page faults, and out-of-memory behavior.
+- [ ] Test scheduler state transitions, priorities, cooperative yield, real-time deadlines, blocked and woken tasks, cancellation, CPU partitioning, and SMP behavior.
+- [ ] Test IPC send/receive, zero-copy buffers, queue bounds, cancellation, timeouts, malformed requests, caller identity, and cross-address-space isolation.
+- [ ] Test capabilities for creation, delegation, rights attenuation, ownership, stale generations, revocation, deletion, mapping, process creation, IPC authorization, and confused-deputy prevention.
+- [ ] Test runtime ABI numbering, argument validation, shared-buffer bounds, direction flags, status mapping, descriptor lifecycle, and unknown operations.
+- [ ] Test `$STATUS` severity, facility, message mapping, stable serialization, and error propagation across kernel, daemon, shell, SDK, and clients.
+- [ ] Test panic, fault, reboot, poweroff, watchdog, recovery, and crash-report paths without leaving resources held.
+
+### 59.5 SynFS, Storage, and Persistence Tests
+
+- [ ] Test SynFS formatting, superblocks, generation selection, checksums, block maps, B-tree insert/update/delete, version lookup, CoW sharing, links, directories, quotas, retention, and garbage collection.
+- [ ] Test file and directory operations through direct SynFS, `synos-fsd`, runtime ABI, kernel IPC, and shell layers.
+- [ ] Test exact-version reads/writes/deletes, latest-version behavior, snapshots, hard links, renames, mount roots, namespace boundaries, and default directories.
+- [ ] Test malformed paths, wildcards, UTF-8 limits, empty names, reserved names, traversal attempts, duplicate entries, and unauthorized visibility.
+- [ ] Test block-device short reads/writes, flush ordering, discard, device removal, degraded mirrors, rebuilds, quota exhaustion, and I/O errors.
+- [ ] Test torn commits at every write boundary, reboot recovery, previous-generation recovery, corrupted metadata, bad checksums, interrupted garbage collection, and consistency-checker diagnostics.
+- [ ] Test Ext4, FAT32, and NTFS read-only discovery with valid, truncated, corrupt, unsupported, and adversarial images.
+- [ ] Test RMS sequential/indexed records, locking, record corruption, concurrent readers/writers, and persistence.
+- [ ] Test package content addressing, dependency resolution, manifest validation, signature verification, revocation, rollback, and obsolescence handling.
+- [ ] Test backup, restore, export, import, deduplication, retention, encryption, and recovery after partial backup failure.
+
+### 59.6 Shell, Scripting, and Application Tests
+
+- [ ] Test every `syn-shell` command, alias, qualifier, argument type, help route, structured output schema, pipeline path, and status mapping.
+- [ ] Test shell parsing for quoting, escaping, whitespace, case, wildcards, version selectors, relative paths, invalid combinations, and bounded input.
+- [ ] Test shell workflows for directory, create, type, edit, link, delete, default directory, storage, network, cluster, diagnostics, jobs, and protection commands.
+- [ ] Test editor buffers, cursor movement, selection, copy/cut/paste, UTF-8, resize, scrolling, save-as-new-version, conflict detection, cancellation, and terminal restoration.
+- [ ] Test `syn-script` parsing, conditions, symbols, logical names, capability attenuation, exit statuses, comments, quoting, wire encoding, limits, and sandbox rejection.
+- [ ] Test embedded script and Wasm loading, host-call authorization, fuel/memory limits, deterministic execution, traps, cancellation, and cleanup.
+- [ ] Test application manifests, capability requests, placement, restart policies, supervisor state, crash recovery, and admission failures.
+- [ ] Test actors, jobs, queues, leases, cancellation, retries, failover, and exactly-once/idempotent behavior where promised.
+
+### 59.7 Networking, Fabric, and Distributed-System Tests
+
+- [ ] Test packet parsing, checksums, Ethernet/ARP/IP/UDP/TCP behavior, route selection, MTU limits, fragmentation policy, firewall rules, and malformed packets.
+- [ ] Test network services, HTTP, gRPC, client SDK, web terminal, remote display, protocol negotiation, framing, authentication, backpressure, and disconnect recovery.
+- [ ] Test DLM lock ownership, ordering, lease expiry, renewal, revocation, deadlock handling, node loss, and split-brain protection.
+- [ ] Test CXL discovery, decoder validation, HDM mapping, bandwidth policy, memory leases, hot removal, and invalid register data.
+- [ ] Test software DSM page fetch, cache coherence, invalidation, migration, duplicate requests, stale pages, transport failure, and mirrored-page failover.
+- [ ] Test mesh discovery, signed advertisements, replayed advertisements, offline operation, CoW delta reconciliation, conflict resolution, and asymmetric offload.
+- [ ] Test time synchronization, clock skew, leap behavior, timeout safety, monotonic ordering, and deterministic fake-clock execution.
+- [ ] Test cluster create/join/leave/rejoin/federation, invitations, attestation, key rotation, quorum, elections, partitions, fencing, recovery, and stale membership epochs.
+
+### 59.8 Compute, AI, and Data-Plane Tests
+
+- [ ] Test tensor shape/stride validation, shared buffers, overflow, serialization, accelerator discovery, capability checks, queue limits, and dispatch completion.
+- [ ] Test memory allocation policy, page alignment, transport selection, remote allocation, quota limits, release, migration, and failure recovery.
+- [ ] Test inference requests, token accounting, batching, KV-cache allocation/eviction, checkpointing, node loss, retry, failover, and deterministic replay.
+- [ ] Test semantic indexing, vector encoding, similarity search, freshness/decay, authorization filtering, zero-copy retrieval, and garbage collection.
+- [ ] Test agent bridge requests, script execution, sandbox limits, capability use, cancellation, audit records, and deterministic output.
+
+### 59.9 Observability, Audit, Debugging, and Recovery Tests
+
+- [ ] Test log formatting, severity filtering, bounded records, dropped-record counters, sink failure, flush, rotation, and restart behavior.
+- [ ] Test metrics, traces, event correlation, query parsing, cardinality limits, export, redaction, and unavailable-sink behavior.
+- [ ] Test audit records for authentication, authorization, filesystem, networking, cluster, patching, attestation, fencing, and destructive actions.
+- [ ] Test inspection and monitor output against stable structured schemas and terminal rendering snapshots.
+- [ ] Test debugger probes, GDB protocol, breakpoints, watchpoints, register/memory access, coredumps, symbol errors, and capability restrictions.
+- [ ] Test replay logs, deterministic restore, reverse stepping, divergent input detection, crash preservation, and bounded log retention.
+- [ ] Test self-healing restart policy, clean snapshot selection, state restore, connection preservation, hot patch validation, rollback, and repeated crash limits.
+- [ ] Test RAS prediction, error records, thermal/power events, recovery actions, alert deduplication, and hardware fault injection.
+
+### 59.10 Update, Shield, Identity, and Supply-Chain Tests
+
+- [ ] Test authentication credentials, challenges, sessions, delegation, federation, expiry, replay resistance, lockout, and recovery.
+- [ ] Test cryptographic tokens, caveats, signatures, constant-time comparisons, malformed tokens, key rotation, revocation, and auditability.
+- [ ] Test confidential-computing attestation, policy decisions, enclave state, capability provisioning, key exchange, invalid evidence, and downgrade rejection.
+- [ ] Test runtime shield rules, quarantine, incident response, tamper detection, rate limits, and safe recovery.
+- [ ] Test atomic update planning, signature checks, compatibility checks, staged activation, rollback, crash recovery, and hot-swap safety.
+- [ ] Test declarative config parsing, schema validation, signed activation, diff output, transactional reconfigure, rollback, and conflicting updates.
+- [ ] Test package and boot supply-chain verification, hash mismatch, signature failure, dependency confusion, revoked artifacts, and reproducible build evidence.
+
+### 59.11 VM and QEMU Integration Matrix
+
+- [ ] Make the `virtual_machine` crate a first-class workspace test target with its own unit, integration, and CLI test commands.
+- [ ] Add VM tests for CPU decode/execute, mode changes, flags, registers, segmentation, control/debug registers, exceptions, interrupts, HLT, and reset.
+- [ ] Add VM tests for MMU allocation, page tables, permissions, MMIO routing, unaligned access, large pages, COW, ballooning, overcommit, and invalid addresses.
+- [ ] Add VM tests for PCI/config space, APIC/PIC, PIT, HPET, serial, PS/2, power, VGA, VESA, GOP, and interrupt delivery/wakeup.
+- [ ] Add VM tests for AHCI, NVMe, Virtio block/net/console/rng, E1000, raw/VHD/QCOW2 images, DMA bounds, queue descriptors, device reset, and I/O errors.
+- [ ] Add VM tests for BIOS, UEFI, Multiboot, kernel loading, initrd, command line, framebuffer information, boot failure, and entry-point validation.
+- [ ] Add VM tests for execution limits, profiling, translation-cache invalidation, snapshot save/restore, snapshot chains, diffs, corrupted snapshots, and compatibility versions.
+- [ ] Add VM tests for terminal input translation, serial output, TTY/raw-mode cleanup, EOF, Ctrl-C, Ctrl-D, escape sequences, HLT wakeup, guest shutdown, panic, and host error cleanup.
+- [ ] Add VM tests for loopback and multi-port networking, packet delivery, MAC filtering, queue backpressure, disconnects, and deterministic packet loss.
+- [ ] Add VM-to-SynOS tests for boot, serial prompt, scheduler, IPC, capabilities, paging, filesystem mount, file read/write, shell commands, shutdown, and reboot.
+- [ ] Add QEMU BIOS and UEFI smoke tests for one CPU and SMP, with serial assertions, bounded timeouts, exit reasons, and saved logs.
+- [ ] Add QEMU filesystem tests for create/list/type/default-directory/edit/link/delete/version/snapshot workflows and all protected failure cases.
+- [ ] Add QEMU cluster tests for two or more nodes, E1000 transport, CXL/ivshmem setup, heartbeats, page movement, node failure, fencing, failover, and rejoin.
+- [ ] Add remote-terminal tests for interactive shell behavior, resize, ANSI output, input cancellation, reconnect, and cleanup after guest failure.
+- [ ] Separate fast deterministic VM tests from opt-in QEMU, hardware, KVM/HVF, cluster, performance, and long-running soak tests.
+
+### 59.12 CI, Coverage, Fuzzing, and Release Gates
+
+- [ ] Make one top-level `cargo test` command run every deterministic SynOS and VM unit/integration test; promote `virtual_machine` into the root workspace or add a tested Cargo test runner that includes its manifest.
+- [ ] Make `cargo test --workspace --all-targets` cover every testable root crate and document the exact command in `docs/testing.md`.
+- [ ] Keep QEMU, cluster, hardware, performance, fuzz, and soak tests in explicit opt-in tiers, with one documented full-validation command that runs those tiers in order and reports skipped prerequisites.
+- [ ] Ensure the unified test command preserves per-test isolation, forwards environment variables, returns failure if any tier fails, and saves logs/evidence for the failing tier.
+- [ ] Add CI jobs for formatting, host unit tests, no-std/kernel tests, VM tests, integration tests, QEMU tests, fuzz smoke tests, and documentation/test-inventory validation.
+- [ ] Add a fast pull-request tier and scheduled full tier; publish which tests were skipped and why.
+- [ ] Add coverage reporting per crate and per TODO feature, with thresholds that prevent total coverage from hiding untested crates.
+- [ ] Add mutation testing for parsers, status mapping, capabilities, storage commits, protocol framing, and VM device behavior.
+- [ ] Add nightly fuzzing and corpus retention; promote every discovered bug into a deterministic regression test.
+- [ ] Add race, loom/model, sanitizer, Miri, cross-target, big-endian/32-bit where applicable, and panic/abort validation jobs.
+- [ ] Add boot-image reproducibility checks and verify that test images are built from the tested source revision.
+- [ ] Add release gates: zero unexpected test failures, zero unexplained skips, clean QEMU boot evidence, clean recovery evidence, and updated test inventory.
+- [ ] Add a test status dashboard showing unit, integration, QEMU, fuzz, coverage, performance, and hardware qualification state per feature.
+
+### 59.13 Definition of Done for Test Coverage
+
+- [ ] No crate with production code has zero tests unless its inventory entry documents why and names a replacement integration test.
+- [ ] Every feature marked `[x]` has passing unit, boundary, integration, and required end-to-end evidence.
+- [ ] Every error and security boundary has a negative test.
+- [ ] Every persistent or distributed feature has restart, corruption, timeout, duplicate, and partial-failure coverage.
+- [ ] Every VM device has register/configuration, normal I/O, reset, interrupt, malformed input, and failure tests.
+- [ ] Every SynOS boot path has a VM or QEMU test with serial evidence.
+- [ ] The test suite is deterministic, isolated, bounded, and runnable by a new developer from the documented commands.

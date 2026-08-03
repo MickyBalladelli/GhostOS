@@ -214,6 +214,87 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ---
 
+## 10. Test Completion Plan
+
+The VM is the SynOS test machine. Every device and every public VM API needs direct tests before it can be used as proof for a SynOS feature.
+
+### 10.1 Test Foundation
+
+- [ ] Split tests into fast unit tests, VM integration tests, CLI tests, QEMU tests, cluster tests, performance tests, and hardware-accelerated tests.
+- [ ] Add deterministic VM fixtures for CPU state, guest memory, page tables, PCI config space, disks, packets, interrupts, clocks, serial input, terminal input, and boot images.
+- [ ] Add reusable fake devices and failure injection for short I/O, DMA overrun, invalid descriptors, dropped interrupts, delayed timers, reset during I/O, and device removal.
+- [ ] Add cleanup guards for temporary disk images, child processes, Unix sockets, QMP sessions, serial logs, and terminal settings.
+- [ ] Add golden files for decoded instructions, firmware tables, boot handoff data, device registers, snapshots, serial output, and terminal output.
+- [ ] Add a VM test inventory mapping each source module and public API to its tests.
+
+### 10.2 CPU, Memory, and Execution Tests
+
+- [ ] Test decoder prefixes, REX, ModR/M, SIB, displacement, immediates, RIP-relative addressing, segment overrides, far operands, and malformed byte streams.
+- [ ] Test executor arithmetic, flags, branches, stack operations, calls/returns, string operations, control/debug registers, MSRs, exceptions, and unsupported instructions.
+- [ ] Test real, protected, compatibility, and long mode transitions, privilege levels, segment limits, page faults, interrupt gates, IF masking, STI shadow, and HLT wakeup.
+- [ ] Test register reset values, instruction pointer progression, exception state, interrupt priority, and deterministic step limits.
+- [ ] Test physical frame allocation/reuse, paging levels, permissions, COW, large pages, MMIO, unaligned access, out-of-range access, and memory statistics.
+- [ ] Test execution engine profiles, block boundaries, translation cache hits/misses/invalidation, JIT fallback, max-step termination, and panic/error cleanup.
+
+### 10.3 Device Tests
+
+- [ ] Test PCI host bridge legacy ports, ECAM, device enumeration, BAR sizing, config writes, absent devices, and invalid bus/device/function values.
+- [ ] Test APIC/PIC register behavior, MSR/MMIO coherence, IRR/ISR/TMR priority, TPR/PPR filtering, EOI, IPI, LVTs, timer modes, and interrupt routing.
+- [ ] Test PIT modes, latching, read-back, BCD, divisor limits, IRQ0 delivery, and host-time progression.
+- [ ] Test HPET counter, comparator, periodic/one-shot mode, legacy routing, enable/disable, overflow, and timer interrupt delivery.
+- [ ] Test serial 16550 registers, divisor latch, FIFO, line status, transmit output, receive input, IRQ enable/priority, reset, and overrun.
+- [ ] Test PS/2 keyboard and mouse queues, controller commands, self-tests, enable/disable, status bits, IRQ vectors, and input overflow.
+- [ ] Test power control, shutdown, reboot, reset, repeated commands, and invalid power states.
+- [ ] Test VGA text memory, cursor, palette, mode changes, VESA framebuffer, GOP modes, pixel formats, bounds, and reset.
+- [ ] Test AHCI and NVMe identification, command setup, DMA reads/writes, queue limits, interrupts, flush, invalid PRDT/PRP, reset, and I/O failure.
+- [ ] Test Virtio feature negotiation, queue setup, descriptor chains, indirect descriptors, readable/writable buffers, notifications, status/reset, and malformed chains.
+- [ ] Test Virtio block flush/read/write, console input/output, RNG bounds, and net transmit/receive behavior.
+- [ ] Test E1000 registers, descriptor rings, MAC filtering, transmit/receive, interrupts, reset, and invalid descriptors.
+- [ ] Test raw, VHD, and QCOW2 image parsing, sector bounds, sparse/unsupported images, persistence, flush, and corruption errors.
+
+### 10.4 Firmware, Boot, and SynOS Tests
+
+- [ ] Test BIOS POST, real-mode entry, MBR load, INT 10h/13h/15h services, bad sectors, missing boot code, and handoff failure.
+- [ ] Test UEFI tables, memory map, boot services, runtime variables, image loading, StartImage, invalid images, and service errors.
+- [ ] Test Multiboot and SynOS boot information, kernel/initrd/cmdline placement, framebuffer data, entry-point validation, and memory overlap rejection.
+- [ ] Test `Vm::new` and `Vm::with_config` defaults, serial enable/disable, custom ports, memory size, firmware, SMP count, boot args, and step limits.
+- [ ] Test VM booting a minimal SynOS image, serial bootstrap, shell prompt, scheduler progress, IPC, capability checks, page mapping, SynFS mount, file read/write, shutdown, and reboot.
+- [ ] Test BIOS and UEFI boot with one and multiple virtual CPUs and assert serial evidence plus bounded termination.
+
+### 10.5 Snapshot, Terminal, Network, and Integration Tests
+
+- [ ] Test snapshot serialization, restore, snapshot IDs, chain order, diffs, memory/device state, corrupted data, version mismatch, and partial restore.
+- [ ] Test terminal input translation for printable bytes, Enter, Backspace, Tab, Ctrl-C, Ctrl-D, Escape sequences, EOF, and PS/2 fallback.
+- [ ] Test terminal raw-mode ownership, restoration on success/error/panic/Ctrl-C/EOF, output flushing, resize, ANSI pass-through, and guest HLT wakeup.
+- [ ] Test loopback hub routing, port isolation, MAC addresses, packet queues, backpressure, dropped frames, and deterministic network faults.
+- [ ] Test VM storage/network device combinations used by SynOS boot and shell workflows.
+- [ ] Test QMP lifecycle, serial capture, timeout handling, guest poweroff, QEMU crash, missing image, missing executable, and stale socket cleanup.
+- [ ] Test QEMU filesystem workflows for directory, create, type, default directory, edit, link, delete, wildcard, version, snapshot, and failure cases.
+- [ ] Test remote terminal workflows for prompt, command input, output, resize, reconnect, guest shutdown, and cleanup.
+
+### 10.6 Cluster and Fault Tests
+
+- [ ] Add a deterministic multi-VM network harness with controllable latency, loss, duplication, reordering, partitions, and reconnection.
+- [ ] Add CXL and shared-memory device fixtures that model discovery, mapping, access, migration, and hot removal.
+- [ ] Test two-node and multi-node SynOS boot, discovery, heartbeat, page fetch, coherence, migration, failover, fencing, and rejoin.
+- [ ] Kill one node during IPC, filesystem commit, memory fetch, inference, and cluster membership changes; assert safe recovery and stable status.
+- [ ] Test split-brain, stale epochs, duplicate node IDs, lost quorum, delayed heartbeats, corrupted shared memory, and transport recovery.
+- [ ] Make cluster tests opt-in and bounded, with serial logs, QMP traces, network traces, and failure-injection metadata saved as evidence.
+
+### 10.7 VM Quality Gates
+
+- [ ] Make `cargo test` from the repository root include the VM tests, either by joining this crate to the root workspace or by using a tested top-level Cargo runner.
+- [ ] Define the fast all-tests command for deterministic VM and SynOS tests, then define the opt-in full-validation command for QEMU, cluster, hardware, performance, fuzz, and soak tests.
+- [ ] Require every VM source module and public API to have a named test in the VM inventory.
+- [ ] Require every emulated device to have register/configuration, normal I/O, reset, interrupt, malformed input, and failure coverage.
+- [ ] Require every SynOS boot path to have a VM or QEMU test with serial evidence.
+- [ ] Require every VM bug fix to add a deterministic regression test.
+- [ ] Add VM coverage reporting, mutation testing for device boundaries, nightly fuzzing for decoder/devices/images, and cross-platform CI.
+- [ ] Publish separate pass/fail/skip status for unit, integration, QEMU, cluster, performance, and hardware-accelerated tests.
+- [ ] Do not mark a VM feature complete until its tests pass with clean resource and terminal cleanup.
+
+---
+
 ## Project Structure
 
 ```
