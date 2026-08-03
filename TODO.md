@@ -945,12 +945,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Support cluster rename, metadata export/import, snapshot, restore, and crash-safe transactional updates.
   - [x] Define lifecycle states for creating, pending admission, active, degraded, partitioned, draining, leaving, retired, and deleted clusters.
 
-- [ ] **Cluster Creation & Bootstrap**
-  - [ ] Implement local cluster creation without a central management server.
-  - [ ] Generate the cluster root identity, signing keys, admission policy, bootstrap token, initial quorum, and initial node record.
-  - [ ] Validate node capabilities, transport availability, protocol compatibility, clock health, and required hardware attestation before activation.
-  - [ ] Make creation idempotent and recoverable after interruption, reboot, or partial bootstrap.
-  - [ ] Publish signed bootstrap advertisements and allow an administrator to rotate or revoke bootstrap credentials.
+- [x] **Cluster Creation & Bootstrap**
+  - [x] Implement local cluster creation without a central management server.
+  - [x] Generate the cluster root identity, signing keys, admission policy, bootstrap token, initial quorum, and initial node record.
+  - [x] Validate node capabilities, transport availability, protocol compatibility, clock health, and required hardware attestation before activation.
+  - [x] Make creation idempotent and recoverable after interruption, reboot, or partial bootstrap.
+  - [x] Publish signed bootstrap advertisements and allow an administrator to rotate or revoke bootstrap credentials.
 
 - [ ] **Join, Leave & Admission Workflow**
   - [ ] Implement invitation creation, expiration, one-time use, scope restrictions, approval, rejection, and revocation.

@@ -15,3 +15,4 @@ synos-netd = { path = "../netd" }
 synos-kernel = { path = "../../kernel" }
 synos-status = { path = "../status" }
 synos-synfs = { path = "../synfs" }
+synos-system-model = { path = "../system-model" }

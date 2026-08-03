@@ -816,6 +816,7 @@ dependencies = [
  "synos-netd",
  "synos-status",
  "synos-synfs",
+ "synos-system-model",
 ]
 
 [[package]]
