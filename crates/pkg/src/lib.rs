@@ -419,6 +419,10 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
     pub fn manifest(&self, package: ContentId) -> Option<&PackageManifest> {
         self.repository.packages().get(package)
     }
+
+    pub fn manifests(&self) -> impl Iterator<Item = &PackageManifest> + '_ {
+        self.repository.packages().iter()
+    }
 }
 
 impl<const PACKAGES: usize, const KEYS: usize> Default for PackageDaemon<PACKAGES, KEYS> {

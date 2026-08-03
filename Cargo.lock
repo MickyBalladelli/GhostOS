@@ -420,6 +420,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-auditd"
+version = "0.1.0"
+dependencies = [
+ "synos-pkg",
+ "synos-status",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-auth"
 version = "0.1.0"
 dependencies = [

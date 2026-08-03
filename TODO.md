@@ -603,8 +603,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 36. Package Obsolescence & Vulnerability Monitoring (`synos-audit`)
-- [ ] **Background Security Audit Daemon (`synos-auditd`)**
-  - [ ] Build a background scanner matching package content hashes against security advisory databases (RustSec/OSV/CVE).
+- [x] **Background Security Audit Daemon (`synos-auditd`)**
+  - [x] Build a background scanner matching package content hashes against security advisory databases (RustSec/OSV/CVE).
 - [ ] **Obsolescence Inspection Utilities (`SHOW OBSOLETE`)**
   - [ ] Implement administrative tools to display deprecated, unmaintained, or out-of-date binaries and driver packages across the cluster.
 - [ ] **AI-Assisted Patch Workflows**

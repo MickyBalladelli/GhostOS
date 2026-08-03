@@ -243,6 +243,10 @@ impl<const CAPACITY: usize> PackageStore<CAPACITY> {
     pub fn contains(&self, content: ContentId) -> bool {
         self.get(content).is_some()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &PackageManifest> + '_ {
+        self.packages.iter().flatten()
+    }
 }
 
 impl<const CAPACITY: usize> Default for PackageStore<CAPACITY> {
