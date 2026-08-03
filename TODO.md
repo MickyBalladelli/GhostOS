@@ -1100,14 +1100,14 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.7 Networking, Fabric, and Distributed-System Tests
 
-- [ ] Test packet parsing, checksums, Ethernet/ARP/IP/UDP/TCP behavior, route selection, MTU limits, fragmentation policy, firewall rules, and malformed packets.
-- [ ] Test network services, HTTP, gRPC, client SDK, web terminal, remote display, protocol negotiation, framing, authentication, backpressure, and disconnect recovery.
-- [ ] Test DLM lock ownership, ordering, lease expiry, renewal, revocation, deadlock handling, node loss, and split-brain protection.
-- [ ] Test CXL discovery, decoder validation, HDM mapping, bandwidth policy, memory leases, hot removal, and invalid register data.
-- [ ] Test software DSM page fetch, cache coherence, invalidation, migration, duplicate requests, stale pages, transport failure, and mirrored-page failover.
-- [ ] Test mesh discovery, signed advertisements, replayed advertisements, offline operation, CoW delta reconciliation, conflict resolution, and asymmetric offload.
-- [ ] Test time synchronization, clock skew, leap behavior, timeout safety, monotonic ordering, and deterministic fake-clock execution.
-- [ ] Test cluster create/join/leave/rejoin/federation, invitations, attestation, key rotation, quorum, elections, partitions, fencing, recovery, and stale membership epochs.
+- [x] Test packet parsing, checksums, Ethernet/ARP/IP/UDP/TCP behavior, route selection, MTU limits, fragmentation policy, firewall rules, and malformed packets.
+- [x] Test network services, HTTP, gRPC, client SDK, web terminal, remote display, protocol negotiation, framing, authentication, backpressure, and disconnect recovery.
+- [x] Test DLM lock ownership, ordering, lease expiry, renewal, revocation, deadlock handling, node loss, and split-brain protection.
+- [x] Test CXL discovery, decoder validation, HDM mapping, bandwidth policy, memory leases, hot removal, and invalid register data.
+- [x] Test software DSM page fetch, cache coherence, invalidation, migration, duplicate requests, stale pages, transport failure, and mirrored-page failover.
+- [x] Test mesh discovery, signed advertisements, replayed advertisements, offline operation, CoW delta reconciliation, conflict resolution, and asymmetric offload.
+- [x] Test time synchronization, clock skew, leap behavior, timeout safety, monotonic ordering, and deterministic fake-clock execution.
+- [x] Test cluster create/join/leave/rejoin/federation, invitations, attestation, key rotation, quorum, elections, partitions, fencing, recovery, and stale membership epochs.
 
 ### 59.8 Compute, AI, and Data-Plane Tests
 
