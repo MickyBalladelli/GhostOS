@@ -28,6 +28,17 @@ fn success_uses_openvms_low_bit_convention() {
 }
 
 #[test]
+fn stable_messages_cover_public_status_constants() {
+    assert_eq!(Status::NORMAL.message(), "normal");
+    assert_eq!(Status::ACCESS_DENIED.message(), "access denied");
+    assert_eq!(Status::DIRECTORY_NOT_EMPTY.message(), "directory not empty");
+    assert_eq!(
+        Status::new(Severity::Error, facility::KERNEL, 0x1f, 0).unwrap().message(),
+        "unknown status"
+    );
+}
+
+#[test]
 fn property_valid_statuses_round_trip_their_raw_value() {
     use synos_test_support::property::{run_assert, Config};
 

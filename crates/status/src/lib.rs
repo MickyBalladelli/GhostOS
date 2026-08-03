@@ -104,6 +104,23 @@ impl Status {
     pub const fn is_success(self) -> bool {
         self.0 & 1 == 1
     }
+
+    pub const fn message(self) -> &'static str {
+        match (self.facility(), self.code()) {
+            (facility::SYSTEM, 1) => "normal",
+            (facility::SYSTEM, 2) => "pending",
+            (facility::SYSTEM, 3) => "invalid argument",
+            (facility::SYSTEM, 4) => "not found",
+            (facility::SYSTEM, 5) => "no space",
+            (facility::SYSTEM, 6) => "corrupt",
+            (facility::SYSTEM, 7) => "busy",
+            (facility::SECURITY, 1) => "access denied",
+            (facility::FILESYSTEM, 2) => "already exists",
+            (facility::FILESYSTEM, 3) => "conflict",
+            (facility::FILESYSTEM, 5) => "directory not empty",
+            _ => "unknown status",
+        }
+    }
 }
 
 pub trait IntoStatus {

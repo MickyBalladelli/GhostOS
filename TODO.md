@@ -1063,16 +1063,16 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.4 Kernel, Boot, Runtime, and Security Tests
 
-- [ ] Test boot protocol magic, version, alignment, region ordering, framebuffer data, malformed records, capacity limits, and unknown enum values.
-- [ ] Test BIOS stage 1/stage 2 loading, sector limits, bad signatures, truncated kernels, invalid entry points, and kernel handoff arguments.
-- [ ] Test UEFI loader discovery, PE/COFF validation, protocol handoff, memory-map creation, initrd/cmdline passing, chainload failure, and runtime service failure.
-- [ ] Test allocator initialization, frame reuse, page-table creation, mapping/unmapping, large pages, permissions, copy-on-write, page faults, and out-of-memory behavior.
-- [ ] Test scheduler state transitions, priorities, cooperative yield, real-time deadlines, blocked and woken tasks, cancellation, CPU partitioning, and SMP behavior.
-- [ ] Test IPC send/receive, zero-copy buffers, queue bounds, cancellation, timeouts, malformed requests, caller identity, and cross-address-space isolation.
-- [ ] Test capabilities for creation, delegation, rights attenuation, ownership, stale generations, revocation, deletion, mapping, process creation, IPC authorization, and confused-deputy prevention.
-- [ ] Test runtime ABI numbering, argument validation, shared-buffer bounds, direction flags, status mapping, descriptor lifecycle, and unknown operations.
-- [ ] Test `$STATUS` severity, facility, message mapping, stable serialization, and error propagation across kernel, daemon, shell, SDK, and clients.
-- [ ] Test panic, fault, reboot, poweroff, watchdog, recovery, and crash-report paths without leaving resources held.
+- [x] Test boot protocol magic, version, alignment, region ordering, framebuffer data, malformed records, capacity limits, and unknown enum values.
+- [x] Test BIOS stage 1/stage 2 loading, sector limits, bad signatures, truncated kernels, invalid entry points, and kernel handoff arguments.
+- [x] Test UEFI loader discovery, PE/COFF validation, protocol handoff, memory-map creation, initrd/cmdline passing, chainload failure, and runtime service failure.
+- [x] Test allocator initialization, frame reuse, page-table creation, mapping/unmapping, large pages, permissions, copy-on-write, page faults, and out-of-memory behavior.
+- [x] Test scheduler state transitions, priorities, cooperative yield, real-time deadlines, blocked and woken tasks, cancellation, CPU partitioning, and SMP behavior.
+- [x] Test IPC send/receive, zero-copy buffers, queue bounds, cancellation, timeouts, malformed requests, caller identity, and cross-address-space isolation.
+- [x] Test capabilities for creation, delegation, rights attenuation, ownership, stale generations, revocation, deletion, mapping, process creation, IPC authorization, and confused-deputy prevention.
+- [x] Test runtime ABI numbering, argument validation, shared-buffer bounds, direction flags, status mapping, descriptor lifecycle, and unknown operations.
+- [x] Test `$STATUS` severity, facility, message mapping, stable serialization, and error propagation across kernel, daemon, shell, SDK, and clients.
+- [x] Test panic, fault, reboot, poweroff, watchdog, recovery, and crash-report paths without leaving resources held.
 
 ### 59.5 SynFS, Storage, and Persistence Tests
 

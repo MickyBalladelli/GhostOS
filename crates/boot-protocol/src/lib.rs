@@ -14,6 +14,16 @@ pub enum BootMethod {
     Uefi = 2,
 }
 
+impl BootMethod {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Bios),
+            2 => Some(Self::Uefi),
+            _ => None,
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryKind {
@@ -24,6 +34,21 @@ pub enum MemoryKind {
     Bootloader = 5,
     Kernel = 6,
     Framebuffer = 7,
+}
+
+impl MemoryKind {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Usable),
+            2 => Some(Self::Reserved),
+            3 => Some(Self::AcpiReclaimable),
+            4 => Some(Self::AcpiNonVolatile),
+            5 => Some(Self::Bootloader),
+            6 => Some(Self::Kernel),
+            7 => Some(Self::Framebuffer),
+            _ => None,
+        }
+    }
 }
 
 #[repr(C)]
@@ -45,6 +70,10 @@ impl MemoryRegion {
 
     pub const fn end(self) -> u64 {
         self.start.saturating_add(self.length)
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.length != 0 && self.start.checked_add(self.length).is_some()
     }
 }
 
@@ -68,6 +97,34 @@ impl FramebufferInfo {
         stride: 0,
         pixel_format: 0,
     };
+
+    pub fn is_valid(self) -> bool {
+        if self.address == 0
+            && self.size == 0
+            && self.width == 0
+            && self.height == 0
+            && self.stride == 0
+            && self.pixel_format == 0
+        {
+            return true
+        }
+        if self.address == 0
+            || self.size == 0
+            || self.width == 0
+            || self.height == 0
+            || self.stride < self.width
+            || !matches!(self.pixel_format, FRAMEBUFFER_PIXEL_RGB | FRAMEBUFFER_PIXEL_BGR)
+        {
+            return false
+        }
+        match (self.stride as u64).checked_mul(self.height as u64) {
+            Some(pixels) => match pixels.checked_mul(4) {
+                Some(bytes) => bytes <= self.size,
+                None => false,
+            },
+            None => false,
+        }
+    }
 }
 
 #[repr(C, align(16))]
@@ -97,7 +154,13 @@ impl BootInfo {
     }
 
     pub fn push_region(&mut self, region: MemoryRegion) -> bool {
-        if self.memory_region_count == MAX_MEMORY_REGIONS {
+        if self.memory_region_count == MAX_MEMORY_REGIONS
+            || !region.is_valid()
+            || self
+                .regions()
+                .last()
+                .is_some_and(|previous| region.start < previous.end())
+        {
             return false
         }
 
@@ -114,6 +177,13 @@ impl BootInfo {
         self.magic == BOOT_INFO_MAGIC
             && self.version == BOOT_INFO_VERSION
             && self.memory_region_count <= MAX_MEMORY_REGIONS
+            && BootMethod::from_raw(self.method as u32).is_some()
+            && self.framebuffer.is_valid()
+            && self.regions().iter().all(|region| region.is_valid())
+            && self
+                .regions()
+                .windows(2)
+                .all(|regions| regions[1].start >= regions[0].end())
     }
 }
 

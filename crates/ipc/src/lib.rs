@@ -494,3 +494,6 @@ pub fn checksum(bytes: &[u8]) -> u64 {
     }
     value
 }
+
+#[cfg(test)]
+mod tests;

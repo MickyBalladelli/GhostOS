@@ -2,7 +2,12 @@ use crate::{
     AddressSpaceId, CapabilityError, CapabilityObject, CapabilitySpace, Rights,
 };
 
+use crate::allocator::{EarlyFrameAllocator, QuotaAllocationError};
+use crate::ipc::{Channel, IpcError, Message};
 use crate::runtime::{Dispatcher, FilesystemIpc, FilesystemIdentity};
+use crate::scheduler::SchedulerError;
+use crate::task::{ExecutionMode, SchedulingPolicy, ThreadState};
+use synos_boot_protocol::{MemoryKind, MemoryRegion};
 use synos_fsd::{Capability as FsdCapability, ProcessId as FsdProcessId, Response as FsdResponse};
 use synos_ipc::{SharedBuffer, SharedRegionId};
 use synos_runtime::{Operation, Request};
@@ -68,6 +73,50 @@ fn revocation_invalidates_all_descendants() {
     assert_eq!(
         capabilities.inspect(grandchild_owner, grandchild),
         Err(CapabilityError::InvalidHandle)
+    );
+}
+
+#[test]
+fn untyped_memory_retype_rejects_overlapping_children_and_preserves_backing() {
+    let owner = address_space(1);
+    let borrower = address_space(2);
+    let mut capabilities = CapabilitySpace::<4>::new();
+    let source = capabilities
+        .mint_untyped(
+            owner,
+            crate::PhysicalRange::new(0x20_0000, 0x4000).unwrap(),
+            Rights::CREATE.union(Rights::READ).union(Rights::MAP),
+        )
+        .expect("untyped memory");
+    let region = SharedRegionId::new(12).unwrap();
+    let child = capabilities
+        .retype_memory(
+            owner,
+            source,
+            borrower,
+            region,
+            crate::PhysicalRange::new(0x20_0000, 0x2000).unwrap(),
+            Rights::READ.union(Rights::MAP),
+        )
+        .expect("retype memory");
+    assert_eq!(
+        capabilities.inspect(borrower, child).unwrap().backing,
+        Some(crate::PhysicalRange::new(0x20_0000, 0x2000).unwrap())
+    );
+    assert_eq!(
+        capabilities.retype_memory(
+            owner,
+            source,
+            borrower,
+            SharedRegionId::new(13).unwrap(),
+            crate::PhysicalRange::new(0x20_1000, 0x1000).unwrap(),
+            Rights::READ,
+        ),
+        Err(CapabilityError::AccessDenied)
+    );
+    assert_eq!(
+        capabilities.inspect(owner, child),
+        Err(CapabilityError::AccessDenied)
     );
 }
 
@@ -229,4 +278,288 @@ fn property_delegation_never_escalates_rights() {
         true
     })
     .expect("generated capability delegations remain attenuated");
+}
+
+#[test]
+fn allocator_skips_reserved_memory_aligns_frames_and_reports_exhaustion() {
+    let regions = [
+        MemoryRegion {
+            start: 0x1000,
+            length: 0x1000,
+            kind: MemoryKind::Reserved,
+            attributes: 0,
+        },
+        MemoryRegion {
+            start: 16 * 1024 * 1024 + 1,
+            length: 0x3000,
+            kind: MemoryKind::Usable,
+            attributes: 0,
+        },
+    ];
+    let mut allocator = EarlyFrameAllocator::new(&regions);
+    assert_eq!(allocator.allocate(), Ok(16 * 1024 * 1024 + 0x1000));
+    assert_eq!(allocator.allocate(), Ok(16 * 1024 * 1024 + 0x2000));
+    assert_eq!(allocator.allocate(), Err(crate::AllocationError));
+}
+
+#[test]
+fn allocator_refunds_quota_when_no_frame_is_available() {
+    let regions = [MemoryRegion {
+        start: 0x1000,
+        length: 0x1000,
+        kind: MemoryKind::Reserved,
+        attributes: 0,
+    }];
+    let quota = crate::CapabilityQuota::new();
+    let before = quota.usage();
+    let mut allocator = EarlyFrameAllocator::new(&regions);
+    assert_eq!(
+        allocator.allocate_for(&quota, 0),
+        Err(QuotaAllocationError::Exhausted)
+    );
+    assert_eq!(quota.usage(), before);
+}
+
+#[test]
+fn scheduler_transitions_tasks_and_rejects_stale_or_unauthorized_control() {
+    let owner = address_space(1);
+    let other = address_space(2);
+    let mut capabilities = CapabilitySpace::<4>::new();
+    let authority = capabilities
+        .mint_root(
+            owner,
+            CapabilityObject::AddressSpace(owner),
+            Rights::CREATE.union(Rights::CONTROL),
+        )
+        .expect("scheduler authority");
+    let mut scheduler = crate::Scheduler::new();
+    let thread = scheduler
+        .create(
+            &capabilities,
+            owner,
+            authority,
+            owner,
+            ExecutionMode::User,
+            SchedulingPolicy::Cooperative,
+            0x1000,
+            0x8000,
+        )
+        .expect("create task");
+    assert_eq!(scheduler.thread(thread).unwrap().state, ThreadState::Ready);
+    assert_eq!(scheduler.dispatch().unwrap().next, thread);
+    assert_eq!(scheduler.block_current().unwrap(), None);
+    assert_eq!(scheduler.thread(thread).unwrap().state, ThreadState::Blocked);
+    scheduler.wake(thread).expect("wake task");
+    assert_eq!(scheduler.thread(thread).unwrap().state, ThreadState::Ready);
+    assert_eq!(
+        scheduler.stop(&capabilities, other, authority, thread),
+        Err(SchedulerError::AccessDenied)
+    );
+    scheduler
+        .stop(&capabilities, owner, authority, thread)
+        .expect("stop task");
+    assert!(matches!(
+        scheduler.thread(thread),
+        Err(SchedulerError::InvalidThread)
+    ));
+}
+
+#[test]
+fn scheduler_prioritizes_deadlines_and_keeps_isolated_cpus_out_of_kernel_work() {
+    let owner = address_space(1);
+    let mut capabilities = CapabilitySpace::<6>::new();
+    let create = capabilities
+        .mint_root(
+            owner,
+            CapabilityObject::AddressSpace(owner),
+            Rights::CREATE,
+        )
+        .expect("create authority");
+    let control = capabilities
+        .mint_root(owner, CapabilityObject::SystemControl, Rights::CONTROL)
+        .expect("system authority");
+    let mut scheduler = crate::Scheduler::new();
+    scheduler
+        .set_online_cores(&capabilities, owner, control, crate::CpuMask::from_raw(0b11))
+        .expect("online CPUs");
+    scheduler
+        .isolate_cores(&capabilities, owner, control, crate::CpuMask::from_raw(0b10))
+        .expect("isolate one CPU");
+    assert_eq!(scheduler.partition().housekeeping(), crate::CpuMask::CPU0);
+    assert_eq!(
+        scheduler.dispatch_on(crate::CpuId::new(1).unwrap()),
+        None
+    );
+
+    let later = scheduler
+        .create(
+            &capabilities,
+            owner,
+            create,
+            owner,
+            ExecutionMode::User,
+            SchedulingPolicy::Realtime {
+                priority: 20,
+                deadline: 100,
+            },
+            0x1000,
+            0x8000,
+        )
+        .expect("later deadline task");
+    let earlier = scheduler
+        .create(
+            &capabilities,
+            owner,
+            create,
+            owner,
+            ExecutionMode::User,
+            SchedulingPolicy::Realtime {
+                priority: 20,
+                deadline: 50,
+            },
+            0x2000,
+            0x9000,
+        )
+        .expect("earlier deadline task");
+    assert_ne!(later, earlier);
+    assert_eq!(scheduler.dispatch().unwrap().next, earlier);
+}
+
+#[test]
+fn ipc_enforces_identity_queue_bounds_and_zero_copy_buffers() {
+    let owner = address_space(1);
+    let other = address_space(2);
+    let channel_id = crate::ipc::ChannelId::new(8).expect("valid channel");
+    let region = SharedRegionId::new(3).expect("valid region");
+    let mut capabilities = CapabilitySpace::<4>::new();
+    let endpoint = capabilities
+        .mint_root(
+            owner,
+            CapabilityObject::IpcChannel(channel_id),
+            Rights::SEND.union(Rights::RECEIVE),
+        )
+        .expect("endpoint capability");
+    let memory = capabilities
+        .mint_root(
+            owner,
+            CapabilityObject::MemoryRegion(region),
+            Rights::READ.union(Rights::WRITE).union(Rights::MAP),
+        )
+        .expect("memory capability");
+    let channel = Channel::<2>::new(channel_id);
+    let message = Message {
+        correlation: synos_observability::CorrelationId::NONE,
+        label: 42,
+        buffer: Some(SharedBuffer {
+            region,
+            offset: 4,
+            length: 8,
+            writable: false,
+        }),
+        words: [1, 2, 3, 4],
+    };
+
+    assert_eq!(
+        channel.try_send(&capabilities, other, endpoint, Some(memory), message),
+        Err(IpcError::AccessDenied)
+    );
+    assert!(channel
+        .try_send(&capabilities, owner, endpoint, Some(memory), message)
+        .is_ok());
+    assert!(channel
+        .try_send(&capabilities, owner, endpoint, Some(memory), message)
+        .is_ok());
+    assert_eq!(
+        channel.try_send(&capabilities, owner, endpoint, Some(memory), message),
+        Err(IpcError::Full)
+    );
+    assert_eq!(channel.try_receive(&capabilities, owner, endpoint).unwrap().label, 42);
+    assert_eq!(channel.try_receive(&capabilities, owner, endpoint).unwrap().buffer, message.buffer);
+    assert_eq!(channel.try_receive(&capabilities, owner, endpoint), Err(IpcError::Empty));
+}
+
+#[test]
+fn page_fault_dispatch_is_quota_limited_and_status_mapped() {
+    let owner = address_space(1);
+    let mut capabilities = CapabilitySpace::<1>::new();
+    let authority = capabilities
+        .mint_root(
+            owner,
+            CapabilityObject::SystemControl,
+            Rights::READ.union(Rights::CONTROL),
+        )
+        .expect("pager authority");
+    let policy = crate::QuotaPolicy::new(
+        crate::BucketConfig::new(8, 8).unwrap(),
+        crate::BucketConfig::new(1, 1).unwrap(),
+        crate::BucketConfig::new(8, 8).unwrap(),
+        4096,
+    )
+    .unwrap();
+    capabilities
+        .configure_quota(owner, authority, policy)
+        .expect("configure pager quota");
+    let fault = crate::PageFault {
+        virtual_address: 0x4000,
+        access: synos_fabric::Access::Read,
+        user: true,
+        present: false,
+        reserved_bit: false,
+        instruction_fetch: false,
+    };
+    assert_eq!(
+        crate::page_fault::dispatch_for(&capabilities, owner, authority, 0, fault),
+        Ok(false)
+    );
+    assert_eq!(
+        capabilities.consume_quota(
+            owner,
+            authority,
+            crate::QuotaResource::PageFaults,
+            0,
+            1,
+        ),
+        Ok(crate::QuotaDecision::Allowed)
+    );
+    assert!(matches!(
+        crate::page_fault::dispatch_for(&capabilities, owner, authority, 0, fault),
+        Err(crate::PageFaultDispatchError::RateLimited { .. })
+    ));
+}
+
+#[test]
+fn runtime_rejects_unknown_operations_reserved_bits_and_bad_buffers() {
+    let caller = address_space(9);
+    let process = FsdProcessId::new(9).expect("valid process");
+    let authority = FsdCapability::from_raw(1_u64 << 32).expect("valid authority");
+    let mut dispatcher = Dispatcher::<RuntimeLinkIpc, 1>::new(RuntimeLinkIpc {
+        request: None,
+        buffer: None,
+    });
+    dispatcher
+        .register_filesystem_process(caller, FilesystemIdentity { process, authority })
+        .expect("register filesystem process");
+
+    let mut unknown = Request::new(Operation::Yield);
+    unknown.operation = u16::MAX;
+    assert_eq!(Status::from_raw(dispatcher.dispatch(caller, unknown).status), Some(Status::INVALID_ARGUMENT));
+
+    let mut reserved = Request::new(Operation::ClockNow);
+    reserved.reserved = 1;
+    assert_eq!(Status::from_raw(dispatcher.dispatch(caller, reserved).status), Some(Status::INVALID_ARGUMENT));
+
+    let path = SharedBuffer {
+        region: SharedRegionId::new(4).unwrap(),
+        offset: 0,
+        length: 4,
+        writable: false,
+    };
+    assert_eq!(
+        Status::from_raw(
+            dispatcher
+                .dispatch(caller, Request::new(Operation::SynFsRead).with_buffer(path))
+                .status
+        ),
+        Some(Status::INVALID_ARGUMENT)
+    );
 }

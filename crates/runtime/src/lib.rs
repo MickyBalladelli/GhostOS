@@ -24,6 +24,9 @@ pub enum Error {
     Status(Status),
 }
 
+#[cfg(test)]
+mod tests;
+
 pub struct Runtime<S> {
     system: S,
 }

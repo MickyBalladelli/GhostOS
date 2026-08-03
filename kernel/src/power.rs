@@ -259,6 +259,54 @@ unsafe fn write_io(_address: u64, _bytes: u8, _value: u64) -> Result<(), AcpiErr
     Err(AcpiError::Unsupported)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn register(bytes: u8) -> GenericAddress {
+        GenericAddress {
+            address_space: AddressSpace::SystemMemory,
+            bit_width: bytes * 8,
+            bit_offset: 0,
+            access_size: bytes,
+            address: 0x1000,
+        }
+    }
+
+    #[test]
+    fn acpi_register_access_rejects_zero_misaligned_and_unsupported_addresses() {
+        assert_eq!(access_bytes(register(1)), Ok(1));
+        assert_eq!(
+            access_bytes(GenericAddress { address: 0, ..register(1) }),
+            Err(AcpiError::InvalidAddress)
+        );
+        assert_eq!(
+            access_bytes(GenericAddress { address: 0x1001, ..register(2) }),
+            Err(AcpiError::InvalidAddress)
+        );
+        assert_eq!(
+            access_bytes(GenericAddress { access_size: 5, ..register(1) }),
+            Err(AcpiError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn acpi_bit_fields_are_extracted_without_overflow() {
+        let field = GenericAddress {
+            bit_offset: 4,
+            bit_width: 8,
+            ..register(2)
+        };
+        assert_eq!(extract_field(0xabcd, field), 0xbc);
+        let wide = GenericAddress {
+            bit_offset: 0,
+            bit_width: 64,
+            ..register(8)
+        };
+        assert_eq!(extract_field(u64::MAX, wide), u64::MAX);
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 unsafe fn in_u8(port: u16) -> u8 {
     let value;
