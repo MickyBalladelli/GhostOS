@@ -1111,11 +1111,11 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.8 Compute, AI, and Data-Plane Tests
 
-- [ ] Test tensor shape/stride validation, shared buffers, overflow, serialization, accelerator discovery, capability checks, queue limits, and dispatch completion.
-- [ ] Test memory allocation policy, page alignment, transport selection, remote allocation, quota limits, release, migration, and failure recovery.
-- [ ] Test inference requests, token accounting, batching, KV-cache allocation/eviction, checkpointing, node loss, retry, failover, and deterministic replay.
-- [ ] Test semantic indexing, vector encoding, similarity search, freshness/decay, authorization filtering, zero-copy retrieval, and garbage collection.
-- [ ] Test agent bridge requests, script execution, sandbox limits, capability use, cancellation, audit records, and deterministic output.
+- [x] Test tensor shape/stride validation, shared buffers, overflow, serialization, accelerator discovery, capability checks, queue limits, and dispatch completion.
+- [x] Test memory allocation policy, page alignment, transport selection, remote allocation, quota limits, release, migration, and failure recovery.
+- [x] Test inference requests, token accounting, batching, KV-cache allocation/eviction, checkpointing, node loss, retry, failover, and deterministic replay.
+- [x] Test semantic indexing, vector encoding, similarity search, freshness/decay, authorization filtering, zero-copy retrieval, and garbage collection.
+- [x] Test agent bridge requests, script execution, sandbox limits, capability use, cancellation, audit records, and deterministic output.
 
 ### 59.9 Observability, Audit, Debugging, and Recovery Tests
 
