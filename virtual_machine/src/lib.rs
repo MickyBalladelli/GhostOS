@@ -847,11 +847,7 @@ impl Vm {
             return Ok(())
         };
         let output = serial.borrow();
-        if output
-            .output()
-            .windows(b"KERNEL PANIC".len())
-            .any(|window| window == b"KERNEL PANIC")
-        {
+        if output.guest_panicked() {
             return Err(VmError::GuestPanic)
         }
         Ok(())

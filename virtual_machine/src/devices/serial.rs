@@ -23,6 +23,9 @@ const LSR_THR_EMPTY: u8 = 0x20;
 const LSR_TRANSMIT_EMPTY: u8 = 0x40;
 
 const FIFO_SIZE: usize = 16;
+const OUTPUT_LIMIT: usize = 1024 * 1024;
+const OUTPUT_COMPACTION_THRESHOLD: usize = OUTPUT_LIMIT * 2;
+const GUEST_PANIC_MARKER: &[u8] = b"KERNEL PANIC";
 
 pub(crate) fn write_host_console<W: Write>(
     output: &mut W,
@@ -59,6 +62,8 @@ pub struct Serial16550 {
     host_last_was_cr: bool,
     rx_buffer: VecDeque<u8>,
     output: Vec<u8>,
+    panic_marker_progress: usize,
+    panic_detected: bool,
     apic: Option<Rc<RefCell<LocalApic>>>,
     irq_vector: u8,
 }
@@ -82,6 +87,8 @@ impl Serial16550 {
             host_last_was_cr: false,
             rx_buffer: VecDeque::new(),
             output: Vec::new(),
+            panic_marker_progress: 0,
+            panic_detected: false,
             apic: None,
             irq_vector: 0x24,
         }
@@ -117,6 +124,10 @@ impl Serial16550 {
         &self.output
     }
 
+    pub fn guest_panicked(&self) -> bool {
+        self.panic_detected
+    }
+
     pub fn take_output(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.output)
     }
@@ -137,18 +148,37 @@ impl Serial16550 {
 
     fn flush_output(&mut self) {
         let mut stdout = std::io::stdout().lock();
+        let tx_count = self.tx_count;
         let _ = write_host_console(
             &mut stdout,
-            &self.tx_buffer[..self.tx_count],
+            &self.tx_buffer[..tx_count],
             &mut self.host_last_was_cr,
         );
         let _ = stdout.flush();
-        self.output.extend_from_slice(&self.tx_buffer[..self.tx_count]);
-        if self.output.len() > 1024 * 1024 {
-            let excess = self.output.len() - 1024 * 1024;
+        self.output.extend_from_slice(&self.tx_buffer[..tx_count]);
+        for index in 0..tx_count {
+            self.observe_panic_marker(self.tx_buffer[index])
+        }
+        if self.output.len() > OUTPUT_COMPACTION_THRESHOLD {
+            let excess = self.output.len() - OUTPUT_LIMIT;
             self.output.drain(..excess);
         }
         self.tx_count = 0;
+    }
+
+    fn observe_panic_marker(&mut self, byte: u8) {
+        if self.panic_detected {
+            return
+        }
+
+        if byte == GUEST_PANIC_MARKER[self.panic_marker_progress] {
+            self.panic_marker_progress += 1;
+            if self.panic_marker_progress == GUEST_PANIC_MARKER.len() {
+                self.panic_detected = true;
+            }
+        } else {
+            self.panic_marker_progress = usize::from(byte == GUEST_PANIC_MARKER[0]);
+        }
     }
 }
 
