@@ -519,6 +519,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-declarative"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-status",
+ "synos-synfs",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-embedded-script"
 version = "0.1.0"
 dependencies = [

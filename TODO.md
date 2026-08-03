@@ -909,12 +909,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 57. Declarative OS Infrastructure-as-Code (`synos-declarative`)
-- [ ] **Declarative System Specification (`System.toml`)**
-  - [ ] Build a system-wide parser to manage system services, capability policies, and network configs in a single declarative file.
-- [ ] **Atomic Configuration Activation**
-  - [ ] Support zero-downtime, sub-millisecond system state swaps using SynFS snapshot trees (`synos-reconfigure`).
-- [ ] **TPM-Signed Configuration Enforcers**
-  - [ ] Require cryptographic signatures on declarative configuration updates before committing state changes across nodes.
+- [x] **Declarative System Specification (`System.toml`)**
+  - [x] Build a system-wide parser to manage system services, capability policies, and network configs in a single declarative file.
+- [x] **Atomic Configuration Activation**
+  - [x] Support zero-downtime, sub-millisecond system state swaps using SynFS snapshot trees (`synos-reconfigure`).
+- [x] **TPM-Signed Configuration Enforcers**
+  - [x] Require cryptographic signatures on declarative configuration updates before committing state changes across nodes.
 
 
 - [ ] **Uptime command**
