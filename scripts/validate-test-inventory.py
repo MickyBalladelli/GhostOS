@@ -2,6 +2,7 @@
 """Check that the TODO roadmap and test inventory still have matching IDs."""
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,3 +40,10 @@ if errors:
     sys.exit(1)
 
 print(f"test inventory valid: {len(feature_ids)} roadmap features, six tiers")
+coverage_check = subprocess.run(
+    [sys.executable, str(root / "scripts" / "validate-test-coverage.py")],
+    cwd=root,
+    check=False,
+)
+if coverage_check.returncode:
+    sys.exit(coverage_check.returncode)

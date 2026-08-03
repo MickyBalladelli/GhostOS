@@ -1,0 +1,166 @@
+# The enforceable checklist for TODO.md section 59.13.
+#
+# This file describes evidence, not a claim that an opt-in tier was run. A
+# claim becomes a pass only when the evidence directory contains a pass result.
+
+schema = 1
+source = "TODO.md"
+section = "59.13"
+
+[policy]
+required_feature_evidence = ["unit", "boundary", "integration", "end_to_end"]
+boundary_tier = "integration"
+end_to_end_tier = "qemu"
+negative_tier = "fault"
+persistent_scenarios = ["restart", "corruption", "timeout", "duplicate", "partial_failure"]
+vm_device_scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+boot_evidence = ["vm_or_qemu", "serial"]
+passing_state = "pass"
+
+[commands]
+deterministic = "./scripts/test-all.sh"
+full_validation = "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
+
+# Crates with production targets but no local #[cfg(test)] module or tests/
+# target. Each exception must name the replacement integration evidence.
+[[crate]]
+name = "synos-uefi"
+reason = "The UEFI loader is firmware-targeted and cannot link into the host test harness."
+replacement_integration = "integration.02.boot-storage"
+
+[[crate]]
+name = "synos-balancerd"
+reason = "The coordinator is exercised through cluster and actor integration boundaries."
+replacement_integration = "integration.40.cluster-balancing"
+
+[[crate]]
+name = "synos-init"
+reason = "The Ring 3 init entry point is target startup glue and is exercised by boot integration."
+replacement_integration = "integration.01.core"
+
+[[crate]]
+name = "synos-legacy-pc-drivers"
+reason = "Hardware driver entry points require the VM and platform qualification harness."
+replacement_integration = "integration.02.boot-storage"
+
+[[crate]]
+name = "synos-platform-io"
+reason = "Platform I/O is selected by target adapters and exercised by compatibility integration."
+replacement_integration = "integration.03.compatibility"
+
+[[crate]]
+name = "synos-power"
+reason = "ACPI and thermal paths require platform lifecycle integration fixtures."
+replacement_integration = "integration.19.lifecycle"
+
+[[crate]]
+name = "synos-auditd"
+reason = "The audit daemon is tested through the authenticated audit pipeline."
+replacement_integration = "integration.36.package-audit"
+
+[[crate]]
+name = "synos-inspect"
+reason = "Inspection output is a client-facing surface tested through shell and monitor integration."
+replacement_integration = "integration.32.inspect-api"
+
+[[crate]]
+name = "synos-kvd"
+reason = "The cache service is exercised through its bounded client API integration."
+replacement_integration = "integration.49.cache-api"
+
+[[crate]]
+name = "synos-system-model"
+reason = "The model is a shared declaration surface exercised by runtime integration."
+replacement_integration = "integration.57.config-activation"
+
+[[crate]]
+name = "cargo-synos"
+reason = "The Cargo subcommand is a thin host CLI wrapper tested through toolchain integration."
+replacement_integration = "integration.12.toolchain-runtime"
+
+# Every guest-visible device family has one stable matrix identity. The
+# identity is intentionally independent of a Rust function name so tests may
+# move without changing the coverage contract.
+[[vm_device]]
+name = "pci"
+source = "virtual_machine/src/devices/mod.rs"
+test_id = "vm.59.13.pci"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "apic-pic"
+source = "virtual_machine/src/devices/apic.rs"
+test_id = "vm.59.13.apic-pic"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "pit-hpet"
+source = "virtual_machine/src/devices/pit.rs"
+test_id = "vm.59.13.pit-hpet"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "serial-ps2"
+source = "virtual_machine/src/devices/serial.rs"
+test_id = "vm.59.13.serial-ps2"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "display"
+source = "virtual_machine/src/devices/display.rs"
+test_id = "vm.59.13.display"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "power"
+source = "virtual_machine/src/devices/power.rs"
+test_id = "vm.59.13.power"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "virtio"
+source = "virtual_machine/src/devices/virtio.rs"
+test_id = "vm.59.13.virtio"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "e1000"
+source = "virtual_machine/src/devices/net/e1000.rs"
+test_id = "vm.59.13.e1000"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "virtio-net"
+source = "virtual_machine/src/devices/net/virtio.rs"
+test_id = "vm.59.13.virtio-net"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "ahci"
+source = "virtual_machine/src/devices/storage/ahci.rs"
+test_id = "vm.59.13.ahci"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[vm_device]]
+name = "nvme"
+source = "virtual_machine/src/devices/storage/nvme.rs"
+test_id = "vm.59.13.nvme"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+
+[[boot_path]]
+name = "bios"
+test_id = "qemu.02.bios-uefi-chainload"
+vm_test = "firmware_loader_boot_parameters_and_uefi_state"
+serial_marker = "SynOS kernel bootstrap"
+
+[[boot_path]]
+name = "uefi"
+test_id = "qemu.02.bios-uefi-chainload"
+vm_test = "firmware_loader_boot_parameters_and_uefi_state"
+serial_marker = "SynOS kernel bootstrap"
+
+[[boot_path]]
+name = "multiboot"
+test_id = "integration.01.core"
+vm_test = "firmware_loader_boot_parameters_and_uefi_state"
+serial_marker = "SynOS kernel bootstrap"

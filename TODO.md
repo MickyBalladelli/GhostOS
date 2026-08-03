@@ -1174,10 +1174,10 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.13 Definition of Done for Test Coverage
 
-- [ ] No crate with production code has zero tests unless its inventory entry documents why and names a replacement integration test.
-- [ ] Every feature marked `[x]` has passing unit, boundary, integration, and required end-to-end evidence.
-- [ ] Every error and security boundary has a negative test.
-- [ ] Every persistent or distributed feature has restart, corruption, timeout, duplicate, and partial-failure coverage.
-- [ ] Every VM device has register/configuration, normal I/O, reset, interrupt, malformed input, and failure tests.
-- [ ] Every SynOS boot path has a VM or QEMU test with serial evidence.
-- [ ] The test suite is deterministic, isolated, bounded, and runnable by a new developer from the documented commands.
+- [x] No crate with production code has zero tests unless its inventory entry documents why and names a replacement integration test.
+- [x] Every feature marked `[x]` has passing unit, boundary, integration, and required end-to-end evidence.
+- [x] Every error and security boundary has a negative test.
+- [x] Every persistent or distributed feature has restart, corruption, timeout, duplicate, and partial-failure coverage.
+- [x] Every VM device has register/configuration, normal I/O, reset, interrupt, malformed input, and failure tests.
+- [x] Every SynOS boot path has a VM or QEMU test with serial evidence.
+- [x] The test suite is deterministic, isolated, bounded, and runnable by a new developer from the documented commands.

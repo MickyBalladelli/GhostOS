@@ -79,6 +79,7 @@ run_optional coverage "$root_dir/scripts/coverage.sh"
 run_optional mutation "$root_dir/scripts/mutation.sh"
 run_optional reproducibility "$root_dir/scripts/check-reproducible-image.sh"
 run_optional dashboard "$root_dir/scripts/test-dashboard.py" "$evidence_dir"
+run_optional coverage-contract python3 "$root_dir/scripts/validate-test-coverage.py" "$evidence_dir"
 
 "$root_dir/scripts/release-gate.sh" "$evidence_dir"
 echo "full validation passed; evidence: $evidence_dir"

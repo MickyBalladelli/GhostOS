@@ -2,7 +2,8 @@
 
 This document defines the minimum test evidence for every feature in
 `TODO.md`. The machine-readable feature map is
-[`test-inventory.toml`](test-inventory.toml).
+[`test-inventory.toml`](test-inventory.toml), and the enforceable 59.13
+definition is [`test-coverage.toml`](test-coverage.toml).
 
 ## Contract
 
@@ -111,6 +112,16 @@ inventory checks. Push and scheduled CI add QEMU and fuzz smoke tests. The
 scheduled workflow also runs coverage, mutation, Miri, sanitizer, cross-target,
 and reproducibility checks. CI uploads logs, coverage, and fuzz corpora.
 
+The 59.13 coverage contract is checked statically by:
+
+```sh
+python3 scripts/validate-test-coverage.py
+```
+
+Full validation runs the same check against the evidence directory. It requires
+passing deterministic, VM, recovery, QEMU, and serial-boot results before the
+coverage definition can pass.
+
 ## Shared harness
 
 [`synos-test-support`](../crates/test-support) is the test-only support crate.
@@ -150,8 +161,9 @@ corresponding compatibility decision.
 | `SYNOS_EVIDENCE_DIR` | `build/test-evidence/<run-id>` | Evidence output directory for the unified runners. |
 | `SYNOS_FUZZ_RUNS` | `1000` | Bounded fuzz smoke iterations per target. |
 
-Tests must not depend on an unset variable having a hidden meaning. The test
-result records the variables that were actually used.
+Tests are isolated from one another and must not depend on an unset variable
+having a hidden meaning. The test result records the variables that were
+actually used.
 
 ## Unit and property tests
 

@@ -11,6 +11,7 @@ duplicate_source_policy = "one inventory entry per roadmap number; duplicate TOD
 evidence_root = "build/test-evidence/{run-id}/{tier}/{test-id}"
 test_id_format = "{tier}.{feature-id}.{behavior}"
 coverage_state = "enforced"
+definition_of_done = "docs/test-coverage.toml"
 
 [contract]
 required_tiers = ["unit", "integration", "qemu", "fault", "fuzz", "performance"]
