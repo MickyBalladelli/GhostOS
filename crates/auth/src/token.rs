@@ -11,14 +11,14 @@ impl CapabilityKey {
         Self(bytes)
     }
 
-    pub(crate) fn authenticate(self, message: &[u8]) -> Result<[u8; 32], TokenError> {
+    pub fn authenticate(self, message: &[u8]) -> Result<[u8; 32], TokenError> {
         if message.len() > 64 {
             return Err(TokenError::Invalid)
         }
         Ok(hmac_sha256(&self.0, message))
     }
 
-    pub(crate) fn verify_authenticator(
+    pub fn verify_authenticator(
         self,
         message: &[u8],
         authenticator: &[u8; 32],

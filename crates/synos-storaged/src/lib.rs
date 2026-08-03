@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 mod bootstrap;
+mod admission;
 mod cache;
 mod capability;
 mod cluster;
@@ -17,6 +18,19 @@ pub use bootstrap::{
     CLUSTER_BOOTSTRAP_STATE_FILE, ClockHealth, ClusterBootstrapError, ClusterBootstrapState,
     ClusterCreateRequest, ClusterRootIdentity, EntropySource, MAX_BOOTSTRAP_ENDPOINT_BYTES,
     NodeCapabilities, ProtocolCompatibility, QuorumPolicy, SeedEntropy, TransportSet,
+};
+pub use admission::{
+    AdmissionAuditJournal, AdmissionEndpoint, AdmissionError, AdmissionInvitation,
+    AdmissionWorkflow, AddressSpaceLayout, AuditRecord, AttestationRoot, DiscoveryCandidate,
+    DiscoveryDirectory, DiscoverySource, IdentityProof, InvitationDecision, JoinChallenge,
+    JoinRequest, JournalError, LeaveHooks, LeaveOutcome, LeavePlan, MembershipChange, MembershipChangeKind,
+    MembershipReason, MembershipRecord, MembershipState, NegotiatedAdmission, NodeAttestation,
+    NodeIdentity, ProtocolOffer, QuorumReceipt, SecurityPolicy, TrustedIdentity,
+    ADMISSION_AUDIT_FORMAT_VERSION, ADMISSION_AUDIT_MAGIC, ADMISSION_AUDIT_STATE_FILE,
+    INVITATION_SCOPE_JOIN, INVITATION_SCOPE_RECONCILE,
+    INVITATION_SCOPE_REJOIN, MAX_ADDRESS_SPACE_LAYOUT_BYTES, MAX_ADMISSION_AUDIT,
+    MAX_ADMISSION_ENDPOINT_BYTES, MAX_ADMISSION_INVITATIONS, MAX_ADMISSION_MEMBERS,
+    MAX_DISCOVERY_CANDIDATES,
 };
 pub use cache::{CacheError, CacheMode, CowCache, RemoteFileBackend};
 pub use capability::{CapabilityError, StorageCapability, StorageRights};

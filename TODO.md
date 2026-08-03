@@ -952,16 +952,16 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Make creation idempotent and recoverable after interruption, reboot, or partial bootstrap.
   - [x] Publish signed bootstrap advertisements and allow an administrator to rotate or revoke bootstrap credentials.
 
-- [ ] **Join, Leave & Admission Workflow**
-  - [ ] Implement invitation creation, expiration, one-time use, scope restrictions, approval, rejection, and revocation.
-  - [ ] Discover candidate clusters through configured endpoints, local mesh gossip, mDNS, broadcast, and explicit addresses.
-  - [ ] Authenticate the joining node and cluster with mutual cryptographic identity, certificate/fingerprint checks, and TPM/TEE attestation.
-  - [ ] Negotiate protocol versions, capabilities, transports, address-space layout, feature flags, and security policy before admission.
-  - [ ] Add pending, approved, rejected, joined, draining, left, fenced, and expelled membership states with clear status reasons.
-  - [ ] Replicate membership changes with quorum acknowledgement and durable audit records.
-  - [ ] Drain workloads, release DLM leases, flush remote pages, reconcile SynFS deltas, revoke delegated capabilities, and close IPC streams before leave.
-  - [ ] Support safe forced leave and forced removal with fencing, epoch advancement, and explicit destructive-action authorization.
-  - [ ] Support rejoin after temporary loss without creating duplicate node identities or stale leases.
+- [x] **Join, Leave & Admission Workflow**
+  - [x] Implement invitation creation, expiration, one-time use, scope restrictions, approval, rejection, and revocation.
+  - [x] Discover candidate clusters through configured endpoints, local mesh gossip, mDNS, broadcast, and explicit addresses.
+  - [x] Authenticate the joining node and cluster with mutual cryptographic identity, certificate/fingerprint checks, and TPM/TEE attestation.
+  - [x] Negotiate protocol versions, capabilities, transports, address-space layout, feature flags, and security policy before admission.
+  - [x] Add pending, approved, rejected, joined, draining, left, fenced, and expelled membership states with clear status reasons.
+  - [x] Replicate membership changes with quorum acknowledgement and durable audit records.
+  - [x] Drain workloads, release DLM leases, flush remote pages, reconcile SynFS deltas, revoke delegated capabilities, and close IPC streams before leave.
+  - [x] Support safe forced leave and forced removal with fencing, epoch advancement, and explicit destructive-action authorization.
+  - [x] Support rejoin after temporary loss without creating duplicate node identities or stale leases.
 
 - [ ] **Membership, Quorum & Consensus**
   - [ ] Build a durable membership registry with node IDs, roles, endpoints, health, capacity, zones, racks, and last-seen generation.
