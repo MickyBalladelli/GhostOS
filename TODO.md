@@ -763,12 +763,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 47. Developer Ecosystem & Debugging Infrastructure
-- [ ] **Remote Microkernel Debugging (`synos-gdb`)**
-  - [ ] Build a lightweight Ring 0 `gdb` stub over serial/network interfaces to inspect microkernel state and DSM page faults without breaking Ring 3 process execution.
-- [ ] **User-Space Core Dump Engine**
-  - [ ] Implement instant CoW process state freezing on user daemon crashes, streaming state snapshots directly to SynFS without halting the microkernel.
-- [ ] **Sandboxed Dynamic Tracing (`syn-probes`)**
-  - [ ] Create an eBPF-style safe bytecode tracer in Ring 3 to monitor zero-copy IPC streams, ring buffer health, and CXL memory latencies in live production environments.
+- [x] **Remote Microkernel Debugging (`synos-gdb`)**
+  - [x] Build a lightweight Ring 0 `gdb` stub over serial/network interfaces to inspect microkernel state and DSM page faults without breaking Ring 3 process execution.
+- [x] **User-Space Core Dump Engine**
+  - [x] Implement instant CoW process state freezing on user daemon crashes, streaming state snapshots directly to SynFS without halting the microkernel.
+- [x] **Sandboxed Dynamic Tracing (`syn-probes`)**
+  - [x] Create an eBPF-style safe bytecode tracer in Ring 3 to monitor zero-copy IPC streams, ring buffer health, and CXL memory latencies in live production environments.
 
 
 ---

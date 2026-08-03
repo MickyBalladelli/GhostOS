@@ -485,6 +485,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-debug"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-init",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-embedded-script"
 version = "0.1.0"
 dependencies = [
