@@ -963,12 +963,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Support safe forced leave and forced removal with fencing, epoch advancement, and explicit destructive-action authorization.
   - [x] Support rejoin after temporary loss without creating duplicate node identities or stale leases.
 
-- [ ] **Membership, Quorum & Consensus**
-  - [ ] Build a durable membership registry with node IDs, roles, endpoints, health, capacity, zones, racks, and last-seen generation.
-  - [ ] Define coordinator/leader election, witness support, quorum calculation, voting/non-voting members, and membership-change rules.
-  - [ ] Handle network partitions, asymmetric reachability, duplicate identities, stale advertisements, and split-brain prevention.
-  - [ ] Propagate membership epochs to DLM, Software DSM, balancer, scheduler, SynFS, and service supervisors.
-  - [ ] Provide read-only operation and clear degraded behavior when quorum is unavailable.
+- [x] **Membership, Quorum & Consensus**
+  - [x] Build a durable membership registry with node IDs, roles, endpoints, health, capacity, zones, racks, and last-seen generation.
+  - [x] Define coordinator/leader election, witness support, quorum calculation, voting/non-voting members, and membership-change rules.
+  - [x] Handle network partitions, asymmetric reachability, duplicate identities, stale advertisements, and split-brain prevention.
+  - [x] Propagate membership epochs to DLM, Software DSM, balancer, scheduler, SynFS, and service supervisors.
+  - [x] Provide read-only operation and clear degraded behavior when quorum is unavailable.
 
 - [ ] **Discovery, Connectivity & Topology**
   - [ ] Implement signed cluster advertisements with cluster ID, node ID, endpoints, transports, versions, capabilities, and expiration.

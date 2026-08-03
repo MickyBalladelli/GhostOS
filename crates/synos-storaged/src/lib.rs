@@ -6,6 +6,7 @@ mod admission;
 mod cache;
 mod capability;
 mod cluster;
+mod membership;
 mod protocol;
 mod remote;
 mod service;
@@ -41,6 +42,14 @@ pub use cluster::{
     CLUSTER_METADATA_STATE_FILE, CLUSTER_ID_BYTES, MAX_CERTIFICATES, MAX_CLUSTER_ALIASES,
     MAX_CLUSTER_DESCRIPTION_BYTES, MAX_CLUSTER_NAME_BYTES, MAX_CLUSTERS, MAX_INVITATIONS,
     MAX_TRUSTED_PEERS, NODE_ID_BYTES, TOKEN_BYTES,
+};
+pub use membership::{
+    propagate_membership_epoch, ConsensusCommit, ConsensusProposal, ElectionResult, MemberHealth,
+    MemberRole, MemberSpec, MembershipAdvertisement, MembershipEpochConsumer, MembershipError,
+    MembershipLabel, MembershipOperation, MembershipRegistry, MembershipSnapshot, QuorumView,
+    RegistryMember, MAX_CONSENSUS_LOG, MAX_MEMBERSHIP_LABEL_BYTES, MAX_MEMBERSHIP_REGISTRY,
+    MEMBERSHIP_FORMAT_VERSION, MEMBERSHIP_HEADER_BYTES, MEMBERSHIP_MAGIC, MEMBERSHIP_RECORD_BYTES,
+    MEMBERSHIP_STATE_FILE,
 };
 pub use protocol::{
     BlockTransport, Endpoint, EndpointError, FabricTransport, NfsMinorVersion, ObjectKey,
