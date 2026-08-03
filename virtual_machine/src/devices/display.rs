@@ -264,7 +264,7 @@ impl DisplayState {
                 width: w,
                 height: h,
                 pixel_format: GopPixelFormat::BgrxRgb8,
-                pixels_per_scanline: pitch,
+                pixels_per_scanline: w,
             }],
             current_mode: 0,
         }
