@@ -142,6 +142,12 @@ pub trait DebugRuntime {
     fn write_memory(&mut self, address: u64, bytes: &[u8]) -> Result<(), Error>;
     fn continue_execution(&mut self) -> Result<(), Error>;
     fn step_execution(&mut self) -> Result<(), Error>;
+    fn reverse_continue_execution(&mut self) -> Result<(), Error> {
+        Err(Error::Unsupported)
+    }
+    fn reverse_step_execution(&mut self) -> Result<(), Error> {
+        Err(Error::Unsupported)
+    }
     fn dsm_faults(&mut self, destination: &mut [DsmFault]) -> usize;
 }
 
@@ -251,7 +257,7 @@ where
         }
         let required_operation = match payload[0] {
             b'G' | b'M' => DebugOperation::Write,
-            b'c' | b's' | b'k' => DebugOperation::Control,
+            b'c' | b's' | b'b' | b'k' => DebugOperation::Control,
             _ => DebugOperation::Read,
         };
         if !self.authority.permits(self.token, required_operation) {
@@ -267,13 +273,15 @@ where
             b'M' => self.receive_memory(&payload[1..], output),
             b'c' => self.control(false, output),
             b's' => self.control(true, output),
+            b'b' if payload == b"bc" => self.reverse_control(false, output),
+            b'b' if payload == b"bs" => self.reverse_control(true, output),
             b'D' => {
                 self.detached = true;
                 self.write_reply(b"OK", output)
             }
             b'k' => self.write_reply(b"OK", output),
             b'q' if payload == b"qSupported" => {
-                self.write_reply(b"PacketSize=200;qSynOS:state+", output)
+                self.write_reply(b"PacketSize=200;qSynOS:state+;qSynOS:replay+", output)
             }
             b'q' if payload == b"qAttached" => self.write_reply(b"1", output),
             b'q' if payload == b"qSynOS:state" => self.write_state(output),
@@ -354,6 +362,15 @@ where
             self.runtime.step_execution()?;
         } else {
             self.runtime.continue_execution()?;
+        }
+        self.write_reply(b"OK", output)
+    }
+
+    fn reverse_control(&mut self, step: bool, output: &mut [u8]) -> Result<usize, Error> {
+        if step {
+            self.runtime.reverse_step_execution()?;
+        } else {
+            self.runtime.reverse_continue_execution()?;
         }
         self.write_reply(b"OK", output)
     }

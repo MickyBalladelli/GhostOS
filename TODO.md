@@ -858,12 +858,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 52. Deterministic Time-Travel Execution & Replay (`synos-replay`)
-- [ ] **Non-Deterministic Input Logging**
-  - [ ] Log microkernel timing events, network interrupts, and CXL memory access variations to lock-free ring buffers with low execution overhead.
-- [ ] **Time-Travel Process Replay**
-  - [ ] Build reverse-debugging primitives into `synos-gdb` allowing developers to step process states backward and forward in time.
-- [ ] **Flight-Recorder Post-Mortems**
-  - [ ] Automatically preserve execution logs on process crash to reproduce transient bugs in isolated test harnesses.
+- [x] **Non-Deterministic Input Logging**
+  - [x] Log microkernel timing events, network interrupts, and CXL memory access variations to lock-free ring buffers with low execution overhead.
+- [x] **Time-Travel Process Replay**
+  - [x] Build reverse-debugging primitives into `synos-gdb` allowing developers to step process states backward and forward in time.
+- [x] **Flight-Recorder Post-Mortems**
+  - [x] Automatically preserve execution logs on process crash to reproduce transient bugs in isolated test harnesses.
 
 ---
 

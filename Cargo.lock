@@ -707,6 +707,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-replay"
+version = "0.1.0"
+dependencies = [
+ "synos-init",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-rms"
 version = "0.1.0"
 dependencies = [
