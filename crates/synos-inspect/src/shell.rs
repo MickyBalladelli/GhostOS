@@ -2,9 +2,11 @@ use syn_shell::{
     Text,
     diagnostics::{
         ClusterSnapshot, CpuSnapshot, DiagnosticSource, DiskSnapshot, MemorySnapshot,
-        MonitorSnapshot, ProcessSnapshot, ProcessState as ShellProcessState, UsersSnapshot,
+        MonitorSnapshot, ObsoleteSnapshot, ProcessSnapshot,
+        ProcessState as ShellProcessState, UsersSnapshot,
     },
 };
+use synos_audit::{ObsolescenceReason, PackageKind};
 use synos_status::Status;
 
 use crate::{
@@ -187,6 +189,43 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
         })
     }
 
+    fn obsolete(&mut self, cluster: bool) -> Result<ObsoleteSnapshot, Status> {
+        let report = self
+            .service
+            .obsolete(self.capability, Self::view(cluster), self.now_us)
+            .map_err(|error| error.status())?;
+        let mut snapshot = ObsoleteSnapshot {
+            sampled_at_us: report.sampled_at_us(),
+            packages: 0,
+            binaries: 0,
+            drivers: 0,
+            deprecated: 0,
+            unmaintained: 0,
+            out_of_date: 0,
+            nodes: 0,
+        };
+        for package in report.packages() {
+            snapshot.packages = snapshot.packages.saturating_add(1);
+            match package.kind {
+                PackageKind::Binary => snapshot.binaries = snapshot.binaries.saturating_add(1),
+                PackageKind::Driver => snapshot.drivers = snapshot.drivers.saturating_add(1),
+            }
+            match package.reason {
+                ObsolescenceReason::Deprecated => {
+                    snapshot.deprecated = snapshot.deprecated.saturating_add(1)
+                }
+                ObsolescenceReason::Unmaintained => {
+                    snapshot.unmaintained = snapshot.unmaintained.saturating_add(1)
+                }
+                ObsolescenceReason::OutOfDate => {
+                    snapshot.out_of_date = snapshot.out_of_date.saturating_add(1)
+                }
+            }
+        }
+        snapshot.nodes = report.packages().map(|package| package.node).collect::<NodeSet>().len();
+        Ok(snapshot)
+    }
+
     fn cluster(&mut self) -> Result<ClusterSnapshot, Status> {
         let report = self
             .service
@@ -244,5 +283,36 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
             remote_faults: cpu.dsm_faults,
             network_bytes: 0,
         })
+    }
+}
+
+struct NodeSet {
+    nodes: [Option<synos_fabric::NodeId>; 64],
+    length: usize,
+}
+
+impl NodeSet {
+    fn len(self) -> u64 {
+        self.length as u64
+    }
+}
+
+impl FromIterator<synos_fabric::NodeId> for NodeSet {
+    fn from_iter<T: IntoIterator<Item = synos_fabric::NodeId>>(iter: T) -> Self {
+        let mut set = Self {
+            nodes: [None; 64],
+            length: 0,
+        };
+        for node in iter {
+            if set.nodes[..set.length].contains(&Some(node)) {
+                continue
+            }
+            if set.length == set.nodes.len() {
+                break
+            }
+            set.nodes[set.length] = Some(node);
+            set.length += 1;
+        }
+        set
     }
 }

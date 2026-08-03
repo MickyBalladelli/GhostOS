@@ -1,4 +1,5 @@
 use synos_status::Status;
+use synos_audit::ObsolescenceReport;
 
 use crate::{
     ActivityReport, CpuReport, InspectCapability, InspectionAuthority,
@@ -37,6 +38,9 @@ pub trait InspectionProvider {
     fn sample_storage(&mut self, report: &mut StorageReport) -> Result<(), Status>;
     fn sample_cpu(&mut self, report: &mut CpuReport) -> Result<(), Status>;
     fn sample_activity(&mut self, report: &mut ActivityReport) -> Result<(), Status>;
+    fn sample_obsolete(&mut self, _report: &mut ObsolescenceReport) -> Result<(), Status> {
+        Err(Status::NOT_FOUND)
+    }
 }
 
 /// Publish/consume handoff useful when hardware and kernel collectors run in
@@ -46,6 +50,7 @@ pub struct TelemetryStore {
     storage: StorageReport,
     cpu: CpuReport,
     activity: ActivityReport,
+    obsolete: ObsolescenceReport,
 }
 
 impl TelemetryStore {
@@ -55,6 +60,7 @@ impl TelemetryStore {
             storage: StorageReport::new(),
             cpu: CpuReport::new(),
             activity: ActivityReport::new(),
+            obsolete: ObsolescenceReport::new(),
         }
     }
 
@@ -72,6 +78,10 @@ impl TelemetryStore {
 
     pub fn publish_activity(&mut self, report: ActivityReport) {
         self.activity = report
+    }
+
+    pub fn publish_obsolete(&mut self, report: ObsolescenceReport) {
+        self.obsolete = report
     }
 }
 
@@ -99,6 +109,11 @@ impl InspectionProvider for TelemetryStore {
 
     fn sample_activity(&mut self, report: &mut ActivityReport) -> Result<(), Status> {
         *report = self.activity;
+        Ok(())
+    }
+
+    fn sample_obsolete(&mut self, report: &mut ObsolescenceReport) -> Result<(), Status> {
+        *report = self.obsolete;
         Ok(())
     }
 }
@@ -222,6 +237,29 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
             .processes()
             .find(|sample| process.is_none_or(|id| sample.id == id))
             .ok_or(InspectError::NotFound)
+    }
+
+    pub fn obsolete(
+        &mut self,
+        capability: InspectCapability,
+        view: View,
+        now_us: u64,
+    ) -> Result<ObsolescenceReport, InspectError> {
+        self.authorize(capability, InspectionRights::OBSOLESCENCE, view, now_us)?;
+        let mut report = ObsolescenceReport::new();
+        self.provider
+            .sample_obsolete(&mut report)
+            .map_err(InspectError::Source)?;
+        if view == View::Local {
+            let node = capability.home_node();
+            let mut local = ObsolescenceReport::new();
+            local.set_sampled_at_us(report.sampled_at_us());
+            for package in report.packages().filter(|package| package.node == node) {
+                local.push(package).map_err(|_| InspectError::InvalidSample)?;
+            }
+            report = local;
+        }
+        Ok(report)
     }
 
     fn authorize(

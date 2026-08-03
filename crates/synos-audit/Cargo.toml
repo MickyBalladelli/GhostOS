@@ -9,6 +9,7 @@ description = "Bounded background package security auditing for SynOS"
 path = "src/lib.rs"
 
 [dependencies]
+synos-fabric = { path = "../fabric" }
 synos-pkg = { path = "../pkg" }
 synos-status = { path = "../status" }
 synos-system-model = { path = "../system-model" }

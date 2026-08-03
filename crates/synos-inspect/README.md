@@ -10,7 +10,9 @@ and process snapshots. `ShellInspectionSource` connects those snapshots to:
 - `SHOW CPU [/CLUSTER]`
 - `SHOW USERS [/CLUSTER]`
 - `SHOW PROCESS [pid]`
+- `SHOW OBSOLETE [/CLUSTER]`
 
 Local capabilities see their home node and their own activity. Cluster views
-require `CAP_AUDIT_WORLD`. Capabilities are expiry- and revocation-epoch
-checked before a provider is sampled.
+require `CAP_AUDIT_WORLD`. Obsolescence reports count deprecated,
+unmaintained, and out-of-date binaries and drivers. Capabilities are expiry-
+and revocation-epoch checked before a provider is sampled.

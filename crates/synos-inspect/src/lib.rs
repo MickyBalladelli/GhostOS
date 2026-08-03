@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 
 //! Capability-scoped snapshots used by `SHOW MEMORY`, `SHOW DISK`,
-//! `SHOW CPU`, `SHOW USERS`, and `SHOW PROCESS`.
+//! `SHOW CPU`, `SHOW USERS`, `SHOW PROCESS`, and `SHOW OBSOLETE`.
 
 mod access;
 mod activity;
@@ -27,6 +27,7 @@ pub use memory::{
     CxlLeaseSample, DsmPageSample, MemoryNodeSample, MemoryReport,
     MAX_CXL_LEASES, MAX_DSM_ALLOCATIONS, MAX_MEMORY_NODES,
 };
+pub use synos_audit::ObsolescenceReport;
 pub use service::{
     InspectError, InspectionProvider, InspectionService, TelemetryStore, View,
 };

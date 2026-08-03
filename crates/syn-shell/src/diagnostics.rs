@@ -16,6 +16,7 @@ pub const MONITOR_ROUTE: u16 = 3;
 pub const SHOW_DISK_ROUTE: u16 = 4;
 pub const SHOW_CPU_ROUTE: u16 = 5;
 pub const SHOW_USERS_ROUTE: u16 = 6;
+pub const SHOW_OBSOLETE_ROUTE: u16 = 7;
 pub const DEFAULT_DIAGNOSTIC_QUEUE: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,6 +77,18 @@ pub struct UsersSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObsoleteSnapshot {
+    pub sampled_at_us: u64,
+    pub packages: u64,
+    pub binaries: u64,
+    pub drivers: u64,
+    pub deprecated: u64,
+    pub unmaintained: u64,
+    pub out_of_date: u64,
+    pub nodes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessState {
     Ready,
     Running,
@@ -120,6 +133,10 @@ pub trait DiagnosticSource {
     fn disk(&mut self, cluster: bool) -> Result<DiskSnapshot, Status>;
     fn cpu(&mut self, cluster: bool) -> Result<CpuSnapshot, Status>;
     fn users(&mut self, cluster: bool) -> Result<UsersSnapshot, Status>;
+    fn obsolete(&mut self, cluster: bool) -> Result<ObsoleteSnapshot, Status> {
+        let _ = cluster;
+        Err(Status::NOT_FOUND)
+    }
     fn cluster(&mut self) -> Result<ClusterSnapshot, Status>;
     fn process(&mut self, pid: Option<u64>) -> Result<ProcessSnapshot, Status>;
     fn monitor(
@@ -164,6 +181,12 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-USERS", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
         RouteId::new(SHOW_USERS_ROUTE).expect("nonzero route"),
+    )?;
+
+    registry.register(
+        CommandSpec::new("SHOW-OBSOLETE", &[cluster])
+            .map_err(|_| Error::InvalidValue)?,
+        RouteId::new(SHOW_OBSOLETE_ROUTE).expect("nonzero route"),
     )?;
 
     let interval =
@@ -293,6 +316,10 @@ impl<Source: DiagnosticSource, const CAPACITY: usize>
             SHOW_USERS_ROUTE => {
                 let cluster = boolean(command.get("CLUSTER"))?;
                 users_output(self.source.users(cluster)?)
+            }
+            SHOW_OBSOLETE_ROUTE => {
+                let cluster = boolean(command.get("CLUSTER"))?;
+                obsolete_output(self.source.obsolete(cluster)?)
             }
             MONITOR_ROUTE => {
                 let interval = unsigned(command.get("INTERVAL"))?.unwrap_or(1_000_000);
@@ -494,6 +521,35 @@ fn users_output(snapshot: UsersSnapshot) -> Result<StructuredOutput, Status> {
         OutputValue::Unsigned(snapshot.remote_sessions),
     )?;
     insert(&mut output, "processes", OutputValue::Unsigned(snapshot.processes))?;
+    Ok(output)
+}
+
+fn obsolete_output(snapshot: ObsoleteSnapshot) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert(
+        &mut output,
+        "sampled-at-us",
+        OutputValue::Unsigned(snapshot.sampled_at_us),
+    )?;
+    insert(&mut output, "packages", OutputValue::Unsigned(snapshot.packages))?;
+    insert(&mut output, "binaries", OutputValue::Unsigned(snapshot.binaries))?;
+    insert(&mut output, "drivers", OutputValue::Unsigned(snapshot.drivers))?;
+    insert(
+        &mut output,
+        "deprecated",
+        OutputValue::Unsigned(snapshot.deprecated),
+    )?;
+    insert(
+        &mut output,
+        "unmaintained",
+        OutputValue::Unsigned(snapshot.unmaintained),
+    )?;
+    insert(
+        &mut output,
+        "out-of-date",
+        OutputValue::Unsigned(snapshot.out_of_date),
+    )?;
+    insert(&mut output, "nodes", OutputValue::Unsigned(snapshot.nodes))?;
     Ok(output)
 }
 

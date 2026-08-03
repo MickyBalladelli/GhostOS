@@ -25,8 +25,14 @@ impl InspectionRights {
     pub const CPU: Self = Self(1 << 2);
     pub const ACTIVITY: Self = Self(1 << 3);
     pub const AUDIT_WORLD: Self = Self(1 << 4);
-    pub const LOCAL_DIAGNOSTICS: Self =
-        Self(Self::MEMORY.0 | Self::STORAGE.0 | Self::CPU.0 | Self::ACTIVITY.0);
+    pub const OBSOLESCENCE: Self = Self(1 << 5);
+    pub const LOCAL_DIAGNOSTICS: Self = Self(
+        Self::MEMORY.0
+            | Self::STORAGE.0
+            | Self::CPU.0
+            | Self::ACTIVITY.0
+            | Self::OBSOLESCENCE.0,
+    );
     pub const ALL: Self = Self(Self::LOCAL_DIAGNOSTICS.0 | Self::AUDIT_WORLD.0);
 
     pub const fn from_bits(bits: u8) -> Option<Self> {

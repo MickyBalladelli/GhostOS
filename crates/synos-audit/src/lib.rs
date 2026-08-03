@@ -3,13 +3,15 @@
 
 use core::fmt;
 
+use synos_fabric::NodeId;
 use synos_pkg::PackageDaemon;
 use synos_status::{IntoStatus, Status};
-use synos_system_model::ContentId;
+use synos_system_model::{ContentId, LogicalName};
 
 pub const DEFAULT_ADVISORY_CAPACITY: usize = 512;
 pub const DEFAULT_FINDING_CAPACITY: usize = 256;
 pub const MAX_ADVISORY_ID_BYTES: usize = 64;
+pub const DEFAULT_OBSOLETE_CAPACITY: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdvisorySource {
@@ -78,6 +80,9 @@ pub enum AuditError {
     FindingCapacity,
     InvalidAdvisoryId,
     InvalidBudget,
+    DuplicateObsolete,
+    InvalidObsolete,
+    ObsoleteCapacity,
 }
 
 impl IntoStatus for AuditError {
@@ -87,8 +92,153 @@ impl IntoStatus for AuditError {
             Self::DuplicateAdvisory | Self::InvalidAdvisoryId | Self::InvalidBudget => {
                 Status::INVALID_ARGUMENT
             }
+            Self::DuplicateObsolete | Self::InvalidObsolete => Status::INVALID_ARGUMENT,
+            Self::ObsoleteCapacity => Status::NO_SPACE,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackageKind {
+    Binary,
+    Driver,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PackageVersion {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl PackageVersion {
+    pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
+        Self { major, minor, patch }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObsolescenceReason {
+    Deprecated,
+    Unmaintained,
+    OutOfDate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObsoletePackage {
+    pub node: NodeId,
+    pub package: ContentId,
+    pub name: LogicalName,
+    pub kind: PackageKind,
+    pub reason: ObsolescenceReason,
+    pub installed_version: PackageVersion,
+    pub latest_version: PackageVersion,
+}
+
+#[derive(Clone, Copy)]
+pub struct ObsolescenceReport<const CAPACITY: usize = DEFAULT_OBSOLETE_CAPACITY> {
+    sampled_at_us: u64,
+    packages: [Option<ObsoletePackage>; CAPACITY],
+}
+
+impl<const CAPACITY: usize> ObsolescenceReport<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            sampled_at_us: 0,
+            packages: [None; CAPACITY],
+        }
+    }
+
+    pub const fn sampled_at_us(&self) -> u64 {
+        self.sampled_at_us
+    }
+
+    pub fn set_sampled_at_us(&mut self, sampled_at_us: u64) {
+        self.sampled_at_us = sampled_at_us
+    }
+
+    pub fn packages(&self) -> impl Iterator<Item = ObsoletePackage> + '_ {
+        self.packages.iter().flatten().copied()
+    }
+
+    pub fn push(&mut self, package: ObsoletePackage) -> Result<(), AuditError> {
+        validate_obsolete(package)?;
+        if self.packages().any(|entry| {
+            entry.node == package.node
+                && entry.package == package.package
+                && entry.reason == package.reason
+        }) {
+            return Err(AuditError::DuplicateObsolete)
+        }
+        let slot = self
+            .packages
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(AuditError::ObsoleteCapacity)?;
+        *slot = Some(package);
+        Ok(())
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::new()
+    }
+}
+
+impl<const CAPACITY: usize> Default for ObsolescenceReport<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Fixed-capacity obsolescence index populated by package metadata feed
+/// adapters. The report keeps node identity so local and cluster views can be
+/// filtered without trusting shell clients with unscoped package data.
+pub struct ObsolescenceRegistry<const CAPACITY: usize = DEFAULT_OBSOLETE_CAPACITY> {
+    report: ObsolescenceReport<CAPACITY>,
+}
+
+impl<const CAPACITY: usize> ObsolescenceRegistry<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            report: ObsolescenceReport::new(),
+        }
+    }
+
+    pub fn add(&mut self, package: ObsoletePackage) -> Result<(), AuditError> {
+        self.report.push(package)
+    }
+
+    pub fn packages(&self) -> impl Iterator<Item = ObsoletePackage> + '_ {
+        self.report.packages()
+    }
+
+    pub fn set_sampled_at_us(&mut self, sampled_at_us: u64) {
+        self.report.set_sampled_at_us(sampled_at_us)
+    }
+
+    pub fn snapshot(&self) -> ObsolescenceReport<CAPACITY> {
+        self.report
+    }
+
+    pub fn clear(&mut self) {
+        self.report.clear()
+    }
+}
+
+impl<const CAPACITY: usize> Default for ObsolescenceRegistry<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn validate_obsolete(package: ObsoletePackage) -> Result<(), AuditError> {
+    if package.name.as_str().is_empty()
+        || (package.reason == ObsolescenceReason::OutOfDate
+            && package.installed_version >= package.latest_version)
+    {
+        return Err(AuditError::InvalidObsolete)
+    }
+    Ok(())
 }
 
 /// Normalized, fixed-capacity advisory index.
