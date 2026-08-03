@@ -58,6 +58,7 @@ members = [
     "tools/cargo-synos",
     "kernel",
     "boot/uefi",
+    "virtual_machine",
 ]
 default-members = [
     "crates/boot-protocol",
@@ -114,6 +115,7 @@ default-members = [
     "crates/synos-mesh",
     "crates/synos-declarative",
     "kernel",
+    "virtual_machine",
 ]
 exclude = ["fuzz"]
 

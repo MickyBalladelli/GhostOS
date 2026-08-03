@@ -337,3 +337,65 @@ Other options:
   -V, --version             Show the version"#
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn cli_parses_bios_machine_and_terminal_options() {
+        let parsed = parse_args(args(&[
+            "--firmware",
+            "bios",
+            "--memory",
+            "64M",
+            "--cpus",
+            "2",
+            "--serial-port",
+            "com2",
+            "--input",
+            "ps2",
+            "--non-interactive",
+            "--steps",
+            "12",
+        ]))
+        .expect("parse CLI");
+        let ParseResult::Run(cli) = parsed else {
+            panic!("expected run configuration")
+        };
+        assert_eq!(cli.config.memory_size, 64 * 1024 * 1024);
+        assert_eq!(cli.config.smp_cores, 2);
+        assert_eq!(cli.config.serial_port, COM2_PORT);
+        assert_eq!(cli.input_mode, TerminalInputMode::Ps2);
+        assert_eq!(cli.terminal, Some(false));
+        assert_eq!(cli.config.max_steps, Some(12));
+    }
+
+    #[test]
+    fn cli_rejects_invalid_combinations() {
+        assert!(parse_args(args(&["--efi", "app.efi"])).is_err());
+        assert!(parse_args(args(&["--integration"])).is_err());
+        assert!(parse_args(args(&["--interactive", "--steps", "1"])).is_err());
+        assert!(parse_args(args(&["--cpus", "0"])).is_err());
+        assert!(parse_args(args(&["--unknown"])).is_err());
+    }
+
+    #[test]
+    fn cli_supports_help_and_version_commands() {
+        assert!(matches!(parse_args(args(&["--help"])), Ok(ParseResult::Help)));
+        assert!(matches!(parse_args(args(&["--version"])), Ok(ParseResult::Version)));
+    }
+
+    #[test]
+    fn cli_parses_hex_ports_and_memory_suffixes() {
+        assert_eq!(parse_serial_port("0x3f8").expect("COM1 port"), COM1_PORT);
+        assert_eq!(parse_serial_port("2f8").expect("COM2 port"), COM2_PORT);
+        assert_eq!(parse_memory("1GiB"), Some(1024 * 1024 * 1024));
+        assert_eq!(parse_memory("4096K"), Some(4096 * 1024));
+        assert_eq!(parse_memory("0"), None);
+    }
+}

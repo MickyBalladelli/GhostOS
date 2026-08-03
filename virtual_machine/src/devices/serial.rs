@@ -312,10 +312,10 @@ mod tests {
         let base = 0x3F8;
         let mut s = Serial16550::new(base);
         s.push_input(b"hi");
-        assert_eq!(s.read(base + REG_LSR, 1).unwrap() & LSR_DATA_READY, 1);
+        assert_eq!(s.read(base + REG_LSR, 1).unwrap() & u64::from(LSR_DATA_READY), 1);
         assert_eq!(s.read(base + REG_DATA, 1).unwrap(), b'h' as u64);
         assert_eq!(s.read(base + REG_DATA, 1).unwrap(), b'i' as u64);
-        assert_eq!(s.read(base + REG_LSR, 1).unwrap() & LSR_DATA_READY, 0);
+        assert_eq!(s.read(base + REG_LSR, 1).unwrap() & u64::from(LSR_DATA_READY), 0);
     }
 
     #[test]

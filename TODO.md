@@ -1140,21 +1140,21 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.11 VM and QEMU Integration Matrix
 
-- [ ] Make the `virtual_machine` crate a first-class workspace test target with its own unit, integration, and CLI test commands.
-- [ ] Add VM tests for CPU decode/execute, mode changes, flags, registers, segmentation, control/debug registers, exceptions, interrupts, HLT, and reset.
-- [ ] Add VM tests for MMU allocation, page tables, permissions, MMIO routing, unaligned access, large pages, COW, ballooning, overcommit, and invalid addresses.
-- [ ] Add VM tests for PCI/config space, APIC/PIC, PIT, HPET, serial, PS/2, power, VGA, VESA, GOP, and interrupt delivery/wakeup.
-- [ ] Add VM tests for AHCI, NVMe, Virtio block/net/console/rng, E1000, raw/VHD/QCOW2 images, DMA bounds, queue descriptors, device reset, and I/O errors.
-- [ ] Add VM tests for BIOS, UEFI, Multiboot, kernel loading, initrd, command line, framebuffer information, boot failure, and entry-point validation.
-- [ ] Add VM tests for execution limits, profiling, translation-cache invalidation, snapshot save/restore, snapshot chains, diffs, corrupted snapshots, and compatibility versions.
-- [ ] Add VM tests for terminal input translation, serial output, TTY/raw-mode cleanup, EOF, Ctrl-C, Ctrl-D, escape sequences, HLT wakeup, guest shutdown, panic, and host error cleanup.
-- [ ] Add VM tests for loopback and multi-port networking, packet delivery, MAC filtering, queue backpressure, disconnects, and deterministic packet loss.
-- [ ] Add VM-to-SynOS tests for boot, serial prompt, scheduler, IPC, capabilities, paging, filesystem mount, file read/write, shell commands, shutdown, and reboot.
-- [ ] Add QEMU BIOS and UEFI smoke tests for one CPU and SMP, with serial assertions, bounded timeouts, exit reasons, and saved logs.
-- [ ] Add QEMU filesystem tests for create/list/type/default-directory/edit/link/delete/version/snapshot workflows and all protected failure cases.
-- [ ] Add QEMU cluster tests for two or more nodes, E1000 transport, CXL/ivshmem setup, heartbeats, page movement, node failure, fencing, failover, and rejoin.
-- [ ] Add remote-terminal tests for interactive shell behavior, resize, ANSI output, input cancellation, reconnect, and cleanup after guest failure.
-- [ ] Separate fast deterministic VM tests from opt-in QEMU, hardware, KVM/HVF, cluster, performance, and long-running soak tests.
+- [x] Make the `virtual_machine` crate a first-class workspace test target with its own unit, integration, and CLI test commands.
+- [x] Add VM tests for CPU decode/execute, mode changes, flags, registers, segmentation, control/debug registers, exceptions, interrupts, HLT, and reset.
+- [x] Add VM tests for MMU allocation, page tables, permissions, MMIO routing, unaligned access, large pages, COW, ballooning, overcommit, and invalid addresses.
+- [x] Add VM tests for PCI/config space, APIC/PIC, PIT, HPET, serial, PS/2, power, VGA, VESA, GOP, and interrupt delivery/wakeup.
+- [x] Add VM tests for AHCI, NVMe, Virtio block/net/console/rng, E1000, raw/VHD/QCOW2 images, DMA bounds, queue descriptors, device reset, and I/O errors.
+- [x] Add VM tests for BIOS, UEFI, Multiboot, kernel loading, initrd, command line, framebuffer information, boot failure, and entry-point validation.
+- [x] Add VM tests for execution limits, profiling, translation-cache invalidation, snapshot save/restore, snapshot chains, diffs, corrupted snapshots, and compatibility versions.
+- [x] Add VM tests for terminal input translation, serial output, TTY/raw-mode cleanup, EOF, Ctrl-C, Ctrl-D, escape sequences, HLT wakeup, guest shutdown, panic, and host error cleanup.
+- [x] Add VM tests for loopback and multi-port networking, packet delivery, MAC filtering, queue backpressure, disconnects, and deterministic packet loss.
+- [x] Add VM-to-SynOS tests for boot, serial prompt, scheduler, IPC, capabilities, paging, filesystem mount, file read/write, shell commands, shutdown, and reboot.
+- [x] Add QEMU BIOS and UEFI smoke tests for one CPU and SMP, with serial assertions, bounded timeouts, exit reasons, and saved logs.
+- [x] Add QEMU filesystem tests for create/list/type/default-directory/edit/link/delete/version/snapshot workflows and all protected failure cases.
+- [x] Add QEMU cluster tests for two or more nodes, E1000 transport, CXL/ivshmem setup, heartbeats, page movement, node failure, fencing, failover, and rejoin.
+- [x] Add remote-terminal tests for interactive shell behavior, resize, ANSI output, input cancellation, reconnect, and cleanup after guest failure.
+- [x] Separate fast deterministic VM tests from opt-in QEMU, hardware, KVM/HVF, cluster, performance, and long-running soak tests.
 
 ### 59.12 CI, Coverage, Fuzzing, and Release Gates
 
