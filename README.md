@@ -62,6 +62,9 @@ Run the host-side unit tests for the default workspace members:
 cargo test
 ```
 
+The test contract, tiers, environment variables, evidence format, and TODO
+feature inventory are in [`docs/testing.md`](docs/testing.md).
+
 The bare-metal kernel and UEFI entry binaries are not test harnesses. Their
 reusable logic is tested through the kernel library with host-safe hardware
 stubs.

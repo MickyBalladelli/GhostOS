@@ -1033,13 +1033,13 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.1 Test Rules and Test Inventory
 
-- [ ] Create `docs/testing.md` with the test contract, supported host platforms, required tools, environment variables, test tiers, and evidence format.
-- [ ] Create a machine-readable test inventory mapping every TODO feature to its unit, integration, QEMU, fault, fuzz, and performance tests.
-- [ ] Add a test checklist to every new feature section: parser/API, success path, invalid input, authorization, limits, persistence, recovery, observability, and compatibility.
-- [ ] Require every public type, operation, status code, wire message, and error variant to have at least one direct test and one boundary test.
-- [ ] Require every bug fix to add a regression test before the fix is marked complete.
-- [ ] Record known untestable hardware behavior as an explicit hardware-smoke test with required evidence; never count an unexecuted test as passing.
-- [ ] Define stable test names and test evidence paths so local runs and CI produce comparable results.
+- [x] Create `docs/testing.md` with the test contract, supported host platforms, required tools, environment variables, test tiers, and evidence format.
+- [x] Create a machine-readable test inventory mapping every TODO feature to its unit, integration, QEMU, fault, fuzz, and performance tests.
+- [x] Add a test checklist to every new feature section: parser/API, success path, invalid input, authorization, limits, persistence, recovery, observability, and compatibility.
+- [x] Require every public type, operation, status code, wire message, and error variant to have at least one direct test and one boundary test.
+- [x] Require every bug fix to add a regression test before the fix is marked complete.
+- [x] Record known untestable hardware behavior as an explicit hardware-smoke test with required evidence; never count an unexecuted test as passing.
+- [x] Define stable test names and test evidence paths so local runs and CI produce comparable results.
 
 ### 59.2 Test Harness and Fixtures
 

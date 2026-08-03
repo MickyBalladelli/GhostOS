@@ -1,0 +1,631 @@
+# Machine-readable coverage map for the numbered feature sections in TODO.md.
+# The IDs are stable names for required evidence, not claims that every test
+# already exists. `planned` entries are coverage debt until an artifact is
+# produced with the result states documented in docs/testing.md.
+
+schema = 1
+source = "TODO.md"
+source_scope = "numbered feature sections 1 through 58"
+duplicate_source_headings = ["37", "38", "39"]
+duplicate_source_policy = "one inventory entry per roadmap number; duplicate TODO headings share the entry"
+evidence_root = "build/test-evidence/{run-id}/{tier}/{test-id}"
+test_id_format = "{tier}.{feature-id}.{behavior}"
+coverage_state = "planned"
+
+[contract]
+required_tiers = ["unit", "integration", "qemu", "fault", "fuzz", "performance"]
+required_checklist = [
+  "parser-api-success",
+  "invalid-input-status",
+  "authorization-isolation",
+  "limits-cancellation-timeout",
+  "persistence-restart-recovery",
+  "observability-audit",
+  "compatibility-versioning",
+  "inventory-evidence",
+]
+unexecuted_states = ["skipped", "blocked", "not_implemented"]
+
+[tiers.unit]
+command = "cargo test"
+artifact = "stdout.log"
+
+[tiers.integration]
+command = "cargo test --workspace --all-targets"
+artifact = "stdout.log"
+
+[tiers.qemu]
+command = "SYNOS_RUN_QEMU_TESTS=1 cargo test --manifest-path virtual_machine/Cargo.toml --test test_environments -- --ignored"
+artifact = "serial.log"
+
+[tiers.fault]
+command = "cargo test --workspace --all-targets"
+artifact = "failure.json"
+
+[tiers.fuzz]
+command = "cargo fuzz run <target>"
+artifact = "corpus-or-crash"
+
+[tiers.performance]
+command = "feature-specific benchmark command"
+artifact = "result.json"
+
+[[feature]]
+id = "01"
+todo_heading = "Core SynOS Kernel Architecture & SynFS"
+unit = ["unit.01.core"]
+integration = ["integration.01.core"]
+qemu = ["qemu.01.boot-filesystem"]
+fault = ["fault.01.boot-ipc-capabilities"]
+fuzz = ["fuzz.01.boot-filesystem-paths"]
+performance = ["performance.01.ipc-filesystem"]
+
+[[feature]]
+id = "02"
+todo_heading = "Legacy PC Hardware, Dual-Boot & Storage Co-Existence"
+unit = ["unit.02.drivers"]
+integration = ["integration.02.boot-storage"]
+qemu = ["qemu.02.bios-uefi-chainload"]
+fault = ["fault.02.device-storage-failure"]
+fuzz = ["fuzz.02.boot-storage-metadata"]
+performance = ["performance.02.storage-io"]
+
+[[feature]]
+id = "03"
+todo_heading = "Solving Core Linux Pain Points in SynOS"
+unit = ["unit.03.platform"]
+integration = ["integration.03.compatibility"]
+qemu = ["qemu.03.user-runtime"]
+fault = ["fault.03.memory-io-boundaries"]
+fuzz = ["fuzz.03.compatibility-input"]
+performance = ["performance.03.zero-copy-io"]
+
+[[feature]]
+id = "04"
+todo_heading = "OpenVMS Feature Integration"
+unit = ["unit.04.dlm-rms-status"]
+integration = ["integration.04.dlm-rms-shell"]
+qemu = ["qemu.04.command-status"]
+fault = ["fault.04.lock-record-status"]
+fuzz = ["fuzz.04.records-command-input"]
+performance = ["performance.04.lock-record-throughput"]
+
+[[feature]]
+id = "05"
+todo_heading = "Hardware Fabric & Clustering Modes"
+unit = ["unit.05.fabric"]
+integration = ["integration.05.cluster-fabric"]
+qemu = ["qemu.05.multi-node-fabric"]
+fault = ["fault.05.node-memory-failover"]
+fuzz = ["fuzz.05.fabric-advertisements"]
+performance = ["performance.05.remote-memory"]
+
+[[feature]]
+id = "06"
+todo_heading = "Large Language Model (LLM) Enablement"
+unit = ["unit.06.llm-runtime"]
+integration = ["integration.06.model-loading"]
+qemu = ["qemu.06.llm-service"]
+fault = ["fault.06.model-memory-node-loss"]
+fuzz = ["fuzz.06.model-manifests"]
+performance = ["performance.06.inference"]
+
+[[feature]]
+id = "07"
+todo_heading = "Target Platforms & Emulation"
+unit = ["unit.07.targets"]
+integration = ["integration.07.platform-qualification"]
+qemu = ["qemu.07.boot-targets"]
+fault = ["fault.07.invalid-platform"]
+fuzz = ["fuzz.07.firmware-input"]
+performance = ["performance.07.emulation"]
+
+[[feature]]
+id = "08"
+todo_heading = "Architectural Risk Mitigations & Optimizations"
+unit = ["unit.08.invariants"]
+integration = ["integration.08.resource-policy"]
+qemu = ["qemu.08.stress-recovery"]
+fault = ["fault.08.resource-exhaustion"]
+fuzz = ["fuzz.08.policy-input"]
+performance = ["performance.08.scheduler-memory"]
+
+[[feature]]
+id = "09"
+todo_heading = "Authentication, Authorization & Identity Services"
+unit = ["unit.09.identity"]
+integration = ["integration.09.auth-policy"]
+qemu = ["qemu.09.identity-login"]
+fault = ["fault.09.auth-replay-expiry"]
+fuzz = ["fuzz.09.credentials-tokens"]
+performance = ["performance.09.auth-throughput"]
+
+[[feature]]
+id = "10"
+todo_heading = "Multi-Cluster Federation & Cross-Cluster Sandboxing"
+unit = ["unit.10.federation"]
+integration = ["integration.10.federation-sandbox"]
+qemu = ["qemu.10.multi-cluster"]
+fault = ["fault.10.partition-fencing"]
+fuzz = ["fuzz.10.federation-messages"]
+performance = ["performance.10.cross-cluster"]
+
+[[feature]]
+id = "11"
+todo_heading = "System Diagnostics, Observability & Auditing"
+unit = ["unit.11.observability"]
+integration = ["integration.11.audit-pipeline"]
+qemu = ["qemu.11.diagnostics"]
+fault = ["fault.11.sink-failure-redaction"]
+fuzz = ["fuzz.11.query-audit-input"]
+performance = ["performance.11.telemetry"]
+
+[[feature]]
+id = "12"
+todo_heading = "Rust Toolchain, Runtime & System Ecosystem"
+unit = ["unit.12.runtime"]
+integration = ["integration.12.toolchain-runtime"]
+qemu = ["qemu.12.runtime-startup"]
+fault = ["fault.12.target-build-runtime"]
+fuzz = ["fuzz.12.abi-input"]
+performance = ["performance.12.runtime-overhead"]
+
+[[feature]]
+id = "13"
+todo_heading = "Native Rust Interactive Shell (syn-shell)"
+unit = ["unit.13.parser-editor"]
+integration = ["integration.13.shell-pipeline"]
+qemu = ["qemu.13.shell-session"]
+fault = ["fault.13.shell-limits"]
+fuzz = ["fuzz.13.command-input"]
+performance = ["performance.13.parse-pipeline"]
+
+[[feature]]
+id = "14"
+todo_heading = "User-Space Async Networking"
+unit = ["unit.14.network"]
+integration = ["integration.14.network-services"]
+qemu = ["qemu.14.network-boot"]
+fault = ["fault.14.packet-disconnect"]
+fuzz = ["fuzz.14.network-packets"]
+performance = ["performance.14.packet-throughput"]
+
+[[feature]]
+id = "15"
+todo_heading = "Service Isolation & Fault Recovery"
+unit = ["unit.15.supervisor"]
+integration = ["integration.15.service-recovery"]
+qemu = ["qemu.15.daemon-restart"]
+fault = ["fault.15.crash-restart"]
+fuzz = ["fuzz.15.service-manifests"]
+performance = ["performance.15.restart-overhead"]
+
+[[feature]]
+id = "16"
+todo_heading = "Pure-Rust AI Compute Engine & GPU Abstraction"
+unit = ["unit.16.compute"]
+integration = ["integration.16.accelerator"]
+qemu = ["qemu.16.compute-service"]
+fault = ["fault.16.buffer-device"]
+fuzz = ["fuzz.16.tensor-dispatch"]
+performance = ["performance.16.tensor-throughput"]
+
+[[feature]]
+id = "17"
+todo_heading = "Rust Ecosystem Toolchain & Package Distribution"
+unit = ["unit.17.package"]
+integration = ["integration.17.package-install"]
+qemu = ["qemu.17.package-runtime"]
+fault = ["fault.17.signature-dependency"]
+fuzz = ["fuzz.17.manifests-artifacts"]
+performance = ["performance.17.package-resolution"]
+
+[[feature]]
+id = "18"
+todo_heading = "Volume Management & Disaster Recovery"
+unit = ["unit.18.volume-backup"]
+integration = ["integration.18.backup-restore"]
+qemu = ["qemu.18.volume-recovery"]
+fault = ["fault.18.torn-backup-restore"]
+fuzz = ["fuzz.18.volume-images"]
+performance = ["performance.18.backup-throughput"]
+
+[[feature]]
+id = "19"
+todo_heading = "Power & Hardware Lifecycle Management"
+unit = ["unit.19.power"]
+integration = ["integration.19.lifecycle"]
+qemu = ["qemu.19.power-events"]
+fault = ["fault.19.hot-remove"]
+fuzz = ["fuzz.19.device-events"]
+performance = ["performance.19.lifecycle-latency"]
+
+[[feature]]
+id = "20"
+todo_heading = "Cluster Topology Visualization"
+unit = ["unit.20.topology"]
+integration = ["integration.20.topology-events"]
+qemu = ["qemu.20.monitor-topology"]
+fault = ["fault.20.stale-node-view"]
+fuzz = ["fuzz.20.topology-records"]
+performance = ["performance.20.topology-render"]
+
+[[feature]]
+id = "21"
+todo_heading = "Cross-Platform Client SDKs & Frontend Gateways"
+unit = ["unit.21.sdk"]
+integration = ["integration.21.gateway"]
+qemu = ["qemu.21.client-gateway"]
+fault = ["fault.21.protocol-auth"]
+fuzz = ["fuzz.21.sdk-frames"]
+performance = ["performance.21.gateway-latency"]
+
+[[feature]]
+id = "22"
+todo_heading = "Remote Console & Remote Desktop Subsystems"
+unit = ["unit.22.remote-display"]
+integration = ["integration.22.console-display"]
+qemu = ["qemu.22.remote-session"]
+fault = ["fault.22.disconnect-resize"]
+fuzz = ["fuzz.22.terminal-frames"]
+performance = ["performance.22.display-stream"]
+
+[[feature]]
+id = "23"
+todo_heading = "Mobile & Remote Security Gateways"
+unit = ["unit.23.security-gateway"]
+integration = ["integration.23.gateway-policy"]
+qemu = ["qemu.23.remote-security"]
+fault = ["fault.23.replay-rate-limit"]
+fuzz = ["fuzz.23.gateway-input"]
+performance = ["performance.23.gateway-auth"]
+
+[[feature]]
+id = "24"
+todo_heading = "Native Application Model & Service Runtimes"
+unit = ["unit.24.app-model"]
+integration = ["integration.24.app-supervision"]
+qemu = ["qemu.24.application-start"]
+fault = ["fault.24.admission-crash"]
+fuzz = ["fuzz.24.manifests-capabilities"]
+performance = ["performance.24.app-startup"]
+
+[[feature]]
+id = "25"
+todo_heading = "Application Data Layer & Native RMS"
+unit = ["unit.25.rms"]
+integration = ["integration.25.records-storage"]
+qemu = ["qemu.25.application-data"]
+fault = ["fault.25.record-corruption-lock"]
+fuzz = ["fuzz.25.record-input"]
+performance = ["performance.25.record-io"]
+
+[[feature]]
+id = "26"
+todo_heading = "High-Level AI Execution & Agent Pipelines"
+unit = ["unit.26.agent-pipeline"]
+integration = ["integration.26.ai-execution"]
+qemu = ["qemu.26.agent-workflow"]
+fault = ["fault.26.cancel-retry"]
+fuzz = ["fuzz.26.pipeline-input"]
+performance = ["performance.26.pipeline-throughput"]
+
+[[feature]]
+id = "27"
+todo_heading = "Web Application & Microservices Layer"
+unit = ["unit.27.http"]
+integration = ["integration.27.web-services"]
+qemu = ["qemu.27.web-application"]
+fault = ["fault.27.http-backpressure"]
+fuzz = ["fuzz.27.http-requests"]
+performance = ["performance.27.http-throughput"]
+
+[[feature]]
+id = "28"
+todo_heading = "Native Command Scripting (syn-script)"
+unit = ["unit.28.script"]
+integration = ["integration.28.script-shell"]
+qemu = ["qemu.28.script-runtime"]
+fault = ["fault.28.script-sandbox"]
+fuzz = ["fuzz.28.script-source"]
+performance = ["performance.28.script-execution"]
+
+[[feature]]
+id = "29"
+todo_heading = "Embedded Scripting & Wasm Extension Runtime"
+unit = ["unit.29.wasm"]
+integration = ["integration.29.extension-host"]
+qemu = ["qemu.29.wasm-application"]
+fault = ["fault.29.fuel-memory-trap"]
+fuzz = ["fuzz.29.wasm-module"]
+performance = ["performance.29.wasm-host-call"]
+
+[[feature]]
+id = "30"
+todo_heading = "AI Agent Orchestration & Deterministic Execution"
+unit = ["unit.30.orchestration"]
+integration = ["integration.30.agent-scheduler"]
+qemu = ["qemu.30.deterministic-agent"]
+fault = ["fault.30.retry-failover"]
+fuzz = ["fuzz.30.agent-events"]
+performance = ["performance.30.agent-scheduling"]
+
+[[feature]]
+id = "31"
+todo_heading = "AI Agent Native Script Execution (synos-agent-bridge)"
+unit = ["unit.31.agent-bridge"]
+integration = ["integration.31.bridge-script"]
+qemu = ["qemu.31.agent-bridge"]
+fault = ["fault.31.bridge-capability"]
+fuzz = ["fuzz.31.bridge-requests"]
+performance = ["performance.31.bridge-overhead"]
+
+[[feature]]
+id = "32"
+todo_heading = "System Inspection & Diagnostics (syn-inspect)"
+unit = ["unit.32.inspect"]
+integration = ["integration.32.inspect-api"]
+qemu = ["qemu.32.inspect-guest"]
+fault = ["fault.32.inspect-permission"]
+fuzz = ["fuzz.32.inspect-query"]
+performance = ["performance.32.inspect-scan"]
+
+[[feature]]
+id = "33"
+todo_heading = "Interactive Cluster Monitor Utility (MONITOR)"
+unit = ["unit.33.monitor"]
+integration = ["integration.33.monitor-stream"]
+qemu = ["qemu.33.monitor-cluster"]
+fault = ["fault.33.monitor-disconnect"]
+fuzz = ["fuzz.33.monitor-input"]
+performance = ["performance.33.monitor-refresh"]
+
+[[feature]]
+id = "34"
+todo_heading = "Capability-Guarded System Control"
+unit = ["unit.34.control-capabilities"]
+integration = ["integration.34.control-api"]
+qemu = ["qemu.34.control-command"]
+fault = ["fault.34.unauthorized-control"]
+fuzz = ["fuzz.34.control-requests"]
+performance = ["performance.34.control-dispatch"]
+
+[[feature]]
+id = "35"
+todo_heading = "Atomic System Patching & Hot-Swapping (synos-update)"
+unit = ["unit.35.update"]
+integration = ["integration.35.atomic-update"]
+qemu = ["qemu.35.update-rollback"]
+fault = ["fault.35.crash-rollback"]
+fuzz = ["fuzz.35.update-manifest"]
+performance = ["performance.35.activation"]
+
+[[feature]]
+id = "36"
+todo_heading = "Package Obsolescence & Vulnerability Monitoring (synos-audit)"
+unit = ["unit.36.audit"]
+integration = ["integration.36.package-audit"]
+qemu = ["qemu.36.audit-service"]
+fault = ["fault.36.revocation"]
+fuzz = ["fuzz.36.package-records"]
+performance = ["performance.36.audit-scan"]
+
+[[feature]]
+id = "37"
+todo_heading = "Microkernel Cyber Defense & Runtime Protection (synos-shield)"
+unit = ["unit.37.shield"]
+integration = ["integration.37.runtime-policy"]
+qemu = ["qemu.37.shield-enforcement"]
+fault = ["fault.37.tamper-quarantine"]
+fuzz = ["fuzz.37.security-events"]
+performance = ["performance.37.policy-evaluation"]
+
+[[feature]]
+id = "38"
+todo_heading = "Dynamic Incident Response & Active Countermeasures"
+unit = ["unit.38.incident"]
+integration = ["integration.38.incident-response"]
+qemu = ["qemu.38.incident-recovery"]
+fault = ["fault.38.escalation-failure"]
+fuzz = ["fuzz.38.incident-records"]
+performance = ["performance.38.response-latency"]
+
+[[feature]]
+id = "39"
+todo_heading = "Supply Chain Security & Memory Integrity"
+unit = ["unit.39.supply-chain"]
+integration = ["integration.39.artifact-verification"]
+qemu = ["qemu.39.verified-boot"]
+fault = ["fault.39.hash-signature-mismatch"]
+fuzz = ["fuzz.39.artifact-metadata"]
+performance = ["performance.39.verification"]
+
+[[feature]]
+id = "40"
+todo_heading = "Intra-Cluster Load Balancing & Resource Pooling (synos-balancerd)"
+unit = ["unit.40.balancer"]
+integration = ["integration.40.cluster-balancing"]
+qemu = ["qemu.40.multi-node-balancing"]
+fault = ["fault.40.node-loss-capacity"]
+fuzz = ["fuzz.40.placement-input"]
+performance = ["performance.40.placement"]
+
+[[feature]]
+id = "41"
+todo_heading = "Inter-Cluster Federated Load Balancing"
+unit = ["unit.41.federated-balancer"]
+integration = ["integration.41.federated-placement"]
+qemu = ["qemu.41.federated-cluster"]
+fault = ["fault.41.federation-partition"]
+fuzz = ["fuzz.41.federation-placement"]
+performance = ["performance.41.cross-cluster-placement"]
+
+[[feature]]
+id = "42"
+todo_heading = "Load Balancing Topology & Arbitration Matrix"
+unit = ["unit.42.arbitration"]
+integration = ["integration.42.topology-arbitration"]
+qemu = ["qemu.42.arbitration-cluster"]
+fault = ["fault.42.stale-topology"]
+fuzz = ["fuzz.42.topology-input"]
+performance = ["performance.42.arbitration"]
+
+[[feature]]
+id = "43"
+todo_heading = "Hardware Diagnostics & RAS"
+unit = ["unit.43.ras"]
+integration = ["integration.43.ras-events"]
+qemu = ["qemu.43.hardware-events"]
+fault = ["fault.43.injected-hardware-error"]
+fuzz = ["fuzz.43.ras-records"]
+performance = ["performance.43.ras-overhead"]
+
+[[feature]]
+id = "44"
+todo_heading = "Real-Time Determinism & Core Partitioning"
+unit = ["unit.44.scheduler"]
+integration = ["integration.44.partitioning"]
+qemu = ["qemu.44.realtime-scheduler"]
+fault = ["fault.44.deadline-overrun"]
+fuzz = ["fuzz.44.scheduler-events"]
+performance = ["performance.44.scheduler-jitter"]
+
+[[feature]]
+id = "45"
+todo_heading = "Multi-Tenant Resource Quotas & Rate-Limiting"
+unit = ["unit.45.quotas"]
+integration = ["integration.45.tenant-policy"]
+qemu = ["qemu.45.quota-enforcement"]
+fault = ["fault.45.quota-exhaustion"]
+fuzz = ["fuzz.45.quota-requests"]
+performance = ["performance.45.rate-limiter"]
+
+[[feature]]
+id = "46"
+todo_heading = "Time Synchronization & Cluster Clock Alignment"
+unit = ["unit.46.time-sync"]
+integration = ["integration.46.clock-cluster"]
+qemu = ["qemu.46.clock-failover"]
+fault = ["fault.46.clock-skew-leap"]
+fuzz = ["fuzz.46.time-messages"]
+performance = ["performance.46.time-sync"]
+
+[[feature]]
+id = "47"
+todo_heading = "Developer Ecosystem & Debugging Infrastructure"
+unit = ["unit.47.debug"]
+integration = ["integration.47.debugger"]
+qemu = ["qemu.47.debug-guest"]
+fault = ["fault.47.invalid-probe"]
+fuzz = ["fuzz.47.debug-protocol"]
+performance = ["performance.47.debug-overhead"]
+
+[[feature]]
+id = "48"
+todo_heading = "Capability-Gated Network Firewall & Packet Filtering (synos-firewall)"
+unit = ["unit.48.firewall"]
+integration = ["integration.48.packet-filter"]
+qemu = ["qemu.48.firewall-network"]
+fault = ["fault.48.malformed-denied-packet"]
+fuzz = ["fuzz.48.packet-rules"]
+performance = ["performance.48.filter-throughput"]
+
+[[feature]]
+id = "49"
+todo_heading = "Native In-Memory Key-Value Cache Engine (synos-kvd)"
+unit = ["unit.49.kvd"]
+integration = ["integration.49.cache-api"]
+qemu = ["qemu.49.cache-service"]
+fault = ["fault.49.eviction-quota"]
+fuzz = ["fuzz.49.cache-requests"]
+performance = ["performance.49.cache-throughput"]
+
+[[feature]]
+id = "50"
+todo_heading = "Enterprise Remote Storage & NAS Mount Services (synos-storaged)"
+unit = ["unit.50.remote-storage"]
+integration = ["integration.50.nas-mount"]
+qemu = ["qemu.50.remote-storage"]
+fault = ["fault.50.remote-device-loss"]
+fuzz = ["fuzz.50.storage-protocol"]
+performance = ["performance.50.remote-storage"]
+
+[[feature]]
+id = "51"
+todo_heading = "Hardware-Rooted Confidential Computing & TEE Enclaves (synos-confidential)"
+unit = ["unit.51.confidential"]
+integration = ["integration.51.attestation"]
+qemu = ["qemu.51.tee-policy"]
+fault = ["fault.51.invalid-downgrade"]
+fuzz = ["fuzz.51.attestation-evidence"]
+performance = ["performance.51.attestation"]
+
+[[feature]]
+id = "52"
+todo_heading = "Deterministic Time-Travel Execution & Replay (synos-replay)"
+unit = ["unit.52.replay"]
+integration = ["integration.52.replay-restore"]
+qemu = ["qemu.52.replay-guest"]
+fault = ["fault.52.divergent-input"]
+fuzz = ["fuzz.52.replay-log"]
+performance = ["performance.52.replay-overhead"]
+
+[[feature]]
+id = "53"
+todo_heading = "Agent-Native Semantic Memory & Context Bus (synos-agentd)"
+unit = ["unit.53.semantic-memory"]
+integration = ["integration.53.context-bus"]
+qemu = ["qemu.53.agent-memory"]
+fault = ["fault.53.authorization-freshness"]
+fuzz = ["fuzz.53.semantic-input"]
+performance = ["performance.53.vector-search"]
+
+[[feature]]
+id = "54"
+todo_heading = "Self-Healing Daemon Supervisor (synos-heal)"
+unit = ["unit.54.healing"]
+integration = ["integration.54.supervisor"]
+qemu = ["qemu.54.daemon-recovery"]
+fault = ["fault.54.repeated-crash"]
+fuzz = ["fuzz.54.heal-policy"]
+performance = ["performance.54.recovery-latency"]
+
+[[feature]]
+id = "55"
+todo_heading = "Zero-Overhead POSIX/Linux Compatibility (synos-compatd)"
+unit = ["unit.55.posix"]
+integration = ["integration.55.compatibility"]
+qemu = ["qemu.55.posix-application"]
+fault = ["fault.55.syscall-boundary"]
+fuzz = ["fuzz.55.syscalls"]
+performance = ["performance.55.compatibility-overhead"]
+
+[[feature]]
+id = "56"
+todo_heading = "Edge-to-Cloud Dynamic Cluster Mesh (synos-mesh)"
+unit = ["unit.56.mesh"]
+integration = ["integration.56.mesh-discovery"]
+qemu = ["qemu.56.edge-cloud"]
+fault = ["fault.56.replay-conflict"]
+fuzz = ["fuzz.56.advertisements"]
+performance = ["performance.56.mesh-routing"]
+
+[[feature]]
+id = "57"
+todo_heading = "Declarative OS Infrastructure-as-Code (synos-declarative)"
+unit = ["unit.57.declarative"]
+integration = ["integration.57.config-activation"]
+qemu = ["qemu.57.declarative-boot"]
+fault = ["fault.57.invalid-rollback"]
+fuzz = ["fuzz.57.config-manifests"]
+performance = ["performance.57.reconfigure"]
+
+[[feature]]
+id = "58"
+todo_heading = "Cluster Lifecycle & Administration"
+unit = ["unit.58.cluster-lifecycle"]
+integration = ["integration.58.cluster-admin"]
+qemu = ["qemu.58.join-leave-recovery"]
+fault = ["fault.58.quorum-fencing"]
+fuzz = ["fuzz.58.admin-commands"]
+performance = ["performance.58.cluster-operations"]
