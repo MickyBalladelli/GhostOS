@@ -5,6 +5,7 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 loader="$project_root/target/x86_64-unknown-uefi/release/synos-loader.efi"
 output_dir="$project_root/build/portable"
 output="$output_dir/synos.img"
+source_revision=$(git -C "$project_root" rev-parse HEAD 2>/dev/null || printf 'unknown')
 
 if ! command -v mkfs.fat >/dev/null 2>&1; then
     echo "mkfs.fat is required (dosfstools)" >&2
@@ -29,6 +30,6 @@ mmd -i "$temporary_image" ::/EFI
 mmd -i "$temporary_image" ::/EFI/BOOT
 mcopy -i "$temporary_image" "$loader" ::/EFI/BOOT/BOOTX64.EFI
 mv "$temporary_image" "$output"
+printf '%s\n' "$source_revision" > "$output.revision"
 
 echo "$output"
-

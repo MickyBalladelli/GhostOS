@@ -4,6 +4,7 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir="$project_root/build/bios"
 target_dir="$project_root/target/x86_64-unknown-none/release"
+source_revision=$(git -C "$project_root" rev-parse HEAD 2>/dev/null || printf 'unknown')
 rust_tools_dir=$(dirname "$(rustc --print target-libdir)")/bin
 rust_lld="$rust_tools_dir/rust-lld"
 llvm_objcopy="$rust_tools_dir/llvm-objcopy"
@@ -50,5 +51,6 @@ dd if=/dev/zero of="$build_dir/synos-bios.img" bs=512 count="$image_sectors" sta
 dd if="$build_dir/stage1.bin" of="$build_dir/synos-bios.img" conv=notrunc status=none
 dd if="$build_dir/stage2.bin" of="$build_dir/synos-bios.img" bs=512 seek=1 conv=notrunc status=none
 dd if="$build_dir/kernel.bin" of="$build_dir/synos-bios.img" bs=512 seek=$((1 + stage2_sectors)) conv=notrunc status=none
+printf '%s\n' "$source_revision" > "$build_dir/synos-bios.img.revision"
 
 echo "$build_dir/synos-bios.img"

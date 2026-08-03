@@ -114,6 +114,7 @@ default-members = [
     "crates/synos-remote-display",
     "crates/synos-mesh",
     "crates/synos-declarative",
+    "crates/test-support",
     "kernel",
     "virtual_machine",
 ]

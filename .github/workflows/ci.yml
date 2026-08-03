@@ -1,0 +1,89 @@
+name: SynOS CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  host:
+    name: Host unit and integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo test --workspace --all-targets
+
+  vm:
+    name: Deterministic VM tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p synos-vm --all-targets
+      - run: ./scripts/test-vm-matrix.sh
+
+  no-std:
+    name: Kernel and bare-metal targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-none
+          - x86_64-unknown-uefi
+          - aarch64-unknown-none
+          - riscv64gc-unknown-none-elf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rust-src
+      - run: cargo build -p synos-kernel --target ${{ matrix.target }} --release
+
+  docs:
+    name: Documentation and inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/validate-test-inventory.py
+      - run: git diff --check
+
+  qemu:
+    name: QEMU boot tests
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-none
+          components: rust-src, llvm-tools
+      - run: sudo apt-get update && sudo apt-get install -y clang lld qemu-system-x86
+      - run: ./scripts/build-bios-image.sh
+      - run: SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored
+
+  fuzz-smoke:
+    name: Fuzz smoke tests
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-fuzz
+      - run: SYNOS_FUZZ_RUNS=100 ./scripts/fuzz-smoke.sh
+

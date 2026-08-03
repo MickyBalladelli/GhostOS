@@ -78,22 +78,45 @@ evidence described in `platforms/README.md`.
 | --- | --- | --- | --- |
 | host-unit | `cargo test` | required | test output and package metadata |
 | workspace | `cargo test --workspace --all-targets` | required for CI | test output and package metadata |
-| vm | `cargo test --manifest-path virtual_machine/Cargo.toml` | required for VM changes | test output and VM metadata |
-| qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test --manifest-path virtual_machine/Cargo.toml --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
+| vm | `cargo test -p synos-vm --all-targets` | required for VM changes | test output and VM metadata |
+| recovery | `cargo test --workspace --all-targets` | required | failure, restart, and recovery output |
+| qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
 | cluster | `scripts/qemu-cluster.sh` and `scripts/qualify-platform.sh` | opt-in | node serial logs, command logs, failover log |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
 | performance | benchmark command named by the inventory entry | opt-in | JSON result and machine metadata |
 
-The `workspace` command is the intended full host command. Until the VM is
-promoted into the root workspace, run the `vm` command separately and keep its
-result in the same evidence bundle.
+The root workspace includes both `synos-test-support` and `synos-vm` in
+`default-members`. Therefore `cargo test` runs every deterministic SynOS and VM
+unit/integration test. `cargo test --workspace --all-targets` is the explicit
+CI command that checks every workspace target.
+
+For one evidence-producing deterministic run, use:
+
+```sh
+./scripts/test-all.sh
+```
+
+For ordered full validation, including opt-in QEMU, fuzz, coverage, mutation,
+reproducibility, and release gates, use:
+
+```sh
+SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
+```
+
+Optional tiers record `skipped` with the missing prerequisite. A release gate
+does not count any skipped, blocked, or not-implemented result as passing.
+
+Fast pull-request CI runs formatting, host, VM, no-std, documentation, and
+inventory checks. Push and scheduled CI add QEMU and fuzz smoke tests. The
+scheduled workflow also runs coverage, mutation, Miri, sanitizer, cross-target,
+and reproducibility checks. CI uploads logs, coverage, and fuzz corpora.
 
 ## Shared harness
 
 [`synos-test-support`](../crates/test-support) is the test-only support crate.
-It is a workspace member but is deliberately absent from `default-members`,
-so production crates do not inherit test helpers. Add it only as a
-`dev-dependency` or use it from an integration test.
+It is a workspace member and a `default-member`; production crates do not
+inherit test helpers because they are only used through `dev-dependencies` or
+integration tests.
 
 `FixtureSet::new(seed)` supplies the common deterministic fixtures. Use
 `TestScope` when a test also owns external resources. The in-memory doubles
@@ -123,6 +146,9 @@ corresponding compatibility decision.
 | `SYNOS_CXL_MEMORY` | `256M` | Per-node CXL backing file size. |
 | `SYNOS_SHARED_MEMORY` | `256M` | Shared `ivshmem` backing file size. |
 | `SYNOS_CLUSTER_BUS` | `230.0.0.1:1234` | QEMU multicast cluster bus. |
+| `SYNOS_FULL_VALIDATION` | unset | Enable opt-in QEMU, fuzz, coverage, mutation, and release tiers. |
+| `SYNOS_EVIDENCE_DIR` | `build/test-evidence/<run-id>` | Evidence output directory for the unified runners. |
+| `SYNOS_FUZZ_RUNS` | `1000` | Bounded fuzz smoke iterations per target. |
 
 Tests must not depend on an unset variable having a hidden meaning. The test
 result records the variables that were actually used.
@@ -180,3 +206,18 @@ When a test finds a bug, keep the smallest deterministic reproduction in the
 normal host tier, then link its stable ID from the inventory. Randomized and
 fuzz failures record their seed or corpus input so the regression can replay
 without the fuzzer.
+
+Fuzz corpora are retained under `fuzz/corpus/<target>`. A crash artifact is
+not considered fixed until it has a deterministic regression test and an
+inventory link. The dashboard command writes
+`build/test-dashboard.md` from the evidence results:
+
+```sh
+./scripts/test-dashboard.py build/test-evidence/<run-id>
+```
+
+Coverage uses `coverage.toml`: the workspace threshold is 60% lines and each
+crate must clear its own 1% floor, so an aggregate cannot hide an untested
+crate. The feature report has one enforced mapping for each TODO 1–58 entry;
+the mapped unit, integration, fault, fuzz, QEMU, and performance IDs are the
+feature-level evidence gate.

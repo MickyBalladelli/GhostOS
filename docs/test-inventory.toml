@@ -10,7 +10,7 @@ duplicate_source_headings = ["37", "38", "39"]
 duplicate_source_policy = "one inventory entry per roadmap number; duplicate TODO headings share the entry"
 evidence_root = "build/test-evidence/{run-id}/{tier}/{test-id}"
 test_id_format = "{tier}.{feature-id}.{behavior}"
-coverage_state = "planned"
+coverage_state = "enforced"
 
 [contract]
 required_tiers = ["unit", "integration", "qemu", "fault", "fuzz", "performance"]
@@ -30,12 +30,20 @@ unexecuted_states = ["skipped", "blocked", "not_implemented"]
 command = "cargo test"
 artifact = "stdout.log"
 
+[gates]
+deterministic = "./scripts/test-all.sh"
+full_validation = "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
+release = "./scripts/release-gate.sh build/test-evidence/<run-id>"
+coverage_policy = "coverage.toml"
+mutation_scope = "status, auth, fsd, synfs, http, virtual_machine"
+fuzz_targets = ["path", "volume", "operations", "mount", "http", "script"]
+
 [tiers.integration]
 command = "cargo test --workspace --all-targets"
 artifact = "stdout.log"
 
 [tiers.qemu]
-command = "SYNOS_RUN_QEMU_TESTS=1 cargo test --manifest-path virtual_machine/Cargo.toml --test test_environments -- --ignored"
+command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored"
 artifact = "serial.log"
 
 [tiers.fault]

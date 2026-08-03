@@ -1158,19 +1158,19 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 
 ### 59.12 CI, Coverage, Fuzzing, and Release Gates
 
-- [ ] Make one top-level `cargo test` command run every deterministic SynOS and VM unit/integration test; promote `virtual_machine` into the root workspace or add a tested Cargo test runner that includes its manifest.
-- [ ] Make `cargo test --workspace --all-targets` cover every testable root crate and document the exact command in `docs/testing.md`.
-- [ ] Keep QEMU, cluster, hardware, performance, fuzz, and soak tests in explicit opt-in tiers, with one documented full-validation command that runs those tiers in order and reports skipped prerequisites.
-- [ ] Ensure the unified test command preserves per-test isolation, forwards environment variables, returns failure if any tier fails, and saves logs/evidence for the failing tier.
-- [ ] Add CI jobs for formatting, host unit tests, no-std/kernel tests, VM tests, integration tests, QEMU tests, fuzz smoke tests, and documentation/test-inventory validation.
-- [ ] Add a fast pull-request tier and scheduled full tier; publish which tests were skipped and why.
-- [ ] Add coverage reporting per crate and per TODO feature, with thresholds that prevent total coverage from hiding untested crates.
-- [ ] Add mutation testing for parsers, status mapping, capabilities, storage commits, protocol framing, and VM device behavior.
-- [ ] Add nightly fuzzing and corpus retention; promote every discovered bug into a deterministic regression test.
-- [ ] Add race, loom/model, sanitizer, Miri, cross-target, big-endian/32-bit where applicable, and panic/abort validation jobs.
-- [ ] Add boot-image reproducibility checks and verify that test images are built from the tested source revision.
-- [ ] Add release gates: zero unexpected test failures, zero unexplained skips, clean QEMU boot evidence, clean recovery evidence, and updated test inventory.
-- [ ] Add a test status dashboard showing unit, integration, QEMU, fuzz, coverage, performance, and hardware qualification state per feature.
+- [x] Make one top-level `cargo test` command run every deterministic SynOS and VM unit/integration test; promote `virtual_machine` into the root workspace or add a tested Cargo test runner that includes its manifest.
+- [x] Make `cargo test --workspace --all-targets` cover every testable root crate and document the exact command in `docs/testing.md`.
+- [x] Keep QEMU, cluster, hardware, performance, fuzz, and soak tests in explicit opt-in tiers, with one documented full-validation command that runs those tiers in order and reports skipped prerequisites.
+- [x] Ensure the unified test command preserves per-test isolation, forwards environment variables, returns failure if any tier fails, and saves logs/evidence for the failing tier.
+- [x] Add CI jobs for formatting, host unit tests, no-std/kernel tests, VM tests, integration tests, QEMU tests, fuzz smoke tests, and documentation/test-inventory validation.
+- [x] Add a fast pull-request tier and scheduled full tier; publish which tests were skipped and why.
+- [x] Add coverage reporting per crate and per TODO feature, with thresholds that prevent total coverage from hiding untested crates.
+- [x] Add mutation testing for parsers, status mapping, capabilities, storage commits, protocol framing, and VM device behavior.
+- [x] Add nightly fuzzing and corpus retention; promote every discovered bug into a deterministic regression test.
+- [x] Add race, loom/model, sanitizer, Miri, cross-target, big-endian/32-bit where applicable, and panic/abort validation jobs.
+- [x] Add boot-image reproducibility checks and verify that test images are built from the tested source revision.
+- [x] Add release gates: zero unexpected test failures, zero unexplained skips, clean QEMU boot evidence, clean recovery evidence, and updated test inventory.
+- [x] Add a test status dashboard showing unit, integration, QEMU, fuzz, coverage, performance, and hardware qualification state per feature.
 
 ### 59.13 Definition of Done for Test Coverage
 

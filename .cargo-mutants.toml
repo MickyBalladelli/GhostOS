@@ -1,0 +1,8 @@
+# Mutation scope is intentionally limited to high-risk state and wire boundaries.
+timeout = 60
+minimum_test_timeout = 5
+exclude_re = [
+  "target/",
+  "build/",
+  "generated",
+]
