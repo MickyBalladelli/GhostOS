@@ -889,12 +889,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 55. Zero-Overhead POSIX/Linux Compatibility (`synos-compatd`)
-- [ ] **Ring 3 Syscall Vector Translation**
-  - [ ] Implement a user-space Linux system call translation daemon using hardware traps to run unmodified Linux binaries.
-- [ ] **Virtual Pseudo-Filesystem Mapping**
-  - [ ] Map Linux `/proc`, `/sys`, and `/dev` constructs dynamically to SynOS Logical Name Tables and capability resources.
-- [ ] **Zero-Copy Container Execution**
-  - [ ] Enable legacy containerized workloads to allocate memory across CXL fabrics and Software DSM directly.
+- [x] **Ring 3 Syscall Vector Translation**
+  - [x] Implement a user-space Linux system call translation daemon using hardware traps to run unmodified Linux binaries.
+- [x] **Virtual Pseudo-Filesystem Mapping**
+  - [x] Map Linux `/proc`, `/sys`, and `/dev` constructs dynamically to SynOS Logical Name Tables and capability resources.
+- [x] **Zero-Copy Container Execution**
+  - [x] Enable legacy containerized workloads to allocate memory across CXL fabrics and Software DSM directly.
 
 ---
 

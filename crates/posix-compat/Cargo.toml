@@ -8,5 +8,9 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+synos-fabric = { path = "../fabric" }
 synos-ipc = { path = "../ipc" }
+synos-llm = { path = "../llm-runtime" }
 synos-runtime = { path = "../runtime" }
+synos-status = { path = "../status" }
+synos-system-model = { path = "../system-model" }

@@ -28,4 +28,21 @@ enum synos_open_flags {
     SYNOS_O_APPEND = 1u << 4
 };
 
+enum synos_linux_architecture {
+    SYNOS_LINUX_X86_64 = 0,
+    SYNOS_LINUX_AARCH64 = 1
+};
+
+struct synos_linux_syscall_request {
+    uint32_t architecture;
+    uint64_t number;
+    uint64_t arguments[6];
+    uint64_t process_id;
+};
+
+struct synos_linux_syscall_response {
+    int64_t value;
+    uint8_t exited;
+};
+
 #endif

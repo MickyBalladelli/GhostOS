@@ -2,10 +2,25 @@
 #![forbid(unsafe_code)]
 
 mod fd;
+mod container;
+mod pseudo;
+mod syscall;
 
 use fd::FdTable;
 use synos_ipc::SharedBuffer;
 use synos_runtime::{OpenOptions, Runtime, SystemCall};
+
+pub use container::{
+    ContainerMemoryPolicy, ZeroCopyContainerMemory, ZeroCopyMemoryError,
+};
+pub use pseudo::{
+    LogicalNameResolver, MAX_PSEUDO_PATH_BYTES, PseudoFileSystem, PseudoFsError, PseudoPath,
+    PseudoPathError, PseudoResource, PseudoResourceKind,
+};
+pub use syscall::{
+    LinuxArchitecture, LinuxErrno, LinuxSyscall, LinuxSyscallRequest, LinuxSyscallResponse,
+    LinuxUserMemory, UserMemoryError, AT_FDCWD, MAX_LINUX_PATH_BYTES,
+};
 
 pub const DEFAULT_MAX_FILES: usize = 64;
 
@@ -35,6 +50,35 @@ pub enum Error {
     InvalidArgument,
     Runtime(synos_runtime::Error),
     TooManyFiles,
+}
+
+impl Error {
+    pub fn linux_errno(self) -> LinuxErrno {
+        match self {
+            Self::BadFileDescriptor => LinuxErrno::BadFileDescriptor,
+            Self::Buffer(BufferError::Empty | BufferError::NotMapped) => LinuxErrno::BadAddress,
+            Self::Buffer(BufferError::PermissionDenied) => LinuxErrno::BadAddress,
+            Self::Buffer(BufferError::TooLarge) => LinuxErrno::InvalidArgument,
+            Self::InvalidArgument => LinuxErrno::InvalidArgument,
+            Self::TooManyFiles => LinuxErrno::TooManyOpenFiles,
+            Self::Runtime(error) => match error {
+                synos_runtime::Error::InvalidResponse => LinuxErrno::Io,
+                synos_runtime::Error::Status(status) => {
+                    if status == synos_status::Status::NOT_FOUND {
+                        LinuxErrno::NoSuchFile
+                    } else if status == synos_status::Status::ACCESS_DENIED {
+                        LinuxErrno::PermissionDenied
+                    } else if status == synos_status::Status::NO_SPACE {
+                        LinuxErrno::NoSpace
+                    } else if status == synos_status::Status::BUSY {
+                        LinuxErrno::Busy
+                    } else {
+                        LinuxErrno::Io
+                    }
+                }
+            },
+        }
+    }
 }
 
 impl From<BufferError> for Error {
@@ -259,5 +303,16 @@ impl<S: SystemCall, M: SharedBuffers, const MAX_FILES: usize> PosixCompat<S, M, 
 
     pub const fn buffers(&self) -> &M {
         &self.buffers
+    }
+
+    /// Dispatches the Linux syscall numbers supported by the compatibility
+    /// vector. The trap handler passes register values and a capability-checked
+    /// user-memory view; no global POSIX state is consulted.
+    pub fn dispatch_linux_syscall<U: LinuxUserMemory>(
+        &mut self,
+        request: LinuxSyscallRequest,
+        memory: &mut U,
+    ) -> LinuxSyscallResponse {
+        syscall::dispatch(self, request, memory)
     }
 }

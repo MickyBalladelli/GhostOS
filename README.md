@@ -659,6 +659,20 @@ write, seek, and clock operations into SynFS capabilities and shared-buffer
 descriptors. Its C contract is in
 `crates/posix-compat/include/synos_posix.h`.
 
+The same Ring 3 compatibility layer decodes x86_64 and AArch64 Linux syscall
+vectors for read, write, open/openat, close, lseek, monotonic clock, getpid,
+and exit. The trap adapter supplies a capability-checked `LinuxUserMemory`
+view, allowing shared pages to stay mapped instead of using a syscall bounce
+buffer. `/proc`, `/sys`, and `/dev` paths resolve through the process logical
+name fast path (`PROC_*`, `SYS_*`, and `DEV_*`) and retain the target's file,
+device, or IPC kind.
+
+Container address spaces can use `ZeroCopyContainerMemory` with the existing
+fabric allocator. One virtual range is backed by generation-checked leases
+over local RAM, CXL memory, and optional layer-2 Software DSM extents. Page
+resolution follows the active fabric mapping, so migration and failover do not
+copy the container's byte stream.
+
 ## Rust package toolchain
 
 `cargo-synos` builds Ring 3 programs for either SynOS target, builds the required

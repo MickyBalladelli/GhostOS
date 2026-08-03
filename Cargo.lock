@@ -697,8 +697,12 @@ dependencies = [
 name = "synos-posix-compat"
 version = "0.1.0"
 dependencies = [
+ "synos-fabric",
  "synos-ipc",
+ "synos-llm",
  "synos-runtime",
+ "synos-status",
+ "synos-system-model",
 ]
 
 [[package]]
