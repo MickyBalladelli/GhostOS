@@ -430,6 +430,7 @@ impl VirtioBlk {
 
     pub fn reset(&mut self) {
         self.transport.reset();
+        self.disk = None;
     }
 }
 

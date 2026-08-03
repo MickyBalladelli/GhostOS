@@ -210,7 +210,7 @@ fn storage_network_and_device_reset_matrix() {
     assert!(queue.push(vec![1, 2, 3, 4]));
     assert!(!queue.push(vec![5]));
     assert_eq!(queue.pop(), Some(vec![1, 2, 3, 4]));
-    assert_eq!(ascii_to_scancodes(0x03), vec![0x1E, 0x9E]);
+    assert_eq!(ascii_to_scancodes(0x03), vec![0x1D, 0x2E, 0xAE, 0x9D]);
     assert_eq!(TerminalInputMode::Serial, TerminalInputMode::Serial);
     assert_eq!(TerminalExit::GuestShutdown, TerminalExit::GuestShutdown);
 }

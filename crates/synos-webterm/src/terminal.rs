@@ -338,7 +338,12 @@ impl<const COLUMNS: usize, const ROWS: usize> Terminal<COLUMNS, ROWS> {
                 0x1b => self.parser.state = ParserState::Escape,
                 0x08 => self.backspace(),
                 b'\t' => self.tab(),
-                b'\n' | 0x0b | 0x0c => self.line_feed(),
+                b'\n' => {
+                    self.cursor.column = 0;
+                    self.wrap_pending = false;
+                    self.line_feed()
+                }
+                0x0b | 0x0c => self.line_feed(),
                 b'\r' => {
                     self.cursor.column = 0;
                     self.wrap_pending = false
@@ -701,7 +706,8 @@ impl<const COLUMNS: usize, const ROWS: usize> Terminal<COLUMNS, ROWS> {
         if top < bottom && bottom < ROWS {
             self.scroll_top = top;
             self.scroll_bottom = bottom;
-            self.set_cursor(0, 0)
+            self.set_cursor(0, 0);
+            self.mark_all_dirty()
         }
     }
 

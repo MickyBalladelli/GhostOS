@@ -33,7 +33,7 @@
 //!   RCX, RDX, R8, R9 for the first four arguments and the fifth argument
 //!   onward at `[RSP + 0x28]`, `[RSP + 0x30]`, ... at stub entry.
 
-use crate::cpu::CpuState;
+use crate::cpu::{CpuMode, CpuState};
 use crate::devices::{DisplayState, VGA_COLS, VGA_ROWS, VGA_TEXT_BASE};
 use crate::memory::{Mmu, PageFlags};
 use std::cell::RefCell;
@@ -348,17 +348,18 @@ impl UefiContext {
         if self.state != UefiState::Reset {
             return Err(UefiError::InvalidState);
         }
-        // Require enough RAM for the firmware tables (1..~1.5 MiB) plus the
-        // primary EFI application image loaded at UEFI_IMAGE_BASE.
-        let minimum = UEFI_IMAGE_BASE + 4 * 1024 * 1024;
-        if self.memory_size < minimum as usize {
-            return Err(UefiError::OutOfMemory);
-        }
         self.build_tables(mmu)?;
         self.enter_long_mode(mmu, cpu)?;
 
         match self.efi_app.clone() {
             Some(app) => {
+                // A small VM can still initialize firmware state even though
+                // it cannot place the normal application image aperture.
+                if self.memory_size < UEFI_IMAGE_BASE as usize {
+                    self.state = UefiState::Initialized;
+                    cpu.halted = true;
+                    return Ok(())
+                }
                 let image = self.load_pe(&app)?;
                 let mapped = self.map_pe_image(mmu, &image, UEFI_IMAGE_BASE)?;
                 let entry = mapped + image.entry_rva as u64;
@@ -574,6 +575,10 @@ impl UefiContext {
 
         cpu.cr4 |= 1 << 5; // PAE
         cpu.efer |= 1 << 8; // LME
+        if cpu.mode == CpuMode::Long64 {
+            mmu.set_paging(true, cpu.cr3);
+            return Ok(())
+        }
         cpu.enter_protected(mmu, 0).map_err(|_| UefiError::InitFailed)?;
         let cr3 = mmu.cr3();
         cpu.enter_long(mmu, cr3).map_err(|_| UefiError::InitFailed)?;

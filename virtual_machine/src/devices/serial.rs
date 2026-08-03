@@ -165,10 +165,6 @@ impl Serial16550 {
             &self.tx_buffer[..tx_count],
             &mut self.host_last_was_cr,
         );
-        self.output.extend_from_slice(&self.tx_buffer[..tx_count]);
-        for index in 0..tx_count {
-            self.observe_panic_marker(self.tx_buffer[index])
-        }
         if self.output.len() > OUTPUT_COMPACTION_THRESHOLD {
             let excess = self.output.len() - OUTPUT_LIMIT;
             self.output.drain(..excess);
@@ -284,6 +280,8 @@ impl PortDevice for Serial16550 {
             }
             self.tx_buffer[self.tx_count] = v;
             self.tx_count += 1;
+            self.output.push(v);
+            self.observe_panic_marker(v);
             if matches!(v, b'\n' | b'\r') {
                 self.flush_output();
             }

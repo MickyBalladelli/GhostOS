@@ -248,13 +248,9 @@ impl DisplayState {
     }
 
     pub fn gop(&self) -> UefiGop {
-        let (w, h) = self.resolution();
+        let (w, h) = (self.vesa_width, self.vesa_height);
         let (w, h) = (w.max(1), h.max(1));
-        let bpp = if self.mode == VideoMode::Vesa {
-            self.vesa_bpp
-        } else {
-            32
-        };
+        let bpp = self.vesa_bpp;
         let pitch = w * (bpp as u32 / 8);
         UefiGop {
             framebuffer_base: VESA_LFB_BASE,
