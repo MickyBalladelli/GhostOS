@@ -2,10 +2,16 @@
 #![forbid(unsafe_code)]
 
 mod hotswap;
+mod patch;
 
 pub use hotswap::{
     HotSwapCoordinator, HotSwapError, HotSwapReceipt, HotSwapRequest, HotSwapRuntime,
     ReplacementSpawnRequest, MAX_HOT_SWAP_DESCRIPTORS,
+};
+pub use patch::{
+    DEFAULT_KERNEL_PATCH_CAPACITY, KernelPatchCoordinator, KernelPatchError,
+    KernelPatchRecord, KernelPatchReceipt, KernelPatchRequest, KernelPatchRuntime,
+    MicrokernelPatchCoordinator, MAX_KERNEL_PATCH_BATCH,
 };
 pub use synos_ipc::InheritableDescriptor;
 

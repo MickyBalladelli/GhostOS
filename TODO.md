@@ -597,8 +597,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Implement content-addressed system state updates on SynFS, enabling zero-cost instant rollbacks if boot or service checks fail.
 - [x] **Zero-Downtime Microservice Hot-Swapping**
   - [x] Build IPC descriptor inheritance hooks to replace running Ring 3 daemons/drivers on-the-fly without service interruption.
-- [ ] **Live Microkernel Patching**
-  - [ ] Support safe Ring 0 function redirection for zero-reboot kernel security updates.
+- [x] **Live Microkernel Patching**
+  - [x] Support safe Ring 0 function redirection for zero-reboot kernel security updates.
 
 ---
 
