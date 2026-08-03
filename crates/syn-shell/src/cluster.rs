@@ -38,6 +38,7 @@ pub const CLUSTER_COMMAND_COUNT: usize = 21;
 pub const CLUSTER_ID_BYTES: usize = 64;
 pub const CLUSTER_STATUS_BYTES: usize = 32;
 pub const MAX_CLUSTER_VIEW_ROWS: usize = 4;
+pub const MAX_CLUSTER_LIST_ROWS: usize = MAX_CLUSTER_VIEW_ROWS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClusterHealth {
@@ -90,6 +91,40 @@ pub struct ClusterSnapshot {
     pub control_protocol_version: u64,
     pub data_protocol_version: u64,
     pub minimum_protocol_version: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterListEntry {
+    pub cluster_id: crate::Text<CLUSTER_ID_BYTES>,
+    pub cluster_name: crate::Text<CLUSTER_ID_BYTES>,
+    pub status: crate::Text<CLUSTER_STATUS_BYTES>,
+    pub trusted: bool,
+    pub joined: bool,
+    pub available: bool,
+    pub degraded: bool,
+    pub federated: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterListView {
+    pub generation: u64,
+    pub total_count: u64,
+    pub page: u64,
+    pub clusters: [Option<ClusterListEntry>; MAX_CLUSTER_LIST_ROWS],
+    pub next_page: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterListQuery {
+    pub filter: Option<crate::Text<{ crate::MAX_TOKEN_BYTES }>>,
+    pub status: Option<crate::Text<{ crate::MAX_TOKEN_BYTES }>>,
+    pub limit: u64,
+    pub page: u64,
+    pub trusted: Option<bool>,
+    pub joined: Option<bool>,
+    pub available: Option<bool>,
+    pub degraded: Option<bool>,
+    pub federated: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -373,6 +408,19 @@ pub fn command_help(name: &str) -> Option<&'static ClusterCommandHelp> {
 pub fn register_cluster_commands<const CAPACITY: usize>(
     registry: &mut CommandRegistry<CAPACITY>,
 ) -> Result<(), Error> {
+    register_cluster_commands_impl(registry, true)
+}
+
+pub fn register_cluster_commands_without_help<const CAPACITY: usize>(
+    registry: &mut CommandRegistry<CAPACITY>,
+) -> Result<(), Error> {
+    register_cluster_commands_impl(registry, false)
+}
+
+fn register_cluster_commands_impl<const CAPACITY: usize>(
+    registry: &mut CommandRegistry<CAPACITY>,
+    include_help: bool,
+) -> Result<(), Error> {
     let name = positional("NAME", ArgumentKind::Text, false)?;
     let required_name = positional("NAME", ArgumentKind::Text, true)?;
     let node = positional("NODE", ArgumentKind::Text, true)?;
@@ -578,8 +626,11 @@ pub fn register_cluster_commands<const CAPACITY: usize>(
         REMOVE_FEDERATION_ROUTE,
     )?;
 
-    let command = positional("COMMAND", ArgumentKind::Text, false)?;
-    register(registry, "HELP", &[command], HELP_ROUTE)
+    if include_help {
+        let command = positional("COMMAND", ArgumentKind::Text, false)?;
+        register(registry, "HELP", &[command], HELP_ROUTE)?;
+    }
+    Ok(())
 }
 
 fn register<const CAPACITY: usize>(
@@ -643,6 +694,26 @@ pub trait ClusterSource {
         Err(Status::NOT_FOUND)
     }
 
+    fn list_clusters(&mut self, query: ClusterListQuery) -> Result<ClusterListView, Status> {
+        Ok(ClusterListView {
+            generation: 0,
+            total_count: 0,
+            page: query.page,
+            clusters: [None; MAX_CLUSTER_LIST_ROWS],
+            next_page: None,
+        })
+    }
+
+    /// Execute a mutating cluster command. A provider should perform the
+    /// membership, lease, workload, storage, and reconciliation checks here.
+    fn execute_cluster_operation(
+        &mut self,
+        command: CommandCall,
+        pipeline_input: Option<&StructuredOutput>,
+    ) -> Result<StructuredOutput, Status> {
+        acknowledged_output(command, pipeline_input.is_some())
+    }
+
     fn execute_cluster(
         &mut self,
         command: CommandCall,
@@ -670,7 +741,10 @@ pub trait ClusterSource {
                 Some(ClusterViewKind::Federated) => Err(Status::NOT_FOUND),
             };
         }
-        acknowledged_output(command, pipeline_input.is_some())
+        if command.route.raw() == LIST_CLUSTERS_ROUTE {
+            return cluster_list_output(self.list_clusters(cluster_list_query(command)?)?);
+        }
+        self.execute_cluster_operation(command, pipeline_input)
     }
 }
 
@@ -763,9 +837,16 @@ pub fn validate(command: CommandCall) -> Result<(), Status> {
             return Err(Status::INVALID_ARGUMENT);
         }
     }
+    if command.route.raw() == LIST_CLUSTERS_ROUTE {
+        let _ = cluster_list_query(command)?;
+    }
     if matches!(
         command.route.raw(),
-        DELETE_CLUSTER_ROUTE | REMOVE_NODE_ROUTE | FENCE_NODE_ROUTE | REMOVE_FEDERATION_ROUTE
+        LEAVE_CLUSTER_ROUTE
+            | DELETE_CLUSTER_ROUTE
+            | REMOVE_NODE_ROUTE
+            | FENCE_NODE_ROUTE
+            | REMOVE_FEDERATION_ROUTE
     ) && command.get("CONFIRM") != Some(Value::Boolean(true))
     {
         return Err(Status::INVALID_ARGUMENT);
@@ -779,6 +860,52 @@ pub fn validate(command: CommandCall) -> Result<(), Status> {
         return Err(Status::INVALID_ARGUMENT);
     }
     Ok(())
+}
+
+fn cluster_list_query(command: CommandCall) -> Result<ClusterListQuery, Status> {
+    let filter = match command.get("NAME") {
+        Some(Value::Text(value)) if !value.is_empty() => Some(value),
+        Some(Value::Text(_)) => return Err(Status::INVALID_ARGUMENT),
+        Some(_) => return Err(Status::INVALID_ARGUMENT),
+        None => None,
+    };
+    let status = match command.get("STATUS") {
+        Some(Value::Text(value)) if !value.is_empty() => Some(value),
+        Some(Value::Text(_)) => return Err(Status::INVALID_ARGUMENT),
+        Some(_) => return Err(Status::INVALID_ARGUMENT),
+        None => None,
+    };
+    let limit = match command.get("LIMIT") {
+        Some(Value::Integer(value)) if value > 0 => value as u64,
+        Some(Value::Integer(_)) => return Err(Status::INVALID_ARGUMENT),
+        Some(_) => return Err(Status::INVALID_ARGUMENT),
+        None => MAX_CLUSTER_LIST_ROWS as u64,
+    };
+    let page = match command.get("PAGE") {
+        Some(Value::Integer(value)) if value > 0 => value as u64,
+        Some(Value::Integer(_)) => return Err(Status::INVALID_ARGUMENT),
+        Some(_) => return Err(Status::INVALID_ARGUMENT),
+        None => 1,
+    };
+    Ok(ClusterListQuery {
+        filter,
+        status,
+        limit,
+        page,
+        trusted: boolean_filter(command.get("TRUSTED"))?,
+        joined: boolean_filter(command.get("JOINED"))?,
+        available: boolean_filter(command.get("AVAILABLE"))?,
+        degraded: boolean_filter(command.get("DEGRADED"))?,
+        federated: boolean_filter(command.get("FEDERATED"))?,
+    })
+}
+
+fn boolean_filter(value: Option<Value>) -> Result<Option<bool>, Status> {
+    match value {
+        Some(Value::Boolean(value)) => Ok(Some(value)),
+        None => Ok(None),
+        Some(_) => Err(Status::INVALID_ARGUMENT),
+    }
 }
 
 fn selected_cluster_view(command: CommandCall) -> Option<ClusterViewKind> {
@@ -797,6 +924,78 @@ fn selected_cluster_view(command: CommandCall) -> Option<ClusterViewKind> {
     } else {
         None
     }
+}
+
+pub fn cluster_list_output(view: ClusterListView) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "list-clusters")?;
+    insert(
+        &mut output,
+        "total-count",
+        OutputValue::Unsigned(view.total_count),
+    )?;
+    insert(&mut output, "page", OutputValue::Unsigned(view.page))?;
+    for (index, cluster) in view.clusters.iter().flatten().enumerate() {
+        insert_indexed_text(&mut output, "cluster", index, "id", cluster.cluster_id.as_str())?;
+        insert_indexed_text(
+            &mut output,
+            "cluster",
+            index,
+            "name",
+            cluster.cluster_name.as_str(),
+        )?;
+        insert_indexed_text(&mut output, "cluster", index, "status", cluster.status.as_str())?;
+        insert_indexed(
+            &mut output,
+            "cluster",
+            index,
+            "trusted",
+            OutputValue::Boolean(cluster.trusted),
+        )?;
+        insert_indexed(
+            &mut output,
+            "cluster",
+            index,
+            "joined",
+            OutputValue::Boolean(cluster.joined),
+        )?;
+        insert_indexed(
+            &mut output,
+            "cluster",
+            index,
+            "available",
+            OutputValue::Boolean(cluster.available),
+        )?;
+        insert_indexed(
+            &mut output,
+            "cluster",
+            index,
+            "federated",
+            OutputValue::Boolean(cluster.federated),
+        )?;
+    }
+    if let Some(next_page) = view.next_page {
+        insert(&mut output, "next-page", OutputValue::Unsigned(next_page))?;
+    }
+    Ok(output)
+}
+
+pub fn execute_cluster_surface_command(
+    command: CommandCall,
+    pipeline_input: Option<&StructuredOutput>,
+) -> Result<StructuredOutput, Status> {
+    validate(command)?;
+    if command.route.raw() == LIST_CLUSTERS_ROUTE {
+        let query = cluster_list_query(command)?;
+        return cluster_list_output(ClusterListView {
+            generation: 0,
+            total_count: 0,
+            page: query.page,
+            clusters: [None; MAX_CLUSTER_LIST_ROWS],
+            next_page: None,
+        });
+    }
+    acknowledged_output(command, pipeline_input.is_some())
 }
 
 pub fn show_cluster_output(snapshot: ClusterSnapshot) -> Result<StructuredOutput, Status> {
@@ -1241,7 +1440,7 @@ pub fn acknowledged_output(
     pipeline_input: bool,
 ) -> Result<StructuredOutput, Status> {
     let mut output = StructuredOutput::new(Status::NORMAL);
-    insert_text(&mut output, "operation", "cluster-command")?;
+    insert_text(&mut output, "operation", operation_name(command.route.raw()))?;
     insert_text(&mut output, "command", command.command.as_str())?;
     insert(
         &mut output,
@@ -1260,7 +1459,67 @@ pub fn acknowledged_output(
             break;
         }
     }
+    for (argument, field) in [
+        ("ID", "cluster-id"),
+        ("DESCRIPTION", "description"),
+        ("ENDPOINT", "endpoint"),
+        ("ADMISSION", "admission-policy"),
+        ("QUORUM", "quorum-policy"),
+        ("ADMIN", "administrator"),
+        ("INVITATION", "invitation"),
+        ("TOKEN", "token"),
+        ("FINGERPRINT", "fingerprint"),
+        ("ATTESTATION", "attestation"),
+        ("ROLE", "role"),
+        ("SCOPE", "scope"),
+    ] {
+        if let Some(Value::Text(value)) = command.get(argument) {
+            insert_text(&mut output, field, value.as_str())?;
+        }
+    }
+    for (argument, field) in [("EXPIRATION", "expiration"), ("TIMEOUT", "timeout")] {
+        if let Some(Value::Integer(value)) = command.get(argument) {
+            insert(&mut output, field, OutputValue::Integer(value))?;
+        }
+    }
+    for (argument, field) in [
+        ("CONFIRM", "confirmed"),
+        ("DRAIN", "drain"),
+        ("FORCE", "force"),
+        ("RECONCILE", "reconcile"),
+        ("DRY_RUN", "dry-run"),
+        ("APPROVE", "approved"),
+    ] {
+        if let Some(Value::Boolean(value)) = command.get(argument) {
+            insert(&mut output, field, OutputValue::Boolean(value))?;
+        }
+    }
     Ok(output)
+}
+
+fn operation_name(route: u16) -> &'static str {
+    match route {
+        CREATE_CLUSTER_ROUTE => "create-cluster",
+        JOIN_CLUSTER_ROUTE => "join-cluster",
+        LEAVE_CLUSTER_ROUTE => "leave-cluster",
+        DELETE_CLUSTER_ROUTE => "delete-cluster",
+        MODIFY_CLUSTER_ROUTE => "modify-cluster",
+        RENAME_CLUSTER_ROUTE => "rename-cluster",
+        SET_CLUSTER_ROUTE => "set-cluster",
+        USE_CLUSTER_ROUTE => "use-cluster",
+        INVITE_NODE_ROUTE => "invite-node",
+        ACCEPT_NODE_ROUTE => "accept-node",
+        REJECT_NODE_ROUTE => "reject-node",
+        REMOVE_NODE_ROUTE => "remove-node",
+        DRAIN_NODE_ROUTE => "drain-node",
+        FENCE_NODE_ROUTE => "fence-node",
+        REJOIN_NODE_ROUTE => "rejoin-node",
+        INVITE_CLUSTER_ROUTE => "invite-cluster",
+        ACCEPT_CLUSTER_ROUTE => "accept-cluster",
+        REJECT_CLUSTER_ROUTE => "reject-cluster",
+        REMOVE_FEDERATION_ROUTE => "remove-federation",
+        _ => "cluster-command",
+    }
 }
 
 fn help_output(command: CommandCall) -> Result<StructuredOutput, Status> {

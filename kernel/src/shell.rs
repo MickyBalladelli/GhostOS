@@ -38,7 +38,7 @@ const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
 const SYNOS_ISOLATE_ROUTE: u16 = 12;
 const UPTIME_ROUTE: u16 = 13;
-const COMMAND_CAPACITY: usize = 30;
+const COMMAND_CAPACITY: usize = 64;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
 
@@ -95,6 +95,8 @@ pub fn run(
     register(&mut registry, "SHOW-DSM", SHOW_DSM_ROUTE);
     register(&mut registry, "UPTIME", UPTIME_ROUTE);
     register_control_commands(&mut registry);
+    syn_shell::cluster::register_cluster_commands_without_help(&mut registry)
+        .expect("kernel cluster command registry has capacity");
     syn_shell::filesystem::register_filesystem_commands(&mut registry)
         .expect("kernel filesystem command registry has capacity");
     syn_shell::firewall::register_firewall_commands(&mut registry)
@@ -1887,6 +1889,12 @@ impl KernelExecutor {
             SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
+            route if (syn_shell::cluster::SHOW_CLUSTER_ROUTE
+                ..=syn_shell::cluster::REMOVE_FEDERATION_ROUTE)
+                .contains(&route) => syn_shell::cluster::execute_cluster_surface_command(
+                command,
+                None,
+            ),
             route if route >= syn_shell::filesystem::DIRECTORY_ROUTE => {
                 self.filesystem.execute_command(command)
             }
@@ -2688,14 +2696,21 @@ impl CommandExecutor for KernelExecutor {
     fn submit(
         &mut self,
         command: CommandCall,
-        _pipeline_input: Option<&StructuredOutput>,
+        pipeline_input: Option<&StructuredOutput>,
     ) -> Result<ExecutionToken, Error> {
         if self.completion.is_some() {
             return Err(Error::AlreadyRunning);
         }
         self.generation = self.generation.wrapping_add(1).max(1);
         let token = ExecutionToken::new(self.generation).ok_or(Error::InvalidHandle)?;
-        let completion = self.execute(command);
+        let completion = if (syn_shell::cluster::SHOW_CLUSTER_ROUTE
+            ..=syn_shell::cluster::REMOVE_FEDERATION_ROUTE)
+            .contains(&command.route.raw())
+        {
+            syn_shell::cluster::execute_cluster_surface_command(command, pipeline_input)
+        } else {
+            self.execute(command)
+        };
         self.completion = Some((token.raw(), completion));
         Ok(token)
     }

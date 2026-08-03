@@ -929,14 +929,14 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define DCL-style syntax, aliases, qualifiers, positional arguments, stable routes, help text, and structured output for all cluster commands.
   - [x] Add `SHOW CLUSTER` for the current cluster identity, status, leader/coordinator, membership, quorum, health, capacity, and protocol versions.
   - [x] Add `SHOW CLUSTER/MEMBERS`, `SHOW CLUSTER/TOPOLOGY`, `SHOW CLUSTER/HEALTH`, `SHOW CLUSTER/RESOURCES`, and `SHOW CLUSTER/CONFIG` views.
-  - [ ] Add `LIST CLUSTERS` for discovered, trusted, joined, available, degraded, and federated clusters with filtering and pagination.
-  - [ ] Add `CREATE CLUSTER name` with optional cluster ID, description, transport endpoints, admission policy, quorum policy, and initial administrator.
-  - [ ] Add `JOIN CLUSTER` with invitation/token, endpoint, fingerprint, attestation, timeout, and approval qualifiers.
-  - [ ] Add `LEAVE CLUSTER` with drain, force, confirmation, and data-reconciliation safeguards.
-  - [ ] Add `REMOVE CLUSTER` or `DELETE CLUSTER` for retiring a cluster only after membership, lease, workload, and storage checks pass.
-  - [ ] Add `MODIFY CLUSTER`, `RENAME CLUSTER`, `SET CLUSTER`, and `USE CLUSTER` for safe configuration and active-target selection.
-  - [ ] Add `INVITE NODE`, `ACCEPT NODE`, `REJECT NODE`, `REMOVE NODE`, `DRAIN NODE`, `FENCE NODE`, and `REJOIN NODE` administration commands.
-  - [ ] Add cluster-aware command completion, confirmation prompts, dry-run mode, machine-readable output, and pipeline support.
+  - [x] Add `LIST CLUSTERS` for discovered, trusted, joined, available, degraded, and federated clusters with filtering and pagination.
+  - [x] Add `CREATE CLUSTER name` with optional cluster ID, description, transport endpoints, admission policy, quorum policy, and initial administrator.
+  - [x] Add `JOIN CLUSTER` with invitation/token, endpoint, fingerprint, attestation, timeout, and approval qualifiers.
+  - [x] Add `LEAVE CLUSTER` with drain, force, confirmation, and data-reconciliation safeguards.
+  - [x] Add `REMOVE CLUSTER` or `DELETE CLUSTER` for retiring a cluster only after membership, lease, workload, and storage checks pass.
+  - [x] Add `MODIFY CLUSTER`, `RENAME CLUSTER`, `SET CLUSTER`, and `USE CLUSTER` for safe configuration and active-target selection.
+  - [x] Add `INVITE NODE`, `ACCEPT NODE`, `REJECT NODE`, `REMOVE NODE`, `DRAIN NODE`, `FENCE NODE`, and `REJOIN NODE` administration commands.
+  - [x] Add cluster-aware command completion, confirmation prompts, dry-run mode, machine-readable output, and pipeline support.
 
 - [ ] **Cluster Identity & Persistent Metadata**
   - [ ] Define immutable cluster IDs, human-readable names, aliases, generation numbers, creation time, owner, and lifecycle state.
