@@ -14,7 +14,7 @@ pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_S
 pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
     Ahci, ApicTrigger, Device, DiskImage, DisplayState, E1000, E1000_MMIO_SIZE, GopMode,
-    GopPixelFormat, Hpet, InterruptController, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
+    GopPixelFormat, Hpet, InterruptController, LegacyPic, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
     PortBus, PortDevice, PowerControl, PowerState, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
     VgaTextDevice, VideoMode, PS2_DATA_PORT, PS2_PORT_COUNT, PS2_STATUS_PORT,
     VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
@@ -137,6 +137,8 @@ impl Vm {
 
         let apic: Rc<RefCell<LocalApic>> = Rc::new(RefCell::new(LocalApic::new(0)));
         let mut ports = PortBus::new();
+        ports.attach(0x20, 2, Box::new(LegacyPic::new(apic.clone())));
+        ports.attach(0xa0, 2, Box::new(LegacyPic::new(apic.clone())));
         let power_state = Rc::new(RefCell::new(PowerState::Running));
         ports.attach(
             POWER_CONTROL_PORT,

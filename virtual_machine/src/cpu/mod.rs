@@ -597,7 +597,12 @@ impl Cpu {
         // so the borrow checker sees disjoint sources (state field vs. the
         // Rc'd device behind the APIC field).
         let apic_rc = self.apic.clone();
-        let mut apic = apic_rc.as_ref().map(|a| a.borrow_mut());
+        let needs_apic = matches!(instruction.mnemonic, "RDMSR" | "WRMSR");
+        let mut apic = if needs_apic {
+            apic_rc.as_ref().map(|a| a.borrow_mut())
+        } else {
+            None
+        };
         let state = &mut self.state;
         self.executor.execute(
             instruction,

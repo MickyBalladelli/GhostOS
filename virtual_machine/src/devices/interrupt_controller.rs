@@ -1,4 +1,7 @@
+use super::{DeviceError, LocalApic, PortDevice};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// A decoded IDT gate descriptor (16 bytes in guest memory).
 #[derive(Clone, Copy, Debug)]
@@ -131,4 +134,41 @@ impl Default for InterruptController {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Minimal legacy PIC port model.
+///
+/// SynOS acknowledges ISA interrupts through the 8259A command ports while
+/// this VM delivers those interrupts through the local APIC. Forwarding EOI
+/// commands keeps both interrupt models in sync.
+pub struct LegacyPic {
+    apic: Rc<RefCell<LocalApic>>,
+}
+
+impl LegacyPic {
+    pub fn new(apic: Rc<RefCell<LocalApic>>) -> Self {
+        Self { apic }
+    }
+}
+
+impl PortDevice for LegacyPic {
+    fn read(&mut self, _port: u16, size: u8) -> Result<u64, DeviceError> {
+        if size == 1 {
+            Ok(0)
+        } else {
+            Err(DeviceError::UnsupportedSize)
+        }
+    }
+
+    fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
+        if size != 1 {
+            return Err(DeviceError::UnsupportedSize);
+        }
+        if (port == 0x20 || port == 0xa0) && value as u8 == 0x20 {
+            self.apic.borrow_mut().eoi();
+        }
+        Ok(())
+    }
+
+    fn reset(&mut self) {}
 }
