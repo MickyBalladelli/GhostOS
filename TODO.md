@@ -624,12 +624,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 38. Dynamic Incident Response & Active Countermeasures
-- [ ] **Sub-Millisecond Capability Revocation**
-  - [ ] Implement immediate microkernel handle revocation to instantly isolate compromised processes or agents from network and memory resources.
-- [ ] **Honeypot Memory & Deception Primitives**
-  - [ ] Expose decoy memory pages (`SYS$HONEYPOT`) in the global address space to instantly flag and quarantine unauthorized memory scanners.
-- [ ] **Automated Self-Healing & CoW Forensics**
-  - [ ] Freeze compromised process trees into immutable SynFS CoW snapshots for post-mortem analysis while automatically re-spawning clean workers.
+- [x] **Sub-Millisecond Capability Revocation**
+  - [x] Implement immediate microkernel handle revocation to instantly isolate compromised processes or agents from network and memory resources.
+- [x] **Honeypot Memory & Deception Primitives**
+  - [x] Expose decoy memory pages (`SYS$HONEYPOT`) in the global address space to instantly flag and quarantine unauthorized memory scanners.
+- [x] **Automated Self-Healing & CoW Forensics**
+  - [x] Freeze compromised process trees into immutable SynFS CoW snapshots for post-mortem analysis while automatically re-spawning clean workers.
 
 ---
 
@@ -653,12 +653,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 38. Dynamic Incident Response & Active Countermeasures
-- [ ] **Sub-Millisecond Capability Revocation**
-  - [ ] Implement immediate microkernel handle revocation to instantly isolate compromised processes or agents from network and memory resources.
-- [ ] **Honeypot Memory & Deception Primitives**
-  - [ ] Expose decoy memory pages (`SYS$HONEYPOT`) in the global address space to instantly flag and quarantine unauthorized memory scanners.
-- [ ] **Automated Self-Healing & CoW Forensics**
-  - [ ] Freeze compromised process trees into immutable SynFS CoW snapshots for post-mortem analysis while automatically re-spawning clean workers.
+- [x] **Sub-Millisecond Capability Revocation**
+  - [x] Implement immediate microkernel handle revocation to instantly isolate compromised processes or agents from network and memory resources.
+- [x] **Honeypot Memory & Deception Primitives**
+  - [x] Expose decoy memory pages (`SYS$HONEYPOT`) in the global address space to instantly flag and quarantine unauthorized memory scanners.
+- [x] **Automated Self-Healing & CoW Forensics**
+  - [x] Freeze compromised process trees into immutable SynFS CoW snapshots for post-mortem analysis while automatically re-spawning clean workers.
 
 ---
 

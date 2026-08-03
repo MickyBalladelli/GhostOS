@@ -7,6 +7,7 @@ use synos_system_model::ContentId;
 pub mod attestation;
 pub mod fabric;
 pub mod probes;
+pub mod response;
 
 pub const DIGEST_BYTES: usize = 32;
 pub(crate) const MAX_HMAC_MESSAGE_BYTES: usize = 2048;

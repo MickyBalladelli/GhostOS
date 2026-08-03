@@ -675,8 +675,10 @@ name = "synos-shield"
 version = "0.1.0"
 dependencies = [
  "synos-fabric",
+ "synos-init",
  "synos-observability",
  "synos-status",
+ "synos-synfs",
  "synos-system-model",
 ]
 
