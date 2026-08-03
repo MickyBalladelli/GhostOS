@@ -213,7 +213,7 @@ protected_mode:
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %ss
-    movl $0x90000, %esp
+    movl $0x800000, %esp
 
     movl $KERNEL_SEGMENT * 16, %esi
     movl $KERNEL_ADDRESS, %edi
@@ -259,7 +259,7 @@ long_mode:
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %ss
-    movq $0x90000, %rsp
+    movq $0x800000, %rsp
     xorq %rbp, %rbp
     movq $BOOT_INFO, %rdi
     movq $KERNEL_ADDRESS, %rax

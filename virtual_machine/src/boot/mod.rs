@@ -12,6 +12,7 @@ pub const BOOT_INFO_ADDR: u64 = 0x0000_7000;
 pub const CMDLINE_ADDR: u64 = 0x0000_8000;
 pub const MULTIBOOT_INFO_ADDR: u64 = 0x0000_9000;
 pub const MULTIBOOT_MODULES_ADDR: u64 = MULTIBOOT_INFO_ADDR + 0x80;
+pub const KERNEL_STACK_TOP: u64 = 0x0080_0000;
 pub const INITRD_ALIGNMENT: u64 = 0x1000;
 pub const MULTIBOOT_HEADER_MAGIC: u32 = 0x1BADB002;
 pub const MULTIBOOT_BOOTLOADER_MAGIC: u32 = 0x2BADB002;
@@ -216,7 +217,7 @@ impl Loader {
         cpu.enter_long_mode(mmu, mmu.cr3())
             .map_err(LoaderError::CpuError)?;
         cpu.state.rip = self.entry_point;
-        cpu.state.rsp = 0x0009_0000;
+        cpu.state.rsp = KERNEL_STACK_TOP;
         cpu.state.rdi = self.boot_info_address;
         cpu.state.rsi = self.multiboot_info_address;
         cpu.state.rax = MULTIBOOT_BOOTLOADER_MAGIC as u64;
