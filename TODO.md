@@ -690,8 +690,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 - [x] **Cooperative Compute & Thread Scheduling**
   - [x] Implement active-active job and actor thread distribution via `synos-actors` across physical cluster CPUs.
   - [x] Integrate DLM granularity-aware lease management to prevent memory/cache thrashing during compute migration.
-- [ ] **Active-Active Node Failover & Redirection**
-  - [ ] Build hardware heartbeat health monitors to initiate sub-millisecond memory page redirection and thread reassignment upon node failure.
+- [x] **Active-Active Node Failover & Redirection**
+  - [x] Build hardware heartbeat health monitors to initiate sub-millisecond memory page redirection and thread reassignment upon node failure.
 
 ---
 

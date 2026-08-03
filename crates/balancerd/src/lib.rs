@@ -5,7 +5,16 @@ use synos_actors::{
     ActorError, ActorId, ActorRef, ActorRuntime, ActorSpawnRequest, ActorSystem,
     DEFAULT_ACTOR_CAPACITY,
 };
-use synos_fabric::NodeId as ClusterNodeId;
+use synos_fabric::{
+    NodeId as ClusterNodeId,
+    cluster::{
+        Heartbeat, HeartbeatMonitor, NodeFailure, NodeState as HeartbeatNodeState,
+        RecoverySummary,
+        recover_failed_node,
+    },
+    dsm::CoherenceDirectory,
+    memory::{GlobalAddressSpace, LeaseTable},
+};
 use synos_kernel::{
     AddressSpaceId, CapabilityHandle, CapabilitySpace, DistributedLockManager, LockError,
     LockGrant, LockHandle, LockMode, LockOwner, LockRange, NodeFenceTable, ResourceId,
@@ -82,6 +91,28 @@ pub enum BalancerError<E> {
     StalePlacement,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum FailoverError<E> {
+    Fabric(synos_fabric::Error),
+    Balancer(BalancerError<E>),
+}
+
+impl<E: IntoStatus> IntoStatus for FailoverError<E> {
+    fn status(self) -> Status {
+        match self {
+            Self::Fabric(error) => error.status(),
+            Self::Balancer(error) => error.status(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FailoverSummary {
+    pub failure: NodeFailure,
+    pub memory: RecoverySummary,
+    pub threads_reassigned: usize,
+}
+
 impl<E: IntoStatus> IntoStatus for BalancerError<E> {
     fn status(self) -> Status {
         match self {
@@ -100,6 +131,7 @@ impl<E: IntoStatus> IntoStatus for BalancerError<E> {
 struct NodeState {
     offer: NodeOffer,
     active_threads: usize,
+    failed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -166,10 +198,14 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
             .flatten()
             .find(|node| node.offer.node == offer.node)
         {
+            if node.failed && node.active_threads != 0 {
+                return Err(BalancerError::Capacity)
+            }
             if offer.cpu_capacity < node.active_threads {
                 return Err(BalancerError::Capacity)
             }
             node.offer = offer;
+            node.failed = false;
             return Ok(())
         }
         let slot = self
@@ -180,6 +216,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
         *slot = Some(NodeState {
             offer,
             active_threads: 0,
+            failed: false,
         });
         Ok(())
     }
@@ -486,6 +523,147 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
         Ok(target.offer.node)
     }
 
+    /// Recreate every actor thread hosted by an isolated node.
+    ///
+    /// The old actor is forgotten without contacting its node. Its DLM leases
+    /// are evicted only after the caller has confirmed hardware isolation, so
+    /// the replacement can safely acquire the same cache slices.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reassign_failed_node<
+        T,
+        const CAPABILITIES: usize,
+        const DLM: usize,
+        const FENCES: usize,
+    >(
+        &mut self,
+        failed: ClusterNodeId,
+        transport: &mut T,
+        dlm: &mut DistributedLockManager<DLM>,
+        capabilities: &CapabilitySpace<CAPABILITIES>,
+        authority: CapabilityHandle,
+        now_us: u64,
+        fences: &NodeFenceTable<FENCES>,
+    ) -> Result<usize, BalancerError<T::Error>>
+    where
+        T: ActorRuntime,
+    {
+        let failed_kernel = kernel_node(failed);
+        let failed_slot = self
+            .nodes
+            .iter()
+            .position(|state| state.is_some_and(|state| state.offer.node == failed))
+            .ok_or(BalancerError::NoNode)?;
+        dlm.evict_node(failed_kernel, fences)
+            .map_err(BalancerError::Lease)?;
+        self.nodes[failed_slot]
+            .as_mut()
+            .expect("located failed node")
+            .failed = true;
+
+        let mut reassigned = 0;
+        for slot in 0..JOBS {
+            for thread in 0..THREADS {
+                let owned_by_failed = self.jobs[slot].leases[thread]
+                    .is_some_and(|lease| lease.owner.node == failed_kernel);
+                if owned_by_failed {
+                    self.reassign_failed_thread(
+                        slot,
+                        thread,
+                        transport,
+                        dlm,
+                        capabilities,
+                        authority,
+                        now_us,
+                        fences,
+                    )?;
+                    reassigned += 1;
+                }
+            }
+        }
+        Ok(reassigned)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reassign_failed_thread<
+        T,
+        const CAPABILITIES: usize,
+        const DLM: usize,
+        const FENCES: usize,
+    >(
+        &mut self,
+        slot: usize,
+        thread: usize,
+        transport: &mut T,
+        dlm: &mut DistributedLockManager<DLM>,
+        capabilities: &CapabilitySpace<CAPABILITIES>,
+        authority: CapabilityHandle,
+        now_us: u64,
+        fences: &NodeFenceTable<FENCES>,
+    ) -> Result<(), BalancerError<T::Error>>
+    where
+        T: ActorRuntime,
+    {
+        let entry = self.jobs[slot];
+        let request = entry.request.ok_or(BalancerError::StalePlacement)?;
+        let old_actor = entry.actors[thread].ok_or(BalancerError::StalePlacement)?;
+        let old_lease = entry.leases[thread].ok_or(BalancerError::StalePlacement)?;
+        let target_slot = self
+            .pick_migration_node(old_lease.owner.node)
+            .ok_or(BalancerError::NoNode)?;
+        let target = self.nodes[target_slot].expect("selected replacement node");
+        let new_owner = LockOwner {
+            node: kernel_node(target.offer.node),
+            address_space: request.address_space,
+        };
+        let new_lease = self.acquire_lease(
+            dlm,
+            capabilities,
+            authority,
+            request,
+            old_lease.range,
+            new_owner,
+            target.offer.node_epoch,
+            now_us,
+            fences,
+        )
+        .map_err(convert_error)?;
+
+        self.actors
+            .forget(old_actor)
+            .map_err(convert_actor_error)
+            .map_err(BalancerError::Actor)?;
+        let new_actor_id = ActorId::new(target.offer.node, self.next_actor_id())
+            .ok_or(BalancerError::Capacity)?;
+        let new_actor = match self.actors.orchestrate(
+            transport,
+            ActorSpawnRequest {
+                actor: new_actor_id,
+                image: request.image,
+                capability_profile: request.capability_profile,
+                generation: request.generation.wrapping_add(1).max(1),
+            },
+        ) {
+            Ok(actor) => actor,
+            Err(error) => {
+                let _ = dlm.release(new_lease.owner, new_lease.handle);
+                return Err(BalancerError::Actor(error))
+            }
+        };
+
+        self.nodes[target_slot]
+            .as_mut()
+            .expect("selected replacement node")
+            .active_threads += 1;
+        if let Some(state) = self.nodes.iter_mut().flatten().find(|state| {
+            kernel_node(state.offer.node) == old_lease.owner.node
+        }) {
+            state.active_threads = state.active_threads.saturating_sub(1)
+        }
+        self.jobs[slot].actors[thread] = Some(new_actor);
+        self.jobs[slot].leases[thread] = Some(new_lease);
+        Ok(())
+    }
+
     pub fn snapshot(&self, job: JobId) -> Result<PlacementSnapshot<THREADS>, BalancerError<core::convert::Infallible>> {
         let slot = self.job_slot(job)?;
         let entry = &self.jobs[slot];
@@ -549,6 +727,9 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
             .enumerate()
             .filter_map(|(index, state)| {
                 let state = (*state)?;
+                if state.failed {
+                    return None
+                }
                 let reserved = selected[index];
                 if state.offer.cpu_capacity < state.active_threads + reserved {
                     return None
@@ -570,7 +751,8 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
             .enumerate()
             .filter_map(|(index, state)| {
                 let state = (*state)?;
-                if kernel_node(state.offer.node) == excluded
+                if state.failed
+                    || kernel_node(state.offer.node) == excluded
                     || state.active_threads >= state.offer.cpu_capacity
                 {
                     return None
@@ -765,6 +947,107 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize> Default
     }
 }
 
+/// Drives hardware heartbeats and turns one failure decision into a complete
+/// active-active recovery transaction.
+pub struct FailoverCoordinator<const HEARTBEATS: usize = DEFAULT_NODE_CAPACITY> {
+    monitor: HeartbeatMonitor<HEARTBEATS>,
+}
+
+impl<const HEARTBEATS: usize> FailoverCoordinator<HEARTBEATS> {
+    pub fn new(
+        local: ClusterNodeId,
+        period_us: u32,
+        missed_limit: u8,
+        now_us: u64,
+    ) -> Result<Self, synos_fabric::Error> {
+        Ok(Self {
+            monitor: HeartbeatMonitor::new(local, period_us, missed_limit, now_us)?,
+        })
+    }
+
+    pub fn add_node(
+        &mut self,
+        node: ClusterNodeId,
+        now_us: u64,
+    ) -> Result<(), synos_fabric::Error> {
+        self.monitor.add_node(node, now_us)
+    }
+
+    pub fn due(&mut self, now_us: u64) -> Option<Heartbeat> {
+        self.monitor.due(now_us)
+    }
+
+    pub fn observe(
+        &mut self,
+        heartbeat: Heartbeat,
+        received_at_us: u64,
+    ) -> Result<(), synos_fabric::Error> {
+        self.monitor.observe(heartbeat, received_at_us)
+    }
+
+    pub fn state(&self, node: ClusterNodeId) -> Option<HeartbeatNodeState> {
+        self.monitor.state(node)
+    }
+
+    /// Detect at most one node per timer tick and recover it before returning.
+    /// Calling this from the NIC timer keeps detection and redirection bounded
+    /// while allowing the caller to emit one completion record per failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn detect_and_recover<
+        I,
+        T,
+        const POOLS: usize,
+        const OVERRIDES: usize,
+        const LEASES: usize,
+        const PAGES: usize,
+        const CAPABILITIES: usize,
+        const DLM: usize,
+        const FENCES: usize,
+        const NODES: usize,
+        const JOBS: usize,
+        const THREADS: usize,
+    >(
+        &mut self,
+        now_us: u64,
+        isolation: &I,
+        space: &mut GlobalAddressSpace<POOLS, OVERRIDES>,
+        leases: &mut LeaseTable<LEASES>,
+        coherence: &mut CoherenceDirectory<PAGES>,
+        balancer: &mut Balancer<NODES, JOBS, THREADS>,
+        transport: &mut T,
+        dlm: &mut DistributedLockManager<DLM>,
+        capabilities: &CapabilitySpace<CAPABILITIES>,
+        authority: CapabilityHandle,
+        fences: &NodeFenceTable<FENCES>,
+    ) -> Result<Option<FailoverSummary>, FailoverError<T::Error>>
+    where
+        I: synos_fabric::cluster::NodeIsolation,
+        T: ActorRuntime,
+    {
+        let Some(failure) = self.monitor.detect(now_us) else {
+            return Ok(None)
+        };
+        let memory = recover_failed_node(failure, isolation, space, leases, coherence)
+            .map_err(FailoverError::Fabric)?;
+        let threads_reassigned = balancer
+            .reassign_failed_node(
+                failure.node,
+                transport,
+                dlm,
+                capabilities,
+                authority,
+                now_us,
+                fences,
+            )
+            .map_err(FailoverError::Balancer)?;
+        Ok(Some(FailoverSummary {
+            failure,
+            memory,
+            threads_reassigned,
+        }))
+    }
+}
+
 trait ThreadSlice {
     fn thread_slice(self, index: usize, threads: usize) -> Option<LockRange>;
 }
@@ -816,5 +1099,20 @@ fn convert_error<E>(error: BalancerError<core::convert::Infallible>) -> Balancer
         BalancerError::MigrationFailed => BalancerError::MigrationFailed,
         BalancerError::NoNode => BalancerError::NoNode,
         BalancerError::StalePlacement => BalancerError::StalePlacement,
+    }
+}
+
+fn convert_actor_error<E>(error: ActorError<core::convert::Infallible>) -> ActorError<E> {
+    match error {
+        ActorError::ActorFailed(status) => ActorError::ActorFailed(status),
+        ActorError::AlreadyRegistered => ActorError::AlreadyRegistered,
+        ActorError::Capacity => ActorError::Capacity,
+        ActorError::CorruptEnvelope => ActorError::CorruptEnvelope,
+        ActorError::InvalidActor => ActorError::InvalidActor,
+        ActorError::InvalidEndpoint => ActorError::InvalidEndpoint,
+        ActorError::InvalidMailbox => ActorError::InvalidMailbox,
+        ActorError::NodeRouteMissing => ActorError::NodeRouteMissing,
+        ActorError::NotFound => ActorError::NotFound,
+        ActorError::Transport(never) => match never {},
     }
 }

@@ -111,6 +111,7 @@ impl<const CAPACITY: usize> HeartbeatMonitor<CAPACITY> {
         }
         if let Some(entry) = self.nodes.iter_mut().find(|entry| entry.node == Some(node)) {
             entry.state = NodeState::Alive;
+            entry.last_sequence = 0;
             entry.last_seen_us = now_us;
             return Ok(())
         }
@@ -148,6 +149,9 @@ impl<const CAPACITY: usize> HeartbeatMonitor<CAPACITY> {
             .iter_mut()
             .find(|entry| entry.node == Some(heartbeat.node))
             .ok_or(Error::DeviceNotFound)?;
+        if entry.state == NodeState::Failed {
+            return Err(Error::NodeFailed)
+        }
         if entry.last_sequence != 0
             && heartbeat.sequence.wrapping_sub(entry.last_sequence) as i32 <= 0
         {

@@ -431,6 +431,24 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         self.directory[index] = None;
         Ok(())
     }
+
+    /// Forget an actor whose node has already been fenced.
+    ///
+    /// A failed node cannot be contacted to stop its actor. Removing the
+    /// directory entry lets the coordinator install the replacement without
+    /// sending a second command to the isolated node.
+    pub fn forget(
+        &mut self,
+        actor: ActorRef,
+    ) -> Result<(), ActorError<core::convert::Infallible>> {
+        let index = self
+            .directory
+            .iter()
+            .position(|entry| entry.is_some_and(|entry| entry.actor == actor.id))
+            .ok_or(ActorError::NotFound)?;
+        self.directory[index] = None;
+        Ok(())
+    }
 }
 
 impl<const ACTORS: usize, const NODES: usize> Default for ActorSystem<ACTORS, NODES> {
