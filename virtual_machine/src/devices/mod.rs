@@ -965,7 +965,7 @@ mod tests {
             fn read(&self, addr: u64, size: u8) -> Result<u64, DeviceError> {
                 Ok((addr & 0xFF) | ((size as u64) << 16))
             }
-            fn write(&mut self, addr: u64, value: u64, size: u8) -> Result<(), DeviceError> {
+            fn write(&mut self, addr: u64, value: u64, _size: u8) -> Result<(), DeviceError> {
                 self.0.push((addr, value as u8));
                 Ok(())
             }

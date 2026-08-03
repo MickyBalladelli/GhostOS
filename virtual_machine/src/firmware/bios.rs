@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn int19_loads_mbr_to_7c00() {
         let mut ctx = BiosContext::new();
-        let mut img = vec![0xAAu8; 512];
+        let img = vec![0xAAu8; 512];
         let boot = img.clone();
         ctx.set_boot_image(img);
         let mut mmu = mem_mmu();

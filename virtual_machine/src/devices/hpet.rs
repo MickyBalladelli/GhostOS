@@ -369,10 +369,6 @@ mod tests {
         Device::write(h, HPET_BASE_DEFAULT + off as u64, value as u64, 4).unwrap();
     }
 
-    fn rd(h: &Hpet, off: u32) -> u32 {
-        Device::read(h, HPET_BASE_DEFAULT + off as u64, 4).unwrap() as u32
-    }
-
     #[test]
     fn capability_and_revision() {
         let h = hpet();
