@@ -6,6 +6,7 @@ use synos_system_model::ContentId;
 
 pub mod attestation;
 pub mod fabric;
+pub mod integrity;
 pub mod probes;
 pub mod response;
 

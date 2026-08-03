@@ -634,10 +634,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 39. Supply Chain Security & Memory Integrity
-- [ ] **Signed Content-Addressed Binaries**
-  - [ ] Enforce cryptographically signed package validation (Sigstore/TUF) prior to process instantiation.
-- [ ] **Runtime Page Hash Verification**
-  - [ ] Continuously audit running executable memory pages against signed storage hashes to detect memory-injection exploits in real time.
+- [x] **Signed Content-Addressed Binaries**
+  - [x] Enforce cryptographically signed package validation (Sigstore/TUF) prior to process instantiation.
+- [x] **Runtime Page Hash Verification**
+  - [x] Continuously audit running executable memory pages against signed storage hashes to detect memory-injection exploits in real time.
 
 
 ---
@@ -663,10 +663,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 39. Supply Chain Security & Memory Integrity
-- [ ] **Signed Content-Addressed Binaries**
-  - [ ] Enforce cryptographically signed package validation (Sigstore/TUF) prior to process instantiation.
-- [ ] **Runtime Page Hash Verification**
-  - [ ] Continuously audit running executable memory pages against signed storage hashes to detect memory-injection exploits in real time.
+- [x] **Signed Content-Addressed Binaries**
+  - [x] Enforce cryptographically signed package validation (Sigstore/TUF) prior to process instantiation.
+- [x] **Runtime Page Hash Verification**
+  - [x] Continuously audit running executable memory pages against signed storage hashes to detect memory-injection exploits in real time.
 
 
 

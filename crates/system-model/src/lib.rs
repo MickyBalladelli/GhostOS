@@ -78,6 +78,17 @@ impl ContentId {
         Self(sha256(bytes))
     }
 
+    pub const fn is_zero(self) -> bool {
+        let mut index = 0;
+        while index < self.0.len() {
+            if self.0[index] != 0 {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }

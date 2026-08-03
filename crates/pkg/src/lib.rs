@@ -25,6 +25,7 @@ pub enum PackageError {
     DuplicateKey,
     InvalidConfiguration,
     InvalidSignature,
+    InstantiationDenied,
     Model(ModelError),
     Repository(RepositoryError),
     TooManyDependencies,
@@ -38,7 +39,9 @@ impl IntoStatus for PackageError {
             Self::BufferTooSmall { .. } | Self::TooManyDependencies | Self::TrustStoreFull => {
                 Status::NO_SPACE
             }
-            Self::UnknownSigningKey | Self::InvalidSignature => Status::ACCESS_DENIED,
+            Self::UnknownSigningKey | Self::InvalidSignature | Self::InstantiationDenied => {
+                Status::ACCESS_DENIED
+            }
             Self::CorruptBundle | Self::BundleTooSmall => Status::CORRUPT,
             Self::InvalidConfiguration | Self::DuplicateBinding | Self::DuplicateKey => {
                 Status::INVALID_ARGUMENT
@@ -93,6 +96,28 @@ pub struct BundleInfo {
     pub entry_offset: u64,
     pub signing_key: [u8; KEY_ID_BYTES],
     pub dependency_count: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstantiationReceipt {
+    package: ContentId,
+    signing_key: [u8; KEY_ID_BYTES],
+}
+
+impl InstantiationReceipt {
+    pub const fn package(self) -> ContentId {
+        self.package
+    }
+
+    pub const fn signing_key(self) -> [u8; KEY_ID_BYTES] {
+        self.signing_key
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VerifiedPackage {
+    package: ContentId,
+    signing_key: [u8; KEY_ID_BYTES],
 }
 
 pub struct PackageBundle<'a> {
@@ -334,6 +359,7 @@ pub struct PackageDaemon<
 > {
     repository: SynFsRepository<PACKAGES>,
     trusted_keys: [Option<SigningKey>; KEYS],
+    verified: [Option<VerifiedPackage>; PACKAGES],
 }
 
 impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
@@ -341,6 +367,7 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         Self {
             repository: SynFsRepository::new(),
             trusted_keys: [None; KEYS],
+            verified: [None; PACKAGES],
         }
     }
 
@@ -370,13 +397,7 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         verification_buffer: &mut [u8],
     ) -> Result<ContentId, PackageError> {
         let bundle = PackageBundle::decode(encoded)?;
-        let key = self
-            .trusted_keys
-            .iter()
-            .flatten()
-            .find(|key| key.id() == bundle.info.signing_key)
-            .copied()
-            .ok_or(PackageError::UnknownSigningKey)?;
+        let key = self.trusted_key(&bundle)?;
         bundle.verify(key)?;
         let dependencies = bundle.dependencies().collect::<DependencyArray>();
         let installed = self.repository.install(
@@ -389,7 +410,17 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         if installed != bundle.info.package {
             return Err(PackageError::CorruptBundle);
         }
+        self.record_verified(installed, bundle.info.signing_key)?;
         Ok(installed)
+    }
+
+    /// Validate a bundle against the local TUF-style trusted key set without
+    /// changing the repository.
+    pub fn verify_bundle(&self, encoded: &[u8]) -> Result<BundleInfo, PackageError> {
+        let bundle = PackageBundle::decode(encoded)?;
+        let key = self.trusted_key(&bundle)?;
+        bundle.verify(key)?;
+        Ok(bundle.info())
     }
 
     pub fn activate<const BLOCKS: usize>(
@@ -397,6 +428,12 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         fs: &mut SynFs<BLOCKS>,
         configuration: &SystemConfiguration,
     ) -> Result<Option<RootManifest<DEFAULT_ROOT_BINDINGS>>, PackageError> {
+        if configuration
+            .bindings()
+            .any(|binding| !self.is_instantiation_authorized(binding.package))
+        {
+            return Err(PackageError::InstantiationDenied);
+        }
         Ok(self.repository.activate(fs, configuration.root()?)?)
     }
 
@@ -408,8 +445,53 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         &mut self,
         configuration: Option<RootManifest<DEFAULT_ROOT_BINDINGS>>,
     ) -> Result<(), PackageError> {
+        if configuration.is_some_and(|root| {
+            root.bindings()
+                .any(|binding| !self.is_instantiation_authorized(binding.package))
+        }) {
+            return Err(PackageError::InstantiationDenied);
+        }
         self.repository.restore_root(configuration)?;
         Ok(())
+    }
+
+    /// Return a receipt that the image passed the signed-package gate. A
+    /// process launcher must hold this receipt before it instantiates code.
+    pub fn authorize_instantiation(
+        &self,
+        package: ContentId,
+    ) -> Result<InstantiationReceipt, PackageError> {
+        self.verified
+            .iter()
+            .flatten()
+            .find(|entry| entry.package == package && self.contains(package))
+            .map(|entry| InstantiationReceipt {
+                package: entry.package,
+                signing_key: entry.signing_key,
+            })
+            .ok_or(PackageError::InstantiationDenied)
+    }
+
+    pub fn validate_instantiation(
+        &self,
+        receipt: InstantiationReceipt,
+    ) -> Result<(), PackageError> {
+        if self.is_instantiation_authorized(receipt.package)
+            && self.verified.iter().flatten().any(|entry| {
+                entry.package == receipt.package && entry.signing_key == receipt.signing_key
+            })
+        {
+            Ok(())
+        } else {
+            Err(PackageError::InstantiationDenied)
+        }
+    }
+
+    pub fn is_instantiation_authorized(&self, package: ContentId) -> bool {
+        self.verified
+            .iter()
+            .flatten()
+            .any(|entry| entry.package == package && self.contains(package))
     }
 
     pub fn contains(&self, package: ContentId) -> bool {
@@ -422,6 +504,41 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
 
     pub fn manifests(&self) -> impl Iterator<Item = &PackageManifest> + '_ {
         self.repository.packages().iter()
+    }
+
+    fn trusted_key(&self, bundle: &PackageBundle<'_>) -> Result<SigningKey, PackageError> {
+        self.trusted_keys
+            .iter()
+            .flatten()
+            .find(|key| key.id() == bundle.info.signing_key)
+            .copied()
+            .ok_or(PackageError::UnknownSigningKey)
+    }
+
+    fn record_verified(
+        &mut self,
+        package: ContentId,
+        signing_key: [u8; KEY_ID_BYTES],
+    ) -> Result<(), PackageError> {
+        if let Some(entry) = self
+            .verified
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.package == package)
+        {
+            entry.signing_key = signing_key;
+            return Ok(())
+        }
+        let slot = self
+            .verified
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(PackageError::InstantiationDenied)?;
+        *slot = Some(VerifiedPackage {
+            package,
+            signing_key,
+        });
+        Ok(())
     }
 }
 
