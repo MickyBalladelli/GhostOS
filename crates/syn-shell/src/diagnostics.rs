@@ -17,6 +17,7 @@ pub const SHOW_DISK_ROUTE: u16 = 4;
 pub const SHOW_CPU_ROUTE: u16 = 5;
 pub const SHOW_USERS_ROUTE: u16 = 6;
 pub const SHOW_OBSOLETE_ROUTE: u16 = 7;
+pub const UPTIME_ROUTE: u16 = 8;
 pub const DEFAULT_DIAGNOSTIC_QUEUE: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +90,11 @@ pub struct ObsoleteSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UptimeSnapshot {
+    pub uptime_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessState {
     Ready,
     Running,
@@ -144,6 +150,10 @@ pub trait DiagnosticSource {
         interval_us: u64,
         samples: u64,
     ) -> Result<MonitorSnapshot, Status>;
+
+    fn uptime(&mut self) -> Result<UptimeSnapshot, Status> {
+        Err(Status::NOT_FOUND)
+    }
 }
 
 pub fn register_builtin_commands<const CAPACITY: usize>(
@@ -187,6 +197,11 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-OBSOLETE", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
         RouteId::new(SHOW_OBSOLETE_ROUTE).expect("nonzero route"),
+    )?;
+
+    registry.register(
+        CommandSpec::new("UPTIME", &[]).map_err(|_| Error::InvalidValue)?,
+        RouteId::new(UPTIME_ROUTE).expect("nonzero route"),
     )?;
 
     let interval =
@@ -321,6 +336,7 @@ impl<Source: DiagnosticSource, const CAPACITY: usize>
                 let cluster = boolean(command.get("CLUSTER"))?;
                 obsolete_output(self.source.obsolete(cluster)?)
             }
+            UPTIME_ROUTE => uptime_output(self.source.uptime()?),
             MONITOR_ROUTE => {
                 let interval = unsigned(command.get("INTERVAL"))?.unwrap_or(1_000_000);
                 let samples = unsigned(command.get("SAMPLES"))?.unwrap_or(1);
@@ -550,6 +566,30 @@ fn obsolete_output(snapshot: ObsoleteSnapshot) -> Result<StructuredOutput, Statu
         OutputValue::Unsigned(snapshot.out_of_date),
     )?;
     insert(&mut output, "nodes", OutputValue::Unsigned(snapshot.nodes))?;
+    Ok(output)
+}
+
+fn uptime_output(snapshot: UptimeSnapshot) -> Result<StructuredOutput, Status> {
+    const US_PER_SECOND: u64 = 1_000_000;
+    const SECONDS_PER_MINUTE: u64 = 60;
+    const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
+    const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+
+    let total_seconds = snapshot.uptime_us / US_PER_SECOND;
+    let days = total_seconds / SECONDS_PER_DAY;
+    let hours = (total_seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR;
+    let minutes = (total_seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
+    let seconds = total_seconds % SECONDS_PER_MINUTE;
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert(
+        &mut output,
+        "uptime-us",
+        OutputValue::Unsigned(snapshot.uptime_us),
+    )?;
+    insert(&mut output, "days", OutputValue::Unsigned(days))?;
+    insert(&mut output, "hours", OutputValue::Unsigned(hours))?;
+    insert(&mut output, "minutes", OutputValue::Unsigned(minutes))?;
+    insert(&mut output, "seconds", OutputValue::Unsigned(seconds))?;
     Ok(output)
 }
 

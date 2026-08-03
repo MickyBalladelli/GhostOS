@@ -917,5 +917,5 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Require cryptographic signatures on declarative configuration updates before committing state changes across nodes.
 
 
-- [ ] **Uptime command**
-  - [ ] Display is easy to read format the amount of time since the machine last rebooted
+- [x] **Uptime command**
+  - [x] Display is easy to read format the amount of time since the machine last rebooted

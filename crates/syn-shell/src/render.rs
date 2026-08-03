@@ -47,6 +47,9 @@ fn render_list(
     if is_metadata_output(output) {
         return render_metadata(output)
     }
+    if is_uptime_output(output) {
+        return render_uptime(output)
+    }
 
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
@@ -86,6 +89,33 @@ fn is_metadata_output(output: &StructuredOutput) -> bool {
     output
         .fields()
         .any(|field| field.name.as_str() == "operation")
+}
+
+fn is_uptime_output(output: &StructuredOutput) -> bool {
+    output.fields().any(|field| field.name.as_str() == "uptime-us")
+}
+
+fn render_uptime(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    let days = find_value(output, "days").and_then(unsigned_value).unwrap_or(0);
+    let hours = find_value(output, "hours").and_then(unsigned_value).unwrap_or(0);
+    let minutes = find_value(output, "minutes")
+        .and_then(unsigned_value)
+        .unwrap_or(0);
+    let seconds = find_value(output, "seconds")
+        .and_then(unsigned_value)
+        .unwrap_or(0);
+    write!(&mut rendered, "Uptime: ").map_err(|_| Error::Capacity)?;
+    if days != 0 {
+        write!(&mut rendered, "{days} day{}, ", if days == 1 { "" } else { "s" })
+            .map_err(|_| Error::Capacity)?;
+    }
+    write!(&mut rendered, "{hours:02}:{minutes:02}:{seconds:02}\n")
+        .map_err(|_| Error::Capacity)?;
+    Ok(rendered)
 }
 
 fn is_created_output(output: &StructuredOutput) -> bool {
@@ -348,6 +378,13 @@ fn find_value(output: &StructuredOutput, name: &str) -> Option<OutputValue> {
         .fields()
         .find(|field| field.name.as_str() == name)
         .map(|field| field.value)
+}
+
+fn unsigned_value(value: OutputValue) -> Option<u64> {
+    match value {
+        OutputValue::Unsigned(value) => Some(value),
+        _ => None,
+    }
 }
 
 fn write_table_text(

@@ -50,3 +50,6 @@ DEFAULT`, and `PWD` return `default-directory`.
 Missing paths return `NOT_FOUND`. Malformed paths, unknown qualifiers, extra
 arguments, and wildcards on create or default-directory commands return
 `INVALID_ARGUMENT` before filesystem I/O.
+
+`UPTIME` displays the time since boot as `days, HH:MM:SS`. Structured output
+also includes the microsecond uptime and each human-readable time component.

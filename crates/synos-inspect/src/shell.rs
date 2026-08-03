@@ -3,7 +3,7 @@ use syn_shell::{
     diagnostics::{
         ClusterSnapshot, CpuSnapshot, DiagnosticSource, DiskSnapshot, MemorySnapshot,
         MonitorSnapshot, ObsoleteSnapshot, ProcessSnapshot,
-        ProcessState as ShellProcessState, UsersSnapshot,
+        ProcessState as ShellProcessState, UptimeSnapshot, UsersSnapshot,
     },
 };
 use synos_audit::{ObsolescenceReason, PackageKind};
@@ -18,6 +18,7 @@ pub struct ShellInspectionSource<Provider> {
     service: InspectionService<Provider>,
     capability: InspectCapability,
     now_us: u64,
+    boot_at_us: u64,
 }
 
 impl<Provider> ShellInspectionSource<Provider> {
@@ -30,6 +31,7 @@ impl<Provider> ShellInspectionSource<Provider> {
             service,
             capability,
             now_us,
+            boot_at_us: 0,
         }
     }
 
@@ -47,6 +49,10 @@ impl<Provider> ShellInspectionSource<Provider> {
 
     pub fn set_now_us(&mut self, now_us: u64) {
         self.now_us = now_us
+    }
+
+    pub fn set_boot_at_us(&mut self, boot_at_us: u64) {
+        self.boot_at_us = boot_at_us
     }
 
     const fn view(cluster: bool) -> View {
@@ -282,6 +288,12 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
             memory_used_bytes: memory.total_bytes.saturating_sub(memory.free_bytes),
             remote_faults: cpu.dsm_faults,
             network_bytes: 0,
+        })
+    }
+
+    fn uptime(&mut self) -> Result<UptimeSnapshot, Status> {
+        Ok(UptimeSnapshot {
+            uptime_us: self.now_us.saturating_sub(self.boot_at_us),
         })
     }
 }
