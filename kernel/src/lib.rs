@@ -29,6 +29,7 @@ pub mod page_fault;
 pub mod persona;
 #[allow(unsafe_code)]
 mod power;
+pub mod partition;
 pub mod scheduler;
 pub mod runtime;
 #[allow(unsafe_code)]
@@ -74,7 +75,8 @@ pub use persona::{
 };
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
 pub use task::{
-    AddressSpaceId, Context, ExecutionMode, SchedulingPolicy, Thread, ThreadId, ThreadState,
+    AddressSpaceId, Context, CpuId, CpuMask, ExecutionMode, SchedulingPolicy, Thread, ThreadId,
+    ThreadState,
 };
 
 static mut SCHEDULER: Scheduler = Scheduler::new();

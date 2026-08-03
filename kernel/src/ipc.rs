@@ -1,5 +1,7 @@
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
-use crate::task::AddressSpaceId;
+use crate::partition::CorePartition;
+use crate::scheduler::Scheduler;
+use crate::task::{AddressSpaceId, CpuId, ThreadId};
 use synos_ipc::{Envelope, Ring, RingError};
 use synos_observability::{
     CorrelationId, EventField, EventKind, field, next_correlation_id, trace,
@@ -59,6 +61,7 @@ pub enum IpcError {
     Full,
     Empty,
     AccessDenied,
+    CoreIsolated,
 }
 
 impl IntoStatus for IpcError {
@@ -68,6 +71,7 @@ impl IntoStatus for IpcError {
             Self::Empty => Status::new(Severity::Information, facility::KERNEL, 2, 0)
                 .expect("valid IPC status"),
             Self::AccessDenied => Status::ACCESS_DENIED,
+            Self::CoreIsolated => Status::BUSY,
         }
     }
 }
@@ -119,6 +123,60 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         }
 
         self.enqueue(message)
+    }
+
+    pub fn try_send_on<const MAX_CAPABILITIES: usize>(
+        &self,
+        partition: CorePartition,
+        cpu: CpuId,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        buffer_authority: Option<CapabilityHandle>,
+        message: Message,
+    ) -> Result<(), IpcError> {
+        if !partition.accepts_ipc(cpu) {
+            return Err(IpcError::CoreIsolated)
+        }
+        self.try_send(
+            capabilities,
+            caller,
+            endpoint,
+            buffer_authority,
+            message,
+        )
+    }
+
+    /// Send through a bounded queue while propagating a blocked sender's
+    /// effective priority to the service thread that owns the endpoint.
+    pub fn try_send_with_priority<const MAX_CAPABILITIES: usize>(
+        &self,
+        scheduler: &mut Scheduler,
+        owner: ThreadId,
+        waiter: ThreadId,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        buffer_authority: Option<CapabilityHandle>,
+        message: Message,
+    ) -> Result<(), IpcError> {
+        match self.try_send(
+            capabilities,
+            caller,
+            endpoint,
+            buffer_authority,
+            message,
+        ) {
+            Ok(()) => {
+                scheduler.ipc_complete(self.id.raw(), waiter);
+                Ok(())
+            }
+            Err(IpcError::Full) => {
+                let _ = scheduler.ipc_wait(self.id.raw(), owner, waiter);
+                Err(IpcError::Full)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Atomically attenuate a capability and attach its handle to a zero-copy
@@ -252,6 +310,20 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         self.dequeue()
     }
 
+    pub fn try_receive_on<const MAX_CAPABILITIES: usize>(
+        &self,
+        partition: CorePartition,
+        cpu: CpuId,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+    ) -> Result<Message, IpcError> {
+        if !partition.accepts_ipc(cpu) {
+            return Err(IpcError::CoreIsolated)
+        }
+        self.try_receive(capabilities, caller, endpoint)
+    }
+
     fn dequeue(&self) -> Result<Message, IpcError> {
         self.ring
             .try_receive()
@@ -285,6 +357,38 @@ impl<const CAPACITY: usize> MappedSender<'_, CAPACITY> {
             return Err(IpcError::AccessDenied);
         }
         self.channel.enqueue(message)
+    }
+
+    pub fn try_send_on(
+        &self,
+        partition: CorePartition,
+        cpu: CpuId,
+        message: Message,
+    ) -> Result<(), IpcError> {
+        if !partition.accepts_ipc(cpu) {
+            return Err(IpcError::CoreIsolated)
+        }
+        self.try_send(message)
+    }
+
+    pub fn try_send_with_priority(
+        &self,
+        scheduler: &mut Scheduler,
+        owner: ThreadId,
+        waiter: ThreadId,
+        message: Message,
+    ) -> Result<(), IpcError> {
+        match self.try_send(message) {
+            Ok(()) => {
+                scheduler.ipc_complete(self.channel.id.raw(), waiter);
+                Ok(())
+            }
+            Err(IpcError::Full) => {
+                let _ = scheduler.ipc_wait(self.channel.id.raw(), owner, waiter);
+                Err(IpcError::Full)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub const fn region(&self) -> SharedRegionId {

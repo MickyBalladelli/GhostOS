@@ -4,6 +4,9 @@ pub mod paging {
 }
 
 pub mod interrupts {
+    pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
+
+
     pub unsafe fn init() {}
     pub unsafe fn enable() {}
 }

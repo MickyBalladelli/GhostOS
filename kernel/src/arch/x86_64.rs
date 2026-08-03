@@ -68,9 +68,24 @@ pub mod paging {
 pub mod interrupts {
     use super::{asm, global_asm};
     use crate::println;
+    use core::sync::atomic::{AtomicU64, Ordering};
 
     const IDT_ENTRIES: usize = 256;
     static mut IDT: [IdtEntry; IDT_ENTRIES] = [IdtEntry::MISSING; IDT_ENTRIES];
+    static ISOLATED_CORES: AtomicU64 = AtomicU64::new(0);
+
+    pub fn set_core_isolated(cpu: u8, isolated: bool) {
+        let bit = 1u64 << cpu;
+        if isolated {
+            ISOLATED_CORES.fetch_or(bit, Ordering::Relaxed);
+        } else {
+            ISOLATED_CORES.fetch_and(!bit, Ordering::Relaxed);
+        }
+    }
+
+    fn core_isolated(cpu: u8) -> bool {
+        ISOLATED_CORES.load(Ordering::Relaxed) & (1u64 << cpu) != 0
+    }
 
     #[repr(C, packed)]
     struct IdtPointer {
@@ -150,6 +165,12 @@ pub mod interrupts {
 
     #[unsafe(no_mangle)]
     extern "sysv64" fn interrupt_dispatch(vector: u64, error_code: u64) {
+        // The bootstrap CPU remains a housekeeping CPU today. This gate is
+        // also the architectural hook used by AP interrupt routing once SMP
+        // startup supplies each core's local ID.
+        if core_isolated(0) {
+            return
+        }
         if vector == 14 {
             let fault_address: u64;
             unsafe {

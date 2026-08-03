@@ -22,7 +22,7 @@ use synos_system_model::command::{
 use crate::capability::{CapabilityObject, CapabilitySpace, Rights};
 use crate::monitor::{MonitorState, MonitorView, MAX_LOCKS};
 use crate::scheduler::Scheduler;
-use crate::task::{AddressSpaceId, ThreadId};
+use crate::task::{AddressSpaceId, CpuId, CpuMask, ThreadId};
 use crate::dlm::{DistributedLockManager, NodeFenceTable, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
 
 const HELP_ROUTE: u16 = 1;
@@ -36,7 +36,8 @@ const SHOW_MEMORY_ROUTE: u16 = 8;
 const SHOW_DSM_ROUTE: u16 = 9;
 const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
-const COMMAND_CAPACITY: usize = 26;
+const SYNOS_ISOLATE_ROUTE: u16 = 12;
+const COMMAND_CAPACITY: usize = 28;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
 
@@ -163,10 +164,18 @@ fn register_control_commands(registry: &mut CommandRegistry<COMMAND_CAPACITY>) {
         .expect("valid process id argument");
     let priority = ArgumentSpec::new("PRIORITY", ArgumentKind::Integer, true, false)
         .expect("valid priority argument");
+    let cores = ArgumentSpec::new("CORES", ArgumentKind::Text, true, true)
+        .expect("valid core list argument");
     registry
         .register(
             CommandSpec::new("STOP", &[job, id]).expect("valid STOP command"),
             RouteId::new(STOP_JOB_ROUTE).expect("valid STOP route"),
+        )
+        .expect("kernel command registry has capacity");
+    registry
+        .register(
+            CommandSpec::new("SYNOS-ISOLATE", &[cores]).expect("valid isolation command"),
+            RouteId::new(SYNOS_ISOLATE_ROUTE).expect("valid isolation route"),
         )
         .expect("kernel command registry has capacity");
     registry
@@ -490,6 +499,24 @@ fn print_edit_result<const CAPACITY: usize>(operation: &str, editor: &FileEditor
 
 fn prompt() {
     crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
+}
+
+fn parse_cpu_mask(value: &str) -> Result<CpuMask, Status> {
+    let mut mask = CpuMask::EMPTY;
+    for part in value.split(',') {
+        let raw = part.trim().parse::<u8>().map_err(|_| Status::INVALID_ARGUMENT)?;
+        let cpu = CpuId::new(raw).ok_or(Status::INVALID_ARGUMENT)?;
+        let bit = CpuMask::from_raw(1u64 << cpu.raw());
+        if mask.intersects(bit) {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        mask = mask.union(bit);
+    }
+    if mask.is_empty() {
+        Err(Status::INVALID_ARGUMENT)
+    } else {
+        Ok(mask)
+    }
 }
 
 fn is_full_directory_command(command: &CommandCall) -> bool {
@@ -1777,6 +1804,7 @@ impl KernelExecutor {
             SHOW_DSM_ROUTE => self.show_dsm(),
             STOP_JOB_ROUTE => self.stop_job(command),
             SET_PROCESS_ROUTE => self.set_process(command),
+            SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
             route if route >= syn_shell::filesystem::DIRECTORY_ROUTE => {
                 self.filesystem.execute_command(command)
             }
@@ -2044,7 +2072,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "CREATE, DELETE, DIRECTORY, EDIT, EDT, HELP, LINK, LS, MKDIR, MONITOR, PWD, REBOOT, RMDIR, SET DEFAULT, SET PROCESS, SHOW DEFAULT, SHOW DSM, SHOW LINKS, SHOW MEMORY, SHOW PROCESSES, SHOW SYSTEM, SHUTDOWN, STOP JOB, TOP CPU, TYPE; unique command prefixes accepted",
+            "CREATE, DELETE, DIRECTORY, EDIT, EDT, HELP, LINK, LS, MKDIR, MONITOR, PWD, REBOOT, RMDIR, SET DEFAULT, SET PROCESS, SHOW DEFAULT, SHOW DSM, SHOW LINKS, SHOW MEMORY, SHOW PROCESSES, SHOW SYSTEM, SHUTDOWN, STOP JOB, SYNOS-ISOLATE, TOP CPU, TYPE; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -2299,6 +2327,27 @@ impl KernelExecutor {
             &mut output,
             "priority",
             OutputValue::Unsigned(priority as u64),
+        )?;
+        Ok(output)
+    }
+
+    fn isolate_cores(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        let cpus = parse_cpu_mask(command.get_text("CORES").ok_or(Status::INVALID_ARGUMENT)?)?;
+        self.scheduler
+            .isolate_cores(
+                &self.capabilities,
+                AddressSpaceId::KERNEL,
+                self.control_authority,
+                cpus,
+            )
+            .map_err(|error| error.status())?;
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "action", "cores-isolated")?;
+        insert(&mut output, "cores", OutputValue::Unsigned(cpus.raw()))?;
+        insert(
+            &mut output,
+            "housekeeping",
+            OutputValue::Unsigned(self.scheduler.partition().housekeeping().raw()),
         )?;
         Ok(output)
     }

@@ -55,6 +55,9 @@ pub mod paging {
 pub mod interrupts {
     use core::arch::{asm, global_asm};
 
+    pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
+
+
     unsafe extern "C" {
         static synos_aarch64_vectors: u8;
     }

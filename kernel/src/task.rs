@@ -1,6 +1,66 @@
 use crate::persona::ExecutionPersona;
 
 pub const MAX_THREADS: usize = 64;
+pub const MAX_CPUS: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct CpuId(u8);
+
+impl CpuId {
+    pub const fn new(raw: u8) -> Option<Self> {
+        if raw < MAX_CPUS as u8 {
+            Some(Self(raw))
+        } else {
+            None
+        }
+    }
+
+    pub const fn raw(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct CpuMask(u64);
+
+impl CpuMask {
+    pub const EMPTY: Self = Self(0);
+    pub const CPU0: Self = Self(1);
+
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    pub const fn all() -> Self {
+        Self(u64::MAX)
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub const fn contains(self, cpu: CpuId) -> bool {
+        self.0 & (1u64 << cpu.raw()) != 0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub const fn difference(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -96,8 +156,11 @@ pub struct Thread {
     pub policy: SchedulingPolicy,
     pub persona: ExecutionPersona,
     pub context: Context,
+    pub affinity: CpuMask,
     pub wake_at: u64,
     pub switches: u64,
+    pub inherited_priority: u8,
+    pub inherited_deadline: u64,
 }
 
 impl Thread {
@@ -109,7 +172,10 @@ impl Thread {
         policy: SchedulingPolicy::Cooperative,
         persona: ExecutionPersona::anonymous(),
         context: Context::new(0, 0),
+        affinity: CpuMask::EMPTY,
         wake_at: 0,
         switches: 0,
+        inherited_priority: 0,
+        inherited_deadline: u64::MAX,
     };
 }

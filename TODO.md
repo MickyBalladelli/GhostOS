@@ -738,10 +738,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 44. Real-Time Determinism & Core Partitioning
-- [ ] **CPU Core Isolation (`synos-isolate`)**
-  - [ ] Build core partitioning primitives to isolate dedicated CPU cores entirely from microkernel interrupts, IPC queues, and timer ticks for hard real-time AI workloads.
-- [ ] **Priority Inversion Prevention**
-  - [ ] Implement deterministic priority inheritance mechanisms within Ring 3 capability-based IPC queues and service daemons.
+- [x] **CPU Core Isolation (`synos-isolate`)**
+  - [x] Build core partitioning primitives to isolate dedicated CPU cores entirely from microkernel interrupts, IPC queues, and timer ticks for hard real-time AI workloads.
+- [x] **Priority Inversion Prevention**
+  - [x] Implement deterministic priority inheritance mechanisms within Ring 3 capability-based IPC queues and service daemons.
 
 ---
 

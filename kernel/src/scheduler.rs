@@ -1,9 +1,10 @@
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::persona::{ExecutionPersona, PersonaError, RightIdentifier};
 use crate::task::{
-    AddressSpaceId, Context, ExecutionMode, MAX_THREADS, SchedulingPolicy, Thread, ThreadId,
-    ThreadState,
+    AddressSpaceId, Context, CpuId, CpuMask, ExecutionMode, MAX_THREADS, SchedulingPolicy, Thread,
+    ThreadId, ThreadState,
 };
+use crate::partition::{CorePartition, CorePartitionError};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,6 +14,9 @@ pub enum SchedulerError {
     InvalidContext,
     InvalidExecutionMode,
     InvalidPriority,
+    InvalidCpuMask,
+    NoHousekeepingCore,
+    IpcWaitTableFull,
     AccessDenied,
 }
 
@@ -24,7 +28,10 @@ impl IntoStatus for SchedulerError {
             Self::InvalidThread
             | Self::InvalidContext
             | Self::InvalidExecutionMode
-            | Self::InvalidPriority => {
+            | Self::InvalidPriority
+            | Self::InvalidCpuMask
+            | Self::NoHousekeepingCore
+            | Self::IpcWaitTableFull => {
                 Status::new(Severity::Error, facility::KERNEL, 3, 0)
                     .expect("valid scheduler status")
             }
@@ -44,6 +51,16 @@ pub struct Scheduler {
     current: Option<ThreadId>,
     cooperative_cursor: usize,
     clock: u64,
+    partition: CorePartition,
+    current_cpu: CpuId,
+    ipc_waiters: [Option<IpcWait>; MAX_THREADS],
+}
+
+#[derive(Clone, Copy)]
+struct IpcWait {
+    endpoint: u32,
+    owner: ThreadId,
+    waiter: ThreadId,
 }
 
 impl Scheduler {
@@ -54,6 +71,9 @@ impl Scheduler {
             current: None,
             cooperative_cursor: 0,
             clock: 0,
+            partition: CorePartition::new(),
+            current_cpu: CpuId::new(0).expect("CPU 0 is valid"),
+            ipc_waiters: [None; MAX_THREADS],
         }
     }
 
@@ -100,8 +120,11 @@ impl Scheduler {
             policy,
             persona: ExecutionPersona::anonymous(),
             context: Context::new(entry, stack_top),
+            affinity: CpuMask::all(),
             wake_at: 0,
             switches: 0,
+            inherited_priority: 0,
+            inherited_deadline: u64::MAX,
         };
         Ok(id)
     }
@@ -119,6 +142,7 @@ impl Scheduler {
         if self.current == Some(id) {
             self.current = None
         }
+        self.clear_ipc_waits(id);
         self.threads[slot] = Thread::VACANT;
         Ok(())
     }
@@ -161,6 +185,130 @@ impl Scheduler {
 
     pub fn current(&self) -> Option<ThreadId> {
         self.current
+    }
+
+    pub const fn partition(&self) -> CorePartition {
+        self.partition
+    }
+
+    pub fn set_online_cores<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        online: CpuMask,
+    ) -> Result<(), SchedulerError> {
+        self.authorize_system_control(capabilities, caller, authority)?;
+        self.partition
+            .set_online(online)
+            .map_err(map_partition_error)
+    }
+
+    pub fn isolate_cores<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        cpus: CpuMask,
+    ) -> Result<(), SchedulerError> {
+        self.authorize_system_control(capabilities, caller, authority)?;
+        self.partition.isolate(cpus).map_err(map_partition_error)?;
+        for raw in 0..crate::task::MAX_CPUS as u8 {
+            if let Some(cpu) = CpuId::new(raw) {
+                crate::arch::interrupts::set_core_isolated(cpu.raw(), self.partition.is_isolated(cpu));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn release_cores<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        cpus: CpuMask,
+    ) -> Result<(), SchedulerError> {
+        self.authorize_system_control(capabilities, caller, authority)?;
+        self.partition.release(cpus);
+        for raw in 0..crate::task::MAX_CPUS as u8 {
+            if let Some(cpu) = CpuId::new(raw) {
+                crate::arch::interrupts::set_core_isolated(
+                    cpu.raw(),
+                    self.partition.is_isolated(cpu),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_affinity<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        id: ThreadId,
+        affinity: CpuMask,
+    ) -> Result<(), SchedulerError> {
+        self.authorized_control(capabilities, caller, authority, id)?;
+        if affinity.is_empty() || !affinity.intersects(self.partition.online()) {
+            return Err(SchedulerError::InvalidCpuMask)
+        }
+        let slot = self.slot(id)?;
+        self.threads[slot].affinity = affinity;
+        Ok(())
+    }
+
+    pub fn effective_priority(&self, id: ThreadId) -> Result<u8, SchedulerError> {
+        let slot = self.slot(id)?;
+        Ok(self.effective_key(&self.threads[slot]).0)
+    }
+
+    /// Record a bounded IPC wait and propagate the waiter's effective priority
+    /// through the owner chain. This is deterministic and allocation-free.
+    pub fn ipc_wait(
+        &mut self,
+        endpoint: u32,
+        owner: ThreadId,
+        waiter: ThreadId,
+    ) -> Result<(), SchedulerError> {
+        if owner == waiter {
+            return Err(SchedulerError::InvalidThread)
+        }
+        self.slot(owner)?;
+        self.slot(waiter)?;
+        let slot = self
+            .ipc_waiters
+            .iter_mut()
+            .find(|entry| match entry {
+                None => true,
+                Some(entry) => entry.endpoint == endpoint && entry.waiter == waiter,
+            })
+            .ok_or(SchedulerError::IpcWaitTableFull)?;
+        *slot = Some(IpcWait {
+            endpoint,
+            owner,
+            waiter,
+        });
+        self.recompute_inheritance();
+        Ok(())
+    }
+
+    pub fn ipc_complete(&mut self, endpoint: u32, waiter: ThreadId) {
+        for entry in &mut self.ipc_waiters {
+            if entry.is_some_and(|entry| entry.endpoint == endpoint && entry.waiter == waiter) {
+                *entry = None
+            }
+        }
+        self.recompute_inheritance()
+    }
+
+    fn clear_ipc_waits(&mut self, thread: ThreadId) {
+        for entry in &mut self.ipc_waiters {
+            if entry.is_some_and(|entry| entry.owner == thread || entry.waiter == thread) {
+                *entry = None
+            }
+        }
+        self.recompute_inheritance()
     }
 
     pub fn thread(&self, id: ThreadId) -> Result<&Thread, SchedulerError> {
@@ -235,6 +383,14 @@ impl Scheduler {
     }
 
     pub fn dispatch(&mut self) -> Option<ContextSwitch> {
+        self.dispatch_on(self.current_cpu)
+    }
+
+    pub fn dispatch_on(&mut self, cpu: CpuId) -> Option<ContextSwitch> {
+        if !self.partition.accepts_kernel_work(cpu) {
+            return None
+        }
+        self.current_cpu = cpu;
         if let Some(current) = self.current {
             if self.thread(current).ok()?.state == ThreadState::Running {
                 return None;
@@ -242,7 +398,7 @@ impl Scheduler {
         }
 
         let previous = self.current.take();
-        let Some(next) = self.pick_next() else {
+        let Some(next) = self.pick_next(self.partition.housekeeping()) else {
             return None;
         };
         self.current = Some(next);
@@ -289,6 +445,13 @@ impl Scheduler {
     }
 
     pub fn tick(&mut self, elapsed: u64) -> Option<ContextSwitch> {
+        self.tick_on(self.current_cpu, elapsed)
+    }
+
+    pub fn tick_on(&mut self, cpu: CpuId, elapsed: u64) -> Option<ContextSwitch> {
+        if !self.partition.accepts_timer(cpu) {
+            return None
+        }
         self.clock = self.clock.saturating_add(elapsed);
         for thread in &mut self.threads {
             if thread.state == ThreadState::Sleeping && thread.wake_at <= self.clock {
@@ -297,9 +460,9 @@ impl Scheduler {
         }
 
         let Some(current) = self.current else {
-            return self.dispatch();
+            return self.dispatch_on(cpu);
         };
-        let candidate = self.pick_realtime();
+        let candidate = self.pick_realtime(self.partition.housekeeping());
         if let Some(next) = candidate {
             if next != current && self.outranks(next, current) {
                 self.threads[current.slot()].state = ThreadState::Ready;
@@ -371,15 +534,17 @@ impl Scheduler {
         }
     }
 
-    fn pick_next(&mut self) -> Option<ThreadId> {
-        if let Some(realtime) = self.pick_realtime() {
+    fn pick_next(&mut self, cpus: CpuMask) -> Option<ThreadId> {
+        if let Some(realtime) = self.pick_realtime(cpus) {
             return Some(realtime);
         }
 
         for offset in 1..=MAX_THREADS {
             let slot = (self.cooperative_cursor + offset) % MAX_THREADS;
             let thread = self.threads[slot];
-            if thread.state == ThreadState::Ready && thread.policy == SchedulingPolicy::Cooperative
+            if thread.state == ThreadState::Ready
+                && thread.policy == SchedulingPolicy::Cooperative
+                && thread.affinity.intersects(cpus)
             {
                 self.cooperative_cursor = slot;
                 return Some(thread.id);
@@ -388,48 +553,90 @@ impl Scheduler {
         None
     }
 
-    fn pick_realtime(&self) -> Option<ThreadId> {
+    fn pick_realtime(&self, cpus: CpuMask) -> Option<ThreadId> {
         self.threads
             .iter()
             .filter(|thread| {
                 thread.state == ThreadState::Ready
-                    && matches!(thread.policy, SchedulingPolicy::Realtime { .. })
+                    && thread.affinity.intersects(cpus)
+                    && self.effective_key(thread).0 != 0
             })
             .min_by_key(|thread| match thread.policy {
-                SchedulingPolicy::Realtime { priority, deadline } => {
+                SchedulingPolicy::Realtime { .. } | SchedulingPolicy::Cooperative => {
+                    let (priority, deadline) = self.effective_key(thread);
                     (u8::MAX - priority, deadline, thread.id.raw())
                 }
-                SchedulingPolicy::Cooperative => (u8::MAX, u64::MAX, u32::MAX),
             })
             .map(|thread| thread.id)
     }
 
     fn outranks(&self, candidate: ThreadId, current: ThreadId) -> bool {
-        let candidate = self.threads[candidate.slot()].policy;
-        let current = self.threads[current.slot()].policy;
-        match (candidate, current) {
-            (
-                SchedulingPolicy::Realtime {
-                    priority: candidate_priority,
-                    deadline: candidate_deadline,
-                },
-                SchedulingPolicy::Realtime {
-                    priority: current_priority,
-                    deadline: current_deadline,
-                },
-            ) => {
-                candidate_priority > current_priority
-                    || (candidate_priority == current_priority
-                        && candidate_deadline < current_deadline)
-            }
-            (SchedulingPolicy::Realtime { .. }, SchedulingPolicy::Cooperative) => true,
-            _ => false,
+        let candidate = self.effective_key(&self.threads[candidate.slot()]);
+        let current = self.effective_key(&self.threads[current.slot()]);
+        candidate.0 > current.0 || (candidate.0 == current.0 && candidate.1 < current.1)
+    }
+
+    fn effective_key(&self, thread: &Thread) -> (u8, u64) {
+        let (base_priority, base_deadline) = match thread.policy {
+            SchedulingPolicy::Realtime { priority, deadline } => (priority, deadline),
+            SchedulingPolicy::Cooperative => (0, u64::MAX),
+        };
+        if thread.inherited_priority > base_priority {
+            (thread.inherited_priority, thread.inherited_deadline)
+        } else {
+            (base_priority, base_deadline)
         }
+    }
+
+    fn recompute_inheritance(&mut self) {
+        for thread in &mut self.threads {
+            thread.inherited_priority = 0;
+            thread.inherited_deadline = u64::MAX;
+        }
+        for _ in 0..MAX_THREADS {
+            let mut changed = false;
+            for entry in self.ipc_waiters.iter().flatten().copied() {
+                let waiter = self.threads[entry.waiter.slot()];
+                let (priority, deadline) = self.effective_key(&waiter);
+                let owner = &mut self.threads[entry.owner.slot()];
+                if priority > owner.inherited_priority
+                    || (priority == owner.inherited_priority
+                        && deadline < owner.inherited_deadline)
+                {
+                    owner.inherited_priority = priority;
+                    owner.inherited_deadline = deadline;
+                    changed = true
+                }
+            }
+            if !changed {
+                break
+            }
+        }
+    }
+
+    fn authorize_system_control<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+    ) -> Result<(), SchedulerError> {
+        capabilities
+            .authorize(caller, authority, CapabilityObject::SystemControl, Rights::CONTROL)
+            .map_err(|_| SchedulerError::AccessDenied)
     }
 }
 
 fn map_persona_error(_: PersonaError) -> SchedulerError {
     SchedulerError::AccessDenied
+}
+
+fn map_partition_error(error: CorePartitionError) -> SchedulerError {
+    match error {
+        CorePartitionError::EmptyMask | CorePartitionError::OfflineCore => {
+            SchedulerError::InvalidCpuMask
+        }
+        CorePartitionError::NoHousekeepingCore => SchedulerError::NoHousekeepingCore,
+    }
 }
 
 impl Default for Scheduler {

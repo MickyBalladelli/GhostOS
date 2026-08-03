@@ -49,6 +49,9 @@ pub mod paging {
 pub mod interrupts {
     use core::arch::asm;
 
+    pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
+
+
     pub unsafe fn init() {
         unsafe {
             asm!("csrw stvec, {}", in(reg) trap_entry as *const () as usize, options(nostack));
