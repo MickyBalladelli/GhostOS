@@ -590,6 +590,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-kvd"
+version = "0.1.0"
+dependencies = [
+ "synos-fabric",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-legacy-pc-drivers"
 version = "0.1.0"
 dependencies = [

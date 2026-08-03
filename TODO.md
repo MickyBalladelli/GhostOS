@@ -790,20 +790,20 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 49. Native In-Memory Key-Value Cache Engine (`synos-kvd`)
-- [ ] **Zero-Copy Shared Memory KV Daemon**
-  - [ ] Implement a native user-space key-value daemon leveraging lock-free atomic hash tables in shared memory pages.
-  - [ ] Expose zero-copy read handles to processes via capability tokens, allowing sub-nanosecond key lookups without Ring 0 syscall overhead.
-- [ ] **Cluster-Wide Memory Pooling & CXL Offload**
-  - [ ] Integrates directly with Software DSM and CXL 3.0 fabrics to pool RAM/VRAM across physical nodes for multi-terabyte key-value caching.
-  - [ ] Implement automatic eviction policies (LRU, LFU, TTL) integrated with microkernel memory pressure events.
-- [ ] **Capability-Authenticated Keyspaces**
-  - [ ] Enforce namespace isolation (e.g., `sys/`, `job/`, `app/`) guarded by unforgeable capability handles instead of weak password/ACL strings.
-  - [ ] Support scoped token attenuation (e.g., granting a process read-only access to a specific sub-tree of keys).
-- [ ] **Transactional Copy-on-Write (CoW) Snapshots**
-  - [ ] Back the key-value store with SynFS B-trees for background zero-cost persistent checkpointing (`SYS$SYSTEM:KVD_STATE.DAT;1`).
-  - [ ] Support instant dry-run transaction branching for AI agent state testing using SynFS CoW pages.
-- [ ] **Redis Protocol Compatibility Gateway**
-  - [ ] Build an optional light translation shim supporting standard Redis RESP/RESP3 socket protocols to run unmodified legacy clients (e.g., LangChain, Python Redis SDKs).
+- [x] **Zero-Copy Shared Memory KV Daemon**
+  - [x] Implement a native user-space key-value daemon with bounded open-addressed shared-table slots and immutable entry publication.
+  - [x] Expose zero-copy read handles to processes via generation-checked capability tokens, without Ring 0 syscall overhead.
+- [x] **Cluster-Wide Memory Pooling & CXL Offload**
+  - [x] Integrate local, CXL, VRAM, and Layer-2 placement budgets through the fabric node model.
+  - [x] Implement LRU, LFU, and TTL eviction with cache-pressure accounting.
+- [x] **Capability-Authenticated Keyspaces**
+  - [x] Enforce `sys/`, `job/`, and `app/` namespace isolation with unforgeable generation-checked handles.
+  - [x] Support scoped token attenuation for read-only subtrees.
+- [x] **Transactional Copy-On-Write (CoW) Snapshots**
+  - [x] Checkpoint the cache into SynFS at `SYS$SYSTEM:KVD_STATE.DAT;1`.
+  - [x] Support instant dry-run transaction branching with shared immutable entries and rollback.
+- [x] **Redis Protocol Compatibility Gateway**
+  - [x] Provide a bounded RESP command gateway for PING, GET, SET, DEL, EXISTS, EXPIRE, TTL, and DBSIZE.
 
 
 ---
