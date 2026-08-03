@@ -1,10 +1,33 @@
 use synos_boot_protocol::{MemoryKind, MemoryRegion};
 
+use crate::capability::{CapabilityHandle, CapabilitySpace};
+use crate::quota::{CapabilityQuota, QuotaDecision, QuotaResource};
+use crate::task::AddressSpaceId;
+use synos_status::{IntoStatus, Status};
+
 pub const FRAME_SIZE: u64 = 4096;
 const EARLY_ALLOCATION_FLOOR: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AllocationError;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QuotaAllocationError {
+    InvalidCapability,
+    Exhausted,
+    Throttled { retry_after_us: u64 },
+    Rejected,
+}
+
+impl IntoStatus for QuotaAllocationError {
+    fn status(self) -> Status {
+        match self {
+            Self::InvalidCapability => Status::ACCESS_DENIED,
+            Self::Exhausted | Self::Rejected => Status::NO_SPACE,
+            Self::Throttled { .. } => Status::BUSY,
+        }
+    }
+}
 
 pub struct EarlyFrameAllocator<'a> {
     regions: &'a [MemoryRegion],
@@ -35,6 +58,65 @@ impl<'a> EarlyFrameAllocator<'a> {
 
             self.region_index += 1;
             self.advance_to_usable_region();
+        }
+    }
+
+    /// Allocate one frame while charging the tenant's memory-byte quota.
+    pub fn allocate_for(
+        &mut self,
+        quota: &CapabilityQuota,
+        now_us: u64,
+    ) -> Result<u64, QuotaAllocationError> {
+        match quota.consume(QuotaResource::MemoryBytes, now_us, FRAME_SIZE) {
+            QuotaDecision::Allowed => {}
+            QuotaDecision::Throttled { retry_after_us } => {
+                return Err(QuotaAllocationError::Throttled { retry_after_us })
+            }
+            QuotaDecision::Rejected => return Err(QuotaAllocationError::Rejected),
+        }
+        match self.allocate() {
+            Ok(frame) => Ok(frame),
+            Err(_) => {
+                quota.refund(QuotaResource::MemoryBytes, FRAME_SIZE);
+                Err(QuotaAllocationError::Exhausted)
+            }
+        }
+    }
+
+    pub fn allocate_for_capability<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        now_us: u64,
+    ) -> Result<u64, QuotaAllocationError> {
+        match capabilities
+            .consume_quota(
+                caller,
+                authority,
+                QuotaResource::MemoryBytes,
+                now_us,
+                FRAME_SIZE,
+            )
+            .map_err(|_| QuotaAllocationError::InvalidCapability)?
+        {
+            QuotaDecision::Allowed => {}
+            QuotaDecision::Throttled { retry_after_us } => {
+                return Err(QuotaAllocationError::Throttled { retry_after_us })
+            }
+            QuotaDecision::Rejected => return Err(QuotaAllocationError::Rejected),
+        }
+        match self.allocate() {
+            Ok(frame) => Ok(frame),
+            Err(_) => {
+                let _ = capabilities.refund_quota(
+                    caller,
+                    authority,
+                    QuotaResource::MemoryBytes,
+                    FRAME_SIZE,
+                );
+                Err(QuotaAllocationError::Exhausted)
+            }
         }
     }
 

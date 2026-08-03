@@ -1,4 +1,5 @@
 use crate::{Access, AddressRange, Error, NodeId, PAGE_SIZE};
+use crate::cxl::{CxlBandwidthDecision, CxlBandwidthQos, CxlChannel};
 use synos_observability::{
     CorrelationId, EventField, EventKind, Level, TraceEvent, emit, field,
     next_correlation_id,
@@ -259,6 +260,43 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
             pool,
             pool.backing_start + global_address - pool.global.start,
         )
+    }
+
+    /// Resolve an address and charge CXL traffic against the selected memory
+    /// channel. Local and Layer-2 mappings do not consume CXL budget.
+    pub fn resolve_with_cxl_qos<const CHANNELS: usize>(
+        &self,
+        global_address: u64,
+        channel: CxlChannel,
+        bytes: u64,
+        now_us: u64,
+        qos: &mut CxlBandwidthQos<CHANNELS>,
+    ) -> Result<ResolvedAddress, Error> {
+        self.resolve_with_cxl_qos_for(0, global_address, channel, bytes, now_us, qos)
+    }
+
+    pub fn resolve_with_cxl_qos_for<const CHANNELS: usize>(
+        &self,
+        tenant: u64,
+        global_address: u64,
+        channel: CxlChannel,
+        bytes: u64,
+        now_us: u64,
+        qos: &mut CxlBandwidthQos<CHANNELS>,
+    ) -> Result<ResolvedAddress, Error> {
+        let resolved = self.resolve(global_address)?;
+        if resolved.transport == Transport::Cxl {
+            if resolved.node != channel.node {
+                return Err(Error::InvalidRange)
+            }
+            if matches!(
+                qos.admit_for(tenant, channel, now_us, bytes)?,
+                CxlBandwidthDecision::Throttled { .. }
+            ) {
+                return Err(Error::BandwidthThrottled)
+            }
+        }
+        Ok(resolved)
     }
 
     /// Preserve transport semantics for the page mapper.

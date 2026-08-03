@@ -1,5 +1,6 @@
 use crate::dlm::ResourceId;
 use crate::ipc::{ChannelId, SharedRegionId};
+use crate::quota::{CapabilityQuota, QuotaDecision, QuotaPolicy, QuotaResource, QuotaUsage};
 use crate::task::AddressSpaceId;
 use synos_observability::{EventField, Level, audit_event, field};
 use synos_status::{IntoStatus, Severity, Status, facility};
@@ -151,6 +152,7 @@ pub enum CapabilityError {
     AccessDenied,
     RightsEscalation,
     EmptyRights,
+    InvalidQuota,
 }
 
 impl IntoStatus for CapabilityError {
@@ -158,7 +160,7 @@ impl IntoStatus for CapabilityError {
         match self {
             Self::AccessDenied | Self::RightsEscalation => Status::ACCESS_DENIED,
             Self::Full => Status::NO_SPACE,
-            Self::InvalidHandle | Self::EmptyRights => {
+            Self::InvalidHandle | Self::EmptyRights | Self::InvalidQuota => {
                 Status::new(Severity::Error, facility::KERNEL, 1, 0)
                     .expect("valid capability status")
             }
@@ -200,12 +202,14 @@ impl CapabilityDescriptorPage {
 /// identity, rights, and derivation links remain in protected kernel memory.
 pub struct CapabilitySpace<const CAPACITY: usize = MAX_CAPABILITIES> {
     entries: [CapabilityDescriptorPage; CAPACITY],
+    quotas: [CapabilityQuota; CAPACITY],
 }
 
 impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
     pub const fn new() -> Self {
         Self {
             entries: [CapabilityDescriptorPage::VACANT; CAPACITY],
+            quotas: [const { CapabilityQuota::new() }; CAPACITY],
         }
     }
 
@@ -381,6 +385,95 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         self.authorize_handle(caller, handle, Rights::NONE)
     }
 
+    /// Replace the resource policy for a live capability. Only an owner with
+    /// CONTROL may change a tenant's limits. Child capabilities inherit the
+    /// policy that was active on their parent when they were delegated.
+    pub fn configure_quota(
+        &mut self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+        policy: QuotaPolicy,
+    ) -> Result<(), CapabilityError> {
+        let slot = self.valid_slot(handle)?;
+        let info = self.entries[slot].info;
+        if info.owner != caller || !info.rights.contains(Rights::CONTROL) {
+            return Err(CapabilityError::AccessDenied)
+        }
+        if !policy.is_valid() {
+            return Err(CapabilityError::InvalidQuota)
+        }
+        self.quotas[slot].configure(policy);
+        Ok(())
+    }
+
+    pub fn quota_policy(
+        &self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+    ) -> Result<QuotaPolicy, CapabilityError> {
+        let slot = self.valid_slot(handle)?;
+        if self.entries[slot].info.owner != caller {
+            return Err(CapabilityError::AccessDenied)
+        }
+        Ok(self.quotas[slot].policy())
+    }
+
+    pub fn quota_usage(
+        &self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+    ) -> Result<QuotaUsage, CapabilityError> {
+        let slot = self.valid_slot(handle)?;
+        if self.entries[slot].info.owner != caller {
+            return Err(CapabilityError::AccessDenied)
+        }
+        Ok(self.quotas[slot].usage())
+    }
+
+    pub fn consume_quota(
+        &self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+        resource: QuotaResource,
+        now_us: u64,
+        amount: u64,
+    ) -> Result<QuotaDecision, CapabilityError> {
+        let slot = self.valid_slot(handle)?;
+        if self.entries[slot].info.owner != caller {
+            return Err(CapabilityError::AccessDenied)
+        }
+        Ok(self.quotas[slot].consume(resource, now_us, amount))
+    }
+
+    pub fn refund_quota(
+        &self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+        resource: QuotaResource,
+        amount: u64,
+    ) -> Result<(), CapabilityError> {
+        let slot = self.valid_slot(handle)?;
+        if self.entries[slot].info.owner != caller {
+            return Err(CapabilityError::AccessDenied)
+        }
+        self.quotas[slot].refund(resource, amount);
+        Ok(())
+    }
+
+    pub fn release_memory(
+        &self,
+        caller: AddressSpaceId,
+        handle: CapabilityHandle,
+        amount: u64,
+    ) -> Result<(), CapabilityError> {
+        let slot = self.valid_slot(handle)?;
+        if self.entries[slot].info.owner != caller {
+            return Err(CapabilityError::AccessDenied)
+        }
+        self.quotas[slot].release_memory(amount);
+        Ok(())
+    }
+
     pub fn links(
         &self,
         caller: AddressSpaceId,
@@ -546,6 +639,11 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         } else {
             self.entries[parent_slot].first_child
         };
+        let inherited_policy = if parent_slot == NO_DESCRIPTOR {
+            QuotaPolicy::default()
+        } else {
+            self.quotas[parent_slot].policy()
+        };
         self.entries[slot] = CapabilityDescriptorPage {
             generation,
             occupied: true,
@@ -560,6 +658,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             first_child: NO_DESCRIPTOR,
             next_sibling,
         };
+        self.quotas[slot].configure(inherited_policy);
         if parent_slot != NO_DESCRIPTOR {
             self.entries[parent_slot].first_child = slot
         }
@@ -671,6 +770,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             }
         }
         self.entries[slot].occupied = false;
+        self.quotas[slot].configure(QuotaPolicy::default());
         self.entries[slot].parent_slot = NO_DESCRIPTOR;
         self.entries[slot].first_child = NO_DESCRIPTOR;
         self.entries[slot].next_sibling = NO_DESCRIPTOR;

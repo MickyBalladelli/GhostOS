@@ -11,6 +11,7 @@ mod console;
 pub mod dlm;
 pub mod ipc;
 pub mod micro_silo;
+pub mod quota;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -54,7 +55,9 @@ use core::panic::PanicInfo;
 use synos_boot_protocol::BootInfo;
 use synos_observability::{EventField, EventKind, field, info};
 
-pub use allocator::{AllocationError, EarlyFrameAllocator, FRAME_SIZE};
+pub use allocator::{
+    AllocationError, EarlyFrameAllocator, QuotaAllocationError, FRAME_SIZE,
+};
 pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
     CapabilityRevocationHook, CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,
@@ -69,7 +72,12 @@ pub use micro_silo::{
     BlindMicroSilo, ConfidentialCpu, HardwareIsolation, MemoryProtection, SiloError,
     SiloMemoryRange, SiloObject, SiloOperation, MAX_SILO_MEMORY_RANGES,
 };
-pub use page_fault::{PageFault, PageFaultHandler, PageFaultHandlerError};
+pub use page_fault::{
+    PageFault, PageFaultDispatchError, PageFaultHandler, PageFaultHandlerError,
+};
+pub use quota::{
+    BucketConfig, CapabilityQuota, QuotaDecision, QuotaPolicy, QuotaResource, QuotaUsage,
+};
 pub use persona::{
     ExecutionPersona, IdentityId, PersonaError, RightIdentifier, MAX_PERSONA_RIGHTS,
 };

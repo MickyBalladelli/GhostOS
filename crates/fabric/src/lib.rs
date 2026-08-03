@@ -9,6 +9,10 @@ pub mod dsm;
 pub mod memory;
 pub mod rcu;
 
+pub use cxl::{
+    CxlBandwidthDecision, CxlBandwidthPolicy, CxlBandwidthQos, CxlChannel,
+};
+
 pub const PAGE_SIZE: u64 = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -31,6 +35,7 @@ impl NodeId {
 pub enum Error {
     AddressConflict,
     Alignment,
+    BandwidthThrottled,
     Busy,
     Capacity,
     CorruptPacket,
@@ -40,6 +45,7 @@ pub enum Error {
     InvalidAddress,
     InvalidDevice,
     InvalidRange,
+    InvalidQosPolicy,
     LeaseNotFound,
     NodeFailed,
     NodeNotFenced,
@@ -50,7 +56,7 @@ pub enum Error {
 impl IntoStatus for Error {
     fn status(self) -> Status {
         match self {
-            Self::Busy => Status::BUSY,
+            Self::Busy | Self::BandwidthThrottled => Status::BUSY,
             Self::Capacity => Status::NO_SPACE,
             Self::DeviceNotFound | Self::LeaseNotFound => Status::NOT_FOUND,
             Self::NotOwner => Status::ACCESS_DENIED,
@@ -76,6 +82,7 @@ impl IntoStatus for Error {
             | Self::InvalidAddress
             | Self::InvalidDevice
             | Self::InvalidRange
+            | Self::InvalidQosPolicy
             | Self::Unsupported => Status::INVALID_ARGUMENT,
         }
     }

@@ -72,6 +72,227 @@ pub enum DeviceState {
     Draining,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CxlChannel {
+    pub node: NodeId,
+    pub channel: u8,
+}
+
+impl CxlChannel {
+    pub const fn new(node: NodeId, channel: u8) -> Self {
+        Self { node, channel }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CxlBandwidthPolicy {
+    pub burst_bytes: u64,
+    pub bytes_per_second: u64,
+}
+
+impl CxlBandwidthPolicy {
+    pub const fn new(burst_bytes: u64, bytes_per_second: u64) -> Option<Self> {
+        if burst_bytes == 0 || bytes_per_second == 0 {
+            None
+        } else {
+            Some(Self {
+                burst_bytes,
+                bytes_per_second,
+            })
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CxlBandwidthDecision {
+    Allowed,
+    Throttled { retry_after_us: u64 },
+}
+
+#[derive(Clone, Copy)]
+struct ChannelBudget {
+    channel: Option<CxlChannel>,
+    tenant: u64,
+    policy: CxlBandwidthPolicy,
+    tokens: u64,
+    last_refill_us: u64,
+    remainder: u64,
+}
+
+impl ChannelBudget {
+    const EMPTY: Self = Self {
+        channel: None,
+        tenant: 0,
+        policy: CxlBandwidthPolicy {
+            burst_bytes: 1,
+            bytes_per_second: 1,
+        },
+        tokens: 0,
+        last_refill_us: 0,
+        remainder: 0,
+    };
+}
+
+/// Software shaping for CXL memory-channel traffic. Hardware setup remains in
+/// the HDM decoder path; this admission gate prevents a tenant's background
+/// DMA/page traffic from consuming another tenant's channel budget.
+pub struct CxlBandwidthQos<const CHANNELS: usize = 64> {
+    channels: [ChannelBudget; CHANNELS],
+}
+
+impl<const CHANNELS: usize> CxlBandwidthQos<CHANNELS> {
+    pub const fn new() -> Self {
+        Self {
+            channels: [ChannelBudget::EMPTY; CHANNELS],
+        }
+    }
+
+    pub fn configure(
+        &mut self,
+        channel: CxlChannel,
+        policy: CxlBandwidthPolicy,
+    ) -> Result<(), Error> {
+        self.configure_for(0, channel, policy)
+    }
+
+    pub fn configure_for(
+        &mut self,
+        tenant: u64,
+        channel: CxlChannel,
+        policy: CxlBandwidthPolicy,
+    ) -> Result<(), Error> {
+        if policy.burst_bytes == 0 || policy.bytes_per_second == 0 {
+            return Err(Error::InvalidQosPolicy)
+        }
+        let slot = self
+            .channels
+            .iter_mut()
+            .find(|entry| {
+                (entry.channel == Some(channel) && entry.tenant == tenant)
+                    || entry.channel.is_none()
+            })
+            .ok_or(Error::Capacity)?;
+        *slot = ChannelBudget {
+            channel: Some(channel),
+            tenant,
+            policy,
+            tokens: policy.burst_bytes,
+            last_refill_us: 0,
+            remainder: 0,
+        };
+        Ok(())
+    }
+
+    pub fn remove(&mut self, channel: CxlChannel) -> Result<(), Error> {
+        self.remove_for(0, channel)
+    }
+
+    pub fn remove_for(&mut self, tenant: u64, channel: CxlChannel) -> Result<(), Error> {
+        let slot = self
+            .channels
+            .iter_mut()
+            .find(|entry| entry.channel == Some(channel) && entry.tenant == tenant)
+            .ok_or(Error::DeviceNotFound)?;
+        *slot = ChannelBudget::EMPTY;
+        Ok(())
+    }
+
+    pub fn admit(
+        &mut self,
+        channel: CxlChannel,
+        now_us: u64,
+        bytes: u64,
+    ) -> Result<CxlBandwidthDecision, Error> {
+        self.admit_for(0, channel, now_us, bytes)
+    }
+
+    pub fn admit_for(
+        &mut self,
+        tenant: u64,
+        channel: CxlChannel,
+        now_us: u64,
+        bytes: u64,
+    ) -> Result<CxlBandwidthDecision, Error> {
+        if bytes == 0 {
+            return Err(Error::InvalidQosPolicy)
+        }
+        let budget = self
+            .channels
+            .iter_mut()
+            .find(|entry| entry.channel == Some(channel) && entry.tenant == tenant)
+            .ok_or(Error::DeviceNotFound)?;
+        if bytes > budget.policy.burst_bytes {
+            return Ok(CxlBandwidthDecision::Throttled {
+                retry_after_us: u64::MAX,
+            })
+        }
+        refill(budget, now_us);
+        if budget.tokens >= bytes {
+            budget.tokens -= bytes;
+            return Ok(CxlBandwidthDecision::Allowed)
+        }
+        let missing = bytes - budget.tokens;
+        let retry_after_us = missing
+            .saturating_mul(1_000_000)
+            .saturating_add(budget.policy.bytes_per_second - 1)
+            .checked_div(budget.policy.bytes_per_second)
+            .unwrap_or(u64::MAX)
+            .max(1);
+        Ok(CxlBandwidthDecision::Throttled { retry_after_us })
+    }
+
+    pub fn available(&self, channel: CxlChannel, now_us: u64) -> Result<u64, Error> {
+        self.available_for(0, channel, now_us)
+    }
+
+    pub fn available_for(
+        &self,
+        tenant: u64,
+        channel: CxlChannel,
+        now_us: u64,
+    ) -> Result<u64, Error> {
+        let budget = self
+            .channels
+            .iter()
+            .find(|entry| entry.channel == Some(channel) && entry.tenant == tenant)
+            .ok_or(Error::DeviceNotFound)?;
+        let elapsed = now_us.saturating_sub(budget.last_refill_us);
+        let added = elapsed
+            .saturating_mul(budget.policy.bytes_per_second)
+            .saturating_add(budget.remainder)
+            / 1_000_000;
+        Ok(budget
+            .tokens
+            .saturating_add(added)
+            .min(budget.policy.burst_bytes))
+    }
+}
+
+impl<const CHANNELS: usize> Default for CxlBandwidthQos<CHANNELS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn refill(budget: &mut ChannelBudget, now_us: u64) {
+    if now_us < budget.last_refill_us {
+        budget.last_refill_us = now_us;
+        budget.remainder = 0;
+        return
+    }
+    let elapsed = now_us - budget.last_refill_us;
+    let produced = elapsed
+        .saturating_mul(budget.policy.bytes_per_second)
+        .saturating_add(budget.remainder);
+    let added = produced / 1_000_000;
+    budget.remainder = produced % 1_000_000;
+    budget.tokens = budget
+        .tokens
+        .saturating_add(added)
+        .min(budget.policy.burst_bytes);
+    budget.last_refill_us = now_us;
+}
+
 pub struct Registry<const CAPACITY: usize = MAX_CXL_DEVICES> {
     devices: [Option<DiscoveredDevice>; CAPACITY],
 }

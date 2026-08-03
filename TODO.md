@@ -746,10 +746,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 45. Multi-Tenant Resource Quotas & Rate-Limiting
-- [ ] **Capability Rate-Limiting & DoS Protection**
-  - [ ] Enforce microkernel-level token-bucket rate limiting on IPC message throughput, page-fault rates, and memory allocations per capability handle.
-- [ ] **CXL Fabric Bandwidth QoS**
-  - [ ] Implement hardware and software traffic shaping on CXL memory channels to prevent background DMA from starving latency-critical inference loops.
+- [x] **Capability Rate-Limiting & DoS Protection**
+  - [x] Enforce microkernel-level token-bucket rate limiting on IPC message throughput, page-fault rates, and memory allocations per capability handle.
+- [x] **CXL Fabric Bandwidth QoS**
+  - [x] Implement hardware and software traffic shaping on CXL memory channels to prevent background DMA from starving latency-critical inference loops.
 
 ---
 

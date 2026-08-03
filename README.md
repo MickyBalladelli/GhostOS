@@ -832,3 +832,16 @@ REBOOT
 SHUTDOWN
 
 ```
+## Multi-tenant quotas
+
+Every live kernel capability owns fixed-size resource state. Administrators
+with `CONTROL` can configure independent token buckets for IPC messages, page
+faults, and allocation bytes, plus an outstanding-memory ceiling. IPC sends and
+receives use the `*_at` APIs with the scheduler clock; failed queue operations
+refund their token. Pager and frame-allocation paths expose the same capability
+charge, so tenants cannot bypass limits through another kernel entry point.
+
+CXL userspace fabric managers configure `CxlBandwidthQos` per node/channel.
+`GlobalAddressSpace::resolve_with_cxl_qos` admits each transfer by byte count
+and returns a busy result when a tenant would consume another workload's
+channel budget.
