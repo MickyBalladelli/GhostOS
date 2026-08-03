@@ -687,9 +687,9 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 - [x] **Dynamic Memory & Page Migration**
   - [x] Implement real-time page migration across CXL 3.0/3.1 fabrics and Layer-2 Ethernet software DSM based on access pattern and latency metrics.
   - [x] Build automated KV-cache rebalancing routines across remote cluster memory nodes during long-context inference operations.
-- [ ] **Cooperative Compute & Thread Scheduling**
-  - [ ] Implement active-active job and actor thread distribution via `synos-actors` across physical cluster CPUs.
-  - [ ] Integrate DLM granularity-aware lease management to prevent memory/cache thrashing during compute migration.
+- [x] **Cooperative Compute & Thread Scheduling**
+  - [x] Implement active-active job and actor thread distribution via `synos-actors` across physical cluster CPUs.
+  - [x] Integrate DLM granularity-aware lease management to prevent memory/cache thrashing during compute migration.
 - [ ] **Active-Active Node Failover & Redirection**
   - [ ] Build hardware heartbeat health monitors to initiate sub-millisecond memory page redirection and thread reassignment upon node failure.
 

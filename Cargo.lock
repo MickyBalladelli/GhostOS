@@ -451,6 +451,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-balancerd"
+version = "0.1.0"
+dependencies = [
+ "synos-actors",
+ "synos-fabric",
+ "synos-kernel",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-boot-protocol"
 version = "0.1.0"
 
