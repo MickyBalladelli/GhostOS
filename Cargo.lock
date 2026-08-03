@@ -412,6 +412,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-agentd"
+version = "0.1.0"
+dependencies = [
+ "synos-auth",
+ "synos-fabric",
+ "synos-kernel",
+ "synos-observability",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-app"
 version = "0.1.0"
 dependencies = [

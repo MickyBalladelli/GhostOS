@@ -868,12 +868,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 53. Agent-Native Semantic Memory & Context Bus (`synos-agentd`)
-- [ ] **Real-Time System Vector Indexing**
-  - [ ] Maintain low-latency vector embeddings of active SynFS files, system logs, and KV state using background NPU/GPU acceleration.
-- [ ] **Zero-Copy Semantic Retrieval**
-  - [ ] Expose capability-authenticated IPC channels for AI processes to perform semantic similarity queries over system memory.
-- [ ] **Context Lifecycle Management**
-  - [ ] Automatically garbage collect and decay context memory in accordance with process capability lifetimes.
+- [x] **Real-Time System Vector Indexing**
+  - [x] Maintain low-latency vector embeddings of active SynFS files, system logs, and KV state using background NPU/GPU acceleration.
+- [x] **Zero-Copy Semantic Retrieval**
+  - [x] Expose capability-authenticated IPC channels for AI processes to perform semantic similarity queries over system memory.
+- [x] **Context Lifecycle Management**
+  - [x] Automatically garbage collect and decay context memory in accordance with process capability lifetimes.
 
 ---
 
