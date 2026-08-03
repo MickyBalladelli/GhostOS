@@ -1,0 +1,17 @@
+[package]
+name = "synos-storaged"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Capability-gated enterprise remote storage service models"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+synos-auth = { path = "../auth" }
+synos-fabric = { path = "../fabric" }
+synos-netd = { path = "../netd" }
+synos-kernel = { path = "../../kernel" }
+synos-status = { path = "../status" }
+synos-synfs = { path = "../synfs" }

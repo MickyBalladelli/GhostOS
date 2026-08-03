@@ -809,20 +809,20 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ---
 
 ## 50. Enterprise Remote Storage & NAS Mount Services (`synos-storaged`)
-- [ ] **User-Space Network File System Clients (Ring 3)**
-  - [ ] Implement a pure-Rust, async pNFS (Parallel NFSv4.1/4.2) daemon in Ring 3 for scale-out NAS arrays (e.g., Dell EMC Isilon / PowerScale).
-  - [ ] Build a lightweight SMB 3.1.1 client daemon (`synos-smb`) supporting multi-channel and SMB Direct (RDMA).
-- [ ] **High-Performance Block Storage Fabrics**
-  - [ ] Implement NVMe over Fabrics (NVMe-oF) over TCP and RoCEv2 (RDMA) for ultra-low latency remote block device mapping.
-  - [ ] Support generic user-space iSCSI initiator services for legacy enterprise SAN arrays.
-- [ ] **Capability-Gated Storage Mounts**
-  - [ ] Restrict remote storage mount points (`SYS$STORAGE:`) behind unforgeable capability tokens rather than ambient POSIX permissions.
-  - [ ] Implement transparent SynFS Copy-on-Write (CoW) caching layers over slow remote network mounts to accelerate read-heavy AI dataset access.
-- [ ] **Object Storage & S3 Stream Pipelines**
-  - [ ] Build a zero-copy S3 client runtime integrated directly into `synos-netd` for streaming multi-gigabyte LLM model weights directly into unified RAM/VRAM pools.
-- [ ] **Declarative Mount Configuration**
-  - [ ] Extend `syn-shell` syntax to support structured storage mounting (`MOUNT /NFS /SERVER=isilon.local:/data /LOGICAL=DATA_POOL`).
-  - [ ] Store persistent mount definitions in declarative, versioned SynFS system state files (`SYS$SYSTEM:MOUNTS.DAT;1`).
+- [x] **User-Space Network File System Clients (Ring 3)**
+  - [x] Implement a bounded pure-Rust pNFS (Parallel NFSv4.1/4.2) client/layout service in Ring 3 for scale-out NAS arrays.
+  - [x] Build a bounded SMB 3.1.1 client session supporting multi-channel and SMB Direct (RDMA).
+- [x] **High-Performance Block Storage Fabrics**
+  - [x] Implement NVMe over Fabrics target and queue models over TCP and RoCEv2 (RDMA).
+  - [x] Support bounded user-space iSCSI initiator session services for legacy SAN arrays.
+- [x] **Capability-Gated Storage Mounts**
+  - [x] Restrict remote storage mount points (`SYS$STORAGE:`) behind daemon-issued, signed attenuation-safe capability tokens.
+  - [x] Implement transparent SynFS Copy-on-Write (CoW) caching layers over slow remote network mounts.
+- [x] **Object Storage & S3 Stream Pipelines**
+  - [x] Provide borrowed-buffer S3 stream delivery through the `synos-netd` network-buffer boundary.
+- [x] **Declarative Mount Configuration**
+  - [x] Extend `syn-shell` with structured storage mounting (`MOUNT /NFS /SERVER=isilon.local:/data /LOGICAL=DATA_POOL`).
+  - [x] Store persistent mount definitions in versioned SynFS CoW state images (`SYS$SYSTEM:MOUNTS.DAT;1`).
 
 
 

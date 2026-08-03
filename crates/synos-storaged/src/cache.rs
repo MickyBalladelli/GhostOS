@@ -1,0 +1,164 @@
+use crate::service::StoragePath;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CacheMode {
+    Disabled,
+    ReadThrough,
+    CopyOnWrite,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CacheError {
+    Capacity,
+    BufferTooSmall,
+    NotFound,
+    ReadOnly,
+    Remote(u16),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CacheEntry<const BYTES: usize> {
+    occupied: bool,
+    dirty: bool,
+    path: StoragePath,
+    bytes: [u8; BYTES],
+    len: usize,
+}
+
+impl<const BYTES: usize> CacheEntry<BYTES> {
+    const EMPTY: Self = Self {
+        occupied: false,
+        dirty: false,
+        path: StoragePath::ROOT,
+        bytes: [0; BYTES],
+        len: 0,
+    };
+}
+
+pub trait RemoteFileBackend {
+    fn read(&mut self, path: StoragePath, destination: &mut [u8]) -> Result<usize, u16>;
+    fn write(&mut self, path: StoragePath, contents: &[u8]) -> Result<(), u16>;
+}
+
+/// Bounded read-through / CoW cache for remote mounts.
+///
+/// A write in `CopyOnWrite` mode only updates a private cache entry. `flush`
+/// publishes each dirty entry to the remote backend, so a failed flush keeps
+/// the private copy available for retry.
+pub struct CowCache<const ENTRIES: usize = 32, const BYTES: usize = { 64 * 1024 }> {
+    mode: CacheMode,
+    entries: [CacheEntry<BYTES>; ENTRIES],
+}
+
+impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
+    pub const fn new(mode: CacheMode) -> Self {
+        Self {
+            mode,
+            entries: [CacheEntry::EMPTY; ENTRIES],
+        }
+    }
+
+    pub const fn mode(&self) -> CacheMode {
+        self.mode
+    }
+
+    pub fn read(
+        &mut self,
+        backend: &mut impl RemoteFileBackend,
+        path: StoragePath,
+        destination: &mut [u8],
+    ) -> Result<usize, CacheError> {
+        if let Some(entry) = self.entries.iter().find(|entry| entry.occupied && entry.path == path) {
+            if destination.len() < entry.len {
+                return Err(CacheError::BufferTooSmall)
+            }
+            destination[..entry.len].copy_from_slice(&entry.bytes[..entry.len]);
+            return Ok(entry.len)
+        }
+        if self.mode == CacheMode::Disabled {
+            return backend.read(path, destination).map_err(CacheError::Remote)
+        }
+        let length = backend.read(path, destination).map_err(CacheError::Remote)?;
+        if length > BYTES {
+            return Err(CacheError::Capacity)
+        }
+        let entry = self.allocate(path)?;
+        entry.bytes[..length].copy_from_slice(&destination[..length]);
+        entry.len = length;
+        Ok(length)
+    }
+
+    pub fn write(
+        &mut self,
+        backend: &mut impl RemoteFileBackend,
+        path: StoragePath,
+        contents: &[u8],
+    ) -> Result<(), CacheError> {
+        if self.mode == CacheMode::Disabled {
+            return backend.write(path, contents).map_err(CacheError::Remote)
+        }
+        if contents.len() > BYTES {
+            return Err(CacheError::Capacity)
+        }
+        let mode = self.mode;
+        let entry = self.allocate(path)?;
+        entry.bytes[..contents.len()].copy_from_slice(contents);
+        entry.len = contents.len();
+        entry.dirty = mode == CacheMode::CopyOnWrite;
+        if mode == CacheMode::ReadThrough {
+            backend.write(path, contents).map_err(CacheError::Remote)?;
+            entry.dirty = false;
+        }
+        Ok(())
+    }
+
+    pub fn flush(&mut self, backend: &mut impl RemoteFileBackend) -> Result<usize, CacheError> {
+        let mut flushed = 0;
+        for entry in &mut self.entries {
+            if !entry.occupied || !entry.dirty {
+                continue
+            }
+            backend
+                .write(entry.path, &entry.bytes[..entry.len])
+                .map_err(CacheError::Remote)?;
+            entry.dirty = false;
+            flushed += 1;
+        }
+        Ok(flushed)
+    }
+
+    pub fn invalidate(&mut self, path: StoragePath) -> bool {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.occupied && entry.path == path) {
+            *entry = CacheEntry::EMPTY;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn dirty_entries(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.occupied && entry.dirty)
+            .count()
+    }
+
+    fn allocate(&mut self, path: StoragePath) -> Result<&mut CacheEntry<BYTES>, CacheError> {
+        if let Some(index) = self.entries.iter().position(|entry| entry.occupied && entry.path == path) {
+            return Ok(&mut self.entries[index])
+        }
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| !entry.occupied)
+            .ok_or(CacheError::Capacity)?;
+        self.entries[index] = CacheEntry {
+            occupied: true,
+            dirty: false,
+            path,
+            bytes: [0; BYTES],
+            len: 0,
+        };
+        Ok(&mut self.entries[index])
+    }
+}

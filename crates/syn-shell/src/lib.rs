@@ -13,6 +13,7 @@ pub mod interpreter;
 pub mod jobs;
 pub mod parser;
 pub mod render;
+pub mod storage;
 
 pub const MAX_LINE_BYTES: usize = 512;
 pub const MAX_TOKEN_BYTES: usize = 128;

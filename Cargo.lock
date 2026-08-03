@@ -728,6 +728,18 @@ name = "synos-status"
 version = "0.1.0"
 
 [[package]]
+name = "synos-storaged"
+version = "0.1.0"
+dependencies = [
+ "synos-auth",
+ "synos-fabric",
+ "synos-kernel",
+ "synos-netd",
+ "synos-status",
+ "synos-synfs",
+]
+
+[[package]]
 name = "synos-synfs"
 version = "0.1.0"
 dependencies = [
