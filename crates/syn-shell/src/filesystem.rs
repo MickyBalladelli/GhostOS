@@ -1486,6 +1486,11 @@ fn directory_output(
         let mut field = Text::<64>::empty();
         field.push_str(prefix).map_err(|_| Status::NO_SPACE)?;
         field.push_str("link-count").map_err(|_| Status::NO_SPACE)?;
+        insert(
+            &mut output,
+            field.as_str(),
+            OutputValue::Unsigned(entry.link_count as u64),
+        )?;
     }
     Ok(output)
 }

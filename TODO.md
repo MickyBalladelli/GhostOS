@@ -174,7 +174,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [ ] Return deterministic, duplicate-free matches with stable ordering, continuation support, maximum-match limits, and bounded shared-buffer encoding.
   - [x] Filter matches through directory visibility, mount boundaries, and per-object capabilities so wildcard expansion cannot reveal unauthorized names.
   - [ ] Define no-match behavior, malformed-pattern errors, partial-match errors, cancellation, and status reporting for every wildcard-enabled command.
-  - [ ] Add `LS`/`DIRECTORY` wildcard listing for files, links, directories, path prefixes, metadata, pagination, and structured pipeline output.
+  - [x] Add `LS`/`DIRECTORY` wildcard listing for files, links, directories, path prefixes, metadata, pagination, and structured pipeline output.
   - [x] Add bounded `DELETE` wildcard expansion with latest-versus-exact-version behavior, link-count updates, and stop-on-first-failure partial semantics.
   - [x] Add `TYPE` wildcard support with path separators, bounded aggregate output, and binary-mode behavior.
   - [x] Add `SHOW LINKS` wildcard support for matching input paths and deduplicating shared link paths within limits.
