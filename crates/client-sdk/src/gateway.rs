@@ -2,10 +2,11 @@ use synos_auth::CryptographicCapability;
 
 use crate::{
     CapabilityDelegation, ClusterState, FrameHeader, JobReceipt, JobSpec, Method, ProtocolError,
+    TopologyState,
     RpcStatus,
     client::{
         decode_delegation, decode_job_spec, encode_capability, encode_cluster_state,
-        encode_job_receipt,
+        encode_job_receipt, encode_topology_state,
     },
     wire::{FLAG_CAPABILITY, FRAME_HEADER_BYTES, read_array},
 };
@@ -15,6 +16,13 @@ pub trait GatewayService {
         &mut self,
         authority: Option<CryptographicCapability>,
     ) -> Result<ClusterState, RpcStatus>;
+
+    fn topology_state(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<TopologyState, RpcStatus> {
+        Ok(TopologyState::new(0, 0))
+    }
 
     fn submit_job(
         &mut self,
@@ -71,6 +79,16 @@ impl<S: GatewayService> FrontendGateway<S> {
                 } else {
                     self.service.cluster_state(authority).and_then(|state| {
                         encode_cluster_state(state, &mut response[FRAME_HEADER_BYTES..])
+                            .map_err(|_| RpcStatus::Internal)
+                    })
+                }
+            }
+            Method::TopologyState => {
+                if !body.is_empty() {
+                    Err(RpcStatus::InvalidRequest)
+                } else {
+                    self.service.topology_state(authority).and_then(|state| {
+                        encode_topology_state(state, &mut response[FRAME_HEADER_BYTES..])
                             .map_err(|_| RpcStatus::Internal)
                     })
                 }

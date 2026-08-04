@@ -31,6 +31,7 @@ public actor SynOSClient {
         case clusterState = 1
         case submitJob = 2
         case delegateCapability = 3
+        case topologyState = 4
     }
 
     private static let headerBytes = 24
@@ -96,6 +97,57 @@ public actor SynOSClient {
             generation: generation,
             sampledAtMicroseconds: sampledAt,
             nodes: nodes
+        )
+    }
+
+    public func topologyState() async throws -> TopologyState {
+        let payload = try await call(method: .topologyState, body: Data())
+        var reader = ByteReader(payload)
+        let generation = try reader.readUInt64()
+        let sampledAt = try reader.readUInt64()
+        let linkCount = Int(try reader.readUInt16())
+        try reader.skip(6)
+        guard linkCount <= 64, reader.remaining == linkCount * 32 else {
+            throw SynOSClientError.invalidFrame
+        }
+        var links: [TopologyLink] = []
+        links.reserveCapacity(linkCount)
+        for index in 0..<linkCount {
+            let from = try reader.readUInt32()
+            let to = try reader.readUInt32()
+            guard from > 0,
+                  to > 0,
+                  let transport = TopologyTransport(rawValue: try reader.readByte()),
+                  let route = TopologyRoute(rawValue: try reader.readByte()),
+                  let reachability = TopologyReachability(rawValue: try reader.readByte()) else {
+                throw SynOSClientError.invalidFrame
+            }
+            try reader.skip(1)
+            let mtu = try reader.readUInt16()
+            try reader.skip(2)
+            let latency = try reader.readUInt64()
+            let bandwidth = try reader.readUInt64()
+            guard mtu >= 576, latency > 0, bandwidth > 0 else {
+                throw SynOSClientError.invalidFrame
+            }
+            links.append(
+                TopologyLink(
+                    id: "\(from)-\(to)-\(index)",
+                    from: from,
+                    to: to,
+                    transport: transport,
+                    route: route,
+                    reachability: reachability,
+                    latencyMicroseconds: latency,
+                    bandwidthMbps: bandwidth,
+                    mtu: mtu
+                )
+            )
+        }
+        return TopologyState(
+            generation: generation,
+            sampledAtMicroseconds: sampledAt,
+            links: links
         )
     }
 

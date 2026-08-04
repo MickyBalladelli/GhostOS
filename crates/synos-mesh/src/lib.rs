@@ -11,6 +11,7 @@
 mod delta;
 mod discovery;
 mod offload;
+mod topology;
 
 pub use delta::{
     CowDelta, CowOperation, DeltaApplyReceipt, DeltaError, DeltaMode, FileFingerprint,
@@ -23,6 +24,13 @@ pub use discovery::{
 pub use offload::{
     ComputeTarget, OffloadError, OffloadPlan, OffloadPlanner, OffloadSession, WorkloadChunk,
     WorkloadClass, WorkloadSpec, WorkloadTransport,
+};
+pub use topology::{
+    ClusterAdvertisement, ClusterCapabilities, ClusterId, ConnectivityManager,
+    ConnectivityStatus, ConnectionAttempt, Endpoint, EndpointAddress, Reachability, RouteKind,
+    TopologyError, TopologyGraph, TopologyLink, TopologyNode, Transport, Zone,
+    ADVERTISEMENT_PAYLOAD_BYTES, ADVERTISEMENT_WIRE_BYTES, MAX_DISCOVERY_CACHE,
+    MAX_ENDPOINTS, MAX_TOPOLOGY_LINKS, MAX_TOPOLOGY_NODES,
 };
 
 use synos_status::{IntoStatus, Severity, Status, facility};

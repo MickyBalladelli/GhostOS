@@ -1,7 +1,12 @@
 use synos_fabric::NodeId;
+use synos_auth::CapabilityKey;
 use synos_mesh::{
     ComputeTarget, CowDelta, DeltaError, DeltaMode, GossipDiscovery, InterfaceSet, MeshInterface,
     NodeAdvertisement, NodeRole, OffloadPlanner, OffloadSession, WorkloadClass, WorkloadSpec,
+};
+use synos_mesh::{
+    ClusterAdvertisement, ClusterCapabilities, ClusterId, ConnectivityManager, Endpoint,
+    Reachability, RouteKind, TopologyGraph, TopologyLink, Transport, Zone,
 };
 use synos_synfs::{RmsMapHandle, SynFs};
 
@@ -76,4 +81,66 @@ fn asymmetric_offload_skips_failed_nodes_and_closes_sessions() {
     assert!(matches!(session.chunk(b"x", false), Err(synos_mesh::OffloadError::SessionClosed)));
     planner.mark_failed(NodeId::new(2).unwrap(), true).unwrap();
     assert!(matches!(planner.plan(workload), Err(synos_mesh::OffloadError::NoEligibleTarget)));
+}
+
+#[test]
+fn signed_topology_rotates_endpoints_and_negotiates_mtu() {
+    let key = CapabilityKey::new([7; 32]);
+    let cluster = ClusterId::new([3; 16]).unwrap();
+    let primary = Endpoint::new(Transport::Ethernet, RouteKind::Direct, "10.0.0.2", 7_001, 1, 1_500).unwrap();
+    let relay = Endpoint::new(Transport::Tunnel, RouteKind::Relay, "relay.example", 7_002, 2, 1_200).unwrap();
+    let advertisement = ClusterAdvertisement::issue(
+        key,
+        cluster,
+        NodeId::new(2).unwrap(),
+        1,
+        10,
+        1_000,
+        (1, 1, 1),
+        ClusterCapabilities::CONTROL_PLANE.with(ClusterCapabilities::DATA_PLANE),
+        &[primary, relay],
+    )
+    .unwrap();
+    advertisement.verify(key, 100).unwrap();
+    assert_eq!(ClusterAdvertisement::decode(advertisement.encode()).unwrap(), advertisement);
+
+    let mut connectivity = ConnectivityManager::<2>::new(10, 100, 3).unwrap();
+    connectivity.observe(advertisement, key, 100).unwrap();
+    assert_eq!(connectivity.connect(NodeId::new(2).unwrap(), 100).unwrap().endpoint, primary);
+    connectivity.record_result(NodeId::new(2).unwrap(), false, 100, 0).unwrap();
+    assert!(connectivity.connect(NodeId::new(2).unwrap(), 100).is_err());
+    assert_eq!(connectivity.connect(NodeId::new(2).unwrap(), 110).unwrap().endpoint, relay);
+    connectivity.record_result(NodeId::new(2).unwrap(), true, 110, 900).unwrap();
+    assert_eq!(connectivity.negotiated_mtu(NodeId::new(2).unwrap()), Some(900));
+
+    let zone = Zone::new("rack-a").unwrap();
+    let local = ClusterAdvertisement::issue(
+        key,
+        cluster,
+        NodeId::new(1).unwrap(),
+        1,
+        10,
+        1_000,
+        (1, 1, 1),
+        ClusterCapabilities::CONTROL_PLANE,
+        &[Endpoint::new(Transport::Loopback, RouteKind::Direct, "local", 0, 1, 65_535).unwrap()],
+    )
+    .unwrap();
+    let mut graph = TopologyGraph::<2, 2>::new();
+    graph.observe(local, key, zone, 100).unwrap();
+    graph.observe(advertisement, key, zone, 100).unwrap();
+    graph
+        .update_link(TopologyLink {
+            from: NodeId::new(1).unwrap(),
+            to: NodeId::new(2).unwrap(),
+            transport: Transport::Ethernet,
+            route: RouteKind::Direct,
+            reachability: Reachability::Reachable,
+            latency_us: 20,
+            bandwidth_mbps: 1_000,
+            mtu: 1_500,
+            observed_at_us: 100,
+        })
+        .unwrap();
+    assert_eq!(graph.link_count(), 1);
 }

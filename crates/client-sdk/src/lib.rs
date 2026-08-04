@@ -16,7 +16,8 @@ pub use client::{Client, ClientError, RpcTransport};
 pub use gateway::{FrontendGateway, GatewayService};
 pub use model::{
     CapabilityDelegation, ClusterNode, ClusterState, JobReceipt, JobSpec, MAX_CLUSTER_NODES,
-    MAX_JOB_COMMAND_BYTES, NodeHealth,
+    MAX_JOB_COMMAND_BYTES, MAX_TOPOLOGY_LINKS, NodeHealth, TopologyLink, TopologyReachability,
+    TopologyRoute, TopologyState, TopologyTransport,
 };
 pub use wire::{
     FRAME_HEADER_BYTES, FrameHeader, MAX_FRAME_BYTES, Method, PROTOCOL_VERSION, ProtocolError,

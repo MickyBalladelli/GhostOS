@@ -152,9 +152,12 @@ pub struct ClusterLink {
     pub from: crate::Text<CLUSTER_ID_BYTES>,
     pub to: crate::Text<CLUSTER_ID_BYTES>,
     pub transport: crate::Text<CLUSTER_STATUS_BYTES>,
+    pub route: crate::Text<CLUSTER_STATUS_BYTES>,
+    pub zone: crate::Text<CLUSTER_STATUS_BYTES>,
     pub status: crate::Text<CLUSTER_STATUS_BYTES>,
     pub latency_us: u64,
     pub bandwidth_mbps: u64,
+    pub mtu: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1206,6 +1209,8 @@ pub fn cluster_topology_output(view: ClusterTopologyView) -> Result<StructuredOu
             "transport",
             link.transport.as_str(),
         )?;
+        insert_indexed_text(&mut output, "link", index, "route", link.route.as_str())?;
+        insert_indexed_text(&mut output, "link", index, "zone", link.zone.as_str())?;
         insert_indexed_text(&mut output, "link", index, "status", link.status.as_str())?;
         insert_indexed(
             &mut output,
@@ -1220,6 +1225,13 @@ pub fn cluster_topology_output(view: ClusterTopologyView) -> Result<StructuredOu
             index,
             "bandwidth-mbps",
             OutputValue::Unsigned(link.bandwidth_mbps),
+        )?;
+        insert_indexed(
+            &mut output,
+            "link",
+            index,
+            "mtu",
+            OutputValue::Unsigned(link.mtu),
         )?;
     }
     if let Some(next) = view.next_link {

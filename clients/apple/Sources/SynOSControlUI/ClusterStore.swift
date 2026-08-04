@@ -4,6 +4,7 @@ import SynOSClient
 @MainActor
 public final class ClusterStore: ObservableObject {
     @Published public private(set) var cluster: ClusterState?
+    @Published public private(set) var topology: TopologyState?
     @Published public private(set) var lastJob: JobReceipt?
     @Published public private(set) var delegatedCapability: SynOSCapability?
     @Published public private(set) var errorMessage: String?
@@ -18,6 +19,7 @@ public final class ClusterStore: ObservableObject {
     public func refresh() async {
         await perform {
             self.cluster = try await self.client.clusterState()
+            self.topology = try await self.client.topologyState()
         }
     }
 

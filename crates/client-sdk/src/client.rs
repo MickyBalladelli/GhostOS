@@ -5,6 +5,7 @@ use synos_fabric::NodeId;
 
 use crate::{
     CapabilityDelegation, ClusterNode, ClusterState, FrameHeader, JobReceipt, JobSpec, NodeHealth,
+    TopologyLink, TopologyReachability, TopologyRoute, TopologyState, TopologyTransport,
     ProtocolError, RpcStatus,
     wire::{
         FLAG_CAPABILITY, FRAME_HEADER_BYTES, MAX_FRAME_BYTES, Method, read_array, read_u16,
@@ -14,6 +15,8 @@ use crate::{
 
 const CLUSTER_HEADER_BYTES: usize = 24;
 const CLUSTER_NODE_BYTES: usize = 32;
+const TOPOLOGY_HEADER_BYTES: usize = 24;
+const TOPOLOGY_LINK_BYTES: usize = 32;
 const JOB_REQUEST_HEADER_BYTES: usize = 18;
 const JOB_RECEIPT_BYTES: usize = 16;
 const DELEGATION_BYTES: usize = 24;
@@ -114,6 +117,14 @@ impl<T: RpcTransport> Client<T> {
         let (response, response_bytes, header) =
             self.call(Method::SubmitJob, &mut request, payload_bytes)?;
         decode_job_receipt(&response[..response_bytes], header).map_err(ClientError::Protocol)
+    }
+
+    pub fn topology_state(&mut self) -> Result<TopologyState, ClientError<T::Error>> {
+        let mut request = [0; MAX_FRAME_BYTES];
+        let payload_start = self.encode_authority(&mut request)?;
+        let (response, response_bytes, header) =
+            self.call(Method::TopologyState, &mut request, payload_start)?;
+        decode_topology_state(&response[..response_bytes], header).map_err(ClientError::Protocol)
     }
 
     pub fn delegate_capability(
@@ -255,6 +266,61 @@ fn decode_cluster_state(frame: &[u8], header: FrameHeader) -> Result<ClusterStat
             memory_total_bytes: read_u64(payload, offset + 16)?,
             running_jobs: read_u32(payload, offset + 24)?,
             queued_jobs: read_u32(payload, offset + 28)?,
+        })?;
+    }
+    Ok(state)
+}
+
+pub(crate) fn encode_topology_state(
+    state: TopologyState,
+    output: &mut [u8],
+) -> Result<usize, ProtocolError> {
+    let required = TOPOLOGY_HEADER_BYTES + state.link_count() * TOPOLOGY_LINK_BYTES;
+    if output.len() < required {
+        return Err(ProtocolError::BufferTooSmall)
+    }
+    output[..required].fill(0);
+    write_u64(output, 0, state.generation)?;
+    write_u64(output, 8, state.sampled_at_us)?;
+    write_u16(output, 16, state.link_count() as u16)?;
+    for (index, link) in state.links().enumerate() {
+        let offset = TOPOLOGY_HEADER_BYTES + index * TOPOLOGY_LINK_BYTES;
+        write_u32(output, offset, link.from.raw())?;
+        write_u32(output, offset + 4, link.to.raw())?;
+        output[offset + 8] = link.transport as u8;
+        output[offset + 9] = link.route as u8;
+        output[offset + 10] = link.reachability as u8;
+        write_u64(output, offset + 16, link.latency_us)?;
+        write_u64(output, offset + 24, link.bandwidth_mbps)?;
+        write_u16(output, offset + 12, link.mtu)?;
+    }
+    Ok(required)
+}
+
+fn decode_topology_state(frame: &[u8], header: FrameHeader) -> Result<TopologyState, ProtocolError> {
+    let payload = frame.get(FRAME_HEADER_BYTES..).ok_or(ProtocolError::InvalidFrame)?;
+    if payload.len() < TOPOLOGY_HEADER_BYTES {
+        return Err(ProtocolError::InvalidFrame)
+    }
+    let count = read_u16(payload, 16)? as usize;
+    if count > crate::MAX_TOPOLOGY_LINKS
+        || payload.len() != TOPOLOGY_HEADER_BYTES + count * TOPOLOGY_LINK_BYTES
+        || header.payload_bytes as usize != payload.len()
+    {
+        return Err(ProtocolError::InvalidFrame)
+    }
+    let mut state = TopologyState::new(read_u64(payload, 0)?, read_u64(payload, 8)?);
+    for index in 0..count {
+        let offset = TOPOLOGY_HEADER_BYTES + index * TOPOLOGY_LINK_BYTES;
+        state.push(TopologyLink {
+            from: NodeId::new(read_u32(payload, offset)?).ok_or(ProtocolError::InvalidValue)?,
+            to: NodeId::new(read_u32(payload, offset + 4)?).ok_or(ProtocolError::InvalidValue)?,
+            transport: TopologyTransport::from_wire(payload[offset + 8])?,
+            route: TopologyRoute::from_wire(payload[offset + 9])?,
+            reachability: TopologyReachability::from_wire(payload[offset + 10])?,
+            mtu: read_u16(payload, offset + 12)?,
+            latency_us: read_u64(payload, offset + 16)?,
+            bandwidth_mbps: read_u64(payload, offset + 24)?,
         })?;
     }
     Ok(state)

@@ -12,7 +12,7 @@ impl CapabilityKey {
     }
 
     pub fn authenticate(self, message: &[u8]) -> Result<[u8; 32], TokenError> {
-        if message.len() > 64 {
+        if message.len() > 512 {
             return Err(TokenError::Invalid)
         }
         Ok(hmac_sha256(&self.0, message))
@@ -372,7 +372,7 @@ fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     } else {
         normalized[..key.len()].copy_from_slice(key)
     }
-    let mut inner = [0; 64 + 64];
+    let mut inner = [0; 64 + 512];
     for (index, byte) in normalized.iter().enumerate() {
         inner[index] = byte ^ 0x36
     }

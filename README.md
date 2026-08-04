@@ -616,6 +616,18 @@ interval percentiles without allocation. Trusted diagnostics can enumerate
 live kernel capability descriptors through `CapabilitySpace::entries`; the
 serving process remains responsible for filtering what a caller may see.
 
+`synos-mesh` carries signed, expiring cluster advertisements. Each advertisement
+contains the cluster and node identity, protocol versions, capabilities, and up
+to four ordered endpoints. Endpoints support CXL, Ethernet, wireless, 5G,
+loopback, and tunnels, including direct, NAT, relay, and offline routes.
+
+`TopologyGraph` keeps bounded node and link records with zones, reachability,
+latency, bandwidth, transport, route, and MTU. `ConnectivityManager` rotates
+failed endpoints, negotiates the smallest MTU, applies capped exponential
+backoff, and retains advertisements for offline inspection. The shell exposes
+these records through `SHOW CLUSTER/TOPOLOGY`; the Rust and Swift clients use
+the same versioned topology RPC.
+
 The asynchronous interpreter never waits inside command dispatch. Background
 commands and complete pipelines enter a system-wide bounded job queue with
 priorities, start times, dependencies, retry limits, worker leases,

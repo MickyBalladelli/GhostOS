@@ -970,12 +970,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Propagate membership epochs to DLM, Software DSM, balancer, scheduler, SynFS, and service supervisors.
   - [x] Provide read-only operation and clear degraded behavior when quorum is unavailable.
 
-- [ ] **Discovery, Connectivity & Topology**
-  - [ ] Implement signed cluster advertisements with cluster ID, node ID, endpoints, transports, versions, capabilities, and expiration.
-  - [ ] Support CXL, Ethernet, wireless, 5G, loopback, and tunneled transports with endpoint preference and failover.
-  - [ ] Maintain a live node/cluster topology graph with latency, bandwidth, reachability, route, zone, and transport details.
-  - [ ] Add endpoint rotation, NAT/relay support, MTU negotiation, connection retry, backoff, and offline discovery caching.
-  - [ ] Expose topology and connectivity diagnostics through shell, SDK, control apps, and structured telemetry.
+- [x] **Discovery, Connectivity & Topology**
+  - [x] Implement signed cluster advertisements with cluster ID, node ID, endpoints, transports, versions, capabilities, and expiration.
+  - [x] Support CXL, Ethernet, wireless, 5G, loopback, and tunneled transports with endpoint preference and failover.
+  - [x] Maintain a live node/cluster topology graph with latency, bandwidth, reachability, route, zone, and transport details.
+  - [x] Add endpoint rotation, NAT/relay support, MTU negotiation, connection retry, backoff, and offline discovery caching.
+  - [x] Expose topology and connectivity diagnostics through shell, SDK, control apps, and structured telemetry.
 
 - [ ] **Cluster Security & Authorization**
   - [ ] Define cluster administrator, operator, auditor, node owner, workload, and read-only roles.

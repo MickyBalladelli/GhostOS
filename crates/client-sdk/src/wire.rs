@@ -12,6 +12,7 @@ pub enum Method {
     ClusterState = 1,
     SubmitJob = 2,
     DelegateCapability = 3,
+    TopologyState = 4,
 }
 
 impl Method {
@@ -20,6 +21,7 @@ impl Method {
             1 => Ok(Self::ClusterState),
             2 => Ok(Self::SubmitJob),
             3 => Ok(Self::DelegateCapability),
+            4 => Ok(Self::TopologyState),
             _ => Err(ProtocolError::UnknownMethod),
         }
     }

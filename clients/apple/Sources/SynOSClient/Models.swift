@@ -33,6 +33,47 @@ public struct ClusterState: Equatable, Sendable {
     public let nodes: [ClusterNode]
 }
 
+public enum TopologyTransport: UInt8, Sendable {
+    case cxl = 1
+    case ethernet = 2
+    case wireless = 3
+    case cellular5g = 4
+    case loopback = 5
+    case tunnel = 6
+}
+
+public enum TopologyRoute: UInt8, Sendable {
+    case direct = 1
+    case nat = 2
+    case relay = 3
+    case offline = 4
+}
+
+public enum TopologyReachability: UInt8, Sendable {
+    case unknown = 1
+    case reachable = 2
+    case unreachable = 3
+    case offline = 4
+}
+
+public struct TopologyLink: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let from: UInt32
+    public let to: UInt32
+    public let transport: TopologyTransport
+    public let route: TopologyRoute
+    public let reachability: TopologyReachability
+    public let latencyMicroseconds: UInt64
+    public let bandwidthMbps: UInt64
+    public let mtu: UInt16
+}
+
+public struct TopologyState: Equatable, Sendable {
+    public let generation: UInt64
+    public let sampledAtMicroseconds: UInt64
+    public let links: [TopologyLink]
+}
+
 public struct JobReceipt: Equatable, Sendable {
     public let jobID: UInt64
     public let acceptedAtMicroseconds: UInt64

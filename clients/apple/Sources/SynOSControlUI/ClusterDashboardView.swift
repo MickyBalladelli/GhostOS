@@ -10,8 +10,24 @@ public struct ClusterDashboardView: View {
     public var body: some View {
         Group {
             if let cluster = store.cluster {
-                List(cluster.nodes) { node in
-                    NodeRowView(node: node)
+                List {
+                    Section("Nodes") {
+                        ForEach(cluster.nodes) { node in
+                            NodeRowView(node: node)
+                        }
+                    }
+                    if let topology = store.topology {
+                        Section("Connectivity") {
+                            ForEach(topology.links) { link in
+                                VStack(alignment: .leading) {
+                                    Text("Node \(link.from) → \(link.to)")
+                                    Text("\(link.latencyMicroseconds) µs · \(link.bandwidthMbps) Mbps · MTU \(link.mtu)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
                 }
                 .overlay {
                     if cluster.nodes.isEmpty {
