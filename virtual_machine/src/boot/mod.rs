@@ -72,7 +72,14 @@ impl Loader {
         };
         self.entry_point = match self.kernel_format {
             KernelFormat::Raw => KERNEL_LOAD_ADDR,
-            KernelFormat::Elf64 => elf_entry(&bytes).ok_or(LoaderError::InvalidFormat)?,
+            KernelFormat::Elf64 => {
+                let entry = elf_entry(&bytes).ok_or(LoaderError::InvalidFormat)?;
+                let (start, end) = elf_load_range(&bytes)?;
+                if entry < start || entry >= end {
+                    return Err(LoaderError::InvalidFormat)
+                }
+                entry
+            }
         };
         self.kernel_size = bytes.len();
         self.kernel = Some(bytes);
@@ -100,25 +107,43 @@ impl Loader {
 
     pub fn load_to_memory(&mut self, mmu: &mut Mmu, load_addr: u64) -> Result<(), LoaderError> {
         let kernel = self.kernel.as_deref().ok_or(LoaderError::KernelMissing)?;
-        let kernel_end = match self.kernel_format {
+        let (kernel_start, kernel_end) = match self.kernel_format {
+            KernelFormat::Raw => (
+                load_addr,
+                load_addr
+                    .checked_add(kernel.len() as u64)
+                    .ok_or(LoaderError::InvalidFormat)?,
+            ),
+            KernelFormat::Elf64 => elf_load_range(kernel)?,
+        };
+
+        let initrd_address = if let Some(initrd) = self.initrd.as_deref() {
+            let address = align_up(kernel_end, INITRD_ALIGNMENT).ok_or(LoaderError::InvalidFormat)?;
+            let end = address
+                .checked_add(initrd.len() as u64)
+                .ok_or(LoaderError::InvalidFormat)?;
+            self.validate_layout(kernel_start, kernel_end, address, end, FramebufferInfo::EMPTY)?;
+            address
+        } else {
+            self.validate_layout(kernel_start, kernel_end, 0, 0, FramebufferInfo::EMPTY)?;
+            0
+        };
+
+        match self.kernel_format {
             KernelFormat::Raw => {
                 mmu.write_phys(load_addr, kernel)
                     .map_err(|_| LoaderError::LoadFailed)?;
                 self.entry_point = load_addr;
-                load_addr
-                    .checked_add(kernel.len() as u64)
-                    .ok_or(LoaderError::InvalidFormat)?
             }
-            KernelFormat::Elf64 => load_elf64(mmu, kernel, &mut self.entry_point)?,
-        };
+            KernelFormat::Elf64 => {
+                load_elf64(mmu, kernel, &mut self.entry_point)?;
+            }
+        }
 
+        self.initrd_address = initrd_address;
         if let Some(initrd) = self.initrd.as_deref() {
-            self.initrd_address =
-                align_up(kernel_end, INITRD_ALIGNMENT).ok_or(LoaderError::InvalidFormat)?;
             mmu.write_phys(self.initrd_address, initrd)
                 .map_err(|_| LoaderError::LoadFailed)?;
-        } else {
-            self.initrd_address = 0;
         }
 
         let cmdline = self.cmdline.as_bytes();
@@ -163,6 +188,14 @@ impl Loader {
             .checked_add(self.initrd_size as u64)
             .ok_or(LoaderError::InvalidFormat)?;
 
+        self.validate_layout(
+            kernel_start,
+            kernel_end,
+            self.initrd_address,
+            initrd_end,
+            framebuffer,
+        )?;
+
         let mut info = BootInfo::empty(method);
         info.framebuffer = framebuffer;
         for region in memory_regions(
@@ -188,6 +221,66 @@ impl Loader {
         mmu.write_phys(self.boot_info_address, &boot_info_bytes(&info))
             .map_err(|_| LoaderError::LoadFailed)?;
         self.write_multiboot_info(mmu, memory_size as u64)?;
+        Ok(())
+    }
+
+    fn validate_layout(
+        &self,
+        kernel_start: u64,
+        kernel_end: u64,
+        initrd_start: u64,
+        initrd_end: u64,
+        framebuffer: FramebufferInfo,
+    ) -> Result<(), LoaderError> {
+        let cmdline_end = self
+            .cmdline_address
+            .checked_add(self.cmdline.len() as u64 + 1)
+            .ok_or(LoaderError::InvalidFormat)?;
+        let ranges = [
+            ("kernel", kernel_start, kernel_end),
+            ("initrd", initrd_start, initrd_end),
+            (
+                "boot-info",
+                self.boot_info_address,
+                self.boot_info_address + BOOT_INFO_SIZE as u64,
+            ),
+            (
+                "cmdline",
+                self.cmdline_address,
+                cmdline_end,
+            ),
+            (
+                "multiboot-info",
+                self.multiboot_info_address,
+                self.multiboot_info_address + MULTIBOOT_INFO_SIZE as u64,
+            ),
+            (
+                "multiboot-map",
+                MULTIBOOT_MMAP_ADDR,
+                MULTIBOOT_MMAP_ADDR + 0x1000,
+            ),
+            (
+                "framebuffer",
+                framebuffer.address,
+                framebuffer.address.saturating_add(framebuffer.size),
+            ),
+        ];
+        for (index, (_, start, end)) in ranges.iter().enumerate() {
+            if *start >= *end {
+                continue
+            }
+            for (_, other_start, other_end) in ranges.iter().skip(index + 1) {
+                if *other_start < *other_end && *start < *other_end && *other_start < *end {
+                    return Err(LoaderError::MemoryOverlap)
+                }
+            }
+        }
+        if ranges[..2]
+            .iter()
+            .any(|(_, start, end)| *start <= KERNEL_STACK_TOP && KERNEL_STACK_TOP < *end)
+        {
+            return Err(LoaderError::MemoryOverlap)
+        }
         Ok(())
     }
 
@@ -218,12 +311,16 @@ impl Loader {
             framebuffer += PAGE_SIZE as u64;
         }
 
-        cpu.state.cr4 |= 1 << 5;
-        cpu.state.efer |= 1 << 8;
-        cpu.enter_protected_mode(mmu, 0)
-            .map_err(LoaderError::CpuError)?;
-        cpu.enter_long_mode(mmu, mmu.cr3())
-            .map_err(LoaderError::CpuError)?;
+        if cpu.mode() != CpuMode::Long64 {
+            cpu.state.cr4 |= 1 << 5;
+            cpu.state.efer |= 1 << 8;
+            cpu.enter_protected_mode(mmu, 0)
+                .map_err(LoaderError::CpuError)?;
+            cpu.enter_long_mode(mmu, mmu.cr3())
+                .map_err(LoaderError::CpuError)?;
+        } else {
+            mmu.set_paging(true, cpu.state.cr3);
+        }
         cpu.state.rip = self.entry_point;
         cpu.state.rsp = KERNEL_STACK_TOP;
         cpu.state.rdi = self.boot_info_address;
@@ -293,6 +390,7 @@ pub enum LoaderError {
     InvalidFormat,
     LoadFailed,
     OutOfMemory,
+    MemoryOverlap,
     NotSupported,
     CpuError(CpuError),
 }

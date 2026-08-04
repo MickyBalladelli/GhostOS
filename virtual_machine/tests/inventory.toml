@@ -9,7 +9,7 @@ status = "deterministic"
 
 [[tier]]
 name = "vm-integration"
-command = "cargo test -p synos-vm --test matrix_59_11"
+command = "cargo test -p synos-vm --test matrix_59_11 --test firmware_boot_synos_10_4"
 status = "deterministic"
 
 [[tier]]
@@ -86,6 +86,36 @@ tiers = ["fast-unit", "vm-integration"]
 id = "vm.cluster.deterministic-harness"
 file = "tests/cluster.rs"
 tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.firmware.bios-post-services-and-mbr"
+file = "tests/firmware_boot_synos_10_4.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.firmware.uefi-tables-services-and-images"
+file = "tests/firmware_boot_synos_10_4.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.boot.multiboot-layout-and-validation"
+file = "tests/firmware_boot_synos_10_4.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.config.bounded-boot-and-power-lifecycle"
+file = "tests/firmware_boot_synos_10_4.rs"
+tiers = ["vm-integration"]
+
+[[test]]
+id = "vm.synos.minimal-boot-services-and-synfs"
+file = "tests/firmware_boot_synos_10_4.rs"
+tiers = ["vm-integration"]
+
+[[test]]
+id = "vm.boot.bios-uefi-single-and-smp-bounded"
+file = "tests/firmware_boot_synos_10_4.rs"
+tiers = ["vm-integration"]
 
 [[source]]
 path = "src/lib.rs"
@@ -165,15 +195,29 @@ tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device"]
 
 [[source]]
 path = "src/firmware/bios.rs"
-tests = ["vm.foundation.cleanup-golden"]
+tests = ["vm.foundation.cleanup-golden", "vm.firmware.bios-post-services-and-mbr"]
 
 [[source]]
 path = "src/firmware/uefi.rs"
-tests = ["vm.foundation.cleanup-golden"]
+tests = ["vm.foundation.cleanup-golden", "vm.firmware.uefi-tables-services-and-images"]
 
 [[source]]
 path = "src/boot/mod.rs"
-tests = ["vm.foundation.cleanup-golden"]
+tests = [
+    "vm.foundation.cleanup-golden",
+    "vm.boot.multiboot-layout-and-validation",
+]
+
+[[source]]
+path = "tests/firmware_boot_synos_10_4.rs"
+tests = [
+    "vm.firmware.bios-post-services-and-mbr",
+    "vm.firmware.uefi-tables-services-and-images",
+    "vm.boot.multiboot-layout-and-validation",
+    "vm.config.bounded-boot-and-power-lifecycle",
+    "vm.synos.minimal-boot-services-and-synfs",
+    "vm.boot.bios-uefi-single-and-smp-bounded",
+]
 
 [[source]]
 path = "src/execution.rs"
@@ -218,6 +262,16 @@ tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
 name = "VmCluster::{add_node,run_node,send,advance,receive,inject_fault}"
 source = "src/cluster.rs"
 tests = ["vm.cluster.deterministic-harness"]
+
+[[public_api]]
+name = "Vm::{new,with_config,run_for_steps,run_with_monitor,request_shutdown,request_reboot}"
+source = "src/lib.rs"
+tests = ["vm.config.bounded-boot-and-power-lifecycle"]
+
+[[public_api]]
+name = "run_synos_integration"
+source = "src/integration.rs"
+tests = ["vm.synos.minimal-boot-services-and-synfs"]
 
 [[public_api]]
 name = "Cpu::{new,reset,decode_instruction,step}"

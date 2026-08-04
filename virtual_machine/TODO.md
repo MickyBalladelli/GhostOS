@@ -299,12 +299,12 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 
 ### 10.4 Firmware, Boot, and SynOS Tests
 
-- [ ] Test BIOS POST, real-mode entry, MBR load, INT 10h/13h/15h services, bad sectors, missing boot code, and handoff failure.
-- [ ] Test UEFI tables, memory map, boot services, runtime variables, image loading, StartImage, invalid images, and service errors.
-- [ ] Test Multiboot and SynOS boot information, kernel/initrd/cmdline placement, framebuffer data, entry-point validation, and memory overlap rejection.
-- [ ] Test `Vm::new` and `Vm::with_config` defaults, serial enable/disable, custom ports, memory size, firmware, SMP count, boot args, and step limits.
-- [ ] Test VM booting a minimal SynOS image, serial bootstrap, shell prompt, scheduler progress, IPC, capability checks, page mapping, SynFS mount, file read/write, shutdown, and reboot.
-- [ ] Test BIOS and UEFI boot with one and multiple virtual CPUs and assert serial evidence plus bounded termination.
+- [x] Test BIOS POST, real-mode entry, MBR load, INT 10h/13h/15h services, bad sectors, missing boot code, and handoff failure.
+- [x] Test UEFI tables, memory map, boot services, runtime variables, image loading, StartImage, invalid images, and service errors.
+- [x] Test Multiboot and SynOS boot information, kernel/initrd/cmdline placement, framebuffer data, entry-point validation, and memory overlap rejection.
+- [x] Test `Vm::new` and `Vm::with_config` defaults, serial enable/disable, custom ports, memory size, firmware, SMP count, boot args, and step limits.
+- [x] Test VM booting a minimal SynOS image, serial bootstrap, shell prompt, scheduler progress, IPC, capability checks, page mapping, SynFS mount, file read/write, shutdown, and reboot.
+- [x] Test BIOS and UEFI boot with one and multiple virtual CPUs and assert serial evidence plus bounded termination.
 
 ### 10.5 Snapshot, Terminal, Network, and Integration Tests
 
