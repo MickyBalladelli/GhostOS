@@ -584,9 +584,12 @@ impl RevocationSignal {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FederationError {
     AccessDenied,
+    Busy,
     Capacity,
+    Duplicate,
     Expired,
     Invalid,
+    InvalidState,
     Lending(LendingError),
     Replay,
     StaleEpoch,

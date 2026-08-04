@@ -3,6 +3,7 @@
 
 pub mod identity;
 pub mod federation;
+pub mod federation_control;
 pub mod lending;
 pub mod logical;
 pub mod remote;
@@ -17,6 +18,11 @@ pub use federation::{
     accept_offer, ClusterId, DiscoveryAnnouncement, FederatedLease, FederatedResourceKind,
     FederatedResourceOffer, FederationError, PeerDirectory, RevocationReason, RevocationSignal,
     MAX_FEDERATED_PEERS, MAX_REVOCATION_LATENCY_US,
+};
+pub use federation_control::{
+    FederationCapability, FederationHealth, FederationInvitation, FederationLeaseStatus,
+    FederationRecord, FederationRegistry, FederationScope, FederationState, LeaseOwner,
+    MAX_FEDERATION_INVITATIONS, MAX_FEDERATION_RECORDS,
 };
 pub use lending::{
     LendingError, LendingKind, LendingRights, ResourceLender, RevocationAction,

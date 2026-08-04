@@ -249,6 +249,32 @@ pub struct ClusterConfigView {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterFederationEntry {
+    pub cluster: crate::Text<CLUSTER_ID_BYTES>,
+    pub state: crate::Text<CLUSTER_STATUS_BYTES>,
+    pub scope: crate::Text<CLUSTER_STATUS_BYTES>,
+    pub lease_owner: crate::Text<CLUSTER_STATUS_BYTES>,
+    pub active_leases: u64,
+    pub revocation_epoch: u64,
+    pub expires_at_us: u64,
+    pub last_seen_us: u64,
+    pub health: crate::Text<CLUSTER_STATUS_BYTES>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterFederationView {
+    pub generation: u64,
+    pub local_cluster: crate::Text<CLUSTER_ID_BYTES>,
+    pub federation_epoch: u64,
+    pub active_federations: u64,
+    pub pending_federations: u64,
+    pub healthy_federations: u64,
+    pub leased_resources: u64,
+    pub federations: [Option<ClusterFederationEntry>; MAX_CLUSTER_VIEW_ROWS],
+    pub next_federation: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClusterCommandHelp {
     pub name: &'static str,
     pub synopsis: &'static str,
@@ -263,7 +289,7 @@ pub const CLUSTER_COMMAND_HELP: [ClusterCommandHelp; CLUSTER_COMMAND_COUNT] = [
         "SHOW CLUSTER [name] [/view]",
         "Show cluster identity, state, membership, quorum, health, resources, or configuration.",
         "CLUSTER",
-        "/MEMBERS /TOPOLOGY /HEALTH /RESOURCES /CONFIG /FEDERATED",
+        "/MEMBERS /TOPOLOGY /HEALTH /RESOURCES /CONFIG /FEDERATED /FEDERATION",
     ),
     help(
         "LIST-CLUSTERS",
@@ -466,9 +492,10 @@ fn register_cluster_commands_impl<const CAPACITY: usize>(
         qualifier("RESOURCES", ArgumentKind::Boolean)?,
         qualifier("CONFIG", ArgumentKind::Boolean)?,
         qualifier("FEDERATED", ArgumentKind::Boolean)?,
+        qualifier("FEDERATION", ArgumentKind::Boolean)?,
     ];
     let show = [
-        name, views[0], views[1], views[2], views[3], views[4], views[5],
+        name, views[0], views[1], views[2], views[3], views[4], views[5], views[6],
     ];
     register(registry, "SHOW-CLUSTER", &show, SHOW_CLUSTER_ROUTE)?;
 
@@ -727,6 +754,13 @@ pub trait ClusterSource {
         Err(Status::NOT_FOUND)
     }
 
+    fn show_cluster_federation(
+        &mut self,
+        _name: Option<&str>,
+    ) -> Result<ClusterFederationView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn list_clusters(&mut self, query: ClusterListQuery) -> Result<ClusterListView, Status> {
         Ok(ClusterListView {
             generation: 0,
@@ -771,7 +805,9 @@ pub trait ClusterSource {
                 Some(ClusterViewKind::Config) => {
                     cluster_config_output(self.show_cluster_config(name)?)
                 }
-                Some(ClusterViewKind::Federated) => Err(Status::NOT_FOUND),
+                Some(ClusterViewKind::Federated) => {
+                    cluster_federation_output(self.show_cluster_federation(name)?)
+                }
             };
         }
         if command.route.raw() == LIST_CLUSTERS_ROUTE {
@@ -854,10 +890,11 @@ pub fn validate(command: CommandCall) -> Result<(), Status> {
         let views = [
             "MEMBERS",
             "TOPOLOGY",
-            "HEALTH",
-            "RESOURCES",
-            "CONFIG",
-            "FEDERATED",
+        "HEALTH",
+        "RESOURCES",
+        "CONFIG",
+        "FEDERATED",
+        "FEDERATION",
         ]
         .iter()
         .filter(|name| {
@@ -883,6 +920,26 @@ pub fn validate(command: CommandCall) -> Result<(), Status> {
     ) && command.get("CONFIRM") != Some(Value::Boolean(true))
     {
         return Err(Status::INVALID_ARGUMENT);
+    }
+    if command.route.raw() == INVITE_CLUSTER_ROUTE {
+        match command.get("EXPIRATION") {
+            Some(Value::Integer(value)) if value > 0 => {}
+            Some(_) => return Err(Status::INVALID_ARGUMENT),
+            None => return Err(Status::INVALID_ARGUMENT),
+        }
+        match command.get_text("SCOPE") {
+            Some(scope) if !scope.is_empty() => {}
+            _ => return Err(Status::INVALID_ARGUMENT),
+        }
+    }
+    if matches!(command.route.raw(), ACCEPT_CLUSTER_ROUTE | REJECT_CLUSTER_ROUTE) {
+        match command.get_text("INVITATION") {
+            Some(invitation) if !invitation.is_empty() => {}
+            _ => return Err(Status::INVALID_ARGUMENT),
+        }
+        if command.get("CONFIRM") != Some(Value::Boolean(true)) {
+            return Err(Status::INVALID_ARGUMENT);
+        }
     }
     if matches!(
         command.route.raw(),
@@ -952,7 +1009,9 @@ fn selected_cluster_view(command: CommandCall) -> Option<ClusterViewKind> {
         Some(ClusterViewKind::Resources)
     } else if command.get("CONFIG") == Some(Value::Boolean(true)) {
         Some(ClusterViewKind::Config)
-    } else if command.get("FEDERATED") == Some(Value::Boolean(true)) {
+    } else if command.get("FEDERATED") == Some(Value::Boolean(true))
+        || command.get("FEDERATION") == Some(Value::Boolean(true))
+    {
         Some(ClusterViewKind::Federated)
     } else {
         None
@@ -1009,6 +1068,113 @@ pub fn cluster_list_output(view: ClusterListView) -> Result<StructuredOutput, St
     }
     if let Some(next_page) = view.next_page {
         insert(&mut output, "next-page", OutputValue::Unsigned(next_page))?;
+    }
+    Ok(output)
+}
+
+pub fn cluster_federation_output(
+    view: ClusterFederationView,
+) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "show-cluster-federation")?;
+    insert_text(&mut output, "local-cluster", view.local_cluster.as_str())?;
+    insert(
+        &mut output,
+        "generation",
+        OutputValue::Unsigned(view.generation),
+    )?;
+    insert(
+        &mut output,
+        "federation-epoch",
+        OutputValue::Unsigned(view.federation_epoch),
+    )?;
+    insert(
+        &mut output,
+        "active-federations",
+        OutputValue::Unsigned(view.active_federations),
+    )?;
+    insert(
+        &mut output,
+        "pending-federations",
+        OutputValue::Unsigned(view.pending_federations),
+    )?;
+    insert(
+        &mut output,
+        "healthy-federations",
+        OutputValue::Unsigned(view.healthy_federations),
+    )?;
+    insert(
+        &mut output,
+        "leased-resources",
+        OutputValue::Unsigned(view.leased_resources),
+    )?;
+    for (index, federation) in view.federations.iter().flatten().enumerate() {
+        insert_indexed_text(
+            &mut output,
+            "federation",
+            index,
+            "cluster",
+            federation.cluster.as_str(),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "federation",
+            index,
+            "state",
+            federation.state.as_str(),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "federation",
+            index,
+            "scope",
+            federation.scope.as_str(),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "federation",
+            index,
+            "lease-owner",
+            federation.lease_owner.as_str(),
+        )?;
+        insert_indexed(
+            &mut output,
+            "federation",
+            index,
+            "active-leases",
+            OutputValue::Unsigned(federation.active_leases),
+        )?;
+        insert_indexed(
+            &mut output,
+            "federation",
+            index,
+            "revocation-epoch",
+            OutputValue::Unsigned(federation.revocation_epoch),
+        )?;
+        insert_indexed(
+            &mut output,
+            "federation",
+            index,
+            "expires-at-us",
+            OutputValue::Unsigned(federation.expires_at_us),
+        )?;
+        insert_indexed(
+            &mut output,
+            "federation",
+            index,
+            "last-seen-us",
+            OutputValue::Unsigned(federation.last_seen_us),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "federation",
+            index,
+            "health",
+            federation.health.as_str(),
+        )?;
+    }
+    if let Some(next) = view.next_federation {
+        insert(&mut output, "next-federation", OutputValue::Unsigned(next))?;
     }
     Ok(output)
 }

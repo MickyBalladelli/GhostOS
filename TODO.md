@@ -992,12 +992,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Coordinate admission, migration, draining, failover, preemption, and cancellation with `synos-balancerd` and `synos-actors`.
   - [x] Prevent new work on draining, fenced, degraded, or incompatible nodes and explain placement failures.
 
-- [ ] **Cross-Cluster Federation**
-  - [ ] Add explicit federation and unfederation workflows separate from intra-cluster node membership.
-  - [ ] Add `LIST CLUSTERS/FEDERATED`, `SHOW CLUSTER/FEDERATION`, `INVITE CLUSTER`, `ACCEPT CLUSTER`, `REJECT CLUSTER`, and `REMOVE FEDERATION`.
-  - [ ] Exchange scoped cluster capabilities and resource offers without exposing local identities, filesystems, processes, or sockets.
-  - [ ] Track federation state, trust scope, lease ownership, revocation epoch, expiration, and cross-cluster health.
-  - [ ] Enforce zero-trust admission, blind-sandbox isolation, lease preemption, and cross-cluster epoch fencing.
+- [x] **Cross-Cluster Federation**
+  - [x] Add explicit federation and unfederation workflows separate from intra-cluster node membership.
+  - [x] Add `LIST CLUSTERS/FEDERATED`, `SHOW CLUSTER/FEDERATION`, `INVITE CLUSTER`, `ACCEPT CLUSTER`, `REJECT CLUSTER`, and `REMOVE FEDERATION`.
+  - [x] Exchange scoped cluster capabilities and resource offers without exposing local identities, filesystems, processes, or sockets.
+  - [x] Track federation state, trust scope, lease ownership, revocation epoch, expiration, and cross-cluster health.
+  - [x] Enforce zero-trust admission, blind-sandbox isolation, lease preemption, and cross-cluster epoch fencing.
 
 - [ ] **Configuration & Declarative Management**
   - [ ] Extend `System.toml` with cluster identity, discovery, membership, quorum, transport, security, resource, and federation settings.
