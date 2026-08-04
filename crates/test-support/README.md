@@ -5,8 +5,8 @@ Shared test-only helpers for SynOS crates and integration tests.
 The crate provides deterministic boot, memory-map, capability, identity,
 node, clock, entropy, packet, disk, SynFS-volume, manifest, wire-frame, and
 terminal fixtures. It also provides bounded in-memory block, network, IPC,
-storage, attestation, and accelerator doubles; one-shot failure injection;
-LIFO cleanup guards; and checked-in golden fixtures.
+storage, attestation, accelerator, and device doubles; one-shot failure
+injection; LIFO cleanup guards; and checked-in golden fixtures.
 
 Use it from a test target or a crate's `dev-dependencies`:
 

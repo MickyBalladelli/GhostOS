@@ -265,12 +265,12 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 
 ### 10.1 Test Foundation
 
-- [ ] Split tests into fast unit tests, VM integration tests, CLI tests, QEMU tests, cluster tests, performance tests, and hardware-accelerated tests.
-- [ ] Add deterministic VM fixtures for CPU state, guest memory, page tables, PCI config space, disks, packets, interrupts, clocks, serial input, terminal input, and boot images.
-- [ ] Add reusable fake devices and failure injection for short I/O, DMA overrun, invalid descriptors, dropped interrupts, delayed timers, reset during I/O, and device removal.
-- [ ] Add cleanup guards for temporary disk images, child processes, Unix sockets, QMP sessions, serial logs, and terminal settings.
-- [ ] Add golden files for decoded instructions, firmware tables, boot handoff data, device registers, snapshots, serial output, and terminal output.
-- [ ] Add a VM test inventory mapping each source module and public API to its tests.
+- [x] Split tests into fast unit tests, VM integration tests, CLI tests, QEMU tests, cluster tests, performance tests, and hardware-accelerated tests.
+- [x] Add deterministic VM fixtures for CPU state, guest memory, page tables, PCI config space, disks, packets, interrupts, clocks, serial input, terminal input, and boot images.
+- [x] Add reusable fake devices and failure injection for short I/O, DMA overrun, invalid descriptors, dropped interrupts, delayed timers, reset during I/O, and device removal.
+- [x] Add cleanup guards for temporary disk images, child processes, Unix sockets, QMP sessions, serial logs, and terminal settings.
+- [x] Add golden files for decoded instructions, firmware tables, boot handoff data, device registers, snapshots, serial output, and terminal output.
+- [x] Add a VM test inventory mapping each source module and public API to its tests.
 
 ### 10.2 CPU, Memory, and Execution Tests
 

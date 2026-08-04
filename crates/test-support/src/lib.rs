@@ -494,6 +494,13 @@ pub enum FaultPoint {
     BlockRead,
     BlockWrite,
     Flush,
+    DeviceRead,
+    DeviceWrite,
+    DeviceDma,
+    DeviceDescriptor,
+    DeviceInterrupt,
+    DeviceReset,
+    DeviceRemoval,
     NetworkSend,
     IpcSend,
     Interrupt,
@@ -507,9 +514,15 @@ pub enum FaultPoint {
 pub enum Fault {
     TornWrite { bytes: usize },
     ShortBuffer { available: usize },
+    ShortIo { bytes: usize },
+    DmaOverrun { bytes: usize },
+    InvalidDescriptor,
     DropPacket,
     DuplicatePacket,
     DelayedInterrupt { ticks: u32 },
+    DroppedInterrupt,
+    ResetDuringIo,
+    DeviceRemoved,
     StaleCapability,
     NodeLoss { node: u16 },
     CorruptMetadata { offset: usize },
@@ -553,6 +566,133 @@ impl FaultPlan {
 #[derive(Clone, Debug, Default)]
 pub struct FailureInjector {
     plan: FaultPlan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FakeDeviceError {
+    ShortIo { bytes: usize },
+    DmaOverrun { bytes: usize },
+    InvalidDescriptor,
+    InterruptDropped,
+    ResetDuringIo,
+    Removed,
+}
+
+impl fmt::Display for FakeDeviceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for FakeDeviceError {}
+
+/// Small register/DMA/interrupt fake for device-boundary tests.
+///
+/// It is deliberately deterministic and has no host I/O. Faults are consumed
+/// once through the same [`FaultPlan`] used by the other test doubles.
+#[derive(Clone, Debug, Default)]
+pub struct FakeDevice {
+    registers: BTreeMap<u64, u64>,
+    faults: FaultPlan,
+    pending_interrupts: u32,
+    io_in_progress: bool,
+    removed: bool,
+}
+
+impl FakeDevice {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn faults_mut(&mut self) -> &mut FaultPlan {
+        &mut self.faults
+    }
+
+    pub fn read_register(&mut self, address: u64) -> Result<u64, FakeDeviceError> {
+        self.ensure_present()?;
+        if let Some(Fault::ShortIo { bytes }) = self.faults.take(&FaultPoint::DeviceRead) {
+            return Err(FakeDeviceError::ShortIo { bytes })
+        }
+        Ok(self.registers.get(&address).copied().unwrap_or(0))
+    }
+
+    pub fn write_register(
+        &mut self,
+        address: u64,
+        value: u64,
+    ) -> Result<(), FakeDeviceError> {
+        self.ensure_present()?;
+        if let Some(Fault::ShortIo { bytes }) = self.faults.take(&FaultPoint::DeviceWrite) {
+            return Err(FakeDeviceError::ShortIo { bytes })
+        }
+        self.registers.insert(address, value);
+        Ok(())
+    }
+
+    pub fn dma(&mut self, descriptor_count: usize) -> Result<usize, FakeDeviceError> {
+        self.ensure_present()?;
+        if self.faults.take(&FaultPoint::DeviceDescriptor).is_some() {
+            return Err(FakeDeviceError::InvalidDescriptor)
+        }
+        if let Some(Fault::DmaOverrun { bytes }) = self.faults.take(&FaultPoint::DeviceDma) {
+            return Err(FakeDeviceError::DmaOverrun { bytes })
+        }
+        self.io_in_progress = true;
+        Ok(descriptor_count)
+    }
+
+    pub fn finish_io(&mut self) -> Result<(), FakeDeviceError> {
+        self.ensure_present()?;
+        if self.faults.take(&FaultPoint::DeviceReset).is_some() {
+            self.io_in_progress = false;
+            return Err(FakeDeviceError::ResetDuringIo)
+        }
+        self.io_in_progress = false;
+        Ok(())
+    }
+
+    pub fn raise_interrupt(&mut self) -> Result<(), FakeDeviceError> {
+        self.ensure_present()?;
+        if self.faults.take(&FaultPoint::DeviceInterrupt).is_some() {
+            return Err(FakeDeviceError::InterruptDropped)
+        }
+        self.pending_interrupts = self.pending_interrupts.saturating_add(1);
+        Ok(())
+    }
+
+    pub fn take_interrupt(&mut self) -> bool {
+        if self.pending_interrupts == 0 {
+            return false
+        }
+        self.pending_interrupts -= 1;
+        true
+    }
+
+    pub fn reset(&mut self) {
+        self.registers.clear();
+        self.pending_interrupts = 0;
+        self.io_in_progress = false;
+    }
+
+    pub fn remove(&mut self) {
+        self.removed = true;
+    }
+
+    pub fn is_removed(&self) -> bool {
+        self.removed
+    }
+
+    pub fn io_in_progress(&self) -> bool {
+        self.io_in_progress
+    }
+
+    fn ensure_present(&mut self) -> Result<(), FakeDeviceError> {
+        if self.removed || self.faults.take(&FaultPoint::DeviceRemoval).is_some() {
+            self.removed = true;
+            return Err(FakeDeviceError::Removed)
+        }
+        Ok(())
+    }
 }
 
 impl FailureInjector {
@@ -1209,9 +1349,15 @@ pub enum GoldenFixture {
     ProtocolFrame,
     FilesystemBlock,
     Snapshot,
+    VmDecodedInstruction,
+    VmFirmwareTables,
+    VmBootHandoff,
+    VmDeviceRegisters,
+    VmSnapshot,
     AuditRecord,
     PackageSignature,
     TerminalOutput,
+    VmSerialOutput,
 }
 
 pub fn golden_text(fixture: GoldenFixture) -> &'static str {
@@ -1220,9 +1366,17 @@ pub fn golden_text(fixture: GoldenFixture) -> &'static str {
         GoldenFixture::ProtocolFrame => include_str!("../golden/protocol-frame.hex"),
         GoldenFixture::FilesystemBlock => include_str!("../golden/filesystem-block.hex"),
         GoldenFixture::Snapshot => include_str!("../golden/snapshot.hex"),
+        GoldenFixture::VmDecodedInstruction => {
+            include_str!("../golden/vm-decoded-instruction.hex")
+        }
+        GoldenFixture::VmFirmwareTables => include_str!("../golden/vm-firmware-tables.hex"),
+        GoldenFixture::VmBootHandoff => include_str!("../golden/vm-boot-handoff.hex"),
+        GoldenFixture::VmDeviceRegisters => include_str!("../golden/vm-device-registers.hex"),
+        GoldenFixture::VmSnapshot => include_str!("../golden/vm-snapshot.hex"),
         GoldenFixture::AuditRecord => include_str!("../golden/audit-record.json"),
         GoldenFixture::PackageSignature => include_str!("../golden/package-signature.hex"),
         GoldenFixture::TerminalOutput => include_str!("../golden/terminal-output.txt"),
+        GoldenFixture::VmSerialOutput => include_str!("../golden/vm-serial-output.txt"),
     }
 }
 

@@ -13,6 +13,7 @@ synos-kernel = { path = "../kernel" }
 synos-synfs = { path = "../crates/synfs" }
 
 [dev-dependencies]
+synos-test-support = { path = "../crates/test-support" }
 
 [features]
 default = []

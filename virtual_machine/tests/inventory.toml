@@ -1,0 +1,216 @@
+# Stable VM test inventory. Test IDs are evidence names, not Rust symbols.
+schema = 1
+crate = "synos-vm"
+
+[[tier]]
+name = "fast-unit"
+command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11"
+status = "deterministic"
+
+[[tier]]
+name = "vm-integration"
+command = "cargo test -p synos-vm --test matrix_59_11"
+status = "deterministic"
+
+[[tier]]
+name = "cli"
+command = "cargo test -p synos-vm --bin synos-vm"
+status = "deterministic"
+
+[[tier]]
+name = "qemu"
+command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored"
+status = "opt-in"
+
+[[tier]]
+name = "cluster"
+command = "scripts/qemu-cluster-validation.sh"
+status = "opt-in"
+
+[[tier]]
+name = "performance"
+command = "cargo test -p synos-vm --test test_environments storage_io_performance_and_integrity"
+status = "deterministic"
+
+[[tier]]
+name = "hardware-accelerated"
+command = "SYNOS_QEMU_ACCEL=kvm cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored"
+status = "opt-in"
+
+[[test]]
+id = "vm.foundation.deterministic-fixtures"
+file = "tests/foundation_59_1.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.foundation.fault-device"
+file = "tests/foundation_59_1.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.foundation.cleanup-golden"
+file = "tests/foundation_59_1.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.foundation.serial-boundary"
+file = "tests/foundation_59_1.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[source]]
+path = "src/lib.rs"
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/cpu/mod.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/cpu/decoder.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/cpu/executor.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/memory/mod.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/devices/mod.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
+path = "src/devices/apic.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
+path = "src/devices/serial.rs"
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/devices/pit.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/devices/hpet.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/devices/input.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/devices/power.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/devices/display.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/devices/virtio.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
+path = "src/devices/net/e1000.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
+path = "src/devices/net/virtio.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
+path = "src/devices/storage/ahci.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
+path = "src/devices/storage/nvme.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
+path = "src/devices/storage/disk_image.rs"
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device"]
+
+[[source]]
+path = "src/firmware/bios.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/firmware/uefi.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/boot/mod.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/execution.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/snapshot.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/terminal.rs"
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+
+[[source]]
+path = "src/integration.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/net/mod.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[public_api]]
+name = "Vm::{new,with_config,run_for_steps,reset,snapshot,restore_snapshot}"
+source = "src/lib.rs"
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+
+[[public_api]]
+name = "Cpu::{new,reset,decode_instruction,step}"
+source = "src/cpu/mod.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[public_api]]
+name = "Mmu::{new,alloc_frame,map_page,read_byte,write_byte}"
+source = "src/memory/mod.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[public_api]]
+name = "Device::{read,write,reset} and PortDevice::{read,write,reset}"
+source = "src/devices/mod.rs"
+tests = ["vm.foundation.fault-device", "vm.foundation.serial-boundary"]
+
+[[public_api]]
+name = "DiskImage::{open,read_sector,write_sector,flush,close}"
+source = "src/devices/storage/disk_image.rs"
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device"]
+
+[[public_api]]
+name = "Loader::{load_kernel,load_to_memory,install_boot_parameters,handoff}"
+source = "src/boot/mod.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[public_api]]
+name = "TerminalSession::{new,poll,flush_output}"
+source = "src/terminal.rs"
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+
+[[public_api]]
+name = "VmSnapshot::{capture,to_bytes,from_bytes,restore_into}"
+source = "src/snapshot.rs"
+tests = ["vm.foundation.cleanup-golden"]
+
+[[public_api]]
+name = "run_synos_integration"
+source = "src/integration.rs"
+tests = ["vm.foundation.deterministic-fixtures"]
+
+[[public_api]]
+name = "NetBackend and PacketQueue"
+source = "src/net/mod.rs"
+tests = ["vm.foundation.deterministic-fixtures"]

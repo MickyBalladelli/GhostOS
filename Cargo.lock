@@ -885,6 +885,7 @@ dependencies = [
  "synos-boot-protocol",
  "synos-kernel",
  "synos-synfs",
+ "synos-test-support",
  "thiserror",
 ]
 
