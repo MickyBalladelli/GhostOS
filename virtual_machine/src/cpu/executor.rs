@@ -1508,8 +1508,23 @@ impl InstructionExecutor {
 
         while rcx > 0 {
             if is_movs {
-                let v = mmu.read_from_addr(rsi, step as u8).map_err(mem_err)?;
-                mmu.write_to_addr(rdi, v, step as u8).map_err(mem_err)?;
+                // Read the whole element before writing it. This preserves
+                // MOVS semantics for overlapping source and destination while
+                // avoiding the wide memory path used by the emulator here.
+                let mut bytes = [0u8; 8];
+                for offset in 0..step {
+                    bytes[offset as usize] = mmu
+                        .read_from_addr(rsi.wrapping_add(offset), 1)
+                        .map_err(mem_err)? as u8;
+                }
+                for offset in 0..step {
+                    mmu.write_to_addr(
+                        rdi.wrapping_add(offset),
+                        bytes[offset as usize] as u64,
+                        1,
+                    )
+                    .map_err(mem_err)?;
+                }
                 rsi = (rsi as i64 + delta) as u64;
                 rdi = (rdi as i64 + delta) as u64;
             } else if is_stos {
@@ -2168,6 +2183,21 @@ mod tests {
         assert_eq!(cpu.state.rcx, 0);
         assert_eq!(cpu.state.rsi, 0x2004);
         assert_eq!(cpu.state.rdi, 0x3004);
+    }
+
+    #[test]
+    fn string_movsq_with_rep_preserves_all_bytes() {
+        // rep movsq: f3 48 a5
+        let (mut cpu, mut mmu) = cpu_with(&[0xF3, 0x48, 0xA5]);
+        cpu.state.rsi = 0x2000;
+        cpu.state.rdi = 0x3000;
+        cpu.state.rcx = 1;
+        mmu.write_phys(0x2000, b"SHOW SYS").unwrap();
+        single_run(&mut cpu, &mut mmu).unwrap();
+        assert_eq!(mmu.read_phys(0x3000, 8).unwrap(), b"SHOW SYS");
+        assert_eq!(cpu.state.rcx, 0);
+        assert_eq!(cpu.state.rsi, 0x2008);
+        assert_eq!(cpu.state.rdi, 0x3008);
     }
 
     #[test]

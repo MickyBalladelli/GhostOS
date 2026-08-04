@@ -127,7 +127,11 @@ impl LogicalName {
         }
 
         let mut stored = [0; MAX_NAME_BYTES];
-        stored[..bytes.len()].copy_from_slice(bytes);
+        let mut index = 0;
+        while index < bytes.len() {
+            stored[index] = bytes[index];
+            index += 1;
+        }
         Ok(Self {
             bytes: stored,
             len: bytes.len() as u8,

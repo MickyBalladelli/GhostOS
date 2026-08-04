@@ -883,29 +883,19 @@ fn expand_command(
     if is_help {
         replacement.push_str("HELP ")?;
     }
-    for byte in command.as_str().bytes() {
+    let command_bytes = command.as_str().as_bytes();
+    let mut index = 0;
+    while index < command_bytes.len() {
+        let byte = command_bytes[index];
         replacement.push_char(if byte == b'-' { ' ' } else { byte as char })?;
+        index += 1;
     }
     if line[start..end].eq_ignore_ascii_case(replacement.as_str()) {
         return Ok(false)
     }
     replace_span(editor, start, end, replacement.as_str())?;
-    redraw_completed_line(editor, line_render);
+    redraw(editor, line_render);
     Ok(true)
-}
-
-fn redraw_completed_line<const HISTORY: usize>(
-    editor: &LineEditor<HISTORY>,
-    rendered: &mut ShellLineRender,
-) {
-    crate::print!("\r\x1b[K");
-    prompt();
-    crate::print!("{}", editor.line());
-    crate::print!("\x1b[K");
-
-    rendered.line.clear();
-    let _ = rendered.line.push_str(editor.line());
-    rendered.cursor = editor.cursor();
 }
 
 fn supports_file_completion(command: &str) -> bool {
@@ -1032,41 +1022,17 @@ fn redraw<const HISTORY: usize>(
     rendered: &mut ShellLineRender,
 ) {
     let current = editor.line();
-    let previous = rendered.line.as_str();
-
-    if previous == current {
-        move_cursor(rendered.cursor, editor.cursor());
-    } else {
-        let common = common_prefix(previous, current);
-        move_cursor(rendered.cursor, common);
-        crate::print!("{}", &current[common..]);
-        crate::print!("\x1b[K");
-        move_cursor(current.len(), editor.cursor());
+    crate::print!("\r\x1b[2K");
+    prompt();
+    crate::print!("{}", current);
+    let tail = current.len().saturating_sub(editor.cursor());
+    if tail != 0 {
+        crate::print!("\x1b[{}D", tail);
     }
 
     rendered.line.clear();
     let _ = rendered.line.push_str(current);
     rendered.cursor = editor.cursor();
-}
-
-fn move_cursor(from: usize, to: usize) {
-    if from > to {
-        crate::print!("\x1b[{}D", from - to);
-    } else if to > from {
-        crate::print!("\x1b[{}C", to - from);
-    }
-}
-
-fn common_prefix(left: &str, right: &str) -> usize {
-    let mut index = 0;
-    let limit = core::cmp::min(left.len(), right.len());
-    while index < limit && left.as_bytes()[index] == right.as_bytes()[index] {
-        index += 1;
-    }
-    while index > 0 && right.as_bytes()[index - 1] & 0xc0 == 0x80 {
-        index -= 1;
-    }
-    index
 }
 
 fn banner() {

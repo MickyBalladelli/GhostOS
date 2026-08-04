@@ -91,7 +91,12 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
         if line.len() > MAX_LINE_BYTES {
             return Err(Error::LineTooLong)
         }
-        self.bytes[..line.len()].copy_from_slice(line.as_bytes());
+        let source = line.as_bytes();
+        let mut index = 0;
+        while index < source.len() {
+            self.bytes[index] = source[index];
+            index += 1;
+        }
         self.len = line.len();
         self.cursor = self.len;
         self.history_offset = None;

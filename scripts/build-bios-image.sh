@@ -9,7 +9,7 @@ rust_tools_dir=$(dirname "$(rustc --print target-libdir)")/bin
 rust_lld="$rust_tools_dir/rust-lld"
 llvm_objcopy="$rust_tools_dir/llvm-objcopy"
 stage2_sectors=16
-max_kernel_sectors=1024
+max_kernel_sectors=1056
 
 mkdir -p "$build_dir"
 

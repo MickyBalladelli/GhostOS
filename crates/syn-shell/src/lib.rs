@@ -96,7 +96,12 @@ impl<const CAPACITY: usize> Text<CAPACITY> {
         if end > CAPACITY || end > u16::MAX as usize {
             return Err(Error::TokenTooLong)
         }
-        self.bytes[start..end].copy_from_slice(value.as_bytes());
+        let source = value.as_bytes();
+        let mut index = 0;
+        while index < source.len() {
+            self.bytes[start + index] = source[index];
+            index += 1;
+        }
         self.len = end as u16;
         Ok(())
     }
