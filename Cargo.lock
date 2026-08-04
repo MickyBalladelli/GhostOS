@@ -900,6 +900,7 @@ name = "synos-webterm"
 version = "0.1.0"
 dependencies = [
  "syn-shell",
+ "synos-status",
 ]
 
 [[package]]

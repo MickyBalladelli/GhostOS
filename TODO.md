@@ -99,7 +99,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Ensure directory removal updates parent listings, path lookup, free-space accounting, retention garbage collection, mounts, and namespace caches consistently.
   - [x] Add parser, shell-executor, runtime/ABI, kernel-dispatch, daemon, SynFS, capability, empty-directory, root-protection, persistence/recovery, and snapshot coverage.
   - [x] Document `RMDIR`/`RD` examples, safety rules, failure statuses, and the empty-directory requirement in the filesystem README.
-  - [ ] Add QEMU and remote-terminal coverage proving that an empty directory can be removed and that non-empty and protected directories fail safely.
+  - [x] Add QEMU and remote-terminal coverage proving that an empty directory can be removed and that non-empty and protected directories fail safely.
 
 - [x] **Create a File**
   - [x] Add a dedicated create-file operation or command using SynFS versioned-create semantics.

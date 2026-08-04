@@ -188,6 +188,46 @@ fn qemu_filesystem_shell_workflow() {
 #[cfg(unix)]
 #[test]
 #[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_rmdir_safety_workflow() {
+    let Some(output) = run_qemu_shell_commands(
+        "qemu-rmdir-safety",
+        &[
+            "mkdir /data/rmdirempty",
+            "rmdir /data/rmdirempty",
+            "directory /data/rmdirempty",
+            "mkdir /data/rmdirnonempty",
+            "create /data/rmdirnonempty/child",
+            "rmdir /data/rmdirnonempty",
+            "directory /data/rmdirnonempty",
+            "rmdir /",
+            "set default /data",
+            "rmdir /data",
+        ],
+    ) else {
+        return;
+    };
+
+    assert!(
+        output.contains("operation: removed") && output.contains("/data/rmdirempty"),
+        "QEMU could not remove the empty directory; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("directory is not empty") && output.contains("/data/rmdirnonempty"),
+        "QEMU did not reject the non-empty directory safely; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("invalid path") && output.contains("access denied"),
+        "QEMU did not protect root and the active default directory; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("NOT_FOUND") || output.contains("path not found"),
+        "QEMU did not confirm the removed directory is gone; serial output was: {output:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_root_filesystem_mount_and_application_file_io() {
     let Some(output) = run_qemu_shell_session("qemu-root-filesystem-io", |qmp| {
         send_qemu_command(qmp, "directory /");

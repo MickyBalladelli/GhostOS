@@ -9,3 +9,6 @@ path = "src/lib.rs"
 
 [dependencies]
 syn-shell = { path = "../syn-shell" }
+
+[dev-dependencies]
+synos-status = { path = "../status" }
