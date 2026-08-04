@@ -999,11 +999,11 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Track federation state, trust scope, lease ownership, revocation epoch, expiration, and cross-cluster health.
   - [x] Enforce zero-trust admission, blind-sandbox isolation, lease preemption, and cross-cluster epoch fencing.
 
-- [ ] **Configuration & Declarative Management**
-  - [ ] Extend `System.toml` with cluster identity, discovery, membership, quorum, transport, security, resource, and federation settings.
-  - [ ] Validate configuration changes before activation and show a structured diff with affected nodes and services.
-  - [ ] Apply cluster configuration atomically with signed commits, quorum acknowledgement, rollback, and version history.
-  - [ ] Support staged changes, maintenance windows, per-node overrides, policy inheritance, and safe defaults.
+- [x] **Configuration & Declarative Management**
+  - [x] Extend `System.toml` with cluster identity, discovery, membership, quorum, transport, security, resource, and federation settings.
+  - [x] Validate configuration changes before activation and show a structured diff with affected nodes and services.
+  - [x] Apply cluster configuration atomically with signed commits, quorum acknowledgement, rollback, and version history.
+  - [x] Support staged changes, maintenance windows, per-node overrides, policy inheritance, and safe defaults.
 
 - [ ] **Failure Handling, Recovery & Operations**
   - [ ] Detect node failure, cluster degradation, partition, quorum loss, clock skew, protocol mismatch, and stale state.

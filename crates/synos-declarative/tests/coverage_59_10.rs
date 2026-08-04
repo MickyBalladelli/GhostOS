@@ -1,6 +1,7 @@
 use synos_declarative::{
-    ConfigurationRuntime, ParseError, ReconfigureError, ReconfigureManager, SignedConfiguration,
-    SystemSpec, TpmConfigurationEnforcer, TpmSigningKey,
+    AdmissionPolicy, ConfigurationArea, ConfigurationDiff, ConfigurationRuntime, DiscoveryPolicy,
+    ParseError, ReconfigureError, ReconfigureManager, SignedConfiguration, SystemSpec,
+    TpmConfigurationEnforcer, TpmSigningKey, TransportKind,
 };
 use synos_fabric::NodeId;
 use synos_status::Status;
@@ -103,4 +104,61 @@ fn signed_activation_is_targeted_atomic_and_rollback_safe() {
     assert_eq!(manager.activate(&mut filesystem, &enforcer, &failing, local, &mut runtime), Err(ReconfigureError::HealthCheck(Status::BUSY)));
     assert_eq!(manager.active().unwrap().revision(), 1);
     assert!(runtime.events.ends_with(&["health", "rollback", "clear"]));
+}
+
+#[test]
+fn cluster_configuration_is_validated_diffed_and_overridden() {
+    let source = r#"
+[system]
+schema = 1
+revision = 4
+
+[cluster]
+id = 0x1234
+name = "prod"
+discovery = "hybrid"
+membership = "automatic"
+admission = "attested"
+heartbeat_period_us = 500000
+missed_heartbeat_limit = 3
+
+[cluster.quorum]
+voting_members = 3
+required_votes = 2
+
+[cluster.security]
+require_attestation = true
+trust_root = 0x55
+
+[cluster.federation]
+enabled = true
+allow_remote_workloads = true
+lease_ttl_us = 60000000
+max_leases = 8
+
+[[cluster.transport]]
+name = "lan"
+kind = "ethernet"
+endpoint = "10.0.0.1:7000"
+priority = 10
+
+[[cluster.node-override]]
+node = 2
+heartbeat_period_us = 100000
+transport = "ethernet"
+"#;
+    let configuration = SystemSpec::parse(source).unwrap();
+    assert_eq!(configuration.cluster().identity.id, 0x1234);
+    assert_eq!(configuration.cluster().discovery, DiscoveryPolicy::Hybrid);
+    assert_eq!(configuration.cluster().admission, AdmissionPolicy::Attested);
+    assert_eq!(configuration.cluster().quorum.required_votes, 2);
+    assert_eq!(configuration.cluster().transports().count(), 1);
+    assert_eq!(configuration.cluster().transports().next().unwrap().kind, TransportKind::Ethernet);
+    assert_eq!(configuration.cluster().effective_for(synos_fabric::NodeId::new(2).unwrap()).heartbeat_period_us, 100000);
+    configuration.validate().unwrap();
+
+    let next = SystemSpec::parse(&source.replace("revision = 4", "revision = 5").replace("required_votes = 2", "required_votes = 3")).unwrap();
+    let diff = ConfigurationDiff::between(Some(&configuration), &next).unwrap();
+    assert!(diff.changes().any(|change| change.area == ConfigurationArea::Quorum));
+    assert_eq!(diff.affected_nodes().collect::<Vec<_>>(), vec![2]);
 }

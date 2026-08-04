@@ -3,6 +3,13 @@ use core::fmt;
 use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
 
+use crate::{
+    AdmissionPolicy, ClusterSpec, DiscoveryPolicy, FederationSpec, MembershipPolicy,
+    NodeOverrideSpec, QuorumSpec, ResourceSpec, SecuritySpec, TransportKind, TransportSpec,
+    ConfigurationValidationError, MAX_CLUSTER_DESCRIPTION_BYTES, MAX_CLUSTER_NAME_BYTES,
+    MAX_ENDPOINT_BYTES, MAX_TRANSPORT_NAME_BYTES,
+};
+
 pub const SYSTEM_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SERVICES: usize = 24;
 pub const MAX_CAPABILITY_POLICIES: usize = 64;
@@ -196,6 +203,7 @@ pub struct SystemSpec {
     services: [Option<ServiceSpec>; MAX_SERVICES],
     capabilities: [Option<CapabilityPolicy>; MAX_CAPABILITY_POLICIES],
     network: NetworkSpec,
+    cluster: ClusterSpec,
 }
 
 impl SystemSpec {
@@ -221,6 +229,14 @@ impl SystemSpec {
 
     pub const fn network(&self) -> &NetworkSpec {
         &self.network
+    }
+
+    pub const fn cluster(&self) -> &ClusterSpec {
+        &self.cluster
+    }
+
+    pub fn validate(&self) -> Result<(), crate::ConfigurationValidationError> {
+        self.cluster.validate()
     }
 
     pub fn digest(&self) -> ContentId {
@@ -265,6 +281,8 @@ impl SystemSpec {
             encoder.text(route.interface.as_str());
             encoder.u32(route.metric);
         }
+        encoder.u8(6);
+        encoder.push(self.cluster.digest().as_bytes());
         ContentId::hash(&encoder.bytes[..encoder.length])
     }
 }
@@ -399,6 +417,161 @@ struct RoutePartial {
     metric: Option<u32>,
 }
 
+#[derive(Clone, Copy)]
+struct ClusterPartial {
+    id: Option<u128>,
+    name: Option<BoundedText<MAX_CLUSTER_NAME_BYTES>>,
+    description: Option<BoundedText<MAX_CLUSTER_DESCRIPTION_BYTES>>,
+    discovery: Option<DiscoveryPolicy>,
+    membership: Option<MembershipPolicy>,
+    admission: Option<AdmissionPolicy>,
+    heartbeat_period_us: Option<u64>,
+    missed_heartbeat_limit: Option<u16>,
+}
+
+impl ClusterPartial {
+    const fn new() -> Self {
+        Self {
+            id: None,
+            name: None,
+            description: None,
+            discovery: None,
+            membership: None,
+            admission: None,
+            heartbeat_period_us: None,
+            missed_heartbeat_limit: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct QuorumPartial {
+    voting_members: Option<u16>,
+    required_votes: Option<u16>,
+    read_only_without_quorum: Option<bool>,
+}
+
+impl QuorumPartial {
+    const fn new() -> Self {
+        Self {
+            voting_members: None,
+            required_votes: None,
+            read_only_without_quorum: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SecurityPartial {
+    require_signed_commits: Option<bool>,
+    require_mutual_identity: Option<bool>,
+    require_attestation: Option<bool>,
+    encrypt_control_plane: Option<bool>,
+    encrypt_data_plane: Option<bool>,
+    trust_root: Option<u128>,
+}
+
+impl SecurityPartial {
+    const fn new() -> Self {
+        Self {
+            require_signed_commits: None,
+            require_mutual_identity: None,
+            require_attestation: None,
+            encrypt_control_plane: None,
+            encrypt_data_plane: None,
+            trust_root: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ResourcePartial {
+    cpu_limit: Option<u64>,
+    memory_limit_bytes: Option<u64>,
+    cxl_limit_bytes: Option<u64>,
+    storage_limit_bytes: Option<u64>,
+    network_limit_mbps: Option<u64>,
+}
+
+impl ResourcePartial {
+    const fn new() -> Self {
+        Self {
+            cpu_limit: None,
+            memory_limit_bytes: None,
+            cxl_limit_bytes: None,
+            storage_limit_bytes: None,
+            network_limit_mbps: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FederationPartial {
+    enabled: Option<bool>,
+    allow_remote_workloads: Option<bool>,
+    require_attestation: Option<bool>,
+    lease_ttl_us: Option<u64>,
+    max_leases: Option<u32>,
+}
+
+impl FederationPartial {
+    const fn new() -> Self {
+        Self {
+            enabled: None,
+            allow_remote_workloads: None,
+            require_attestation: None,
+            lease_ttl_us: None,
+            max_leases: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ClusterTransportPartial {
+    name: Option<BoundedText<MAX_TRANSPORT_NAME_BYTES>>,
+    kind: Option<TransportKind>,
+    endpoint: Option<BoundedText<MAX_ENDPOINT_BYTES>>,
+    enabled: Option<bool>,
+    priority: Option<u16>,
+    mtu: Option<u32>,
+}
+
+impl ClusterTransportPartial {
+    const fn new() -> Self {
+        Self {
+            name: None,
+            kind: None,
+            endpoint: None,
+            enabled: None,
+            priority: None,
+            mtu: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NodeOverridePartial {
+    node: Option<u32>,
+    discovery: Option<DiscoveryPolicy>,
+    admission: Option<AdmissionPolicy>,
+    heartbeat_period_us: Option<u64>,
+    missed_heartbeat_limit: Option<u16>,
+    transport: Option<TransportKind>,
+}
+
+impl NodeOverridePartial {
+    const fn new() -> Self {
+        Self {
+            node: None,
+            discovery: None,
+            admission: None,
+            heartbeat_period_us: None,
+            missed_heartbeat_limit: None,
+            transport: None,
+        }
+    }
+}
+
 impl RoutePartial {
     const fn new() -> Self {
         Self {
@@ -419,6 +592,13 @@ enum Section {
     Capability,
     Interface,
     Route,
+    Cluster,
+    ClusterQuorum,
+    ClusterSecurity,
+    ClusterResources,
+    ClusterFederation,
+    ClusterTransport,
+    ClusterOverride,
 }
 
 struct Parser {
@@ -430,6 +610,15 @@ struct Parser {
     capability: Option<CapabilityPartial>,
     interface: Option<InterfacePartial>,
     route: Option<RoutePartial>,
+    cluster: Option<ClusterSpec>,
+    cluster_partial: Option<ClusterPartial>,
+    quorum_partial: Option<QuorumPartial>,
+    security_partial: Option<SecurityPartial>,
+    resource_partial: Option<ResourcePartial>,
+    federation_partial: Option<FederationPartial>,
+    transport_partial: Option<ClusterTransportPartial>,
+    override_partial: Option<NodeOverridePartial>,
+    explicit_transport: bool,
     services: [Option<ServiceSpec>; MAX_SERVICES],
     service_count: usize,
     capabilities: [Option<CapabilityPolicy>; MAX_CAPABILITY_POLICIES],
@@ -451,6 +640,15 @@ impl Parser {
             capability: None,
             interface: None,
             route: None,
+            cluster: None,
+            cluster_partial: None,
+            quorum_partial: None,
+            security_partial: None,
+            resource_partial: None,
+            federation_partial: None,
+            transport_partial: None,
+            override_partial: None,
+            explicit_transport: false,
             services: [None; MAX_SERVICES],
             service_count: 0,
             capabilities: [None; MAX_CAPABILITY_POLICIES],
@@ -520,6 +718,11 @@ impl Parser {
                 interfaces,
                 routes,
             },
+            cluster: {
+                let cluster = self.cluster.unwrap_or_else(ClusterSpec::safe_defaults);
+                cluster.validate().map_err(map_validation_error)?;
+                cluster
+            },
         })
     }
 
@@ -529,6 +732,13 @@ impl Parser {
             Section::Capability => self.capability = Some(CapabilityPartial::new()),
             Section::Interface => self.interface = Some(InterfacePartial::new()),
             Section::Route => self.route = Some(RoutePartial::new()),
+            Section::Cluster => self.cluster_partial = Some(ClusterPartial::new()),
+            Section::ClusterQuorum => self.quorum_partial = Some(QuorumPartial::new()),
+            Section::ClusterSecurity => self.security_partial = Some(SecurityPartial::new()),
+            Section::ClusterResources => self.resource_partial = Some(ResourcePartial::new()),
+            Section::ClusterFederation => self.federation_partial = Some(FederationPartial::new()),
+            Section::ClusterTransport => self.transport_partial = Some(ClusterTransportPartial::new()),
+            Section::ClusterOverride => self.override_partial = Some(NodeOverridePartial::new()),
             Section::Root | Section::System | Section::Network => {}
         }
     }
@@ -615,6 +825,96 @@ impl Parser {
                 self.routes[self.route_count] = Some(route);
                 self.route_count += 1;
             }
+            Section::Cluster => {
+                let partial = self.cluster_partial.take().ok_or(ParseError::MissingField)?;
+                let mut cluster = self.cluster.take().unwrap_or_else(ClusterSpec::safe_defaults);
+                if let Some(value) = partial.id { cluster.identity.id = value }
+                if let Some(value) = partial.name { cluster.identity.name = value }
+                if let Some(value) = partial.description { cluster.identity.description = value }
+                if let Some(value) = partial.discovery { cluster.discovery = value }
+                if let Some(value) = partial.membership { cluster.membership = value }
+                if let Some(value) = partial.admission { cluster.admission = value }
+                if let Some(value) = partial.heartbeat_period_us { cluster.heartbeat_period_us = value }
+                if let Some(value) = partial.missed_heartbeat_limit { cluster.missed_heartbeat_limit = value }
+                self.cluster = Some(cluster);
+            }
+            Section::ClusterQuorum => {
+                let partial = self.quorum_partial.take().ok_or(ParseError::MissingField)?;
+                let mut cluster = self.cluster.take().unwrap_or_else(ClusterSpec::safe_defaults);
+                cluster.quorum = QuorumSpec {
+                    voting_members: partial.voting_members.unwrap_or(cluster.quorum.voting_members),
+                    required_votes: partial.required_votes.unwrap_or(cluster.quorum.required_votes),
+                    read_only_without_quorum: partial.read_only_without_quorum.unwrap_or(cluster.quorum.read_only_without_quorum),
+                };
+                self.cluster = Some(cluster);
+            }
+            Section::ClusterSecurity => {
+                let partial = self.security_partial.take().ok_or(ParseError::MissingField)?;
+                let mut cluster = self.cluster.take().unwrap_or_else(ClusterSpec::safe_defaults);
+                cluster.security = SecuritySpec {
+                    require_signed_commits: partial.require_signed_commits.unwrap_or(cluster.security.require_signed_commits),
+                    require_mutual_identity: partial.require_mutual_identity.unwrap_or(cluster.security.require_mutual_identity),
+                    require_attestation: partial.require_attestation.unwrap_or(cluster.security.require_attestation),
+                    encrypt_control_plane: partial.encrypt_control_plane.unwrap_or(cluster.security.encrypt_control_plane),
+                    encrypt_data_plane: partial.encrypt_data_plane.unwrap_or(cluster.security.encrypt_data_plane),
+                    trust_root: partial.trust_root.unwrap_or(cluster.security.trust_root),
+                };
+                self.cluster = Some(cluster);
+            }
+            Section::ClusterResources => {
+                let partial = self.resource_partial.take().ok_or(ParseError::MissingField)?;
+                let mut cluster = self.cluster.take().unwrap_or_else(ClusterSpec::safe_defaults);
+                cluster.resources = ResourceSpec {
+                    cpu_limit: partial.cpu_limit.unwrap_or(cluster.resources.cpu_limit),
+                    memory_limit_bytes: partial.memory_limit_bytes.unwrap_or(cluster.resources.memory_limit_bytes),
+                    cxl_limit_bytes: partial.cxl_limit_bytes.unwrap_or(cluster.resources.cxl_limit_bytes),
+                    storage_limit_bytes: partial.storage_limit_bytes.unwrap_or(cluster.resources.storage_limit_bytes),
+                    network_limit_mbps: partial.network_limit_mbps.unwrap_or(cluster.resources.network_limit_mbps),
+                };
+                self.cluster = Some(cluster);
+            }
+            Section::ClusterFederation => {
+                let partial = self.federation_partial.take().ok_or(ParseError::MissingField)?;
+                let mut cluster = self.cluster.take().unwrap_or_else(ClusterSpec::safe_defaults);
+                cluster.federation = FederationSpec {
+                    enabled: partial.enabled.unwrap_or(cluster.federation.enabled),
+                    allow_remote_workloads: partial.allow_remote_workloads.unwrap_or(cluster.federation.allow_remote_workloads),
+                    require_attestation: partial.require_attestation.unwrap_or(cluster.federation.require_attestation),
+                    lease_ttl_us: partial.lease_ttl_us.unwrap_or(cluster.federation.lease_ttl_us),
+                    max_leases: partial.max_leases.unwrap_or(cluster.federation.max_leases),
+                };
+                self.cluster = Some(cluster);
+            }
+            Section::ClusterTransport => {
+                let partial = self.transport_partial.take().ok_or(ParseError::MissingField)?;
+                let mut cluster = self.cluster.take().unwrap_or_else(ClusterSpec::safe_defaults);
+                if !self.explicit_transport {
+                    cluster.clear_transports();
+                    self.explicit_transport = true;
+                }
+                cluster.push_transport(TransportSpec {
+                    name: partial.name.ok_or(ParseError::MissingField)?,
+                    kind: partial.kind.ok_or(ParseError::MissingField)?,
+                    endpoint: partial.endpoint.unwrap_or(BoundedText::EMPTY),
+                    enabled: partial.enabled.unwrap_or(true),
+                    priority: partial.priority.unwrap_or(100),
+                    mtu: partial.mtu.unwrap_or(1500),
+                }).map_err(map_validation_error)?;
+                self.cluster = Some(cluster);
+            }
+            Section::ClusterOverride => {
+                let partial = self.override_partial.take().ok_or(ParseError::MissingField)?;
+                let mut cluster = self.cluster.take().unwrap_or_else(ClusterSpec::safe_defaults);
+                cluster.push_override(NodeOverrideSpec {
+                    node: partial.node.ok_or(ParseError::MissingField)?,
+                    discovery: partial.discovery,
+                    admission: partial.admission,
+                    heartbeat_period_us: partial.heartbeat_period_us,
+                    missed_heartbeat_limit: partial.missed_heartbeat_limit,
+                    transport: partial.transport,
+                }).map_err(map_validation_error)?;
+                self.cluster = Some(cluster);
+            }
             Section::Root | Section::System | Section::Network => {}
         }
         Ok(())
@@ -643,6 +943,13 @@ impl Parser {
             Section::Route => {
                 self.assign_route(key, value)?;
             }
+            Section::Cluster => self.assign_cluster(key, value)?,
+            Section::ClusterQuorum => self.assign_quorum(key, value)?,
+            Section::ClusterSecurity => self.assign_security(key, value)?,
+            Section::ClusterResources => self.assign_resources(key, value)?,
+            Section::ClusterFederation => self.assign_federation(key, value)?,
+            Section::ClusterTransport => self.assign_transport(key, value)?,
+            Section::ClusterOverride => self.assign_override(key, value)?,
         }
         Ok(())
     }
@@ -701,6 +1008,94 @@ impl Parser {
     fn services(&self) -> impl Iterator<Item = ServiceSpec> + '_ {
         self.services.iter().flatten().copied()
     }
+
+    fn assign_cluster(&mut self, key: &str, value: &str) -> Result<(), ParseError> {
+        let partial = self.cluster_partial.as_mut().ok_or(ParseError::MissingField)?;
+        match key {
+            "id" => set_once(&mut partial.id, parse_u128(value)?),
+            "name" => set_once(&mut partial.name, parse_text(value)?),
+            "description" => set_once(&mut partial.description, parse_text(value)?),
+            "discovery" => set_once(&mut partial.discovery, parse_discovery(value)?),
+            "membership" => set_once(&mut partial.membership, parse_membership(value)?),
+            "admission" => set_once(&mut partial.admission, parse_admission(value)?),
+            "heartbeat_period_us" | "heartbeat-period-us" => set_once(&mut partial.heartbeat_period_us, parse_u64(value)?),
+            "missed_heartbeat_limit" | "missed-heartbeat-limit" => set_once(&mut partial.missed_heartbeat_limit, parse_u16(value)?),
+            _ => Err(ParseError::UnknownKey),
+        }
+    }
+
+    fn assign_quorum(&mut self, key: &str, value: &str) -> Result<(), ParseError> {
+        let partial = self.quorum_partial.as_mut().ok_or(ParseError::MissingField)?;
+        match key {
+            "voting_members" | "voting-members" => set_once(&mut partial.voting_members, parse_u16(value)?),
+            "required_votes" | "required-votes" => set_once(&mut partial.required_votes, parse_u16(value)?),
+            "read_only_without_quorum" | "read-only-without-quorum" => set_once(&mut partial.read_only_without_quorum, parse_bool(value)?),
+            _ => Err(ParseError::UnknownKey),
+        }
+    }
+
+    fn assign_security(&mut self, key: &str, value: &str) -> Result<(), ParseError> {
+        let partial = self.security_partial.as_mut().ok_or(ParseError::MissingField)?;
+        match key {
+            "require_signed_commits" | "require-signed-commits" => set_once(&mut partial.require_signed_commits, parse_bool(value)?),
+            "require_mutual_identity" | "require-mutual-identity" => set_once(&mut partial.require_mutual_identity, parse_bool(value)?),
+            "require_attestation" | "require-attestation" => set_once(&mut partial.require_attestation, parse_bool(value)?),
+            "encrypt_control_plane" | "encrypt-control-plane" => set_once(&mut partial.encrypt_control_plane, parse_bool(value)?),
+            "encrypt_data_plane" | "encrypt-data-plane" => set_once(&mut partial.encrypt_data_plane, parse_bool(value)?),
+            "trust_root" | "trust-root" => set_once(&mut partial.trust_root, parse_u128(value)?),
+            _ => Err(ParseError::UnknownKey),
+        }
+    }
+
+    fn assign_resources(&mut self, key: &str, value: &str) -> Result<(), ParseError> {
+        let partial = self.resource_partial.as_mut().ok_or(ParseError::MissingField)?;
+        match key {
+            "cpu_limit" | "cpu-limit" => set_once(&mut partial.cpu_limit, parse_u64(value)?),
+            "memory_limit_bytes" | "memory-limit-bytes" => set_once(&mut partial.memory_limit_bytes, parse_u64(value)?),
+            "cxl_limit_bytes" | "cxl-limit-bytes" => set_once(&mut partial.cxl_limit_bytes, parse_u64(value)?),
+            "storage_limit_bytes" | "storage-limit-bytes" => set_once(&mut partial.storage_limit_bytes, parse_u64(value)?),
+            "network_limit_mbps" | "network-limit-mbps" => set_once(&mut partial.network_limit_mbps, parse_u64(value)?),
+            _ => Err(ParseError::UnknownKey),
+        }
+    }
+
+    fn assign_federation(&mut self, key: &str, value: &str) -> Result<(), ParseError> {
+        let partial = self.federation_partial.as_mut().ok_or(ParseError::MissingField)?;
+        match key {
+            "enabled" => set_once(&mut partial.enabled, parse_bool(value)?),
+            "allow_remote_workloads" | "allow-remote-workloads" => set_once(&mut partial.allow_remote_workloads, parse_bool(value)?),
+            "require_attestation" | "require-attestation" => set_once(&mut partial.require_attestation, parse_bool(value)?),
+            "lease_ttl_us" | "lease-ttl-us" => set_once(&mut partial.lease_ttl_us, parse_u64(value)?),
+            "max_leases" | "max-leases" => set_once(&mut partial.max_leases, parse_u32(value)?),
+            _ => Err(ParseError::UnknownKey),
+        }
+    }
+
+    fn assign_transport(&mut self, key: &str, value: &str) -> Result<(), ParseError> {
+        let partial = self.transport_partial.as_mut().ok_or(ParseError::MissingField)?;
+        match key {
+            "name" => set_once(&mut partial.name, parse_text(value)?),
+            "kind" => set_once(&mut partial.kind, parse_transport_kind(value)?),
+            "endpoint" => set_once(&mut partial.endpoint, parse_text(value)?),
+            "enabled" => set_once(&mut partial.enabled, parse_bool(value)?),
+            "priority" => set_once(&mut partial.priority, parse_u16(value)?),
+            "mtu" => set_once(&mut partial.mtu, parse_u32(value)?),
+            _ => Err(ParseError::UnknownKey),
+        }
+    }
+
+    fn assign_override(&mut self, key: &str, value: &str) -> Result<(), ParseError> {
+        let partial = self.override_partial.as_mut().ok_or(ParseError::MissingField)?;
+        match key {
+            "node" => set_once(&mut partial.node, parse_u32(value)?),
+            "discovery" => set_once(&mut partial.discovery, parse_discovery(value)?),
+            "admission" => set_once(&mut partial.admission, parse_admission(value)?),
+            "heartbeat_period_us" | "heartbeat-period-us" => set_once(&mut partial.heartbeat_period_us, parse_u64(value)?),
+            "missed_heartbeat_limit" | "missed-heartbeat-limit" => set_once(&mut partial.missed_heartbeat_limit, parse_u16(value)?),
+            "transport" => set_once(&mut partial.transport, parse_transport_kind(value)?),
+            _ => Err(ParseError::UnknownKey),
+        }
+    }
 }
 
 fn set_once<T>(slot: &mut Option<T>, value: T) -> Result<(), ParseError> {
@@ -719,6 +1114,10 @@ fn parse_section(line: &str) -> Result<Section, ParseError> {
             "capabilities" | "capability" => Ok(Section::Capability),
             "network.interfaces" | "network.interface" => Ok(Section::Interface),
             "network.routes" | "network.route" => Ok(Section::Route),
+            "cluster.transports" | "cluster.transport" => Ok(Section::ClusterTransport),
+            "cluster.node_overrides" | "cluster.node-override" | "cluster.node_override" => {
+                Ok(Section::ClusterOverride)
+            }
             _ => Err(ParseError::UnknownSection),
         };
     }
@@ -726,6 +1125,11 @@ fn parse_section(line: &str) -> Result<Section, ParseError> {
         return match &line[1..line.len() - 1] {
             "system" => Ok(Section::System),
             "network" => Ok(Section::Network),
+            "cluster" => Ok(Section::Cluster),
+            "cluster.quorum" => Ok(Section::ClusterQuorum),
+            "cluster.security" => Ok(Section::ClusterSecurity),
+            "cluster.resources" => Ok(Section::ClusterResources),
+            "cluster.federation" => Ok(Section::ClusterFederation),
             _ => Err(ParseError::UnknownSection),
         };
     }
@@ -797,17 +1201,11 @@ fn parse_u64(value: &str) -> Result<u64, ParseError> {
 }
 
 fn parse_u128(value: &str) -> Result<u128, ParseError> {
-    let value = value.strip_prefix("0x").unwrap_or(value);
-    let radix = if value.len()
-        != value
-            .trim_start_matches(|byte: char| byte.is_ascii_digit())
-            .len()
-    {
-        10
+    if let Some(value) = value.strip_prefix("0x") {
+        u128::from_str_radix(value, 16).map_err(|_| ParseError::InvalidInteger)
     } else {
-        16
-    };
-    u128::from_str_radix(value, radix).map_err(|_| ParseError::InvalidInteger)
+        value.parse().map_err(|_| ParseError::InvalidInteger)
+    }
 }
 
 fn parse_integer(value: &str) -> Result<u64, ParseError> {
@@ -815,6 +1213,60 @@ fn parse_integer(value: &str) -> Result<u64, ParseError> {
         u64::from_str_radix(value, 16).map_err(|_| ParseError::InvalidInteger)
     } else {
         value.parse().map_err(|_| ParseError::InvalidInteger)
+    }
+}
+
+fn parse_discovery(value: &str) -> Result<DiscoveryPolicy, ParseError> {
+    match quoted_value(value) {
+        "disabled" => Ok(DiscoveryPolicy::Disabled),
+        "static" => Ok(DiscoveryPolicy::Static),
+        "mesh" => Ok(DiscoveryPolicy::Mesh),
+        "mdns" => Ok(DiscoveryPolicy::Mdns),
+        "hybrid" => Ok(DiscoveryPolicy::Hybrid),
+        _ => Err(ParseError::InvalidValue),
+    }
+}
+
+fn parse_membership(value: &str) -> Result<MembershipPolicy, ParseError> {
+    match quoted_value(value) {
+        "static" => Ok(MembershipPolicy::Static),
+        "automatic" => Ok(MembershipPolicy::Automatic),
+        _ => Err(ParseError::InvalidValue),
+    }
+}
+
+fn parse_admission(value: &str) -> Result<AdmissionPolicy, ParseError> {
+    match quoted_value(value) {
+        "open" => Ok(AdmissionPolicy::Open),
+        "invitation" => Ok(AdmissionPolicy::Invitation),
+        "attested" => Ok(AdmissionPolicy::Attested),
+        _ => Err(ParseError::InvalidValue),
+    }
+}
+
+fn parse_transport_kind(value: &str) -> Result<TransportKind, ParseError> {
+    match quoted_value(value) {
+        "loopback" => Ok(TransportKind::Loopback),
+        "ethernet" => Ok(TransportKind::Ethernet),
+        "cxl" => Ok(TransportKind::Cxl),
+        "wireless" => Ok(TransportKind::Wireless),
+        "tunnel" => Ok(TransportKind::Tunnel),
+        _ => Err(ParseError::InvalidValue),
+    }
+}
+
+fn map_validation_error(error: ConfigurationValidationError) -> ParseError {
+    match error {
+        ConfigurationValidationError::Capacity => ParseError::Capacity,
+        ConfigurationValidationError::DuplicateNodeOverride
+        | ConfigurationValidationError::DuplicateTransport => ParseError::DuplicateName,
+        ConfigurationValidationError::InvalidFederation
+        | ConfigurationValidationError::InvalidHeartbeat
+        | ConfigurationValidationError::InvalidIdentity
+        | ConfigurationValidationError::InvalidNodeOverride { .. }
+        | ConfigurationValidationError::InvalidQuorum
+        | ConfigurationValidationError::InvalidTransport { .. }
+        | ConfigurationValidationError::MissingTrustRoot => ParseError::InvalidValue,
     }
 }
 
