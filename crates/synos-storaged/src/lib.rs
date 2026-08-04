@@ -9,6 +9,7 @@ mod cluster;
 mod membership;
 mod protocol;
 mod remote;
+mod security;
 mod service;
 mod state;
 
@@ -58,6 +59,15 @@ pub use protocol::{
 pub use remote::{
     IscsiSession, IscsiState, NvmeCommand, NvmeQueue, NvmeTarget, PnfsClient, PnfsDataServer,
     PnfsLayout, S3GetRequest, SmbChannel, SmbSession, SmbSessionState,
+};
+pub use security::{
+    ClusterAuditRecord, ClusterCapability, ClusterCapabilityCaveat, ClusterKey, ClusterKeyring,
+    ClusterOperation, ClusterOperations, ClusterRole, ClusterRoleSet, ClusterSecurityAudit,
+    ClusterSecurityAuthority, ClusterSecurityPolicy, NodeCertificate, RevocationEntry,
+    RevocationKind, SecureChannel, SecureFrame, SecurityDecision, SecurityError, TrafficClass,
+    TrustRoot, TrustRootStore, DEFAULT_SECURITY_AUDIT_CAPACITY, MAX_CLUSTER_CAVEATS,
+    MAX_CLUSTER_KEYS, MAX_REVOKED_ENTRIES, MAX_SECURE_PAYLOAD, MAX_TRUST_ROOTS,
+    SECURE_FRAME_HEADER_BYTES, SECURE_FRAME_TAG_BYTES, SECURE_FRAME_WIRE_BYTES,
 };
 pub use service::{
     Completion, IoOperation, IoRequest, MountError, MountId, MountInfo, MountOptions,

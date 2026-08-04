@@ -815,6 +815,7 @@ dependencies = [
  "synos-fabric",
  "synos-kernel",
  "synos-netd",
+ "synos-observability",
  "synos-status",
  "synos-synfs",
  "synos-system-model",

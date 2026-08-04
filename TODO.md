@@ -977,13 +977,13 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add endpoint rotation, NAT/relay support, MTU negotiation, connection retry, backoff, and offline discovery caching.
   - [x] Expose topology and connectivity diagnostics through shell, SDK, control apps, and structured telemetry.
 
-- [ ] **Cluster Security & Authorization**
-  - [ ] Define cluster administrator, operator, auditor, node owner, workload, and read-only roles.
-  - [ ] Require capability-authorized access for create, join, leave, remove, modify, invite, fence, and resource-management operations.
-  - [ ] Bind node admission to signed identities, hardware attestation, capability policies, and configurable trust roots.
-  - [ ] Encrypt and authenticate membership, control-plane, DLM, DSM, IPC, and telemetry traffic.
-  - [ ] Rotate cluster and node keys without downtime; revoke compromised nodes, invitations, certificates, and delegated capabilities.
-  - [ ] Audit every lifecycle, membership, authorization, configuration, fencing, and resource decision with correlation IDs.
+- [x] **Cluster Security & Authorization**
+  - [x] Define cluster administrator, operator, auditor, node owner, workload, and read-only roles.
+  - [x] Require capability-authorized access for create, join, leave, remove, modify, invite, fence, and resource-management operations.
+  - [x] Bind node admission to signed identities, hardware attestation, capability policies, and configurable trust roots.
+  - [x] Encrypt and authenticate membership, control-plane, DLM, DSM, IPC, and telemetry traffic.
+  - [x] Rotate cluster and node keys without downtime; revoke compromised nodes, invitations, certificates, and delegated capabilities.
+  - [x] Audit every lifecycle, membership, authorization, configuration, fencing, and resource decision with correlation IDs.
 
 - [ ] **Cluster Resources & Workloads**
   - [ ] Report aggregate and per-node CPU, RAM, VRAM, CXL, storage, network, accelerator, and lease capacity.
