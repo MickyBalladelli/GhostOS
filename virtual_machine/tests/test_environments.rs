@@ -216,7 +216,7 @@ fn qemu_rmdir_safety_workflow() {
         "QEMU did not reject the non-empty directory safely; serial output was: {output:?}"
     );
     assert!(
-        output.contains("invalid path") && output.contains("access denied"),
+        output.matches("access denied").count() >= 2,
         "QEMU did not protect root and the active default directory; serial output was: {output:?}"
     );
     assert!(

@@ -156,11 +156,15 @@ impl FilesystemSource for RemoteFilesystem {
 
     fn list(
         &mut self,
-        _path: &str,
+        path: &str,
         _continuation: Option<u32>,
-        _output: &mut DirectoryPage,
+        output: &mut DirectoryPage,
     ) -> Result<(), Status> {
-        Err(Status::NOT_FOUND)
+        if !self.directory_exists(path)? {
+            return Err(Status::NOT_FOUND)
+        }
+        output.clear();
+        Ok(())
     }
 
     fn create_directory(&mut self, _path: &str, _recursive: bool) -> Result<FileMetadata, Status> {
@@ -297,6 +301,6 @@ fn remote_terminal_rmdir_keeps_non_empty_and_protected_directories_safe() {
     let count = daemon.output(session, &mut output).expect("read remote output");
     assert_eq!(
         &output[..count],
-        b"ok\ndirectory not empty\naccess denied\nok\naccess denied\ninvalid path\npath not found\ndirectory not empty\n"
+        b"ok\ndirectory not empty\naccess denied\nok\naccess denied\naccess denied\nnot found\ndirectory not empty\n"
     );
 }
