@@ -321,7 +321,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
             .with_flags(Flags::RECURSIVE),
         Some(&mut invalid_path),
     );
-    assert_eq!(response.status, Status::INVALID_ARGUMENT);
+    assert_eq!(response.status, Status::INVALID_PATH);
 
     let response = daemon.dispatch(
         Request::new(Operation::List, process).with_capability(authority),

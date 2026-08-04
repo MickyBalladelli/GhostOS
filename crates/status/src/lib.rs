@@ -56,6 +56,12 @@ impl Status {
         Self::new(Severity::Warning, facility::FILESYSTEM, 3, 0).expect("valid status");
     pub const DIRECTORY_NOT_EMPTY: Self =
         Self::new(Severity::Error, facility::FILESYSTEM, 5, 0).expect("valid status");
+    pub const INVALID_PATH: Self =
+        Self::new(Severity::Error, facility::FILESYSTEM, 6, 0).expect("valid status");
+    pub const NOT_DIRECTORY: Self =
+        Self::new(Severity::Error, facility::FILESYSTEM, 7, 0).expect("valid status");
+    pub const READ_ONLY: Self =
+        Self::new(Severity::Error, facility::FILESYSTEM, 8, 0).expect("valid status");
     pub const QUORUM_LOST: Self =
         Self::new(Severity::Warning, facility::FABRIC, 1, 0).expect("valid status");
     pub const PARTITIONED: Self =
@@ -140,6 +146,9 @@ impl Status {
             (facility::FILESYSTEM, 2) => "already exists",
             (facility::FILESYSTEM, 3) => "conflict",
             (facility::FILESYSTEM, 5) => "directory not empty",
+            (facility::FILESYSTEM, 6) => "invalid path",
+            (facility::FILESYSTEM, 7) => "not a directory",
+            (facility::FILESYSTEM, 8) => "read-only mount",
             (facility::FABRIC, 1) => "quorum lost",
             (facility::FABRIC, 2) => "cluster partitioned",
             (facility::FABRIC, 3) => "clock skew",

@@ -9,7 +9,7 @@ fn structured_output_json_is_a_stable_schema_with_escaped_values() {
     output.insert("count", OutputValue::Unsigned(3)).unwrap();
     output.insert("enabled", OutputValue::Boolean(true)).unwrap();
     let rendered = render(&output, OutputFormat::Json).unwrap();
-    assert_eq!(rendered.as_str(), format!("{{\"status\":{},\"fields\":{{\"operation\":\"audit\\nready\",\"count\":3,\"enabled\":true}}}}", Status::NORMAL.raw()));
+    assert_eq!(rendered.as_str(), format!("{{\"status\":{},\"message\":\"normal\",\"fields\":{{\"operation\":\"audit\\nready\",\"count\":3,\"enabled\":true}}}}", Status::NORMAL.raw()));
 }
 
 #[test]
@@ -21,5 +21,5 @@ fn list_output_keeps_error_status_and_known_metadata_labels() {
     output.insert("size", OutputValue::Unsigned(12)).unwrap();
     output.insert("version", OutputValue::Unsigned(4)).unwrap();
     let rendered = render(&output, OutputFormat::List).unwrap();
-    assert_eq!(rendered.as_str(), format!("ERROR: status={}\nOperation: read\nPath: SYS$LOG:BOOT\nType: FILE\nSize: 12\nVersion: 4\n", Status::INVALID_ARGUMENT.raw()));
+    assert_eq!(rendered.as_str(), format!("ERROR: status={} (invalid argument)\nOperation: read\nPath: SYS$LOG:BOOT\nType: FILE\nSize: 12\nVersion: 4\n", Status::INVALID_ARGUMENT.raw()));
 }

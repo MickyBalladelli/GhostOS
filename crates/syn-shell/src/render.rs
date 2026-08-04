@@ -67,7 +67,12 @@ fn render_error_status(
     rendered: &mut Text<MAX_RENDERED_OUTPUT_BYTES>,
 ) -> Result<(), Error> {
     if matches!(output.status().severity(), Severity::Error | Severity::Fatal) {
-        writeln!(rendered, "ERROR: status={}", output.status().raw())
+        writeln!(
+            rendered,
+            "ERROR: status={} ({})",
+            output.status().raw(),
+            output.status().message()
+        )
             .map_err(|_| Error::Capacity)?;
     }
     Ok(())
@@ -431,8 +436,9 @@ fn render_json(
     let mut rendered = Text::empty();
     write!(
         &mut rendered,
-        "{{\"status\":{},\"fields\":{{",
-        output.status().raw()
+        "{{\"status\":{},\"message\":\"{}\",\"fields\":{{",
+        output.status().raw(),
+        output.status().message()
     )
     .map_err(|_| Error::Capacity)?;
     for (index, field) in output.fields().enumerate() {

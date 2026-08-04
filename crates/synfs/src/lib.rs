@@ -64,9 +64,8 @@ impl IntoStatus for Error {
                 Status::NO_SPACE
             }
             Self::Corrupt => Status::CORRUPT,
-            Self::InvalidPath | Self::InvalidVersion | Self::NotDirectory => {
-                Status::INVALID_ARGUMENT
-            }
+            Self::InvalidPath | Self::InvalidVersion => Status::INVALID_PATH,
+            Self::NotDirectory => Status::NOT_DIRECTORY,
             Self::DirectoryNotEmpty => Status::DIRECTORY_NOT_EMPTY,
             Self::TransactionAborted => Status::BUSY,
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)

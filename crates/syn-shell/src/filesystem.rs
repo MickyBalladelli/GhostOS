@@ -54,7 +54,7 @@ impl Path {
             || (bytes.len() > 1 && bytes.ends_with(b"/"))
             || bytes.windows(2).any(|pair| pair == b"//")
         {
-            return Err(Status::INVALID_ARGUMENT);
+            return Err(Status::INVALID_PATH);
         }
         let mut path = Self {
             bytes: [0; MAX_PATH_BYTES],
@@ -372,7 +372,7 @@ impl ShellSession {
         let path = path.unwrap_or(self.default_directory.as_str());
         let (path_without_version, version) = split_version_selector(path)?;
         if path_without_version.is_empty() {
-            return Err(Status::INVALID_ARGUMENT);
+            return Err(Status::INVALID_PATH);
         }
         if path_without_version != "/"
             && (path_without_version.ends_with('/')
@@ -381,38 +381,38 @@ impl ShellSession {
                     .windows(2)
                     .any(|pair| pair == b"//"))
         {
-            return Err(Status::INVALID_ARGUMENT);
+            return Err(Status::INVALID_PATH);
         }
         if path_without_version.contains('\0') {
-            return Err(Status::INVALID_ARGUMENT);
+            return Err(Status::INVALID_PATH);
         }
         Pattern::parse(path_without_version).map_err(pattern_status)?;
         let mut source = Text::<{ MAX_PATH_BYTES * 2 + 1 }>::empty();
         if !path_without_version.starts_with('/') {
             source
                 .push_str(self.default_directory.as_str())
-                .map_err(|_| Status::INVALID_ARGUMENT)?;
+                .map_err(|_| Status::INVALID_PATH)?;
             if !source.as_str().ends_with('/') {
                 source
                     .push_char('/')
-                    .map_err(|_| Status::INVALID_ARGUMENT)?;
+                    .map_err(|_| Status::INVALID_PATH)?;
             }
         }
         source
             .push_str(path_without_version)
-            .map_err(|_| Status::INVALID_ARGUMENT)?;
+            .map_err(|_| Status::INVALID_PATH)?;
         let resolved = canonicalize(source.as_str())?;
         let mut result = Text::<MAX_PATH_BYTES>::new(resolved.as_str())
             .map_err(|_| Status::INVALID_ARGUMENT)?;
         if let Some(version) = version {
             result
                 .push_char(';')
-                .map_err(|_| Status::INVALID_ARGUMENT)?;
+                .map_err(|_| Status::INVALID_PATH)?;
             let mut version_text = Text::<10>::empty();
             write_u32(&mut version_text, version)?;
             result
                 .push_str(version_text.as_str())
-                .map_err(|_| Status::INVALID_ARGUMENT)?;
+                .map_err(|_| Status::INVALID_PATH)?;
         }
         Path::new(result.as_str())
     }
@@ -427,9 +427,8 @@ impl ShellSession {
         }
         let resolved = self.resolve(Some(path))?;
         let resolved = literal_path(resolved.as_str())?;
-        if !source.directory_exists(resolved.as_str())? {
-            return Err(Status::NOT_FOUND);
-        }
+        let mut page = DirectoryPage::new();
+        source.list(resolved.as_str(), None, &mut page)?;
         self.default_directory = resolved;
         Ok(resolved)
     }
@@ -453,7 +452,7 @@ fn canonicalize(source: &str) -> Result<Path, Status> {
         }
         if component == ".." {
             if component_count == 0 {
-                return Err(Status::INVALID_ARGUMENT);
+                return Err(Status::INVALID_PATH);
             }
             result.len = component_starts[component_count - 1] as u16;
             component_count -= 1;
@@ -461,14 +460,14 @@ fn canonicalize(source: &str) -> Result<Path, Status> {
             continue;
         }
         if component.contains('\0') || component_count == component_starts.len() {
-            return Err(Status::INVALID_ARGUMENT);
+            return Err(Status::INVALID_PATH);
         }
         let start = if cursor == 1 { 1 } else { cursor + 1 };
         let end = start
             .checked_add(component.len())
-            .ok_or(Status::INVALID_ARGUMENT)?;
+            .ok_or(Status::INVALID_PATH)?;
         if end > MAX_PATH_BYTES {
-            return Err(Status::INVALID_ARGUMENT);
+            return Err(Status::INVALID_PATH);
         }
         if cursor > 1 {
             result.bytes[cursor] = b'/';
@@ -493,14 +492,14 @@ fn pattern_status(error: PatternError) -> Status {
         | PatternError::TrailingEscape
         | PatternError::UnterminatedClass
         | PatternError::EmptyClass
-        | PatternError::InvalidRange => Status::INVALID_ARGUMENT,
+        | PatternError::InvalidRange => Status::INVALID_PATH,
     }
 }
 
 fn literal_path(value: &str) -> Result<Path, Status> {
     let mut bytes = [0; MAX_PATH_BYTES];
     let length = unescape(value, &mut bytes).map_err(pattern_status)?;
-    let value = core::str::from_utf8(&bytes[..length]).map_err(|_| Status::INVALID_ARGUMENT)?;
+    let value = core::str::from_utf8(&bytes[..length]).map_err(|_| Status::INVALID_PATH)?;
     Path::new(value)
 }
 
@@ -892,10 +891,13 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             }
             return Ok(path)
         }
-        if version.is_none() && self.source.directory_exists(base_path)? {
+        if version.is_none() {
             let continuation = continuation.or(integer(command.get("CONTINUATION"))?);
-            self.source.list(base_path, continuation, output)?;
-            return Ok(path)
+            match self.source.list(base_path, continuation, output) {
+                Ok(()) => return Ok(path),
+                Err(Status::NOT_FOUND) => {}
+                Err(status) => return Err(status),
+            }
         }
 
         let Some((parent, name)) = base_path.rsplit_once('/') else {
@@ -1065,7 +1067,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let create = boolean(command.get("CREATE"))?;
         let recursive = boolean(command.get("RECURSIVE"))?;
         if path.as_str().contains(';') {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::INVALID_PATH)
         }
         if contains_wildcard(path.as_str()) {
             if create || recursive {
@@ -1108,19 +1110,14 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
     fn remove_directory(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         let path_value = text(command.get("PATH")).ok_or(Status::INVALID_ARGUMENT)?;
         let path = self.session.resolve(Some(path_value.as_str()))?;
-        if path.as_str() == "/"
-            || path.as_str().contains(';')
-            || contains_wildcard(path.as_str())
-            || is_path_or_descendant(path.as_str(), self.session.default_directory().as_str())
-        {
-            return Err(if is_path_or_descendant(
-                path.as_str(),
-                self.session.default_directory().as_str(),
-            ) {
-                Status::ACCESS_DENIED
-            } else {
-                Status::INVALID_ARGUMENT
-            })
+        if is_path_or_descendant(path.as_str(), self.session.default_directory().as_str()) {
+            return Err(Status::ACCESS_DENIED)
+        }
+        if path.as_str() == "/" {
+            return Err(Status::INVALID_PATH)
+        }
+        if path.as_str().contains(';') || contains_wildcard(path.as_str()) {
+            return Err(Status::INVALID_ARGUMENT)
         }
         let path = literal_path(path.as_str())?;
         self.source.remove_directory(path.as_str())?;
@@ -1207,7 +1204,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let path_value = text(command.get("PATH")).ok_or(Status::INVALID_ARGUMENT)?;
         let path = self.session.resolve(Some(path_value.as_str()))?;
         if path.as_str() == "/" {
-            return Err(Status::INVALID_ARGUMENT);
+            return Err(Status::INVALID_PATH);
         }
         let mut matches = PathCompletionPage::new();
         expand_paths(&mut self.source, path.as_str(), &mut matches)?;
@@ -1244,7 +1241,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let source = literal_path(source.as_str())?;
         let target = literal_path(target.as_str())?;
         if split_version_selector(target.as_str())?.1.is_some() || target.as_str() == "/" {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::INVALID_PATH)
         }
         let metadata = self.source.link(source.as_str(), target.as_str())?;
         let mut output = metadata_output("linked", metadata)?;

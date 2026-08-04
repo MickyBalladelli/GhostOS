@@ -1446,6 +1446,13 @@ impl FilesystemSource for KernelFilesystem {
         prefix: &str,
         output: &mut PathCompletionPage,
     ) -> Result<(), Status> {
+        if directory != "/"
+            && self
+                .find(directory)
+                .is_some_and(|file| file.file_type != EntryType::Directory)
+        {
+            return Err(Status::NOT_DIRECTORY)
+        }
         if !self.directory_exists(directory)? {
             return Err(Status::NOT_FOUND)
         }
@@ -1472,6 +1479,13 @@ impl FilesystemSource for KernelFilesystem {
         continuation: Option<u32>,
         output: &mut syn_shell::filesystem::DirectoryPage,
     ) -> Result<(), Status> {
+        if path != "/"
+            && self
+                .find(path)
+                .is_some_and(|file| file.file_type != EntryType::Directory)
+        {
+            return Err(Status::NOT_DIRECTORY)
+        }
         if !self.directory_exists(path)? {
             return Err(Status::NOT_FOUND)
         }
@@ -1516,14 +1530,10 @@ impl FilesystemSource for KernelFilesystem {
         recursive: bool,
     ) -> Result<FileMetadata, Status> {
         if path == "/" {
-            return Err(Status::NOT_FOUND)
+            return Err(Status::INVALID_PATH)
         }
-        if let Some(existing) = self.find(path) {
-            return if existing.file_type == EntryType::Directory {
-                Ok(self.metadata(existing))
-            } else {
-                Err(Status::ALREADY_EXISTS)
-            }
+        if self.find(path).is_some() {
+            return Err(Status::ALREADY_EXISTS)
         }
         if recursive {
             self.ensure_parent_directories(Self::parent(path))?;
@@ -1536,42 +1546,32 @@ impl FilesystemSource for KernelFilesystem {
 
     fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status> {
         if path == "/" {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::INVALID_PATH)
         }
         let parent = Self::parent(path);
         if self
             .find(parent)
             .is_some_and(|file| file.file_type != EntryType::Directory)
         {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::NOT_DIRECTORY)
         }
         if !self.directory_exists(parent)? {
             return Err(Status::NOT_FOUND)
         }
-        let version = if self.find(path).is_none() {
-            1
-        } else {
-            self.files
-                .iter()
-                .flatten()
-                .filter(|file| file.path.as_str() == path && !file.deleted)
-                .map(|file| file.version)
-                .max()
-                .map_or(Ok(1), |version| {
-                    version.checked_add(1).ok_or(Status::CORRUPT)
-                })?
-        };
-        self.insert_version(path, EntryType::File, version)
+        if self.find(path).is_some() {
+            return Err(Status::ALREADY_EXISTS)
+        }
+        self.insert_version(path, EntryType::File, 1)
             .map(|file| self.metadata(file))
     }
 
     fn remove_directory(&mut self, path: &str) -> Result<DirectoryRemovalMetadata, Status> {
         if path == "/" {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::INVALID_PATH)
         }
         let selected = self.find(path).ok_or(Status::NOT_FOUND)?;
         if selected.file_type != EntryType::Directory {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::NOT_DIRECTORY)
         }
         if self
             .files
@@ -1603,7 +1603,7 @@ impl FilesystemSource for KernelFilesystem {
     fn delete(&mut self, path: &str) -> Result<DeleteMetadata, Status> {
         let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
         if path == "/" {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::INVALID_PATH)
         }
         let selected = self
             .files
@@ -1618,7 +1618,7 @@ impl FilesystemSource for KernelFilesystem {
             .copied()
             .ok_or(Status::NOT_FOUND)?;
         if selected.file_type == EntryType::Directory {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::NOT_DIRECTORY)
         }
         let shared_before = self.link_count(selected.object_id);
         let slot = self
@@ -1660,7 +1660,7 @@ impl FilesystemSource for KernelFilesystem {
         }
         .ok_or(Status::NOT_FOUND)?;
         if source.file_type != EntryType::File {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::NOT_DIRECTORY)
         }
         if !self.directory_exists(Self::parent(target))? {
             return Err(Status::NOT_FOUND)
@@ -1711,7 +1711,7 @@ impl FilesystemSource for KernelFilesystem {
     ) -> Result<FileMetadata, Status> {
         let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
         if path == "/" {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::INVALID_PATH)
         }
         let file = match version {
             None | Some(0) => self.find(path),
@@ -1719,7 +1719,7 @@ impl FilesystemSource for KernelFilesystem {
         }
         .ok_or(Status::NOT_FOUND)?;
         if file.file_type != EntryType::File {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::NOT_DIRECTORY)
         }
         if version.is_some_and(|version| version != 0 && version != file.version) {
             return Err(Status::NOT_FOUND)
@@ -1734,7 +1734,11 @@ impl FilesystemSource for KernelFilesystem {
     fn save_file(&mut self, path: &str, contents: &[u8]) -> Result<FileMetadata, Status> {
         let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
         if path == "/" || contents.len() > KERNEL_FILE_BYTES {
-            return Err(Status::NO_SPACE)
+            return if path == "/" {
+                Err(Status::INVALID_PATH)
+            } else {
+                Err(Status::NO_SPACE)
+            }
         }
         let selected = match version {
             None | Some(0) => self.find(path),
@@ -1742,7 +1746,7 @@ impl FilesystemSource for KernelFilesystem {
         }
         .ok_or(Status::NOT_FOUND)?;
         if selected.file_type != EntryType::File {
-            return Err(Status::INVALID_ARGUMENT)
+            return Err(Status::NOT_DIRECTORY)
         }
         if version.is_some_and(|version| version != 0 && version != selected.version) {
             return Err(Status::NOT_FOUND)
@@ -2783,8 +2787,14 @@ fn status_reason(status: Status) -> &'static str {
         "file changed since edit began"
     } else if status == Status::DIRECTORY_NOT_EMPTY {
         "directory is not empty"
+    } else if status == Status::INVALID_PATH {
+        "invalid path"
+    } else if status == Status::NOT_DIRECTORY {
+        "not a directory"
+    } else if status == Status::READ_ONLY {
+        "read-only mount"
     } else {
-        "unknown error"
+        status.message()
     }
 }
 

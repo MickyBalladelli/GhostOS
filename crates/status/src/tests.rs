@@ -32,6 +32,9 @@ fn stable_messages_cover_public_status_constants() {
     assert_eq!(Status::NORMAL.message(), "normal");
     assert_eq!(Status::ACCESS_DENIED.message(), "access denied");
     assert_eq!(Status::DIRECTORY_NOT_EMPTY.message(), "directory not empty");
+    assert_eq!(Status::INVALID_PATH.message(), "invalid path");
+    assert_eq!(Status::NOT_DIRECTORY.message(), "not a directory");
+    assert_eq!(Status::READ_ONLY.message(), "read-only mount");
     assert_eq!(
         Status::new(Severity::Error, facility::KERNEL, 0x1f, 0).unwrap().message(),
         "unknown status"

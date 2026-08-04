@@ -57,9 +57,9 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define command names, aliases, abbreviations, positional arguments, and qualifiers for `DIRECTORY`, `CREATE`, `TYPE`, and `SET DEFAULT`.
   - [x] Register filesystem commands with the shell command dictionary and assign stable execution routes.
   - [x] Add structured output schemas for directory entries, created files, file contents, and the active default directory.
-  - [ ] Return clear status messages for missing paths, invalid paths, permissions, read-only mounts, existing files, and non-directory targets.
+  - [x] Return clear status messages for missing paths, invalid paths, permissions, read-only mounts, existing files, and non-directory targets.
 
-- [ ] **Path Resolution and Default Directory**
+- [x] **Path Resolution and Default Directory**
   - [x] Add a per-process or per-session default directory initialized to the SynFS root.
   - [x] Resolve relative paths against the caller's default directory before sending filesystem requests.
   - [x] Canonicalize absolute and relative paths while preventing traversal outside the mounted namespace.
@@ -67,7 +67,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add `SET DEFAULT` and a short `CD` alias, and expose the active directory in the shell prompt or `SHOW DEFAULT` output.
   - [x] Preserve default-directory state across command execution and reject stale or unauthorized directory capabilities.
 
-- [ ] **List Files in a Folder**
+- [x] **List Files in a Folder**
   - [x] Add a runtime filesystem API for listing a directory through a capability-authenticated request.
   - [x] Support absolute paths, relative paths, and the current default directory as list targets.
   - [x] Return typed entries with names, file types, sizes, versions, and link metadata instead of newline-only names.

@@ -196,13 +196,14 @@ impl From<ProtocolError> for DaemonError {
 impl IntoStatus for DaemonError {
     fn status(self) -> Status {
         match self {
-            Self::Protocol(_) | Self::InvalidRequest | Self::InvalidPath | Self::InvalidRename => {
+            Self::Protocol(_) | Self::InvalidRequest | Self::InvalidRename => {
                 Status::INVALID_ARGUMENT
             }
+            Self::InvalidPath => Status::INVALID_PATH,
             Self::ProcessNotRegistered
             | Self::AccessDenied
-            | Self::InvalidCapability
-            | Self::ReadOnly => Status::ACCESS_DENIED,
+            | Self::InvalidCapability => Status::ACCESS_DENIED,
+            Self::ReadOnly => Status::READ_ONLY,
             Self::CrossVolume => Status::INVALID_ARGUMENT,
             Self::CapabilityExhausted
             | Self::HandleExhausted
@@ -213,9 +214,8 @@ impl IntoStatus for DaemonError {
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
                 .expect("valid filesystem status"),
             Self::Namespace(error) => match error {
-                NamespaceError::InvalidPath | NamespaceError::InvalidPartition => {
-                    Status::INVALID_ARGUMENT
-                }
+                NamespaceError::InvalidPath => Status::INVALID_PATH,
+                NamespaceError::InvalidPartition => Status::INVALID_ARGUMENT,
                 NamespaceError::Capacity => Status::NO_SPACE,
                 NamespaceError::InvalidCapability | NamespaceError::AccessDenied => {
                     Status::ACCESS_DENIED
