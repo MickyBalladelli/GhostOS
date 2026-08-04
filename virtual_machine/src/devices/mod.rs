@@ -40,7 +40,7 @@ pub use virtio::{
     VIRTIO_RNG_SUBCLASS,
 };
 pub use storage::{
-    Ahci, AttachedDisk, DiskController, DiskFormat, DiskImage, DiskInfo, DiskManager, DiskMode,
+    Ahci, AttachedDisk, DiskController, DiskFormat, DiskImage, DiskInfo, DiskLockInfo, DiskManager, DiskMode,
     DiskPersistence, DiskRole, DiskSpec, Nvme, StorageError, AHCI_ABAR_SIZE, AHCI_CLASS,
     AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID, NVME_BAR0_SIZE, NVME_CLASS,
     NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID, SystemDiskCreateOptions,

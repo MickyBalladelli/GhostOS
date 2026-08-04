@@ -155,6 +155,60 @@ impl DiskManager {
             .map(|disk| &disk.info)
     }
 
+    /// Inspect a configured disk without claiming its writable ownership.
+    ///
+    /// This is used by management commands so inspection never changes the
+    /// runtime ownership state of a VM disk.
+    pub fn inspect(spec: &DiskSpec) -> Result<DiskInfo, StorageError> {
+        let source = fs::canonicalize(&spec.image_path).map_err(|error| {
+            StorageError::InvalidImage(format!(
+                "cannot resolve disk `{}`: {error}",
+                spec.image_path.display()
+            ))
+        })?;
+        let image = DiskImage::open_with_access(&source, false)?;
+        if let Some(expected) = spec.format {
+            if image.format() != expected {
+                return Err(StorageError::InvalidImage(format!(
+                    "disk `{}` has format {:?}, expected {:?}",
+                    spec.id,
+                    image.format(),
+                    expected
+                )));
+            }
+        }
+        if image.size() == 0 || image.size() % SECTOR_SIZE != 0 {
+            return Err(StorageError::InvalidImage(format!(
+                "disk `{}` capacity {} is not a non-zero sector multiple",
+                spec.id,
+                image.size()
+            )));
+        }
+        if let Some(expected) = spec.capacity {
+            if image.size() != expected {
+                return Err(StorageError::InvalidImage(format!(
+                    "disk `{}` capacity is {}, expected {}",
+                    spec.id,
+                    image.size(),
+                    expected
+                )));
+            }
+        }
+        Ok(DiskInfo {
+            id: spec.id.clone(),
+            role: spec.role,
+            controller: spec.controller,
+            bus: spec.bus,
+            slot: spec.slot,
+            image_path: source,
+            format: image.format(),
+            capacity: image.size(),
+            read_only: spec.read_only,
+            persistence: spec.persistence,
+            guest_id: guest_id(spec),
+        })
+    }
+
     pub(crate) fn validate_specs(specs: &[DiskSpec]) -> Result<(), StorageError> {
         let mut ids = HashSet::new();
         let mut locations = HashSet::new();

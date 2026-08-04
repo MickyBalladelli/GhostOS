@@ -2,24 +2,79 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use synos_vm::{
-    run_synos_integration, FirmwareMode, TerminalExit, TerminalInputMode, TerminalSession, Vm,
-    VmConfig, COM1_PORT, COM2_PORT,
+    run_synos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
+    DiskRole,
+    DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
+    TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig, COM1_PORT, COM2_PORT,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct Cli {
+    command: Command,
     config: VmConfig,
     efi_path: Option<PathBuf>,
     integration: bool,
     terminal: Option<bool>,
     input_mode: TerminalInputMode,
+    disk_options: DiskOptions,
+}
+
+enum Command {
+    Run,
+    ListDisks,
+}
+
+enum DiskCommand {
+    List(DiskOptions),
+    Inspect(PathBuf),
+    Validate(PathBuf),
+    Provision {
+        path: PathBuf,
+        kernel: PathBuf,
+        initrd: Option<PathBuf>,
+        size: Option<u64>,
+        format: DiskFormat,
+        replace: bool,
+        boot_args: String,
+        machine_identity: String,
+        network_identity: String,
+    },
+    Lock(PathBuf),
+    RecoverLock(PathBuf),
+}
+
+struct DiskOptions {
+    disks: Vec<PathBuf>,
+    system_disk: Option<PathBuf>,
+    controller: DiskController,
+    format: Option<DiskFormat>,
+    size: Option<u64>,
+    read_only: bool,
+    persistence: DiskPersistence,
+    create_if_missing: bool,
+}
+
+impl Default for DiskOptions {
+    fn default() -> Self {
+        Self {
+            disks: Vec::new(),
+            system_disk: None,
+            controller: DiskController::VirtioBlk,
+            format: None,
+            size: None,
+            read_only: false,
+            persistence: DiskPersistence::Persistent,
+            create_if_missing: false,
+        }
+    }
 }
 
 enum ParseResult {
     Run(Cli),
     Help,
     Version,
+    Disk(DiskCommand),
 }
 
 fn main() {
@@ -36,6 +91,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Ok(ParseResult::Disk(command)) => {
+            if let Err(error) = run_disk_command(command) {
+                eprintln!("synos-vm: {error}");
+                std::process::exit(1);
+            }
+        }
         Err(error) => {
             eprintln!("synos-vm: {error}");
             eprintln!("Try `synos-vm --help` for usage.");
@@ -48,12 +109,19 @@ fn parse_args<I>(args: I) -> Result<ParseResult, String>
 where
     I: IntoIterator<Item = String>,
 {
+    let values: Vec<String> = args.into_iter().collect();
+    if values.first().map(String::as_str) == Some("disk") {
+        return parse_disk_command(&values[1..]);
+    }
+
     let mut config = VmConfig::default();
     let mut efi_path = None;
     let mut integration = false;
     let mut terminal = None;
     let mut input_mode = TerminalInputMode::Serial;
-    let mut args = args.into_iter().peekable();
+    let mut command = Command::Run;
+    let mut disk_options = DiskOptions::default();
+    let mut args = values.into_iter().peekable();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -108,6 +176,29 @@ where
                 };
             }
             "--integration" => integration = true,
+            "--list-disks" => command = Command::ListDisks,
+            "--disk" => disk_options.disks.push(PathBuf::from(next_value(&mut args, "--disk")?)),
+            "--system-disk" => {
+                if disk_options.system_disk.is_some() {
+                    return Err("--system-disk may only be supplied once".to_string());
+                }
+                disk_options.system_disk = Some(PathBuf::from(next_value(&mut args, "--system-disk")?));
+            }
+            "--disk-controller" => {
+                disk_options.controller = parse_disk_controller(&next_value(&mut args, "--disk-controller")?)?;
+            }
+            "--disk-format" => {
+                disk_options.format = Some(parse_disk_format(&next_value(&mut args, "--disk-format")?)?);
+            }
+            "--disk-size" => {
+                let value = next_value(&mut args, "--disk-size")?;
+                disk_options.size = Some(parse_size_bytes(&value, "disk size")?);
+            }
+            "--read-only" => disk_options.read_only = true,
+            "--read-write" => disk_options.read_only = false,
+            "--copy-on-write" => disk_options.persistence = DiskPersistence::CopyOnWrite,
+            "--disposable" => disk_options.persistence = DiskPersistence::Disposable,
+            "--create-if-missing" => disk_options.create_if_missing = true,
             value if value.starts_with('-') => {
                 return Err(format!("unknown option `{value}`"));
             }
@@ -132,12 +223,125 @@ where
     }
 
     Ok(ParseResult::Run(Cli {
+        command,
         config,
         efi_path,
         integration,
         terminal,
         input_mode,
+        disk_options,
     }))
+}
+
+fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
+    let subcommand = values
+        .first()
+        .map(String::as_str)
+        .ok_or_else(|| "disk needs a command: list, inspect, validate, provision, lock, or recover-lock".to_string())?;
+    match subcommand {
+        "list" => Ok(ParseResult::Disk(DiskCommand::List(parse_disk_options(&values[1..])?))),
+        "inspect" => Ok(ParseResult::Disk(DiskCommand::Inspect(command_path(values, "inspect")?))),
+        "validate" => Ok(ParseResult::Disk(DiskCommand::Validate(command_path(values, "validate")?))),
+        "lock" => Ok(ParseResult::Disk(DiskCommand::Lock(command_path(values, "lock")?))),
+        "recover-lock" => Ok(ParseResult::Disk(DiskCommand::RecoverLock(command_path(values, "recover-lock")?))),
+        "provision" => parse_provision_command(&values[1..]),
+        "help" | "--help" | "-h" => Ok(ParseResult::Help),
+        value => Err(format!("unknown disk command `{value}`")),
+    }
+}
+
+fn command_path(values: &[String], command: &str) -> Result<PathBuf, String> {
+    if values.len() != 2 {
+        return Err(format!("disk {command} needs exactly one PATH"));
+    }
+    Ok(PathBuf::from(&values[1]))
+}
+
+fn parse_disk_options(values: &[String]) -> Result<DiskOptions, String> {
+    let mut options = DiskOptions::default();
+    let mut args = values.iter().peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--disk" => options.disks.push(PathBuf::from(next_ref(&mut args, "--disk")?)),
+            "--system-disk" => {
+                if options.system_disk.is_some() {
+                    return Err("--system-disk may only be supplied once".to_string());
+                }
+                options.system_disk = Some(PathBuf::from(next_ref(&mut args, "--system-disk")?));
+            }
+            "--disk-controller" => {
+                options.controller = parse_disk_controller(next_ref(&mut args, "--disk-controller")?)?;
+            }
+            "--disk-format" => {
+                options.format = Some(parse_disk_format(next_ref(&mut args, "--disk-format")?)?);
+            }
+            "--disk-size" => {
+                let value = next_ref(&mut args, "--disk-size")?;
+                options.size = Some(parse_size_bytes(value, "disk size")?);
+            }
+            "--read-only" => options.read_only = true,
+            "--read-write" => options.read_only = false,
+            "--copy-on-write" => options.persistence = DiskPersistence::CopyOnWrite,
+            "--disposable" => options.persistence = DiskPersistence::Disposable,
+            "--create-if-missing" => options.create_if_missing = true,
+            "--help" | "-h" => return Ok(options),
+            value => return Err(format!("unknown disk list option `{value}`")),
+        }
+    }
+    Ok(options)
+}
+
+fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
+    let mut args = values.iter().peekable();
+    let path = PathBuf::from(next_ref(&mut args, "disk provision PATH")?);
+    let mut kernel = None;
+    let mut initrd = None;
+    let mut size = None;
+    let mut format = DiskFormat::Raw;
+    let mut replace = false;
+    let mut boot_args = String::new();
+    let mut machine_identity = String::new();
+    let mut network_identity = String::new();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--kernel" => kernel = Some(PathBuf::from(next_ref(&mut args, "--kernel")?)),
+            "--initrd" => initrd = Some(PathBuf::from(next_ref(&mut args, "--initrd")?)),
+            "--size" | "--disk-size" => {
+                size = Some(parse_size_bytes(next_ref(&mut args, "--size")?, "disk size")?);
+            }
+            "--format" | "--disk-format" => {
+                format = parse_disk_format(next_ref(&mut args, "--format")?)?;
+            }
+            "--replace" => replace = true,
+            "--boot-args" | "--append" => boot_args = next_ref(&mut args, "--boot-args")?.to_string(),
+            "--machine-id" => machine_identity = next_ref(&mut args, "--machine-id")?.to_string(),
+            "--network-id" => network_identity = next_ref(&mut args, "--network-id")?.to_string(),
+            value => return Err(format!("unknown disk provision option `{value}`")),
+        }
+    }
+    let kernel = kernel.ok_or_else(|| "disk provision needs --kernel PATH".to_string())?;
+    Ok(ParseResult::Disk(DiskCommand::Provision {
+        path,
+        kernel,
+        initrd,
+        size,
+        format,
+        replace,
+        boot_args,
+        machine_identity,
+        network_identity,
+    }))
+}
+
+fn next_ref<'a, I>(args: &mut std::iter::Peekable<I>, option: &str) -> Result<&'a str, String>
+where
+    I: Iterator<Item = &'a String>,
+{
+    let value = args.next().ok_or_else(|| format!("{option} needs a value"))?;
+    if value.starts_with('-') {
+        return Err(format!("{option} needs a value"));
+    }
+    Ok(value)
 }
 
 fn next_value<I>(args: &mut std::iter::Peekable<I>, option: &str) -> Result<String, String>
@@ -202,6 +406,34 @@ fn parse_memory(value: &str) -> Option<usize> {
         .filter(|size| *size > 0)
 }
 
+fn parse_size_bytes(value: &str, name: &str) -> Result<u64, String> {
+    parse_memory(value)
+        .map(|size| size as u64)
+        .ok_or_else(|| format!("invalid {name} `{value}`"))
+}
+
+fn parse_disk_controller(value: &str) -> Result<DiskController, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "ahci" | "sata" => Ok(DiskController::Ahci),
+        "nvme" => Ok(DiskController::Nvme),
+        "virtio" | "virtio-blk" => Ok(DiskController::VirtioBlk),
+        _ => Err(format!(
+            "invalid disk controller `{value}`; use ahci, nvme, or virtio-blk"
+        )),
+    }
+}
+
+fn parse_disk_format(value: &str) -> Result<DiskFormat, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "raw" | "img" => Ok(DiskFormat::Raw),
+        "vhd" => Ok(DiskFormat::Vhd),
+        "qcow2" | "qcow" => Ok(DiskFormat::Qcow2),
+        _ => Err(format!(
+            "invalid disk format `{value}`; use raw, vhd, or qcow2"
+        )),
+    }
+}
+
 fn parse_serial_port(value: &str) -> Result<u16, String> {
     match value.to_ascii_lowercase().as_str() {
         "com1" => Ok(COM1_PORT),
@@ -214,7 +446,13 @@ fn parse_serial_port(value: &str) -> Result<u16, String> {
     }
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(mut cli: Cli) -> Result<(), String> {
+    let list_disks = matches!(&cli.command, Command::ListDisks);
+    cli.config.disks = prepare_disk_specs(&cli.disk_options)?;
+    if list_disks {
+        return print_disk_inventory(&cli.config.disks);
+    }
+
     let config = cli.config;
     if std::io::stdout().is_terminal() {
         print!(
@@ -288,6 +526,274 @@ fn run(cli: Cli) -> Result<(), String> {
     result
 }
 
+fn prepare_disk_specs(options: &DiskOptions) -> Result<Vec<DiskSpec>, String> {
+    let mut specs = Vec::new();
+    if options.system_disk.is_none() && options.disks.is_empty() {
+        return Ok(specs);
+    }
+    if let Some(path) = options.system_disk.as_ref() {
+        specs.push(make_disk_spec("system", DiskRole::System, path, options)?);
+    }
+    for (index, path) in options.disks.iter().enumerate() {
+        specs.push(make_disk_spec(
+            &format!("disk{index}"),
+            DiskRole::Data,
+            path,
+            options,
+        )?);
+    }
+    Ok(specs)
+}
+
+fn make_disk_spec(
+    id: &str,
+    role: DiskRole,
+    path: &PathBuf,
+    options: &DiskOptions,
+) -> Result<DiskSpec, String> {
+    if !path.exists() {
+        if !options.create_if_missing {
+            return Err(format!(
+                "disk path {} does not exist; pass --create-if-missing explicitly",
+                path.display()
+            ));
+        }
+        let size = options.size.ok_or_else(|| {
+            format!(
+                "disk path {} is missing; --disk-size is required with --create-if-missing",
+                path.display()
+            )
+        })?;
+        let create_options = SystemDiskCreateOptions::new(size)
+            .with_format(options.format.unwrap_or(DiskFormat::Raw));
+        SystemDiskProvisioner::create(path, create_options)
+            .map_err(|error| format!("cannot create disk {}: {error}", path.display()))?;
+    }
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("cannot canonicalize disk {}: {error}", path.display()))?;
+    let mut spec = DiskSpec::new(id, canonical)
+        .with_controller(options.controller)
+        .with_persistence(options.persistence)
+        .read_only(options.read_only);
+    spec.role = role;
+    if let Some(format) = options.format {
+        spec = spec.with_format(format);
+    }
+    if let Some(size) = options.size {
+        spec = spec.with_capacity(size);
+    }
+    Ok(spec)
+}
+
+fn run_disk_command(command: DiskCommand) -> Result<(), String> {
+    match command {
+        DiskCommand::List(options) => {
+            let specs = prepare_disk_specs(&options)?;
+            if specs.is_empty() {
+                return Err("disk list needs --disk PATH or --system-disk PATH".to_string());
+            }
+            print_disk_inventory(&specs)
+        }
+        DiskCommand::Inspect(path) => inspect_disk(&path),
+        DiskCommand::Validate(path) => {
+            let manifest = SystemDiskProvisioner::validate(&path)
+                .map_err(|error| format!("disk validation failed for {}: {error}", path.display()))?;
+            println!(
+                "valid system disk: path={} format={} capacity={} generation={} kernel={} bytes initrd={} bytes",
+                canonical_display(&path)?,
+                format_name(manifest.format),
+                format_bytes(manifest.disk_size),
+                manifest.generation,
+                manifest.layout.kernel_size,
+                manifest.layout.initrd_size,
+            );
+            Ok(())
+        }
+        DiskCommand::Provision {
+            path,
+            kernel,
+            initrd,
+            size,
+            format,
+            replace,
+            boot_args,
+            machine_identity,
+            network_identity,
+        } => {
+            let mut install = SystemDiskInstall::new(kernel)
+                .with_boot_args(boot_args)
+                .with_machine_identity(machine_identity)
+                .with_network_identity(network_identity);
+            if let Some(initrd) = initrd {
+                install = install.with_initrd(initrd);
+            }
+            let manifest = if let Some(size) = size {
+                SystemDiskProvisioner::provision_with_options(
+                    &path,
+                    SystemDiskCreateOptions::new(size)
+                        .with_format(format)
+                        .replace_existing(replace),
+                    &install,
+                )
+                .map_err(|error| format!("disk provisioning failed: {error}"))?
+            } else if replace {
+                return Err("disk provision --replace needs --size".to_string());
+            } else {
+                SystemDiskProvisioner::provision(&path, &install)
+                    .map_err(|error| format!("disk provisioning failed: {error}"))?
+            };
+            println!(
+                "provisioned system disk: path={} format={} capacity={} generation={}",
+                canonical_display(&path)?,
+                format_name(manifest.format),
+                format_bytes(manifest.disk_size),
+                manifest.generation,
+            );
+            Ok(())
+        }
+        DiskCommand::Lock(path) => print_lock_status(&path),
+        DiskCommand::RecoverLock(path) => {
+            let info = DiskImage::recover_stale_lock(&path)
+                .map_err(|error| format!("cannot recover lock for {}: {error}", path.display()))?;
+            println!("recovered stale disk lock {} (owner: {})", info.path.display(), info.owner.trim());
+            Ok(())
+        }
+    }
+}
+
+fn print_disk_inventory(specs: &[DiskSpec]) -> Result<(), String> {
+    for spec in specs {
+        let info = DiskManager::inspect(spec);
+        match info {
+            Ok(info) => {
+                let lock = DiskImage::inspect_lock(&info.image_path)
+                    .map_err(|error| format!("cannot inspect disk lock: {error}"))?;
+                let health = if spec.role == DiskRole::System {
+                    match SystemDiskProvisioner::validate(&info.image_path) {
+                        Ok(_) => "healthy".to_string(),
+                        Err(_) => "uninstalled or invalid".to_string(),
+                    }
+                } else {
+                    "healthy".to_string()
+                };
+                let lock_state = lock
+                    .map(|lock| format!("locked(stale={})", lock.stale))
+                    .unwrap_or_else(|| "unlocked".to_string());
+                println!(
+                    "id={} role={} controller={} format={} capacity={} persistence={} read-only={} health={} guest-id={} path={} lock={}",
+                    info.id,
+                    role_name(info.role),
+                    controller_name(info.controller),
+                    format_name(info.format),
+                    format_bytes(info.capacity),
+                    persistence_name(info.persistence),
+                    info.read_only,
+                    health,
+                    info.guest_id,
+                    info.image_path.display(),
+                    lock_state,
+                );
+            }
+            Err(error) => println!(
+                "id={} role={} path={} health=invalid ({error})",
+                spec.id,
+                role_name(spec.role),
+                spec.image_path.display(),
+            ),
+        }
+    }
+    Ok(())
+}
+
+fn inspect_disk(path: &PathBuf) -> Result<(), String> {
+    let image = DiskImage::open_with_access(path, false)
+        .map_err(|error| format!("cannot inspect disk {}: {error}", path.display()))?;
+    let lock = DiskImage::inspect_lock(path)
+        .map_err(|error| format!("cannot inspect disk lock: {error}"))?;
+    let health = match SystemDiskProvisioner::validate(path) {
+        Ok(_) => "healthy system installation".to_string(),
+        Err(_) => "valid image, no installed system".to_string(),
+    };
+    println!(
+        "path={} format={} capacity={} health={} lock={}",
+        canonical_display(path)?,
+        format_name(image.format()),
+        format_bytes(image.size()),
+        health,
+        lock.map(|value| format!("present(stale={})", value.stale))
+            .unwrap_or_else(|| "absent".to_string()),
+    );
+    Ok(())
+}
+
+fn print_lock_status(path: &PathBuf) -> Result<(), String> {
+    match DiskImage::inspect_lock(path)
+        .map_err(|error| format!("cannot inspect lock for {}: {error}", path.display()))?
+    {
+        Some(info) => println!(
+            "lock={} stale={} pid={} image={} owner={}",
+            info.path.display(),
+            info.stale,
+            info.pid.map(|pid| pid.to_string()).unwrap_or_else(|| "unknown".to_string()),
+            info.image_path
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            info.owner.trim().replace('\n', "; "),
+        ),
+        None => println!("lock={} state=absent", DiskImage::lock_path(path).display()),
+    }
+    Ok(())
+}
+
+fn canonical_display(path: &PathBuf) -> Result<String, String> {
+    std::fs::canonicalize(path)
+        .map(|value| value.display().to_string())
+        .map_err(|error| format!("cannot canonicalize {}: {error}", path.display()))
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    const GIB: u64 = 1024 * MIB;
+    if bytes % GIB == 0 {
+        format!("{} GiB", bytes / GIB)
+    } else if bytes % MIB == 0 {
+        format!("{} MiB", bytes / MIB)
+    } else {
+        format!("{} bytes", bytes)
+    }
+}
+
+fn format_name(format: DiskFormat) -> &'static str {
+    match format {
+        DiskFormat::Raw => "raw",
+        DiskFormat::Vhd => "vhd",
+        DiskFormat::Qcow2 => "qcow2",
+    }
+}
+
+fn controller_name(controller: DiskController) -> &'static str {
+    match controller {
+        DiskController::Ahci => "ahci",
+        DiskController::Nvme => "nvme",
+        DiskController::VirtioBlk => "virtio-blk",
+    }
+}
+
+fn role_name(role: DiskRole) -> &'static str {
+    match role {
+        DiskRole::System => "system",
+        DiskRole::Data => "data",
+    }
+}
+
+fn persistence_name(persistence: synos_vm::DiskPersistence) -> &'static str {
+    match persistence {
+        synos_vm::DiskPersistence::Persistent => "persistent",
+        synos_vm::DiskPersistence::CopyOnWrite => "copy-on-write",
+        synos_vm::DiskPersistence::Disposable => "disposable",
+    }
+}
+
 fn format_memory(bytes: usize) -> String {
     const KIB: usize = 1024;
     const MIB: usize = KIB * 1024;
@@ -328,10 +834,30 @@ Machine options:
       --interactive          Force raw interactive terminal mode
       --non-interactive      Disable raw mode; keep pipe input usable
       --input <MODE>         Host input path: serial (default) or ps2
-      --steps <COUNT>       Run a bounded number of instructions
+      --steps <COUNT>        Run a bounded number of instructions
+
+Disk options:
+      --disk <PATH>          Attach a data disk; repeat for more disks
+      --system-disk <PATH>   Attach the SynOS system disk
+      --disk-controller <C>  Controller: ahci, nvme, or virtio-blk
+      --disk-format <F>      Image format: raw, vhd, or qcow2
+      --disk-size <SIZE>     Require this capacity, or use it when creating
+      --read-only            Open disks without writable ownership
+      --copy-on-write        Use a temporary clone for VM writes
+      --disposable            Use a temporary clone and discard VM writes
+      --create-if-missing    Explicitly create a missing disk image
+      --list-disks           Inspect configured disks and do not boot
 
 Commands:
       --integration          Run SynOS integration checks
+  synos-vm disk list          List disk health and guest identities
+  synos-vm disk inspect PATH  Inspect an image without modifying it
+  synos-vm disk validate PATH Validate an installed system disk
+  synos-vm disk provision PATH --kernel PATH [OPTIONS]
+                              Create/install a system disk without booting
+  synos-vm disk lock PATH     Diagnose an ownership lock
+  synos-vm disk recover-lock PATH
+                              Recover a lock only when its owner is stale
 
 Other options:
   -h, --help                Show this help

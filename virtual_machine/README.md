@@ -50,6 +50,41 @@ cargo build --release
 
 Pass `--initrd <PATH>` only when you have a separate initrd image.
 
+### Disk operations
+
+Disk paths are always supplied explicitly. The VM canonicalizes them before
+attachment; it never chooses a host disk. A new VM can provision and boot from
+a system disk like this:
+
+```bash
+../target/release/synos-vm disk provision ./state/system.raw \
+  --kernel ../build/bios/kernel.bin \
+  --size 64M --boot-args "console=serial0"
+
+../target/release/synos-vm \
+  --system-disk ./state/system.raw --firmware bios --interactive
+```
+
+Reopen that VM with the same `--system-disk` path. Attach a data disk with
+`--disk PATH`; choose `--disk-controller ahci|nvme|virtio-blk` and
+`--disk-format raw|vhd|qcow2`. `--disk-size` checks an existing image's exact
+capacity. `--create-if-missing` requires `--disk-size` and is the only way the
+CLI creates an image.
+
+Inspect disks without booting:
+
+```bash
+../target/release/synos-vm disk list --system-disk ./state/system.raw
+../target/release/synos-vm disk inspect ./state/system.raw
+../target/release/synos-vm disk validate ./state/system.raw
+```
+
+Use `--read-only` to share a base image safely, or `--copy-on-write` for a
+temporary writable clone. Writable persistent attachments create a
+`<image>.synos.lock` ownership marker. Use `disk lock PATH` to inspect its PID
+and owner metadata, then `disk recover-lock PATH` only after the owner is
+reported stale.
+
 Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
 bounded run or `--integration` to run the SynOS integration checks.
 

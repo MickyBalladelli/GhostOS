@@ -82,6 +82,16 @@ struct DiskLock {
     path: PathBuf,
 }
 
+/// Metadata for a disk ownership marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskLockInfo {
+    pub path: PathBuf,
+    pub owner: String,
+    pub pid: Option<u32>,
+    pub image_path: Option<PathBuf>,
+    pub stale: bool,
+}
+
 impl Drop for DiskLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
@@ -244,6 +254,46 @@ impl DiskImage {
     pub fn recover_lock<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
         let lock_path = Self::lock_path(path);
         fs::remove_file(&lock_path).map_err(StorageError::Io)
+    }
+
+    /// Read ownership metadata without changing the lock.
+    pub fn inspect_lock<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<Option<DiskLockInfo>, StorageError> {
+        let lock_path = Self::lock_path(path);
+        if !lock_path.exists() {
+            return Ok(None);
+        }
+        let owner = fs::read_to_string(&lock_path)?;
+        let pid = owner.lines().find_map(|line| {
+            line.strip_prefix("pid=")?.trim().parse::<u32>().ok()
+        });
+        let image_path = owner
+            .lines()
+            .find_map(|line| line.strip_prefix("image=").map(PathBuf::from));
+        let stale = pid.map(|value| !process_exists(value)).unwrap_or(true);
+        Ok(Some(DiskLockInfo {
+            path: lock_path,
+            owner,
+            pid,
+            image_path,
+            stale,
+        }))
+    }
+
+    /// Remove an ownership marker only when its recorded process is gone.
+    pub fn recover_stale_lock<P: AsRef<Path>>(path: P) -> Result<DiskLockInfo, StorageError> {
+        let info = Self::inspect_lock(&path)?.ok_or_else(|| {
+            StorageError::InvalidImage("disk has no ownership lock".to_string())
+        })?;
+        if !info.stale {
+            return Err(StorageError::Locked {
+                path: info.path.display().to_string(),
+                owner: info.owner.clone(),
+            });
+        }
+        Self::recover_lock(path)?;
+        Ok(info)
     }
 
     /// Parse and validate a fixed-size VHD footer.
@@ -474,6 +524,17 @@ impl DiskImage {
         }
         Ok(())
     }
+}
+
+fn process_exists(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 impl QcowFile {

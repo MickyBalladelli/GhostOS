@@ -13,7 +13,7 @@ pub mod system_disk;
 pub use ahci::{
     Ahci, AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
 };
-pub use disk_image::{DiskFormat, DiskImage};
+pub use disk_image::{DiskFormat, DiskImage, DiskLockInfo};
 pub use management::{
     AttachedDisk, DiskController, DiskInfo, DiskManager, DiskMode, DiskPersistence, DiskRole,
     DiskSpec,

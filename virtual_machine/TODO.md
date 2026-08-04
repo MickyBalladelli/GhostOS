@@ -71,13 +71,13 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Preserve settings and filesystem changes across VM shutdown, reboot, and a later VM created from the same disk.
   - [x] Add system-disk version checks and an upgrade/migration path for changes to the on-disk layout or SynOS installation.
 
-- [ ] **Disk CLI and Operational Controls**
-  - [ ] Add VM CLI options for `--disk`, `--system-disk`, `--disk-controller`, `--disk-format`, `--disk-size`, `--read-only`, and create-if-missing behavior.
-  - [ ] Add commands or inspection output to list attached disks, roles, formats, capacities, persistence mode, health, and guest-visible identifiers.
-  - [ ] Add a validate/provision workflow that can prepare a disk without booting a VM and can inspect an installed disk without modifying it.
-  - [ ] Make disk paths explicit, canonical, and scoped to the VM configuration; avoid silently creating or selecting a host disk.
-  - [ ] Add locking and ownership metadata so concurrent VM launches fail safely and stale locks can be diagnosed and recovered.
-  - [ ] Document disk lifecycle examples for creating a new SynOS VM, reopening an existing VM, attaching a data disk, and using a read-only clone.
+- [x] **Disk CLI and Operational Controls**
+  - [x] Add VM CLI options for `--disk`, `--system-disk`, `--disk-controller`, `--disk-format`, `--disk-size`, `--read-only`, and create-if-missing behavior.
+  - [x] Add commands or inspection output to list attached disks, roles, formats, capacities, persistence mode, health, and guest-visible identifiers.
+  - [x] Add a validate/provision workflow that can prepare a disk without booting a VM and can inspect an installed disk without modifying it.
+  - [x] Make disk paths explicit, canonical, and scoped to the VM configuration; avoid silently creating or selecting a host disk.
+  - [x] Add locking and ownership metadata so concurrent VM launches fail safely and stale locks can be diagnosed and recovered.
+  - [x] Document disk lifecycle examples for creating a new SynOS VM, reopening an existing VM, attaching a data disk, and using a read-only clone.
 
 - [ ] **Disk Reliability and Validation**
   - [ ] Test attachment and boot with RAW, fixed VHD, and QCOW2 images through AHCI, NVMe, and virtio-blk where supported.

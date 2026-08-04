@@ -13,7 +13,7 @@ pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
 pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
-    Ahci, ApicTrigger, Device, DiskController, DiskFormat, DiskImage, DiskInfo, DiskManager,
+    Ahci, ApicTrigger, Device, DiskController, DiskFormat, DiskImage, DiskInfo, DiskLockInfo, DiskManager,
     DiskMode, DiskPersistence, DiskRole, DiskSpec, DisplayState, E1000, E1000_MMIO_SIZE,
     GopMode,
     GopPixelFormat, Hpet, InterruptController, LegacyPic, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
