@@ -297,6 +297,40 @@ mod tests {
     }
 
     #[test]
+    fn delete_marshals_path_buffer_and_validates_metadata() {
+        let system = MockSystemCall {
+            request: Cell::new(Request::new(Operation::Yield)),
+            response: Response {
+                status: Status::NORMAL.raw(),
+                flags: 0,
+                values: [7, 1, 2, 1],
+            },
+        };
+        let runtime = Runtime::new(system);
+        let metadata = runtime.delete(buffer(false)).expect("delete response");
+
+        assert_eq!(metadata.version, 7);
+        assert_eq!(metadata.file_type, 1);
+        assert_eq!(metadata.remaining_link_count, 2);
+        assert!(metadata.shared_data_reachable);
+        let request = runtime.system().request.get();
+        assert_eq!(request.operation, Operation::SynFsDelete as u16);
+        assert_eq!(request.capability, 0);
+        assert_eq!(request.arguments[3], 0);
+
+        let system = MockSystemCall {
+            request: Cell::new(Request::new(Operation::Yield)),
+            response: Response {
+                status: Status::NORMAL.raw(),
+                flags: 0,
+                values: [u64::MAX, 4, 0, 0],
+            },
+        };
+        let runtime = Runtime::new(system);
+        assert_eq!(runtime.delete(buffer(false)), Err(Error::InvalidResponse));
+    }
+
+    #[test]
     fn list_directory_marshals_continuation_and_rejects_oversized_pages() {
         let system = MockSystemCall {
             request: Cell::new(Request::new(Operation::Yield)),

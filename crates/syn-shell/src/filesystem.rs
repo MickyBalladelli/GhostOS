@@ -1728,6 +1728,25 @@ mod tests {
             })
         }
 
+        fn delete(&mut self, path: &str) -> Result<DeleteMetadata, Status> {
+            let (base_path, selector) = split_version_selector(path)?;
+            if base_path == "/data/directory" {
+                return Err(Status::NOT_DIRECTORY)
+            }
+            if !self.present {
+                return Err(Status::NOT_FOUND)
+            }
+            let version = selector.filter(|version| *version != 0).unwrap_or(self.version);
+            if version > self.version {
+                return Err(Status::NOT_FOUND)
+            }
+            self.present = false;
+            Ok(DeleteMetadata {
+                file: Self::metadata(base_path, EntryType::File, self.len, version),
+                shared_data_reachable: false,
+            })
+        }
+
         fn type_file(
             &mut self,
             path: &str,
@@ -1864,6 +1883,55 @@ mod tests {
             executor.execute_command(command("RMDIR /data")),
             Err(Status::ACCESS_DENIED)
         ));
+    }
+
+    #[test]
+    fn delete_alias_resolves_relative_path_and_reports_metadata() {
+        let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"contents", 3));
+        executor.session.default_directory = Path::new("/data").expect("valid default path");
+
+        let output = executor
+            .execute_command(command("RM \"relative note\""))
+            .expect("delete relative file");
+
+        assert_eq!(output.status(), Status::NORMAL);
+        assert_eq!(
+            output_value(&output, "operation"),
+            Some(OutputValue::Text(OutputText::new("deleted").unwrap()))
+        );
+        assert_eq!(
+            output_value(&output, "path"),
+            Some(OutputValue::Text(OutputText::new("/data/relative note").unwrap()))
+        );
+        assert_eq!(output_value(&output, "version"), Some(OutputValue::Unsigned(3)));
+        assert_eq!(output_value(&output, "match-count"), Some(OutputValue::Unsigned(1)));
+        assert_eq!(
+            output_value(&output, "shared-data-reachable"),
+            Some(OutputValue::Boolean(false))
+        );
+    }
+
+    #[test]
+    fn delete_preserves_explicit_version_and_rejects_protected_inputs() {
+        let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"contents", 3));
+        let output = executor
+            .execute_command(command("DELETE /data/note;1"))
+            .expect("delete selected version");
+        assert_eq!(output_value(&output, "version"), Some(OutputValue::Unsigned(1)));
+
+        let cases = [
+            ("DELETE /", Status::INVALID_PATH),
+            ("DELETE /data/note;wat", Status::INVALID_ARGUMENT),
+            ("DELETE /data/directory", Status::NOT_DIRECTORY),
+        ];
+        for (line, status) in cases {
+            let mut executor =
+                FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"contents", 3));
+            assert!(
+                matches!(executor.execute_command(command(line)), Err(error) if error == status),
+                "{line}"
+            );
+        }
     }
 
     #[test]

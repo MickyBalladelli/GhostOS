@@ -151,6 +151,38 @@ fn qemu_link_lifecycle() {
 #[cfg(unix)]
 #[test]
 #[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_delete_file_and_link_workflow() {
+    let Some(output) = run_qemu_shell_commands(
+        "qemu-delete-file-link",
+        &[
+            "create /data/delete-source",
+            "link /data/delete-source /data/delete-alias",
+            "delete /data/delete-source",
+            "show links /data/delete-alias",
+            "type /data/delete-alias",
+            "delete /data/delete-alias",
+            "type /data/delete-alias",
+        ],
+    ) else {
+        return;
+    };
+    assert!(
+        output.matches("operation: deleted").count() >= 2,
+        "QEMU did not delete both link names; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("/data/delete-source") && output.contains("/data/delete-alias"),
+        "QEMU did not preserve the remaining link before final deletion; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("NOT_FOUND") || output.contains("path not found"),
+        "QEMU did not reject the deleted final link; serial output was: {output:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_filesystem_shell_workflow() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-filesystem-shell",

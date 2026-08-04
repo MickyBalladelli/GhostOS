@@ -253,6 +253,31 @@ fn persists_link_lifecycle_and_shared_data() {
 }
 
 #[test]
+fn persists_exact_delete_and_recovers_the_remaining_version() {
+    let image_path = TemporaryImage::new("exact-delete");
+    let mut disk = DiskImage::create(image_path.path());
+    let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+    SynFs::<MAX_BLOCKS>::format_to_device(&mut image, &mut disk).expect("format disk image");
+    let mut filesystem =
+        SynFs::<MAX_BLOCKS>::load_from_device(&mut image, &mut disk).expect("load image");
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+    filesystem.write("/data/state", b"old").expect("write first version");
+    filesystem.write("/data/state", b"new").expect("write second version");
+    filesystem
+        .delete("/data/state;1")
+        .expect("delete exact old version");
+    filesystem.flush_to_device(&mut disk).expect("persist delete");
+    drop(disk);
+
+    let recovered = read_state(image_path.path());
+    assert_eq!(recovered.lookup("/data/state").unwrap().version, 2);
+    assert_eq!(recovered.lookup("/data/state;1"), Err(synos_synfs::Error::NotFound));
+    recovered.check_consistency().expect("consistent recovered delete");
+}
+
+#[test]
 fn recovers_previous_generation_after_torn_commit() {
     let baseline_path = TemporaryImage::new("baseline");
     let trial_path = TemporaryImage::new("power-loss");

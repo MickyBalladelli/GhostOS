@@ -82,6 +82,72 @@ fn versions_directories_links_snapshots_and_retention_are_consistent() {
 }
 
 #[test]
+fn exact_and_latest_delete_preserve_snapshots_until_release() {
+    let mut filesystem = SynFs::<BLOCKS>::new();
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+    filesystem.write("/data/item", b"old").expect("write version one");
+    let checkpoint = filesystem.create_checkpoint().expect("pin snapshot");
+    filesystem.write("/data/item", b"new").expect("write version two");
+
+    let deleted = filesystem
+        .delete("/data/item;1")
+        .expect("delete exact older version");
+    assert_eq!(deleted.version, 1);
+    assert_eq!(filesystem.lookup("/data/item").unwrap().version, 2);
+    assert_eq!(filesystem.lookup("/data/item;1"), Err(Error::NotFound));
+
+    let snapshot = filesystem
+        .checkpoint_snapshot(
+            checkpoint.id,
+            synos_synfs::RmsMapHandle::from_capability((1 << 32) | 1).unwrap(),
+        )
+        .expect("open checkpoint snapshot");
+    let mut snapshot_contents = [0; 3];
+    let mut copied = 0;
+    snapshot
+        .visit_file_pages("/data/item", |page| {
+            snapshot_contents[copied..copied + page.bytes.len()].copy_from_slice(page.bytes);
+            copied += page.bytes.len();
+        })
+        .expect("snapshot retains exact deleted version");
+    assert_eq!(&snapshot_contents, b"old");
+
+    let deleted = filesystem.delete("/data/item").expect("delete latest version");
+    assert_eq!(deleted.version, 2);
+    assert_eq!(deleted.link_count, 0);
+    assert_eq!(filesystem.lookup("/data/item"), Err(Error::NotFound));
+
+    filesystem.release_checkpoint(checkpoint.id).expect("release snapshot");
+    assert!(filesystem.collect_garbage().freed_blocks > 0);
+    filesystem.check_consistency().expect("consistent deleted tree");
+}
+
+#[test]
+fn deleting_the_final_hard_link_reclaims_shared_data() {
+    let mut filesystem = SynFs::<BLOCKS>::new();
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+    filesystem.write("/data/source", b"shared").expect("write source");
+    filesystem
+        .link("/data/source", "/data/alias")
+        .expect("create hard link");
+
+    let deleted = filesystem.delete("/data/source").expect("delete first link");
+    assert_eq!(deleted.link_count, 1);
+    assert_eq!(filesystem.lookup("/data/source"), Err(Error::NotFound));
+    assert_eq!(filesystem.lookup("/data/alias").unwrap().link_count, 1);
+
+    let deleted = filesystem.delete("/data/alias").expect("delete final link");
+    assert_eq!(deleted.link_count, 0);
+    assert_eq!(filesystem.lookup("/data/alias"), Err(Error::NotFound));
+    assert!(filesystem.collect_garbage().freed_blocks > 0);
+    filesystem.check_consistency().expect("consistent link cleanup");
+}
+
+#[test]
 fn wildcard_versions_are_sorted_bounded_and_selector_scoped() {
     let mut filesystem = SynFs::<BLOCKS>::new();
     filesystem

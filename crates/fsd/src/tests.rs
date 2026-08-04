@@ -328,4 +328,22 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
         None,
     );
     assert_eq!(response.status, Status::INVALID_ARGUMENT);
+
+    let mut delete_path = *b"/data/first";
+    let response = daemon.dispatch(
+        Request::new(Operation::Delete, process).with_capability(authority),
+        Some(&mut delete_path),
+    );
+    assert_eq!(response.status, Status::NORMAL);
+    assert_eq!(response.values[0], 1);
+    assert_eq!(response.values[1], FileType::Regular as u64);
+    assert_eq!(response.values[2], 0);
+    assert_eq!(response.values[3], 0);
+    assert_eq!(daemon.filesystem().lookup("/data/first"), Err(synos_synfs::Error::NotFound));
+
+    let response = daemon.dispatch(
+        Request::new(Operation::Delete, process).with_capability(authority),
+        Some(&mut delete_path),
+    );
+    assert_eq!(response.status, Status::NOT_FOUND);
 }

@@ -848,6 +848,15 @@ mod tests {
             registry.parse("RMDIR /data/a /data/b"),
             Err(Error::TooManyArguments)
         );
+        assert_eq!(registry.parse("DELETE"), Err(Error::MissingArgument));
+        assert_eq!(
+            registry.parse("DELETE /data/a /data/b"),
+            Err(Error::TooManyArguments)
+        );
+        assert_eq!(
+            registry.parse("DELETE \"/data/a"),
+            Err(Error::UnterminatedQuote)
+        );
         assert_eq!(
             registry.parse("SHOW DEFAULT /UNKNOWN"),
             Err(Error::UnknownArgument)

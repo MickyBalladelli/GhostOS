@@ -180,6 +180,28 @@ struct RuntimeLinkIpc {
     buffer: Option<SharedBuffer>,
 }
 
+struct RuntimeDeleteIpc {
+    request: Option<synos_fsd::Request>,
+    buffer: Option<SharedBuffer>,
+}
+
+impl FilesystemIpc for RuntimeDeleteIpc {
+    fn transact(
+        &mut self,
+        _caller: AddressSpaceId,
+        request: synos_fsd::Request,
+        buffer: Option<SharedBuffer>,
+    ) -> FsdResponse {
+        self.request = Some(request);
+        self.buffer = buffer;
+        FsdResponse::success()
+            .with_value(0, 7)
+            .with_value(1, 1)
+            .with_value(2, 1)
+            .with_value(3, 1)
+    }
+}
+
 impl FilesystemIpc for RuntimeLinkIpc {
     fn transact(
         &mut self,
@@ -247,6 +269,45 @@ fn runtime_link_dispatch_preserves_operation_and_buffer_direction() {
         Some(authority)
     );
     assert_eq!(dispatcher.filesystem().buffer, Some(links_buffer));
+}
+
+#[test]
+fn runtime_delete_dispatch_uses_authority_and_bounded_input_buffer() {
+    let caller = address_space(10);
+    let process = FsdProcessId::new(10).expect("valid process");
+    let authority = FsdCapability::from_raw(1_u64 << 32).expect("valid authority");
+    let mut dispatcher = Dispatcher::<RuntimeDeleteIpc, 2>::new(RuntimeDeleteIpc {
+        request: None,
+        buffer: None,
+    });
+    dispatcher
+        .register_filesystem_process(caller, FilesystemIdentity { process, authority })
+        .expect("register filesystem process");
+
+    let buffer = SharedBuffer {
+        region: SharedRegionId::new(5).expect("valid region"),
+        offset: 24,
+        length: 128,
+        writable: false,
+    };
+    let response = dispatcher.dispatch(
+        caller,
+        Request::new(Operation::SynFsDelete).with_buffer(buffer),
+    );
+    assert_eq!(Status::from_raw(response.status), Some(Status::NORMAL));
+    assert_eq!(dispatcher.filesystem().request.unwrap().operation, synos_fsd::Operation::Delete);
+    assert_eq!(dispatcher.filesystem().request.unwrap().capability, Some(authority));
+    assert_eq!(dispatcher.filesystem().buffer, Some(buffer));
+
+    let oversized = SharedBuffer {
+        length: (synos_fsd::MAX_IPC_BUFFER_BYTES + 1) as u32,
+        ..buffer
+    };
+    let response = dispatcher.dispatch(
+        caller,
+        Request::new(Operation::SynFsDelete).with_buffer(oversized),
+    );
+    assert_eq!(Status::from_raw(response.status), Some(Status::INVALID_ARGUMENT));
 }
 
 #[test]

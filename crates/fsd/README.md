@@ -78,3 +78,22 @@ bounded shared buffers, continuation pages, status mapping, and restart
 persistence. The ignored QEMU test uses `SYNOS_RUN_QEMU_TESTS=1` and checks the
 same listing, mkdir, create, type, and default-directory sequence on a booted
 guest.
+
+## Delete examples
+
+```text
+DELETE /data/note
+DELETE /data/note;2
+LINK /data/note /data/backup
+DELETE /data/note
+SHOW LINKS /data/backup
+DELETE /data/backup
+```
+
+The first command removes the latest live version. `;N` removes only version
+`N`; older versions are not silently selected. Deleting one hard-link name
+keeps the shared data reachable through the other name. Deleting the final
+name leaves no live directory entry, and garbage collection can reclaim the
+unreachable data. Root paths, directories, missing versions, malformed
+selectors, read-only mounts, and unauthorized paths fail with stable status
+messages.

@@ -82,7 +82,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Report already-existing paths, missing parents, read-only mounts, quota exhaustion, and non-directory parents.
   - [x] Return the created directory metadata and make it visible immediately to subsequent listings.
 
-- [ ] **Remove a Folder (`RMDIR` / `RD`)**
+- [x] **Remove a Folder (`RMDIR` / `RD`)**
   - [x] Define the SynFS directory-removal operation, wire its runtime ABI number, and dispatch it through kernel IPC to `synos-fsd`.
   - [x] Add the filesystem-daemon protocol request and bounded UTF-8 path validation for directory removal.
   - [x] Require the target to exist, be a directory, and have no live immediate children before removing it.
@@ -108,7 +108,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define behavior for existing files, version selection, zero-length files, quotas, and read-only mounts.
   - [x] Return a file capability or metadata result that can be consumed by later commands.
 
-- [ ] **Delete a File or Link**
+- [x] **Delete a File or Link**
   - [x] Define `DELETE path[;version]` syntax, required arguments, aliases, and structured success output.
   - [x] Register a stable shell route and wire command parsing for absolute paths, relative paths, the active default directory, quoted paths, and invalid argument combinations.
   - [x] Resolve version selectors consistently with SynFS: no selector or `;0` deletes only the latest live version; an explicit `;N` deletes only version `N`.
@@ -121,8 +121,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Define behavior when deleting the latest version, an older version, the final link, or a link whose target has newer versions; keep link counts and lookup results consistent.
   - [x] Return deleted path, deleted version, file/link type, remaining link count, and whether shared data remains reachable.
   - [x] Map not-found, invalid-version, directory, access-denied, read-only, quota, stale-capability, and persistence failures to stable shell status messages.
-  - [ ] Add parser, shell-executor, runtime/ABI, kernel-dispatch, daemon, SynFS, link-lifecycle, snapshot, garbage-collection, persistence/recovery, and QEMU coverage.
-  - [ ] Document examples for deleting the latest version, deleting an explicit version, deleting one link while retaining another, and deleting the final link.
+  - [x] Add parser, shell-executor, runtime/ABI, kernel-dispatch, daemon, SynFS, link-lifecycle, snapshot, garbage-collection, persistence/recovery, and QEMU coverage.
+  - [x] Document examples for deleting the latest version, deleting an explicit version, deleting one link while retaining another, and deleting the final link.
 
 - [x] **Type a File**
   - [x] Add a `TYPE` command that opens a file read-only and reads it in bounded chunks.
