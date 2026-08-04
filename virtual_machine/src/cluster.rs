@@ -176,6 +176,14 @@ impl ClusterNetwork {
         &self.trace
     }
 
+    pub fn pending_packets(&self) -> usize {
+        self.in_flight.len() + self.delivered.len()
+    }
+
+    pub fn clear_trace(&mut self) {
+        self.trace.clear();
+    }
+
     pub fn partition(&mut self, left: ClusterNodeId, right: ClusterNodeId) {
         if !self.is_partitioned(left, right) {
             self.partitions.push((left, right));
@@ -357,6 +365,24 @@ impl CxlFabricFixture {
         self.space.resolve(address)
     }
 
+    pub fn discover(&self) -> Vec<MemoryPool> {
+        self.space.pools().copied().collect()
+    }
+
+    pub fn access(
+        &self,
+        requester: ClusterNodeId,
+        address: u64,
+        write: bool,
+    ) -> Result<synos_fabric::memory::ResolvedAddress, FabricError> {
+        let requester = fabric_node(requester)?;
+        let resolved = self.resolve(address)?;
+        if resolved.node != requester && write {
+            return Err(FabricError::NotOwner)
+        }
+        Ok(resolved)
+    }
+
     pub fn write(&mut self, address: u64, data: &[u8]) -> Result<(), FabricError> {
         for (offset, byte) in data.iter().copied().enumerate() {
             let address = address
@@ -452,6 +478,198 @@ fn fabric_node(node: ClusterNodeId) -> Result<FabricNodeId, FabricError> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SharedMemoryMapping {
+    pub node: ClusterNodeId,
+    pub offset: usize,
+    pub length: usize,
+    pub epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SharedMemoryDevice {
+    pub size: usize,
+    pub epoch: u64,
+    pub present: bool,
+}
+
+/// Deterministic shared-memory fixture for ivshmem-style cluster tests.
+pub struct SharedMemoryFixture {
+    bytes: Vec<u8>,
+    epoch: u64,
+    present: bool,
+    corrupted: bool,
+    nodes: Vec<ClusterNodeId>,
+    failed_nodes: Vec<ClusterNodeId>,
+}
+
+impl SharedMemoryFixture {
+    const MAX_SIZE: usize = 64 * 1024 * 1024;
+
+    pub fn new(size: usize) -> Result<Self, ClusterError> {
+        if size == 0 || size % PAGE_SIZE as usize != 0 || size > Self::MAX_SIZE {
+            return Err(ClusterError::InvalidSharedMemorySize)
+        }
+        Ok(Self {
+            bytes: vec![0; size],
+            epoch: 1,
+            present: true,
+            corrupted: false,
+            nodes: Vec::new(),
+            failed_nodes: Vec::new(),
+        })
+    }
+
+    pub fn discover(&self) -> SharedMemoryDevice {
+        SharedMemoryDevice {
+            size: self.bytes.len(),
+            epoch: self.epoch,
+            present: self.present,
+        }
+    }
+
+    pub fn register_node(&mut self, node: ClusterNodeId) {
+        if !self.nodes.contains(&node) {
+            self.nodes.push(node);
+        }
+        self.failed_nodes.retain(|failed| *failed != node);
+    }
+
+    pub fn fail_node(&mut self, node: ClusterNodeId) {
+        if !self.failed_nodes.contains(&node) {
+            self.failed_nodes.push(node);
+        }
+    }
+
+    pub fn restore_node(&mut self, node: ClusterNodeId) {
+        self.failed_nodes.retain(|failed| *failed != node);
+    }
+
+    pub fn map(
+        &self,
+        node: ClusterNodeId,
+        offset: usize,
+        length: usize,
+    ) -> Result<SharedMemoryMapping, ClusterError> {
+        self.check_access(node, offset, length)?;
+        Ok(SharedMemoryMapping {
+            node,
+            offset,
+            length,
+            epoch: self.epoch,
+        })
+    }
+
+    pub fn read(
+        &self,
+        node: ClusterNodeId,
+        offset: usize,
+        length: usize,
+    ) -> Result<Vec<u8>, ClusterError> {
+        self.check_access(node, offset, length)?;
+        if self.corrupted {
+            return Err(ClusterError::CorruptSharedMemory)
+        }
+        Ok(self.bytes[offset..offset + length].to_vec())
+    }
+
+    pub fn write(
+        &mut self,
+        node: ClusterNodeId,
+        offset: usize,
+        data: &[u8],
+    ) -> Result<(), ClusterError> {
+        self.check_access(node, offset, data.len())?;
+        if self.corrupted {
+            return Err(ClusterError::CorruptSharedMemory)
+        }
+        self.bytes[offset..offset + data.len()].copy_from_slice(data);
+        Ok(())
+    }
+
+    pub fn hot_remove(&mut self) {
+        self.present = false;
+        self.epoch = self.epoch.saturating_add(1);
+    }
+
+    pub fn restore(&mut self) {
+        self.present = true;
+        self.corrupted = false;
+        self.epoch = self.epoch.saturating_add(1);
+    }
+
+    pub fn corrupt(&mut self) {
+        self.corrupted = true;
+    }
+
+    pub fn repair(&mut self) {
+        self.corrupted = false;
+        self.epoch = self.epoch.saturating_add(1);
+    }
+
+    fn check_access(
+        &self,
+        node: ClusterNodeId,
+        offset: usize,
+        length: usize,
+    ) -> Result<(), ClusterError> {
+        if !self.present {
+            return Err(ClusterError::SharedMemoryUnavailable)
+        }
+        if !self.nodes.contains(&node) {
+            return Err(ClusterError::UnknownNode(node))
+        }
+        if self.failed_nodes.contains(&node) {
+            return Err(ClusterError::NodeNotRunning(node))
+        }
+        let end = offset
+            .checked_add(length)
+            .ok_or(ClusterError::InvalidSharedMemoryRange)?;
+        if end > self.bytes.len() {
+            return Err(ClusterError::InvalidSharedMemoryRange)
+        }
+        Ok(())
+    }
+}
+
+impl Default for SharedMemoryFixture {
+    fn default() -> Self {
+        Self::new(PAGE_SIZE as usize).expect("default shared memory size is valid")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterHeartbeat {
+    pub source: ClusterNodeId,
+    pub sequence: u64,
+    pub epoch: u64,
+    pub tick: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterStatus {
+    pub epoch: u64,
+    pub members: usize,
+    pub running: usize,
+    pub quorum: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClusterWorkload {
+    Ipc,
+    FilesystemCommit,
+    MemoryFetch,
+    Inference,
+    MembershipChange,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterFaultRecord {
+    pub node: ClusterNodeId,
+    pub workload: ClusterWorkload,
+    pub recovered: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClusterFault {
     Partition {
         left: ClusterNodeId,
@@ -464,6 +682,10 @@ pub enum ClusterFault {
     IsolateNode(ClusterNodeId),
     FailNode(ClusterNodeId),
     RecoverNode(ClusterNodeId),
+    KillNodeDuring {
+        node: ClusterNodeId,
+        workload: ClusterWorkload,
+    },
 }
 
 #[derive(Debug)]
@@ -472,6 +694,12 @@ pub enum ClusterError {
     UnknownNode(ClusterNodeId),
     InvalidNetworkConfig,
     NodeNotRunning(ClusterNodeId),
+    InvalidSharedMemorySize,
+    InvalidSharedMemoryRange,
+    SharedMemoryUnavailable,
+    CorruptSharedMemory,
+    StaleEpoch,
+    NoFaultToRecover,
     Vm(VmError),
     Fabric(FabricError),
 }
@@ -493,6 +721,11 @@ pub struct VmCluster {
     nodes: Vec<ClusterNode>,
     network: ClusterNetwork,
     cxl: CxlFabricFixture,
+    shared_memory: SharedMemoryFixture,
+    epoch: u64,
+    heartbeat_sequences: Vec<(ClusterNodeId, u64)>,
+    observed_heartbeats: Vec<(ClusterNodeId, ClusterNodeId, u64)>,
+    fault_records: Vec<ClusterFaultRecord>,
 }
 
 impl VmCluster {
@@ -501,6 +734,11 @@ impl VmCluster {
             nodes: Vec::new(),
             network: ClusterNetwork::new(network)?,
             cxl: CxlFabricFixture::new(),
+            shared_memory: SharedMemoryFixture::default(),
+            epoch: 1,
+            heartbeat_sequences: Vec::new(),
+            observed_heartbeats: Vec::new(),
+            fault_records: Vec::new(),
         })
     }
 
@@ -514,6 +752,8 @@ impl VmCluster {
             state: ClusterNodeState::Running,
             executed_steps: 0,
         });
+        self.shared_memory.register_node(id);
+        self.heartbeat_sequences.push((id, 0));
         Ok(())
     }
 
@@ -545,6 +785,110 @@ impl VmCluster {
         &mut self.cxl
     }
 
+    pub fn shared_memory(&self) -> &SharedMemoryFixture {
+        &self.shared_memory
+    }
+
+    pub fn shared_memory_mut(&mut self) -> &mut SharedMemoryFixture {
+        &mut self.shared_memory
+    }
+
+    pub fn status(&self) -> ClusterStatus {
+        let running = self
+            .nodes
+            .iter()
+            .filter(|node| node.state == ClusterNodeState::Running)
+            .count();
+        ClusterStatus {
+            epoch: self.epoch,
+            members: self.nodes.len(),
+            running,
+            quorum: running >= self.nodes.len() / 2 + 1,
+        }
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub fn discover_nodes(&self) -> Vec<ClusterNodeId> {
+        self.nodes.iter().map(ClusterNode::id).collect()
+    }
+
+    pub fn heartbeat(&mut self, source: ClusterNodeId) -> Result<ClusterHeartbeat, ClusterError> {
+        let node = self.node(source).ok_or(ClusterError::UnknownNode(source))?;
+        if node.state != ClusterNodeState::Running {
+            return Err(ClusterError::NodeNotRunning(source));
+        }
+        let sequence = self
+            .heartbeat_sequences
+            .iter_mut()
+            .find(|entry| entry.0 == source)
+            .ok_or(ClusterError::UnknownNode(source))?;
+        sequence.1 = sequence.1.saturating_add(1);
+        Ok(ClusterHeartbeat {
+            source,
+            sequence: sequence.1,
+            epoch: self.epoch,
+            tick: self.network.tick(),
+        })
+    }
+
+    pub fn observe_heartbeat(
+        &mut self,
+        target: ClusterNodeId,
+        heartbeat: ClusterHeartbeat,
+    ) -> Result<(), ClusterError> {
+        let node = self.node(target).ok_or(ClusterError::UnknownNode(target))?;
+        if node.state != ClusterNodeState::Running {
+            return Err(ClusterError::NodeNotRunning(target));
+        }
+        if heartbeat.epoch != self.epoch {
+            return Err(ClusterError::StaleEpoch);
+        }
+        if !self
+            .observed_heartbeats
+            .iter()
+            .any(|entry| entry.0 == target && entry.1 == heartbeat.source)
+        {
+            self.observed_heartbeats
+                .push((target, heartbeat.source, heartbeat.sequence));
+        } else if let Some(entry) = self
+            .observed_heartbeats
+            .iter_mut()
+            .find(|entry| entry.0 == target && entry.1 == heartbeat.source)
+        {
+            if heartbeat.sequence <= entry.2 {
+                return Ok(())
+            }
+            entry.2 = heartbeat.sequence;
+        }
+        Ok(())
+    }
+
+    pub fn fault_records(&self) -> &[ClusterFaultRecord] {
+        &self.fault_records
+    }
+
+    pub fn evidence(&self) -> ClusterEvidence {
+        ClusterEvidence {
+            tick: self.network.tick(),
+            epoch: self.epoch,
+            node_states: self.nodes.iter().map(|node| (node.id, node.state)).collect(),
+            serial_output: self
+                .nodes
+                .iter()
+                .map(|node| (node.id, node.serial_output()))
+                .collect(),
+            network_trace: self.network.trace().to_vec(),
+            fault_records: self.fault_records.clone(),
+            network_events: self.network.trace().len(),
+            pending_packets: self.network.pending_packets(),
+            cxl_devices: self.cxl.pools().count(),
+            shared_memory: self.shared_memory.discover(),
+        }
+    }
+
     pub fn run_node(&mut self, id: ClusterNodeId, steps: u64) -> Result<u64, ClusterError> {
         let node = self.node_mut(id).ok_or(ClusterError::UnknownNode(id))?;
         if node.state != ClusterNodeState::Running {
@@ -565,7 +909,7 @@ impl VmCluster {
         let target = self
             .node(packet.target)
             .ok_or(ClusterError::UnknownNode(packet.target))?;
-        if target.state == ClusterNodeState::Failed || target.state == ClusterNodeState::Stopped {
+        if target.state != ClusterNodeState::Running {
             return Err(ClusterError::NodeNotRunning(packet.target));
         }
         Ok(self.network.send(packet))
@@ -588,6 +932,8 @@ impl VmCluster {
                 self.network.partition(left, right);
             }
             ClusterFault::Reconnect { left, right } => {
+                self.require_node(left)?;
+                self.require_node(right)?;
                 self.network.reconnect(left, right);
             }
             ClusterFault::IsolateNode(id) => {
@@ -596,12 +942,47 @@ impl VmCluster {
             ClusterFault::FailNode(id) => {
                 self.set_node_state(id, ClusterNodeState::Failed)?;
                 self.cxl.fail_node(id)?;
+                self.shared_memory.fail_node(id);
+                self.epoch = self.epoch.saturating_add(1);
             }
             ClusterFault::RecoverNode(id) => {
                 self.set_node_state(id, ClusterNodeState::Running)?;
                 self.cxl.restore_node(id)?;
+                self.shared_memory.restore_node(id);
+                self.shared_memory.register_node(id);
+                self.epoch = self.epoch.saturating_add(1);
+            }
+            ClusterFault::KillNodeDuring { node, workload } => {
+                self.set_node_state(node, ClusterNodeState::Failed)?;
+                self.cxl.fail_node(node)?;
+                self.shared_memory.fail_node(node);
+                self.epoch = self.epoch.saturating_add(1);
+                self.fault_records.push(ClusterFaultRecord {
+                    node,
+                    workload,
+                    recovered: false,
+                });
             }
         }
+        Ok(())
+    }
+
+    pub fn recover_last_fault(&mut self) -> Result<(), ClusterError> {
+        let index = self
+            .fault_records
+            .len()
+            .checked_sub(1)
+            .ok_or(ClusterError::NoFaultToRecover)?;
+        if self.fault_records[index].recovered {
+            return Ok(())
+        }
+        let node = self.fault_records[index].node;
+        self.set_node_state(node, ClusterNodeState::Running)?;
+        self.cxl.restore_node(node)?;
+        self.shared_memory.restore_node(node);
+        self.shared_memory.register_node(node);
+        self.epoch = self.epoch.saturating_add(1);
+        self.fault_records[index].recovered = true;
         Ok(())
     }
 
@@ -619,5 +1000,42 @@ impl VmCluster {
         let node = self.node_mut(id).ok_or(ClusterError::UnknownNode(id))?;
         node.state = state;
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClusterEvidence {
+    pub tick: u64,
+    pub epoch: u64,
+    pub node_states: Vec<(ClusterNodeId, ClusterNodeState)>,
+    pub serial_output: Vec<(ClusterNodeId, Vec<u8>)>,
+    pub network_trace: Vec<ClusterNetworkTrace>,
+    pub fault_records: Vec<ClusterFaultRecord>,
+    pub network_events: usize,
+    pub pending_packets: usize,
+    pub cxl_devices: usize,
+    pub shared_memory: SharedMemoryDevice,
+}
+
+impl ClusterEvidence {
+    pub fn to_text(&self) -> String {
+        let states = self
+            .node_states
+            .iter()
+            .map(|(node, state)| format!("{}:{state:?}", node.raw()))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "tick={} epoch={} nodes={} network_events={} pending_packets={} cxl_devices={} shared_memory={{size={},epoch={},present={}}}\n",
+            self.tick,
+            self.epoch,
+            states,
+            self.network_trace.len(),
+            self.pending_packets,
+            self.cxl_devices,
+            self.shared_memory.size,
+            self.shared_memory.epoch,
+            self.shared_memory.present,
+        )
     }
 }

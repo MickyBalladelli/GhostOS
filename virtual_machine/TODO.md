@@ -319,12 +319,12 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 
 ### 10.6 Cluster and Fault Tests
 
-- [ ] Add a deterministic multi-VM network harness with controllable latency, loss, duplication, reordering, partitions, and reconnection.
-- [ ] Add CXL and shared-memory device fixtures that model discovery, mapping, access, migration, and hot removal.
-- [ ] Test two-node and multi-node SynOS boot, discovery, heartbeat, page fetch, coherence, migration, failover, fencing, and rejoin.
-- [ ] Kill one node during IPC, filesystem commit, memory fetch, inference, and cluster membership changes; assert safe recovery and stable status.
-- [ ] Test split-brain, stale epochs, duplicate node IDs, lost quorum, delayed heartbeats, corrupted shared memory, and transport recovery.
-- [ ] Make cluster tests opt-in and bounded, with serial logs, QMP traces, network traces, and failure-injection metadata saved as evidence.
+- [x] Add a deterministic multi-VM network harness with controllable latency, loss, duplication, reordering, partitions, and reconnection.
+- [x] Add CXL and shared-memory device fixtures that model discovery, mapping, access, migration, and hot removal.
+- [x] Test two-node and multi-node SynOS boot, discovery, heartbeat, page fetch, coherence, migration, failover, fencing, and rejoin.
+- [x] Kill one node during IPC, filesystem commit, memory fetch, inference, and cluster membership changes; assert safe recovery and stable status.
+- [x] Test split-brain, stale epochs, duplicate node IDs, lost quorum, delayed heartbeats, corrupted shared memory, and transport recovery.
+- [x] Make cluster tests opt-in and bounded, with serial logs, QMP traces, network traces, and failure-injection metadata saved as evidence.
 
 ### 10.7 VM Quality Gates
 

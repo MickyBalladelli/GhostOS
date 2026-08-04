@@ -54,8 +54,9 @@ pub use boot::Loader;
 pub use boot::{framebuffer_info, LoaderError, KERNEL_LOAD_ADDR};
 pub use cluster::{
     ClusterError, ClusterFault, ClusterNode, ClusterNodeId, ClusterNodeState, ClusterPacket,
-    ClusterNetwork, ClusterNetworkConfig, ClusterNetworkOutcome, ClusterNetworkTrace,
-    CxlFabricFixture, VmCluster,
+    ClusterEvidence, ClusterFaultRecord, ClusterHeartbeat, ClusterNetwork, ClusterNetworkConfig,
+    ClusterNetworkOutcome, ClusterNetworkTrace, ClusterStatus, ClusterWorkload,
+    CxlFabricFixture, SharedMemoryDevice, SharedMemoryFixture, SharedMemoryMapping, VmCluster,
 };
 pub use integration::{run_synos_integration, IntegrationError, SynosIntegrationReport};
 pub use execution::{

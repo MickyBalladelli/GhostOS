@@ -88,6 +88,26 @@ file = "tests/cluster.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
+id = "vm.cluster.membership-heartbeat-epochs"
+file = "tests/cluster.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.cluster.shared-memory-faults"
+file = "tests/cluster.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.cluster.coherence-failover"
+file = "tests/cluster.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.cluster.workload-recovery-evidence"
+file = "tests/cluster.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
 id = "vm.firmware.bios-post-services-and-mbr"
 file = "tests/firmware_boot_synos_10_4.rs"
 tiers = ["fast-unit", "vm-integration"]
@@ -247,7 +267,13 @@ tests = ["vm.foundation.deterministic-fixtures"]
 
 [[source]]
 path = "src/cluster.rs"
-tests = ["vm.cluster.deterministic-harness"]
+tests = [
+    "vm.cluster.deterministic-harness",
+    "vm.cluster.membership-heartbeat-epochs",
+    "vm.cluster.shared-memory-faults",
+    "vm.cluster.coherence-failover",
+    "vm.cluster.workload-recovery-evidence",
+]
 
 [[source]]
 path = "src/net/mod.rs"
@@ -300,7 +326,21 @@ tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
 [[public_api]]
 name = "VmCluster::{add_node,run_node,send,advance,receive,inject_fault}"
 source = "src/cluster.rs"
-tests = ["vm.cluster.deterministic-harness"]
+tests = [
+    "vm.cluster.deterministic-harness",
+    "vm.cluster.membership-heartbeat-epochs",
+    "vm.cluster.workload-recovery-evidence",
+]
+
+[[public_api]]
+name = "VmCluster::{heartbeat,observe_heartbeat,status,evidence}"
+source = "src/cluster.rs"
+tests = ["vm.cluster.membership-heartbeat-epochs", "vm.cluster.workload-recovery-evidence"]
+
+[[public_api]]
+name = "SharedMemoryFixture::{discover,map,read,write,hot_remove,restore,corrupt,repair}"
+source = "src/cluster.rs"
+tests = ["vm.cluster.shared-memory-faults"]
 
 [[public_api]]
 name = "Vm::{new,with_config,run_for_steps,run_with_monitor,request_shutdown,request_reboot}"
