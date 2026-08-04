@@ -11,7 +11,8 @@ case "$node" in
         ;;
 esac
 
-pid_file="$project_root/build/qemu-cluster/node-$node.pid"
+run_dir=${SYNOS_CLUSTER_RUN_DIR:-"$project_root/build/qemu-cluster"}
+pid_file="$run_dir/node-$node.pid"
 if [ ! -f "$pid_file" ]; then
     echo "node $node pid file not found" >&2
     exit 1

@@ -48,6 +48,18 @@ run_optional() {
                 return 0
             fi
             ;;
+        cluster)
+            if [[ "$(uname -s)" != Linux ]]; then
+                printf '{"state":"skipped","tier":"%s","reason":"cluster QEMU requires Linux","prerequisite":"Linux with QEMU CXL and ivshmem devices"}\n' "$tier" > "$output_dir/result.json"
+                echo "== $tier: skipped; cluster QEMU requires Linux"
+                return 0
+            fi
+            if ! command -v "${SYNOS_QEMU_BIN:-qemu-system-x86_64}" >/dev/null 2>&1 || [[ ! -f "${SYNOS_DISK_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]]; then
+                printf '{"state":"skipped","tier":"%s","reason":"missing QEMU or cluster image","prerequisite":"qemu-system-x86_64 and SYNOS_DISK_IMAGE"}\n' "$tier" > "$output_dir/result.json"
+                echo "== $tier: skipped; missing QEMU or cluster image"
+                return 0
+            fi
+            ;;
     esac
     if ! command -v "$1" >/dev/null 2>&1; then
         printf '{"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"%s"}\n' "$tier" "$1" > "$output_dir/result.json"
@@ -74,6 +86,7 @@ fi
 
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
 run_optional qemu env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
+run_optional cluster env SYNOS_RUN_QEMU_TESTS=1 "$root_dir/scripts/qemu-cluster-validation.sh"
 run_optional fuzz "$root_dir/scripts/fuzz-smoke.sh"
 run_optional coverage "$root_dir/scripts/coverage.sh"
 run_optional mutation "$root_dir/scripts/mutation.sh"

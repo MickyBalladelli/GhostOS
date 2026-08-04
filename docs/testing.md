@@ -82,7 +82,7 @@ evidence described in `platforms/README.md`.
 | vm | `cargo test -p synos-vm --all-targets` | required for VM changes | test output and VM metadata |
 | recovery | `cargo test --workspace --all-targets` | required | failure, restart, and recovery output |
 | qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
-| cluster | `scripts/qemu-cluster.sh` and `scripts/qualify-platform.sh` | opt-in | node serial logs, command logs, failover log |
+| cluster | `scripts/qemu-cluster-validation.sh` | opt-in | node serial logs, command logs, QMP input, failover log |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
 | performance | benchmark command named by the inventory entry | opt-in | JSON result and machine metadata |
 
@@ -111,6 +111,41 @@ Fast pull-request CI runs formatting, host, VM, no-std, documentation, and
 inventory checks. Push and scheduled CI add QEMU and fuzz smoke tests. The
 scheduled workflow also runs coverage, mutation, Miri, sanitizer, cross-target,
 and reproducibility checks. CI uploads logs, coverage, and fuzz corpora.
+
+### Cluster lifecycle validation
+
+The cluster lifecycle bundle has deterministic parser, authorization, protocol,
+persistence, invitation, quorum, partition, fencing, recovery, and transport
+failure coverage in the shell, storage, and client SDK test targets. Run the
+interactive two-node evidence path on a Linux host with a QEMU cluster image:
+
+```sh
+SYNOS_RUN_QEMU_TESTS=1 ./scripts/qemu-cluster-validation.sh
+```
+
+The runner creates two guests with unique serial logs and QMP sockets. It sends
+typed shell commands for create, list, show, join, leave, federation, fence,
+recover, and rejoin, then injects a node failure. Evidence is written under
+`build/qemu-cluster-validation-<pid>/`. The full validation command includes
+this tier when Linux, QEMU, and the image are available:
+
+```sh
+SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
+```
+
+Cluster writes require an administrator or an operation-specific delegated
+capability. Read-only roles can inspect but cannot mutate membership. Leave,
+remove, fence, recover, rollback, abandon, and accept/reject actions require
+`/CONFIRM`; `/FORCE` requires the stronger destructive-action authorization.
+Loss of quorum returns `quorum lost` and keeps writes disabled. Partition,
+stale epoch, duplicate identity, expired or revoked invitation, failed
+attestation, incompatible protocol, and transport failure all remain explicit
+negative cases rather than being treated as successful degraded operation.
+
+For an unsafe node, operators should inspect health, drain work, fence first,
+reconcile shared memory, storage, jobs, capabilities, leases, SynFS deltas,
+logs, reservations, and workloads, then recover or rejoin. Abandon is the last
+resort and permanently discards the node's unreconciled ownership.
 
 The 59.13 coverage contract is checked statically by:
 

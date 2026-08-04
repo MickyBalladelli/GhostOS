@@ -2,7 +2,7 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-run_dir="$project_root/build/qemu-cluster"
+run_dir=${SYNOS_CLUSTER_RUN_DIR:-"$project_root/build/qemu-cluster"}
 image=${SYNOS_DISK_IMAGE:-"$project_root/build/bios/synos-bios.img"}
 qemu_bin=${SYNOS_QEMU_BIN:-qemu-system-x86_64}
 node_count=${SYNOS_CLUSTER_NODES:-2}
@@ -99,6 +99,7 @@ while [ "$node" -le "$node_count" ]; do
     serial_log="$run_dir/node-$node.serial.log"
     pid_file="$run_dir/node-$node.pid"
     command_log="$run_dir/node-$node.command.txt"
+    qmp_socket="$run_dir/node-$node.qmp"
     mac_suffix=$(printf '%02x' "$node")
 
     if [ ! -f "$cxl_path" ]; then
@@ -110,6 +111,7 @@ while [ "$node" -le "$node_count" ]; do
         printf '%s\n' "-machine q35,cxl=on,accel=$accelerator"
         printf '%s\n' "-netdev socket,id=cluster,mcast=$cluster_bus"
         printf '%s\n' "-device e1000,netdev=cluster,mac=52:54:00:53:59:$mac_suffix"
+        printf '%s\n' "-qmp unix:$qmp_socket,server=on,wait=off"
         printf '%s\n' "-device cxl-type3,volatile-memdev=cxlmem$node"
         printf '%s\n' "-device ivshmem-plain,memdev=ivshmem$node"
     } > "$command_log"
@@ -123,6 +125,7 @@ while [ "$node" -le "$node_count" ]; do
         -drive "file=$image,format=raw,if=ide,readonly=on" \
         -display none \
         -monitor none \
+        -qmp "unix:$qmp_socket,server=on,wait=off" \
         -serial "file:$serial_log" \
         -netdev "socket,id=cluster,mcast=$cluster_bus" \
         -device "e1000,netdev=cluster,mac=52:54:00:53:59:$mac_suffix" \

@@ -594,6 +594,40 @@ control/data protocol versions. The `/MEMBERS` and `/TOPOLOGY` views expose
 bounded numbered records with continuation fields; `/HEALTH`, `/RESOURCES`,
 and `/CONFIG` expose typed aggregate snapshots.
 
+Cluster permissions are capability-based. Administrators may create, modify,
+invite, fence, recover, and retire clusters. Operators may join, leave, remove,
+modify, invite, fence, and manage resources. Auditors and read-only users may
+inspect state only. Node owners may join, leave, and manage their own resources.
+
+`/CONFIRM` is required for leave, remove, federation removal, fencing, recovery,
+rollback, abandonment, and node admission decisions. `/FORCE` is an extra
+authorization check; it never replaces `/CONFIRM`. Mutable configuration
+commands support `/DRY_RUN`.
+
+Common status results are `normal`, `invalid argument`, `access denied`,
+`confirmation required`, `quorum lost`, `cluster partitioned`, `protocol
+mismatch`, `stale state`, `node unsafe`, `reconciliation required`, and
+`recovery state invalid`. A failed quorum makes the cluster read-only. A
+partition or stale membership epoch blocks writes until an administrator
+reconciles or fences the unsafe node.
+
+Safe recovery order is: inspect `SHOW CLUSTER/HEALTH`, stop new work with
+`DRAIN NODE`, fence unsafe nodes, reconcile membership/SynFS/leases, then use
+`RECOVER NODE` or `REJOIN NODE`. Use `ABANDON NODE /FORCE /CONFIRM` only when
+data reconciliation is impossible. `REMOVE CLUSTER` is destructive and must
+follow workload, lease, membership, and storage checks.
+
+The opt-in two-node QEMU validation captures command input, serial output, QMP
+control traffic, failure injection, and node logs:
+
+```sh
+SYNOS_RUN_QEMU_TESTS=1 ./scripts/qemu-cluster-validation.sh
+```
+
+The runner covers create, list, show, join/leave, federation, fencing,
+recovery, rejoin, and a failed-node path. It needs Linux QEMU with CXL,
+ivshmem, and multicast socket support.
+
 EDIT file (also EDT) opens a bounded UTF-8 full-screen editor. It edits a
 selected version and saves as a new SynFS version; an omitted selector opens
 the latest version. Ctrl-S saves, Ctrl-Z saves and exits, and Ctrl-X discards

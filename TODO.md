@@ -1019,11 +1019,11 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add cluster dashboards for identity, members, health, capacity, topology, pending admissions, alerts, and recent actions.
   - [x] Export metrics, traces, logs, audit events, and alerts per cluster, node, transport, workload, and operation.
 
-- [ ] **Validation & Documentation**
-  - [ ] Add parser, authorization, protocol, persistence, recovery, quorum, partition, fencing, and transport-failure coverage for every command.
-  - [ ] Add multi-node QEMU and remote-terminal scenarios for create, list, show, join, leave, remove, rejoin, federation, and recovery workflows.
-  - [ ] Test duplicate identity, expired invitation, revoked key, failed attestation, incompatible version, full cluster, no quorum, and split-brain cases.
-  - [ ] Document command examples, permissions, confirmation requirements, status codes, recovery procedures, and destructive-action safeguards.
+- [x] **Validation & Documentation**
+  - [x] Add parser, authorization, protocol, persistence, recovery, quorum, partition, fencing, and transport-failure coverage for every command.
+  - [x] Add multi-node QEMU and remote-terminal scenarios for create, list, show, join, leave, remove, rejoin, federation, and recovery workflows.
+  - [x] Test duplicate identity, expired invitation, revoked key, failed attestation, incompatible version, full cluster, no quorum, and split-brain cases.
+  - [x] Document command examples, permissions, confirmation requirements, status codes, recovery procedures, and destructive-action safeguards.
 
 ---
 
