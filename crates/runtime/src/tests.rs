@@ -29,10 +29,33 @@ fn buffer(writable: bool) -> SharedBuffer {
 #[test]
 fn abi_operations_and_capabilities_reject_unknown_or_stale_values() {
     assert_eq!(Operation::from_raw(Operation::SynFsDelete as u16), Some(Operation::SynFsDelete));
+    assert_eq!(Operation::from_raw(Operation::SynFsRmdir as u16), Some(Operation::SynFsRmdir));
+    assert_eq!(Operation::from_raw(Operation::SynFsLink as u16), Some(Operation::SynFsLink));
+    assert_eq!(Operation::from_raw(Operation::SynFsLinks as u16), Some(Operation::SynFsLinks));
     assert_eq!(Operation::from_raw(0), None);
     assert_eq!(Operation::from_raw(u16::MAX), None);
     assert_eq!(Capability::from_raw(0), None);
     assert_eq!(Capability::from_raw(1_u64 << 32).unwrap().raw(), 1_u64 << 32);
+}
+
+#[test]
+fn filesystem_operation_numbers_are_stable_and_contiguous() {
+    let operations = [
+        Operation::SynFsOpen,
+        Operation::SynFsClose,
+        Operation::SynFsRead,
+        Operation::SynFsWrite,
+        Operation::SynFsMetadata,
+        Operation::SynFsMkdir,
+        Operation::SynFsRmdir,
+        Operation::SynFsLink,
+        Operation::SynFsList,
+        Operation::SynFsLinks,
+        Operation::SynFsDelete,
+    ];
+    for pair in operations.windows(2) {
+        assert_eq!(pair[1] as u16, pair[0] as u16 + 1);
+    }
 }
 
 #[test]

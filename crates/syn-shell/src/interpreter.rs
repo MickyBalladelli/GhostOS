@@ -170,3 +170,53 @@ impl Default for Interpreter {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filesystem::register_filesystem_commands;
+
+    struct PendingExecutor {
+        cancelled: bool,
+    }
+
+    impl CommandExecutor for PendingExecutor {
+        fn submit(
+            &mut self,
+            _command: CommandCall,
+            _pipeline_input: Option<&StructuredOutput>,
+        ) -> Result<ExecutionToken, Error> {
+            Ok(ExecutionToken::new(1).expect("valid pending token"))
+        }
+
+        fn poll(&mut self, _token: ExecutionToken) -> Option<Result<StructuredOutput, Status>> {
+            None
+        }
+
+        fn cancel(&mut self, _token: ExecutionToken) -> Result<(), Error> {
+            self.cancelled = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn cancellation_clears_a_pending_wildcard_command() {
+        let mut registry = CommandRegistry::<16>::new();
+        register_filesystem_commands(&mut registry).expect("filesystem commands");
+        let program = registry.parse("TYPE /data/*.txt").expect("wildcard command");
+        let mut executor = PendingExecutor { cancelled: false };
+        let mut interpreter = Interpreter::new();
+
+        assert!(matches!(
+            interpreter.start_program(program, &mut executor),
+            Ok(InterpreterEvent::Started)
+        ));
+        assert!(interpreter.is_running());
+        assert!(matches!(
+            interpreter.cancel(&mut executor),
+            Ok(InterpreterEvent::Cancelled)
+        ));
+        assert!(!interpreter.is_running());
+        assert!(executor.cancelled);
+    }
+}

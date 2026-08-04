@@ -1900,4 +1900,29 @@ mod tests {
         let restarted = FilesystemExecutor::<_, 16>::new(executor.source);
         assert_eq!(restarted.session().default_directory().as_str(), "/");
     }
+
+    #[test]
+    fn wildcard_safety_rules_cover_mutating_and_version_selector_commands() {
+        let mut executor = FilesystemExecutor::<_, 16>::new(MockFilesystem::new(b"", 1));
+        for line in [
+            "CREATE /data/*",
+            "MKDIR /data/*",
+            "SET DEFAULT /data/*",
+            "CD /data/*",
+            "LINK /data/* /data/alias",
+            "LINK /data/source /data/*",
+        ] {
+            assert!(
+                matches!(
+                    executor.execute_command(command(line)),
+                    Err(Status::INVALID_ARGUMENT)
+                ),
+                "{line}"
+            );
+        }
+        assert!(matches!(
+            executor.execute_command(command("TYPE /data/*.txt;*")),
+            Err(Status::INVALID_ARGUMENT)
+        ));
+    }
 }

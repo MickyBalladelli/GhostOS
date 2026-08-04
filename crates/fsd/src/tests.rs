@@ -109,6 +109,85 @@ fn link_keeps_data_alive_through_write_delete_and_rename() {
 }
 
 #[test]
+fn wildcard_delete_and_links_preserve_exact_version_selection() {
+    let (mut daemon, process, authority) = daemon();
+    let source = daemon
+        .open(
+            process,
+            authority,
+            "/data/source",
+            file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+        )
+        .expect("open source");
+    daemon
+        .write(process, source.capability, 0, b"version one")
+        .expect("write source v1");
+    let linked = daemon
+        .link(process, source.capability, "/data/alias")
+        .expect("link selected source version");
+    assert_eq!(linked.version, 1);
+    daemon
+        .write(process, source.capability, 0, b"version two")
+        .expect("write source v2");
+
+    let mut links = [0; 256];
+    let (_, bytes) = daemon
+        .list_links(process, authority, "/data/source*;1", &mut links)
+        .expect("list links for retained version");
+    assert_eq!(&links[..bytes], b"/data/alias\n/data/source\n");
+
+    let deleted = daemon
+        .delete_path(process, authority, "/data/source*;1")
+        .expect("delete only selected retained version");
+    assert_eq!(deleted.file.version, 1);
+    assert_eq!(daemon.filesystem().lookup("/data/source").unwrap().version, 2);
+    assert_eq!(
+        daemon.delete_path(process, authority, "/data/source*;1"),
+        Err(DaemonError::NotFound)
+    );
+    assert_eq!(
+        daemon.delete_path(process, authority, "/data/source*;wat"),
+        Err(DaemonError::InvalidPath)
+    );
+}
+
+#[test]
+fn wildcard_operations_require_authority_and_bound_shared_buffers() {
+    let (mut daemon, process, authority) = daemon();
+    daemon
+        .open(
+            process,
+            authority,
+            "/data/first",
+            file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+        )
+        .expect("create first file");
+    daemon
+        .open(
+            process,
+            authority,
+            "/data/second",
+            file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+        )
+        .expect("create second file");
+
+    let readonly_process = ProcessId::new(8).expect("valid read-only process");
+    let readonly = daemon
+        .register_process(readonly_process, ProcessRights::READ)
+        .expect("register read-only process");
+    assert_eq!(
+        daemon.delete_path(readonly_process, readonly, "/data/*"),
+        Err(DaemonError::AccessDenied)
+    );
+
+    let mut output = [0; 1];
+    assert!(matches!(
+        daemon.list_links(process, authority, "/data/*", &mut output),
+        Err(DaemonError::BufferTooSmall { .. })
+    ));
+}
+
+#[test]
 fn link_requires_read_handle() {
     let (mut daemon, process, authority) = daemon();
     let source = daemon

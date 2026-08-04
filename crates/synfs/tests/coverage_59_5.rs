@@ -82,6 +82,60 @@ fn versions_directories_links_snapshots_and_retention_are_consistent() {
 }
 
 #[test]
+fn wildcard_versions_are_sorted_bounded_and_selector_scoped() {
+    let mut filesystem = SynFs::<BLOCKS>::new();
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+    filesystem.write("/data/zeta", b"z1").expect("write zeta v1");
+    filesystem.write("/data/alpha", b"a1").expect("write alpha v1");
+    filesystem.write("/data/zeta", b"z2").expect("write zeta v2");
+
+    let mut matches = [None; 4];
+    assert_eq!(filesystem.expand_paths("/data/*", &mut matches), Ok(2));
+    assert_eq!(matches[0].unwrap().as_str(), "/data/alpha");
+    assert_eq!(matches[1].unwrap().as_str(), "/data/zeta");
+
+    let mut retained = [None; 4];
+    assert_eq!(filesystem.expand_paths("/data/*;1", &mut retained), Ok(2));
+    assert_eq!(retained[0].unwrap().as_str(), "/data/alpha");
+    assert_eq!(retained[1].unwrap().as_str(), "/data/zeta");
+
+    let mut latest_only = [None; 1];
+    assert_eq!(
+        filesystem.expand_paths("/data/*", &mut latest_only),
+        Err(Error::BufferTooSmall { required: 2 })
+    );
+
+    filesystem.delete("/data/zeta;1").expect("delete selected version");
+    let mut after_delete = [None; 4];
+    assert_eq!(filesystem.expand_paths("/data/*;1", &mut after_delete), Ok(1));
+    assert_eq!(after_delete[0].unwrap().as_str(), "/data/alpha");
+    assert_eq!(filesystem.lookup("/data/zeta").unwrap().version, 2);
+}
+
+#[test]
+fn property_wildcard_version_selection_never_falls_back_to_latest() {
+    use synos_test_support::property::{run_assert, Config};
+
+    run_assert("synfs.wildcard-version-selection", Config::new(0x59_3, 64), |_, _, entropy| {
+        let requested = (entropy.next_u64() % 4 + 1) as u32;
+        let mut filesystem = SynFs::<BLOCKS>::new();
+        if filesystem.create_directory("/data", true).is_err()
+            || filesystem.write("/data/item", b"one").is_err()
+            || filesystem.write("/data/item", b"two").is_err()
+        {
+            return false
+        }
+        let pattern = format!("/data/*;{requested}");
+        let mut matches = [None; 2];
+        let count = filesystem.expand_paths(&pattern, &mut matches).ok();
+        count == Some(usize::from(requested <= 2))
+    })
+    .expect("generated version selectors preserve wildcard scope");
+}
+
+#[test]
 fn path_limits_and_quotas_reject_unsafe_or_excessive_input() {
     assert_eq!(VersionedPath::parse("/tmp/file;0").unwrap().version, VersionSelector::Latest);
     assert_eq!(VersionedPath::parse("/tmp/file;7").unwrap().version, VersionSelector::Exact(7));

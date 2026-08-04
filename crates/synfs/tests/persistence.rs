@@ -214,6 +214,10 @@ fn persists_link_lifecycle_and_shared_data() {
     filesystem
         .write("/data/source", b"new contents")
         .expect("create source version");
+    let mut selected = [None; 4];
+    assert_eq!(filesystem.expand_paths("/data/*;1", &mut selected), Ok(2));
+    assert_eq!(selected[0].unwrap().as_str(), "/data/alias");
+    assert_eq!(selected[1].unwrap().as_str(), "/data/source");
     let mut alias_contents = [0; 12];
     filesystem
         .read("/data/alias", &mut alias_contents)
@@ -240,6 +244,11 @@ fn persists_link_lifecycle_and_shared_data() {
     assert_eq!(links[0].path.as_str(), "/data/renamed");
     assert_eq!(links[1].path.as_str(), "/data/source");
     assert_eq!(filesystem.lookup("/data/renamed").unwrap().link_count, 2);
+    let mut recovered_selected = [None; 4];
+    assert_eq!(
+        filesystem.expand_paths("/data/*;1", &mut recovered_selected),
+        Ok(2)
+    );
     filesystem.check_consistency().expect("consistent linked image");
 }
 

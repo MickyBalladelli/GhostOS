@@ -185,6 +185,33 @@ fn qemu_filesystem_shell_workflow() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_wildcard_version_and_boundary_workflow() {
+    let Some(output) = run_qemu_shell_commands(
+        "qemu-wildcard-version",
+        &[
+            "create /data/wild-a",
+            "create /data/wild-a",
+            "directory /data/wild-*;2",
+            "delete /data/wild-*;1",
+            "type /data/wild-a;2",
+            "directory /data/wild-*;1",
+        ],
+    ) else {
+        return;
+    };
+    assert!(
+        output.contains("version: 2") && output.contains("/data/wild-a"),
+        "QEMU did not select the retained wildcard version; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("status=") || output.contains("NOT_FOUND"),
+        "QEMU did not report the exhausted exact-version wildcard; serial output was: {output:?}"
+    );
+}
+
 fn qemu_image() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SYNOS_QEMU_IMAGE") {
         return Some(PathBuf::from(path));

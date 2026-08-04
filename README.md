@@ -31,6 +31,13 @@ Build a BIOS disk image:
 
 The image is written to `build/bios/synos-bios.img`.
 
+Build the BIOS image, build the virtual machine in release mode, and run the
+workspace tests in one step:
+
+```sh
+./scripts/build-and-test.sh
+```
+
 Build the UEFI application:
 
 ```sh

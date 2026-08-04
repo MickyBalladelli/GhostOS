@@ -250,6 +250,30 @@ mod tests {
     fn rejects_malformed_patterns() {
         assert_eq!(Pattern::parse("/data/[abc"), Err(PatternError::UnterminatedClass));
         assert_eq!(Pattern::parse("/data/foo\\"), Err(PatternError::TrailingEscape));
+        assert_eq!(Pattern::parse("/data/[z-a]"), Err(PatternError::InvalidRange));
+        assert_eq!(Pattern::parse("/data/[]"), Err(PatternError::EmptyClass));
+        assert_eq!(Pattern::parse("/data/foo/"), Err(PatternError::InvalidPath));
+    }
+
+    #[test]
+    fn matcher_handles_boundaries_and_utf8_without_crossing_components() {
+        assert!(Pattern::parse("*").unwrap().matches(".hidden"));
+        assert!(Pattern::parse("?").unwrap().matches("é"));
+        assert!(!Pattern::parse("?").unwrap().matches("éé"));
+        assert!(!Pattern::parse("*").unwrap().matches("nested/name"));
+        assert!(Pattern::parse(r#"/data/\*.txt"#).unwrap().matches("/data/*.txt"));
+        assert!(!Pattern::parse(r#"/data/\*.txt"#).unwrap().matches("/data/a.txt"));
+    }
+
+    #[test]
+    fn matcher_rejects_patterns_at_the_encoded_path_boundary() {
+        let value = [b'a'; MAX_PATTERN_BYTES];
+        let too_long = [b'a'; MAX_PATTERN_BYTES + 1];
+        assert!(Pattern::parse(core::str::from_utf8(&value).unwrap()).is_ok());
+        assert_eq!(
+            Pattern::parse(core::str::from_utf8(&too_long).unwrap()),
+            Err(PatternError::InvalidPath)
+        );
     }
 
     #[test]
