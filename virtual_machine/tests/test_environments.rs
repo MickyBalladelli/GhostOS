@@ -188,6 +188,38 @@ fn qemu_filesystem_shell_workflow() {
 #[cfg(unix)]
 #[test]
 #[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_root_filesystem_mount_and_application_file_io() {
+    let Some(output) = run_qemu_shell_session("qemu-root-filesystem-io", |qmp| {
+        send_qemu_command(qmp, "directory /");
+        send_qemu_command(qmp, "mkdir /data/application");
+        send_qemu_command(qmp, "create /data/application/state");
+        send_qemu_command(qmp, "edit /data/application/state");
+        for key in "applicationdata".bytes() {
+            send_qemu_key(qmp, &key_name(key));
+        }
+        send_qemu_key(qmp, "ctrl-z");
+        send_qemu_command(qmp, "type /data/application/state");
+    }) else {
+        return;
+    };
+
+    assert!(
+        output.contains("root filesystem mounted"),
+        "QEMU did not mount the root filesystem; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("Directory: /") && output.contains("data"),
+        "QEMU could not list the mounted root filesystem; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("EDIT operation=SAVED") && output.contains("applicationdata"),
+        "QEMU application file read/write failed; serial output was: {output:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_wildcard_version_and_boundary_workflow() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-wildcard-version",
@@ -271,6 +303,18 @@ fn run_qemu_boot(vcpus: usize) -> Option<String> {
 
 #[cfg(unix)]
 fn run_qemu_shell_commands(label: &str, commands: &[&str]) -> Option<String> {
+    run_qemu_shell_session(label, |qmp| {
+        for command in commands {
+            send_qemu_command(qmp, command);
+        }
+    })
+}
+
+#[cfg(unix)]
+fn run_qemu_shell_session<F>(label: &str, session: F) -> Option<String>
+where
+    F: FnOnce(&mut UnixStream),
+{
     if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
         eprintln!("QEMU shell test skipped: set SYNOS_RUN_QEMU_TESTS=1 to enable");
         return None;
@@ -328,29 +372,41 @@ fn run_qemu_shell_commands(label: &str, commands: &[&str]) -> Option<String> {
     read_qmp_message(&mut qmp);
     qmp_command(&mut qmp, "{\"execute\":\"qmp_capabilities\"}");
 
-    for command in commands {
-        for key in command.bytes() {
-            let key = match key {
-                b'a'..=b'z' | b'0'..=b'9' => (key as char).to_string(),
-                b' ' => "spc".to_owned(),
-                b'/' => "slash".to_owned(),
-                _ => panic!("unsupported QEMU key in command"),
-            };
-            qmp_command(&mut qmp, &format!(
-                "{{\"execute\":\"human-monitor-command\",\"arguments\":{{\"command-line\":\"sendkey {key}\"}}}}"
-            ));
-        }
-        qmp_command(
-            &mut qmp,
-            "{\"execute\":\"human-monitor-command\",\"arguments\":{\"command-line\":\"sendkey ret\"}}",
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    session(&mut qmp);
 
     std::thread::sleep(Duration::from_millis(500));
     let _ = child.kill();
     let _ = child.wait();
     fs::read_to_string(&serial_path).ok()
+}
+
+#[cfg(unix)]
+fn send_qemu_command(stream: &mut UnixStream, command: &str) {
+    for key in command.bytes() {
+        send_qemu_key(stream, &key_name(key));
+    }
+    send_qemu_key(stream, "ret");
+    std::thread::sleep(Duration::from_millis(100));
+}
+
+#[cfg(unix)]
+fn send_qemu_key(stream: &mut UnixStream, key: &str) {
+    qmp_command(
+        stream,
+        &format!(
+            "{{\"execute\":\"human-monitor-command\",\"arguments\":{{\"command-line\":\"sendkey {key}\"}}}}"
+        ),
+    );
+}
+
+#[cfg(unix)]
+fn key_name(key: u8) -> String {
+    match key {
+        b'a'..=b'z' | b'0'..=b'9' => (key as char).to_string(),
+        b' ' => "spc".to_owned(),
+        b'/' => "slash".to_owned(),
+        _ => panic!("unsupported QEMU key in command"),
+    }
 }
 
 #[cfg(unix)]

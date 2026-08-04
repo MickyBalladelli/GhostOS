@@ -1851,6 +1851,8 @@ impl KernelExecutor {
                 Rights::CONTROL,
             )
             .expect("kernel control capability");
+        let filesystem = KernelFilesystem::new();
+        crate::println!("root filesystem mounted");
 
         Self {
             boot_method: boot_info.method,
@@ -1870,7 +1872,7 @@ impl KernelExecutor {
             capabilities,
             control_authority,
             dlm,
-            filesystem: FilesystemExecutor::new(KernelFilesystem::new()),
+            filesystem: FilesystemExecutor::new(filesystem),
             firewall_policy_version: 1,
             firewall_rule_count: 0,
         }

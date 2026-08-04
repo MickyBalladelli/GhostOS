@@ -46,10 +46,10 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 - [x] **Directories and Metadata**
   - [x] Add directory records, listing, directory creation/removal, rename, links, and file type metadata.
   - [x] Add quotas, retention policy enforcement, free-space accounting, and per-volume limits.
-- [ ] **Validation and Operations**
+- [x] **Validation and Operations**
   - [x] Test persistence and recovery with real disk images and simulated power loss.
   - [x] Fuzz path parsing, B-tree records, on-disk blocks, mount detection, and corrupted metadata.
-  - [ ] Add QEMU boot coverage proving that the root filesystem mounts and applications can read and write files.
+  - [x] Add QEMU boot coverage proving that the root filesystem mounts and applications can read and write files.
 
 ### Filesystem User Workflow Checklist
 
