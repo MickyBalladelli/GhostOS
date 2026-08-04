@@ -140,6 +140,8 @@ impl SynosPersistencePort {
         if length > SYNOS_PERSISTENCE_MAX_BYTES {
             return Err(DeviceError::InvalidAddress)
         }
+        self.mode = Mode::Write;
+        self.bytes.fill(0);
         self.expected_length = length;
         self.length = length;
         self.cursor = 0;
@@ -147,13 +149,22 @@ impl SynosPersistencePort {
     }
 
     fn write_data(&mut self, value: u32) -> Result<(), DeviceError> {
-        if self.mode != Mode::Write || self.cursor >= self.expected_length {
+        if self.cursor >= self.expected_length {
             return Err(DeviceError::InvalidAddress)
         }
         let count = (self.expected_length - self.cursor).min(4);
         self.bytes[self.cursor..self.cursor + count]
             .copy_from_slice(&value.to_le_bytes()[..count]);
         self.cursor = self.cursor.saturating_add(4);
+        Ok(())
+    }
+
+    fn write_data_byte(&mut self, value: u8) -> Result<(), DeviceError> {
+        if self.cursor >= self.expected_length {
+            return Err(DeviceError::InvalidAddress)
+        }
+        self.bytes[self.cursor] = value;
+        self.cursor += 1;
         Ok(())
     }
 }
@@ -166,12 +177,14 @@ impl Default for SynosPersistencePort {
 
 impl PortDevice for SynosPersistencePort {
     fn read(&mut self, port: u16, size: u8) -> Result<u64, DeviceError> {
-        if size != 4 {
-            return Err(DeviceError::UnsupportedSize)
-        }
         match port {
-            SYNOS_PERSISTENCE_LENGTH_PORT => Ok(self.length as u64),
-            SYNOS_PERSISTENCE_DATA_PORT if self.mode == Mode::Read => {
+            SYNOS_PERSISTENCE_LENGTH_PORT if size == 4 => Ok(self.length as u64),
+            SYNOS_PERSISTENCE_DATA_PORT if size == 1 && self.mode == Mode::Read => {
+                let value = self.bytes.get(self.cursor).copied().unwrap_or(0);
+                self.cursor = self.cursor.saturating_add(1);
+                Ok(value as u64)
+            }
+            SYNOS_PERSISTENCE_DATA_PORT if size == 4 && self.mode == Mode::Read => {
                 let mut word = [0u8; 4];
                 let remaining = self.length.saturating_sub(self.cursor);
                 let count = remaining.min(4);
@@ -204,6 +217,7 @@ impl PortDevice for SynosPersistencePort {
                 _ => Err(DeviceError::InvalidAddress),
             },
             SYNOS_PERSISTENCE_LENGTH_PORT if size == 4 => self.write_length(value as u32),
+            SYNOS_PERSISTENCE_DATA_PORT if size == 1 => self.write_data_byte(value as u8),
             SYNOS_PERSISTENCE_DATA_PORT if size == 4 => self.write_data(value as u32),
             _ => Err(DeviceError::UnsupportedSize),
         }

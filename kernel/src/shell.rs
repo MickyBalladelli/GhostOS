@@ -13,7 +13,8 @@ use syn_shell::{
     render::{OutputFormat, render},
     Text, MAX_LINE_BYTES,
 };
-use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind, SYNOS_PERSISTENCE_MAX_BYTES};
+use synos_boot_protocol::BootInfo;
+use synos_boot_protocol::{BootMethod, MemoryKind};
 use synos_power::AcpiPlatform;
 use synos_status::{IntoStatus, Status};
 use synos_system_model::command::{
@@ -1282,6 +1283,7 @@ fn wait_for_byte(
 
 const KERNEL_FILE_CAPACITY: usize = 16;
 const KERNEL_FILE_BYTES: usize = 1024;
+const KERNEL_PERSISTENCE_BYTES: usize = 32 * 1024;
 const PERSISTENCE_MAGIC: &[u8; 8] = b"SYNFS001";
 const PERSISTENCE_VERSION: u32 = 1;
 
@@ -1307,6 +1309,7 @@ struct KernelFilesystem {
     objects: [Option<KernelObject>; KERNEL_FILE_CAPACITY],
     next_object_id: u64,
     persistent: PersistentStore,
+    scratch: [u8; KERNEL_PERSISTENCE_BYTES],
 }
 
 impl KernelFilesystem {
@@ -1316,6 +1319,7 @@ impl KernelFilesystem {
             objects: [None; KERNEL_FILE_CAPACITY],
             next_object_id: 1,
             persistent: PersistentStore::new(),
+            scratch: [0; KERNEL_PERSISTENCE_BYTES],
         };
         for path in ["/packages", "/logs", "/data", "/tmp"] {
             let _ = filesystem.insert(path, EntryType::Directory);
@@ -1325,11 +1329,10 @@ impl KernelFilesystem {
     }
 
     fn load_persistent(&mut self) {
-        let mut bytes = [0u8; SYNOS_PERSISTENCE_MAX_BYTES];
-        let Some(length) = self.persistent.load(&mut bytes) else {
+        let Some(length) = self.persistent.load(&mut self.scratch) else {
             return
         };
-        let Some((files, objects, next_object_id)) = decode_filesystem(&bytes[..length]) else {
+        let Some((files, objects, next_object_id)) = decode_filesystem(&self.scratch[..length]) else {
             return
         };
         self.files = files;
@@ -1338,11 +1341,15 @@ impl KernelFilesystem {
     }
 
     fn persist(&mut self) {
-        let mut bytes = [0u8; SYNOS_PERSISTENCE_MAX_BYTES];
-        let Some(length) = encode_filesystem(self, &mut bytes) else {
+        let Some(length) = encode_filesystem(
+            &self.files,
+            &self.objects,
+            self.next_object_id,
+            &mut self.scratch,
+        ) else {
             return
         };
-        self.persistent.save(&bytes[..length]);
+        self.persistent.save(&self.scratch[..length]);
     }
 
     fn find(&self, path: &str) -> Option<KernelFile> {
@@ -1524,12 +1531,17 @@ impl<'a> PersistenceReader<'a> {
     }
 }
 
-fn encode_filesystem(filesystem: &KernelFilesystem, bytes: &mut [u8]) -> Option<usize> {
+fn encode_filesystem(
+    files: &[Option<KernelFile>; KERNEL_FILE_CAPACITY],
+    objects: &[Option<KernelObject>; KERNEL_FILE_CAPACITY],
+    next_object_id: u64,
+    bytes: &mut [u8],
+) -> Option<usize> {
     let mut writer = PersistenceWriter::new(bytes);
     writer.write(PERSISTENCE_MAGIC)?;
     writer.u32(PERSISTENCE_VERSION)?;
-    writer.u64(filesystem.next_object_id)?;
-    for file in filesystem.files {
+    writer.u64(next_object_id)?;
+    for file in *files {
         let Some(file) = file else {
             writer.u8(0)?;
             continue
@@ -1545,7 +1557,7 @@ fn encode_filesystem(filesystem: &KernelFilesystem, bytes: &mut [u8]) -> Option<
         writer.u8(file.is_link as u8)?;
         writer.u8(file.deleted as u8)?;
     }
-    for object in filesystem.objects {
+    for object in *objects {
         let Some(object) = object else {
             writer.u8(0)?;
             continue
@@ -2604,6 +2616,7 @@ impl KernelExecutor {
     }
 
     fn request_reboot(&mut self) -> Result<StructuredOutput, Status> {
+        self.filesystem.source_mut().persist();
         self.reboot_requested = true;
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "action", "rebooting")?;
@@ -2615,6 +2628,7 @@ impl KernelExecutor {
     }
 
     fn request_shutdown(&mut self) -> Result<StructuredOutput, Status> {
+        self.filesystem.source_mut().persist();
         self.shutdown_requested = true;
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "action", "shutting-down")?;
