@@ -20,8 +20,9 @@ pub use devices::{
     PortBus, PortDevice, PowerControl, PowerState, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
     VgaTextDevice, VideoMode, PS2_DATA_PORT, PS2_PORT_COUNT, PS2_STATUS_PORT,
     StorageError, VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
-    SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout, SystemDiskManifest,
-    SystemDiskProvisioner, SystemSetting, SYSTEM_DISK_ALIGNMENT, SYSTEM_DISK_FORMAT_VERSION,
+    SystemDiskBootArtifacts, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout,
+    SystemDiskManifest, SystemDiskProvisioner, SystemSetting, SYSTEM_DISK_ALIGNMENT,
+    SYSTEM_DISK_FORMAT_VERSION,
     SYSTEM_DISK_MANIFEST_SIZE, SYSTEM_DISK_MIN_SIZE, SYSTEM_DISK_PAYLOAD_OFFSET,
     SYSTEM_DISK_SETTINGS_SIZE, SYNFS_SYSTEM_BLOCKS, SYNFS_SYSTEM_VOLUME_SIZE,
     AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
@@ -129,6 +130,7 @@ pub struct Vm {
     bios: Bios,
     execution: ExecutionEngine,
     disk_manager: DiskManager,
+    booted_system_disk: Option<SystemDiskBootArtifacts>,
     config: VmConfig,
 }
 
@@ -444,6 +446,7 @@ impl Vm {
             bios,
             execution: ExecutionEngine::new(),
             disk_manager: DiskManager::new(),
+            booted_system_disk: None,
             config,
         }
     }
@@ -590,6 +593,11 @@ impl Vm {
         self.bios.context.uefi.as_mut()
     }
 
+    /// Return the validated system disk that supplied the current boot.
+    pub fn booted_system_disk(&self) -> Option<&SystemDiskBootArtifacts> {
+        self.booted_system_disk.as_ref()
+    }
+
     fn initialize(&mut self) -> Result<(), VmError> {
         println!("Initializing VM...");
 
@@ -612,7 +620,16 @@ impl Vm {
             }
         }
 
-        if self.config.kernel_path.is_some() {
+        let uefi_application_selected = self
+            .bios
+            .context
+            .uefi
+            .as_ref()
+            .and_then(|uefi| uefi.efi_application())
+            .is_some();
+        if !uefi_application_selected
+            && (self.config.kernel_path.is_some() || self.configured_system_disk().is_some())
+        {
             self.boot_kernel()?;
         }
 
@@ -768,30 +785,57 @@ impl Vm {
     }
 
     fn boot_kernel(&mut self) -> Result<(), VmError> {
-        if self.config.firmware == FirmwareMode::Uefi {
+        let mut loader = Loader::new();
+        let installed = if self.config.kernel_path.is_none() {
+            let spec = self
+                .configured_system_disk()
+                .ok_or(VmError::InvalidConfiguration)?;
+            Some(
+                SystemDiskProvisioner::load_boot_artifacts(&spec.image_path)
+                    .map_err(disk_error_to_vm)?,
+            )
+        } else {
+            None
+        };
+
+        if let Some(kernel_path) = self.config.kernel_path.as_ref() {
+            loader
+                .load_kernel(kernel_path)
+                .map_err(loader_error_to_vm)?;
+        } else if let Some(artifacts) = installed.as_ref() {
+            loader
+                .load_kernel_bytes(artifacts.kernel.clone())
+                .map_err(loader_error_to_vm)?;
+        } else {
             return Err(VmError::InvalidConfiguration);
         }
 
-        let kernel_path = self
-            .config
-            .kernel_path
-            .as_ref()
-            .ok_or(VmError::InvalidConfiguration)?;
-        let mut loader = Loader::new();
-        loader
-            .load_kernel(kernel_path)
-            .map_err(loader_error_to_vm)?;
         if let Some(initrd_path) = self.config.initrd_path.as_ref() {
             loader
                 .load_initrd(initrd_path)
                 .map_err(loader_error_to_vm)?;
+        } else if let Some(initrd) = installed.as_ref().and_then(|artifacts| artifacts.initrd.as_ref()) {
+            loader
+                .load_initrd_bytes(initrd.clone())
+                .map_err(loader_error_to_vm)?;
         }
-        loader.set_cmdline(self.config.boot_args.clone());
+
+        let boot_args = if !self.config.boot_args.is_empty() {
+            self.config.boot_args.clone()
+        } else {
+            installed
+                .as_ref()
+                .and_then(|artifacts| artifacts.setting("boot_args"))
+                .or_else(|| installed.as_ref().map(|artifacts| artifacts.manifest.boot_args.as_str()))
+                .unwrap_or_default()
+                .to_string()
+        };
+        loader.set_cmdline(boot_args.clone());
         loader
             .load_to_memory(&mut self.mmu, KERNEL_LOAD_ADDR)
             .map_err(loader_error_to_vm)?;
 
-        let framebuffer = if Self::serial_console_requested(&self.config.boot_args) {
+        let framebuffer = if Self::serial_console_requested(&boot_args) {
             FramebufferInfo::EMPTY
         } else {
             let gop = self.display.borrow().gop();
@@ -811,7 +855,16 @@ impl Vm {
             .map_err(loader_error_to_vm)?;
         loader
             .handoff(&mut self.cpu, &mut self.mmu)
-            .map_err(loader_error_to_vm)
+            .map_err(loader_error_to_vm)?;
+        self.booted_system_disk = installed;
+        Ok(())
+    }
+
+    fn configured_system_disk(&self) -> Option<&DiskSpec> {
+        self.config
+            .disks
+            .iter()
+            .find(|spec| spec.role == DiskRole::System)
     }
 
     fn serial_console_requested(boot_args: &str) -> bool {

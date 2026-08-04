@@ -63,6 +63,25 @@ pub struct SystemDiskManifest {
     pub settings_checksum: u32,
 }
 
+/// Validated boot data loaded from an attached SynOS system disk.
+#[derive(Debug, Clone)]
+pub struct SystemDiskBootArtifacts {
+    pub manifest: SystemDiskManifest,
+    pub kernel: Vec<u8>,
+    pub initrd: Option<Vec<u8>>,
+    pub settings: Vec<SystemSetting>,
+    pub system_volume: Vec<u8>,
+}
+
+impl SystemDiskBootArtifacts {
+    pub fn setting(&self, key: &str) -> Option<&str> {
+        self.settings
+            .iter()
+            .find(|setting| setting.key == key)
+            .map(|setting| setting.value.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemSetting {
     pub key: String,
@@ -355,6 +374,49 @@ impl SystemDiskProvisioner {
     pub fn inspect<P: AsRef<Path>>(path: P) -> Result<SystemDiskManifest, StorageError> {
         Self::validate(path)
     }
+
+    /// Load the kernel, initrd, settings, and validated SynFS root volume.
+    ///
+    /// The image is opened read-only, so this is safe while the same image is
+    /// attached to a writable VM controller.
+    pub fn load_boot_artifacts<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<SystemDiskBootArtifacts, StorageError> {
+        let mut image = DiskImage::open_with_access(path.as_ref(), false)?;
+        let manifest = read_best_manifest(&mut image)?;
+        let kernel = read_extent(
+            &mut image,
+            manifest.layout.kernel_offset,
+            manifest.layout.kernel_size,
+        )?;
+        let initrd = if manifest.layout.initrd_size == 0 {
+            None
+        } else {
+            Some(read_extent(
+                &mut image,
+                manifest.layout.initrd_offset,
+                manifest.layout.initrd_size,
+            )?)
+        };
+        let settings_bytes = read_extent(
+            &mut image,
+            manifest.layout.settings_offset,
+            manifest.layout.settings_size,
+        )?;
+        let settings = decode_settings(&settings_bytes)?;
+        let system_volume = read_extent(
+            &mut image,
+            manifest.layout.system_volume_offset,
+            manifest.layout.system_volume_size,
+        )?;
+        Ok(SystemDiskBootArtifacts {
+            manifest,
+            kernel,
+            initrd,
+            settings,
+            system_volume,
+        })
+    }
 }
 
 fn default_settings() -> Vec<SystemSetting> {
@@ -557,6 +619,87 @@ fn encode_settings(install: &SystemDiskInstall) -> Result<Vec<u8>, StorageError>
     }
     bytes.resize(SYSTEM_DISK_SETTINGS_SIZE as usize, 0);
     Ok(bytes)
+}
+
+fn decode_settings(bytes: &[u8]) -> Result<Vec<SystemSetting>, StorageError> {
+    if bytes.len() < SETTINGS_MAGIC.len() + 4 || &bytes[..8] != SETTINGS_MAGIC {
+        return Err(StorageError::InvalidImage(
+            "invalid system settings header".to_string(),
+        ));
+    }
+
+    let mut cursor = SETTINGS_MAGIC.len();
+    let checksum_offset = loop {
+        if cursor.checked_add(4).is_some_and(|end| end <= bytes.len())
+            && checksum(&bytes[..cursor]) == get_u32(bytes, cursor)
+            && bytes[cursor + 4..].iter().all(|byte| *byte == 0)
+        {
+            break cursor;
+        }
+        let header_end = cursor.checked_add(6).ok_or_else(|| {
+            StorageError::InvalidImage("system settings record overflow".to_string())
+        })?;
+        if header_end > bytes.len() {
+            return Err(StorageError::InvalidImage(
+                "truncated system settings".to_string(),
+            ));
+        }
+        let key_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
+        let value_len = u32::from_le_bytes(bytes[cursor + 2..header_end].try_into().unwrap()) as usize;
+        if key_len == 0 {
+            return Err(StorageError::InvalidImage(
+                "system setting key is empty".to_string(),
+            ));
+        }
+        let key_start = header_end;
+        let value_start = key_start.checked_add(key_len).ok_or_else(|| {
+            StorageError::InvalidImage("system setting key overflow".to_string())
+        })?;
+        let end = value_start.checked_add(value_len).ok_or_else(|| {
+            StorageError::InvalidImage("system setting value overflow".to_string())
+        })?;
+        if end > bytes.len() {
+            return Err(StorageError::InvalidImage(
+                "truncated system setting".to_string(),
+            ));
+        }
+        let key = std::str::from_utf8(&bytes[key_start..value_start])
+            .map_err(|_| StorageError::InvalidImage("system setting key is not UTF-8".to_string()))?;
+        let value = std::str::from_utf8(&bytes[value_start..end]).map_err(|_| {
+            StorageError::InvalidImage("system setting value is not UTF-8".to_string())
+        })?;
+        if key.contains(['\0', '\n', '=']) || value.contains(['\0', '\n']) {
+            return Err(StorageError::InvalidImage(
+                "system setting contains an invalid character".to_string(),
+            ));
+        }
+        cursor = end;
+    };
+
+    if checksum_offset + 4 > bytes.len() {
+        return Err(StorageError::InvalidImage(
+            "truncated system settings checksum".to_string(),
+        ));
+    }
+
+    let mut settings = Vec::new();
+    cursor = SETTINGS_MAGIC.len();
+    while cursor < checksum_offset {
+        let key_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
+        let value_len = u32::from_le_bytes(bytes[cursor + 2..cursor + 6].try_into().unwrap()) as usize;
+        let key_start = cursor + 6;
+        let value_start = key_start + key_len;
+        let end = value_start + value_len;
+        let key = std::str::from_utf8(&bytes[key_start..value_start])
+            .map_err(|_| StorageError::InvalidImage("system setting key is not UTF-8".to_string()))?
+            .to_string();
+        let value = std::str::from_utf8(&bytes[value_start..end])
+            .map_err(|_| StorageError::InvalidImage("system setting value is not UTF-8".to_string()))?
+            .to_string();
+        settings.push(SystemSetting { key, value });
+        cursor = end;
+    }
+    Ok(settings)
 }
 
 fn push_setting(bytes: &mut Vec<u8>, key: &str, value: &str) -> Result<(), StorageError> {

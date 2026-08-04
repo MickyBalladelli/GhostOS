@@ -63,13 +63,13 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Refuse accidental overwrite of an existing disk unless the caller explicitly requests replacement or reformatting.
   - [x] Validate the system-disk manifest and SynFS volume before boot, and report missing, stale, incompatible, or corrupt installation state.
 
-- [ ] **Boot SynOS From the Attached Disk**
-  - [ ] Teach BIOS and UEFI boot flows to discover the configured system disk and load SynOS from its on-disk boot artifacts.
-  - [ ] Define boot-source precedence when host `--kernel`/`--initrd` arguments and an installed system disk are both present.
-  - [ ] Load persistent settings from the disk before starting user-space services, with safe defaults when optional settings are absent.
-  - [ ] Mount the installed SynFS system volume as the SynOS root and keep system, package, log, user-data, and temporary storage roles separate.
-  - [ ] Preserve settings and filesystem changes across VM shutdown, reboot, and a later VM created from the same disk.
-  - [ ] Add system-disk version checks and an upgrade/migration path for changes to the on-disk layout or SynOS installation.
+- [x] **Boot SynOS From the Attached Disk**
+  - [x] Teach BIOS and UEFI boot flows to discover the configured system disk and load SynOS from its on-disk boot artifacts.
+  - [x] Define boot-source precedence when host `--kernel`/`--initrd` arguments and an installed system disk are both present.
+  - [x] Load persistent settings from the disk before starting user-space services, with safe defaults when optional settings are absent.
+  - [x] Mount the installed SynFS system volume as the SynOS root and keep system, package, log, user-data, and temporary storage roles separate.
+  - [x] Preserve settings and filesystem changes across VM shutdown, reboot, and a later VM created from the same disk.
+  - [x] Add system-disk version checks and an upgrade/migration path for changes to the on-disk layout or SynOS installation.
 
 - [ ] **Disk CLI and Operational Controls**
   - [ ] Add VM CLI options for `--disk`, `--system-disk`, `--disk-controller`, `--disk-format`, `--disk-size`, `--read-only`, and create-if-missing behavior.

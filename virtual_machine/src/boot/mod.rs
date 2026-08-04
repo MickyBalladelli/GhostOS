@@ -61,6 +61,10 @@ impl Loader {
 
     pub fn load_kernel<P: AsRef<Path>>(&mut self, path: P) -> Result<(), LoaderError> {
         let bytes = std::fs::read(path).map_err(|_| LoaderError::FileNotFound)?;
+        self.load_kernel_bytes(bytes)
+    }
+
+    pub fn load_kernel_bytes(&mut self, bytes: Vec<u8>) -> Result<(), LoaderError> {
         self.kernel_format = if is_elf64(&bytes) {
             KernelFormat::Elf64
         } else {
@@ -77,6 +81,10 @@ impl Loader {
 
     pub fn load_initrd<P: AsRef<Path>>(&mut self, path: P) -> Result<(), LoaderError> {
         let bytes = std::fs::read(path).map_err(|_| LoaderError::FileNotFound)?;
+        self.load_initrd_bytes(bytes)
+    }
+
+    pub fn load_initrd_bytes(&mut self, bytes: Vec<u8>) -> Result<(), LoaderError> {
         self.initrd_size = bytes.len();
         self.initrd = Some(bytes);
         Ok(())
