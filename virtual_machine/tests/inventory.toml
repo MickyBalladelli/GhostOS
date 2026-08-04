@@ -4,7 +4,7 @@ crate = "synos-vm"
 
 [[tier]]
 name = "fast-unit"
-command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11"
+command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution"
 status = "deterministic"
 
 [[tier]]
@@ -55,6 +55,31 @@ tiers = ["fast-unit"]
 [[test]]
 id = "vm.foundation.serial-boundary"
 file = "tests/foundation_59_1.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.cpu.decoder-prefixes-and-malformed-streams"
+file = "tests/cpu_memory_execution.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.cpu.executor-architectural-operations"
+file = "tests/cpu_memory_execution.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.cpu.modes-interrupts-and-hlt"
+file = "tests/cpu_memory_execution.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.memory.paging-cow-mmio-and-statistics"
+file = "tests/cpu_memory_execution.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.execution.translation-cache-profiling-and-cleanup"
+file = "tests/cpu_memory_execution.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
@@ -153,6 +178,16 @@ tests = ["vm.foundation.cleanup-golden"]
 [[source]]
 path = "src/execution.rs"
 tests = ["vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "tests/cpu_memory_execution.rs"
+tests = [
+    "vm.cpu.decoder-prefixes-and-malformed-streams",
+    "vm.cpu.executor-architectural-operations",
+    "vm.cpu.modes-interrupts-and-hlt",
+    "vm.memory.paging-cow-mmio-and-statistics",
+    "vm.execution.translation-cache-profiling-and-cleanup",
+]
 
 [[source]]
 path = "src/snapshot.rs"

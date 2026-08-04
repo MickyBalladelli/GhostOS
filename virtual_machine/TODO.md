@@ -274,12 +274,12 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 
 ### 10.2 CPU, Memory, and Execution Tests
 
-- [ ] Test decoder prefixes, REX, ModR/M, SIB, displacement, immediates, RIP-relative addressing, segment overrides, far operands, and malformed byte streams.
-- [ ] Test executor arithmetic, flags, branches, stack operations, calls/returns, string operations, control/debug registers, MSRs, exceptions, and unsupported instructions.
-- [ ] Test real, protected, compatibility, and long mode transitions, privilege levels, segment limits, page faults, interrupt gates, IF masking, STI shadow, and HLT wakeup.
-- [ ] Test register reset values, instruction pointer progression, exception state, interrupt priority, and deterministic step limits.
-- [ ] Test physical frame allocation/reuse, paging levels, permissions, COW, large pages, MMIO, unaligned access, out-of-range access, and memory statistics.
-- [ ] Test execution engine profiles, block boundaries, translation cache hits/misses/invalidation, JIT fallback, max-step termination, and panic/error cleanup.
+- [x] Test decoder prefixes, REX, ModR/M, SIB, displacement, immediates, RIP-relative addressing, segment overrides, far operands, and malformed byte streams.
+- [x] Test executor arithmetic, flags, branches, stack operations, calls/returns, string operations, control/debug registers, MSRs, exceptions, and unsupported instructions.
+- [x] Test real, protected, compatibility, and long mode transitions, privilege levels, segment limits, page faults, interrupt gates, IF masking, STI shadow, and HLT wakeup.
+- [x] Test register reset values, instruction pointer progression, exception state, interrupt priority, and deterministic step limits.
+- [x] Test physical frame allocation/reuse, paging levels, permissions, COW, large pages, MMIO, unaligned access, out-of-range access, and memory statistics.
+- [x] Test execution engine profiles, block boundaries, translation cache hits/misses/invalidation, JIT fallback, max-step termination, and panic/error cleanup.
 
 ### 10.3 Device Tests
 

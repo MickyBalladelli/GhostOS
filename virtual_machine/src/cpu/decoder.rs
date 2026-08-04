@@ -1166,6 +1166,16 @@ impl InstructionDecoder {
                 ins.operands = vec![Operand::Register(rm + high), Operand::ControlRegister(reg)];
                 return Ok(());
             }
+            0x21 => {
+                let (mod_, reg, rm) = Self::read_modrm(mmu, pos)?;
+                if mod_ != 0b11 {
+                    return Err(InstructionDecodeError::InvalidModRm);
+                }
+                ins.mnemonic = "MOV";
+                let high = if rex.b { 8 } else { 0 };
+                ins.operands = vec![Operand::Register(rm + high), Operand::DebugRegister(reg)];
+                return Ok(());
+            }
             0x22 => {
                 let (mod_, reg, rm) = Self::read_modrm(mmu, pos)?;
                 if mod_ != 0b11 {
@@ -1174,6 +1184,16 @@ impl InstructionDecoder {
                 ins.mnemonic = "MOV";
                 let high = if rex.b { 8 } else { 0 };
                 ins.operands = vec![Operand::ControlRegister(reg), Operand::Register(rm + high)];
+                return Ok(());
+            }
+            0x23 => {
+                let (mod_, reg, rm) = Self::read_modrm(mmu, pos)?;
+                if mod_ != 0b11 {
+                    return Err(InstructionDecodeError::InvalidModRm);
+                }
+                ins.mnemonic = "MOV";
+                let high = if rex.b { 8 } else { 0 };
+                ins.operands = vec![Operand::DebugRegister(reg), Operand::Register(rm + high)];
                 return Ok(());
             }
 
