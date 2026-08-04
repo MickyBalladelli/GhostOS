@@ -9,7 +9,8 @@ use synos_vm::{
     run_synos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
-    TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig, COM1_PORT, COM2_PORT,
+    HardwareAcceleration, TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig,
+    COM1_PORT, COM2_PORT,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -187,6 +188,10 @@ where
                         .parse::<u64>()
                         .map_err(|_| format!("invalid step count `{value}`"))?,
                 );
+            }
+            "--accel" | "--hardware-acceleration" => {
+                let value = next_value(&mut args, "--accel")?;
+                config.hardware_acceleration = parse_hardware_acceleration(&value)?;
             }
             "--serial" => config.enable_serial = true,
             "--no-serial" => config.enable_serial = false,
@@ -432,6 +437,20 @@ fn parse_firmware(value: &str) -> Result<FirmwareMode, String> {
         "bios" => Ok(FirmwareMode::Bios),
         "uefi" => Ok(FirmwareMode::Uefi),
         _ => Err(format!("invalid firmware `{value}`; use `bios` or `uefi`")),
+    }
+}
+
+fn parse_hardware_acceleration(value: &str) -> Result<HardwareAcceleration, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "software" | "none" => Ok(HardwareAcceleration::Software),
+        "auto" => Ok(HardwareAcceleration::Auto),
+        "kvm" => Ok(HardwareAcceleration::Kvm),
+        "haxm" => Ok(HardwareAcceleration::Haxm),
+        "hvf" => Ok(HardwareAcceleration::Hvf),
+        "whpx" => Ok(HardwareAcceleration::Whpx),
+        _ => Err(format!(
+            "invalid accelerator `{value}`; use software, auto, kvm, haxm, hvf, or whpx"
+        )),
     }
 }
 
@@ -1130,6 +1149,7 @@ Boot options:
 Machine options:
   -m, --memory <SIZE>       Guest RAM, such as 128M, 1GiB, or 4096K
   -c, --cpus <COUNT>        Number of guest CPUs
+      --accel <BACKEND>     CPU backend: software (default), auto, kvm, haxm, hvf, or whpx
       --serial              Enable COM1 serial output (default)
       --no-serial            Disable COM1 serial output
       --serial-port <PORT>   Serial port: com1, com2, or a hex I/O base

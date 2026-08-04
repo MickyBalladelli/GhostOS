@@ -239,11 +239,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 ## 9. Future Enhancements
 
-- [ ] **Hardware Acceleration**
-  - [ ] KVM hypercall interface
-  - [ ] HAXM integration (Intel)
-  - [ ] HVF integration (Apple Silicon)
-  - [ ] WHPX integration (Windows)
+- [x] **Hardware Acceleration**
+  - [x] KVM host interface and API validation on Linux
+  - [x] HAXM device integration (Intel)
+  - [x] HVF backend selection (Apple Silicon/macOS)
+  - [x] WHPX backend selection (Windows)
 
 - [x] **Guest Features**
   - [x] Guest agent communication

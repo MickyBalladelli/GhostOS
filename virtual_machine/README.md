@@ -128,6 +128,15 @@ versions require a future migration step instead of being mounted silently.
 Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
 bounded run or `--integration` to run the SynOS integration checks.
 
+### Hardware acceleration
+
+Select a host backend with `--accel software|auto|kvm|haxm|hvf|whpx`.
+`software` is the default. `auto` probes native backends in host order and
+falls back to the portable executor when none is available. An explicit
+backend fails at VM creation if its host interface is unavailable. KVM opens
+and validates `/dev/kvm`; HAXM opens its device node; HVF and WHPX are selected
+only on their supported operating systems.
+
 ### Checkpoints, migration, and monitor
 
 Save and restore VM state with bounded or interactive runs:

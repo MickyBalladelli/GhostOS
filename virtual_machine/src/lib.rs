@@ -6,6 +6,7 @@ pub mod boot;
 pub mod net;
 pub mod integration;
 pub mod execution;
+pub mod hardware_acceleration;
 pub mod snapshot;
 pub mod terminal;
 
@@ -54,6 +55,10 @@ pub use integration::{run_synos_integration, IntegrationError, SynosIntegrationR
 pub use execution::{
     BlockProfile, ExecutionEngine, ExecutionEngineConfig, ExecutionStats,
 };
+pub use hardware_acceleration::{
+    HardwareAcceleration, HardwareAccelerationError, HardwareAccelerationHandle,
+    HardwareAccelerationSession, HardwareAccelerationStatus,
+};
 pub use snapshot::{SnapshotChain, SnapshotDiff, SnapshotError, SnapshotId, VmSnapshot};
 pub use terminal::{
     ascii_to_scancodes, TerminalError, TerminalExit, TerminalInput, TerminalInputMode,
@@ -97,6 +102,7 @@ pub struct VmConfig {
     pub serial_port: u16,
     pub firmware: FirmwareMode,
     pub max_steps: Option<u64>,
+    pub hardware_acceleration: HardwareAcceleration,
     pub disks: Vec<DiskSpec>,
 }
 
@@ -113,6 +119,7 @@ impl Default for VmConfig {
             serial_port: COM1_PORT,
             firmware: FirmwareMode::Bios,
             max_steps: None,
+            hardware_acceleration: HardwareAcceleration::Software,
             disks: Vec::new(),
         }
     }
@@ -146,6 +153,7 @@ pub struct Vm {
     display: Rc<RefCell<DisplayState>>,
     bios: Bios,
     execution: ExecutionEngine,
+    hardware_acceleration: HardwareAccelerationSession,
     disk_manager: DiskManager,
     booted_system_disk: Option<SystemDiskBootArtifacts>,
     config: VmConfig,
@@ -166,7 +174,10 @@ impl Vm {
     pub fn try_with_config(mut config: VmConfig) -> Result<Self, VmError> {
         config.max_memory_size = config.max_memory_size.max(config.memory_size);
         DiskManager::validate_specs(&config.disks).map_err(disk_error_to_vm)?;
+        let hardware_acceleration = HardwareAccelerationSession::open(config.hardware_acceleration)
+            .map_err(|error| VmError::HardwareAcceleration(error.to_string()))?;
         let mut vm = Self::build_with_config(config);
+        vm.hardware_acceleration = hardware_acceleration;
         vm.attach_configured_disks()?;
         if let Err(error) = vm.configure_persistence() {
             let _ = vm.close_disks();
@@ -506,6 +517,8 @@ impl Vm {
             display,
             bios,
             execution: ExecutionEngine::new(),
+            hardware_acceleration: HardwareAccelerationSession::open(HardwareAcceleration::Software)
+                .expect("software acceleration session cannot fail"),
             disk_manager: DiskManager::new(),
             booted_system_disk: None,
             config,
@@ -1150,6 +1163,12 @@ impl Vm {
         &mut self.execution
     }
 
+    /// Report the selected host accelerator and whether its native handle is
+    /// available. Software remains the default and is always portable.
+    pub fn hardware_acceleration(&self) -> HardwareAccelerationStatus {
+        self.hardware_acceleration.status()
+    }
+
     pub fn mmu(&self) -> &Mmu {
         &self.mmu
     }
@@ -1377,6 +1396,7 @@ pub enum VmError {
     Disk(String),
     KernelLoadError,
     BootFailure,
+    HardwareAcceleration(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
