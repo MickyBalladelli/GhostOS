@@ -54,14 +54,14 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Support explicit disk flush, sync, detach, and close behavior during normal shutdown, reboot, reset, and VM errors.
   - [x] Define read-only, copy-on-write, and disposable disk modes for safe inspection and test runs.
 
-- [ ] **SynOS System-Disk Provisioning**
-  - [ ] Define the system-disk layout: boot metadata, SynOS kernel and initrd, SynFS system volume, persistent settings, and reserved space for future updates.
-  - [ ] Add a disk-creation path that creates a new raw or supported formatted image with validated size, alignment, and format options.
-  - [ ] Build an idempotent installer/provisioner that writes SynOS, required system files, and default settings onto the system disk.
-  - [ ] Store the selected boot arguments, machine identity, network identity, capabilities, and system configuration on the disk rather than only in host-side VM arguments.
-  - [ ] Make provisioning atomic and restartable, with generation markers, checksums, and recovery for interrupted installation.
-  - [ ] Refuse accidental overwrite of an existing disk unless the caller explicitly requests replacement or reformatting.
-  - [ ] Validate the system-disk manifest and SynFS volume before boot, and report missing, stale, incompatible, or corrupt installation state.
+- [x] **SynOS System-Disk Provisioning**
+  - [x] Define the system-disk layout: boot metadata, SynOS kernel and initrd, SynFS system volume, persistent settings, and reserved space for future updates.
+  - [x] Add a disk-creation path that creates a new raw or supported formatted image with validated size, alignment, and format options.
+  - [x] Build an idempotent installer/provisioner that writes SynOS, required system files, and default settings onto the system disk.
+  - [x] Store the selected boot arguments, machine identity, network identity, capabilities, and system configuration on the disk rather than only in host-side VM arguments.
+  - [x] Make provisioning atomic and restartable, with generation markers, checksums, and recovery for interrupted installation.
+  - [x] Refuse accidental overwrite of an existing disk unless the caller explicitly requests replacement or reformatting.
+  - [x] Validate the system-disk manifest and SynFS volume before boot, and report missing, stale, incompatible, or corrupt installation state.
 
 - [ ] **Boot SynOS From the Attached Disk**
   - [ ] Teach BIOS and UEFI boot flows to discover the configured system disk and load SynOS from its on-disk boot artifacts.

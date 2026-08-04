@@ -884,6 +884,7 @@ dependencies = [
  "bitflags 2.13.1",
  "synos-boot-protocol",
  "synos-kernel",
+ "synos-synfs",
  "thiserror",
 ]
 

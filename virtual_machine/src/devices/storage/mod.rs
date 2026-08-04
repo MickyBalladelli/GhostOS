@@ -8,6 +8,7 @@ pub mod ahci;
 pub mod disk_image;
 pub mod management;
 pub mod nvme;
+pub mod system_disk;
 
 pub use ahci::{
     Ahci, AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
@@ -19,6 +20,12 @@ pub use management::{
 };
 pub use nvme::{
     Nvme, NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
+};
+pub use system_disk::{
+    SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout, SystemDiskManifest,
+    SystemDiskProvisioner, SystemSetting, SYSTEM_DISK_ALIGNMENT, SYSTEM_DISK_FORMAT_VERSION,
+    SYSTEM_DISK_MANIFEST_SIZE, SYSTEM_DISK_MIN_SIZE, SYSTEM_DISK_PAYLOAD_OFFSET,
+    SYSTEM_DISK_SETTINGS_SIZE, SYNFS_SYSTEM_BLOCKS, SYNFS_SYSTEM_VOLUME_SIZE,
 };
 
 use crate::devices::DeviceError;
