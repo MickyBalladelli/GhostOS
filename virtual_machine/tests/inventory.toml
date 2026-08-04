@@ -37,6 +37,11 @@ name = "hardware-accelerated"
 command = "SYNOS_QEMU_ACCEL=kvm cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored"
 status = "opt-in"
 
+[[tier]]
+name = "soak"
+command = "SYNOS_VM_SOAK_RUNS=3 ./scripts/vm-soak.sh"
+status = "opt-in"
+
 [[test]]
 id = "vm.foundation.deterministic-fixtures"
 file = "tests/foundation_59_1.rs"
@@ -318,6 +323,152 @@ id = "vm.qemu.remote-terminal-workflows"
 file = "tests/test_environments.rs"
 tiers = ["qemu"]
 
+[[test]]
+id = "vm.gates.inventory-contract"
+file = "tests/quality_gates.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.device.register-configuration"
+file = "tests/quality_gates.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.device.normal-io"
+file = "tests/quality_gates.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.device.reset"
+file = "tests/quality_gates.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.device.interrupt"
+file = "tests/quality_gates.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.device.malformed-input"
+file = "tests/quality_gates.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.device.failure"
+file = "tests/quality_gates.rs"
+tiers = ["fast-unit"]
+
+[[boot_path]]
+name = "bios"
+test = "vm.boot.bios-uefi-single-and-smp-bounded"
+serial_marker = "SynOS kernel bootstrap"
+
+[[boot_path]]
+name = "uefi"
+test = "vm.boot.bios-uefi-single-and-smp-bounded"
+serial_marker = "SynOS kernel bootstrap"
+
+[[boot_path]]
+name = "multiboot"
+test = "vm.boot.multiboot-layout-and-validation"
+serial_marker = "SynOS kernel bootstrap"
+
+[[device]]
+name = "pci"
+source = "src/devices/mod.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "apic"
+source = "src/devices/apic.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "pit"
+source = "src/devices/pit.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "hpet"
+source = "src/devices/hpet.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "serial"
+source = "src/devices/serial.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "ps2"
+source = "src/devices/input.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "power"
+source = "src/devices/power.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "display"
+source = "src/devices/display.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "guest-services"
+source = "src/devices/guest.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "virtio"
+source = "src/devices/virtio.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "e1000"
+source = "src/devices/net/e1000.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "virtio-net"
+source = "src/devices/net/virtio.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "ahci"
+source = "src/devices/storage/ahci.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "nvme"
+source = "src/devices/storage/nvme.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "disk-image"
+source = "src/devices/storage/disk_image.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "system-disk"
+source = "src/devices/storage/system_disk.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
 [[public_api]]
 name = "Vm::{new,with_config,run_for_steps,reset,snapshot,restore_snapshot}"
 source = "src/lib.rs"
@@ -406,3 +557,199 @@ tests = ["vm.foundation.deterministic-fixtures"]
 name = "NetBackend and PacketQueue"
 source = "src/net/mod.rs"
 tests = ["vm.foundation.deterministic-fixtures"]
+
+# Keep a module-level public-surface record for every VM source file. The
+# grouped records above describe important APIs; these records prevent a new
+# public module from silently falling outside the gate.
+[[public_api]]
+name = "devices::guest public surface"
+source = "src/devices/guest.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "devices::interrupt_controller public surface"
+source = "src/devices/interrupt_controller.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "devices::net public surface"
+source = "src/devices/net/mod.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "devices::storage public surface"
+source = "src/devices/storage/mod.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "devices::storage::management public surface"
+source = "src/devices/storage/management.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "devices::storage::persistence public surface"
+source = "src/devices/storage/persistence.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "devices::storage::system_disk public surface"
+source = "src/devices/storage/system_disk.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "firmware public surface"
+source = "src/firmware/mod.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "hardware_acceleration public surface"
+source = "src/hardware_acceleration.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "main CLI public surface"
+source = "src/main.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "net::mac public surface"
+source = "src/net/mac.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "net::packet public surface"
+source = "src/net/packet.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[source]]
+path = "src/devices/guest.rs"
+tests = ["vm.gates.inventory-contract", "vm.device.failure"]
+
+[[source]]
+path = "src/devices/interrupt_controller.rs"
+tests = ["vm.gates.inventory-contract", "vm.device.interrupt"]
+
+[[source]]
+path = "src/devices/net/mod.rs"
+tests = ["vm.gates.inventory-contract", "vm.device.register-configuration"]
+
+[[source]]
+path = "src/devices/storage/mod.rs"
+tests = ["vm.gates.inventory-contract", "vm.device.register-configuration"]
+
+[[source]]
+path = "src/devices/storage/management.rs"
+tests = ["vm.gates.inventory-contract", "vm.device.normal-io"]
+
+[[source]]
+path = "src/devices/storage/persistence.rs"
+tests = ["vm.gates.inventory-contract", "vm.device.failure"]
+
+[[source]]
+path = "src/devices/storage/system_disk.rs"
+tests = ["vm.gates.inventory-contract", "vm.device.failure"]
+
+[[source]]
+path = "src/firmware/mod.rs"
+tests = ["vm.gates.inventory-contract", "vm.boot.bios-uefi-single-and-smp-bounded"]
+
+[[source]]
+path = "src/hardware_acceleration.rs"
+tests = ["vm.gates.inventory-contract", "vm.config.bounded-boot-and-power-lifecycle"]
+
+[[source]]
+path = "src/main.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[source]]
+path = "src/net/mac.rs"
+tests = ["vm.gates.inventory-contract", "vm.network.loopback-routing-isolation-faults"]
+
+[[source]]
+path = "src/net/packet.rs"
+tests = ["vm.gates.inventory-contract", "vm.network.loopback-routing-isolation-faults"]
+
+[[public_api]]
+name = "cpu::decoder public surface"
+source = "src/cpu/decoder.rs"
+tests = ["vm.cpu.decoder-prefixes-and-malformed-streams"]
+
+[[public_api]]
+name = "cpu::executor public surface"
+source = "src/cpu/executor.rs"
+tests = ["vm.cpu.executor-architectural-operations"]
+
+[[public_api]]
+name = "devices::apic public surface"
+source = "src/devices/apic.rs"
+tests = ["vm.device.interrupt"]
+
+[[public_api]]
+name = "devices::display public surface"
+source = "src/devices/display.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::hpet public surface"
+source = "src/devices/hpet.rs"
+tests = ["vm.device.interrupt"]
+
+[[public_api]]
+name = "devices::input public surface"
+source = "src/devices/input.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::pit public surface"
+source = "src/devices/pit.rs"
+tests = ["vm.device.interrupt"]
+
+[[public_api]]
+name = "devices::power public surface"
+source = "src/devices/power.rs"
+tests = ["vm.device.reset"]
+
+[[public_api]]
+name = "devices::serial public surface"
+source = "src/devices/serial.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::virtio public surface"
+source = "src/devices/virtio.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::net::e1000 public surface"
+source = "src/devices/net/e1000.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::net::virtio public surface"
+source = "src/devices/net/virtio.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::storage::ahci public surface"
+source = "src/devices/storage/ahci.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::storage::nvme public surface"
+source = "src/devices/storage/nvme.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "execution public surface"
+source = "src/execution.rs"
+tests = ["vm.execution.translation-cache-profiling-and-cleanup"]
+
+[[public_api]]
+name = "firmware::bios public surface"
+source = "src/firmware/bios.rs"
+tests = ["vm.firmware.bios-post-services-and-mbr"]
+
+[[public_api]]
+name = "firmware::uefi public surface"
+source = "src/firmware/uefi.rs"
+tests = ["vm.firmware.uefi-tables-services-and-images"]

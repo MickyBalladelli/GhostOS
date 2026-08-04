@@ -60,6 +60,18 @@ run_optional() {
                 return 0
             fi
             ;;
+        hardware)
+            if ! command -v "${SYNOS_QEMU_BIN:-qemu-system-x86_64}" >/dev/null 2>&1 || [[ ! -f "${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]]; then
+                printf '{"state":"skipped","tier":"%s","reason":"missing QEMU or boot image","prerequisite":"qemu-system-x86_64 and SYNOS_QEMU_IMAGE"}\n' "$tier" > "$output_dir/result.json"
+                echo "== $tier: skipped; missing QEMU or boot image"
+                return 0
+            fi
+            case "$(uname -s)" in
+                Linux) [[ -e /dev/kvm ]] || { printf '{"state":"skipped","tier":"%s","reason":"KVM is unavailable","prerequisite":"/dev/kvm"}\n' "$tier" > "$output_dir/result.json"; echo "== $tier: skipped; KVM is unavailable"; return 0; } ;;
+                Darwin) : ;;
+                *) printf '{"state":"skipped","tier":"%s","reason":"no supported hardware accelerator","prerequisite":"KVM or HVF"}\n' "$tier" > "$output_dir/result.json"; echo "== $tier: skipped; no supported hardware accelerator"; return 0 ;;
+            esac
+            ;;
     esac
     if ! command -v "$1" >/dev/null 2>&1; then
         printf '{"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"%s"}\n' "$tier" "$1" > "$output_dir/result.json"
@@ -86,10 +98,16 @@ fi
 
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
 run_optional qemu env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
+hardware_accel=${SYNOS_QEMU_ACCEL:-kvm}
+if [[ -z "${SYNOS_QEMU_ACCEL:-}" && "$(uname -s)" == Darwin ]]; then
+    hardware_accel=hvf
+fi
+run_optional hardware env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/hardware" SYNOS_QEMU_ACCEL="$hardware_accel" cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
 run_optional cluster env SYNOS_RUN_QEMU_TESTS=1 "$root_dir/scripts/qemu-cluster-validation.sh"
 run_optional fuzz "$root_dir/scripts/fuzz-smoke.sh"
 run_optional coverage "$root_dir/scripts/coverage.sh"
 run_optional mutation "$root_dir/scripts/mutation.sh"
+run_optional soak "$root_dir/scripts/vm-soak.sh"
 run_optional reproducibility "$root_dir/scripts/check-reproducible-image.sh"
 run_optional dashboard "$root_dir/scripts/test-dashboard.py" "$evidence_dir"
 run_optional coverage-contract python3 "$root_dir/scripts/validate-test-coverage.py" "$evidence_dir"

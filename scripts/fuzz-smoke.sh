@@ -10,7 +10,7 @@ if ! command -v cargo-fuzz >/dev/null 2>&1; then
 fi
 
 runs=${SYNOS_FUZZ_RUNS:-1000}
-for target in path volume operations mount http script; do
+for target in path volume operations mount http script vm-decoder vm-devices vm-images; do
     echo "fuzz smoke: $target ($runs runs)"
     cargo fuzz run "$target" --sanitizer none -- -runs="$runs" -max_len=4096
 done

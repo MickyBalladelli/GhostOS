@@ -16,5 +16,11 @@ The VM tests use stable names from `inventory.toml`.
   loopback, and storage/network matrix checks.
 - cluster and hardware-accelerated runs are opt-in external tiers named in the
   inventory; they reuse the same cleanup and evidence contract.
+- `quality_gates.rs`: deterministic checks for the inventory contract and the
+  six required device-boundary scenarios.
+
+Run `python3 scripts/validate-vm-quality.py` from the repository root to check
+source-module/API inventory, device scenarios, serial boot paths, fuzz targets,
+mutation wiring, and cross-platform CI.
 
 Do not put wall-clock, host-random, or host-path assumptions in the fast tier.

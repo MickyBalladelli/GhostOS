@@ -328,15 +328,15 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 
 ### 10.7 VM Quality Gates
 
-- [ ] Make `cargo test` from the repository root include the VM tests, either by joining this crate to the root workspace or by using a tested top-level Cargo runner.
-- [ ] Define the fast all-tests command for deterministic VM and SynOS tests, then define the opt-in full-validation command for QEMU, cluster, hardware, performance, fuzz, and soak tests.
-- [ ] Require every VM source module and public API to have a named test in the VM inventory.
-- [ ] Require every emulated device to have register/configuration, normal I/O, reset, interrupt, malformed input, and failure coverage.
-- [ ] Require every SynOS boot path to have a VM or QEMU test with serial evidence.
-- [ ] Require every VM bug fix to add a deterministic regression test.
-- [ ] Add VM coverage reporting, mutation testing for device boundaries, nightly fuzzing for decoder/devices/images, and cross-platform CI.
-- [ ] Publish separate pass/fail/skip status for unit, integration, QEMU, cluster, performance, and hardware-accelerated tests.
-- [ ] Do not mark a VM feature complete until its tests pass with clean resource and terminal cleanup.
+- [x] Make `cargo test` from the repository root include the VM tests, either by joining this crate to the root workspace or by using a tested top-level Cargo runner.
+- [x] Define the fast all-tests command for deterministic VM and SynOS tests, then define the opt-in full-validation command for QEMU, cluster, hardware, performance, fuzz, and soak tests.
+- [x] Require every VM source module and public API to have a named test in the VM inventory.
+- [x] Require every emulated device to have register/configuration, normal I/O, reset, interrupt, malformed input, and failure coverage.
+- [x] Require every SynOS boot path to have a VM or QEMU test with serial evidence.
+- [x] Require every VM bug fix to add a deterministic regression test.
+- [x] Add VM coverage reporting, mutation testing for device boundaries, nightly fuzzing for decoder/devices/images, and cross-platform CI.
+- [x] Publish separate pass/fail/skip status for unit, integration, QEMU, cluster, performance, and hardware-accelerated tests.
+- [x] Do not mark a VM feature complete until its tests pass with clean resource and terminal cleanup.
 
 ---
 

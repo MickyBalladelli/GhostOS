@@ -38,6 +38,9 @@ fn run_qemu(firmware: &str, cpus: usize) -> String {
         .stdin(Stdio::null())
         .stderr(Stdio::piped())
         .stdout(Stdio::piped());
+    if let Some(accel) = std::env::var_os("SYNOS_QEMU_ACCEL") {
+        command.arg("-accel").arg(accel);
+    }
     if firmware == "uefi" {
         let firmware_path = std::env::var_os("SYNOS_QEMU_UEFI_FIRMWARE")
             .map(PathBuf::from)

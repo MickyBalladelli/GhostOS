@@ -83,13 +83,27 @@ evidence described in `platforms/README.md`.
 | recovery | `cargo test --workspace --all-targets` | required | failure, restart, and recovery output |
 | qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
 | cluster | `scripts/qemu-cluster-validation.sh` | opt-in | node serial logs, command logs, QMP input, failover log |
+| hardware-accelerated | `SYNOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
-| performance | benchmark command named by the inventory entry | opt-in | JSON result and machine metadata |
+| performance | `cargo test -p synos-vm --test test_environments storage_io_performance_and_integrity` | required | throughput output and test metadata |
+| soak | `SYNOS_VM_SOAK_RUNS=3 ./scripts/vm-soak.sh` | opt-in | repeated bounded test output |
 
 The root workspace includes both `synos-test-support` and `synos-vm` in
 `default-members`. Therefore `cargo test` runs every deterministic SynOS and VM
 unit/integration test. `cargo test --workspace --all-targets` is the explicit
 CI command that checks every workspace target.
+
+The VM-specific contract is checked by:
+
+```sh
+python3 scripts/validate-vm-quality.py
+```
+
+It requires a named inventory test for every VM source module and public API,
+all six device boundary scenarios (register/configuration, normal I/O, reset,
+interrupt, malformed input, and failure), and BIOS, UEFI, and Multiboot serial
+boot evidence. A VM source change must include a VM regression or integration
+test change; CI runs the check with `--changed`.
 
 For one evidence-producing deterministic run, use:
 
@@ -111,6 +125,12 @@ Fast pull-request CI runs formatting, host, VM, no-std, documentation, and
 inventory checks. Push and scheduled CI add QEMU and fuzz smoke tests. The
 scheduled workflow also runs coverage, mutation, Miri, sanitizer, cross-target,
 and reproducibility checks. CI uploads logs, coverage, and fuzz corpora.
+
+VM fuzz targets cover the decoder, device configuration/I/O boundaries, and
+disk-image parsers. They run in the nightly fuzz job. Mutation testing includes
+`synos-vm`; coverage emits workspace and per-crate reports. Full validation
+records separate `pass`, `fail`, and `skipped` results for QEMU, cluster,
+hardware-accelerated, performance, fuzz, and soak tiers.
 
 ### Cluster lifecycle validation
 
@@ -195,6 +215,8 @@ corresponding compatibility decision.
 | `SYNOS_FULL_VALIDATION` | unset | Enable opt-in QEMU, fuzz, coverage, mutation, and release tiers. |
 | `SYNOS_EVIDENCE_DIR` | `build/test-evidence/<run-id>` | Evidence output directory for the unified runners. |
 | `SYNOS_FUZZ_RUNS` | `1000` | Bounded fuzz smoke iterations per target. |
+| `SYNOS_VM_SOAK_RUNS` | `3` | Number of bounded deterministic VM soak repetitions. |
+| `VM_QUALITY_BASE` | `HEAD^` | Git base used by `validate-vm-quality.py --changed`. |
 
 Tests are isolated from one another and must not depend on an unset variable
 having a hidden meaning. The test result records the variables that were
