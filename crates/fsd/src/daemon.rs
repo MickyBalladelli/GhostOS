@@ -6,7 +6,7 @@ use synos_path_pattern::Pattern;
 use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
     CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, LinkEntry, SynFs,
-    SynFsDiagnostics, SynFsTransaction, TransactionCommit,
+    SynFsDiagnostics, SynFsTransaction, TransactionCommit, VersionSelector, VersionedPath,
 };
 
 use crate::namespace::{
@@ -816,12 +816,13 @@ impl<
             FileRights::DELETE.union(FileRights::WRITE).union(FileRights::ADMIN),
         )?;
         let path = Name::from_str(path)?;
-        let pattern = Pattern::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let versioned = VersionedPath::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| DaemonError::InvalidPath)?;
         let mut matches = [None; MAX_DIRECTORY_ENTRIES];
         let match_count = if pattern.has_magic() {
             self.filesystem.expand_paths(path.as_str(), &mut matches)?
         } else {
-            matches[0] = Some(synos_synfs::FileName::new(path.as_str())?);
+            matches[0] = Some(versioned.file);
             1
         };
         if match_count == 0 {
@@ -829,10 +830,11 @@ impl<
         }
         let mut deleted = None;
         for matched in matches[..match_count].iter().flatten() {
-            if self.path_is_read_only(matched.as_str())? {
+            let selected = versioned_name(matched.as_str(), versioned.version)?;
+            if self.path_is_read_only(selected.as_str())? {
                 return Err(DaemonError::ReadOnly);
             }
-            deleted = Some(self.filesystem.delete(matched.as_str())?);
+            deleted = Some(self.filesystem.delete(selected.as_str())?);
         }
         let deleted = deleted.ok_or(DaemonError::NotFound)?;
         Ok(DeleteInfo {
@@ -970,12 +972,13 @@ impl<
     ) -> Result<(FileInfo, usize), DaemonError> {
         self.authorize_process(process, authority, FileRights::READ)?;
         let path = Name::from_str(path)?;
-        let pattern = Pattern::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let versioned = VersionedPath::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| DaemonError::InvalidPath)?;
         let mut matches = [None; MAX_DIRECTORY_ENTRIES];
         let match_count = if pattern.has_magic() {
             self.filesystem.expand_paths(path.as_str(), &mut matches)?
         } else {
-            matches[0] = Some(synos_synfs::FileName::new(path.as_str())?);
+            matches[0] = Some(versioned.file);
             1
         };
         if match_count == 0 {
@@ -984,10 +987,11 @@ impl<
         let mut metadata = None;
         let mut written = 0;
         for matched in matches[..match_count].iter().flatten() {
-            let current = self.filesystem.lookup(matched.as_str())?;
+            let selected = versioned_name(matched.as_str(), versioned.version)?;
+            let current = self.filesystem.lookup(selected.as_str())?;
             metadata = Some(current);
             let mut entries = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
-            let count = self.filesystem.list_links(matched.as_str(), &mut entries)?;
+            let count = self.filesystem.list_links(selected.as_str(), &mut entries)?;
             for entry in entries.iter().take(count) {
                 let suffix = if entry.version == 0 { 0 } else { 1 + digits(entry.version) };
                 let required = entry.path.as_bytes().len() + suffix + 1;
@@ -1555,14 +1559,15 @@ impl<
     ) -> Result<(usize, usize), DaemonError> {
         let path = if prefix.is_empty() { "/" } else { prefix };
         let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
-        let count = if Pattern::parse(path)
-            .map_err(|_| DaemonError::InvalidPath)?
-            .has_magic()
-        {
+        let versioned = VersionedPath::parse(path).map_err(|_| DaemonError::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str())
+            .map_err(|_| DaemonError::InvalidPath)?;
+        let count = if pattern.has_magic() {
             let mut matches = [None; MAX_DIRECTORY_ENTRIES];
             let count = snapshot.expand_paths(path, &mut matches)?;
             for (index, matched) in matches[..count].iter().flatten().enumerate() {
-                let file = snapshot.lookup(matched.as_str())?;
+                let selected = versioned_name(matched.as_str(), versioned.version)?;
+                let file = snapshot.lookup(selected.as_str())?;
                 entries[index] = DirectoryEntry {
                     name: *matched,
                     file_type: file.file_type,
@@ -1837,6 +1842,26 @@ fn rms_capability() -> synos_synfs::RmsMapHandle {
 
 fn mount_path(path: &str) -> &str {
     path.rsplit_once(';').map_or(path, |(path, _)| path)
+}
+
+fn versioned_name(path: &str, selector: VersionSelector) -> Result<Name, DaemonError> {
+    let VersionSelector::Exact(version) = selector else {
+        return Name::from_str(path)
+    };
+    let required = path
+        .len()
+        .checked_add(1)
+        .and_then(|length| length.checked_add(digits(version)))
+        .ok_or(DaemonError::InvalidPath)?;
+    if required > MAX_NAME_BYTES {
+        return Err(DaemonError::InvalidPath)
+    }
+    let mut bytes = [0; MAX_NAME_BYTES];
+    bytes[..path.len()].copy_from_slice(path.as_bytes());
+    bytes[path.len()] = b';';
+    let end = path.len() + 1;
+    write_decimal(&mut bytes[end..required], version);
+    Name::from_bytes(&bytes[..required], false)
 }
 
 fn same_volume(

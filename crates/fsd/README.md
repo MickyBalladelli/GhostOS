@@ -43,11 +43,17 @@ limits return `NO_SPACE`.
 
 `DIRECTORY`/`LS`, `TYPE`, `DELETE`, and `SHOW LINKS` accept wildcard paths.
 `DELETE` uses the latest live version unless a numeric `;N` selector is added
-to the pattern, and stops at the first failed match after earlier matches were
-committed. `TYPE` separates matched files with a path header. `LINK`, `MKDIR`,
+to the pattern. A wildcard with `;N` matches only names retaining live version
+`N`; it never falls back to the latest version or returns retained versions
+from other selectors. `;0` means latest. Delete stops at the first failed
+match after earlier matches were committed. `TYPE` separates matched files
+with a path header. `LINK`, `MKDIR`,
 `CREATE`, `RMDIR`, `SET DEFAULT`, and `CD` reject wildcard paths because their
 target mapping is ambiguous or unsafe. Wildcards in version selectors are not
-valid.
+valid. `LINK source;N target` links the selected retained version as a fixed
+hard-link target; later source versions do not change that link. Link source
+wildcards and target selectors remain rejected. `SHOW LINKS path;N` reports
+links for only the selected version's shared data.
 
 ## Shell validation workflow
 

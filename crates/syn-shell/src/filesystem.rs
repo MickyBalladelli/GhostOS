@@ -291,6 +291,9 @@ pub trait FilesystemSource {
     ) -> Result<(), Status> {
         expand_pattern(self, pattern, output)
     }
+    fn version_exists(&mut self, _path: &str, _version: u32) -> Result<bool, Status> {
+        Ok(true)
+    }
     fn list(
         &mut self,
         path: &str,
@@ -1555,6 +1558,19 @@ fn expand_paths<S: FilesystemSource + ?Sized>(
     }
     source.expand(base, output)?;
     if let Some(version) = version.filter(|version| *version != 0) {
+        let mut retained = 0;
+        for index in 0..output.count {
+            let Some(path) = output.entries[index] else { continue };
+            if !source.version_exists(path.as_str(), version)? {
+                continue
+            }
+            output.entries[retained] = Some(path);
+            retained += 1;
+        }
+        for entry in output.entries.iter_mut().skip(retained) {
+            *entry = None;
+        }
+        output.count = retained;
         for entry in output.entries.iter_mut().take(output.count) {
             let Some(path) = *entry else { continue };
             let mut value = Text::<{ MAX_PATH_BYTES }>::empty();

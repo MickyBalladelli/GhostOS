@@ -554,20 +554,35 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         self.filesystem.list_directory_at(self.root, path, entries)
     }
 
+    /// Expand a wildcard over names visible at the selected version.
+    ///
+    /// Without a selector, or with `;0`, only latest live names are returned.
+    /// With `;N`, only live retained version `N` is returned for each matching
+    /// name. The returned names do not carry `;N`; callers must preserve the
+    /// selector when they perform the operation.
     pub fn expand_paths<const CAPACITY: usize>(
         &self,
         pattern: &str,
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
-        let pattern = Pattern::parse(pattern).map_err(|_| Error::InvalidPath)?;
+        let versioned = VersionedPath::parse(pattern)?;
+        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| Error::InvalidPath)?;
         output.fill(None);
         let mut written = 0;
         let mut ordinal = 0;
         while let Some(record) = self.filesystem.record_at(self.root, ordinal)? {
             ordinal = ordinal.saturating_add(1);
-            if self.filesystem.latest_record_at(self.root, record.key.file)? != Some(record)
-                || !pattern.matches(record.key.file.as_str())
-            {
+            let selected = match versioned.version {
+                VersionSelector::Latest => {
+                    !record.deleted
+                        && self.filesystem.latest_record_at(self.root, record.key.file)?
+                            == Some(record)
+                }
+                VersionSelector::Exact(version) => {
+                    !record.deleted && record.key.version == version
+                }
+            };
+            if !selected || !pattern.matches(record.key.file.as_str()) {
                 continue
             }
             if written == CAPACITY {
@@ -1354,24 +1369,32 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.list_directory_at(self.root, path, entries)
     }
 
-    /// Expand a bounded wildcard over live latest names in this generation.
-    /// Results are sorted by canonical path and never include retained-only
-    /// versions or deleted records.
+    /// Expand a bounded wildcard over names visible at the selected version.
+    /// Without a selector, or with `;0`, results contain only latest live
+    /// names. With `;N`, results contain only live retained version `N`.
+    /// Results are sorted by canonical path and never include deleted records.
     pub fn expand_paths<const CAPACITY: usize>(
         &self,
         pattern: &str,
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
-        let pattern = Pattern::parse(pattern).map_err(|_| Error::InvalidPath)?;
+        let versioned = VersionedPath::parse(pattern)?;
+        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| Error::InvalidPath)?;
         output.fill(None);
         let mut written = 0;
         let mut ordinal = 0;
         while let Some(record) = self.record_at(self.root, ordinal)? {
             ordinal = ordinal.saturating_add(1);
-            if record.deleted
-                || self.latest_record_at(self.root, record.key.file)? != Some(record)
-                || !pattern.matches(record.key.file.as_str())
-            {
+            let selected = match versioned.version {
+                VersionSelector::Latest => {
+                    !record.deleted
+                        && self.latest_record_at(self.root, record.key.file)? == Some(record)
+                }
+                VersionSelector::Exact(version) => {
+                    !record.deleted && record.key.version == version
+                }
+            };
+            if !selected || !pattern.matches(record.key.file.as_str()) {
                 continue
             }
             if output[..written].iter().flatten().any(|path| *path == record.key.file) {

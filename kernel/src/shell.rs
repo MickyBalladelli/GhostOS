@@ -1436,6 +1436,10 @@ impl FilesystemSource for KernelFilesystem {
                 .is_some_and(|file| file.file_type == EntryType::Directory))
     }
 
+    fn version_exists(&mut self, path: &str, version: u32) -> Result<bool, Status> {
+        Ok(self.find_version(path, version).is_some())
+    }
+
     fn complete(
         &mut self,
         directory: &str,
