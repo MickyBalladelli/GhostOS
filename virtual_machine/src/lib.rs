@@ -65,9 +65,9 @@ pub use hardware_acceleration::{
     HardwareAcceleration, HardwareAccelerationError, HardwareAccelerationHandle,
     HardwareAccelerationSession, HardwareAccelerationStatus,
 };
-pub use snapshot::{SnapshotChain, SnapshotDiff, SnapshotError, SnapshotId, VmSnapshot};
+pub use snapshot::{SnapshotChain, SnapshotDiff, SnapshotError, SnapshotId, SnapshotPage, VmSnapshot};
 pub use terminal::{
-    ascii_to_scancodes, TerminalError, TerminalExit, TerminalInput, TerminalInputMode,
+    ascii_to_scancodes, translate_input_bytes, TerminalError, TerminalExit, TerminalInput, TerminalInputMode,
     TerminalSession,
 };
 

@@ -4,7 +4,7 @@ crate = "synos-vm"
 
 [[tier]]
 name = "fast-unit"
-command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution"
+command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test snapshot_terminal_network_10_5"
 status = "deterministic"
 
 [[tier]]
@@ -235,11 +235,11 @@ tests = [
 
 [[source]]
 path = "src/snapshot.rs"
-tests = ["vm.foundation.cleanup-golden"]
+tests = ["vm.snapshot.serialization-restore-chain-failures"]
 
 [[source]]
 path = "src/terminal.rs"
-tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+tests = ["vm.terminal.translation-ps2-fallback", "vm.foundation.cleanup-golden"]
 
 [[source]]
 path = "src/integration.rs"
@@ -251,7 +251,46 @@ tests = ["vm.cluster.deterministic-harness"]
 
 [[source]]
 path = "src/net/mod.rs"
-tests = ["vm.foundation.deterministic-fixtures"]
+tests = ["vm.network.loopback-routing-isolation-faults", "vm.foundation.deterministic-fixtures"]
+
+[[source]]
+path = "src/net/backend.rs"
+tests = ["vm.network.loopback-routing-isolation-faults"]
+
+[[test]]
+id = "vm.snapshot.serialization-restore-chain-failures"
+file = "tests/snapshot_terminal_network_10_5.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.terminal.translation-ps2-fallback"
+file = "tests/snapshot_terminal_network_10_5.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.network.loopback-routing-isolation-faults"
+file = "tests/snapshot_terminal_network_10_5.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.integration.storage-network-boot-matrix"
+file = "tests/snapshot_terminal_network_10_5.rs"
+tiers = ["vm-integration"]
+
+[[test]]
+id = "vm.qemu.lifecycle-serial-timeout-cleanup"
+file = "tests/test_environments.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.filesystem-workflows"
+file = "tests/test_environments.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.remote-terminal-workflows"
+file = "tests/test_environments.rs"
+tiers = ["qemu"]
 
 [[public_api]]
 name = "Vm::{new,with_config,run_for_steps,reset,snapshot,restore_snapshot}"
@@ -277,6 +316,16 @@ tests = ["vm.synos.minimal-boot-services-and-synfs"]
 name = "Cpu::{new,reset,decode_instruction,step}"
 source = "src/cpu/mod.rs"
 tests = ["vm.foundation.deterministic-fixtures"]
+
+[[public_api]]
+name = "translate_input_bytes"
+source = "src/terminal.rs"
+tests = ["vm.terminal.translation-ps2-fallback"]
+
+[[public_api]]
+name = "LoopbackHub::{set_link_up,queued_packets,clear}"
+source = "src/net/backend.rs"
+tests = ["vm.network.loopback-routing-isolation-faults"]
 
 [[public_api]]
 name = "Mmu::{new,alloc_frame,map_page,read_byte,write_byte}"

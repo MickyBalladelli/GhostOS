@@ -9,6 +9,8 @@ The VM tests use stable names from `inventory.toml`.
 - `main.rs` unit tests: CLI parsing and command behavior.
 - `qemu_matrix_59_11.rs` and `test_environments.rs`: opt-in QEMU and bounded
   performance checks.
+- `snapshot_terminal_network_10_5.rs`: deterministic snapshot, terminal,
+  loopback, and storage/network matrix checks.
 - cluster and hardware-accelerated runs are opt-in external tiers named in the
   inventory; they reuse the same cleanup and evidence contract.
 

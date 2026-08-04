@@ -120,7 +120,7 @@ impl TerminalSession {
 
         while let Ok(event) = self.events.try_recv() {
             match event {
-                InputEvent::Bytes(bytes) => translate_input(&bytes, &mut input),
+                InputEvent::Bytes(bytes) => input.bytes.extend(translate_input_bytes(&bytes)),
                 InputEvent::Eof => {
                     input.bytes.push(0x04)
                 }
@@ -158,19 +158,15 @@ impl TerminalSession {
     }
 }
 
-fn translate_input(bytes: &[u8], input: &mut TerminalInput) {
-    for &byte in bytes {
-        match byte {
-            // Ctrl-C belongs to the guest shell. It cancels the current input
-            // without stopping the VM.
-            0x03 => input.bytes.push(0x03),
-            // TTYs commonly report Backspace as DEL; SynOS serial consoles
-            // conventionally consume BS.
-            0x7F => input.bytes.push(0x08),
-            // Enter, Tab, Ctrl-D, and escape sequences pass through.
-            byte => input.bytes.push(byte),
-        }
-    }
+/// Translate host terminal bytes into the guest console contract.
+///
+/// This stays independent from stdin so the exact input policy can be tested
+/// without taking ownership of the process terminal.
+pub fn translate_input_bytes(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .iter()
+        .map(|byte| if *byte == 0x7F { 0x08 } else { *byte })
+        .collect()
 }
 
 #[cfg(unix)]
@@ -191,7 +187,9 @@ fn terminal_size() -> Option<(u16, u16)> {
 
 /// Convert one ASCII byte to PS/2 set-1 make/break bytes.
 pub fn ascii_to_scancodes(byte: u8) -> Vec<u8> {
-    let (byte, control) = if (1..=26).contains(&byte) {
+    let (byte, control) = if (1..=26).contains(&byte)
+        && !matches!(byte, b'\t' | b'\n' | b'\r' | 0x08)
+    {
         (b'a' + byte - 1, true)
     } else {
         (byte, false)

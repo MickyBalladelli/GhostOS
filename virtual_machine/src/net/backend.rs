@@ -29,6 +29,26 @@ impl LoopbackHub {
         }
     }
 
+    /// Enable or disable delivery for both ports.
+    pub fn set_link_up(&mut self, up: bool) {
+        self.up = up
+    }
+
+    pub fn link_up(&self) -> bool {
+        self.up
+    }
+
+    /// Return the number of frames waiting for a port.
+    pub fn queued_packets(&self, port: usize) -> usize {
+        self.queues.get(port).map_or(0, VecDeque::len)
+    }
+
+    pub fn clear(&mut self) {
+        for queue in &mut self.queues {
+            queue.clear()
+        }
+    }
+
     fn deliver(&mut self, from: usize, packet: &[u8]) -> Result<(), NetError> {
         if packet.len() > ETHERNET_FRAME_MAX {
             return Err(NetError::PacketTooLarge);

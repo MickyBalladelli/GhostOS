@@ -308,14 +308,14 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 
 ### 10.5 Snapshot, Terminal, Network, and Integration Tests
 
-- [ ] Test snapshot serialization, restore, snapshot IDs, chain order, diffs, memory/device state, corrupted data, version mismatch, and partial restore.
-- [ ] Test terminal input translation for printable bytes, Enter, Backspace, Tab, Ctrl-C, Ctrl-D, Escape sequences, EOF, and PS/2 fallback.
-- [ ] Test terminal raw-mode ownership, restoration on success/error/panic/Ctrl-C/EOF, output flushing, resize, ANSI pass-through, and guest HLT wakeup.
-- [ ] Test loopback hub routing, port isolation, MAC addresses, packet queues, backpressure, dropped frames, and deterministic network faults.
-- [ ] Test VM storage/network device combinations used by SynOS boot and shell workflows.
-- [ ] Test QMP lifecycle, serial capture, timeout handling, guest poweroff, QEMU crash, missing image, missing executable, and stale socket cleanup.
-- [ ] Test QEMU filesystem workflows for directory, create, type, default directory, edit, link, delete, wildcard, version, snapshot, and failure cases.
-- [ ] Test remote terminal workflows for prompt, command input, output, resize, reconnect, guest shutdown, and cleanup.
+- [x] Test snapshot serialization, restore, snapshot IDs, chain order, diffs, memory/device state, corrupted data, version mismatch, and partial restore.
+- [x] Test terminal input translation for printable bytes, Enter, Backspace, Tab, Ctrl-C, Ctrl-D, Escape sequences, EOF, and PS/2 fallback.
+- [x] Test terminal raw-mode ownership, restoration on success/error/panic/Ctrl-C/EOF, output flushing, resize, ANSI pass-through, and guest HLT wakeup.
+- [x] Test loopback hub routing, port isolation, MAC addresses, packet queues, backpressure, dropped frames, and deterministic network faults.
+- [x] Test VM storage/network device combinations used by SynOS boot and shell workflows.
+- [x] Test QMP lifecycle, serial capture, timeout handling, guest poweroff, QEMU crash, missing image, missing executable, and stale socket cleanup.
+- [x] Test QEMU filesystem workflows for directory, create, type, default directory, edit, link, delete, wildcard, version, snapshot, and failure cases.
+- [x] Test remote terminal workflows for prompt, command input, output, resize, reconnect, guest shutdown, and cleanup.
 
 ### 10.6 Cluster and Fault Tests
 
