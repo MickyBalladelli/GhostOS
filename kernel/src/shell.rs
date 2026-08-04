@@ -502,6 +502,8 @@ mod input_tests {
 
         assert!(expand_command(&mut editor, &registry, &mut rendered).unwrap());
         assert_eq!(editor.line(), "SHOW SYSTEM");
+        assert_eq!(rendered.line.as_str(), "SHOW SYSTEM");
+        assert_eq!(rendered.cursor, "SHOW SYSTEM".len());
     }
 }
 
@@ -888,8 +890,22 @@ fn expand_command(
         return Ok(false)
     }
     replace_span(editor, start, end, replacement.as_str())?;
-    redraw(editor, line_render);
+    redraw_completed_line(editor, line_render);
     Ok(true)
+}
+
+fn redraw_completed_line<const HISTORY: usize>(
+    editor: &LineEditor<HISTORY>,
+    rendered: &mut ShellLineRender,
+) {
+    crate::print!("\r\x1b[K");
+    prompt();
+    crate::print!("{}", editor.line());
+    crate::print!("\x1b[K");
+
+    rendered.line.clear();
+    let _ = rendered.line.push_str(editor.line());
+    rendered.cursor = editor.cursor();
 }
 
 fn supports_file_completion(command: &str) -> bool {
