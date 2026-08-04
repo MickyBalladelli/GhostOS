@@ -645,7 +645,8 @@ fn decode_settings(bytes: &[u8]) -> Result<Vec<SystemSetting>, StorageError> {
             ));
         }
         let key_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
-        let value_len = u32::from_le_bytes(bytes[cursor + 2..header_end].try_into().unwrap()) as usize;
+        let value_len =
+            u32::from_le_bytes(bytes[cursor + 2..header_end].try_into().unwrap()) as usize;
         if key_len == 0 {
             return Err(StorageError::InvalidImage(
                 "system setting key is empty".to_string(),
@@ -663,8 +664,9 @@ fn decode_settings(bytes: &[u8]) -> Result<Vec<SystemSetting>, StorageError> {
                 "truncated system setting".to_string(),
             ));
         }
-        let key = std::str::from_utf8(&bytes[key_start..value_start])
-            .map_err(|_| StorageError::InvalidImage("system setting key is not UTF-8".to_string()))?;
+        let key = std::str::from_utf8(&bytes[key_start..value_start]).map_err(|_| {
+            StorageError::InvalidImage("system setting key is not UTF-8".to_string())
+        })?;
         let value = std::str::from_utf8(&bytes[value_start..end]).map_err(|_| {
             StorageError::InvalidImage("system setting value is not UTF-8".to_string())
         })?;
@@ -686,15 +688,20 @@ fn decode_settings(bytes: &[u8]) -> Result<Vec<SystemSetting>, StorageError> {
     cursor = SETTINGS_MAGIC.len();
     while cursor < checksum_offset {
         let key_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
-        let value_len = u32::from_le_bytes(bytes[cursor + 2..cursor + 6].try_into().unwrap()) as usize;
+        let value_len =
+            u32::from_le_bytes(bytes[cursor + 2..cursor + 6].try_into().unwrap()) as usize;
         let key_start = cursor + 6;
         let value_start = key_start + key_len;
         let end = value_start + value_len;
         let key = std::str::from_utf8(&bytes[key_start..value_start])
-            .map_err(|_| StorageError::InvalidImage("system setting key is not UTF-8".to_string()))?
+            .map_err(|_| {
+                StorageError::InvalidImage("system setting key is not UTF-8".to_string())
+            })?
             .to_string();
         let value = std::str::from_utf8(&bytes[value_start..end])
-            .map_err(|_| StorageError::InvalidImage("system setting value is not UTF-8".to_string()))?
+            .map_err(|_| {
+                StorageError::InvalidImage("system setting value is not UTF-8".to_string())
+            })?
             .to_string();
         settings.push(SystemSetting { key, value });
         cursor = end;

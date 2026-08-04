@@ -814,7 +814,10 @@ impl Vm {
             loader
                 .load_initrd(initrd_path)
                 .map_err(loader_error_to_vm)?;
-        } else if let Some(initrd) = installed.as_ref().and_then(|artifacts| artifacts.initrd.as_ref()) {
+        } else if let Some(initrd) = installed
+            .as_ref()
+            .and_then(|artifacts| artifacts.initrd.as_ref())
+        {
             loader
                 .load_initrd_bytes(initrd.clone())
                 .map_err(loader_error_to_vm)?;
@@ -826,7 +829,11 @@ impl Vm {
             installed
                 .as_ref()
                 .and_then(|artifacts| artifacts.setting("boot_args"))
-                .or_else(|| installed.as_ref().map(|artifacts| artifacts.manifest.boot_args.as_str()))
+                .or_else(|| {
+                    installed
+                        .as_ref()
+                        .map(|artifacts| artifacts.manifest.boot_args.as_str())
+                })
                 .unwrap_or_default()
                 .to_string()
         };

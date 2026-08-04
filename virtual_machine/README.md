@@ -102,10 +102,10 @@ Runnable examples live in [`examples/`](examples/):
   RAW, fixed VHD, or QCOW2 image to AHCI, NVMe, or virtio-blk.
 
 The default VM has a virtio-net device connected to an in-memory loopback
-backend. The storage example attaches a disk for guest I/O. The current CLI
-does not implement PXE network boot or firmware boot directly from AHCI/NVMe;
-those examples exercise device bring-up while the kernel is loaded by the
-host-side SynOS loader.
+backend. The storage example attaches a disk for guest I/O. A disk attached
+with `DiskRole::System` can also supply the kernel, initrd, persistent settings,
+and SynFS root volume when no host kernel is configured. Explicit host kernel
+and initrd paths take precedence.
 
 ## Architecture
 
