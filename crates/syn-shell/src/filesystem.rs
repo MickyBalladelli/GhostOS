@@ -15,6 +15,7 @@ pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_DIRECTORY_PAGE_ENTRIES: usize = 32;
 pub const MAX_LINK_PAGE_ENTRIES: usize = 16;
 pub const MAX_PATH_COMPLETION_MATCHES: usize = MAX_DIRECTORY_PAGE_ENTRIES;
+pub const MAX_WILDCARD_MATCHES: usize = 256;
 pub const MAX_VISIBLE_DIRECTORY_ENTRIES: usize = 6;
 pub const MAX_TYPE_OUTPUT_BYTES: usize = 4096;
 
@@ -160,6 +161,7 @@ pub struct WildcardExpansion {
     pub matches: usize,
     pub failure: Option<Status>,
     pub cancelled: bool,
+    pub next: Option<u32>,
 }
 
 impl WildcardExpansion {
@@ -168,6 +170,7 @@ impl WildcardExpansion {
             matches,
             failure: None,
             cancelled: false,
+            next: None,
         }
     }
 
@@ -176,6 +179,16 @@ impl WildcardExpansion {
             matches,
             failure: Some(failure),
             cancelled: failure.raw() == Status::CANCELLED.raw(),
+            next: None,
+        }
+    }
+
+    pub const fn page(matches: usize, next: Option<u32>) -> Self {
+        Self {
+            matches,
+            failure: None,
+            cancelled: false,
+            next,
         }
     }
 
@@ -348,7 +361,21 @@ pub trait FilesystemSource {
         pattern: &str,
         output: &mut PathCompletionPage,
     ) -> Result<(), Status> {
-        expand_pattern(self, pattern, output)
+        match expand_pattern_page(self, pattern, 0, output)? {
+            Some(_) => Err(Status::NO_SPACE),
+            None => Ok(()),
+        }
+    }
+
+    /// Fill one stable wildcard page. `pattern` includes its optional version
+    /// selector, and `continuation` is the zero-based match ordinal.
+    fn expand_page(
+        &mut self,
+        pattern: &str,
+        continuation: u32,
+        output: &mut PathCompletionPage,
+    ) -> Result<Option<u32>, Status> {
+        expand_pattern_page(self, pattern, continuation, output)
     }
 
     /// Wildcard scans are cooperative. A remote or kernel-backed source can
@@ -582,20 +609,99 @@ fn child_path(directory: &str, name: &str) -> Result<Path, Status> {
     Path::new(path.as_str())
 }
 
-fn expand_pattern<S: FilesystemSource + ?Sized>(
+fn selected_path(path: Path, version: Option<u32>) -> Result<Path, Status> {
+    let Some(version) = version.filter(|version| *version != 0) else {
+        return Ok(path)
+    };
+    let mut value = Text::<{ MAX_PATH_BYTES }>::empty();
+    value.push_str(path.as_str()).map_err(|_| Status::NO_SPACE)?;
+    value.push_char(';').map_err(|_| Status::NO_SPACE)?;
+    write_u32(&mut value, version)?;
+    Path::new(value.as_str())
+}
+
+fn insert_wildcard_match(
+    matches: &mut [Option<Path>; MAX_WILDCARD_MATCHES],
+    count: &mut usize,
+    path: Path,
+) -> Result<(), Status> {
+    if matches[..*count]
+        .iter()
+        .flatten()
+        .any(|entry| entry.as_str() == path.as_str())
+    {
+        return Ok(())
+    }
+    if *count == matches.len() {
+        return Err(Status::NO_SPACE)
+    }
+    let insert_at = matches[..*count]
+        .iter()
+        .position(|entry| entry.is_some_and(|entry| entry.as_str() > path.as_str()))
+        .unwrap_or(*count);
+    for index in (insert_at..*count).rev() {
+        matches[index + 1] = matches[index];
+    }
+    matches[insert_at] = Some(path);
+    *count += 1;
+    Ok(())
+}
+
+fn expand_pattern_page<S: FilesystemSource + ?Sized>(
     source: &mut S,
     pattern: &str,
+    continuation: u32,
     output: &mut PathCompletionPage,
-) -> Result<(), Status> {
-    let pattern = Pattern::parse(pattern).map_err(pattern_status)?;
-    if !pattern.has_magic() {
-        return output.push(literal_path(pattern.as_str())?)
-    }
+) -> Result<Option<u32>, Status> {
+    let (base, version) = split_version_selector(pattern)?;
+    let pattern = Pattern::parse(base).map_err(pattern_status)?;
     output.clear();
+    if !pattern.has_magic() {
+        if continuation == 0 {
+            output.push(selected_path(literal_path(pattern.as_str())?, version)?)?;
+        }
+        return Ok(None)
+    }
+
+    let mut matches = [None; MAX_WILDCARD_MATCHES];
+    let mut match_count = 0;
     let mut scanned = 0;
     let root = wildcard_root(pattern.as_str())?;
     let recurse = wildcard_has_later_component(pattern.as_str());
-    expand_directory(source, pattern, root.as_str(), output, recurse, 0, &mut scanned)
+    let scan = expand_directory(
+        source,
+        pattern,
+        version,
+        root.as_str(),
+        &mut matches,
+        &mut match_count,
+        recurse,
+        0,
+        &mut scanned,
+    );
+
+    let start = continuation as usize;
+    if let Err(status) = scan {
+        if start < match_count {
+            let end = start
+                .saturating_add(MAX_PATH_COMPLETION_MATCHES)
+                .min(match_count);
+            for path in matches[start..end].iter().flatten().copied() {
+                output.push(path)?;
+            }
+        }
+        return Err(status)
+    }
+    if start >= match_count {
+        return Ok(None)
+    }
+    let end = start
+        .saturating_add(MAX_PATH_COMPLETION_MATCHES)
+        .min(match_count);
+    for path in matches[start..end].iter().flatten().copied() {
+        output.push(path)?;
+    }
+    Ok((end < match_count).then_some(end as u32))
 }
 
 fn wildcard_has_later_component(pattern: &str) -> bool {
@@ -635,8 +741,10 @@ fn wildcard_root(pattern: &str) -> Result<Path, Status> {
 fn expand_directory<S: FilesystemSource + ?Sized>(
     source: &mut S,
     pattern: Pattern<'_>,
+    version: Option<u32>,
     directory: &str,
-    output: &mut PathCompletionPage,
+    matches: &mut [Option<Path>; MAX_WILDCARD_MATCHES],
+    match_count: &mut usize,
     recurse: bool,
     depth: usize,
     scanned: &mut usize,
@@ -661,14 +769,24 @@ fn expand_directory<S: FilesystemSource + ?Sized>(
             }
             let child = child_path(directory, entry.name.as_str())?;
             if pattern.matches(child.as_str()) {
-                output.push(child)?;
+                let selected = version
+                    .filter(|version| *version != 0)
+                    .map_or(Ok(true), |version| {
+                        source.version_exists(child.as_str(), version)
+                    })?;
+                if selected {
+                    let selected_path = selected_path(child, version)?;
+                    insert_wildcard_match(matches, match_count, selected_path)?;
+                }
             }
             if recurse && entry.file_type == EntryType::Directory {
                 expand_directory(
                     source,
                     pattern,
+                    version,
                     child.as_str(),
-                    output,
+                    matches,
+                    match_count,
                     recurse,
                     depth + 1,
                     scanned,
@@ -924,7 +1042,9 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let (base_path, version) = split_version_selector(path.as_str())?;
         if contains_wildcard(base_path) {
             let mut matches = PathCompletionPage::new();
-            let expansion = expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+            let continuation = continuation.or(integer(command.get("CONTINUATION"))?);
+            let expansion =
+                expand_paths_page(&mut self.source, path.as_str(), continuation, &mut matches)?;
             if matches.len() == 0 {
                 return Err(Status::NOT_FOUND)
             }
@@ -932,9 +1052,8 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             output.wildcard_matches = expansion.matches;
             output.wildcard_failure = expansion.failure;
             output.wildcard_cancelled = expansion.cancelled;
-            let start = continuation.unwrap_or(0) as usize;
-            let mut next_match = start;
-            for matched in matches.entries().skip(start) {
+            let mut next_match = continuation.unwrap_or(0);
+            for matched in matches.entries() {
                 if self.source.is_cancelled() {
                     output.wildcard_failure = Some(Status::CANCELLED);
                     output.wildcard_cancelled = true;
@@ -964,7 +1083,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
                             continue
                         }
                         if output.len() == MAX_DIRECTORY_PAGE_ENTRIES {
-                            output.next = Some(next_match.saturating_add(1) as u32);
+                            output.next = Some(next_match.saturating_add(1));
                             return Ok(path)
                         }
                         output.push(entry)?;
@@ -977,6 +1096,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
                 }
                 next_match += 1;
             }
+            output.next = expansion.next;
             if output.len() == 0 {
                 return Err(if output.wildcard_cancelled {
                     Status::CANCELLED
@@ -1826,50 +1946,34 @@ pub fn expand_paths<S: FilesystemSource + ?Sized>(
     path: &str,
     output: &mut PathCompletionPage,
 ) -> Result<WildcardExpansion, Status> {
-    let (base, version) = split_version_selector(path)?;
-    let pattern = Pattern::parse(base).map_err(pattern_status)?;
-    if !pattern.has_magic() {
-        output.push(literal_path(path)?)?;
-        return Ok(WildcardExpansion::complete(output.len()));
+    let expansion = expand_paths_page(source, path, None, output)?;
+    if let Some(next) = expansion.next {
+        return Ok(WildcardExpansion {
+            matches: expansion.matches,
+            failure: Some(Status::NO_SPACE),
+            cancelled: false,
+            next: Some(next),
+        })
     }
-    match source.expand(base, output) {
-        Ok(()) => {}
+    Ok(expansion)
+}
+
+/// Expand one path page without losing the stable match ordinal used for the
+/// next request. The page itself is bounded by `MAX_PATH_COMPLETION_MATCHES`.
+pub fn expand_paths_page<S: FilesystemSource + ?Sized>(
+    source: &mut S,
+    path: &str,
+    continuation: Option<u32>,
+    output: &mut PathCompletionPage,
+) -> Result<WildcardExpansion, Status> {
+    output.clear();
+    match source.expand_page(path, continuation.unwrap_or(0), output) {
+        Ok(next) => Ok(WildcardExpansion::page(output.len(), next)),
         Err(status) if output.len() != 0 => {
-            return Ok(WildcardExpansion::partial(output.len(), status))
+            Ok(WildcardExpansion::partial(output.len(), status))
         }
-        Err(status) => return Err(status),
+        Err(status) => Err(status),
     }
-    if let Some(version) = version.filter(|version| *version != 0) {
-        let mut retained = 0;
-        for index in 0..output.count {
-            let Some(path) = output.entries[index] else { continue };
-            let exists = match source.version_exists(path.as_str(), version) {
-                Ok(exists) => exists,
-                Err(status) if retained != 0 => {
-                    return Ok(WildcardExpansion::partial(retained, status))
-                }
-                Err(status) => return Err(status),
-            };
-            if !exists {
-                continue
-            }
-            output.entries[retained] = Some(path);
-            retained += 1;
-        }
-        for entry in output.entries.iter_mut().skip(retained) {
-            *entry = None;
-        }
-        output.count = retained;
-        for entry in output.entries.iter_mut().take(output.count) {
-            let Some(path) = *entry else { continue };
-            let mut value = Text::<{ MAX_PATH_BYTES }>::empty();
-            value.push_str(path.as_str()).map_err(|_| Status::NO_SPACE)?;
-            value.push_char(';').map_err(|_| Status::NO_SPACE)?;
-            write_u32(&mut value, version)?;
-            *entry = Some(Path::new(value.as_str())?);
-        }
-    }
-    Ok(WildcardExpansion::complete(output.len()))
 }
 
 fn is_path_or_descendant(path: &str, candidate: &str) -> bool {

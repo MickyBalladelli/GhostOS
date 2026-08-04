@@ -1662,17 +1662,17 @@ impl<
         let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
         let versioned = VersionedPath::parse(path).map_err(|_| DaemonError::InvalidPath)?;
         let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
+        let mut wildcard_next = None;
         let count = if pattern.has_magic() {
             let mut matches = [None; MAX_DIRECTORY_ENTRIES];
-            let count = match snapshot.expand_paths(path, &mut matches) {
-                Ok(count) => count,
-                Err(SynFsError::BufferTooSmall { .. })
-                    if matches.iter().any(Option::is_some) =>
-                {
+            let (count, next) = match snapshot.expand_paths_page(path, continuation, &mut matches) {
+                Ok(page) => page,
+                Err(SynFsError::BufferTooSmall { .. }) => {
                     return Err(DaemonError::PartialMatch)
                 }
                 Err(error) => return Err(DaemonError::File(error)),
             };
+            wildcard_next = next;
             for (index, matched) in matches[..count].iter().flatten().enumerate() {
                 let selected = versioned_name(matched.as_str(), versioned.version)?;
                 let file = snapshot.lookup(selected.as_str())?;
@@ -1695,14 +1695,21 @@ impl<
         let mut written = 0;
         let mut next = 0;
         let mut stopped_for_buffer = false;
-        for (index, entry) in entries.iter().take(count).enumerate().skip(continuation) {
+        let entry_start = if pattern.has_magic() { 0 } else { continuation };
+        for (index, entry) in entries.iter().take(count).enumerate().skip(entry_start) {
             let name = entry.name.as_bytes();
-            let required = 22 + name.len();
+            let required = 22usize
+                .checked_add(name.len())
+                .ok_or(DaemonError::BufferTooSmall { required: usize::MAX })?;
             if written + required > output.len() {
                 if written == 0 {
                     return Err(DaemonError::BufferTooSmall { required })
                 }
-                next = index;
+                next = if pattern.has_magic() {
+                    continuation.saturating_add(index)
+                } else {
+                    index
+                };
                 stopped_for_buffer = true;
                 break
             }
@@ -1719,7 +1726,10 @@ impl<
             written += required;
             next = index + 1;
         }
-        if stopped_for_buffer || next < count {
+        if pattern.has_magic() && !stopped_for_buffer {
+            next = wildcard_next.unwrap_or(0);
+        }
+        if stopped_for_buffer || wildcard_next.is_some() || next < count {
             Ok((written, next))
         } else {
             Ok((written, 0))

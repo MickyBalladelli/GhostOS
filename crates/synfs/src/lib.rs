@@ -35,6 +35,7 @@ pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_KEYS: usize = 7;
 pub const MAX_RETENTION_RULES: usize = 16;
 pub const MAX_CHECKPOINTS: usize = 16;
+pub const MAX_WILDCARD_MATCHES: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -566,11 +567,28 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         pattern: &str,
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
+        let (count, next) = self.expand_paths_page(pattern, 0, output)?;
+        next.map_or(Ok(count), |next| {
+            Err(Error::BufferTooSmall {
+                required: next.saturating_add(1),
+            })
+        })
+    }
+
+    /// Return one bounded, sorted wildcard page. Continuation is the stable
+    /// zero-based match ordinal, not an internal record position.
+    pub fn expand_paths_page<const CAPACITY: usize>(
+        &self,
+        pattern: &str,
+        continuation: usize,
+        output: &mut [Option<FileName>; CAPACITY],
+    ) -> Result<(usize, Option<usize>), Error> {
         let versioned = VersionedPath::parse(pattern)?;
         let pattern = Pattern::parse(versioned.file.as_str())
             .map_err(|_| Error::InvalidPattern)?;
         output.fill(None);
-        let mut written = 0;
+        let mut matches = [None; MAX_WILDCARD_MATCHES];
+        let mut match_count = 0;
         let mut ordinal = 0;
         while let Some(record) = self.filesystem.record_at(self.root, ordinal)? {
             ordinal = ordinal.saturating_add(1);
@@ -587,25 +605,36 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
             if !selected || !pattern.matches(record.key.file.as_str()) {
                 continue
             }
-            if written == CAPACITY {
-                return Err(Error::BufferTooSmall {
-                    required: written.saturating_add(1),
-                })
-            }
-            if output[..written].iter().flatten().any(|path| *path == record.key.file) {
+            if matches[..match_count]
+                .iter()
+                .flatten()
+                .any(|path| *path == record.key.file)
+            {
                 continue
             }
-            let insert_at = output[..written]
+            if match_count == matches.len() {
+                return Err(Error::BufferTooSmall {
+                    required: match_count.saturating_add(1),
+                })
+            }
+            let insert_at = matches[..match_count]
                 .iter()
                 .position(|path| path.is_some_and(|path| path > record.key.file))
-                .unwrap_or(written);
-            for index in (insert_at..written).rev() {
-                output[index + 1] = output[index];
+                .unwrap_or(match_count);
+            for index in (insert_at..match_count).rev() {
+                matches[index + 1] = matches[index];
             }
-            output[insert_at] = Some(record.key.file);
-            written += 1;
+            matches[insert_at] = Some(record.key.file);
+            match_count += 1;
         }
-        Ok(written)
+        if continuation >= match_count {
+            return Ok((0, None))
+        }
+        let end = continuation.saturating_add(CAPACITY).min(match_count);
+        for (slot, path) in matches[continuation..end].iter().flatten().copied().enumerate() {
+            output[slot] = Some(path);
+        }
+        Ok((end - continuation, (end < match_count).then_some(end)))
     }
 
     /// Read a range from one file version without leaving the checkpoint tree.
@@ -1380,11 +1409,28 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         pattern: &str,
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
+        let (count, next) = self.expand_paths_page(pattern, 0, output)?;
+        next.map_or(Ok(count), |next| {
+            Err(Error::BufferTooSmall {
+                required: next.saturating_add(1),
+            })
+        })
+    }
+
+    /// Return one bounded, sorted wildcard page. Continuation is the stable
+    /// zero-based match ordinal, not an internal record position.
+    pub fn expand_paths_page<const CAPACITY: usize>(
+        &self,
+        pattern: &str,
+        continuation: usize,
+        output: &mut [Option<FileName>; CAPACITY],
+    ) -> Result<(usize, Option<usize>), Error> {
         let versioned = VersionedPath::parse(pattern)?;
         let pattern = Pattern::parse(versioned.file.as_str())
             .map_err(|_| Error::InvalidPattern)?;
         output.fill(None);
-        let mut written = 0;
+        let mut matches = [None; MAX_WILDCARD_MATCHES];
+        let mut match_count = 0;
         let mut ordinal = 0;
         while let Some(record) = self.record_at(self.root, ordinal)? {
             ordinal = ordinal.saturating_add(1);
@@ -1400,25 +1446,36 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             if !selected || !pattern.matches(record.key.file.as_str()) {
                 continue
             }
-            if output[..written].iter().flatten().any(|path| *path == record.key.file) {
+            if matches[..match_count]
+                .iter()
+                .flatten()
+                .any(|path| *path == record.key.file)
+            {
                 continue
             }
-            if written == CAPACITY {
+            if match_count == matches.len() {
                 return Err(Error::BufferTooSmall {
-                    required: written.saturating_add(1),
+                    required: match_count.saturating_add(1),
                 })
             }
-            let insert_at = output[..written]
+            let insert_at = matches[..match_count]
                 .iter()
                 .position(|path| path.is_some_and(|path| path > record.key.file))
-                .unwrap_or(written);
-            for index in (insert_at..written).rev() {
-                output[index + 1] = output[index];
+                .unwrap_or(match_count);
+            for index in (insert_at..match_count).rev() {
+                matches[index + 1] = matches[index];
             }
-            output[insert_at] = Some(record.key.file);
-            written += 1;
+            matches[insert_at] = Some(record.key.file);
+            match_count += 1;
         }
-        Ok(written)
+        if continuation >= match_count {
+            return Ok((0, None))
+        }
+        let end = continuation.saturating_add(CAPACITY).min(match_count);
+        for (slot, path) in matches[continuation..end].iter().flatten().copied().enumerate() {
+            output[slot] = Some(path);
+        }
+        Ok((end - continuation, (end < match_count).then_some(end)))
     }
 
     pub fn list_links(&self, path: &str, entries: &mut [LinkEntry]) -> Result<usize, Error> {
