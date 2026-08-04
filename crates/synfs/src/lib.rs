@@ -43,6 +43,7 @@ pub enum Error {
     Corrupt,
     DirectoryNotEmpty,
     InvalidPath,
+    InvalidPattern,
     InvalidVersion,
     NotFound,
     NotDirectory,
@@ -65,6 +66,7 @@ impl IntoStatus for Error {
             }
             Self::Corrupt => Status::CORRUPT,
             Self::InvalidPath | Self::InvalidVersion => Status::INVALID_PATH,
+            Self::InvalidPattern => Status::INVALID_PATTERN,
             Self::NotDirectory => Status::NOT_DIRECTORY,
             Self::DirectoryNotEmpty => Status::DIRECTORY_NOT_EMPTY,
             Self::TransactionAborted => Status::BUSY,
@@ -565,7 +567,8 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
         let versioned = VersionedPath::parse(pattern)?;
-        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| Error::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str())
+            .map_err(|_| Error::InvalidPattern)?;
         output.fill(None);
         let mut written = 0;
         let mut ordinal = 0;
@@ -1378,7 +1381,8 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
         let versioned = VersionedPath::parse(pattern)?;
-        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| Error::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str())
+            .map_err(|_| Error::InvalidPattern)?;
         output.fill(None);
         let mut written = 0;
         let mut ordinal = 0;

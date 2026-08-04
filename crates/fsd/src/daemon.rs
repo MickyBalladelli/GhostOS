@@ -2,7 +2,7 @@ use core::fmt;
 
 use host_filesystems::{FileSystemKind, Partition};
 use synos_ipc::{Envelope, SharedBuffer};
-use synos_path_pattern::Pattern;
+use synos_path_pattern::{Pattern, PatternError};
 use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
     CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, LinkEntry, SynFs,
@@ -27,6 +27,20 @@ const MAX_DIRECTORY_ENTRIES: usize = 256;
 const MAX_NAME_BYTES: usize = synos_synfs::MAX_PATH_BYTES;
 const ROOT_MOUNT_NAME: &str = "SYS$ROOT";
 const INTERNAL_MAPPING_CAPABILITY: u64 = 1 << 32;
+
+fn pattern_error(error: PatternError) -> DaemonError {
+    match error {
+        PatternError::InvalidPath => DaemonError::InvalidPath,
+        PatternError::TooLong => DaemonError::File(SynFsError::BufferTooSmall {
+            required: synos_path_pattern::MAX_PATTERN_BYTES.saturating_add(1),
+        }),
+        PatternError::Empty
+        | PatternError::TrailingEscape
+        | PatternError::UnterminatedClass
+        | PatternError::EmptyClass
+        | PatternError::InvalidRange => DaemonError::InvalidPattern,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -126,6 +140,12 @@ pub struct DirectoryRemovalInfo {
 pub struct DeleteInfo {
     pub file: FileInfo,
     pub shared_data_reachable: bool,
+    pub status: Status,
+    pub matched_count: usize,
+    pub processed_count: usize,
+    pub failed_count: usize,
+    pub failure_status: Option<Status>,
+    pub cancelled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -173,8 +193,10 @@ pub enum DaemonError {
     NotFound,
     ReadOnly,
     CrossVolume,
+    PartialMatch,
     BufferTooSmall { required: usize },
     InvalidPath,
+    InvalidPattern,
     InvalidRename,
     ScratchTooSmall { required: usize },
     Namespace(NamespaceError),
@@ -200,11 +222,13 @@ impl IntoStatus for DaemonError {
                 Status::INVALID_ARGUMENT
             }
             Self::InvalidPath => Status::INVALID_PATH,
+            Self::InvalidPattern => Status::INVALID_PATTERN,
             Self::ProcessNotRegistered
             | Self::AccessDenied
             | Self::InvalidCapability => Status::ACCESS_DENIED,
             Self::ReadOnly => Status::READ_ONLY,
             Self::CrossVolume => Status::INVALID_ARGUMENT,
+            Self::PartialMatch => Status::PARTIAL_MATCH,
             Self::CapabilityExhausted
             | Self::HandleExhausted
             | Self::SnapshotExhausted
@@ -246,8 +270,10 @@ impl fmt::Display for DaemonError {
             Self::NotFound => "filesystem object not found",
             Self::ReadOnly => "filesystem is read-only",
             Self::CrossVolume => "hard links cannot cross volumes",
+            Self::PartialMatch => "wildcard operation matched only part of the input",
             Self::BufferTooSmall { .. } => "shared buffer is too small",
             Self::InvalidPath => "invalid filesystem path",
+            Self::InvalidPattern => "malformed wildcard pattern",
             Self::InvalidRename => "invalid rename payload",
             Self::ScratchTooSmall { .. } => "daemon scratch space is too small",
             Self::Namespace(_) => "invalid filesystem namespace operation",
@@ -801,6 +827,12 @@ impl<
                 mode: deleted.mode,
             },
             shared_data_reachable: deleted.link_count != 0,
+            status: Status::NORMAL,
+            matched_count: 1,
+            processed_count: 1,
+            failed_count: 0,
+            failure_status: None,
+            cancelled: false,
         })
     }
 
@@ -817,26 +849,60 @@ impl<
         )?;
         let path = Name::from_str(path)?;
         let versioned = VersionedPath::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
-        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
         let mut matches = [None; MAX_DIRECTORY_ENTRIES];
+        let mut failure_status = None;
         let match_count = if pattern.has_magic() {
-            self.filesystem.expand_paths(path.as_str(), &mut matches)?
+            match self.filesystem.expand_paths(path.as_str(), &mut matches) {
+                Ok(count) => count,
+                Err(error @ SynFsError::BufferTooSmall { .. }) => {
+                    let count = matches.iter().flatten().count();
+                    failure_status = Some(error.status());
+                    count
+                }
+                Err(error) => return Err(DaemonError::File(error)),
+            }
         } else {
             matches[0] = Some(versioned.file);
             1
         };
         if match_count == 0 {
-            return Err(DaemonError::NotFound)
+            return Err(failure_status.map_or(DaemonError::NotFound, |_| {
+                DaemonError::File(SynFsError::BufferTooSmall { required: 1 })
+            }))
         }
         let mut deleted = None;
+        let mut processed_count = 0;
         for matched in matches[..match_count].iter().flatten() {
             let selected = versioned_name(matched.as_str(), versioned.version)?;
             if self.path_is_read_only(selected.as_str())? {
-                return Err(DaemonError::ReadOnly);
+                failure_status = Some(Status::READ_ONLY);
+                break
             }
-            deleted = Some(self.filesystem.delete(selected.as_str())?);
+            match self.filesystem.delete(selected.as_str()) {
+                Ok(current) => {
+                    deleted = Some(current);
+                    processed_count += 1;
+                }
+                Err(error) if processed_count != 0 => {
+                    failure_status = Some(error.status());
+                    break
+                }
+                Err(error) => return Err(DaemonError::File(error)),
+            }
         }
-        let deleted = deleted.ok_or(DaemonError::NotFound)?;
+        let deleted = deleted.ok_or_else(|| {
+            failure_status
+                .map_or(DaemonError::NotFound, |status| match status {
+                    status if status.raw() == Status::READ_ONLY.raw() => DaemonError::ReadOnly,
+                    _ => DaemonError::NotFound,
+                })
+        })?;
+        let status = if failure_status.is_some() {
+            Status::PARTIAL_MATCH
+        } else {
+            Status::NORMAL
+        };
         Ok(DeleteInfo {
             file: FileInfo {
                 capability: authority,
@@ -851,6 +917,12 @@ impl<
                 mode: deleted.mode,
             },
             shared_data_reachable: deleted.link_count != 0,
+            status,
+            matched_count: match_count,
+            processed_count,
+            failed_count: if failure_status.is_some() { 1 } else { 0 },
+            failure_status,
+            cancelled: false,
         })
     }
 
@@ -973,10 +1045,18 @@ impl<
         self.authorize_process(process, authority, FileRights::READ)?;
         let path = Name::from_str(path)?;
         let versioned = VersionedPath::parse(path.as_str()).map_err(|_| DaemonError::InvalidPath)?;
-        let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| DaemonError::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
         let mut matches = [None; MAX_DIRECTORY_ENTRIES];
         let match_count = if pattern.has_magic() {
-            self.filesystem.expand_paths(path.as_str(), &mut matches)?
+            match self.filesystem.expand_paths(path.as_str(), &mut matches) {
+                Ok(count) => count,
+                Err(SynFsError::BufferTooSmall { .. })
+                    if matches.iter().any(Option::is_some) =>
+                {
+                    return Err(DaemonError::PartialMatch)
+                }
+                Err(error) => return Err(DaemonError::File(error)),
+            }
         } else {
             matches[0] = Some(versioned.file);
             1
@@ -987,15 +1067,30 @@ impl<
         let mut metadata = None;
         let mut links = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
         let mut link_count = 0;
+        let mut processed_count = 0;
         for matched in matches[..match_count].iter().flatten() {
             let selected = versioned_name(matched.as_str(), versioned.version)?;
-            let current = self.filesystem.lookup(selected.as_str())?;
+            let current = match self.filesystem.lookup(selected.as_str()) {
+                Ok(current) => current,
+                Err(_error) if processed_count != 0 => return Err(DaemonError::PartialMatch),
+                Err(error) => return Err(DaemonError::File(error)),
+            };
             metadata = Some(current);
             let mut entries = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
-            let count = self.filesystem.list_links(selected.as_str(), &mut entries)?;
+            let count = match self.filesystem.list_links(selected.as_str(), &mut entries) {
+                Ok(count) => count,
+                Err(_error) if processed_count != 0 => return Err(DaemonError::PartialMatch),
+                Err(error) => return Err(DaemonError::File(error)),
+            };
             for entry in entries.iter().take(count) {
-                insert_link_entry(&mut links, &mut link_count, *entry)?;
+                if insert_link_entry(&mut links, &mut link_count, *entry).is_err() {
+                    if processed_count != 0 {
+                        return Err(DaemonError::PartialMatch)
+                    }
+                    return Err(DaemonError::BufferTooSmall { required: link_count + 1 })
+                }
             }
+            processed_count += 1;
         }
         let metadata = metadata.ok_or(DaemonError::NotFound)?;
         let mut required = 0usize;
@@ -1272,11 +1367,15 @@ impl<
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
                     path.as_str(),
                 )?;
-                Ok(Response::success()
-                    .with_value(0, deleted.file.version as u64)
-                    .with_value(1, deleted.file.file_type as u64)
-                    .with_value(2, deleted.file.link_count as u64)
-                    .with_value(3, deleted.shared_data_reachable as u64))
+                Ok(Response {
+                    status: deleted.status,
+                    values: [
+                        deleted.file.version as u64,
+                        deleted.file.file_type as u64,
+                        deleted.file.link_count as u64,
+                        deleted.shared_data_reachable as u64,
+                    ],
+                })
             }
             Operation::Rename => {
                 let input = input_buffer(buffer)?;
@@ -1562,11 +1661,18 @@ impl<
         let path = if prefix.is_empty() { "/" } else { prefix };
         let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
         let versioned = VersionedPath::parse(path).map_err(|_| DaemonError::InvalidPath)?;
-        let pattern = Pattern::parse(versioned.file.as_str())
-            .map_err(|_| DaemonError::InvalidPath)?;
+        let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
         let count = if pattern.has_magic() {
             let mut matches = [None; MAX_DIRECTORY_ENTRIES];
-            let count = snapshot.expand_paths(path, &mut matches)?;
+            let count = match snapshot.expand_paths(path, &mut matches) {
+                Ok(count) => count,
+                Err(SynFsError::BufferTooSmall { .. })
+                    if matches.iter().any(Option::is_some) =>
+                {
+                    return Err(DaemonError::PartialMatch)
+                }
+                Err(error) => return Err(DaemonError::File(error)),
+            };
             for (index, matched) in matches[..count].iter().flatten().enumerate() {
                 let selected = versioned_name(matched.as_str(), versioned.version)?;
                 let file = snapshot.lookup(selected.as_str())?;
@@ -1578,6 +1684,9 @@ impl<
                     link_count: file.link_count,
                     mode: file.mode,
                 };
+            }
+            if count == 0 {
+                return Err(DaemonError::NotFound)
             }
             count
         } else {

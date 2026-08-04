@@ -144,6 +144,34 @@ pub struct DirectoryPage {
     entries: [Option<DirectoryEntry>; MAX_DIRECTORY_PAGE_ENTRIES],
     count: usize,
     pub next: Option<u32>,
+    pub wildcard_matches: usize,
+    pub wildcard_failure: Option<Status>,
+    pub wildcard_cancelled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WildcardExpansion {
+    matches: usize,
+    failure: Option<Status>,
+    cancelled: bool,
+}
+
+impl WildcardExpansion {
+    const fn complete(matches: usize) -> Self {
+        Self {
+            matches,
+            failure: None,
+            cancelled: false,
+        }
+    }
+
+    const fn partial(matches: usize, failure: Status) -> Self {
+        Self {
+            matches,
+            failure: Some(failure),
+            cancelled: failure.raw() == Status::CANCELLED.raw(),
+        }
+    }
 }
 
 pub struct PathCompletionPage {
@@ -254,13 +282,19 @@ impl DirectoryPage {
             entries: [None; MAX_DIRECTORY_PAGE_ENTRIES],
             count: 0,
             next: None,
+            wildcard_matches: 0,
+            wildcard_failure: None,
+            wildcard_cancelled: false,
         }
     }
 
     pub fn clear(&mut self) {
         self.entries = [None; MAX_DIRECTORY_PAGE_ENTRIES];
         self.count = 0;
-        self.next = None
+        self.next = None;
+        self.wildcard_matches = 0;
+        self.wildcard_failure = None;
+        self.wildcard_cancelled = false
     }
 
     pub fn push(&mut self, entry: DirectoryEntry) -> Result<(), Status> {
@@ -300,6 +334,14 @@ pub trait FilesystemSource {
     ) -> Result<(), Status> {
         expand_pattern(self, pattern, output)
     }
+
+    /// Wildcard scans are cooperative. A remote or kernel-backed source can
+    /// report cancellation between bounded directory pages.
+    fn is_cancelled(&mut self) -> bool {
+        false
+    }
+
+    fn request_cancel(&mut self) {}
     fn version_exists(&mut self, _path: &str, _version: u32) -> Result<bool, Status> {
         Ok(true)
     }
@@ -496,12 +538,12 @@ const MAX_WILDCARD_SCAN: usize = 4096;
 fn pattern_status(error: PatternError) -> Status {
     match error {
         PatternError::TooLong => Status::NO_SPACE,
+        PatternError::InvalidPath => Status::INVALID_PATH,
         PatternError::Empty
-        | PatternError::InvalidPath
         | PatternError::TrailingEscape
         | PatternError::UnterminatedClass
         | PatternError::EmptyClass
-        | PatternError::InvalidRange => Status::INVALID_PATH,
+        | PatternError::InvalidRange => Status::INVALID_PATTERN,
     }
 }
 
@@ -588,9 +630,15 @@ fn expand_directory<S: FilesystemSource + ?Sized>(
     }
     let mut continuation = None;
     loop {
+        if source.is_cancelled() {
+            return Err(Status::CANCELLED)
+        }
         let mut page = DirectoryPage::new();
         source.list(directory, continuation, &mut page)?;
         for entry in page.entries() {
+            if source.is_cancelled() {
+                return Err(Status::CANCELLED)
+            }
             *scanned = scanned.saturating_add(1);
             if *scanned > MAX_WILDCARD_SCAN {
                 return Err(Status::NO_SPACE)
@@ -834,6 +882,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> CommandExecutor
     }
 
     fn cancel(&mut self, token: ExecutionToken) -> Result<(), Error> {
+        self.source.request_cancel();
         let slot = token.raw().checked_sub(1).ok_or(Error::InvalidHandle)? as usize;
         let completion = self.completions.get_mut(slot).ok_or(Error::InvalidHandle)?;
         *completion = None;
@@ -859,14 +908,22 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
         let (base_path, version) = split_version_selector(path.as_str())?;
         if contains_wildcard(base_path) {
             let mut matches = PathCompletionPage::new();
-            expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+            let expansion = expand_paths(&mut self.source, path.as_str(), &mut matches)?;
             if matches.len() == 0 {
                 return Err(Status::NOT_FOUND)
             }
             output.clear();
+            output.wildcard_matches = expansion.matches;
+            output.wildcard_failure = expansion.failure;
+            output.wildcard_cancelled = expansion.cancelled;
             let start = continuation.unwrap_or(0) as usize;
             let mut next_match = start;
             for matched in matches.entries().skip(start) {
+                if self.source.is_cancelled() {
+                    output.wildcard_failure = Some(Status::CANCELLED);
+                    output.wildcard_cancelled = true;
+                    break
+                }
                 let (matched_path, selected_version) = split_version_selector(matched.as_str())?;
                 let Some((parent, name)) = matched_path.rsplit_once('/') else {
                     return Err(Status::NOT_FOUND)
@@ -875,8 +932,14 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
                 let mut source_continuation = None;
                 loop {
                     let mut page = DirectoryPage::new();
-                    self.source
-                        .list(parent, source_continuation, &mut page)?;
+                    match self.source.list(parent, source_continuation, &mut page) {
+                        Ok(()) => {}
+                        Err(status) if output.len() != 0 => {
+                            output.wildcard_failure = Some(status);
+                            break
+                        }
+                        Err(status) => return Err(status),
+                    }
                     for entry in page.entries() {
                         if entry.name.as_str() != name
                             || !selected_version
@@ -893,10 +956,19 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
                     let Some(next) = page.next else { break };
                     source_continuation = Some(next);
                 }
+                if output.wildcard_failure.is_some() {
+                    break
+                }
                 next_match += 1;
             }
             if output.len() == 0 {
-                return Err(Status::NOT_FOUND)
+                return Err(if output.wildcard_cancelled {
+                    Status::CANCELLED
+                } else if output.wildcard_failure.is_some() {
+                    Status::PARTIAL_MATCH
+                } else {
+                    Status::NOT_FOUND
+                })
             }
             return Ok(path)
         }
@@ -1155,28 +1227,82 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             .resolve(path_value.as_ref().map(Text::as_str))?;
         let binary = boolean(command.get("BINARY"))?;
         let mut matches = PathCompletionPage::new();
-        expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+        let expansion = expand_paths(&mut self.source, path.as_str(), &mut matches)?;
         if matches.len() == 0 {
             return Err(Status::NOT_FOUND)
         }
         let mut contents = TypeBuffer::new(binary);
         let mut metadata = None;
+        let mut processed = 0usize;
+        let mut failure = expansion.failure;
+        let mut cancelled = expansion.cancelled;
         for (index, matched) in matches.entries().enumerate() {
-            if index != 0 {
-                contents.separator(matched.as_str())?;
+            if self.source.is_cancelled() {
+                failure = Some(Status::CANCELLED);
+                cancelled = true;
+                break
             }
-            let current = self
+            if index != 0 {
+                if let Err(status) = contents.separator(matched.as_str()) {
+                    failure = Some(status);
+                    break
+                }
+            }
+            match self
                 .source
-                .type_file(matched.as_str(), binary, &mut contents)?;
-            metadata = Some(current);
+                .type_file(matched.as_str(), binary, &mut contents)
+            {
+                Ok(current) => {
+                    metadata = Some(current);
+                    processed += 1;
+                }
+                Err(status) => {
+                    failure = Some(status);
+                    break
+                }
+            }
         }
-        let metadata = metadata.ok_or(Status::NOT_FOUND)?;
-        let mut output = metadata_output("file", metadata)?;
+        let metadata = metadata.ok_or(failure.unwrap_or(Status::NOT_FOUND))?;
+        let status = if cancelled {
+            Status::CANCELLED
+        } else if failure.is_some() {
+            Status::PARTIAL_MATCH
+        } else {
+            Status::NORMAL
+        };
+        let mut output = metadata_output_with_status("file", metadata, status)?;
         insert(
             &mut output,
             "match-count",
             OutputValue::Unsigned(matches.len() as u64),
         )?;
+        insert(
+            &mut output,
+            "processed-count",
+            OutputValue::Unsigned(processed as u64),
+        )?;
+        insert(
+            &mut output,
+            "failed-count",
+            OutputValue::Unsigned(u64::from(failure.is_some())),
+        )?;
+        insert(
+            &mut output,
+            "partial",
+            OutputValue::Boolean(failure.is_some()),
+        )?;
+        insert(
+            &mut output,
+            "cancelled",
+            OutputValue::Boolean(cancelled),
+        )?;
+        if let Some(status) = failure {
+            insert(
+                &mut output,
+                "failure-status",
+                OutputValue::Unsigned(status.raw() as u64),
+            )?;
+        }
         for (index, matched) in matches.entries().enumerate().take(8) {
             let mut field = Text::<64>::empty();
             field.push_str("match-").map_err(|_| Status::NO_SPACE)?;
@@ -1213,21 +1339,72 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             return Err(Status::INVALID_PATH);
         }
         let mut matches = PathCompletionPage::new();
-        expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+        let expansion = expand_paths(&mut self.source, path.as_str(), &mut matches)?;
         if matches.len() == 0 {
             return Err(Status::NOT_FOUND)
         }
         let mut deleted = None;
+        let mut processed = 0usize;
+        let mut failure = expansion.failure;
+        let mut cancelled = expansion.cancelled;
         for matched in matches.entries() {
-            deleted = Some(self.source.delete(matched.as_str())?);
+            if self.source.is_cancelled() {
+                failure = Some(Status::CANCELLED);
+                cancelled = true;
+                break
+            }
+            match self.source.delete(matched.as_str()) {
+                Ok(current) => {
+                    deleted = Some(current);
+                    processed += 1;
+                }
+                Err(status) => {
+                    failure = Some(status);
+                    break
+                }
+            }
         }
-        let deleted = deleted.ok_or(Status::NOT_FOUND)?;
-        let mut output = metadata_output("deleted", deleted.file)?;
+        let deleted = deleted.ok_or(failure.unwrap_or(Status::NOT_FOUND))?;
+        let status = if cancelled {
+            Status::CANCELLED
+        } else if failure.is_some() {
+            Status::PARTIAL_MATCH
+        } else {
+            Status::NORMAL
+        };
+        let mut output = metadata_output_with_status("deleted", deleted.file, status)?;
         insert(
             &mut output,
             "match-count",
             OutputValue::Unsigned(matches.len() as u64),
         )?;
+        insert(
+            &mut output,
+            "processed-count",
+            OutputValue::Unsigned(processed as u64),
+        )?;
+        insert(
+            &mut output,
+            "failed-count",
+            OutputValue::Unsigned(u64::from(failure.is_some())),
+        )?;
+        insert(
+            &mut output,
+            "partial",
+            OutputValue::Boolean(failure.is_some()),
+        )?;
+        insert(
+            &mut output,
+            "cancelled",
+            OutputValue::Boolean(cancelled),
+        )?;
+        if let Some(status) = failure {
+            insert(
+                &mut output,
+                "failure-status",
+                OutputValue::Unsigned(status.raw() as u64),
+            )?;
+        }
         insert(
             &mut output,
             "shared-data-reachable",
@@ -1260,26 +1437,83 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             .session
             .resolve(text(command.get("PATH")).as_ref().map(Text::as_str))?;
         let mut matches = PathCompletionPage::new();
-        expand_paths(&mut self.source, path.as_str(), &mut matches)?;
+        let expansion = expand_paths(&mut self.source, path.as_str(), &mut matches)?;
         if matches.len() == 0 {
             return Err(Status::NOT_FOUND)
         }
         let mut links = LinkPage::new();
         let mut metadata = None;
+        let mut processed = 0usize;
+        let mut failure = expansion.failure;
+        let mut cancelled = expansion.cancelled;
         for matched in matches.entries() {
+            if self.source.is_cancelled() {
+                failure = Some(Status::CANCELLED);
+                cancelled = true;
+                break
+            }
             let mut current = LinkPage::new();
-            metadata = Some(self.source.list_links(matched.as_str(), &mut current)?);
+            match self.source.list_links(matched.as_str(), &mut current) {
+                Ok(current_metadata) => {
+                    metadata = Some(current_metadata);
+                    processed += 1;
+                }
+                Err(status) => {
+                    failure = Some(status);
+                    break
+                }
+            }
             for link in current.entries() {
-                links.push_unique(link)?;
+                if let Err(status) = links.push_unique(link) {
+                    failure = Some(status);
+                    break
+                }
+            }
+            if failure.is_some() {
+                break
             }
         }
-        let metadata = metadata.ok_or(Status::NOT_FOUND)?;
-        let mut output = metadata_output("links", metadata)?;
+        let metadata = metadata.ok_or(failure.unwrap_or(Status::NOT_FOUND))?;
+        let status = if cancelled {
+            Status::CANCELLED
+        } else if failure.is_some() {
+            Status::PARTIAL_MATCH
+        } else {
+            Status::NORMAL
+        };
+        let mut output = metadata_output_with_status("links", metadata, status)?;
         insert(
             &mut output,
             "match-count",
             OutputValue::Unsigned(matches.len() as u64),
         )?;
+        insert(
+            &mut output,
+            "processed-count",
+            OutputValue::Unsigned(processed as u64),
+        )?;
+        insert(
+            &mut output,
+            "failed-count",
+            OutputValue::Unsigned(u64::from(failure.is_some())),
+        )?;
+        insert(
+            &mut output,
+            "partial",
+            OutputValue::Boolean(failure.is_some()),
+        )?;
+        insert(
+            &mut output,
+            "cancelled",
+            OutputValue::Boolean(cancelled),
+        )?;
+        if let Some(status) = failure {
+            insert(
+                &mut output,
+                "failure-status",
+                OutputValue::Unsigned(status.raw() as u64),
+            )?;
+        }
         for (index, link) in links.entries().enumerate() {
             let mut field = Text::<64>::empty();
             field.push_str("link-").map_err(|_| Status::NO_SPACE)?;
@@ -1391,7 +1625,15 @@ fn integer(value: Option<Value>) -> Result<Option<u32>, Status> {
 }
 
 fn metadata_output(label: &str, metadata: FileMetadata) -> Result<StructuredOutput, Status> {
-    let mut output = StructuredOutput::new(Status::NORMAL);
+    metadata_output_with_status(label, metadata, Status::NORMAL)
+}
+
+fn metadata_output_with_status(
+    label: &str,
+    metadata: FileMetadata,
+    status: Status,
+) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(status);
     insert_text(&mut output, "operation", label)?;
     insert_text(&mut output, "path", metadata.path.as_str())?;
     insert_text(
@@ -1418,18 +1660,64 @@ fn directory_output(
     page: DirectoryPage,
     continuation: Option<u32>,
 ) -> Result<StructuredOutput, Status> {
-    let mut output = StructuredOutput::new(Status::NORMAL);
+    let wildcard_status = if page.wildcard_cancelled {
+        Status::CANCELLED
+    } else if page.wildcard_failure.is_some() {
+        Status::PARTIAL_MATCH
+    } else {
+        Status::NORMAL
+    };
+    let mut output = StructuredOutput::new(wildcard_status);
     insert_text(&mut output, "path", path.as_str())?;
+    if page.wildcard_matches != 0 {
+        insert(
+            &mut output,
+            "match-count",
+            OutputValue::Unsigned(page.wildcard_matches as u64),
+        )?;
+        insert(
+            &mut output,
+            "processed-count",
+            OutputValue::Unsigned(page.len() as u64),
+        )?;
+        insert(
+            &mut output,
+            "failed-count",
+            OutputValue::Unsigned(u64::from(page.wildcard_failure.is_some())),
+        )?;
+        insert(
+            &mut output,
+            "partial",
+            OutputValue::Boolean(page.wildcard_failure.is_some()),
+        )?;
+        insert(
+            &mut output,
+            "cancelled",
+            OutputValue::Boolean(page.wildcard_cancelled),
+        )?;
+        if let Some(status) = page.wildcard_failure {
+            insert(
+                &mut output,
+                "failure-status",
+                OutputValue::Unsigned(status.raw() as u64),
+            )?;
+        }
+    }
     insert(
         &mut output,
         "entry-count",
         OutputValue::Unsigned(page.len() as u64),
     )?;
-    let has_more = page.next.is_some() || page.len() > MAX_VISIBLE_DIRECTORY_ENTRIES;
-    let visible_entries = if has_more {
-        MAX_VISIBLE_DIRECTORY_ENTRIES - 1
+    let max_visible_entries = if page.wildcard_matches != 0 {
+        MAX_VISIBLE_DIRECTORY_ENTRIES - 2
     } else {
         MAX_VISIBLE_DIRECTORY_ENTRIES
+    };
+    let has_more = page.next.is_some() || page.len() > max_visible_entries;
+    let visible_entries = if has_more {
+        max_visible_entries - 1
+    } else {
+        max_visible_entries
     };
     if has_more {
         let next = if page.len() > visible_entries {
@@ -1515,18 +1803,32 @@ fn expand_paths<S: FilesystemSource + ?Sized>(
     source: &mut S,
     path: &str,
     output: &mut PathCompletionPage,
-) -> Result<(), Status> {
+) -> Result<WildcardExpansion, Status> {
     let (base, version) = split_version_selector(path)?;
     let pattern = Pattern::parse(base).map_err(pattern_status)?;
     if !pattern.has_magic() {
-        return output.push(literal_path(path)?);
+        output.push(literal_path(path)?)?;
+        return Ok(WildcardExpansion::complete(output.len()));
     }
-    source.expand(base, output)?;
+    match source.expand(base, output) {
+        Ok(()) => {}
+        Err(status) if output.len() != 0 => {
+            return Ok(WildcardExpansion::partial(output.len(), status))
+        }
+        Err(status) => return Err(status),
+    }
     if let Some(version) = version.filter(|version| *version != 0) {
         let mut retained = 0;
         for index in 0..output.count {
             let Some(path) = output.entries[index] else { continue };
-            if !source.version_exists(path.as_str(), version)? {
+            let exists = match source.version_exists(path.as_str(), version) {
+                Ok(exists) => exists,
+                Err(status) if retained != 0 => {
+                    return Ok(WildcardExpansion::partial(retained, status))
+                }
+                Err(status) => return Err(status),
+            };
+            if !exists {
                 continue
             }
             output.entries[retained] = Some(path);
@@ -1545,7 +1847,7 @@ fn expand_paths<S: FilesystemSource + ?Sized>(
             *entry = Some(Path::new(value.as_str())?);
         }
     }
-    Ok(())
+    Ok(WildcardExpansion::complete(output.len()))
 }
 
 fn is_path_or_descendant(path: &str, candidate: &str) -> bool {

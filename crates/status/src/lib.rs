@@ -50,6 +50,8 @@ impl Status {
         Self::new(Severity::Fatal, facility::SYSTEM, 6, 0).expect("valid status");
     pub const BUSY: Self =
         Self::new(Severity::Warning, facility::SYSTEM, 7, 0).expect("valid status");
+    pub const CANCELLED: Self =
+        Self::new(Severity::Warning, facility::SYSTEM, 8, 0).expect("valid status");
     pub const ALREADY_EXISTS: Self =
         Self::new(Severity::Error, facility::FILESYSTEM, 2, 0).expect("valid status");
     pub const CONFLICT: Self =
@@ -62,6 +64,10 @@ impl Status {
         Self::new(Severity::Error, facility::FILESYSTEM, 7, 0).expect("valid status");
     pub const READ_ONLY: Self =
         Self::new(Severity::Error, facility::FILESYSTEM, 8, 0).expect("valid status");
+    pub const PARTIAL_MATCH: Self =
+        Self::new(Severity::Warning, facility::FILESYSTEM, 9, 0).expect("valid status");
+    pub const INVALID_PATTERN: Self =
+        Self::new(Severity::Error, facility::FILESYSTEM, 10, 0).expect("valid status");
     pub const QUORUM_LOST: Self =
         Self::new(Severity::Warning, facility::FABRIC, 1, 0).expect("valid status");
     pub const PARTITIONED: Self =
@@ -142,6 +148,7 @@ impl Status {
             (facility::SYSTEM, 5) => "no space",
             (facility::SYSTEM, 6) => "corrupt",
             (facility::SYSTEM, 7) => "busy",
+            (facility::SYSTEM, 8) => "cancelled",
             (facility::SECURITY, 1) => "access denied",
             (facility::FILESYSTEM, 2) => "already exists",
             (facility::FILESYSTEM, 3) => "conflict",
@@ -149,6 +156,8 @@ impl Status {
             (facility::FILESYSTEM, 6) => "invalid path",
             (facility::FILESYSTEM, 7) => "not a directory",
             (facility::FILESYSTEM, 8) => "read-only mount",
+            (facility::FILESYSTEM, 9) => "partial wildcard match",
+            (facility::FILESYSTEM, 10) => "malformed wildcard pattern",
             (facility::FABRIC, 1) => "quorum lost",
             (facility::FABRIC, 2) => "cluster partitioned",
             (facility::FABRIC, 3) => "clock skew",

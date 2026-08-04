@@ -173,7 +173,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add one shared bounded matcher/expander for shell, runtime, filesystem daemon, and SynFS callers instead of command-specific glob behavior.
   - [ ] Return deterministic, duplicate-free matches with stable ordering, continuation support, maximum-match limits, and bounded shared-buffer encoding.
   - [x] Filter matches through directory visibility, mount boundaries, and per-object capabilities so wildcard expansion cannot reveal unauthorized names.
-  - [ ] Define no-match behavior, malformed-pattern errors, partial-match errors, cancellation, and status reporting for every wildcard-enabled command.
+  - [x] Define no-match behavior, malformed-pattern errors, partial-match errors, cancellation, and status reporting for every wildcard-enabled command.
   - [x] Add `LS`/`DIRECTORY` wildcard listing for files, links, directories, path prefixes, metadata, pagination, and structured pipeline output.
   - [x] Add bounded `DELETE` wildcard expansion with latest-versus-exact-version behavior, link-count updates, and stop-on-first-failure partial semantics.
   - [x] Add `TYPE` wildcard support with path separators, bounded aggregate output, and binary-mode behavior.

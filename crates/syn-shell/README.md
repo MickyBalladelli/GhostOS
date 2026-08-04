@@ -51,5 +51,15 @@ Missing paths return `NOT_FOUND`. Malformed paths, unknown qualifiers, extra
 arguments, and wildcards on create or default-directory commands return
 `INVALID_ARGUMENT` before filesystem I/O.
 
+Wildcard commands use the same contract. A valid pattern with no visible
+matches returns `NOT_FOUND`; malformed wildcard grammar returns
+`INVALID_PATTERN`. If expansion or command execution stops after matches were
+processed, the command returns `PARTIAL_MATCH` with `match-count`,
+`processed-count`, `failed-count`, `failure-status`, and `partial` fields.
+Cancellation returns `CANCELLED` and sets `cancelled` while preserving the
+bounded work counts. `DIRECTORY`, `TYPE`, `DELETE`, and `SHOW LINKS` all stop
+at the first operation failure; `DELETE` keeps already-completed deletions and
+reports them as partial.
+
 `UPTIME` displays the time since boot as `days, HH:MM:SS`. Structured output
 also includes the microsecond uptime and each human-readable time component.
