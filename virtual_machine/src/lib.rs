@@ -13,11 +13,13 @@ pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
 pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
-    Ahci, ApicTrigger, Device, DiskImage, DisplayState, E1000, E1000_MMIO_SIZE, GopMode,
+    Ahci, ApicTrigger, Device, DiskController, DiskFormat, DiskImage, DiskInfo, DiskManager,
+    DiskMode, DiskPersistence, DiskRole, DiskSpec, DisplayState, E1000, E1000_MMIO_SIZE,
+    GopMode,
     GopPixelFormat, Hpet, InterruptController, LegacyPic, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
     PortBus, PortDevice, PowerControl, PowerState, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
     VgaTextDevice, VideoMode, PS2_DATA_PORT, PS2_PORT_COUNT, PS2_STATUS_PORT,
-    VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
+    StorageError, VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
     AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
     APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR,
     NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
@@ -80,6 +82,7 @@ pub struct VmConfig {
     pub serial_port: u16,
     pub firmware: FirmwareMode,
     pub max_steps: Option<u64>,
+    pub disks: Vec<DiskSpec>,
 }
 
 impl Default for VmConfig {
@@ -94,6 +97,7 @@ impl Default for VmConfig {
             serial_port: COM1_PORT,
             firmware: FirmwareMode::Bios,
             max_steps: None,
+            disks: Vec::new(),
         }
     }
 }
@@ -120,6 +124,7 @@ pub struct Vm {
     display: Rc<RefCell<DisplayState>>,
     bios: Bios,
     execution: ExecutionEngine,
+    disk_manager: DiskManager,
     config: VmConfig,
 }
 
@@ -129,6 +134,19 @@ impl Vm {
     }
 
     pub fn with_config(config: VmConfig) -> Self {
+        Self::try_with_config(config)
+            .unwrap_or_else(|error| panic!("cannot create VM: {error:?}"))
+    }
+
+    /// Create a VM and attach every configured disk before firmware starts.
+    pub fn try_with_config(config: VmConfig) -> Result<Self, VmError> {
+        DiskManager::validate_specs(&config.disks).map_err(disk_error_to_vm)?;
+        let mut vm = Self::build_with_config(config);
+        vm.attach_configured_disks()?;
+        Ok(vm)
+    }
+
+    fn build_with_config(config: VmConfig) -> Self {
         let mut mmu = Mmu::new(config.memory_size);
 
         // One shared PCI Express host bridge exposed through both the legacy
@@ -421,6 +439,7 @@ impl Vm {
             display,
             bios,
             execution: ExecutionEngine::new(),
+            disk_manager: DiskManager::new(),
             config,
         }
     }
@@ -445,6 +464,117 @@ impl Vm {
         if let Some(uefi) = self.bios.context.uefi.as_mut() {
             uefi.set_efi_application(image);
         }
+    }
+
+    fn attach_configured_disks(&mut self) -> Result<(), VmError> {
+        let mut specs = self.config.disks.clone();
+        specs.sort_by(|left, right| left.id.cmp(&right.id));
+        for spec in specs {
+            self.attach_disk_spec(spec)?;
+        }
+        Ok(())
+    }
+
+    fn attach_disk_spec(&mut self, spec: DiskSpec) -> Result<(), VmError> {
+        if self.disk_manager.get(&spec.id).is_some() {
+            return Err(VmError::Disk(format!("duplicate disk ID `{}`", spec.id)));
+        }
+        if self
+            .disk_manager
+            .list()
+            .iter()
+            .any(|disk| disk.controller == spec.controller)
+        {
+            return Err(VmError::Disk(format!(
+                "{} already has its only disk slot attached",
+                disk_controller_name(spec.controller)
+            )));
+        }
+
+        let (image, info) = DiskManager::open(&spec).map_err(disk_error_to_vm)?;
+        let previous = match spec.controller {
+            DiskController::Ahci => self.ahci.borrow_mut().attach_disk(image),
+            DiskController::Nvme => self.nvme.borrow_mut().attach_namespace(image),
+            DiskController::VirtioBlk => self.virtio_blk.borrow_mut().attach_disk(image),
+        };
+        if let Some(previous) = previous {
+            let _ = previous.close();
+            return Err(VmError::Disk(format!(
+                "{} disk slot is already occupied",
+                disk_controller_name(spec.controller)
+            )));
+        }
+        self.disk_manager.insert(info);
+        Ok(())
+    }
+
+    /// Attach a disk after VM creation. The disk is immediately visible to
+    /// the selected guest controller.
+    pub fn attach_disk(&mut self, spec: DiskSpec) -> Result<(), VmError> {
+        DiskManager::validate_specs(&[spec.clone()]).map_err(disk_error_to_vm)?;
+        if spec.role == DiskRole::System
+            && self.disk_manager.list().iter().any(|disk| disk.role == DiskRole::System)
+        {
+            return Err(VmError::Disk("only one system disk may be attached".into()));
+        }
+        self.attach_disk_spec(spec.clone())?;
+        self.config.disks.push(spec);
+        Ok(())
+    }
+
+    /// Return a deterministic inventory of configured and attached disks.
+    pub fn disks(&self) -> Vec<DiskInfo> {
+        self.disk_manager.list()
+    }
+
+    pub fn flush_disks(&mut self) -> Result<(), VmError> {
+        for disk in self.disk_manager.list() {
+            let result = match disk.controller {
+                DiskController::Ahci => self.ahci.borrow_mut().flush_disk(),
+                DiskController::Nvme => self.nvme.borrow_mut().flush_namespace(),
+                DiskController::VirtioBlk => self.virtio_blk.borrow_mut().flush_disk(),
+            };
+            result.map_err(disk_error_to_vm)?;
+        }
+        Ok(())
+    }
+
+    pub fn sync_disks(&mut self) -> Result<(), VmError> {
+        for disk in self.disk_manager.list() {
+            let result = match disk.controller {
+                DiskController::Ahci => self.ahci.borrow_mut().sync_disk(),
+                DiskController::Nvme => self.nvme.borrow_mut().sync_namespace(),
+                DiskController::VirtioBlk => self.virtio_blk.borrow_mut().sync_disk(),
+            };
+            result.map_err(disk_error_to_vm)?;
+        }
+        Ok(())
+    }
+
+    /// Flush, release, and close one attached disk.
+    pub fn detach_disk(&mut self, id: &str) -> Result<(), VmError> {
+        let info = self
+            .disk_manager
+            .get(id)
+            .cloned()
+            .ok_or_else(|| VmError::Disk(format!("disk `{id}` is not attached")))?;
+        let image = match info.controller {
+            DiskController::Ahci => self.ahci.borrow_mut().detach_disk(),
+            DiskController::Nvme => self.nvme.borrow_mut().detach_namespace(),
+            DiskController::VirtioBlk => self.virtio_blk.borrow_mut().detach_disk(),
+        }
+        .ok_or_else(|| VmError::Disk(format!("disk `{id}` has no backing image")))?;
+        self.disk_manager.remove(id);
+        self.config.disks.retain(|spec| spec.id != id);
+        image.close().map_err(disk_error_to_vm)
+    }
+
+    pub fn close_disks(&mut self) -> Result<(), VmError> {
+        let ids: Vec<String> = self.disks().into_iter().map(|disk| disk.id).collect();
+        for id in ids {
+            self.detach_disk(&id)?;
+        }
+        Ok(())
     }
 
     /// Mutable access to the UEFI firmware context (only valid in UEFI mode).
@@ -528,8 +658,12 @@ impl Vm {
 
             match self.power_state() {
                 PowerState::Running => {}
-                PowerState::Shutdown => return Ok(()),
+                PowerState::Shutdown => {
+                    self.close_disks()?;
+                    return Ok(())
+                }
                 PowerState::Reboot => {
+                    self.sync_disks()?;
                     self.reset();
                     self.initialize()?;
                     started = std::time::Instant::now();
@@ -582,8 +716,12 @@ impl Vm {
 
             match self.power_state() {
                 PowerState::Running => {}
-                PowerState::Shutdown => return Ok(TerminalExit::GuestShutdown),
+                PowerState::Shutdown => {
+                    self.close_disks()?;
+                    return Ok(TerminalExit::GuestShutdown)
+                }
                 PowerState::Reboot => {
+                    self.sync_disks()?;
                     self.reset();
                     self.initialize()?;
                     started = std::time::Instant::now();
@@ -617,6 +755,7 @@ impl Vm {
             }
             steps += executed as u64;
         }
+        self.sync_disks()?;
         Ok(VmRunReport {
             steps,
             halted: self.cpu.state.halted,
@@ -735,6 +874,8 @@ impl Vm {
     }
 
     pub fn reset(&mut self) {
+        let _ = self.sync_disks();
+        let virtio_disk = self.virtio_blk.borrow_mut().detach_disk();
         self.cpu.reset();
         self.execution.reset();
         self.mmu.reset();
@@ -751,6 +892,9 @@ impl Vm {
         self.virtio_rng.borrow_mut().reset();
         self.display.borrow_mut().reset();
         self.bios.reset();
+        if let Some(disk) = virtio_disk {
+            let _ = self.virtio_blk.borrow_mut().attach_disk(disk);
+        }
     }
 
     pub fn cpu(&self) -> &Cpu {
@@ -930,6 +1074,7 @@ pub enum VmError {
     BiosError,
     IoError,
     InvalidConfiguration,
+    Disk(String),
     KernelLoadError,
     BootFailure,
 }
@@ -951,5 +1096,17 @@ fn loader_error_to_vm(error: crate::boot::LoaderError) -> VmError {
     match error {
         crate::boot::LoaderError::CpuError(error) => VmError::CpuError(error),
         _ => VmError::KernelLoadError,
+    }
+}
+
+fn disk_error_to_vm(error: StorageError) -> VmError {
+    VmError::Disk(error.to_string())
+}
+
+fn disk_controller_name(controller: DiskController) -> &'static str {
+    match controller {
+        DiskController::Ahci => "AHCI",
+        DiskController::Nvme => "NVMe",
+        DiskController::VirtioBlk => "virtio-blk",
     }
 }

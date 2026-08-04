@@ -6,12 +6,17 @@
 
 pub mod ahci;
 pub mod disk_image;
+pub mod management;
 pub mod nvme;
 
 pub use ahci::{
     Ahci, AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
 };
 pub use disk_image::{DiskFormat, DiskImage};
+pub use management::{
+    AttachedDisk, DiskController, DiskInfo, DiskManager, DiskMode, DiskPersistence, DiskRole,
+    DiskSpec,
+};
 pub use nvme::{
     Nvme, NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
 };
@@ -24,6 +29,7 @@ use std::fmt;
 pub enum StorageError {
     Io(std::io::Error),
     InvalidImage(String),
+    Locked { path: String, owner: String },
     ReadOnly,
     OutOfRange,
     Unsupported(String),
@@ -35,6 +41,9 @@ impl fmt::Display for StorageError {
         match self {
             StorageError::Io(e) => write!(f, "storage I/O error: {e}"),
             StorageError::InvalidImage(msg) => write!(f, "invalid disk image: {msg}"),
+            StorageError::Locked { path, owner } => {
+                write!(f, "disk is already locked by {path} ({owner})")
+            }
             StorageError::ReadOnly => write!(f, "disk image opened read-only"),
             StorageError::OutOfRange => write!(f, "storage access out of range"),
             StorageError::Unsupported(msg) => write!(f, "unsupported storage feature: {msg}"),

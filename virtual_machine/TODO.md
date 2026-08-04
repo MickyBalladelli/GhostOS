@@ -44,15 +44,15 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Block device image file parser (RAW, VHD, QCOW2)
   - [x] DMA transfer implementation
 
-- [ ] **VM Disk Attachment and Management**
-  - [ ] Define a disk specification with a stable disk ID, role (`system` or `data`), controller, bus/slot, image path, format, capacity, and read-only mode.
-  - [ ] Add disk specifications to `VmConfig` so disks are attached while the VM is created, before firmware and SynOS boot.
-  - [ ] Provide one shared attachment path for AHCI, NVMe, and virtio-blk instead of requiring callers to open an image and reach into a controller manually.
-  - [ ] Reject missing, malformed, unsupported, duplicate, already-locked, and incorrectly sized images with actionable VM startup errors.
-  - [ ] Prevent the same backing image from being attached to multiple writable disks or multiple VMs at the same time.
-  - [ ] Define deterministic disk enumeration and guest-visible identity across VM restarts and controller types.
-  - [ ] Support explicit disk flush, sync, detach, and close behavior during normal shutdown, reboot, reset, and VM errors.
-  - [ ] Define read-only, copy-on-write, and disposable disk modes for safe inspection and test runs.
+- [x] **VM Disk Attachment and Management**
+  - [x] Define a disk specification with a stable disk ID, role (`system` or `data`), controller, bus/slot, image path, format, capacity, and read-only mode.
+  - [x] Add disk specifications to `VmConfig` so disks are attached while the VM is created, before firmware and SynOS boot.
+  - [x] Provide one shared attachment path for AHCI, NVMe, and virtio-blk instead of requiring callers to open an image and reach into a controller manually.
+  - [x] Reject missing, malformed, unsupported, duplicate, already-locked, and incorrectly sized images with actionable VM startup errors.
+  - [x] Prevent the same backing image from being attached to multiple writable disks or multiple VMs at the same time.
+  - [x] Define deterministic disk enumeration and guest-visible identity across VM restarts and controller types.
+  - [x] Support explicit disk flush, sync, detach, and close behavior during normal shutdown, reboot, reset, and VM errors.
+  - [x] Define read-only, copy-on-write, and disposable disk modes for safe inspection and test runs.
 
 - [ ] **SynOS System-Disk Provisioning**
   - [ ] Define the system-disk layout: boot metadata, SynOS kernel and initrd, SynFS system volume, persistent settings, and reserved space for future updates.

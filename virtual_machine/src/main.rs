@@ -256,7 +256,8 @@ fn run(cli: Cli) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut vm = Vm::with_config(config);
+    let mut vm = Vm::try_with_config(config)
+        .map_err(|error| format!("VM configuration error: {error:?}"))?;
     if let Some(image) = efi_image {
         vm.set_efi_application(image);
     }

@@ -154,6 +154,26 @@ impl Ahci {
         self.port.disk.replace(disk)
     }
 
+    pub fn detach_disk(&mut self) -> Option<DiskImage> {
+        self.port.disk.take()
+    }
+
+    pub fn flush_disk(&mut self) -> Result<(), StorageError> {
+        self.port
+            .disk
+            .as_mut()
+            .ok_or_else(|| StorageError::InvalidImage("no disk".into()))?
+            .flush()
+    }
+
+    pub fn sync_disk(&mut self) -> Result<(), StorageError> {
+        self.port
+            .disk
+            .as_mut()
+            .ok_or_else(|| StorageError::InvalidImage("no disk".into()))?
+            .sync()
+    }
+
     pub fn sector_count(&self) -> Option<u64> {
         self.port.disk.as_ref().map(|d| d.sector_count())
     }

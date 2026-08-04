@@ -49,7 +49,7 @@ pub fn run_synos_integration(
     }
 
     config.max_steps = Some(max_steps);
-    let mut vm = Vm::with_config(config);
+    let mut vm = Vm::try_with_config(config)?;
     let vm_report = vm.run_for_steps(max_steps)?;
 
     let boot_output = vm

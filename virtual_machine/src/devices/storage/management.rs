@@ -1,0 +1,349 @@
+//! VM-facing disk specifications and attachment bookkeeping.
+
+use super::{DiskFormat, DiskImage, StorageError};
+use super::disk_image::SECTOR_SIZE;
+use std::collections::HashSet;
+use std::fs::{self, OpenOptions};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiskRole {
+    System,
+    Data,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiskController {
+    Ahci,
+    Nvme,
+    VirtioBlk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskPersistence {
+    /// Writes go to the configured image and survive VM shutdown.
+    Persistent,
+    /// Work on a temporary clone and discard it when the VM closes.
+    CopyOnWrite,
+    /// Work on a temporary clone and discard it when the VM closes.
+    Disposable,
+}
+
+/// Short name for callers that model the attachment as a disk mode.
+pub type DiskMode = DiskPersistence;
+
+impl Default for DiskPersistence {
+    fn default() -> Self {
+        Self::Persistent
+    }
+}
+
+/// A stable host-side description of one guest disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskSpec {
+    pub id: String,
+    pub role: DiskRole,
+    pub controller: DiskController,
+    pub bus: u8,
+    pub slot: u8,
+    pub image_path: PathBuf,
+    /// `None` means detect the image format from its header.
+    pub format: Option<DiskFormat>,
+    /// Exact logical capacity in bytes. `None` accepts the image capacity.
+    pub capacity: Option<u64>,
+    pub read_only: bool,
+    pub persistence: DiskPersistence,
+}
+
+impl DiskSpec {
+    pub fn new(id: impl Into<String>, image_path: impl Into<PathBuf>) -> Self {
+        Self {
+            id: id.into(),
+            role: DiskRole::Data,
+            controller: DiskController::VirtioBlk,
+            bus: 0,
+            slot: 0,
+            image_path: image_path.into(),
+            format: None,
+            capacity: None,
+            read_only: false,
+            persistence: DiskPersistence::Persistent,
+        }
+    }
+
+    pub fn system(id: impl Into<String>, image_path: impl Into<PathBuf>) -> Self {
+        let mut spec = Self::new(id, image_path);
+        spec.role = DiskRole::System;
+        spec
+    }
+
+    pub fn with_controller(mut self, controller: DiskController) -> Self {
+        self.controller = controller;
+        self
+    }
+
+    pub fn with_location(mut self, bus: u8, slot: u8) -> Self {
+        self.bus = bus;
+        self.slot = slot;
+        self
+    }
+
+    pub fn with_format(mut self, format: DiskFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    pub fn with_capacity(mut self, capacity: u64) -> Self {
+        self.capacity = Some(capacity);
+        self
+    }
+
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn with_persistence(mut self, persistence: DiskPersistence) -> Self {
+        self.persistence = persistence;
+        self
+    }
+
+    pub fn with_mode(self, mode: DiskMode) -> Self {
+        self.with_persistence(mode)
+    }
+}
+
+/// Stable inspection information for an attached disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskInfo {
+    pub id: String,
+    pub role: DiskRole,
+    pub controller: DiskController,
+    pub bus: u8,
+    pub slot: u8,
+    pub image_path: PathBuf,
+    pub format: DiskFormat,
+    pub capacity: u64,
+    pub read_only: bool,
+    pub persistence: DiskPersistence,
+    pub guest_id: String,
+}
+
+#[derive(Debug)]
+pub struct AttachedDisk {
+    pub info: DiskInfo,
+}
+
+pub struct DiskManager {
+    attached: Vec<AttachedDisk>,
+}
+
+impl DiskManager {
+    pub fn new() -> Self {
+        Self { attached: Vec::new() }
+    }
+
+    pub fn list(&self) -> Vec<DiskInfo> {
+        self.attached.iter().map(|disk| disk.info.clone()).collect()
+    }
+
+    pub fn get(&self, id: &str) -> Option<&DiskInfo> {
+        self.attached
+            .iter()
+            .find(|disk| disk.info.id == id)
+            .map(|disk| &disk.info)
+    }
+
+    pub(crate) fn validate_specs(specs: &[DiskSpec]) -> Result<(), StorageError> {
+        let mut ids = HashSet::new();
+        let mut locations = HashSet::new();
+        let mut writable_paths = HashSet::new();
+        let mut has_system = false;
+
+        for spec in specs {
+            if spec.id.trim().is_empty() {
+                return Err(StorageError::InvalidImage(
+                    "disk ID must not be empty".to_string(),
+                ));
+            }
+            if !ids.insert(spec.id.clone()) {
+                return Err(StorageError::InvalidImage(format!(
+                    "duplicate disk ID `{}`",
+                    spec.id
+                )));
+            }
+            if spec.role == DiskRole::System && std::mem::replace(&mut has_system, true) {
+                return Err(StorageError::InvalidImage(
+                    "only one system disk may be attached".to_string(),
+                ));
+            }
+            if spec.bus != 0 || spec.slot != 0 {
+                return Err(StorageError::Unsupported(format!(
+                    "{} supports only bus 0, slot 0",
+                    controller_name(spec.controller)
+                )));
+            }
+            if !locations.insert((spec.controller, spec.bus, spec.slot)) {
+                return Err(StorageError::InvalidImage(format!(
+                    "duplicate {} location bus {}, slot {}",
+                    controller_name(spec.controller),
+                    spec.bus,
+                    spec.slot
+                )));
+            }
+            if !spec.read_only && spec.persistence == DiskPersistence::Persistent {
+                let path = fs::canonicalize(&spec.image_path).map_err(|error| {
+                    StorageError::InvalidImage(format!(
+                        "cannot resolve disk `{}`: {error}",
+                        spec.image_path.display()
+                    ))
+                })?;
+                if !writable_paths.insert(path) {
+                    return Err(StorageError::InvalidImage(format!(
+                        "backing image `{}` is assigned to multiple writable disks",
+                        spec.image_path.display()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn open(spec: &DiskSpec) -> Result<(DiskImage, DiskInfo), StorageError> {
+        let source = fs::canonicalize(&spec.image_path).map_err(|error| {
+            StorageError::InvalidImage(format!(
+                "cannot resolve disk `{}`: {error}",
+                spec.image_path.display()
+            ))
+        })?;
+        let (path, cleanup_path) = if spec.read_only || spec.persistence == DiskPersistence::Persistent
+        {
+            (source.clone(), None)
+        } else {
+            let overlay = clone_to_temporary(&source)?;
+            (overlay.clone(), Some(overlay))
+        };
+
+        let mut image = match DiskImage::open_for_vm(&path, !spec.read_only) {
+            Ok(image) => image,
+            Err(error) => {
+                if let Some(path) = cleanup_path {
+                    let _ = fs::remove_file(path);
+                }
+                return Err(error);
+            }
+        };
+        if let Some(path) = cleanup_path {
+            image.set_cleanup_path(path);
+        }
+
+        if let Some(expected) = spec.format {
+            if image.format() != expected {
+                return Err(StorageError::InvalidImage(format!(
+                    "disk `{}` has format {:?}, expected {:?}",
+                    spec.id,
+                    image.format(),
+                    expected
+                )));
+            }
+        }
+        if image.size() == 0 || image.size() % SECTOR_SIZE != 0 {
+            return Err(StorageError::InvalidImage(format!(
+                "disk `{}` capacity {} is not a non-zero sector multiple",
+                spec.id,
+                image.size()
+            )));
+        }
+        if let Some(expected) = spec.capacity {
+            if image.size() != expected {
+                return Err(StorageError::InvalidImage(format!(
+                    "disk `{}` capacity is {}, expected {}",
+                    spec.id,
+                    image.size(),
+                    expected
+                )));
+            }
+        }
+
+        let info = DiskInfo {
+            id: spec.id.clone(),
+            role: spec.role,
+            controller: spec.controller,
+            bus: spec.bus,
+            slot: spec.slot,
+            image_path: source,
+            format: image.format(),
+            capacity: image.size(),
+            read_only: spec.read_only,
+            persistence: spec.persistence,
+            guest_id: guest_id(spec),
+        };
+        Ok((image, info))
+    }
+
+    pub(crate) fn insert(&mut self, info: DiskInfo) {
+        self.attached.push(AttachedDisk { info });
+        self.attached.sort_by(|left, right| left.info.id.cmp(&right.info.id));
+    }
+
+    pub(crate) fn remove(&mut self, id: &str) -> Option<DiskInfo> {
+        let index = self.attached.iter().position(|disk| disk.info.id == id)?;
+        Some(self.attached.remove(index).info)
+    }
+}
+
+impl Default for DiskManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn controller_name(controller: DiskController) -> &'static str {
+    match controller {
+        DiskController::Ahci => "AHCI",
+        DiskController::Nvme => "NVMe",
+        DiskController::VirtioBlk => "virtio-blk",
+    }
+}
+
+fn guest_id(spec: &DiskSpec) -> String {
+    match spec.controller {
+        DiskController::Ahci => format!("ahci-bus{}-port{}", spec.bus, spec.slot),
+        DiskController::Nvme => format!("nvme-bus{}-namespace1", spec.bus),
+        DiskController::VirtioBlk => format!("virtio-blk-bus{}-slot{}", spec.bus, spec.slot),
+    }
+}
+
+fn clone_to_temporary(source: &Path) -> Result<PathBuf, StorageError> {
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| StorageError::InvalidImage(format!("system clock error: {error}")))?
+        .as_nanos();
+    for attempt in 0..32u32 {
+        let path = std::env::temp_dir().join(format!(
+            "synos-vm-disk-{}-{timestamp}-{attempt}{extension}",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => {
+                drop(file);
+                if let Err(error) = fs::copy(source, &path) {
+                    let _ = fs::remove_file(&path);
+                    return Err(StorageError::Io(error));
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(StorageError::Io(error)),
+        }
+    }
+    Err(StorageError::InvalidImage(
+        "could not allocate a unique temporary disk clone".to_string(),
+    ))
+}

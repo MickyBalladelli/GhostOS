@@ -157,6 +157,26 @@ impl Nvme {
         self.ns1.replace(Namespace { image }).map(|n| n.image)
     }
 
+    pub fn detach_namespace(&mut self) -> Option<DiskImage> {
+        self.ns1.take().map(|namespace| namespace.image)
+    }
+
+    pub fn flush_namespace(&mut self) -> Result<(), StorageError> {
+        self.ns1
+            .as_mut()
+            .ok_or_else(|| StorageError::InvalidImage("no namespace".into()))?
+            .image
+            .flush()
+    }
+
+    pub fn sync_namespace(&mut self) -> Result<(), StorageError> {
+        self.ns1
+            .as_mut()
+            .ok_or_else(|| StorageError::InvalidImage("no namespace".into()))?
+            .image
+            .sync()
+    }
+
     pub fn has_pending(&self) -> bool {
         self.admin_pending != 0 || self.io_pending.iter().any(|&p| p != 0)
     }

@@ -290,6 +290,24 @@ impl VirtioBlk {
         self.disk.replace(disk)
     }
 
+    pub fn detach_disk(&mut self) -> Option<DiskImage> {
+        self.disk.take()
+    }
+
+    pub fn flush_disk(&mut self) -> Result<(), crate::devices::storage::StorageError> {
+        self.disk
+            .as_mut()
+            .ok_or_else(|| crate::devices::storage::StorageError::InvalidImage("no disk".into()))?
+            .flush()
+    }
+
+    pub fn sync_disk(&mut self) -> Result<(), crate::devices::storage::StorageError> {
+        self.disk
+            .as_mut()
+            .ok_or_else(|| crate::devices::storage::StorageError::InvalidImage("no disk".into()))?
+            .sync()
+    }
+
     pub fn sector_count(&self) -> Option<u64> {
         self.disk.as_ref().map(DiskImage::sector_count)
     }

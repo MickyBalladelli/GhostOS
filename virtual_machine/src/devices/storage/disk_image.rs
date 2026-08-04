@@ -11,9 +11,9 @@
 //! layer, which simply issues sector-aligned reads and writes.
 
 use crate::devices::storage::StorageError;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Disk image format as detected from the file header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,19 +69,51 @@ pub struct DiskImage {
     qcow: Option<QcowFile>,
     writable: bool,
     filename: String,
+    lock: Option<DiskLock>,
+    cleanup_path: Option<PathBuf>,
+}
+
+/// A process-local ownership marker for a writable VM disk.
+///
+/// The marker is deliberately a separate file so read-only users can share
+/// an image. `create_new` makes competing writable VM launches fail without
+/// relying on platform-specific file-locking APIs.
+struct DiskLock {
+    path: PathBuf,
+}
+
+impl Drop for DiskLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 impl DiskImage {
     /// Open `path`, detect its format, and prepare it for sector I/O.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
+        match Self::open_with_access(&path, true) {
+            Ok(image) => Ok(image),
+            Err(StorageError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                Self::open_with_access(path, false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Open an image with an explicit access mode.
+    pub fn open_with_access<P: AsRef<Path>>(
+        path: P,
+        writable: bool,
+    ) -> Result<Self, StorageError> {
         let path = path.as_ref();
 
-        // Open read/write when the file system allows it; fall back to
-        // read-only.  The same handle is then used for both reads and
-        // writes so the `writable` flag always matches the handle.
-        let (mut file, writable) = match OpenOptions::new().read(true).write(true).open(path) {
-            Ok(f) => (f, true),
-            Err(_) => (File::open(path)?, false),
+        let (mut file, writable) = if writable {
+            // Open read/write when requested. A caller that wants a
+            // read-only image must say so explicitly; silently downgrading a
+            // writable VM disk would hide configuration errors.
+            (OpenOptions::new().read(true).write(true).open(path)?, true)
+        } else {
+            (File::open(path)?, false)
         };
 
         let mut magic = [0u8; 8];
@@ -115,6 +147,8 @@ impl DiskImage {
                     qcow: None,
                     writable,
                     filename: path.display().to_string(),
+                    lock: None,
+                    cleanup_path: None,
                 })
             }
             DiskFormat::Vhd => {
@@ -128,6 +162,8 @@ impl DiskImage {
                     qcow: None,
                     writable,
                     filename: path.display().to_string(),
+                    lock: None,
+                    cleanup_path: None,
                 })
             }
             DiskFormat::Qcow2 => {
@@ -141,9 +177,73 @@ impl DiskImage {
                     qcow: Some(qcow),
                     writable,
                     filename: path.display().to_string(),
+                    lock: None,
+                    cleanup_path: None,
                 })
             }
         }
+    }
+
+    /// Path used for the ownership marker of a writable VM attachment.
+    pub fn lock_path<P: AsRef<Path>>(path: P) -> PathBuf {
+        PathBuf::from(format!("{}.synos.lock", path.as_ref().display()))
+    }
+
+    /// Open an image for a VM and claim exclusive writable ownership.
+    pub(crate) fn open_for_vm<P: AsRef<Path>>(
+        path: P,
+        writable: bool,
+    ) -> Result<Self, StorageError> {
+        let path = path.as_ref();
+        let lock = if writable {
+            Some(Self::acquire_lock(path)?)
+        } else {
+            None
+        };
+        match Self::open_with_access(path, writable) {
+            Ok(mut image) => {
+                image.lock = lock;
+                Ok(image)
+            }
+            Err(error) => {
+                drop(lock);
+                Err(error)
+            }
+        }
+    }
+
+    fn acquire_lock(path: &Path) -> Result<DiskLock, StorageError> {
+        let lock_path = Self::lock_path(path);
+        let mut lock_file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let owner = fs::read_to_string(&lock_path)
+                    .unwrap_or_else(|_| "owner metadata unavailable".to_string());
+                return Err(StorageError::Locked {
+                    path: lock_path.display().to_string(),
+                    owner,
+                });
+            }
+            Err(error) => return Err(StorageError::Io(error)),
+        };
+        writeln!(
+            lock_file,
+            "pid={}\nimage={}",
+            std::process::id(),
+            path.display()
+        )?;
+        lock_file.sync_all()?;
+        Ok(DiskLock { path: lock_path })
+    }
+
+    /// Explicitly remove a stale ownership marker after diagnosing it.
+    pub fn recover_lock<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
+        let lock_path = Self::lock_path(path);
+        fs::remove_file(&lock_path).map_err(StorageError::Io)
     }
 
     /// Parse and validate a fixed-size VHD footer.
@@ -281,6 +381,42 @@ impl DiskImage {
 
     pub fn writable(&self) -> bool {
         self.writable
+    }
+
+    pub fn filename(&self) -> &str {
+        &self.filename
+    }
+
+    /// Flush buffered writes to the host file.
+    pub fn flush(&mut self) -> Result<(), StorageError> {
+        match (self.raw.as_mut(), self.vhd.as_mut(), self.qcow.as_mut()) {
+            (Some(file), _, _) => file.flush()?,
+            (_, Some(vhd), _) => vhd.file.flush()?,
+            (_, _, Some(qcow)) => qcow.file.flush()?,
+            _ => return Err(StorageError::InvalidImage("no backing store".into())),
+        }
+        Ok(())
+    }
+
+    /// Flush and request durable host storage for this image.
+    pub fn sync(&mut self) -> Result<(), StorageError> {
+        self.flush()?;
+        match (self.raw.as_mut(), self.vhd.as_mut(), self.qcow.as_mut()) {
+            (Some(file), _, _) => file.sync_all()?,
+            (_, Some(vhd), _) => vhd.file.sync_all()?,
+            (_, _, Some(qcow)) => qcow.file.sync_all()?,
+            _ => return Err(StorageError::InvalidImage("no backing store".into())),
+        }
+        Ok(())
+    }
+
+    /// Flush and close the image, returning any host I/O error.
+    pub fn close(mut self) -> Result<(), StorageError> {
+        self.sync()
+    }
+
+    pub(crate) fn set_cleanup_path(&mut self, path: PathBuf) {
+        self.cleanup_path = Some(path);
     }
 
     /// Read one 512-byte logical sector at `lba`.
@@ -518,6 +654,15 @@ impl std::fmt::Debug for DiskImage {
             .field("writable", &self.writable)
             .field("filename", &self.filename)
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for DiskImage {
+    fn drop(&mut self) {
+        let _ = self.flush();
+        if let Some(path) = self.cleanup_path.take() {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
