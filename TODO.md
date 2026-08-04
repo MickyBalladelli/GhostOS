@@ -985,12 +985,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Rotate cluster and node keys without downtime; revoke compromised nodes, invitations, certificates, and delegated capabilities.
   - [x] Audit every lifecycle, membership, authorization, configuration, fencing, and resource decision with correlation IDs.
 
-- [ ] **Cluster Resources & Workloads**
-  - [ ] Report aggregate and per-node CPU, RAM, VRAM, CXL, storage, network, accelerator, and lease capacity.
-  - [ ] Define placement, reservations, quotas, affinity/anti-affinity, labels, taints, priorities, and tenant boundaries.
-  - [ ] Allow workloads, actors, jobs, services, and remote sessions to target the active cluster or a selected member cluster.
-  - [ ] Coordinate admission, migration, draining, failover, preemption, and cancellation with `synos-balancerd` and `synos-actors`.
-  - [ ] Prevent new work on draining, fenced, degraded, or incompatible nodes and explain placement failures.
+- [x] **Cluster Resources & Workloads**
+  - [x] Report aggregate and per-node CPU, RAM, VRAM, CXL, storage, network, accelerator, and lease capacity.
+  - [x] Define placement, reservations, quotas, affinity/anti-affinity, labels, taints, priorities, and tenant boundaries.
+  - [x] Allow workloads, actors, jobs, services, and remote sessions to target the active cluster or a selected member cluster.
+  - [x] Coordinate admission, migration, draining, failover, preemption, and cancellation with `synos-balancerd` and `synos-actors`.
+  - [x] Prevent new work on draining, fenced, degraded, or incompatible nodes and explain placement failures.
 
 - [ ] **Cross-Cluster Federation**
   - [ ] Add explicit federation and unfederation workflows separate from intra-cluster node membership.

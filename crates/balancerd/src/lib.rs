@@ -2,6 +2,9 @@
 #![forbid(unsafe_code)]
 
 pub mod topology;
+pub mod resources;
+
+pub use resources::*;
 
 pub use topology::{
     ArbitrationError, ArbitrationMatrix, ArbitrationPolicy, InterClusterGrant, IntraClusterGrant,

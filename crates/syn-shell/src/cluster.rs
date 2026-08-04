@@ -39,6 +39,7 @@ pub const CLUSTER_ID_BYTES: usize = 64;
 pub const CLUSTER_STATUS_BYTES: usize = 32;
 pub const MAX_CLUSTER_VIEW_ROWS: usize = 4;
 pub const MAX_CLUSTER_LIST_ROWS: usize = MAX_CLUSTER_VIEW_ROWS;
+pub const MAX_CLUSTER_RESOURCE_ROWS: usize = MAX_CLUSTER_VIEW_ROWS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClusterHealth {
@@ -198,9 +199,38 @@ pub struct ClusterResourcesView {
     pub vram_capacity_bytes: u64,
     pub storage_capacity_bytes: u64,
     pub network_bandwidth_mbps: u64,
+    pub accelerator_capacity: u64,
+    pub accelerator_available: u64,
+    pub lease_capacity: u64,
+    pub lease_available: u64,
     pub active_leases: u64,
     pub running_workloads: u64,
     pub queued_workloads: u64,
+    pub nodes: [Option<ClusterResourceNode>; MAX_CLUSTER_RESOURCE_ROWS],
+    pub next_node: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterResourceNode {
+    pub node: crate::Text<CLUSTER_ID_BYTES>,
+    pub status: crate::Text<CLUSTER_STATUS_BYTES>,
+    pub cpu_capacity: u64,
+    pub cpu_available: u64,
+    pub memory_capacity_bytes: u64,
+    pub memory_available_bytes: u64,
+    pub vram_capacity_bytes: u64,
+    pub vram_available_bytes: u64,
+    pub cxl_capacity_bytes: u64,
+    pub cxl_available_bytes: u64,
+    pub storage_capacity_bytes: u64,
+    pub storage_available_bytes: u64,
+    pub network_bandwidth_mbps: u64,
+    pub network_available_mbps: u64,
+    pub accelerator_capacity: u64,
+    pub accelerator_available: u64,
+    pub lease_capacity: u64,
+    pub lease_available: u64,
+    pub running_workloads: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1334,6 +1364,26 @@ pub fn cluster_resources_output(view: ClusterResourcesView) -> Result<Structured
     )?;
     insert(
         &mut output,
+        "accelerator-capacity",
+        OutputValue::Unsigned(view.accelerator_capacity),
+    )?;
+    insert(
+        &mut output,
+        "accelerator-available",
+        OutputValue::Unsigned(view.accelerator_available),
+    )?;
+    insert(
+        &mut output,
+        "lease-capacity",
+        OutputValue::Unsigned(view.lease_capacity),
+    )?;
+    insert(
+        &mut output,
+        "lease-available",
+        OutputValue::Unsigned(view.lease_available),
+    )?;
+    insert(
+        &mut output,
         "active-leases",
         OutputValue::Unsigned(view.active_leases),
     )?;
@@ -1347,6 +1397,132 @@ pub fn cluster_resources_output(view: ClusterResourcesView) -> Result<Structured
         "queued-workloads",
         OutputValue::Unsigned(view.queued_workloads),
     )?;
+    for (index, node) in view.nodes.iter().flatten().enumerate() {
+        insert_indexed_text(&mut output, "node", index, "id", node.node.as_str())?;
+        insert_indexed_text(&mut output, "node", index, "status", node.status.as_str())?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "cpu-capacity",
+            OutputValue::Unsigned(node.cpu_capacity),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "cpu-available",
+            OutputValue::Unsigned(node.cpu_available),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "memory-capacity-bytes",
+            OutputValue::Unsigned(node.memory_capacity_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "memory-available-bytes",
+            OutputValue::Unsigned(node.memory_available_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "vram-capacity-bytes",
+            OutputValue::Unsigned(node.vram_capacity_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "vram-available-bytes",
+            OutputValue::Unsigned(node.vram_available_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "cxl-capacity-bytes",
+            OutputValue::Unsigned(node.cxl_capacity_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "cxl-available-bytes",
+            OutputValue::Unsigned(node.cxl_available_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "storage-capacity-bytes",
+            OutputValue::Unsigned(node.storage_capacity_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "storage-available-bytes",
+            OutputValue::Unsigned(node.storage_available_bytes),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "network-bandwidth-mbps",
+            OutputValue::Unsigned(node.network_bandwidth_mbps),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "network-available-mbps",
+            OutputValue::Unsigned(node.network_available_mbps),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "accelerator-capacity",
+            OutputValue::Unsigned(node.accelerator_capacity),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "accelerator-available",
+            OutputValue::Unsigned(node.accelerator_available),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "lease-capacity",
+            OutputValue::Unsigned(node.lease_capacity),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "lease-available",
+            OutputValue::Unsigned(node.lease_available),
+        )?;
+        insert_indexed(
+            &mut output,
+            "node",
+            index,
+            "running-workloads",
+            OutputValue::Unsigned(node.running_workloads),
+        )?;
+    }
+    if let Some(next_node) = view.next_node {
+        insert(&mut output, "next-node", OutputValue::Unsigned(next_node))?;
+    }
     Ok(output)
 }
 
