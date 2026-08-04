@@ -749,19 +749,35 @@ fn install_matches(
 
 fn read_best_manifest(image: &mut DiskImage) -> Result<SystemDiskManifest, StorageError> {
     let mut candidates = Vec::new();
+    let mut first_error = None;
     for offset in [MANIFEST_A_OFFSET, MANIFEST_B_OFFSET] {
         let bytes = read_extent(image, offset, SYSTEM_DISK_MANIFEST_SIZE)?;
-        if let Ok(manifest) = decode_manifest(&bytes) {
-            if validate_manifest(image, &manifest).is_ok() {
-                candidates.push(manifest);
+        match decode_manifest(&bytes) {
+            Ok(manifest) => match validate_manifest(image, &manifest) {
+                Ok(()) => candidates.push(manifest),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            },
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
             }
         }
     }
     candidates
         .into_iter()
         .max_by_key(|manifest| manifest.generation)
-        .ok_or_else(|| {
-            StorageError::InvalidImage("no valid SynOS system-disk installation".to_string())
+        .ok_or_else(|| match first_error {
+            Some(error) => StorageError::InvalidImage(format!(
+                "no valid SynOS system-disk installation: {error}"
+            )),
+            None => StorageError::InvalidImage(
+                "no valid SynOS system-disk installation".to_string(),
+            ),
         })
 }
 
@@ -841,6 +857,12 @@ fn validate_manifest(
             "system-disk checksum mismatch".to_string(),
         ));
     }
+    let settings = read_extent(
+        image,
+        manifest.layout.settings_offset,
+        manifest.layout.settings_size,
+    )?;
+    decode_settings(&settings)?;
     let volume = read_extent(
         image,
         manifest.layout.system_volume_offset,
@@ -948,8 +970,8 @@ fn encode_manifest(manifest: &SystemDiskManifest) -> Result<Vec<u8>, StorageErro
     for capability in &manifest.capabilities {
         push_manifest_string(&mut bytes, &mut cursor, capability)?;
     }
-    let digest = checksum(&bytes[..bytes.len() - 4]);
     let checksum_offset = bytes.len() - 4;
+    let digest = checksum(&bytes);
     put_u32(&mut bytes, checksum_offset, digest);
     Ok(bytes)
 }
@@ -1072,13 +1094,13 @@ fn write_extent(
     size: u64,
     data: &[u8],
 ) -> Result<(), StorageError> {
-    if *offset % SECTOR_SIZE != 0 || size % SECTOR_SIZE != 0 || data.len() as u64 > size {
+    if *offset % SECTOR_SIZE != 0 || data.len() as u64 > size {
         return Err(StorageError::InvalidImage(
             "unaligned system-disk write".to_string(),
         ));
     }
     let mut sector = [0u8; HEADER_SIZE];
-    let sectors = size / SECTOR_SIZE;
+    let sectors = size.div_ceil(SECTOR_SIZE);
     for index in 0..sectors {
         sector.fill(0);
         let start = index as usize * HEADER_SIZE;
@@ -1092,16 +1114,37 @@ fn write_extent(
 }
 
 fn read_extent(image: &mut DiskImage, offset: u64, size: u64) -> Result<Vec<u8>, StorageError> {
-    if size % SECTOR_SIZE != 0 || offset % SECTOR_SIZE != 0 {
+    if offset % SECTOR_SIZE != 0 {
         return Err(StorageError::InvalidImage(
             "unaligned system-disk read".to_string(),
         ));
     }
-    let mut bytes = vec![0u8; size as usize];
-    for (index, sector) in bytes.chunks_exact_mut(HEADER_SIZE).enumerate() {
+    let sectors = size.div_ceil(SECTOR_SIZE);
+    let storage_size = sectors.checked_mul(SECTOR_SIZE).ok_or_else(|| {
+        StorageError::InvalidImage("system-disk extent size overflows".to_string())
+    })?;
+    if offset
+        .checked_add(storage_size)
+        .map_or(true, |end| end > image.size())
+    {
+        return Err(StorageError::InvalidImage(
+            "system-disk read is outside the image".to_string(),
+        ));
+    }
+    let length = usize::try_from(size).map_err(|_| {
+        StorageError::InvalidImage("system-disk extent is too large for this host".to_string())
+    })?;
+    let mut bytes = vec![0u8; length];
+    for index in 0..sectors {
         let mut value = [0u8; HEADER_SIZE];
-        image.read_sector(offset / SECTOR_SIZE + index as u64, &mut value)?;
-        sector.copy_from_slice(&value);
+        image.read_sector(offset / SECTOR_SIZE + index, &mut value)?;
+        let start = usize::try_from(index * SECTOR_SIZE).map_err(|_| {
+            StorageError::InvalidImage("system-disk extent is too large for this host".to_string())
+        })?;
+        if start < bytes.len() {
+            let end = (start + HEADER_SIZE).min(bytes.len());
+            bytes[start..end].copy_from_slice(&value[..end - start]);
+        }
     }
     Ok(bytes)
 }
@@ -1130,6 +1173,8 @@ fn validate_header(image: &mut DiskImage) -> Result<(), StorageError> {
     if &header[0..8] != HEADER_MAGIC
         || u32::from_le_bytes(header[8..12].try_into().unwrap()) != SYSTEM_DISK_FORMAT_VERSION
         || u64::from_le_bytes(header[12..20].try_into().unwrap()) != image.size()
+        || u64::from_le_bytes(header[20..28].try_into().unwrap()) != MANIFEST_A_OFFSET
+        || u64::from_le_bytes(header[28..36].try_into().unwrap()) != MANIFEST_B_OFFSET
     {
         return Err(StorageError::InvalidImage(
             "invalid system-disk header".to_string(),
@@ -1286,4 +1331,67 @@ fn checksum(bytes: &[u8]) -> u32 {
         }
     }
     !crc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::OpenOptions;
+    use std::io::{Seek, SeekFrom, Write};
+
+    fn test_path(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("synos-system-disk-{label}-{stamp}"))
+    }
+
+    #[test]
+    fn provision_validate_and_reload_persistent_state() {
+        let disk_path = test_path("persistent.raw");
+        let kernel_path = test_path("kernel.bin");
+        fs::write(&kernel_path, b"test kernel image").unwrap();
+
+        let install = SystemDiskInstall::new(&kernel_path)
+            .with_boot_args("console=serial0")
+            .with_machine_identity("machine-a")
+            .with_network_identity("network-a")
+            .with_setting("test.key", "test-value");
+        let manifest = SystemDiskProvisioner::provision_with_options(
+            &disk_path,
+            SystemDiskCreateOptions::new(SYSTEM_DISK_MIN_SIZE),
+            &install,
+        )
+        .unwrap();
+
+        let validated = SystemDiskProvisioner::validate(&disk_path).unwrap();
+        assert_eq!(validated, manifest);
+        let artifacts = SystemDiskProvisioner::load_boot_artifacts(&disk_path).unwrap();
+        assert_eq!(artifacts.kernel, b"test kernel image");
+        assert_eq!(artifacts.setting("test.key"), Some("test-value"));
+
+        fs::remove_file(&disk_path).ok();
+        fs::remove_file(&kernel_path).ok();
+    }
+
+    #[test]
+    fn validation_rejects_corrupt_settings_metadata() {
+        let disk_path = test_path("corrupt-settings.raw");
+        let kernel_path = test_path("corrupt-settings-kernel.bin");
+        fs::write(&kernel_path, b"test kernel image").unwrap();
+        let install = SystemDiskInstall::new(&kernel_path);
+        let manifest = SystemDiskProvisioner::provision(&disk_path, &install).unwrap();
+
+        let mut file = OpenOptions::new().write(true).open(&disk_path).unwrap();
+        file.seek(SeekFrom::Start(manifest.layout.settings_offset + 8))
+            .unwrap();
+        file.write_all(&[0xff]).unwrap();
+        file.sync_all().unwrap();
+
+        assert!(SystemDiskProvisioner::validate(&disk_path).is_err());
+
+        fs::remove_file(&disk_path).ok();
+        fs::remove_file(&kernel_path).ok();
+    }
 }

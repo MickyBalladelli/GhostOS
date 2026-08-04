@@ -27,6 +27,8 @@ pub enum DiskFormat {
 /// logical sectors).
 pub const SECTOR_SIZE: u64 = 512;
 
+const QCOW_CLUSTER_OFFSET_MASK: u64 = 0x00FF_FFFF_FFFF_FE00;
+
 /// Magic numbers of the supported image formats.
 const VHD_MAGIC: &[u8; 8] = b"conectix";
 const QCOW2_MAGIC: &[u8; 4] = b"QFI\xfb";
@@ -126,6 +128,13 @@ impl DiskImage {
             (File::open(path)?, false)
         };
 
+        let file_len = file.metadata()?.len();
+        if file_len < 8 {
+            return Err(StorageError::InvalidImage(
+                "disk image header is truncated".to_string(),
+            ));
+        }
+
         let mut magic = [0u8; 8];
         file.read_exact(&mut magic)?;
 
@@ -136,19 +145,25 @@ impl DiskImage {
         } else if &magic[..8] == VHD_MAGIC {
             DiskFormat::Vhd
         } else {
-            let mut footer = [0u8; 8];
-            match file.seek(SeekFrom::End(-512)).and_then(|_| file.read_exact(&mut footer)) {
-                Ok(()) if &footer[..8] == VHD_MAGIC => {
-                    file.seek(SeekFrom::Start(0))?;
+            if file_len >= 512 {
+                let mut footer = [0u8; 8];
+                file.seek(SeekFrom::End(-512))?;
+                file.read_exact(&mut footer)?;
+                file.seek(SeekFrom::Start(0))?;
+                if &footer[..8] == VHD_MAGIC {
                     DiskFormat::Vhd
+                } else {
+                    DiskFormat::Raw
                 }
-                _ => DiskFormat::Raw,
+            } else {
+                DiskFormat::Raw
             }
         };
 
         match format {
             DiskFormat::Raw => {
-                let size = file.metadata()?.len();
+                let size = file_len;
+                validate_sector_capacity(size, "RAW")?;
                 Ok(Self {
                     format,
                     size,
@@ -298,6 +313,12 @@ impl DiskImage {
 
     /// Parse and validate a fixed-size VHD footer.
     fn open_vhd(mut file: File, writable: bool) -> Result<VhdFile, StorageError> {
+        let file_len = file.metadata()?.len();
+        if file_len < 1024 {
+            return Err(StorageError::InvalidImage(
+                "VHD image is truncated".to_string(),
+            ));
+        }
         file.seek(SeekFrom::End(-512))?;
         let mut footer = [0u8; 512];
         file.read_exact(&mut footer)?;
@@ -320,6 +341,17 @@ impl DiskImage {
                 "VHD original/current size mismatch".to_string(),
             ));
         }
+        let disk_size = current_size as u64;
+        validate_sector_capacity(disk_size, "VHD")?;
+        let expected_file_len = disk_size.checked_add(512).ok_or_else(|| {
+            StorageError::InvalidImage("VHD image size overflows host limits".to_string())
+        })?;
+        if file_len != expected_file_len {
+            return Err(StorageError::InvalidImage(format!(
+                "VHD file is {} bytes, footer declares {} bytes of disk data",
+                file_len, disk_size
+            )));
+        }
 
         // Checksum is the one's-complement of the sum of all footer bytes
         // with the checksum field zeroed.
@@ -339,13 +371,19 @@ impl DiskImage {
         file.seek(SeekFrom::Start(0))?;
         Ok(VhdFile {
             file,
-            disk_size: current_size as u64,
+            disk_size,
             writable,
         })
     }
 
     /// Parse and validate a QCOW2 header (versions 2 and 3).
     fn open_qcow2(mut file: File, writable: bool) -> Result<QcowFile, StorageError> {
+        let file_len = file.metadata()?.len();
+        if file_len < 104 {
+            return Err(StorageError::InvalidImage(
+                "QCOW2 header is truncated".to_string(),
+            ));
+        }
         file.seek(SeekFrom::Start(0))?;
         let mut hdr = [0u8; 104];
         file.read_exact(&mut hdr)?;
@@ -358,6 +396,18 @@ impl DiskImage {
             return Err(StorageError::Unsupported(format!(
                 "QCOW version {version} (only 2 and 3 are supported)"
             )));
+        }
+        let backing_file_offset = u64_at(8);
+        let backing_file_size = u32_at(16);
+        if backing_file_offset != 0 || backing_file_size != 0 {
+            return Err(StorageError::Unsupported(
+                "QCOW2 backing files are not supported".to_string(),
+            ));
+        }
+        if u32_at(32) != 0 {
+            return Err(StorageError::Unsupported(
+                "QCOW2 encryption is not supported".to_string(),
+            ));
         }
         let cluster_bits = u32_at(20);
         if !(9..=21).contains(&cluster_bits) {
@@ -384,13 +434,50 @@ impl DiskImage {
         }
 
         let cluster_size = 1u64 << cluster_bits;
+        let disk_size = u64_at(24);
+        validate_sector_capacity(disk_size, "QCOW2")?;
+        if version == 3 {
+            let header_length = u32_at(100) as u64;
+            if header_length < 104 || header_length > file_len {
+                return Err(StorageError::InvalidImage(
+                    "invalid QCOW2 header length".to_string(),
+                ));
+            }
+        }
         let mut l2_bits = 0u32;
         while (1u64 << l2_bits) < cluster_size / 8 {
             l2_bits += 1;
         }
         let l2_entries = 1u32 << l2_bits;
+        let coverage = cluster_size.checked_mul(l2_entries as u64).ok_or_else(|| {
+            StorageError::InvalidImage("QCOW2 L1 coverage overflows".to_string())
+        })?;
 
         let l1_table_offset = u64_at(40);
+        if l1_table_offset % cluster_size != 0 {
+            return Err(StorageError::InvalidImage(
+                "QCOW2 L1 table is not cluster-aligned".to_string(),
+            ));
+        }
+        let l1_bytes = (l1_size as u64).checked_mul(8).ok_or_else(|| {
+            StorageError::InvalidImage("QCOW2 L1 table size overflows".to_string())
+        })?;
+        let l1_end = l1_table_offset.checked_add(l1_bytes).ok_or_else(|| {
+            StorageError::InvalidImage("QCOW2 L1 table range overflows".to_string())
+        })?;
+        if l1_table_offset < cluster_size || l1_end > file_len {
+            return Err(StorageError::InvalidImage(
+                "QCOW2 L1 table is outside the image".to_string(),
+            ));
+        }
+        if coverage
+            .checked_mul(l1_size as u64)
+            .map_or(true, |value| value < disk_size)
+        {
+            return Err(StorageError::InvalidImage(
+                "QCOW2 L1 table does not cover the virtual disk".to_string(),
+            ));
+        }
         let mut l1_cache = vec![0u64; l1_size as usize];
         file.seek(SeekFrom::Start(l1_table_offset))?;
         for slot in l1_cache.iter_mut() {
@@ -399,11 +486,39 @@ impl DiskImage {
             *slot = u64::from_be_bytes(b);
         }
 
+        for entry in &l1_cache {
+            let offset = qcow_cluster_offset(*entry);
+            if *entry != 0 && offset == 0 {
+                return Err(StorageError::InvalidImage(
+                    "QCOW2 L1 entry has no table offset".to_string(),
+                ));
+            }
+            if offset != 0
+                && (offset % cluster_size != 0
+                    || offset
+                        .checked_add(cluster_size)
+                        .map_or(true, |end| end > file_len))
+            {
+                return Err(StorageError::InvalidImage(
+                    "QCOW2 L2 table is outside the image".to_string(),
+                ));
+            }
+            if offset != 0 {
+                validate_qcow_l2_table(
+                    &mut file,
+                    offset,
+                    cluster_size,
+                    l2_entries,
+                    file_len,
+                )?;
+            }
+        }
+
         Ok(QcowFile {
             file,
             header: QcowHeader {
                 cluster_bits,
-                disk_size: u64_at(24),
+                disk_size,
                 l1_table_offset,
                 l1_size,
                 l2_bits,
@@ -537,6 +652,51 @@ fn process_exists(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+fn validate_sector_capacity(size: u64, format: &str) -> Result<(), StorageError> {
+    if size == 0 || size % SECTOR_SIZE != 0 {
+        return Err(StorageError::InvalidImage(format!(
+            "{format} capacity {size} is not a non-zero sector multiple"
+        )));
+    }
+    Ok(())
+}
+
+fn qcow_cluster_offset(entry: u64) -> u64 {
+    entry & QCOW_CLUSTER_OFFSET_MASK
+}
+
+fn validate_qcow_l2_table(
+    file: &mut File,
+    l2_phys: u64,
+    cluster_size: u64,
+    l2_entries: u32,
+    file_len: u64,
+) -> Result<(), StorageError> {
+    file.seek(SeekFrom::Start(l2_phys))?;
+    for _ in 0..l2_entries {
+        let mut bytes = [0u8; 8];
+        file.read_exact(&mut bytes)?;
+        let entry = u64::from_be_bytes(bytes);
+        let offset = qcow_cluster_offset(entry);
+        if entry & (1 << 62) != 0 {
+            return Err(StorageError::Unsupported(
+                "QCOW2 compressed clusters are not supported".to_string(),
+            ));
+        }
+        if offset != 0
+            && (offset % cluster_size != 0
+                || offset
+                    .checked_add(cluster_size)
+                    .map_or(true, |end| end > file_len))
+        {
+            return Err(StorageError::InvalidImage(
+                "QCOW2 data cluster is outside the image".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl QcowFile {
     /// Read `buf.len()` bytes starting at file offset `offset`.
     fn read_range(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), StorageError> {
@@ -593,16 +753,21 @@ impl QcowFile {
         if l1_entry == 0 {
             return Ok(None);
         }
-        let l2_phys = l1_entry & 0x00FF_FFFF_FFFF_FE00;
+        let l2_phys = qcow_cluster_offset(l1_entry);
+        if l2_phys == 0 {
+            return Err(StorageError::InvalidImage(
+                "QCOW2 L1 entry has no table offset".to_string(),
+            ));
+        }
         self.load_l2(l2_phys)?;
 
         let l2_index = (cluster_idx & (self.l2_entries as u64 - 1)) as usize;
         let entry = self.l2_cache[l2_index];
-        if entry & 1 == 0 {
-            // Bit 0 clear = unallocated.
+        let offset = qcow_cluster_offset(entry);
+        if offset == 0 {
+            // A zero host offset means the virtual cluster is unallocated.
             return Ok(None);
         }
-        let offset = entry & 0x00FF_FFFF_FFFF_FE00;
         if entry & (1 << 62) != 0 {
             return Err(StorageError::Unsupported(
                 "QCOW2 compressed clusters are not supported".to_string(),
@@ -623,8 +788,9 @@ impl QcowFile {
             let l2_index = (cluster_idx & (self.l2_entries as u64 - 1)) as usize;
             if l2_index < self.l2_cache.len() {
                 let entry = self.l2_cache[l2_index];
-                if entry & 1 != 0 {
-                    return Ok(entry & 0x00FF_FFFF_FFFF_FE00);
+                let offset = qcow_cluster_offset(entry);
+                if offset != 0 {
+                    return Ok(offset);
                 }
             }
         }
@@ -655,8 +821,8 @@ impl QcowFile {
     /// table and load that table into the cache.
     fn ensure_l2(&mut self, l1_index: usize) -> Result<u64, StorageError> {
         let existing = self.l1_cache[l1_index];
-        if existing & 1 != 0 {
-            let l2_phys = existing & 0x00FF_FFFF_FFFF_FE00;
+        if qcow_cluster_offset(existing) != 0 {
+            let l2_phys = qcow_cluster_offset(existing);
             self.load_l2(l2_phys)?;
             return Ok(l2_phys);
         }
@@ -672,9 +838,7 @@ impl QcowFile {
         // Zero the L2 table (set_len may leave garbage).
         self.file.seek(SeekFrom::Start(l2_phys))?;
         let zeros = vec![0u8; self.cluster_size as usize];
-        if self.cluster_size <= (1 << 20) {
-            self.file.write_all(&zeros)?;
-        }
+        self.file.write_all(&zeros)?;
 
         let entry = l2_phys | 1;
         let entry_bytes = entry.to_be_bytes();
@@ -700,6 +864,25 @@ impl QcowFile {
             let mut b = [0u8; 8];
             self.file.read_exact(&mut b)?;
             entries.push(u64::from_be_bytes(b));
+        }
+        let file_len = self.file.metadata()?.len();
+        for entry in &entries {
+            let offset = qcow_cluster_offset(*entry);
+            if *entry & (1 << 62) != 0 {
+                return Err(StorageError::Unsupported(
+                    "QCOW2 compressed clusters are not supported".to_string(),
+                ));
+            }
+            if offset != 0
+                && (offset % self.cluster_size != 0
+                    || offset
+                        .checked_add(self.cluster_size)
+                        .map_or(true, |end| end > file_len))
+            {
+                return Err(StorageError::InvalidImage(
+                    "QCOW2 data cluster is outside the image".to_string(),
+                ));
+            }
         }
         self.l2_cache_offset = l2_phys;
         self.l2_cache = entries;
@@ -833,8 +1016,9 @@ mod tests {
         hdr[40..48].copy_from_slice(&0x20000u64.to_be_bytes()); // L1 table offset
         hdr[48..56].copy_from_slice(&0x30000u64.to_be_bytes()); // refcount table
         hdr[56..60].copy_from_slice(&1u32.to_be_bytes()); // refcount clusters
-        // L1 entry at 0x20000 -> L2 at 0x10000.
-        data[0x20000..0x20008].copy_from_slice(&(0x10000u64 | 1).to_be_bytes());
+        // L1 entry at 0x20000 -> L2 at 0x10000. The low flag bits are clear,
+        // as they are in standard QCOW2 images.
+        data[0x20000..0x20008].copy_from_slice(&0x10000u64.to_be_bytes());
 
         File::create(&path).unwrap().write_all(&data).unwrap();
 
@@ -853,6 +1037,36 @@ mod tests {
         let mut read2 = [0u8; 512];
         img.read_sector(0, &mut read2).unwrap();
         assert_eq!(read2, write);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn raw_image_rejects_unaligned_capacity() {
+        let path = std::env::temp_dir().join("synos_vm_raw_unaligned_test.img");
+        File::create(&path).unwrap().set_len(513).unwrap();
+
+        let error = DiskImage::open(&path).unwrap_err();
+        assert!(matches!(error, StorageError::InvalidImage(_)));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn qcow2_rejects_l2_table_outside_image() {
+        let path = std::env::temp_dir().join("synos_vm_qcow2_invalid_test.qcow2");
+        let mut data = vec![0u8; 0x40000];
+        data[0..4].copy_from_slice(QCOW2_MAGIC);
+        data[4..8].copy_from_slice(&2u32.to_be_bytes());
+        data[20..24].copy_from_slice(&16u32.to_be_bytes());
+        data[24..32].copy_from_slice(&(1024u64 * 1024).to_be_bytes());
+        data[36..40].copy_from_slice(&1u32.to_be_bytes());
+        data[40..48].copy_from_slice(&0x20000u64.to_be_bytes());
+        data[0x20000..0x20008].copy_from_slice(&0x40000u64.to_be_bytes());
+        File::create(&path).unwrap().write_all(&data).unwrap();
+
+        let error = DiskImage::open(&path).unwrap_err();
+        assert!(matches!(error, StorageError::InvalidImage(_)));
 
         std::fs::remove_file(&path).ok();
     }

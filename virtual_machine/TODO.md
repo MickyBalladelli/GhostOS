@@ -79,14 +79,14 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Add locking and ownership metadata so concurrent VM launches fail safely and stale locks can be diagnosed and recovered.
   - [x] Document disk lifecycle examples for creating a new SynOS VM, reopening an existing VM, attaching a data disk, and using a read-only clone.
 
-- [ ] **Disk Reliability and Validation**
-  - [ ] Test attachment and boot with RAW, fixed VHD, and QCOW2 images through AHCI, NVMe, and virtio-blk where supported.
-  - [ ] Test persistence by installing SynOS and settings, rebooting, creating files, recreating the VM, and verifying the same state is loaded.
-  - [ ] Test power-loss and interrupted-flush recovery for the boot metadata, settings store, and SynFS volume.
-  - [ ] Test read-only and copy-on-write behavior so base system disks cannot be mutated accidentally.
-  - [ ] Test invalid images, truncated images, corrupt metadata, out-of-range I/O, full disks, unsupported formats, and controller reset during I/O.
-  - [ ] Add end-to-end BIOS and UEFI coverage proving a newly provisioned system disk boots SynOS without host-provided kernel or initrd paths.
-  - [ ] Document the system-disk format, provisioning contract, backup/restore expectations, and compatibility policy.
+- [x] **Disk Reliability and Validation**
+  - [x] Test attachment and boot with RAW, fixed VHD, and QCOW2 images through AHCI, NVMe, and virtio-blk where supported.
+  - [x] Test persistence by installing SynOS and settings, rebooting, creating files, recreating the VM, and verifying the same state is loaded.
+  - [x] Test power-loss and interrupted-flush recovery for the boot metadata, settings store, and SynFS volume.
+  - [x] Test read-only and copy-on-write behavior so base system disks cannot be mutated accidentally.
+  - [x] Test invalid images, truncated images, corrupt metadata, out-of-range I/O, full disks, unsupported formats, and controller reset during I/O.
+  - [x] Add end-to-end BIOS and UEFI coverage proving a newly provisioned system disk boots SynOS without host-provided kernel or initrd paths.
+  - [x] Document the system-disk format, provisioning contract, backup/restore expectations, and compatibility policy.
 
 - [x] **Networking**
   - [x] Intel e1000 NIC emulation

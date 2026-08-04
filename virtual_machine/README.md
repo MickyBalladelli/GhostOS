@@ -85,6 +85,25 @@ temporary writable clone. Writable persistent attachments create a
 and owner metadata, then `disk recover-lock PATH` only after the owner is
 reported stale.
 
+### System-disk reliability contract
+
+System disks use a 512-byte sector interface and must have a non-zero,
+sector-aligned logical capacity. Provisioning accepts RAW, fixed VHD, and
+QCOW2 images. VHD uses a fixed footer; QCOW2 must not use encryption,
+compression, or an external backing file. The image parser validates table
+ranges before guest I/O and rejects truncated or corrupt metadata.
+
+Provisioned disks contain a versioned header, kernel/initrd payloads, settings,
+and a SynFS system volume. Two manifest slots are published only after payload
+sync; each manifest has checksums, layout, and generation data. Boot validation
+selects the newest complete generation, verifies settings and SynFS
+consistency, and can fall back to the other slot after an interrupted write.
+
+Back up a quiesced VM by copying the whole disk image together with its format
+and capacity metadata. Restore only to a new path, then run `disk validate`
+before attaching it. The on-disk format version is checked at boot; incompatible
+versions require a future migration step instead of being mounted silently.
+
 Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
 bounded run or `--integration` to run the SynOS integration checks.
 
