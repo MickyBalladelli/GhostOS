@@ -44,6 +44,50 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Block device image file parser (RAW, VHD, QCOW2)
   - [x] DMA transfer implementation
 
+- [ ] **VM Disk Attachment and Management**
+  - [ ] Define a disk specification with a stable disk ID, role (`system` or `data`), controller, bus/slot, image path, format, capacity, and read-only mode.
+  - [ ] Add disk specifications to `VmConfig` so disks are attached while the VM is created, before firmware and SynOS boot.
+  - [ ] Provide one shared attachment path for AHCI, NVMe, and virtio-blk instead of requiring callers to open an image and reach into a controller manually.
+  - [ ] Reject missing, malformed, unsupported, duplicate, already-locked, and incorrectly sized images with actionable VM startup errors.
+  - [ ] Prevent the same backing image from being attached to multiple writable disks or multiple VMs at the same time.
+  - [ ] Define deterministic disk enumeration and guest-visible identity across VM restarts and controller types.
+  - [ ] Support explicit disk flush, sync, detach, and close behavior during normal shutdown, reboot, reset, and VM errors.
+  - [ ] Define read-only, copy-on-write, and disposable disk modes for safe inspection and test runs.
+
+- [ ] **SynOS System-Disk Provisioning**
+  - [ ] Define the system-disk layout: boot metadata, SynOS kernel and initrd, SynFS system volume, persistent settings, and reserved space for future updates.
+  - [ ] Add a disk-creation path that creates a new raw or supported formatted image with validated size, alignment, and format options.
+  - [ ] Build an idempotent installer/provisioner that writes SynOS, required system files, and default settings onto the system disk.
+  - [ ] Store the selected boot arguments, machine identity, network identity, capabilities, and system configuration on the disk rather than only in host-side VM arguments.
+  - [ ] Make provisioning atomic and restartable, with generation markers, checksums, and recovery for interrupted installation.
+  - [ ] Refuse accidental overwrite of an existing disk unless the caller explicitly requests replacement or reformatting.
+  - [ ] Validate the system-disk manifest and SynFS volume before boot, and report missing, stale, incompatible, or corrupt installation state.
+
+- [ ] **Boot SynOS From the Attached Disk**
+  - [ ] Teach BIOS and UEFI boot flows to discover the configured system disk and load SynOS from its on-disk boot artifacts.
+  - [ ] Define boot-source precedence when host `--kernel`/`--initrd` arguments and an installed system disk are both present.
+  - [ ] Load persistent settings from the disk before starting user-space services, with safe defaults when optional settings are absent.
+  - [ ] Mount the installed SynFS system volume as the SynOS root and keep system, package, log, user-data, and temporary storage roles separate.
+  - [ ] Preserve settings and filesystem changes across VM shutdown, reboot, and a later VM created from the same disk.
+  - [ ] Add system-disk version checks and an upgrade/migration path for changes to the on-disk layout or SynOS installation.
+
+- [ ] **Disk CLI and Operational Controls**
+  - [ ] Add VM CLI options for `--disk`, `--system-disk`, `--disk-controller`, `--disk-format`, `--disk-size`, `--read-only`, and create-if-missing behavior.
+  - [ ] Add commands or inspection output to list attached disks, roles, formats, capacities, persistence mode, health, and guest-visible identifiers.
+  - [ ] Add a validate/provision workflow that can prepare a disk without booting a VM and can inspect an installed disk without modifying it.
+  - [ ] Make disk paths explicit, canonical, and scoped to the VM configuration; avoid silently creating or selecting a host disk.
+  - [ ] Add locking and ownership metadata so concurrent VM launches fail safely and stale locks can be diagnosed and recovered.
+  - [ ] Document disk lifecycle examples for creating a new SynOS VM, reopening an existing VM, attaching a data disk, and using a read-only clone.
+
+- [ ] **Disk Reliability and Validation**
+  - [ ] Test attachment and boot with RAW, fixed VHD, and QCOW2 images through AHCI, NVMe, and virtio-blk where supported.
+  - [ ] Test persistence by installing SynOS and settings, rebooting, creating files, recreating the VM, and verifying the same state is loaded.
+  - [ ] Test power-loss and interrupted-flush recovery for the boot metadata, settings store, and SynFS volume.
+  - [ ] Test read-only and copy-on-write behavior so base system disks cannot be mutated accidentally.
+  - [ ] Test invalid images, truncated images, corrupt metadata, out-of-range I/O, full disks, unsupported formats, and controller reset during I/O.
+  - [ ] Add end-to-end BIOS and UEFI coverage proving a newly provisioned system disk boots SynOS without host-provided kernel or initrd paths.
+  - [ ] Document the system-disk format, provisioning contract, backup/restore expectations, and compatibility policy.
+
 - [x] **Networking**
   - [x] Intel e1000 NIC emulation
   - [x] virtio-net device emulation
