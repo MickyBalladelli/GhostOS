@@ -462,7 +462,11 @@ fn is_line_only_edit_key<const CAPACITY: usize>(
 
 #[cfg(test)]
 mod input_tests {
-    use super::{Key, VtInput};
+    use super::{
+        expand_command, register, Key, ShellLineRender, VtInput, COMMAND_CAPACITY,
+        HISTORY_CAPACITY,
+    };
+    use syn_shell::{editor::LineEditor, parser::CommandRegistry};
 
     fn decode(input: &mut VtInput, bytes: &[u8]) -> Key {
         bytes
@@ -486,6 +490,18 @@ mod input_tests {
         let mut input = VtInput::new();
         assert_eq!(decode(&mut input, b"\x1b[8;30;120t"), Key::Resize);
         assert_eq!(input.take_resize(), Some((120, 30)));
+    }
+
+    #[test]
+    fn tab_completes_abbreviated_show_command_without_repeating_text() {
+        let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
+        register(&mut registry, "SHOW-SYSTEM", 1);
+        let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
+        editor.replace_line("sho sys").unwrap();
+        let mut rendered = ShellLineRender::new();
+
+        assert!(expand_command(&mut editor, &registry, &mut rendered).unwrap());
+        assert_eq!(editor.line(), "SHOW SYSTEM");
     }
 }
 
@@ -917,6 +933,7 @@ fn command_span(line: &str) -> Option<(usize, usize)> {
         if matches!(
             second_word,
             value if value.eq_ignore_ascii_case("SHOW")
+                || value.eq_ignore_ascii_case("SHO")
                 || value.eq_ignore_ascii_case("TOP")
                 || value.eq_ignore_ascii_case("SET")
         ) {
@@ -927,6 +944,7 @@ fn command_span(line: &str) -> Option<(usize, usize)> {
     if matches!(
         first_word,
         value if value.eq_ignore_ascii_case("SHOW")
+            || value.eq_ignore_ascii_case("SHO")
             || value.eq_ignore_ascii_case("TOP")
             || value.eq_ignore_ascii_case("SET")
     ) {

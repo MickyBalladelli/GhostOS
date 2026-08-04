@@ -934,8 +934,9 @@ fn encode_member(member: &RegistryMember, output: &mut [u8]) {
     output[130..138].copy_from_slice(&member.membership_epoch.to_le_bytes());
     output[138..146].copy_from_slice(&member.last_seen_us.to_le_bytes());
     output[146..154].copy_from_slice(&member.sequence.to_le_bytes());
-    output[154..156].copy_from_slice(&member.endpoint.as_str().len().to_le_bytes());
-    output[156..156 + member.endpoint.as_str().len()].copy_from_slice(member.endpoint.as_str().as_bytes());
+    let endpoint_len = member.endpoint.as_str().len() as u16;
+    output[154..156].copy_from_slice(&endpoint_len.to_le_bytes());
+    output[156..156 + endpoint_len as usize].copy_from_slice(member.endpoint.as_str().as_bytes());
 }
 
 fn decode_member(input: &[u8]) -> Result<RegistryMember, MembershipError> {

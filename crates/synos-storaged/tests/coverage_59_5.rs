@@ -172,7 +172,7 @@ fn cluster_metadata_is_generation_safe_and_persistent() {
         .unwrap();
     catalog.set_active_cluster(id, catalog.catalog_generation()).unwrap();
 
-    let mut filesystem = SynFs::<256>::new();
+    let mut filesystem = SynFs::<128>::new();
     let mut staging = vec![0; ClusterMetadataCatalog::encoded_len()];
     catalog.save_to_synfs(&mut filesystem, &mut staging).unwrap();
     let restored = ClusterMetadataCatalog::load_from_synfs(&filesystem, &mut staging).unwrap();
