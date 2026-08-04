@@ -33,8 +33,14 @@ pub const INVITE_CLUSTER_ROUTE: u16 = 118;
 pub const ACCEPT_CLUSTER_ROUTE: u16 = 119;
 pub const REJECT_CLUSTER_ROUTE: u16 = 120;
 pub const REMOVE_FEDERATION_ROUTE: u16 = 121;
+pub const RETRY_NODE_ROUTE: u16 = 122;
+pub const RESYNC_NODE_ROUTE: u16 = 123;
+pub const RECOVER_NODE_ROUTE: u16 = 124;
+pub const UNFENCE_NODE_ROUTE: u16 = 125;
+pub const ROLLBACK_CLUSTER_ROUTE: u16 = 126;
+pub const ABANDON_NODE_ROUTE: u16 = 127;
 
-pub const CLUSTER_COMMAND_COUNT: usize = 21;
+pub const CLUSTER_COMMAND_COUNT: usize = 27;
 pub const CLUSTER_ID_BYTES: usize = 64;
 pub const CLUSTER_STATUS_BYTES: usize = 32;
 pub const MAX_CLUSTER_VIEW_ROWS: usize = 4;
@@ -431,6 +437,48 @@ pub const CLUSTER_COMMAND_HELP: [ClusterCommandHelp; CLUSTER_COMMAND_COUNT] = [
         "",
         "/FORCE /CONFIRM",
     ),
+    help(
+        "RETRY-NODE",
+        "RETRY NODE node",
+        "Retry a failed node operation without releasing shared resources.",
+        "",
+        "",
+    ),
+    help(
+        "RESYNC-NODE",
+        "RESYNC NODE node",
+        "Reconcile a fenced node's membership, data, logs, and workloads.",
+        "",
+        "",
+    ),
+    help(
+        "RECOVER-NODE",
+        "RECOVER NODE node",
+        "Recover a fenced node after all reconciliation checks pass.",
+        "",
+        "",
+    ),
+    help(
+        "UNFENCE-NODE",
+        "UNFENCE NODE node /CONFIRM",
+        "Return a reconciled node to active service.",
+        "",
+        "/CONFIRM",
+    ),
+    help(
+        "ROLLBACK-CLUSTER",
+        "ROLLBACK CLUSTER /CONFIRM",
+        "Roll back the last safe cluster recovery checkpoint.",
+        "",
+        "/CONFIRM",
+    ),
+    help(
+        "ABANDON-NODE",
+        "ABANDON NODE node /FORCE /CONFIRM",
+        "Permanently abandon a fenced node and its unrecoverable state.",
+        "",
+        "/FORCE /CONFIRM",
+    ),
 ];
 
 const fn help(
@@ -685,6 +733,36 @@ fn register_cluster_commands_impl<const CAPACITY: usize>(
         ],
         REMOVE_FEDERATION_ROUTE,
     )?;
+    register(registry, "RETRY-NODE", &[node], RETRY_NODE_ROUTE)?;
+    register(registry, "RESYNC-NODE", &[node], RESYNC_NODE_ROUTE)?;
+    register(
+        registry,
+        "RECOVER-NODE",
+        &[node, qualifier("CONFIRM", ArgumentKind::Boolean)?],
+        RECOVER_NODE_ROUTE,
+    )?;
+    register(
+        registry,
+        "UNFENCE-NODE",
+        &[node, qualifier("CONFIRM", ArgumentKind::Boolean)?],
+        UNFENCE_NODE_ROUTE,
+    )?;
+    register(
+        registry,
+        "ROLLBACK-CLUSTER",
+        &[qualifier("CONFIRM", ArgumentKind::Boolean)?],
+        ROLLBACK_CLUSTER_ROUTE,
+    )?;
+    register(
+        registry,
+        "ABANDON-NODE",
+        &[
+            node,
+            qualifier("FORCE", ArgumentKind::Boolean)?,
+            qualifier("CONFIRM", ArgumentKind::Boolean)?,
+        ],
+        ABANDON_NODE_ROUTE,
+    )?;
 
     if include_help {
         let command = positional("COMMAND", ArgumentKind::Text, false)?;
@@ -882,7 +960,7 @@ impl<Source: ClusterSource, const CAPACITY: usize> CommandExecutor
 
 pub fn validate(command: CommandCall) -> Result<(), Status> {
     if command.route.raw() != HELP_ROUTE
-        && !(SHOW_CLUSTER_ROUTE..=REMOVE_FEDERATION_ROUTE).contains(&command.route.raw())
+        && !(SHOW_CLUSTER_ROUTE..=ABANDON_NODE_ROUTE).contains(&command.route.raw())
     {
         return Err(Status::NOT_FOUND);
     }
@@ -917,6 +995,10 @@ pub fn validate(command: CommandCall) -> Result<(), Status> {
             | REMOVE_NODE_ROUTE
             | FENCE_NODE_ROUTE
             | REMOVE_FEDERATION_ROUTE
+            | RECOVER_NODE_ROUTE
+            | UNFENCE_NODE_ROUTE
+            | ROLLBACK_CLUSTER_ROUTE
+            | ABANDON_NODE_ROUTE
     ) && command.get("CONFIRM") != Some(Value::Boolean(true))
     {
         return Err(Status::INVALID_ARGUMENT);
@@ -943,7 +1025,13 @@ pub fn validate(command: CommandCall) -> Result<(), Status> {
     }
     if matches!(
         command.route.raw(),
-        LEAVE_CLUSTER_ROUTE | REMOVE_NODE_ROUTE | FENCE_NODE_ROUTE
+        LEAVE_CLUSTER_ROUTE
+            | REMOVE_NODE_ROUTE
+            | FENCE_NODE_ROUTE
+            | RECOVER_NODE_ROUTE
+            | UNFENCE_NODE_ROUTE
+            | ROLLBACK_CLUSTER_ROUTE
+            | ABANDON_NODE_ROUTE
     ) && command.get("FORCE") == Some(Value::Boolean(true))
         && command.get("CONFIRM") != Some(Value::Boolean(true))
     {
@@ -1872,6 +1960,12 @@ fn operation_name(route: u16) -> &'static str {
         ACCEPT_CLUSTER_ROUTE => "accept-cluster",
         REJECT_CLUSTER_ROUTE => "reject-cluster",
         REMOVE_FEDERATION_ROUTE => "remove-federation",
+        RETRY_NODE_ROUTE => "retry-node",
+        RESYNC_NODE_ROUTE => "resync-node",
+        RECOVER_NODE_ROUTE => "recover-node",
+        UNFENCE_NODE_ROUTE => "unfence-node",
+        ROLLBACK_CLUSTER_ROUTE => "rollback-cluster",
+        ABANDON_NODE_ROUTE => "abandon-node",
         _ => "cluster-command",
     }
 }

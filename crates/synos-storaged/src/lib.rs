@@ -6,6 +6,7 @@ mod admission;
 mod cache;
 mod capability;
 mod cluster;
+mod failure;
 mod membership;
 mod protocol;
 mod remote;
@@ -43,6 +44,11 @@ pub use cluster::{
     CLUSTER_METADATA_STATE_FILE, CLUSTER_ID_BYTES, MAX_CERTIFICATES, MAX_CLUSTER_ALIASES,
     MAX_CLUSTER_DESCRIPTION_BYTES, MAX_CLUSTER_NAME_BYTES, MAX_CLUSTERS, MAX_INVITATIONS,
     MAX_TRUSTED_PEERS, NODE_ID_BYTES, TOKEN_BYTES,
+};
+pub use failure::{
+    ActionRequest, ClusterHealth, ClusterSample, FailureController, FailureError, FailureEvent,
+    FailureKind, FailureReport, NodeHealthSample, OperatorAction, RecoveryHooks, RecoveryReceipt,
+    RecoveryState, MAX_FAILURE_EVENTS, MAX_RECOVERY_NODES,
 };
 pub use membership::{
     propagate_membership_epoch, ConsensusCommit, ConsensusProposal, ElectionResult, MemberHealth,

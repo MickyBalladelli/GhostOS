@@ -56,6 +56,28 @@ impl Status {
         Self::new(Severity::Warning, facility::FILESYSTEM, 3, 0).expect("valid status");
     pub const DIRECTORY_NOT_EMPTY: Self =
         Self::new(Severity::Error, facility::FILESYSTEM, 5, 0).expect("valid status");
+    pub const QUORUM_LOST: Self =
+        Self::new(Severity::Warning, facility::FABRIC, 1, 0).expect("valid status");
+    pub const PARTITIONED: Self =
+        Self::new(Severity::Warning, facility::FABRIC, 2, 0).expect("valid status");
+    pub const CLOCK_SKEW: Self =
+        Self::new(Severity::Error, facility::FABRIC, 3, 0).expect("valid status");
+    pub const PROTOCOL_MISMATCH: Self =
+        Self::new(Severity::Error, facility::FABRIC, 4, 0).expect("valid status");
+    pub const CLUSTER_DEGRADED: Self =
+        Self::new(Severity::Warning, facility::FABRIC, 11, 0).expect("valid status");
+    pub const STALE_STATE: Self =
+        Self::new(Severity::Warning, facility::FABRIC, 6, 0).expect("valid status");
+    pub const NODE_UNSAFE: Self =
+        Self::new(Severity::Error, facility::FABRIC, 7, 0).expect("valid status");
+    pub const CONFIRMATION_REQUIRED: Self =
+        Self::new(Severity::Error, facility::FABRIC, 8, 0).expect("valid status");
+    pub const RECONCILIATION_REQUIRED: Self =
+        Self::new(Severity::Warning, facility::FABRIC, 9, 0).expect("valid status");
+    pub const ROLLBACK_UNAVAILABLE: Self =
+        Self::new(Severity::Error, facility::FABRIC, 10, 0).expect("valid status");
+    pub const RECOVERY_STATE_INVALID: Self =
+        Self::new(Severity::Error, facility::FABRIC, 12, 0).expect("valid status");
 
     pub const fn new(severity: Severity, facility: u16, code: u16, flags: u8) -> Option<Self> {
         if facility as u32 > FACILITY_MASK || code as u32 > CODE_MASK || flags as u32 > FLAGS_MASK {
@@ -118,6 +140,17 @@ impl Status {
             (facility::FILESYSTEM, 2) => "already exists",
             (facility::FILESYSTEM, 3) => "conflict",
             (facility::FILESYSTEM, 5) => "directory not empty",
+            (facility::FABRIC, 1) => "quorum lost",
+            (facility::FABRIC, 2) => "cluster partitioned",
+            (facility::FABRIC, 3) => "clock skew",
+            (facility::FABRIC, 4) => "protocol mismatch",
+            (facility::FABRIC, 11) => "cluster degraded",
+            (facility::FABRIC, 6) => "stale state",
+            (facility::FABRIC, 7) => "node unsafe",
+            (facility::FABRIC, 8) => "confirmation required",
+            (facility::FABRIC, 9) => "reconciliation required",
+            (facility::FABRIC, 10) => "rollback unavailable",
+            (facility::FABRIC, 12) => "recovery state invalid",
             _ => "unknown status",
         }
     }

@@ -814,6 +814,7 @@ dependencies = [
  "synos-auth",
  "synos-fabric",
  "synos-kernel",
+ "synos-mesh",
  "synos-netd",
  "synos-observability",
  "synos-status",

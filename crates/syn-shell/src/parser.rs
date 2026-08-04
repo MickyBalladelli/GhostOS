@@ -631,6 +631,18 @@ fn dcl_cluster_command(verb: &str, object: Option<&str>) -> Option<&'static str>
         Some("FENCE-NODE")
     } else if verb.eq_ignore_ascii_case("REJOIN") && object.eq_ignore_ascii_case("NODE") {
         Some("REJOIN-NODE")
+    } else if verb.eq_ignore_ascii_case("RETRY") && object.eq_ignore_ascii_case("NODE") {
+        Some("RETRY-NODE")
+    } else if verb.eq_ignore_ascii_case("RESYNC") && object.eq_ignore_ascii_case("NODE") {
+        Some("RESYNC-NODE")
+    } else if verb.eq_ignore_ascii_case("RECOVER") && object.eq_ignore_ascii_case("NODE") {
+        Some("RECOVER-NODE")
+    } else if verb.eq_ignore_ascii_case("UNFENCE") && object.eq_ignore_ascii_case("NODE") {
+        Some("UNFENCE-NODE")
+    } else if verb.eq_ignore_ascii_case("ROLLBACK") && object.eq_ignore_ascii_case("CLUSTER") {
+        Some("ROLLBACK-CLUSTER")
+    } else if verb.eq_ignore_ascii_case("ABANDON") && object.eq_ignore_ascii_case("NODE") {
+        Some("ABANDON-NODE")
     } else {
         None
     }

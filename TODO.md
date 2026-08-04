@@ -1005,15 +1005,15 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Apply cluster configuration atomically with signed commits, quorum acknowledgement, rollback, and version history.
   - [x] Support staged changes, maintenance windows, per-node overrides, policy inheritance, and safe defaults.
 
-- [ ] **Failure Handling, Recovery & Operations**
-  - [ ] Detect node failure, cluster degradation, partition, quorum loss, clock skew, protocol mismatch, and stale state.
-  - [ ] Fence unsafe nodes before releasing or reassigning shared memory, storage, jobs, capabilities, and DLM leases.
-  - [ ] Reconcile membership, SynFS CoW deltas, logs, resource reservations, and workload state after recovery or rejoin.
-  - [ ] Provide operator actions for retry, resync, drain, recover, fence, un-fence, rollback, and abandon with safe guards.
-  - [ ] Preserve availability where safe and return stable `$STATUS` values explaining every blocked operation.
+- [x] **Failure Handling, Recovery & Operations**
+  - [x] Detect node failure, cluster degradation, partition, quorum loss, clock skew, protocol mismatch, and stale state.
+  - [x] Fence unsafe nodes before releasing or reassigning shared memory, storage, jobs, capabilities, and DLM leases.
+  - [x] Reconcile membership, SynFS CoW deltas, logs, resource reservations, and workload state after recovery or rejoin.
+  - [x] Provide operator actions for retry, resync, drain, recover, fence, un-fence, rollback, and abandon with safe guards.
+  - [x] Preserve availability where safe and return stable `$STATUS` values explaining every blocked operation.
 
 - [ ] **APIs, Clients & Observability**
-  - [ ] Add cluster lifecycle and membership methods to the Rust client SDK, wire protocol, HTTP/gRPC gateway, and Swift client.
+  - [ ] Add cluster lifecycle and membership methods to the Rust client SDK, wire protocol, HTTP/gRPC gateway.
   - [ ] Add structured schemas for cluster summaries, member lists, invitations, join/leave plans, topology, health, resources, and audit events.
   - [ ] Add live subscriptions and bounded polling for membership, health, topology, resource, and lifecycle changes.
   - [ ] Add cluster dashboards for identity, members, health, capacity, topology, pending admissions, alerts, and recent actions.
