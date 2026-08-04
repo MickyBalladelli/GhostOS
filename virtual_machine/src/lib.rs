@@ -20,6 +20,7 @@ pub use devices::{
     PortBus, PortDevice, PowerControl, PowerState, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
     VgaTextDevice, VideoMode, PS2_DATA_PORT, PS2_PORT_COUNT, PS2_STATUS_PORT,
     StorageError, VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
+    SynosPersistencePort,
     SystemDiskBootArtifacts, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout,
     SystemDiskManifest, SystemDiskProvisioner, SystemSetting, SYSTEM_DISK_ALIGNMENT,
     SYSTEM_DISK_FORMAT_VERSION,
@@ -57,7 +58,9 @@ pub use terminal::{
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use synos_boot_protocol::{BootMethod, FramebufferInfo};
+use synos_boot_protocol::{
+    BootMethod, FramebufferInfo, SYNOS_PERSISTENCE_PORT, SYNOS_PERSISTENCE_PORT_SIZE,
+};
 
 pub const COM1_PORT: u16 = 0x3F8;
 pub const COM2_PORT: u16 = 0x2F8;
@@ -126,6 +129,7 @@ pub struct Vm {
     virtio_blk: Rc<RefCell<VirtioBlk>>,
     virtio_console: Rc<RefCell<VirtioConsole>>,
     virtio_rng: Rc<RefCell<VirtioRng>>,
+    persistence: Rc<RefCell<SynosPersistencePort>>,
     display: Rc<RefCell<DisplayState>>,
     bios: Bios,
     execution: ExecutionEngine,
@@ -149,6 +153,10 @@ impl Vm {
         DiskManager::validate_specs(&config.disks).map_err(disk_error_to_vm)?;
         let mut vm = Self::build_with_config(config);
         vm.attach_configured_disks()?;
+        if let Err(error) = vm.configure_persistence() {
+            let _ = vm.close_disks();
+            return Err(error)
+        }
         Ok(vm)
     }
 
@@ -182,6 +190,12 @@ impl Vm {
         ps2.borrow_mut().attach_apic(apic.clone());
         ports.attach(PS2_DATA_PORT, 5, Box::new(ps2.clone()));
         ports.attach(PCI_CONFIG_PORT, PCI_CONFIG_PORT_SIZE, Box::new(pci.clone()));
+        let persistence = Rc::new(RefCell::new(SynosPersistencePort::new()));
+        ports.attach(
+            SYNOS_PERSISTENCE_PORT,
+            SYNOS_PERSISTENCE_PORT_SIZE,
+            Box::new(persistence.clone()),
+        );
 
         // ECAM aperture is memory-mapped; route it through the MMU so guest
         // loads/stores to the configuration space hit the same bridge.
@@ -442,6 +456,7 @@ impl Vm {
             virtio_blk,
             virtio_console,
             virtio_rng,
+            persistence,
             display,
             bios,
             execution: ExecutionEngine::new(),
@@ -480,6 +495,25 @@ impl Vm {
             self.attach_disk_spec(spec)?;
         }
         Ok(())
+    }
+
+    fn configure_persistence(&mut self) -> Result<(), VmError> {
+        let disk = self
+            .disk_manager
+            .list()
+            .into_iter()
+            .filter(|disk| {
+                disk.persistence == DiskPersistence::Persistent && !disk.read_only
+            })
+            .min_by_key(|disk| if disk.role == DiskRole::Data { 0 } else { 1 });
+        let Some(disk) = disk else {
+            return Ok(())
+        };
+        let image = DiskImage::open_with_access(&disk.image_path, true).map_err(disk_error_to_vm)?;
+        self.persistence
+            .borrow_mut()
+            .attach_image(image)
+            .map_err(disk_error_to_vm)
     }
 
     fn attach_disk_spec(&mut self, spec: DiskSpec) -> Result<(), VmError> {
@@ -525,6 +559,9 @@ impl Vm {
             return Err(VmError::Disk("only one system disk may be attached".into()));
         }
         self.attach_disk_spec(spec.clone())?;
+        if !self.persistence.borrow().has_image() {
+            self.configure_persistence()?;
+        }
         self.config.disks.push(spec);
         Ok(())
     }
@@ -543,6 +580,10 @@ impl Vm {
             };
             result.map_err(disk_error_to_vm)?;
         }
+        self.persistence
+            .borrow_mut()
+            .sync()
+            .map_err(disk_error_to_vm)?;
         Ok(())
     }
 
@@ -577,6 +618,10 @@ impl Vm {
     }
 
     pub fn close_disks(&mut self) -> Result<(), VmError> {
+        self.persistence
+            .borrow_mut()
+            .sync()
+            .map_err(disk_error_to_vm)?;
         let ids: Vec<String> = self.disks().into_iter().map(|disk| disk.id).collect();
         for id in ids {
             self.detach_disk(&id)?;

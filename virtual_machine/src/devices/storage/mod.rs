@@ -8,6 +8,7 @@ pub mod ahci;
 pub mod disk_image;
 pub mod management;
 pub mod nvme;
+pub mod persistence;
 pub mod system_disk;
 
 pub use ahci::{
@@ -21,6 +22,7 @@ pub use management::{
 pub use nvme::{
     Nvme, NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
 };
+pub use persistence::SynosPersistencePort;
 pub use system_disk::{
     SystemDiskBootArtifacts, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout,
     SystemDiskManifest, SystemDiskProvisioner, SystemSetting, SYSTEM_DISK_ALIGNMENT,

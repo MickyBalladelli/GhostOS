@@ -80,6 +80,7 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Document disk lifecycle examples for creating a new SynOS VM, reopening an existing VM, attaching a data disk, and using a read-only clone.
 
 - [x] **Disk Reliability and Validation**
+  - [x] Persist SynOS shell filesystem state on writable persistent disks across shutdown, reboot, and VM recreation.
   - [x] Test attachment and boot with RAW, fixed VHD, and QCOW2 images through AHCI, NVMe, and virtio-blk where supported.
   - [x] Test persistence by installing SynOS and settings, rebooting, creating files, recreating the VM, and verifying the same state is loaded.
   - [x] Test power-loss and interrupted-flush recovery for the boot metadata, settings store, and SynFS volume.

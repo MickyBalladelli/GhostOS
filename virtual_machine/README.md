@@ -69,6 +69,7 @@ Reopen that VM with the same `--system-disk` path. Create and attach a new data
 disk like this:
 
 ```bash
+mkdir -p ./state
 ../target/release/synos-vm \
   --kernel ../build/bios/kernel.bin \
   --disk ./state/data.raw \
@@ -85,6 +86,11 @@ Attach a data disk with
 `--disk-format raw|vhd|qcow2`. `--disk-size` checks an existing image's exact
 capacity. `--create-if-missing` requires `--disk-size` and is the only way the
 CLI creates an image.
+
+The SynOS shell filesystem saves its files in the last 64 KiB of a writable,
+persistent attached disk. Files created in the shell therefore survive
+shutdown, reboot, and starting a new VM with the same disk. Read-only,
+copy-on-write, and disposable disks do not receive shell filesystem changes.
 
 Inspect disks without booting:
 

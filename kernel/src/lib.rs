@@ -30,6 +30,8 @@ pub mod page_fault;
 pub mod persona;
 #[allow(unsafe_code)]
 mod power;
+#[allow(unsafe_code)]
+mod persistence;
 pub mod partition;
 pub mod scheduler;
 pub mod runtime;

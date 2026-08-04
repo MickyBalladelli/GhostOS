@@ -7,6 +7,18 @@ pub const MAX_MEMORY_REGIONS: usize = 128;
 pub const FRAMEBUFFER_PIXEL_RGB: u32 = 1;
 pub const FRAMEBUFFER_PIXEL_BGR: u32 = 2;
 
+// Host-backed persistence bridge used by the in-tree SynOS shell filesystem.
+// It is deliberately a private VM contract, not a guest-visible block driver.
+pub const SYNOS_PERSISTENCE_PORT: u16 = 0x5400;
+pub const SYNOS_PERSISTENCE_PORT_SIZE: u16 = 12;
+pub const SYNOS_PERSISTENCE_COMMAND_PORT: u16 = SYNOS_PERSISTENCE_PORT;
+pub const SYNOS_PERSISTENCE_LENGTH_PORT: u16 = SYNOS_PERSISTENCE_PORT + 4;
+pub const SYNOS_PERSISTENCE_DATA_PORT: u16 = SYNOS_PERSISTENCE_PORT + 8;
+pub const SYNOS_PERSISTENCE_LOAD: u8 = 1;
+pub const SYNOS_PERSISTENCE_SAVE: u8 = 2;
+pub const SYNOS_PERSISTENCE_FLUSH: u8 = 3;
+pub const SYNOS_PERSISTENCE_MAX_BYTES: usize = 60 * 1024;
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BootMethod {

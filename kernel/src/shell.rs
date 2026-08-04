@@ -13,7 +13,7 @@ use syn_shell::{
     render::{OutputFormat, render},
     Text, MAX_LINE_BYTES,
 };
-use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind};
+use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind, SYNOS_PERSISTENCE_MAX_BYTES};
 use synos_power::AcpiPlatform;
 use synos_status::{IntoStatus, Status};
 use synos_system_model::command::{
@@ -24,6 +24,7 @@ use crate::monitor::{MonitorState, MonitorView, MAX_LOCKS};
 use crate::scheduler::Scheduler;
 use crate::task::{AddressSpaceId, CpuId, CpuMask, ThreadId};
 use crate::dlm::{DistributedLockManager, NodeFenceTable, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
+use crate::persistence::PersistentStore;
 
 const HELP_ROUTE: u16 = 1;
 const SHOW_SYSTEM_ROUTE: u16 = 2;
@@ -1281,6 +1282,8 @@ fn wait_for_byte(
 
 const KERNEL_FILE_CAPACITY: usize = 16;
 const KERNEL_FILE_BYTES: usize = 1024;
+const PERSISTENCE_MAGIC: &[u8; 8] = b"SYNFS001";
+const PERSISTENCE_VERSION: u32 = 1;
 
 #[derive(Clone, Copy)]
 struct KernelFile {
@@ -1303,6 +1306,7 @@ struct KernelFilesystem {
     files: [Option<KernelFile>; KERNEL_FILE_CAPACITY],
     objects: [Option<KernelObject>; KERNEL_FILE_CAPACITY],
     next_object_id: u64,
+    persistent: PersistentStore,
 }
 
 impl KernelFilesystem {
@@ -1311,11 +1315,34 @@ impl KernelFilesystem {
             files: [None; KERNEL_FILE_CAPACITY],
             objects: [None; KERNEL_FILE_CAPACITY],
             next_object_id: 1,
+            persistent: PersistentStore::new(),
         };
         for path in ["/packages", "/logs", "/data", "/tmp"] {
             let _ = filesystem.insert(path, EntryType::Directory);
         }
+        filesystem.load_persistent();
         filesystem
+    }
+
+    fn load_persistent(&mut self) {
+        let mut bytes = [0u8; SYNOS_PERSISTENCE_MAX_BYTES];
+        let Some(length) = self.persistent.load(&mut bytes) else {
+            return
+        };
+        let Some((files, objects, next_object_id)) = decode_filesystem(&bytes[..length]) else {
+            return
+        };
+        self.files = files;
+        self.objects = objects;
+        self.next_object_id = next_object_id;
+    }
+
+    fn persist(&mut self) {
+        let mut bytes = [0u8; SYNOS_PERSISTENCE_MAX_BYTES];
+        let Some(length) = encode_filesystem(self, &mut bytes) else {
+            return
+        };
+        self.persistent.save(&bytes[..length]);
     }
 
     fn find(&self, path: &str) -> Option<KernelFile> {
@@ -1425,6 +1452,185 @@ impl KernelFilesystem {
                         .is_some_and(|latest| latest.version == file.version)
             })
             .count() as u32
+    }
+}
+
+struct PersistenceWriter<'a> {
+    bytes: &'a mut [u8],
+    cursor: usize,
+}
+
+impl<'a> PersistenceWriter<'a> {
+    fn new(bytes: &'a mut [u8]) -> Self {
+        Self { bytes, cursor: 0 }
+    }
+
+    fn write(&mut self, bytes: &[u8]) -> Option<()> {
+        let end = self.cursor.checked_add(bytes.len())?;
+        let target = self.bytes.get_mut(self.cursor..end)?;
+        target.copy_from_slice(bytes);
+        self.cursor = end;
+        Some(())
+    }
+
+    fn u8(&mut self, value: u8) -> Option<()> {
+        self.write(&[value])
+    }
+
+    fn u16(&mut self, value: u16) -> Option<()> {
+        self.write(&value.to_le_bytes())
+    }
+
+    fn u32(&mut self, value: u32) -> Option<()> {
+        self.write(&value.to_le_bytes())
+    }
+
+    fn u64(&mut self, value: u64) -> Option<()> {
+        self.write(&value.to_le_bytes())
+    }
+}
+
+struct PersistenceReader<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> PersistenceReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, cursor: 0 }
+    }
+
+    fn read(&mut self, length: usize) -> Option<&'a [u8]> {
+        let end = self.cursor.checked_add(length)?;
+        let bytes = self.bytes.get(self.cursor..end)?;
+        self.cursor = end;
+        Some(bytes)
+    }
+
+    fn u8(&mut self) -> Option<u8> {
+        self.read(1).map(|bytes| bytes[0])
+    }
+
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_le_bytes(self.read(2)?.try_into().ok()?))
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.read(4)?.try_into().ok()?))
+    }
+
+    fn u64(&mut self) -> Option<u64> {
+        Some(u64::from_le_bytes(self.read(8)?.try_into().ok()?))
+    }
+}
+
+fn encode_filesystem(filesystem: &KernelFilesystem, bytes: &mut [u8]) -> Option<usize> {
+    let mut writer = PersistenceWriter::new(bytes);
+    writer.write(PERSISTENCE_MAGIC)?;
+    writer.u32(PERSISTENCE_VERSION)?;
+    writer.u64(filesystem.next_object_id)?;
+    for file in filesystem.files {
+        let Some(file) = file else {
+            writer.u8(0)?;
+            continue
+        };
+        writer.u8(1)?;
+        let path = file.path.as_str().as_bytes();
+        writer.u16(u16::try_from(path.len()).ok()?)?;
+        writer.write(path)?;
+        writer.u8(entry_type_code(file.file_type))?;
+        writer.u32(file.version)?;
+        writer.u32(file.link_count)?;
+        writer.u64(file.object_id)?;
+        writer.u8(file.is_link as u8)?;
+        writer.u8(file.deleted as u8)?;
+    }
+    for object in filesystem.objects {
+        let Some(object) = object else {
+            writer.u8(0)?;
+            continue
+        };
+        writer.u8(1)?;
+        writer.u16(u16::try_from(object.length).ok()?)?;
+        writer.write(&object.bytes[..object.length])?;
+    }
+    Some(writer.cursor)
+}
+
+fn decode_filesystem(
+    bytes: &[u8],
+) -> Option<(
+    [Option<KernelFile>; KERNEL_FILE_CAPACITY],
+    [Option<KernelObject>; KERNEL_FILE_CAPACITY],
+    u64,
+)> {
+    let mut reader = PersistenceReader::new(bytes);
+    if reader.read(PERSISTENCE_MAGIC.len())? != PERSISTENCE_MAGIC
+        || reader.u32()? != PERSISTENCE_VERSION
+    {
+        return None
+    }
+    let next_object_id = reader.u64()?;
+    if next_object_id == 0 {
+        return None
+    }
+    let mut files = [None; KERNEL_FILE_CAPACITY];
+    for slot in &mut files {
+        if reader.u8()? == 0 {
+            continue
+        }
+        let path_length = reader.u16()? as usize;
+        let path = core::str::from_utf8(reader.read(path_length)?).ok()?;
+        let file_type = decode_entry_type(reader.u8()?)?;
+        let version = reader.u32()?;
+        let link_count = reader.u32()?;
+        let object_id = reader.u64()?;
+        if object_id == 0 || object_id as usize > KERNEL_FILE_CAPACITY {
+            return None
+        }
+        *slot = Some(KernelFile {
+            path: ShellPath::new(path).ok()?,
+            file_type,
+            version,
+            link_count,
+            object_id,
+            is_link: reader.u8()? != 0,
+            deleted: reader.u8()? != 0,
+        });
+    }
+    let mut objects = [None; KERNEL_FILE_CAPACITY];
+    for slot in &mut objects {
+        if reader.u8()? == 0 {
+            continue
+        }
+        let length = reader.u16()? as usize;
+        if length > KERNEL_FILE_BYTES {
+            return None
+        }
+        let mut object = KernelObject {
+            bytes: [0; KERNEL_FILE_BYTES],
+            length,
+        };
+        object.bytes[..length].copy_from_slice(reader.read(length)?);
+        *slot = Some(object);
+    }
+    Some((files, objects, next_object_id))
+}
+
+fn entry_type_code(file_type: EntryType) -> u8 {
+    match file_type {
+        EntryType::File => 1,
+        EntryType::Directory => 2,
+        EntryType::Symlink => 3,
+    }
+}
+
+fn decode_entry_type(code: u8) -> Option<EntryType> {
+    match code {
+        1 => Some(EntryType::File),
+        2 => Some(EntryType::Directory),
+        3 => Some(EntryType::Symlink),
+        _ => None,
     }
 }
 
@@ -1906,7 +2112,11 @@ impl KernelExecutor {
                 None,
             ),
             route if route >= syn_shell::filesystem::DIRECTORY_ROUTE => {
-                self.filesystem.execute_command(command)
+                let result = self.filesystem.execute_command(command);
+                if result.is_ok() {
+                    self.filesystem.source_mut().persist();
+                }
+                result
             }
             _ => Err(Status::NOT_FOUND),
         }
@@ -2022,6 +2232,7 @@ impl KernelExecutor {
     ) -> Result<(), Status> {
         let mut contents = EditBufferOutput::<KERNEL_FILE_BYTES>::new();
         let metadata = self.filesystem.edit_file_load(command, &mut contents)?;
+        self.filesystem.source_mut().persist();
         let mut editor = FileEditor::<KERNEL_FILE_BYTES>::new(
             metadata.path.as_str(),
             metadata.version,
@@ -2100,6 +2311,7 @@ impl KernelExecutor {
                         match self.filesystem.edit_file_force_save(command, editor.bytes()) {
                             Ok(metadata) => {
                                 editor.mark_saved(metadata.version);
+                                self.filesystem.source_mut().persist();
                                 confirming_conflict = None;
                                 if save_exit {
                                     return Ok(EditExit::Saved)
@@ -2154,6 +2366,7 @@ impl KernelExecutor {
                     {
                         Ok(metadata) => {
                             editor.mark_saved(metadata.version);
+                            self.filesystem.source_mut().persist();
                             if save_exit {
                                 return Ok(EditExit::Saved)
                             }
