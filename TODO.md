@@ -179,7 +179,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add `TYPE` wildcard support with path separators, bounded aggregate output, and binary-mode behavior.
   - [x] Add `SHOW LINKS` wildcard support for matching input paths and deduplicating shared link paths within limits.
   - [x] Reject ambiguous wildcard `LINK` source and target patterns.
-  - [ ] Evaluate wildcard support for future path commands such as `RENAME`, `COPY`, `PURGE`, and protection/metadata commands, reusing the same expansion contract.
+  - [x] Evaluate wildcard support for future path commands such as `RENAME`, `COPY`, `PURGE`, and protection/metadata commands, reusing the same expansion contract.
   - [x] Reject wildcards for commands where expansion is unsafe or ambiguous, including `CREATE`, `MKDIR`, `SET DEFAULT`, and `CD`, with clear diagnostics.
   - [x] Define wildcard/version interactions for links and retained SynFS versions without deleting or exposing versions outside the selected pattern.
   - [x] Add parser, matcher, capability, daemon, runtime/ABI, shell, SynFS, persistence, QEMU, boundary, fuzz, ordering, quota, and cancellation coverage.

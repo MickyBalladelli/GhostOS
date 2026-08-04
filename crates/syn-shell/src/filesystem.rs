@@ -149,15 +149,21 @@ pub struct DirectoryPage {
     pub wildcard_cancelled: bool,
 }
 
+/// Result of the shared wildcard expansion contract.
+///
+/// Future path commands must consume this result before doing filesystem
+/// work. Matches are bounded, sorted, and duplicate-free in the supplied
+/// `PathCompletionPage`. A failure after one or more matches is partial; a
+/// caller must preserve completed mutations and report the returned status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct WildcardExpansion {
-    matches: usize,
-    failure: Option<Status>,
-    cancelled: bool,
+pub struct WildcardExpansion {
+    pub matches: usize,
+    pub failure: Option<Status>,
+    pub cancelled: bool,
 }
 
 impl WildcardExpansion {
-    const fn complete(matches: usize) -> Self {
+    pub const fn complete(matches: usize) -> Self {
         Self {
             matches,
             failure: None,
@@ -165,11 +171,21 @@ impl WildcardExpansion {
         }
     }
 
-    const fn partial(matches: usize, failure: Status) -> Self {
+    pub const fn partial(matches: usize, failure: Status) -> Self {
         Self {
             matches,
             failure: Some(failure),
             cancelled: failure.raw() == Status::CANCELLED.raw(),
+        }
+    }
+
+    pub const fn status(self) -> Status {
+        if self.cancelled {
+            Status::CANCELLED
+        } else if self.failure.is_some() {
+            Status::PARTIAL_MATCH
+        } else {
+            Status::NORMAL
         }
     }
 }
@@ -1799,7 +1815,13 @@ fn contains_wildcard(path: &str) -> bool {
     Pattern::parse(path).map_or(true, |pattern| pattern.has_magic())
 }
 
-fn expand_paths<S: FilesystemSource + ?Sized>(
+/// Expand one resolved path using the shared wildcard contract.
+///
+/// Literal paths are returned unchanged after unescaping. Wildcard paths are
+/// expanded through the source's bounded, capability-filtered implementation.
+/// Numeric version selectors are applied after expansion, so an exact selector
+/// never falls back to another retained or latest version.
+pub fn expand_paths<S: FilesystemSource + ?Sized>(
     source: &mut S,
     path: &str,
     output: &mut PathCompletionPage,

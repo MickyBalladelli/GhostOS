@@ -61,5 +61,15 @@ bounded work counts. `DIRECTORY`, `TYPE`, `DELETE`, and `SHOW LINKS` all stop
 at the first operation failure; `DELETE` keeps already-completed deletions and
 reports them as partial.
 
+Future path commands use this same expansion result. `RENAME` accepts a
+wildcard only when its source-to-target mapping is unambiguous; its target is
+literal. `COPY` accepts wildcard sources only when the literal target is an
+existing directory. `PURGE` uses the same selected-version rules as `DELETE`
+and keeps completed removals on partial failure. Read-only metadata commands
+may expand wildcards and return bounded per-match records. Protection commands
+may expand wildcards only with an explicit protection capability and use the
+same stop-on-first-failure, partial-status fields. Wildcard targets that could
+map one input to many outputs are rejected before mutation.
+
 `UPTIME` displays the time since boot as `days, HH:MM:SS`. Structured output
 also includes the microsecond uptime and each human-readable time component.

@@ -55,6 +55,14 @@ hard-link target; later source versions do not change that link. Link source
 wildcards and target selectors remain rejected. `SHOW LINKS path;N` reports
 links for only the selected version's shared data.
 
+Future path operations reuse this contract. `RENAME` requires an unambiguous
+source-to-literal-target mapping. `COPY` permits wildcard sources only when a
+literal existing directory can receive each result. `PURGE` follows `DELETE`
+version selection and partial-commit reporting. Read-only metadata expansion
+is safe when each returned record remains bounded; protection expansion also
+requires explicit per-object authority. Any ambiguous wildcard target is
+rejected before mutation.
+
 ## Shell validation workflow
 
 ```text
