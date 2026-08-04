@@ -169,9 +169,9 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 - [x] **Command-Line Interface**
   - [x] VM configuration via CLI arguments
-  - [ ] Snapshot save/restore functionality
-  - [ ] Live migration support (future)
-  - [ ] Monitor console access
+  - [x] Snapshot save/restore functionality
+  - [x] Live migration support (checkpoint-based transfer)
+  - [x] Monitor console access
 
 - [x] **Interactive SynOS Terminal**
   - [x] Define the terminal contract: use the guest COM1 serial console as the

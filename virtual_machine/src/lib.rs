@@ -136,6 +136,7 @@ pub struct Vm {
     disk_manager: DiskManager,
     booted_system_disk: Option<SystemDiskBootArtifacts>,
     config: VmConfig,
+    initialized: bool,
 }
 
 impl Vm {
@@ -463,6 +464,7 @@ impl Vm {
             disk_manager: DiskManager::new(),
             booted_system_disk: None,
             config,
+            initialized: false,
         }
     }
 
@@ -644,6 +646,9 @@ impl Vm {
     }
 
     fn initialize(&mut self) -> Result<(), VmError> {
+        if self.initialized {
+            return Ok(())
+        }
         println!("Initializing VM...");
 
         match self.config.firmware {
@@ -678,6 +683,7 @@ impl Vm {
             self.boot_kernel()?;
         }
 
+        self.initialized = true;
         Ok(())
     }
 
@@ -712,12 +718,25 @@ impl Vm {
     /// Run the VM until the host stops it. Guest HLT instructions wait for
     /// an interrupt while device and timer polling continues.
     pub fn run(&mut self) -> Result<(), VmError> {
+        self.run_with_monitor(|_| Ok(true))
+    }
+
+    /// Run the VM while polling a host-side monitor between guest batches.
+    /// Returning `false` cleanly stops the VM and releases attached disks.
+    pub fn run_with_monitor<F>(&mut self, mut monitor: F) -> Result<(), VmError>
+    where
+        F: FnMut(&mut Self) -> Result<bool, VmError>,
+    {
         self.initialize()?;
 
         println!("Starting CPU emulation...");
 
         let mut started = std::time::Instant::now();
         loop {
+            if !monitor(self)? {
+                self.close_disks()?;
+                return Ok(())
+            }
             self.step_cpu(&started, usize::MAX)?;
             self.flush_serial_output();
             self.return_if_guest_panicked()?;
@@ -758,6 +777,20 @@ impl Vm {
         terminal: &TerminalSession,
         input_mode: TerminalInputMode,
     ) -> Result<TerminalExit, VmError> {
+        self.run_with_terminal_mode_and_monitor(terminal, input_mode, |_| Ok(true))
+    }
+
+    /// Run with terminal input and a host-side monitor polled between guest
+    /// batches. A monitor request to stop is treated like a clean session end.
+    pub fn run_with_terminal_mode_and_monitor<F>(
+        &mut self,
+        terminal: &TerminalSession,
+        input_mode: TerminalInputMode,
+        mut monitor: F,
+    ) -> Result<TerminalExit, VmError>
+    where
+        F: FnMut(&mut Self) -> Result<bool, VmError>,
+    {
         self.initialize()?;
 
         let mut started = std::time::Instant::now();
@@ -774,6 +807,11 @@ impl Vm {
                         }
                     }
                 }
+            }
+
+            if !monitor(self)? {
+                self.close_disks()?;
+                return Ok(TerminalExit::GuestShutdown)
             }
 
             self.step_cpu(&started, 256)?;
@@ -806,10 +844,26 @@ impl Vm {
     /// integration checks; a kernel that waits for input can be inspected
     /// without leaving a host process running forever.
     pub fn run_for_steps(&mut self, max_steps: u64) -> Result<VmRunReport, VmError> {
+        self.run_for_steps_with_monitor(max_steps, |_| Ok(true))
+    }
+
+    /// Run a bounded number of instructions while polling a host-side
+    /// monitor between guest batches.
+    pub fn run_for_steps_with_monitor<F>(
+        &mut self,
+        max_steps: u64,
+        mut monitor: F,
+    ) -> Result<VmRunReport, VmError>
+    where
+        F: FnMut(&mut Self) -> Result<bool, VmError>,
+    {
         self.initialize()?;
         let started = std::time::Instant::now();
         let mut steps = 0;
         while steps < max_steps {
+            if !monitor(self)? {
+                break
+            }
             let remaining = (max_steps - steps).min(usize::MAX as u64) as usize;
             let executed = self.step_cpu(&started, remaining)?;
             self.return_if_guest_panicked()?;
@@ -1001,6 +1055,7 @@ impl Vm {
         self.virtio_rng.borrow_mut().reset();
         self.display.borrow_mut().reset();
         self.bios.reset();
+        self.initialized = false;
         if let Some(disk) = virtio_disk {
             let _ = self.virtio_blk.borrow_mut().attach_disk(disk);
         }

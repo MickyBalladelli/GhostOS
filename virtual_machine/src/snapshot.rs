@@ -213,6 +213,7 @@ impl VmSnapshot {
         vm.bios.context.bda = self.bios_bda;
         vm.bios.context.ega = self.bios_ega;
         vm.bios.reset_vector = self.bios_reset_vector;
+        vm.initialized = self.bios_state != BiosState::Reset;
         vm.execution.clear_cache();
         Ok(())
     }

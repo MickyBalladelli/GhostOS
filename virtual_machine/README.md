@@ -128,6 +128,29 @@ versions require a future migration step instead of being mounted silently.
 Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
 bounded run or `--integration` to run the SynOS integration checks.
 
+### Checkpoints, migration, and monitor
+
+Save and restore VM state with bounded or interactive runs:
+
+```bash
+../target/release/synos-vm --kernel ../build/bios/kernel.bin \
+  --steps 100000 --snapshot-save ./state/checkpoint.vm
+../target/release/synos-vm --snapshot-restore ./state/checkpoint.vm \
+  --steps 100000
+```
+
+Transfer a validated checkpoint to another host over TCP, then start the
+receiver with `--snapshot-restore`:
+
+```bash
+../target/release/synos-vm migrate receive 0.0.0.0:9000 ./state/incoming.vm
+../target/release/synos-vm migrate send ./state/checkpoint.vm HOST:9000
+```
+
+Expose a Unix monitor socket with `--monitor PATH`. Connect with a Unix-socket
+client and use `help`, `info registers`, `info disks`, `info status`, `save
+PATH`, or `quit`. Monitor `quit` cleanly stops the VM.
+
 ### Interactive terminal
 
 When stdin and stdout are TTYs, an unbounded VM run attaches the host terminal

@@ -1,5 +1,9 @@
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::net::UnixListener;
 
 use synos_vm::{
     run_synos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
@@ -13,16 +17,25 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 struct Cli {
     command: Command,
     config: VmConfig,
+    memory_explicit: bool,
     efi_path: Option<PathBuf>,
     integration: bool,
     terminal: Option<bool>,
     input_mode: TerminalInputMode,
     disk_options: DiskOptions,
+    snapshot_save: Option<PathBuf>,
+    snapshot_restore: Option<PathBuf>,
+    monitor_path: Option<PathBuf>,
 }
 
 enum Command {
     Run,
     ListDisks,
+}
+
+enum MigrateCommand {
+    Send { snapshot: PathBuf, address: String },
+    Receive { address: String, snapshot: PathBuf },
 }
 
 enum DiskCommand {
@@ -75,6 +88,7 @@ enum ParseResult {
     Help,
     Version,
     Disk(DiskCommand),
+    Migrate(MigrateCommand),
 }
 
 fn main() {
@@ -97,6 +111,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Ok(ParseResult::Migrate(command)) => {
+            if let Err(error) = run_migrate_command(command) {
+                eprintln!("synos-vm: {error}");
+                std::process::exit(1);
+            }
+        }
         Err(error) => {
             eprintln!("synos-vm: {error}");
             eprintln!("Try `synos-vm --help` for usage.");
@@ -113,14 +133,21 @@ where
     if values.first().map(String::as_str) == Some("disk") {
         return parse_disk_command(&values[1..]);
     }
+    if values.first().map(String::as_str) == Some("migrate") {
+        return parse_migrate_command(&values[1..]);
+    }
 
     let mut config = VmConfig::default();
+    let mut memory_explicit = false;
     let mut efi_path = None;
     let mut integration = false;
     let mut terminal = None;
     let mut input_mode = TerminalInputMode::Serial;
     let mut command = Command::Run;
     let mut disk_options = DiskOptions::default();
+    let mut snapshot_save = None;
+    let mut snapshot_restore = None;
+    let mut monitor_path = None;
     let mut args = values.into_iter().peekable();
 
     while let Some(arg) = args.next() {
@@ -138,6 +165,7 @@ where
                 let value = next_value(&mut args, "--memory")?;
                 config.memory_size =
                     parse_memory(&value).ok_or_else(|| format!("invalid memory size `{value}`"))?;
+                memory_explicit = true;
             }
             "-k" | "--kernel" => {
                 config.kernel_path = Some(PathBuf::from(next_value(&mut args, "--kernel")?));
@@ -199,6 +227,16 @@ where
             "--copy-on-write" => disk_options.persistence = DiskPersistence::CopyOnWrite,
             "--disposable" => disk_options.persistence = DiskPersistence::Disposable,
             "--create-if-missing" => disk_options.create_if_missing = true,
+            "--snapshot-save" => {
+                snapshot_save = Some(PathBuf::from(next_value(&mut args, "--snapshot-save")?));
+            }
+            "--snapshot-restore" => {
+                snapshot_restore =
+                    Some(PathBuf::from(next_value(&mut args, "--snapshot-restore")?));
+            }
+            "--monitor" => {
+                monitor_path = Some(PathBuf::from(next_value(&mut args, "--monitor")?));
+            }
             value if value.starts_with('-') => {
                 return Err(format!("unknown option `{value}`"));
             }
@@ -221,16 +259,48 @@ where
     if terminal == Some(true) && config.max_steps.is_some() {
         return Err("--interactive cannot be combined with --steps".to_string());
     }
+    if integration && (snapshot_save.is_some() || snapshot_restore.is_some()) {
+        return Err("snapshot options cannot be combined with --integration".to_string());
+    }
+    if terminal == Some(true) && monitor_path.is_some() {
+        return Err("--monitor cannot be combined with --interactive".to_string());
+    }
 
     Ok(ParseResult::Run(Cli {
         command,
         config,
+        memory_explicit,
         efi_path,
         integration,
         terminal,
         input_mode,
         disk_options,
+        snapshot_save,
+        snapshot_restore,
+        monitor_path,
     }))
+}
+
+fn parse_migrate_command(values: &[String]) -> Result<ParseResult, String> {
+    match values {
+        [command, snapshot, address] if command == "send" => {
+            Ok(ParseResult::Migrate(MigrateCommand::Send {
+                snapshot: PathBuf::from(snapshot),
+                address: address.clone(),
+            }))
+        }
+        [command, address, snapshot] if command == "receive" => {
+            Ok(ParseResult::Migrate(MigrateCommand::Receive {
+                address: address.clone(),
+                snapshot: PathBuf::from(snapshot),
+            }))
+        }
+        [command] if command == "help" || command == "--help" || command == "-h" => {
+            Ok(ParseResult::Help)
+        }
+        [] => Err("migrate needs `send SNAPSHOT ADDRESS` or `receive ADDRESS SNAPSHOT`".to_string()),
+        _ => Err("usage: synos-vm migrate send SNAPSHOT ADDRESS | receive ADDRESS SNAPSHOT".to_string()),
+    }
 }
 
 fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
@@ -453,7 +523,24 @@ fn run(mut cli: Cli) -> Result<(), String> {
         return print_disk_inventory(&cli.config.disks);
     }
 
-    let config = cli.config;
+    let restore_snapshot = cli
+        .snapshot_restore
+        .as_ref()
+        .map(Vm::load_snapshot)
+        .transpose()
+        .map_err(|error| format!("cannot load snapshot: {error}"))?;
+    let mut config = cli.config;
+    if let Some(snapshot) = restore_snapshot.as_ref() {
+        if !cli.memory_explicit {
+            config.memory_size = snapshot.memory_size;
+        }
+        if config.memory_size != snapshot.memory_size {
+            return Err(format!(
+                "snapshot needs {} bytes of RAM; pass matching --memory or omit it",
+                snapshot.memory_size
+            ));
+        }
+    }
     if std::io::stdout().is_terminal() {
         print!(
             "\x1b]0;SynOS | {}\x07",
@@ -462,6 +549,8 @@ fn run(mut cli: Cli) -> Result<(), String> {
     }
     let terminal_mode = cli.terminal;
     let input_mode = cli.input_mode;
+    let snapshot_save = cli.snapshot_save;
+    let monitor_path = cli.monitor_path;
     let efi_image = cli
         .efi_path
         .map(|path| {
@@ -499,31 +588,244 @@ fn run(mut cli: Cli) -> Result<(), String> {
     if let Some(image) = efi_image {
         vm.set_efi_application(image);
     }
+    if let Some(snapshot) = restore_snapshot.as_ref() {
+        vm.restore_snapshot(snapshot)
+            .map_err(|error| format!("cannot restore snapshot: {error}"))?;
+        println!("Restored VM snapshot (checksum=0x{:016x})", snapshot.checksum());
+    }
 
-    let result = if let Some(steps) = vm.config().max_steps {
+    let terminal_mode = if monitor_path.is_some() && terminal_mode.is_none() {
+        Some(false)
+    } else {
+        terminal_mode
+    };
+    let mut monitor = monitor_path
+        .map(|path| MonitorSession::bind(path))
+        .transpose()?;
+    let mut poll_monitor = |vm: &mut Vm| {
+        monitor
+            .as_mut()
+            .map(|session| session.poll(vm))
+            .transpose()
+            .map(|value| value.unwrap_or(true))
+            .map_err(|_| synos_vm::VmError::IoError)
+    };
+
+    if let Some(steps) = vm.config().max_steps {
         let report = vm
-            .run_for_steps(steps)
+            .run_for_steps_with_monitor(steps, &mut poll_monitor)
             .map_err(|error| format!("VM error: {error:?}"))?;
         println!(
             "VM stopped after {} steps at RIP 0x{:016x} (halted={})",
             report.steps, report.rip, report.halted
         );
-        Ok(())
     } else {
         println!("Starting CPU emulation...");
         let terminal = TerminalSession::new(terminal_mode)
             .map_err(|error| format!("terminal error: {error}"))?;
         let exit = vm
-            .run_with_terminal_mode(&terminal, input_mode)
+            .run_with_terminal_mode_and_monitor(&terminal, input_mode, &mut poll_monitor)
             .map_err(|error| format!("VM error: {error:?}"))?;
         drop(terminal);
         match exit {
             TerminalExit::GuestShutdown => println!("\nGuest powered off"),
         }
-        Ok(())
-    };
+    }
 
-    result
+    if let Some(path) = snapshot_save {
+        vm.save_snapshot(&path)
+            .map_err(|error| format!("cannot save snapshot {}: {error}", path.display()))?;
+        println!("Saved VM snapshot to {}", path.display());
+    }
+
+    Ok(())
+}
+
+const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG1";
+const MAX_MIGRATION_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+
+fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
+    match command {
+        MigrateCommand::Send { snapshot, address } => {
+            let bytes = std::fs::read(&snapshot)
+                .map_err(|error| format!("cannot read snapshot {}: {error}", snapshot.display()))?;
+            let snapshot_value = synos_vm::VmSnapshot::from_bytes(&bytes)
+                .map_err(|error| format!("cannot validate snapshot {}: {error}", snapshot.display()))?;
+            let bytes = snapshot_value.to_bytes();
+            let mut stream = TcpStream::connect(&address)
+                .map_err(|error| format!("cannot connect to migration target {address}: {error}"))?;
+            stream
+                .write_all(MIGRATION_MAGIC)
+                .and_then(|_| stream.write_all(&(bytes.len() as u64).to_le_bytes()))
+                .and_then(|_| stream.write_all(&bytes))
+                .map_err(|error| format!("migration send failed: {error}"))?;
+            println!("sent VM checkpoint {} to {address}", snapshot.display());
+            Ok(())
+        }
+        MigrateCommand::Receive { address, snapshot } => {
+            if snapshot.exists() {
+                return Err(format!(
+                    "migration target {} already exists; choose a new path",
+                    snapshot.display()
+                ));
+            }
+            let listener = TcpListener::bind(&address)
+                .map_err(|error| format!("cannot listen for migration on {address}: {error}"))?;
+            println!("waiting for VM checkpoint on {address}");
+            let (mut stream, peer) = listener
+                .accept()
+                .map_err(|error| format!("migration accept failed: {error}"))?;
+            let mut magic = [0u8; 8];
+            stream
+                .read_exact(&mut magic)
+                .map_err(|error| format!("migration header read failed: {error}"))?;
+            if &magic != MIGRATION_MAGIC {
+                return Err("migration stream has an invalid header".to_string());
+            }
+            let mut length = [0u8; 8];
+            stream
+                .read_exact(&mut length)
+                .map_err(|error| format!("migration length read failed: {error}"))?;
+            let length = u64::from_le_bytes(length);
+            if length == 0 || length > MAX_MIGRATION_BYTES {
+                return Err(format!("migration payload is too large: {length} bytes"));
+            }
+            let length = usize::try_from(length)
+                .map_err(|_| "migration payload does not fit in host memory".to_string())?;
+            let mut bytes = vec![0u8; length];
+            stream
+                .read_exact(&mut bytes)
+                .map_err(|error| format!("migration payload read failed: {error}"))?;
+            synos_vm::VmSnapshot::from_bytes(&bytes)
+                .map_err(|error| format!("received invalid VM checkpoint: {error}"))?;
+            let partial = snapshot.with_extension("synos-migration-partial");
+            std::fs::write(&partial, bytes)
+                .map_err(|error| format!("cannot write migration checkpoint: {error}"))?;
+            std::fs::rename(&partial, &snapshot)
+                .map_err(|error| format!("cannot publish migration checkpoint: {error}"))?;
+            println!("received VM checkpoint from {peer} at {}", snapshot.display());
+            Ok(())
+        }
+    }
+}
+
+struct MonitorSession {
+    #[cfg(unix)]
+    listener: UnixListener,
+    path: PathBuf,
+}
+
+impl MonitorSession {
+    fn bind(path: PathBuf) -> Result<Self, String> {
+        #[cfg(unix)]
+        {
+            if path.exists() {
+                return Err(format!("monitor socket {} already exists", path.display()));
+            }
+            let listener = UnixListener::bind(&path)
+                .map_err(|error| format!("cannot create monitor socket {}: {error}", path.display()))?;
+            listener
+                .set_nonblocking(true)
+                .map_err(|error| format!("cannot configure monitor socket: {error}"))?;
+            println!("monitor console listening at {}", path.display());
+            Ok(Self { listener, path })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err("monitor console is only supported on Unix hosts".to_string())
+        }
+    }
+
+    fn poll(&mut self, vm: &mut Vm) -> Result<bool, String> {
+        #[cfg(unix)]
+        {
+            let (mut stream, _) = match self.listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
+                Err(error) => return Err(format!("monitor accept failed: {error}")),
+            };
+            stream
+                .set_nonblocking(true)
+                .map_err(|error| format!("cannot configure monitor client: {error}"))?;
+            let mut buffer = [0u8; 4096];
+            let count = match stream.read(&mut buffer) {
+                Ok(count) => count,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
+                Err(error) => return Err(format!("monitor read failed: {error}")),
+            };
+            let command = String::from_utf8_lossy(&buffer[..count]).trim().to_string();
+            let (keep_running, response) = monitor_command(vm, &command)?;
+            stream
+                .write_all(response.as_bytes())
+                .map_err(|error| format!("monitor write failed: {error}"))?;
+            return Ok(keep_running)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = vm;
+            Ok(true)
+        }
+    }
+}
+
+impl Drop for MonitorSession {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn monitor_command(vm: &mut Vm, command: &str) -> Result<(bool, String), String> {
+    match command {
+        "help" | "?" => Ok((true, "help\ninfo registers\ninfo disks\ninfo status\nsave PATH\nquit\n".to_string())),
+        "info registers" => Ok((
+            true,
+            format!(
+                "rip=0x{:016x} rax=0x{:016x} rbx=0x{:016x} rcx=0x{:016x} rdx=0x{:016x} rflags=0x{:016x} halted={}\n",
+                vm.cpu().state.rip,
+                vm.cpu().state.rax,
+                vm.cpu().state.rbx,
+                vm.cpu().state.rcx,
+                vm.cpu().state.rdx,
+                vm.cpu().state.rflags,
+                vm.cpu().state.halted,
+            ),
+        )),
+        "info disks" => {
+            let mut response = String::new();
+            for disk in vm.disks() {
+                response.push_str(&format!(
+                    "id={} role={:?} controller={:?} capacity={} read-only={} path={}\n",
+                    disk.id,
+                    disk.role,
+                    disk.controller,
+                    disk.capacity,
+                    disk.read_only,
+                    disk.image_path.display(),
+                ));
+            }
+            if response.is_empty() {
+                response.push_str("no disks attached\n");
+            }
+            Ok((true, response))
+        }
+        "info status" => Ok((true, format!("power={:?}\n", vm.power_state()))),
+        "quit" | "exit" => Ok((false, "stopping VM\n".to_string())),
+        command if command.strip_prefix("save ").is_some() => {
+            let path = command.strip_prefix("save ").unwrap().trim();
+            if path.is_empty() {
+                return Err("save needs a snapshot PATH".to_string());
+            }
+            let path = PathBuf::from(path);
+            vm.save_snapshot(&path)
+                .map_err(|error| format!("cannot save snapshot: {error}"))?;
+            Ok((true, format!("saved {}\n", path.display())))
+        }
+        _ => Ok((true, "unknown monitor command; try help\n".to_string())),
+    }
 }
 
 fn prepare_disk_specs(options: &DiskOptions) -> Result<Vec<DiskSpec>, String> {
@@ -848,6 +1150,12 @@ Disk options:
       --create-if-missing    Explicitly create a missing disk image
       --list-disks           Inspect configured disks and do not boot
 
+State and management:
+      --snapshot-save <PATH> Save a checkpoint when the VM stops
+      --snapshot-restore <PATH>
+                              Restore a checkpoint before running
+      --monitor <SOCKET>     Expose a local monitor console socket
+
 Commands:
       --integration          Run SynOS integration checks
   synos-vm disk list          List disk health and guest identities
@@ -858,6 +1166,10 @@ Commands:
   synos-vm disk lock PATH     Diagnose an ownership lock
   synos-vm disk recover-lock PATH
                               Recover a lock only when its owner is stale
+  synos-vm migrate send SNAPSHOT ADDRESS
+                              Send a checkpoint to another VM host
+  synos-vm migrate receive ADDRESS SNAPSHOT
+                              Receive a checkpoint for later restore
 
 Other options:
   -h, --help                Show this help
