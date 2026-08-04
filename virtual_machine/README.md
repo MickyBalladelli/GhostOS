@@ -65,7 +65,22 @@ a system disk like this:
   --system-disk ./state/system.raw --firmware bios --interactive
 ```
 
-Reopen that VM with the same `--system-disk` path. Attach a data disk with
+Reopen that VM with the same `--system-disk` path. Create and attach a new data
+disk like this:
+
+```bash
+../target/release/synos-vm \
+  --kernel ../build/bios/kernel.bin \
+  --disk ./state/data.raw \
+  --disk-size 64M \
+  --disk-format raw \
+  --disk-controller virtio-blk \
+  --create-if-missing \
+  --firmware bios --interactive
+```
+
+For an existing data disk, omit `--create-if-missing` and `--disk-size`.
+Attach a data disk with
 `--disk PATH`; choose `--disk-controller ahci|nvme|virtio-blk` and
 `--disk-format raw|vhd|qcow2`. `--disk-size` checks an existing image's exact
 capacity. `--create-if-missing` requires `--disk-size` and is the only way the
