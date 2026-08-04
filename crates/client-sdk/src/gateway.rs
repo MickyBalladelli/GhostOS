@@ -1,12 +1,18 @@
 use synos_auth::CryptographicCapability;
 
 use crate::{
-    CapabilityDelegation, ClusterState, FrameHeader, JobReceipt, JobSpec, Method, ProtocolError,
-    TopologyState,
+    AuditEventList, CapabilityDelegation, ChangeBatch, ClusterCreateRequest, ClusterHealthSnapshot,
+    ClusterJoinRequest, ClusterLeaveRequest, ClusterRemoveRequest, ClusterResources, ClusterState,
+    ClusterSummary, FrameHeader, InvitationList, JobReceipt, JobSpec, JoinPlan, LeavePlan,
+    LifecycleReceipt, MemberList, Method, ProtocolError, Subscription, TopologyState,
     RpcStatus,
     client::{
         decode_delegation, decode_job_spec, encode_capability, encode_cluster_state,
-        encode_job_receipt, encode_topology_state,
+        encode_audit_events, encode_change_batch, encode_cluster_health, encode_cluster_resources,
+        encode_cluster_summary, encode_invitation_list, encode_job_receipt, encode_join_plan,
+        encode_leave_plan, encode_lifecycle_receipt, encode_member_list, encode_subscription,
+        encode_topology_state, decode_cluster_create, decode_cluster_join, decode_cluster_leave,
+        decode_cluster_remove,
     },
     wire::{FLAG_CAPABILITY, FRAME_HEADER_BYTES, read_array},
 };
@@ -35,6 +41,111 @@ pub trait GatewayService {
         authority: Option<CryptographicCapability>,
         delegation: CapabilityDelegation,
     ) -> Result<CryptographicCapability, RpcStatus>;
+
+    fn cluster_summary(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<ClusterSummary, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn cluster_members(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<MemberList, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn cluster_invitations(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<InvitationList, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn cluster_join_plan(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<JoinPlan, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn cluster_leave_plan(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<LeavePlan, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn cluster_health(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<ClusterHealthSnapshot, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn cluster_resources(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<ClusterResources, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn cluster_audit(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+    ) -> Result<AuditEventList, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn create_cluster(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+        _request: ClusterCreateRequest,
+    ) -> Result<LifecycleReceipt, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn join_cluster(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+        _request: ClusterJoinRequest,
+    ) -> Result<LifecycleReceipt, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn leave_cluster(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+        _request: ClusterLeaveRequest,
+    ) -> Result<LifecycleReceipt, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn remove_cluster(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+        _request: ClusterRemoveRequest,
+    ) -> Result<LifecycleReceipt, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn subscribe(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+        _kind: crate::SubscriptionKind,
+    ) -> Result<Subscription, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
+
+    fn poll(
+        &mut self,
+        _authority: Option<CryptographicCapability>,
+        _subscription: Subscription,
+        _limit: u8,
+    ) -> Result<ChangeBatch, RpcStatus> {
+        Err(RpcStatus::NotFound)
+    }
 }
 
 pub struct FrontendGateway<S> {
@@ -107,6 +218,22 @@ impl<S: GatewayService> FrontendGateway<S> {
                     encode_capability(capability, &mut response[FRAME_HEADER_BYTES..])
                         .map_err(|_| RpcStatus::Internal)
                 }),
+            Method::ClusterSummary => empty_request(body).and_then(|()| self.service.cluster_summary(authority)).and_then(|value| encode_cluster_summary(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterMembers => empty_request(body).and_then(|()| self.service.cluster_members(authority)).and_then(|value| encode_member_list(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterInvitations => empty_request(body).and_then(|()| self.service.cluster_invitations(authority)).and_then(|value| encode_invitation_list(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterJoinPlan => empty_request(body).and_then(|()| self.service.cluster_join_plan(authority)).and_then(|value| encode_join_plan(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterLeavePlan => empty_request(body).and_then(|()| self.service.cluster_leave_plan(authority)).and_then(|value| encode_leave_plan(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterHealth => empty_request(body).and_then(|()| self.service.cluster_health(authority)).and_then(|value| encode_cluster_health(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterResources => empty_request(body).and_then(|()| self.service.cluster_resources(authority)).and_then(|value| encode_cluster_resources(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterAudit => empty_request(body).and_then(|()| self.service.cluster_audit(authority)).and_then(|value| encode_audit_events(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterCreate => decode_cluster_create(body).map_err(|_| RpcStatus::InvalidRequest).and_then(|request| self.service.create_cluster(authority, request)).and_then(|value| encode_lifecycle_receipt(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterJoin => decode_cluster_join(body).map_err(|_| RpcStatus::InvalidRequest).and_then(|request| self.service.join_cluster(authority, request)).and_then(|value| encode_lifecycle_receipt(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterLeave => decode_cluster_leave(body).map_err(|_| RpcStatus::InvalidRequest).and_then(|request| self.service.leave_cluster(authority, request)).and_then(|value| encode_lifecycle_receipt(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::ClusterRemove => decode_cluster_remove(body).map_err(|_| RpcStatus::InvalidRequest).and_then(|request| self.service.remove_cluster(authority, request)).and_then(|value| encode_lifecycle_receipt(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
+            Method::Subscribe => {
+                decode_subscription_body(body).and_then(|kind| self.service.subscribe(authority, kind)).and_then(|value| encode_subscription(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal))
+            }
+            Method::Poll => decode_poll(body).and_then(|(subscription, limit)| self.service.poll(authority, subscription, limit)).and_then(|value| encode_change_batch(value, &mut response[FRAME_HEADER_BYTES..]).map_err(|_| RpcStatus::Internal)),
         };
         let (status, payload_bytes) = match outcome {
             Ok(payload_bytes) => (RpcStatus::Ok, payload_bytes),
@@ -122,6 +249,24 @@ impl<S: GatewayService> FrontendGateway<S> {
         .encode(response)?;
         Ok(FRAME_HEADER_BYTES + payload_bytes)
     }
+}
+
+fn empty_request(body: &[u8]) -> Result<(), RpcStatus> {
+    if body.is_empty() { Ok(()) } else { Err(RpcStatus::InvalidRequest) }
+}
+
+fn decode_subscription_body(body: &[u8]) -> Result<crate::SubscriptionKind, RpcStatus> {
+    if body.len() != 8 { return Err(RpcStatus::InvalidRequest) }
+    crate::SubscriptionKind::from_wire(body[0]).map_err(|_| RpcStatus::InvalidRequest)
+}
+
+fn decode_poll(body: &[u8]) -> Result<(Subscription, u8), RpcStatus> {
+    if body.len() != 16 || body[1] == 0 || body[1] as usize > crate::MAX_CLUSTER_CHANGES {
+        return Err(RpcStatus::InvalidRequest)
+    }
+    let kind = crate::SubscriptionKind::from_wire(body[0]).map_err(|_| RpcStatus::InvalidRequest)?;
+    let cursor = u64::from_be_bytes(body[8..16].try_into().map_err(|_| RpcStatus::InvalidRequest)?);
+    Ok((Subscription { kind, cursor }, body[1]))
 }
 
 fn decode_authority(

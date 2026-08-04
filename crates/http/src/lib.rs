@@ -10,6 +10,7 @@
 mod grpc;
 mod http;
 mod netd;
+mod rpc;
 mod router;
 mod server;
 
@@ -22,6 +23,7 @@ pub use http::{
     ParsedRequest, Request, Response, StatusCode, Version, encode_response, parse_request,
 };
 pub use netd::{NetdClient, NetdError};
+pub use rpc::{RpcHttpError, SYNOS_RPC_CONTENT_TYPE, decode_rpc_request, is_rpc_content_type, rpc_response};
 pub use router::{Handler, RequestContext, Route, RouteError, Router, WebRights};
 pub use server::{HttpServer, SERVER_SOCKET_RIGHTS, ServerError, ServerEvent, ServerState};
 

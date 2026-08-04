@@ -8,11 +8,22 @@
 //! receives the same versioned binary RPC contract on every platform.
 
 mod client;
+mod cluster;
 mod gateway;
 mod model;
 mod wire;
 
 pub use client::{Client, ClientError, RpcTransport};
+pub use cluster::{
+    AuditEventList, BoundedText, ChangeBatch, ChangeEvent, ChangeLog, ChangeLogError,
+    ClusterAuditEvent, ClusterCreateRequest,
+    ClusterHealth, ClusterHealthSnapshot, ClusterId, ClusterInvitation, ClusterJoinRequest,
+    ClusterLeaveRequest, ClusterLifecycle, ClusterMember, ClusterName, ClusterRemoveRequest,
+    ClusterResources, ClusterSummary, InvitationList, InvitationState, JoinPlan, LeavePlan,
+    LifecycleReceipt, MemberList, MemberRole, MemberState, Subscription, SubscriptionKind,
+    MAX_CLUSTER_AUDIT_EVENTS, MAX_CLUSTER_CHANGES, MAX_CLUSTER_INVITATIONS,
+    MAX_CLUSTER_MEMBERS, MAX_CLUSTER_NAME_BYTES,
+};
 pub use gateway::{FrontendGateway, GatewayService};
 pub use model::{
     CapabilityDelegation, ClusterNode, ClusterState, JobReceipt, JobSpec, MAX_CLUSTER_NODES,

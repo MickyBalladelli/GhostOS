@@ -647,6 +647,13 @@ the SDK.
 policy-owning `GatewayService`. Malformed input never reaches service handlers,
 and remote failures return stable protocol status codes.
 
+Cluster lifecycle, membership, invitations, plans, health, resources, topology,
+and audit activity share bounded SDK schemas. Subscriptions use cursors and a
+fixed maximum poll batch, so a slow dashboard cannot grow server state without
+bound. `synos-observability` exports dimensioned metric samples, trace/log
+records, audit records, and alerts keyed by cluster, node, transport, workload,
+and operation.
+
 `clients/apple` contains a shared Swift implementation and SwiftUI control
 surface for macOS 14+ and iOS 17+. It displays node health and resource use,
 submits bounded jobs, and requests restricted capability grants through a TLS

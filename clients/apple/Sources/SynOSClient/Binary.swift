@@ -76,6 +76,10 @@ struct ByteReader {
         return value
     }
 
+    mutating func readUInt128() throws -> UInt128Value {
+        UInt128Value(high: try readUInt64(), low: try readUInt64())
+    }
+
     mutating func readData(count: Int) throws -> Data {
         guard count >= 0, offset + count <= data.count else {
             throw SynOSClientError.invalidFrame

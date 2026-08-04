@@ -9,6 +9,9 @@ pub const MAX_EVENT_FIELDS: usize = 4;
 pub const JOURNAL_RECORD_SIZE: usize = 128;
 pub const GLOBAL_TRACE_CAPACITY: usize = 256;
 pub const GLOBAL_AUDIT_CAPACITY: usize = 256;
+pub const MAX_METRIC_SAMPLES: usize = 256;
+pub const MAX_ALERTS: usize = 128;
+pub const MAX_TELEMETRY_BATCH: usize = 32;
 
 const JOURNAL_MAGIC: u32 = u32::from_le_bytes(*b"SLOG");
 const JOURNAL_VERSION: u8 = 1;
@@ -28,6 +31,34 @@ pub mod field {
     pub const LENGTH: u16 = 11;
     pub const CHANNEL: u16 = 12;
     pub const OPERATION: u16 = 13;
+    pub const CLUSTER: u16 = 14;
+    pub const TRANSPORT: u16 = 15;
+    pub const WORKLOAD: u16 = 16;
+    pub const TRACE: u16 = 17;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub struct TelemetryDimensions {
+    pub cluster: u128,
+    pub node: u32,
+    pub transport: u8,
+    pub workload: u64,
+    pub operation: u16,
+}
+
+impl TelemetryDimensions {
+    pub const fn new(cluster: u128, node: u32, transport: u8, workload: u64, operation: u16) -> Self {
+        Self { cluster, node, transport, workload, operation }
+    }
+
+    pub fn apply(self, event: TraceEvent) -> TraceEvent {
+        event
+            .on_node(self.node)
+            .with_field(EventField::identifier(field::CLUSTER, self.cluster))
+            .with_field(EventField::unsigned(field::TRANSPORT, self.transport as u64))
+            .with_field(EventField::unsigned(field::WORKLOAD, self.workload))
+            .with_field(EventField::unsigned(field::OPERATION, self.operation as u64))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -739,4 +770,214 @@ fn parse_u64(value: &str) -> Result<u64, QueryError> {
             .parse::<u64>()
             .map_err(|_| QueryError::InvalidArgument)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum MetricKind {
+    Counter = 1,
+    Gauge = 2,
+    Histogram = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MetricSample {
+    pub name: u16,
+    pub kind: MetricKind,
+    pub timestamp: u64,
+    pub value: u64,
+    pub dimensions: TelemetryDimensions,
+}
+
+impl MetricSample {
+    pub const fn new(
+        name: u16,
+        kind: MetricKind,
+        timestamp: u64,
+        value: u64,
+        dimensions: TelemetryDimensions,
+    ) -> Self {
+        Self { name, kind, timestamp, value, dimensions }
+    }
+
+    fn same_series(self, other: Self) -> bool {
+        self.name == other.name
+            && self.kind == other.kind
+            && self.dimensions == other.dimensions
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MetricError {
+    Capacity,
+    Invalid,
+}
+
+/// Bounded metric series store. Counters are accumulated; gauges and histogram
+/// observations replace the last value for the same dimensions.
+pub struct MetricRegistry<const CAPACITY: usize = MAX_METRIC_SAMPLES> {
+    samples: [Option<MetricSample>; CAPACITY],
+    dropped: u64,
+}
+
+impl<const CAPACITY: usize> MetricRegistry<CAPACITY> {
+    pub const fn new() -> Self {
+        assert!(CAPACITY >= 1);
+        Self { samples: [None; CAPACITY], dropped: 0 }
+    }
+
+    pub fn record(&mut self, sample: MetricSample) -> Result<(), MetricError> {
+        if sample.name == 0 || sample.timestamp == 0 || sample.dimensions.node == 0 {
+            return Err(MetricError::Invalid);
+        }
+        if let Some(existing) = self.samples.iter_mut().flatten().find(|entry| entry.same_series(sample)) {
+            if sample.kind == MetricKind::Counter {
+                existing.value = existing.value.saturating_add(sample.value);
+            } else {
+                *existing = sample;
+            }
+            existing.timestamp = sample.timestamp;
+            return Ok(())
+        }
+        let slot = self.samples.iter_mut().find(|entry| entry.is_none());
+        if let Some(slot) = slot {
+            *slot = Some(sample);
+            Ok(())
+        } else {
+            self.dropped = self.dropped.saturating_add(1);
+            Err(MetricError::Capacity)
+        }
+    }
+
+    pub fn samples(&self) -> impl Iterator<Item = MetricSample> + '_ {
+        self.samples.iter().flatten().copied()
+    }
+
+    pub const fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    pub fn export(&self, destination: &mut [Option<MetricSample>]) -> usize {
+        let mut count = 0;
+        for sample in self.samples() {
+            if let Some(slot) = destination.get_mut(count) {
+                *slot = Some(sample);
+                count += 1;
+            } else {
+                break
+            }
+        }
+        count
+    }
+}
+
+impl<const CAPACITY: usize> Default for MetricRegistry<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AlertLevel {
+    Info = 1,
+    Warning = 2,
+    Critical = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Alert {
+    pub sequence: u64,
+    pub timestamp: u64,
+    pub level: AlertLevel,
+    pub code: u16,
+    pub dimensions: TelemetryDimensions,
+    pub correlation: CorrelationId,
+}
+
+pub struct AlertRegistry<const CAPACITY: usize = MAX_ALERTS> {
+    alerts: [Option<Alert>; CAPACITY],
+    next_sequence: u64,
+    dropped: u64,
+}
+
+impl<const CAPACITY: usize> AlertRegistry<CAPACITY> {
+    pub const fn new() -> Self {
+        assert!(CAPACITY >= 1);
+        Self { alerts: [None; CAPACITY], next_sequence: 1, dropped: 0 }
+    }
+
+    pub fn push(&mut self, mut alert: Alert) -> Result<u64, MetricError> {
+        if alert.timestamp == 0 || alert.code == 0 || alert.dimensions.node == 0 {
+            return Err(MetricError::Invalid);
+        }
+        alert.sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1).max(1);
+        if let Some(slot) = self.alerts.iter_mut().find(|entry| entry.is_none()) {
+            *slot = Some(alert);
+            return Ok(alert.sequence)
+        }
+        self.dropped = self.dropped.saturating_add(1);
+        Err(MetricError::Capacity)
+    }
+
+    pub fn alerts(&self) -> impl Iterator<Item = Alert> + '_ {
+        self.alerts.iter().flatten().copied()
+    }
+
+    pub const fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    pub fn drain(&mut self, destination: &mut [Option<Alert>]) -> usize {
+        let mut count = 0;
+        for alert in self.alerts.iter_mut() {
+            if let Some(value) = alert.take() {
+                if let Some(slot) = destination.get_mut(count) {
+                    *slot = Some(value);
+                    count += 1;
+                } else {
+                    *alert = Some(value);
+                    break
+                }
+            }
+        }
+        count
+    }
+}
+
+impl<const CAPACITY: usize> Default for AlertRegistry<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn drain_trace(destination: &mut [Option<TraceEvent>]) -> usize {
+    drain_ring(&SYSTEM_TRACE, destination)
+}
+
+pub fn drain_logs(destination: &mut [Option<TraceEvent>]) -> usize {
+    drain_trace(destination)
+}
+
+pub fn drain_audit(destination: &mut [Option<TraceEvent>]) -> usize {
+    drain_ring(&SECURITY_AUDIT, destination)
+}
+
+fn drain_ring<const CAPACITY: usize>(
+    ring: &TraceRing<CAPACITY>,
+    destination: &mut [Option<TraceEvent>],
+) -> usize {
+    if destination.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    while count < destination.len() {
+        let Some(event) = ring.try_pop() else { break };
+        if let Some(slot) = destination.get_mut(count) {
+            *slot = Some(event);
+            count += 1;
+        }
+    }
+    count
 }

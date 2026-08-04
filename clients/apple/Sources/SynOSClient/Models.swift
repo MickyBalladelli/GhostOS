@@ -33,6 +33,107 @@ public struct ClusterState: Equatable, Sendable {
     public let nodes: [ClusterNode]
 }
 
+public enum ClusterLifecycle: UInt8, Sendable {
+    case creating = 1
+    case pendingAdmission = 2
+    case active = 3
+    case degraded = 4
+    case partitioned = 5
+    case draining = 6
+    case leaving = 7
+    case retired = 8
+    case deleted = 9
+}
+
+public enum ClusterHealth: UInt8, Sendable {
+    case healthy = 1
+    case degraded = 2
+    case partitioned = 3
+    case unavailable = 4
+}
+
+public struct ClusterSummary: Equatable, Sendable {
+    public let id: UInt128Value
+    public let name: String
+    public let lifecycle: ClusterLifecycle
+    public let health: ClusterHealth
+    public let generation: UInt64
+    public let sampledAtMicroseconds: UInt64
+    public let leader: UInt32
+    public let coordinator: UInt32
+    public let memberCount: UInt16
+    public let healthyMembers: UInt16
+    public let votingMembers: UInt16
+    public let quorumRequired: UInt16
+    public let quorumAvailable: UInt16
+}
+
+public struct UInt128Value: Equatable, Hashable, Sendable, CustomStringConvertible {
+    public let high: UInt64
+    public let low: UInt64
+
+    public var description: String {
+        String(format: "%016llx%016llx", high, low)
+    }
+}
+
+public struct ClusterHealthSnapshot: Equatable, Sendable {
+    public let generation: UInt64
+    public let health: ClusterHealth
+    public let quorum: Bool
+    public let heartbeatPeriodMicroseconds: UInt64
+    public let missedHeartbeatLimit: UInt16
+    public let lastChangeMicroseconds: UInt64
+    public let healthyNodes: UInt16
+    public let degradedNodes: UInt16
+    public let failedNodes: UInt16
+}
+
+public struct ClusterResources: Equatable, Sendable {
+    public let generation: UInt64
+    public let cpuCapacity: UInt64
+    public let cpuAvailable: UInt64
+    public let memoryCapacityBytes: UInt64
+    public let memoryAvailableBytes: UInt64
+    public let cxlCapacityBytes: UInt64
+    public let cxlAvailableBytes: UInt64
+    public let storageCapacityBytes: UInt64
+    public let storageAvailableBytes: UInt64
+    public let networkBandwidthMbps: UInt64
+    public let acceleratorCapacity: UInt64
+    public let acceleratorAvailable: UInt64
+}
+
+public struct ClusterInvitation: Identifiable, Equatable, Sendable {
+    public let id: UInt64
+    public let node: UInt32
+    public let state: UInt8
+    public let expiresAtMicroseconds: UInt64
+}
+
+public struct ClusterAuditEvent: Identifiable, Equatable, Sendable {
+    public let id: UInt64
+    public let timestampMicroseconds: UInt64
+    public let actor: UInt32
+    public let operation: UInt16
+    public let status: UInt16
+    public let target: UInt64
+}
+
+public struct ClusterAlert: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let detail: String
+    public let critical: Bool
+
+    public init(id: String, title: String, detail: String, critical: Bool) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.critical = critical
+    }
+}
+
 public enum TopologyTransport: UInt8, Sendable {
     case cxl = 1
     case ethernet = 2

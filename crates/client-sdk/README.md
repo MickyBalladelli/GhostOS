@@ -39,6 +39,11 @@ frames.
 The SDK currently exposes:
 
 - `Client::cluster_state`
+- cluster summary, membership, invitation, join/leave-plan, health, resource,
+  and audit schemas through bounded RPC methods
+- lifecycle methods for create, join, leave, and remove
+- `Client::subscribe` and bounded `Client::poll` for membership, health,
+  topology, resource, and lifecycle changes
 - `Client::submit_job`
 - `Client::delegate_capability`
 - `FrontendGateway::handle`
@@ -46,3 +51,7 @@ The SDK currently exposes:
 `GatewayService` owns authentication and authorization policy. The dispatcher
 only validates framing and typed payloads; possession of a decoded capability
 does not itself authorize an operation.
+
+HTTP gateways use `POST /...` with `application/vnd.synos.rpc`. The
+`synos-http` crate provides the content-type and response envelope helpers;
+its `GrpcRouter` provides the equivalent bounded gRPC dispatch path.

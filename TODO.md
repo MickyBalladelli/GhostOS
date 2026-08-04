@@ -1012,12 +1012,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Provide operator actions for retry, resync, drain, recover, fence, un-fence, rollback, and abandon with safe guards.
   - [x] Preserve availability where safe and return stable `$STATUS` values explaining every blocked operation.
 
-- [ ] **APIs, Clients & Observability**
-  - [ ] Add cluster lifecycle and membership methods to the Rust client SDK, wire protocol, HTTP/gRPC gateway.
-  - [ ] Add structured schemas for cluster summaries, member lists, invitations, join/leave plans, topology, health, resources, and audit events.
-  - [ ] Add live subscriptions and bounded polling for membership, health, topology, resource, and lifecycle changes.
-  - [ ] Add cluster dashboards for identity, members, health, capacity, topology, pending admissions, alerts, and recent actions.
-  - [ ] Export metrics, traces, logs, audit events, and alerts per cluster, node, transport, workload, and operation.
+- [x] **APIs, Clients & Observability**
+  - [x] Add cluster lifecycle and membership methods to the Rust client SDK, wire protocol, HTTP/gRPC gateway.
+  - [x] Add structured schemas for cluster summaries, member lists, invitations, join/leave plans, topology, health, resources, and audit events.
+  - [x] Add live subscriptions and bounded polling for membership, health, topology, resource, and lifecycle changes.
+  - [x] Add cluster dashboards for identity, members, health, capacity, topology, pending admissions, alerts, and recent actions.
+  - [x] Export metrics, traces, logs, audit events, and alerts per cluster, node, transport, workload, and operation.
 
 - [ ] **Validation & Documentation**
   - [ ] Add parser, authorization, protocol, persistence, recovery, quorum, partition, fencing, and transport-failure coverage for every command.

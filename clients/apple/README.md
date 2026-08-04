@@ -8,6 +8,16 @@ The control surface shows cluster health, submits bounded jobs, and requests
 attenuated capability grants. Capability bytes travel inside the RPC envelope;
 the app never receives an issuer key.
 
+The Swift client can also be embedded in your own macOS or iOS app. `SynOSClient`
+reads cluster identity, health, members, capacity, topology, alerts, pending
+admissions, and recent actions; it can submit bounded jobs and delegate limited
+capabilities to another node. `ControlRootView` provides the ready-made SwiftUI
+dashboard, Jobs, and Delegate screens. Set `SYNOS_GATEWAY_URL` to point the
+sample app at a SynOS HTTP gateway; the default is
+`http://127.0.0.1:8443/rpc`. Rust supports lifecycle mutations and live polling
+through its SDK, while the Swift UI currently exposes the read and action flows
+listed above.
+
 Run the macOS app from Xcode or:
 
 ```sh

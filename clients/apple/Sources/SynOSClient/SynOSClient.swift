@@ -32,6 +32,14 @@ public actor SynOSClient {
         case submitJob = 2
         case delegateCapability = 3
         case topologyState = 4
+        case clusterSummary = 5
+        case clusterMembers = 6
+        case clusterInvitations = 7
+        case clusterJoinPlan = 8
+        case clusterLeavePlan = 9
+        case clusterHealth = 10
+        case clusterResources = 11
+        case clusterAudit = 12
     }
 
     private static let headerBytes = 24
@@ -149,6 +157,167 @@ public actor SynOSClient {
             sampledAtMicroseconds: sampledAt,
             links: links
         )
+    }
+
+    public func clusterSummary() async throws -> ClusterSummary {
+        let payload = try await call(method: .clusterSummary, body: Data())
+        guard payload.count == 128 else {
+            throw SynOSClientError.invalidFrame
+        }
+        var reader = ByteReader(payload)
+        let id = try reader.readUInt128()
+        let lifecycle = try reader.readByte()
+        let health = try reader.readByte()
+        try reader.skip(2)
+        let generation = try reader.readUInt64()
+        let sampledAt = try reader.readUInt64()
+        let leader = try reader.readUInt32()
+        let coordinator = try reader.readUInt32()
+        let memberCount = try reader.readUInt16()
+        let healthyMembers = try reader.readUInt16()
+        let votingMembers = try reader.readUInt16()
+        let quorumRequired = try reader.readUInt16()
+        let quorumAvailable = try reader.readUInt16()
+        try reader.skip(2)
+        let nameBytes = try reader.readData(count: 64)
+        let name = String(data: nameBytes.prefix(while: { $0 != 0 }), encoding: .utf8)
+        guard let lifecycle = ClusterLifecycle(rawValue: lifecycle),
+              let health = ClusterHealth(rawValue: health),
+              leader > 0,
+              coordinator > 0,
+              let name else {
+            throw SynOSClientError.invalidFrame
+        }
+        return ClusterSummary(
+            id: id,
+            name: name,
+            lifecycle: lifecycle,
+            health: health,
+            generation: generation,
+            sampledAtMicroseconds: sampledAt,
+            leader: leader,
+            coordinator: coordinator,
+            memberCount: memberCount,
+            healthyMembers: healthyMembers,
+            votingMembers: votingMembers,
+            quorumRequired: quorumRequired,
+            quorumAvailable: quorumAvailable
+        )
+    }
+
+    public func clusterHealth() async throws -> ClusterHealthSnapshot {
+        let payload = try await call(method: .clusterHealth, body: Data())
+        guard payload.count == 48 else {
+            throw SynOSClientError.invalidFrame
+        }
+        var reader = ByteReader(payload)
+        let generation = try reader.readUInt64()
+        let health = try reader.readByte()
+        let quorum = try reader.readByte() != 0
+        try reader.skip(6)
+        let heartbeat = try reader.readUInt64()
+        let missed = try reader.readUInt16()
+        try reader.skip(2)
+        let lastChange = try reader.readUInt64()
+        let healthy = try reader.readUInt16()
+        let degraded = try reader.readUInt16()
+        let failed = try reader.readUInt16()
+        guard let health = ClusterHealth(rawValue: health) else {
+            throw SynOSClientError.invalidFrame
+        }
+        return ClusterHealthSnapshot(
+            generation: generation,
+            health: health,
+            quorum: quorum,
+            heartbeatPeriodMicroseconds: heartbeat,
+            missedHeartbeatLimit: missed,
+            lastChangeMicroseconds: lastChange,
+            healthyNodes: healthy,
+            degradedNodes: degraded,
+            failedNodes: failed
+        )
+    }
+
+    public func clusterResources() async throws -> ClusterResources {
+        let payload = try await call(method: .clusterResources, body: Data())
+        guard payload.count == 96 else {
+            throw SynOSClientError.invalidFrame
+        }
+        var reader = ByteReader(payload)
+        return ClusterResources(
+            generation: try reader.readUInt64(),
+            cpuCapacity: try reader.readUInt64(),
+            cpuAvailable: try reader.readUInt64(),
+            memoryCapacityBytes: try reader.readUInt64(),
+            memoryAvailableBytes: try reader.readUInt64(),
+            cxlCapacityBytes: try reader.readUInt64(),
+            cxlAvailableBytes: try reader.readUInt64(),
+            storageCapacityBytes: try reader.readUInt64(),
+            storageAvailableBytes: try reader.readUInt64(),
+            networkBandwidthMbps: try reader.readUInt64(),
+            acceleratorCapacity: try reader.readUInt64(),
+            acceleratorAvailable: try reader.readUInt64()
+        )
+    }
+
+    public func clusterInvitations() async throws -> [ClusterInvitation] {
+        let payload = try await call(method: .clusterInvitations, body: Data())
+        var reader = ByteReader(payload)
+        guard payload.count >= 24 else {
+            throw SynOSClientError.invalidFrame
+        }
+        _ = try reader.readUInt64()
+        try reader.skip(8)
+        let count = Int(try reader.readUInt16())
+        try reader.skip(6)
+        guard count <= 32, reader.remaining == count * 32 else {
+            throw SynOSClientError.invalidFrame
+        }
+        var invitations: [ClusterInvitation] = []
+        for _ in 0..<count {
+            let id = try reader.readUInt64()
+            let node = try reader.readUInt32()
+            let state = try reader.readByte()
+            try reader.skip(3)
+            _ = try reader.readUInt64()
+            let expiresAt = try reader.readUInt64()
+            _ = try reader.readUInt32()
+            guard id > 0, node > 0 else {
+                throw SynOSClientError.invalidFrame
+            }
+            invitations.append(ClusterInvitation(id: id, node: node, state: state, expiresAtMicroseconds: expiresAt))
+        }
+        return invitations
+    }
+
+    public func clusterAudit() async throws -> [ClusterAuditEvent] {
+        let payload = try await call(method: .clusterAudit, body: Data())
+        var reader = ByteReader(payload)
+        guard payload.count >= 24 else {
+            throw SynOSClientError.invalidFrame
+        }
+        _ = try reader.readUInt64()
+        try reader.skip(8)
+        let count = Int(try reader.readUInt16())
+        try reader.skip(6)
+        guard count <= 32, reader.remaining == count * 48 else {
+            throw SynOSClientError.invalidFrame
+        }
+        var events: [ClusterAuditEvent] = []
+        for _ in 0..<count {
+            let sequence = try reader.readUInt64()
+            let timestamp = try reader.readUInt64()
+            try reader.skip(16)
+            let actor = try reader.readUInt32()
+            let operation = try reader.readUInt16()
+            let status = try reader.readUInt16()
+            let target = try reader.readUInt64()
+            guard sequence > 0, actor > 0 else {
+                throw SynOSClientError.invalidFrame
+            }
+            events.append(ClusterAuditEvent(id: sequence, timestampMicroseconds: timestamp, actor: actor, operation: operation, status: status, target: target))
+        }
+        return events
     }
 
     public func submitJob(
