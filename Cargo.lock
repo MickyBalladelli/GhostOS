@@ -883,6 +883,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "synos-boot-protocol",
+ "synos-fabric",
  "synos-kernel",
  "synos-synfs",
  "synos-test-support",

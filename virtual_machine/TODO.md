@@ -251,11 +251,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [x] Shutdown/reboot notifications
   - [x] Memory hot-plug support
 
-- [ ] **Cluster Testing**
-  - [ ] Multi-node VM orchestration
-  - [ ] Network simulation for clustering
-  - [ ] CXL fabric emulation
-  - [ ] Fault injection for testing
+- [x] **Cluster Testing**
+  - [x] Multi-node VM orchestration
+  - [x] Network simulation for clustering
+  - [x] CXL fabric emulation
+  - [x] Fault injection for testing
 
 ---
 

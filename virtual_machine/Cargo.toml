@@ -9,6 +9,7 @@ description = "A lightweight virtual machine for testing SynOS"
 bitflags = "2.4"
 thiserror = "1.0"
 synos-boot-protocol = { path = "../crates/boot-protocol" }
+synos-fabric = { path = "../crates/fabric" }
 synos-kernel = { path = "../kernel" }
 synos-synfs = { path = "../crates/synfs" }
 

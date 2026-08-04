@@ -57,6 +57,11 @@ id = "vm.foundation.serial-boundary"
 file = "tests/foundation_59_1.rs"
 tiers = ["fast-unit", "vm-integration"]
 
+[[test]]
+id = "vm.cluster.deterministic-harness"
+file = "tests/cluster.rs"
+tiers = ["fast-unit", "vm-integration"]
+
 [[source]]
 path = "src/lib.rs"
 tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
@@ -162,6 +167,10 @@ path = "src/integration.rs"
 tests = ["vm.foundation.deterministic-fixtures"]
 
 [[source]]
+path = "src/cluster.rs"
+tests = ["vm.cluster.deterministic-harness"]
+
+[[source]]
 path = "src/net/mod.rs"
 tests = ["vm.foundation.deterministic-fixtures"]
 
@@ -169,6 +178,11 @@ tests = ["vm.foundation.deterministic-fixtures"]
 name = "Vm::{new,with_config,run_for_steps,reset,snapshot,restore_snapshot}"
 source = "src/lib.rs"
 tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+
+[[public_api]]
+name = "VmCluster::{add_node,run_node,send,advance,receive,inject_fault}"
+source = "src/cluster.rs"
+tests = ["vm.cluster.deterministic-harness"]
 
 [[public_api]]
 name = "Cpu::{new,reset,decode_instruction,step}"

@@ -3,6 +3,7 @@ pub mod memory;
 pub mod devices;
 pub mod firmware;
 pub mod boot;
+pub mod cluster;
 pub mod net;
 pub mod integration;
 pub mod execution;
@@ -51,6 +52,11 @@ pub use firmware::uefi::{
 pub use firmware::FirmwareMode;
 pub use boot::Loader;
 pub use boot::{framebuffer_info, LoaderError, KERNEL_LOAD_ADDR};
+pub use cluster::{
+    ClusterError, ClusterFault, ClusterNode, ClusterNodeId, ClusterNodeState, ClusterPacket,
+    ClusterNetwork, ClusterNetworkConfig, ClusterNetworkOutcome, ClusterNetworkTrace,
+    CxlFabricFixture, VmCluster,
+};
 pub use integration::{run_synos_integration, IntegrationError, SynosIntegrationReport};
 pub use execution::{
     BlockProfile, ExecutionEngine, ExecutionEngineConfig, ExecutionStats,
@@ -91,6 +97,7 @@ pub const VIRTIO_BLK_IO_BASE: u16 = 0x5100;
 pub const VIRTIO_CONSOLE_IO_BASE: u16 = 0x5200;
 pub const VIRTIO_RNG_IO_BASE: u16 = 0x5300;
 
+#[derive(Clone)]
 pub struct VmConfig {
     pub memory_size: usize,
     pub max_memory_size: usize,
