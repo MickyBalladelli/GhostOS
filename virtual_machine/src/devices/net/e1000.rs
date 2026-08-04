@@ -128,7 +128,7 @@ impl E1000 {
     }
 
     fn register_offset(&self, addr: u64) -> usize {
-        ((addr & (E1000_MMIO_SIZE - 1)) >> 2) as usize
+        (addr & (E1000_MMIO_SIZE - 1)) as usize
     }
 
     fn read_dword(&self, off: usize) -> u32 {
@@ -383,5 +383,71 @@ impl Device for Rc<RefCell<E1000>> {
 
     fn reset(&mut self) {
         self.borrow_mut().reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::{LoopbackHub, LoopbackPort};
+
+    #[test]
+    fn registers_mac_link_interrupt_and_reset() {
+        let mac = MacAddress::synos_default(1);
+        let mut nic = E1000::new(mac);
+        assert_eq!(Device::read(&nic, REG_STATUS as u64, 4).unwrap() & STATUS_LU as u64, STATUS_LU as u64);
+        assert_eq!(Device::read(&nic, REG_RAL0 as u64, 4).unwrap(), 0x1200_5452);
+        assert_eq!(Device::read(&nic, REG_RAH0 as u64, 4).unwrap() & 0xFFFF, 0x134);
+        assert_eq!(Device::read(&nic, 0, 2), Err(DeviceError::UnsupportedSize));
+
+        Device::write(&mut nic, REG_IMS as u64, ICR_TXDW as u64, 4).unwrap();
+        nic.icr = ICR_TXDW;
+        nic.check_interrupt();
+        assert_eq!(nic.read_dword(REG_ICR), ICR_TXDW);
+        Device::write(&mut nic, REG_CTRL as u64, CTRL_RST as u64, 4).unwrap();
+        assert_eq!(nic.mac(), mac);
+        assert_eq!(nic.read_dword(REG_ICR), 0);
+    }
+
+    #[test]
+    fn tx_and_rx_descriptor_rings_move_a_frame() {
+        let hub = Rc::new(RefCell::new(LoopbackHub::new()));
+        let tx_mac = MacAddress::synos_default(1);
+        let rx_mac = MacAddress::synos_default(2);
+        let mut tx = E1000::new(tx_mac);
+        let mut rx = E1000::new(rx_mac);
+        tx.attach_backend(Box::new(LoopbackPort::new(hub.clone(), 0, tx_mac)));
+        rx.attach_backend(Box::new(LoopbackPort::new(hub, 1, rx_mac)));
+
+        let mut mmu = Mmu::new(0x20_000);
+        let frame_addr = 0x3000;
+        let tx_ring = 0x1000;
+        let rx_ring = 0x2000;
+        let mut frame = vec![0u8; 60];
+        frame[0..6].copy_from_slice(&rx_mac.0);
+        frame[6..12].copy_from_slice(&tx_mac.0);
+        frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+        mmu.write_phys(frame_addr, &frame).unwrap();
+        let mut tx_desc = [0u8; 16];
+        tx_desc[0..8].copy_from_slice(&(frame_addr as u64).to_le_bytes());
+        tx_desc[8..12].copy_from_slice(&(frame.len() as u32).to_le_bytes());
+        mmu.write_phys(tx_ring, &tx_desc).unwrap();
+        tx.tdbal = tx_ring as u32;
+        tx.tdlen = 16;
+        tx.tctl = TCTL_EN;
+        tx.poll(&mut mmu);
+        assert_eq!(mmu.read_phys(tx_ring + 12, 1).unwrap()[0] & 3, 3);
+
+        let rx_buffer = 0x4000;
+        let mut rx_desc = [0u8; 16];
+        rx_desc[0..8].copy_from_slice(&(rx_buffer as u64).to_le_bytes());
+        rx_desc[8..12].copy_from_slice(&512u32.to_le_bytes());
+        mmu.write_phys(rx_ring + 16, &rx_desc).unwrap();
+        rx.rdbal = rx_ring as u32;
+        rx.rdlen = 32;
+        rx.rdt = 0;
+        rx.rctl = RCTL_EN;
+        rx.poll(&mut mmu);
+        assert_eq!(&mmu.read_phys(rx_buffer, frame.len()).unwrap(), &frame);
     }
 }

@@ -536,3 +536,51 @@ impl Device for Rc<RefCell<Ahci>> {
         self.borrow_mut().reset();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+
+    fn image_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("synos-ahci-{name}-{}", std::process::id()))
+    }
+
+    fn disk(name: &str) -> DiskImage {
+        let path = image_path(name);
+        let mut file = File::create(path.clone()).unwrap();
+        file.set_len(4096).unwrap();
+        file.flush().unwrap();
+        DiskImage::open(path).unwrap()
+    }
+
+    #[test]
+    fn identification_and_dma_round_trip() {
+        let mut ahci = Ahci::new();
+        ahci.attach_disk(disk("round-trip"));
+        assert_eq!(ahci.sector_count(), Some(8));
+        let identify = ahci.build_identify();
+        assert_eq!(&identify[46..64], b"SynOS Virtual Disk");
+
+        let mut mmu = Mmu::new(0x20_000);
+        let source = 0x1000;
+        let target = 0x2000;
+        let sector = [0xA5u8; 512];
+        mmu.write_phys(source, &sector).unwrap();
+        ahci.disk_to_prds(&mut mmu, 2, 1, &[(source, 512)], true).unwrap();
+        ahci.disk_to_prds(&mut mmu, 2, 1, &[(target, 512)], false).unwrap();
+        assert_eq!(mmu.read_phys(target, 512).unwrap(), sector);
+    }
+
+    #[test]
+    fn register_access_rejects_bad_size_and_reset_keeps_disk() {
+        let mut ahci = Ahci::new();
+        ahci.attach_disk(disk("reset"));
+        assert_eq!(Device::read(&ahci, 0, 2), Err(DeviceError::UnsupportedSize));
+        assert_eq!(Device::read(&ahci, 0, 4).unwrap(), ahci.cap as u64);
+        ahci.reset();
+        assert_eq!(ahci.sector_count(), Some(8));
+        assert!(!ahci.has_pending());
+    }
+}

@@ -23,6 +23,7 @@ const COMMAND_WRITE_MOUSE: u8 = 0xD4;
 
 const KEYBOARD_IRQ_VECTOR: u8 = 0x21;
 const MOUSE_IRQ_VECTOR: u8 = 0x2C;
+const OUTPUT_QUEUE_CAPACITY: usize = 64;
 
 #[derive(Clone, Copy)]
 struct OutputByte {
@@ -78,6 +79,9 @@ impl Ps2Controller {
 
     /// Inject one keyboard scan-code byte into the guest output buffer.
     pub fn push_keyboard_scancode(&mut self, scancode: u8) {
+        if !self.keyboard_enabled {
+            return
+        }
         self.push_output(OutputByte {
             value: scancode,
             auxiliary: false,
@@ -130,6 +134,9 @@ impl Ps2Controller {
     }
 
     fn push_output(&mut self, byte: OutputByte) {
+        if self.output.len() >= OUTPUT_QUEUE_CAPACITY {
+            self.output.pop_front();
+        }
         self.output.push_back(byte);
         let irq_enabled = if byte.auxiliary {
             self.mouse_interrupt_enabled()
@@ -384,5 +391,25 @@ mod tests {
         }
         ps2.push_mouse_packet([0x08, 1, 0]);
         assert_eq!(ps2.read(PS2_DATA_PORT, 1).unwrap(), 0x08);
+    }
+
+    #[test]
+    fn controller_commands_and_overflow_are_bounded() {
+        let mut ps2 = Ps2Controller::new();
+        ps2.write(PS2_STATUS_PORT, COMMAND_DISABLE_KEYBOARD as u64, 1).unwrap();
+        ps2.push_keyboard_bytes(&[0x1C, 0xF0, 0x1C]);
+        assert!(!ps2.input_pending());
+
+        ps2.write(PS2_STATUS_PORT, COMMAND_ENABLE_KEYBOARD as u64, 1).unwrap();
+        for _ in 0..256 {
+            ps2.push_keyboard_scancode(0x1E);
+        }
+        let mut count = 0;
+        while ps2.input_pending() {
+            let _ = ps2.read(PS2_DATA_PORT, 1).unwrap();
+            count += 1;
+        }
+        assert!(count <= 64);
+        assert_eq!(ps2.read(PS2_STATUS_PORT, 1).unwrap() & 1, 0);
     }
 }

@@ -365,3 +365,42 @@ impl PortDevice for Rc<RefCell<VirtioNet>> {
         self.borrow_mut().reset();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::{LoopbackHub, LoopbackPort};
+
+    #[test]
+    fn feature_mac_queue_status_and_reset_round_trip() {
+        let mac = MacAddress::synos_default(3);
+        let mut net = VirtioNet::new(mac);
+        assert_eq!(net.read_io(REG_DEVICE_FEATURES), DEVICE_FEATURES as u64);
+        assert_eq!(net.read_io(REG_CONFIG), mac.0[0] as u64);
+        assert_eq!(net.read_io(REG_CONFIG + 5), mac.0[5] as u64);
+
+        net.write_io(REG_GUEST_FEATURES, 0x10000);
+        net.write_io(REG_QUEUE_SEL, QUEUE_TX as u32);
+        net.write_io(REG_QUEUE_PFN, 4);
+        net.write_io(REG_STATUS, 4);
+        assert!(net.queue_enabled[QUEUE_TX as usize]);
+        assert_eq!(net.status, 4);
+        net.write_io(REG_QUEUE_NOTIFY, 0);
+        assert!(net.has_pending());
+
+        net.reset();
+        assert_eq!(net.status, 0);
+        assert!(!net.queue_enabled.iter().any(|enabled| *enabled));
+    }
+
+    #[test]
+    fn loopback_backend_is_attached_and_invalid_access_is_rejected() {
+        let hub = Rc::new(RefCell::new(LoopbackHub::new()));
+        let mac = MacAddress::synos_default(4);
+        let mut net = VirtioNet::new(mac);
+        net.attach_backend(Box::new(LoopbackPort::new(hub, 0, mac)));
+        assert!(net.backend.as_ref().unwrap().link_up());
+        assert_eq!(PortDevice::read(&mut net, REG_STATUS, 8), Err(DeviceError::UnsupportedSize));
+        assert_eq!(Device::read(&net, 0, 4), Err(DeviceError::InvalidAddress));
+    }
+}

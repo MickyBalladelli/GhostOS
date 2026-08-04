@@ -19,6 +19,7 @@ const REG_SCR: u16 = 0x07;
 
 const LCR_DLAB: u8 = 0x80;
 const LSR_DATA_READY: u8 = 0x01;
+const LSR_OVERRUN: u8 = 0x02;
 const LSR_THR_EMPTY: u8 = 0x20;
 const LSR_TRANSMIT_EMPTY: u8 = 0x40;
 
@@ -112,7 +113,13 @@ impl Serial16550 {
     /// Put host input into the UART receive FIFO.
     pub fn push_input(&mut self, bytes: &[u8]) {
         let was_empty = self.rx_buffer.is_empty();
-        self.rx_buffer.extend(bytes.iter().copied());
+        for &byte in bytes {
+            if self.rx_buffer.len() >= FIFO_SIZE {
+                self.lsr |= LSR_OVERRUN;
+                break;
+            }
+            self.rx_buffer.push_back(byte);
+        }
         if was_empty && !self.rx_buffer.is_empty() {
             self.signal_receive_irq()
         }
@@ -364,6 +371,21 @@ mod tests {
 
         assert_eq!(s.tx_count, 0);
         assert_eq!(s.output(), b"\r");
+    }
+
+    #[test]
+    fn serial_receive_fifo_sets_overrun_and_irq() {
+        let base = 0x3F8;
+        let apic = Rc::new(RefCell::new(LocalApic::new(0)));
+        let mut s = Serial16550::new(base);
+        s.attach_apic(apic.clone());
+        s.write(base + REG_IER, 1, 1).unwrap();
+        s.push_input(&[0xAA; FIFO_SIZE + 1]);
+        assert_eq!(s.rx_buffer.len(), FIFO_SIZE);
+        assert_ne!(s.read(base + REG_LSR, 1).unwrap() as u8 & LSR_OVERRUN, 0);
+        assert_eq!(apic.borrow_mut().pending_vector(), Some(0x24));
+        s.reset();
+        assert!(!s.input_pending());
     }
 
     #[test]

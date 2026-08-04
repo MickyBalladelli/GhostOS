@@ -759,3 +759,68 @@ fn scatter_write(mmu: &mut Mmu, descriptors: &[Descriptor], bytes: &[u8]) -> boo
     }
     offset == bytes.len()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    fn transport_negotiates_queue_and_resets() {
+        let mut transport = VirtioTransport::new();
+        assert_eq!(transport.read_common(REG_DEVICE_FEATURES, 0x55), Some(0x55));
+        transport.write_common(REG_GUEST_FEATURES, 0x55);
+        transport.write_common(REG_QUEUE_PFN, 2);
+        transport.write_common(REG_STATUS, STATUS_DRIVER_OK as u32);
+        assert_eq!(transport.queue.pfn, 2);
+        assert_eq!(transport.status, STATUS_DRIVER_OK);
+
+        transport.write_common(REG_QUEUE_NOTIFY, 0);
+        assert!(transport.take_pending());
+        transport.write_common(REG_STATUS, 0);
+        assert!(!transport.queue.enabled());
+        transport.reset();
+        assert_eq!(transport.status, 0);
+        assert_eq!(transport.guest_features, 0);
+    }
+
+    #[test]
+    fn malformed_descriptor_chain_is_rejected() {
+        let mut mmu = Mmu::new(0x20_000);
+        let mut queue = VirtioQueue::new();
+        queue.pfn = 1;
+        let descriptor = [0u8; 16];
+        mmu.write_phys(queue.desc_base(), &descriptor).unwrap();
+        let mut bad = descriptor;
+        bad[12..14].copy_from_slice(&DESC_INDIRECT.to_le_bytes());
+        mmu.write_phys(queue.desc_base(), &bad).unwrap();
+        assert!(queue.chain(&mmu, 0).is_err());
+        assert!(queue.chain(&mmu, QUEUE_SIZE).is_err());
+    }
+
+    #[test]
+    fn block_capacity_and_console_output_are_visible() {
+        let path = std::env::temp_dir().join(format!("synos-virtio-{}", std::process::id()));
+        let mut file = File::create(path.clone()).unwrap();
+        file.set_len(4096).unwrap();
+        file.flush().unwrap();
+
+        let mut block = VirtioBlk::new();
+        block.attach_disk(DiskImage::open(path).unwrap());
+        assert_eq!(block.sector_count(), Some(8));
+        assert_eq!(block.read_io(REG_CONFIG, 8).unwrap(), 8);
+        assert_eq!(block.read_io(REG_CONFIG + 7, 2), Err(DeviceError::UnsupportedSize));
+
+        let mut console = VirtioConsole::new();
+        console.output.extend_from_slice(b"hello");
+        assert_eq!(console.take_output(), b"hello");
+        console.reset();
+        assert!(console.output().is_empty());
+
+        let mut rng = VirtioRng::new();
+        let mut bytes = [0u8; 32];
+        rng.fill_random(&mut bytes);
+        assert_ne!(bytes, [0; 32]);
+    }
+}

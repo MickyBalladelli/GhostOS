@@ -680,3 +680,65 @@ impl Device for Rc<RefCell<Nvme>> {
         self.borrow_mut().reset();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+
+    fn disk(name: &str) -> DiskImage {
+        let path = std::env::temp_dir().join(format!("synos-nvme-{name}-{}", std::process::id()));
+        let mut file = File::create(path.clone()).unwrap();
+        file.set_len(4096).unwrap();
+        file.flush().unwrap();
+        DiskImage::open(path).unwrap()
+    }
+
+    fn command(opcode: u8, buffer: u64, sector: u64, sectors: u16) -> [u8; 64] {
+        let mut cmd = [0u8; 64];
+        cmd[0] = opcode;
+        cmd[4..8].copy_from_slice(&1u32.to_le_bytes());
+        cmd[8..16].copy_from_slice(&buffer.to_le_bytes());
+        cmd[40..44].copy_from_slice(&(sector as u32).to_le_bytes());
+        cmd[44..48].copy_from_slice(&(((u32::from(sectors) - 1) << 16) | (sector >> 32) as u32).to_le_bytes());
+        cmd
+    }
+
+    #[test]
+    fn controller_registers_identify_and_io_round_trip() {
+        let mut nvme = Nvme::new();
+        nvme.attach_namespace(disk("round-trip"));
+        assert_eq!(Device::read(&nvme, REG_VS, 4).unwrap(), 0x0001_0300);
+        assert!(nvme.cap & CAP_CSS_NVM != 0);
+
+        let mut mmu = Mmu::new(0x20_000);
+        let buffer = 0x2000;
+        let payload = [0x5Au8; 512];
+        mmu.write_phys(buffer, &payload).unwrap();
+        assert_eq!(nvme.handle_io(&mut mmu, &command(NVM_WRITE, buffer, 1, 1)), STS_SUCCESS);
+        mmu.write_phys(buffer, &[0; 512]).unwrap();
+        assert_eq!(nvme.handle_io(&mut mmu, &command(NVM_READ, buffer, 1, 1)), STS_SUCCESS);
+        assert_eq!(mmu.read_phys(buffer, 512).unwrap(), payload);
+
+        let identify_buffer = 0x3000;
+        let mut identify = command(ADMIN_IDENTIFY, identify_buffer, 0, 1);
+        identify[40..44].copy_from_slice(&0u32.to_le_bytes());
+        assert_eq!(nvme.handle_admin(&mut mmu, &identify), STS_SUCCESS);
+        assert_eq!(u64::from_le_bytes(mmu.read_phys(identify_buffer, 8).unwrap().try_into().unwrap()), 8);
+    }
+
+    #[test]
+    fn invalid_namespace_and_bounds_fail_cleanly() {
+        let mut nvme = Nvme::new();
+        let mut mmu = Mmu::new(0x10_000);
+        let mut cmd = command(NVM_READ, 0x2000, 0, 1);
+        cmd[4..8].copy_from_slice(&2u32.to_le_bytes());
+        assert_eq!(nvme.handle_io(&mut mmu, &cmd), STS_INVALID_NS);
+        nvme.attach_namespace(disk("bounds"));
+        assert_eq!(nvme.handle_io(&mut mmu, &command(NVM_READ, 0x2000, 8, 1)), STS_LBA_OUT_OF_RANGE);
+        assert_eq!(Device::read(&nvme, REG_VS, 2), Err(DeviceError::UnsupportedSize));
+        nvme.reset();
+        assert_eq!(nvme.ns1.as_ref().map(|n| n.image.sector_count()), Some(8));
+    }
+}

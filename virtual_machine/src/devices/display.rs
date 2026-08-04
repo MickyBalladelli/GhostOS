@@ -979,3 +979,52 @@ impl PortDevice for VgaPorts {
         self.0.borrow_mut().reset();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn text_and_framebuffer_mmio_round_trip_and_bounds() {
+        let state = Rc::new(RefCell::new(DisplayState::new()));
+        let mut text = VgaTextDevice::new(state.clone());
+        let mut fb = VesaFbDevice::new(state.clone());
+
+        text.write(VGA_TEXT_BASE, 0x0741, 2).unwrap();
+        assert_eq!(text.read(VGA_TEXT_BASE, 2).unwrap(), 0x0741);
+        assert_eq!(state.borrow().text_char(0, 0), Some(b'A'));
+        assert_eq!(state.borrow().text_attr(0, 0), Some(0x07));
+
+        fb.write(VESA_LFB_BASE + 3, 0xAABB_CCDD, 4).unwrap();
+        assert_eq!(fb.read(VESA_LFB_BASE + 3, 4).unwrap(), 0xAABB_CCDD);
+        assert_eq!(fb.read(VESA_LFB_BASE + VESA_FB_SIZE as u64 - 1, 2), Err(DeviceError::InvalidAddress));
+        assert_eq!(text.write(VGA_TEXT_BASE, 0, 3), Err(DeviceError::UnsupportedSize));
+    }
+
+    #[test]
+    fn vga_ports_control_cursor_and_palette() {
+        let state = Rc::new(RefCell::new(DisplayState::new()));
+        let mut ports = VgaPorts::new(state.clone());
+
+        ports.write(VGA_CRTC_INDEX, 0x0F, 1).unwrap();
+        ports.write(VGA_CRTC_DATA, 81, 1).unwrap();
+        ports.write(VGA_CRTC_INDEX, 0x0E, 1).unwrap();
+        ports.write(VGA_CRTC_DATA, 0, 1).unwrap();
+        assert_eq!(state.borrow().cursor(), (1, 1));
+
+        ports.write(VGA_DAC_WRITE_INDEX, 2, 1).unwrap();
+        ports.write(VGA_DAC_DATA, 1, 1).unwrap();
+        ports.write(VGA_DAC_DATA, 2, 1).unwrap();
+        ports.write(VGA_DAC_DATA, 3, 1).unwrap();
+        ports.write(VGA_DAC_READ_INDEX, 2, 1).unwrap();
+        assert_eq!(ports.read(VGA_DAC_DATA, 1).unwrap(), 1);
+        assert_eq!(ports.read(VGA_DAC_DATA, 1).unwrap(), 2);
+        assert_eq!(ports.read(VGA_DAC_DATA, 1).unwrap(), 3);
+
+        ports.reset();
+        assert_eq!(state.borrow().mode(), VideoMode::Text);
+        assert_eq!(state.borrow().cursor(), (0, 0));
+    }
+}

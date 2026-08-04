@@ -84,3 +84,37 @@ impl PortDevice for PowerControl {
         *self.state.borrow_mut() = PowerState::Running
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_and_reboot_are_notified_and_reset() {
+        let state = Rc::new(RefCell::new(PowerState::Running));
+        let events = Rc::new(RefCell::new(VecDeque::new()));
+        let mut power = PowerControl::new(state.clone());
+        power.attach_notifications(events.clone());
+
+        power.write(POWER_CONTROL_PORT, (5 << 10) | SLP_EN as u64, 2).unwrap();
+        assert_eq!(*state.borrow(), PowerState::Shutdown);
+        assert_eq!(events.borrow_mut().pop_front(), Some(PowerNotification::Shutdown));
+
+        power.write(POWER_CONTROL_PORT, (0 << 10) | SLP_EN as u64, 4).unwrap();
+        assert_eq!(*state.borrow(), PowerState::Reboot);
+        assert_eq!(events.borrow_mut().pop_front(), Some(PowerNotification::Reboot));
+
+        power.write(POWER_CONTROL_PORT, 0, 2).unwrap();
+        assert_eq!(*state.borrow(), PowerState::Reboot);
+        power.reset();
+        assert_eq!(*state.borrow(), PowerState::Running);
+    }
+
+    #[test]
+    fn invalid_power_access_is_rejected() {
+        let state = Rc::new(RefCell::new(PowerState::Running));
+        let mut power = PowerControl::new(state);
+        assert_eq!(power.read(POWER_CONTROL_PORT + 1, 2), Err(DeviceError::UnsupportedSize));
+        assert_eq!(power.write(POWER_CONTROL_PORT, 0, 1), Err(DeviceError::UnsupportedSize));
+    }
+}

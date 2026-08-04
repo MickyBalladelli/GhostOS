@@ -283,19 +283,19 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 
 ### 10.3 Device Tests
 
-- [ ] Test PCI host bridge legacy ports, ECAM, device enumeration, BAR sizing, config writes, absent devices, and invalid bus/device/function values.
-- [ ] Test APIC/PIC register behavior, MSR/MMIO coherence, IRR/ISR/TMR priority, TPR/PPR filtering, EOI, IPI, LVTs, timer modes, and interrupt routing.
-- [ ] Test PIT modes, latching, read-back, BCD, divisor limits, IRQ0 delivery, and host-time progression.
-- [ ] Test HPET counter, comparator, periodic/one-shot mode, legacy routing, enable/disable, overflow, and timer interrupt delivery.
-- [ ] Test serial 16550 registers, divisor latch, FIFO, line status, transmit output, receive input, IRQ enable/priority, reset, and overrun.
-- [ ] Test PS/2 keyboard and mouse queues, controller commands, self-tests, enable/disable, status bits, IRQ vectors, and input overflow.
-- [ ] Test power control, shutdown, reboot, reset, repeated commands, and invalid power states.
-- [ ] Test VGA text memory, cursor, palette, mode changes, VESA framebuffer, GOP modes, pixel formats, bounds, and reset.
-- [ ] Test AHCI and NVMe identification, command setup, DMA reads/writes, queue limits, interrupts, flush, invalid PRDT/PRP, reset, and I/O failure.
-- [ ] Test Virtio feature negotiation, queue setup, descriptor chains, indirect descriptors, readable/writable buffers, notifications, status/reset, and malformed chains.
-- [ ] Test Virtio block flush/read/write, console input/output, RNG bounds, and net transmit/receive behavior.
-- [ ] Test E1000 registers, descriptor rings, MAC filtering, transmit/receive, interrupts, reset, and invalid descriptors.
-- [ ] Test raw, VHD, and QCOW2 image parsing, sector bounds, sparse/unsupported images, persistence, flush, and corruption errors.
+- [x] Test PCI host bridge legacy ports, ECAM, device enumeration, BAR sizing, config writes, absent devices, and invalid bus/device/function values.
+- [x] Test APIC/PIC register behavior, MSR/MMIO coherence, IRR/ISR/TMR priority, TPR/PPR filtering, EOI, IPI, LVTs, timer modes, and interrupt routing.
+- [x] Test PIT modes, latching, read-back, BCD, divisor limits, IRQ0 delivery, and host-time progression.
+- [x] Test HPET counter, comparator, periodic/one-shot mode, legacy routing, enable/disable, overflow, and timer interrupt delivery.
+- [x] Test serial 16550 registers, divisor latch, FIFO, line status, transmit output, receive input, IRQ enable/priority, reset, and overrun.
+- [x] Test PS/2 keyboard and mouse queues, controller commands, self-tests, enable/disable, status bits, IRQ vectors, and input overflow.
+- [x] Test power control, shutdown, reboot, reset, repeated commands, and invalid power states.
+- [x] Test VGA text memory, cursor, palette, mode changes, VESA framebuffer, GOP modes, pixel formats, bounds, and reset.
+- [x] Test AHCI and NVMe identification, command setup, DMA reads/writes, queue limits, interrupts, flush, invalid PRDT/PRP, reset, and I/O failure.
+- [x] Test Virtio feature negotiation, queue setup, descriptor chains, indirect descriptors, readable/writable buffers, notifications, status/reset, and malformed chains.
+- [x] Test Virtio block flush/read/write, console input/output, RNG bounds, and net transmit/receive behavior.
+- [x] Test E1000 registers, descriptor rings, MAC filtering, transmit/receive, interrupts, reset, and invalid descriptors.
+- [x] Test raw, VHD, and QCOW2 image parsing, sector bounds, sparse/unsupported images, persistence, flush, and corruption errors.
 
 ### 10.4 Firmware, Boot, and SynOS Tests
 
