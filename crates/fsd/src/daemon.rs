@@ -985,7 +985,8 @@ impl<
             return Err(DaemonError::NotFound)
         }
         let mut metadata = None;
-        let mut written = 0;
+        let mut links = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
+        let mut link_count = 0;
         for matched in matches[..match_count].iter().flatten() {
             let selected = versioned_name(matched.as_str(), versioned.version)?;
             let current = self.filesystem.lookup(selected.as_str())?;
@@ -993,32 +994,33 @@ impl<
             let mut entries = [LinkEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
             let count = self.filesystem.list_links(selected.as_str(), &mut entries)?;
             for entry in entries.iter().take(count) {
-                let suffix = if entry.version == 0 { 0 } else { 1 + digits(entry.version) };
-                let required = entry.path.as_bytes().len() + suffix + 1;
-                let duplicate = output[..written]
-                    .split(|byte| *byte == b'\n')
-                    .any(|line| line == entry.path.as_bytes());
-                if duplicate {
-                    continue
-                }
-                if written + required > output.len() {
-                    return Err(DaemonError::BufferTooSmall {
-                        required: written + required,
-                    });
-                }
-                let end = written + entry.path.as_bytes().len();
-                output[written..end].copy_from_slice(entry.path.as_bytes());
-                written = end;
-                if entry.version != 0 {
-                    output[written] = b';';
-                    written += 1;
-                    written += write_decimal(&mut output[written..], entry.version);
-                }
-                output[written] = b'\n';
-                written += 1;
+                insert_link_entry(&mut links, &mut link_count, *entry)?;
             }
         }
         let metadata = metadata.ok_or(DaemonError::NotFound)?;
+        let mut required = 0usize;
+        for entry in links.iter().take(link_count) {
+            let suffix = if entry.version == 0 { 0 } else { 1 + digits(entry.version) };
+            required = required
+                .checked_add(entry.path.as_bytes().len() + suffix + 1)
+                .ok_or(DaemonError::BufferTooSmall { required: usize::MAX })?;
+        }
+        if required > output.len() {
+            return Err(DaemonError::BufferTooSmall { required })
+        }
+        let mut written = 0;
+        for entry in links.iter().take(link_count) {
+            let end = written + entry.path.as_bytes().len();
+            output[written..end].copy_from_slice(entry.path.as_bytes());
+            written = end;
+            if entry.version != 0 {
+                output[written] = b';';
+                written += 1;
+                written += write_decimal(&mut output[written..], entry.version);
+            }
+            output[written] = b'\n';
+            written += 1;
+        }
         Ok((
             FileInfo {
                 capability: authority,
@@ -1862,6 +1864,37 @@ fn versioned_name(path: &str, selector: VersionSelector) -> Result<Name, DaemonE
     let end = path.len() + 1;
     write_decimal(&mut bytes[end..required], version);
     Name::from_bytes(&bytes[..required], false)
+}
+
+fn insert_link_entry(
+    entries: &mut [LinkEntry],
+    count: &mut usize,
+    entry: LinkEntry,
+) -> Result<(), DaemonError> {
+    if entries[..*count]
+        .iter()
+        .any(|current| current.path == entry.path && current.version == entry.version)
+    {
+        return Ok(())
+    }
+    if *count == entries.len() {
+        return Err(DaemonError::BufferTooSmall {
+            required: (*count).saturating_add(1),
+        })
+    }
+    let insert_at = entries[..*count]
+        .iter()
+        .position(|current| {
+            current.path > entry.path
+                || current.path == entry.path && current.version > entry.version
+        })
+        .unwrap_or(*count);
+    for index in (insert_at..*count).rev() {
+        entries[index + 1] = entries[index];
+    }
+    entries[insert_at] = entry;
+    *count += 1;
+    Ok(())
 }
 
 fn same_volume(

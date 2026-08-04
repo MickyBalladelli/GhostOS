@@ -216,13 +216,6 @@ impl LinkPage {
     }
 
     pub fn push(&mut self, path: Path) -> Result<(), Status> {
-        let slot = self.entries.get_mut(self.count).ok_or(Status::NO_SPACE)?;
-        *slot = Some(path);
-        self.count += 1;
-        Ok(())
-    }
-
-    pub fn push_unique(&mut self, path: Path) -> Result<(), Status> {
         if self
             .entries
             .iter()
@@ -231,6 +224,22 @@ impl LinkPage {
         {
             return Ok(())
         }
+        if self.count == self.entries.len() {
+            return Err(Status::NO_SPACE)
+        }
+        let insert_at = self.entries[..self.count]
+            .iter()
+            .position(|entry| entry.is_some_and(|entry| entry.as_str() > path.as_str()))
+            .unwrap_or(self.count);
+        for index in (insert_at..self.count).rev() {
+            self.entries[index + 1] = self.entries[index];
+        }
+        self.entries[insert_at] = Some(path);
+        self.count += 1;
+        Ok(())
+    }
+
+    pub fn push_unique(&mut self, path: Path) -> Result<(), Status> {
         self.push(path)
     }
 
@@ -1066,6 +1075,7 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             .resolve(path_value.as_ref().map(Text::as_str))?;
         let create = boolean(command.get("CREATE"))?;
         let recursive = boolean(command.get("RECURSIVE"))?;
+        let continuation = integer(command.get("CONTINUATION"))?;
         if path.as_str().contains(';') {
             return Err(Status::INVALID_PATH)
         }
@@ -1073,12 +1083,9 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             if create || recursive {
                 return Err(Status::INVALID_ARGUMENT)
             }
-            let mut matches = PathCompletionPage::new();
-            expand_paths(&mut self.source, path.as_str(), &mut matches)?;
-            if matches.len() == 0 {
-                return Err(Status::NOT_FOUND)
-            }
-            return wildcard_output("directory", path.as_str(), matches);
+            let mut page = DirectoryPage::new();
+            let path = self.list_directory_page(command, continuation, &mut page)?;
+            return directory_output(path, page, continuation)
         }
         let path = literal_path(path.as_str())?;
         if create {
@@ -1088,7 +1095,6 @@ impl<Source: FilesystemSource, const CAPACITY: usize> FilesystemExecutor<Source,
             return metadata_output("created", metadata);
         }
         let mut page = DirectoryPage::new();
-        let continuation = integer(command.get("CONTINUATION"))?;
         self.source.list(path.as_str(), continuation, &mut page)?;
         directory_output(path, page, continuation)
     }
@@ -1480,49 +1486,6 @@ fn directory_output(
         let mut field = Text::<64>::empty();
         field.push_str(prefix).map_err(|_| Status::NO_SPACE)?;
         field.push_str("link-count").map_err(|_| Status::NO_SPACE)?;
-    }
-    Ok(output)
-}
-
-fn wildcard_output(
-    label: &str,
-    pattern: &str,
-    matches: PathCompletionPage,
-) -> Result<StructuredOutput, Status> {
-    let mut output = StructuredOutput::new(Status::NORMAL);
-    insert_text(&mut output, "operation", label)?;
-    insert_text(&mut output, "path", pattern)?;
-    insert(
-        &mut output,
-        "entry-count",
-        OutputValue::Unsigned(matches.len() as u64),
-    )?;
-    insert(
-        &mut output,
-        "match-count",
-        OutputValue::Unsigned(matches.len() as u64),
-    )?;
-    for (index, path) in matches.entries().enumerate().take(6) {
-        let mut field = Text::<64>::empty();
-        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
-        write_u32(&mut field, index as u32)?;
-        field.push_str("-name").map_err(|_| Status::NO_SPACE)?;
-        insert_text(&mut output, field.as_str(), path.as_str())?;
-        let mut field = Text::<64>::empty();
-        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
-        write_u32(&mut field, index as u32)?;
-        field.push_str("-type").map_err(|_| Status::NO_SPACE)?;
-        insert_text(&mut output, field.as_str(), "MATCH")?;
-        let mut field = Text::<64>::empty();
-        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
-        write_u32(&mut field, index as u32)?;
-        field.push_str("-size").map_err(|_| Status::NO_SPACE)?;
-        insert(&mut output, field.as_str(), OutputValue::Unsigned(0))?;
-        let mut field = Text::<64>::empty();
-        field.push_str("entry-").map_err(|_| Status::NO_SPACE)?;
-        write_u32(&mut field, index as u32)?;
-        field.push_str("-version").map_err(|_| Status::NO_SPACE)?;
-        insert(&mut output, field.as_str(), OutputValue::Unsigned(0))?;
     }
     Ok(output)
 }

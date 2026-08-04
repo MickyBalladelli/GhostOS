@@ -153,7 +153,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Add QEMU and remote-terminal coverage proving that a file can be opened, edited, saved as a new version, reopened, and exited without saving.
   - [x] Document the `EDIT`/`EDT` workflow, keymap, status line, version behavior, save prompts, and examples in the shell and project READMEs.
 
-- [ ] **Manage File Links**
+- [x] **Manage File Links**
   - [x] Add a `LINK source target` command and register aliases and qualifiers.
   - [x] Resolve source and target paths from absolute paths, relative paths, and the active default directory.
   - [x] Define whether linking selects the latest version or an explicit `;version`.
