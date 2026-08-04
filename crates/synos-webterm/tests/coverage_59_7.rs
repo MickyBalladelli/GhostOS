@@ -1,6 +1,8 @@
 use std::vec::Vec;
 
 use synos_status::Status;
+use syn_shell::editor::Key;
+use syn_shell::file_editor::{FileEditor, FileEditorAction};
 use synos_webterm::{
     AuthenticatedPrincipal, ShellBackend, SshAuthenticator, SshDaemon, SshError, Terminal,
     TerminalSize,
@@ -303,4 +305,218 @@ fn remote_terminal_rmdir_keeps_non_empty_and_protected_directories_safe() {
         &output[..count],
         b"ok\ndirectory not empty\naccess denied\nok\naccess denied\naccess denied\nnot found\ndirectory not empty\n"
     );
+}
+
+struct RemoteEditorShell {
+    command: Vec<u8>,
+    output: Vec<u8>,
+    file: Vec<u8>,
+    version: u32,
+    editor: Option<FileEditor<128>>,
+    discard_prompt: bool,
+    terminal: TerminalSize,
+    resized: Option<TerminalSize>,
+    closed: bool,
+}
+
+impl RemoteEditorShell {
+    fn new(terminal: TerminalSize) -> Self {
+        Self {
+            command: Vec::new(),
+            output: Vec::new(),
+            file: Vec::new(),
+            version: 1,
+            editor: None,
+            discard_prompt: false,
+            terminal,
+            resized: None,
+            closed: false,
+        }
+    }
+
+    fn render_editor(&mut self, editor: &mut FileEditor<128>) -> Result<(), SshError> {
+        let rendered = editor
+            .render::<8192>(self.terminal.columns as usize, self.terminal.rows as usize)
+            .map_err(|_| SshError::WouldBlock)?;
+        self.output.extend_from_slice(rendered.as_str().as_bytes());
+        Ok(())
+    }
+
+    fn open_editor(&mut self) -> Result<(), SshError> {
+        let mut editor = FileEditor::new("/note", self.version, &self.file)
+            .map_err(|_| SshError::WouldBlock)?;
+        self.render_editor(&mut editor)?;
+        self.editor = Some(editor);
+        Ok(())
+    }
+
+    fn save_editor(&mut self, editor: &mut FileEditor<128>) {
+        self.file.clear();
+        self.file.extend_from_slice(editor.bytes());
+        self.version += 1;
+        editor.mark_saved(self.version);
+        self.output.extend_from_slice(
+            format!(
+                "EDIT operation=SAVED path=/note size={} version={}\n",
+                editor.len(),
+                editor.version(),
+            )
+            .as_bytes(),
+        );
+    }
+
+    fn finish_editor(&mut self, operation: &str, editor: FileEditor<128>) {
+        self.output.extend_from_slice(
+            format!(
+                "EDIT operation={operation} path=/note size={} version={}\n",
+                editor.len(),
+                editor.version(),
+            )
+            .as_bytes(),
+        );
+    }
+
+    fn handle_editor_byte(&mut self, byte: u8) -> Result<(), SshError> {
+        if self.discard_prompt {
+            self.discard_prompt = false;
+            if matches!(byte, b'y' | b'Y') {
+                if let Some(editor) = self.editor.take() {
+                    self.finish_editor("DISCARDED", editor);
+                }
+            } else if let Some(mut editor) = self.editor.take() {
+                self.render_editor(&mut editor)?;
+                self.editor = Some(editor);
+            }
+            return Ok(())
+        }
+
+        let key = match byte {
+            19 => Key::Save,
+            24 => Key::DiscardExit,
+            26 => Key::SaveExit,
+            _ => Key::Character(byte as char),
+        };
+        let mut editor = self.editor.take().ok_or(SshError::InvalidSession)?;
+        let action = editor.handle(key).map_err(|_| SshError::WouldBlock)?;
+        match action {
+            FileEditorAction::Save | FileEditorAction::SaveExit => {
+                let save_exit = action == FileEditorAction::SaveExit;
+                if editor.is_dirty() {
+                    self.save_editor(&mut editor);
+                }
+                if save_exit {
+                    self.finish_editor("SAVED", editor);
+                } else {
+                    self.render_editor(&mut editor)?;
+                    self.editor = Some(editor);
+                }
+            }
+            FileEditorAction::PromptDiscard => {
+                self.discard_prompt = true;
+                self.output.extend_from_slice(b"Discard? [y/N]\n");
+                self.editor = Some(editor);
+            }
+            FileEditorAction::DiscardExit => self.finish_editor("DISCARDED", editor),
+            FileEditorAction::Redraw => {
+                self.render_editor(&mut editor)?;
+                self.editor = Some(editor);
+            }
+            FileEditorAction::None => self.editor = Some(editor),
+        }
+        Ok(())
+    }
+
+    fn handle_command(&mut self, command: &[u8]) -> Result<(), SshError> {
+        match command {
+            b"EDIT /note" | b"EDT /note" => self.open_editor(),
+            b"TYPE /note" => {
+                self.output.extend_from_slice(&self.file);
+                self.output.push(b'\n');
+                Ok(())
+            }
+            _ => Err(SshError::WouldBlock),
+        }
+    }
+}
+
+impl ShellBackend for RemoteEditorShell {
+    type Handle = u64;
+
+    fn open(
+        &mut self,
+        _principal: AuthenticatedPrincipal,
+        terminal: TerminalSize,
+    ) -> Result<Self::Handle, SshError> {
+        self.terminal = terminal;
+        Ok(1)
+    }
+
+    fn input(&mut self, _handle: Self::Handle, bytes: &[u8]) -> Result<usize, SshError> {
+        for byte in bytes {
+            if self.editor.is_some() {
+                self.handle_editor_byte(*byte)?;
+            } else {
+                self.command.push(*byte);
+                if *byte == b'\n' {
+                    let command = self.command[..self.command.len() - 1].to_vec();
+                    self.command.clear();
+                    self.handle_command(&command)?;
+                }
+            }
+        }
+        Ok(bytes.len())
+    }
+
+    fn resize(&mut self, _handle: Self::Handle, terminal: TerminalSize) -> Result<(), SshError> {
+        self.terminal = terminal;
+        self.resized = Some(terminal);
+        if let Some(mut editor) = self.editor.take() {
+            self.render_editor(&mut editor)?;
+            self.editor = Some(editor);
+        }
+        Ok(())
+    }
+
+    fn output(&mut self, _handle: Self::Handle, bytes: &mut [u8]) -> Result<usize, SshError> {
+        let count = bytes.len().min(self.output.len());
+        bytes[..count].copy_from_slice(&self.output[..count]);
+        self.output.drain(..count);
+        Ok(count)
+    }
+
+    fn close(&mut self, _handle: Self::Handle) {
+        self.closed = true;
+    }
+}
+
+#[test]
+fn remote_terminal_editor_saves_reopens_discards_and_resizes() {
+    let terminal = TerminalSize::new(80, 24).unwrap();
+    let mut daemon = SshDaemon::<_, _, 1>::new(Auth, RemoteEditorShell::new(terminal));
+    let session = daemon
+        .open_public_key_session("user", b"key", b"sig", b"hash", terminal)
+        .expect("remote editor session opens");
+
+    daemon.input(session, b"EDIT /note\nremote text").unwrap();
+    daemon.resize(session, TerminalSize::new(100, 30).unwrap()).unwrap();
+    daemon.input(session, &[19, 26]).unwrap();
+    daemon.input(session, b"EDT /note\nremote text").unwrap();
+    daemon.input(session, &[24, b'y']).unwrap();
+    daemon.input(session, b"TYPE /note\n").unwrap();
+
+    let mut output = Vec::new();
+    let mut chunk = [0; 1024];
+    loop {
+        let count = daemon.output(session, &mut chunk).unwrap();
+        if count == 0 {
+            break
+        }
+        output.extend_from_slice(&chunk[..count]);
+    }
+    let output = String::from_utf8_lossy(&output);
+    assert!(output.contains("EDIT operation=SAVED path=/note size=11 version=2"));
+    assert!(output.contains("EDIT operation=DISCARDED path=/note size=22 version=2"));
+    assert!(output.ends_with("remote text\n"));
+
+    daemon.close(session).unwrap();
 }

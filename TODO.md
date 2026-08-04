@@ -132,7 +132,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Close the file capability on success, failure, cancellation, and partial reads.
   - [x] Enforce read capability and report directories, missing files, corrupt versions, and I/O failures correctly.
 
-- [ ] **Full-Screen File Editor (`EDIT` / `EDT`)
+- [x] **Full-Screen File Editor (`EDIT` / `EDT`)
   - [x] Define `EDIT file[;version]` syntax, the `EDT` alias, default-directory resolution, and behavior for missing files, directories, binary files, and read-only files.
   - [x] Define SynFS version semantics: open the latest version by default, allow an explicit version for editing, and save changes as a new version without mutating the original.
   - [x] Add an editor session state machine for the open file capability, edit buffer, cursor, viewport, selection, dirty state, mode, and exit result.
@@ -150,7 +150,7 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Prompt before discarding unsaved changes and make both save-and-exit and exit-without-saving restore terminal modes and release file capabilities.
   - [x] Return stable shell status and structured output for opened, saved, discarded, cancelled, conflicted, and failed edit sessions.
   - [x] Add parser, editor-buffer, keymap, selection, scrolling, resize, rendering, UTF-8, save/versioning, failure-recovery, capability, and terminal integration coverage.
-  - [ ] Add QEMU and remote-terminal coverage proving that a file can be opened, edited, saved as a new version, reopened, and exited without saving.
+  - [x] Add QEMU and remote-terminal coverage proving that a file can be opened, edited, saved as a new version, reopened, and exited without saving.
   - [x] Document the `EDIT`/`EDT` workflow, keymap, status line, version behavior, save prompts, and examples in the shell and project READMEs.
 
 - [ ] **Manage File Links**

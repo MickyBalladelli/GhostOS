@@ -292,6 +292,47 @@ fn qemu_root_filesystem_mount_and_application_file_io() {
 #[cfg(unix)]
 #[test]
 #[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+fn qemu_full_screen_editor_save_reopen_and_discard_workflow() {
+    let Some(output) = run_qemu_shell_session("qemu-full-screen-editor", |qmp| {
+        send_qemu_command(qmp, "create /data/editor-e2e");
+        send_qemu_command(qmp, "edit /data/editor-e2e");
+        for key in "saved text".bytes() {
+            send_qemu_key(qmp, &key_name(key));
+        }
+        send_qemu_key(qmp, "ctrl-s");
+        send_qemu_key(qmp, "ctrl-z");
+        send_qemu_command(qmp, "directory /data");
+        send_qemu_command(qmp, "type /data/editor-e2e");
+        send_qemu_command(qmp, "edt /data/editor-e2e");
+        for key in "discarded text".bytes() {
+            send_qemu_key(qmp, &key_name(key));
+        }
+        send_qemu_key(qmp, "ctrl-x");
+        send_qemu_key(qmp, "y");
+        send_qemu_command(qmp, "type /data/editor-e2e");
+    }) else {
+        return;
+    };
+
+    assert!(
+        output.contains("EDIT operation=SAVED")
+            && output.contains("path=/data/editor-e2e")
+            && output.contains("version=2"),
+        "QEMU did not save the edited file as a new version; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("saved text"),
+        "QEMU did not reopen and read the saved editor contents; serial output was: {output:?}"
+    );
+    assert!(
+        output.contains("EDIT operation=DISCARDED"),
+        "QEMU did not exit the reopened editor without saving; serial output was: {output:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_wildcard_version_and_boundary_workflow() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-wildcard-version",
