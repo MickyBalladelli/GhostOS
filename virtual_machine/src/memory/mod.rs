@@ -102,6 +102,16 @@ impl FrameAllocator {
         self.free.len()
     }
 
+    fn add_memory(&mut self, old_size: usize, new_size: usize) {
+        let old_frames = old_size / PAGE_SIZE;
+        let new_frames = new_size / PAGE_SIZE;
+        if new_frames <= old_frames {
+            return
+        }
+        self.free.extend(old_frames..new_frames);
+        self.total_frames = new_frames;
+    }
+
     pub fn alloc(&mut self) -> Option<u64> {
         self.free.pop().map(|f| f as u64 * PAGE_SIZE as u64)
     }
@@ -345,6 +355,24 @@ impl Mmu {
 
     pub fn ram_size(&self) -> usize {
         self.ram.len()
+    }
+
+    /// Add page-aligned physical RAM at the end of the current RAM range.
+    /// Existing guest mappings and contents remain untouched.
+    pub fn hotplug_memory(&mut self, size: usize) -> Result<u64, MemoryError> {
+        if size == 0 || size % PAGE_SIZE != 0 {
+            return Err(MemoryError::AlignmentError)
+        }
+        let old_size = self.ram.len();
+        let new_size = old_size
+            .checked_add(size)
+            .ok_or(MemoryError::InvalidAddress)?;
+        self.ram.resize(new_size, 0);
+        self.allocator.add_memory(old_size, new_size);
+        self.overcommit_limit = self
+            .overcommit_limit
+            .saturating_add((size / PAGE_SIZE).saturating_mul(4));
+        Ok(old_size as u64)
     }
 
     pub(crate) fn snapshot_state(&self) -> MmuState {

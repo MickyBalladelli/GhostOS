@@ -245,11 +245,11 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
   - [ ] HVF integration (Apple Silicon)
   - [ ] WHPX integration (Windows)
 
-- [ ] **Guest Features**
-  - [ ] Guest agent communication
-  - [ ] Time synchronization (PV clock)
-  - [ ] Shutdown/reboot notifications
-  - [ ] Memory hot-plug support
+- [x] **Guest Features**
+  - [x] Guest agent communication
+  - [x] Time synchronization (PV clock)
+  - [x] Shutdown/reboot notifications
+  - [x] Memory hot-plug support
 
 - [ ] **Cluster Testing**
   - [ ] Multi-node VM orchestration

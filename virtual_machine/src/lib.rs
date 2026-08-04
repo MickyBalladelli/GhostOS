@@ -17,8 +17,13 @@ pub use devices::{
     DiskMode, DiskPersistence, DiskRole, DiskSpec, DisplayState, E1000, E1000_MMIO_SIZE,
     GopMode,
     GopPixelFormat, Hpet, InterruptController, LegacyPic, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
-    PortBus, PortDevice, PowerControl, PowerState, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
+    PortBus, PortDevice, PowerControl, PowerNotification, PowerState, Ps2Controller, Serial16550, UefiGop, VesaFbDevice, VgaPorts,
     VgaTextDevice, VideoMode, PS2_DATA_PORT, PS2_PORT_COUNT, PS2_STATUS_PORT,
+    GuestAgent, GuestEvent, MemoryHotplugDevice, PvClock,
+    GUEST_AGENT_FEATURE_AGENT, GUEST_AGENT_FEATURE_MEMORY_HOTPLUG, GUEST_AGENT_FEATURE_POWER_EVENTS,
+    GUEST_AGENT_FEATURE_PV_CLOCK, GUEST_AGENT_IRQ_VECTOR, GUEST_AGENT_MAGIC, GUEST_AGENT_MMIO_BASE,
+    GUEST_AGENT_MMIO_SIZE, GUEST_AGENT_VERSION, KVM_SYSTEM_TIME_NEW, KVM_WALL_CLOCK_NEW,
+    MEMORY_HOTPLUG_IRQ_VECTOR, MEMORY_HOTPLUG_MMIO_BASE, MEMORY_HOTPLUG_MMIO_SIZE,
     StorageError, VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
     SynosPersistencePort,
     SystemDiskBootArtifacts, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout,
@@ -56,6 +61,7 @@ pub use terminal::{
 };
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
 use synos_boot_protocol::{
@@ -82,6 +88,7 @@ pub const VIRTIO_RNG_IO_BASE: u16 = 0x5300;
 
 pub struct VmConfig {
     pub memory_size: usize,
+    pub max_memory_size: usize,
     pub kernel_path: Option<PathBuf>,
     pub initrd_path: Option<PathBuf>,
     pub boot_args: String,
@@ -97,6 +104,7 @@ impl Default for VmConfig {
     fn default() -> Self {
         Self {
             memory_size: 128 * 1024 * 1024,
+            max_memory_size: 1024 * 1024 * 1024,
             kernel_path: None,
             initrd_path: None,
             boot_args: String::new(),
@@ -117,6 +125,11 @@ pub struct Vm {
     ports: PortBus,
     serial: Option<Rc<RefCell<Serial16550>>>,
     power_state: Rc<RefCell<PowerState>>,
+    power_notifications: Rc<RefCell<VecDeque<PowerNotification>>>,
+    guest_power_notifications: Rc<RefCell<VecDeque<PowerNotification>>>,
+    guest_agent: Rc<RefCell<GuestAgent>>,
+    pv_clock: Rc<RefCell<PvClock>>,
+    memory_hotplug: Rc<RefCell<MemoryHotplugDevice>>,
     ps2: Rc<RefCell<Ps2Controller>>,
     pci: Rc<RefCell<PciHostBridge>>,
     apic: Rc<RefCell<LocalApic>>,
@@ -150,7 +163,8 @@ impl Vm {
     }
 
     /// Create a VM and attach every configured disk before firmware starts.
-    pub fn try_with_config(config: VmConfig) -> Result<Self, VmError> {
+    pub fn try_with_config(mut config: VmConfig) -> Result<Self, VmError> {
+        config.max_memory_size = config.max_memory_size.max(config.memory_size);
         DiskManager::validate_specs(&config.disks).map_err(disk_error_to_vm)?;
         let mut vm = Self::build_with_config(config);
         vm.attach_configured_disks()?;
@@ -173,10 +187,25 @@ impl Vm {
         ports.attach(0x20, 2, Box::new(LegacyPic::new(apic.clone())));
         ports.attach(0xa0, 2, Box::new(LegacyPic::new(apic.clone())));
         let power_state = Rc::new(RefCell::new(PowerState::Running));
+        let power_notifications = Rc::new(RefCell::new(VecDeque::new()));
+        let guest_power_notifications = Rc::new(RefCell::new(VecDeque::new()));
+        let guest_agent = Rc::new(RefCell::new(GuestAgent::new()));
+        guest_agent.borrow().attach_apic(apic.clone());
+        let pv_clock = Rc::new(RefCell::new(PvClock::new()));
+        let memory_hotplug = Rc::new(RefCell::new(MemoryHotplugDevice::new(
+            config.memory_size as u64,
+            config.max_memory_size.max(config.memory_size) as u64,
+        )));
+        memory_hotplug.borrow().attach_apic(apic.clone());
         ports.attach(
             POWER_CONTROL_PORT,
             4,
-            Box::new(PowerControl::new(power_state.clone())),
+            Box::new({
+                let mut power = PowerControl::new(power_state.clone());
+                power.attach_notifications(power_notifications.clone());
+                power.attach_notifications(guest_power_notifications.clone());
+                power
+            }),
         );
         let serial = if config.enable_serial {
             let serial = Rc::new(RefCell::new(Serial16550::new(config.serial_port)));
@@ -221,6 +250,16 @@ impl Vm {
         hpet.borrow_mut().attach_apic(apic.clone());
         hpet.borrow_mut().set_legacy_vector(0x20);
         mmu.attach_mmio(HPET_BASE_DEFAULT, HPET_SIZE, Box::new(hpet.clone()));
+        mmu.attach_mmio(
+            GUEST_AGENT_MMIO_BASE,
+            GUEST_AGENT_MMIO_SIZE,
+            Box::new(guest_agent.clone()),
+        );
+        mmu.attach_mmio(
+            MEMORY_HOTPLUG_MMIO_BASE,
+            MEMORY_HOTPLUG_MMIO_SIZE,
+            Box::new(memory_hotplug.clone()),
+        );
 
         // -------------------------------------------------------------------
         // Storage controllers
@@ -404,6 +443,7 @@ impl Vm {
 
         let mut cpu = Cpu::new();
         cpu.attach_apic(apic.clone());
+        cpu.attach_pv_clock(pv_clock.clone());
 
         // Display: shared VGA text buffer + VESA LFB + VGA controller ports.
         let display: Rc<RefCell<DisplayState>> = Rc::new(RefCell::new(DisplayState::new()));
@@ -445,6 +485,11 @@ impl Vm {
             ports,
             serial,
             power_state,
+            power_notifications,
+            guest_power_notifications,
+            guest_agent,
+            pv_clock,
+            memory_hotplug,
             ps2,
             pci,
             apic,
@@ -711,8 +756,31 @@ impl Vm {
         self.poll_devices();
 
         let now_ns = started.elapsed().as_nanos() as u64;
+        self.poll_guest_features();
+        self.pv_clock.borrow_mut().update(&mut self.mmu, now_ns);
         self.poll_apic(now_ns)?;
         Ok(executed)
+    }
+
+    fn poll_guest_features(&mut self) {
+        loop {
+            let request = self.memory_hotplug.borrow().take_request();
+            let Some(size) = request else {
+                break
+            };
+            let _ = self.hotplug_memory(size as usize);
+        }
+        let notifications: Vec<_> = self
+            .guest_power_notifications
+            .borrow_mut()
+            .drain(..)
+            .collect();
+        for notification in notifications {
+            self.guest_agent.borrow().notify(match notification {
+                PowerNotification::Shutdown => GuestEvent::Shutdown,
+                PowerNotification::Reboot => GuestEvent::Reboot,
+            });
+        }
     }
 
     /// Run the VM until the host stops it. Guest HLT instructions wait for
@@ -1055,6 +1123,11 @@ impl Vm {
         self.virtio_rng.borrow_mut().reset();
         self.display.borrow_mut().reset();
         self.bios.reset();
+        self.power_notifications.borrow_mut().clear();
+        self.guest_power_notifications.borrow_mut().clear();
+        self.guest_agent.borrow().clear();
+        self.pv_clock.borrow_mut().reset();
+        self.memory_hotplug.borrow().clear_pending();
         self.initialized = false;
         if let Some(disk) = virtio_disk {
             let _ = self.virtio_blk.borrow_mut().attach_disk(disk);
@@ -1104,6 +1177,69 @@ impl Vm {
     /// Shared handle to the HPET (MMIO at 0xFED0_0000).
     pub fn hpet(&self) -> Rc<RefCell<Hpet>> {
         self.hpet.clone()
+    }
+
+    pub fn guest_agent(&self) -> Rc<RefCell<GuestAgent>> {
+        self.guest_agent.clone()
+    }
+
+    pub fn pv_clock(&self) -> Rc<RefCell<PvClock>> {
+        self.pv_clock.clone()
+    }
+
+    pub fn memory_hotplug(&self) -> Rc<RefCell<MemoryHotplugDevice>> {
+        self.memory_hotplug.clone()
+    }
+
+    pub fn take_power_notifications(&mut self) -> Vec<PowerNotification> {
+        self.power_notifications.borrow_mut().drain(..).collect()
+    }
+
+    pub fn request_shutdown(&mut self) {
+        *self.power_state.borrow_mut() = PowerState::Shutdown;
+        self.power_notifications
+            .borrow_mut()
+            .push_back(PowerNotification::Shutdown);
+        self.guest_power_notifications
+            .borrow_mut()
+            .push_back(PowerNotification::Shutdown);
+    }
+
+    pub fn request_reboot(&mut self) {
+        *self.power_state.borrow_mut() = PowerState::Reboot;
+        self.power_notifications
+            .borrow_mut()
+            .push_back(PowerNotification::Reboot);
+        self.guest_power_notifications
+            .borrow_mut()
+            .push_back(PowerNotification::Reboot);
+    }
+
+    /// Add physical RAM at the end of the existing address space and notify
+    /// the guest through the hot-plug device and guest-agent event queue.
+    pub fn hotplug_memory(&mut self, size: usize) -> Result<u64, VmError> {
+        let new_size = self
+            .mmu
+            .ram_size()
+            .checked_add(size)
+            .ok_or(VmError::MemoryError)?;
+        if new_size > self.config.max_memory_size {
+            return Err(VmError::MemoryError)
+        }
+        let base = self
+            .mmu
+            .hotplug_memory(size)
+            .map_err(|_| VmError::MemoryError)?;
+        self.memory_hotplug
+            .borrow()
+            .add_region(base, size as u64);
+        self.guest_agent
+            .borrow()
+            .notify(GuestEvent::MemoryAdded {
+                base,
+                size: size as u64,
+            });
+        Ok(base)
     }
 
     /// Shared handle to the AHCI SATA host controller.

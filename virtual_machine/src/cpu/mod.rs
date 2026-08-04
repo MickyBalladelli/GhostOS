@@ -2,7 +2,7 @@
 
 use crate::cpu::decoder::{InstructionDecoder, InstructionDecodeError};
 use crate::cpu::executor::InstructionExecutor;
-use crate::devices::{IdtGate, InterruptController, LocalApic, PortBus};
+use crate::devices::{IdtGate, InterruptController, LocalApic, PortBus, PvClock};
 use crate::firmware::bios::BiosContext;
 use crate::memory::Mmu;
 use std::cell::RefCell;
@@ -524,6 +524,7 @@ pub struct Cpu {
     decoder: InstructionDecoder,
     executor: InstructionExecutor,
     apic: Option<Rc<RefCell<LocalApic>>>,
+    pv_clock: Option<Rc<RefCell<PvClock>>>,
 }
 
 impl Cpu {
@@ -533,6 +534,7 @@ impl Cpu {
             decoder: InstructionDecoder::new(),
             executor: InstructionExecutor::new(),
             apic: None,
+            pv_clock: None,
         }
     }
 
@@ -540,6 +542,10 @@ impl Cpu {
     /// `IA32_APIC_BASE` MSR to the same device exposed via MMIO.
     pub fn attach_apic(&mut self, apic: Rc<RefCell<LocalApic>>) {
         self.apic = Some(apic);
+    }
+
+    pub fn attach_pv_clock(&mut self, pv_clock: Rc<RefCell<PvClock>>) {
+        self.pv_clock = Some(pv_clock);
     }
 
     pub fn reset(&mut self) {
@@ -597,9 +603,15 @@ impl Cpu {
         // so the borrow checker sees disjoint sources (state field vs. the
         // Rc'd device behind the APIC field).
         let apic_rc = self.apic.clone();
-        let needs_apic = matches!(instruction.mnemonic, "RDMSR" | "WRMSR");
-        let mut apic = if needs_apic {
+        let pv_clock_rc = self.pv_clock.clone();
+        let needs_msr = matches!(instruction.mnemonic, "RDMSR" | "WRMSR");
+        let mut apic = if needs_msr {
             apic_rc.as_ref().map(|a| a.borrow_mut())
+        } else {
+            None
+        };
+        let mut pv_clock = if needs_msr {
+            pv_clock_rc.as_ref().map(|clock| clock.borrow_mut())
         } else {
             None
         };
@@ -612,6 +624,7 @@ impl Cpu {
             ports,
             bios,
             apic.as_deref_mut(),
+            pv_clock.as_deref_mut(),
         )?;
         Ok(())
     }

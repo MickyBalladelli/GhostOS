@@ -4,7 +4,10 @@
 
 use crate::cpu::decoder::{DecodedInstruction, MemoryOperand, Operand};
 use crate::cpu::{CpuError, CpuMode, CpuState, PrivilegeLevel};
-use crate::devices::{DeviceError, InterruptController, LocalApic, PortBus, IA32_APIC_BASE_MSR};
+use crate::devices::{
+    DeviceError, InterruptController, LocalApic, PortBus, PvClock, IA32_APIC_BASE_MSR,
+    KVM_SYSTEM_TIME_NEW, KVM_WALL_CLOCK_NEW,
+};
 use crate::firmware::bios::BiosContext;
 use crate::memory::{MemoryError, Mmu};
 
@@ -452,6 +455,7 @@ impl InstructionExecutor {
         ports: &mut PortBus,
         bios: &mut BiosContext,
         apic: Option<&mut LocalApic>,
+        mut pv_clock: Option<&mut PvClock>,
     ) -> Result<(), CpuError> {
         match instruction.mnemonic {
             "NOP" | "LFENCE" | "MFENCE" | "SFENCE" | "INVD" | "WBINVD" | "INVLPG"
@@ -510,7 +514,9 @@ impl InstructionExecutor {
             }
             "IN" | "OUT" => self.execute_io(instruction, state, ports)?,
             "CPUID" => self.execute_cpuid(instruction, state)?,
-            "WRMSR" | "RDMSR" => self.execute_msr(instruction, state, mmu, apic)?,
+            "WRMSR" | "RDMSR" => {
+                self.execute_msr(instruction, state, mmu, apic, pv_clock.as_deref_mut())?
+            }
             "SYSCALL" | "SYSRET" => self.execute_syscall(instruction, state, mmu)?,
             "SYSENTER" | "SYSEXIT" => {
                 state.rip = instruction.next_ip;
@@ -1669,6 +1675,7 @@ impl InstructionExecutor {
         state: &mut CpuState,
         mmu: &mut Mmu,
         apic: Option<&mut LocalApic>,
+        pv_clock: Option<&mut PvClock>,
     ) -> Result<(), CpuError> {
         let msr = state.rcx & 0xFFFF_FFFF;
         let value = ((state.rdx & 0xFFFF_FFFF) << 32) | (state.rax & 0xFFFF_FFFF);
@@ -1693,6 +1700,11 @@ impl InstructionExecutor {
                         apic.set_apic_base_msr(value);
                     }
                 }
+                x if x == KVM_SYSTEM_TIME_NEW as u64 || x == KVM_WALL_CLOCK_NEW as u64 => {
+                    if let Some(pv_clock) = pv_clock {
+                        pv_clock.write_msr(msr as u32, value);
+                    }
+                }
                 _ => { /* Unknown MSRs are accepted and ignored. */ }
             },
             "RDMSR" => {
@@ -1705,6 +1717,7 @@ impl InstructionExecutor {
                         0xC000_0082 => state.lstar,
                         0xC000_0100 => state.fs_base,
                         0xC000_0101 => state.gs_base,
+                        x if x == KVM_SYSTEM_TIME_NEW as u64 || x == KVM_WALL_CLOCK_NEW as u64 => 0,
                         _ => 0,
                     }
                 };
