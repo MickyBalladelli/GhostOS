@@ -19,6 +19,7 @@ cargo synos compile --manifest-path PATH --bin NAME
     [--target x86_64|aarch64] [--release] [--locked] [--offline]
     [--target-dir PATH]
 cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH]
+cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH]
 cargo synos run --manifest-path PATH --bin NAME [--release] [-- ARGUMENT]...
 
 Keys may contain 32 raw bytes or 64 hexadecimal characters.";
@@ -50,6 +51,7 @@ fn run() -> Result<(), String> {
         "package" => package(&arguments[1..]),
         "compile" => compile(&arguments[1..]),
         "compile-all" => compile_all(&arguments[1..]),
+        "reproduce" => reproduce(&arguments[1..]),
         "run" => run_program(&arguments[1..]),
         "help" | "-h" | "--help" => {
             println!("{USAGE}");
@@ -102,6 +104,28 @@ fn compile_all(arguments: &[String]) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
     println!("compiled SynOS workspace for {:?}", options.target);
+    Ok(())
+}
+
+fn reproduce(arguments: &[String]) -> Result<(), String> {
+    let options = ReproduceOptions::parse(arguments)?;
+    let compiler = Compiler::new().map_err(|error| error.to_string())?;
+    let clean_root = options
+        .clean_root
+        .unwrap_or_else(|| env::temp_dir().join(format!("synos-reproduce-{}", std::process::id())));
+    let output = compiler
+        .reproduce_workspace(options.target, options.release, &clean_root)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "reproduced {:?}: {} artifacts, digest {:?}",
+        output.target, output.artifact_count, output.digest
+    );
+    println!(
+        "clean workspace: {}; targets: {} and {}",
+        output.workspace.display(),
+        output.first_target.display(),
+        output.second_target.display()
+    );
     Ok(())
 }
 
@@ -363,6 +387,12 @@ struct WorkspaceOptions {
     target_directory: Option<PathBuf>,
 }
 
+struct ReproduceOptions {
+    target: Target,
+    release: bool,
+    clean_root: Option<PathBuf>,
+}
+
 impl WorkspaceOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut target = Target::X86_64;
@@ -389,6 +419,36 @@ impl WorkspaceOptions {
             target,
             release,
             target_directory,
+        })
+    }
+}
+
+impl ReproduceOptions {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut target = Target::X86_64;
+        let mut release = false;
+        let mut clean_root = None;
+        let mut index = 0;
+        while index < arguments.len() {
+            match arguments[index].as_str() {
+                "--target" => {
+                    target = Target::parse(required_value(arguments, &mut index)?)
+                        .map_err(|error| error.to_string())?
+                }
+                "--release" => {
+                    release = true;
+                    index += 1;
+                }
+                "--clean-root" => {
+                    clean_root = Some(PathBuf::from(required_value(arguments, &mut index)?))
+                }
+                other => return Err(format!("unknown reproduce option `{other}`")),
+            }
+        }
+        Ok(Self {
+            target,
+            release,
+            clean_root,
         })
     }
 }

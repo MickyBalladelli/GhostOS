@@ -56,6 +56,17 @@ the runtime build first, refuses unlocked or networked requests, then submits
 the compiler build only after the runtime artifact is complete. Both results
 must carry non-zero package and payload identities for the session to finish.
 
+Reproducibility is checked with:
+
+```sh
+cargo run -p cargo-synos -- synos reproduce --target x86_64 --release
+```
+
+The command creates one fresh source workspace, builds it twice with fresh
+target directories and `--locked --offline`, disables incremental state,
+remaps workspace paths, and compares the final `.rlib`, `.rmeta`, `.a`, `.o`,
+and `.so` artifacts by content ID.
+
 The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in
 `TODO-compiler.md`.

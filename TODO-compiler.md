@@ -20,7 +20,7 @@ native `std` port, executable loader, and a real booted service image.
 - [x] Produce a signed SynOS application bundle from a host-side native build.
 - [x] Launch that bundle as a capability-limited process.
 - [x] Compile the compiler and its runtime again from inside SynOS.
-- [ ] Reproduce the same result in an offline build from a clean workspace.
+- [x] Reproduce the same result in an offline build from a clean workspace.
 
 Completed host/service slice:
 
@@ -46,6 +46,9 @@ Completed host/service slice:
   content-addressed cache keys.
 - `synos-compiler` supports locked/offline Cargo builds and compile-to-signed
   bundle output.
+- `cargo synos reproduce` copies the source into one fresh workspace, runs two
+  independent locked offline builds with deterministic path and incremental
+  settings, and compares final artifacts by content ID.
 - `cargo synos package` accepts `--manifest-path`, `--locked`, `--offline`,
   and `--target-dir`.
 

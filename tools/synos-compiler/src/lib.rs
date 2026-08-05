@@ -93,6 +93,16 @@ pub struct WorkspaceOutput {
     pub target: Target,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReproducibleWorkspaceOutput {
+    pub target: Target,
+    pub workspace: PathBuf,
+    pub first_target: PathBuf,
+    pub second_target: PathBuf,
+    pub artifact_count: usize,
+    pub digest: ContentId,
+}
+
 #[derive(Debug)]
 pub enum CompileError {
     CargoUnavailable(String),
@@ -109,6 +119,10 @@ pub enum CompileError {
     Staging { path: PathBuf, error: String },
     Package(PackageError),
     PackageWrite { path: PathBuf, error: String },
+    CleanWorkspaceExists(PathBuf),
+    WorkspaceCopy { path: PathBuf, error: String },
+    NoArtifacts(PathBuf),
+    NonReproducible { path: String },
 }
 
 impl std::fmt::Display for CompileError {
@@ -141,6 +155,18 @@ impl std::fmt::Display for CompileError {
             Self::Package(error) => write!(formatter, "could not create package: {error:?}"),
             Self::PackageWrite { path, error } => {
                 write!(formatter, "could not write package {}: {error}", path.display())
+            }
+            Self::CleanWorkspaceExists(path) => {
+                write!(formatter, "clean workspace already exists: {}", path.display())
+            }
+            Self::WorkspaceCopy { path, error } => {
+                write!(formatter, "could not copy workspace item {}: {error}", path.display())
+            }
+            Self::NoArtifacts(path) => {
+                write!(formatter, "clean build produced no artifacts under {}", path.display())
+            }
+            Self::NonReproducible { path } => {
+                write!(formatter, "clean builds differ at {path}")
             }
         }
     }
@@ -332,6 +358,44 @@ impl Compiler {
         Ok(WorkspaceOutput { target })
     }
 
+    /// Build one clean source workspace twice with fresh target directories,
+    /// Cargo locked and offline, then compare final artifacts by content ID.
+    pub fn reproduce_workspace(
+        &self,
+        target: Target,
+        release: bool,
+        clean_root: &Path,
+    ) -> Result<ReproducibleWorkspaceOutput, CompileError> {
+        if clean_root.exists() {
+            return Err(CompileError::CleanWorkspaceExists(clean_root.to_path_buf()));
+        }
+        let workspace = clean_root.join("workspace");
+        copy_clean_workspace(&self.workspace_root, &workspace)?;
+
+        let first_target = clean_root.join("target-first");
+        let second_target = clean_root.join("target-second");
+        build_clean_workspace(&workspace, &first_target, target, release)?;
+        build_clean_workspace(&workspace, &second_target, target, release)?;
+
+        let first_output = workspace_output_directory(&first_target, target, release);
+        let second_output = workspace_output_directory(&second_target, target, release);
+        let first_artifacts = collect_artifacts(&first_output)?;
+        let second_artifacts = collect_artifacts(&second_output)?;
+        if first_artifacts.is_empty() {
+            return Err(CompileError::NoArtifacts(first_output));
+        }
+        compare_artifacts(&first_artifacts, &second_artifacts)?;
+        let digest = digest_artifacts(&first_artifacts);
+        Ok(ReproducibleWorkspaceOutput {
+            target,
+            workspace,
+            first_target,
+            second_target,
+            artifact_count: first_artifacts.len(),
+            digest,
+        })
+    }
+
     fn base_command(&self) -> Command {
         let mut command = Command::new(&self.cargo);
         command
@@ -381,6 +445,221 @@ impl Compiler {
             .status()
             .map_err(|error| CompileError::CargoUnavailable(error.to_string()))
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ArtifactDigest {
+    path: String,
+    digest: ContentId,
+}
+
+fn copy_clean_workspace(source: &Path, destination: &Path) -> Result<(), CompileError> {
+    if destination.exists() {
+        return Err(CompileError::CleanWorkspaceExists(destination.to_path_buf()));
+    }
+    copy_workspace_tree(source, destination)
+}
+
+fn copy_workspace_tree(source: &Path, destination: &Path) -> Result<(), CompileError> {
+    fs::create_dir_all(destination).map_err(|error| CompileError::WorkspaceCopy {
+        path: destination.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let entries = fs::read_dir(source).map_err(|error| CompileError::WorkspaceCopy {
+        path: source.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| CompileError::WorkspaceCopy {
+            path: source.to_path_buf(),
+            error: error.to_string(),
+        })?;
+        let name = entry.file_name();
+        if name == ".git" || name == "target" || name == "build" || name == "clients" {
+            continue;
+        }
+        let source_path = entry.path();
+        let destination_path = destination.join(name);
+        let file_type = entry
+            .file_type()
+            .map_err(|error| CompileError::WorkspaceCopy {
+                path: source_path.clone(),
+                error: error.to_string(),
+            })?;
+        if file_type.is_symlink() {
+            return Err(CompileError::WorkspaceCopy {
+                path: source_path,
+                error: "symbolic links are not allowed in a clean workspace".into(),
+            });
+        }
+        if file_type.is_dir() {
+            copy_workspace_tree(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path).map_err(|error| {
+                CompileError::WorkspaceCopy {
+                    path: source_path,
+                    error: error.to_string(),
+                }
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn build_clean_workspace(
+    workspace: &Path,
+    target_directory: &Path,
+    target: Target,
+    release: bool,
+) -> Result<(), CompileError> {
+    let target_file = workspace.join("targets").join(target.target_file());
+    let mut command = Command::new(env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")));
+    command
+        .current_dir(workspace)
+        .env("CARGO_INCREMENTAL", "0")
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("CONST_RANDOM_SEED", "synos-reproducible-seed-v1")
+        .env("TZ", "UTC")
+        .env("LC_ALL", "C")
+        .env("RUSTC_BOOTSTRAP", "1")
+        .args(["-Z", "build-std=core,alloc", "-Z", "json-target-spec"])
+        .arg("build")
+        .arg("--workspace")
+        .arg("--lib")
+        .args([
+            "--exclude",
+            "cargo-synos",
+            "--exclude",
+            "synos-compiler",
+            "--exclude",
+            "synos-test-support",
+            "--exclude",
+            "synos-uefi",
+            "--exclude",
+            "synos-vm",
+        ])
+        .arg("--target")
+        .arg(target_file)
+        .arg("--target-dir")
+        .arg(target_directory)
+        .arg("--locked")
+        .arg("--offline");
+    if release {
+        command.arg("--release");
+    }
+    let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
+    if let Some(linker) = bundled_linker() {
+        if !rustflags.is_empty() {
+            rustflags.push(' ')
+        }
+        rustflags.push_str("-C linker=");
+        rustflags.push_str(&linker.to_string_lossy());
+    }
+    rustflags.push_str(" --remap-path-prefix=");
+    rustflags.push_str(&workspace.to_string_lossy());
+    rustflags.push_str("=/synos-clean-workspace");
+    command.env("RUSTFLAGS", rustflags);
+    let status = command
+        .status()
+        .map_err(|error| CompileError::CargoUnavailable(error.to_string()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CompileError::BuildFailed(status))
+    }
+}
+
+fn workspace_output_directory(target_directory: &Path, target: Target, release: bool) -> PathBuf {
+    target_directory
+        .join(target.target_file().trim_end_matches(".json"))
+        .join(if release { "release" } else { "debug" })
+}
+
+fn collect_artifacts(root: &Path) -> Result<Vec<ArtifactDigest>, CompileError> {
+    let mut artifacts = Vec::new();
+    collect_artifacts_from(root, root, &mut artifacts)?;
+    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(artifacts)
+}
+
+fn collect_artifacts_from(
+    root: &Path,
+    directory: &Path,
+    artifacts: &mut Vec<ArtifactDigest>,
+) -> Result<(), CompileError> {
+    let entries = fs::read_dir(directory).map_err(|error| CompileError::WorkspaceCopy {
+        path: directory.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| CompileError::WorkspaceCopy {
+            path: directory.to_path_buf(),
+            error: error.to_string(),
+        })?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| CompileError::WorkspaceCopy {
+                path: path.clone(),
+                error: error.to_string(),
+            })?;
+        if file_type.is_dir() {
+            collect_artifacts_from(root, &path, artifacts)?;
+        } else if file_type.is_file() && is_reproducible_artifact(&path) {
+            let bytes = fs::read(&path).map_err(|error| CompileError::WorkspaceCopy {
+                path: path.clone(),
+                error: error.to_string(),
+            })?;
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
+            artifacts.push(ArtifactDigest {
+                path: relative,
+                digest: ContentId::hash(&bytes),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn is_reproducible_artifact(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        matches!(
+            extension.to_str(),
+            Some("rlib") | Some("rmeta") | Some("a") | Some("o") | Some("so")
+        )
+    })
+}
+
+fn compare_artifacts(
+    first: &[ArtifactDigest],
+    second: &[ArtifactDigest],
+) -> Result<(), CompileError> {
+    if first.len() != second.len() {
+        return Err(CompileError::NonReproducible {
+            path: format!("artifact count {} != {}", first.len(), second.len()),
+        });
+    }
+    for (left, right) in first.iter().zip(second) {
+        if left != right {
+            return Err(CompileError::NonReproducible {
+                path: left.path.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn digest_artifacts(artifacts: &[ArtifactDigest]) -> ContentId {
+    let mut material = Vec::new();
+    for artifact in artifacts {
+        material.extend_from_slice(artifact.path.as_bytes());
+        material.push(0);
+        material.extend_from_slice(artifact.digest.as_bytes());
+    }
+    ContentId::hash(&material)
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CompileError> {

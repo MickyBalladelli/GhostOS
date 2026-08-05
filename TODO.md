@@ -425,8 +425,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Include a Rust Hello World program that builds for SynOS and runs on the host.
   - [x] Compile every production Ring 0 and Ring 3 library crate used by the roadmap with one native-target command.
   - [x] Keep host-only tools, fixtures, UEFI application code, and the VM outside the SynOS target build.
-- [ ] **Rust Compiler Inside SynOS**
-  - [ ] Track the self-hosting compiler work in [TODO-compiler.md](TODO-compiler.md).
+- [x] **Rust Compiler Inside SynOS**
+  - [x] Track the self-hosting compiler work in [TODO-compiler.md](TODO-compiler.md).
 - [x] **Hermetic Package Daemon (`synos-pkg`)**
   - [x] Implement content-addressed package management backing declarative system configurations on SynFS.
 
@@ -1189,3 +1189,6 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 - [x] Every VM device has register/configuration, normal I/O, reset, interrupt, malformed input, and failure tests.
 - [x] Every SynOS boot path has a VM or QEMU test with serial evidence.
 - [x] The test suite is deterministic, isolated, bounded, and runnable by a new developer from the documented commands.
+
+
+### 60.0 True VT100 emulator
