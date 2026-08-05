@@ -782,6 +782,35 @@ The key file contains either 32 raw bytes or 64 hexadecimal characters.
 `--dependency` pins another package by its 64-character SHA-256 ID. The
 standalone `build` and `bundle` commands expose each half of the workflow.
 
+Compile a native Ring 3 binary with the reusable compiler driver:
+
+```sh
+cargo run -p cargo-synos -- synos compile \
+  --manifest-path examples/hello-world/Cargo.toml \
+  --bin hello-world --target x86_64
+```
+
+Run the same example on the host:
+
+```sh
+cargo run -p cargo-synos -- synos run \
+  --manifest-path examples/hello-world/Cargo.toml \
+  --bin hello-world
+```
+
+The compiler emits a position-independent SynOS binary. Package it with the
+existing signing command before installing it into SynFS.
+
+Compile every production Ring 0 and Ring 3 library crate used by the TODO roadmap:
+
+```sh
+cargo run -p cargo-synos -- synos compile-all --target x86_64 --release
+```
+
+The workspace command excludes only host-side Cargo tooling, test fixtures,
+the UEFI host application, and the host virtual machine. See
+[`docs/native-compiler.md`](docs/native-compiler.md) for the boundary.
+
 The heap-free `synos-pkg` daemon rejects bundles from unknown trust keys,
 validates the signature and payload digest, and installs payloads and manifests
 under SHA-256-derived SynFS names. A bounded `SystemConfiguration` declares the

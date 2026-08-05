@@ -1,0 +1,12 @@
+[package]
+name = "synos-hello-world"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "hello-world"
+path = "src/main.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("synos"))'] }

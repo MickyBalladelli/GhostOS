@@ -419,6 +419,12 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 ## 17. Rust Ecosystem Toolchain & Package Distribution
 - [x] **Cargo Extension (`cargo-synos`)**
   - [x] Build toolchain utilities for automated cross-compiling, manifest signing, and binary bundle generation.
+- [x] **Native SynOS Compiler Workflow**
+  - [x] Provide a reusable Rust compiler driver for the custom SynOS targets.
+  - [x] Expose compile and host-execution commands through `cargo-synos`.
+  - [x] Include a Rust Hello World program that builds for SynOS and runs on the host.
+  - [x] Compile every production Ring 0 and Ring 3 library crate used by the roadmap with one native-target command.
+  - [x] Keep host-only tools, fixtures, UEFI application code, and the VM outside the SynOS target build.
 - [x] **Hermetic Package Daemon (`synos-pkg`)**
   - [x] Implement content-addressed package management backing declarative system configurations on SynFS.
 

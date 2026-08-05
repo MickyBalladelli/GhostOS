@@ -11,3 +11,4 @@ path = "src/main.rs"
 [dependencies]
 synos-pkg = { path = "../../crates/pkg" }
 synos-system-model = { path = "../../crates/system-model" }
+synos-compiler = { path = "../synos-compiler" }

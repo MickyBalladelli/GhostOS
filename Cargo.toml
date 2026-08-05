@@ -56,6 +56,8 @@ members = [
     "crates/synos-declarative",
     "crates/test-support",
     "tools/cargo-synos",
+    "tools/synos-compiler",
+    "examples/hello-world",
     "kernel",
     "boot/uefi",
     "virtual_machine",

@@ -13,7 +13,8 @@ This catalog is a navigation aid. Read the crate’s `Cargo.toml`, `README`, and
 | `synos-runtime` | User ABI, descriptor validation, filesystem and service calls |
 | `synos-posix-compat` | Bounded POSIX/Linux compatibility surface over SynOS services |
 | `synos-ipc` | Shared IPC structures and bounded transport primitives |
-| `cargo-synos` | Cargo workflow integration |
+| `cargo-synos` | Cargo workflow integration and compiler commands |
+| `synos-compiler` | Native Rust compiler driver for SynOS targets |
 
 ## Filesystem, storage, and packages
 

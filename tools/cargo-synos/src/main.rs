@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use synos_compiler::{CompileRequest, Compiler, Target};
 use synos_pkg::{SigningKey, bundle_size, encode_bundle};
 use synos_system_model::ContentId;
 
@@ -13,6 +14,10 @@ cargo synos bundle --artifact PATH --key PATH --output PATH
 cargo synos package --bin NAME --key PATH --output PATH
     [--package NAME] [--target x86_64|aarch64] [--release]
     [--entry-offset BYTES] [--dependency SHA256]...
+cargo synos compile --manifest-path PATH --bin NAME
+    [--target x86_64|aarch64] [--release] [--target-dir PATH]
+cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH]
+cargo synos run --manifest-path PATH --bin NAME [--release] [-- ARGUMENT]...
 
 Keys may contain 32 raw bytes or 64 hexadecimal characters.";
 
@@ -41,12 +46,58 @@ fn run() -> Result<(), String> {
         "build" => build(&arguments[1..]),
         "bundle" => bundle(&arguments[1..]),
         "package" => package(&arguments[1..]),
+        "compile" => compile(&arguments[1..]),
+        "compile-all" => compile_all(&arguments[1..]),
+        "run" => run_program(&arguments[1..]),
         "help" | "-h" | "--help" => {
             println!("{USAGE}");
             Ok(())
         }
         other => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     }
+}
+
+fn compile(arguments: &[String]) -> Result<(), String> {
+    let options = CompileOptions::parse(arguments)?;
+    let compiler = Compiler::new().map_err(|error| error.to_string())?;
+    let output = compiler
+        .compile(&CompileRequest {
+            manifest_path: options.manifest_path,
+            binary: options.binary,
+            target: options.target,
+            release: options.release,
+            target_directory: options.target_directory,
+        })
+        .map_err(|error| error.to_string())?;
+    println!("compiled {}", output.artifact.display());
+    Ok(())
+}
+
+fn run_program(arguments: &[String]) -> Result<(), String> {
+    let options = RunOptions::parse(arguments)?;
+    let compiler = Compiler::new().map_err(|error| error.to_string())?;
+    let status = compiler
+        .run_host(&options.manifest_path, &options.binary, options.release, &options.arguments)
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("program exited with {status}"))
+    }
+}
+
+fn compile_all(arguments: &[String]) -> Result<(), String> {
+    let options = WorkspaceOptions::parse(arguments)?;
+    let compiler = Compiler::new().map_err(|error| error.to_string())?;
+    compiler
+        .compile_workspace(
+            options.target,
+            options.release,
+            options.target_directory.as_deref(),
+        )
+        .map_err(|error| error.to_string())?;
+    println!("compiled SynOS workspace for {:?}", options.target);
+    Ok(())
 }
 
 fn build(arguments: &[String]) -> Result<(), String> {
@@ -102,7 +153,7 @@ fn run_cargo_build(arguments: &[String]) -> Result<(), String> {
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let status = Command::new(cargo)
         .env("RUSTC_BOOTSTRAP", "1")
-        .args(["-Z", "build-std=core,alloc"])
+        .args(["-Z", "build-std=core,alloc", "-Z", "json-target-spec"])
         .arg("build")
         .args(arguments)
         .status()
@@ -238,6 +289,136 @@ struct BundleOptions {
     output: PathBuf,
     entry_offset: u64,
     dependencies: Vec<ContentId>,
+}
+
+struct CompileOptions {
+    manifest_path: PathBuf,
+    binary: String,
+    target: Target,
+    release: bool,
+    target_directory: Option<PathBuf>,
+}
+
+impl CompileOptions {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut manifest_path = None;
+        let mut binary = None;
+        let mut target = Target::X86_64;
+        let mut release = false;
+        let mut target_directory = None;
+        let mut index = 0;
+        while index < arguments.len() {
+            match arguments[index].as_str() {
+                "--manifest-path" => {
+                    manifest_path = Some(PathBuf::from(required_value(arguments, &mut index)?))
+                }
+                "--bin" => binary = Some(required_value(arguments, &mut index)?.to_string()),
+                "--target" => {
+                    target = Target::parse(required_value(arguments, &mut index)?)
+                        .map_err(|error| error.to_string())?
+                }
+                "--release" => {
+                    release = true;
+                    index += 1;
+                }
+                "--target-dir" => {
+                    target_directory = Some(PathBuf::from(required_value(arguments, &mut index)?))
+                }
+                other => return Err(format!("unknown compile option `{other}`")),
+            }
+        }
+        Ok(Self {
+            manifest_path: manifest_path.ok_or_else(|| "--manifest-path is required".to_string())?,
+            binary: binary.ok_or_else(|| "--bin is required".to_string())?,
+            target,
+            release,
+            target_directory,
+        })
+    }
+}
+
+struct RunOptions {
+    manifest_path: PathBuf,
+    binary: String,
+    release: bool,
+    arguments: Vec<String>,
+}
+
+struct WorkspaceOptions {
+    target: Target,
+    release: bool,
+    target_directory: Option<PathBuf>,
+}
+
+impl WorkspaceOptions {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut target = Target::X86_64;
+        let mut release = false;
+        let mut target_directory = None;
+        let mut index = 0;
+        while index < arguments.len() {
+            match arguments[index].as_str() {
+                "--target" => {
+                    target = Target::parse(required_value(arguments, &mut index)?)
+                        .map_err(|error| error.to_string())?
+                }
+                "--release" => {
+                    release = true;
+                    index += 1;
+                }
+                "--target-dir" => {
+                    target_directory = Some(PathBuf::from(required_value(arguments, &mut index)?))
+                }
+                other => return Err(format!("unknown compile-all option `{other}`")),
+            }
+        }
+        Ok(Self {
+            target,
+            release,
+            target_directory,
+        })
+    }
+}
+
+impl RunOptions {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut manifest_path = None;
+        let mut binary = None;
+        let mut release = false;
+        let mut program_arguments = Vec::new();
+        let mut index = 0;
+        while index < arguments.len() {
+            match arguments[index].as_str() {
+                "--manifest-path" => {
+                    manifest_path = Some(PathBuf::from(required_value(arguments, &mut index)?))
+                }
+                "--bin" => binary = Some(required_value(arguments, &mut index)?.to_string()),
+                "--release" => {
+                    release = true;
+                    index += 1;
+                }
+                "--" => {
+                    program_arguments.extend_from_slice(&arguments[index + 1..]);
+                    break
+                }
+                other => return Err(format!("unknown run option `{other}`")),
+            }
+        }
+        Ok(Self {
+            manifest_path: manifest_path.ok_or_else(|| "--manifest-path is required".to_string())?,
+            binary: binary.ok_or_else(|| "--bin is required".to_string())?,
+            release,
+            arguments: program_arguments,
+        })
+    }
+}
+
+fn required_value<'a>(arguments: &'a [String], index: &mut usize) -> Result<&'a str, String> {
+    let value = arguments
+        .get(*index + 1)
+        .ok_or_else(|| format!("{} needs a value", arguments[*index]))?;
+    *index += 2;
+    Ok(value)
 }
 
 impl BundleOptions {
