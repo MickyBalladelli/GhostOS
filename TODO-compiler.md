@@ -54,19 +54,34 @@ Completed host/service slice:
 
 ## 1. Freeze the design
 
-- [ ] Choose the first supported self-hosting target: `x86_64-unknown-synos`.
-- [ ] Add `aarch64-unknown-synos` after the x86_64 path is self-hosting.
-- [ ] Decide the initial supported Rust surface: `core`, `alloc`, `std`, Cargo,
+- [x] Choose the first supported self-hosting target: `x86_64-unknown-synos`.
+- [x] Add `aarch64-unknown-synos` after the x86_64 path is self-hosting.
+- [x] Decide the initial supported Rust surface: `core`, `alloc`, `std`, Cargo,
   build scripts, proc macros, tests, and rustdoc.
-- [ ] Choose the compiler stack: upstream `rustc` plus LLVM, or a separate
+- [x] Choose the compiler stack: upstream `rustc` plus LLVM, or a separate
   SynOS compiler frontend/backend.
-- [ ] Define the on-disk layout for toolchains, registries, sources, build
+- [x] Define the on-disk layout for toolchains, registries, sources, build
   state, temporary files, and output bundles on SynFS.
-- [ ] Define the compiler-service IPC protocol, status codes, logs, and
+- [x] Define the compiler-service IPC protocol, status codes, logs, and
   cancellation rules.
 
-The bounded request and job protocol model is implemented in
-`crates/synos-rustd`; the real SynOS IPC service is still open.
+Frozen choices live in `crates/synos-rustd/src/design.rs`:
+
+- `x86_64-unknown-synos` is the primary self-host target. Aarch64 is the next
+  target and stays planned until x86_64 self-hosting works.
+- The initial Rust surface is `core`, `alloc`, `std`, Cargo, build scripts,
+  proc macros, tests, and rustdoc.
+- The compiler stack is upstream `rustc` with LLVM.
+- SynFS stores toolchains under `/system/toolchains`, registries under
+  `/system/registries`, sources under `/system/sources`, build state under
+  `/system/builds`, scratch data under `/system/tmp`, and output bundles under
+  `/system/bundles`.
+- Protocol version 1 uses fixed-size request and response frames. Operations
+  are submit, start, poll, cancel, release, and read-log. Status values use
+  `synos-status`; logs carry sequence, level, event, and bounded text.
+- Queued jobs cancel immediately. Running jobs receive a cooperative stop and
+  are fenced after a five-second grace period. Terminal jobs cannot be
+  cancelled, and partial output is never published.
 
 ## 2. Make native compiler processes run
 

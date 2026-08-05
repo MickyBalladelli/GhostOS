@@ -2,12 +2,22 @@
 #![forbid(unsafe_code)]
 
 mod boot;
+mod design;
 mod self_host;
 mod toolchain;
 
 pub use boot::{
     COMPILER_CAPABILITY_PROFILE, COMPILER_SERVICE_ID, COMPILER_SERVICE_NAME, CompilerBootError,
     CompilerBootState, CompilerServiceBoot, CompilerServiceHealthCheck, NativeCompilerBootConfig,
+};
+pub use design::{
+    CANCELLATION_GRACE_US, COMPILER_PROTOCOL_VERSION, CancellationDisposition, CompilerEventKind,
+    CompilerIpcRequest, CompilerIpcResponse, CompilerLogLevel, CompilerLogRecord,
+    CompilerOperation, CompilerProtocolError, CompilerStack, MAX_LOG_MESSAGE_BYTES,
+    NEXT_SELF_HOST_TARGET, PRIMARY_SELF_HOST_TARGET, RustSurface, SYNFS_BOOTSTRAP_TOOLCHAIN,
+    SYNFS_BUILD_STATE, SYNFS_OUTPUT_BUNDLES, SYNFS_REGISTRIES, SYNFS_RUNTIME_TOOLCHAIN,
+    SYNFS_SELF_HOST_TOOLCHAIN, SYNFS_SOURCES, SYNFS_TEMP, SYNFS_TOOLCHAINS, StorageArea,
+    TargetSupport,
 };
 pub use self_host::{
     SelfHostError, SelfHostRequest, SelfHostResult, SelfHostSession, SelfHostStage,
@@ -102,18 +112,34 @@ impl<const CAPACITY: usize> core::fmt::Debug for Text<CAPACITY> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum Target {
     X86_64,
     Aarch64,
 }
 
+impl Target {
+    pub const fn triple(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64-unknown-synos",
+            Self::Aarch64 => "aarch64-unknown-synos",
+        }
+    }
+
+    pub const fn is_primary_self_host(self) -> bool {
+        matches!(self, Self::X86_64)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum Profile {
     Debug,
     Release,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum NetworkPolicy {
     Denied,
     Allowed,
@@ -197,12 +223,17 @@ impl BuildPolicy {
 pub struct JobId(u64);
 
 impl JobId {
+    pub const fn from_raw(raw: u64) -> Option<Self> {
+        if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
     pub const fn raw(self) -> u64 {
         self.0
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum JobState {
     Queued,
     Running,

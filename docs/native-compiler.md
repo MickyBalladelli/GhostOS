@@ -37,6 +37,26 @@ can write a signed package atomically after a successful build. Its
 copies the bounded project tree into an isolated Cargo workspace, and compiles
 that snapshot with the same target and lock policy.
 
+## Frozen design
+
+The primary self-hosting target is `x86_64-unknown-synos`. The
+`aarch64-unknown-synos` target follows after x86_64 self-hosting works. The
+initial Rust surface includes `core`, `alloc`, `std`, Cargo, build scripts, proc
+macros, tests, and rustdoc. The compiler stack is upstream `rustc` plus LLVM.
+
+SynFS layout is fixed: `/system/toolchains` contains stage-0, stage-1, and
+stage-2 toolchains; `/system/registries` contains signed registries;
+`/system/sources` contains source snapshots; `/system/builds` contains build
+state; `/system/tmp` contains scratch data; and `/system/bundles` contains
+output bundles. These paths are exported as constants by `synos-rustd`.
+
+Compiler IPC is protocol version 1 with fixed-size frames. It supports
+`Submit`, `Start`, `Poll`, `Cancel`, `Release`, and `ReadLog`. Responses use
+existing `synos-status` values. Log records contain a job id, sequence number,
+level, event, and bounded message. Queued jobs cancel immediately; running
+jobs get a cooperative stop and are fenced after a five-second grace period;
+terminal jobs reject cancellation; partial output is never published.
+
 `synos-rustd` also has a signed `ToolchainManifest`. It requires Cargo, rustc,
 and the linker, optionally requires build-script and proc-macro runners, then
 executes the ordered plan through a process-runtime hook. Every tool receives
