@@ -2,10 +2,17 @@
 #![forbid(unsafe_code)]
 
 mod boot;
+mod toolchain;
 
 pub use boot::{
     COMPILER_CAPABILITY_PROFILE, COMPILER_SERVICE_ID, COMPILER_SERVICE_NAME, CompilerBootError,
     CompilerBootState, CompilerServiceBoot, CompilerServiceHealthCheck, NativeCompilerBootConfig,
+};
+pub use toolchain::{
+    ToolExit, ToolKind, ToolSpawnRequest, ToolchainComponent, ToolchainError, ToolchainExecutor,
+    ToolchainExecutionError, ToolchainManifest, ToolchainPlan, ToolchainPolicy, ToolchainReceipt,
+    ToolchainRequest, ToolchainRuntime, ToolchainStep, MAX_TOOLCHAIN_COMPONENTS,
+    MAX_TOOLCHAIN_STEPS,
 };
 
 use synos_status::{IntoStatus, Status};

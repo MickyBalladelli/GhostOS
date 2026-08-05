@@ -37,6 +37,13 @@ can write a signed package atomically after a successful build. Its
 copies the bounded project tree into an isolated Cargo workspace, and compiles
 that snapshot with the same target and lock policy.
 
+`synos-rustd` also has a signed `ToolchainManifest`. It requires Cargo, rustc,
+and the linker, optionally requires build-script and proc-macro runners, then
+executes the ordered plan through a process-runtime hook. Every tool receives
+the bounded build request, and failed tools are fenced before the job fails.
+The native loader and SynOS `std` PAL still need to provide that hook for true
+in-guest execution.
+
 The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in
 `TODO-compiler.md`.
