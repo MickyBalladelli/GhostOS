@@ -12,5 +12,6 @@ pub use manifest::{
 pub use supervisor::{
     AppSpawnRequest, ApplicationEvent, ApplicationId, ApplicationRuntime, ApplicationState,
     ApplicationStatus, ApplicationSupervisor, CapabilityPolicy, CapabilityRule, CapabilitySet,
-    DEFAULT_APPLICATION_CAPACITY, PolicyError, SupervisorError,
+    DEFAULT_APPLICATION_CAPACITY, ExecutableImage, PackageLaunchError, PolicyError,
+    SupervisorError,
 };

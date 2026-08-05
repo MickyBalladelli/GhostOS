@@ -18,7 +18,7 @@ native `std` port, executable loader, and a real booted service image.
 - [x] Compile a Rust project from source stored on SynFS.
 - [x] Run Cargo, rustc, linker, build scripts, and proc macros inside SynOS.
 - [x] Produce a signed SynOS application bundle from a host-side native build.
-- [ ] Launch that bundle as a capability-limited process.
+- [x] Launch that bundle as a capability-limited process.
 - [ ] Compile the compiler and its runtime again from inside SynOS.
 - [ ] Reproduce the same result in an offline build from a clean workspace.
 
@@ -33,6 +33,10 @@ Completed host/service slice:
 - `synos-rustd` accepts only authorized toolchain components, plans Cargo,
   build-script, proc-macro, rustc, and linker steps, and executes each step
   through a bounded process-runtime hook with exit and cleanup handling.
+- `synos-app` validates an instantiation receipt before launch, checks the
+  signed package entry point, applies the application capability policy, and
+  passes the approved capabilities plus executable package metadata to the
+  process runtime.
 - `synos-rustd` has fixed-size build requests, bounded job state, quotas,
   cancellation, deadline expiry, deny-by-default network policy, and
   content-addressed cache keys.
@@ -66,7 +70,7 @@ The bounded request and job protocol model is implemented in
   process exit status.
 - [ ] Implement process `spawn`, `exec`, `wait`, cancellation, and resource
   limits for compiler jobs.
-- [ ] Connect process launch to application manifests, capability policy,
+- [x] Connect process launch to application manifests, capability policy,
   supervisor restart policy, and signed-package instantiation receipts.
 - [ ] Add executable-page measurement and integrity checks for compiler and
   generated application images.

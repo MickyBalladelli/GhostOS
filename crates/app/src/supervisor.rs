@@ -1,5 +1,7 @@
 use synos_init::{CrashReason, ExitReason, ProcessId};
+use synos_pkg::{InstantiationReceipt, PackageDaemon, PackageError};
 use synos_status::{IntoStatus, Status};
+use synos_system_model::ContentId;
 
 use crate::{
     AppManifest, ApplicationKind, BoundedText, CapabilityKind, CapabilityRequest, CapabilityRights,
@@ -163,6 +165,44 @@ pub struct AppSpawnRequest<'a> {
     pub placement: Placement,
     pub generation: u32,
     pub capabilities: &'a [Option<CapabilityRequest>; MAX_APP_CAPABILITIES],
+    pub executable: Option<ExecutableImage>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecutableImage {
+    pub package: ContentId,
+    pub payload: ContentId,
+    pub entry_offset: u64,
+    pub byte_length: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackageLaunchError {
+    InvalidImage,
+    Package(PackageError),
+    Supervisor(SupervisorError),
+}
+
+impl IntoStatus for PackageLaunchError {
+    fn status(self) -> Status {
+        match self {
+            Self::InvalidImage => Status::INVALID_ARGUMENT,
+            Self::Package(error) => error.status(),
+            Self::Supervisor(error) => error.status(),
+        }
+    }
+}
+
+impl From<PackageError> for PackageLaunchError {
+    fn from(error: PackageError) -> Self {
+        Self::Package(error)
+    }
+}
+
+impl From<SupervisorError> for PackageLaunchError {
+    fn from(error: SupervisorError) -> Self {
+        Self::Supervisor(error)
+    }
 }
 
 pub trait ApplicationRuntime {
@@ -242,6 +282,7 @@ struct ApplicationSlot {
     window_started_us: u64,
     restart_at_us: u64,
     last_exit: Option<ExitReason>,
+    executable: Option<ExecutableImage>,
 }
 
 impl ApplicationSlot {
@@ -269,6 +310,7 @@ impl ApplicationSlot {
         window_started_us: 0,
         restart_at_us: 0,
         last_exit: None,
+        executable: None,
     };
 }
 
@@ -320,6 +362,67 @@ impl<const CAPACITY: usize> ApplicationSupervisor<CAPACITY> {
             ..ApplicationSlot::EMPTY
         };
         Ok(())
+    }
+
+    /// Register an application after its signed package has been checked.
+    /// The package identity and entry point stay attached to the slot until
+    /// the process runtime receives the launch request.
+    pub fn register_package<const RULES: usize>(
+        &mut self,
+        application: ApplicationId,
+        manifest: AppManifest,
+        executable: ExecutableImage,
+        policy: &CapabilityPolicy<RULES>,
+    ) -> Result<(), SupervisorError> {
+        if executable.package.is_zero()
+            || executable.payload.is_zero()
+            || executable.entry_offset >= executable.byte_length
+        {
+            return Err(SupervisorError::InvalidManifest(ManifestError::InvalidManifest));
+        }
+        self.register(application, manifest, policy)?;
+        self.slot_mut(application)?.executable = Some(executable);
+        Ok(())
+    }
+
+    /// Verify a package receipt, validate its entry point, apply capability
+    /// policy, and launch the verified package through the supervisor.
+    pub fn launch_package<
+        const RULES: usize,
+        const PACKAGES: usize,
+        const KEYS: usize,
+        R: ApplicationRuntime,
+    >(
+        &mut self,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        application: ApplicationId,
+        manifest: AppManifest,
+        receipt: InstantiationReceipt,
+        policy: &CapabilityPolicy<RULES>,
+        runtime: &mut R,
+    ) -> Result<ApplicationEvent, PackageLaunchError> {
+        packages.validate_instantiation(receipt)?;
+        let package = packages
+            .manifest(receipt.package())
+            .ok_or(PackageError::InstantiationDenied)?;
+        if package.content != receipt.package()
+            || package.payload.is_zero()
+            || package.entry_offset >= package.byte_length
+        {
+            return Err(PackageLaunchError::InvalidImage);
+        }
+        self.register_package(
+            application,
+            manifest,
+            ExecutableImage {
+                package: package.content,
+                payload: package.payload,
+                entry_offset: package.entry_offset,
+                byte_length: package.byte_length,
+            },
+            policy,
+        )?;
+        Ok(self.start(application, runtime)?)
     }
 
     pub fn start<R: ApplicationRuntime>(
@@ -466,6 +569,7 @@ fn spawn<R: ApplicationRuntime>(
             placement: slot.manifest.runtime.placement,
             generation,
             capabilities: slot.capabilities.as_slice(),
+            executable: slot.executable,
         })
         .map_err(|_| SupervisorError::SpawnFailed)?;
     slot.generation = generation;

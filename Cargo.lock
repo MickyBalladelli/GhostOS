@@ -429,7 +429,9 @@ name = "synos-app"
 version = "0.1.0"
 dependencies = [
  "synos-init",
+ "synos-pkg",
  "synos-status",
+ "synos-system-model",
 ]
 
 [[package]]

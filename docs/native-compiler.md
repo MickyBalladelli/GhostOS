@@ -44,6 +44,13 @@ the bounded build request, and failed tools are fenced before the job fails.
 The native loader and SynOS `std` PAL still need to provide that hook for true
 in-guest execution.
 
+Signed compiler output can now be launched through `synos-app`. The supervisor
+validates the package instantiation receipt and entry point, authorizes the
+manifest's requested capabilities against policy, and passes only the approved
+capabilities plus the package payload identity to the process runtime. The
+native executable-image loader still must map that payload before the process
+can run on a booted SynOS instance.
+
 The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in
 `TODO-compiler.md`.
