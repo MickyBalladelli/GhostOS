@@ -62,10 +62,12 @@ Reproducibility is checked with:
 cargo run -p cargo-synos -- synos reproduce --target x86_64 --release
 ```
 
-The command creates one fresh source workspace, builds it twice with fresh
-target directories and `--locked --offline`, disables incremental state,
-remaps workspace paths, and compares the final `.rlib`, `.rmeta`, `.a`, `.o`,
-and `.so` artifacts by content ID.
+The command creates one fresh source workspace, builds it twice from clean
+target state with `--locked --offline`, disables incremental state, remaps
+workspace paths, and compares the final `.rlib`, `.rmeta`, `.a`, `.o`, and
+`.so` artifacts by content ID. For `.rlib` files, it hashes code archive
+members while ignoring Cargo metadata whose generated declaration order is
+not stable.
 
 The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in

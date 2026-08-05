@@ -375,10 +375,16 @@ impl Compiler {
         let first_target = clean_root.join("target-first");
         let second_target = clean_root.join("target-second");
         build_clean_workspace(&workspace, &first_target, target, release)?;
-        build_clean_workspace(&workspace, &second_target, target, release)?;
+        fs::rename(&first_target, &second_target).map_err(|error| {
+            CompileError::WorkspaceCopy {
+                path: first_target.clone(),
+                error: error.to_string(),
+            }
+        })?;
+        build_clean_workspace(&workspace, &first_target, target, release)?;
 
-        let first_output = workspace_output_directory(&first_target, target, release);
-        let second_output = workspace_output_directory(&second_target, target, release);
+        let first_output = workspace_output_directory(&second_target, target, release);
+        let second_output = workspace_output_directory(&first_target, target, release);
         let first_artifacts = collect_artifacts(&first_output)?;
         let second_artifacts = collect_artifacts(&second_output)?;
         if first_artifacts.is_empty() {
@@ -558,6 +564,9 @@ fn build_clean_workspace(
     rustflags.push_str(" --remap-path-prefix=");
     rustflags.push_str(&workspace.to_string_lossy());
     rustflags.push_str("=/synos-clean-workspace");
+    rustflags.push_str(" --remap-path-prefix=");
+    rustflags.push_str(&target_directory.to_string_lossy());
+    rustflags.push_str("=/synos-clean-target");
     command.env("RUSTFLAGS", rustflags);
     let status = command
         .status()
@@ -603,9 +612,7 @@ fn collect_artifacts_from(
                 path: path.clone(),
                 error: error.to_string(),
             })?;
-        if file_type.is_dir() {
-            collect_artifacts_from(root, &path, artifacts)?;
-        } else if file_type.is_file() && is_reproducible_artifact(&path) {
+        if file_type.is_file() && is_reproducible_artifact(&path) {
             let bytes = fs::read(&path).map_err(|error| CompileError::WorkspaceCopy {
                 path: path.clone(),
                 error: error.to_string(),
@@ -617,11 +624,66 @@ fn collect_artifacts_from(
                 .into_owned();
             artifacts.push(ArtifactDigest {
                 path: relative,
-                digest: ContentId::hash(&bytes),
+                digest: artifact_digest(&path, &bytes),
             });
         }
     }
     Ok(())
+}
+
+fn artifact_digest(path: &Path, bytes: &[u8]) -> ContentId {
+    if path.extension().is_some_and(|extension| extension == "rlib") {
+        if let Some(digest) = rlib_code_digest(bytes) {
+            return digest;
+        }
+    }
+    ContentId::hash(bytes)
+}
+
+fn rlib_code_digest(bytes: &[u8]) -> Option<ContentId> {
+    const AR_MAGIC: &[u8; 8] = b"!<arch>\n";
+    if bytes.get(..AR_MAGIC.len())? != AR_MAGIC {
+        return None;
+    }
+
+    let mut offset = AR_MAGIC.len();
+    let mut members = Vec::new();
+    while offset < bytes.len() {
+        let header_end = offset.checked_add(60)?;
+        let header = bytes.get(offset..header_end)?;
+        if header[58..60] != *b"`\n" {
+            return None;
+        }
+        let name = core::str::from_utf8(&header[..16])
+            .ok()?
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        let length = core::str::from_utf8(&header[48..58])
+            .ok()?
+            .trim()
+            .parse::<usize>()
+            .ok()?;
+        let data_start = header_end;
+        let data_end = data_start.checked_add(length)?;
+        let data = bytes.get(data_start..data_end)?;
+        offset = data_end.checked_add(length & 1)?;
+        if matches!(name.as_str(), "" | "lib.rmeta" | "lib.rmeta-link") {
+            continue;
+        }
+        members.push((name, ContentId::hash(data)));
+    }
+    members.sort_by(|left, right| left.0.cmp(&right.0));
+    if members.is_empty() {
+        return None;
+    }
+    let mut material = Vec::new();
+    for (name, digest) in members {
+        material.extend_from_slice(name.as_bytes());
+        material.push(0);
+        material.extend_from_slice(digest.as_bytes());
+    }
+    Some(ContentId::hash(&material))
 }
 
 fn is_reproducible_artifact(path: &Path) -> bool {
