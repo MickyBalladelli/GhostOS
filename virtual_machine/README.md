@@ -44,6 +44,17 @@ cargo build --release
   --memory 128M \
   --append "console=serial0"
 
+
+or using a precreated disk
+
+../target/release/synos-vm \
+  --kernel ../build/bios/kernel.bin \
+  --disk ./state/data.raw \
+  --disk-size 64M \
+  --disk-format raw \
+  --disk-controller virtio-blk \
+  --firmware bios --interactive
+
 cargo build --release
 
 ```
