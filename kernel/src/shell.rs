@@ -43,6 +43,17 @@ const UPTIME_ROUTE: u16 = 13;
 const COMMAND_CAPACITY: usize = 64;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
+const HELP_CATEGORIES: [&str; 9] = [
+    "SHELL",
+    "SYSTEM",
+    "PROCESS",
+    "MEMORY",
+    "MONITOR",
+    "CONTROL",
+    "CLUSTER",
+    "FILESYSTEM",
+    "FIREWALL",
+];
 
 struct ShellLineRender {
     line: Text<MAX_LINE_BYTES>,
@@ -1016,6 +1027,65 @@ fn argument_kind(kind: ArgumentKind) -> &'static str {
         ArgumentKind::Boolean => "BOOLEAN",
         ArgumentKind::Integer => "INTEGER",
         ArgumentKind::Text => "TEXT",
+    }
+}
+
+fn help_category(value: &str) -> Option<&'static str> {
+    HELP_CATEGORIES
+        .iter()
+        .copied()
+        .find(|category| category.eq_ignore_ascii_case(value))
+}
+
+fn command_category(route: u16) -> &'static str {
+    match route {
+        HELP_ROUTE => "SHELL",
+        SHOW_SYSTEM_ROUTE | REBOOT_ROUTE | SHUTDOWN_ROUTE | UPTIME_ROUTE => "SYSTEM",
+        SHOW_PROCESSES_ROUTE | TOP_CPU_ROUTE | STOP_JOB_ROUTE | SET_PROCESS_ROUTE => "PROCESS",
+        SHOW_MEMORY_ROUTE | SHOW_DSM_ROUTE => "MEMORY",
+        MONITOR_ROUTE => "MONITOR",
+        SYNOS_ISOLATE_ROUTE => "CONTROL",
+        syn_shell::cluster::SHOW_CLUSTER_ROUTE..=syn_shell::cluster::ABANDON_NODE_ROUTE => {
+            "CLUSTER"
+        }
+        syn_shell::filesystem::DIRECTORY_ROUTE..=syn_shell::filesystem::RMDIR_ROUTE => {
+            "FILESYSTEM"
+        }
+        syn_shell::firewall::SHOW_FIREWALL_ROUTE..=syn_shell::firewall::SET_FIREWALL_ROUTE => {
+            "FIREWALL"
+        }
+        _ => "SHELL",
+    }
+}
+
+fn print_command_syntax(spec: &CommandSpec) {
+    for argument in spec.arguments().filter(|argument| argument.positional) {
+        if argument.required {
+            crate::print!(" <{}>", argument.name.as_str());
+        } else {
+            crate::print!(" [<{}>]", argument.name.as_str());
+        }
+    }
+    for argument in spec.arguments().filter(|argument| !argument.positional) {
+        if argument.kind == ArgumentKind::Boolean {
+            if argument.required {
+                crate::print!(" /{}", argument.name.as_str());
+            } else {
+                crate::print!(" [/{}]", argument.name.as_str());
+            }
+        } else if argument.required {
+            crate::print!(
+                " /{}=<{}>",
+                argument.name.as_str(),
+                argument_kind(argument.kind)
+            );
+        } else {
+            crate::print!(
+                " [/{}=<{}>]",
+                argument.name.as_str(),
+                argument_kind(argument.kind)
+            );
+        }
     }
 }
 
@@ -2419,65 +2489,21 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "CREATE, DELETE, DIRECTORY, EDIT, EDT, HELP, LINK, LS, MKDIR, MONITOR, PWD, REBOOT, RMDIR, SET DEFAULT, SET PROCESS, SHOW DEFAULT, SHOW DSM, SHOW LINKS, SHOW MEMORY, SHOW PROCESSES, SHOW SYSTEM, SHUTDOWN, STOP JOB, SYNOS-ISOLATE, TOP CPU, TYPE; unique command prefixes accepted",
+            "SHELL, SYSTEM, PROCESS, MEMORY, MONITOR, CONTROL, CLUSTER, FILESYSTEM, FIREWALL; use HELP <CATEGORY> for related commands; unique command prefixes accepted",
         )?;
         Ok(output)
     }
 
-    fn print_help(&self, registry: &CommandRegistry<COMMAND_CAPACITY>) {
+    fn print_help(&self, _registry: &CommandRegistry<COMMAND_CAPACITY>) {
         crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
-        crate::println!("COMMAND");
-
-        let mut commands = [None; COMMAND_CAPACITY];
-        let mut command_count = 0;
-        for registration in registry.registrations() {
-            commands[command_count] = Some(registration.spec.name);
-            command_count += 1;
-        }
-        for index in 1..command_count {
-            let Some(command) = commands[index] else { continue };
-            let mut position = index;
-            while position > 0
-                && commands[position - 1]
-                    .is_some_and(|previous| previous.as_str() > command.as_str())
-            {
-                commands[position] = commands[position - 1];
-                position -= 1;
-            }
-            commands[position] = Some(command);
-        }
-
-        let widest_command = commands[..command_count]
-            .iter()
-            .flatten()
-            .map(|command| command.as_str().len())
-            .max()
-            .unwrap_or(0);
-        let column_width = widest_command.saturating_add(2);
-        let (terminal_columns, _) = crate::console::terminal_size();
-        let column_count = core::cmp::max(1, terminal_columns / column_width.saturating_add(2))
-            .min(command_count);
-        let row_count = (command_count + column_count - 1) / column_count;
-
-        for row in 0..row_count {
-            for column in 0..column_count {
-                let index = row * column_count + column;
-                if index >= command_count {
-                    break
-                }
-
-                let Some(command) = commands[index] else { break };
-                crate::print!("  ");
-                print_display_command(command.as_str());
-                if index + 1 < command_count && column + 1 < column_count {
-                    for _ in command.as_str().len()..column_width {
-                        crate::print!(" ");
-                    }
-                }
-            }
+        crate::println!("CATEGORY");
+        for category in HELP_CATEGORIES {
+            crate::print!("  {:<12} HELP ", category);
+            print_display_command(category);
             crate::println!();
         }
         crate::println!();
+        crate::println!("Use HELP <CATEGORY> for related commands.");
         crate::println!("Use HELP <COMMAND> for syntax and parameters.");
         crate::println!("EDIT keys: Ctrl-S save, Ctrl-Z save and exit, Ctrl-X discard and exit.");
         crate::println!("  Insert text normally; Enter adds a line; Shift-arrows select text.");
@@ -2494,6 +2520,10 @@ impl KernelExecutor {
         registry: &CommandRegistry<COMMAND_CAPACITY>,
         command: &str,
     ) {
+        if let Some(category) = help_category(command) {
+            self.print_category_help(registry, category);
+            return
+        }
         let Some(registration) = registry.registration(command) else {
             crate::println!("No help available for {command}.");
             return
@@ -2559,6 +2589,27 @@ impl KernelExecutor {
         if has_boolean {
             crate::println!("Boolean parameters accept TRUE, FALSE, YES, NO, 1, or 0.");
         }
+    }
+
+    #[inline(never)]
+    fn print_category_help(
+        &self,
+        registry: &CommandRegistry<COMMAND_CAPACITY>,
+        category: &str,
+    ) {
+        crate::print!("\x1b[1;36m=== HELP: ");
+        print_display_command(category);
+        crate::println!(" ===\x1b[0m");
+        for registration in registry.registrations() {
+            if command_category(registration.route.raw()) == category {
+                crate::print!("  ");
+                print_display_command(registration.spec.name.as_str());
+                print_command_syntax(&registration.spec);
+                crate::println!();
+            }
+        }
+        crate::println!();
+        crate::println!("Use HELP <COMMAND> for parameters.");
     }
 
     fn show_system(&self) -> Result<StructuredOutput, Status> {

@@ -437,23 +437,25 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 target.push_char('-')?;
                 target.push_str(words[2].as_ref().ok_or(Error::InvalidSyntax)?.as_str())?;
             }
-            if target.as_str().eq_ignore_ascii_case("CLUSTER") {
+            if word_count > 2 && target.as_str().eq_ignore_ascii_case("CLUSTER") {
                 target = Text::new("SHOW-CLUSTER")?;
             } else if target.as_str().eq_ignore_ascii_case("LS-CLUSTERS") {
                 target = Text::new("LIST-CLUSTERS")?;
             } else if target.as_str().eq_ignore_ascii_case("REMOVE-CLUSTER") {
                 target = Text::new("DELETE-CLUSTER")?;
             }
-            let target_registration = self.find_registration(target.as_str())?;
             let target_argument = registration
                 .spec
                 .arguments()
                 .find(|argument| argument.name.as_str().eq_ignore_ascii_case("COMMAND"))
                 .ok_or(Error::TooManyArguments)?;
+            let target_name = self
+                .find_registration(target.as_str())
+                .map_or(target.as_str(), |registration| registration.spec.name.as_str());
             insert_argument(
                 &mut arguments,
                 target_argument,
-                target_registration.spec.name.as_str(),
+                target_name,
             )?;
             first_argument = word_count;
         }
