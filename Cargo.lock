@@ -805,8 +805,12 @@ dependencies = [
 name = "synos-rustd"
 version = "0.1.0"
 dependencies = [
+ "synos-init",
+ "synos-pkg",
  "synos-status",
+ "synos-synfs",
  "synos-system-model",
+ "synos-update",
 ]
 
 [[package]]

@@ -6,5 +6,9 @@ license.workspace = true
 description = "Bounded compiler-service protocol for SynOS"
 
 [dependencies]
+synos-init = { path = "../init" }
+synos-pkg = { path = "../pkg" }
+synos-synfs = { path = "../synfs" }
 synos-status = { path = "../status" }
 synos-system-model = { path = "../system-model" }
+synos-update = { path = "../synos-update" }

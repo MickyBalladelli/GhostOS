@@ -1,6 +1,13 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+mod boot;
+
+pub use boot::{
+    COMPILER_CAPABILITY_PROFILE, COMPILER_SERVICE_ID, COMPILER_SERVICE_NAME, CompilerBootError,
+    CompilerBootState, CompilerServiceBoot, CompilerServiceHealthCheck, NativeCompilerBootConfig,
+};
+
 use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
 

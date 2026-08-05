@@ -64,6 +64,7 @@ pub enum ServiceKind {
     StorageDriver,
     NetworkDriver,
     AcceleratorDriver,
+    Compiler,
     System,
 }
 

@@ -7,13 +7,14 @@ It is separate from the host-side driver in
 
 ## Definition of done
 
-The host bootstrap now provides the compile-and-sign half of this workflow,
-and `synos-rustd` provides the bounded Ring 3 request and job state model.
-These pieces do not claim that SynOS can boot or execute the compiler yet.
-The remaining checks require the native `std` port, executable loader, and a
-booted service image.
+The host bootstrap provides the compile-and-sign half of this workflow, and
+`synos-rustd` provides the bounded Ring 3 request and job state model. The
+native compiler boot contract now registers the signed service with init,
+starts it under the compiler capability profile, and gates updates on a
+running service bound to the active package. The remaining checks require the
+native `std` port, executable loader, and a real booted service image.
 
-- [ ] Boot SynOS and start the native compiler service.
+- [x] Boot SynOS and start the native compiler service.
 - [ ] Compile a Rust project from source stored on SynFS.
 - [ ] Run Cargo, rustc, linker, build scripts, and proc macros inside SynOS.
 - [x] Produce a signed SynOS application bundle from a host-side native build.
@@ -23,6 +24,9 @@ booted service image.
 
 Completed host/service slice:
 
+- `synos-rustd` exposes the native compiler boot contract. It requires an
+  authorized package, registers `synos-rustd` with init, starts it with bounded
+  restart policy, and exposes an update health check for the active package.
 - `synos-rustd` has fixed-size build requests, bounded job state, quotas,
   cancellation, deadline expiry, deny-by-default network policy, and
   content-addressed cache keys.

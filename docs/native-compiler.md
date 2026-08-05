@@ -27,8 +27,16 @@ property that can be claimed from a host Cargo command.
 The current service boundary is represented by `synos-rustd`. Its requests are
 fixed-size and include the source root, manifest, target, profile, lock policy,
 network policy, and resource limits. The default policy denies network access.
-The host driver accepts matching `--locked` and `--offline` flags and can write
-a signed package atomically after a successful build.
+During user-space boot, `CompilerServiceBoot` verifies the package gate,
+registers the service with init, and starts it under the compiler capability
+profile. `CompilerServiceHealthCheck` makes a system update fail and roll back
+when the service is not running or the active root is not bound to that
+package. The host driver accepts matching `--locked` and `--offline` flags and
+can write a signed package atomically after a successful build.
+
+The boot contract is now wired, but the actual native executable still needs
+the SynOS `std` port, process loader, and service image described in
+`TODO-compiler.md`.
 
 For the complete host-side step, use `cargo-synos package` with
 `--manifest-path`, `--locked`, `--offline`, `--key`, and `--output`.
