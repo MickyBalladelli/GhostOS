@@ -32,7 +32,10 @@ registers the service with init, and starts it under the compiler capability
 profile. `CompilerServiceHealthCheck` makes a system update fail and roll back
 when the service is not running or the active root is not bound to that
 package. The host driver accepts matching `--locked` and `--offline` flags and
-can write a signed package atomically after a successful build.
+can write a signed package atomically after a successful build. Its
+`compile_synfs` path validates the source root and manifest through SynFS,
+copies the bounded project tree into an isolated Cargo workspace, and compiles
+that snapshot with the same target and lock policy.
 
 The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in

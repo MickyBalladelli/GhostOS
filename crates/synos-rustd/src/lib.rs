@@ -9,6 +9,7 @@ pub use boot::{
 };
 
 use synos_status::{IntoStatus, Status};
+use synos_synfs::{Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
 
 pub const MAX_PATH_BYTES: usize = 192;
@@ -27,6 +28,7 @@ pub enum Error {
     NetworkDenied,
     ResourceLimit,
     DeadlineExpired,
+    SourceFilesystem(SynFsError),
 }
 
 impl IntoStatus for Error {
@@ -38,6 +40,7 @@ impl IntoStatus for Error {
             Self::InvalidRequest | Self::InvalidTransition | Self::DeadlineExpired => {
                 Status::INVALID_ARGUMENT
             }
+            Self::SourceFilesystem(error) => error.status(),
         }
     }
 }
@@ -275,6 +278,32 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         Ok(id)
     }
 
+    /// Validate a source tree through SynFS before putting the build on the
+    /// bounded job queue. The manifest must live below the source root.
+    pub fn submit_from_synfs<const BLOCKS: usize>(
+        &mut self,
+        filesystem: &SynFs<BLOCKS>,
+        request: BuildRequest,
+    ) -> Result<JobId, Error> {
+        let root = filesystem
+            .lookup(request.source_root.as_str())
+            .map_err(Error::SourceFilesystem)?;
+        if root.file_type != FileType::Directory {
+            return Err(Error::InvalidRequest);
+        }
+
+        let manifest = filesystem
+            .lookup(request.manifest.as_str())
+            .map_err(Error::SourceFilesystem)?;
+        if manifest.file_type != FileType::Regular
+            || !is_source_member(request.source_root.as_str(), request.manifest.as_str())
+        {
+            return Err(Error::InvalidRequest);
+        }
+
+        self.submit(request)
+    }
+
     pub fn start(&mut self, id: JobId) -> Result<(), Error> {
         self.start_at(id, 0)
     }
@@ -401,4 +430,8 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             .find(|job| job.status.id == id)
             .ok_or(Error::JobNotFound)
     }
+}
+
+fn is_source_member(root: &str, path: &str) -> bool {
+    root == "/" || path.strip_prefix(root).is_some_and(|suffix| suffix.starts_with('/'))
 }

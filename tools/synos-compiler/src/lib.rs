@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 use synos_pkg::{BundleInfo, PackageError, SigningKey, bundle_size, encode_bundle};
+use synos_synfs::{DirectoryEntry, Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +44,37 @@ pub struct CompileRequest {
     pub offline: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct SynFsCompileRequest {
+    pub source_root: String,
+    pub manifest: String,
+    pub binary: String,
+    pub package: Option<String>,
+    pub target: Target,
+    pub release: bool,
+    pub locked: bool,
+    pub offline: bool,
+    pub target_directory: Option<PathBuf>,
+    pub max_source_bytes: u64,
+}
+
+impl SynFsCompileRequest {
+    pub fn new(source_root: &str, manifest: &str, binary: &str, target: Target) -> Self {
+        Self {
+            source_root: source_root.into(),
+            manifest: manifest.into(),
+            binary: binary.into(),
+            package: None,
+            target,
+            release: false,
+            locked: true,
+            offline: true,
+            target_directory: None,
+            max_source_bytes: 64 * 1024 * 1024,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompileOutput {
     pub artifact: PathBuf,
@@ -69,6 +101,12 @@ pub enum CompileError {
     BuildFailed(ExitStatus),
     InvalidTargetDirectory,
     InvalidSourceRoot(PathBuf),
+    InvalidSynFsSourceRoot(String),
+    InvalidSynFsManifest(String),
+    SourceTooLarge { limit: u64 },
+    UnsupportedSynFsFile(String),
+    SynFs(SynFsError),
+    Staging { path: PathBuf, error: String },
     Package(PackageError),
     PackageWrite { path: PathBuf, error: String },
 }
@@ -84,6 +122,22 @@ impl std::fmt::Display for CompileError {
             Self::InvalidSourceRoot(path) => {
                 write!(formatter, "source root does not exist: {}", path.display())
             }
+            Self::InvalidSynFsSourceRoot(path) => {
+                write!(formatter, "SynFS source root is invalid: {path}")
+            }
+            Self::InvalidSynFsManifest(path) => {
+                write!(formatter, "SynFS manifest is invalid: {path}")
+            }
+            Self::SourceTooLarge { limit } => {
+                write!(formatter, "SynFS source exceeds the {limit}-byte limit")
+            }
+            Self::UnsupportedSynFsFile(path) => {
+                write!(formatter, "unsupported SynFS source file: {path}")
+            }
+            Self::SynFs(error) => write!(formatter, "could not read SynFS source: {error:?}"),
+            Self::Staging { path, error } => {
+                write!(formatter, "could not stage SynFS source at {}: {error}", path.display())
+            }
             Self::Package(error) => write!(formatter, "could not create package: {error:?}"),
             Self::PackageWrite { path, error } => {
                 write!(formatter, "could not write package {}: {error}", path.display())
@@ -97,6 +151,12 @@ impl std::error::Error for CompileError {}
 impl From<PackageError> for CompileError {
     fn from(error: PackageError) -> Self {
         Self::Package(error)
+    }
+}
+
+impl From<SynFsError> for CompileError {
+    fn from(error: SynFsError) -> Self {
+        Self::SynFs(error)
     }
 }
 
@@ -172,6 +232,30 @@ impl Compiler {
                 .join(profile)
                 .join(&request.binary),
             target: request.target,
+        })
+    }
+
+    /// Copy one immutable SynFS project generation into a private host
+    /// workspace, then run the normal locked Cargo build against that copy.
+    /// The staged directory is retained so the caller can inspect artifacts
+    /// and diagnostics after the build.
+    pub fn compile_synfs<const MAX_BLOCKS: usize>(
+        &self,
+        filesystem: &SynFs<MAX_BLOCKS>,
+        request: &SynFsCompileRequest,
+        staging_root: &Path,
+    ) -> Result<CompileOutput, CompileError> {
+        let project_root = stage_synfs_project(filesystem, request, staging_root)?;
+        let manifest = synfs_manifest_path(&request.source_root, &request.manifest)?;
+        self.compile(&CompileRequest {
+            manifest_path: project_root.join(relative_synfs_path(&request.source_root, &manifest)?),
+            binary: request.binary.clone(),
+            package: request.package.clone(),
+            target: request.target,
+            release: request.release,
+            target_directory: request.target_directory.clone(),
+            locked: request.locked,
+            offline: request.offline,
         })
     }
 
@@ -318,6 +402,123 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CompileError> {
         path: path.to_path_buf(),
         error: error.to_string(),
     })
+}
+
+fn stage_synfs_project<const MAX_BLOCKS: usize>(
+    filesystem: &SynFs<MAX_BLOCKS>,
+    request: &SynFsCompileRequest,
+    staging_root: &Path,
+) -> Result<PathBuf, CompileError> {
+    let source_root = validate_synfs_root(&request.source_root)?;
+    let manifest = synfs_manifest_path(source_root, &request.manifest)?;
+    let root = filesystem.lookup(source_root)?;
+    if root.file_type != FileType::Directory {
+        return Err(CompileError::InvalidSynFsSourceRoot(source_root.into()));
+    }
+    let manifest_info = filesystem.lookup(&manifest)?;
+    if manifest_info.file_type != FileType::Regular {
+        return Err(CompileError::InvalidSynFsManifest(manifest));
+    }
+
+    let identity = format!("{source_root}:{manifest}:{}", filesystem.generation());
+    let project_root = staging_root.join(format!("synfs-{:?}", ContentId::hash(identity.as_bytes())));
+    fs::create_dir_all(&project_root).map_err(|error| CompileError::Staging {
+        path: project_root.clone(),
+        error: error.to_string(),
+    })?;
+
+    let mut pending = vec![source_root.to_string()];
+    let mut total_bytes = 0_u64;
+    while let Some(directory) = pending.pop() {
+        let mut entries = [DirectoryEntry::EMPTY; 256];
+        let count = filesystem.list_directory(&directory, &mut entries)?;
+        for entry in entries.into_iter().take(count) {
+            let source = join_synfs_path(&directory, entry.name.as_str());
+            let relative = relative_synfs_path(source_root, &source)?;
+            let destination = project_root.join(&relative);
+            match entry.file_type {
+                FileType::Directory => {
+                    fs::create_dir_all(&destination).map_err(|error| CompileError::Staging {
+                        path: destination.clone(),
+                        error: error.to_string(),
+                    })?;
+                    pending.push(source);
+                }
+                FileType::Regular => {
+                    total_bytes = total_bytes
+                        .checked_add(entry.size)
+                        .ok_or(CompileError::SourceTooLarge {
+                            limit: request.max_source_bytes,
+                        })?;
+                    if total_bytes > request.max_source_bytes {
+                        return Err(CompileError::SourceTooLarge {
+                            limit: request.max_source_bytes,
+                        });
+                    }
+                    let size = usize::try_from(entry.size).map_err(|_| CompileError::SourceTooLarge {
+                        limit: request.max_source_bytes,
+                    })?;
+                    let mut bytes = vec![0; size];
+                    let read = filesystem.read(&source, &mut bytes)?;
+                    bytes.truncate(read.bytes_read);
+                    if let Some(parent) = destination.parent() {
+                        fs::create_dir_all(parent).map_err(|error| CompileError::Staging {
+                            path: parent.to_path_buf(),
+                            error: error.to_string(),
+                        })?;
+                    }
+                    fs::write(&destination, bytes).map_err(|error| CompileError::Staging {
+                        path: destination,
+                        error: error.to_string(),
+                    })?;
+                }
+                FileType::Symlink => {
+                    return Err(CompileError::UnsupportedSynFsFile(source));
+                }
+            }
+        }
+    }
+    Ok(project_root)
+}
+
+fn validate_synfs_root(root: &str) -> Result<&str, CompileError> {
+    if root.is_empty() || root == "/" || root.ends_with('/') || root.contains('\0') {
+        return Err(CompileError::InvalidSynFsSourceRoot(root.into()));
+    }
+    Ok(root)
+}
+
+fn synfs_manifest_path(source_root: &str, manifest: &str) -> Result<String, CompileError> {
+    if manifest.is_empty() || manifest.contains('\0') {
+        return Err(CompileError::InvalidSynFsManifest(manifest.into()));
+    }
+    let path = if manifest.starts_with('/') {
+        manifest.to_string()
+    } else {
+        format!("{source_root}/{manifest}")
+    };
+    if !is_synfs_member(source_root, &path) {
+        return Err(CompileError::InvalidSynFsManifest(path));
+    }
+    Ok(path)
+}
+
+fn relative_synfs_path(source_root: &str, path: &str) -> Result<PathBuf, CompileError> {
+    let relative = path
+        .strip_prefix(source_root)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .filter(|suffix| !suffix.is_empty())
+        .ok_or_else(|| CompileError::InvalidSynFsManifest(path.into()))?;
+    Ok(PathBuf::from(relative))
+}
+
+fn is_synfs_member(root: &str, path: &str) -> bool {
+    path.strip_prefix(root)
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn join_synfs_path(directory: &str, name: &str) -> String {
+    format!("{}/{}", directory.trim_end_matches('/'), name)
 }
 
 fn bundled_linker() -> Option<PathBuf> {

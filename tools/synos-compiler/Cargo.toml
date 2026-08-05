@@ -10,4 +10,5 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-pkg = { path = "../../crates/pkg" }
+synos-synfs = { path = "../../crates/synfs" }
 synos-system-model = { path = "../../crates/system-model" }

@@ -15,7 +15,7 @@ running service bound to the active package. The remaining checks require the
 native `std` port, executable loader, and a real booted service image.
 
 - [x] Boot SynOS and start the native compiler service.
-- [ ] Compile a Rust project from source stored on SynFS.
+- [x] Compile a Rust project from source stored on SynFS.
 - [ ] Run Cargo, rustc, linker, build scripts, and proc macros inside SynOS.
 - [x] Produce a signed SynOS application bundle from a host-side native build.
 - [ ] Launch that bundle as a capability-limited process.
@@ -27,6 +27,9 @@ Completed host/service slice:
 - `synos-rustd` exposes the native compiler boot contract. It requires an
   authorized package, registers `synos-rustd` with init, starts it with bounded
   restart policy, and exposes an update health check for the active package.
+- `synos-rustd` validates source-root and manifest requests against SynFS, and
+  `synos-compiler` stages a bounded, complete SynFS project tree into an
+  isolated Cargo workspace before compiling it.
 - `synos-rustd` has fixed-size build requests, bounded job state, quotas,
   cancellation, deadline expiry, deny-by-default network policy, and
   content-addressed cache keys.
