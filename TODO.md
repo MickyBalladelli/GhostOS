@@ -425,6 +425,8 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
   - [x] Include a Rust Hello World program that builds for SynOS and runs on the host.
   - [x] Compile every production Ring 0 and Ring 3 library crate used by the roadmap with one native-target command.
   - [x] Keep host-only tools, fixtures, UEFI application code, and the VM outside the SynOS target build.
+- [ ] **Rust Compiler Inside SynOS**
+  - [ ] Track the self-hosting compiler work in [TODO-compiler.md](TODO-compiler.md).
 - [x] **Hermetic Package Daemon (`synos-pkg`)**
   - [x] Implement content-addressed package management backing declarative system configurations on SynFS.
 

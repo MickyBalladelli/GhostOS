@@ -12,10 +12,12 @@ cargo synos build [--target x86_64|aarch64] [--release] [cargo options]
 cargo synos bundle --artifact PATH --key PATH --output PATH
     [--entry-offset BYTES] [--dependency SHA256]...
 cargo synos package --bin NAME --key PATH --output PATH
-    [--package NAME] [--target x86_64|aarch64] [--release]
+    [--manifest-path PATH] [--package NAME] [--target x86_64|aarch64]
+    [--release] [--locked] [--offline] [--target-dir PATH]
     [--entry-offset BYTES] [--dependency SHA256]...
 cargo synos compile --manifest-path PATH --bin NAME
-    [--target x86_64|aarch64] [--release] [--target-dir PATH]
+    [--target x86_64|aarch64] [--release] [--locked] [--offline]
+    [--target-dir PATH]
 cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH]
 cargo synos run --manifest-path PATH --bin NAME [--release] [-- ARGUMENT]...
 
@@ -64,9 +66,12 @@ fn compile(arguments: &[String]) -> Result<(), String> {
         .compile(&CompileRequest {
             manifest_path: options.manifest_path,
             binary: options.binary,
+            package: None,
             target: options.target,
             release: options.release,
             target_directory: options.target_directory,
+            locked: options.locked,
+            offline: options.offline,
         })
         .map_err(|error| error.to_string())?;
     println!("compiled {}", output.artifact.display());
@@ -112,41 +117,35 @@ fn bundle(arguments: &[String]) -> Result<(), String> {
 
 fn package(arguments: &[String]) -> Result<(), String> {
     let options = PackageOptions::parse(arguments)?;
-    let target = target_path(&options.target)?;
-    let mut build_arguments = vec![
-        "--target".into(),
-        target.to_string_lossy().into_owned(),
-        "--bin".into(),
-        options.binary.clone(),
-    ];
-    if let Some(package) = &options.package {
-        build_arguments.push("--package".into());
-        build_arguments.push(package.clone());
-    }
-    if options.release {
-        build_arguments.push("--release".into());
-    }
-    run_cargo_build(&build_arguments)?;
-
-    let profile = if options.release { "release" } else { "debug" };
-    let target_name = target
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "invalid target name".to_string())?;
-    let target_directory = env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or(workspace_root()?.join("target"));
-    let artifact = target_directory
-        .join(target_name)
-        .join(profile)
-        .join(&options.binary);
-    create_bundle(&BundleOptions {
-        artifact,
-        key: options.key,
-        output: options.output,
-        entry_offset: options.entry_offset,
-        dependencies: options.dependencies,
-    })
+    let compiler = Compiler::new().map_err(|error| error.to_string())?;
+    let key = read_key(&options.key)?;
+    let output = compiler
+        .compile_and_bundle(
+            &CompileRequest {
+                manifest_path: options
+                    .manifest_path
+                    .unwrap_or(workspace_root()?.join("Cargo.toml")),
+                binary: options.binary,
+                package: options.package,
+                target: Target::parse(&options.target).map_err(|error| error.to_string())?,
+                release: options.release,
+                target_directory: options.target_directory,
+                locked: options.locked,
+                offline: options.offline,
+            },
+            key,
+            &options.output,
+            options.entry_offset,
+            &options.dependencies,
+        )
+        .map_err(|error| error.to_string())?;
+    println!(
+        "created {} package {:?} ({} bytes)",
+        output.bundle.display(),
+        output.info.package,
+        output.info.payload_length
+    );
+    Ok(())
 }
 
 fn run_cargo_build(arguments: &[String]) -> Result<(), String> {
@@ -297,6 +296,8 @@ struct CompileOptions {
     target: Target,
     release: bool,
     target_directory: Option<PathBuf>,
+    locked: bool,
+    offline: bool,
 }
 
 impl CompileOptions {
@@ -306,6 +307,8 @@ impl CompileOptions {
         let mut target = Target::X86_64;
         let mut release = false;
         let mut target_directory = None;
+        let mut locked = false;
+        let mut offline = false;
         let mut index = 0;
         while index < arguments.len() {
             match arguments[index].as_str() {
@@ -321,6 +324,14 @@ impl CompileOptions {
                     release = true;
                     index += 1;
                 }
+                "--locked" => {
+                    locked = true;
+                    index += 1;
+                }
+                "--offline" => {
+                    offline = true;
+                    index += 1;
+                }
                 "--target-dir" => {
                     target_directory = Some(PathBuf::from(required_value(arguments, &mut index)?))
                 }
@@ -333,6 +344,8 @@ impl CompileOptions {
             target,
             release,
             target_directory,
+            locked,
+            offline,
         })
     }
 }
@@ -459,6 +472,7 @@ impl BundleOptions {
 
 struct PackageOptions {
     binary: String,
+    manifest_path: Option<PathBuf>,
     package: Option<String>,
     target: String,
     release: bool,
@@ -466,11 +480,15 @@ struct PackageOptions {
     output: PathBuf,
     entry_offset: u64,
     dependencies: Vec<ContentId>,
+    locked: bool,
+    offline: bool,
+    target_directory: Option<PathBuf>,
 }
 
 impl PackageOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut binary = None;
+        let mut manifest_path = None;
         let mut package = None;
         let mut target = "x86_64".to_string();
         let mut release = false;
@@ -478,10 +496,23 @@ impl PackageOptions {
         let mut output = None;
         let mut entry_offset = 0;
         let mut dependencies = Vec::new();
+        let mut locked = false;
+        let mut offline = false;
+        let mut target_directory = None;
         let mut index = 0;
         while index < arguments.len() {
             if arguments[index] == "--release" {
                 release = true;
+                index += 1;
+                continue;
+            }
+            if arguments[index] == "--locked" {
+                locked = true;
+                index += 1;
+                continue;
+            }
+            if arguments[index] == "--offline" {
+                offline = true;
                 index += 1;
                 continue;
             }
@@ -490,6 +521,7 @@ impl PackageOptions {
                 .ok_or_else(|| format!("{} needs a value", arguments[index]))?;
             match arguments[index].as_str() {
                 "--bin" => binary = Some(value.clone()),
+                "--manifest-path" => manifest_path = Some(PathBuf::from(value)),
                 "--package" => package = Some(value.clone()),
                 "--target" => target = value.clone(),
                 "--key" => key = Some(PathBuf::from(value)),
@@ -500,12 +532,14 @@ impl PackageOptions {
                         .map_err(|_| "entry offset must be an integer".to_string())?
                 }
                 "--dependency" => dependencies.push(decode_content_id(value)?),
+                "--target-dir" => target_directory = Some(PathBuf::from(value)),
                 other => return Err(format!("unknown package option `{other}`")),
             }
             index += 2;
         }
         Ok(Self {
             binary: binary.ok_or_else(|| "--bin is required".to_string())?,
+            manifest_path,
             package,
             target,
             release,
@@ -513,6 +547,9 @@ impl PackageOptions {
             output: output.ok_or_else(|| "--output is required".to_string())?,
             entry_offset,
             dependencies,
+            locked,
+            offline,
+            target_directory,
         })
     }
 }

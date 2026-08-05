@@ -1,7 +1,12 @@
 use std::env;
 use std::ffi::OsString;
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
+
+use synos_pkg::{BundleInfo, PackageError, SigningKey, bundle_size, encode_bundle};
+use synos_system_model::ContentId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Target {
@@ -30,15 +35,25 @@ impl Target {
 pub struct CompileRequest {
     pub manifest_path: PathBuf,
     pub binary: String,
+    pub package: Option<String>,
     pub target: Target,
     pub release: bool,
     pub target_directory: Option<PathBuf>,
+    pub locked: bool,
+    pub offline: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompileOutput {
     pub artifact: PathBuf,
     pub target: Target,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BundleOutput {
+    pub bundle: PathBuf,
+    pub artifact: PathBuf,
+    pub info: BundleInfo,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +68,9 @@ pub enum CompileError {
     UnsupportedTarget(String),
     BuildFailed(ExitStatus),
     InvalidTargetDirectory,
+    InvalidSourceRoot(PathBuf),
+    Package(PackageError),
+    PackageWrite { path: PathBuf, error: String },
 }
 
 impl std::fmt::Display for CompileError {
@@ -63,11 +81,24 @@ impl std::fmt::Display for CompileError {
             Self::UnsupportedTarget(target) => write!(formatter, "unsupported SynOS target `{target}`"),
             Self::BuildFailed(status) => write!(formatter, "SynOS compilation failed with {status}"),
             Self::InvalidTargetDirectory => write!(formatter, "could not locate the workspace root"),
+            Self::InvalidSourceRoot(path) => {
+                write!(formatter, "source root does not exist: {}", path.display())
+            }
+            Self::Package(error) => write!(formatter, "could not create package: {error:?}"),
+            Self::PackageWrite { path, error } => {
+                write!(formatter, "could not write package {}: {error}", path.display())
+            }
         }
     }
 }
 
 impl std::error::Error for CompileError {}
+
+impl From<PackageError> for CompileError {
+    fn from(error: PackageError) -> Self {
+        Self::Package(error)
+    }
+}
 
 pub struct Compiler {
     cargo: OsString,
@@ -91,6 +122,13 @@ impl Compiler {
         if !request.manifest_path.is_file() {
             return Err(CompileError::InvalidManifest(request.manifest_path.clone()))
         }
+        let source_root = request
+            .manifest_path
+            .parent()
+            .ok_or_else(|| CompileError::InvalidSourceRoot(request.manifest_path.clone()))?;
+        if !source_root.is_dir() {
+            return Err(CompileError::InvalidSourceRoot(source_root.to_path_buf()))
+        }
         let target_file = self.workspace_root.join("targets").join(request.target.target_file());
         let mut command = self.base_command();
         command
@@ -101,11 +139,20 @@ impl Compiler {
             .arg(&request.binary)
             .arg("--target")
             .arg(&target_file);
+        if let Some(package) = &request.package {
+            command.arg("--package").arg(package);
+        }
         if request.release {
             command.arg("--release");
         }
         if let Some(target_directory) = &request.target_directory {
             command.arg("--target-dir").arg(target_directory);
+        }
+        if request.locked {
+            command.arg("--locked");
+        }
+        if request.offline {
+            command.arg("--offline");
         }
         let status = command
             .status()
@@ -125,6 +172,38 @@ impl Compiler {
                 .join(profile)
                 .join(&request.binary),
             target: request.target,
+        })
+    }
+
+    pub fn compile_and_bundle(
+        &self,
+        request: &CompileRequest,
+        key: SigningKey,
+        output: &Path,
+        entry_offset: u64,
+        dependencies: &[ContentId],
+    ) -> Result<BundleOutput, CompileError> {
+        let compiled = self.compile(request)?;
+        let payload = fs::read(&compiled.artifact).map_err(|error| {
+            CompileError::PackageWrite {
+                path: compiled.artifact.clone(),
+                error: error.to_string(),
+            }
+        })?;
+        let required = bundle_size(payload.len(), dependencies.len())?;
+        let mut encoded = vec![0; required];
+        let info = encode_bundle(
+            &payload,
+            entry_offset,
+            dependencies,
+            key,
+            &mut encoded,
+        )?;
+        write_atomic(output, &encoded)?;
+        Ok(BundleOutput {
+            bundle: output.to_path_buf(),
+            artifact: compiled.artifact,
+            info,
         })
     }
 
@@ -218,6 +297,27 @@ impl Compiler {
             .status()
             .map_err(|error| CompileError::CargoUnavailable(error.to_string()))
     }
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CompileError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err(CompileError::PackageWrite {
+            path: path.to_path_buf(),
+            error: "parent directory does not exist".into(),
+        })
+    }
+    let temporary = path.with_extension("synpkg.tmp");
+    let result = (|| {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)
+    })();
+    result.map_err(|error| CompileError::PackageWrite {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })
 }
 
 fn bundled_linker() -> Option<PathBuf> {

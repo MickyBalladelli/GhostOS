@@ -9,3 +9,5 @@ description = "Native Rust compiler driver for SynOS Ring 3 programs"
 path = "src/lib.rs"
 
 [dependencies]
+synos-pkg = { path = "../../crates/pkg" }
+synos-system-model = { path = "../../crates/system-model" }

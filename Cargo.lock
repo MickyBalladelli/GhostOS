@@ -493,6 +493,10 @@ dependencies = [
 [[package]]
 name = "synos-compiler"
 version = "0.1.0"
+dependencies = [
+ "synos-pkg",
+ "synos-system-model",
+]
 
 [[package]]
 name = "synos-compute"
@@ -795,6 +799,14 @@ dependencies = [
  "synos-ipc",
  "synos-path-pattern",
  "synos-status",
+]
+
+[[package]]
+name = "synos-rustd"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
+ "synos-system-model",
 ]
 
 [[package]]

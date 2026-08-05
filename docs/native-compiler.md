@@ -23,3 +23,12 @@ Self-hosting Rust compilation inside a running SynOS instance needs a SynOS
 `std` port, process loader, dynamic library support, compiler package, and a
 filesystem-backed compiler service. Those are separate runtime work, not a
 property that can be claimed from a host Cargo command.
+
+The current service boundary is represented by `synos-rustd`. Its requests are
+fixed-size and include the source root, manifest, target, profile, lock policy,
+network policy, and resource limits. The default policy denies network access.
+The host driver accepts matching `--locked` and `--offline` flags and can write
+a signed package atomically after a successful build.
+
+For the complete host-side step, use `cargo-synos package` with
+`--manifest-path`, `--locked`, `--offline`, `--key`, and `--output`.

@@ -15,6 +15,7 @@ This catalog is a navigation aid. Read the crate’s `Cargo.toml`, `README`, and
 | `synos-ipc` | Shared IPC structures and bounded transport primitives |
 | `cargo-synos` | Cargo workflow integration and compiler commands |
 | `synos-compiler` | Native Rust compiler driver for SynOS targets |
+| `synos-rustd` | Bounded compiler-service requests, jobs, policy, and cache keys |
 
 ## Filesystem, storage, and packages
 
