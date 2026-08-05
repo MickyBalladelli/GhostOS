@@ -51,6 +51,11 @@ capabilities plus the package payload identity to the process runtime. The
 native executable-image loader still must map that payload before the process
 can run on a booted SynOS instance.
 
+The self-host path is represented by `SelfHostSession`. It submits and validates
+the runtime build first, refuses unlocked or networked requests, then submits
+the compiler build only after the runtime artifact is complete. Both results
+must carry non-zero package and payload identities for the session to finish.
+
 The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in
 `TODO-compiler.md`.

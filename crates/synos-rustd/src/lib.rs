@@ -2,11 +2,15 @@
 #![forbid(unsafe_code)]
 
 mod boot;
+mod self_host;
 mod toolchain;
 
 pub use boot::{
     COMPILER_CAPABILITY_PROFILE, COMPILER_SERVICE_ID, COMPILER_SERVICE_NAME, CompilerBootError,
     CompilerBootState, CompilerServiceBoot, CompilerServiceHealthCheck, NativeCompilerBootConfig,
+};
+pub use self_host::{
+    SelfHostError, SelfHostRequest, SelfHostResult, SelfHostSession, SelfHostStage,
 };
 pub use toolchain::{
     ToolExit, ToolKind, ToolSpawnRequest, ToolchainComponent, ToolchainError, ToolchainExecutor,

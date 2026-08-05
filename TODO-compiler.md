@@ -19,7 +19,7 @@ native `std` port, executable loader, and a real booted service image.
 - [x] Run Cargo, rustc, linker, build scripts, and proc macros inside SynOS.
 - [x] Produce a signed SynOS application bundle from a host-side native build.
 - [x] Launch that bundle as a capability-limited process.
-- [ ] Compile the compiler and its runtime again from inside SynOS.
+- [x] Compile the compiler and its runtime again from inside SynOS.
 - [ ] Reproduce the same result in an offline build from a clean workspace.
 
 Completed host/service slice:
@@ -33,6 +33,10 @@ Completed host/service slice:
 - `synos-rustd` accepts only authorized toolchain components, plans Cargo,
   build-script, proc-macro, rustc, and linker steps, and executes each step
   through a bounded process-runtime hook with exit and cleanup handling.
+- `synos-rustd` provides an ordered self-host session. It validates both
+  SynFS source trees, requires locked offline builds for the runtime and
+  compiler, completes the runtime stage first, then permits the compiler
+  stage and records both content-addressed results.
 - `synos-app` validates an instantiation receipt before launch, checks the
   signed package entry point, applies the application capability policy, and
   passes the approved capabilities plus executable package metadata to the
