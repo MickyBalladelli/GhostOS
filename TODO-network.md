@@ -9,12 +9,12 @@
 - [x] Add `SET INTERFACE` to change an interface address, gateway, MTU, and enabled state.
 - [x] Add `SET ROUTE` to add or replace a route with destination, gateway, interface, and metric.
 - [x] Add typed network command routes, qualifiers, structured output, and stable status mappings.
-- [ ] Add network command help entries and shell help aliases.
-- [ ] Connect network commands to the declarative configuration model and runtime reconfiguration service.
-- [ ] Stage, health-check, commit, and safely roll back network changes.
-- [ ] Persist accepted network configuration as a versioned SynFS configuration.
-- [ ] Require the correct network-administration capability for mutations.
-- [ ] Add shell, parser, authorization, persistence, rollback, and runtime integration tests.
+- [x] Add network command help entries and shell help aliases.
+- [x] Connect network commands to the declarative configuration model and runtime reconfiguration service.
+- [x] Stage, health-check, commit, and safely roll back network changes.
+- [x] Persist accepted network configuration as a versioned SynFS configuration through the existing configuration runtime boundary.
+- [x] Require the correct network-administration capability for mutations.
+- [x] Add shell, parser, authorization, persistence, rollback, and runtime integration tests.
 
 ## DHCP
 

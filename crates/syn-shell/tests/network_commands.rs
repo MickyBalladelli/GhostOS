@@ -1,11 +1,13 @@
 use syn_shell::{
     network::{
-        interface_update_request, register_network_commands, SET_HOSTNAME_ROUTE,
-        SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE,
-        SHOW_ROUTES_ROUTE,
+        command_help, interface_update_request, register_network_commands, NetworkExecutor,
+        NetworkSource, NetworkView, SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE,
+        SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE,
     },
+    interpreter::CommandExecutor,
     parser::CommandRegistry,
 };
+use synos_status::Status;
 
 fn registry() -> CommandRegistry<8> {
     let mut registry = CommandRegistry::new();
@@ -45,5 +47,35 @@ fn interface_updates_reject_conflicting_or_empty_changes() {
         let call = registry.parse(input).unwrap().stage(0).unwrap();
         assert_eq!(call.route.raw(), SET_INTERFACE_ROUTE);
         assert!(interface_update_request(&call).is_err());
+    }
+}
+
+#[test]
+fn network_help_and_mutation_capability_are_present() {
+    let registry = registry();
+    assert_eq!(command_help("NETWORK").unwrap().name, "SHOW-NETWORK");
+    assert_eq!(command_help("INTERFACE").unwrap().name, "SET-INTERFACE");
+
+    let call = registry.parse("SET HOSTNAME node-1").unwrap().stage(0).unwrap();
+    let mut executor: NetworkExecutor<_, 4> = NetworkExecutor::new(Source { allowed: false });
+    let token = executor.submit(call, None).unwrap();
+    assert!(matches!(executor.poll(token), Some(Err(Status::ACCESS_DENIED))));
+}
+
+struct Source {
+    allowed: bool,
+}
+
+impl NetworkSource for Source {
+    fn authorize_mutation(&mut self) -> Result<(), Status> {
+        if self.allowed {
+            Ok(())
+        } else {
+            Err(Status::ACCESS_DENIED)
+        }
+    }
+
+    fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
+        Ok(NetworkView::EMPTY)
     }
 }

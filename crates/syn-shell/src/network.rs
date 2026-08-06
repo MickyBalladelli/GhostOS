@@ -18,6 +18,72 @@ pub const SET_ROUTE_ROUTE: u16 = 65;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkCommandHelp {
+    pub name: &'static str,
+    pub synopsis: &'static str,
+    pub description: &'static str,
+    pub aliases: &'static str,
+    pub qualifiers: &'static str,
+}
+
+const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
+    NetworkCommandHelp {
+        name: "SHOW-NETWORK",
+        synopsis: "SHOW NETWORK",
+        description: "Show network hostname and bounded interface and route counts.",
+        aliases: "NETWORK",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "SHOW-INTERFACES",
+        synopsis: "SHOW INTERFACES",
+        description: "Show bounded interface settings and link state.",
+        aliases: "INTERFACES",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "SHOW-ROUTES",
+        synopsis: "SHOW ROUTES",
+        description: "Show bounded network routes.",
+        aliases: "ROUTES",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "SET-HOSTNAME",
+        synopsis: "SET HOSTNAME hostname",
+        description: "Set the host name through the versioned network configuration.",
+        aliases: "HOSTNAME",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "SET-INTERFACE",
+        synopsis: "SET INTERFACE name",
+        description: "Change interface address, gateway, MTU, or enabled state.",
+        aliases: "INTERFACE",
+        qualifiers: "/ADDRESS /GATEWAY /MTU /ENABLE /DISABLE",
+    },
+    NetworkCommandHelp {
+        name: "SET-ROUTE",
+        synopsis: "SET ROUTE destination",
+        description: "Add or replace a route through the versioned network configuration.",
+        aliases: "ROUTE",
+        qualifiers: "/GATEWAY /INTERFACE /METRIC",
+    },
+];
+
+pub fn command_help(name: &str) -> Option<&'static NetworkCommandHelp> {
+    let canonical = NETWORK_COMMAND_HELP
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(name))
+        .or_else(|| {
+            NETWORK_COMMAND_HELP
+                .iter()
+                .find(|entry| entry.aliases.eq_ignore_ascii_case(name))
+        });
+    canonical
+}
+
 pub type NetworkText = Text<MAX_TOKEN_BYTES>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +152,9 @@ pub struct RouteUpdate<'a> {
 /// capability, create a new declarative configuration revision, stage it,
 /// health-check it, commit it, and persist it before returning the new view.
 pub trait NetworkSource {
+    /// Prove the caller has the network-administration capability.
+    fn authorize_mutation(&mut self) -> Result<(), Status>;
+
     fn show_network(&mut self) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -203,14 +272,19 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
                     .get_text("HOSTNAME")
                     .filter(|value| !value.is_empty())
                     .ok_or(Status::INVALID_ARGUMENT);
-                hostname.and_then(|value| self.source.set_hostname(value).and_then(network_output))
+                hostname.and_then(|value| {
+                    self.source.authorize_mutation()?;
+                    self.source.set_hostname(value).and_then(network_output)
+                })
             }
-            SET_INTERFACE_ROUTE => interface_update_request(&command)
-                .and_then(|update| self.source.set_interface(update))
-                .and_then(network_output),
-            SET_ROUTE_ROUTE => route_update_request(&command)
-                .and_then(|update| self.source.set_route(update))
-                .and_then(network_output),
+            SET_INTERFACE_ROUTE => interface_update_request(&command).and_then(|update| {
+                self.source.authorize_mutation()?;
+                self.source.set_interface(update).and_then(network_output)
+            }),
+            SET_ROUTE_ROUTE => route_update_request(&command).and_then(|update| {
+                self.source.authorize_mutation()?;
+                self.source.set_route(update).and_then(network_output)
+            }),
             _ => Err(Status::NOT_FOUND),
         };
         self.completions[slot] = Some(completion);

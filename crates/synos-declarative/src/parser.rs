@@ -147,6 +147,7 @@ impl CapabilityRights {
     pub const CONNECT: Self = Self(1 << 5);
     pub const SEND: Self = Self(1 << 6);
     pub const RECEIVE: Self = Self(1 << 7);
+    pub const ADMIN: Self = Self(1 << 8);
 
     pub const fn bits(self) -> u16 {
         self.0
@@ -194,6 +195,121 @@ impl NetworkSpec {
     pub fn routes(&self) -> impl Iterator<Item = NetworkRoute> + '_ {
         self.routes.iter().flatten().copied()
     }
+
+    pub fn validate(&self) -> Result<(), ParseError> {
+        for (index, interface) in self.interfaces().enumerate() {
+            if interface.name.is_empty()
+                || interface.address.is_empty()
+                || !(576..=65_535).contains(&interface.mtu)
+                || self
+                    .interfaces()
+                    .take(index)
+                    .any(|previous| previous.name == interface.name)
+            {
+                return Err(ParseError::InvalidValue);
+            }
+        }
+        for route in self.routes() {
+            if route.destination.is_empty()
+                || route.gateway.is_empty()
+                || route.interface.is_empty()
+                || !self
+                    .interfaces()
+                    .any(|interface| interface.name == route.interface)
+            {
+                return Err(ParseError::InvalidValue);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_hostname(&mut self, hostname: &str) -> Result<(), ParseError> {
+        self.hostname = Some(BoundedText::new(hostname)?);
+        Ok(())
+    }
+
+    pub fn update_interface(
+        &mut self,
+        name: &str,
+        address: Option<&str>,
+        gateway: Option<&str>,
+        mtu: Option<u32>,
+        enabled: Option<bool>,
+    ) -> Result<(), ParseError> {
+        if address.is_none() && gateway.is_none() && mtu.is_none() && enabled.is_none() {
+            return Err(ParseError::InvalidValue);
+        }
+        let previous = *self;
+        let name = BoundedText::new(name)?;
+        let interface = self
+            .interfaces
+            .iter_mut()
+            .flatten()
+            .find(|interface| interface.name == name)
+            .ok_or(ParseError::InvalidValue)?;
+        if let Some(address) = address {
+            interface.address = BoundedText::new(address)?;
+        }
+        if let Some(gateway) = gateway {
+            interface.gateway = Some(BoundedText::new(gateway)?);
+        }
+        if let Some(mtu) = mtu {
+            interface.mtu = mtu;
+        }
+        if let Some(enabled) = enabled {
+            interface.enabled = enabled;
+        }
+        let result = self.validate();
+        if result.is_err() {
+            *self = previous;
+        }
+        result
+    }
+
+    pub fn upsert_route(
+        &mut self,
+        destination: &str,
+        gateway: &str,
+        interface: &str,
+        metric: Option<u32>,
+    ) -> Result<(), ParseError> {
+        let previous = *self;
+        let destination = BoundedText::new(destination)?;
+        let gateway = BoundedText::new(gateway)?;
+        let interface = BoundedText::new(interface)?;
+        if !self
+            .interfaces()
+            .any(|entry| entry.name == interface)
+        {
+            return Err(ParseError::InvalidValue);
+        }
+        let route = NetworkRoute {
+            destination,
+            gateway,
+            interface,
+            metric: metric.unwrap_or(100),
+        };
+        if let Some(existing) = self
+            .routes
+            .iter_mut()
+            .flatten()
+            .find(|existing| existing.destination == route.destination)
+        {
+            *existing = route;
+        } else {
+            let count = self.routes.iter().filter(|entry| entry.is_some()).count();
+            let slot = self
+                .routes
+                .get_mut(count)
+                .ok_or(ParseError::Capacity)?;
+            *slot = Some(route);
+        }
+        let result = self.validate();
+        if result.is_err() {
+            *self = previous;
+        }
+        result
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -229,6 +345,56 @@ impl SystemSpec {
 
     pub const fn network(&self) -> &NetworkSpec {
         &self.network
+    }
+
+    pub fn set_network_hostname(&mut self, hostname: &str) -> Result<(), ParseError> {
+        let previous = self.network;
+        let result = self.network.set_hostname(hostname);
+        if result.is_ok() {
+            self.revision = self.revision.saturating_add(1);
+        } else {
+            self.network = previous;
+        }
+        result
+    }
+
+    pub fn update_network_interface(
+        &mut self,
+        name: &str,
+        address: Option<&str>,
+        gateway: Option<&str>,
+        mtu: Option<u32>,
+        enabled: Option<bool>,
+    ) -> Result<(), ParseError> {
+        let previous = self.network;
+        let result = self
+            .network
+            .update_interface(name, address, gateway, mtu, enabled);
+        if result.is_ok() {
+            self.revision = self.revision.saturating_add(1);
+        } else {
+            self.network = previous;
+        }
+        result
+    }
+
+    pub fn upsert_network_route(
+        &mut self,
+        destination: &str,
+        gateway: &str,
+        interface: &str,
+        metric: Option<u32>,
+    ) -> Result<(), ParseError> {
+        let previous = self.network;
+        let result = self
+            .network
+            .upsert_route(destination, gateway, interface, metric);
+        if result.is_ok() {
+            self.revision = self.revision.saturating_add(1);
+        } else {
+            self.network = previous;
+        }
+        result
     }
 
     pub const fn cluster(&self) -> &ClusterSpec {
@@ -708,16 +874,18 @@ impl Parser {
         }) {
             return Err(ParseError::InvalidValue);
         }
+        let network = NetworkSpec {
+            hostname: self.hostname,
+            interfaces,
+            routes,
+        };
+        network.validate()?;
         Ok(SystemSpec {
             schema,
             revision,
             services,
             capabilities,
-            network: NetworkSpec {
-                hostname: self.hostname,
-                interfaces,
-                routes,
-            },
+            network,
             cluster: {
                 let cluster = self.cluster.unwrap_or_else(ClusterSpec::safe_defaults);
                 cluster.validate().map_err(map_validation_error)?;
@@ -1336,6 +1504,7 @@ fn right_bit(value: &str) -> Result<u16, ParseError> {
         "connect" => Ok(CapabilityRights::CONNECT.bits()),
         "send" => Ok(CapabilityRights::SEND.bits()),
         "receive" => Ok(CapabilityRights::RECEIVE.bits()),
+        "admin" => Ok(CapabilityRights::ADMIN.bits()),
         _ => Err(ParseError::InvalidValue),
     }
 }

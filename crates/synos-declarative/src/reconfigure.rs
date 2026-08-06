@@ -27,7 +27,8 @@ pub enum ReconfigureError<E> {
 }
 
 /// Runtime bridge used by init, netd, and policy daemons. `stage` must only
-/// prepare private state. `commit` is the short atomic publication point.
+/// prepare private state. Activation health-checks the staged state before
+/// `commit`, which is the short atomic publication point.
 pub trait ConfigurationRuntime {
     type Error;
 
@@ -113,13 +114,13 @@ impl<const HISTORY: usize> ReconfigureManager<HISTORY> {
             let _ = rollback(filesystem, runtime);
             return Err(ReconfigureError::Runtime(error));
         }
-        if let Err(error) = runtime.commit() {
-            let _ = rollback(filesystem, runtime);
-            return Err(ReconfigureError::Runtime(error));
-        }
         if let Err(status) = runtime.health_check(update.configuration()) {
             let _ = rollback(filesystem, runtime);
             return Err(ReconfigureError::HealthCheck(status));
+        }
+        if let Err(error) = runtime.commit() {
+            let _ = rollback(filesystem, runtime);
+            return Err(ReconfigureError::Runtime(error));
         }
 
         let receipt = ActivationReceipt {

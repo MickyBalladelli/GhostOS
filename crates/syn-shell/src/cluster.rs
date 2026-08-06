@@ -1974,12 +1974,21 @@ fn help_output(command: CommandCall) -> Result<StructuredOutput, Status> {
     let mut output = StructuredOutput::new(Status::NORMAL);
     insert_text(&mut output, "operation", "help")?;
     if let Some(target) = command.get_text("COMMAND") {
-        let help = command_help(target).ok_or(Status::NOT_FOUND)?;
-        insert_text(&mut output, "command", help.name)?;
-        insert_text(&mut output, "synopsis", help.synopsis)?;
-        insert_text(&mut output, "description", help.description)?;
-        insert_text(&mut output, "aliases", help.aliases)?;
-        insert_text(&mut output, "qualifiers", help.qualifiers)?;
+        if let Some(help) = command_help(target) {
+            insert_text(&mut output, "command", help.name)?;
+            insert_text(&mut output, "synopsis", help.synopsis)?;
+            insert_text(&mut output, "description", help.description)?;
+            insert_text(&mut output, "aliases", help.aliases)?;
+            insert_text(&mut output, "qualifiers", help.qualifiers)?;
+        } else if let Some(help) = crate::network::command_help(target) {
+            insert_text(&mut output, "command", help.name)?;
+            insert_text(&mut output, "synopsis", help.synopsis)?;
+            insert_text(&mut output, "description", help.description)?;
+            insert_text(&mut output, "aliases", help.aliases)?;
+            insert_text(&mut output, "qualifiers", help.qualifiers)?;
+        } else {
+            return Err(Status::NOT_FOUND);
+        }
     } else {
         insert(
             &mut output,
