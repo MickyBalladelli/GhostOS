@@ -97,6 +97,19 @@ pub trait SharedBufferResolver {
     ) -> Result<&mut [u8], RuntimeDispatchError>;
 }
 
+/// Kernel extension point for compiler/runtime operations that need a
+/// scheduler, process table, entropy source, terminal, or VM manager. The
+/// fixed request remains capability-checked by the service implementation;
+/// the filesystem dispatcher stays independent from those subsystems.
+pub trait RuntimeOperationService {
+    fn dispatch(
+        &mut self,
+        caller: AddressSpaceId,
+        operation: Operation,
+        request: Request,
+    ) -> Result<Response, RuntimeDispatchError>;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FilesystemEndpoints {
     pub request_channel: ChannelId,
@@ -377,6 +390,46 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 flags: 0,
                 values: [0; 4],
             },
+        }
+    }
+
+    /// Dispatch the extended PAL operations through the kernel subsystem that
+    /// owns them. Basic clock, wait, and SynFS calls keep their existing path.
+    pub fn dispatch_with_operations<O: RuntimeOperationService>(
+        &mut self,
+        caller: AddressSpaceId,
+        request: Request,
+        operations: &mut O,
+    ) -> Response {
+        let Some(operation) = Operation::from_raw(request.operation) else {
+            return self.dispatch(caller, request);
+        };
+        if !matches!(
+            operation,
+            Operation::ClockNow
+                | Operation::Yield
+                | Operation::SynFsOpen
+                | Operation::SynFsClose
+                | Operation::SynFsRead
+                | Operation::SynFsWrite
+                | Operation::SynFsMetadata
+                | Operation::SynFsList
+                | Operation::SynFsMkdir
+                | Operation::SynFsRmdir
+                | Operation::SynFsLink
+                | Operation::SynFsLinks
+                | Operation::SynFsDelete
+        ) {
+            match operations.dispatch(caller, operation, request) {
+                Ok(response) => response,
+                Err(error) => Response {
+                    status: error.status().raw(),
+                    flags: 0,
+                    values: [0; 4],
+                },
+            }
+        } else {
+            self.dispatch(caller, request)
         }
     }
 

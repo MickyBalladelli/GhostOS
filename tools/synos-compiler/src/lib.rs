@@ -9,6 +9,12 @@ use synos_pkg::{BundleInfo, PackageError, SigningKey, bundle_size, encode_bundle
 use synos_synfs::{DirectoryEntry, Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
 
+pub const SYNOS_TOOLCHAIN_ROOT: &str = "/system/toolchains/stage-2";
+pub const SYNOS_REGISTRY_ROOT: &str = "/system/registries";
+pub const SYNOS_SOURCE_ROOT: &str = "/system/sources";
+pub const SYNOS_BUILD_ROOT: &str = "/system/builds";
+pub const SYNOS_TEMP_ROOT: &str = "/system/tmp";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Target {
     X86_64,
@@ -188,6 +194,7 @@ impl From<SynFsError> for CompileError {
 
 pub struct Compiler {
     cargo: OsString,
+    linker: Option<PathBuf>,
     workspace_root: PathBuf,
 }
 
@@ -200,8 +207,20 @@ impl Compiler {
             .ok_or(CompileError::InvalidTargetDirectory)?;
         Ok(Self {
             cargo: env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")),
+            linker: bundled_linker(),
             workspace_root,
         })
+    }
+
+    /// Construct a compiler view for an in-guest SynOS stage-2 toolchain.
+    /// Paths are explicit capabilities/roots; no host `PATH`, `HOME`, or
+    /// temporary directory is consulted.
+    pub fn with_synos_toolchain(workspace_root: PathBuf, toolchain_root: &Path) -> Self {
+        Self {
+            cargo: toolchain_root.join("bin/cargo").into_os_string(),
+            linker: Some(toolchain_root.join("bin/rust-lld")),
+            workspace_root,
+        }
     }
 
     pub fn compile(&self, request: &CompileRequest) -> Result<CompileOutput, CompileError> {
@@ -250,7 +269,6 @@ impl Compiler {
         let target_directory = request
             .target_directory
             .clone()
-            .or_else(|| env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
             .unwrap_or_else(|| self.workspace_root.join("target"));
         Ok(CompileOutput {
             artifact: target_directory
@@ -406,13 +424,15 @@ impl Compiler {
         let mut command = Command::new(&self.cargo);
         command
             .env("RUSTC_BOOTSTRAP", "1")
+            .env_remove("RUSTC_WRAPPER")
+            .env_remove("RUSTC_WORKSPACE_WRAPPER")
             .args([
                 "-Z",
                 "build-std=core,alloc",
                 "-Z",
                 "json-target-spec",
             ]);
-        if let Some(linker) = bundled_linker() {
+        if let Some(linker) = self.linker.as_ref() {
             let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
             if !rustflags.is_empty() {
                 rustflags.push(' ')

@@ -62,6 +62,27 @@ pub struct DeleteMetadata {
 pub const DIRECTORY_RECORD_HEADER_BYTES: usize = 22;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PathBuffer {
+    buffer: SharedBuffer,
+}
+
+impl PathBuffer {
+    pub fn new(buffer: SharedBuffer) -> Result<Self, Error> {
+        if buffer.length == 0 || buffer.length as usize > crate::pal::MAX_PAL_PATH_BYTES {
+            return Err(Error::InvalidResponse);
+        }
+        if buffer.writable {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(Self { buffer })
+    }
+
+    pub const fn buffer(self) -> SharedBuffer {
+        self.buffer
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DirectoryPage {
     pub bytes: usize,
     pub next: u64,
@@ -74,6 +95,10 @@ impl File {
 }
 
 impl<S: SystemCall> Runtime<S> {
+    pub fn open_path(&self, path: PathBuffer, options: OpenOptions) -> Result<File, Error> {
+        self.open(path.buffer, options)
+    }
+
     pub fn open(&self, path: SharedBuffer, options: OpenOptions) -> Result<File, Error> {
         let mut request = Request::new(Operation::SynFsOpen).with_buffer(path);
         request.flags = options.bits();

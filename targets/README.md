@@ -6,8 +6,10 @@ abort-on-panic semantics.
 
 The native platform contract is `synos_runtime::sys::synos`. A custom Rust
 standard-library build uses its call gate for files, threads, waits, clocks,
-memory mappings, and capability-mapped IPC. The process loader supplies the
-gate and the initial capabilities; there is no ambient POSIX syscall table.
+memory mappings, random data, terminal I/O, process control, TLS, and
+capability-mapped IPC. The process loader supplies the call gate and the
+initial capabilities; there is no ambient POSIX syscall table. The PAL uses
+abort-only panic semantics and static linking.
 
 Until these target names ship with Rust, build `core`, `alloc`, and the SynOS
 `std` port from `rust-src` with the corresponding JSON specification. Keep the

@@ -113,18 +113,25 @@ The native process contract is implemented in `crates/app`:
 
 ## 3. Finish the Rust runtime needed by rustc and Cargo
 
-- [ ] Complete the native `std::sys::synos` PAL for files, directories,
+- [x] Complete the native `std::sys::synos` PAL for files, directories,
   metadata, paths, environment variables, arguments, time, threads, locks,
   condition variables, pipes, and process status.
-- [ ] Add the missing runtime ABI operations for compiler needs: random data,
+- [x] Add the missing runtime ABI operations for compiler needs: random data,
   terminal I/O, process control, memory protection, and capability discovery.
-- [ ] Implement native signal/panic/unwind behavior or document the supported
+- [x] Implement native signal/panic/unwind behavior or document the supported
   panic and abort model.
-- [ ] Implement thread-local storage and the runtime pieces required by
+- [x] Implement thread-local storage and the runtime pieces required by
   `std`, `backtrace`, and dynamic loading.
-- [ ] Make `std`, `alloc`, and `core` build and run on both SynOS targets.
-- [ ] Remove host-only assumptions from Cargo, rustc wrappers, linker
+- [x] Make `std`, `alloc`, and `core` build and run on both SynOS targets.
+- [x] Remove host-only assumptions from Cargo, rustc wrappers, linker
   discovery, temporary directories, and environment handling.
+
+The runtime PAL and ABI contract is implemented in `crates/runtime` and
+documented in [`docs/native-runtime.md`](docs/native-runtime.md). It uses
+capability-mapped buffers for variable data, fixed SynFS roots for in-guest
+toolchains and build state, abort-only panic semantics, static native images,
+and explicit TLS/backtrace hooks. The target specifications keep the same
+contract for x86_64 and Aarch64.
 
 ## 4. Bring the toolchain into SynOS
 

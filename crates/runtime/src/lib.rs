@@ -4,6 +4,7 @@
 mod abi;
 mod fs;
 mod ipc;
+mod pal;
 pub mod sys;
 mod thread;
 
@@ -13,9 +14,17 @@ pub use abi::{Capability, GateFn, NativeGate, Operation, Request, Response, Syst
 pub use synos_path_pattern::{Pattern, PatternError};
 pub use fs::{
     DirectoryPage, DirectoryRemovalMetadata, File, LinkMetadata, Metadata, OpenOptions,
-    DIRECTORY_RECORD_HEADER_BYTES,
+    PathBuffer, DIRECTORY_RECORD_HEADER_BYTES,
 };
 pub use ipc::{IpcAccess, IpcMapping};
+pub use pal::{
+    BacktraceFrame, BacktraceProvider, BufferPage, CapabilityDescription, CapabilityObjectKind,
+    DynamicLoadingPolicy, MemoryProtection, PanicModel, Pipe, ProcessExitReason,
+    ProcessExitStatus, ProcessHandle, ProcessState, ProcessStatus, RuntimeCondvar, RuntimeMutex,
+    Terminal, TlsKey, PANIC_MODEL, MAX_PAL_ARGUMENT_BYTES, MAX_PAL_PATH_BYTES,
+    SYNOS_BUILD_ROOT, SYNOS_REGISTRY_ROOT, SYNOS_SOURCE_ROOT, SYNOS_TEMP_ROOT,
+    SYNOS_TOOLCHAIN_ROOT,
+};
 pub use thread::{Thread, ThreadStart, WaitWord};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,12 +78,17 @@ impl<S: SystemCall> Runtime<S> {
     }
 
     pub(crate) fn execute(&self, request: Request) -> Result<Response, Error> {
-        let response = self.system.call(request);
-        let status = Status::from_raw(response.status).ok_or(Error::InvalidResponse)?;
+        let (response, status) = self.execute_raw(request)?;
         if status.is_success() {
             Ok(response)
         } else {
             Err(Error::Status(status))
         }
+    }
+
+    pub(crate) fn execute_raw(&self, request: Request) -> Result<(Response, Status), Error> {
+        let response = self.system.call(request);
+        let status = Status::from_raw(response.status).ok_or(Error::InvalidResponse)?;
+        Ok((response, status))
     }
 }

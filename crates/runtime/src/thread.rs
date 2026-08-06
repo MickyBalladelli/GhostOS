@@ -53,6 +53,13 @@ impl<S: SystemCall> Runtime<S> {
         Ok(response.values[0])
     }
 
+    pub fn thread_exit(&self, status: i32) -> Result<(), Error> {
+        let mut request = Request::new(Operation::ThreadExit);
+        request.arguments[0] = status as i64 as u64;
+        self.execute(request)?;
+        Ok(())
+    }
+
     pub fn wait(
         &self,
         word: WaitWord,
