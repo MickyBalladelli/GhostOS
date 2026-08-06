@@ -1,0 +1,484 @@
+use synos_status::Status;
+use synos_system_model::command::{
+    ArgumentKind, ArgumentSpec, CommandSpec, OutputValue, StructuredOutput,
+};
+
+use crate::{
+    Error, Text, MAX_TOKEN_BYTES,
+    interpreter::{CommandExecutor, ExecutionToken},
+    parser::{CommandCall, CommandRegistry, RouteId, Value},
+};
+
+pub const SHOW_NETWORK_ROUTE: u16 = 60;
+pub const SHOW_INTERFACES_ROUTE: u16 = 61;
+pub const SHOW_ROUTES_ROUTE: u16 = 62;
+pub const SET_HOSTNAME_ROUTE: u16 = 63;
+pub const SET_INTERFACE_ROUTE: u16 = 64;
+pub const SET_ROUTE_ROUTE: u16 = 65;
+
+pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
+
+pub type NetworkText = Text<MAX_TOKEN_BYTES>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkInterfaceView {
+    pub name: NetworkText,
+    pub address: NetworkText,
+    pub gateway: Option<NetworkText>,
+    pub mtu: u32,
+    pub enabled: bool,
+    pub link_up: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkRouteView {
+    pub destination: NetworkText,
+    pub gateway: NetworkText,
+    pub interface: NetworkText,
+    pub metric: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkView {
+    pub generation: u64,
+    pub hostname: Option<NetworkText>,
+    pub interface_count: u64,
+    pub route_count: u64,
+    pub interfaces: [Option<NetworkInterfaceView>; MAX_NETWORK_OUTPUT_ROWS],
+    pub routes: [Option<NetworkRouteView>; MAX_NETWORK_OUTPUT_ROWS],
+    pub next_interface: Option<u64>,
+    pub next_route: Option<u64>,
+}
+
+impl NetworkView {
+    pub const EMPTY: Self = Self {
+        generation: 0,
+        hostname: None,
+        interface_count: 0,
+        route_count: 0,
+        interfaces: [None; MAX_NETWORK_OUTPUT_ROWS],
+        routes: [None; MAX_NETWORK_OUTPUT_ROWS],
+        next_interface: None,
+        next_route: None,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InterfaceUpdate<'a> {
+    pub name: &'a str,
+    pub address: Option<&'a str>,
+    pub gateway: Option<&'a str>,
+    pub mtu: Option<u32>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RouteUpdate<'a> {
+    pub destination: &'a str,
+    pub gateway: &'a str,
+    pub interface: &'a str,
+    pub metric: Option<u32>,
+}
+
+/// Source of truth for network settings.
+///
+/// A system provider should validate the caller's network-administration
+/// capability, create a new declarative configuration revision, stage it,
+/// health-check it, commit it, and persist it before returning the new view.
+pub trait NetworkSource {
+    fn show_network(&mut self) -> Result<NetworkView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn show_interfaces(&mut self) -> Result<NetworkView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn show_routes(&mut self) -> Result<NetworkView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn set_interface(&mut self, _update: InterfaceUpdate<'_>) -> Result<NetworkView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn set_route(&mut self, _update: RouteUpdate<'_>) -> Result<NetworkView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+}
+
+pub fn register_network_commands<const CAPACITY: usize>(
+    registry: &mut CommandRegistry<CAPACITY>,
+) -> Result<(), Error> {
+    registry.register(
+        CommandSpec::new("SHOW-NETWORK", &[]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_NETWORK_ROUTE),
+    )?;
+    registry.register(
+        CommandSpec::new("SHOW-INTERFACES", &[]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_INTERFACES_ROUTE),
+    )?;
+    registry.register(
+        CommandSpec::new("SHOW-ROUTES", &[]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_ROUTES_ROUTE),
+    )?;
+
+    let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
+    registry.register(
+        CommandSpec::new("SET-HOSTNAME", &[hostname]).map_err(|_| Error::InvalidValue)?,
+        route(SET_HOSTNAME_ROUTE),
+    )?;
+
+    let interface = positional("INTERFACE", ArgumentKind::Text, true)?;
+    let address = qualifier("ADDRESS", ArgumentKind::Text)?;
+    let gateway = qualifier("GATEWAY", ArgumentKind::Text)?;
+    let mtu = qualifier("MTU", ArgumentKind::Integer)?;
+    let enable = qualifier("ENABLE", ArgumentKind::Boolean)?;
+    let disable = qualifier("DISABLE", ArgumentKind::Boolean)?;
+    registry.register(
+        CommandSpec::new(
+            "SET-INTERFACE",
+            &[interface, address, gateway, mtu, enable, disable],
+        )
+        .map_err(|_| Error::InvalidValue)?,
+        route(SET_INTERFACE_ROUTE),
+    )?;
+
+    let destination = positional("DESTINATION", ArgumentKind::Text, true)?;
+    let gateway = qualifier("GATEWAY", ArgumentKind::Text)?;
+    let interface = qualifier("INTERFACE", ArgumentKind::Text)?;
+    let metric = qualifier("METRIC", ArgumentKind::Integer)?;
+    registry.register(
+        CommandSpec::new("SET-ROUTE", &[destination, gateway, interface, metric])
+            .map_err(|_| Error::InvalidValue)?,
+        route(SET_ROUTE_ROUTE),
+    )
+}
+
+pub struct NetworkExecutor<Source, const CAPACITY: usize = 16> {
+    source: Source,
+    completions: [Option<Result<StructuredOutput, Status>>; CAPACITY],
+}
+
+impl<Source, const CAPACITY: usize> NetworkExecutor<Source, CAPACITY> {
+    pub fn new(source: Source) -> Self {
+        Self {
+            source,
+            completions: [const { None }; CAPACITY],
+        }
+    }
+
+    pub const fn source(&self) -> &Source {
+        &self.source
+    }
+
+    pub const fn source_mut(&mut self) -> &mut Source {
+        &mut self.source
+    }
+}
+
+impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
+    for NetworkExecutor<Source, CAPACITY>
+{
+    fn submit(
+        &mut self,
+        command: CommandCall,
+        _pipeline_input: Option<&StructuredOutput>,
+    ) -> Result<ExecutionToken, Error> {
+        let slot = self
+            .completions
+            .iter()
+            .position(Option::is_none)
+            .ok_or(Error::Capacity)?;
+        let completion = match command.route.raw() {
+            SHOW_NETWORK_ROUTE => self.source.show_network().and_then(network_output),
+            SHOW_INTERFACES_ROUTE => self.source.show_interfaces().and_then(interfaces_output),
+            SHOW_ROUTES_ROUTE => self.source.show_routes().and_then(routes_output),
+            SET_HOSTNAME_ROUTE => {
+                let hostname = command
+                    .get_text("HOSTNAME")
+                    .filter(|value| !value.is_empty())
+                    .ok_or(Status::INVALID_ARGUMENT);
+                hostname.and_then(|value| self.source.set_hostname(value).and_then(network_output))
+            }
+            SET_INTERFACE_ROUTE => interface_update_request(&command)
+                .and_then(|update| self.source.set_interface(update))
+                .and_then(network_output),
+            SET_ROUTE_ROUTE => route_update_request(&command)
+                .and_then(|update| self.source.set_route(update))
+                .and_then(network_output),
+            _ => Err(Status::NOT_FOUND),
+        };
+        self.completions[slot] = Some(completion);
+        ExecutionToken::new((slot + 1) as u64).ok_or(Error::InvalidHandle)
+    }
+
+    fn poll(&mut self, token: ExecutionToken) -> Option<Result<StructuredOutput, Status>> {
+        self.completions
+            .get_mut(token.raw().checked_sub(1)? as usize)?
+            .take()
+    }
+
+    fn cancel(&mut self, token: ExecutionToken) -> Result<(), Error> {
+        let completion = self
+            .completions
+            .get_mut(token.raw().checked_sub(1).ok_or(Error::InvalidHandle)? as usize)
+            .ok_or(Error::InvalidHandle)?;
+        *completion = None;
+        Ok(())
+    }
+}
+
+pub fn interface_update_request<'a>(
+    command: &'a CommandCall,
+) -> Result<InterfaceUpdate<'a>, Status> {
+    let name = command
+        .get_text("INTERFACE")
+        .filter(|value| !value.is_empty())
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    let address = optional_text(command, "ADDRESS")?;
+    let gateway = optional_text(command, "GATEWAY")?;
+    let mtu = optional_u32(command, "MTU")?;
+    let enable = boolean(command.get("ENABLE"))?;
+    let disable = boolean(command.get("DISABLE"))?;
+    if enable && disable {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    let enabled = match (enable, disable) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    };
+    if address.is_none() && gateway.is_none() && mtu.is_none() && enabled.is_none() {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    if mtu.is_some_and(|value| !(576..=65_535).contains(&value)) {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    Ok(InterfaceUpdate {
+        name,
+        address,
+        gateway,
+        mtu,
+        enabled,
+    })
+}
+
+pub fn route_update_request<'a>(command: &'a CommandCall) -> Result<RouteUpdate<'a>, Status> {
+    let destination = command
+        .get_text("DESTINATION")
+        .filter(|value| !value.is_empty())
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    let gateway = command
+        .get_text("GATEWAY")
+        .filter(|value| !value.is_empty())
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    let interface = command
+        .get_text("INTERFACE")
+        .filter(|value| !value.is_empty())
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    let metric = optional_u32(command, "METRIC")?;
+    Ok(RouteUpdate {
+        destination,
+        gateway,
+        interface,
+        metric,
+    })
+}
+
+fn optional_text<'a>(command: &'a CommandCall, name: &str) -> Result<Option<&'a str>, Status> {
+    match command.get(name) {
+        None => Ok(None),
+        Some(Value::Text(_)) => command
+            .get_text(name)
+            .filter(|value| !value.is_empty())
+            .map(Some)
+            .ok_or(Status::INVALID_ARGUMENT),
+        Some(_) => Err(Status::INVALID_ARGUMENT),
+    }
+}
+
+fn optional_u32(command: &CommandCall, name: &str) -> Result<Option<u32>, Status> {
+    match command.get(name) {
+        None => Ok(None),
+        Some(Value::Integer(value)) => u32::try_from(value)
+            .map(Some)
+            .map_err(|_| Status::INVALID_ARGUMENT),
+        Some(_) => Err(Status::INVALID_ARGUMENT),
+    }
+}
+
+fn boolean(value: Option<Value>) -> Result<bool, Status> {
+    match value {
+        None => Ok(false),
+        Some(Value::Boolean(value)) => Ok(value),
+        Some(_) => Err(Status::INVALID_ARGUMENT),
+    }
+}
+
+fn network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "show-network")?;
+    insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
+    if let Some(hostname) = view.hostname {
+        insert_text(&mut output, "hostname", hostname.as_str())?;
+    }
+    insert(
+        &mut output,
+        "interface-count",
+        OutputValue::Unsigned(view.interface_count),
+    )?;
+    insert(
+        &mut output,
+        "route-count",
+        OutputValue::Unsigned(view.route_count),
+    )?;
+    Ok(output)
+}
+
+fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> {
+    let mut output = network_output(view)?;
+    insert_text(&mut output, "operation", "show-interfaces")?;
+    for (index, interface) in view.interfaces.iter().flatten().enumerate() {
+        insert_indexed_text(&mut output, "interface", index, "name", interface.name.as_str())?;
+        insert_indexed_text(
+            &mut output,
+            "interface",
+            index,
+            "address",
+            interface.address.as_str(),
+        )?;
+        if let Some(gateway) = interface.gateway {
+            insert_indexed_text(&mut output, "interface", index, "gateway", gateway.as_str())?;
+        }
+        insert_indexed(
+            &mut output,
+            "interface",
+            index,
+            "mtu",
+            OutputValue::Unsigned(interface.mtu as u64),
+        )?;
+        insert_indexed(
+            &mut output,
+            "interface",
+            index,
+            "enabled",
+            OutputValue::Boolean(interface.enabled),
+        )?;
+        insert_indexed(
+            &mut output,
+            "interface",
+            index,
+            "link-up",
+            OutputValue::Boolean(interface.link_up),
+        )?;
+    }
+    if let Some(next) = view.next_interface {
+        insert(&mut output, "next-interface", OutputValue::Unsigned(next))?;
+    }
+    Ok(output)
+}
+
+fn routes_output(view: NetworkView) -> Result<StructuredOutput, Status> {
+    let mut output = network_output(view)?;
+    insert_text(&mut output, "operation", "show-routes")?;
+    for (index, route) in view.routes.iter().flatten().enumerate() {
+        insert_indexed_text(&mut output, "route", index, "destination", route.destination.as_str())?;
+        insert_indexed_text(&mut output, "route", index, "gateway", route.gateway.as_str())?;
+        insert_indexed_text(&mut output, "route", index, "interface", route.interface.as_str())?;
+        insert_indexed(
+            &mut output,
+            "route",
+            index,
+            "metric",
+            OutputValue::Unsigned(route.metric as u64),
+        )?;
+    }
+    if let Some(next) = view.next_route {
+        insert(&mut output, "next-route", OutputValue::Unsigned(next))?;
+    }
+    Ok(output)
+}
+
+fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result<(), Status> {
+    output
+        .insert(
+            name,
+            OutputValue::Text(
+                synos_system_model::command::OutputText::new(value)
+                    .map_err(|_| Status::NO_SPACE)?,
+            ),
+        )
+        .map_err(|_| Status::NO_SPACE)
+}
+
+fn insert(output: &mut StructuredOutput, name: &str, value: OutputValue) -> Result<(), Status> {
+    output.insert(name, value).map_err(|_| Status::NO_SPACE)
+}
+
+fn insert_indexed_text(
+    output: &mut StructuredOutput,
+    prefix: &str,
+    index: usize,
+    suffix: &str,
+    value: &str,
+) -> Result<(), Status> {
+    insert_indexed(
+        output,
+        prefix,
+        index,
+        suffix,
+        OutputValue::Text(
+            synos_system_model::command::OutputText::new(value)
+                .map_err(|_| Status::NO_SPACE)?,
+        ),
+    )
+}
+
+fn insert_indexed(
+    output: &mut StructuredOutput,
+    prefix: &str,
+    index: usize,
+    suffix: &str,
+    value: OutputValue,
+) -> Result<(), Status> {
+    let mut name = Text::<32>::empty();
+    name.push_str(prefix).map_err(|_| Status::NO_SPACE)?;
+    let mut digits = [0; 10];
+    let mut count = 0;
+    let mut number = (index + 1) as u64;
+    loop {
+        digits[count] = b'0' + (number % 10) as u8;
+        count += 1;
+        number /= 10;
+        if number == 0 {
+            break;
+        }
+    }
+    while count != 0 {
+        count -= 1;
+        name.push_char(digits[count] as char)
+            .map_err(|_| Status::NO_SPACE)?;
+    }
+    name.push_char('-').map_err(|_| Status::NO_SPACE)?;
+    name.push_str(suffix).map_err(|_| Status::NO_SPACE)?;
+    output
+        .insert(name.as_str(), value)
+        .map_err(|_| Status::NO_SPACE)
+}
+
+fn route(raw: u16) -> RouteId {
+    RouteId::new(raw).expect("network route is non-zero")
+}
+
+fn positional(name: &str, kind: ArgumentKind, required: bool) -> Result<ArgumentSpec, Error> {
+    ArgumentSpec::new(name, kind, required, true).map_err(|_| Error::InvalidValue)
+}
+
+fn qualifier(name: &str, kind: ArgumentKind) -> Result<ArgumentSpec, Error> {
+    ArgumentSpec::new(name, kind, false, false).map_err(|_| Error::InvalidValue)
+}

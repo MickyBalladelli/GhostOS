@@ -12,6 +12,7 @@ pub mod filesystem;
 pub mod firewall;
 pub mod interpreter;
 pub mod jobs;
+pub mod network;
 pub mod parser;
 pub mod render;
 pub mod rust;
