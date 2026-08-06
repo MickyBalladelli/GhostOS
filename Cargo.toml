@@ -135,3 +135,13 @@ panic = "abort"
 panic = "abort"
 lto = true
 codegen-units = 1
+
+# Keep the BIOS-staged kernel under the conventional-memory load limit.
+[profile.release.package.synos-kernel]
+opt-level = "z"
+
+[profile.release.package.syn-shell]
+opt-level = "z"
+
+[profile.release.package.synos-system-model]
+opt-level = "z"
