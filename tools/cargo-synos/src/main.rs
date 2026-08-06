@@ -3,7 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use synos_compiler::{CompileRequest, Compiler, Target};
+use synos_compiler::{
+    CompileRequest, Compiler, HostToolchain, Target, ToolchainStage, verify_bundle,
+};
 use synos_pkg::{SigningKey, bundle_size, encode_bundle};
 use synos_system_model::ContentId;
 
@@ -20,6 +22,9 @@ cargo synos compile --manifest-path PATH --bin NAME
     [--target-dir PATH]
 cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH]
 cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH]
+cargo synos toolchain package --key PATH --output PATH
+    [--stage 0|1|2] [--target x86_64|aarch64] [--root PATH] [--rust-version TEXT]
+cargo synos toolchain verify --bundle PATH --key PATH
 cargo synos run --manifest-path PATH --bin NAME [--release] [-- ARGUMENT]...
 
 Keys may contain 32 raw bytes or 64 hexadecimal characters.";
@@ -52,6 +57,7 @@ fn run() -> Result<(), String> {
         "compile" => compile(&arguments[1..]),
         "compile-all" => compile_all(&arguments[1..]),
         "reproduce" => reproduce(&arguments[1..]),
+        "toolchain" => toolchain(&arguments[1..]),
         "run" => run_program(&arguments[1..]),
         "help" | "-h" | "--help" => {
             println!("{USAGE}");
@@ -59,6 +65,63 @@ fn run() -> Result<(), String> {
         }
         other => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     }
+}
+
+fn toolchain(arguments: &[String]) -> Result<(), String> {
+    let Some(operation) = arguments.first().map(String::as_str) else {
+        return Err("toolchain needs package or verify".into());
+    };
+    match operation {
+        "package" => package_toolchain(&arguments[1..]),
+        "verify" => verify_toolchain(&arguments[1..]),
+        other => Err(format!("unknown toolchain operation `{other}`")),
+    }
+}
+
+fn package_toolchain(arguments: &[String]) -> Result<(), String> {
+    let options = ToolchainPackageOptions::parse(arguments)?;
+    let key = read_key(&options.key)?;
+    let toolchain = if let Some(root) = options.root {
+        HostToolchain::from_root(
+            &root,
+            options.stage,
+            options.target,
+            options.rust_version.unwrap_or_else(|| "prebuilt".into()),
+        )
+    } else {
+        if options.stage != ToolchainStage::Stage0 {
+            return Err("--root is required when packaging stage 1 or stage 2".into());
+        }
+        HostToolchain::discover(options.stage, options.target)
+    }
+    .map_err(|error| error.to_string())?;
+    let output = toolchain
+        .package(&options.output, key)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "created {:?} toolchain {} ({:?}, {} assets)",
+        output.manifest.stage,
+        output.bundle.display(),
+        output.info.package,
+        output.manifest.assets.len()
+    );
+    Ok(())
+}
+
+fn verify_toolchain(arguments: &[String]) -> Result<(), String> {
+    let options = ToolchainVerifyOptions::parse(arguments)?;
+    let key = read_key(&options.key)?;
+    let bytes = fs::read(&options.bundle)
+        .map_err(|error| format!("could not read {}: {error}", options.bundle.display()))?;
+    let manifest = verify_bundle(&bytes, key).map_err(|error| error.to_string())?;
+    println!(
+        "verified {:?} toolchain for {:?}: {:?}, {} assets",
+        manifest.stage,
+        manifest.target,
+        manifest.content,
+        manifest.assets.len()
+    );
+    Ok(())
 }
 
 fn compile(arguments: &[String]) -> Result<(), String> {
@@ -393,6 +456,20 @@ struct ReproduceOptions {
     clean_root: Option<PathBuf>,
 }
 
+struct ToolchainPackageOptions {
+    stage: ToolchainStage,
+    target: Target,
+    root: Option<PathBuf>,
+    rust_version: Option<String>,
+    key: PathBuf,
+    output: PathBuf,
+}
+
+struct ToolchainVerifyOptions {
+    bundle: PathBuf,
+    key: PathBuf,
+}
+
 impl WorkspaceOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut target = Target::X86_64;
@@ -449,6 +526,64 @@ impl ReproduceOptions {
             target,
             release,
             clean_root,
+        })
+    }
+}
+
+impl ToolchainPackageOptions {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut stage = ToolchainStage::Stage0;
+        let mut target = Target::X86_64;
+        let mut root = None;
+        let mut rust_version = None;
+        let mut key = None;
+        let mut output = None;
+        let mut index = 0;
+        while index < arguments.len() {
+            let value = arguments
+                .get(index + 1)
+                .ok_or_else(|| format!("{} needs a value", arguments[index]))?;
+            match arguments[index].as_str() {
+                "--stage" => stage = ToolchainStage::parse(value).map_err(|error| error.to_string())?,
+                "--target" => target = Target::parse(value).map_err(|error| error.to_string())?,
+                "--root" => root = Some(PathBuf::from(value)),
+                "--rust-version" => rust_version = Some(value.to_string()),
+                "--key" => key = Some(PathBuf::from(value)),
+                "--output" => output = Some(PathBuf::from(value)),
+                other => return Err(format!("unknown toolchain package option `{other}`")),
+            }
+            index += 2;
+        }
+        Ok(Self {
+            stage,
+            target,
+            root,
+            rust_version,
+            key: key.ok_or_else(|| "--key is required".to_string())?,
+            output: output.ok_or_else(|| "--output is required".to_string())?,
+        })
+    }
+}
+
+impl ToolchainVerifyOptions {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut bundle = None;
+        let mut key = None;
+        let mut index = 0;
+        while index < arguments.len() {
+            let value = arguments
+                .get(index + 1)
+                .ok_or_else(|| format!("{} needs a value", arguments[index]))?;
+            match arguments[index].as_str() {
+                "--bundle" => bundle = Some(PathBuf::from(value)),
+                "--key" => key = Some(PathBuf::from(value)),
+                other => return Err(format!("unknown toolchain verify option `{other}`")),
+            }
+            index += 2;
+        }
+        Ok(Self {
+            bundle: bundle.ok_or_else(|| "--bundle is required".to_string())?,
+            key: key.ok_or_else(|| "--key is required".to_string())?,
         })
     }
 }

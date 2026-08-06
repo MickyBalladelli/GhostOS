@@ -9,6 +9,13 @@ use synos_pkg::{BundleInfo, PackageError, SigningKey, bundle_size, encode_bundle
 use synos_synfs::{DirectoryEntry, Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
 
+mod toolchain;
+
+pub use toolchain::{
+    HostToolchain, ToolchainAsset, ToolchainAssetKind, ToolchainError, ToolchainManifest,
+    ToolchainPackageOutput, ToolchainStage, verify_bundle,
+};
+
 pub const SYNOS_TOOLCHAIN_ROOT: &str = "/system/toolchains/stage-2";
 pub const SYNOS_REGISTRY_ROOT: &str = "/system/registries";
 pub const SYNOS_SOURCE_ROOT: &str = "/system/sources";
@@ -26,6 +33,13 @@ impl Target {
         match self {
             Self::X86_64 => "x86_64-unknown-synos.json",
             Self::Aarch64 => "aarch64-unknown-synos.json",
+        }
+    }
+
+    pub const fn rust_target(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64-unknown-none",
+            Self::Aarch64 => "aarch64-unknown-none",
         }
     }
 
@@ -194,6 +208,8 @@ impl From<SynFsError> for CompileError {
 
 pub struct Compiler {
     cargo: OsString,
+    rustc: Option<PathBuf>,
+    rustdoc: Option<PathBuf>,
     linker: Option<PathBuf>,
     workspace_root: PathBuf,
 }
@@ -207,6 +223,8 @@ impl Compiler {
             .ok_or(CompileError::InvalidTargetDirectory)?;
         Ok(Self {
             cargo: env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")),
+            rustc: None,
+            rustdoc: None,
             linker: bundled_linker(),
             workspace_root,
         })
@@ -218,6 +236,8 @@ impl Compiler {
     pub fn with_synos_toolchain(workspace_root: PathBuf, toolchain_root: &Path) -> Self {
         Self {
             cargo: toolchain_root.join("bin/cargo").into_os_string(),
+            rustc: Some(toolchain_root.join("bin/rustc")),
+            rustdoc: Some(toolchain_root.join("bin/rustdoc")),
             linker: Some(toolchain_root.join("bin/rust-lld")),
             workspace_root,
         }
@@ -432,6 +452,12 @@ impl Compiler {
                 "-Z",
                 "json-target-spec",
             ]);
+        if let Some(rustc) = self.rustc.as_ref() {
+            command.env("RUSTC", rustc);
+        }
+        if let Some(rustdoc) = self.rustdoc.as_ref() {
+            command.env("RUSTDOC", rustdoc);
+        }
         if let Some(linker) = self.linker.as_ref() {
             let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
             if !rustflags.is_empty() {

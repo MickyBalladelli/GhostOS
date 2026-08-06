@@ -21,11 +21,14 @@ pub use design::{
 };
 pub use self_host::{
     SelfHostError, SelfHostRequest, SelfHostResult, SelfHostSession, SelfHostStage,
+    ToolchainStage, ToolchainStageError, ToolchainStageResult,
 };
 pub use toolchain::{
     ToolExit, ToolKind, ToolSpawnRequest, ToolchainComponent, ToolchainError, ToolchainExecutor,
-    ToolchainExecutionError, ToolchainManifest, ToolchainPlan, ToolchainPolicy, ToolchainReceipt,
-    ToolchainRequest, ToolchainRuntime, ToolchainStep, MAX_TOOLCHAIN_COMPONENTS,
+    ArtifactError, ArtifactSandbox, DynamicArtifact, DynamicArtifactKind, ToolchainAsset,
+    ToolchainAssetKind, ToolchainExecutionError, ToolchainManifest,
+    ToolchainPlan, ToolchainPolicy, ToolchainReceipt, ToolchainRequest, ToolchainRuntime,
+    ToolchainStep, MAX_DYNAMIC_ARTIFACTS, MAX_TOOLCHAIN_ASSETS, MAX_TOOLCHAIN_COMPONENTS,
     MAX_TOOLCHAIN_STEPS,
 };
 
@@ -284,6 +287,7 @@ pub struct CompilerService<const JOB_CAPACITY: usize = MAX_JOBS, const CACHE_CAP
     next_id: u64,
     jobs: [Option<Job>; JOB_CAPACITY],
     cache: [Option<CacheEntry>; CACHE_CAPACITY],
+    artifacts: ArtifactSandbox,
 }
 
 impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
@@ -295,7 +299,28 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             next_id: 1,
             jobs: [None; JOB_CAPACITY],
             cache: [None; CACHE_CAPACITY],
+            artifacts: ArtifactSandbox::new(),
         }
+    }
+
+    pub fn stage_artifact<const PACKAGES: usize, const KEYS: usize>(
+        &mut self,
+        packages: &synos_pkg::PackageDaemon<PACKAGES, KEYS>,
+        artifact: DynamicArtifact,
+    ) -> Result<(), ArtifactError> {
+        self.artifacts.stage(packages, artifact)
+    }
+
+    pub fn release_artifact(&mut self, payload: ContentId) -> Result<(), ArtifactError> {
+        self.artifacts.release(payload)
+    }
+
+    pub fn release_build_artifacts(&mut self) {
+        self.artifacts.release_all();
+    }
+
+    pub fn active_artifacts(&self) -> impl Iterator<Item = DynamicArtifact> + '_ {
+        self.artifacts.active()
     }
 
     pub fn submit(&mut self, request: BuildRequest) -> Result<JobId, Error> {

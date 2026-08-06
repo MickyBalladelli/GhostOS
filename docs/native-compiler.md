@@ -114,3 +114,23 @@ the SynOS `std` port, process loader, and service image described in
 
 For the complete host-side step, use `cargo-synos package` with
 `--manifest-path`, `--locked`, `--offline`, `--key`, and `--output`.
+
+## Toolchain package
+
+The host bootstrap can package the complete Rust toolchain needed by the
+native service:
+
+```sh
+cargo run -p cargo-synos -- synos toolchain package \
+  --stage 0 --target x86_64 --key compiler.key --output stage-0.synpkg
+cargo run -p cargo-synos -- synos toolchain verify \
+  --bundle stage-0.synpkg --key compiler.key
+```
+
+Stage 1 and stage 2 roots use the same format. Their root contains `bin/`
+with Cargo, rustc, rustdoc, and rust-lld, plus `sysroot/`,
+`target-libraries/`, and `rust-src/`; pass that root with `--root` and the
+matching stage number. The archive uses stable sorted paths, content IDs for
+every file, and no symbolic links. `synos-pkg` verifies the signed outer
+bundle before SynFS installation, while `synos-rustd` authorizes each
+component and revokes build-script and proc-macro images when the build ends.

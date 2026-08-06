@@ -10,6 +10,72 @@ pub enum SelfHostStage {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolchainStage {
+    Stage0,
+    Stage1,
+    Stage2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ToolchainStageResult {
+    pub stage: ToolchainStage,
+    pub target: Target,
+    pub package: synos_system_model::ContentId,
+    pub payload: synos_system_model::ContentId,
+    pub predecessor: Option<synos_system_model::ContentId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolchainStageError {
+    InvalidArtifact,
+    InvalidTransition,
+    TargetMismatch,
+}
+
+impl SelfHostStage {
+    pub const fn toolchain_stage(self) -> ToolchainStage {
+        match self {
+            Self::Runtime => ToolchainStage::Stage1,
+            Self::Compiler => ToolchainStage::Stage2,
+        }
+    }
+}
+
+impl ToolchainStageResult {
+    pub fn new(
+        stage: ToolchainStage,
+        target: Target,
+        package: synos_system_model::ContentId,
+        payload: synos_system_model::ContentId,
+        predecessor: Option<synos_system_model::ContentId>,
+    ) -> Result<Self, ToolchainStageError> {
+        if package.is_zero() || payload.is_zero() {
+            return Err(ToolchainStageError::InvalidArtifact);
+        }
+        if stage == ToolchainStage::Stage0 && predecessor.is_some() {
+            return Err(ToolchainStageError::InvalidTransition);
+        }
+        if stage != ToolchainStage::Stage0 && predecessor.is_none() {
+            return Err(ToolchainStageError::InvalidTransition);
+        }
+        Ok(Self { stage, target, package, payload, predecessor })
+    }
+
+    pub fn compare_rebuild(&self, rebuilt: Self) -> Result<bool, ToolchainStageError> {
+        if self.stage != ToolchainStage::Stage1
+            || rebuilt.stage != ToolchainStage::Stage2
+            || self.target != rebuilt.target
+        {
+            return Err(ToolchainStageError::TargetMismatch);
+        }
+        if rebuilt.predecessor != Some(self.package) {
+            return Err(ToolchainStageError::InvalidTransition);
+        }
+        Ok(self.payload == rebuilt.payload)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SelfHostError {
     Compiler(Error),
     InvalidRequest,

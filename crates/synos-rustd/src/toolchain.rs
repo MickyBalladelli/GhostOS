@@ -4,16 +4,124 @@ use synos_system_model::ContentId;
 
 use crate::{BuildRequest, Error, Target, Text, MAX_PATH_BYTES};
 
-pub const MAX_TOOLCHAIN_COMPONENTS: usize = 5;
+pub const MAX_TOOLCHAIN_COMPONENTS: usize = 8;
+pub const MAX_TOOLCHAIN_ASSETS: usize = 8;
 pub const MAX_TOOLCHAIN_STEPS: usize = MAX_TOOLCHAIN_COMPONENTS;
+pub const MAX_DYNAMIC_ARTIFACTS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolKind {
     Cargo,
     Rustc,
+    Rustdoc,
     Linker,
     BuildScript,
     ProcMacro,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolchainAssetKind {
+    Codegen,
+    Sysroot,
+    TargetLibraries,
+    Sources,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ToolchainAsset {
+    pub kind: ToolchainAssetKind,
+    pub package: ContentId,
+    pub content: ContentId,
+    pub path: Text<MAX_PATH_BYTES>,
+    pub target: Target,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DynamicArtifactKind {
+    BuildScript,
+    ProcMacro,
+    CodeGenerator,
+    TestBinary,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DynamicArtifact {
+    pub kind: DynamicArtifactKind,
+    pub package: ContentId,
+    pub payload: ContentId,
+    pub executable: Text<MAX_PATH_BYTES>,
+    pub target: Target,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArtifactError {
+    Capacity,
+    InvalidArtifact,
+    PackageNotAuthorized,
+    NotFound,
+}
+
+/// Build-local registry for dynamic build-script and proc-macro images.
+/// Entries are accepted only after package verification and are revoked when
+/// the build workspace is released.
+pub struct ArtifactSandbox {
+    artifacts: [Option<DynamicArtifact>; MAX_DYNAMIC_ARTIFACTS],
+}
+
+impl ArtifactSandbox {
+    pub const fn new() -> Self {
+        Self { artifacts: [None; MAX_DYNAMIC_ARTIFACTS] }
+    }
+
+    pub fn stage<const PACKAGES: usize, const KEYS: usize>(
+        &mut self,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        artifact: DynamicArtifact,
+    ) -> Result<(), ArtifactError> {
+        if artifact.package.is_zero() || artifact.payload.is_zero() {
+            return Err(ArtifactError::InvalidArtifact);
+        }
+        packages
+            .authorize_instantiation(artifact.package)
+            .map_err(|_| ArtifactError::PackageNotAuthorized)?;
+        if self.artifacts.iter().flatten().any(|current| current.payload == artifact.payload) {
+            return Err(ArtifactError::InvalidArtifact);
+        }
+        let slot = self
+            .artifacts
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(ArtifactError::Capacity)?;
+        *slot = Some(artifact);
+        Ok(())
+    }
+
+    pub fn resolve(&self, payload: ContentId) -> Result<DynamicArtifact, ArtifactError> {
+        self.artifacts
+            .iter()
+            .flatten()
+            .find(|artifact| artifact.payload == payload)
+            .copied()
+            .ok_or(ArtifactError::NotFound)
+    }
+
+    pub fn release(&mut self, payload: ContentId) -> Result<(), ArtifactError> {
+        let slot = self
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.is_some_and(|artifact| artifact.payload == payload))
+            .ok_or(ArtifactError::NotFound)?;
+        *slot = None;
+        Ok(())
+    }
+
+    pub fn release_all(&mut self) {
+        self.artifacts.fill(None);
+    }
+
+    pub fn active(&self) -> impl Iterator<Item = DynamicArtifact> + '_ {
+        self.artifacts.iter().flatten().copied()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,6 +163,7 @@ pub enum ToolchainError {
     ProcMacrosDenied,
     NetworkDenied,
     StepCapacity,
+    MissingAsset(ToolchainAssetKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,12 +193,14 @@ impl ToolchainPolicy {
 #[derive(Clone, Copy)]
 pub struct ToolchainManifest {
     components: [Option<ToolchainComponent>; MAX_TOOLCHAIN_COMPONENTS],
+    assets: [Option<ToolchainAsset>; MAX_TOOLCHAIN_ASSETS],
 }
 
 impl ToolchainManifest {
     pub const fn new() -> Self {
         Self {
             components: [None; MAX_TOOLCHAIN_COMPONENTS],
+            assets: [None; MAX_TOOLCHAIN_ASSETS],
         }
     }
 
@@ -122,6 +233,29 @@ impl ToolchainManifest {
         self.install(component)
     }
 
+    pub fn install_asset_authorized<const PACKAGES: usize, const KEYS: usize>(
+        &mut self,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        asset: ToolchainAsset,
+    ) -> Result<(), ToolchainError> {
+        if asset.package.is_zero() || asset.content.is_zero() {
+            return Err(ToolchainError::InvalidComponent);
+        }
+        packages
+            .authorize_instantiation(asset.package)
+            .map_err(|_| ToolchainError::PackageNotAuthorized)?;
+        if self.assets.iter().flatten().any(|current| current.kind == asset.kind) {
+            return Err(ToolchainError::DuplicateComponent);
+        }
+        let slot = self
+            .assets
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(ToolchainError::Capacity)?;
+        *slot = Some(asset);
+        Ok(())
+    }
+
     pub fn component(&self, kind: ToolKind) -> Option<ToolchainComponent> {
         self.components
             .iter()
@@ -132,6 +266,34 @@ impl ToolchainManifest {
 
     pub fn components(&self) -> impl Iterator<Item = ToolchainComponent> + '_ {
         self.components.iter().flatten().copied()
+    }
+
+    pub fn assets(&self) -> impl Iterator<Item = ToolchainAsset> + '_ {
+        self.assets.iter().flatten().copied()
+    }
+
+    pub fn asset(&self, kind: ToolchainAssetKind) -> Option<ToolchainAsset> {
+        self.assets.iter().flatten().find(|asset| asset.kind == kind).copied()
+    }
+
+    pub fn validate_complete(&self, target: Target) -> Result<(), ToolchainError> {
+        for kind in [ToolKind::Cargo, ToolKind::Rustc, ToolKind::Rustdoc, ToolKind::Linker] {
+            let component = self.require(kind)?;
+            if component.target != target {
+                return Err(ToolchainError::InvalidComponent);
+            }
+        }
+        for kind in [
+            ToolchainAssetKind::Sysroot,
+            ToolchainAssetKind::TargetLibraries,
+            ToolchainAssetKind::Sources,
+        ] {
+            let asset = self.asset(kind).ok_or(ToolchainError::MissingAsset(kind))?;
+            if asset.target != target {
+                return Err(ToolchainError::InvalidComponent);
+            }
+        }
+        Ok(())
     }
 
     fn require(&self, kind: ToolKind) -> Result<ToolchainComponent, ToolchainError> {

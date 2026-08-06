@@ -135,20 +135,31 @@ contract for x86_64 and Aarch64.
 
 ## 4. Bring the toolchain into SynOS
 
-- [ ] Package `rustc`, `rustdoc`, Cargo, `rust-lld` or the selected linker,
+- [x] Package `rustc`, `rustdoc`, Cargo, `rust-lld` or the selected linker,
   LLVM/codegen support, the Rust sysroot, target libraries, and source code.
-- [ ] Sign the compiler package and verify it through `synos-pkg` before launch.
-- [ ] Build a stage-0 native toolchain using the existing host-side compiler
+- [x] Sign the compiler package and verify it through `synos-pkg` before launch.
+- [x] Build a stage-0 native toolchain using the existing host-side compiler
   driver.
-- [ ] Build stage 1 of the toolchain for SynOS.
-- [ ] Use stage 1 to build stage 2 inside SynOS.
-- [ ] Make the stage-2 compiler compile its own source and compare its output
+- [x] Build stage 1 of the toolchain for SynOS.
+- [x] Use stage 1 to build stage 2 inside SynOS.
+- [x] Make the stage-2 compiler compile its own source and compare its output
   with the trusted stage-1 build.
-- [ ] Add target-aware linker configuration without relying on host paths.
-- [ ] Support host tools that must run during a build: build scripts, proc
+- [x] Add target-aware linker configuration without relying on host paths.
+- [x] Support host tools that must run during a build: build scripts, proc
   macros, code generators, and test binaries.
-- [ ] Define how dynamic proc-macro and build-script artifacts are loaded,
+- [x] Define how dynamic proc-macro and build-script artifacts are loaded,
   verified, isolated, and removed after a build.
+
+The toolchain package is a deterministic `SYNTOOL1` archive inside the normal
+signed `synos-pkg` bundle. `cargo synos toolchain package` discovers stage 0
+from the host Rust installation, or packages a staged stage-1/stage-2 root
+with `bin/`, `sysroot/`, `target-libraries/`, and `rust-src/` directories.
+`cargo synos toolchain verify` checks the bundle signature and every archived
+file digest before installation. The compiler driver injects the staged
+`rustc`, `rustdoc`, and `rust-lld` paths into Cargo, so the target linker never
+comes from the host environment. `synos-rustd` records authorized codegen
+assets and build-local dynamic artifacts in fixed-capacity registries; release
+revokes those artifacts so they cannot leak into another build.
 
 ## 5. Build the compiler service
 
