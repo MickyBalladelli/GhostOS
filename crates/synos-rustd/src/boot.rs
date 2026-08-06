@@ -9,8 +9,8 @@ use synos_system_model::{ContentId, LogicalName, RootManifest};
 use synos_update::HealthCheck;
 
 use crate::{
-    BuildPolicy, CompilerIpcRequest, CompilerIpcResponse, CompilerService, MAX_CACHE_ENTRIES,
-    MAX_JOBS, Target,
+    BuildPolicy, CompilerIpcRequest, CompilerIpcResponse, CompilerSecurityPolicy,
+    CompilerService, COMPILER_IDENTITY, MAX_CACHE_ENTRIES, MAX_JOBS, Target,
 };
 
 pub const COMPILER_SERVICE_ID: u32 = 0x5255_5354;
@@ -30,6 +30,7 @@ pub struct NativeCompilerBootConfig {
     pub package: ContentId,
     pub image_id: u128,
     pub target: Target,
+    pub identity: u64,
     pub policy: BuildPolicy,
 }
 
@@ -39,12 +40,18 @@ impl NativeCompilerBootConfig {
             package,
             image_id,
             target,
+            identity: COMPILER_IDENTITY,
             policy: BuildPolicy::OFFLINE,
         }
     }
 
     pub const fn with_policy(mut self, policy: BuildPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    pub const fn with_identity(mut self, identity: u64) -> Self {
+        self.identity = identity;
         self
     }
 }
@@ -76,10 +83,15 @@ pub struct CompilerServiceBoot<const JOBS: usize = MAX_JOBS, const CACHE: usize 
 
 impl<const JOBS: usize, const CACHE: usize> CompilerServiceBoot<JOBS, CACHE> {
     fn new(config: NativeCompilerBootConfig) -> Result<Self, CompilerBootError> {
-        if config.package.is_zero() || config.image_id == 0 {
+        if config.package.is_zero() || config.image_id == 0 || config.identity != COMPILER_IDENTITY {
             return Err(CompilerBootError::InvalidConfiguration);
         }
         let mut service = CompilerService::new(config.policy);
+        service
+            .set_security_policy(CompilerSecurityPolicy::minimum(config.identity).map_err(|_| {
+                CompilerBootError::InvalidConfiguration
+            })?)
+            .map_err(|_| CompilerBootError::InvalidConfiguration)?;
         service
             .set_toolchain_identity(config.package)
             .map_err(|_| CompilerBootError::InvalidConfiguration)?;
@@ -139,6 +151,26 @@ impl<const JOBS: usize, const CACHE: usize> CompilerServiceBoot<JOBS, CACHE> {
 
     pub fn tick(&mut self, now_us: u64) -> usize {
         self.service.tick(now_us)
+    }
+
+    /// Fence all in-flight work before init starts the next process generation.
+    /// The supervisor owns the restart delay; this method makes the old build
+    /// state terminal and lets the next process start cleanly.
+    pub fn recover_after_crash<const SERVICES: usize, R: SupervisorRuntime>(
+        &mut self,
+        supervisor: &mut Supervisor<SERVICES>,
+        now_us: u64,
+        runtime: &mut R,
+    ) -> Result<Option<SupervisorEvent>, CompilerBootError> {
+        self.service.recover_after_crash();
+        let event = supervisor.tick(now_us, runtime)?;
+        if let Some(SupervisorEvent::Started {
+            process, generation, ..
+        }) = event
+        {
+            self.state = CompilerBootState::Running { process, generation };
+        }
+        Ok(event)
     }
 
     /// Register and start the service during SynOS user-space boot.

@@ -212,6 +212,32 @@ RUST BUILD /MANIFEST=/sources/hello/Cargo.toml /BIN=hello /RELEASE /LOCKED /OFFL
 RUST RUN /MANIFEST=/sources/hello/Cargo.toml /BIN=hello
 ```
 
+## Security and recovery
+
+The compiler service runs under the dedicated `SYNORUST` identity. Its
+minimum capability set covers source, toolchain, registry, build, cache,
+output, IPC, and approved tool execution. Source, toolchain, registry, build,
+cache, output, active-package, and trusted-key roots are separate. Write
+authorization allows only build, cache, and output roots; active compiler and
+trusted-key roots are fenced.
+
+Build-script and proc-macro plans carry an explicit capability mask. Network,
+device, secret, and process-control capabilities are denied unless both the
+policy and the request grant them. Every job exposes a bounded
+`BuildAuditRecord` containing source, dependency, toolchain, package, payload,
+capability, identity, and final status fields.
+
+If `synos-rustd` crashes, init fences the old process and applies its bounded
+restart policy. `CompilerServiceBoot::recover_after_crash` marks queued and
+running jobs failed, releases dynamic artifacts, leaves workspace cleanup
+pending, and starts only the next process generation. The workspace runtime
+then calls `cleanup_job` for each `cleanup_pending` job.
+
+Toolchain installation and rollback write a transaction journal before any
+rename. `ToolchainManager::recover` restores the last known active state after
+an interrupted operation, so a failed update cannot publish a half-swapped
+toolchain.
+
 ## Toolchain package
 
 The host bootstrap can package the complete Rust toolchain needed by the

@@ -11,6 +11,7 @@ const ARCHIVE_MAGIC: &[u8; 8] = b"SYNTOOL1";
 const ARCHIVE_VERSION: u16 = 1;
 const ARCHIVE_HEADER_BYTES: usize = 22;
 const ARCHIVE_RECORD_BYTES: usize = 45;
+const TRANSACTION_FILE: &str = "transaction";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -87,6 +88,7 @@ impl ToolchainManager {
         stage: ToolchainStage,
         target: Option<Target>,
     ) -> Result<ToolchainManifest, ToolchainError> {
+        self.recover()?;
         let bytes = fs::read(bundle).map_err(|error| ToolchainError::Io {
             path: bundle.to_path_buf(),
             error: error.to_string(),
@@ -101,18 +103,26 @@ impl ToolchainManager {
         })?;
         let current = self.stage_path(stage);
         let previous = self.root.join("previous.synpkg");
+        let old_active = fs::read_to_string(self.root.join("active-stage")).unwrap_or_default();
+        write_manager_file(
+            &self.root.join(TRANSACTION_FILE),
+            format!("pending-install\n{}\n{}", stage_name(stage), old_active.trim()).as_bytes(),
+        )?;
         if current.is_file() {
-            fs::copy(&current, &previous).map_err(|error| ToolchainError::Io {
-                path: previous.clone(),
+            let current_bytes = fs::read(&current).map_err(|error| ToolchainError::Io {
+                path: current.clone(),
                 error: error.to_string(),
             })?;
+            write_manager_file(&previous, &current_bytes)?;
         }
         write_manager_file(&current, &bytes)?;
         write_manager_file(&self.root.join("active-stage"), stage_name(stage).as_bytes())?;
+        write_manager_file(&self.root.join(TRANSACTION_FILE), b"committed\ninstall")?;
         Ok(manifest)
     }
 
     pub fn select(&self, stage: ToolchainStage) -> Result<(), ToolchainError> {
+        self.recover()?;
         let path = self.stage_path(stage);
         if !path.is_file() {
             return Err(ToolchainError::ToolchainNotInstalled(stage));
@@ -121,6 +131,7 @@ impl ToolchainManager {
     }
 
     pub fn rollback(&self) -> Result<ToolchainStage, ToolchainError> {
+        self.recover()?;
         let active = fs::read_to_string(self.root.join("active-stage"))
             .map_err(|_| ToolchainError::NoPreviousToolchain)?;
         let stage = ToolchainStage::parse(active.trim())?;
@@ -130,6 +141,10 @@ impl ToolchainManager {
         }
         let current = self.stage_path(stage);
         let rollback = self.root.join("rollback.synpkg");
+        write_manager_file(
+            &self.root.join(TRANSACTION_FILE),
+            format!("pending-rollback\n{}", stage_name(stage)).as_bytes(),
+        )?;
         if current.is_file() {
             fs::rename(&current, &rollback).map_err(|error| ToolchainError::Io {
                 path: rollback.clone(),
@@ -148,7 +163,64 @@ impl ToolchainManager {
                 }
             })?;
         }
+        write_manager_file(&self.root.join(TRANSACTION_FILE), b"committed\nrollback")?;
         Ok(stage)
+    }
+
+    /// Finish or undo an interrupted toolchain mutation.
+    pub fn recover(&self) -> Result<(), ToolchainError> {
+        if !self.root.is_dir() {
+            return Ok(());
+        }
+        let transaction = match fs::read_to_string(self.root.join(TRANSACTION_FILE)) {
+            Ok(transaction) => transaction,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(ToolchainError::Io {
+                path: self.root.join(TRANSACTION_FILE),
+                error: error.to_string(),
+            }),
+        };
+        let mut lines = transaction.lines();
+        match lines.next() {
+            Some("pending-install") => {
+                let stage = ToolchainStage::parse(lines.next().ok_or(ToolchainError::InvalidTransaction)?)?;
+                let old_active = lines.next().unwrap_or_default();
+                let previous = self.root.join("previous.synpkg");
+                if previous.is_file() {
+                    let bytes = fs::read(&previous).map_err(|error| ToolchainError::Io {
+                        path: previous.clone(),
+                        error: error.to_string(),
+                    })?;
+                    write_manager_file(&self.stage_path(stage), &bytes)?;
+                }
+                write_manager_file(&self.root.join("active-stage"), old_active.as_bytes())?;
+                write_manager_file(&self.root.join(TRANSACTION_FILE), b"recovered\ninstall")?;
+            }
+            Some("pending-rollback") => {
+                let stage = ToolchainStage::parse(lines.next().ok_or(ToolchainError::InvalidTransaction)?)?;
+                let current = self.stage_path(stage);
+                let previous = self.root.join("previous.synpkg");
+                let rollback = self.root.join("rollback.synpkg");
+                if rollback.is_file() {
+                    if !current.is_file() && previous.is_file() {
+                        fs::rename(&previous, &current).map_err(|error| ToolchainError::Io {
+                            path: current.clone(),
+                            error: error.to_string(),
+                        })?;
+                    }
+                    if !previous.is_file() && rollback.is_file() {
+                        fs::rename(&rollback, &previous).map_err(|error| ToolchainError::Io {
+                            path: previous.clone(),
+                            error: error.to_string(),
+                        })?;
+                    }
+                }
+                write_manager_file(&self.root.join(TRANSACTION_FILE), b"recovered\nrollback")?;
+            }
+            Some("committed") | Some("recovered") => {}
+            Some(_) | None => return Err(ToolchainError::InvalidTransaction),
+        }
+        Ok(())
     }
 
     fn stage_path(&self, stage: ToolchainStage) -> PathBuf {
@@ -167,6 +239,7 @@ pub enum ToolchainError {
     Io { path: PathBuf, error: String },
     InvalidArchive,
     InvalidArchivePath(String),
+    InvalidTransaction,
     ArchiveTooLarge,
     Package(PackageError),
     PackageWrite { path: PathBuf, error: String },
@@ -191,6 +264,7 @@ impl std::fmt::Display for ToolchainError {
             Self::Io { path, error } => write!(formatter, "{}: {error}", path.display()),
             Self::InvalidArchive => write!(formatter, "invalid SynOS toolchain archive"),
             Self::InvalidArchivePath(path) => write!(formatter, "invalid archive path `{path}`"),
+            Self::InvalidTransaction => write!(formatter, "invalid toolchain transaction journal"),
             Self::ArchiveTooLarge => write!(formatter, "toolchain archive is too large"),
             Self::Package(error) => write!(formatter, "package error: {error:?}"),
             Self::PackageWrite { path, error } => {

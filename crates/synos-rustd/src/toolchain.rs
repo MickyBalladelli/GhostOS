@@ -2,7 +2,7 @@ use synos_init::ProcessId;
 use synos_pkg::PackageDaemon;
 use synos_system_model::ContentId;
 
-use crate::{BuildRequest, Error, Target, Text, MAX_PATH_BYTES};
+use crate::{BuildRequest, CompilerCapabilities, Error, Target, Text, MAX_PATH_BYTES};
 
 pub const MAX_TOOLCHAIN_COMPONENTS: usize = 8;
 pub const MAX_TOOLCHAIN_ASSETS: usize = 8;
@@ -198,6 +198,7 @@ pub enum ToolchainError {
     NetworkDenied,
     StepCapacity,
     MissingAsset(ToolchainAssetKind),
+    CapabilityDenied,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -206,6 +207,7 @@ pub struct ToolchainPolicy {
     pub allow_proc_macros: bool,
     pub allow_network: bool,
     pub max_steps: u8,
+    pub capabilities: CompilerCapabilities,
 }
 
 impl ToolchainPolicy {
@@ -214,6 +216,7 @@ impl ToolchainPolicy {
         allow_proc_macros: true,
         allow_network: false,
         max_steps: MAX_TOOLCHAIN_STEPS as u8,
+        capabilities: CompilerCapabilities::MINIMUM,
     };
 
     pub const RESTRICTED: Self = Self {
@@ -221,6 +224,7 @@ impl ToolchainPolicy {
         allow_proc_macros: false,
         allow_network: false,
         max_steps: 3,
+        capabilities: CompilerCapabilities::MINIMUM,
     };
 }
 
@@ -347,6 +351,7 @@ pub struct ToolchainRequest {
     pub build: BuildRequest,
     pub run_build_scripts: bool,
     pub run_proc_macros: bool,
+    pub capabilities: CompilerCapabilities,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -386,6 +391,14 @@ impl ToolchainPlan {
         }
         if request.run_proc_macros && !policy.allow_proc_macros {
             return Err(ToolchainError::ProcMacrosDenied);
+        }
+        if !policy.capabilities.contains(request.capabilities) {
+            return Err(ToolchainError::CapabilityDenied);
+        }
+        if request.build.network == crate::NetworkPolicy::Allowed
+            && !request.capabilities.contains(CompilerCapabilities::NETWORK)
+        {
+            return Err(ToolchainError::CapabilityDenied);
         }
 
         let mut plan = Self {

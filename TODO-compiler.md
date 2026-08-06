@@ -225,18 +225,33 @@ published only after a successful build.
 
 ## 8. Security and recovery
 
-- [ ] Run compiler jobs under a dedicated identity with the minimum file,
+- [x] Run compiler jobs under a dedicated identity with the minimum file,
   memory, IPC, and execution capabilities.
-- [ ] Keep compiler source, toolchain, registry, cache, and output permissions
+- [x] Keep compiler source, toolchain, registry, cache, and output permissions
   separate.
-- [ ] Require explicit approval for build scripts that access network,
+- [x] Require explicit approval for build scripts that access network,
   devices, secrets, or process-control capabilities.
-- [ ] Prevent compiler jobs from modifying the active compiler package or
+- [x] Prevent compiler jobs from modifying the active compiler package or
   trusted-key store.
-- [ ] Record package, source, dependency, toolchain, and capability identity
+- [x] Record package, source, dependency, toolchain, and capability identity
   in the build audit log.
-- [ ] Restart a crashed compiler service without corrupting build state.
-- [ ] Roll back a failed toolchain update atomically.
+- [x] Restart a crashed compiler service without corrupting build state.
+- [x] Roll back a failed toolchain update atomically.
+
+Section 8 is implemented in `synos-rustd` and `synos-compiler`:
+
+- `CompilerSecurityPolicy` binds the service to a dedicated identity, grants
+  only minimum compiler capabilities, separates storage roots, and rejects
+  writes to the active compiler package and trusted-key store.
+- `ToolchainPolicy` and `ToolchainRequest` carry an explicit capability mask.
+  Network, device, secret, and process-control access cannot enter a build
+  plan without that mask being granted.
+- Each job writes a bounded `BuildAuditRecord` with package, source,
+  dependency, toolchain, capability, result, and status identities.
+- Crash recovery fences in-flight jobs, marks cleanup pending, drops dynamic
+  artifacts, completes audit records, and lets init restart the next process.
+- Toolchain install and rollback use an atomic transaction journal. A later
+  manager operation calls `recover()` before touching the active toolchain.
 
 ## 9. Acceptance checks
 

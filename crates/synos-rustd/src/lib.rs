@@ -4,6 +4,7 @@
 mod boot;
 mod design;
 mod registry;
+mod security;
 mod self_host;
 mod source;
 mod toolchain;
@@ -30,6 +31,9 @@ pub use registry::{
     SignedLocalRegistry, Version, lockfile_digest, MAX_PACKAGE_NAME_BYTES,
     MAX_REGISTRY_DEPENDENCIES, MAX_REGISTRY_ENTRIES,
 };
+pub use security::{
+    BuildAuditRecord, CompilerCapabilities, CompilerSecurityPolicy, COMPILER_IDENTITY,
+};
 pub use source::{
     SourceCapability, SourceFile, SourceGrant, SourceSnapshot, MAX_SOURCE_DIRECTORIES,
     MAX_SOURCE_FILES,
@@ -54,6 +58,7 @@ pub const MAX_JOBS: usize = 16;
 pub const MAX_CACHE_ENTRIES: usize = 32;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 512;
 pub const MAX_LOG_RECORDS: usize = 128;
+pub const MAX_AUDIT_RECORDS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -65,6 +70,9 @@ pub enum Error {
     ResourceLimit,
     DeadlineExpired,
     SourceCapabilityDenied,
+    CapabilityDenied,
+    IdentityMismatch,
+    StorageSeparation,
     SourceLimit,
     Registry(RegistryError),
     SourceFilesystem(SynFsError),
@@ -76,11 +84,13 @@ impl IntoStatus for Error {
             Self::Capacity | Self::ResourceLimit => Status::NO_SPACE,
             Self::JobNotFound => Status::NOT_FOUND,
             Self::NetworkDenied => Status::ACCESS_DENIED,
+            Self::CapabilityDenied | Self::IdentityMismatch => Status::ACCESS_DENIED,
             Self::InvalidRequest
             | Self::InvalidTransition
             | Self::DeadlineExpired
             | Self::SourceCapabilityDenied
-            | Self::SourceLimit => {
+            | Self::SourceLimit
+            | Self::StorageSeparation => {
                 Status::INVALID_ARGUMENT
             }
             Self::Registry(error) => match error {
@@ -282,6 +292,15 @@ pub struct Diagnostic {
     pub message: Text<MAX_DIAGNOSTIC_BYTES>,
 }
 
+impl Diagnostic {
+    pub fn new(code: u16, message: &str) -> Result<Self, Error> {
+        Ok(Self {
+            code,
+            message: Text::new(message)?,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BuildResult {
     pub package: ContentId,
@@ -320,6 +339,24 @@ struct Job {
     started_at_us: u64,
     isolation: BuildIsolation,
     control: JobControl,
+}
+
+struct JobAuditInput {
+    id: JobId,
+    request: BuildRequest,
+    source: ContentId,
+    toolchain: ContentId,
+}
+
+impl JobAuditInput {
+    fn new(id: JobId, request: BuildRequest, source: ContentId, toolchain: ContentId) -> Self {
+        Self {
+            id,
+            request,
+            source,
+            toolchain,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -418,12 +455,14 @@ pub struct CompilerService<const JOB_CAPACITY: usize = MAX_JOBS, const CACHE_CAP
     toolchain_identity: ContentId,
     cache_hits: u64,
     cache_misses: u64,
+    security: CompilerSecurityPolicy,
+    audits: [Option<BuildAuditRecord>; MAX_AUDIT_RECORDS],
 }
 
 impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
     CompilerService<JOB_CAPACITY, CACHE_CAPACITY>
 {
-    pub const fn new(policy: BuildPolicy) -> Self {
+    pub fn new(policy: BuildPolicy) -> Self {
         Self {
             policy,
             next_id: 1,
@@ -436,6 +475,9 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             toolchain_identity: ContentId::from_bytes([0; 32]),
             cache_hits: 0,
             cache_misses: 0,
+            security: CompilerSecurityPolicy::minimum(COMPILER_IDENTITY)
+                .expect("valid compiler security policy"),
+            audits: [None; MAX_AUDIT_RECORDS],
         }
     }
 
@@ -453,6 +495,90 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             );
         }
         Ok(())
+    }
+
+    pub fn set_security_policy(&mut self, policy: CompilerSecurityPolicy) -> Result<(), Error> {
+        if policy.identity() != COMPILER_IDENTITY
+            || !policy
+                .capabilities()
+                .contains(CompilerCapabilities::MINIMUM)
+        {
+            return Err(Error::IdentityMismatch);
+        }
+        policy.validate()?;
+        self.security = policy;
+        Ok(())
+    }
+
+    pub const fn security_policy(&self) -> CompilerSecurityPolicy {
+        self.security
+    }
+
+    pub fn audit_records(&self) -> impl Iterator<Item = BuildAuditRecord> + '_ {
+        self.audits.iter().flatten().copied()
+    }
+
+    pub fn cleanup_pending(&self) -> impl Iterator<Item = JobId> + '_ {
+        self.jobs
+            .iter()
+            .flatten()
+            .filter(|job| job.isolation.cleanup_pending)
+            .map(|job| job.status.id)
+    }
+
+    fn record_audit(&mut self, input: JobAuditInput) {
+        let record = BuildAuditRecord {
+            identity: self.security.identity(),
+            job: input.id.raw(),
+            source: input.source,
+            dependencies: feature_digest(input.request),
+            toolchain: input.toolchain,
+            package: ContentId::from_bytes([0; 32]),
+            payload: ContentId::from_bytes([0; 32]),
+            target: input.request.target,
+            profile: input.request.profile,
+            capability_bits: self.security.capabilities().bits(),
+            status: Status::PENDING,
+        };
+        let index = self
+            .audits
+            .iter()
+            .position(Option::is_none)
+            .unwrap_or((input.id.raw() as usize) % MAX_AUDIT_RECORDS);
+        self.audits[index] = Some(record);
+    }
+
+    fn finish_audit(&mut self, id: JobId, result: BuildResult, status: Status) {
+        if let Some(record) = self
+            .audits
+            .iter_mut()
+            .flatten()
+            .find(|record| record.job == id.raw())
+        {
+            record.package = result.package;
+            record.payload = result.payload;
+            record.status = status;
+        }
+    }
+
+    fn finish_failed_audit(&mut self, id: JobId, status: Status) {
+        let target = self
+            .jobs
+            .iter()
+            .flatten()
+            .find(|job| job.status.id == id)
+            .map(|job| job.status.request.target);
+        if let Some(target) = target {
+            self.finish_audit(
+                id,
+                BuildResult {
+                    package: ContentId::from_bytes([0; 32]),
+                    payload: ContentId::from_bytes([0; 32]),
+                    target,
+                },
+                status,
+            );
+        }
     }
 
     pub fn prepare_job<R: BuildWorkspaceRuntime>(
@@ -521,6 +647,7 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         source_identity: ContentId,
     ) -> Result<JobId, Error> {
         self.policy.authorize(&request)?;
+        self.security.authorize(&request)?;
         if !self.jobs.iter().any(Option::is_none) {
             return Err(Error::Capacity);
         }
@@ -544,6 +671,7 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             isolation,
             control: JobControl::Running,
         });
+        self.record_audit(JobAuditInput::new(id, request, source_identity, self.toolchain_identity));
         self.emit_log(id, CompilerLogLevel::Info, CompilerEventKind::Queued, "build queued");
         Ok(id)
     }
@@ -639,6 +767,14 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             toolchain_identity,
             job.status.request,
         );
+        if let Some(record) = self
+            .audits
+            .iter_mut()
+            .flatten()
+            .find(|record| record.job == id.raw())
+        {
+            record.dependencies = lockfile;
+        }
         Ok(())
     }
 
@@ -682,6 +818,7 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             }
         }
         for id in expired_ids.into_iter().take(expired_length).flatten() {
+            self.finish_failed_audit(id, Status::BUSY);
             self.emit_log(id, CompilerLogLevel::Error, CompilerEventKind::Failed, "build deadline expired");
         }
         expired
@@ -723,6 +860,9 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
                 }
             }
         };
+        if queued || fenced {
+            self.finish_failed_audit(id, Status::CANCELLED);
+        }
         if queued {
             self.emit_log(id, CompilerLogLevel::Info, CompilerEventKind::Cancelled, "queued build cancelled");
         } else if requested {
@@ -755,28 +895,39 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
     }
 
     pub fn complete(&mut self, id: JobId, result: BuildResult) -> Result<(), Error> {
-        let job = self.job_mut(id)?;
-        if job.status.state != JobState::Running {
-            return Err(Error::InvalidTransition);
+        {
+            let job = self.job_mut(id)?;
+            if job.status.state != JobState::Running {
+                return Err(Error::InvalidTransition);
+            }
+            if result.target != job.status.request.target || job.control != JobControl::Running {
+                return Err(Error::InvalidTransition);
+            }
+            job.status.state = JobState::Completed;
+            job.status.result = Some(result);
+            job.isolation.cleanup_pending = true;
         }
-        if result.target != job.status.request.target || job.control != JobControl::Running {
-            return Err(Error::InvalidTransition);
-        }
-        job.status.state = JobState::Completed;
-        job.status.result = Some(result);
-        job.isolation.cleanup_pending = true;
+        self.finish_audit(id, result, Status::NORMAL);
         self.emit_log(id, CompilerLogLevel::Info, CompilerEventKind::Completed, "build completed");
         Ok(())
     }
 
     pub fn fail(&mut self, id: JobId, diagnostic: Diagnostic) -> Result<(), Error> {
-        let job = self.job_mut(id)?;
-        if !matches!(job.status.state, JobState::Queued | JobState::Running) {
-            return Err(Error::InvalidTransition);
-        }
-        job.status.state = JobState::Failed;
-        job.status.diagnostic = Some(diagnostic);
-        job.isolation.cleanup_pending = true;
+        let target = {
+            let job = self.job_mut(id)?;
+            if !matches!(job.status.state, JobState::Queued | JobState::Running) {
+                return Err(Error::InvalidTransition);
+            }
+            job.status.state = JobState::Failed;
+            job.status.diagnostic = Some(diagnostic);
+            job.isolation.cleanup_pending = true;
+            job.status.request.target
+        };
+        self.finish_audit(id, BuildResult {
+            package: ContentId::from_bytes([0; 32]),
+            payload: ContentId::from_bytes([0; 32]),
+            target,
+        }, Status::BUSY);
         self.emit_log(id, CompilerLogLevel::Error, CompilerEventKind::Failed, diagnostic.message.as_str());
         Ok(())
     }
@@ -849,6 +1000,31 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         *slot = None;
         self.artifacts.release_job(id);
         Ok(())
+    }
+
+    pub fn recover_after_crash(&mut self) -> usize {
+        let mut recovered = 0;
+        for index in 0..self.jobs.len() {
+            let Some((id, target)) = self.jobs[index].as_mut().and_then(|job| {
+                if !matches!(job.status.state, JobState::Queued | JobState::Running) {
+                    return None;
+                }
+                job.status.state = JobState::Failed;
+                job.status.diagnostic = Diagnostic::new(900, "compiler service restarted; build aborted").ok();
+                job.control = JobControl::Fenced;
+                job.isolation.cleanup_pending = true;
+                Some((job.status.id, job.status.request.target))
+            }) else { continue };
+            self.artifacts.release_job(id);
+            self.finish_audit(id, BuildResult {
+                package: ContentId::from_bytes([0; 32]),
+                payload: ContentId::from_bytes([0; 32]),
+                target,
+            }, Status::BUSY);
+            self.emit_log(id, CompilerLogLevel::Warn, CompilerEventKind::Failed, "compiler service restarted; build aborted");
+            recovered += 1;
+        }
+        recovered
     }
 
     pub fn cache_lookup(
