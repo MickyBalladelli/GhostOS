@@ -496,6 +496,7 @@ dependencies = [
 name = "synos-compiler"
 version = "0.1.0"
 dependencies = [
+ "synos-app",
  "synos-pkg",
  "synos-synfs",
  "synos-system-model",

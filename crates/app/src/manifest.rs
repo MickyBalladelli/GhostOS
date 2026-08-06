@@ -2,11 +2,16 @@ use core::fmt;
 
 use synos_init::RestartPolicy;
 use synos_status::{IntoStatus, Status};
+use synos_system_model::ContentId;
 
 pub const APP_MANIFEST_SCHEMA: u16 = 1;
 pub const MAX_APP_NAME_BYTES: usize = 48;
 pub const MAX_RESOURCE_NAME_BYTES: usize = 64;
 pub const MAX_APP_CAPABILITIES: usize = 16;
+pub const MAX_APP_DEPENDENCIES: usize = 8;
+pub const MAX_APPLICATION_MEMORY_BYTES: u64 = 1 << 40;
+pub const MAX_APPLICATION_HEAP_BYTES: u64 = 1 << 38;
+pub const MAX_APPLICATION_CPU_TIME_US: u64 = 86_400_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ManifestError {
@@ -95,6 +100,50 @@ pub enum ApplicationKind {
     Service,
     Interactive,
     Batch,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AppTarget {
+    X86_64,
+    Aarch64,
+}
+
+impl AppTarget {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64-unknown-synos",
+            Self::Aarch64 => "aarch64-unknown-synos",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationResources {
+    pub memory_bytes: u64,
+    pub cpu_time_us: u64,
+    pub heap_bytes: u64,
+}
+
+impl ApplicationResources {
+    pub const DEFAULT: Self = Self {
+        memory_bytes: 16 * 1024 * 1024,
+        cpu_time_us: 0,
+        heap_bytes: 64 * 1024,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationDependency {
+    pub package: ContentId,
+    pub required: bool,
+}
+
+impl ApplicationDependency {
+    pub(crate) const EMPTY: Self = Self {
+        package: ContentId::from_bytes([0; 32]),
+        required: true,
+    };
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -196,6 +245,12 @@ pub struct AppManifest {
     pub(crate) runtime: RuntimeSpec,
     pub(crate) capabilities: [CapabilityRequest; MAX_APP_CAPABILITIES],
     pub(crate) capability_count: u8,
+    pub(crate) target: Option<AppTarget>,
+    pub(crate) entry_offset: Option<u64>,
+    pub(crate) resources: ApplicationResources,
+    pub(crate) resources_declared: bool,
+    pub(crate) dependencies: [ApplicationDependency; MAX_APP_DEPENDENCIES],
+    pub(crate) dependency_count: u8,
 }
 
 impl AppManifest {
@@ -228,6 +283,40 @@ impl AppManifest {
     pub const fn runtime(&self) -> RuntimeSpec {
         self.runtime
     }
+
+    pub const fn target(&self) -> Option<AppTarget> {
+        self.target
+    }
+
+    pub const fn entry_offset(&self) -> Option<u64> {
+        self.entry_offset
+    }
+
+    pub const fn resources(&self) -> ApplicationResources {
+        self.resources
+    }
+
+    pub fn dependencies(&self) -> impl Iterator<Item = ApplicationDependency> + '_ {
+        self.dependencies[..self.dependency_count as usize]
+            .iter()
+            .copied()
+    }
+
+    pub fn validate_profile(&self) -> Result<(), ManifestError> {
+        if self.target.is_none()
+            || self.entry_offset.is_none()
+            || !self.resources_declared
+            || self.resources.memory_bytes == 0
+            || self.resources.heap_bytes == 0
+            || self.resources.memory_bytes > MAX_APPLICATION_MEMORY_BYTES
+            || self.resources.heap_bytes > MAX_APPLICATION_HEAP_BYTES
+            || self.resources.heap_bytes > self.resources.memory_bytes
+            || self.resources.cpu_time_us > MAX_APPLICATION_CPU_TIME_US
+        {
+            return Err(ManifestError::MissingField);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -235,7 +324,9 @@ enum Section {
     Root,
     Application,
     Runtime,
+    Resources,
     Capability(usize),
+    Dependency(usize),
 }
 
 struct Parser {
@@ -244,7 +335,9 @@ struct Parser {
     seen_root: u8,
     seen_application: u8,
     seen_runtime: u8,
+    seen_resources: u8,
     capability_seen: [u8; MAX_APP_CAPABILITIES],
+    dependency_seen: [u8; MAX_APP_DEPENDENCIES],
 }
 
 impl Parser {
@@ -258,12 +351,20 @@ impl Parser {
                 runtime: RuntimeSpec::DEFAULT,
                 capabilities: [CapabilityRequest::EMPTY; MAX_APP_CAPABILITIES],
                 capability_count: 0,
+                target: None,
+                entry_offset: None,
+                resources: ApplicationResources::DEFAULT,
+                resources_declared: false,
+                dependencies: [ApplicationDependency::EMPTY; MAX_APP_DEPENDENCIES],
+                dependency_count: 0,
             },
             section: Section::Root,
             seen_root: 0,
             seen_application: 0,
             seen_runtime: 0,
+            seen_resources: 0,
             capability_seen: [0; MAX_APP_CAPABILITIES],
+            dependency_seen: [0; MAX_APP_DEPENDENCIES],
         }
     }
 
@@ -287,6 +388,7 @@ impl Parser {
         self.section = match line {
             "[application]" => Section::Application,
             "[runtime]" => Section::Runtime,
+            "[resources]" => Section::Resources,
             "[[capability]]" => {
                 let index = self.manifest.capability_count as usize;
                 if index == MAX_APP_CAPABILITIES {
@@ -294,6 +396,14 @@ impl Parser {
                 }
                 self.manifest.capability_count += 1;
                 Section::Capability(index)
+            }
+            "[[dependency]]" => {
+                let index = self.manifest.dependency_count as usize;
+                if index == MAX_APP_DEPENDENCIES {
+                    return Err(ManifestError::Capacity);
+                }
+                self.manifest.dependency_count += 1;
+                Section::Dependency(index)
             }
             _ if line.starts_with("[[") => return Err(ManifestError::UnknownSection),
             _ => return Err(ManifestError::UnknownSection),
@@ -330,10 +440,64 @@ impl Parser {
                         _ => return Err(ManifestError::UnknownValue),
                     }
                 }
+                "target" => {
+                    mark(&mut self.seen_application, 8)?;
+                    self.manifest.target = Some(match parse_string(value)? {
+                        "x86_64-unknown-synos" => AppTarget::X86_64,
+                        "aarch64-unknown-synos" => AppTarget::Aarch64,
+                        _ => return Err(ManifestError::UnknownValue),
+                    })
+                }
+                "entry_offset" => {
+                    mark(&mut self.seen_application, 16)?;
+                    self.manifest.entry_offset = Some(parse_u64(value)?)
+                }
                 _ => return Err(ManifestError::UnknownKey),
             },
             Section::Runtime => self.assign_runtime(key, value)?,
+            Section::Resources => self.assign_resources(key, value)?,
             Section::Capability(index) => self.assign_capability(index, key, value)?,
+            Section::Dependency(index) => self.assign_dependency(index, key, value)?,
+        }
+        Ok(())
+    }
+
+    fn assign_resources(&mut self, key: &str, value: &str) -> Result<(), ManifestError> {
+        match key {
+            "memory_bytes" => {
+                mark(&mut self.seen_resources, 1)?;
+                self.manifest.resources.memory_bytes = parse_u64(value)?;
+            }
+            "cpu_time_us" => {
+                mark(&mut self.seen_resources, 2)?;
+                self.manifest.resources.cpu_time_us = parse_u64(value)?;
+            }
+            "heap_bytes" => {
+                mark(&mut self.seen_resources, 4)?;
+                self.manifest.resources.heap_bytes = parse_u64(value)?;
+            }
+            _ => return Err(ManifestError::UnknownKey),
+        }
+        self.manifest.resources_declared = true;
+        Ok(())
+    }
+
+    fn assign_dependency(
+        &mut self,
+        index: usize,
+        key: &str,
+        value: &str,
+    ) -> Result<(), ManifestError> {
+        match key {
+            "package" => {
+                mark(&mut self.dependency_seen[index], 1)?;
+                self.manifest.dependencies[index].package = parse_content_id(parse_string(value)?)?
+            }
+            "required" => {
+                mark(&mut self.dependency_seen[index], 2)?;
+                self.manifest.dependencies[index].required = parse_bool(value)?
+            }
+            _ => return Err(ManifestError::UnknownKey),
         }
         Ok(())
     }
@@ -430,7 +594,7 @@ impl Parser {
     }
 
     fn finish(mut self) -> Result<AppManifest, ManifestError> {
-        if self.seen_root != 1 || self.seen_application != 7 {
+        if self.seen_root != 1 || self.seen_application & 7 != 7 {
             return Err(ManifestError::MissingField);
         }
         if self.manifest.schema != APP_MANIFEST_SCHEMA {
@@ -440,6 +604,14 @@ impl Parser {
             if seen & 7 != 7 {
                 return Err(ManifestError::MissingField);
             }
+        }
+        for seen in &self.dependency_seen[..self.manifest.dependency_count as usize] {
+            if *seen & 1 != 1 {
+                return Err(ManifestError::MissingField);
+            }
+        }
+        if self.manifest.resources_declared && self.seen_resources != 7 {
+            return Err(ManifestError::MissingField);
         }
         for (index, capability) in self.manifest.capabilities().enumerate() {
             if self
@@ -563,6 +735,32 @@ fn parse_image(value: &str) -> Result<u128, ManifestError> {
         Err(ManifestError::InvalidInteger)
     } else {
         Ok(image)
+    }
+}
+
+fn parse_content_id(value: &str) -> Result<ContentId, ManifestError> {
+    let digits = value.strip_prefix("0x").unwrap_or(value);
+    if digits.len() != 64 {
+        return Err(ManifestError::InvalidInteger);
+    }
+    let mut bytes = [0; 32];
+    for (index, pair) in digits.as_bytes().chunks_exact(2).enumerate() {
+        let high = hex_digit(pair[0]).ok_or(ManifestError::InvalidInteger)?;
+        let low = hex_digit(pair[1]).ok_or(ManifestError::InvalidInteger)?;
+        bytes[index] = high << 4 | low;
+    }
+    if bytes.iter().all(|byte| *byte == 0) {
+        return Err(ManifestError::InvalidInteger);
+    }
+    Ok(ContentId::from_bytes(bytes))
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 

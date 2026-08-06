@@ -200,16 +200,16 @@ published only after a successful build.
 
 ## 6. Turn compiler output into SynOS applications
 
-- [ ] Define the Rust application profile and required `App.toml` fields.
-- [ ] Link a Rust binary against the SynOS runtime and selected capability
+- [x] Define the Rust application profile and required `App.toml` fields.
+- [x] Link a Rust binary against the SynOS runtime and selected capability
   shims.
-- [ ] Convert the linked image into a `synos-pkg` bundle with entry point,
+- [x] Convert the linked image into a `synos-pkg` bundle with entry point,
   target, dependencies, resource limits, and manifest.
-- [ ] Sign the output bundle and publish it to the local SynFS repository.
-- [ ] Refuse to launch an artifact with the wrong target, bad signature,
+- [x] Sign the output bundle and publish it to the local SynFS repository.
+- [x] Refuse to launch an artifact with the wrong target, bad signature,
   missing dependency, invalid entry point, or excessive resource request.
-- [ ] Support debug symbols and a separate stripped release image.
-- [ ] Support reproducible build metadata and a content-addressed build record.
+- [x] Support debug symbols and a separate stripped release image.
+- [x] Support reproducible build metadata and a content-addressed build record.
 
 ## 7. Expose the workflow to users
 

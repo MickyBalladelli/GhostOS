@@ -124,6 +124,46 @@ toolchain, target, profile, and feature identities all match.
 For the complete host-side step, use `cargo-synos package` with
 `--manifest-path`, `--locked`, `--offline`, `--key`, and `--output`.
 
+## Rust application bundles
+
+`cargo-synos package --app-manifest` turns a linked ELF into a signed SynOS
+application. The profile requires `schema`, application `name`, `image`,
+`kind`, `target`, and `entry_offset`, plus all three resource fields:
+
+```toml
+schema = 1
+
+[application]
+name = "demo"
+image = "0x1"
+kind = "service"
+target = "x86_64-unknown-synos"
+entry_offset = 0
+
+[resources]
+memory_bytes = 16777216
+cpu_time_us = 1000000
+heap_bytes = 65536
+```
+
+Dependencies use repeated `[[dependency]]` sections with a 64-digit package
+content ID. Capability requests stay in repeated `[[capability]]` sections.
+The compiler checks the ELF machine, signs a `SYNAPP01` envelope containing
+the target, entry point, dependencies, resource limits, and manifest data,
+then writes a content-addressed `.build-record` beside the bundle.
+
+```sh
+cargo synos package --bin demo --app-manifest App.toml \
+  --target x86_64 --release --locked --offline \
+  --key compiler.key --output demo.synapp \
+  --debug-symbols demo.debug --stripped-output demo.stripped
+```
+
+The runtime publishes this output with
+`PackageDaemon::install_application_bundle`. Launch checks the trusted
+signature, target, entry point, dependency closure, and resource limits before
+the normal ELF loader receives the image.
+
 ## Toolchain package
 
 The host bootstrap can package the complete Rust toolchain needed by the

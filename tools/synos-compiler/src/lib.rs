@@ -5,7 +5,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
-use synos_pkg::{BundleInfo, PackageError, SigningKey, bundle_size, encode_bundle};
+use synos_app::{parse_image, AppManifest, AppTarget, ImageArchitecture};
+use synos_pkg::{
+    application_bundle_size, bundle_size, encode_application_bundle, encode_bundle,
+    ApplicationBundleInfo, ApplicationPackageManifest, BundleInfo, PackageError, SigningKey,
+};
 use synos_synfs::{DirectoryEntry, Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
 
@@ -109,6 +113,44 @@ pub struct BundleOutput {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BuildRecord {
+    pub source: ContentId,
+    pub artifact: ContentId,
+    pub target: Target,
+    pub release: bool,
+    pub reproducible: bool,
+}
+
+impl BuildRecord {
+    pub fn encode(self) -> [u8; 67] {
+        let mut bytes = [0; 67];
+        bytes[..32].copy_from_slice(self.source.as_bytes());
+        bytes[32..64].copy_from_slice(self.artifact.as_bytes());
+        bytes[64] = match self.target {
+            Target::X86_64 => 1,
+            Target::Aarch64 => 2,
+        };
+        bytes[65] = self.release as u8;
+        bytes[66] = self.reproducible as u8;
+        bytes
+    }
+
+    pub fn content_id(self) -> ContentId {
+        ContentId::hash(&self.encode())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ApplicationBundleOutput {
+    pub bundle: PathBuf,
+    pub artifact: PathBuf,
+    pub debug_symbols: Option<PathBuf>,
+    pub stripped_artifact: Option<PathBuf>,
+    pub info: ApplicationBundleInfo,
+    pub build_record: ContentId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkspaceOutput {
     pub target: Target,
 }
@@ -143,6 +185,12 @@ pub enum CompileError {
     WorkspaceCopy { path: PathBuf, error: String },
     NoArtifacts(PathBuf),
     NonReproducible { path: String },
+    ApplicationManifest(PathBuf),
+    ApplicationProfile(String),
+    ApplicationTargetMismatch { profile: String, requested: Target },
+    InvalidApplicationImage(String),
+    StripperUnavailable,
+    StripFailed(ExitStatus),
 }
 
 impl std::fmt::Display for CompileError {
@@ -188,6 +236,16 @@ impl std::fmt::Display for CompileError {
             Self::NonReproducible { path } => {
                 write!(formatter, "clean builds differ at {path}")
             }
+            Self::ApplicationManifest(path) => {
+                write!(formatter, "could not read application manifest {}", path.display())
+            }
+            Self::ApplicationProfile(error) => write!(formatter, "invalid application profile: {error}"),
+            Self::ApplicationTargetMismatch { profile, requested } => {
+                write!(formatter, "application targets {profile}, compiler requested {requested:?}")
+            }
+            Self::InvalidApplicationImage(error) => write!(formatter, "invalid application image: {error}"),
+            Self::StripperUnavailable => write!(formatter, "llvm-strip is required for a stripped release image"),
+            Self::StripFailed(status) => write!(formatter, "stripping application image failed with {status}"),
         }
     }
 }
@@ -211,6 +269,7 @@ pub struct Compiler {
     rustc: Option<PathBuf>,
     rustdoc: Option<PathBuf>,
     linker: Option<PathBuf>,
+    stripper: Option<PathBuf>,
     workspace_root: PathBuf,
 }
 
@@ -226,6 +285,7 @@ impl Compiler {
             rustc: None,
             rustdoc: None,
             linker: bundled_linker(),
+            stripper: find_tool("llvm-strip"),
             workspace_root,
         })
     }
@@ -239,6 +299,7 @@ impl Compiler {
             rustc: Some(toolchain_root.join("bin/rustc")),
             rustdoc: Some(toolchain_root.join("bin/rustdoc")),
             linker: Some(toolchain_root.join("bin/rust-lld")),
+            stripper: Some(toolchain_root.join("bin/llvm-strip")),
             workspace_root,
         }
     }
@@ -353,6 +414,126 @@ impl Compiler {
             artifact: compiled.artifact,
             info,
         })
+    }
+
+    pub fn compile_application_and_bundle(
+        &self,
+        request: &CompileRequest,
+        profile_path: &Path,
+        key: SigningKey,
+        output: &Path,
+        debug_symbols: Option<&Path>,
+        stripped_output: Option<&Path>,
+    ) -> Result<ApplicationBundleOutput, CompileError> {
+        let profile_source = fs::read_to_string(profile_path)
+            .map_err(|_| CompileError::ApplicationManifest(profile_path.to_path_buf()))?;
+        let profile = AppManifest::parse(&profile_source)
+            .map_err(|error| CompileError::ApplicationProfile(format!("{error:?}")))?;
+        profile
+            .validate_profile()
+            .map_err(|error| CompileError::ApplicationProfile(format!("{error:?}")))?;
+        let expected_target = match profile.target().expect("validated application target") {
+            AppTarget::X86_64 => Target::X86_64,
+            AppTarget::Aarch64 => Target::Aarch64,
+        };
+        if expected_target != request.target {
+            return Err(CompileError::ApplicationTargetMismatch {
+                profile: expected_target.target_file().into(),
+                requested: request.target,
+            });
+        }
+        let compiled = self.compile(request)?;
+        let payload = fs::read(&compiled.artifact).map_err(|error| CompileError::PackageWrite {
+            path: compiled.artifact.clone(),
+            error: error.to_string(),
+        })?;
+        let architecture = match request.target {
+            Target::X86_64 => ImageArchitecture::X86_64,
+            Target::Aarch64 => ImageArchitecture::Aarch64,
+        };
+        parse_image(&payload, architecture)
+            .map_err(|error| CompileError::InvalidApplicationImage(format!("{error:?}")))?;
+        let entry_offset = profile.entry_offset().expect("validated entry offset");
+        if entry_offset >= payload.len() as u64 {
+            return Err(CompileError::InvalidApplicationImage(
+                "entry offset is outside the linked image".into(),
+            ));
+        }
+        let artifact_id = ContentId::hash(&payload);
+        let source_id = ContentId::hash(profile_source.as_bytes());
+        let build = BuildRecord {
+            source: source_id,
+            artifact: artifact_id,
+            target: request.target,
+            release: request.release,
+            reproducible: request.locked && request.offline,
+        };
+        let build_record = build.content_id();
+        let debug_path = debug_symbols.map(Path::to_path_buf);
+        if let Some(path) = &debug_path {
+            fs::copy(&compiled.artifact, path).map_err(|error| CompileError::PackageWrite {
+                path: path.clone(),
+                error: error.to_string(),
+            })?;
+        }
+        let stripped_path = if let Some(path) = stripped_output {
+            self.strip_image(&compiled.artifact, path)?;
+            Some(path.to_path_buf())
+        } else {
+            None
+        };
+        let debug_id = debug_path
+            .as_ref()
+            .map(|path| ContentId::hash(&fs::read(path).unwrap_or_default()))
+            .unwrap_or_else(|| ContentId::from_bytes([0; 32]));
+        let metadata = ApplicationPackageManifest::new(
+            profile.schema(),
+            match expected_target {
+                Target::X86_64 => 1,
+                Target::Aarch64 => 2,
+            },
+            profile.kind() as u8 + 1,
+            profile.name().as_str(),
+            entry_offset,
+            profile.resources().memory_bytes,
+            profile.resources().cpu_time_us,
+            profile.resources().heap_bytes,
+            debug_id,
+            build_record,
+        )?;
+        let dependencies = profile.dependencies().map(|dependency| dependency.package).collect::<Vec<_>>();
+        let inner_size = bundle_size(payload.len(), dependencies.len())?;
+        let mut inner = vec![0; inner_size];
+        encode_bundle(&payload, entry_offset, &dependencies, key, &mut inner)?;
+        let required = application_bundle_size(inner.len())?;
+        let mut encoded = vec![0; required];
+        let info = encode_application_bundle(&inner, metadata, key, &mut encoded)?;
+        write_atomic(output, &encoded)?;
+        let record_path = output.with_extension("build-record");
+        write_atomic(&record_path, &build.encode())?;
+        Ok(ApplicationBundleOutput {
+            bundle: output.to_path_buf(),
+            artifact: compiled.artifact,
+            debug_symbols: debug_path,
+            stripped_artifact: stripped_path,
+            info,
+            build_record,
+        })
+    }
+
+    fn strip_image(&self, input: &Path, output: &Path) -> Result<(), CompileError> {
+        let stripper = self.stripper.as_ref().ok_or(CompileError::StripperUnavailable)?;
+        let status = Command::new(stripper)
+            .arg(input)
+            .arg("-o")
+            .arg(output)
+            .status()
+            .map_err(|_| CompileError::StripperUnavailable)?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(CompileError::StripFailed(status))
+        }
     }
 
     pub fn compile_workspace(
@@ -920,4 +1101,11 @@ fn bundled_linker() -> Option<PathBuf> {
     let libdir = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
     let linker = libdir.parent()?.join("bin").join("rust-lld");
     linker.is_file().then_some(linker)
+}
+
+fn find_tool(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
 }

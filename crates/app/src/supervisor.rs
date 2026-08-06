@@ -4,8 +4,9 @@ use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
 
 use crate::{
-    AppManifest, ApplicationKind, BoundedText, CapabilityKind, CapabilityRequest, CapabilityRights,
-    MAX_APP_CAPABILITIES, MAX_RESOURCE_NAME_BYTES, ManifestError, Placement, RestartMode,
+    AppManifest, AppTarget, ApplicationKind, BoundedText, CapabilityKind, CapabilityRequest,
+    CapabilityRights, MAX_APP_CAPABILITIES, MAX_RESOURCE_NAME_BYTES, ManifestError, Placement,
+    RestartMode,
 };
 
 pub const DEFAULT_APPLICATION_CAPACITY: usize = 32;
@@ -166,6 +167,8 @@ pub struct AppSpawnRequest<'a> {
     pub generation: u32,
     pub capabilities: &'a [Option<CapabilityRequest>; MAX_APP_CAPABILITIES],
     pub executable: Option<ExecutableImage>,
+    pub target: Option<AppTarget>,
+    pub resources: crate::ApplicationResources,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -192,6 +195,10 @@ impl ExecutableImage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PackageLaunchError {
     InvalidImage,
+    MissingApplicationMetadata,
+    WrongTarget,
+    MissingDependency,
+    ExcessiveResourceRequest,
     Package(PackageError),
     Supervisor(SupervisorError),
 }
@@ -200,6 +207,8 @@ impl IntoStatus for PackageLaunchError {
     fn status(self) -> Status {
         match self {
             Self::InvalidImage => Status::INVALID_ARGUMENT,
+            Self::MissingApplicationMetadata | Self::MissingDependency => Status::NOT_FOUND,
+            Self::WrongTarget | Self::ExcessiveResourceRequest => Status::INVALID_ARGUMENT,
             Self::Package(error) => error.status(),
             Self::Supervisor(error) => error.status(),
         }
@@ -318,6 +327,12 @@ impl ApplicationSlot {
             },
             capabilities: [CapabilityRequest::EMPTY; MAX_APP_CAPABILITIES],
             capability_count: 0,
+            target: None,
+            entry_offset: None,
+            resources: crate::ApplicationResources::DEFAULT,
+            resources_declared: false,
+            dependencies: [crate::ApplicationDependency::EMPTY; crate::MAX_APP_DEPENDENCIES],
+            dependency_count: 0,
         },
         capabilities: CapabilitySet::new(),
         state: ApplicationState::Stopped,
@@ -425,6 +440,28 @@ impl<const CAPACITY: usize> ApplicationSupervisor<CAPACITY> {
         {
             return Err(PackageLaunchError::InvalidImage);
         }
+        let metadata = packages
+            .application_manifest(receipt.package())
+            .ok_or(PackageLaunchError::MissingApplicationMetadata)?;
+        let target = match metadata.target {
+            1 => AppTarget::X86_64,
+            2 => AppTarget::Aarch64,
+            _ => return Err(PackageLaunchError::WrongTarget),
+        };
+        if manifest.target() != Some(target)
+            || manifest.entry_offset() != Some(metadata.entry_offset)
+            || manifest.resources().memory_bytes != metadata.memory_bytes
+            || manifest.resources().cpu_time_us != metadata.cpu_time_us
+            || manifest.resources().heap_bytes != metadata.heap_bytes
+        {
+            return Err(PackageLaunchError::WrongTarget);
+        }
+        if package.dependencies().any(|dependency| !packages.contains(dependency)) {
+            return Err(PackageLaunchError::MissingDependency);
+        }
+        manifest
+            .validate_profile()
+            .map_err(|_| PackageLaunchError::ExcessiveResourceRequest)?;
         self.register_package(
             application,
             manifest,
@@ -584,6 +621,8 @@ fn spawn<R: ApplicationRuntime>(
             generation,
             capabilities: slot.capabilities.as_slice(),
             executable: slot.executable,
+            target: slot.manifest.target,
+            resources: slot.manifest.resources,
         })
         .map_err(|_| SupervisorError::SpawnFailed)?;
     slot.generation = generation;

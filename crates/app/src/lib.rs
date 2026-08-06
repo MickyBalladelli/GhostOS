@@ -8,8 +8,10 @@ mod supervisor;
 
 pub use manifest::{
     APP_MANIFEST_SCHEMA, AppManifest, ApplicationKind, BoundedText, CapabilityKind,
-    CapabilityRequest, CapabilityRights, MAX_APP_CAPABILITIES, MAX_APP_NAME_BYTES,
-    MAX_RESOURCE_NAME_BYTES, ManifestError, Placement, RestartMode, RuntimeSpec,
+    AppTarget, ApplicationDependency, ApplicationResources, CapabilityRequest, CapabilityRights,
+    MAX_APP_CAPABILITIES, MAX_APP_DEPENDENCIES, MAX_APP_NAME_BYTES, MAX_APPLICATION_CPU_TIME_US,
+    MAX_APPLICATION_HEAP_BYTES, MAX_APPLICATION_MEMORY_BYTES, MAX_RESOURCE_NAME_BYTES,
+    ManifestError, Placement, RestartMode, RuntimeSpec,
 };
 pub use loader::{
     load_image, measure_executable_pages, parse_image, ImageArchitecture, ImageFormat, ImageLayout,

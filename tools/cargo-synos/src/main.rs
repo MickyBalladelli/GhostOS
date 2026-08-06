@@ -16,6 +16,7 @@ cargo synos bundle --artifact PATH --key PATH --output PATH
 cargo synos package --bin NAME --key PATH --output PATH
     [--manifest-path PATH] [--package NAME] [--target x86_64|aarch64]
     [--release] [--locked] [--offline] [--target-dir PATH]
+    [--app-manifest PATH] [--debug-symbols PATH] [--stripped-output PATH]
     [--entry-offset BYTES] [--dependency SHA256]...
 cargo synos compile --manifest-path PATH --bin NAME
     [--target x86_64|aarch64] [--release] [--locked] [--offline]
@@ -206,9 +207,7 @@ fn package(arguments: &[String]) -> Result<(), String> {
     let options = PackageOptions::parse(arguments)?;
     let compiler = Compiler::new().map_err(|error| error.to_string())?;
     let key = read_key(&options.key)?;
-    let output = compiler
-        .compile_and_bundle(
-            &CompileRequest {
+    let request = CompileRequest {
                 manifest_path: options
                     .manifest_path
                     .unwrap_or(workspace_root()?.join("Cargo.toml")),
@@ -219,19 +218,41 @@ fn package(arguments: &[String]) -> Result<(), String> {
                 target_directory: options.target_directory,
                 locked: options.locked,
                 offline: options.offline,
-            },
-            key,
-            &options.output,
-            options.entry_offset,
-            &options.dependencies,
-        )
-        .map_err(|error| error.to_string())?;
-    println!(
-        "created {} package {:?} ({} bytes)",
-        output.bundle.display(),
-        output.info.package,
-        output.info.payload_length
-    );
+            };
+    if let Some(profile) = options.app_manifest {
+        let output = compiler
+            .compile_application_and_bundle(
+                &request,
+                &profile,
+                key,
+                &options.output,
+                options.debug_symbols.as_deref(),
+                options.stripped_output.as_deref(),
+            )
+            .map_err(|error| error.to_string())?;
+        println!(
+            "created {} application {:?} (build {:?})",
+            output.bundle.display(),
+            output.info.package,
+            output.build_record
+        );
+    } else {
+        let output = compiler
+            .compile_and_bundle(
+                &request,
+                key,
+                &options.output,
+                options.entry_offset,
+                &options.dependencies,
+            )
+            .map_err(|error| error.to_string())?;
+        println!(
+            "created {} package {:?} ({} bytes)",
+            output.bundle.display(),
+            output.info.package,
+            output.info.payload_length
+        );
+    }
     Ok(())
 }
 
@@ -678,6 +699,9 @@ struct PackageOptions {
     locked: bool,
     offline: bool,
     target_directory: Option<PathBuf>,
+    app_manifest: Option<PathBuf>,
+    debug_symbols: Option<PathBuf>,
+    stripped_output: Option<PathBuf>,
 }
 
 impl PackageOptions {
@@ -694,6 +718,9 @@ impl PackageOptions {
         let mut locked = false;
         let mut offline = false;
         let mut target_directory = None;
+        let mut app_manifest = None;
+        let mut debug_symbols = None;
+        let mut stripped_output = None;
         let mut index = 0;
         while index < arguments.len() {
             if arguments[index] == "--release" {
@@ -728,6 +755,9 @@ impl PackageOptions {
                 }
                 "--dependency" => dependencies.push(decode_content_id(value)?),
                 "--target-dir" => target_directory = Some(PathBuf::from(value)),
+                "--app-manifest" => app_manifest = Some(PathBuf::from(value)),
+                "--debug-symbols" => debug_symbols = Some(PathBuf::from(value)),
+                "--stripped-output" => stripped_output = Some(PathBuf::from(value)),
                 other => return Err(format!("unknown package option `{other}`")),
             }
             index += 2;
@@ -745,6 +775,9 @@ impl PackageOptions {
             locked,
             offline,
             target_directory,
+            app_manifest,
+            debug_symbols,
+            stripped_output,
         })
     }
 }

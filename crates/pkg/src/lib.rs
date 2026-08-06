@@ -15,6 +15,10 @@ const MAX_SIGNED_BYTES: usize = 107 + MAX_DEPENDENCIES * 32;
 pub const KEY_ID_BYTES: usize = 16;
 pub const SIGNATURE_BYTES: usize = 32;
 pub const DEFAULT_TRUSTED_KEYS: usize = 8;
+pub const APPLICATION_BUNDLE_MAGIC: &[u8; 8] = b"SYNAPP01";
+pub const APPLICATION_BUNDLE_VERSION: u16 = 1;
+pub const APPLICATION_BUNDLE_HEADER_BYTES: usize = 144;
+pub const APPLICATION_METADATA_BYTES: usize = 160;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PackageError {
@@ -99,6 +103,257 @@ pub struct BundleInfo {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationPackageManifest {
+    pub schema: u16,
+    pub target: u8,
+    pub kind: u8,
+    pub name: [u8; 48],
+    pub name_length: u8,
+    pub entry_offset: u64,
+    pub memory_bytes: u64,
+    pub cpu_time_us: u64,
+    pub heap_bytes: u64,
+    pub debug_symbols: ContentId,
+    pub build_record: ContentId,
+}
+
+impl ApplicationPackageManifest {
+    pub fn new(
+        schema: u16,
+        target: u8,
+        kind: u8,
+        name: &str,
+        entry_offset: u64,
+        memory_bytes: u64,
+        cpu_time_us: u64,
+        heap_bytes: u64,
+        debug_symbols: ContentId,
+        build_record: ContentId,
+    ) -> Result<Self, PackageError> {
+        if name.is_empty() || name.len() > 48 || memory_bytes == 0 || heap_bytes == 0 {
+            return Err(PackageError::InvalidConfiguration);
+        }
+        let mut stored_name = [0; 48];
+        stored_name[..name.len()].copy_from_slice(name.as_bytes());
+        Ok(Self {
+            schema,
+            target,
+            kind,
+            name: stored_name,
+            name_length: name.len() as u8,
+            entry_offset,
+            memory_bytes,
+            cpu_time_us,
+            heap_bytes,
+            debug_symbols,
+            build_record,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        core::str::from_utf8(&self.name[..self.name_length as usize])
+            .expect("application name is UTF-8")
+    }
+
+    fn encode(self, destination: &mut [u8]) -> Result<(), PackageError> {
+        if destination.len() < APPLICATION_METADATA_BYTES {
+            return Err(PackageError::BufferTooSmall {
+                required: APPLICATION_METADATA_BYTES,
+            });
+        }
+        destination[..APPLICATION_METADATA_BYTES].fill(0);
+        destination[0..2].copy_from_slice(&self.schema.to_be_bytes());
+        destination[2] = self.target;
+        destination[3] = self.kind;
+        destination[4] = self.name_length;
+        destination[6..14].copy_from_slice(&self.entry_offset.to_be_bytes());
+        destination[14..22].copy_from_slice(&self.memory_bytes.to_be_bytes());
+        destination[22..30].copy_from_slice(&self.cpu_time_us.to_be_bytes());
+        destination[30..38].copy_from_slice(&self.heap_bytes.to_be_bytes());
+        destination[38..70].copy_from_slice(self.debug_symbols.as_bytes());
+        destination[70..102].copy_from_slice(self.build_record.as_bytes());
+        destination[102..150].copy_from_slice(&self.name);
+        Ok(())
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, PackageError> {
+        if bytes.len() != APPLICATION_METADATA_BYTES {
+            return Err(PackageError::CorruptBundle);
+        }
+        let name_length = bytes[4] as usize;
+        if name_length == 0 || name_length > 48 || bytes[150..].iter().any(|byte| *byte != 0) {
+            return Err(PackageError::CorruptBundle);
+        }
+        let mut name = [0; 48];
+        name.copy_from_slice(&bytes[102..150]);
+        core::str::from_utf8(&name[..name_length]).map_err(|_| PackageError::CorruptBundle)?;
+        Ok(Self {
+            schema: read_u16(bytes, 0)?,
+            target: bytes[2],
+            kind: bytes[3],
+            name,
+            name_length: name_length as u8,
+            entry_offset: read_u64(bytes, 6)?,
+            memory_bytes: read_u64(bytes, 14)?,
+            cpu_time_us: read_u64(bytes, 22)?,
+            heap_bytes: read_u64(bytes, 30)?,
+            debug_symbols: read_content_id(bytes, 38)?,
+            build_record: read_content_id(bytes, 70)?,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationBundleInfo {
+    pub package: ContentId,
+    pub manifest: ContentId,
+    pub signing_key: [u8; KEY_ID_BYTES],
+    pub inner_length: u64,
+}
+
+pub struct ApplicationBundle<'a> {
+    info: ApplicationBundleInfo,
+    metadata: ApplicationPackageManifest,
+    inner: &'a [u8],
+    signature: [u8; SIGNATURE_BYTES],
+}
+
+impl<'a> ApplicationBundle<'a> {
+    pub fn decode(bytes: &'a [u8]) -> Result<Self, PackageError> {
+        if bytes.len() < APPLICATION_BUNDLE_HEADER_BYTES + APPLICATION_METADATA_BYTES {
+            return Err(PackageError::BundleTooSmall);
+        }
+        if &bytes[..8] != APPLICATION_BUNDLE_MAGIC
+            || read_u16(bytes, 8)? != APPLICATION_BUNDLE_VERSION
+            || read_u16(bytes, 10)? as usize != APPLICATION_BUNDLE_HEADER_BYTES
+            || read_u64(bytes, 20)? as usize != APPLICATION_METADATA_BYTES
+        {
+            return Err(PackageError::CorruptBundle);
+        }
+        let inner_length = read_u64(bytes, 12)? as usize;
+        let inner_end = APPLICATION_BUNDLE_HEADER_BYTES
+            .checked_add(inner_length)
+            .ok_or(PackageError::CorruptBundle)?;
+        let metadata_end = inner_end
+            .checked_add(APPLICATION_METADATA_BYTES)
+            .ok_or(PackageError::CorruptBundle)?;
+        if bytes.len() != metadata_end {
+            return Err(PackageError::CorruptBundle);
+        }
+        let inner = &bytes[APPLICATION_BUNDLE_HEADER_BYTES..inner_end];
+        let metadata = ApplicationPackageManifest::decode(&bytes[inner_end..])?;
+        let inner_bundle = PackageBundle::decode(inner)?;
+        if metadata.entry_offset != inner_bundle.info.entry_offset
+            || bytes[140..APPLICATION_BUNDLE_HEADER_BYTES]
+                .iter()
+                .any(|byte| *byte != 0)
+        {
+            return Err(PackageError::CorruptBundle);
+        }
+        let mut manifest_material = [0; APPLICATION_METADATA_BYTES];
+        metadata.encode(&mut manifest_material)?;
+        let manifest_id = ContentId::hash(&manifest_material);
+        if read_content_id(bytes, 28)? != inner_bundle.info.package
+            || read_content_id(bytes, 60)? != manifest_id
+        {
+            return Err(PackageError::CorruptBundle);
+        }
+        let mut signing_key = [0; KEY_ID_BYTES];
+        signing_key.copy_from_slice(&bytes[92..108]);
+        let mut signature = [0; SIGNATURE_BYTES];
+        signature.copy_from_slice(&bytes[108..140]);
+        Ok(Self {
+            info: ApplicationBundleInfo {
+                package: inner_bundle.info.package,
+                manifest: manifest_id,
+                signing_key,
+                inner_length: inner_length as u64,
+            },
+            metadata,
+            inner,
+            signature,
+        })
+    }
+
+    pub const fn info(&self) -> ApplicationBundleInfo {
+        self.info
+    }
+
+    pub const fn metadata(&self) -> ApplicationPackageManifest {
+        self.metadata
+    }
+
+    pub const fn inner(&self) -> &'a [u8] {
+        self.inner
+    }
+
+    pub fn verify(&self, key: SigningKey) -> Result<(), PackageError> {
+        if key.id() != self.info.signing_key {
+            return Err(PackageError::UnknownSigningKey);
+        }
+        let mut material = [0; 64];
+        material[..32].copy_from_slice(ContentId::hash(self.inner).as_bytes());
+        let mut metadata = [0; APPLICATION_METADATA_BYTES];
+        self.metadata.encode(&mut metadata)?;
+        material[32..].copy_from_slice(ContentId::hash(&metadata).as_bytes());
+        if constant_time_equal(&key.sign(&material), &self.signature) {
+            Ok(())
+        } else {
+            Err(PackageError::InvalidSignature)
+        }
+    }
+}
+
+pub fn application_bundle_size(inner_length: usize) -> Result<usize, PackageError> {
+    APPLICATION_BUNDLE_HEADER_BYTES
+        .checked_add(inner_length)
+        .and_then(|length| length.checked_add(APPLICATION_METADATA_BYTES))
+        .ok_or(PackageError::BufferTooSmall { required: usize::MAX })
+}
+
+pub fn encode_application_bundle(
+    inner: &[u8],
+    metadata: ApplicationPackageManifest,
+    key: SigningKey,
+    destination: &mut [u8],
+) -> Result<ApplicationBundleInfo, PackageError> {
+    let required = application_bundle_size(inner.len())?;
+    if destination.len() < required {
+        return Err(PackageError::BufferTooSmall { required });
+    }
+    let mut metadata_bytes = [0; APPLICATION_METADATA_BYTES];
+    metadata.encode(&mut metadata_bytes)?;
+    let inner_bundle = PackageBundle::decode(inner)?;
+    if metadata.entry_offset != inner_bundle.info.entry_offset {
+        return Err(PackageError::InvalidConfiguration);
+    }
+    let key_id = key.id();
+    destination[..required].fill(0);
+    destination[..8].copy_from_slice(APPLICATION_BUNDLE_MAGIC);
+    destination[8..10].copy_from_slice(&APPLICATION_BUNDLE_VERSION.to_be_bytes());
+    destination[10..12].copy_from_slice(&(APPLICATION_BUNDLE_HEADER_BYTES as u16).to_be_bytes());
+    destination[12..20].copy_from_slice(&(inner.len() as u64).to_be_bytes());
+    destination[20..28].copy_from_slice(&(APPLICATION_METADATA_BYTES as u64).to_be_bytes());
+    destination[28..60].copy_from_slice(inner_bundle.info.package.as_bytes());
+    destination[60..92].copy_from_slice(ContentId::hash(&metadata_bytes).as_bytes());
+    destination[92..108].copy_from_slice(&key_id);
+    destination[APPLICATION_BUNDLE_HEADER_BYTES..APPLICATION_BUNDLE_HEADER_BYTES + inner.len()]
+        .copy_from_slice(inner);
+    destination[APPLICATION_BUNDLE_HEADER_BYTES + inner.len()..required]
+        .copy_from_slice(&metadata_bytes);
+    let mut material = [0; 64];
+    material[..32].copy_from_slice(ContentId::hash(inner).as_bytes());
+    material[32..].copy_from_slice(ContentId::hash(&metadata_bytes).as_bytes());
+    destination[108..140].copy_from_slice(&key.sign(&material));
+    Ok(ApplicationBundleInfo {
+        package: inner_bundle.info.package,
+        manifest: ContentId::hash(&metadata_bytes),
+        signing_key: key_id,
+        inner_length: inner.len() as u64,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstantiationReceipt {
     package: ContentId,
     signing_key: [u8; KEY_ID_BYTES],
@@ -118,6 +373,12 @@ impl InstantiationReceipt {
 struct VerifiedPackage {
     package: ContentId,
     signing_key: [u8; KEY_ID_BYTES],
+}
+
+#[derive(Clone, Copy)]
+struct InstalledApplication {
+    package: ContentId,
+    metadata: ApplicationPackageManifest,
 }
 
 pub struct PackageBundle<'a> {
@@ -360,6 +621,7 @@ pub struct PackageDaemon<
     repository: SynFsRepository<PACKAGES>,
     trusted_keys: [Option<SigningKey>; KEYS],
     verified: [Option<VerifiedPackage>; PACKAGES],
+    applications: [Option<InstalledApplication>; PACKAGES],
 }
 
 impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
@@ -368,6 +630,7 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
             repository: SynFsRepository::new(),
             trusted_keys: [None; KEYS],
             verified: [None; PACKAGES],
+            applications: [None; PACKAGES],
         }
     }
 
@@ -412,6 +675,33 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         }
         self.record_verified(installed, bundle.info.signing_key)?;
         Ok(installed)
+    }
+
+    pub fn install_application_bundle<const BLOCKS: usize>(
+        &mut self,
+        fs: &mut SynFs<BLOCKS>,
+        encoded: &[u8],
+        verification_buffer: &mut [u8],
+    ) -> Result<ApplicationBundleInfo, PackageError> {
+        let application = ApplicationBundle::decode(encoded)?;
+        let inner = PackageBundle::decode(application.inner())?;
+        let key = self.trusted_key(&inner)?;
+        inner.verify(key)?;
+        application.verify(key)?;
+        let dependencies = inner.dependencies().collect::<DependencyArray>();
+        let installed = self.repository.install(
+            fs,
+            inner.payload(),
+            inner.info.entry_offset,
+            dependencies.as_slice(),
+            verification_buffer,
+        )?;
+        if installed != application.info.package {
+            return Err(PackageError::CorruptBundle);
+        }
+        self.record_verified(installed, inner.info.signing_key)?;
+        self.record_application(installed, application.metadata())?;
+        Ok(application.info())
     }
 
     /// Validate a bundle against the local TUF-style trusted key set without
@@ -506,6 +796,14 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         self.repository.packages().iter()
     }
 
+    pub fn application_manifest(&self, package: ContentId) -> Option<ApplicationPackageManifest> {
+        self.applications
+            .iter()
+            .flatten()
+            .find(|entry| entry.package == package)
+            .map(|entry| entry.metadata)
+    }
+
     fn trusted_key(&self, bundle: &PackageBundle<'_>) -> Result<SigningKey, PackageError> {
         self.trusted_keys
             .iter()
@@ -538,6 +836,29 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
             package,
             signing_key,
         });
+        Ok(())
+    }
+
+    fn record_application(
+        &mut self,
+        package: ContentId,
+        metadata: ApplicationPackageManifest,
+    ) -> Result<(), PackageError> {
+        if let Some(entry) = self
+            .applications
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.package == package)
+        {
+            entry.metadata = metadata;
+            return Ok(())
+        }
+        let slot = self
+            .applications
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(PackageError::InstantiationDenied)?;
+        *slot = Some(InstalledApplication { package, metadata });
         Ok(())
     }
 }
