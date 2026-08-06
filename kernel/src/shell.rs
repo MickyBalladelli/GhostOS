@@ -40,10 +40,10 @@ const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
 const SYNOS_ISOLATE_ROUTE: u16 = 12;
 const UPTIME_ROUTE: u16 = 13;
-const COMMAND_CAPACITY: usize = 64;
+const COMMAND_CAPACITY: usize = 80;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
-const HELP_CATEGORIES: [&str; 9] = [
+const HELP_CATEGORIES: [&str; 10] = [
     "SHELL",
     "SYSTEM",
     "PROCESS",
@@ -53,6 +53,7 @@ const HELP_CATEGORIES: [&str; 9] = [
     "CLUSTER",
     "FILESYSTEM",
     "FIREWALL",
+    "NETWORK",
 ];
 
 struct ShellLineRender {
@@ -114,6 +115,8 @@ pub fn run(
         .expect("kernel filesystem command registry has capacity");
     syn_shell::firewall::register_firewall_commands(&mut registry)
         .expect("kernel firewall command registry has capacity");
+    syn_shell::network::register_network_commands(&mut registry)
+        .expect("kernel network command registry has capacity");
 
     let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
     let mut interpreter = Interpreter::new();
@@ -517,6 +520,20 @@ mod input_tests {
         assert_eq!(editor.line(), "SHOW SYSTEM");
         assert_eq!(rendered.line.as_str(), "SHOW SYSTEM");
         assert_eq!(rendered.cursor, "SHOW SYSTEM".len());
+    }
+
+    #[test]
+    fn show_interface_singular_resolves_to_network_command() {
+        let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
+        syn_shell::network::register_network_commands(&mut registry)
+            .expect("network commands fit");
+        let program = registry
+            .parse("SHOW INTERFACE")
+            .expect("show interface parses");
+        assert_eq!(
+            program.stage(0).unwrap().route.raw(),
+            syn_shell::network::SHOW_INTERFACES_ROUTE
+        );
     }
 }
 
@@ -1054,6 +1071,7 @@ fn command_category(route: u16) -> &'static str {
         syn_shell::firewall::SHOW_FIREWALL_ROUTE..=syn_shell::firewall::SET_FIREWALL_ROUTE => {
             "FIREWALL"
         }
+        syn_shell::network::SHOW_NETWORK_ROUTE..=syn_shell::network::SET_ROUTE_ROUTE => "NETWORK",
         _ => "SHELL",
     }
 }
@@ -2093,6 +2111,183 @@ impl FilesystemSource for KernelFilesystem {
     }
 }
 
+struct KernelNetwork {
+    view: syn_shell::network::NetworkView,
+}
+
+impl KernelNetwork {
+    fn seeded() -> Self {
+        use syn_shell::network::{
+            InterfaceAddressMode, MAX_NETWORK_OUTPUT_ROWS, NetworkInterfaceView, NetworkText,
+            NetworkView,
+        };
+
+        let text = |value: &str| NetworkText::new(value).expect("network text fits");
+        let mut interfaces = [None; MAX_NETWORK_OUTPUT_ROWS];
+        interfaces[0] = Some(NetworkInterfaceView {
+            name: text("lo"),
+            address: text("127.0.0.1"),
+            gateway: None,
+            mtu: 65_535,
+            enabled: true,
+            link_up: true,
+            mode: InterfaceAddressMode::Static,
+            dhcp: None,
+        });
+        interfaces[1] = Some(NetworkInterfaceView {
+            name: text("eth0"),
+            address: text("0.0.0.0"),
+            gateway: None,
+            mtu: 1500,
+            enabled: true,
+            link_up: false,
+            mode: InterfaceAddressMode::Static,
+            dhcp: None,
+        });
+        Self {
+            view: NetworkView {
+                generation: 1,
+                hostname: Some(text("synos")),
+                interface_count: 2,
+                route_count: 0,
+                interfaces,
+                routes: [None; MAX_NETWORK_OUTPUT_ROWS],
+                next_interface: None,
+                next_route: None,
+            },
+        }
+    }
+
+    fn bump(&mut self) {
+        self.view.generation = self.view.generation.saturating_add(1);
+    }
+
+    fn interface_mut(
+        &mut self,
+        name: &str,
+    ) -> Result<&mut syn_shell::network::NetworkInterfaceView, Status> {
+        self.view
+            .interfaces
+            .iter_mut()
+            .flatten()
+            .find(|interface| interface.name.as_str().eq_ignore_ascii_case(name))
+            .ok_or(Status::NOT_FOUND)
+    }
+
+    fn network_text(value: &str) -> Result<syn_shell::network::NetworkText, Status> {
+        syn_shell::network::NetworkText::new(value).map_err(|_| Status::INVALID_ARGUMENT)
+    }
+}
+
+impl syn_shell::network::NetworkSource for KernelNetwork {
+    fn authorize_mutation(&mut self) -> Result<(), Status> {
+        Ok(())
+    }
+
+    fn show_network(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+        Ok(self.view)
+    }
+
+    fn show_interfaces(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+        Ok(self.view)
+    }
+
+    fn show_routes(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+        Ok(self.view)
+    }
+
+    fn set_hostname(
+        &mut self,
+        hostname: &str,
+    ) -> Result<syn_shell::network::NetworkView, Status> {
+        self.view.hostname = Some(Self::network_text(hostname)?);
+        self.bump();
+        Ok(self.view)
+    }
+
+    fn set_interface(
+        &mut self,
+        update: syn_shell::network::InterfaceUpdate<'_>,
+    ) -> Result<syn_shell::network::NetworkView, Status> {
+        use syn_shell::network::{DhcpLeaseView, InterfaceAddressMode};
+
+        let interface = self.interface_mut(update.name)?;
+        if let Some(mode) = update.mode {
+            interface.mode = mode;
+            if mode == InterfaceAddressMode::Dhcp {
+                if interface.address.as_str().is_empty() {
+                    interface.address = Self::network_text("0.0.0.0")?;
+                }
+                interface.dhcp = Some(DhcpLeaseView {
+                    state: Self::network_text("init")?,
+                    server: None,
+                    expires_at_ms: None,
+                    dns0: None,
+                    dns1: None,
+                });
+            } else {
+                interface.dhcp = None;
+            }
+        }
+        if let Some(address) = update.address {
+            interface.address = Self::network_text(address)?;
+            if update.mode.is_none() {
+                interface.mode = InterfaceAddressMode::Static;
+                interface.dhcp = None;
+            }
+        }
+        if let Some(gateway) = update.gateway {
+            interface.gateway = Some(Self::network_text(gateway)?);
+        }
+        if let Some(mtu) = update.mtu {
+            interface.mtu = mtu;
+        }
+        if let Some(enabled) = update.enabled {
+            interface.enabled = enabled;
+        }
+        self.bump();
+        Ok(self.view)
+    }
+
+    fn set_route(
+        &mut self,
+        update: syn_shell::network::RouteUpdate<'_>,
+    ) -> Result<syn_shell::network::NetworkView, Status> {
+        use syn_shell::network::NetworkRouteView;
+
+        self.interface_mut(update.interface)?;
+        if let Some(existing) = self
+            .view
+            .routes
+            .iter_mut()
+            .flatten()
+            .find(|route| route.destination.as_str() == update.destination)
+        {
+            existing.gateway = Self::network_text(update.gateway)?;
+            existing.interface = Self::network_text(update.interface)?;
+            if let Some(metric) = update.metric {
+                existing.metric = metric;
+            }
+        } else {
+            let slot = self
+                .view
+                .routes
+                .iter_mut()
+                .find(|slot| slot.is_none())
+                .ok_or(Status::NO_SPACE)?;
+            *slot = Some(NetworkRouteView {
+                destination: Self::network_text(update.destination)?,
+                gateway: Self::network_text(update.gateway)?,
+                interface: Self::network_text(update.interface)?,
+                metric: update.metric.unwrap_or(100),
+            });
+            self.view.route_count = self.view.route_count.saturating_add(1);
+        }
+        self.bump();
+        Ok(self.view)
+    }
+}
+
 struct KernelExecutor {
     boot_method: BootMethod,
     memory_regions: &'static [synos_boot_protocol::MemoryRegion],
@@ -2112,6 +2307,7 @@ struct KernelExecutor {
     control_authority: crate::CapabilityHandle,
     dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
     filesystem: FilesystemExecutor<KernelFilesystem>,
+    network: KernelNetwork,
     firewall_policy_version: u64,
     firewall_rule_count: u64,
 }
@@ -2165,6 +2361,7 @@ impl KernelExecutor {
             control_authority,
             dlm,
             filesystem: FilesystemExecutor::new(filesystem),
+            network: KernelNetwork::seeded(),
             firewall_policy_version: 1,
             firewall_rule_count: 0,
         }
@@ -2187,13 +2384,22 @@ impl KernelExecutor {
             SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
+            route if (syn_shell::network::SHOW_NETWORK_ROUTE
+                ..=syn_shell::network::SET_ROUTE_ROUTE)
+                .contains(&route) =>
+            {
+                syn_shell::network::dispatch_network_command(&mut self.network, command)
+            }
             route if (syn_shell::cluster::SHOW_CLUSTER_ROUTE
                 ..=syn_shell::cluster::REMOVE_FEDERATION_ROUTE)
                 .contains(&route) => syn_shell::cluster::execute_cluster_surface_command(
                 command,
                 None,
             ),
-            route if route >= syn_shell::filesystem::DIRECTORY_ROUTE => {
+            route if (syn_shell::filesystem::DIRECTORY_ROUTE
+                ..=syn_shell::filesystem::RMDIR_ROUTE)
+                .contains(&route) =>
+            {
                 let result = self.filesystem.execute_command(command);
                 if result.is_ok() {
                     self.filesystem.source_mut().persist();
@@ -2489,7 +2695,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "SHELL, SYSTEM, PROCESS, MEMORY, MONITOR, CONTROL, CLUSTER, FILESYSTEM, FIREWALL; use HELP <CATEGORY> for related commands; unique command prefixes accepted",
+            "SHELL, SYSTEM, PROCESS, MEMORY, MONITOR, CONTROL, CLUSTER, FILESYSTEM, FIREWALL, NETWORK; use HELP <CATEGORY> for related commands; unique command prefixes accepted",
         )?;
         Ok(output)
     }

@@ -1,6 +1,6 @@
 use synos_status::Status;
 use synos_system_model::command::{
-    ArgumentKind, ArgumentSpec, CommandSpec, OutputValue, StructuredOutput,
+    ArgumentKind, ArgumentSpec, CommandSpec, OutputValue, StructuredOutput, MAX_OUTPUT_FIELDS,
 };
 
 use crate::{
@@ -73,15 +73,18 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
 ];
 
 pub fn command_help(name: &str) -> Option<&'static NetworkCommandHelp> {
-    let canonical = NETWORK_COMMAND_HELP
+    NETWORK_COMMAND_HELP
         .iter()
         .find(|entry| entry.name.eq_ignore_ascii_case(name))
         .or_else(|| {
-            NETWORK_COMMAND_HELP
-                .iter()
-                .find(|entry| entry.aliases.eq_ignore_ascii_case(name))
-        });
-    canonical
+            NETWORK_COMMAND_HELP.iter().find(|entry| {
+                entry
+                    .aliases
+                    .split(',')
+                    .map(str::trim)
+                    .any(|alias| !alias.is_empty() && alias.eq_ignore_ascii_case(name))
+            })
+        })
 }
 
 pub type NetworkText = Text<MAX_TOKEN_BYTES>;
@@ -289,6 +292,43 @@ impl<Source, const CAPACITY: usize> NetworkExecutor<Source, CAPACITY> {
     }
 }
 
+impl<Source: NetworkSource, const CAPACITY: usize> NetworkExecutor<Source, CAPACITY> {
+    pub fn execute_command(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        dispatch_network_command(&mut self.source, command)
+    }
+}
+
+/// Execute a network command against a [`NetworkSource`] without buffering completions.
+pub fn dispatch_network_command<Source: NetworkSource>(
+    source: &mut Source,
+    command: CommandCall,
+) -> Result<StructuredOutput, Status> {
+    match command.route.raw() {
+        SHOW_NETWORK_ROUTE => source.show_network().and_then(network_output),
+        SHOW_INTERFACES_ROUTE => source.show_interfaces().and_then(interfaces_output),
+        SHOW_ROUTES_ROUTE => source.show_routes().and_then(routes_output),
+        SET_HOSTNAME_ROUTE => {
+            let hostname = command
+                .get_text("HOSTNAME")
+                .filter(|value| !value.is_empty())
+                .ok_or(Status::INVALID_ARGUMENT)?;
+            source.authorize_mutation()?;
+            source.set_hostname(hostname).and_then(network_output)
+        }
+        SET_INTERFACE_ROUTE => {
+            let update = interface_update_request(&command)?;
+            source.authorize_mutation()?;
+            source.set_interface(update).and_then(network_output)
+        }
+        SET_ROUTE_ROUTE => {
+            let update = route_update_request(&command)?;
+            source.authorize_mutation()?;
+            source.set_route(update).and_then(network_output)
+        }
+        _ => Err(Status::NOT_FOUND),
+    }
+}
+
 impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
     for NetworkExecutor<Source, CAPACITY>
 {
@@ -302,30 +342,7 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
             .iter()
             .position(Option::is_none)
             .ok_or(Error::Capacity)?;
-        let completion = match command.route.raw() {
-            SHOW_NETWORK_ROUTE => self.source.show_network().and_then(network_output),
-            SHOW_INTERFACES_ROUTE => self.source.show_interfaces().and_then(interfaces_output),
-            SHOW_ROUTES_ROUTE => self.source.show_routes().and_then(routes_output),
-            SET_HOSTNAME_ROUTE => {
-                let hostname = command
-                    .get_text("HOSTNAME")
-                    .filter(|value| !value.is_empty())
-                    .ok_or(Status::INVALID_ARGUMENT);
-                hostname.and_then(|value| {
-                    self.source.authorize_mutation()?;
-                    self.source.set_hostname(value).and_then(network_output)
-                })
-            }
-            SET_INTERFACE_ROUTE => interface_update_request(&command).and_then(|update| {
-                self.source.authorize_mutation()?;
-                self.source.set_interface(update).and_then(network_output)
-            }),
-            SET_ROUTE_ROUTE => route_update_request(&command).and_then(|update| {
-                self.source.authorize_mutation()?;
-                self.source.set_route(update).and_then(network_output)
-            }),
-            _ => Err(Status::NOT_FOUND),
-        };
+        let completion = dispatch_network_command(&mut self.source, command);
         self.completions[slot] = Some(completion);
         ExecutionToken::new((slot + 1) as u64).ok_or(Error::InvalidHandle)
     }
@@ -453,7 +470,7 @@ fn boolean(value: Option<Value>) -> Result<bool, Status> {
     }
 }
 
-fn network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
+pub fn network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
     let mut output = StructuredOutput::new(Status::NORMAL);
     insert_text(&mut output, "operation", "show-network")?;
     insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
@@ -473,87 +490,119 @@ fn network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
     Ok(output)
 }
 
-fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> {
+pub fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> {
     let mut output = network_output(view)?;
     insert_text(&mut output, "operation", "show-interfaces")?;
+    let mut used = output.fields().count();
+    let mut omitted = None;
     for (index, interface) in view.interfaces.iter().flatten().enumerate() {
-        insert_indexed_text(&mut output, "interface", index, "name", interface.name.as_str())?;
-        insert_indexed_text(
-            &mut output,
-            "interface",
-            index,
-            "address",
-            interface.address.as_str(),
-        )?;
-        if let Some(gateway) = interface.gateway {
-            insert_indexed_text(&mut output, "interface", index, "gateway", gateway.as_str())?;
+        let needed = interface_field_count(interface);
+        // Reserve one slot for next-interface when more rows remain in this page
+        // or the source already provided a continuation marker.
+        let remaining = view
+            .interfaces
+            .iter()
+            .flatten()
+            .skip(index + 1)
+            .count()
+            .saturating_add(usize::from(view.next_interface.is_some()));
+        let reserve = usize::from(remaining > 0);
+        if used.saturating_add(needed).saturating_add(reserve) > MAX_OUTPUT_FIELDS {
+            omitted = Some(index as u64);
+            break;
         }
-        insert_indexed(
-            &mut output,
-            "interface",
-            index,
-            "mtu",
-            OutputValue::Unsigned(interface.mtu as u64),
-        )?;
-        insert_indexed(
-            &mut output,
-            "interface",
-            index,
-            "enabled",
-            OutputValue::Boolean(interface.enabled),
-        )?;
-        insert_indexed(
-            &mut output,
-            "interface",
-            index,
-            "link-up",
-            OutputValue::Boolean(interface.link_up),
-        )?;
-        insert_indexed_text(
-            &mut output,
-            "interface",
-            index,
-            "mode",
-            interface.mode.as_str(),
-        )?;
-        if let Some(dhcp) = interface.dhcp {
-            insert_indexed_text(
-                &mut output,
-                "interface",
-                index,
-                "dhcp-state",
-                dhcp.state.as_str(),
-            )?;
-            if let Some(server) = dhcp.server {
-                insert_indexed_text(
-                    &mut output,
-                    "interface",
-                    index,
-                    "dhcp-server",
-                    server.as_str(),
-                )?;
-            }
-            if let Some(expires) = dhcp.expires_at_ms {
-                insert_indexed(
-                    &mut output,
-                    "interface",
-                    index,
-                    "dhcp-expires-ms",
-                    OutputValue::Unsigned(expires),
-                )?;
-            }
-            if let Some(dns0) = dhcp.dns0 {
-                insert_indexed_text(&mut output, "interface", index, "dns0", dns0.as_str())?;
-            }
-            if let Some(dns1) = dhcp.dns1 {
-                insert_indexed_text(&mut output, "interface", index, "dns1", dns1.as_str())?;
-            }
-        }
+        emit_interface(&mut output, index, interface)?;
+        used = used.saturating_add(needed);
     }
-    if let Some(next) = view.next_interface {
+    if let Some(next) = omitted.or(view.next_interface) {
         insert(&mut output, "next-interface", OutputValue::Unsigned(next))?;
     }
     Ok(output)
+}
+
+fn interface_field_count(interface: &NetworkInterfaceView) -> usize {
+    let mut count = 6; // name address mtu enabled link-up mode
+    if interface.gateway.is_some() {
+        count += 1;
+    }
+    if let Some(dhcp) = interface.dhcp {
+        count += 1; // dhcp-state
+        if dhcp.server.is_some() {
+            count += 1;
+        }
+        if dhcp.expires_at_ms.is_some() {
+            count += 1;
+        }
+        if dhcp.dns0.is_some() {
+            count += 1;
+        }
+        if dhcp.dns1.is_some() {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn emit_interface(
+    output: &mut StructuredOutput,
+    index: usize,
+    interface: &NetworkInterfaceView,
+) -> Result<(), Status> {
+    insert_indexed_text(output, "interface", index, "name", interface.name.as_str())?;
+    insert_indexed_text(
+        output,
+        "interface",
+        index,
+        "address",
+        interface.address.as_str(),
+    )?;
+    if let Some(gateway) = interface.gateway {
+        insert_indexed_text(output, "interface", index, "gateway", gateway.as_str())?;
+    }
+    insert_indexed(
+        output,
+        "interface",
+        index,
+        "mtu",
+        OutputValue::Unsigned(interface.mtu as u64),
+    )?;
+    insert_indexed(
+        output,
+        "interface",
+        index,
+        "enabled",
+        OutputValue::Boolean(interface.enabled),
+    )?;
+    insert_indexed(
+        output,
+        "interface",
+        index,
+        "link-up",
+        OutputValue::Boolean(interface.link_up),
+    )?;
+    insert_indexed_text(output, "interface", index, "mode", interface.mode.as_str())?;
+    if let Some(dhcp) = interface.dhcp {
+        insert_indexed_text(output, "interface", index, "dhcp-state", dhcp.state.as_str())?;
+        if let Some(server) = dhcp.server {
+            insert_indexed_text(output, "interface", index, "dhcp-server", server.as_str())?;
+        }
+        if let Some(expires) = dhcp.expires_at_ms {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-expires-ms",
+                OutputValue::Unsigned(expires),
+            )?;
+        }
+        if let Some(dns0) = dhcp.dns0 {
+            insert_indexed_text(output, "interface", index, "dns0", dns0.as_str())?;
+        }
+        if let Some(dns1) = dhcp.dns1 {
+            insert_indexed_text(output, "interface", index, "dns1", dns1.as_str())?;
+        }
+    }
+    Ok(())
 }
 
 fn routes_output(view: NetworkView) -> Result<StructuredOutput, Status> {

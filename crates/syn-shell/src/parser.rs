@@ -422,6 +422,8 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name = Text::new("LIST-CLUSTERS")?;
         } else if command_name.as_str().eq_ignore_ascii_case("REMOVE-CLUSTER") {
             command_name = Text::new("DELETE-CLUSTER")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("SHOW-INTERFACE") {
+            command_name = Text::new("SHOW-INTERFACES")?;
         }
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];

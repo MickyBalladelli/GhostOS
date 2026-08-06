@@ -80,6 +80,7 @@ fn network_commands_use_single_noun_names() {
     for (input, route) in [
         ("SHOW NETWORK", SHOW_NETWORK_ROUTE),
         ("SHOW INTERFACES", SHOW_INTERFACES_ROUTE),
+        ("SHOW INTERFACE", SHOW_INTERFACES_ROUTE),
         ("SHOW ROUTES", SHOW_ROUTES_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
@@ -179,6 +180,7 @@ fn route_updates_require_destination_gateway_and_interface() {
 fn network_help_covers_aliases_and_dhcp_qualifiers() {
     assert_eq!(command_help("NETWORK").unwrap().name, "SHOW-NETWORK");
     assert_eq!(command_help("INTERFACES").unwrap().name, "SHOW-INTERFACES");
+    assert_eq!(command_help("INTERFACE").unwrap().name, "SET-INTERFACE");
     assert_eq!(command_help("ROUTES").unwrap().name, "SHOW-ROUTES");
     assert_eq!(command_help("HOSTNAME").unwrap().name, "SET-HOSTNAME");
     assert_eq!(command_help("INTERFACE").unwrap().name, "SET-INTERFACE");
@@ -304,6 +306,98 @@ fn set_route_upserts_and_bumps_generation() {
     assert!(has_unsigned(&routes, "route2-metric", 25));
 }
 
+
+#[test]
+fn two_seeded_interfaces_fit_output_budget() {
+    let mut interfaces = [None; MAX_NETWORK_OUTPUT_ROWS];
+    interfaces[0] = Some(NetworkInterfaceView {
+        name: text("lo"),
+        address: text("127.0.0.1"),
+        gateway: None,
+        mtu: 65_535,
+        enabled: true,
+        link_up: true,
+        mode: InterfaceAddressMode::Static,
+        dhcp: None,
+    });
+    interfaces[1] = Some(NetworkInterfaceView {
+        name: text("eth0"),
+        address: text("0.0.0.0"),
+        gateway: None,
+        mtu: 1500,
+        enabled: true,
+        link_up: false,
+        mode: InterfaceAddressMode::Static,
+        dhcp: None,
+    });
+    let source = FakeNetwork {
+        allowed: true,
+        view: NetworkView {
+            generation: 1,
+            hostname: Some(text("synos")),
+            interface_count: 2,
+            route_count: 0,
+            interfaces,
+            routes: [None; MAX_NETWORK_OUTPUT_ROWS],
+            next_interface: None,
+            next_route: None,
+        },
+    };
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
+    let interfaces = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
+    assert!(has_text(&interfaces, "interface1-name", "lo"));
+    assert!(has_text(&interfaces, "interface2-name", "eth0"));
+    assert!(syn_shell::render::render(&interfaces, syn_shell::render::OutputFormat::List).is_ok());
+}
+
+#[test]
+fn four_full_interfaces_paginate_within_output_budget() {
+    let mut interfaces = [None; MAX_NETWORK_OUTPUT_ROWS];
+    for i in 0..4 {
+        let name = match i {
+            0 => "eth0",
+            1 => "eth1",
+            2 => "eth2",
+            _ => "eth3",
+        };
+        interfaces[i] = Some(NetworkInterfaceView {
+            name: text(name),
+            address: text("10.0.0.2"),
+            gateway: Some(text("10.0.0.1")),
+            mtu: 1500,
+            enabled: true,
+            link_up: true,
+            mode: InterfaceAddressMode::Dhcp,
+            dhcp: Some(DhcpLeaseView {
+                state: text("bound"),
+                server: Some(text("10.0.0.1")),
+                expires_at_ms: Some(60_000),
+                dns0: Some(text("10.0.0.53")),
+                dns1: Some(text("10.0.0.54")),
+            }),
+        });
+    }
+    let source = FakeNetwork {
+        allowed: true,
+        view: NetworkView {
+            generation: 1,
+            hostname: Some(text("synos")),
+            interface_count: 4,
+            route_count: 0,
+            interfaces,
+            routes: [None; MAX_NETWORK_OUTPUT_ROWS],
+            next_interface: None,
+            next_route: None,
+        },
+    };
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
+    let output = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
+    assert!(has_text(&output, "interface1-name", "eth0"));
+    assert!(has_text(&output, "interface2-name", "eth1"));
+    assert!(lacks_field(&output, "interface3-name"));
+    assert!(has_unsigned(&output, "next-interface", 2));
+}
+
 #[test]
 fn show_interfaces_supports_bounded_pagination_marker() {
     let mut source = FakeNetwork::seeded();
@@ -312,6 +406,7 @@ fn show_interfaces_supports_bounded_pagination_marker() {
     let interfaces = execute(&mut executor, "SHOW INTERFACES").unwrap();
     assert!(has_unsigned(&interfaces, "next-interface", 4));
 }
+
 
 struct FakeNetwork {
     allowed: bool,
