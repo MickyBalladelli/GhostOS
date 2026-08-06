@@ -18,15 +18,15 @@
 
 ## DHCP
 
-- [ ] Add a capability-gated DHCP client service for IPv4 address assignment.
-- [ ] Implement bounded DHCP discover, offer, request, and acknowledgement handling.
-- [ ] Bind DHCP client traffic to a selected Ethernet interface.
-- [ ] Validate transaction IDs, client MAC address, lease timers, server identifier, subnet mask, gateway, DNS servers, and routes.
-- [ ] Support lease renewal, rebinding, expiry, release, link-down, and restart recovery.
-- [ ] Apply a DHCP lease atomically through the network configuration runtime.
-- [ ] Preserve the previous static configuration when DHCP fails or the lease expires.
-- [ ] Expose DHCP state and lease details through `SHOW INTERFACES`.
-- [ ] Add `SET INTERFACE ... /DHCP` and an explicit static-address mode.
-- [ ] Add bounded retry and backoff behavior for unavailable DHCP servers.
-- [ ] Add firewall rules and capability checks for DHCP client traffic.
-- [ ] Add deterministic DHCP server fixtures and tests for malformed packets, conflicting offers, renewals, expiry, and rollback.
+- [x] Add a capability-gated DHCP client service for IPv4 address assignment.
+- [x] Implement bounded DHCP discover, offer, request, and acknowledgement handling.
+- [x] Bind DHCP client traffic to a selected Ethernet interface.
+- [x] Validate transaction IDs, client MAC address, lease timers, server identifier, subnet mask, gateway, DNS servers, and routes.
+- [x] Support lease renewal, rebinding, expiry, release, link-down, and restart recovery.
+- [x] Apply a DHCP lease atomically through the network configuration runtime.
+- [x] Preserve the previous static configuration when DHCP fails or the lease expires.
+- [x] Expose DHCP state and lease details through `SHOW INTERFACES`.
+- [x] Add `SET INTERFACE ... /DHCP` and an explicit static-address mode.
+- [x] Add bounded retry and backoff behavior for unavailable DHCP servers.
+- [x] Add firewall rules and capability checks for DHCP client traffic.
+- [x] Add deterministic DHCP server fixtures and tests for malformed packets, conflicting offers, renewals, expiry, and rollback.

@@ -164,12 +164,37 @@ pub struct CapabilityPolicy {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AddressMode {
+    Static = 0,
+    Dhcp = 1,
+}
+
+impl AddressMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Dhcp => "dhcp",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, ParseError> {
+        match value {
+            "static" => Ok(Self::Static),
+            "dhcp" => Ok(Self::Dhcp),
+            _ => Err(ParseError::InvalidValue),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkInterface {
     pub name: BoundedText<MAX_SERVICE_NAME_BYTES>,
     pub address: BoundedText<MAX_ADDRESS_BYTES>,
     pub gateway: Option<BoundedText<MAX_ADDRESS_BYTES>>,
     pub mtu: u32,
     pub enabled: bool,
+    pub mode: AddressMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,8 +223,12 @@ impl NetworkSpec {
 
     pub fn validate(&self) -> Result<(), ParseError> {
         for (index, interface) in self.interfaces().enumerate() {
+            let address_ok = match interface.mode {
+                AddressMode::Static => !interface.address.is_empty(),
+                AddressMode::Dhcp => true,
+            };
             if interface.name.is_empty()
-                || interface.address.is_empty()
+                || !address_ok
                 || !(576..=65_535).contains(&interface.mtu)
                 || self
                     .interfaces()
@@ -235,8 +264,14 @@ impl NetworkSpec {
         gateway: Option<&str>,
         mtu: Option<u32>,
         enabled: Option<bool>,
+        mode: Option<AddressMode>,
     ) -> Result<(), ParseError> {
-        if address.is_none() && gateway.is_none() && mtu.is_none() && enabled.is_none() {
+        if address.is_none()
+            && gateway.is_none()
+            && mtu.is_none()
+            && enabled.is_none()
+            && mode.is_none()
+        {
             return Err(ParseError::InvalidValue);
         }
         let previous = *self;
@@ -247,8 +282,17 @@ impl NetworkSpec {
             .flatten()
             .find(|interface| interface.name == name)
             .ok_or(ParseError::InvalidValue)?;
+        if let Some(mode) = mode {
+            interface.mode = mode;
+            if mode == AddressMode::Dhcp && address.is_none() && interface.address.is_empty() {
+                interface.address = BoundedText::new("0.0.0.0")?;
+            }
+        }
         if let Some(address) = address {
             interface.address = BoundedText::new(address)?;
+            if mode.is_none() {
+                interface.mode = AddressMode::Static;
+            }
         }
         if let Some(gateway) = gateway {
             interface.gateway = Some(BoundedText::new(gateway)?);
@@ -264,6 +308,54 @@ impl NetworkSpec {
             *self = previous;
         }
         result
+    }
+
+    /// Apply a DHCP lease atomically. On validation failure the previous
+    /// network snapshot is restored unchanged.
+    pub fn apply_dhcp_lease(
+        &mut self,
+        name: &str,
+        address: &str,
+        gateway: Option<&str>,
+    ) -> Result<(), ParseError> {
+        let previous = *self;
+        let name = BoundedText::new(name)?;
+        let interface = self
+            .interfaces
+            .iter_mut()
+            .flatten()
+            .find(|interface| interface.name == name)
+            .ok_or(ParseError::InvalidValue)?;
+        if interface.mode != AddressMode::Dhcp {
+            return Err(ParseError::InvalidValue);
+        }
+        interface.address = BoundedText::new(address)?;
+        interface.gateway = match gateway {
+            Some(value) => Some(BoundedText::new(value)?),
+            None => None,
+        };
+        let result = self.validate();
+        if result.is_err() {
+            *self = previous;
+        }
+        result
+    }
+
+    /// Restore a preserved static configuration after DHCP failure or expiry.
+    pub fn restore_static_interface(
+        &mut self,
+        name: &str,
+        address: &str,
+        gateway: Option<&str>,
+    ) -> Result<(), ParseError> {
+        self.update_interface(
+            name,
+            Some(address),
+            gateway,
+            None,
+            None,
+            Some(AddressMode::Static),
+        )
     }
 
     pub fn upsert_route(
@@ -365,11 +457,46 @@ impl SystemSpec {
         gateway: Option<&str>,
         mtu: Option<u32>,
         enabled: Option<bool>,
+        mode: Option<AddressMode>,
     ) -> Result<(), ParseError> {
         let previous = self.network;
         let result = self
             .network
-            .update_interface(name, address, gateway, mtu, enabled);
+            .update_interface(name, address, gateway, mtu, enabled, mode);
+        if result.is_ok() {
+            self.revision = self.revision.saturating_add(1);
+        } else {
+            self.network = previous;
+        }
+        result
+    }
+
+    pub fn apply_network_dhcp_lease(
+        &mut self,
+        name: &str,
+        address: &str,
+        gateway: Option<&str>,
+    ) -> Result<(), ParseError> {
+        let previous = self.network;
+        let result = self.network.apply_dhcp_lease(name, address, gateway);
+        if result.is_ok() {
+            self.revision = self.revision.saturating_add(1);
+        } else {
+            self.network = previous;
+        }
+        result
+    }
+
+    pub fn restore_network_static_interface(
+        &mut self,
+        name: &str,
+        address: &str,
+        gateway: Option<&str>,
+    ) -> Result<(), ParseError> {
+        let previous = self.network;
+        let result = self
+            .network
+            .restore_static_interface(name, address, gateway);
         if result.is_ok() {
             self.revision = self.revision.saturating_add(1);
         } else {
@@ -439,6 +566,7 @@ impl SystemSpec {
             encode_optional_text(&mut encoder, interface.gateway);
             encoder.u32(interface.mtu);
             encoder.u8(interface.enabled as u8);
+            encoder.u8(interface.mode as u8);
         }
         for route in self.network.routes() {
             encoder.u8(5);
@@ -561,6 +689,7 @@ struct InterfacePartial {
     gateway: Option<BoundedText<MAX_ADDRESS_BYTES>>,
     mtu: Option<u32>,
     enabled: Option<bool>,
+    mode: Option<AddressMode>,
 }
 
 impl InterfacePartial {
@@ -571,6 +700,7 @@ impl InterfacePartial {
             gateway: None,
             mtu: None,
             enabled: None,
+            mode: None,
         }
     }
 }
@@ -955,12 +1085,19 @@ impl Parser {
             }
             Section::Interface => {
                 let partial = self.interface.take().ok_or(ParseError::MissingField)?;
+                let mode = partial.mode.unwrap_or(AddressMode::Static);
+                let address = match (mode, partial.address) {
+                    (_, Some(address)) => address,
+                    (AddressMode::Dhcp, None) => BoundedText::new("0.0.0.0")?,
+                    (AddressMode::Static, None) => return Err(ParseError::MissingField),
+                };
                 let interface = NetworkInterface {
                     name: partial.name.ok_or(ParseError::MissingField)?,
-                    address: partial.address.ok_or(ParseError::MissingField)?,
+                    address,
                     gateway: partial.gateway,
                     mtu: partial.mtu.unwrap_or(1500),
                     enabled: partial.enabled.unwrap_or(true),
+                    mode,
                 };
                 if interface.mtu < 576 || interface.mtu > 65_535 {
                     return Err(ParseError::InvalidValue);
@@ -1156,6 +1293,7 @@ impl Parser {
             "gateway" => set_once(&mut partial.gateway, parse_text(value)?),
             "mtu" => set_once(&mut partial.mtu, parse_u32(value)?),
             "enabled" => set_once(&mut partial.enabled, parse_bool(value)?),
+            "mode" => set_once(&mut partial.mode, AddressMode::parse(value)?),
             _ => return Err(ParseError::UnknownKey),
         }?;
         Ok(())

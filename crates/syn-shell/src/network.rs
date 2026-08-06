@@ -38,7 +38,7 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
     NetworkCommandHelp {
         name: "SHOW-INTERFACES",
         synopsis: "SHOW INTERFACES",
-        description: "Show bounded interface settings and link state.",
+        description: "Show bounded interface settings, address mode, link state, and DHCP lease details.",
         aliases: "INTERFACES",
         qualifiers: "",
     },
@@ -59,9 +59,9 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
     NetworkCommandHelp {
         name: "SET-INTERFACE",
         synopsis: "SET INTERFACE name",
-        description: "Change interface address, gateway, MTU, or enabled state.",
+        description: "Change interface address mode, address, gateway, MTU, or enabled state.",
         aliases: "INTERFACE",
-        qualifiers: "/ADDRESS /GATEWAY /MTU /ENABLE /DISABLE",
+        qualifiers: "/ADDRESS /GATEWAY /MTU /ENABLE /DISABLE /DHCP /STATIC",
     },
     NetworkCommandHelp {
         name: "SET-ROUTE",
@@ -87,6 +87,31 @@ pub fn command_help(name: &str) -> Option<&'static NetworkCommandHelp> {
 pub type NetworkText = Text<MAX_TOKEN_BYTES>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum InterfaceAddressMode {
+    Static = 0,
+    Dhcp = 1,
+}
+
+impl InterfaceAddressMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Dhcp => "dhcp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DhcpLeaseView {
+    pub state: NetworkText,
+    pub server: Option<NetworkText>,
+    pub expires_at_ms: Option<u64>,
+    pub dns0: Option<NetworkText>,
+    pub dns1: Option<NetworkText>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkInterfaceView {
     pub name: NetworkText,
     pub address: NetworkText,
@@ -94,6 +119,8 @@ pub struct NetworkInterfaceView {
     pub mtu: u32,
     pub enabled: bool,
     pub link_up: bool,
+    pub mode: InterfaceAddressMode,
+    pub dhcp: Option<DhcpLeaseView>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,6 +163,7 @@ pub struct InterfaceUpdate<'a> {
     pub gateway: Option<&'a str>,
     pub mtu: Option<u32>,
     pub enabled: Option<bool>,
+    pub mode: Option<InterfaceAddressMode>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -208,10 +236,21 @@ pub fn register_network_commands<const CAPACITY: usize>(
     let mtu = qualifier("MTU", ArgumentKind::Integer)?;
     let enable = qualifier("ENABLE", ArgumentKind::Boolean)?;
     let disable = qualifier("DISABLE", ArgumentKind::Boolean)?;
+    let dhcp = qualifier("DHCP", ArgumentKind::Boolean)?;
+    let static_mode = qualifier("STATIC", ArgumentKind::Boolean)?;
     registry.register(
         CommandSpec::new(
             "SET-INTERFACE",
-            &[interface, address, gateway, mtu, enable, disable],
+            &[
+                interface,
+                address,
+                gateway,
+                mtu,
+                enable,
+                disable,
+                dhcp,
+                static_mode,
+            ],
         )
         .map_err(|_| Error::InvalidValue)?,
         route(SET_INTERFACE_ROUTE),
@@ -319,7 +358,15 @@ pub fn interface_update_request<'a>(
     let mtu = optional_u32(command, "MTU")?;
     let enable = boolean(command.get("ENABLE"))?;
     let disable = boolean(command.get("DISABLE"))?;
+    let dhcp = boolean(command.get("DHCP"))?;
+    let static_mode = boolean(command.get("STATIC"))?;
     if enable && disable {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    if dhcp && static_mode {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    if dhcp && address.is_some() {
         return Err(Status::INVALID_ARGUMENT);
     }
     let enabled = match (enable, disable) {
@@ -327,7 +374,18 @@ pub fn interface_update_request<'a>(
         (false, true) => Some(false),
         _ => None,
     };
-    if address.is_none() && gateway.is_none() && mtu.is_none() && enabled.is_none() {
+    let mode = match (dhcp, static_mode) {
+        (true, false) => Some(InterfaceAddressMode::Dhcp),
+        (false, true) => Some(InterfaceAddressMode::Static),
+        _ if address.is_some() => Some(InterfaceAddressMode::Static),
+        _ => None,
+    };
+    if address.is_none()
+        && gateway.is_none()
+        && mtu.is_none()
+        && enabled.is_none()
+        && mode.is_none()
+    {
         return Err(Status::INVALID_ARGUMENT);
     }
     if mtu.is_some_and(|value| !(576..=65_535).contains(&value)) {
@@ -339,6 +397,7 @@ pub fn interface_update_request<'a>(
         gateway,
         mtu,
         enabled,
+        mode,
     })
 }
 
@@ -450,6 +509,46 @@ fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> {
             "link-up",
             OutputValue::Boolean(interface.link_up),
         )?;
+        insert_indexed_text(
+            &mut output,
+            "interface",
+            index,
+            "mode",
+            interface.mode.as_str(),
+        )?;
+        if let Some(dhcp) = interface.dhcp {
+            insert_indexed_text(
+                &mut output,
+                "interface",
+                index,
+                "dhcp-state",
+                dhcp.state.as_str(),
+            )?;
+            if let Some(server) = dhcp.server {
+                insert_indexed_text(
+                    &mut output,
+                    "interface",
+                    index,
+                    "dhcp-server",
+                    server.as_str(),
+                )?;
+            }
+            if let Some(expires) = dhcp.expires_at_ms {
+                insert_indexed(
+                    &mut output,
+                    "interface",
+                    index,
+                    "dhcp-expires-ms",
+                    OutputValue::Unsigned(expires),
+                )?;
+            }
+            if let Some(dns0) = dhcp.dns0 {
+                insert_indexed_text(&mut output, "interface", index, "dns0", dns0.as_str())?;
+            }
+            if let Some(dns1) = dhcp.dns1 {
+                insert_indexed_text(&mut output, "interface", index, "dns1", dns1.as_str())?;
+            }
+        }
     }
     if let Some(next) = view.next_interface {
         insert(&mut output, "next-interface", OutputValue::Unsigned(next))?;

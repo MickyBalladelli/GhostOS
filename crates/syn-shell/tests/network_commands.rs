@@ -1,8 +1,8 @@
 use syn_shell::{
     network::{
-        command_help, interface_update_request, register_network_commands, NetworkExecutor,
-        NetworkSource, NetworkView, SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE,
-        SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE,
+        command_help, interface_update_request, register_network_commands, InterfaceAddressMode,
+        NetworkExecutor, NetworkSource, NetworkView, SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE,
+        SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE,
     },
     interpreter::CommandExecutor,
     parser::CommandRegistry,
@@ -28,6 +28,14 @@ fn network_commands_use_single_noun_names() {
             SET_INTERFACE_ROUTE,
         ),
         (
+            "SET INTERFACE eth0 /DHCP",
+            SET_INTERFACE_ROUTE,
+        ),
+        (
+            "SET INTERFACE eth0 /STATIC /ADDRESS=10.0.0.2",
+            SET_INTERFACE_ROUTE,
+        ),
+        (
             "SET ROUTE 0.0.0.0/0 /GATEWAY=10.0.0.1 /INTERFACE=eth0 /METRIC=100",
             SET_ROUTE_ROUTE,
         ),
@@ -43,11 +51,31 @@ fn interface_updates_reject_conflicting_or_empty_changes() {
         "SET INTERFACE eth0 /ENABLE /DISABLE",
         "SET INTERFACE eth0",
         "SET INTERFACE eth0 /MTU=500",
+        "SET INTERFACE eth0 /DHCP /STATIC",
+        "SET INTERFACE eth0 /DHCP /ADDRESS=10.0.0.2",
     ] {
         let call = registry.parse(input).unwrap().stage(0).unwrap();
         assert_eq!(call.route.raw(), SET_INTERFACE_ROUTE);
         assert!(interface_update_request(&call).is_err());
     }
+}
+
+#[test]
+fn interface_dhcp_and_static_modes_parse() {
+    let registry = registry();
+    let dhcp = registry.parse("SET INTERFACE eth0 /DHCP").unwrap().stage(0).unwrap();
+    let update = interface_update_request(&dhcp).unwrap();
+    assert_eq!(update.mode, Some(InterfaceAddressMode::Dhcp));
+    assert!(update.address.is_none());
+
+    let static_mode = registry
+        .parse("SET INTERFACE eth0 /STATIC /ADDRESS=10.0.0.9")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    let update = interface_update_request(&static_mode).unwrap();
+    assert_eq!(update.mode, Some(InterfaceAddressMode::Static));
+    assert_eq!(update.address, Some("10.0.0.9"));
 }
 
 #[test]
