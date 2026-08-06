@@ -31,6 +31,25 @@ Build a BIOS disk image:
 
 The image is written to `build/bios/synos-bios.img`.
 
+Run the interactive BIOS VM (builds the release `synos-vm` first if needed):
+
+```sh
+cargo build -p synos-vm --release
+./start-synos.sh
+```
+
+Writable disks create a `<image>.synos.lock` ownership marker. If start fails
+with `disk is already locked` after a crashed or killed VM, inspect and recover
+the stale lock:
+
+```sh
+./target/release/synos-vm disk lock ./virtual_machine/state/data.raw
+./target/release/synos-vm disk recover-lock ./virtual_machine/state/data.raw
+```
+
+`recover-lock` only removes the marker when the recorded owner PID is gone.
+Then run `./start-synos.sh` again.
+
 Build the BIOS image, build the virtual machine in release mode, and run the
 workspace tests in one step:
 

@@ -668,29 +668,42 @@ fn insert_indexed(
     suffix: &str,
     value: OutputValue,
 ) -> Result<(), Status> {
-    let mut name = Text::<32>::empty();
-    name.push_str(prefix).map_err(|_| Status::NO_SPACE)?;
-    let mut digits = [0; 10];
-    let mut count = 0;
-    let mut number = (index + 1) as u64;
+    let mut bytes = [0u8; 32];
+    let prefix = prefix.as_bytes();
+    let suffix = suffix.as_bytes();
+    let mut number = index.saturating_add(1);
+    let mut digits = [0u8; 10];
+    let mut digit_count = 0usize;
     loop {
-        digits[count] = b'0' + (number % 10) as u8;
-        count += 1;
+        digits[digit_count] = b'0' + (number % 10) as u8;
+        digit_count += 1;
         number /= 10;
         if number == 0 {
             break;
         }
     }
-    while count != 0 {
-        count -= 1;
-        name.push_char(digits[count] as char)
-            .map_err(|_| Status::NO_SPACE)?;
+    let total = prefix
+        .len()
+        .saturating_add(digit_count)
+        .saturating_add(1)
+        .saturating_add(suffix.len());
+    if total > bytes.len() {
+        return Err(Status::NO_SPACE);
     }
-    name.push_char('-').map_err(|_| Status::NO_SPACE)?;
-    name.push_str(suffix).map_err(|_| Status::NO_SPACE)?;
-    output
-        .insert(name.as_str(), value)
-        .map_err(|_| Status::NO_SPACE)
+    let mut len = 0usize;
+    bytes[len..len + prefix.len()].copy_from_slice(prefix);
+    len += prefix.len();
+    while digit_count != 0 {
+        digit_count -= 1;
+        bytes[len] = digits[digit_count];
+        len += 1;
+    }
+    bytes[len] = b'-';
+    len += 1;
+    bytes[len..len + suffix.len()].copy_from_slice(suffix);
+    len += suffix.len();
+    let name = core::str::from_utf8(&bytes[..len]).map_err(|_| Status::INVALID_ARGUMENT)?;
+    output.insert(name, value).map_err(|_| Status::NO_SPACE)
 }
 
 fn route(raw: u16) -> RouteId {

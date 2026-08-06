@@ -1307,6 +1307,19 @@ impl InstructionDecoder {
                 ins.operands = vec![rm, Operand::Register(reg)];
                 return Ok(());
             }
+            0xBA => {
+                // Group 8: BT/BTS/BTR/BTC r/m, imm8. Only BT is required today
+                // (used by kernel 1 GiB page probing under size-optimized builds).
+                let (digit, rm) =
+                    self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, true)?;
+                let imm = Self::rd(mmu, pos)? as u64;
+                if digit != 4 {
+                    return Err(InstructionDecodeError::InvalidOpcode);
+                }
+                ins.mnemonic = "BT";
+                ins.operands = vec![rm, Operand::Immediate(imm)];
+                return Ok(());
+            }
 
             0xC0 | 0xC1 => {
                 ins.mnemonic = "XADD";
@@ -1590,6 +1603,19 @@ mod tests {
         match &i.operands[..] {
             [Operand::Register(0), Operand::Segment(s)] => assert_eq!(*s, 2),
             _ => panic!("bad operands"),
+        }
+    }
+
+    #[test]
+    fn bt_reg_imm8() {
+        // btl $0x1a, %edx  — emitted by size-optimized kernel CPUID probes
+        let i = dec(&[0x0F, 0xBA, 0xE2, 0x1A]).unwrap();
+        assert_eq!(i.mnemonic, "BT");
+        assert_eq!(i.opsize, 32);
+        assert_eq!(i.next_ip, 0x1004);
+        match &i.operands[..] {
+            [Operand::Register(2), Operand::Immediate(v)] => assert_eq!(*v, 0x1A),
+            other => panic!("bad operands: {other:?}"),
         }
     }
 }

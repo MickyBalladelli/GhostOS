@@ -249,11 +249,8 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             || first.as_str().eq_ignore_ascii_case("TOP")
             || first.as_str().eq_ignore_ascii_case("SET")
         {
-            let object = words[1].ok_or(Error::MissingArgument)?;
-            let noun = object
-                .as_str()
-                .split_once('/')
-                .map_or(object.as_str(), |(noun, _)| noun);
+            // Incomplete "SHOW"/"SET"/"TOP" input is valid during completion; use the
+            // verb prefix alone so suggestions can still be produced.
             let prefix = if first.as_str().eq_ignore_ascii_case("TOP") {
                 "TOP-"
             } else if first.as_str().eq_ignore_ascii_case("SET") {
@@ -262,7 +259,24 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 "SHOW-"
             };
             command_name.push_str(prefix)?;
-            command_name.push_str(noun)?;
+            if let Some(object) = words[1].as_ref() {
+                let noun = object
+                    .as_str()
+                    .split_once('/')
+                    .map_or(object.as_str(), |(noun, _)| noun);
+                if noun.is_empty() {
+                    return Err(Error::InvalidSyntax);
+                }
+                command_name.push_str(noun)?;
+            }
+        } else if first.as_str().eq_ignore_ascii_case("INTERFACES")
+            || first.as_str().eq_ignore_ascii_case("INTERFACE")
+        {
+            command_name.push_str("SHOW-INTERFACES")?;
+        } else if first.as_str().eq_ignore_ascii_case("NETWORK")
+            && words[1].is_none()
+        {
+            command_name.push_str("SHOW-NETWORK")?;
         } else if let Some(cluster_command) =
             dcl_cluster_command(first.as_str(), words[1].as_ref().map(Text::as_str))
         {
@@ -424,6 +438,12 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name = Text::new("DELETE-CLUSTER")?;
         } else if command_name.as_str().eq_ignore_ascii_case("SHOW-INTERFACE") {
             command_name = Text::new("SHOW-INTERFACES")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("INTERFACES")
+            || command_name.as_str().eq_ignore_ascii_case("INTERFACE")
+        {
+            command_name = Text::new("SHOW-INTERFACES")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("NETWORK") {
+            command_name = Text::new("SHOW-NETWORK")?;
         }
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];

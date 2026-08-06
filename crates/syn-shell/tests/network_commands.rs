@@ -75,7 +75,22 @@ fn execute(
 }
 
 #[test]
+fn interfaces_alias_parses() {
+    let registry = registry();
+    for input in ["INTERFACES", "INTERFACE", "SHOW INTERFACE", "SHOW INTERFACES"] {
+        assert_eq!(
+            registry.parse(input).unwrap().stage(0).unwrap().route.raw(),
+            SHOW_INTERFACES_ROUTE,
+            "{input}"
+        );
+    }
+    let suggestions = registry.suggestions("show int").unwrap();
+    assert!(suggestions.commands().any(|name| name.as_str() == "SHOW-INTERFACES"));
+}
+
+#[test]
 fn network_commands_use_single_noun_names() {
+
     let registry = registry();
     for (input, route) in [
         ("SHOW NETWORK", SHOW_NETWORK_ROUTE),
@@ -561,3 +576,4 @@ impl NetworkSource for FakeNetwork {
         Ok(self.view)
     }
 }
+

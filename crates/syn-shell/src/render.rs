@@ -239,7 +239,10 @@ fn render_labeled_value(
     label: &str,
     value: OutputValue,
 ) -> Result<(), Error> {
-    write!(rendered, "{label}: ").map_err(|_| Error::Capacity)?;
+    // Prefer push_str over `write!("{label}")` — size/LTO builds have miscompiled
+    // some format_args str writes in the guest kernel.
+    rendered.push_str(label)?;
+    rendered.push_str(": ")?;
     write_value(rendered, value, false)?;
     rendered.push_str("\n")?;
     Ok(())

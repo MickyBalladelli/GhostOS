@@ -1,3 +1,4 @@
+use core::mem::MaybeUninit;
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
@@ -40,9 +41,16 @@ const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
 const SYNOS_ISOLATE_ROUTE: u16 = 12;
 const UPTIME_ROUTE: u16 = 13;
-const COMMAND_CAPACITY: usize = 64;
+const COMMAND_CAPACITY: usize = 96;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
+
+// CommandRegistry alone is ~108 KiB. Keep registry/interpreter/executor in BSS via
+// MaybeUninit (not const-initialized .data) so they do not inflate kernel.bin, and so
+// the shell stack stays small under size-optimized LTO builds.
+static mut SHELL_REGISTRY: MaybeUninit<CommandRegistry<COMMAND_CAPACITY>> = MaybeUninit::uninit();
+static mut SHELL_INTERPRETER: MaybeUninit<Interpreter> = MaybeUninit::uninit();
+static mut SHELL_EXECUTOR: MaybeUninit<KernelExecutor> = MaybeUninit::uninit();
 const HELP_CATEGORIES: [&str; 10] = [
     "SHELL",
     "SYSTEM",
@@ -90,7 +98,17 @@ pub fn run(
     scheduler_clock: u64,
     acpi: Option<AcpiPlatform>,
 ) -> ! {
-    let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
+    // Safety: shell::run is entered once from kernel_entry and never re-entered.
+    let registry = unsafe {
+        let slot = &mut *core::ptr::addr_of_mut!(SHELL_REGISTRY);
+        slot.write(CommandRegistry::new());
+        slot.assume_init_mut()
+    };
+    let interpreter = unsafe {
+        let slot = &mut *core::ptr::addr_of_mut!(SHELL_INTERPRETER);
+        slot.write(Interpreter::new());
+        slot.assume_init_mut()
+    };
     let help_target = ArgumentSpec::new("COMMAND", ArgumentKind::Text, false, true)
         .expect("valid HELP command argument");
     registry
@@ -99,29 +117,39 @@ pub fn run(
             RouteId::new(HELP_ROUTE).expect("nonzero HELP route"),
         )
         .expect("kernel command registry has capacity");
-    register(&mut registry, "SHOW-SYSTEM", SHOW_SYSTEM_ROUTE);
-    register(&mut registry, "REBOOT", REBOOT_ROUTE);
-    register(&mut registry, "SHUTDOWN", SHUTDOWN_ROUTE);
-    register(&mut registry, "MONITOR", MONITOR_ROUTE);
-    register(&mut registry, "SHOW-PROCESSES", SHOW_PROCESSES_ROUTE);
-    register(&mut registry, "TOP-CPU", TOP_CPU_ROUTE);
-    register(&mut registry, "SHOW-MEMORY", SHOW_MEMORY_ROUTE);
-    register(&mut registry, "SHOW-DSM", SHOW_DSM_ROUTE);
-    register(&mut registry, "UPTIME", UPTIME_ROUTE);
-    register_control_commands(&mut registry);
-    syn_shell::cluster::register_cluster_commands_without_help(&mut registry)
+    register(registry, "SHOW-SYSTEM", SHOW_SYSTEM_ROUTE);
+    register(registry, "REBOOT", REBOOT_ROUTE);
+    register(registry, "SHUTDOWN", SHUTDOWN_ROUTE);
+    register(registry, "MONITOR", MONITOR_ROUTE);
+    register(registry, "SHOW-PROCESSES", SHOW_PROCESSES_ROUTE);
+    register(registry, "TOP-CPU", TOP_CPU_ROUTE);
+    register(registry, "SHOW-MEMORY", SHOW_MEMORY_ROUTE);
+    register(registry, "SHOW-DSM", SHOW_DSM_ROUTE);
+    register(registry, "UPTIME", UPTIME_ROUTE);
+    register_control_commands(registry);
+    syn_shell::cluster::register_cluster_commands_without_help(registry)
         .expect("kernel cluster command registry has capacity");
-    syn_shell::filesystem::register_filesystem_commands(&mut registry)
+    syn_shell::filesystem::register_filesystem_commands(registry)
         .expect("kernel filesystem command registry has capacity");
-    syn_shell::firewall::register_firewall_commands(&mut registry)
+    syn_shell::firewall::register_firewall_commands(registry)
         .expect("kernel firewall command registry has capacity");
-    syn_shell::network::register_network_commands(&mut registry)
+    syn_shell::network::register_network_commands(registry)
         .expect("kernel network command registry has capacity");
 
     let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
-    let mut interpreter = Interpreter::new();
-    let mut executor =
-        KernelExecutor::new(boot_info, scheduler, dlm, node_fences, scheduler_clock, acpi.is_some());
+    // Safety: executor is initialized once before the shell loop and not shared.
+    let executor = unsafe {
+        let slot = &mut *core::ptr::addr_of_mut!(SHELL_EXECUTOR);
+        slot.write(KernelExecutor::new(
+            boot_info,
+            scheduler,
+            dlm,
+            node_fences,
+            scheduler_clock,
+            acpi.is_some(),
+        ));
+        slot.assume_init_mut()
+    };
     let mut keyboard = crate::keyboard::Keyboard::new();
     let mut usb_keyboard = crate::usb_keyboard::UsbKeyboard::new();
     let mut input = VtInput::new();
@@ -157,8 +185,8 @@ pub fn run(
             Ok(EditorAction::Complete) => {
                 if let Err(error) = complete_line(
                     &mut editor,
-                    &registry,
-                    &mut executor,
+                    registry,
+                    executor,
                     &mut line_render,
                 ) {
                     crate::println!();
@@ -174,9 +202,9 @@ pub fn run(
                 if !line.as_str().trim().is_empty() {
                     execute_line(
                         line.as_str(),
-                        &registry,
-                        &mut interpreter,
-                        &mut executor,
+                        registry,
+                        interpreter,
+                        executor,
                         &mut keyboard,
                         &mut usb_keyboard,
                         acpi.as_ref(),
@@ -479,8 +507,8 @@ fn is_line_only_edit_key<const CAPACITY: usize>(
 #[cfg(test)]
 mod input_tests {
     use super::{
-        expand_command, register, Key, ShellLineRender, VtInput, COMMAND_CAPACITY,
-        HISTORY_CAPACITY,
+        expand_command, register, register_control_commands, Key, ShellLineRender, VtInput,
+        COMMAND_CAPACITY, HISTORY_CAPACITY,
     };
     use syn_shell::{editor::LineEditor, parser::CommandRegistry};
 
@@ -535,6 +563,85 @@ mod input_tests {
             syn_shell::network::SHOW_INTERFACES_ROUTE
         );
     }
+
+
+
+    #[test]
+    fn full_registry_completes_show_int() {
+        let registry = full_registry();
+        let suggestions = registry.suggestions("show int").expect("suggestions");
+        assert!(suggestions.commands().any(|n| n.as_str() == "SHOW-INTERFACES"));
+        let suggestions = registry.suggestions("show inter").expect("suggestions");
+        assert!(suggestions.commands().any(|n| n.as_str() == "SHOW-INTERFACES"));
+        assert_eq!(
+            registry.parse("show interfaces").unwrap().stage(0).unwrap().route.raw(),
+            syn_shell::network::SHOW_INTERFACES_ROUTE
+        );
+    }
+
+    fn full_registry() -> CommandRegistry<COMMAND_CAPACITY> {
+        let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
+        let help_target = synos_system_model::command::ArgumentSpec::new(
+            "COMMAND",
+            synos_system_model::command::ArgumentKind::Text,
+            false,
+            true,
+        )
+        .expect("help arg");
+        registry
+            .register(
+                synos_system_model::command::CommandSpec::new("HELP", &[help_target])
+                    .expect("help"),
+                syn_shell::parser::RouteId::new(1).expect("route"),
+            )
+            .expect("help register");
+        register(&mut registry, "SHOW-SYSTEM", 2);
+        register(&mut registry, "REBOOT", 3);
+        register(&mut registry, "SHUTDOWN", 4);
+        register(&mut registry, "MONITOR", 5);
+        register(&mut registry, "SHOW-PROCESSES", 6);
+        register(&mut registry, "TOP-CPU", 7);
+        register(&mut registry, "SHOW-MEMORY", 8);
+        register(&mut registry, "SHOW-DSM", 9);
+        register(&mut registry, "UPTIME", 10);
+        register_control_commands(&mut registry);
+        syn_shell::cluster::register_cluster_commands_without_help(&mut registry)
+            .expect("cluster");
+        syn_shell::filesystem::register_filesystem_commands(&mut registry)
+            .expect("filesystem");
+        syn_shell::firewall::register_firewall_commands(&mut registry)
+            .expect("firewall");
+        syn_shell::network::register_network_commands(&mut registry)
+            .expect("network");
+        registry
+    }
+
+    #[test]
+    fn expand_command_accepts_show_int_prefix() {
+        let registry = full_registry();
+        let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
+        editor.replace_line("show int").unwrap();
+        let mut rendered = ShellLineRender::new();
+        expand_command(&mut editor, &registry, &mut rendered)
+            .unwrap_or_else(|error| panic!("expand failed: {error:?}"));
+        assert_eq!(editor.line(), "SHOW INTERFACES");
+    }
+
+    #[test]
+    fn full_registry_parses_show_interfaces() {
+        let registry = full_registry();
+        let program = registry
+            .parse("SHOW INTERFACES")
+            .unwrap_or_else(|error| panic!("parse failed: {error:?}"));
+        assert_eq!(
+            program.stage(0).unwrap().route.raw(),
+            syn_shell::network::SHOW_INTERFACES_ROUTE
+        );
+        let prefix = registry.suggestions("show int").expect("suggestions");
+        assert!(prefix.commands().any(|name| name.as_str() == "SHOW-INTERFACES"));
+    }
+
+
 }
 
 fn report_editor_error(status: Status) {
@@ -779,7 +886,9 @@ fn complete_line(
         return Ok(())
     }
 
-    let suggestions = registry.suggestions(editor.line())?;
+    let Ok(suggestions) = registry.suggestions(editor.line()) else {
+        return Ok(())
+    };
     if suggestions.commands().count() > 1 {
         crate::println!();
         for command in suggestions.commands() {
@@ -799,7 +908,10 @@ fn complete_file(
     line_render: &mut ShellLineRender,
 ) -> Result<bool, Error> {
     let line = editor.line();
-    let Some(command) = registry.unique_suggestion(line)? else {
+    if line.trim().is_empty() {
+        return Ok(false)
+    }
+    let Some(command) = registry.unique_suggestion(line).unwrap_or(None) else {
         return Ok(false)
     };
     if !supports_file_completion(command.as_str()) {
@@ -898,13 +1010,18 @@ fn expand_command(
     line_render: &mut ShellLineRender,
 ) -> Result<bool, Error> {
     let line = editor.line();
-    let Some(command) = registry.unique_suggestion(line)? else {
+    if line.trim().is_empty() {
+        return Ok(false)
+    }
+    let Some(command) = registry.unique_suggestion(line).unwrap_or(None) else {
         return Ok(false)
     };
     let Some((start, end)) = command_span(line) else {
         return Ok(false)
     };
-    let first = word_span(line, 0).ok_or(Error::InvalidSyntax)?;
+    let Some(first) = word_span(line, 0) else {
+        return Ok(false)
+    };
     let is_help = line[first.0..first.1].eq_ignore_ascii_case("HELP");
     if is_help && word_span(line, first.1).is_none() {
         return Ok(false)
@@ -1034,8 +1151,19 @@ fn print_command_suggestion(command: &str) {
 }
 
 fn print_display_command(command: &str) {
-    for byte in command.bytes() {
-        crate::print!("{}", if byte == b'-' { ' ' } else { byte as char });
+    // Size-optimized LTO miscompiles per-character `print!("{}", char)` into a
+    // repeated first character. Transform the token once and print the &str.
+    let mut bytes = [0u8; 64];
+    let mut len = 0usize;
+    for byte in command.as_bytes() {
+        if len == bytes.len() {
+            break;
+        }
+        bytes[len] = if *byte == b'-' { b' ' } else { *byte };
+        len += 1;
+    }
+    if let Ok(text) = core::str::from_utf8(&bytes[..len]) {
+        crate::print!("{}", text);
     }
 }
 
@@ -2704,7 +2832,14 @@ impl KernelExecutor {
         crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
         crate::println!("CATEGORY");
         for category in HELP_CATEGORIES {
-            crate::print!("  {:<12} HELP ", category);
+            crate::print!("  ");
+            crate::print!("{}", category);
+            let mut pad = category.len();
+            while pad < 12 {
+                crate::print!(" ");
+                pad += 1;
+            }
+            crate::print!(" HELP ");
             print_display_command(category);
             crate::println!();
         }
