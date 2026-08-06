@@ -1,7 +1,9 @@
 use synos_netd::{
-    dhcp_client_firewall_rules, install_dhcp_client_rules, CapabilityRight, DhcpClient,
-    DhcpClientState, DhcpError, DhcpLease, DhcpLeaseRuntime, DhcpServerFixture, DhcpTransport,
-    FirewallPolicy, MAX_DHCP_PACKET, StaticSnapshot, BACKOFF_MS, MAX_DISCOVER_ATTEMPTS,
+    dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, CapabilityRight,
+    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DhcpClient, DhcpClientState, DhcpError, DhcpLease,
+    DhcpLeaseRuntime, DhcpServerFixture, DhcpTransport, Direction, Firewall, FirewallDecision,
+    FirewallPolicy, PacketContext, Protocol, MAX_DHCP_PACKET, StaticSnapshot, BACKOFF_MS,
+    MAX_DISCOVER_ATTEMPTS,
 };
 
 const MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
@@ -348,4 +350,235 @@ fn nak_rolls_back_to_static_and_firewall_rules_are_capability_gated() {
     assert_eq!(rules[0].capability, Some(CapabilityRight::Raw));
     assert_eq!(rules[1].capability, Some(CapabilityRight::Ingress));
     assert_eq!(policy.rules().iter().flatten().count(), 2);
+}
+
+fn set_option_u32(packet: &mut [u8], code: u8, value: u32) {
+    let mut index = 240;
+    while index + 2 <= packet.len() {
+        let option = packet[index];
+        if option == 255 {
+            break;
+        }
+        if option == 0 {
+            index += 1;
+            continue;
+        }
+        let length = packet[index + 1] as usize;
+        if option == code && length == 4 && index + 2 + length <= packet.len() {
+            packet[index + 2..index + 6].copy_from_slice(&value.to_be_bytes());
+            return;
+        }
+        index += 2 + length;
+    }
+    panic!("option {code} not found");
+}
+
+fn remove_option(packet: &mut [u8], code: u8) {
+    let mut index = 240;
+    while index + 2 <= packet.len() {
+        let option = packet[index];
+        if option == 255 {
+            break;
+        }
+        if option == 0 {
+            index += 1;
+            continue;
+        }
+        let length = packet[index + 1] as usize;
+        let end = index + 2 + length;
+        if option == code && end <= packet.len() {
+            packet.copy_within(end.., index);
+            return;
+        }
+        index = end;
+    }
+}
+
+fn dhcp_udp_frame(payload: &[u8], source_port: u16, destination_port: u16) -> [u8; 640] {
+    let total = 14 + 20 + 8 + payload.len();
+    let mut frame = [0; 640];
+    frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+    frame[14] = 0x45;
+    frame[16..18].copy_from_slice(&(total as u16 - 14).to_be_bytes());
+    frame[23] = 17;
+    frame[26..30].copy_from_slice(&[10, 0, 0, 1]);
+    frame[30..34].copy_from_slice(&[255, 255, 255, 255]);
+    frame[34..36].copy_from_slice(&source_port.to_be_bytes());
+    frame[36..38].copy_from_slice(&destination_port.to_be_bytes());
+    frame[38..40].copy_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
+    frame[42..42 + payload.len()].copy_from_slice(payload);
+    frame
+}
+
+#[test]
+fn rejects_wrong_mac_invalid_lease_options_and_bad_magic() {
+    let mut client = authorized_client();
+    let mut transport = CaptureTransport::new();
+    let mut runtime = RecordingRuntime::new();
+    let server = fixture();
+    client.start(0).unwrap();
+    client.poll(0, &mut transport, &mut runtime).unwrap();
+
+    let mut wrong_mac = server.respond(transport.last()).unwrap();
+    wrong_mac[28] ^= 0xff;
+    assert_eq!(
+        client.handle_packet(&wrong_mac, 1, &mut runtime),
+        Err(DhcpError::InvalidPacket)
+    );
+
+    let mut zero_lease = server.respond(transport.last()).unwrap();
+    set_option_u32(&mut zero_lease, 51, 0);
+    assert_eq!(
+        client.handle_packet(&zero_lease, 1, &mut runtime),
+        Err(DhcpError::InvalidLease)
+    );
+
+    let mut no_server = server.respond(transport.last()).unwrap();
+    remove_option(&mut no_server, 54);
+    assert_eq!(
+        client.handle_packet(&no_server, 1, &mut runtime),
+        Err(DhcpError::InvalidLease)
+    );
+
+    let mut bad_timers = server.respond(transport.last()).unwrap();
+    set_option_u32(&mut bad_timers, 51, 100);
+    set_option_u32(&mut bad_timers, 58, 100);
+    set_option_u32(&mut bad_timers, 59, 100);
+    assert_eq!(
+        client.handle_packet(&bad_timers, 1, &mut runtime),
+        Err(DhcpError::InvalidLease)
+    );
+
+    let mut bad_magic = server.respond(transport.last()).unwrap();
+    bad_magic[236] = 0;
+    assert_eq!(
+        client.handle_packet(&bad_magic, 1, &mut runtime),
+        Err(DhcpError::InvalidPacket)
+    );
+}
+
+#[test]
+fn validates_gateway_dns_and_formats_ipv4() {
+    let mut client = authorized_client();
+    let mut transport = CaptureTransport::new();
+    let mut runtime = RecordingRuntime::new();
+    let mut server = fixture();
+    server.gateway = [10, 0, 0, 254];
+    server.dns = [1, 1, 1, 1];
+    bind_lease(&mut client, &mut transport, &mut runtime, &server, 0);
+    let lease = client.lease().unwrap();
+    assert_eq!(lease.gateway, Some([10, 0, 0, 254]));
+    assert_eq!(lease.dns[0], [1, 1, 1, 1]);
+    assert_eq!(lease.dns_count, 1);
+
+    let mut buffer = [0u8; 16];
+    let length = format_ipv4([10, 0, 0, 50], &mut buffer).unwrap();
+    assert_eq!(&buffer[..length], b"10.0.0.50");
+}
+
+#[test]
+fn client_rejects_invalid_interface_and_zero_mac() {
+    assert_eq!(
+        DhcpClient::new("", MAC, 1).err(),
+        Some(DhcpError::InvalidInterface)
+    );
+    assert_eq!(
+        DhcpClient::new("eth0", [0; 6], 1).err(),
+        Some(DhcpError::InvalidInterface)
+    );
+    let long = "a".repeat(64);
+    assert_eq!(
+        DhcpClient::new(&long, MAC, 1).err(),
+        Some(DhcpError::InvalidInterface)
+    );
+}
+
+#[test]
+fn release_without_lease_and_poll_without_link_are_safe() {
+    let mut client = authorized_client();
+    let mut transport = CaptureTransport::new();
+    let mut runtime = RecordingRuntime::new();
+    assert_eq!(
+        client.release(0, &mut transport, &mut runtime),
+        Err(DhcpError::InvalidState)
+    );
+    client.set_link(false, 0);
+    assert_eq!(client.start(0), Err(DhcpError::InvalidState));
+    assert_eq!(client.poll(0, &mut transport, &mut runtime), Ok(()));
+}
+
+#[test]
+fn firewall_allows_capability_gated_dhcp_client_ports() {
+    let mut policy = FirewallPolicy::<8>::new();
+    policy.default_action = synos_netd::RuleAction::Drop;
+    install_dhcp_client_rules(&mut policy).unwrap();
+    let mut firewall = Firewall::<8, 4, 4>::new(policy);
+    let key = synos_netd::CapabilityKey::new([3; 32]);
+    firewall.set_capability_key(key);
+
+    let discover = [0u8; 8];
+    let egress = dhcp_udp_frame(&discover, DHCP_CLIENT_PORT, DHCP_SERVER_PORT);
+    let ingress = dhcp_udp_frame(&discover, DHCP_SERVER_PORT, DHCP_CLIENT_PORT);
+
+    let denied = PacketContext {
+        principal: 1,
+        direction: Direction::Egress,
+        now_ms: 1,
+        leased_workload: false,
+        capability: None,
+        signature: None,
+        signer: None,
+    };
+    assert_eq!(
+        firewall.inspect(&egress, denied),
+        FirewallDecision::AccessDenied
+    );
+
+    // inspect() validates capability ports against the packet destination port.
+    let raw = synos_netd::NetworkCapability::issue(
+        &key,
+        1,
+        CapabilityRight::Raw as u8,
+        synos_netd::PortRange::new(DHCP_SERVER_PORT, DHCP_SERVER_PORT).unwrap(),
+        synos_netd::Ipv4Cidr::ANY,
+        1_000,
+        1,
+    )
+    .unwrap();
+    let allowed_egress = PacketContext {
+        capability: Some(raw),
+        ..denied
+    };
+    assert_eq!(
+        firewall.inspect(&egress, allowed_egress),
+        FirewallDecision::Allow
+    );
+
+    let ingress_cap = synos_netd::NetworkCapability::issue(
+        &key,
+        1,
+        CapabilityRight::Ingress as u8,
+        synos_netd::PortRange::new(DHCP_CLIENT_PORT, DHCP_CLIENT_PORT).unwrap(),
+        synos_netd::Ipv4Cidr::ANY,
+        1_000,
+        2,
+    )
+    .unwrap();
+    let allowed_ingress = PacketContext {
+        principal: 1,
+        direction: Direction::Ingress,
+        now_ms: 1,
+        leased_workload: false,
+        capability: Some(ingress_cap),
+        signature: None,
+        signer: None,
+    };
+    assert_eq!(
+        firewall.inspect(&ingress, allowed_ingress),
+        FirewallDecision::Allow
+    );
+    assert_eq!(
+        synos_netd::PacketView::parse(&egress).unwrap().protocol,
+        Protocol::Udp
+    );
 }

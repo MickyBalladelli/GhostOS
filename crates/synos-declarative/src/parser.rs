@@ -179,7 +179,7 @@ impl AddressMode {
     }
 
     pub fn parse(value: &str) -> Result<Self, ParseError> {
-        match value {
+        match quoted_value(value) {
             "static" => Ok(Self::Static),
             "dhcp" => Ok(Self::Dhcp),
             _ => Err(ParseError::InvalidValue),
