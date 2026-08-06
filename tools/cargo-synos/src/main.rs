@@ -4,13 +4,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use synos_compiler::{
-    CompileRequest, Compiler, HostToolchain, Target, ToolchainStage, verify_bundle,
+    CompileRequest, Compiler, HostToolchain, Target, ToolchainManager, ToolchainStage,
+    verify_bundle,
 };
 use synos_pkg::{SigningKey, bundle_size, encode_bundle};
 use synos_system_model::ContentId;
 
 const USAGE: &str = "\
 cargo synos build [--target x86_64|aarch64] [--release] [cargo options]
+cargo synos check [--target x86_64|aarch64] [--release] [cargo options]
+cargo synos test [--target x86_64|aarch64] [--release] [cargo options]
+cargo synos doc [--target x86_64|aarch64] [--release] [cargo options]
 cargo synos bundle --artifact PATH --key PATH --output PATH
     [--entry-offset BYTES] [--dependency SHA256]...
 cargo synos package --bin NAME --key PATH --output PATH
@@ -26,6 +30,10 @@ cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH]
 cargo synos toolchain package --key PATH --output PATH
     [--stage 0|1|2] [--target x86_64|aarch64] [--root PATH] [--rust-version TEXT]
 cargo synos toolchain verify --bundle PATH --key PATH
+cargo synos toolchain install|update --bundle PATH --key PATH --root PATH
+    [--stage 0|1|2] [--target x86_64|aarch64]
+cargo synos toolchain select --root PATH --stage 0|1|2
+cargo synos toolchain rollback --root PATH
 cargo synos run --manifest-path PATH --bin NAME [--release] [-- ARGUMENT]...
 
 Keys may contain 32 raw bytes or 64 hexadecimal characters.";
@@ -53,6 +61,9 @@ fn run() -> Result<(), String> {
     };
     match command {
         "build" => build(&arguments[1..]),
+        "check" => cargo_operation("check", &arguments[1..]),
+        "test" => cargo_operation("test", &arguments[1..]),
+        "doc" => cargo_operation("doc", &arguments[1..]),
         "bundle" => bundle(&arguments[1..]),
         "package" => package(&arguments[1..]),
         "compile" => compile(&arguments[1..]),
@@ -75,6 +86,10 @@ fn toolchain(arguments: &[String]) -> Result<(), String> {
     match operation {
         "package" => package_toolchain(&arguments[1..]),
         "verify" => verify_toolchain(&arguments[1..]),
+        "install" => manage_toolchain(&arguments[1..], false),
+        "update" => manage_toolchain(&arguments[1..], true),
+        "select" => select_toolchain(&arguments[1..]),
+        "rollback" => rollback_toolchain(&arguments[1..]),
         other => Err(format!("unknown toolchain operation `{other}`")),
     }
 }
@@ -125,6 +140,45 @@ fn verify_toolchain(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn manage_toolchain(arguments: &[String], update: bool) -> Result<(), String> {
+    let options = ToolchainManageOptions::parse(arguments, true)?;
+    let key = read_key(&options.key.ok_or_else(|| "--key is required".to_string())?)?;
+    let manager = ToolchainManager::new(options.root).map_err(|error| error.to_string())?;
+    let manifest = manager
+        .install(
+            &options.bundle.ok_or_else(|| "--bundle is required".to_string())?,
+            key,
+            options.stage,
+            options.target,
+        )
+        .map_err(|error| error.to_string())?;
+    println!(
+        "{} toolchain {:?} for {:?} installed",
+        if update { "updated" } else { "installed" },
+        manifest.stage,
+        manifest.target
+    );
+    Ok(())
+}
+
+fn select_toolchain(arguments: &[String]) -> Result<(), String> {
+    let options = ToolchainManageOptions::parse(arguments, false)?;
+    let manager = ToolchainManager::new(options.root).map_err(|error| error.to_string())?;
+    manager
+        .select(options.stage)
+        .map_err(|error| error.to_string())?;
+    println!("selected toolchain stage-{}", options.stage as u8);
+    Ok(())
+}
+
+fn rollback_toolchain(arguments: &[String]) -> Result<(), String> {
+    let options = ToolchainManageOptions::parse(arguments, false)?;
+    let manager = ToolchainManager::new(options.root).map_err(|error| error.to_string())?;
+    let stage = manager.rollback().map_err(|error| error.to_string())?;
+    println!("rolled back toolchain stage-{}", stage as u8);
+    Ok(())
+}
+
 fn compile(arguments: &[String]) -> Result<(), String> {
     let options = CompileOptions::parse(arguments)?;
     let compiler = Compiler::new().map_err(|error| error.to_string())?;
@@ -151,8 +205,14 @@ fn run_program(arguments: &[String]) -> Result<(), String> {
         .run_host(&options.manifest_path, &options.binary, options.release, &options.arguments)
         .map_err(|error| error.to_string())?;
     if status.success() {
+        if options.json {
+            println!("{{\"command\":\"run\",\"success\":true}}");
+        }
         Ok(())
     } else {
+        if options.json {
+            println!("{{\"command\":\"run\",\"success\":false}}");
+        }
         Err(format!("program exited with {status}"))
     }
 }
@@ -194,8 +254,62 @@ fn reproduce(arguments: &[String]) -> Result<(), String> {
 }
 
 fn build(arguments: &[String]) -> Result<(), String> {
-    let expanded = expand_target(arguments)?;
-    run_cargo_build(&expanded)
+    cargo_operation("build", arguments)
+}
+
+fn cargo_operation(operation: &str, arguments: &[String]) -> Result<(), String> {
+    let options = CargoOperationOptions::parse(arguments)?;
+    let target_file = target_path(&options.target)?;
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let mut command = Command::new(cargo);
+    command
+        .env("RUSTC_BOOTSTRAP", "1")
+        .args(["-Z", "build-std=core,alloc", "-Z", "json-target-spec"])
+        .arg(operation)
+        .arg("--target")
+        .arg(target_file);
+    if let Some(manifest) = options.manifest_path {
+        command.arg("--manifest-path").arg(manifest);
+    }
+    if let Some(package) = options.package {
+        command.arg("--package").arg(package);
+    }
+    if let Some(binary) = options.binary {
+        command.arg("--bin").arg(binary);
+    }
+    if options.release {
+        command.arg("--release");
+    }
+    if options.locked {
+        command.arg("--locked");
+    }
+    if options.offline {
+        command.arg("--offline");
+    }
+    if let Some(target_directory) = options.target_directory {
+        command.arg("--target-dir").arg(target_directory);
+    }
+    if options.json {
+        command.arg("--message-format=json");
+    }
+    command.args(options.extra);
+    let status = command
+        .status()
+        .map_err(|error| format!("could not start Cargo: {error}"))?;
+    if options.json {
+        println!(
+            "{{\"command\":\"{operation}\",\"success\":{},\"target\":\"{}\"}}",
+            status.success(),
+            options.target
+        );
+    } else if status.success() {
+        println!("rust {operation}: ok");
+    }
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("rust {operation} failed with {status}"))
+    }
 }
 
 fn bundle(arguments: &[String]) -> Result<(), String> {
@@ -256,22 +370,6 @@ fn package(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn run_cargo_build(arguments: &[String]) -> Result<(), String> {
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let status = Command::new(cargo)
-        .env("RUSTC_BOOTSTRAP", "1")
-        .args(["-Z", "build-std=core,alloc", "-Z", "json-target-spec"])
-        .arg("build")
-        .args(arguments)
-        .status()
-        .map_err(|error| format!("could not start Cargo: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("cross-build failed with {status}"))
-    }
-}
-
 fn create_bundle(options: &BundleOptions) -> Result<(), String> {
     let payload = fs::read(&options.artifact)
         .map_err(|error| format!("could not read {}: {error}", options.artifact.display()))?;
@@ -296,31 +394,6 @@ fn create_bundle(options: &BundleOptions) -> Result<(), String> {
         info.payload_length
     );
     Ok(())
-}
-
-fn expand_target(arguments: &[String]) -> Result<Vec<String>, String> {
-    let mut expanded = Vec::with_capacity(arguments.len() + 1);
-    let mut index = 0;
-    let mut found_target = false;
-    while index < arguments.len() {
-        if arguments[index] == "--target" {
-            let target = arguments
-                .get(index + 1)
-                .ok_or_else(|| "--target needs a value".to_string())?;
-            expanded.push("--target".into());
-            expanded.push(target_path(target)?.to_string_lossy().into_owned());
-            found_target = true;
-            index += 2;
-        } else {
-            expanded.push(arguments[index].clone());
-            index += 1;
-        }
-    }
-    if !found_target {
-        expanded.insert(0, target_path("x86_64")?.to_string_lossy().into_owned());
-        expanded.insert(0, "--target".into());
-    }
-    Ok(expanded)
 }
 
 fn target_path(target: &str) -> Result<PathBuf, String> {
@@ -398,6 +471,77 @@ struct BundleOptions {
     dependencies: Vec<ContentId>,
 }
 
+struct CargoOperationOptions {
+    target: String,
+    release: bool,
+    locked: bool,
+    offline: bool,
+    json: bool,
+    manifest_path: Option<PathBuf>,
+    package: Option<String>,
+    binary: Option<String>,
+    target_directory: Option<PathBuf>,
+    extra: Vec<String>,
+}
+
+impl CargoOperationOptions {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut options = Self {
+            target: "x86_64".into(),
+            release: false,
+            locked: false,
+            offline: false,
+            json: false,
+            manifest_path: None,
+            package: None,
+            binary: None,
+            target_directory: None,
+            extra: Vec::new(),
+        };
+        let mut index = 0;
+        while index < arguments.len() {
+            match arguments[index].as_str() {
+                "--release" => {
+                    options.release = true;
+                    index += 1;
+                }
+                "--locked" => {
+                    options.locked = true;
+                    index += 1;
+                }
+                "--offline" => {
+                    options.offline = true;
+                    index += 1;
+                }
+                "--json" => {
+                    options.json = true;
+                    index += 1;
+                }
+                "--target" => {
+                    options.target = required_value(arguments, &mut index)?.into();
+                }
+                "--manifest-path" => {
+                    options.manifest_path = Some(PathBuf::from(required_value(arguments, &mut index)?));
+                }
+                "--package" => {
+                    options.package = Some(required_value(arguments, &mut index)?.into());
+                }
+                "--bin" => {
+                    options.binary = Some(required_value(arguments, &mut index)?.into());
+                }
+                "--target-dir" => {
+                    options.target_directory = Some(PathBuf::from(required_value(arguments, &mut index)?));
+                }
+                other => {
+                    options.extra.push(other.into());
+                    index += 1;
+                }
+            }
+        }
+        Ok(options)
+    }
+}
+
 struct CompileOptions {
     manifest_path: PathBuf,
     binary: String,
@@ -463,6 +607,7 @@ struct RunOptions {
     binary: String,
     release: bool,
     arguments: Vec<String>,
+    json: bool,
 }
 
 struct WorkspaceOptions {
@@ -489,6 +634,14 @@ struct ToolchainPackageOptions {
 struct ToolchainVerifyOptions {
     bundle: PathBuf,
     key: PathBuf,
+}
+
+struct ToolchainManageOptions {
+    root: PathBuf,
+    stage: ToolchainStage,
+    target: Option<Target>,
+    bundle: Option<PathBuf>,
+    key: Option<PathBuf>,
 }
 
 impl WorkspaceOptions {
@@ -609,12 +762,45 @@ impl ToolchainVerifyOptions {
     }
 }
 
+impl ToolchainManageOptions {
+    fn parse(arguments: &[String], require_bundle: bool) -> Result<Self, String> {
+        let mut root = None;
+        let mut stage = ToolchainStage::Stage0;
+        let mut target = None;
+        let mut bundle = None;
+        let mut key = None;
+        let mut index = 0;
+        while index < arguments.len() {
+            let value = required_value(arguments, &mut index)?;
+            match arguments[index - 2].as_str() {
+                "--root" => root = Some(PathBuf::from(value)),
+                "--stage" => stage = ToolchainStage::parse(value).map_err(|error| error.to_string())?,
+                "--target" => target = Some(Target::parse(value).map_err(|error| error.to_string())?),
+                "--bundle" => bundle = Some(PathBuf::from(value)),
+                "--key" => key = Some(PathBuf::from(value)),
+                other => return Err(format!("unknown toolchain option `{other}`")),
+            }
+        }
+        if require_bundle && bundle.is_none() {
+            return Err("--bundle is required".into());
+        }
+        Ok(Self {
+            root: root.ok_or_else(|| "--root is required".to_string())?,
+            stage,
+            target,
+            bundle,
+            key,
+        })
+    }
+}
+
 impl RunOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut manifest_path = None;
         let mut binary = None;
         let mut release = false;
         let mut program_arguments = Vec::new();
+        let mut json = false;
         let mut index = 0;
         while index < arguments.len() {
             match arguments[index].as_str() {
@@ -624,6 +810,10 @@ impl RunOptions {
                 "--bin" => binary = Some(required_value(arguments, &mut index)?.to_string()),
                 "--release" => {
                     release = true;
+                    index += 1;
+                }
+                "--json" => {
+                    json = true;
                     index += 1;
                 }
                 "--" => {
@@ -638,6 +828,7 @@ impl RunOptions {
             binary: binary.ok_or_else(|| "--bin is required".to_string())?,
             release,
             arguments: program_arguments,
+            json,
         })
     }
 }

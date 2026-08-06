@@ -68,6 +68,94 @@ pub struct ToolchainPackageOutput {
     pub manifest: ToolchainManifest,
 }
 
+pub struct ToolchainManager {
+    root: PathBuf,
+}
+
+impl ToolchainManager {
+    pub fn new(root: PathBuf) -> Result<Self, ToolchainError> {
+        if root.as_os_str().is_empty() || root == Path::new("/") {
+            return Err(ToolchainError::PermissionDenied(root));
+        }
+        Ok(Self { root })
+    }
+
+    pub fn install(
+        &self,
+        bundle: &Path,
+        key: SigningKey,
+        stage: ToolchainStage,
+        target: Option<Target>,
+    ) -> Result<ToolchainManifest, ToolchainError> {
+        let bytes = fs::read(bundle).map_err(|error| ToolchainError::Io {
+            path: bundle.to_path_buf(),
+            error: error.to_string(),
+        })?;
+        let manifest = verify_bundle(&bytes, key)?;
+        if manifest.stage != stage || target.is_some_and(|target| target != manifest.target) {
+            return Err(ToolchainError::InvalidTarget);
+        }
+        fs::create_dir_all(&self.root).map_err(|error| ToolchainError::Io {
+            path: self.root.clone(),
+            error: error.to_string(),
+        })?;
+        let current = self.stage_path(stage);
+        let previous = self.root.join("previous.synpkg");
+        if current.is_file() {
+            fs::copy(&current, &previous).map_err(|error| ToolchainError::Io {
+                path: previous.clone(),
+                error: error.to_string(),
+            })?;
+        }
+        write_manager_file(&current, &bytes)?;
+        write_manager_file(&self.root.join("active-stage"), stage_name(stage).as_bytes())?;
+        Ok(manifest)
+    }
+
+    pub fn select(&self, stage: ToolchainStage) -> Result<(), ToolchainError> {
+        let path = self.stage_path(stage);
+        if !path.is_file() {
+            return Err(ToolchainError::ToolchainNotInstalled(stage));
+        }
+        write_manager_file(&self.root.join("active-stage"), stage_name(stage).as_bytes())
+    }
+
+    pub fn rollback(&self) -> Result<ToolchainStage, ToolchainError> {
+        let active = fs::read_to_string(self.root.join("active-stage"))
+            .map_err(|_| ToolchainError::NoPreviousToolchain)?;
+        let stage = ToolchainStage::parse(active.trim())?;
+        let previous = self.root.join("previous.synpkg");
+        if !previous.is_file() {
+            return Err(ToolchainError::NoPreviousToolchain);
+        }
+        let current = self.stage_path(stage);
+        let rollback = self.root.join("rollback.synpkg");
+        if current.is_file() {
+            fs::rename(&current, &rollback).map_err(|error| ToolchainError::Io {
+                path: rollback.clone(),
+                error: error.to_string(),
+            })?;
+        }
+        fs::rename(&previous, &current).map_err(|error| ToolchainError::Io {
+            path: current.clone(),
+            error: error.to_string(),
+        })?;
+        if rollback.is_file() {
+            fs::rename(&rollback, &self.root.join("previous.synpkg")).map_err(|error| {
+                ToolchainError::Io {
+                    path: self.root.join("previous.synpkg"),
+                    error: error.to_string(),
+                }
+            })?;
+        }
+        Ok(stage)
+    }
+
+    fn stage_path(&self, stage: ToolchainStage) -> PathBuf {
+        self.root.join(format!("{}.synpkg", stage_name(stage)))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolchainError {
     InvalidStage,
@@ -82,6 +170,9 @@ pub enum ToolchainError {
     ArchiveTooLarge,
     Package(PackageError),
     PackageWrite { path: PathBuf, error: String },
+    PermissionDenied(PathBuf),
+    ToolchainNotInstalled(ToolchainStage),
+    NoPreviousToolchain,
 }
 
 impl std::fmt::Display for ToolchainError {
@@ -105,6 +196,13 @@ impl std::fmt::Display for ToolchainError {
             Self::PackageWrite { path, error } => {
                 write!(formatter, "could not write {}: {error}", path.display())
             }
+            Self::PermissionDenied(path) => {
+                write!(formatter, "toolchain root is not an allowed capability path: {}", path.display())
+            }
+            Self::ToolchainNotInstalled(stage) => {
+                write!(formatter, "toolchain {} is not installed", stage_name(*stage))
+            }
+            Self::NoPreviousToolchain => write!(formatter, "no previous toolchain is available"),
         }
     }
 }
@@ -455,6 +553,26 @@ fn valid_archive_path(path: &str) -> bool {
         && !path.starts_with('/')
         && !path.contains('\\')
         && !path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+fn stage_name(stage: ToolchainStage) -> &'static str {
+    match stage {
+        ToolchainStage::Stage0 => "stage-0",
+        ToolchainStage::Stage1 => "stage-1",
+        ToolchainStage::Stage2 => "stage-2",
+    }
+}
+
+fn write_manager_file(path: &Path, bytes: &[u8]) -> Result<(), ToolchainError> {
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, bytes).map_err(|error| ToolchainError::Io {
+        path: temporary.clone(),
+        error: error.to_string(),
+    })?;
+    fs::rename(&temporary, path).map_err(|error| ToolchainError::Io {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })
 }
 
 fn find_executable(name: &str, configured: Option<std::ffi::OsString>) -> Result<PathBuf, ToolchainError> {

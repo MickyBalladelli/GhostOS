@@ -164,6 +164,54 @@ The runtime publishes this output with
 signature, target, entry point, dependency closure, and resource limits before
 the normal ELF loader receives the image.
 
+## User workflow
+
+The host command mirrors the SynOS shell vocabulary:
+
+```sh
+cargo synos check --manifest-path service/Cargo.toml --bin service --locked --offline
+cargo synos build --manifest-path service/Cargo.toml --bin service --release --locked --offline
+cargo synos run --manifest-path service/Cargo.toml --bin service
+cargo synos test --manifest-path service/Cargo.toml --locked --offline
+cargo synos doc --manifest-path service/Cargo.toml --offline
+```
+
+Add `--json` to `check`, `build`, `test`, `doc`, or `run` for Cargo JSON
+diagnostics and a final machine-readable command record. Without it, Cargo's
+normal diagnostics stay visible to a human.
+
+Inside the shell, `syn-shell::rust::register_rust_commands` exposes the same
+operations as `RUST CHECK`, `RUST BUILD`, `RUST RUN`, `RUST TEST`, and `RUST
+DOC`, plus `SHOW-RUST-JOBS` and `TOOLCHAIN INSTALL|SELECT|UPDATE|ROLLBACK`.
+The adapter takes a capability-bound `RustSource`; it does not grant the
+shell direct access to compiler files or processes.
+
+`CompilerService::snapshot` reports queued, running, completed, failed, and
+cancelled jobs; requested memory and CPU budgets; active artifacts; cache
+entries; cache hits; and cache misses. `CompilerService::jobs` provides the
+bounded per-job records for detailed inspection.
+
+Toolchain management requires an explicit capability root:
+
+```sh
+cargo synos toolchain install --bundle stage-2.synpkg --key compiler.key \
+  --root /system/toolchains --stage 2 --target x86_64
+cargo synos toolchain select --root /system/toolchains --stage 2
+cargo synos toolchain rollback --root /system/toolchains
+```
+
+The manager verifies the signed bundle before install, keeps the previous
+bundle for rollback, and refuses `/` as a toolchain root.
+
+Small service recipe from inside SynOS:
+
+```text
+CREATE-DIRECTORY /sources/hello
+RUST CHECK /MANIFEST=/sources/hello/Cargo.toml /BIN=hello /LOCKED /OFFLINE
+RUST BUILD /MANIFEST=/sources/hello/Cargo.toml /BIN=hello /RELEASE /LOCKED /OFFLINE
+RUST RUN /MANIFEST=/sources/hello/Cargo.toml /BIN=hello
+```
+
 ## Toolchain package
 
 The host bootstrap can package the complete Rust toolchain needed by the

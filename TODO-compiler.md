@@ -213,15 +213,15 @@ published only after a successful build.
 
 ## 7. Expose the workflow to users
 
-- [ ] Add shell commands for `RUST CHECK`, `RUST BUILD`, `RUST RUN`, `RUST TEST`,
+- [x] Add shell commands for `RUST CHECK`, `RUST BUILD`, `RUST RUN`, `RUST TEST`,
   and `RUST DOC`.
-- [ ] Add machine-readable output for scripts and interactive diagnostics for
+- [x] Add machine-readable output for scripts and interactive diagnostics for
   humans.
-- [ ] Show compiler-service jobs, resource use, cache hits, and failures in
+- [x] Show compiler-service jobs, resource use, cache hits, and failures in
   the process and service inspection tools.
-- [ ] Add permission-aware commands to install, select, update, and rollback a
+- [x] Add permission-aware commands to install, select, update, and rollback a
   Rust toolchain.
-- [ ] Document how to build a small Rust service entirely from inside SynOS.
+- [x] Document how to build a small Rust service entirely from inside SynOS.
 
 ## 8. Security and recovery
 

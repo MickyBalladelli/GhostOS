@@ -17,7 +17,7 @@ mod toolchain;
 
 pub use toolchain::{
     HostToolchain, ToolchainAsset, ToolchainAssetKind, ToolchainError, ToolchainManifest,
-    ToolchainPackageOutput, ToolchainStage, verify_bundle,
+    ToolchainManager, ToolchainPackageOutput, ToolchainStage, verify_bundle,
 };
 
 pub const SYNOS_TOOLCHAIN_ROOT: &str = "/system/toolchains/stage-2";

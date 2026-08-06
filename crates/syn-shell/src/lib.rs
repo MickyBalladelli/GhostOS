@@ -14,6 +14,7 @@ pub mod interpreter;
 pub mod jobs;
 pub mod parser;
 pub mod render;
+pub mod rust;
 pub mod storage;
 
 pub const MAX_LINE_BYTES: usize = 512;

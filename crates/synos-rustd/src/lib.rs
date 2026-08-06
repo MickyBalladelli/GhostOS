@@ -298,6 +298,22 @@ pub struct JobStatus {
     pub diagnostic: Option<Diagnostic>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompilerServiceSnapshot {
+    pub queued: u64,
+    pub running: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    pub requested_memory_bytes: u64,
+    pub requested_cpu_time_us: u64,
+    pub cache_entries: u64,
+    pub content_cache_entries: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub active_artifacts: u64,
+}
+
 #[derive(Clone, Copy)]
 struct Job {
     status: JobStatus,
@@ -400,6 +416,8 @@ pub struct CompilerService<const JOB_CAPACITY: usize = MAX_JOBS, const CACHE_CAP
     logs: [Option<CompilerLogRecord>; MAX_LOG_RECORDS],
     next_log_sequence: u32,
     toolchain_identity: ContentId,
+    cache_hits: u64,
+    cache_misses: u64,
 }
 
 impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
@@ -416,6 +434,8 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             logs: [None; MAX_LOG_RECORDS],
             next_log_sequence: 1,
             toolchain_identity: ContentId::from_bytes([0; 32]),
+            cache_hits: 0,
+            cache_misses: 0,
         }
     }
 
@@ -774,6 +794,43 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             .ok_or(Error::JobNotFound)
     }
 
+    pub fn jobs(&self) -> impl Iterator<Item = JobStatus> + '_ {
+        self.jobs.iter().flatten().map(|job| job.status)
+    }
+
+    pub fn snapshot(&self) -> CompilerServiceSnapshot {
+        let mut snapshot = CompilerServiceSnapshot {
+            queued: 0,
+            running: 0,
+            completed: 0,
+            failed: 0,
+            cancelled: 0,
+            requested_memory_bytes: 0,
+            requested_cpu_time_us: 0,
+            cache_entries: self.cache.iter().flatten().count() as u64,
+            content_cache_entries: self.content_cache.iter().flatten().count() as u64,
+            cache_hits: self.cache_hits,
+            cache_misses: self.cache_misses,
+            active_artifacts: self.artifacts.active().count() as u64,
+        };
+        for job in self.jobs.iter().flatten() {
+            match job.status.state {
+                JobState::Queued => snapshot.queued += 1,
+                JobState::Running => snapshot.running += 1,
+                JobState::Completed => snapshot.completed += 1,
+                JobState::Failed => snapshot.failed += 1,
+                JobState::Cancelled => snapshot.cancelled += 1,
+            }
+            snapshot.requested_memory_bytes = snapshot
+                .requested_memory_bytes
+                .saturating_add(job.status.request.limits.memory_bytes);
+            snapshot.requested_cpu_time_us = snapshot
+                .requested_cpu_time_us
+                .saturating_add(job.status.request.limits.cpu_time_us);
+        }
+        snapshot
+    }
+
     pub fn isolation(&self, id: JobId) -> Result<BuildIsolation, Error> {
         self.jobs
             .iter()
@@ -795,13 +852,13 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
     }
 
     pub fn cache_lookup(
-        &self,
+        &mut self,
         source: ContentId,
         lockfile: ContentId,
         target: Target,
         profile: Profile,
     ) -> Option<BuildResult> {
-        self.cache
+        let result = self.cache
             .iter()
             .flatten()
             .find(|entry| {
@@ -810,7 +867,13 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
                     && entry.target == target
                     && entry.profile == profile
             })
-            .map(|entry| entry.result)
+            .map(|entry| entry.result);
+        if result.is_some() {
+            self.cache_hits = self.cache_hits.saturating_add(1)
+        } else {
+            self.cache_misses = self.cache_misses.saturating_add(1)
+        }
+        result
     }
 
     pub fn cache_insert(&mut self, entry: CacheEntry) -> Result<(), Error> {
@@ -848,12 +911,18 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         }
     }
 
-    pub fn cache_lookup_key(&self, key: CacheKey) -> Option<BuildResult> {
-        self.content_cache
+    pub fn cache_lookup_key(&mut self, key: CacheKey) -> Option<BuildResult> {
+        let result = self.content_cache
             .iter()
             .flatten()
             .find(|entry| entry.key == key)
-            .map(|entry| entry.result)
+            .map(|entry| entry.result);
+        if result.is_some() {
+            self.cache_hits = self.cache_hits.saturating_add(1)
+        } else {
+            self.cache_misses = self.cache_misses.saturating_add(1)
+        }
+        result
     }
 
     pub fn cache_insert_key(&mut self, entry: ContentCacheEntry) -> Result<(), Error> {
