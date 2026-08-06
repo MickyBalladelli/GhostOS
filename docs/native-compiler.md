@@ -108,6 +108,22 @@ workspace paths, and compares the final `.rlib`, `.rmeta`, `.a`, `.o`, and
 members while ignoring Cargo metadata whose generated declaration order is
 not stable.
 
+## Acceptance gate
+
+Run the compiler acceptance matrix with:
+
+```sh
+cargo run -p cargo-synos -- synos acceptance --target x86_64 --release
+```
+
+The gate checks signed boot and storage contracts, offline locked requests,
+isolated concurrent jobs, cancellation and crash recovery, stage-2 ordering,
+signed/corrupt/unsigned package handling, hello-world compilation and host
+execution, build scripts, proc macros, application bundles, production Ring 3
+builds, reproducibility, and Aarch64 cross-builds. Use `--skip-build` for the
+fast in-memory contract pass and `--json` for CI records. Pass `--clean-root`
+to choose a new artifact root explicitly.
+
 The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in
 `TODO-compiler.md`.

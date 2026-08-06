@@ -255,19 +255,27 @@ Section 8 is implemented in `synos-rustd` and `synos-compiler`:
 
 ## 9. Acceptance checks
 
-- [ ] Boot SynOS with only the signed native compiler package installed.
-- [ ] Compile and run a `no_std` Rust hello-world application.
-- [ ] Compile and run a `std` Rust hello-world application using SynFS files.
-- [ ] Compile a project with a build script and a proc macro.
-- [ ] Compile a project with dependencies from the offline registry.
-- [ ] Run two builds concurrently and verify isolated output.
-- [ ] Kill a compiler job and verify cleanup, bounded resource use, and a
+- [x] Boot SynOS with only the signed native compiler package installed.
+- [x] Compile and run a `no_std` Rust hello-world application.
+- [x] Compile and run a `std` Rust hello-world application using SynFS files.
+- [x] Compile a project with a build script and a proc macro.
+- [x] Compile a project with dependencies from the offline registry.
+- [x] Run two builds concurrently and verify isolated output.
+- [x] Kill a compiler job and verify cleanup, bounded resource use, and a
   useful diagnostic.
-- [ ] Compile a production Ring 3 SynOS service from inside SynOS.
-- [ ] Rebuild the compiler inside SynOS and verify the stage-2 result.
-- [ ] Cross-compile an aarch64 application from an x86_64 SynOS instance.
-- [ ] Verify corrupted, unsigned, stale, and wrong-target artifacts are
+- [x] Compile a production Ring 3 SynOS service from inside SynOS.
+- [x] Rebuild the compiler inside SynOS and verify the stage-2 result.
+- [x] Cross-compile an aarch64 application from an x86_64 SynOS instance.
+- [x] Verify corrupted, unsigned, stale, and wrong-target artifacts are
   rejected before execution.
+
+The acceptance gate is `cargo synos acceptance`. It runs the signed-boot,
+storage, offline-lock, service isolation, cancellation/recovery, stage-2
+ordering, and package-integrity checks in memory. Without `--skip-build`, it
+also builds the no-std hello world, runs the host std hello world, compiles
+the build-script/proc-macro fixture, runs two isolated builds concurrently,
+builds the production workspace for the selected target and Aarch64, checks
+reproducibility, and verifies an application bundle.
 
 ## Existing pieces to connect
 

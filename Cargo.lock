@@ -57,6 +57,7 @@ version = "0.1.0"
 dependencies = [
  "synos-compiler",
  "synos-pkg",
+ "synos-rustd",
  "synos-system-model",
 ]
 

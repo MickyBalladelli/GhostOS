@@ -1,3 +1,5 @@
+mod acceptance;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,6 +29,8 @@ cargo synos compile --manifest-path PATH --bin NAME
     [--target-dir PATH]
 cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH]
 cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH]
+cargo synos acceptance [--target x86_64|aarch64] [--release]
+    [--clean-root PATH] [--skip-build] [--json]
 cargo synos toolchain package --key PATH --output PATH
     [--stage 0|1|2] [--target x86_64|aarch64] [--root PATH] [--rust-version TEXT]
 cargo synos toolchain verify --bundle PATH --key PATH
@@ -69,6 +73,7 @@ fn run() -> Result<(), String> {
         "compile" => compile(&arguments[1..]),
         "compile-all" => compile_all(&arguments[1..]),
         "reproduce" => reproduce(&arguments[1..]),
+        "acceptance" => acceptance::run(&arguments[1..]),
         "toolchain" => toolchain(&arguments[1..]),
         "run" => run_program(&arguments[1..]),
         "help" | "-h" | "--help" => {

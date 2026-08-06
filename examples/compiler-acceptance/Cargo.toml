@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["proc-macro"]
+
+[package]
+name = "acceptance-service"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "build.rs"
+
+[dependencies]
+acceptance-proc-macro = { path = "proc-macro" }
+
+[[bin]]
+name = "acceptance-service"
+path = "src/main.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("synos"))'] }
