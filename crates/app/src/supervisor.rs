@@ -176,6 +176,19 @@ pub struct ExecutableImage {
     pub byte_length: u64,
 }
 
+impl ExecutableImage {
+    pub const fn valid(self) -> bool {
+        !self.package.is_zero()
+            && !self.payload.is_zero()
+            && self.entry_offset < self.byte_length
+            && self.byte_length != 0
+    }
+
+    pub fn matches_payload(self, measurement: ContentId) -> bool {
+        self.payload == measurement
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PackageLaunchError {
     InvalidImage,
@@ -208,6 +221,10 @@ impl From<SupervisorError> for PackageLaunchError {
 pub trait ApplicationRuntime {
     type Error;
 
+    /// The runtime resolves `executable.payload` through the authorized
+    /// immutable package namespace, calls `parse_image` and `load_image`,
+    /// verifies the payload measurement, then creates the process context.
+    /// It must not jump directly to the package entry offset.
     fn spawn(&mut self, request: AppSpawnRequest<'_>) -> Result<ProcessId, Self::Error>;
     fn fence_process(&mut self, process: ProcessId) -> Result<(), Self::Error>;
 }
@@ -374,10 +391,7 @@ impl<const CAPACITY: usize> ApplicationSupervisor<CAPACITY> {
         executable: ExecutableImage,
         policy: &CapabilityPolicy<RULES>,
     ) -> Result<(), SupervisorError> {
-        if executable.package.is_zero()
-            || executable.payload.is_zero()
-            || executable.entry_offset >= executable.byte_length
-        {
+        if !executable.valid() {
             return Err(SupervisorError::InvalidManifest(ManifestError::InvalidManifest));
         }
         self.register(application, manifest, policy)?;

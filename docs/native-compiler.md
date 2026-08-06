@@ -57,6 +57,25 @@ level, event, and bounded message. Queued jobs cancel immediately; running
 jobs get a cooperative stop and are fenced after a five-second grace period;
 terminal jobs reject cancellation; partial output is never published.
 
+## Native process contract
+
+`synos-app` now owns the Ring 3 side of native process loading. Its ELF64
+loader accepts little-endian x86_64 and Aarch64 images, validates PT_LOAD
+bounds, entry points, TLS, relative relocations, and package payload identity.
+W^X is mandatory: writable/executable segments and executable stacks are
+rejected. The `ImageMapper` backend maps segments, zero-fills BSS, applies
+relocations before final protection, creates a non-executable heap and guarded
+stack, allocates TLS, and installs the entry context.
+
+`ProcessSupervisor` provides bounded `spawn`, `exec`, `wait`, cancellation,
+deadline, CPU, memory, and fencing state. Cancellation is cooperative first;
+the backend is fenced after the configured grace period. Application launch
+already passes the signed package identity and capability-approved request to
+the runtime. The runtime must resolve the immutable payload, verify its
+measurement, use `load_image`, and report the resulting process exit status.
+Executable pages can be measured through `measure_executable_pages` before
+the process is made runnable.
+
 `synos-rustd` also has a signed `ToolchainManifest`. It requires Cargo, rustc,
 and the linker, optionally requires build-script and proc-macro runners, then
 executes the ordered plan through a process-runtime hook. Every tool receives

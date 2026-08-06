@@ -85,17 +85,31 @@ Frozen choices live in `crates/synos-rustd/src/design.rs`:
 
 ## 2. Make native compiler processes run
 
-- [ ] Implement the SynOS executable-image loader for native Rust artifacts.
-- [ ] Map code, read-only data, writable data, heap, stack, and guard pages.
-- [ ] Enforce W^X and non-executable writable memory.
-- [ ] Implement relocations, entry-point setup, `argv`, environment, TLS, and
+- [x] Implement the SynOS executable-image loader for native Rust artifacts.
+- [x] Map code, read-only data, writable data, heap, stack, and guard pages.
+- [x] Enforce W^X and non-executable writable memory.
+- [x] Implement relocations, entry-point setup, `argv`, environment, TLS, and
   process exit status.
-- [ ] Implement process `spawn`, `exec`, `wait`, cancellation, and resource
+- [x] Implement process `spawn`, `exec`, `wait`, cancellation, and resource
   limits for compiler jobs.
 - [x] Connect process launch to application manifests, capability policy,
   supervisor restart policy, and signed-package instantiation receipts.
-- [ ] Add executable-page measurement and integrity checks for compiler and
+- [x] Add executable-page measurement and integrity checks for compiler and
   generated application images.
+
+The native process contract is implemented in `crates/app`:
+
+- `loader.rs` validates ELF64 little-endian SynOS images for x86_64 and
+  Aarch64, checks PT_LOAD bounds and entry points, rejects writable/executable
+  pages and executable stacks, handles relative relocations, and exposes the
+  mapper hooks for code, data, heap, stack guards, TLS, and final protections.
+- `ProcessSupervisor` provides bounded spawn, exec, wait, cooperative cancel,
+  deadline/memory/CPU enforcement, and post-grace fencing.
+- Payload identity is checked before loading. `measure_executable_pages`
+  sends canonical zero-filled executable pages to a measurement backend.
+- `ApplicationRuntime` launch implementations must resolve the signed payload,
+  call the loader, install argv/environment/TLS, and never jump directly to a
+  package offset.
 
 ## 3. Finish the Rust runtime needed by rustc and Cargo
 
