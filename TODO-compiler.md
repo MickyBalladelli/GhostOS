@@ -163,22 +163,40 @@ revokes those artifacts so they cannot leak into another build.
 
 ## 5. Build the compiler service
 
-- [ ] Create a Ring 3 `synos-rustd` service.
+- [x] Create a Ring 3 `synos-rustd` service.
 - [x] Accept a bounded compile request containing source root, manifest,
   target, profile, features, locked dependencies, and output policy.
-- [ ] Resolve dependencies from a signed local registry and support offline
+- [x] Resolve dependencies from a signed local registry and support offline
   locked builds.
-- [ ] Read sources through capability-authorized SynFS handles.
-- [ ] Give every build an isolated workspace, scratch area, cache namespace,
+- [x] Read sources through capability-authorized SynFS handles.
+- [x] Give every build an isolated workspace, scratch area, cache namespace,
   memory quota, CPU quota, and deadline.
 - [x] Deny network access by default; require an explicit capability for a
   networked build step.
-- [ ] Stream structured diagnostics, compiler messages, progress, and exit
+- [x] Stream structured diagnostics, compiler messages, progress, and exit
   status over IPC.
-- [ ] Support concurrent builds without sharing mutable build state.
-- [ ] Cancel a build and clean its temporary state after timeout or process
+- [x] Support concurrent builds without sharing mutable build state.
+- [x] Cancel a build and clean its temporary state after timeout or process
   failure.
-- [ ] Cache immutable compiler inputs and artifacts by content ID.
+- [x] Cache immutable compiler inputs and artifacts by content ID.
+
+`CompilerServiceBoot` now gates the fixed-frame IPC dispatcher on the signed
+Ring 3 service being running and pins requests to its configured target.
+`SignedLocalRegistry` accepts only packages already authorized by
+`synos-pkg`, resolves exact lockfile pins, and rejects unlocked offline jobs.
+`SourceGrant` and `SourceSnapshot` bind source reads to a non-forgeable
+capability value and produce a content identity from the immutable SynFS
+generation. Each queued job receives unique `/system/builds/<job>` and
+`/system/tmp/<job>` roots, resource limits, a cache namespace, and cleanup
+state. `BuildWorkspaceRuntime` supplies the actual create/cleanup mapping for
+the Ring 3 filesystem/process runtime.
+
+The IPC dispatcher returns job state, results, diagnostics, and the next
+structured `CompilerLogRecord`; deadline ticks and cooperative cancellation
+fence jobs after `CANCELLATION_GRACE_US`. Build-script and proc-macro images
+are owned by the job and released with its workspace. Cache entries include
+source, lockfile, toolchain, target, profile, and feature identities, and are
+published only after a successful build.
 
 ## 6. Turn compiler output into SynOS applications
 

@@ -112,6 +112,15 @@ The boot contract is now wired, but the actual native executable still needs
 the SynOS `std` port, process loader, and service image described in
 `TODO-compiler.md`.
 
+The compiler service boundary now includes the operational Ring 3 path:
+signed local-registry pins are resolved by content ID, source reads require a
+capability-bound `SourceGrant`, and each job receives independent build and
+scratch roots. `CompilerService::handle_ipc` streams state and structured log
+records; `tick` handles deadline expiry and cooperative cancellation; a
+`BuildWorkspaceRuntime` implementation performs the actual SynFS cleanup.
+Successful results enter the immutable cache only after source, lockfile,
+toolchain, target, profile, and feature identities all match.
+
 For the complete host-side step, use `cargo-synos package` with
 `--manifest-path`, `--locked`, `--offline`, `--key`, and `--output`.
 

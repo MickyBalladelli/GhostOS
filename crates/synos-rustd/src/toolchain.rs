@@ -66,15 +66,37 @@ pub enum ArtifactError {
 /// the build workspace is released.
 pub struct ArtifactSandbox {
     artifacts: [Option<DynamicArtifact>; MAX_DYNAMIC_ARTIFACTS],
+    owners: [Option<crate::JobId>; MAX_DYNAMIC_ARTIFACTS],
 }
 
 impl ArtifactSandbox {
     pub const fn new() -> Self {
-        Self { artifacts: [None; MAX_DYNAMIC_ARTIFACTS] }
+        Self {
+            artifacts: [None; MAX_DYNAMIC_ARTIFACTS],
+            owners: [None; MAX_DYNAMIC_ARTIFACTS],
+        }
     }
 
     pub fn stage<const PACKAGES: usize, const KEYS: usize>(
         &mut self,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        artifact: DynamicArtifact,
+    ) -> Result<(), ArtifactError> {
+        self.stage_owned(None, packages, artifact)
+    }
+
+    pub fn stage_for_job<const PACKAGES: usize, const KEYS: usize>(
+        &mut self,
+        job: crate::JobId,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        artifact: DynamicArtifact,
+    ) -> Result<(), ArtifactError> {
+        self.stage_owned(Some(job), packages, artifact)
+    }
+
+    fn stage_owned<const PACKAGES: usize, const KEYS: usize>(
+        &mut self,
+        owner: Option<crate::JobId>,
         packages: &PackageDaemon<PACKAGES, KEYS>,
         artifact: DynamicArtifact,
     ) -> Result<(), ArtifactError> {
@@ -87,12 +109,13 @@ impl ArtifactSandbox {
         if self.artifacts.iter().flatten().any(|current| current.payload == artifact.payload) {
             return Err(ArtifactError::InvalidArtifact);
         }
-        let slot = self
+        let index = self
             .artifacts
-            .iter_mut()
-            .find(|entry| entry.is_none())
+            .iter()
+            .position(Option::is_none)
             .ok_or(ArtifactError::Capacity)?;
-        *slot = Some(artifact);
+        self.artifacts[index] = Some(artifact);
+        self.owners[index] = owner;
         Ok(())
     }
 
@@ -106,17 +129,28 @@ impl ArtifactSandbox {
     }
 
     pub fn release(&mut self, payload: ContentId) -> Result<(), ArtifactError> {
-        let slot = self
+        let index = self
             .artifacts
-            .iter_mut()
-            .find(|artifact| artifact.is_some_and(|artifact| artifact.payload == payload))
+            .iter()
+            .position(|artifact| artifact.is_some_and(|artifact| artifact.payload == payload))
             .ok_or(ArtifactError::NotFound)?;
-        *slot = None;
+        self.artifacts[index] = None;
+        self.owners[index] = None;
         Ok(())
+    }
+
+    pub fn release_job(&mut self, job: crate::JobId) {
+        for index in 0..MAX_DYNAMIC_ARTIFACTS {
+            if self.owners[index] == Some(job) {
+                self.artifacts[index] = None;
+                self.owners[index] = None;
+            }
+        }
     }
 
     pub fn release_all(&mut self) {
         self.artifacts.fill(None);
+        self.owners.fill(None);
     }
 
     pub fn active(&self) -> impl Iterator<Item = DynamicArtifact> + '_ {

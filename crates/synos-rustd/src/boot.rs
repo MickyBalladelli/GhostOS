@@ -8,7 +8,10 @@ use synos_synfs::SynFs;
 use synos_system_model::{ContentId, LogicalName, RootManifest};
 use synos_update::HealthCheck;
 
-use crate::{BuildPolicy, CompilerService, MAX_CACHE_ENTRIES, MAX_JOBS, Target};
+use crate::{
+    BuildPolicy, CompilerIpcRequest, CompilerIpcResponse, CompilerService, MAX_CACHE_ENTRIES,
+    MAX_JOBS, Target,
+};
 
 pub const COMPILER_SERVICE_ID: u32 = 0x5255_5354;
 pub const COMPILER_SERVICE_NAME: &str = "synos-rustd";
@@ -76,8 +79,12 @@ impl<const JOBS: usize, const CACHE: usize> CompilerServiceBoot<JOBS, CACHE> {
         if config.package.is_zero() || config.image_id == 0 {
             return Err(CompilerBootError::InvalidConfiguration);
         }
+        let mut service = CompilerService::new(config.policy);
+        service
+            .set_toolchain_identity(config.package)
+            .map_err(|_| CompilerBootError::InvalidConfiguration)?;
         Ok(Self {
-            service: CompilerService::new(config.policy),
+            service,
             config,
             state: CompilerBootState::Cold,
         })
@@ -113,6 +120,25 @@ impl<const JOBS: usize, const CACHE: usize> CompilerServiceBoot<JOBS, CACHE> {
 
     pub fn service_mut(&mut self) -> &mut CompilerService<JOBS, CACHE> {
         &mut self.service
+    }
+
+    /// Ring 3 IPC entry point. Requests are refused until init reports the
+    /// signed compiler image as running.
+    pub fn handle_ipc(&mut self, request: CompilerIpcRequest) -> CompilerIpcResponse {
+        if !matches!(self.state, CompilerBootState::Running { .. }) {
+            return CompilerIpcResponse::empty(Status::BUSY);
+        }
+        if request
+            .build
+            .is_some_and(|build| build.target != self.config.target)
+        {
+            return CompilerIpcResponse::empty(Status::INVALID_ARGUMENT);
+        }
+        self.service.handle_ipc(request)
+    }
+
+    pub fn tick(&mut self, now_us: u64) -> usize {
+        self.service.tick(now_us)
     }
 
     /// Register and start the service during SynOS user-space boot.

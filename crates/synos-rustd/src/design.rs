@@ -273,6 +273,7 @@ pub struct CompilerIpcResponse {
     pub sequence: u32,
     pub diagnostic: Option<Diagnostic>,
     pub result: Option<BuildResult>,
+    pub log: Option<CompilerLogRecord>,
 }
 
 impl CompilerIpcResponse {
@@ -286,6 +287,7 @@ impl CompilerIpcResponse {
             sequence: 0,
             diagnostic: None,
             result: None,
+            log: None,
         }
     }
 }
