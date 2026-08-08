@@ -115,7 +115,10 @@ Use `--read-only` to share a base image safely, or `--copy-on-write` for a
 temporary writable clone. Writable persistent attachments create a
 `<image>.synos.lock` ownership marker. Use `disk lock PATH` to inspect its PID
 and owner metadata, then `disk recover-lock PATH` only after the owner is
-reported stale.
+reported stale. The record stores the canonical image path, disk format,
+owner, host identity, and process start marker. A different host, copied image,
+or reused PID is therefore treated as stale; incomplete records are not
+recovered automatically.
 
 ### System-disk reliability contract
 

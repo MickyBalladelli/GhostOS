@@ -14,6 +14,8 @@ use crate::devices::storage::StorageError;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "linux"))]
+use std::process::Command;
 
 /// Disk image format as detected from the file header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,13 +86,19 @@ struct DiskLock {
     path: PathBuf,
 }
 
+const LOCK_RECORD_VERSION: u32 = 2;
+
 /// Metadata for a disk ownership marker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskLockInfo {
     pub path: PathBuf,
     pub owner: String,
+    pub owner_identity: Option<String>,
     pub pid: Option<u32>,
+    pub start_time: Option<String>,
+    pub host_identity: Option<String>,
     pub image_path: Option<PathBuf>,
+    pub format: Option<DiskFormat>,
     pub stale: bool,
 }
 
@@ -211,7 +219,9 @@ impl DiskImage {
 
     /// Path used for the ownership marker of a writable VM attachment.
     pub fn lock_path<P: AsRef<Path>>(path: P) -> PathBuf {
-        PathBuf::from(format!("{}.synos.lock", path.as_ref().display()))
+        let path = path.as_ref();
+        let image_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        PathBuf::from(format!("{}.synos.lock", image_path.display()))
     }
 
     /// Open an image for a VM and claim exclusive writable ownership.
@@ -219,13 +229,14 @@ impl DiskImage {
         path: P,
         writable: bool,
     ) -> Result<Self, StorageError> {
-        let path = path.as_ref();
+        let path = fs::canonicalize(path)?;
+        let format = Self::open_with_access(&path, false)?.format();
         let lock = if writable {
-            Some(Self::acquire_lock(path)?)
+            Some(Self::acquire_lock(&path, format)?)
         } else {
             None
         };
-        match Self::open_with_access(path, writable) {
+        match Self::open_with_access(&path, writable) {
             Ok(mut image) => {
                 image.lock = lock;
                 Ok(image)
@@ -237,7 +248,7 @@ impl DiskImage {
         }
     }
 
-    fn acquire_lock(path: &Path) -> Result<DiskLock, StorageError> {
+    fn acquire_lock(path: &Path, format: DiskFormat) -> Result<DiskLock, StorageError> {
         let lock_path = Self::lock_path(path);
         let mut lock_file = match OpenOptions::new()
             .write(true)
@@ -257,9 +268,14 @@ impl DiskImage {
         };
         writeln!(
             lock_file,
-            "pid={}\nimage={}",
+            "version={}\nimage_identity={}\nowner_identity={}\npid={}\nstart_time={}\nhost_identity={}\nformat={}",
+            LOCK_RECORD_VERSION,
+            path.display(),
+            owner_identity(),
             std::process::id(),
-            path.display()
+            process_start_time(std::process::id()).unwrap_or_else(|| "unknown".to_string()),
+            host_identity(),
+            format_name(format),
         )?;
         lock_file.sync_all()?;
         Ok(DiskLock { path: lock_path })
@@ -278,23 +294,59 @@ impl DiskImage {
     pub fn inspect_lock<P: AsRef<Path>>(
         path: P,
     ) -> Result<Option<DiskLockInfo>, StorageError> {
-        let lock_path = Self::lock_path(path);
+        let image_path = path.as_ref();
+        let lock_path = Self::lock_path(image_path);
         if !lock_path.exists() {
             return Ok(None);
         }
         let owner = fs::read_to_string(&lock_path)?;
-        let pid = owner.lines().find_map(|line| {
-            line.strip_prefix("pid=")?.trim().parse::<u32>().ok()
-        });
-        let image_path = owner
-            .lines()
-            .find_map(|line| line.strip_prefix("image=").map(PathBuf::from));
-        let stale = pid.map(|value| !process_exists(value)).unwrap_or(true);
+        let version = lock_field(&owner, "version").and_then(|value| value.parse::<u32>().ok());
+        let owner_identity = lock_field(&owner, "owner_identity").map(str::to_string);
+        let pid = lock_field(&owner, "pid").and_then(|value| value.parse::<u32>().ok());
+        let start_time = lock_field(&owner, "start_time")
+            .filter(|value| *value != "unknown")
+            .map(str::to_string);
+        let stored_host_identity = lock_field(&owner, "host_identity").map(str::to_string);
+        let stored_image = lock_field(&owner, "image_identity")
+            .or_else(|| lock_field(&owner, "image"))
+            .map(PathBuf::from);
+        let format = lock_field(&owner, "format").and_then(parse_format);
+
+        let metadata_complete = version == Some(LOCK_RECORD_VERSION)
+            && owner_identity.is_some()
+            && pid.is_some()
+            && start_time.is_some()
+            && stored_host_identity.is_some()
+            && stored_image.is_some()
+            && format.is_some();
+        let image_matches = fs::canonicalize(image_path)
+            .ok()
+            .zip(stored_image.as_ref())
+            .is_some_and(|(actual, stored)| actual == *stored);
+        let host_matches = stored_host_identity
+            .as_deref()
+            .is_some_and(|stored| stored == host_identity());
+        let process_matches = pid
+            .zip(start_time.as_deref())
+            .is_some_and(|(pid, start)| {
+                process_exists(pid)
+                    && process_start_time(pid).is_some_and(|actual| actual == start)
+            });
+        let format_mismatch = format
+            .zip(Self::open_with_access(image_path, false).ok().map(|image| image.format()))
+            .is_some_and(|(stored, actual)| stored != actual);
+        let stale = metadata_complete
+            && (!image_matches || !host_matches || !process_matches || format_mismatch);
+
         Ok(Some(DiskLockInfo {
             path: lock_path,
             owner,
             pid,
-            image_path,
+            owner_identity,
+            start_time,
+            host_identity: stored_host_identity,
+            image_path: stored_image,
+            format,
             stale,
         }))
     }
@@ -657,6 +709,86 @@ fn process_exists(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn lock_field<'a>(record: &'a str, key: &str) -> Option<&'a str> {
+    record.lines().find_map(|line| {
+        let (field, value) = line.split_once('=')?;
+        (field == key).then_some(value.trim())
+    })
+}
+
+fn parse_format(value: &str) -> Option<DiskFormat> {
+    match value {
+        "raw" => Some(DiskFormat::Raw),
+        "vhd" => Some(DiskFormat::Vhd),
+        "qcow2" => Some(DiskFormat::Qcow2),
+        _ => None,
+    }
+}
+
+fn format_name(format: DiskFormat) -> &'static str {
+    match format {
+        DiskFormat::Raw => "raw",
+        DiskFormat::Vhd => "vhd",
+        DiskFormat::Qcow2 => "qcow2",
+    }
+}
+
+fn owner_identity() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn host_identity() -> String {
+    let hostname = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let machine_id = fs::read_to_string("/etc/machine-id")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("hostname={hostname};machine={machine_id}")
+}
+
+fn process_start_time(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let fields = stat.rsplit_once(") ")?.1.split_whitespace().collect::<Vec<_>>();
+        let start_ticks = fields.get(19)?;
+        let proc_stat = fs::read_to_string("/proc/stat").ok()?;
+        let boot_time = proc_stat
+            .lines()
+            .find_map(|line| line.strip_prefix("btime "))?
+            .trim();
+        return Some(format!("linux:{boot_time}:{start_ticks}"));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output = Command::new("ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let start = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        (!start.is_empty()).then_some(start)
+    }
 }
 
 fn validate_sector_capacity(size: u64, format: &str) -> Result<(), StorageError> {

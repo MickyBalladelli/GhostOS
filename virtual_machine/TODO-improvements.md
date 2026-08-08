@@ -53,7 +53,7 @@ remaining proof, portability, safety, and fidelity work.
 
 - [x] Make stale-lock recovery the only public recovery path, or require an
       explicit force token for unconditional lock removal.
-- [ ] Store canonical image identity, owner identity, start time, host identity,
+- [x] Store canonical image identity, owner identity, start time, host identity,
       and format in the lock record. Handle PID reuse and cross-host copies.
 - [ ] Add lock tests for concurrent open, crash, PID reuse, copied images,
       read-only attachment, symlink/path aliasing, and permission failure.
