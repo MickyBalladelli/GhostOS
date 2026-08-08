@@ -62,6 +62,9 @@ fn render_list(
     if is_cluster_output(output) {
         return render_cluster(output)
     }
+    if is_firewall_output(output) {
+        return render_firewall(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -172,6 +175,40 @@ fn is_cluster_output(output: &StructuredOutput) -> bool {
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "show-cluster"
     )
+}
+
+fn is_firewall_output(output: &StructuredOutput) -> bool {
+    find_value(output, "policy-path").is_some()
+        && find_value(output, "policy-version").is_some()
+}
+
+fn render_firewall(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    const FIELDS: [(&str, &str); 6] = [
+        ("Policy path", "policy-path"),
+        ("Policy version", "policy-version"),
+        ("Rule count", "rule-count"),
+        ("Active connections", "active-connections"),
+        ("Dropped packets", "dropped-packets"),
+        ("Allowed packets", "allowed-packets"),
+    ];
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("Firewall policy")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    rendered.push_str(ANSI_TABLE_HEADER)?;
+    rendered.push_str("PROPERTY                  VALUE")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    for (label, field) in FIELDS {
+        if let Some(value) = find_value(output, field) {
+            render_labeled_value(&mut rendered, label, value)?;
+        }
+    }
+    Ok(rendered)
 }
 
 fn render_cluster(
