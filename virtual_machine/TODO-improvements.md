@@ -20,8 +20,9 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Add differential instruction tests for supported x86_64 instructions,
       flags, privilege transitions, segmentation, paging faults, interrupts,
       string operations, and reset state.
-- [ ] Define the exact unsupported-instruction policy: injected exception,
-      halted guest, or VM error. Test it consistently in BIOS and long mode.
+- [x] Define the exact unsupported-instruction policy: unsupported decoded
+      instructions return a VM error, without injecting an exception or
+      halting the guest. Test it consistently in BIOS and long mode.
 - [x] Centralize DMA and MMIO validation so every device rejects overflow,
       wraparound, unaligned ranges where forbidden, bad ownership, and stale
       descriptor chains with the same error contract.

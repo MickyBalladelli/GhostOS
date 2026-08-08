@@ -647,11 +647,16 @@ impl Cpu {
         // The STI window covers exactly one instruction: clear it before the
         // next instruction executes so a pending maskable interrupt may be
         // delivered on the following step.
+        let previous_interrupt_shadow = self.state.interrupt_shadow;
         self.state.interrupt_shadow = false;
 
         let ip = self.state.rip;
         let instruction = self.decode_instruction(ip, mmu)?;
-        self.execute_decoded(&instruction, mmu, intc, ports, bios)
+        let result = self.execute_decoded(&instruction, mmu, intc, ports, bios);
+        if matches!(result, Err(CpuError::UnsupportedInstruction)) {
+            self.state.interrupt_shadow = previous_interrupt_shadow;
+        }
+        result
     }
 
     /// Decode one instruction without executing it. The execution engine
@@ -828,6 +833,9 @@ pub enum CpuError {
     PageFault,
     GeneralProtectionFault,
     InvalidOpcode,
+    /// A valid instruction was decoded, but the VM has no implementation for
+    /// it. This is a VM execution error: do not inject #UD and do not halt the
+    /// guest. The caller must stop or report the VM error.
     UnsupportedInstruction,
     MemoryAccessError,
     AlignmentCheck,
