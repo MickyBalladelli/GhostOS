@@ -86,10 +86,10 @@ fn snapshot_serialization_restore_chain_and_failures() {
         Err(SnapshotError::InvalidFormat)
     ));
     let mut wrong_version = bytes;
-    wrong_version[8..12].copy_from_slice(&2u32.to_le_bytes());
+    wrong_version[8..12].copy_from_slice(&3u32.to_le_bytes());
     assert!(matches!(
         synos_vm::VmSnapshot::from_bytes(&wrong_version),
-        Err(SnapshotError::VersionMismatch(2))
+        Err(SnapshotError::VersionMismatch(3))
     ));
 
     let mut invalid = diff;

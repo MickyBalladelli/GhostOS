@@ -10,7 +10,7 @@ use synos_vm::{
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
     HardwareAcceleration, TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig,
-    SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
+    SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT, MAX_SNAPSHOT_BYTES,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -663,7 +663,6 @@ fn run(mut cli: Cli) -> Result<(), String> {
 const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG2";
 const LEGACY_MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG1";
 const MIGRATION_PROTOCOL_VERSION: u32 = 2;
-const MAX_MIGRATION_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
 fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
     match command {
@@ -680,10 +679,12 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 .and_then(|_| write_migration_schema(&mut stream, SnapshotSchema::local()))
                 .map_err(|error| format!("migration schema handshake failed: {error}"))?;
             let negotiated = read_migration_response(&mut stream)?;
-            let mut wire_snapshot = snapshot_value;
-            wire_snapshot.format_version = negotiated.max_version;
-            wire_snapshot.feature_flags = negotiated.features;
-            let bytes = wire_snapshot.to_bytes();
+            let wire_snapshot = snapshot_value
+                .convert_to_schema(negotiated)
+                .map_err(|error| format!("migration schema conversion failed: {error}"))?;
+            let bytes = wire_snapshot
+                .try_to_bytes()
+                .map_err(|error| format!("migration snapshot encoding failed: {error}"))?;
             stream
                 .write_all(&(bytes.len() as u64).to_le_bytes())
                 .and_then(|_| stream.write_all(&bytes))
@@ -720,7 +721,7 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                     return Err(format!("unsupported migration protocol {protocol}"));
                 }
                 let peer_schema = read_migration_schema(&mut stream)?;
-                let negotiated = SnapshotSchema::negotiate(peer_schema)
+                let negotiated = SnapshotSchema::negotiate_with(SnapshotSchema::local(), peer_schema)
                     .map_err(|error| format!("migration schema negotiation failed: {error}"))?;
                 stream
                     .write_all(&[0])
@@ -733,7 +734,7 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 .read_exact(&mut length)
                 .map_err(|error| format!("migration length read failed: {error}"))?;
             let length = u64::from_le_bytes(length);
-            if length == 0 || length > MAX_MIGRATION_BYTES {
+            if length == 0 || length > MAX_SNAPSHOT_BYTES {
                 return Err(format!("migration payload is too large: {length} bytes"));
             }
             let length = usize::try_from(length)
@@ -786,15 +787,15 @@ fn read_migration_schema(stream: &mut TcpStream) -> Result<SnapshotSchema, Strin
         .read_exact(&mut features)
         .map_err(|error| format!("migration feature read failed: {error}"))?;
     let raw_features = u64::from_le_bytes(features);
-    let unsupported = raw_features & !SnapshotFeatures::ALL.bits();
-    if min_version > max_version || unsupported != 0 {
-        return Err("migration peer advertised an invalid schema".to_string());
-    }
-    Ok(SnapshotSchema {
+    let schema = SnapshotSchema {
         min_version,
         max_version,
         features: SnapshotFeatures::from_bits_retain(raw_features),
-    })
+    };
+    schema
+        .validate()
+        .map_err(|error| format!("migration peer advertised an invalid schema: {error}"))?;
+    Ok(schema)
 }
 
 fn read_migration_response(stream: &mut TcpStream) -> Result<SnapshotSchema, String> {
@@ -805,7 +806,11 @@ fn read_migration_response(stream: &mut TcpStream) -> Result<SnapshotSchema, Str
     if status[0] != 0 {
         return Err("migration target rejected the snapshot schema".to_string());
     }
-    read_migration_schema(stream)
+    let schema = read_migration_schema(stream)?;
+    if schema.min_version != schema.max_version {
+        return Err("migration target returned a non-negotiated schema range".to_string());
+    }
+    Ok(schema)
 }
 
 struct MonitorSession {

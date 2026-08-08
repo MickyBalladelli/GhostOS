@@ -167,6 +167,12 @@ receiver with `--snapshot-restore`:
 ../target/release/synos-vm migrate send ./state/checkpoint.vm HOST:9000
 ```
 
+Snapshot versions 1 and 2 remain compatible. Version 1 has implicit feature
+flags; version 2 negotiates explicit flags and bounds every decoded length.
+See [the snapshot format and upgrade path](docs/SNAPSHOT_FORMAT.md) before
+moving checkpoints between VM builds. Migration transport is not encrypted or
+authenticated, so protect the TCP connection separately.
+
 Expose a Unix monitor socket with `--monitor PATH`. Connect with a Unix-socket
 client and use `help`, `info registers`, `info disks`, `info status`, `save
 PATH`, or `quit`. Monitor `quit` cleanly stops the VM.

@@ -37,7 +37,7 @@ remaining proof, portability, safety, and fidelity work.
       intentionally excluded. Include device queues, serial/input buffers,
       timers, RNG state, disks, network topology, guest-agent state, hotplug,
       acceleration mode, and firmware state.
-- [ ] Add snapshot schema negotiation, bounded decoding, explicit feature flags,
+- [x] Add snapshot schema negotiation, bounded decoding, explicit feature flags,
       migration compatibility, and a documented upgrade path.
 - [ ] Replace the current checksum-only trust model with authenticated
       integrity for snapshots and migration streams.

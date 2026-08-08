@@ -68,7 +68,8 @@ pub use hardware_acceleration::{
 };
 pub use snapshot::{
     SnapshotChain, SnapshotDiff, SnapshotError, SnapshotFeatures, SnapshotId, SnapshotPage,
-    SnapshotSchema, VmSnapshot, MAX_SNAPSHOT_BYTES, SNAPSHOT_FORMAT_VERSION,
+    SnapshotSchema, VmSnapshot, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_MEMORY_BYTES,
+    SNAPSHOT_FORMAT_VERSION,
     SNAPSHOT_MIN_FORMAT_VERSION,
 };
 pub use terminal::{

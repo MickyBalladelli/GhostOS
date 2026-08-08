@@ -1,6 +1,6 @@
 # VM Snapshot State Inventory
 
-This is the state boundary for `VmSnapshot` version 1. Every mutable
+This is the state boundary for `VmSnapshot` versions 1 and 2. Every mutable
 `Vm` field has one status:
 
 - **Serialized**: captured in `VmSnapshot` and encoded by `snapshot.rs`.
