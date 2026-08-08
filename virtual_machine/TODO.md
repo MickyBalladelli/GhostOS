@@ -414,3 +414,10 @@ cargo build --release
     --memory 128M \
     --append "console=serial0"
 ```
+
+## Features that require improvements
+### 1.0 INTERFACE command
+- [x] Make SHOW INTERFACES output easy to read
+- [x] Make SET INTERFACE eth0 /dhcp easy to read
+### 2.0 NETWORK command
+- [ ] Make SHOW INTERFACE easy to read

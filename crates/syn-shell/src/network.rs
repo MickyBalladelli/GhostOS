@@ -318,7 +318,9 @@ pub fn dispatch_network_command<Source: NetworkSource>(
         SET_INTERFACE_ROUTE => {
             let update = interface_update_request(&command)?;
             source.authorize_mutation()?;
-            source.set_interface(update).and_then(network_output)
+            source
+                .set_interface(update)
+                .and_then(|view| set_interface_output(view, update.name))
         }
         SET_ROUTE_ROUTE => {
             let update = route_update_request(&command)?;
@@ -488,6 +490,59 @@ pub fn network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
         OutputValue::Unsigned(view.route_count),
     )?;
     Ok(output)
+}
+
+pub fn set_interface_output(
+    view: NetworkView,
+    name: &str,
+) -> Result<StructuredOutput, Status> {
+    let interface = view
+        .interfaces
+        .iter()
+        .flatten()
+        .find(|interface| interface.name.as_str().eq_ignore_ascii_case(name));
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "set-interface")?;
+    insert_text(
+        &mut output,
+        "interface",
+        interface.map_or(name, |interface| interface.name.as_str()),
+    )?;
+    insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
+    if let Some(interface) = interface {
+        emit_interface_details(&mut output, interface)?;
+    }
+    Ok(output)
+}
+
+fn emit_interface_details(
+    output: &mut StructuredOutput,
+    interface: &NetworkInterfaceView,
+) -> Result<(), Status> {
+    insert_text(output, "address", interface.address.as_str())?;
+    if let Some(gateway) = interface.gateway {
+        insert_text(output, "gateway", gateway.as_str())?;
+    }
+    insert(output, "mtu", OutputValue::Unsigned(interface.mtu as u64))?;
+    insert(output, "enabled", OutputValue::Boolean(interface.enabled))?;
+    insert(output, "link-up", OutputValue::Boolean(interface.link_up))?;
+    insert_text(output, "mode", interface.mode.as_str())?;
+    if let Some(dhcp) = interface.dhcp {
+        insert_text(output, "dhcp-state", dhcp.state.as_str())?;
+        if let Some(server) = dhcp.server {
+            insert_text(output, "dhcp-server", server.as_str())?;
+        }
+        if let Some(expires) = dhcp.expires_at_ms {
+            insert(output, "dhcp-expires-ms", OutputValue::Unsigned(expires))?;
+        }
+        if let Some(dns0) = dhcp.dns0 {
+            insert_text(output, "dns0", dns0.as_str())?;
+        }
+        if let Some(dns1) = dhcp.dns1 {
+            insert_text(output, "dns1", dns1.as_str())?;
+        }
+    }
+    Ok(())
 }
 
 pub fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> {

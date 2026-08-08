@@ -50,6 +50,12 @@ fn render_list(
     if is_uptime_output(output) {
         return render_uptime(output)
     }
+    if is_show_interfaces_output(output) {
+        return render_interfaces(output)
+    }
+    if is_set_interface_output(output) {
+        return render_set_interface(output)
+    }
 
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
@@ -98,6 +104,280 @@ fn is_metadata_output(output: &StructuredOutput) -> bool {
 
 fn is_uptime_output(output: &StructuredOutput) -> bool {
     output.fields().any(|field| field.name.as_str() == "uptime-us")
+}
+
+fn is_show_interfaces_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-interfaces"
+    )
+}
+
+fn is_set_interface_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "set-interface"
+    )
+}
+
+const INTERFACE_FIELD_NAMES: [[&str; 7]; 4] = [
+    [
+        "interface1-name",
+        "interface1-address",
+        "interface1-gateway",
+        "interface1-mtu",
+        "interface1-enabled",
+        "interface1-link-up",
+        "interface1-mode",
+    ],
+    [
+        "interface2-name",
+        "interface2-address",
+        "interface2-gateway",
+        "interface2-mtu",
+        "interface2-enabled",
+        "interface2-link-up",
+        "interface2-mode",
+    ],
+    [
+        "interface3-name",
+        "interface3-address",
+        "interface3-gateway",
+        "interface3-mtu",
+        "interface3-enabled",
+        "interface3-link-up",
+        "interface3-mode",
+    ],
+    [
+        "interface4-name",
+        "interface4-address",
+        "interface4-gateway",
+        "interface4-mtu",
+        "interface4-enabled",
+        "interface4-link-up",
+        "interface4-mode",
+    ],
+];
+
+const INTERFACE_DHCP_FIELD_NAMES: [[&str; 5]; 4] = [
+    [
+        "interface1-dhcp-state",
+        "interface1-dhcp-server",
+        "interface1-dhcp-expires-ms",
+        "interface1-dns0",
+        "interface1-dns1",
+    ],
+    [
+        "interface2-dhcp-state",
+        "interface2-dhcp-server",
+        "interface2-dhcp-expires-ms",
+        "interface2-dns0",
+        "interface2-dns1",
+    ],
+    [
+        "interface3-dhcp-state",
+        "interface3-dhcp-server",
+        "interface3-dhcp-expires-ms",
+        "interface3-dns0",
+        "interface3-dns1",
+    ],
+    [
+        "interface4-dhcp-state",
+        "interface4-dhcp-server",
+        "interface4-dhcp-expires-ms",
+        "interface4-dns0",
+        "interface4-dns1",
+    ],
+];
+
+fn render_interfaces(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str("Interfaces: ")?;
+    if let Some(count) = find_value(output, "interface-count") {
+        write_value(&mut rendered, count, false)?;
+    }
+    rendered.push_str(" (generation ")?;
+    if let Some(generation) = find_value(output, "generation") {
+        write_value(&mut rendered, generation, false)?;
+    }
+    rendered.push_str(")\n\n")?;
+
+    let mut widths = [4usize, 7, 7, 4, 8, 4, 3];
+    for names in INTERFACE_FIELD_NAMES {
+        let Some(name) = find_value(output, names[0]) else {
+            continue
+        };
+        widths[0] = widths[0].max(value_width(name));
+        if let Some(address) = find_value(output, names[1]) {
+            widths[1] = widths[1].max(value_width(address));
+        }
+        if let Some(gateway) = find_value(output, names[2]) {
+            widths[2] = widths[2].max(value_width(gateway));
+        }
+    }
+
+    let headers = ["NAME", "ADDRESS", "GATEWAY", "MODE", "STATE", "LINK", "MTU"];
+    for (index, header) in headers.iter().enumerate() {
+        if index != 0 {
+            rendered.push_str("  ")?;
+        }
+        write_table_text(&mut rendered, header, widths[index], false)?;
+    }
+    rendered.push_str("\n")?;
+
+    let mut rows = 0;
+    for (index, names) in INTERFACE_FIELD_NAMES.iter().enumerate() {
+        let Some(name) = find_value(output, names[0]) else {
+            continue
+        };
+        write_table_value(&mut rendered, name, widths[0], false)?;
+        rendered.push_str("  ")?;
+        write_optional_table_value(&mut rendered, find_value(output, names[1]), widths[1], false)?;
+        rendered.push_str("  ")?;
+        write_optional_table_value(&mut rendered, find_value(output, names[2]), widths[2], false)?;
+        rendered.push_str("  ")?;
+        write_optional_table_value(&mut rendered, find_value(output, names[6]), widths[3], false)?;
+        rendered.push_str("  ")?;
+        let enabled = find_value(output, names[4]) == Some(OutputValue::Boolean(true));
+        write_table_text(&mut rendered, if enabled { "enabled" } else { "disabled" }, widths[4], false)?;
+        rendered.push_str("  ")?;
+        let link_up = find_value(output, names[5]) == Some(OutputValue::Boolean(true));
+        write_table_text(&mut rendered, if link_up { "up" } else { "down" }, widths[5], false)?;
+        rendered.push_str("  ")?;
+        write_optional_table_value(&mut rendered, find_value(output, names[3]), widths[6], true)?;
+        rendered.push_str("\n")?;
+
+        if let Some(state) = find_value(output, INTERFACE_DHCP_FIELD_NAMES[index][0]) {
+            rendered.push_str("  DHCP: ")?;
+            write_value(&mut rendered, state, false)?;
+            if let Some(server) = find_value(output, INTERFACE_DHCP_FIELD_NAMES[index][1]) {
+                rendered.push_str("; server=")?;
+                write_value(&mut rendered, server, false)?;
+            }
+            if let Some(expires) = find_value(output, INTERFACE_DHCP_FIELD_NAMES[index][2]) {
+                rendered.push_str("; expires=")?;
+                write_value(&mut rendered, expires, false)?;
+                rendered.push_str(" ms")?;
+            }
+            if let Some(dns0) = find_value(output, INTERFACE_DHCP_FIELD_NAMES[index][3]) {
+                rendered.push_str("; dns=")?;
+                write_value(&mut rendered, dns0, false)?;
+                if let Some(dns1) = find_value(output, INTERFACE_DHCP_FIELD_NAMES[index][4]) {
+                    rendered.push_str(", ")?;
+                    write_value(&mut rendered, dns1, false)?;
+                }
+            }
+            rendered.push_str("\n")?;
+        }
+        rows += 1;
+    }
+
+    if rows == 0 {
+        rendered.push_str("(none)\n")?;
+    }
+    if let Some(next) = find_value(output, "next-interface") {
+        rendered.push_str("\nMore interfaces available (continuation: ")?;
+        write_value(&mut rendered, next, false)?;
+        rendered.push_str(")\n")?;
+    }
+    Ok(rendered)
+}
+
+fn render_set_interface(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str("Interface ")?;
+    if let Some(interface) = find_value(output, "interface") {
+        write_value(&mut rendered, interface, false)?;
+    }
+    rendered.push_str(" updated\n")?;
+    if let Some(mode) = find_value(output, "mode") {
+        rendered.push_str("  Mode: ")?;
+        write_value(&mut rendered, mode, false)?;
+        rendered.push_str("\n")?;
+    }
+    if let Some(address) = find_value(output, "address") {
+        rendered.push_str("  Address: ")?;
+        write_value(&mut rendered, address, false)?;
+        rendered.push_str("\n")?;
+    }
+    if let Some(gateway) = find_value(output, "gateway") {
+        rendered.push_str("  Gateway: ")?;
+        write_value(&mut rendered, gateway, false)?;
+        rendered.push_str("\n")?;
+    }
+    if let Some(mtu) = find_value(output, "mtu") {
+        rendered.push_str("  MTU: ")?;
+        write_value(&mut rendered, mtu, false)?;
+        rendered.push_str("\n")?;
+    }
+    if let Some(enabled) = find_value(output, "enabled") {
+        rendered.push_str("  State: ")?;
+        rendered.push_str(if enabled == OutputValue::Boolean(true) {
+            "enabled"
+        } else {
+            "disabled"
+        })?;
+        if let Some(link_up) = find_value(output, "link-up") {
+            rendered.push_str(if link_up == OutputValue::Boolean(true) {
+                ", link up"
+            } else {
+                ", link down"
+            })?;
+        }
+        rendered.push_str("\n")?;
+    }
+    if let Some(state) = find_value(output, "dhcp-state") {
+        rendered.push_str("  DHCP: ")?;
+        write_value(&mut rendered, state, false)?;
+        if let Some(server) = find_value(output, "dhcp-server") {
+            rendered.push_str("; server=")?;
+            write_value(&mut rendered, server, false)?;
+        }
+        if let Some(expires) = find_value(output, "dhcp-expires-ms") {
+            rendered.push_str("; expires=")?;
+            write_value(&mut rendered, expires, false)?;
+            rendered.push_str(" ms")?;
+        }
+        if let Some(dns0) = find_value(output, "dns0") {
+            rendered.push_str("; dns=")?;
+            write_value(&mut rendered, dns0, false)?;
+            if let Some(dns1) = find_value(output, "dns1") {
+                rendered.push_str(", ")?;
+                write_value(&mut rendered, dns1, false)?;
+            }
+        }
+        rendered.push_str("\n")?;
+    }
+    if let Some(generation) = find_value(output, "generation") {
+        rendered.push_str("  Generation: ")?;
+        write_value(&mut rendered, generation, false)?;
+        rendered.push_str("\n")?;
+    }
+    Ok(rendered)
+}
+
+fn value_width(value: OutputValue) -> usize {
+    let mut rendered = Text::<64>::empty();
+    write_value(&mut rendered, value, false).ok();
+    rendered.len()
+}
+
+fn write_optional_table_value(
+    output: &mut Text<MAX_RENDERED_OUTPUT_BYTES>,
+    value: Option<OutputValue>,
+    width: usize,
+    right_aligned: bool,
+) -> Result<(), Error> {
+    match value {
+        Some(value) => write_table_value(output, value, width, right_aligned),
+        None => write_table_text(output, "-", width, right_aligned),
+    }
 }
 
 fn render_uptime(
