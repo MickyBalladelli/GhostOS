@@ -2579,7 +2579,7 @@ impl KernelExecutor {
                 crate::println!("Directory: {}", path.as_str());
                 crate::println!();
                 crate::println!(
-                    "{:<20}  {:<10}  {:>8}  {:>7}",
+                    "\x1b[1;97;44m{:<20}  {:<10}  {:>8}  {:>7}\x1b[0m",
                     "NAME",
                     "TYPE",
                     "SIZE",
@@ -2829,8 +2829,8 @@ impl KernelExecutor {
     }
 
     fn print_help(&self, _registry: &CommandRegistry<COMMAND_CAPACITY>) {
-        crate::println!("\x1b[1;36m=== HELP ===\x1b[0m");
-        crate::println!("CATEGORY");
+        crate::println!("\x1b[1;97;44m  HELP  \x1b[0m");
+        crate::println!("\x1b[1;97;44mCATEGORY     COMMAND\x1b[0m");
         for category in HELP_CATEGORIES {
             crate::print!("  ");
             crate::print!("{}", category);
@@ -2870,9 +2870,9 @@ impl KernelExecutor {
             return
         };
 
-        crate::print!("\x1b[1;36m=== HELP: ");
+        crate::print!("\x1b[1;97;44m  HELP: ");
         print_display_command(registration.spec.name.as_str());
-        crate::println!(" ===\x1b[0m");
+        crate::println!("  \x1b[0m");
         crate::print!("SYNTAX: ");
         print_display_command(registration.spec.name.as_str());
         for argument in registration.spec.arguments().filter(|argument| argument.positional) {
@@ -2938,9 +2938,9 @@ impl KernelExecutor {
         registry: &CommandRegistry<COMMAND_CAPACITY>,
         category: &str,
     ) {
-        crate::print!("\x1b[1;36m=== HELP: ");
+        crate::print!("\x1b[1;97;44m  HELP: ");
         print_display_command(category);
-        crate::println!(" ===\x1b[0m");
+        crate::println!("  \x1b[0m");
         for registration in registry.registrations() {
             if command_category(registration.route.raw()) == category {
                 crate::print!("  ");
@@ -2986,7 +2986,7 @@ impl KernelExecutor {
     }
 
     fn print_system(&self) {
-        crate::println!("\x1b[1;7;32mPROPERTY             VALUE\x1b[0m");
+        crate::println!("\x1b[1;97;44mPROPERTY             VALUE\x1b[0m");
         crate::println!("Name                 SynOS");
         crate::println!("Architecture         {}", architecture());
         crate::println!(
@@ -3114,7 +3114,7 @@ impl KernelExecutor {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "processes")?;
         let processes = MonitorState::get_processes(self.scheduler);
-        crate::println!("\x1b[1;7;36mTHREAD       STATE      SWITCHES SPACE     POLICY\x1b[0m");
+        crate::println!("\x1b[1;97;46mTHREAD       STATE      SWITCHES SPACE     POLICY\x1b[0m");
         let mut idx: u64 = 0;
         for proc in processes.iter() {
             if let Some(p) = proc {
@@ -3152,7 +3152,7 @@ impl KernelExecutor {
 
     fn print_top_cpu(&mut self) {
         let top = MonitorState::get_top_cpu(self.scheduler, &mut self.monitor.cpu_history);
-        crate::println!("\x1b[1;7;32mTHREAD     OWNER        SPACE    STATE    POLICY  CPU%  SWITCHES\x1b[0m");
+        crate::println!("\x1b[1;97;42mTHREAD     OWNER        SPACE    STATE    POLICY  CPU%  SWITCHES\x1b[0m");
         let mut idx: u64 = 0;
         for cpu in top.iter().flatten() {
             let state = match cpu.state {
@@ -3273,7 +3273,7 @@ impl KernelExecutor {
         insert(&mut output, "granted-locks", OutputValue::Unsigned(granted_locks))?;
         insert(&mut output, "queued-locks", OutputValue::Unsigned(queued_locks))?;
 
-        crate::println!("\x1b[1;7;33mSTAT                 VALUE\x1b[0m");
+        crate::println!("\x1b[1;97;43mSTAT                 VALUE\x1b[0m");
         crate::println!("Active locks         {} / {}", active_locks, MAX_LOCKS);
         crate::println!("Granted              {}", granted_locks);
         crate::println!("Queued               {}", queued_locks);
@@ -3284,7 +3284,7 @@ impl KernelExecutor {
         }
 
         crate::println!();
-        crate::println!("\x1b[1;7;33mRESOURCE   STATE    QUEUED  OWNER NODE\x1b[0m");
+        crate::println!("\x1b[1;97;43mRESOURCE   STATE    QUEUED  OWNER NODE\x1b[0m");
         for lock in locks.iter() {
             let Some(resource_id) = lock.resource_id else { continue };
             let state = if lock.granted != 0 { "GRANTED" } else { "WAITING" };

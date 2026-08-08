@@ -8,9 +8,13 @@ use crate::{Error, Text};
 pub const MAX_RENDERED_OUTPUT_BYTES: usize = 4096;
 
 const ANSI_RESET: &str = "\x1b[0m";
-const ANSI_REVERSE_CYAN: &str = "\x1b[1;7;36m";
-const ANSI_REVERSE_GREEN: &str = "\x1b[1;7;32m";
-const ANSI_REVERSE_MAGENTA: &str = "\x1b[1;7;35m";
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_ERROR: &str = "\x1b[1;91m";
+const ANSI_SUCCESS: &str = "\x1b[1;92m";
+const ANSI_SECTION_CYAN: &str = "\x1b[1;96m";
+const ANSI_SECTION_GREEN: &str = "\x1b[1;92m";
+const ANSI_TABLE_HEADER: &str = "\x1b[1;97;44m";
+const ANSI_TABLE_MAGENTA: &str = "\x1b[1;97;45m";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutputFormat {
@@ -65,8 +69,10 @@ fn render_list(
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
     for field in output.fields() {
+        rendered.push_str(ANSI_BOLD)?;
         write!(&mut rendered, "{}=", field.name.as_str())
             .map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
         write_value(&mut rendered, field.value, false)?;
         rendered.push_str("\n")?
     }
@@ -78,13 +84,16 @@ fn render_error_status(
     rendered: &mut Text<MAX_RENDERED_OUTPUT_BYTES>,
 ) -> Result<(), Error> {
     if matches!(output.status().severity(), Severity::Error | Severity::Fatal) {
-        writeln!(
+        rendered.push_str(ANSI_ERROR)?;
+        write!(
             rendered,
             "ERROR: status={} ({})",
             output.status().raw(),
             output.status().message()
         )
             .map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
     }
     Ok(())
 }
@@ -240,42 +249,53 @@ fn render_interfaces(
         Some(OutputValue::Text(value)) if value.as_str() == "show-network"
     );
     if network {
+        rendered.push_str(ANSI_BOLD)?;
         rendered.push_str("Network: ")?;
         if let Some(hostname) = find_value(output, "hostname") {
             write_value(&mut rendered, hostname, false)?;
         }
+        rendered.push_str(ANSI_RESET)?;
     } else if singular {
-        rendered.push_str(ANSI_REVERSE_CYAN)?;
+        rendered.push_str(ANSI_SECTION_CYAN)?;
         rendered.push_str("  INTERFACE  ")?;
         rendered.push_str(ANSI_RESET)?;
         rendered.push_str("\n")?;
+        rendered.push_str(ANSI_BOLD)?;
         rendered.push_str("Interface: ")?;
         if let Some(name) = find_value(output, "interface1-name") {
             write_value(&mut rendered, name, false)?;
         }
+        rendered.push_str(ANSI_RESET)?;
     } else {
-        rendered.push_str(ANSI_REVERSE_GREEN)?;
+        rendered.push_str(ANSI_SECTION_GREEN)?;
         rendered.push_str("  INTERFACES  ")?;
         rendered.push_str(ANSI_RESET)?;
         rendered.push_str("\n")?;
+        rendered.push_str(ANSI_BOLD)?;
         rendered.push_str("Interfaces: ")?;
         if let Some(count) = find_value(output, "interface-count") {
             write_value(&mut rendered, count, false)?;
         }
+        rendered.push_str(ANSI_RESET)?;
     }
-    rendered.push_str(" (generation ")?;
+    rendered.push_str(" (")?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("generation ")?;
     if let Some(generation) = find_value(output, "generation") {
         write_value(&mut rendered, generation, false)?;
     }
+    rendered.push_str(ANSI_RESET)?;
     rendered.push_str(")\n")?;
     if network {
+        rendered.push_str(ANSI_BOLD)?;
         rendered.push_str("Interfaces: ")?;
         if let Some(count) = find_value(output, "interface-count") {
             write_value(&mut rendered, count, false)?;
         }
+        rendered.push_str(ANSI_RESET)?;
         rendered.push_str("\n")?;
     }
-    rendered.push_str(ANSI_REVERSE_GREEN)?;
+    rendered.push_str(ANSI_TABLE_HEADER)?;
     write_table_text(&mut rendered, "NAME", 8, false)?;
     rendered.push_str("  ")?;
     write_table_text(&mut rendered, "ADDRESS", 15, false)?;
@@ -354,14 +374,16 @@ fn render_interfaces(
         rendered.push_str(")\n")?;
     }
     if network {
-        rendered.push_str(ANSI_REVERSE_MAGENTA)?;
+        rendered.push_str(ANSI_TABLE_MAGENTA)?;
         rendered.push_str("  ROUTES  ")?;
         rendered.push_str(ANSI_RESET)?;
         rendered.push_str("\n")?;
+        rendered.push_str(ANSI_BOLD)?;
         rendered.push_str("Routes: ")?;
         if let Some(count) = find_value(output, "route-count") {
             write_value(&mut rendered, count, false)?;
         }
+        rendered.push_str(ANSI_RESET)?;
         rendered.push_str("\n")?;
         for names in NETWORK_ROUTE_FIELD_NAMES {
             let Some(destination) = find_value(output, names[0]) else {
@@ -419,7 +441,10 @@ fn render_set_interface(
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
-    rendered.push_str("Interface updated\n")?;
+    rendered.push_str(ANSI_SUCCESS)?;
+    rendered.push_str("Interface updated")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
     for (field, label) in [
         ("interface", "  Name"),
         ("mode", "  Mode"),
@@ -453,13 +478,16 @@ fn render_uptime(
     let seconds = find_value(output, "seconds")
         .and_then(unsigned_value)
         .unwrap_or(0);
-    write!(&mut rendered, "Uptime: ").map_err(|_| Error::Capacity)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("Uptime: ")?;
     if days != 0 {
         write!(&mut rendered, "{days} day{}, ", if days == 1 { "" } else { "s" })
             .map_err(|_| Error::Capacity)?;
     }
-    write!(&mut rendered, "{hours:02}:{minutes:02}:{seconds:02}\n")
+    write!(&mut rendered, "{hours:02}:{minutes:02}:{seconds:02}")
         .map_err(|_| Error::Capacity)?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
     Ok(rendered)
 }
 
@@ -484,11 +512,13 @@ fn render_removed(
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_SUCCESS)?;
     if let Some(path) = find_value(output, "path") {
         write_value(&mut rendered, path, false)?;
         rendered.push_str(" was deleted")?;
-        rendered.push_str("\n")?;
     }
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
     Ok(rendered)
 }
 
@@ -497,6 +527,7 @@ fn render_deleted(
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_SUCCESS)?;
     if let Some(path) = find_value(output, "path") {
         write_value(&mut rendered, path, false)?;
         if let Some(version) = find_value(output, "version") {
@@ -504,7 +535,9 @@ fn render_deleted(
             write_value(&mut rendered, version, false)?;
         }
     }
-    rendered.push_str(" was deleted\n")?;
+    rendered.push_str(" was deleted")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
     Ok(rendered)
 }
 
@@ -513,6 +546,7 @@ fn render_created(
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_SUCCESS)?;
     if let Some(path) = find_value(output, "path") {
         write_value(&mut rendered, path, false)?;
         if !is_directory_output_type(output) {
@@ -522,7 +556,9 @@ fn render_created(
             }
         }
     }
-    rendered.push_str(" was created\n")?;
+    rendered.push_str(" was created")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
     Ok(rendered)
 }
 
@@ -531,12 +567,14 @@ fn render_linked(
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_SUCCESS)?;
     if let (Some(target), Some(source)) = (find_value(output, "path"), find_value(output, "source")) {
         write_value(&mut rendered, target, false)?;
         rendered.push_str(" is now a link to ")?;
         write_value(&mut rendered, source, false)?;
-        rendered.push_str("\n")?;
     }
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
     Ok(rendered)
 }
 
@@ -581,7 +619,9 @@ fn render_labeled_value(
 ) -> Result<(), Error> {
     // Prefer push_str over `write!("{label}")` — size/LTO builds have miscompiled
     // some format_args str writes in the guest kernel.
+    rendered.push_str(ANSI_BOLD)?;
     rendered.push_str(label)?;
+    rendered.push_str(ANSI_RESET)?;
     rendered.push_str(": ")?;
     write_value(rendered, value, false)?;
     rendered.push_str("\n")?;
@@ -601,10 +641,12 @@ fn render_default_directory(
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
     rendered.push_str("Current directory: ")?;
     if let Some(directory) = find_value(output, "default-directory") {
         write_value(&mut rendered, directory, false)?;
     }
+    rendered.push_str(ANSI_RESET)?;
     rendered.push_str("\n")?;
     Ok(rendered)
 }
@@ -661,16 +703,22 @@ fn render_directory(
 
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
     rendered.push_str("Directory: ")?;
     if let Some(path) = find_value(output, "path") {
         write_value(&mut rendered, path, false)?;
     }
-    rendered.push_str("\nEntries: ")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("Entries: ")?;
     if let Some(count) = find_value(output, "entry-count") {
         write_value(&mut rendered, count, false)?;
     }
+    rendered.push_str(ANSI_RESET)?;
     rendered.push_str("\n\n")?;
 
+    rendered.push_str(ANSI_TABLE_HEADER)?;
     write_table_text(&mut rendered, "NAME", name_width, false)?;
     rendered.push_str("  ")?;
     write_table_text(&mut rendered, "TYPE", 10, false)?;
@@ -678,6 +726,7 @@ fn render_directory(
     write_table_text(&mut rendered, "SIZE", 8, true)?;
     rendered.push_str("  ")?;
     write_table_text(&mut rendered, "VERSION", 7, true)?;
+    rendered.push_str(ANSI_RESET)?;
     rendered.push_str("\n")?;
 
     for fields in ENTRY_FIELDS {
@@ -709,7 +758,9 @@ fn render_directory(
     }
 
     if rendered_entries == 0 {
+        rendered.push_str(ANSI_BOLD)?;
         rendered.push_str("(empty)\n")?;
+        rendered.push_str(ANSI_RESET)?;
     }
 
     if let Some(next) = find_value(output, "next") {
