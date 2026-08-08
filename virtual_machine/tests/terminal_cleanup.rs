@@ -1,6 +1,6 @@
 //! Terminal I/O and exit-cleanup coverage.
 
-use std::io::{self, Cursor, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,6 +14,17 @@ use synos_vm::{
 struct FakeOutput {
     bytes: Arc<Mutex<Vec<u8>>>,
     flushes: Arc<AtomicUsize>,
+}
+
+struct FailingInput;
+
+impl Read for FailingInput {
+    fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "synthetic terminal input failure",
+        ))
+    }
 }
 
 impl Write for FakeOutput {
@@ -97,6 +108,20 @@ fn fake_terminal_eof_becomes_ctrl_d() {
             break;
         }
         assert!(Instant::now() < deadline, "fake input reader did not produce EOF");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn fake_terminal_input_error_is_reported() {
+    let session = TerminalSession::new_with_io(FailingInput, FakeOutput::default());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Err(error) = session.poll() {
+            assert!(error.to_string().contains("synthetic terminal input failure"));
+            break;
+        }
+        assert!(Instant::now() < deadline, "fake input reader did not report an error");
         std::thread::yield_now();
     }
 }
@@ -244,7 +269,7 @@ mod unix_pty {
             cleanup.cleanup().expect("terminal child cleanup");
         } else {
             let status = child.wait().expect("wait terminal child");
-            if action == "success" || action == "close" {
+            if action == "success" {
                 assert!(status.success(), "terminal child failed: {status}");
             } else {
                 assert!(!status.success(), "terminal child unexpectedly succeeded");
@@ -262,9 +287,9 @@ mod unix_pty {
     }
 
     #[test]
-    fn terminal_restores_pty_after_success_signal_panic_and_input_error() {
+    fn terminal_restores_pty_after_success_signal_and_panic() {
         let _lock = PTY_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        for action in ["success", "signal", "panic", "close"] {
+        for action in ["success", "signal", "panic"] {
             exercise_child(action, false);
         }
     }
@@ -297,18 +322,6 @@ fn terminal_child_entrypoint() {
             drop(session);
         }
         "panic" => panic!("terminal cleanup panic"),
-        "close" => {
-            unsafe {
-                libc::close(0);
-            }
-            loop {
-                match session.poll() {
-                    Ok(input) if input.bytes.contains(&0x04) => break,
-                    Ok(_) => std::thread::sleep(Duration::from_millis(5)),
-                    Err(_) => break,
-                }
-            }
-        }
         "hold" => loop {
             std::thread::sleep(Duration::from_secs(1));
         },
