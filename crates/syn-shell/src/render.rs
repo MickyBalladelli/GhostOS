@@ -110,9 +110,38 @@ fn is_show_interfaces_output(output: &StructuredOutput) -> bool {
     matches!(
         find_value(output, "operation"),
         Some(OutputValue::Text(value))
-            if value.as_str() == "show-interfaces" || value.as_str() == "show-interface"
+            if value.as_str() == "show-network"
+                || value.as_str() == "show-interfaces"
+                || value.as_str() == "show-interface"
     )
 }
+
+const NETWORK_ROUTE_FIELD_NAMES: [[&str; 4]; 4] = [
+    [
+        "route1-destination",
+        "route1-gateway",
+        "route1-interface",
+        "route1-metric",
+    ],
+    [
+        "route2-destination",
+        "route2-gateway",
+        "route2-interface",
+        "route2-metric",
+    ],
+    [
+        "route3-destination",
+        "route3-gateway",
+        "route3-interface",
+        "route3-metric",
+    ],
+    [
+        "route4-destination",
+        "route4-gateway",
+        "route4-interface",
+        "route4-metric",
+    ],
+];
 
 fn is_set_interface_output(output: &StructuredOutput) -> bool {
     matches!(
@@ -201,7 +230,16 @@ fn render_interfaces(
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "show-interface"
     );
-    if singular {
+    let network = matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-network"
+    );
+    if network {
+        rendered.push_str("Network: ")?;
+        if let Some(hostname) = find_value(output, "hostname") {
+            write_value(&mut rendered, hostname, false)?;
+        }
+    } else if singular {
         rendered.push_str("Interface: ")?;
         if let Some(name) = find_value(output, "interface1-name") {
             write_value(&mut rendered, name, false)?;
@@ -217,6 +255,13 @@ fn render_interfaces(
         write_value(&mut rendered, generation, false)?;
     }
     rendered.push_str(")\n")?;
+    if network {
+        rendered.push_str("Interfaces: ")?;
+        if let Some(count) = find_value(output, "interface-count") {
+            write_value(&mut rendered, count, false)?;
+        }
+        rendered.push_str("\n")?;
+    }
     let mut rows = 0;
     for (index, names) in INTERFACE_FIELD_NAMES.iter().enumerate() {
         let Some(name) = find_value(output, names[0]) else {
@@ -268,6 +313,28 @@ fn render_interfaces(
         rendered.push_str("\nMore interfaces available (continuation: ")?;
         write_value(&mut rendered, next, false)?;
         rendered.push_str(")\n")?;
+    }
+    if network {
+        rendered.push_str("Routes: ")?;
+        if let Some(count) = find_value(output, "route-count") {
+            write_value(&mut rendered, count, false)?;
+        }
+        rendered.push_str("\n")?;
+        for names in NETWORK_ROUTE_FIELD_NAMES {
+            let Some(destination) = find_value(output, names[0]) else {
+                continue
+            };
+            rendered.push_str("  Route: ")?;
+            write_value(&mut rendered, destination, false)?;
+            render_interface_field(&mut rendered, output, names[1], "    Gateway")?;
+            render_interface_field(&mut rendered, output, names[2], "    Interface")?;
+            render_interface_field(&mut rendered, output, names[3], "    Metric")?;
+        }
+        if let Some(next) = find_value(output, "next-route") {
+            rendered.push_str("  More routes available (continuation: ")?;
+            write_value(&mut rendered, next, false)?;
+            rendered.push_str(")\n")?;
+        }
     }
     Ok(rendered)
 }

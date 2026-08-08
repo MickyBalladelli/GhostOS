@@ -236,6 +236,13 @@ fn show_and_set_commands_emit_structured_network_output() {
     assert!(has_text(&network, "hostname", "synos"));
     assert!(has_unsigned(&network, "interface-count", 1));
     assert!(has_unsigned(&network, "route-count", 1));
+    assert!(has_text(&network, "interface1-name", "eth0"));
+    assert!(has_text(&network, "interface1-address", "10.0.0.2"));
+    assert!(has_text(&network, "route1-destination", "0.0.0.0/0"));
+    let rendered = syn_shell::render::render(&network, syn_shell::render::OutputFormat::List)
+        .unwrap();
+    assert!(rendered.as_str().contains("Network: synos"));
+    assert!(rendered.as_str().contains("Address: 10.0.0.2"));
 
     let interfaces = execute(&mut executor, "SHOW INTERFACES").unwrap();
     assert!(has_text(&interfaces, "operation", "show-interfaces"));

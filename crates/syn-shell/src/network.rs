@@ -308,7 +308,7 @@ pub fn dispatch_network_command<Source: NetworkSource>(
     command: CommandCall,
 ) -> Result<StructuredOutput, Status> {
     match command.route.raw() {
-        SHOW_NETWORK_ROUTE => source.show_network().and_then(network_output),
+        SHOW_NETWORK_ROUTE => source.show_network().and_then(show_network_output),
         SHOW_INTERFACES_ROUTE => {
             let interface = command.get_text("INTERFACE");
             if interface.is_some_and(str::is_empty) {
@@ -326,7 +326,9 @@ pub fn dispatch_network_command<Source: NetworkSource>(
                 .filter(|value| !value.is_empty())
                 .ok_or(Status::INVALID_ARGUMENT)?;
             source.authorize_mutation()?;
-            source.set_hostname(hostname).and_then(network_output)
+            source
+                .set_hostname(hostname)
+                .and_then(|view| network_operation_output(view, "set-hostname"))
         }
         SET_INTERFACE_ROUTE => {
             let update = interface_update_request(&command)?;
@@ -338,7 +340,9 @@ pub fn dispatch_network_command<Source: NetworkSource>(
         SET_ROUTE_ROUTE => {
             let update = route_update_request(&command)?;
             source.authorize_mutation()?;
-            source.set_route(update).and_then(network_output)
+            source
+                .set_route(update)
+                .and_then(|view| network_operation_output(view, "set-route"))
         }
         _ => Err(Status::NOT_FOUND),
     }
@@ -505,6 +509,15 @@ pub fn network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
     Ok(output)
 }
 
+fn network_operation_output(
+    view: NetworkView,
+    operation: &str,
+) -> Result<StructuredOutput, Status> {
+    let mut output = network_output(view)?;
+    insert_text(&mut output, "operation", operation)?;
+    Ok(output)
+}
+
 pub fn set_interface_output(
     view: NetworkView,
     name: &str,
@@ -584,6 +597,25 @@ pub fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> 
     }
     if let Some(next) = omitted.or(view.next_interface) {
         insert(&mut output, "next-interface", OutputValue::Unsigned(next))?;
+    }
+    Ok(output)
+}
+
+pub fn show_network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
+    let mut output = interfaces_output(view)?;
+    insert_text(&mut output, "operation", "show-network")?;
+    let mut used = output.fields().count();
+    let mut omitted = None;
+    for (index, route) in view.routes.iter().flatten().enumerate() {
+        if used.saturating_add(4).saturating_add(1) > MAX_OUTPUT_FIELDS {
+            omitted = Some(index as u64);
+            break;
+        }
+        emit_route(&mut output, index, route)?;
+        used = used.saturating_add(4);
+    }
+    if let Some(next) = omitted.or(view.next_route) {
+        insert(&mut output, "next-route", OutputValue::Unsigned(next))?;
     }
     Ok(output)
 }
@@ -698,21 +730,29 @@ fn routes_output(view: NetworkView) -> Result<StructuredOutput, Status> {
     let mut output = network_output(view)?;
     insert_text(&mut output, "operation", "show-routes")?;
     for (index, route) in view.routes.iter().flatten().enumerate() {
-        insert_indexed_text(&mut output, "route", index, "destination", route.destination.as_str())?;
-        insert_indexed_text(&mut output, "route", index, "gateway", route.gateway.as_str())?;
-        insert_indexed_text(&mut output, "route", index, "interface", route.interface.as_str())?;
-        insert_indexed(
-            &mut output,
-            "route",
-            index,
-            "metric",
-            OutputValue::Unsigned(route.metric as u64),
-        )?;
+        emit_route(&mut output, index, route)?;
     }
     if let Some(next) = view.next_route {
         insert(&mut output, "next-route", OutputValue::Unsigned(next))?;
     }
     Ok(output)
+}
+
+fn emit_route(
+    output: &mut StructuredOutput,
+    index: usize,
+    route: &NetworkRouteView,
+) -> Result<(), Status> {
+    insert_indexed_text(output, "route", index, "destination", route.destination.as_str())?;
+    insert_indexed_text(output, "route", index, "gateway", route.gateway.as_str())?;
+    insert_indexed_text(output, "route", index, "interface", route.interface.as_str())?;
+    insert_indexed(
+        output,
+        "route",
+        index,
+        "metric",
+        OutputValue::Unsigned(route.metric as u64),
+    )
 }
 
 fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result<(), Status> {
