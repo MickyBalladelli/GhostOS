@@ -1,9 +1,12 @@
 //! Host terminal session for the guest serial console.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io::{self, IsTerminal, Read, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
+
+#[path = "terminal_platform.rs"]
+mod terminal_platform;
 
 const TERMINAL_SIZE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -56,7 +59,7 @@ pub enum TerminalInputMode {
 /// Owns host input polling and terminal restoration for one VM session.
 pub struct TerminalSession {
     events: Receiver<InputEvent>,
-    _raw_mode: RawMode,
+    raw_mode: RawMode,
     has_terminal: bool,
     last_size: Cell<Option<(u16, u16)>>,
     last_size_check: Cell<Option<Instant>>,
@@ -72,7 +75,7 @@ impl TerminalSession {
         let raw_mode = if interactive && is_tty {
             RawMode::enter()?
         } else {
-            RawMode::Inactive
+            RawMode::inactive()
         };
 
         let (sender, events) = mpsc::channel();
@@ -100,7 +103,7 @@ impl TerminalSession {
 
         Ok(Self {
             events,
-            _raw_mode: raw_mode,
+            raw_mode,
             has_terminal: is_tty,
             last_size: Cell::new(None),
             last_size_check: Cell::new(None),
@@ -122,7 +125,8 @@ impl TerminalSession {
             match event {
                 InputEvent::Bytes(bytes) => input.bytes.extend(translate_input_bytes(&bytes)),
                 InputEvent::Eof => {
-                    input.bytes.push(0x04)
+                    input.bytes.push(0x04);
+                    self.raw_mode.restore()?
                 }
                 InputEvent::Error(error) => return Err(TerminalError::Io(error)),
             }
@@ -139,7 +143,7 @@ impl TerminalSession {
             && size_check_due
         {
             self.last_size_check.set(Some(Instant::now()));
-            if let Some((rows, columns)) = terminal_size() {
+            if let Some((rows, columns)) = terminal_platform::size() {
                 let size = (rows, columns);
                 if self.last_size.get() != Some(size) {
                     let mut resized = format!("\x1b[8;{};{}t", rows, columns).into_bytes();
@@ -167,22 +171,6 @@ pub fn translate_input_bytes(bytes: &[u8]) -> Vec<u8> {
         .iter()
         .map(|byte| if *byte == 0x7F { 0x08 } else { *byte })
         .collect()
-}
-
-#[cfg(unix)]
-fn terminal_size() -> Option<(u16, u16)> {
-    let output = stty_command().arg("size").output().ok()?;
-    if !output.status.success() {
-        return None
-    }
-    let text = String::from_utf8(output.stdout).ok()?;
-    let mut values = text.split_whitespace().map(|value| value.parse::<u16>().ok());
-    Some((values.next()??, values.next()??))
-}
-
-#[cfg(not(unix))]
-fn terminal_size() -> Option<(u16, u16)> {
-    None
 }
 
 /// Convert one ASCII byte to PS/2 set-1 make/break bytes.
@@ -278,65 +266,39 @@ pub fn ascii_to_scancodes(byte: u8) -> Vec<u8> {
     result
 }
 
-enum RawMode {
-    Inactive,
-    #[cfg(unix)]
-    Unix { saved: String },
+struct RawMode {
+    mode: RefCell<Option<terminal_platform::TerminalMode>>,
 }
 
 impl RawMode {
-    #[cfg(unix)]
     fn enter() -> Result<Self, TerminalError> {
-        let saved = stty_command()
-            .arg("-g")
-            .output()
-            .map_err(TerminalError::Io)?;
-        if !saved.status.success() {
-            return Err(TerminalError::RawMode(stty_error(
-                "cannot read terminal settings",
-                &saved.stderr,
-            )))
-        }
-        let saved = String::from_utf8_lossy(&saved.stdout).trim().to_string();
-        let status = stty_command()
-            .args(["raw", "-echo", "min", "1", "time", "0"])
-            .status()
-            .map_err(TerminalError::Io)?;
-        if !status.success() {
-            return Err(TerminalError::RawMode("cannot enable raw mode".to_string()))
-        }
-        Ok(Self::Unix { saved })
+        Ok(Self {
+            mode: RefCell::new(Some(
+                terminal_platform::TerminalMode::enter().map_err(|error| {
+                    TerminalError::RawMode(format!("cannot enable raw mode: {error}"))
+                })?,
+            )),
+        })
     }
 
-    #[cfg(not(unix))]
-    fn enter() -> Result<Self, TerminalError> {
-        Ok(Self::Inactive)
+    fn inactive() -> Self {
+        Self {
+            mode: RefCell::new(None),
+        }
     }
-}
 
-#[cfg(unix)]
-fn stty_command() -> std::process::Command {
-    let mut command = std::process::Command::new("stty");
-    #[cfg(target_os = "macos")]
-    command.args(["-f", "/dev/tty"]);
-    command
-}
-
-#[cfg(unix)]
-fn stty_error(context: &str, stderr: &[u8]) -> String {
-    let detail = String::from_utf8_lossy(stderr).trim().to_string();
-    if detail.is_empty() {
-        context.to_string()
-    } else {
-        format!("{context}: {detail}")
+    fn restore(&self) -> Result<(), TerminalError> {
+        let Some(mut mode) = self.mode.borrow_mut().take() else {
+            return Ok(())
+        };
+        mode.restore().map_err(|error| {
+            TerminalError::RawMode(format!("cannot restore terminal settings: {error}"))
+        })
     }
 }
 
 impl Drop for RawMode {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Self::Unix { saved } = self {
-            let _ = stty_command().arg(saved).status();
-        }
+        let _ = self.restore();
     }
 }

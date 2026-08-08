@@ -68,7 +68,7 @@ remaining proof, portability, safety, and fidelity work.
 
 ## P1: Terminal and host portability
 
-- [ ] Replace the `stty` subprocess path with a platform terminal abstraction
+- [x] Replace the `stty` subprocess path with a platform terminal abstraction
       that restores settings on success, error, panic, signal, EOF, and child
       failure.
 - [ ] Define Windows, macOS, Linux, and non-TTY behavior for raw input,

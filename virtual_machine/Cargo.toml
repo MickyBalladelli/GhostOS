@@ -13,6 +13,9 @@ synos-fabric = { path = "../crates/fabric" }
 synos-kernel = { path = "../kernel" }
 synos-synfs = { path = "../crates/synfs" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 synos-test-support = { path = "../crates/test-support" }
 

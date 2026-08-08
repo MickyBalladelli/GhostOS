@@ -912,6 +912,7 @@ name = "synos-vm"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
+ "libc",
  "synos-boot-protocol",
  "synos-fabric",
  "synos-kernel",
