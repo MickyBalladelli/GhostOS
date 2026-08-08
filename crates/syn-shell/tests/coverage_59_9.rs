@@ -21,5 +21,32 @@ fn list_output_keeps_error_status_and_known_metadata_labels() {
     output.insert("size", OutputValue::Unsigned(12)).unwrap();
     output.insert("version", OutputValue::Unsigned(4)).unwrap();
     let rendered = render(&output, OutputFormat::List).unwrap();
-    assert_eq!(rendered.as_str(), format!("ERROR: status={} (invalid argument)\nOperation: read\nPath: SYS$LOG:BOOT\nType: FILE\nSize: 12\nVersion: 4\n", Status::INVALID_ARGUMENT.raw()));
+    assert_eq!(
+        strip_ansi(rendered.as_str()),
+        format!("ERROR: status={} (invalid argument)\nOperation: read\nPath: SYS$LOG:BOOT\nType: FILE\nSize: 12\nVersion: 4\n", Status::INVALID_ARGUMENT.raw())
+    );
+}
+
+fn strip_ansi(value: &str) -> String {
+    let mut plain = String::new();
+    let mut escape = false;
+    let mut csi = false;
+    for character in value.chars() {
+        if escape {
+            if character == '[' {
+                csi = true;
+            } else if csi && matches!(character, '@'..='~') {
+                escape = false;
+                csi = false;
+            }
+            continue;
+        }
+        if character == '\x1b' {
+            escape = true;
+            csi = false;
+        } else {
+            plain.push(character);
+        }
+    }
+    plain
 }
