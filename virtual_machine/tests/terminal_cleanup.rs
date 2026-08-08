@@ -134,7 +134,7 @@ mod unix_pty {
     use std::mem::MaybeUninit;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::process::CommandExt;
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Command, ExitStatus, Stdio};
     use std::ptr;
 
     static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -223,6 +223,35 @@ mod unix_pty {
         }
     }
 
+    fn wait_for_child(
+        child: &mut Child,
+        master: &mut File,
+        action: &str,
+    ) -> ExitStatus {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut buffer = [0u8; 256];
+        loop {
+            if let Some(status) = child.try_wait().expect("poll terminal child") {
+                return status;
+            }
+
+            loop {
+                match std::io::Read::read(master, &mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("read terminal child output: {error}"),
+                }
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "terminal child did not exit during {action}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn spawn_child(action: &str, slave: &File) -> Child {
         let stdin = slave.try_clone().expect("clone PTY stdin");
         let stdout = slave.try_clone().expect("clone PTY stdout");
@@ -268,7 +297,7 @@ mod unix_pty {
             });
             cleanup.cleanup().expect("terminal child cleanup");
         } else {
-            let status = child.wait().expect("wait terminal child");
+            let status = wait_for_child(&mut child, &mut master, action);
             if action == "success" {
                 assert!(status.success(), "terminal child failed: {status}");
             } else {
