@@ -51,7 +51,7 @@ remaining proof, portability, safety, and fidelity work.
 
 ## P0: Disk and lock reliability
 
-- [ ] Make stale-lock recovery the only public recovery path, or require an
+- [x] Make stale-lock recovery the only public recovery path, or require an
       explicit force token for unconditional lock removal.
 - [ ] Store canonical image identity, owner identity, start time, host identity,
       and format in the lock record. Handle PID reuse and cross-host copies.

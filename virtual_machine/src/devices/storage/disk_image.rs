@@ -265,8 +265,11 @@ impl DiskImage {
         Ok(DiskLock { path: lock_path })
     }
 
-    /// Explicitly remove a stale ownership marker after diagnosing it.
-    pub fn recover_lock<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
+    /// Remove an ownership marker after stale-state validation.
+    ///
+    /// Keep this helper private so every public recovery request must pass
+    /// through `recover_stale_lock`.
+    fn recover_lock<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
         let lock_path = Self::lock_path(path);
         fs::remove_file(&lock_path).map_err(StorageError::Io)
     }
