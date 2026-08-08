@@ -33,7 +33,7 @@ remaining proof, portability, safety, and fidelity work.
 
 ## P0: Snapshot and migration safety
 
-- [ ] Inventory every mutable VM field and mark it as serialized, rebuilt, or
+- [x] Inventory every mutable VM field and mark it as serialized, rebuilt, or
       intentionally excluded. Include device queues, serial/input buffers,
       timers, RNG state, disks, network topology, guest-agent state, hotplug,
       acceleration mode, and firmware state.
