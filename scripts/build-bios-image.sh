@@ -9,8 +9,8 @@ rust_tools_dir=$(dirname "$(rustc --print target-libdir)")/bin
 rust_lld="$rust_tools_dir/rust-lld"
 llvm_objcopy="$rust_tools_dir/llvm-objcopy"
 stage2_sectors=16
-# Staging load starts at 0x10000; keep the image below typical EBDA (~0x9FC00).
-max_kernel_sectors=1140
+# Staging load starts at 0x10000; leave 1 KiB below typical EBDA (~0x9FC00).
+max_kernel_sectors=1148
 
 mkdir -p "$build_dir"
 

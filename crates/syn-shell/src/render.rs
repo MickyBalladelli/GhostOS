@@ -279,18 +279,44 @@ fn render_interfaces(
         }
         rendered.push_str("\n")?;
     }
+    rendered.push_str(ANSI_REVERSE_GREEN)?;
+    write_table_text(&mut rendered, "NAME", 8, false)?;
+    rendered.push_str("  ")?;
+    write_table_text(&mut rendered, "ADDRESS", 15, false)?;
+    rendered.push_str("  ")?;
+    write_table_text(&mut rendered, "GATEWAY", 15, false)?;
+    rendered.push_str("  ")?;
+    write_table_text(&mut rendered, "MODE", 6, false)?;
+    rendered.push_str("  ")?;
+    write_table_text(&mut rendered, "STATE", 8, false)?;
+    rendered.push_str("  ")?;
+    write_table_text(&mut rendered, "LINK", 4, false)?;
+    rendered.push_str("  ")?;
+    write_table_text(&mut rendered, "MTU", 5, true)?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+
     let mut rows = 0;
     for (index, names) in INTERFACE_FIELD_NAMES.iter().enumerate() {
-        let Some(name) = find_value(output, names[0]) else {
+        let Some(_) = find_value(output, names[0]) else {
             continue
         };
-        render_labeled_value(&mut rendered, "Interface", name)?;
-        render_interface_field(&mut rendered, output, names[1], "  Address")?;
-        render_interface_field(&mut rendered, output, names[2], "  Gateway")?;
-        render_interface_field(&mut rendered, output, names[6], "  Mode")?;
-        render_interface_field(&mut rendered, output, names[3], "  MTU")?;
-        render_interface_field(&mut rendered, output, names[4], "  Enabled")?;
-        render_interface_field(&mut rendered, output, names[5], "  Link up")?;
+        write_interface_table_value(&mut rendered, output, names[0], 8, false)?;
+        rendered.push_str("  ")?;
+        write_interface_table_value(&mut rendered, output, names[1], 15, false)?;
+        rendered.push_str("  ")?;
+        write_interface_table_value(&mut rendered, output, names[2], 15, false)?;
+        rendered.push_str("  ")?;
+        write_interface_table_value(&mut rendered, output, names[6], 6, false)?;
+        rendered.push_str("  ")?;
+        let enabled = find_value(output, names[4]) == Some(OutputValue::Boolean(true));
+        write_table_text(&mut rendered, if enabled { "enabled" } else { "disabled" }, 8, false)?;
+        rendered.push_str("  ")?;
+        let link_up = find_value(output, names[5]) == Some(OutputValue::Boolean(true));
+        write_table_text(&mut rendered, if link_up { "up" } else { "down" }, 4, false)?;
+        rendered.push_str("  ")?;
+        write_interface_table_value(&mut rendered, output, names[3], 5, true)?;
+        rendered.push_str("\n")?;
 
         if let Some(state) = find_value(output, INTERFACE_DHCP_FIELD_NAMES[index][0]) {
             render_labeled_value(&mut rendered, "  DHCP state", state)?;
@@ -370,6 +396,25 @@ fn render_interface_field(
         render_labeled_value(rendered, label, value)?;
     }
     Ok(())
+}
+
+fn write_interface_table_value(
+    rendered: &mut Text<MAX_RENDERED_OUTPUT_BYTES>,
+    output: &StructuredOutput,
+    field: &str,
+    width: usize,
+    right_aligned: bool,
+) -> Result<(), Error> {
+    match find_value(output, field) {
+        Some(OutputValue::Text(value)) => {
+            write_table_text(rendered, value.as_str(), width, right_aligned)
+        }
+        Some(OutputValue::Boolean(value)) => {
+            write_table_text(rendered, if value { "true" } else { "false" }, width, right_aligned)
+        }
+        Some(value) => write_table_value(rendered, value, width, right_aligned),
+        None => write_table_text(rendered, "-", width, right_aligned),
+    }
 }
 
 #[inline(never)]

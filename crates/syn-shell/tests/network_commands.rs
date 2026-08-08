@@ -242,7 +242,8 @@ fn show_and_set_commands_emit_structured_network_output() {
     let rendered = syn_shell::render::render(&network, syn_shell::render::OutputFormat::List)
         .unwrap();
     assert!(rendered.as_str().contains("Network: synos"));
-    assert!(rendered.as_str().contains("Address: 10.0.0.2"));
+    assert!(rendered.as_str().contains("ADDRESS"));
+    assert!(rendered.as_str().contains("10.0.0.2"));
 
     let interfaces = execute(&mut executor, "SHOW INTERFACES").unwrap();
     assert!(has_text(&interfaces, "operation", "show-interfaces"));
