@@ -1,3 +1,4 @@
+use std::fs::{self, File, OpenOptions};
 use std::io::{IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -786,12 +787,6 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
         } => {
             let key = SnapshotAuthKey::from_file(&key_path)
                 .map_err(|error| format!("cannot load migration authentication key: {error}"))?;
-            if snapshot.exists() {
-                return Err(format!(
-                    "migration target {} already exists; choose a new path",
-                    snapshot.display()
-                ));
-            }
             let listener = TcpListener::bind(&address)
                 .map_err(|error| format!("cannot listen for migration on {address}: {error}"))?;
             println!("waiting for VM checkpoint on {address}");
@@ -904,15 +899,206 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 checkpoint_id,
                 issued_at,
             )?;
-            let partial = snapshot.with_extension("synos-migration-partial");
-            std::fs::write(&partial, bytes)
-                .map_err(|error| format!("cannot write migration checkpoint: {error}"))?;
-            std::fs::rename(&partial, &snapshot)
-                .map_err(|error| format!("cannot publish migration checkpoint: {error}"))?;
+            publish_received_checkpoint(&snapshot, &bytes, key, &received)?;
             println!("received VM checkpoint from {peer} at {}", snapshot.display());
             Ok(())
         }
     }
+}
+
+fn publish_received_checkpoint(
+    target: &Path,
+    bytes: &[u8],
+    key: SnapshotAuthKey,
+    expected: &synos_vm::VmSnapshot,
+) -> Result<(), String> {
+    let parent = target
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let (partial, mut file) = create_migration_temp(parent, target)?;
+    let result = match file.write_all(bytes).and_then(|_| file.sync_all()) {
+        Ok(()) => {
+            drop(file);
+            verify_received_checkpoint(&partial, key, expected, "temporary")
+                .and_then(|_| publish_checkpoint_file(&partial, target, parent, key, expected))
+        }
+        Err(error) => {
+            drop(file);
+            Err(format!("cannot write migration checkpoint: {error}"))
+        }
+    };
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    result
+}
+
+fn create_migration_temp(parent: &Path, target: &Path) -> Result<(PathBuf, File), String> {
+    let name = target
+        .file_name()
+        .ok_or_else(|| "migration target must name a file".to_string())?
+        .to_string_lossy();
+    for attempt in 0..100u32 {
+        let partial = parent.join(format!(
+            ".{name}.synos-migration-{}-{attempt}.partial",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)
+        {
+            Ok(file) => return Ok((partial, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("cannot create migration checkpoint temporary file: {error}")),
+        }
+    }
+    Err("cannot create a unique migration checkpoint temporary file".to_string())
+}
+
+fn verify_received_checkpoint(
+    path: &Path,
+    key: SnapshotAuthKey,
+    expected: &synos_vm::VmSnapshot,
+    stage: &str,
+) -> Result<(), String> {
+    let reopened = synos_vm::VmSnapshot::load_authenticated(path, key)
+        .map_err(|error| format!("cannot verify {stage} migration checkpoint after reopen: {error}"))?;
+    if &reopened != expected {
+        return Err(format!("{stage} migration checkpoint changed during publication"));
+    }
+    Ok(())
+}
+
+fn publish_checkpoint_file(
+    partial: &Path,
+    target: &Path,
+    parent: &Path,
+    key: SnapshotAuthKey,
+    expected: &synos_vm::VmSnapshot,
+) -> Result<(), String> {
+    let had_old_target = match fs::symlink_metadata(target) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(format!("cannot inspect migration target: {error}")),
+    };
+    let backup = if had_old_target {
+        Some(create_migration_backup(parent, target)?)
+    } else {
+        None
+    };
+    if had_old_target {
+        if let Err(error) = sync_migration_directory(parent) {
+            if let Some(backup) = backup.as_ref() {
+                if let Err(restore_error) = restore_migration_target(target, Some(backup), parent) {
+                    return Err(format!(
+                        "{error}; cannot preserve old migration target: {restore_error}"
+                    ));
+                }
+            }
+            return Err(error);
+        }
+    }
+
+    let mut published = false;
+    let result = (|| {
+        fs::rename(partial, target)
+            .map_err(|error| format!("cannot publish migration checkpoint: {error}"))?;
+        published = true;
+        sync_migration_directory(parent)?;
+        verify_received_checkpoint(target, key, expected, "published")
+    })();
+
+    if let Err(error) = result {
+        if published {
+            if let Err(restore_error) = restore_migration_target(target, backup.as_deref(), parent) {
+                return Err(format!(
+                    "{error}; cannot preserve old migration target: {restore_error}"
+                ));
+            }
+        } else if let Some(backup) = backup.as_deref() {
+            if let Err(restore_error) = restore_migration_target(target, Some(backup), parent) {
+                return Err(format!(
+                    "{error}; cannot preserve old migration target: {restore_error}"
+                ));
+            }
+        }
+        return Err(error);
+    }
+
+    if let Some(backup) = backup {
+        let _ = fs::remove_file(backup);
+    }
+    Ok(())
+}
+
+fn create_migration_backup(parent: &Path, target: &Path) -> Result<PathBuf, String> {
+    let name = target
+        .file_name()
+        .ok_or_else(|| "migration target must name a file".to_string())?
+        .to_string_lossy();
+    for attempt in 0..100u32 {
+        let backup = parent.join(format!(
+            ".{name}.synos-migration-{}-{attempt}.backup",
+            std::process::id()
+        ));
+        match create_migration_backup_entry(target, &backup) {
+            Ok(()) => return Ok(backup),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("cannot preserve old migration target: {error}")),
+        }
+    }
+    Err("cannot create a unique migration checkpoint backup file".to_string())
+}
+
+#[cfg(unix)]
+fn create_migration_backup_entry(target: &Path, backup: &Path) -> std::io::Result<()> {
+    fs::hard_link(target, backup)
+}
+
+#[cfg(not(unix))]
+fn create_migration_backup_entry(target: &Path, backup: &Path) -> std::io::Result<()> {
+    fs::rename(target, backup)
+}
+
+fn restore_migration_target(
+    target: &Path,
+    backup: Option<&Path>,
+    parent: &Path,
+) -> Result<(), String> {
+    match backup {
+        Some(backup) => {
+            #[cfg(unix)]
+            fs::rename(backup, target)
+                .map_err(|error| format!("cannot restore old migration target: {error}"))?;
+
+            #[cfg(not(unix))]
+            {
+                let _ = fs::remove_file(target);
+                fs::rename(backup, target)
+                    .map_err(|error| format!("cannot restore old migration target: {error}"))?;
+            }
+        }
+        None => match fs::remove_file(target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("cannot remove failed migration target: {error}")),
+        },
+    }
+    sync_migration_directory(parent)
+}
+
+fn sync_migration_directory(parent: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("cannot sync migration target directory: {error}"))?;
+    }
+    #[cfg(not(unix))]
+    let _ = parent;
+    Ok(())
 }
 
 fn configure_migration_stream(stream: &TcpStream) -> Result<(), String> {

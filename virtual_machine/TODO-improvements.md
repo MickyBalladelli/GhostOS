@@ -43,7 +43,7 @@ remaining proof, portability, safety, and fidelity work.
   integrity for snapshots and migration streams.
 - [x] Authenticate migration peers, add connection and read/write timeouts,
       limit memory before allocation, and reject replayed or stale checkpoints.
-- [ ] Publish received checkpoints with file and directory sync ordering, then
+- [x] Publish received checkpoints with file and directory sync ordering, then
       verify them after reopen. Preserve the old target on every failure.
 - [ ] Add migration tests for interrupted transfer, malicious length, corrupt
       pages, wrong VM topology, incompatible device state, duplicate delivery,

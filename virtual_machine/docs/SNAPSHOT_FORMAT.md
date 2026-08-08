@@ -47,6 +47,11 @@ payloads above its 8 GiB pre-allocation migration cap, rejects checkpoints older
 24 hours or more than five minutes in the future, and records accepted
 checkpoint identities in `.synos-vm-migration-replay` beside the destination.
 The bounded ledger rejects duplicate deliveries during the freshness window.
+Received checkpoints are written to a unique temporary file in the destination
+directory, synced, atomically published, and followed by a directory sync.
+The published file is reopened and authenticated before the receive succeeds;
+an existing destination is retained until that verification completes and is
+restored if publication fails.
 
 `SYNOMIG1` and `SYNOMIG2` are legacy unauthenticated protocols and are rejected
 by the migration listener. Convert old version-1 payloads offline, wrap them in
