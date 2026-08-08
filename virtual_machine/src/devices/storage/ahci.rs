@@ -379,7 +379,7 @@ impl Ahci {
                 if count > MAX_TRANSFER_BYTES / 512 {
                     return Err(StorageError::Dma("transfer too large".into()));
                 }
-                self.disk_to_prds(mmu, lba, count, &prds, true)?;
+                self.disk_to_prds(mmu, lba, count, &prds, false)?;
                 self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40)?;
                 Ok(IS_DPS)
             }
@@ -388,7 +388,7 @@ impl Ahci {
                 if count > MAX_TRANSFER_BYTES / 512 {
                     return Err(StorageError::Dma("transfer too large".into()));
                 }
-                self.disk_to_prds(mmu, lba, count, &prds, false)?;
+                self.disk_to_prds(mmu, lba, count, &prds, true)?;
                 self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40)?;
                 Ok(0)
             }

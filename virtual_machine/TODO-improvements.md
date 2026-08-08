@@ -28,7 +28,7 @@ remaining proof, portability, safety, and fidelity work.
       descriptor chains with the same error contract.
 - [x] Add device-model tests for ordering, interrupt coalescing, queue
       backpressure, reset during I/O, hot removal, and completion after reset.
-- [ ] Compare AHCI, NVMe, and Virtio block behavior for identical reads,
+- [x] Compare AHCI, NVMe, and Virtio block behavior for identical reads,
       writes, flushes, failures, and guest-visible capacity.
 
 ## P0: Snapshot and migration safety

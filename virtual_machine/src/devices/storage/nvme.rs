@@ -344,7 +344,8 @@ impl Nvme {
         // DW2 (bytes 8..12): SQHD in bits 15:0, phase tag (bit 16) and
         // status code (bits 17:31) in the upper half.
         entry[8..10].copy_from_slice(&sqhd.to_le_bytes());
-        entry[10..12].copy_from_slice(&((status << 1) | phase as u32).to_le_bytes());
+        let status_word = ((status & 0x7FFF) as u16) << 1 | phase;
+        entry[10..12].copy_from_slice(&status_word.to_le_bytes());
         // DW3 (bytes 12..16): CID in bits 31:16.
         entry[14..16].copy_from_slice(&cid.to_le_bytes());
         let addr = q
