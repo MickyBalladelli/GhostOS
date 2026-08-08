@@ -3114,8 +3114,7 @@ impl KernelExecutor {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "processes")?;
         let processes = MonitorState::get_processes(self.scheduler);
-        crate::println!("\x1b[1;36m=== PROCESSES ===\x1b[0m");
-        crate::println!("THREAD       STATE      SWITCHES SPACE     POLICY     ");
+        crate::println!("\x1b[1;7;36mTHREAD       STATE      SWITCHES SPACE     POLICY\x1b[0m");
         let mut idx: u64 = 0;
         for proc in processes.iter() {
             if let Some(p) = proc {
@@ -3153,8 +3152,7 @@ impl KernelExecutor {
 
     fn print_top_cpu(&mut self) {
         let top = MonitorState::get_top_cpu(self.scheduler, &mut self.monitor.cpu_history);
-        crate::println!("\x1b[1;32m=== TOP CPU ===\x1b[0m");
-        crate::println!("THREAD     OWNER        SPACE    STATE    POLICY  CPU%  SWITCHES");
+        crate::println!("\x1b[1;7;32mTHREAD     OWNER        SPACE    STATE    POLICY  CPU%  SWITCHES\x1b[0m");
         let mut idx: u64 = 0;
         for cpu in top.iter().flatten() {
             let state = match cpu.state {
@@ -3226,32 +3224,32 @@ impl KernelExecutor {
     }
 
     fn print_memory(&self) {
-        crate::println!("\x1b[1;34m=== MEMORY ===\x1b[0m");
-        crate::println!("  Total:     {}", memory_size(self.memory_total_bytes));
+        crate::println!("\x1b[1;7;34mPROPERTY             VALUE\x1b[0m");
+        crate::println!("Total                {}", memory_size(self.memory_total_bytes));
         crate::println!(
-            "  Used:      {}  ({:>4}.{}%)",
+            "Used                 {}  ({:>4}.{}%)",
             memory_size(self.memory_used_bytes),
             memory_percent(self.memory_used_bytes, self.memory_total_bytes) / 10,
             memory_percent(self.memory_used_bytes, self.memory_total_bytes) % 10,
         );
         crate::println!(
-            "  Available: {}  ({:>4}.{}%)",
+            "Available            {}  ({:>4}.{}%)",
             memory_size(self.memory_available_bytes),
             memory_percent(self.memory_available_bytes, self.memory_total_bytes) / 10,
             memory_percent(self.memory_available_bytes, self.memory_total_bytes) % 10,
         );
-        crate::println!("  Regions:   {}", self.memory_region_count);
+        crate::println!("Regions              {}", self.memory_region_count);
         crate::println!();
         for (index, region) in self.memory_regions.iter().enumerate() {
             let available_bytes = region_available_bytes(region.kind, region.length);
             let used_bytes = region_used_bytes(region.kind, region.length);
             crate::println!(
-                "  Region {}: {}",
+                "Region {}             {}",
                 index,
                 memory_kind_name(region.kind),
             );
-            crate::println!("    Used:      {}", memory_size(used_bytes));
-            crate::println!("    Available: {}", memory_size(available_bytes));
+            crate::println!("  Used                {}", memory_size(used_bytes));
+            crate::println!("  Available           {}", memory_size(available_bytes));
         }
     }
 
@@ -3275,10 +3273,10 @@ impl KernelExecutor {
         insert(&mut output, "granted-locks", OutputValue::Unsigned(granted_locks))?;
         insert(&mut output, "queued-locks", OutputValue::Unsigned(queued_locks))?;
 
-        crate::println!("\x1b[1;33m=== DISTRIBUTED SHARED MEMORY (DSM) LOCKS ===\x1b[0m");
-        crate::println!("Active locks: {} / {}", active_locks, MAX_LOCKS);
-        crate::println!("Granted:      {}", granted_locks);
-        crate::println!("Queued:       {}", queued_locks);
+        crate::println!("\x1b[1;7;33mSTAT                 VALUE\x1b[0m");
+        crate::println!("Active locks         {} / {}", active_locks, MAX_LOCKS);
+        crate::println!("Granted              {}", granted_locks);
+        crate::println!("Queued               {}", queued_locks);
 
         if active_locks == 0 {
             crate::println!("No active DSM locks.");
@@ -3286,7 +3284,7 @@ impl KernelExecutor {
         }
 
         crate::println!();
-        crate::println!("RESOURCE   STATE    QUEUED  OWNER NODE");
+        crate::println!("\x1b[1;7;33mRESOURCE   STATE    QUEUED  OWNER NODE\x1b[0m");
         for lock in locks.iter() {
             let Some(resource_id) = lock.resource_id else { continue };
             let state = if lock.granted != 0 { "GRANTED" } else { "WAITING" };
