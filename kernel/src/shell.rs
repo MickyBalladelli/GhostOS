@@ -1150,6 +1150,7 @@ fn print_command_suggestion(command: &str) {
     crate::println!();
 }
 
+#[inline(never)]
 fn print_display_command(command: &str) {
     // Size-optimized LTO miscompiles per-character `print!("{}", char)` into a
     // repeated first character. Transform the token once and print the &str.
@@ -1204,33 +1205,37 @@ fn command_category(route: u16) -> &'static str {
     }
 }
 
+#[inline(never)]
 fn print_command_syntax(spec: &CommandSpec) {
     for argument in spec.arguments().filter(|argument| argument.positional) {
         if argument.required {
-            crate::print!(" <{}>", argument.name.as_str());
+            crate::print!(" <");
+            print_display_command(argument.name.as_str());
+            crate::print!(">");
         } else {
-            crate::print!(" [<{}>]", argument.name.as_str());
+            crate::print!(" [<");
+            print_display_command(argument.name.as_str());
+            crate::print!(">]");
         }
     }
     for argument in spec.arguments().filter(|argument| !argument.positional) {
         if argument.kind == ArgumentKind::Boolean {
             if argument.required {
-                crate::print!(" /{}", argument.name.as_str());
+                crate::print!(" /");
+                print_display_command(argument.name.as_str());
             } else {
-                crate::print!(" [/{}]", argument.name.as_str());
+                crate::print!(" [/");
+                print_display_command(argument.name.as_str());
+                crate::print!("]");
             }
         } else if argument.required {
-            crate::print!(
-                " /{}=<{}>",
-                argument.name.as_str(),
-                argument_kind(argument.kind)
-            );
+            crate::print!(" /");
+            print_display_command(argument.name.as_str());
+            crate::print!("=<{}>", argument_kind(argument.kind));
         } else {
-            crate::print!(
-                " [/{}=<{}>]",
-                argument.name.as_str(),
-                argument_kind(argument.kind)
-            );
+            crate::print!(" [/");
+            print_display_command(argument.name.as_str());
+            crate::print!("=<{}>]", argument_kind(argument.kind));
         }
     }
 }
