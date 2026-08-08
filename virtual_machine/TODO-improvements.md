@@ -9,7 +9,7 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Inspect all VM source, documentation, examples, and test files.
 - [x] Compare the VM TODO claims with the public API, CLI, storage, firmware,
       terminal, snapshot, acceleration, and test-inventory code.
-- [ ] Keep the source-module inventory synchronized with the actual tree. The
+- [x] Keep the source-module inventory synchronized with the actual tree. The
       old Project Structure section names files that are now consolidated or
       no longer exist.
 
@@ -125,7 +125,7 @@ remaining proof, portability, safety, and fidelity work.
 
 ## P2: Documentation and release quality
 
-- [ ] Regenerate the Project Structure section from the current source tree.
+- [x] Regenerate the Project Structure section from the current source tree.
 - [ ] Document the public VM API invariants, device map, interrupt routes,
       snapshot schema, disk formats, migration protocol, and terminal contract.
 - [ ] Add compatibility matrices for VM snapshots, system disks, guest boot

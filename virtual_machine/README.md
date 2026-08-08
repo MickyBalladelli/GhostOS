@@ -231,29 +231,54 @@ and initrd paths take precedence.
 virtual_machine/
 ├── src/
 │   ├── main.rs              # VM entry point
+│   ├── lib.rs               # Public API
+│   ├── boot/
+│   │   └── mod.rs           # Boot loading
 │   ├── cpu/                 # CPU emulation
 │   │   ├── mod.rs
 │   │   ├── decoder.rs
 │   │   └── executor.rs
 │   ├── memory/              # MMU implementation
-│   │   ├── mod.rs
-│   │   ├── allocator.rs
-│   │   └── paging.rs
+│   │   └── mod.rs
 │   ├── devices/             # Device emulations
 │   │   ├── mod.rs
-│   │   ├── pci.rs
-│   │   ├── ahci.rs
-│   │   ├── e1000.rs
-│   │   ├── vga.rs
-│   │   └── virtio.rs
+│   │   ├── apic.rs
+│   │   ├── display.rs
+│   │   ├── guest.rs
+│   │   ├── hpet.rs
+│   │   ├── input.rs
+│   │   ├── interrupt_controller.rs
+│   │   ├── pit.rs
+│   │   ├── power.rs
+│   │   ├── serial.rs
+│   │   ├── virtio.rs
+│   │   ├── net/
+│   │   │   ├── mod.rs
+│   │   │   ├── e1000.rs
+│   │   │   └── virtio.rs
+│   │   └── storage/
+│   │       ├── mod.rs
+│   │       ├── ahci.rs
+│   │       ├── disk_image.rs
+│   │       ├── management.rs
+│   │       ├── nvme.rs
+│   │       ├── persistence.rs
+│   │       └── system_disk.rs
+│   ├── execution.rs         # Translated execution
 │   ├── firmware/            # BIOS/UEFI
 │   │   ├── mod.rs
 │   │   ├── bios.rs
 │   │   └── uefi.rs
-│   ├── boot/                # Boot loading
+│   ├── hardware_acceleration.rs
+│   ├── integration.rs
+│   ├── net/                  # Host-side network backends
 │   │   ├── mod.rs
-│   │   └── loader.rs
-│   └── lib.rs               # Public API
+│   │   ├── backend.rs
+│   │   ├── mac.rs
+│   │   └── packet.rs
+│   ├── cluster.rs
+│   ├── snapshot.rs
+│   └── terminal.rs
 ├── Cargo.toml
 └── README.md
 ```

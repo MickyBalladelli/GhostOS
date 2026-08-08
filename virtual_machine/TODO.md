@@ -346,32 +346,54 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 virtual_machine/
 ├── src/
 │   ├── main.rs              # VM entry point
+│   ├── lib.rs               # Public API
+│   ├── boot/
+│   │   └── mod.rs           # Boot loading
 │   ├── cpu/                 # CPU emulation
 │   │   ├── mod.rs
 │   │   ├── decoder.rs
 │   │   └── executor.rs
 │   ├── memory/              # MMU implementation
-│   │   ├── mod.rs
-│   │   ├── allocator.rs
-│   │   └── paging.rs
+│   │   └── mod.rs
 │   ├── devices/             # Device emulations
 │   │   ├── mod.rs
 │   │   ├── apic.rs          # Local APIC (xAPIC)
-│   │   ├── pit.rs           # 8254 Programmable Interval Timer
+│   │   ├── display.rs       # VGA/VESA/UEFI display
+│   │   ├── guest.rs         # Guest agent and hotplug devices
 │   │   ├── hpet.rs          # High Precision Event Timer
-│   │   ├── pci.rs
-│   │   ├── ahci.rs
-│   │   ├── e1000.rs
-│   │   ├── vga.rs
-│   │   └── virtio.rs
+│   │   ├── input.rs         # PS/2 input
+│   │   ├── interrupt_controller.rs
+│   │   ├── pit.rs           # 8254 Programmable Interval Timer
+│   │   ├── power.rs
+│   │   ├── serial.rs
+│   │   ├── virtio.rs
+│   │   ├── net/
+│   │   │   ├── mod.rs
+│   │   │   ├── e1000.rs
+│   │   │   └── virtio.rs
+│   │   └── storage/
+│   │       ├── mod.rs
+│   │       ├── ahci.rs
+│   │       ├── disk_image.rs
+│   │       ├── management.rs
+│   │       ├── nvme.rs
+│   │       ├── persistence.rs
+│   │       └── system_disk.rs
+│   ├── execution.rs         # Translated execution
 │   ├── firmware/            # BIOS/UEFI
 │   │   ├── mod.rs
 │   │   ├── bios.rs
 │   │   └── uefi.rs
-│   ├── boot/                # Boot loading
+│   ├── hardware_acceleration.rs
+│   ├── integration.rs
+│   ├── net/                  # Host-side network backends
 │   │   ├── mod.rs
-│   │   └── loader.rs
-│   └── lib.rs               # Public API
+│   │   ├── backend.rs
+│   │   ├── mac.rs
+│   │   └── packet.rs
+│   ├── cluster.rs
+│   ├── snapshot.rs
+│   └── terminal.rs
 ├── Cargo.toml
 └── README.md
 ```
