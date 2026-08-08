@@ -51,6 +51,7 @@ const DESC_INDIRECT: u16 = 4;
 const QUEUE_SIZE: u16 = 128;
 const DESC_SIZE: u64 = 16;
 const MAX_CHAIN: usize = 64;
+const MAX_DMA_BYTES: usize = 16 * 1024 * 1024;
 
 const BLK_T_IN: u32 = 0;
 const BLK_T_OUT: u32 = 1;
@@ -113,6 +114,12 @@ impl VirtioQueue {
         if self.avail_last == avail_idx {
             return None;
         }
+        if avail_idx.wrapping_sub(self.avail_last) > QUEUE_SIZE {
+            // A producer cannot publish more than one queue's worth of
+            // entries. Drop the stale window instead of replaying old heads.
+            self.avail_last = avail_idx;
+            return None;
+        }
         let slot = self.avail_last as u64 & (QUEUE_SIZE as u64 - 1);
         let head = read_u16(mmu, self.avail_base() + 4 + slot * 2)?;
         self.avail_last = self.avail_last.wrapping_add(1);
@@ -126,7 +133,10 @@ impl VirtioQueue {
         let mut descriptors = Vec::new();
         let mut index = head;
         for _ in 0..MAX_CHAIN {
-            let addr = self.desc_base() + index as u64 * DESC_SIZE;
+            let addr = self
+                .desc_base()
+                .checked_add(index as u64 * DESC_SIZE)
+                .ok_or(())?;
             let bytes = mmu.read_phys(addr, DESC_SIZE as usize).map_err(|_| ())?;
             let descriptor = Descriptor {
                 addr: u64::from_le_bytes(bytes[0..8].try_into().map_err(|_| ())?),
@@ -134,7 +144,9 @@ impl VirtioQueue {
                 flags: u16::from_le_bytes(bytes[12..14].try_into().map_err(|_| ())?),
                 next: u16::from_le_bytes(bytes[14..16].try_into().map_err(|_| ())?),
             };
-            if descriptor.flags & DESC_INDIRECT != 0 {
+            if descriptor.flags & !(DESC_NEXT | DESC_WRITE | DESC_INDIRECT) != 0
+                || descriptor.flags & DESC_INDIRECT != 0
+            {
                 return Err(());
             }
             descriptors.push(descriptor);
@@ -351,7 +363,15 @@ impl VirtioBlk {
             return (BLK_S_IOERR, 1);
         }
         let data = &chain[1..chain.len() - 1];
-        let data_len = data.iter().map(|desc| desc.len as usize).sum::<usize>();
+        let Some(data_len) = data
+            .iter()
+            .try_fold(0usize, |total, desc| total.checked_add(desc.len as usize))
+        else {
+            return (BLK_S_IOERR, 1);
+        };
+        if data_len > MAX_DMA_BYTES {
+            return (BLK_S_IOERR, 1);
+        }
 
         match request_type {
             BLK_T_IN => {
@@ -394,11 +414,8 @@ impl VirtioBlk {
                 (BLK_S_OK, 1)
             }
             BLK_T_FLUSH => {
-                if self.disk.is_some() {
-                    (BLK_S_OK, 1)
-                } else {
-                    (BLK_S_IOERR, 1)
-                }
+                let Some(disk) = self.disk.as_mut() else { return (BLK_S_IOERR, 1) };
+                if disk.flush().is_ok() { (BLK_S_OK, 1) } else { (BLK_S_IOERR, 1) }
             }
             _ => {
                 (BLK_S_UNSUPP, 1)
@@ -501,21 +518,34 @@ impl VirtioConsole {
         }
         while let Some(head) = self.transport.queue.next_available(mmu) {
             let Ok(chain) = self.transport.queue.chain(mmu, head) else {
+                if self.transport.queue.complete(mmu, head, 0) {
+                    self.transport.mark_complete();
+                }
                 continue;
             };
             let mut completed = 0u32;
+            let mut valid = true;
             for descriptor in chain {
                 if descriptor.flags & DESC_WRITE != 0 {
-                    continue;
+                    valid = false;
+                    break;
+                }
+                if descriptor.len as usize > MAX_DMA_BYTES {
+                    valid = false;
+                    break;
                 }
                 let Ok(bytes) = mmu.read_phys(descriptor.addr, descriptor.len as usize) else {
-                    continue;
+                    valid = false;
+                    break;
                 };
                 completed = completed.saturating_add(bytes.len() as u32);
                 self.output.extend_from_slice(&bytes);
                 let mut stdout = std::io::stdout().lock();
                 let _ = write_host_console(&mut stdout, &bytes, &mut self.host_last_was_cr);
                 let _ = stdout.flush();
+            }
+            if !valid {
+                completed = 0;
             }
             if self.output.len() > CONSOLE_OUTPUT_COMPACTION_THRESHOLD {
                 let excess = self.output.len() - CONSOLE_OUTPUT_LIMIT;
@@ -601,19 +631,32 @@ impl VirtioRng {
         }
         while let Some(head) = self.transport.queue.next_available(mmu) {
             let Ok(chain) = self.transport.queue.chain(mmu, head) else {
+                if self.transport.queue.complete(mmu, head, 0) {
+                    self.transport.mark_complete();
+                }
                 continue;
             };
             let mut completed = 0u32;
+            let mut valid = true;
             for descriptor in chain {
                 if descriptor.flags & DESC_WRITE == 0 {
-                    continue;
+                    valid = false;
+                    break;
+                }
+                if descriptor.len as usize > MAX_DMA_BYTES {
+                    valid = false;
+                    break;
                 }
                 let mut bytes = vec![0u8; descriptor.len as usize];
                 self.fill_random(&mut bytes);
                 if mmu.write_phys(descriptor.addr, &bytes).is_err() {
-                    continue;
+                    valid = false;
+                    break;
                 }
                 completed = completed.saturating_add(bytes.len() as u32);
+            }
+            if !valid {
+                completed = 0;
             }
             if self.transport.queue.complete(mmu, head, completed) {
                 self.transport.mark_complete();
@@ -740,7 +783,11 @@ fn gather_read(mmu: &Mmu, descriptors: &[Descriptor]) -> Option<Vec<u8>> {
         if descriptor.flags & DESC_WRITE != 0 {
             return None;
         }
-        result.extend_from_slice(&mmu.read_phys(descriptor.addr, descriptor.len as usize).ok()?);
+        let len = descriptor.len as usize;
+        if len > MAX_DMA_BYTES || result.len().checked_add(len)? > MAX_DMA_BYTES {
+            return None;
+        }
+        result.extend_from_slice(&mmu.read_phys(descriptor.addr, len).ok()?);
     }
     Some(result)
 }
@@ -752,10 +799,14 @@ fn scatter_write(mmu: &mut Mmu, descriptors: &[Descriptor], bytes: &[u8]) -> boo
             return false;
         }
         let len = descriptor.len as usize;
-        if offset + len > bytes.len() || mmu.write_phys(descriptor.addr, &bytes[offset..offset + len]).is_err() {
+        if len > MAX_DMA_BYTES {
             return false;
         }
-        offset += len;
+        let Some(end) = offset.checked_add(len) else { return false };
+        if end > bytes.len() || mmu.write_phys(descriptor.addr, &bytes[offset..end]).is_err() {
+            return false;
+        }
+        offset = end;
     }
     offset == bytes.len()
 }

@@ -634,7 +634,11 @@ impl DiskImage {
     }
 
     fn bounds_check(&self, lba: u64) -> Result<(), StorageError> {
-        if lba.saturating_mul(SECTOR_SIZE).saturating_add(SECTOR_SIZE) > self.size {
+        let end = lba
+            .checked_mul(SECTOR_SIZE)
+            .and_then(|offset| offset.checked_add(SECTOR_SIZE))
+            .ok_or(StorageError::OutOfRange)?;
+        if end > self.size {
             return Err(StorageError::OutOfRange);
         }
         Ok(())

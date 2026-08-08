@@ -58,6 +58,7 @@ const FIS_D2H: u8 = 0x34;
 const FIS_PIO: u8 = 0x5F;
 
 const CMD_HEADER_SIZE: u64 = 32;
+const MAX_TRANSFER_BYTES: usize = 16 * 1024 * 1024;
 
 const ATA_IDENTIFY: u8 = 0xEC;
 const ATA_READ: u8 = 0x20;
@@ -298,22 +299,36 @@ impl Ahci {
             PORT_SACT => p.sact = value,
             PORT_CI => {
                 p.pending |= value & !p.ci;
+                p.ci |= value;
             }
             _ => {}
         }
     }
 
     fn process_slot(&mut self, slot: usize, mmu: &mut Mmu) -> Result<u32, StorageError> {
-        let header_addr = self.port.clb + slot as u64 * CMD_HEADER_SIZE;
+        if self.port.clb % 1024 != 0 || self.port.fb % 256 != 0 {
+            return Err(StorageError::Dma("unaligned AHCI command structures".into()));
+        }
+        let header_addr = self
+            .port
+            .clb
+            .checked_add(slot as u64 * CMD_HEADER_SIZE)
+            .ok_or_else(|| StorageError::Dma("command header address overflow".into()))?;
         let mut header = [0u8; 32];
         Self::dma_read(mmu, header_addr, &mut header)?;
 
         let dw0 = u32::from_le_bytes(header[0..4].try_into().unwrap());
         let prdtl = (dw0 & 0xFFFF) as usize;
+        if prdtl == 0 || prdtl > 256 {
+            return Err(StorageError::Dma("invalid PRDT length".into()));
+        }
         if dw0 & (1 << 28) != 0 {
             return Err(StorageError::Unsupported("ATAPI".into()));
         }
         let ctba = u64::from_le_bytes(header[8..16].try_into().unwrap());
+        if ctba % 128 != 0 {
+            return Err(StorageError::Dma("unaligned AHCI command table".into()));
+        }
 
         let mut cfis = [0u8; 64];
         Self::dma_read(mmu, ctba, &mut cfis)?;
@@ -327,10 +342,14 @@ impl Ahci {
                 | (cfis[11] as u64) << 24))
                 << 24);
 
-        let mut prds = Vec::with_capacity(prdtl.min(256));
-        for i in 0..prdtl.min(256) {
+        let mut prds = Vec::with_capacity(prdtl);
+        for i in 0..prdtl {
             let mut prd = [0u8; 16];
-            Self::dma_read(mmu, ctba + 0x80 + (i as u64) * 16, &mut prd)?;
+            let prd_addr = ctba
+                .checked_add(0x80)
+                .and_then(|address| address.checked_add((i as u64) * 16))
+                .ok_or_else(|| StorageError::Dma("PRD address overflow".into()))?;
+            Self::dma_read(mmu, prd_addr, &mut prd)?;
             let dba = u64::from_le_bytes(prd[0..8].try_into().unwrap());
             let dbc = u32::from_le_bytes(prd[12..16].try_into().unwrap());
             prds.push((dba, (dbc & 0x003F_FFFF) as usize + 1));
@@ -341,31 +360,47 @@ impl Ahci {
                 let identify = self.build_identify();
                 let mut done = 0usize;
                 for &(dba, size) in &prds {
-                    let n = size.min(identify.len() - done);
+                    let n = size.min(identify.len().saturating_sub(done));
                     Self::dma_write(mmu, dba, &identify[done..done + n])?;
                     done += n;
                     if done >= 512 {
                         break;
                     }
                 }
-                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40);
-                self.write_fis(mmu, FIS_PIO, 0x50, 0, 0x20);
+                if done != identify.len() {
+                    return Err(StorageError::Dma("short IDENTIFY buffer".into()));
+                }
+                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40)?;
+                self.write_fis(mmu, FIS_PIO, 0x50, 0, 0x20)?;
                 Ok(IS_DPS)
             }
             ATA_READ | ATA_READ_EXT | ATA_READ_DMA | ATA_READ_DMA_EXT => {
                 let count = if sector_count == 0 { 256 } else { sector_count as usize };
+                if count > MAX_TRANSFER_BYTES / 512 {
+                    return Err(StorageError::Dma("transfer too large".into()));
+                }
                 self.disk_to_prds(mmu, lba, count, &prds, true)?;
-                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40);
+                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40)?;
                 Ok(IS_DPS)
             }
             ATA_WRITE | ATA_WRITE_EXT | ATA_WRITE_DMA | ATA_WRITE_DMA_EXT => {
                 let count = if sector_count == 0 { 256 } else { sector_count as usize };
+                if count > MAX_TRANSFER_BYTES / 512 {
+                    return Err(StorageError::Dma("transfer too large".into()));
+                }
                 self.disk_to_prds(mmu, lba, count, &prds, false)?;
-                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40);
+                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40)?;
                 Ok(0)
             }
             ATA_FLUSH | ATA_FLUSH_EXT | ATA_SET_FEATURES | ATA_SET_MULTIPLE => {
-                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40);
+                if matches!(command, ATA_FLUSH | ATA_FLUSH_EXT) {
+                    self.port
+                        .disk
+                        .as_mut()
+                        .ok_or_else(|| StorageError::InvalidImage("no disk".into()))?
+                        .flush()?;
+                }
+                self.write_fis(mmu, FIS_D2H, 0x50, 0, 0x40)?;
                 Ok(0)
             }
             other => Err(StorageError::Unsupported(format!("ATA 0x{other:02X}"))),
@@ -405,7 +440,9 @@ impl Ahci {
                     }
                     Self::dma_write(mmu, addr, &sector[off..off + n])?;
                 }
-                addr += n as u64;
+                addr = addr
+                    .checked_add(n as u64)
+                    .ok_or_else(|| StorageError::Dma("PRD address overflow".into()))?;
                 remaining -= n;
                 idx += n;
             }
@@ -413,10 +450,11 @@ impl Ahci {
                 break;
             }
         }
-        if to_disk && idx % 512 != 0 && idx > 0 {
-            let off = idx % 512;
-            sector[off..].fill(0);
-            disk.write_sector(lba + ((idx - 1) / 512) as u64, &sector)?;
+        let expected = count
+            .checked_mul(512)
+            .ok_or_else(|| StorageError::Dma("transfer length overflow".into()))?;
+        if idx != expected {
+            return Err(StorageError::Dma("PRDT length does not match transfer".into()));
         }
         Ok(())
     }
@@ -453,14 +491,21 @@ impl Ahci {
         id
     }
 
-    fn write_fis(&mut self, mmu: &mut Mmu, fis_type: u8, status: u8, error: u8, fb_off: u64) {
+    fn write_fis(
+        &mut self,
+        mmu: &mut Mmu,
+        fis_type: u8,
+        status: u8,
+        error: u8,
+        fb_off: u64,
+    ) -> Result<(), StorageError> {
         let mut fis = [0u8; 28];
         fis[0] = fis_type;
         fis[1] = 0x02;
         fis[2] = status;
         fis[3] = error;
         fis[12] = 1;
-        let _ = Self::dma_write(mmu, self.port.fb + fb_off, &fis);
+        Self::dma_write(mmu, self.port.fb.checked_add(fb_off).ok_or_else(|| StorageError::Dma("FIS address overflow".into()))?, &fis)
     }
 
     fn raise_irq(&mut self) {

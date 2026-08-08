@@ -205,7 +205,8 @@ impl VirtioNet {
         while self.avail_last[q] != self.used_count[q] {
             let idx = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
             let mut desc = [0u8; 16];
-            if !Self::dma_read(mmu, base + idx * DESC_SIZE, &mut desc) {
+            let Some(desc_addr) = base.checked_add(idx * DESC_SIZE) else { break };
+            if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
             let addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
@@ -221,7 +222,10 @@ impl VirtioNet {
                 let _ = backend.transmit(&packet);
             }
             let used_slot = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
-            let used_off = self.used_base() + 4 + used_slot * 8;
+            let Some(used_off) = self
+                .used_base()
+                .checked_add(4)
+                .and_then(|addr| addr.checked_add(used_slot * 8)) else { break };
             let mut entry = [0u8; 8];
             entry[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
             entry[4..8].copy_from_slice(&(len as u32).to_le_bytes());
@@ -249,7 +253,8 @@ impl VirtioNet {
             }
             let idx = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
             let mut desc = [0u8; 16];
-            if !Self::dma_read(mmu, base + idx * DESC_SIZE, &mut desc) {
+            let Some(desc_addr) = base.checked_add(idx * DESC_SIZE) else { break };
+            if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
             let addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
@@ -266,7 +271,9 @@ impl VirtioNet {
             let mut entry = [0u8; 8];
             entry[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
             entry[4..8].copy_from_slice(&(frame.len() as u32).to_le_bytes());
-            let used_off = used + 4 + (self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1)) * 8;
+            let Some(used_off) = used
+                .checked_add(4)
+                .and_then(|addr| addr.checked_add((self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1)) * 8)) else { break };
             if !Self::dma_write(mmu, used_off, &entry) {
                 break;
             }

@@ -8,7 +8,7 @@ pub struct MemoryOperand {
     pub base: Option<u8>,
     pub index: Option<u8>,
     pub scale: u8,
-    pub displacement: i32,
+    pub displacement: i64,
     /// RIP-relative addressing (64-bit mode, ModRM mod=00 r/m=101).
     pub rip_relative: bool,
     /// Segment override for the access: 0=default, 1=CS, 2=DS, 3=ES, 4=FS,
@@ -71,7 +71,7 @@ impl DecodedInstruction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstructionDecodeError {
     InvalidOpcode,
     UnsupportedMode,
@@ -81,6 +81,7 @@ pub enum InstructionDecodeError {
     InvalidDisplacement,
     InvalidImmediate,
     OutOfMemory,
+    AddressOverflow,
 }
 
 pub struct InstructionDecoder;
@@ -110,9 +111,11 @@ impl InstructionDecoder {
 
     pub(crate) fn rd(mmu: &Mmu, pos: &mut u64) -> Result<u8, InstructionDecodeError> {
         let b = mmu
-            .read_byte(*pos)
+            .read_instruction_byte(*pos)
             .map_err(|_| InstructionDecodeError::OutOfMemory)?;
-        *pos += 1;
+        *pos = (*pos)
+            .checked_add(1)
+            .ok_or(InstructionDecodeError::AddressOverflow)?;
         Ok(b)
     }
 
@@ -186,11 +189,11 @@ impl InstructionDecoder {
         let mut base = Some(rm);
         let mut index: Option<u8> = None;
         let mut scale: u8 = 1;
-        let mut displacement: i32 = 0;
+        let mut displacement: i64 = 0;
         let rip_relative = false;
 
         if mod_ == 0b00 && rm == 0b101 {
-            displacement = Self::rd32(mmu, pos)? as i32;
+            displacement = Self::rd32(mmu, pos)? as i32 as i64;
             return Ok(Operand::Memory(MemoryOperand {
                 base: None,
                 index: None,
@@ -218,7 +221,7 @@ impl InstructionDecoder {
 
             if bas == 0b101 && mod_ == 0b00 {
                 // No base register; disp32 follows.
-                displacement = Self::rd32(mmu, pos)? as i32;
+                displacement = Self::rd32(mmu, pos)? as i32 as i64;
                 base = None;
             } else {
                 base = Some(bas);
@@ -231,9 +234,9 @@ impl InstructionDecoder {
         }
 
         if mod_ == 0b01 {
-            displacement = Self::rd(mmu, pos)? as i8 as i32;
+            displacement = Self::rd(mmu, pos)? as i8 as i64;
         } else if mod_ == 0b10 {
-            displacement = Self::rd32(mmu, pos)? as i32;
+            displacement = Self::rd32(mmu, pos)? as i32 as i64;
         }
 
         Ok(Operand::Memory(MemoryOperand {
@@ -290,7 +293,7 @@ impl InstructionDecoder {
                 0x3E => segment = 2,
                 0x64 => segment = 4,
                 0x65 => segment = 5,
-                0xF0 => {}
+                0xF0 => return Err(InstructionDecodeError::InvalidPrefix),
                 0xF2 => rep_prefix = Some(false),
                 0xF3 => rep_prefix = Some(true),
                 0x40..=0x4F => {
@@ -572,6 +575,9 @@ impl InstructionDecoder {
                 ins.mnemonic = "MOV";
                 let (reg, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, false)?;
+                if reg > 5 {
+                    return Err(InstructionDecodeError::InvalidModRm);
+                }
                 ins.operands = vec![rm, Operand::Segment(seg_index(reg))];
                 return Ok(());
             }
@@ -579,6 +585,9 @@ impl InstructionDecoder {
                 ins.mnemonic = "LEA";
                 let (reg, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, false)?;
+                if matches!(rm, Operand::Register(_)) {
+                    return Err(InstructionDecodeError::InvalidModRm);
+                }
                 ins.operands = vec![Operand::Register(reg), rm];
                 return Ok(());
             }
@@ -586,6 +595,9 @@ impl InstructionDecoder {
                 ins.mnemonic = "MOV";
                 let (reg, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, false)?;
+                if reg > 5 {
+                    return Err(InstructionDecodeError::InvalidModRm);
+                }
                 ins.operands = vec![Operand::Segment(seg_index(reg)), rm];
                 return Ok(());
             }
@@ -1014,6 +1026,9 @@ impl InstructionDecoder {
             0xF6 => {
                 let (digit, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, 8, addrsize, segment, true)?;
+                if digit == 1 {
+                    return Err(InstructionDecodeError::InvalidOpcode);
+                }
                 ins.opsize = 8;
                 ins.mnemonic = group3_mnemonic(digit);
                 if digit == 0 {
@@ -1029,6 +1044,9 @@ impl InstructionDecoder {
             0xF7 => {
                 let (digit, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, true)?;
+                if digit == 1 {
+                    return Err(InstructionDecodeError::InvalidOpcode);
+                }
                 ins.mnemonic = group3_mnemonic(digit);
                 if digit == 0 {
                     let imm = if opsize == 16 {
@@ -1071,6 +1089,9 @@ impl InstructionDecoder {
             0xFE => {
                 let (digit, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, 8, addrsize, segment, true)?;
+                if digit > 1 {
+                    return Err(InstructionDecodeError::InvalidOpcode);
+                }
                 ins.opsize = 8;
                 ins.mnemonic = if digit == 0 { "INC" } else { "DEC" };
                 ins.operands = vec![rm];
@@ -1080,6 +1101,9 @@ impl InstructionDecoder {
                 let (digit, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, true)?;
                 ins.mnemonic = group5_mnemonic(digit);
+                if digit == 3 || digit == 5 || digit > 6 {
+                    return Err(InstructionDecodeError::InvalidOpcode);
+                }
                 ins.operands = vec![rm];
                 return Ok(());
             }
@@ -1199,7 +1223,7 @@ impl InstructionDecoder {
 
             0x01 => {
                 let (digit, rm) = self.decode_modrm_operands(
-                    mmu, pos, Rex::default(), opsize, addrsize, 0, true,
+                    mmu, pos, rex, opsize, addrsize, segment, true,
                 )?;
                 match digit {
                     0 => ins.mnemonic = "SGDT",
@@ -1386,7 +1410,7 @@ fn moffs_mem(offset: u64, segment: u8) -> MemoryOperand {
         base: None,
         index: None,
         scale: 1,
-        displacement: offset as i32,
+        displacement: offset as i64,
         rip_relative: false,
         segment,
     }

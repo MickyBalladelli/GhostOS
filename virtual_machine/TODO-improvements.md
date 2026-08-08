@@ -15,14 +15,14 @@ remaining proof, portability, safety, and fidelity work.
 
 ## P0: CPU and device correctness
 
-- [ ] Make malformed or unsupported guest instruction encodings return a
+- [x] Make malformed or unsupported guest instruction encodings return a
       structured decode or CPU exception instead of panicking.
 - [ ] Add differential instruction tests for supported x86_64 instructions,
       flags, privilege transitions, segmentation, paging faults, interrupts,
       string operations, and reset state.
 - [ ] Define the exact unsupported-instruction policy: injected exception,
       halted guest, or VM error. Test it consistently in BIOS and long mode.
-- [ ] Centralize DMA and MMIO validation so every device rejects overflow,
+- [x] Centralize DMA and MMIO validation so every device rejects overflow,
       wraparound, unaligned ranges where forbidden, bad ownership, and stale
       descriptor chains with the same error contract.
 - [ ] Add device-model tests for ordering, interrupt coalescing, queue

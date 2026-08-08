@@ -247,7 +247,8 @@ impl E1000 {
         while sent < count {
             let idx = self.tdh as usize % count;
             let mut desc = [0u8; 16];
-            if !Self::dma_read(mmu, base + (idx as u64) * DESC_SIZE, &mut desc) {
+            let Some(desc_addr) = base.checked_add((idx as u64) * DESC_SIZE) else { break };
+            if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
             let addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
@@ -265,7 +266,10 @@ impl E1000 {
             }
             let mut status = desc[12];
             status |= 0x03; // DD | EOP
-            let _ = Self::dma_write(mmu, base + (idx as u64) * DESC_SIZE + 12, &[status]);
+            let Some(status_addr) = base
+                .checked_add((idx as u64) * DESC_SIZE)
+                .and_then(|addr| addr.checked_add(12)) else { break };
+            let _ = Self::dma_write(mmu, status_addr, &[status]);
             self.tdh = (self.tdh + 1) % count as u32;
             sent += 1;
         }
@@ -307,7 +311,8 @@ impl E1000 {
         while let Some(packet) = self.pending_rx.peek() {
             let idx = (self.rdt as usize + 1) % count;
             let mut desc = [0u8; 16];
-            if !Self::dma_read(mmu, base + (idx as u64) * DESC_SIZE, &mut desc) {
+            let Some(desc_addr) = base.checked_add((idx as u64) * DESC_SIZE) else { break };
+            if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
             let buf_addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
@@ -326,7 +331,10 @@ impl E1000 {
             }
             let mut l = (frame_len as u32).to_le_bytes();
             l[3] = status;
-            let _ = Self::dma_write(mmu, base + (idx as u64) * DESC_SIZE + 8, &l);
+            let Some(status_addr) = base
+                .checked_add((idx as u64) * DESC_SIZE)
+                .and_then(|addr| addr.checked_add(8)) else { break };
+            let _ = Self::dma_write(mmu, status_addr, &l);
             let _ = self.pending_rx.pop();
             self.rdt = idx as u32;
             delivered += 1;

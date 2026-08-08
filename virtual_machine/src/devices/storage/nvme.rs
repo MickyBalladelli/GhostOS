@@ -26,6 +26,7 @@ pub const NVME_SUBCLASS: u8 = 0x08;
 pub const NVME_PROG_IF: u8 = 0x02;
 
 const MAX_Q_DEPTH: u16 = 1024;
+const MAX_TRANSFER_BYTES: usize = 16 * 1024 * 1024;
 
 // Controller register offsets (BAR0).
 const REG_CAP: u64 = 0x0000;
@@ -78,6 +79,7 @@ const SQ_ENTRY_SIZE: u64 = 64;
 struct Queue {
     base: u64,
     depth: u16,
+    completion_queue: u16,
     phase: bool,
     tail: u16,
     head: u16,
@@ -86,7 +88,7 @@ struct Queue {
 
 impl Queue {
     fn new() -> Self {
-        Self { base: 0, depth: 0, phase: true, tail: 0, head: 0, deleted: true }
+        Self { base: 0, depth: 0, completion_queue: 0, phase: true, tail: 0, head: 0, deleted: true }
     }
 }
 
@@ -249,8 +251,8 @@ impl Nvme {
         if enable != 0 && was_enable == 0 {
             let acqs = ((self.aqa >> 16) & 0x0FFF) as u16 + 1;
             let asqs = (self.aqa & 0x0FFF) as u16 + 1;
-            self.admin_cq = Queue { base: self.acq, depth: acqs.max(2), phase: true, tail: 0, head: 0, deleted: false };
-            self.admin_sq = Queue { base: self.asq, depth: asqs.max(2), phase: true, tail: 0, head: 0, deleted: false };
+            self.admin_cq = Queue { base: self.acq, depth: acqs.max(2), completion_queue: 0, phase: true, tail: 0, head: 0, deleted: false };
+            self.admin_sq = Queue { base: self.asq, depth: asqs.max(2), completion_queue: 0, phase: true, tail: 0, head: 0, deleted: false };
             self.io_sq.clear();
             self.io_cq.clear();
             self.io_pending.clear();
@@ -269,7 +271,10 @@ impl Nvme {
         let index = door / 4;
         match index {
             0 => {
-                self.admin_sq.tail = (value & 0xFFFF) as u16;
+                let tail = (value & 0xFFFF) as u16;
+                if tail < self.admin_sq.depth {
+                    self.admin_sq.tail = tail;
+                }
                 self.admin_pending = self.admin_pending.wrapping_add(1);
             }
             1 => {
@@ -278,6 +283,9 @@ impl Nvme {
             2 => {
                 // SQ1 tail.
                 if !self.io_sq.is_empty() {
+                    if (value & 0xFFFF) as u16 >= self.io_sq[0].depth {
+                        return;
+                    }
                     self.io_sq[0].tail = (value & 0xFFFF) as u16;
                     self.io_pending[0] = self.io_pending[0].wrapping_add(1);
                 }
@@ -292,6 +300,9 @@ impl Nvme {
                 let n = (index / 2) as usize;
                 if index % 2 == 0 {
                     if n > 0 && n <= self.io_sq.len() {
+                        if (value & 0xFFFF) as u16 >= self.io_sq[n - 1].depth {
+                            return;
+                        }
                         self.io_sq[n - 1].tail = (value & 0xFFFF) as u16;
                         self.io_pending[n - 1] = self.io_pending[n - 1].wrapping_add(1);
                     }
@@ -303,7 +314,16 @@ impl Nvme {
     }
 
     fn read_sq(mmu: &Mmu, q: &Queue, index: u16, buf: &mut [u8; 64]) -> Result<(), StorageError> {
-        Self::dma_read(mmu, q.base + (index as u64) * SQ_ENTRY_SIZE, buf)
+        if q.deleted || q.depth < 2 || q.base % 4096 != 0 {
+            return Err(StorageError::Dma("invalid submission queue".into()));
+        }
+        mmu.validate_dma_range(q.base, q.depth as usize * SQ_ENTRY_SIZE as usize, 4096)
+            .map_err(|_| StorageError::Dma("invalid submission queue range".into()))?;
+        let addr = q
+            .base
+            .checked_add((index as u64) * SQ_ENTRY_SIZE)
+            .ok_or_else(|| StorageError::Dma("submission queue address overflow".into()))?;
+        Self::dma_read(mmu, addr, buf)
     }
 
     fn write_cq(
@@ -314,6 +334,11 @@ impl Nvme {
         sqhd: u16,
         cid: u16,
     ) -> Result<(), StorageError> {
+        if q.deleted || q.depth < 2 || q.base % 4096 != 0 {
+            return Err(StorageError::Dma("invalid completion queue".into()));
+        }
+        mmu.validate_dma_range(q.base, q.depth as usize * CQ_ENTRY_SIZE as usize, 4096)
+            .map_err(|_| StorageError::Dma("invalid completion queue range".into()))?;
         let mut entry = [0u8; CQ_ENTRY_SIZE as usize];
         let phase = if q.phase { 1u16 } else { 0u16 };
         // DW2 (bytes 8..12): SQHD in bits 15:0, phase tag (bit 16) and
@@ -322,7 +347,11 @@ impl Nvme {
         entry[10..12].copy_from_slice(&((status << 1) | phase as u32).to_le_bytes());
         // DW3 (bytes 12..16): CID in bits 31:16.
         entry[14..16].copy_from_slice(&cid.to_le_bytes());
-        Self::dma_write(mmu, q.base + (index as u64) * CQ_ENTRY_SIZE, &entry)
+        let addr = q
+            .base
+            .checked_add((index as u64) * CQ_ENTRY_SIZE)
+            .ok_or_else(|| StorageError::Dma("completion queue address overflow".into()))?;
+        Self::dma_write(mmu, addr, &entry)
     }
 
     /// Advance a completion queue's tail by one entry, flipping phase on wrap.
@@ -367,12 +396,11 @@ impl Nvme {
             }
             let cid = u16::from_le_bytes([cmd[2], cmd[3]]);
             let status = self.handle_io(mmu, &cmd);
-            // I/O commands complete on the CQ whose ID is stored in the SQ's
-            // CREATE I/O SQ CQID field; for simplicity we track a single
-            // CQ per SQ via the create-time association stored in io_cq
-            // (guest maps SQ qidx+1 to CQ qidx+1 in the common case).
-            let cq_idx = qidx;
+            let cq_idx = self.io_sq[qidx].completion_queue.checked_sub(1).unwrap_or(usize::MAX as u16) as usize;
             if cq_idx >= self.io_cq.len() {
+                break;
+            }
+            if self.io_sq[qidx].deleted || self.io_cq[cq_idx].deleted {
                 break;
             }
             let cq_index = self.io_cq[cq_idx].tail;
@@ -409,6 +437,9 @@ impl Nvme {
                 if qid == 0 || qid > 4096 {
                     return STS_INVALID_QID;
                 }
+                if qsize < 2 {
+                    return STS_INVALID_FIELD;
+                }
                 if qsize > MAX_Q_DEPTH {
                     return STS_Q_SIZE_EXCEEDED;
                 }
@@ -419,6 +450,7 @@ impl Nvme {
                 self.io_cq[qid - 1] = Queue {
                     base: prp1,
                     depth: qsize,
+                    completion_queue: 0,
                     phase: true,
                     tail: 0,
                     head: 0,
@@ -434,6 +466,9 @@ impl Nvme {
                 if qid == 0 || qid > 4096 || cqid == 0 || cqid > 4096 {
                     return STS_INVALID_QID;
                 }
+                if qsize < 2 {
+                    return STS_INVALID_FIELD;
+                }
                 if qsize > MAX_Q_DEPTH {
                     return STS_Q_SIZE_EXCEEDED;
                 }
@@ -447,6 +482,7 @@ impl Nvme {
                 self.io_sq[qid - 1] = Queue {
                     base: prp1,
                     depth: qsize,
+                    completion_queue: cqid as u16,
                     phase: true,
                     tail: 0,
                     head: 0,
@@ -570,14 +606,20 @@ impl Nvme {
         let nlb = ((cdw11 >> 16) & 0xFFFF) as u64 + 1;
 
         match opcode {
-            NVM_FLUSH => STS_SUCCESS,
+            NVM_FLUSH => {
+                let Some(ns) = self.ns1.as_mut() else { return STS_NS_NOT_READY };
+                if ns.image.flush().is_ok() { STS_SUCCESS } else { STS_NS_NOT_READY }
+            }
             NVM_READ | NVM_WRITE => {
                 let Some(ns) = self.ns1.as_mut() else { return STS_NS_NOT_READY };
                 let sectors = ns.image.sector_count();
-                if slba.saturating_add(nlb) > sectors {
+                if slba.checked_add(nlb).map_or(true, |end| end > sectors) {
                     return STS_LBA_OUT_OF_RANGE;
                 }
                 let total = (nlb as usize) * 512;
+                if total > MAX_TRANSFER_BYTES {
+                    return STS_CAP_EXCEEDED;
+                }
                 let mut buf = vec![0u8; total];
                 if opcode == NVM_READ {
                     for i in 0..nlb as usize {

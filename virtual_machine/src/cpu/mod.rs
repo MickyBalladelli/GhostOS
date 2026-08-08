@@ -237,6 +237,86 @@ impl CpuState {
         }
     }
 
+    /// Load a visible and hidden segment state from the guest GDT.
+    pub fn load_segment(
+        &mut self,
+        code: u8,
+        selector: u16,
+        mmu: &mut Mmu,
+    ) -> Result<(), CpuError> {
+        if self.mode == CpuMode::Real16 {
+            self.seg_write(code, selector);
+            move_segment_real_base(self, code, selector);
+            return Ok(())
+        }
+        if selector == 0 || selector & 4 != 0 {
+            return Err(CpuError::GeneralProtectionFault)
+        }
+        // `enter_protected` may use the VM's built-in flat segments without
+        // installing a guest-visible GDT. Keep those two selectors usable.
+        if self.gdtr.limit == 0 && (selector == 0x08 || selector == 0x10) {
+            if (code == 1) != (selector == 0x08) {
+                return Err(CpuError::GeneralProtectionFault)
+            }
+            let segment = SegmentRegister {
+                selector,
+                base: 0,
+                limit: 0xFFFF_FFFF,
+                attributes: if selector == 0x08 { 0x9B } else { 0x93 },
+            };
+            match code {
+                1 => self.cs = segment,
+                2 => self.ds = segment,
+                3 => self.es = segment,
+                4 => self.fs = segment,
+                5 => self.gs = segment,
+                6 => self.ss = segment,
+                _ => return Err(CpuError::GeneralProtectionFault),
+            }
+            return Ok(())
+        }
+        let offset = (selector as u64 & !7)
+            .checked_add(self.gdtr.base)
+            .ok_or(CpuError::GeneralProtectionFault)?;
+        if (selector as u32 & !7) + 7 > self.gdtr.limit as u32 {
+            return Err(CpuError::GeneralProtectionFault)
+        }
+        let raw = mmu.read_u64(offset).map_err(|_| CpuError::GeneralProtectionFault)?;
+        let access = ((raw >> 40) & 0xFF) as u8;
+        if access & 0x80 == 0 {
+            return Err(CpuError::GeneralProtectionFault)
+        }
+        let is_code = access & 0x08 != 0;
+        if (code == 1) != is_code {
+            return Err(CpuError::GeneralProtectionFault)
+        }
+        let mut base = ((raw >> 16) & 0xFFFF) | (((raw >> 32) & 0xFF) << 16) | (((raw >> 56) & 0xFF) << 24);
+        let mut limit = (raw & 0xFFFF) | (((raw >> 48) & 0x0F) << 16);
+        if raw & (1 << 55) != 0 {
+            limit = (limit << 12) | 0xFFF;
+        }
+        if self.mode == CpuMode::Long64 && code != 4 && code != 5 {
+            base = 0;
+            limit = 0xFFFF_FFFF;
+        }
+        let segment = SegmentRegister {
+            selector,
+            base,
+            limit: limit as u32,
+            attributes: u16::from(access) | (((raw >> 52) as u16) & 0xF) << 8,
+        };
+        match code {
+            1 => self.cs = segment,
+            2 => self.ds = segment,
+            3 => self.es = segment,
+            4 => self.fs = segment,
+            5 => self.gs = segment,
+            6 => self.ss = segment,
+            _ => return Err(CpuError::GeneralProtectionFault),
+        }
+        Ok(())
+    }
+
     /// Read a register with a given operand size (this VM runs in 64-bit
     /// mode, so 32-bit reads zero-extend and 8/16-bit reads mask).
     pub fn reg_size(&self, idx: u8, size: u8) -> u64 {
@@ -711,6 +791,22 @@ impl Default for Cpu {
     }
 }
 
+fn move_segment_real_base(state: &mut CpuState, code: u8, selector: u16) {
+    if state.mode != CpuMode::Real16 || code > 6 {
+        return
+    }
+    let base = (selector as u64) << 4;
+    match code {
+        1 => state.cs.base = base,
+        2 => state.ds.base = base,
+        3 => state.es.base = base,
+        4 => state.fs.base = base,
+        5 => state.gs.base = base,
+        6 => state.ss.base = base,
+        _ => {}
+    }
+}
+
 /// Install a minimal flat GDT (null, code, data) at `base` in guest RAM.
 fn install_flat_gdt(mmu: &mut Mmu, base: u64) -> Result<(), CpuError> {
     let gdt: [u8; 24] = [
@@ -722,7 +818,7 @@ fn install_flat_gdt(mmu: &mut Mmu, base: u64) -> Result<(), CpuError> {
         .map_err(|_| CpuError::MemoryAccessError)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuError {
     InvalidInterruptVector,
     InterruptNotConfigured,

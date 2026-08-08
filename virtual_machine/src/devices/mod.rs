@@ -106,7 +106,13 @@ impl MmioRegion {
     }
 
     pub fn contains(&self, addr: u64, size: u64) -> bool {
-        addr >= self.base && addr.saturating_add(size) <= self.base.saturating_add(self.size)
+        size != 0
+            && addr >= self.base
+            && addr.checked_add(size).is_some_and(|end| {
+                self.base
+                    .checked_add(self.size)
+                    .is_some_and(|region_end| end <= region_end)
+            })
     }
 
     pub fn read(&self, addr: u64, size: u8) -> Result<u64, DeviceError> {
@@ -148,6 +154,7 @@ impl PortBus {
     }
 
     pub fn read(&mut self, port: u16, size: u8) -> Result<u64, DeviceError> {
+        validate_io_size(size)?;
         for (base, len, dev) in &mut self.devices {
             if port >= *base
                 && (port as u32).saturating_add(size as u32)
@@ -157,10 +164,11 @@ impl PortBus {
             }
         }
         // Unhandled port reads return all-ones, as real hardware does.
-        Ok((1u64 << (size * 8)).wrapping_sub(1))
+        Ok(if size == 8 { u64::MAX } else { (1u64 << (size * 8)) - 1 })
     }
 
     pub fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
+        validate_io_size(size)?;
         for (base, len, dev) in &mut self.devices {
             if port >= *base
                 && (port as u32).saturating_add(size as u32)
@@ -177,6 +185,13 @@ impl PortBus {
         for (_, _, dev) in &mut self.devices {
             dev.reset();
         }
+    }
+}
+
+fn validate_io_size(size: u8) -> Result<(), DeviceError> {
+    match size {
+        1 | 2 | 4 | 8 => Ok(()),
+        _ => Err(DeviceError::UnsupportedSize),
     }
 }
 

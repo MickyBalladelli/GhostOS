@@ -231,28 +231,42 @@ fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> 
     let pd_idx = ((virt >> 21) & 0x1FF) as usize;
     let pt_idx = ((virt >> 12) & 0x1FF) as usize;
 
-    let pml4e = read_ptr(cr3 + (pml4_idx as u64) * 8)?;
+    let pml4e = read_ptr(cr3.checked_add((pml4_idx as u64) * 8)?)?;
     let pml4e = Pte { raw: pml4e };
     if !pml4e.present() {
         return None;
     }
 
-    let pdpte = read_ptr(pml4e.phys() + (pdpt_idx as u64) * 8)?;
+    let pdpte = read_ptr(pml4e.phys().checked_add((pdpt_idx as u64) * 8)?)?;
     let pdpte = Pte { raw: pdpte };
     if !pdpte.present() {
         return None;
     }
 
+    let effective_flags = |leaf: PageFlags| {
+        let mut flags = leaf;
+        if pml4e.raw & 0x2 == 0 || pdpte.raw & 0x2 == 0 {
+            flags.remove(PageFlags::WRITABLE);
+        }
+        if pml4e.raw & 0x4 == 0 || pdpte.raw & 0x4 == 0 {
+            flags.remove(PageFlags::USER);
+        }
+        if pml4e.raw & PageFlags::NX.bits() != 0 || pdpte.raw & PageFlags::NX.bits() != 0 {
+            flags.insert(PageFlags::NX);
+        }
+        flags
+    };
+
     // 1 GiB page
     if pdpte.large() {
         let mask = 0x3FFF_FFFFu64;
         return Some((
-            pdpte.phys() + (virt & mask),
-            PageFlags::from_bits_truncate(pdpte.raw),
+            pdpte.phys().checked_add(virt & mask)?,
+            effective_flags(PageFlags::from_bits_truncate(pdpte.raw)),
         ));
     }
 
-    let pde = read_ptr(pdpte.phys() + (pd_idx as u64) * 8)?;
+    let pde = read_ptr(pdpte.phys().checked_add((pd_idx as u64) * 8)?)?;
     let pde = Pte { raw: pde };
     if !pde.present() {
         return None;
@@ -262,19 +276,32 @@ fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> 
     if pde.large() {
         let mask = 0x1F_FFFFu64;
         return Some((
-            pde.phys() + (virt & mask),
-            PageFlags::from_bits_truncate(pde.raw),
+            pde.phys().checked_add(virt & mask)?,
+            effective_flags(PageFlags::from_bits_truncate(pde.raw)),
         ));
     }
 
-    let pte = read_ptr(pde.phys() + (pt_idx as u64) * 8)?;
+    let pte = read_ptr(pde.phys().checked_add((pt_idx as u64) * 8)?)?;
     let pte = Pte { raw: pte };
     if !pte.present() {
         return None;
     }
 
     let offset = virt & (PAGE_SIZE as u64 - 1);
-    Some((pte.phys() + offset, PageFlags::from_bits_truncate(pte.raw)))
+    let mut flags = effective_flags(PageFlags::from_bits_truncate(pte.raw));
+    if pde.raw & 0x2 == 0 {
+        flags.remove(PageFlags::WRITABLE);
+    }
+    if pde.raw & 0x4 == 0 {
+        flags.remove(PageFlags::USER);
+    }
+    if pde.raw & PageFlags::NX.bits() != 0 {
+        flags.insert(PageFlags::NX);
+    }
+    Some((
+        pte.phys().checked_add(offset)?,
+        flags,
+    ))
 }
 
 /// Central MMU: physical RAM, frame allocation, page tables, MMIO routing,
@@ -755,14 +782,24 @@ impl Mmu {
         access: AccessKind,
         size: u64,
     ) -> Result<u64, MemoryError> {
+        if size == 0 {
+            return Err(MemoryError::InvalidAddress);
+        }
         if self.paging_enabled {
-            let max_addr = u64::MAX - size + 1;
+            let upper = virt >> 48;
+            if upper != 0 && upper != 0xFFFF {
+                return Err(MemoryError::PageFault);
+            }
+            let max_addr = u64::MAX
+                .checked_sub(size - 1)
+                .ok_or(MemoryError::InvalidAddress)?;
             if virt > max_addr {
                 return Err(MemoryError::PageFault);
             }
             let (phys, flags) =
                 walk_page_table(&self.ram, self.cr3, virt).ok_or(MemoryError::PageFault)?;
             validate_flags(flags, access, self.privilege)?;
+            phys.checked_add(size - 1).ok_or(MemoryError::PageFault)?;
             Ok(phys)
         } else {
             // Identity mapping.
@@ -806,6 +843,20 @@ impl Mmu {
     /// the device in one call; otherwise it reads from RAM. This is the
     /// canonical read used by the CPU executor's memory operands.
     pub fn read_from_addr(&self, addr: u64, size: u8) -> Result<u64, MemoryError> {
+        if size == 0 || size > 8 {
+            return Err(MemoryError::InvalidAddress);
+        }
+        if (addr & (PAGE_SIZE as u64 - 1)) + size as u64 > PAGE_SIZE as u64 {
+            let mut value = 0u64;
+            for offset in 0..size as u64 {
+                value |= (self.read_from_addr(
+                    addr.checked_add(offset).ok_or(MemoryError::InvalidAddress)?,
+                    1,
+                )? as u8 as u64)
+                    << (offset * 8);
+            }
+            return Ok(value);
+        }
         let phys = self.physical_address(addr, AccessKind::Read, size as u64)?;
         if let Some(region) = self.find_mmio(phys, size as u64) {
             return region.read(addr, size).map_err(|_| MemoryError::MmioError);
@@ -816,6 +867,20 @@ impl Mmu {
     /// Write `value` (low `size` bytes) to a (possibly translated) address.
     /// MMIO regions receive the write; RAM gets a plain store.
     pub fn write_to_addr(&mut self, addr: u64, value: u64, size: u8) -> Result<(), MemoryError> {
+        if size == 0 || size > 8 {
+            return Err(MemoryError::InvalidAddress);
+        }
+        if (addr & (PAGE_SIZE as u64 - 1)) + size as u64 > PAGE_SIZE as u64 {
+            self.prepare_write(addr, size as u64)?;
+            for offset in 0..size as u64 {
+                self.write_to_addr(
+                    addr.checked_add(offset).ok_or(MemoryError::InvalidAddress)?,
+                    (value >> (offset * 8)) & 0xFF,
+                    1,
+                )?;
+            }
+            return Ok(())
+        }
         self.prepare_write(addr, size as u64)?;
         let phys = self.physical_address(addr, AccessKind::Write, size as u64)?;
         if let Some(region) = self.find_mmio_mut(phys, size as u64) {
@@ -925,6 +990,15 @@ impl Mmu {
         }
     }
 
+    /// Fetch one instruction byte with execute permission checks.
+    pub fn read_instruction_byte(&self, addr: u64) -> Result<u8, MemoryError> {
+        let phys = self.physical_address(addr, AccessKind::Execute, 1)?;
+        if let Some(region) = self.find_mmio(phys, 1) {
+            return region.read(addr, 1).map(|value| value as u8).map_err(Into::into);
+        }
+        self.ram_read(phys, 1).map(|value| value as u8)
+    }
+
     pub fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError> {
         self.prepare_write(addr, 1)?;
         if self.paging_enabled || !self.identity.is_empty() {
@@ -1016,10 +1090,9 @@ impl Mmu {
     /// Direct physical (non-translated) write. Used by the loader to place
     /// the kernel image at a physical address regardless of paging state.
     pub fn write_phys(&mut self, phys: u64, bytes: &[u8]) -> Result<(), MemoryError> {
-        let start = phys as usize;
-        let end = start
-            .checked_add(bytes.len())
-            .ok_or(MemoryError::InvalidAddress)?;
+        self.validate_dma_range(phys, bytes.len(), 1)?;
+        let start = usize::try_from(phys).map_err(|_| MemoryError::InvalidAddress)?;
+        let end = start.checked_add(bytes.len()).ok_or(MemoryError::InvalidAddress)?;
         if end > self.ram.len() {
             return Err(MemoryError::InvalidAddress);
         }
@@ -1031,12 +1104,50 @@ impl Mmu {
     /// Direct physical (non-translated) read. Used by the BIOS and loader to
     /// inspect guest memory without a mapping.
     pub fn read_phys(&self, phys: u64, len: usize) -> Result<Vec<u8>, MemoryError> {
-        let start = phys as usize;
+        self.validate_dma_range(phys, len, 1)?;
+        let start = usize::try_from(phys).map_err(|_| MemoryError::InvalidAddress)?;
         let end = start.checked_add(len).ok_or(MemoryError::InvalidAddress)?;
         if end > self.ram.len() {
             return Err(MemoryError::InvalidAddress);
         }
         Ok(self.ram[start..end].to_vec())
+    }
+
+    /// Validate a physical DMA range before a device touches guest RAM.
+    /// Device models use this same gate, so overflow, MMIO, ballooned pages,
+    /// and out-of-RAM accesses fail identically.
+    pub fn validate_dma_range(
+        &self,
+        phys: u64,
+        len: usize,
+        alignment: u64,
+    ) -> Result<(), MemoryError> {
+        if len == 0 || (alignment != 0 && phys % alignment != 0) {
+            return Err(MemoryError::AlignmentError);
+        }
+        let last = phys
+            .checked_add(len as u64 - 1)
+            .ok_or(MemoryError::InvalidAddress)?;
+        let end = last.checked_add(1).ok_or(MemoryError::InvalidAddress)?;
+        let ram_end = self.ram.len() as u64;
+        if end > ram_end {
+            return Err(MemoryError::InvalidAddress);
+        }
+        let first_page = phys & !(PAGE_SIZE as u64 - 1);
+        let last_page = last & !(PAGE_SIZE as u64 - 1);
+        let mut page = first_page;
+        loop {
+            if self.ballooned_frames.contains(&page) || self.find_mmio(page, 1).is_some() {
+                return Err(MemoryError::AccessDenied);
+            }
+            if page == last_page {
+                break;
+            }
+            page = page
+                .checked_add(PAGE_SIZE as u64)
+                .ok_or(MemoryError::InvalidAddress)?;
+        }
+        Ok(())
     }
 
     /// Install an identity mapping for a physical range in the bootstrap

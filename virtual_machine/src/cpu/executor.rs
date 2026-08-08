@@ -114,7 +114,7 @@ fn port_err(e: DeviceError) -> CpuError {
 /// Compute the linear (segment-offset applied) address of a memory operand.
 fn effective_address(ins: &DecodedInstruction, state: &CpuState, mem: &MemoryOperand) -> u64 {
     if mem.rip_relative {
-        return ins.next_ip.wrapping_add(mem.displacement as i64 as u64);
+        return ins.next_ip.wrapping_add(mem.displacement as u64);
     }
 
     let mut base = mem.base.map(|b| state.reg(b)).unwrap_or(0);
@@ -126,7 +126,7 @@ fn effective_address(ins: &DecodedInstruction, state: &CpuState, mem: &MemoryOpe
     }
 
     let addr = base
-        .wrapping_add(mem.displacement as i64 as u64)
+        .wrapping_add(mem.displacement as u64)
         .wrapping_add(index.wrapping_mul(mem.scale as u64));
 
     if ins.addrsize == 32 {
@@ -138,9 +138,13 @@ fn effective_address(ins: &DecodedInstruction, state: &CpuState, mem: &MemoryOpe
 
 fn segment_base(state: &CpuState, seg: u8) -> u64 {
     match seg {
+        1 => state.cs.base,
+        2 => state.ds.base,
+        3 => state.es.base,
         4 => state.fs_base,
         5 => state.gs_base,
-        _ => 0,
+        6 => state.ss.base,
+        _ => state.ds.base,
     }
 }
 
@@ -152,7 +156,13 @@ fn read_operand_sized(
     size: u8,
 ) -> Result<u64, CpuError> {
     match op {
-        Operand::Register(r) => Ok(state.reg_size(*r, size)),
+        Operand::Register(r) => {
+            if size == 1 && !ins.has_rex && (4..=7).contains(r) {
+                Ok((state.reg(*r - 4) >> 8) & 0xFF)
+            } else {
+                Ok(state.reg_size(*r, size))
+            }
+        }
         Operand::Memory(mem) => {
             let addr = effective_address(ins, state, mem)
                 .wrapping_add(segment_base(state, mem.segment));
@@ -185,7 +195,12 @@ fn write_operand(
     let size = operand_bytes(ins.opsize);
     match op {
         Operand::Register(r) => {
-            state.set_reg_size(*r, size, value);
+            if size == 1 && !ins.has_rex && (4..=7).contains(r) {
+                let full = state.reg(*r - 4);
+                state.set_reg(*r - 4, (full & !0xFF00) | ((value & 0xFF) << 8));
+            } else {
+                state.set_reg_size(*r, size, value);
+            }
             Ok(())
         }
         Operand::Memory(mem) => {
@@ -224,23 +239,6 @@ fn write_cr(state: &mut CpuState, mmu: &mut Mmu, cr: u8, value: u64) -> Result<(
     Ok(())
 }
 
-fn move_segment(state: &mut CpuState, code: u8, selector: u16) {
-    state.seg_write(code, selector);
-    // In real mode the hidden base of a data/code segment is selector << 4.
-    if state.mode == CpuMode::Real16 && code <= 6 {
-        let base = (selector as u64) << 4;
-        match code {
-            1 => state.cs.base = base,
-            2 => state.ds.base = base,
-            3 => state.es.base = base,
-            4 => state.fs.base = base,
-            5 => state.gs.base = base,
-            6 => state.ss.base = base,
-            _ => {}
-        }
-    }
-}
-
 /// Push a value onto the stack, growing down.
 fn push_value(state: &mut CpuState, mmu: &mut Mmu, value: u64, size: u8) -> Result<(), CpuError> {
     state.rsp = state.rsp.wrapping_sub(size as u64);
@@ -265,15 +263,15 @@ fn alu_add(state: &mut CpuState, a: u64, b: u64, size: u8, carry_in: u64) -> u64
     let r128 = a128.wrapping_add(b128);
     let r = (r128 & mask as u128) as u64;
     let sign = sign_bit(size) as u128;
-    let of = ((a128 ^ r128) & (b128 ^ r128) & sign) != 0;
-    let af = (a128 ^ b128 ^ r128) & 0x10 != 0;
+    let of = ((a128 ^ r as u128) & (b128 ^ r as u128) & sign) != 0;
+    let af = (a128 ^ b128 ^ r as u128) & 0x10 != 0;
     write_flags(
         state,
         r128 > mask as u128,
         parity(r),
         af,
         (r128 & mask as u128) == 0,
-        r128 & sign != 0,
+        r as u128 & sign != 0,
         of,
     );
     r
@@ -286,15 +284,15 @@ fn alu_sub(state: &mut CpuState, a: u64, b: u64, size: u8, borrow_in: u64) -> u6
     let r128 = a128.wrapping_sub(b128);
     let r = (r128 & mask as u128) as u64;
     let sign = sign_bit(size) as u128;
-    let of = ((a128 ^ r128) & (a128 ^ b128) & sign) != 0;
-    let af = (a128 ^ b128 ^ r128) & 0x10 != 0;
+    let of = ((a128 ^ r as u128) & (a128 ^ b128) & sign) != 0;
+    let af = (a128 ^ b128 ^ r as u128) & 0x10 != 0;
     write_flags(
         state,
         a128 < b128,
         parity(r),
         af,
         (r128 & mask as u128) == 0,
-        r128 & sign != 0,
+        r as u128 & sign != 0,
         of,
     );
     r
@@ -414,7 +412,7 @@ fn resolve_target(
         Operand::Relative(rel) => Ok(ins.next_ip.wrapping_add(*rel as i64 as u64)),
         Operand::Immediate(v) => Ok(*v),
         Operand::Far { offset, selector } => {
-            move_segment(state, 1, *selector);
+            state.load_segment(1, *selector, mmu)?;
             Ok(*offset)
         }
         _ => read_operand(ins, state, mmu, op),
@@ -518,9 +516,7 @@ impl InstructionExecutor {
                 self.execute_msr(instruction, state, mmu, apic, pv_clock.as_deref_mut())?
             }
             "SYSCALL" | "SYSRET" => self.execute_syscall(instruction, state, mmu)?,
-            "SYSENTER" | "SYSEXIT" => {
-                state.rip = instruction.next_ip;
-            }
+            "SYSENTER" | "SYSEXIT" => return Err(CpuError::UnsupportedInstruction),
             "XCHG" => self.execute_xchg(instruction, state, mmu)?,
             "CMPXCHG" => self.execute_cmpxchg(instruction, state, mmu)?,
             "XADD" => self.execute_xadd(instruction, state, mmu)?,
@@ -562,13 +558,19 @@ impl InstructionExecutor {
             "CBW" | "CWDE" | "CDQE" | "CWD" | "CDQ" | "CQO" => {
                 self.execute_sign_extend(instruction, state)?;
             }
-            "SAHF" => self.execute_sahf(state)?,
-            "LAHF" => self.execute_lahf(state)?,
+            "SAHF" => {
+                self.execute_sahf(state)?;
+                state.rip = instruction.next_ip;
+            }
+            "LAHF" => {
+                self.execute_lahf(state)?;
+                state.rip = instruction.next_ip;
+            }
             "LOOP" | "LOOPE" | "LOOPNE" | "JRCXZ" => {
                 self.execute_loop(instruction, state)?;
             }
             _ => {
-                state.rip = instruction.next_ip;
+                return Err(CpuError::UnsupportedInstruction);
             }
         }
         Ok(())
@@ -609,7 +611,7 @@ impl InstructionExecutor {
             }
             (Operand::Segment(code), Some(src)) => {
                 let sel = read_operand(ins, state, mmu, src)? as u16;
-                move_segment(state, *code, sel);
+                state.load_segment(*code, sel, mmu)?;
             }
             (dst, Some(Operand::Segment(code))) => {
                 let sel = state.seg_read(*code) as u64;
@@ -791,55 +793,32 @@ impl InstructionExecutor {
             let rm = read_operand(ins, state, mmu, &ins.operands[0])?;
             let mask = operand_mask(ins.opsize);
             let m = rm & mask;
-            let (_lo, hi) = match ins.opsize {
-                8 => {
-                    let a = (state.rax & 0xFF) as u64;
-                    let p = if signed {
-                        ((a as i8 as i64) * (m as i8 as i64)) as u64
+            let bits = ins.opsize as u32;
+            let a = state.rax & mask;
+            let (lo, hi, overflow) = if signed {
+                let sign_extend = |value: u64| -> i128 {
+                    let value = value & mask;
+                    if value & sign_bit(ins.opsize) != 0 {
+                        (value as i128) - (1i128 << bits)
                     } else {
-                        a * m
-                    };
-                    // AL:AH = AX
-                    state.rax = (state.rax & !0xFFFF) | (p & 0xFFFF);
-                    (p & 0xFF, (p >> 8) & 0xFF)
-                }
-                16 => {
-                    let a = state.rax & 0xFFFF;
-                    let p = if signed {
-                        ((a as i16 as i64) * (m as i16 as i64)) as u64
-                    } else {
-                        a as u64 * m as u64
-                    };
-                    state.rax = (state.rax & !0xFFFF_FFFF) | (p & 0xFFFF_FFFF);
-                    state.rdx = (state.rdx & !0xFFFF) | ((p >> 16) & 0xFFFF);
-                    (p & 0xFFFF, (p >> 32) & 0xFFFF)
-                }
-                32 => {
-                    let a = state.rax & 0xFFFF_FFFF;
-                    let p = if signed {
-                        ((a as i32 as i64) * (m as i32 as i64)) as u64
-                    } else {
-                        a * m
-                    };
-                    state.rax = (state.rax & !0xFFFF_FFFF) | (p & 0xFFFF_FFFF);
-                    state.rdx = (state.rdx & !0xFFFF_FFFF) | ((p >> 32) & 0xFFFF_FFFF);
-                    (p & 0xFFFF_FFFF, (p >> 32) & 0xFFFF_FFFF)
-                }
-                _ => {
-                    let a = state.rax;
-                    let p = if signed {
-                        let p = (a as i64 as i128) * (m as i64 as i128);
-                        (p as u64, (p >> 64) as u64)
-                    } else {
-                        let p = (a as u128) * (m as u128);
-                        (p as u64, (p >> 64) as u64)
-                    };
-                    state.rax = p.0;
-                    state.rdx = p.1;
-                    p
-                }
+                        value as i128
+                    }
+                };
+                let product = sign_extend(a) * sign_extend(m);
+                let min = -(1i128 << (bits - 1));
+                let max = (1i128 << (bits - 1)) - 1;
+                (product as u128 as u64, (product >> bits) as u64, product < min || product > max)
+            } else {
+                let product = (a as u128) * (m as u128);
+                (product as u64, (product >> bits) as u64, (product >> bits) != 0)
             };
-            let overflow = hi != 0;
+            let width = operand_bytes(ins.opsize);
+            if ins.opsize == 8 {
+                state.set_reg_size(0, 2, lo);
+            } else {
+                state.set_reg_size(0, width, lo);
+                state.set_reg_size(2, width, hi);
+            }
             if overflow {
                 state.rflags |= CF | OF;
             } else {
@@ -859,24 +838,21 @@ impl InstructionExecutor {
             read_operand(ins, state, mmu, &dst)?
         };
         let mask = operand_mask(ins.opsize);
-        let a_s = (a & mask) as i64;
-        let b_s = (b & mask) as i64;
-        let (lo, hi) = if ins.opsize == 64 {
-            let p = (a_s as i128) * (b_s as i128);
-            (p as u64, (p >> 64) as u64)
-        } else {
-            let p = (a_s as i64).wrapping_mul((b & mask) as i64);
-            let bits = bit_count(ins.opsize);
-            let lo = (p as u64) & mask;
-            let hi = p as u64 >> bits;
-            (lo, hi)
+        let bits = bit_count(ins.opsize);
+        let sign_extend = |value: u64| -> i128 {
+            let value = value & mask;
+            if value & sign_bit(ins.opsize) != 0 {
+                (value as i128) - (1i128 << bits)
+            } else {
+                value as i128
+            }
         };
+        let a_s = sign_extend(a);
+        let b_s = sign_extend(b);
+        let p = a_s * b_s;
+        let lo = (p as u128 as u64) & mask;
         write_operand(ins, state, mmu, &dst, lo)?;
-        let overflow = if ins.opsize == 64 {
-            hi != (if a_s.is_negative() { u64::MAX } else { 0 })
-        } else {
-            hi != 0 && hi != mask
-        };
+        let overflow = p < -(1i128 << (bits - 1)) || p > (1i128 << (bits - 1)) - 1;
         if overflow {
             state.rflags |= CF | OF;
         } else {
@@ -902,8 +878,12 @@ impl InstructionExecutor {
 
         let (quotient, remainder, overflow) = if signed {
             let (dividend, divisor): (i128, i128) = match ins.opsize {
-                8 => ((state.rax & 0xFF) as i8 as i128, (rm & 0xFF) as i8 as i128),
-                16 => ((state.rax & 0xFFFF) as i16 as i128, (rm & 0xFFFF) as i16 as i128),
+                8 => ((state.rax & 0xFFFF) as i16 as i128, (rm & 0xFF) as i8 as i128),
+                16 => (
+                    (((state.rdx & 0xFFFF) << 16) | (state.rax & 0xFFFF)) as u32 as i32
+                        as i128,
+                    (rm & 0xFFFF) as i16 as i128,
+                ),
                 32 => (
                     ((state.rdx & 0xFFFF_FFFF) << 32 | (state.rax & 0xFFFF_FFFF)) as u64 as i64 as i128,
                     (rm & 0xFFFF_FFFF) as i32 as i128,
@@ -1121,14 +1101,15 @@ impl InstructionExecutor {
         if let Some(op) = ins.operands.first() {
             match op {
                 Operand::Far { offset, selector } => {
-                    push_value(state, mmu, state.cs.selector as u64, 8)?;
-                    push_value(state, mmu, ins.next_ip, 8)?;
-                    move_segment(state, 1, *selector);
+                    let size = stack_operand_size(state, ins.opsize);
+                    push_value(state, mmu, state.cs.selector as u64, size)?;
+                    push_value(state, mmu, ins.next_ip, size)?;
+                    state.load_segment(1, *selector, mmu)?;
                     state.rip = *offset;
                 }
                 _ => {
                     let target = resolve_target(ins, state, mmu, op)?;
-                    push_value(state, mmu, ins.next_ip, 8)?;
+                    push_value(state, mmu, ins.next_ip, stack_operand_size(state, ins.opsize))?;
                     state.rip = target;
                 }
             }
@@ -1146,10 +1127,11 @@ impl InstructionExecutor {
         mmu: &mut Mmu,
         far: bool,
     ) -> Result<(), CpuError> {
-        let new_rip = pop_value(state, mmu, 8)?;
+        let size = stack_operand_size(state, ins.opsize);
+        let new_rip = pop_value(state, mmu, size)?;
         if far {
-            let new_cs = pop_value(state, mmu, 8)? as u16;
-            move_segment(state, 1, new_cs);
+            let new_cs = pop_value(state, mmu, size)? as u16;
+            state.load_segment(1, new_cs, mmu)?;
         }
         if let Some(Operand::Immediate(v)) = ins.operands.first() {
             state.rsp = state.rsp.wrapping_add(*v);
@@ -1200,10 +1182,23 @@ impl InstructionExecutor {
         let new_rip = pop_value(state, mmu, 8)?;
         let new_cs = pop_value(state, mmu, 8)? as u16;
         let new_flags = pop_value(state, mmu, 8)?;
-        move_segment(state, 1, new_cs);
+        let return_to_user = new_cs & 3 != 0;
+        if return_to_user && state.privilege == PrivilegeLevel::Ring0 {
+            let new_rsp = pop_value(state, mmu, 8)?;
+            let new_ss = pop_value(state, mmu, 8)? as u16;
+            state.rsp = new_rsp;
+            state.load_segment(6, new_ss, mmu)?;
+        }
+        state.load_segment(1, new_cs, mmu)?;
         state.rip = new_rip;
         // Preserve the reserved bit.
         state.rflags = new_flags | 0x2;
+        state.privilege = if return_to_user {
+            PrivilegeLevel::Ring3
+        } else {
+            PrivilegeLevel::Ring0
+        };
+        mmu.set_privilege(return_to_user);
         let _ = ins;
         Ok(())
     }
@@ -1390,83 +1385,64 @@ impl InstructionExecutor {
         } else {
             (count_raw & 0x1F) as u32
         };
-        let count_u64 = count as u64;
+        if count == 0 {
+            state.rip = ins.next_ip;
+            return Ok(())
+        }
 
-        let (result, new_cf) = if count == 0 {
-            (v, state.rflags & CF != 0)
-        } else {
-            let sign = sign_bit(ins.opsize);
-            match ins.mnemonic {
-                "SHL" => {
-                    let cf = (v >> (bits - count_u64)) & 1 != 0;
-                    ((v << count) & mask, cf)
-                }
-                "SHR" => {
-                    let cf = (v >> (count_u64 - 1)) & 1 != 0;
-                    ((v >> count) & mask, cf)
-                }
-                "SAR" => {
-                    let cf = (v >> (count_u64 - 1)) & 1 != 0;
-                    let shifted = (v as i64) >> count;
-                    ((shifted as u64) & mask, cf)
-                }
-                "ROL" => {
-                    let r = ((v << count) | (v >> (bits - count_u64))) & mask;
-                    (r, r & 1 != 0)
-                }
-                "ROR" => {
-                    let r = ((v >> count) | (v << (bits - count_u64))) & mask;
-                    (r, r & sign != 0)
-                }
-                "RCL" => {
-                    let carry_in = (state.rflags & CF != 0) as u64;
-                    let top = (v >> (bits - count_u64 - 1)) & ((1u64 << count) - 1);
-                    let cf = if count == 1 { (v & sign) != 0 } else { (v >> (bits - count_u64)) & 1 != 0 };
-                    let r = ((v << count) | (top << 1) | carry_in) & mask;
-                    let _ = cf;
-                    (r, ((v >> (bits - count_u64)) & 1) != 0)
-                }
-                "RCR" => {
-                    let r = ((v >> count) | ((v & ((1u64 << count) - 1)) << (bits - count_u64 + 1))) & mask;
-                    (r, (v >> (count_u64 - 1)) & 1 != 0)
-                }
-                _ => (v, false),
+        let rotate_count = match ins.mnemonic {
+            "RCL" | "RCR" => count % (bits as u32 + 1),
+            "ROL" | "ROR" => count % bits as u32,
+            _ => count,
+        };
+        if rotate_count == 0 {
+            state.rip = ins.next_ip;
+            return Ok(())
+        }
+        let count_u64 = rotate_count as u64;
+        let old_cf = (state.rflags & CF != 0) as u128;
+        let (result, new_cf) = match ins.mnemonic {
+            "SHL" => (((v << count_u64) & mask), (v >> (bits - count_u64)) & 1 != 0),
+            "SHR" => ((v >> count_u64), (v >> (count_u64 - 1)) & 1 != 0),
+            "SAR" => ((((v as i64) >> rotate_count) as u64) & mask, (v >> (count_u64 - 1)) & 1 != 0),
+            "ROL" => {
+                let r = ((v << count_u64) | (v >> (bits - count_u64))) & mask;
+                (r, r & 1 != 0)
             }
+            "ROR" => {
+                let r = ((v >> count_u64) | (v << (bits - count_u64))) & mask;
+                (r, r & sign_bit(ins.opsize) != 0)
+            }
+            "RCL" => {
+                let width = bits as u32 + 1;
+                let ext_mask = (1u128 << width) - 1;
+                let ext = (((v as u128) & mask as u128) << 1) | old_cf;
+                let rotated = ((ext << count_u64) | (ext >> (width as u64 - count_u64))) & ext_mask;
+                ((rotated as u64) & mask, rotated & (1u128 << bits) != 0)
+            }
+            "RCR" => {
+                let width = bits as u32 + 1;
+                let ext_mask = (1u128 << width) - 1;
+                let ext = (old_cf << bits) | ((v as u128) & mask as u128);
+                let rotated = ((ext >> count_u64) | (ext << (width as u64 - count_u64))) & ext_mask;
+                ((rotated as u64) & mask, rotated & (1u128 << bits) != 0)
+            }
+            _ => (v, false),
         };
 
-        // OF is defined only for count == 1.
-        if count == 1 {
-            let sign = sign_bit(ins.opsize);
-            let of = match ins.mnemonic {
-                "SHL" => (result & sign) != (v & sign),
-                "SHR" => (result & sign) != 0,
+        let of = if rotate_count == 1 {
+            match ins.mnemonic {
+                "SHL" => (result & sign_bit(ins.opsize)) != (v & sign_bit(ins.opsize)),
+                "SHR" => (result & sign_bit(ins.opsize)) != 0,
                 "SAR" => false,
-                "ROL" => ((result & sign) != 0) != (result & 1 != 0),
-                "ROR" => ((result & sign) != 0) != (v & sign != 0),
-                _ => false,
-            };
-            if of {
-                state.rflags |= OF;
-            } else {
-                state.rflags &= !OF;
+                "ROL" => ((result & sign_bit(ins.opsize)) != 0) != (result & 1 != 0),
+                "ROR" => ((result & sign_bit(ins.opsize)) != 0) != (result & (sign_bit(ins.opsize) >> 1) != 0),
+                _ => state.rflags & OF != 0,
             }
-        }
-
-        // SF/ZF/PF from the result; AF is undefined.
-        write_flags(
-            state,
-            new_cf,
-            parity(result),
-            false,
-            result == 0 && count != 0,
-            result & sign_bit(ins.opsize) != 0,
-            if count == 1 { state.rflags & OF != 0 } else { false },
-        );
-
-        // Restore OF if count != 1 (write_flags cleared it).
-        if count != 1 {
-            state.rflags &= !OF;
-        }
+        } else {
+            state.rflags & OF != 0
+        };
+        write_flags(state, new_cf, parity(result), false, result == 0, result & sign_bit(ins.opsize) != 0, of);
 
         write_operand(ins, state, mmu, &dst, result)?;
         state.rip = ins.next_ip;
@@ -1688,7 +1664,7 @@ impl InstructionExecutor {
                     state.update_paging(mmu)?;
                 }
                 0xC000_0081 => state.star = value,
-                0xC000_0082 => state.lstar = value & !0xFFF,
+                0xC000_0082 => state.lstar = value,
                 0xC000_0083 => { /* FMASK - ignored */ }
                 0xC000_0100 => state.fs_base = value,
                 0xC000_0101 => state.gs_base = value,
@@ -1741,17 +1717,34 @@ impl InstructionExecutor {
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
         if ins.mnemonic == "SYSCALL" {
+            if state.mode != CpuMode::Long64 {
+                return Err(CpuError::UnsupportedInstruction);
+            }
             state.rcx = ins.next_ip;
             state.r11 = state.rflags;
             state.rip = state.lstar;
-            state.privilege = PrivilegeLevel::Ring3;
-            mmu.set_privilege(true);
-        } else {
-            // SYSRET returns to the caller.
-            state.rip = state.rcx;
-            state.rflags = state.r11 | 0x2;
+            let kernel_cs = ((state.star >> 32) & 0xFFFF) as u16;
+            if kernel_cs != 0 {
+                state.load_segment(1, kernel_cs, mmu)?;
+                state.load_segment(6, kernel_cs.wrapping_add(8), mmu)?;
+            }
             state.privilege = PrivilegeLevel::Ring0;
             mmu.set_privilege(false);
+        } else {
+            if state.mode != CpuMode::Long64 {
+                return Err(CpuError::UnsupportedInstruction);
+            }
+            // SYSRET returns to the caller in the user code segment selected
+            // by STAR[63:48].
+            state.rip = state.rcx;
+            state.rflags = state.r11 | 0x2;
+            let user_cs = ((state.star >> 48) & 0xFFFF) as u16;
+            if user_cs != 0 {
+                state.load_segment(1, user_cs.wrapping_add(16), mmu)?;
+                state.load_segment(6, user_cs.wrapping_add(8), mmu)?;
+            }
+            state.privilege = PrivilegeLevel::Ring3;
+            mmu.set_privilege(true);
         }
         Ok(())
     }
