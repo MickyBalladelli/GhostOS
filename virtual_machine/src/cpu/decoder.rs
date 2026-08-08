@@ -50,6 +50,9 @@ pub struct DecodedInstruction {
     /// REP prefix state: None = none, Some(true) = REPE/REPZ,
     /// Some(false) = REPNE/REPNZ.
     pub rep_prefix: Option<bool>,
+    /// LOCK prefix was present. The single-CPU emulator needs no extra
+    /// execution semantics, but must decode the prefix correctly.
+    pub lock_prefix: bool,
     pub operands: Vec<Operand>,
 }
 
@@ -66,6 +69,7 @@ impl DecodedInstruction {
             has_rex: false,
             condition: 0,
             rep_prefix: None,
+            lock_prefix: false,
             operands: Vec::new(),
         }
     }
@@ -278,6 +282,7 @@ impl InstructionDecoder {
         let mut has_rex = false;
         let mut rex = Rex::default();
         let mut rep_prefix: Option<bool> = None;
+        let mut lock_prefix = false;
 
         loop {
             if pos - ip >= MAX_INSN_LEN as u64 {
@@ -293,7 +298,7 @@ impl InstructionDecoder {
                 0x3E => segment = 2,
                 0x64 => segment = 4,
                 0x65 => segment = 5,
-                0xF0 => return Err(InstructionDecodeError::InvalidPrefix),
+                0xF0 => lock_prefix = true,
                 0xF2 => rep_prefix = Some(false),
                 0xF3 => rep_prefix = Some(true),
                 0x40..=0x4F => {
@@ -321,6 +326,7 @@ impl InstructionDecoder {
         ins.addrsize = addrsize;
         ins.has_rex = has_rex;
         ins.rep_prefix = rep_prefix;
+        ins.lock_prefix = lock_prefix;
 
         if opcode == 0x0F {
             let op2 = Self::rd(mmu, &mut pos)?;
@@ -1613,6 +1619,13 @@ mod tests {
         let i = dec(&[0xF3, 0xA4]).unwrap();
         assert_eq!(i.mnemonic, "MOVSB");
         assert_eq!(i.rep_prefix, Some(true));
+    }
+
+    #[test]
+    fn lock_prefix_tracked() {
+        let i = dec(&[0xF0, 0x0F, 0xC1, 0xC2]).unwrap();
+        assert_eq!(i.mnemonic, "XADD");
+        assert!(i.lock_prefix);
     }
 
     #[test]
