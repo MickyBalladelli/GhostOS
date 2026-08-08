@@ -57,7 +57,7 @@ remaining proof, portability, safety, and fidelity work.
       and format in the lock record. Handle PID reuse and cross-host copies.
 - [x] Add lock tests for concurrent open, crash, PID reuse, copied images,
       read-only attachment, symlink/path aliasing, and permission failure.
-- [ ] Make disk creation, format writes, system-disk manifests, migration
+- [x] Make disk creation, format writes, system-disk manifests, migration
       checkpoints, and lock publication crash-safe with file and directory
       sync ordering.
 - [ ] Verify RAW, fixed VHD, and QCOW2 behavior against independent fixtures,

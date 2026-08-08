@@ -968,6 +968,7 @@ fn publish_received_checkpoint(
     };
     if result.is_err() {
         let _ = fs::remove_file(&partial);
+        let _ = sync_migration_directory(parent);
     }
     result
 }
@@ -1066,7 +1067,9 @@ fn publish_checkpoint_file(
     }
 
     if let Some(backup) = backup {
-        let _ = fs::remove_file(backup);
+        fs::remove_file(backup)
+            .map_err(|error| format!("cannot remove migration checkpoint backup: {error}"))?;
+        sync_migration_directory(parent)?;
     }
     Ok(())
 }

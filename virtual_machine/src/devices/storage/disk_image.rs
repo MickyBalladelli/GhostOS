@@ -104,7 +104,9 @@ pub struct DiskLockInfo {
 
 impl Drop for DiskLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        if fs::remove_file(&self.path).is_ok() {
+            let _ = sync_parent_directory(&self.path);
+        }
     }
 }
 
@@ -266,7 +268,7 @@ impl DiskImage {
             }
             Err(error) => return Err(StorageError::Io(error)),
         };
-        writeln!(
+        let publication = writeln!(
             lock_file,
             "version={}\nimage_identity={}\nowner_identity={}\npid={}\nstart_time={}\nhost_identity={}\nformat={}",
             LOCK_RECORD_VERSION,
@@ -276,8 +278,15 @@ impl DiskImage {
             process_start_time(std::process::id()).unwrap_or_else(|| "unknown".to_string()),
             host_identity(),
             format_name(format),
-        )?;
-        lock_file.sync_all()?;
+        )
+        .and_then(|_| lock_file.sync_all())
+        .and_then(|_| sync_parent_directory(&lock_path));
+        if let Err(error) = publication {
+            drop(lock_file);
+            let _ = fs::remove_file(&lock_path);
+            let _ = sync_parent_directory(&lock_path);
+            return Err(StorageError::Io(error));
+        }
         Ok(DiskLock { path: lock_path })
     }
 
@@ -287,7 +296,9 @@ impl DiskImage {
     /// through `recover_stale_lock`.
     fn recover_lock<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
         let lock_path = Self::lock_path(path);
-        fs::remove_file(&lock_path).map_err(StorageError::Io)
+        fs::remove_file(&lock_path)?;
+        sync_parent_directory(&lock_path)?;
+        Ok(())
     }
 
     /// Read ownership metadata without changing the lock.
@@ -709,6 +720,22 @@ fn process_exists(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+pub(crate) fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    #[cfg(unix)]
+    {
+        File::open(parent)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = parent;
+        Ok(())
+    }
 }
 
 fn lock_field<'a>(record: &'a str, key: &str) -> Option<&'a str> {

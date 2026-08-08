@@ -5,7 +5,7 @@
 //! therefore fall back to the previous valid generation.
 
 use super::{DiskFormat, DiskImage, StorageError};
-use crate::devices::storage::disk_image::SECTOR_SIZE;
+use crate::devices::storage::disk_image::{sync_parent_directory, SECTOR_SIZE};
 use std::fs::{self, File};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -218,12 +218,15 @@ impl SystemDiskProvisioner {
             .and_then(|_| install_header(&temporary, options.size_bytes))
         {
             let _ = fs::remove_file(&temporary);
+            let _ = sync_parent_directory(&temporary);
             return Err(error);
         }
         if let Err(error) = fs::rename(&temporary, path) {
             let _ = fs::remove_file(&temporary);
+            let _ = sync_parent_directory(&temporary);
             return Err(StorageError::Io(error));
         }
+        sync_parent_directory(path.as_ref()).map_err(StorageError::Io)?;
         Ok(())
     }
 
@@ -362,6 +365,7 @@ impl SystemDiskProvisioner {
         };
         write_manifest(&mut image, slot, &manifest)?;
         image.sync()?;
+        sync_parent_directory(path.as_ref()).map_err(StorageError::Io)?;
         Ok(manifest)
     }
 
@@ -1164,6 +1168,7 @@ fn install_header(path: &Path, size: u64) -> Result<(), StorageError> {
     let mut image = DiskImage::open_with_access(path, true)?;
     image.write_sector(0, &header)?;
     image.sync()?;
+    sync_parent_directory(path)?;
     Ok(())
 }
 
@@ -1214,6 +1219,7 @@ fn create_image_file(path: &Path, size: u64, format: DiskFormat) -> Result<(), S
         }
     }
     file.sync_all()?;
+    sync_parent_directory(path)?;
     Ok(())
 }
 
