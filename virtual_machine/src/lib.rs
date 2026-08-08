@@ -68,8 +68,9 @@ pub use hardware_acceleration::{
 };
 pub use snapshot::{
     SnapshotChain, SnapshotDiff, SnapshotError, SnapshotFeatures, SnapshotId, SnapshotPage,
-    SnapshotSchema, VmSnapshot, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_MEMORY_BYTES,
-    SNAPSHOT_FORMAT_VERSION,
+    SnapshotAuthKey, SnapshotSchema, VmSnapshot, MAX_SNAPSHOT_BYTES,
+    MAX_SNAPSHOT_MEMORY_BYTES, SNAPSHOT_AUTH_FORMAT_VERSION, SNAPSHOT_AUTH_KEY_BYTES,
+    SNAPSHOT_AUTH_TAG_BYTES, SNAPSHOT_FORMAT_VERSION,
     SNAPSHOT_MIN_FORMAT_VERSION,
 };
 pub use terminal::{
@@ -1381,14 +1382,33 @@ impl Vm {
         self.restore_snapshot(snapshot)
     }
 
-    /// Save a checkpoint to the versioned binary snapshot format.
+    /// Save an unkeyed raw payload for offline format conversion only.
+    /// Trusted checkpoint storage must use [`Self::save_authenticated_snapshot`].
     pub fn save_snapshot(&self, path: impl AsRef<std::path::Path>) -> Result<(), SnapshotError> {
         self.snapshot().save(path)
     }
 
-    /// Load a checkpoint from disk.
+    /// Save an authenticated checkpoint. Use this for persistent or remote
+    /// snapshot state; the unkeyed method above is retained for raw format
+    /// conversion and local test fixtures.
+    pub fn save_authenticated_snapshot(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        key: snapshot::SnapshotAuthKey,
+    ) -> Result<(), SnapshotError> {
+        self.snapshot().save_authenticated(path, key)
+    }
+
+    /// Load an untrusted raw payload for offline format conversion only.
     pub fn load_snapshot(path: impl AsRef<std::path::Path>) -> Result<VmSnapshot, SnapshotError> {
         VmSnapshot::load(path)
+    }
+
+    pub fn load_authenticated_snapshot(
+        path: impl AsRef<std::path::Path>,
+        key: snapshot::SnapshotAuthKey,
+    ) -> Result<VmSnapshot, SnapshotError> {
+        VmSnapshot::load_authenticated(path, key)
     }
 }
 

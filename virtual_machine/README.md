@@ -154,8 +154,10 @@ Save and restore VM state with bounded or interactive runs:
 
 ```bash
 ../target/release/synos-vm --kernel ../build/bios/kernel.bin \
-  --steps 100000 --snapshot-save ./state/checkpoint.vm
-../target/release/synos-vm --snapshot-restore ./state/checkpoint.vm \
+  --steps 100000 --snapshot-key ./state/vm.key \
+  --snapshot-save ./state/checkpoint.vm
+../target/release/synos-vm --snapshot-key ./state/vm.key \
+  --snapshot-restore ./state/checkpoint.vm \
   --steps 100000
 ```
 
@@ -163,15 +165,20 @@ Transfer a validated checkpoint to another host over TCP, then start the
 receiver with `--snapshot-restore`:
 
 ```bash
-../target/release/synos-vm migrate receive 0.0.0.0:9000 ./state/incoming.vm
-../target/release/synos-vm migrate send ./state/checkpoint.vm HOST:9000
+openssl rand -out ./state/vm.key 32
+../target/release/synos-vm migrate receive 0.0.0.0:9000 ./state/incoming.vm \
+  --key ./state/vm.key
+../target/release/synos-vm migrate send ./state/checkpoint.vm HOST:9000 \
+  --key ./state/vm.key
 ```
 
-Snapshot versions 1 and 2 remain compatible. Version 1 has implicit feature
-flags; version 2 negotiates explicit flags and bounds every decoded length.
-See [the snapshot format and upgrade path](docs/SNAPSHOT_FORMAT.md) before
-moving checkpoints between VM builds. Migration transport is not encrypted or
-authenticated, so protect the TCP connection separately.
+Snapshot files and migration frames use HMAC-SHA256 with the shared key.
+Version 1 and 2 payloads remain compatible after authentication. Version 1 has
+implicit feature flags; version 2 negotiates explicit flags and bounds every
+decoded length. See [the snapshot format and upgrade path](docs/SNAPSHOT_FORMAT.md)
+before moving checkpoints between VM builds. Authentication does not encrypt
+the migration transport or prevent replay; protect the TCP connection and
+manage key rotation separately.
 
 Expose a Unix monitor socket with `--monitor PATH`. Connect with a Unix-socket
 client and use `help`, `info registers`, `info disks`, `info status`, `save

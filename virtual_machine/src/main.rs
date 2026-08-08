@@ -10,7 +10,8 @@ use synos_vm::{
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
     HardwareAcceleration, TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig,
-    SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT, MAX_SNAPSHOT_BYTES,
+    SnapshotAuthKey, SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
+    MAX_SNAPSHOT_BYTES,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -26,6 +27,7 @@ struct Cli {
     disk_options: DiskOptions,
     snapshot_save: Option<PathBuf>,
     snapshot_restore: Option<PathBuf>,
+    snapshot_key: Option<PathBuf>,
     monitor_path: Option<PathBuf>,
 }
 
@@ -35,8 +37,16 @@ enum Command {
 }
 
 enum MigrateCommand {
-    Send { snapshot: PathBuf, address: String },
-    Receive { address: String, snapshot: PathBuf },
+    Send {
+        snapshot: PathBuf,
+        address: String,
+        key: PathBuf,
+    },
+    Receive {
+        address: String,
+        snapshot: PathBuf,
+        key: PathBuf,
+    },
 }
 
 enum DiskCommand {
@@ -148,6 +158,7 @@ where
     let mut disk_options = DiskOptions::default();
     let mut snapshot_save = None;
     let mut snapshot_restore = None;
+    let mut snapshot_key = None;
     let mut monitor_path = None;
     let mut args = values.into_iter().peekable();
 
@@ -239,6 +250,9 @@ where
                 snapshot_restore =
                     Some(PathBuf::from(next_value(&mut args, "--snapshot-restore")?));
             }
+            "--snapshot-key" => {
+                snapshot_key = Some(PathBuf::from(next_value(&mut args, "--snapshot-key")?));
+            }
             "--monitor" => {
                 monitor_path = Some(PathBuf::from(next_value(&mut args, "--monitor")?));
             }
@@ -267,6 +281,13 @@ where
     if integration && (snapshot_save.is_some() || snapshot_restore.is_some()) {
         return Err("snapshot options cannot be combined with --integration".to_string());
     }
+    if (snapshot_save.is_some() || snapshot_restore.is_some() || monitor_path.is_some())
+        && snapshot_key.is_none()
+    {
+        return Err(
+            "snapshot save, restore, and monitor save require --snapshot-key <PATH>".to_string(),
+        );
+    }
     if terminal == Some(true) && monitor_path.is_some() {
         return Err("--monitor cannot be combined with --interactive".to_string());
     }
@@ -282,29 +303,42 @@ where
         disk_options,
         snapshot_save,
         snapshot_restore,
+        snapshot_key,
         monitor_path,
     }))
 }
 
 fn parse_migrate_command(values: &[String]) -> Result<ParseResult, String> {
     match values {
-        [command, snapshot, address] if command == "send" => {
+        [command, snapshot, address, key_flag, key]
+            if command == "send" && key_flag == "--key" =>
+        {
             Ok(ParseResult::Migrate(MigrateCommand::Send {
                 snapshot: PathBuf::from(snapshot),
                 address: address.clone(),
+                key: PathBuf::from(key),
             }))
         }
-        [command, address, snapshot] if command == "receive" => {
+        [command, address, snapshot, key_flag, key]
+            if command == "receive" && key_flag == "--key" =>
+        {
             Ok(ParseResult::Migrate(MigrateCommand::Receive {
                 address: address.clone(),
                 snapshot: PathBuf::from(snapshot),
+                key: PathBuf::from(key),
             }))
         }
         [command] if command == "help" || command == "--help" || command == "-h" => {
             Ok(ParseResult::Help)
         }
-        [] => Err("migrate needs `send SNAPSHOT ADDRESS` or `receive ADDRESS SNAPSHOT`".to_string()),
-        _ => Err("usage: synos-vm migrate send SNAPSHOT ADDRESS | receive ADDRESS SNAPSHOT".to_string()),
+        [] => Err(
+            "migrate needs `send SNAPSHOT ADDRESS --key KEY` or `receive ADDRESS SNAPSHOT --key KEY`"
+                .to_string(),
+        ),
+        _ => Err(
+            "usage: synos-vm migrate send SNAPSHOT ADDRESS --key KEY | receive ADDRESS SNAPSHOT --key KEY"
+                .to_string(),
+        ),
     }
 }
 
@@ -542,12 +576,22 @@ fn run(mut cli: Cli) -> Result<(), String> {
         return print_disk_inventory(&cli.config.disks);
     }
 
+    let snapshot_key = cli
+        .snapshot_key
+        .as_ref()
+        .map(SnapshotAuthKey::from_file)
+        .transpose()
+        .map_err(|error| format!("cannot load snapshot authentication key: {error}"))?;
+    let auth_key = snapshot_key.as_ref();
     let restore_snapshot = cli
         .snapshot_restore
         .as_ref()
-        .map(Vm::load_snapshot)
-        .transpose()
-        .map_err(|error| format!("cannot load snapshot: {error}"))?;
+        .map(|path| {
+            let key = auth_key.ok_or_else(|| "snapshot restore needs an authentication key".to_string())?;
+            Vm::load_authenticated_snapshot(path, *key)
+                .map_err(|error| format!("cannot load authenticated snapshot: {error}"))
+        })
+        .transpose()?;
     let mut config = cli.config;
     if let Some(snapshot) = restore_snapshot.as_ref() {
         if !cli.memory_explicit {
@@ -624,7 +668,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
     let mut poll_monitor = |vm: &mut Vm| {
         monitor
             .as_mut()
-            .map(|session| session.poll(vm))
+            .map(|session| session.poll(vm, auth_key))
             .transpose()
             .map(|value| value.unwrap_or(true))
             .map_err(|_| synos_vm::VmError::IoError)
@@ -652,47 +696,65 @@ fn run(mut cli: Cli) -> Result<(), String> {
     }
 
     if let Some(path) = snapshot_save {
-        vm.save_snapshot(&path)
-            .map_err(|error| format!("cannot save snapshot {}: {error}", path.display()))?;
+        let key = auth_key.ok_or_else(|| "snapshot save needs an authentication key".to_string())?;
+        vm.save_authenticated_snapshot(&path, *key)
+            .map_err(|error| format!("cannot save authenticated snapshot {}: {error}", path.display()))?;
         println!("Saved VM snapshot to {}", path.display());
     }
 
     Ok(())
 }
 
-const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG2";
-const LEGACY_MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG1";
-const MIGRATION_PROTOCOL_VERSION: u32 = 2;
+const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG3";
+const MIGRATION_PROTOCOL_VERSION: u32 = 3;
+const MIGRATION_AUTH_DOMAIN: &[u8] = b"SYNOS-MIGRATION-HMAC-SHA256-V3";
 
 fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
     match command {
-        MigrateCommand::Send { snapshot, address } => {
+        MigrateCommand::Send {
+            snapshot,
+            address,
+            key: key_path,
+        } => {
+            let key = SnapshotAuthKey::from_file(&key_path)
+                .map_err(|error| format!("cannot load migration authentication key: {error}"))?;
             let bytes = std::fs::read(&snapshot)
                 .map_err(|error| format!("cannot read snapshot {}: {error}", snapshot.display()))?;
-            let snapshot_value = synos_vm::VmSnapshot::from_bytes(&bytes)
-                .map_err(|error| format!("cannot validate snapshot {}: {error}", snapshot.display()))?;
+            let snapshot_value = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
+                .map_err(|error| format!("cannot validate authenticated snapshot {}: {error}", snapshot.display()))?;
             let mut stream = TcpStream::connect(&address)
                 .map_err(|error| format!("cannot connect to migration target {address}: {error}"))?;
             stream
                 .write_all(MIGRATION_MAGIC)
                 .and_then(|_| write_migration_u32(&mut stream, MIGRATION_PROTOCOL_VERSION))
                 .and_then(|_| write_migration_schema(&mut stream, SnapshotSchema::local()))
+                .and_then(|_| stream.write_all(&key.key_id()))
                 .map_err(|error| format!("migration schema handshake failed: {error}"))?;
-            let negotiated = read_migration_response(&mut stream)?;
+            let negotiated = read_migration_response(&mut stream, key)?;
             let wire_snapshot = snapshot_value
                 .convert_to_schema(negotiated)
                 .map_err(|error| format!("migration schema conversion failed: {error}"))?;
             let bytes = wire_snapshot
-                .try_to_bytes()
+                .to_authenticated_bytes(key)
                 .map_err(|error| format!("migration snapshot encoding failed: {error}"))?;
+            let length = u64::try_from(bytes.len())
+                .map_err(|_| "migration payload does not fit in the wire length".to_string())?;
+            let tag = migration_auth_tag(key, negotiated, length, &bytes);
             stream
-                .write_all(&(bytes.len() as u64).to_le_bytes())
+                .write_all(&length.to_le_bytes())
                 .and_then(|_| stream.write_all(&bytes))
+                .and_then(|_| stream.write_all(&tag))
                 .map_err(|error| format!("migration send failed: {error}"))?;
             println!("sent VM checkpoint {} to {address}", snapshot.display());
             Ok(())
         }
-        MigrateCommand::Receive { address, snapshot } => {
+        MigrateCommand::Receive {
+            address,
+            snapshot,
+            key: key_path,
+        } => {
+            let key = SnapshotAuthKey::from_file(&key_path)
+                .map_err(|error| format!("cannot load migration authentication key: {error}"))?;
             if snapshot.exists() {
                 return Err(format!(
                     "migration target {} already exists; choose a new path",
@@ -709,26 +771,31 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             stream
                 .read_exact(&mut magic)
                 .map_err(|error| format!("migration header read failed: {error}"))?;
-            let legacy_protocol = &magic == LEGACY_MIGRATION_MAGIC;
-            if &magic != MIGRATION_MAGIC && !legacy_protocol {
+            if &magic != MIGRATION_MAGIC {
+                if &magic == b"SYNOMIG1" || &magic == b"SYNOMIG2" {
+                    return Err("unauthenticated migration protocol is no longer accepted".to_string());
+                }
                 return Err("migration stream has an invalid header".to_string());
             }
-            let negotiated = if legacy_protocol {
-                SnapshotSchema::for_version(1)
-            } else {
-                let protocol = read_migration_u32(&mut stream)?;
-                if protocol != MIGRATION_PROTOCOL_VERSION {
-                    return Err(format!("unsupported migration protocol {protocol}"));
-                }
-                let peer_schema = read_migration_schema(&mut stream)?;
-                let negotiated = SnapshotSchema::negotiate_with(SnapshotSchema::local(), peer_schema)
-                    .map_err(|error| format!("migration schema negotiation failed: {error}"))?;
-                stream
-                    .write_all(&[0])
-                    .and_then(|_| write_migration_schema(&mut stream, negotiated))
-                    .map_err(|error| format!("migration schema response failed: {error}"))?;
-                negotiated
-            };
+            let protocol = read_migration_u32(&mut stream)?;
+            if protocol != MIGRATION_PROTOCOL_VERSION {
+                return Err(format!("unsupported migration protocol {protocol}"));
+            }
+            let peer_schema = read_migration_schema(&mut stream)?;
+            let mut peer_key_id = [0u8; 16];
+            stream
+                .read_exact(&mut peer_key_id)
+                .map_err(|error| format!("migration key identity read failed: {error}"))?;
+            if peer_key_id != key.key_id() {
+                return Err("migration peer uses a different authentication key".to_string());
+            }
+            let negotiated = SnapshotSchema::negotiate_with(SnapshotSchema::local(), peer_schema)
+                .map_err(|error| format!("migration schema negotiation failed: {error}"))?;
+            stream
+                .write_all(&[0])
+                .and_then(|_| write_migration_schema(&mut stream, negotiated))
+                .and_then(|_| stream.write_all(&key.key_id()))
+                .map_err(|error| format!("migration schema response failed: {error}"))?;
             let mut length = [0u8; 8];
             stream
                 .read_exact(&mut length)
@@ -737,14 +804,34 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             if length == 0 || length > MAX_SNAPSHOT_BYTES {
                 return Err(format!("migration payload is too large: {length} bytes"));
             }
-            let length = usize::try_from(length)
+            let length_bytes = length.to_le_bytes();
+            let payload_length = usize::try_from(length)
                 .map_err(|_| "migration payload does not fit in host memory".to_string())?;
-            let mut bytes = vec![0u8; length];
+            let mut bytes = vec![0u8; payload_length];
             stream
                 .read_exact(&mut bytes)
                 .map_err(|error| format!("migration payload read failed: {error}"))?;
-            let received = synos_vm::VmSnapshot::from_bytes(&bytes)
-                .map_err(|error| format!("received invalid VM checkpoint: {error}"))?;
+            let mut tag = [0u8; 32];
+            stream
+                .read_exact(&mut tag)
+                .map_err(|error| format!("migration authentication tag read failed: {error}"))?;
+            let min_version = negotiated.min_version.to_le_bytes();
+            let max_version = negotiated.max_version.to_le_bytes();
+            let features = negotiated.features.bits().to_le_bytes();
+            key.verify_parts(
+                &[
+                    MIGRATION_AUTH_DOMAIN,
+                    &min_version,
+                    &max_version,
+                    &features,
+                    &length_bytes,
+                    &bytes,
+                ],
+                &tag,
+            )
+            .map_err(|error| format!("migration authentication failed: {error}"))?;
+            let received = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
+                .map_err(|error| format!("received invalid authenticated VM checkpoint: {error}"))?;
             if received.format_version != negotiated.max_version
                 || !negotiated.accepts(received.format_version, received.feature_flags)
             {
@@ -759,6 +846,25 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn migration_auth_tag(
+    key: SnapshotAuthKey,
+    schema: SnapshotSchema,
+    length: u64,
+    payload: &[u8],
+) -> [u8; 32] {
+    let min_version = schema.min_version.to_le_bytes();
+    let max_version = schema.max_version.to_le_bytes();
+    let features = schema.features.bits().to_le_bytes();
+    key.authenticate_parts(&[
+        MIGRATION_AUTH_DOMAIN,
+        &min_version,
+        &max_version,
+        &features,
+        &length.to_le_bytes(),
+        payload,
+    ])
 }
 
 fn write_migration_u32(stream: &mut TcpStream, value: u32) -> std::io::Result<()> {
@@ -798,7 +904,10 @@ fn read_migration_schema(stream: &mut TcpStream) -> Result<SnapshotSchema, Strin
     Ok(schema)
 }
 
-fn read_migration_response(stream: &mut TcpStream) -> Result<SnapshotSchema, String> {
+fn read_migration_response(
+    stream: &mut TcpStream,
+    key: SnapshotAuthKey,
+) -> Result<SnapshotSchema, String> {
     let mut status = [0u8; 1];
     stream
         .read_exact(&mut status)
@@ -809,6 +918,13 @@ fn read_migration_response(stream: &mut TcpStream) -> Result<SnapshotSchema, Str
     let schema = read_migration_schema(stream)?;
     if schema.min_version != schema.max_version {
         return Err("migration target returned a non-negotiated schema range".to_string());
+    }
+    let mut key_id = [0u8; 16];
+    stream
+        .read_exact(&mut key_id)
+        .map_err(|error| format!("migration key identity response read failed: {error}"))?;
+    if key_id != key.key_id() {
+        return Err("migration target uses a different authentication key".to_string());
     }
     Ok(schema)
 }
@@ -841,7 +957,11 @@ impl MonitorSession {
         }
     }
 
-    fn poll(&mut self, vm: &mut Vm) -> Result<bool, String> {
+    fn poll(
+        &mut self,
+        vm: &mut Vm,
+        auth_key: Option<&SnapshotAuthKey>,
+    ) -> Result<bool, String> {
         #[cfg(unix)]
         {
             let (mut stream, _) = match self.listener.accept() {
@@ -859,7 +979,7 @@ impl MonitorSession {
                 Err(error) => return Err(format!("monitor read failed: {error}")),
             };
             let command = String::from_utf8_lossy(&buffer[..count]).trim().to_string();
-            let (keep_running, response) = monitor_command(vm, &command)?;
+            let (keep_running, response) = monitor_command(vm, &command, auth_key)?;
             stream
                 .write_all(response.as_bytes())
                 .map_err(|error| format!("monitor write failed: {error}"))?;
@@ -867,7 +987,7 @@ impl MonitorSession {
         }
         #[cfg(not(unix))]
         {
-            let _ = vm;
+            let _ = (vm, auth_key);
             Ok(true)
         }
     }
@@ -882,7 +1002,11 @@ impl Drop for MonitorSession {
     }
 }
 
-fn monitor_command(vm: &mut Vm, command: &str) -> Result<(bool, String), String> {
+fn monitor_command(
+    vm: &mut Vm,
+    command: &str,
+    auth_key: Option<&SnapshotAuthKey>,
+) -> Result<(bool, String), String> {
     match command {
         "help" | "?" => Ok((true, "help\ninfo registers\ninfo disks\ninfo status\nsave PATH\nquit\n".to_string())),
         "info registers" => Ok((
@@ -924,8 +1048,9 @@ fn monitor_command(vm: &mut Vm, command: &str) -> Result<(bool, String), String>
                 return Err("save needs a snapshot PATH".to_string());
             }
             let path = PathBuf::from(path);
-            vm.save_snapshot(&path)
-                .map_err(|error| format!("cannot save snapshot: {error}"))?;
+            let key = auth_key.ok_or_else(|| "monitor snapshot save needs an authentication key".to_string())?;
+            vm.save_authenticated_snapshot(&path, *key)
+                .map_err(|error| format!("cannot save authenticated snapshot: {error}"))?;
             Ok((true, format!("saved {}\n", path.display())))
         }
         _ => Ok((true, "unknown monitor command; try help\n".to_string())),
@@ -1259,6 +1384,7 @@ State and management:
       --snapshot-save <PATH> Save a checkpoint when the VM stops
       --snapshot-restore <PATH>
                               Restore a checkpoint before running
+      --snapshot-key <PATH>  Raw 32-byte or 64-hex-byte auth key
       --monitor <SOCKET>     Expose a local monitor console socket
 
 Commands:
@@ -1271,10 +1397,10 @@ Commands:
   synos-vm disk lock PATH     Diagnose an ownership lock
   synos-vm disk recover-lock PATH
                               Recover a lock only when its owner is stale
-  synos-vm migrate send SNAPSHOT ADDRESS
-                              Send a checkpoint to another VM host
-  synos-vm migrate receive ADDRESS SNAPSHOT
-                              Receive a checkpoint for later restore
+  synos-vm migrate send SNAPSHOT ADDRESS --key KEY
+                              Send an authenticated checkpoint
+  synos-vm migrate receive ADDRESS SNAPSHOT --key KEY
+                              Receive an authenticated checkpoint
 
 Other options:
   -h, --help                Show this help

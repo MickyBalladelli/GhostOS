@@ -7,9 +7,17 @@ use crate::memory::{MmuState, PAGE_SIZE};
 use crate::Vm;
 use bitflags::bitflags;
 use std::fs;
+use std::fmt;
 use std::path::Path;
 
 const MAGIC: &[u8; 8] = b"SYNOVM01";
+const AUTH_MAGIC: &[u8; 8] = b"SYNOSIG1";
+const AUTH_ALGORITHM_HMAC_SHA256: u8 = 1;
+const AUTH_HEADER_BYTES: usize = 8 + 4 + 1 + 3 + 16 + 8;
+const AUTH_TAG_BYTES: usize = 32;
+pub const SNAPSHOT_AUTH_FORMAT_VERSION: u32 = 1;
+pub const SNAPSHOT_AUTH_KEY_BYTES: usize = 32;
+pub const SNAPSHOT_AUTH_TAG_BYTES: usize = AUTH_TAG_BYTES;
 pub const SNAPSHOT_FORMAT_VERSION: u32 = 2;
 pub const SNAPSHOT_MIN_FORMAT_VERSION: u32 = 1;
 pub const MAX_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
@@ -17,6 +25,94 @@ pub const MAX_SNAPSHOT_MEMORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const MAX_ITEMS: usize = 16 * 1024 * 1024;
 
 pub type SnapshotId = u64;
+
+/// Shared secret used to authenticate snapshot files and migration frames.
+/// The key is never serialized; only its non-secret identifier is carried on
+/// the wire so both peers can select the same configured key.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct SnapshotAuthKey([u8; SNAPSHOT_AUTH_KEY_BYTES]);
+
+impl SnapshotAuthKey {
+    pub const fn new(bytes: [u8; SNAPSHOT_AUTH_KEY_BYTES]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SnapshotError> {
+        if bytes.len() != SNAPSHOT_AUTH_KEY_BYTES {
+            return Err(SnapshotError::InvalidAuthenticationKey)
+        }
+        let mut key = [0u8; SNAPSHOT_AUTH_KEY_BYTES];
+        key.copy_from_slice(bytes);
+        Ok(Self::new(key))
+    }
+
+    pub fn from_hex(value: &str) -> Result<Self, SnapshotError> {
+        let value = value.trim();
+        if value.len() != SNAPSHOT_AUTH_KEY_BYTES * 2 {
+            return Err(SnapshotError::InvalidAuthenticationKey)
+        }
+        let mut key = [0u8; SNAPSHOT_AUTH_KEY_BYTES];
+        for (index, byte) in key.iter_mut().enumerate() {
+            let start = index * 2;
+            let high = hex_value(value.as_bytes()[start])
+                .ok_or(SnapshotError::InvalidAuthenticationKey)?;
+            let low = hex_value(value.as_bytes()[start + 1])
+                .ok_or(SnapshotError::InvalidAuthenticationKey)?;
+            *byte = (high << 4) | low;
+        }
+        Ok(Self::new(key))
+    }
+
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, SnapshotError> {
+        let bytes = fs::read(path)?;
+        if bytes.len() == SNAPSHOT_AUTH_KEY_BYTES {
+            return Self::from_bytes(&bytes)
+        }
+        Self::from_hex(std::str::from_utf8(&bytes).map_err(|_| SnapshotError::InvalidAuthenticationKey)?)
+    }
+
+    pub fn key_id(self) -> [u8; 16] {
+        let digest = sha256(&self.0);
+        let mut id = [0u8; 16];
+        id.copy_from_slice(&digest[..16]);
+        id
+    }
+
+    pub fn authenticate_parts(self, parts: &[&[u8]]) -> [u8; AUTH_TAG_BYTES] {
+        hmac_sha256(&self.0, parts)
+    }
+
+    pub fn verify_parts(
+        self,
+        parts: &[&[u8]],
+        tag: &[u8; AUTH_TAG_BYTES],
+    ) -> Result<(), SnapshotError> {
+        let expected = self.authenticate_parts(parts);
+        if constant_time_equal(&expected, tag) {
+            Ok(())
+        } else {
+            Err(SnapshotError::AuthenticationFailed)
+        }
+    }
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+impl fmt::Debug for SnapshotAuthKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SnapshotAuthKey")
+            .field("key_id", &self.key_id())
+            .finish()
+    }
+}
 
 bitflags! {
     /// State components understood by the snapshot wire format.
@@ -161,6 +257,14 @@ pub enum SnapshotError {
     IncompatibleMemory { expected: usize, actual: usize },
     #[error("snapshot state is invalid")]
     InvalidState,
+    #[error("snapshot authentication key must be exactly 32 bytes")]
+    InvalidAuthenticationKey,
+    #[error("snapshot is not authenticated")]
+    AuthenticationRequired,
+    #[error("snapshot authentication failed")]
+    AuthenticationFailed,
+    #[error("unsupported snapshot authentication version {0}")]
+    UnsupportedAuthenticationVersion(u32),
     #[error("snapshot checksum does not match its base")]
     ChecksumMismatch,
     #[error("snapshot {0} does not exist in the chain")]
@@ -218,6 +322,97 @@ impl VmSnapshot {
             })
         }
         Ok(bytes)
+    }
+
+    /// Encode the snapshot inside an authenticated envelope.
+    pub fn to_authenticated_bytes(
+        &self,
+        key: SnapshotAuthKey,
+    ) -> Result<Vec<u8>, SnapshotError> {
+        let payload = self.try_to_bytes()?;
+        let payload_length = u64::try_from(payload.len()).map_err(|_| SnapshotError::SizeLimit {
+            max: MAX_SNAPSHOT_BYTES,
+        })?;
+        let total_length = AUTH_HEADER_BYTES
+            .checked_add(payload.len())
+            .and_then(|length| length.checked_add(AUTH_TAG_BYTES))
+            .ok_or(SnapshotError::SizeLimit {
+                max: MAX_SNAPSHOT_BYTES,
+            })?;
+        if u64::try_from(total_length).unwrap_or(u64::MAX) > MAX_SNAPSHOT_BYTES {
+            return Err(SnapshotError::SizeLimit {
+                max: MAX_SNAPSHOT_BYTES,
+            })
+        }
+
+        let mut envelope = Vec::with_capacity(total_length);
+        envelope.extend_from_slice(AUTH_MAGIC);
+        envelope.extend_from_slice(&SNAPSHOT_AUTH_FORMAT_VERSION.to_le_bytes());
+        envelope.push(AUTH_ALGORITHM_HMAC_SHA256);
+        envelope.extend_from_slice(&[0u8; 3]);
+        envelope.extend_from_slice(&key.key_id());
+        envelope.extend_from_slice(&payload_length.to_le_bytes());
+        envelope.extend_from_slice(&payload);
+        let tag = key.authenticate_parts(&[&envelope]);
+        envelope.extend_from_slice(&tag);
+        Ok(envelope)
+    }
+
+    /// Verify an authenticated envelope before decoding its snapshot payload.
+    pub fn from_authenticated_bytes(
+        bytes: &[u8],
+        key: SnapshotAuthKey,
+    ) -> Result<Self, SnapshotError> {
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_SNAPSHOT_BYTES {
+            return Err(SnapshotError::SizeLimit {
+                max: MAX_SNAPSHOT_BYTES,
+            })
+        }
+        if bytes.len() < AUTH_HEADER_BYTES + AUTH_TAG_BYTES
+            || bytes.get(..AUTH_MAGIC.len()) != Some(AUTH_MAGIC)
+        {
+            return Err(SnapshotError::AuthenticationRequired)
+        }
+        let version = u32::from_le_bytes(
+            bytes[8..12]
+                .try_into()
+                .map_err(|_| SnapshotError::InvalidFormat)?,
+        );
+        if version != SNAPSHOT_AUTH_FORMAT_VERSION {
+            return Err(SnapshotError::UnsupportedAuthenticationVersion(version))
+        }
+        if bytes[12] != AUTH_ALGORITHM_HMAC_SHA256 || bytes[13..16] != [0u8; 3] {
+            return Err(SnapshotError::InvalidFormat)
+        }
+        let mut key_id = [0u8; 16];
+        key_id.copy_from_slice(&bytes[16..32]);
+        let payload_length = u64::from_le_bytes(
+            bytes[32..40]
+                .try_into()
+                .map_err(|_| SnapshotError::InvalidFormat)?,
+        );
+        let payload_length = usize::try_from(payload_length)
+            .map_err(|_| SnapshotError::SizeLimit {
+                max: MAX_SNAPSHOT_BYTES,
+            })?;
+        let payload_end = AUTH_HEADER_BYTES
+            .checked_add(payload_length)
+            .ok_or(SnapshotError::InvalidFormat)?;
+        let tag_start = payload_end;
+        let expected_length = tag_start
+            .checked_add(AUTH_TAG_BYTES)
+            .ok_or(SnapshotError::InvalidFormat)?;
+        if expected_length != bytes.len() {
+            return Err(SnapshotError::InvalidFormat)
+        }
+        if !constant_time_equal_short(&key_id, &key.key_id()) {
+            return Err(SnapshotError::AuthenticationFailed)
+        }
+        let tag: &[u8; AUTH_TAG_BYTES] = bytes[tag_start..]
+            .try_into()
+            .map_err(|_| SnapshotError::InvalidFormat)?;
+        key.verify_parts(&[&bytes[..tag_start]], tag)?;
+        Self::from_bytes(&bytes[AUTH_HEADER_BYTES..payload_end])
     }
 
     fn encode_bytes(&self) -> Vec<u8> {
@@ -327,14 +522,33 @@ impl VmSnapshot {
         Self::from_bytes(bytes)
     }
 
+    /// Save the raw payload for offline format conversion only. It has no
+    /// authenticity and must not be used as a trusted checkpoint.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), SnapshotError> {
         fs::write(path, self.try_to_bytes()?).map_err(SnapshotError::Io)
     }
 
+    pub fn save_authenticated(
+        &self,
+        path: impl AsRef<Path>,
+        key: SnapshotAuthKey,
+    ) -> Result<(), SnapshotError> {
+        fs::write(path, self.to_authenticated_bytes(key)?).map_err(SnapshotError::Io)
+    }
+
+    /// Load an untrusted raw payload for offline conversion only.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, SnapshotError> {
         Self::from_bytes(&fs::read(path)?)
     }
 
+    pub fn load_authenticated(
+        path: impl AsRef<Path>,
+        key: SnapshotAuthKey,
+    ) -> Result<Self, SnapshotError> {
+        Self::from_authenticated_bytes(&fs::read(path)?, key)
+    }
+
+    /// Return a local chain identity. This is not an authenticity check.
     pub fn checksum(&self) -> u64 {
         checksum(&self.to_bytes())
     }
@@ -642,6 +856,170 @@ impl SnapshotChain {
     pub fn restore_into(&self, id: SnapshotId, vm: &mut Vm) -> Result<(), SnapshotError> {
         self.snapshot(id)?.restore_into(vm)
     }
+}
+
+fn constant_time_equal(left: &[u8; AUTH_TAG_BYTES], right: &[u8; AUTH_TAG_BYTES]) -> bool {
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (left, right)| difference | (left ^ right))
+        == 0
+}
+
+fn constant_time_equal_short(left: &[u8; 16], right: &[u8; 16]) -> bool {
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (left, right)| difference | (left ^ right))
+        == 0
+}
+
+fn hmac_sha256(key: &[u8; SNAPSHOT_AUTH_KEY_BYTES], parts: &[&[u8]]) -> [u8; AUTH_TAG_BYTES] {
+    let mut normalized = [0u8; 64];
+    normalized[..key.len()].copy_from_slice(key);
+
+    let mut inner = Sha256::new();
+    let inner_pad = normalized.map(|byte| byte ^ 0x36);
+    inner.update(&inner_pad);
+    for part in parts {
+        inner.update(part)
+    }
+    let inner_hash = inner.finish();
+
+    let mut outer = Sha256::new();
+    let outer_pad = normalized.map(|byte| byte ^ 0x5c);
+    outer.update(&outer_pad);
+    outer.update(&inner_hash);
+    outer.finish()
+}
+
+struct Sha256 {
+    state: [u32; 8],
+    buffer: [u8; 64],
+    buffered: usize,
+    length: u64,
+}
+
+impl Sha256 {
+    fn new() -> Self {
+        Self {
+            state: [
+                0x6a09e667,
+                0xbb67ae85,
+                0x3c6ef372,
+                0xa54ff53a,
+                0x510e527f,
+                0x9b05688c,
+                0x1f83d9ab,
+                0x5be0cd19,
+            ],
+            buffer: [0; 64],
+            buffered: 0,
+            length: 0,
+        }
+    }
+
+    fn update(&mut self, mut bytes: &[u8]) {
+        self.length = self.length.wrapping_add(bytes.len() as u64);
+        if self.buffered != 0 {
+            let needed = 64 - self.buffered;
+            if bytes.len() < needed {
+                self.buffer[self.buffered..self.buffered + bytes.len()].copy_from_slice(bytes);
+                self.buffered += bytes.len();
+                return
+            }
+            self.buffer[self.buffered..].copy_from_slice(&bytes[..needed]);
+            sha256_compress(&mut self.state, &self.buffer);
+            self.buffered = 0;
+            bytes = &bytes[needed..];
+        }
+        while bytes.len() >= 64 {
+            sha256_compress(&mut self.state, &bytes[..64]);
+            bytes = &bytes[64..];
+        }
+        self.buffer[..bytes.len()].copy_from_slice(bytes);
+        self.buffered = bytes.len()
+    }
+
+    fn finish(mut self) -> [u8; 32] {
+        let bit_length = self.length.wrapping_mul(8).to_be_bytes();
+        self.buffer[self.buffered] = 0x80;
+        self.buffered += 1;
+        if self.buffered > 56 {
+            self.buffer[self.buffered..].fill(0);
+            sha256_compress(&mut self.state, &self.buffer);
+            self.buffered = 0;
+        }
+        self.buffer[self.buffered..56].fill(0);
+        self.buffer[56..].copy_from_slice(&bit_length);
+        sha256_compress(&mut self.state, &self.buffer);
+
+        let mut digest = [0u8; 32];
+        for (bytes, word) in digest.chunks_exact_mut(4).zip(self.state) {
+            bytes.copy_from_slice(&word.to_be_bytes())
+        }
+        digest
+    }
+}
+
+fn sha256_compress(state: &mut [u32; 8], block: &[u8]) {
+    const ROUND: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354,
+        0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c,
+        0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f,
+        0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+    let mut schedule = [0u32; 64];
+    for (word, bytes) in schedule.iter_mut().zip(block.chunks_exact(4)).take(16) {
+        *word = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+    for index in 16..64 {
+        let s0 = schedule[index - 15].rotate_right(7)
+            ^ schedule[index - 15].rotate_right(18)
+            ^ (schedule[index - 15] >> 3);
+        let s1 = schedule[index - 2].rotate_right(17)
+            ^ schedule[index - 2].rotate_right(19)
+            ^ (schedule[index - 2] >> 10);
+        schedule[index] = schedule[index - 16]
+            .wrapping_add(s0)
+            .wrapping_add(schedule[index - 7])
+            .wrapping_add(s1)
+    }
+
+    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
+    for index in 0..64 {
+        let choice = (e & f) ^ (!e & g);
+        let majority = (a & b) ^ (a & c) ^ (b & c);
+        let sum0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let sum1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let first = h
+            .wrapping_add(sum1)
+            .wrapping_add(choice)
+            .wrapping_add(ROUND[index])
+            .wrapping_add(schedule[index]);
+        let second = sum0.wrapping_add(majority);
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(first);
+        d = c;
+        c = b;
+        b = a;
+        a = first.wrapping_add(second)
+    }
+    for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+        *slot = slot.wrapping_add(value)
+    }
+}
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(bytes);
+    hash.finish()
 }
 
 fn checksum(bytes: &[u8]) -> u64 {
@@ -1152,6 +1530,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sha256_matches_standard_vector() {
+        assert_eq!(
+            sha256(b"abc"),
+            [
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d,
+                0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10,
+                0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+            ]
+        );
+    }
+
+    #[test]
     fn schema_negotiation_selects_common_version_and_flags() {
         let negotiated = SnapshotSchema::negotiate(SnapshotSchema::for_version(1))
             .expect("v1 schema remains compatible");
@@ -1212,6 +1602,41 @@ mod tests {
         assert!(matches!(
             VmSnapshot::from_bytes(&unknown),
             Err(SnapshotError::UnsupportedFeatures { .. })
+        ));
+    }
+
+    #[test]
+    fn authenticated_snapshot_rejects_tampering_and_wrong_keys() {
+        let vm = Vm::with_config(crate::VmConfig {
+            memory_size: 4 * 1024 * 1024,
+            ..crate::VmConfig::default()
+        });
+        let snapshot = VmSnapshot::capture(&vm);
+        let key = SnapshotAuthKey::new([0x42; SNAPSHOT_AUTH_KEY_BYTES]);
+        let mut authenticated = snapshot
+            .to_authenticated_bytes(key)
+            .expect("authenticate snapshot");
+        assert_eq!(
+            VmSnapshot::from_authenticated_bytes(&authenticated, key).expect("verify snapshot"),
+            snapshot
+        );
+
+        authenticated[AUTH_HEADER_BYTES] ^= 1;
+        assert!(matches!(
+            VmSnapshot::from_authenticated_bytes(&authenticated, key),
+            Err(SnapshotError::AuthenticationFailed)
+        ));
+        let other_key = SnapshotAuthKey::new([0x24; SNAPSHOT_AUTH_KEY_BYTES]);
+        assert!(matches!(
+            VmSnapshot::from_authenticated_bytes(
+                &snapshot.to_authenticated_bytes(key).expect("authenticate snapshot"),
+                other_key
+            ),
+            Err(SnapshotError::AuthenticationFailed)
+        ));
+        assert!(matches!(
+            VmSnapshot::from_authenticated_bytes(&snapshot.to_bytes(), key),
+            Err(SnapshotError::AuthenticationRequired)
         ));
     }
 }

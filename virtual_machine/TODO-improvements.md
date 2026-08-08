@@ -39,8 +39,8 @@ remaining proof, portability, safety, and fidelity work.
       acceleration mode, and firmware state.
 - [x] Add snapshot schema negotiation, bounded decoding, explicit feature flags,
       migration compatibility, and a documented upgrade path.
-- [ ] Replace the current checksum-only trust model with authenticated
-      integrity for snapshots and migration streams.
+- [x] Replace the current checksum-only trust model with authenticated
+  integrity for snapshots and migration streams.
 - [ ] Authenticate migration peers, add connection and read/write timeouts,
       limit memory before allocation, and reject replayed or stale checkpoints.
 - [ ] Publish received checkpoints with file and directory sync ordering, then

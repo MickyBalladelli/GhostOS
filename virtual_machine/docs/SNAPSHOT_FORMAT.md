@@ -19,15 +19,30 @@ currently required state component. All length-prefixed arrays are checked
 against the remaining input, `MAX_ITEMS`, and the RAM/whole-snapshot byte
 limits before allocation.
 
+The raw `SYNOVM01` payload is a format-conversion primitive, not a trusted
+checkpoint. Persistent snapshots use the `SYNOSIG1` envelope:
+
+| Field | Size |
+| --- | ---: |
+| magic, version, algorithm, reserved bytes | 16 bytes |
+| key identifier | 16 bytes |
+| payload length | 8 bytes |
+| `SYNOVM01` payload | variable |
+| HMAC-SHA256 tag | 32 bytes |
+
+The tag covers every envelope byte before the tag. Decoding verifies the tag
+before passing the payload to the bounded snapshot decoder.
+
 ## Negotiation
 
-Migration protocol `SYNOMIG2` exchanges a protocol version and a
+Migration protocol `SYNOMIG3` exchanges a protocol version and a
 `SnapshotSchema` containing a supported version range plus feature bits. The
 highest overlapping version is selected. A migration fails when ranges do not
 overlap or the feature intersection lacks a required component.
 
-`SYNOMIG1` remains a receive-only compatibility path for older senders. It
-accepts one version-1 snapshot and does not perform a feature handshake.
+`SYNOMIG1` and `SYNOMIG2` are legacy unauthenticated protocols and are rejected
+by the migration listener. Convert old version-1 payloads offline, wrap them in
+an authenticated snapshot envelope, then migrate with `SYNOMIG3`.
 
 ## Upgrade path
 
@@ -38,8 +53,9 @@ accepts one version-1 snapshot and does not perform a feature handshake.
    Version 1 has implicit `ALL` flags; conversion to version 2 writes the
    explicit flags word. Current versions have the same state payload, so no
    guest state migration is needed.
-4. Save the converted checkpoint and verify it by reopening it with
-   `VmSnapshot::load` before using it for restore or migration.
+4. Save the converted checkpoint with `VmSnapshot::save_authenticated` and
+   verify it by reopening it with `VmSnapshot::load_authenticated` before using
+   it for restore or migration.
 
 When a future format changes the state payload, add a new version and decoder,
 keep the old decoder for at least one compatibility window, add a conversion
@@ -47,6 +63,8 @@ step here, and update the schema matrix and state inventory in the same
 change. Never reinterpret an old field in place or silently ignore a feature
 bit.
 
-The migration TCP path is not authenticated or encrypted. Use an authorized,
-protected transport until the separate migration transport-security work is
-complete.
+Snapshot envelopes and migration frames use HMAC-SHA256 with a configured
+32-byte shared key. The migration tag covers the negotiated schema, payload
+length, and authenticated snapshot bytes. Authentication does not encrypt the
+TCP path or provide replay protection; use an authorized protected transport
+and rotate keys through an external key-management process.
