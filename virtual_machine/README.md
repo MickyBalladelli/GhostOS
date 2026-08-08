@@ -213,6 +213,19 @@ Guest serial output passes through to stdout with prompt flushing.
 `--steps <COUNT>` remains the bounded,
 non-interactive instruction-run mode.
 
+Terminal behavior is platform-defined:
+
+| Host | Raw input and Ctrl-C | Resize and escape sequences | Output and non-TTY |
+| --- | --- | --- | --- |
+| Linux | `termios` raw mode; Ctrl-C is byte `0x03` | `ioctl(TIOCGWINSZ)`; serial gets `ESC[8;<rows>;<columns>t`; input/output ANSI bytes pass through | stdout flushes after guest output; no raw mode for pipes |
+| macOS | Same byte behavior through `/dev/tty` and `termios` | `/dev/tty` window query; same serial resize sequence; ANSI bytes pass through | Same flush behavior; no raw mode for pipes |
+| Windows | Console mode disables line/echo/processed input, disables Quick Edit, and enables VT input; Ctrl-C is byte `0x03` | Console buffer query; same serial resize sequence; VT input/output preserve ANSI bytes | stdout flushes after guest output; no console mode changes for redirected streams |
+| Non-TTY | Input is read as supplied; no host mode changes; Ctrl-C stays a byte | No host resize query or generated resize sequence; escape bytes stay unchanged | stdout is flushed normally |
+
+An external termination signal restores the saved host terminal state before
+the process exits. The PS/2 input path does not receive serial resize control
+sequences.
+
 ## Documentation and examples
 
 Read the guides in this order:

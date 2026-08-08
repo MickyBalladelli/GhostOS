@@ -59,6 +59,7 @@ pub enum TerminalInputMode {
 /// Owns host input polling and terminal restoration for one VM session.
 pub struct TerminalSession {
     events: Receiver<InputEvent>,
+    output: RefCell<Box<dyn Write + Send>>,
     raw_mode: RawMode,
     has_terminal: bool,
     last_size: Cell<Option<(u16, u16)>>,
@@ -78,36 +79,34 @@ impl TerminalSession {
             RawMode::inactive()
         };
 
-        let (sender, events) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut input = io::stdin().lock();
-            let mut buffer = [0u8; 1024];
-            loop {
-                match input.read(&mut buffer) {
-                    Ok(0) => {
-                        let _ = sender.send(InputEvent::Eof);
-                        break
-                    }
-                    Ok(count) => {
-                        if sender.send(InputEvent::Bytes(buffer[..count].to_vec())).is_err() {
-                            break
-                        }
-                    }
-                    Err(error) => {
-                        let _ = sender.send(InputEvent::Error(error));
-                        break
-                    }
-                }
-            }
-        });
+        let events = spawn_input_reader(Box::new(io::stdin()));
 
         Ok(Self {
             events,
+            output: RefCell::new(Box::new(io::stdout())),
             raw_mode,
             has_terminal: is_tty,
             last_size: Cell::new(None),
             last_size_check: Cell::new(None),
         })
+    }
+
+    /// Create a session over supplied streams without changing host terminal
+    /// settings. Intended for embedders and deterministic tests using pipes,
+    /// cursors, or fake readers and writers.
+    pub fn new_with_io<I, O>(input: I, output: O) -> Self
+    where
+        I: Read + Send + 'static,
+        O: Write + Send + 'static,
+    {
+        Self {
+            events: spawn_input_reader(Box::new(input)),
+            output: RefCell::new(Box::new(output)),
+            raw_mode: RawMode::inactive(),
+            has_terminal: false,
+            last_size: Cell::new(None),
+            last_size_check: Cell::new(None),
+        }
     }
 
     /// Drain available host input without blocking the VM execution loop.
@@ -139,7 +138,6 @@ impl TerminalSession {
                 .is_none_or(|last| last.elapsed() >= TERMINAL_SIZE_POLL_INTERVAL);
         if input_mode == TerminalInputMode::Serial
             && self.has_terminal
-            && (!input.bytes.is_empty() || self.last_size.get().is_none())
             && size_check_due
         {
             self.last_size_check.set(Some(Instant::now()));
@@ -158,8 +156,43 @@ impl TerminalSession {
     }
 
     pub fn flush_output(&self) -> Result<(), TerminalError> {
-        io::stdout().flush().map_err(TerminalError::Io)
+        self.output
+            .borrow_mut()
+            .flush()
+            .map_err(TerminalError::Io)
     }
+
+    pub fn write_output(&self, bytes: &[u8]) -> Result<(), TerminalError> {
+        self.output
+            .borrow_mut()
+            .write_all(bytes)
+            .map_err(TerminalError::Io)
+    }
+}
+
+fn spawn_input_reader(mut input: Box<dyn Read + Send>) -> Receiver<InputEvent> {
+    let (sender, events) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 1024];
+        loop {
+            match input.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = sender.send(InputEvent::Eof);
+                    break
+                }
+                Ok(count) => {
+                    if sender.send(InputEvent::Bytes(buffer[..count].to_vec())).is_err() {
+                        break
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(InputEvent::Error(error));
+                    break
+                }
+            }
+        }
+    });
+    events
 }
 
 /// Translate host terminal bytes into the guest console contract.

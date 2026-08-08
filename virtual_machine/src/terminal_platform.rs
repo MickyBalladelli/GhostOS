@@ -218,6 +218,10 @@ mod windows {
     const ENABLE_PROCESSED_INPUT: u32 = 0x0001;
     const ENABLE_LINE_INPUT: u32 = 0x0002;
     const ENABLE_ECHO_INPUT: u32 = 0x0004;
+    const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
+    const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
+    const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x0200;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -256,29 +260,73 @@ mod windows {
     }
 
     pub(crate) struct TerminalMode {
-        handle: Handle,
-        saved: u32,
+        input_handle: Handle,
+        input_saved: u32,
+        output_handle: Handle,
+        output_saved: u32,
     }
 
     impl TerminalMode {
         pub(crate) fn enter() -> io::Result<Self> {
-            let handle = io::stdin().as_raw_handle();
-            let mut saved = 0;
-            if unsafe { GetConsoleMode(handle, &mut saved) } == 0 {
+            let input_handle = io::stdin().as_raw_handle();
+            let output_handle = io::stdout().as_raw_handle();
+            let mut input_saved = 0;
+            let mut output_saved = 0;
+            if unsafe { GetConsoleMode(input_handle, &mut input_saved) } == 0 {
                 return Err(io::Error::last_os_error())
             }
-            let raw = saved & !(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-            if unsafe { SetConsoleMode(handle, raw) } == 0 {
+            if unsafe { GetConsoleMode(output_handle, &mut output_saved) } == 0 {
                 return Err(io::Error::last_os_error())
             }
-            Ok(Self { handle, saved })
+
+            let mut raw_input = input_saved
+                & !(ENABLE_PROCESSED_INPUT
+                    | ENABLE_LINE_INPUT
+                    | ENABLE_ECHO_INPUT
+                    | ENABLE_QUICK_EDIT_MODE);
+            raw_input |= ENABLE_EXTENDED_FLAGS | ENABLE_VIRTUAL_TERMINAL_INPUT;
+            if unsafe { SetConsoleMode(input_handle, raw_input) } == 0 {
+                return Err(io::Error::last_os_error())
+            }
+
+            let raw_output = output_saved | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            if unsafe { SetConsoleMode(output_handle, raw_output) } == 0 {
+                let error = io::Error::last_os_error();
+                unsafe {
+                    SetConsoleMode(input_handle, input_saved);
+                }
+                return Err(error)
+            }
+
+            Ok(Self {
+                input_handle,
+                input_saved,
+                output_handle,
+                output_saved,
+            })
         }
 
         pub(crate) fn restore(&mut self) -> io::Result<()> {
-            if unsafe { SetConsoleMode(self.handle, self.saved) } == 0 {
+            let output_result = if unsafe {
+                SetConsoleMode(self.output_handle, self.output_saved)
+            } == 0
+            {
                 Err(io::Error::last_os_error())
             } else {
                 Ok(())
+            };
+            let input_result = if unsafe {
+                SetConsoleMode(self.input_handle, self.input_saved)
+            } == 0
+            {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            };
+
+            match (output_result, input_result) {
+                (Err(error), _) | (Ok(()), Err(error)) => Err(error),
+                (Ok(()), Ok(())) => Ok(()),
             }
         }
     }

@@ -71,9 +71,9 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Replace the `stty` subprocess path with a platform terminal abstraction
       that restores settings on success, error, panic, signal, EOF, and child
       failure.
-- [ ] Define Windows, macOS, Linux, and non-TTY behavior for raw input,
+- [x] Define Windows, macOS, Linux, and non-TTY behavior for raw input,
       resize, escape sequences, output flushing, and Ctrl-C.
-- [ ] Add terminal tests with fake input/output and a child-process cleanup
+- [x] Add terminal tests with fake input/output and a child-process cleanup
       harness. Prove no host terminal state remains changed after every exit.
 - [ ] Separate terminal policy from serial and PS/2 emulation, and expose a
       deterministic input transcript for replay.

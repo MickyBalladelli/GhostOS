@@ -4,7 +4,7 @@ crate = "synos-vm"
 
 [[tier]]
 name = "fast-unit"
-command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test snapshot_terminal_network_10_5"
+command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test snapshot_terminal_network_10_5 --test terminal_cleanup"
 status = "deterministic"
 
 [[tier]]
@@ -269,7 +269,20 @@ tests = ["vm.snapshot.serialization-restore-chain-failures"]
 
 [[source]]
 path = "src/terminal.rs"
-tests = ["vm.terminal.translation-ps2-fallback", "vm.foundation.cleanup-golden"]
+tests = [
+    "vm.terminal.translation-ps2-fallback",
+    "vm.terminal.fake-input-output",
+    "vm.terminal.exit-cleanup",
+    "vm.foundation.cleanup-golden",
+]
+
+[[source]]
+path = "src/terminal_platform.rs"
+tests = ["vm.terminal.exit-cleanup"]
+
+[[source]]
+path = "tests/terminal_cleanup.rs"
+tests = ["vm.terminal.fake-input-output", "vm.terminal.exit-cleanup"]
 
 [[source]]
 path = "src/integration.rs"
@@ -302,6 +315,16 @@ tiers = ["fast-unit", "vm-integration"]
 id = "vm.terminal.translation-ps2-fallback"
 file = "tests/snapshot_terminal_network_10_5.rs"
 tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.terminal.fake-input-output"
+file = "tests/terminal_cleanup.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.terminal.exit-cleanup"
+file = "tests/terminal_cleanup.rs"
+tiers = ["fast-unit"]
 
 [[test]]
 id = "vm.network.loopback-routing-isolation-faults"
@@ -544,7 +567,7 @@ source = "src/boot/mod.rs"
 tests = ["vm.foundation.cleanup-golden"]
 
 [[public_api]]
-name = "TerminalSession::{new,poll,flush_output}"
+name = "TerminalSession::{new,new_with_io,poll,write_output,flush_output}"
 source = "src/terminal.rs"
 tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
 
