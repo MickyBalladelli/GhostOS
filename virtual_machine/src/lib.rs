@@ -68,7 +68,7 @@ pub use hardware_acceleration::{
 };
 pub use snapshot::{
     SnapshotChain, SnapshotDiff, SnapshotError, SnapshotFeatures, SnapshotId, SnapshotPage,
-    SnapshotAuthKey, SnapshotSchema, VmSnapshot, MAX_SNAPSHOT_BYTES,
+    snapshot_digest, SnapshotAuthKey, SnapshotSchema, VmSnapshot, MAX_SNAPSHOT_BYTES,
     MAX_SNAPSHOT_MEMORY_BYTES, SNAPSHOT_AUTH_FORMAT_VERSION, SNAPSHOT_AUTH_KEY_BYTES,
     SNAPSHOT_AUTH_TAG_BYTES, SNAPSHOT_FORMAT_VERSION,
     SNAPSHOT_MIN_FORMAT_VERSION,

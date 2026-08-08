@@ -1,6 +1,10 @@
 use std::io::{IsTerminal, Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[cfg(not(unix))]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
@@ -10,8 +14,7 @@ use synos_vm::{
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
     HardwareAcceleration, TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig,
-    SnapshotAuthKey, SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
-    MAX_SNAPSHOT_BYTES,
+    snapshot_digest, SnapshotAuthKey, SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -708,6 +711,14 @@ fn run(mut cli: Cli) -> Result<(), String> {
 const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG3";
 const MIGRATION_PROTOCOL_VERSION: u32 = 3;
 const MIGRATION_AUTH_DOMAIN: &[u8] = b"SYNOS-MIGRATION-HMAC-SHA256-V3";
+const MIGRATION_NONCE_BYTES: usize = 32;
+const MAX_MIGRATION_ALLOCATION_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const MAX_CHECKPOINT_AGE_SECS: u64 = 24 * 60 * 60;
+const MAX_CLOCK_SKEW_SECS: u64 = 5 * 60;
+const REPLAY_RECORD_BYTES: usize = 56;
+const MAX_REPLAY_RECORDS: usize = 4096;
+#[cfg(not(unix))]
+static NONCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
     match command {
@@ -722,15 +733,23 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 .map_err(|error| format!("cannot read snapshot {}: {error}", snapshot.display()))?;
             let snapshot_value = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
                 .map_err(|error| format!("cannot validate authenticated snapshot {}: {error}", snapshot.display()))?;
-            let mut stream = TcpStream::connect(&address)
-                .map_err(|error| format!("cannot connect to migration target {address}: {error}"))?;
+            let issued_at = checkpoint_timestamp(&snapshot)?;
+            validate_checkpoint_time(issued_at)?;
+            let sender_nonce = migration_nonce()?;
+            let sender_schema = SnapshotSchema::local();
+            let sender_auth = migration_sender_handshake_tag(key, &sender_nonce, sender_schema);
+            let mut stream = connect_migration(&address)?;
+            configure_migration_stream(&stream)?;
             stream
                 .write_all(MIGRATION_MAGIC)
                 .and_then(|_| write_migration_u32(&mut stream, MIGRATION_PROTOCOL_VERSION))
-                .and_then(|_| write_migration_schema(&mut stream, SnapshotSchema::local()))
+                .and_then(|_| write_migration_schema(&mut stream, sender_schema))
                 .and_then(|_| stream.write_all(&key.key_id()))
+                .and_then(|_| stream.write_all(&sender_nonce))
+                .and_then(|_| stream.write_all(&sender_auth))
                 .map_err(|error| format!("migration schema handshake failed: {error}"))?;
-            let negotiated = read_migration_response(&mut stream, key)?;
+            let (negotiated, receiver_nonce) =
+                read_migration_response(&mut stream, key, &sender_nonce)?;
             let wire_snapshot = snapshot_value
                 .convert_to_schema(negotiated)
                 .map_err(|error| format!("migration schema conversion failed: {error}"))?;
@@ -739,9 +758,21 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 .map_err(|error| format!("migration snapshot encoding failed: {error}"))?;
             let length = u64::try_from(bytes.len())
                 .map_err(|_| "migration payload does not fit in the wire length".to_string())?;
-            let tag = migration_auth_tag(key, negotiated, length, &bytes);
+            let checkpoint_id = snapshot_digest(&bytes);
+            let tag = migration_auth_tag(
+                key,
+                negotiated,
+                &sender_nonce,
+                &receiver_nonce,
+                issued_at,
+                &checkpoint_id,
+                length,
+                &bytes,
+            );
             stream
-                .write_all(&length.to_le_bytes())
+                .write_all(&issued_at.to_le_bytes())
+                .and_then(|_| stream.write_all(&checkpoint_id))
+                .and_then(|_| stream.write_all(&length.to_le_bytes()))
                 .and_then(|_| stream.write_all(&bytes))
                 .and_then(|_| stream.write_all(&tag))
                 .map_err(|error| format!("migration send failed: {error}"))?;
@@ -767,6 +798,7 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             let (mut stream, peer) = listener
                 .accept()
                 .map_err(|error| format!("migration accept failed: {error}"))?;
+            configure_migration_stream(&stream)?;
             let mut magic = [0u8; 8];
             stream
                 .read_exact(&mut magic)
@@ -789,47 +821,76 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             if peer_key_id != key.key_id() {
                 return Err("migration peer uses a different authentication key".to_string());
             }
+            let mut sender_nonce = [0u8; MIGRATION_NONCE_BYTES];
+            stream
+                .read_exact(&mut sender_nonce)
+                .map_err(|error| format!("migration sender challenge read failed: {error}"))?;
+            let mut sender_auth = [0u8; 32];
+            stream
+                .read_exact(&mut sender_auth)
+                .map_err(|error| format!("migration peer authentication read failed: {error}"))?;
+            let expected_sender_auth = migration_sender_handshake_tag(key, &sender_nonce, peer_schema);
+            key.verify_tag(&expected_sender_auth, &sender_auth)
+                .map_err(|error| format!("migration peer authentication failed: {error}"))?;
+            let receiver_nonce = migration_nonce()?;
             let negotiated = SnapshotSchema::negotiate_with(SnapshotSchema::local(), peer_schema)
                 .map_err(|error| format!("migration schema negotiation failed: {error}"))?;
+            let response_tag = migration_handshake_tag(
+                key,
+                &sender_nonce,
+                &receiver_nonce,
+                negotiated,
+            );
             stream
                 .write_all(&[0])
                 .and_then(|_| write_migration_schema(&mut stream, negotiated))
                 .and_then(|_| stream.write_all(&key.key_id()))
+                .and_then(|_| stream.write_all(&receiver_nonce))
+                .and_then(|_| stream.write_all(&response_tag))
                 .map_err(|error| format!("migration schema response failed: {error}"))?;
+            let mut issued_at = [0u8; 8];
+            stream
+                .read_exact(&mut issued_at)
+                .map_err(|error| format!("migration checkpoint time read failed: {error}"))?;
+            let issued_at = u64::from_le_bytes(issued_at);
+            validate_checkpoint_time(issued_at)?;
+            let mut checkpoint_id = [0u8; 32];
+            stream
+                .read_exact(&mut checkpoint_id)
+                .map_err(|error| format!("migration checkpoint identity read failed: {error}"))?;
             let mut length = [0u8; 8];
             stream
                 .read_exact(&mut length)
                 .map_err(|error| format!("migration length read failed: {error}"))?;
             let length = u64::from_le_bytes(length);
-            if length == 0 || length > MAX_SNAPSHOT_BYTES {
+            if length == 0 || length > MAX_MIGRATION_ALLOCATION_BYTES {
                 return Err(format!("migration payload is too large: {length} bytes"));
             }
-            let length_bytes = length.to_le_bytes();
             let payload_length = usize::try_from(length)
                 .map_err(|_| "migration payload does not fit in host memory".to_string())?;
             let mut bytes = vec![0u8; payload_length];
             stream
                 .read_exact(&mut bytes)
                 .map_err(|error| format!("migration payload read failed: {error}"))?;
-            let mut tag = [0u8; 32];
+            let mut received_tag = [0u8; 32];
             stream
-                .read_exact(&mut tag)
+                .read_exact(&mut received_tag)
                 .map_err(|error| format!("migration authentication tag read failed: {error}"))?;
-            let min_version = negotiated.min_version.to_le_bytes();
-            let max_version = negotiated.max_version.to_le_bytes();
-            let features = negotiated.features.bits().to_le_bytes();
-            key.verify_parts(
-                &[
-                    MIGRATION_AUTH_DOMAIN,
-                    &min_version,
-                    &max_version,
-                    &features,
-                    &length_bytes,
-                    &bytes,
-                ],
-                &tag,
-            )
-            .map_err(|error| format!("migration authentication failed: {error}"))?;
+            let expected_tag = migration_auth_tag(
+                key,
+                negotiated,
+                &sender_nonce,
+                &receiver_nonce,
+                issued_at,
+                &checkpoint_id,
+                length,
+                &bytes,
+            );
+            key.verify_tag(&expected_tag, &received_tag)
+                .map_err(|error| format!("migration authentication failed: {error}"))?;
+            if snapshot_digest(&bytes) != checkpoint_id {
+                return Err("migration checkpoint identity does not match its payload".to_string());
+            }
             let received = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
                 .map_err(|error| format!("received invalid authenticated VM checkpoint: {error}"))?;
             if received.format_version != negotiated.max_version
@@ -837,6 +898,12 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             {
                 return Err("received checkpoint does not match negotiated schema".to_string());
             }
+            reserve_replay(
+                &replay_ledger_path(&snapshot),
+                key.key_id(),
+                checkpoint_id,
+                issued_at,
+            )?;
             let partial = snapshot.with_extension("synos-migration-partial");
             std::fs::write(&partial, bytes)
                 .map_err(|error| format!("cannot write migration checkpoint: {error}"))?;
@@ -848,22 +915,198 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
     }
 }
 
+fn configure_migration_stream(stream: &TcpStream) -> Result<(), String> {
+    let timeout = Some(Duration::from_secs(10));
+    stream
+        .set_read_timeout(timeout)
+        .map_err(|error| format!("cannot set migration read timeout: {error}"))?;
+    stream
+        .set_write_timeout(timeout)
+        .map_err(|error| format!("cannot set migration write timeout: {error}"))?;
+    Ok(())
+}
+
+fn connect_migration(address: &str) -> Result<TcpStream, String> {
+    let socket = address
+        .to_socket_addrs()
+        .map_err(|error| format!("cannot resolve migration target {address}: {error}"))?
+        .next()
+        .ok_or_else(|| format!("migration target {address} has no socket address"))?;
+    TcpStream::connect_timeout(&socket, Duration::from_secs(10))
+        .map_err(|error| format!("cannot connect to migration target {address}: {error}"))
+}
+
+fn now_seconds() -> Result<u64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| format!("host clock is before the Unix epoch: {error}"))
+}
+
+fn checkpoint_timestamp(path: &Path) -> Result<u64, String> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| format!("cannot read checkpoint timestamp: {error}"))?
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| format!("checkpoint timestamp is before the Unix epoch: {error}"))
+}
+
+fn validate_checkpoint_time(issued_at: u64) -> Result<(), String> {
+    let now = now_seconds()?;
+    if issued_at > now.saturating_add(MAX_CLOCK_SKEW_SECS) {
+        return Err("checkpoint timestamp is too far in the future".to_string());
+    }
+    if now.saturating_sub(issued_at) > MAX_CHECKPOINT_AGE_SECS {
+        return Err("checkpoint is stale; save a fresh checkpoint".to_string());
+    }
+    Ok(())
+}
+
+fn migration_nonce() -> Result<[u8; MIGRATION_NONCE_BYTES], String> {
+    #[cfg(unix)]
+    {
+        let mut nonce = [0u8; MIGRATION_NONCE_BYTES];
+        let mut random = std::fs::File::open("/dev/urandom")
+            .map_err(|error| format!("cannot open host randomness source: {error}"))?;
+        random
+            .read_exact(&mut nonce)
+            .map_err(|error| format!("cannot read host randomness source: {error}"))?;
+        return Ok(nonce)
+    }
+
+    #[cfg(not(unix))]
+    {
+        let counter = NONCE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("host clock is before the Unix epoch: {error}"))?;
+        let mut seed = [0u8; MIGRATION_NONCE_BYTES];
+        seed[..8].copy_from_slice(&counter.to_le_bytes());
+        seed[8..16].copy_from_slice(&u64::from(std::process::id()).to_le_bytes());
+        seed[16..24].copy_from_slice(&now.as_secs().to_le_bytes());
+        seed[24..].copy_from_slice(&u64::from(now.subsec_nanos()).to_le_bytes());
+        let fallback_key = SnapshotAuthKey::new(seed);
+        return Ok(fallback_key.authenticate_parts(&[b"migration nonce", &seed]))
+    }
+}
+
+fn replay_ledger_path(snapshot: &Path) -> PathBuf {
+    let parent = snapshot
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    parent.join(".synos-vm-migration-replay")
+}
+
+fn reserve_replay(
+    ledger: &Path,
+    key_id: [u8; 16],
+    checkpoint_id: [u8; 32],
+    issued_at: u64,
+) -> Result<(), String> {
+    let now = now_seconds()?;
+    let existing = match std::fs::read(ledger) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("cannot read migration replay ledger: {error}")),
+    };
+    if existing.len() % REPLAY_RECORD_BYTES != 0 {
+        return Err("migration replay ledger is corrupt".to_string());
+    }
+    let mut next = Vec::with_capacity(existing.len() + REPLAY_RECORD_BYTES);
+    for record in existing.chunks_exact(REPLAY_RECORD_BYTES) {
+        let record_time = u64::from_le_bytes(
+            record[..8]
+                .try_into()
+                .map_err(|_| "migration replay ledger is corrupt".to_string())?,
+        );
+        if now.saturating_sub(record_time) > MAX_CHECKPOINT_AGE_SECS {
+            continue
+        }
+        if record[8..24] == key_id && record[24..] == checkpoint_id {
+            return Err("checkpoint replay detected".to_string());
+        }
+        next.extend_from_slice(record);
+    }
+    if next.len() / REPLAY_RECORD_BYTES >= MAX_REPLAY_RECORDS {
+        return Err("migration replay ledger is full".to_string());
+    }
+    next.extend_from_slice(&issued_at.to_le_bytes());
+    next.extend_from_slice(&key_id);
+    next.extend_from_slice(&checkpoint_id);
+    std::fs::write(ledger, next)
+        .map_err(|error| format!("cannot update migration replay ledger: {error}"))
+}
+
 fn migration_auth_tag(
     key: SnapshotAuthKey,
     schema: SnapshotSchema,
+    sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    issued_at: u64,
+    checkpoint_id: &[u8; 32],
     length: u64,
     payload: &[u8],
 ) -> [u8; 32] {
     let min_version = schema.min_version.to_le_bytes();
     let max_version = schema.max_version.to_le_bytes();
     let features = schema.features.bits().to_le_bytes();
+    let issued_at = issued_at.to_le_bytes();
+    let length = length.to_le_bytes();
     key.authenticate_parts(&[
         MIGRATION_AUTH_DOMAIN,
+        b"frame",
+        &key.key_id(),
+        sender_nonce,
+        receiver_nonce,
         &min_version,
         &max_version,
         &features,
-        &length.to_le_bytes(),
+        &issued_at,
+        checkpoint_id,
+        &length,
         payload,
+    ])
+}
+
+fn migration_handshake_tag(
+    key: SnapshotAuthKey,
+    sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    schema: SnapshotSchema,
+) -> [u8; 32] {
+    let min_version = schema.min_version.to_le_bytes();
+    let max_version = schema.max_version.to_le_bytes();
+    let features = schema.features.bits().to_le_bytes();
+    key.authenticate_parts(&[
+        MIGRATION_AUTH_DOMAIN,
+        b"handshake",
+        &key.key_id(),
+        sender_nonce,
+        receiver_nonce,
+        &min_version,
+        &max_version,
+        &features,
+    ])
+}
+
+fn migration_sender_handshake_tag(
+    key: SnapshotAuthKey,
+    sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    schema: SnapshotSchema,
+) -> [u8; 32] {
+    let min_version = schema.min_version.to_le_bytes();
+    let max_version = schema.max_version.to_le_bytes();
+    let features = schema.features.bits().to_le_bytes();
+    key.authenticate_parts(&[
+        MIGRATION_AUTH_DOMAIN,
+        b"sender-handshake",
+        &key.key_id(),
+        sender_nonce,
+        &min_version,
+        &max_version,
+        &features,
     ])
 }
 
@@ -907,7 +1150,8 @@ fn read_migration_schema(stream: &mut TcpStream) -> Result<SnapshotSchema, Strin
 fn read_migration_response(
     stream: &mut TcpStream,
     key: SnapshotAuthKey,
-) -> Result<SnapshotSchema, String> {
+    sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
+) -> Result<(SnapshotSchema, [u8; MIGRATION_NONCE_BYTES]), String> {
     let mut status = [0u8; 1];
     stream
         .read_exact(&mut status)
@@ -926,7 +1170,18 @@ fn read_migration_response(
     if key_id != key.key_id() {
         return Err("migration target uses a different authentication key".to_string());
     }
-    Ok(schema)
+    let mut receiver_nonce = [0u8; MIGRATION_NONCE_BYTES];
+    stream
+        .read_exact(&mut receiver_nonce)
+        .map_err(|error| format!("migration receiver challenge read failed: {error}"))?;
+    let mut response_tag = [0u8; 32];
+    stream
+        .read_exact(&mut response_tag)
+        .map_err(|error| format!("migration handshake tag read failed: {error}"))?;
+    let expected_tag = migration_handshake_tag(key, sender_nonce, &receiver_nonce, schema);
+    key.verify_tag(&expected_tag, &response_tag)
+        .map_err(|error| format!("migration peer authentication failed: {error}"))?;
+    Ok((schema, receiver_nonce))
 }
 
 struct MonitorSession {

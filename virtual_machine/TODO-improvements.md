@@ -41,7 +41,7 @@ remaining proof, portability, safety, and fidelity work.
       migration compatibility, and a documented upgrade path.
 - [x] Replace the current checksum-only trust model with authenticated
   integrity for snapshots and migration streams.
-- [ ] Authenticate migration peers, add connection and read/write timeouts,
+- [x] Authenticate migration peers, add connection and read/write timeouts,
       limit memory before allocation, and reject replayed or stale checkpoints.
 - [ ] Publish received checkpoints with file and directory sync ordering, then
       verify them after reopen. Preserve the old target on every failure.

@@ -37,8 +37,16 @@ before passing the payload to the bounded snapshot decoder.
 
 Migration protocol `SYNOMIG3` exchanges a protocol version and a
 `SnapshotSchema` containing a supported version range plus feature bits. The
-highest overlapping version is selected. A migration fails when ranges do not
-overlap or the feature intersection lacks a required component.
+highest overlapping version is selected. Both peers prove possession of the
+shared key with mutual nonces before checkpoint bytes are accepted. A migration
+fails when ranges do not overlap or the feature intersection lacks a required
+component.
+
+Migration reads and writes have a ten-second timeout. The receiver rejects
+payloads above its 8 GiB pre-allocation migration cap, rejects checkpoints older than
+24 hours or more than five minutes in the future, and records accepted
+checkpoint identities in `.synos-vm-migration-replay` beside the destination.
+The bounded ledger rejects duplicate deliveries during the freshness window.
 
 `SYNOMIG1` and `SYNOMIG2` are legacy unauthenticated protocols and are rejected
 by the migration listener. Convert old version-1 payloads offline, wrap them in
@@ -65,6 +73,6 @@ bit.
 
 Snapshot envelopes and migration frames use HMAC-SHA256 with a configured
 32-byte shared key. The migration tag covers the negotiated schema, payload
-length, and authenticated snapshot bytes. Authentication does not encrypt the
-TCP path or provide replay protection; use an authorized protected transport
-and rotate keys through an external key-management process.
+length, freshness metadata, both nonces, and authenticated snapshot bytes.
+Authentication does not encrypt the TCP path; use an authorized protected
+transport and rotate keys through an external key-management process.

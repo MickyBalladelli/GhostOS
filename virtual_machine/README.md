@@ -177,8 +177,8 @@ Version 1 and 2 payloads remain compatible after authentication. Version 1 has
 implicit feature flags; version 2 negotiates explicit flags and bounds every
 decoded length. See [the snapshot format and upgrade path](docs/SNAPSHOT_FORMAT.md)
 before moving checkpoints between VM builds. Authentication does not encrypt
-the migration transport or prevent replay; protect the TCP connection and
-manage key rotation separately.
+the migration transport; migration also uses mutual challenges, timeouts,
+freshness checks, and a replay ledger. Manage key rotation separately.
 
 Expose a Unix monitor socket with `--monitor PATH`. Connect with a Unix-socket
 client and use `help`, `info registers`, `info disks`, `info status`, `save

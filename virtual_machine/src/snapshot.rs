@@ -26,6 +26,12 @@ const MAX_ITEMS: usize = 16 * 1024 * 1024;
 
 pub type SnapshotId = u64;
 
+/// Stable digest used as a replay-guard identity for an authenticated
+/// checkpoint payload.
+pub fn snapshot_digest(bytes: &[u8]) -> [u8; 32] {
+    sha256(bytes)
+}
+
 /// Shared secret used to authenticate snapshot files and migration frames.
 /// The key is never serialized; only its non-secret identifier is carried on
 /// the wire so both peers can select the same configured key.
@@ -88,7 +94,15 @@ impl SnapshotAuthKey {
         tag: &[u8; AUTH_TAG_BYTES],
     ) -> Result<(), SnapshotError> {
         let expected = self.authenticate_parts(parts);
-        if constant_time_equal(&expected, tag) {
+        self.verify_tag(&expected, tag)
+    }
+
+    pub fn verify_tag(
+        self,
+        expected: &[u8; AUTH_TAG_BYTES],
+        tag: &[u8; AUTH_TAG_BYTES],
+    ) -> Result<(), SnapshotError> {
+        if constant_time_equal(expected, tag) {
             Ok(())
         } else {
             Err(SnapshotError::AuthenticationFailed)
