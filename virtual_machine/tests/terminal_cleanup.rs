@@ -154,10 +154,17 @@ mod unix_pty {
         )
     }
 
-    fn termios(file: &File) -> libc::termios {
+    fn termios(file: &File, phase: &str) -> libc::termios {
         let mut value = MaybeUninit::uninit();
-        let result = unsafe { libc::tcgetattr(file.as_raw_fd(), value.as_mut_ptr()) };
-        assert_eq!(result, 0, "tcgetattr failed: {}", io::Error::last_os_error());
+        let fd = file.as_raw_fd();
+        let result = unsafe { libc::tcgetattr(fd, value.as_mut_ptr()) };
+        assert_eq!(
+            result,
+            0,
+            "tcgetattr failed during {phase} on fd {fd}, isatty={}, errno={}",
+            unsafe { libc::isatty(fd) },
+            io::Error::last_os_error()
+        );
         unsafe { value.assume_init() }
     }
 
@@ -201,7 +208,7 @@ mod unix_pty {
     fn wait_for_raw_mode(slave: &File, original: &[u8]) {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            if termios_bytes(&termios(slave)) != original {
+            if termios_bytes(&termios(slave, "raw-mode wait")) != original {
                 return;
             }
             assert!(Instant::now() < deadline, "terminal child did not enter raw mode");
@@ -235,7 +242,7 @@ mod unix_pty {
 
     fn exercise_child(action: &str, cleanup_with_guard: bool) {
         let (mut master, slave, probe) = open_pty();
-        let original = termios_bytes(&termios(&probe));
+        let original = termios_bytes(&termios(&probe, "original"));
         let mut child = spawn_child(action, &slave);
         wait_for_ready(&mut master);
         wait_for_raw_mode(&probe, &original);
@@ -263,7 +270,11 @@ mod unix_pty {
             }
         }
 
-        assert_eq!(termios_bytes(&termios(&probe)), original, "PTY settings leaked after {action}");
+        assert_eq!(
+            termios_bytes(&termios(&probe, "restored")),
+            original,
+            "PTY settings leaked after {action}"
+        );
         drop(master);
     }
 
