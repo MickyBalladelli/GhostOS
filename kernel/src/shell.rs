@@ -2986,7 +2986,6 @@ impl KernelExecutor {
     }
 
     fn print_system(&self) {
-        crate::println!("\x1b[1;7;36m  SYSTEM  \x1b[0m");
         crate::println!("\x1b[1;7;32mPROPERTY             VALUE\x1b[0m");
         crate::println!("Name                 SynOS");
         crate::println!("Architecture         {}", architecture());
