@@ -240,10 +240,6 @@ fn render_interfaces(
         Some(OutputValue::Text(value)) if value.as_str() == "show-network"
     );
     if network {
-        rendered.push_str(ANSI_REVERSE_CYAN)?;
-        rendered.push_str("  NETWORK  ")?;
-        rendered.push_str(ANSI_RESET)?;
-        rendered.push_str("\n")?;
         rendered.push_str("Network: ")?;
         if let Some(hostname) = find_value(output, "hostname") {
             write_value(&mut rendered, hostname, false)?;
