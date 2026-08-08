@@ -63,6 +63,14 @@ pub struct SystemDiskManifest {
     pub settings_checksum: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemDiskRepairReport {
+    pub path: PathBuf,
+    pub repaired_manifest_slot: Option<u64>,
+    pub generation: u64,
+    pub actions: Vec<String>,
+}
+
 /// Validated boot data loaded from an attached SynOS system disk.
 #[derive(Debug, Clone)]
 pub struct SystemDiskBootArtifacts {
@@ -373,6 +381,58 @@ impl SystemDiskProvisioner {
     pub fn validate<P: AsRef<Path>>(path: P) -> Result<SystemDiskManifest, StorageError> {
         let mut image = DiskImage::open_with_access(path.as_ref(), false)?;
         read_best_manifest(&mut image)
+    }
+
+    /// Rebuild one damaged redundant manifest slot from the other valid slot.
+    /// Payloads are never guessed at or rewritten. An explicit caller choice
+    /// is required because this method opens the image for writing.
+    pub fn repair<P: AsRef<Path>>(path: P) -> Result<SystemDiskRepairReport, StorageError> {
+        let path = fs::canonicalize(path)?;
+        let mut image = DiskImage::open_for_vm(&path, true)?;
+        validate_header(&mut image)?;
+
+        let mut valid = Vec::new();
+        for offset in [MANIFEST_A_OFFSET, MANIFEST_B_OFFSET] {
+            let bytes = read_extent(&mut image, offset, SYSTEM_DISK_MANIFEST_SIZE)?;
+            if let Ok(manifest) = decode_manifest(&bytes) {
+                if validate_manifest(&mut image, &manifest).is_ok() {
+                    valid.push((offset, bytes, manifest.generation));
+                }
+            }
+        }
+
+        if valid.is_empty() {
+            return Err(StorageError::InvalidImage(
+                "no valid system-disk manifest is available for repair".to_string(),
+            ));
+        }
+        if valid.len() == 2 {
+            let generation = valid.iter().map(|(_, _, generation)| *generation).max().unwrap();
+            return Ok(SystemDiskRepairReport {
+                path,
+                repaired_manifest_slot: None,
+                generation,
+                actions: Vec::new(),
+            });
+        }
+
+        let (source_offset, bytes, generation) = valid.pop().unwrap();
+        let target_offset = if source_offset == MANIFEST_A_OFFSET {
+            MANIFEST_B_OFFSET
+        } else {
+            MANIFEST_A_OFFSET
+        };
+        write_extent(&mut image, &target_offset, SYSTEM_DISK_MANIFEST_SIZE, &bytes)?;
+        image.sync()?;
+        sync_parent_directory(&path)?;
+        Ok(SystemDiskRepairReport {
+            path,
+            repaired_manifest_slot: Some(target_offset),
+            generation,
+            actions: vec![format!(
+                "rebuilt system-disk manifest slot at byte offset {target_offset} from slot at byte offset {source_offset}"
+            )],
+        })
     }
 
     pub fn inspect<P: AsRef<Path>>(path: P) -> Result<SystemDiskManifest, StorageError> {

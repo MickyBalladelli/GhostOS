@@ -57,6 +57,7 @@ enum DiskCommand {
     List(DiskOptions),
     Inspect(PathBuf),
     Validate(PathBuf),
+    Repair(PathBuf),
     Provision {
         path: PathBuf,
         kernel: PathBuf,
@@ -350,11 +351,12 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
     let subcommand = values
         .first()
         .map(String::as_str)
-        .ok_or_else(|| "disk needs a command: list, inspect, validate, provision, lock, or recover-lock".to_string())?;
+        .ok_or_else(|| "disk needs a command: list, inspect, validate, repair, provision, lock, or recover-lock".to_string())?;
     match subcommand {
         "list" => Ok(ParseResult::Disk(DiskCommand::List(parse_disk_options(&values[1..])?))),
         "inspect" => Ok(ParseResult::Disk(DiskCommand::Inspect(command_path(values, "inspect")?))),
         "validate" => Ok(ParseResult::Disk(DiskCommand::Validate(command_path(values, "validate")?))),
+        "repair" => Ok(ParseResult::Disk(DiskCommand::Repair(command_path(values, "repair")?))),
         "lock" => Ok(ParseResult::Disk(DiskCommand::Lock(command_path(values, "lock")?))),
         "recover-lock" => Ok(ParseResult::Disk(DiskCommand::RecoverLock(command_path(values, "recover-lock")?))),
         "provision" => parse_provision_command(&values[1..]),
@@ -1622,6 +1624,7 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             );
             Ok(())
         }
+        DiskCommand::Repair(path) => repair_disk(&path),
         DiskCommand::Provision {
             path,
             kernel,
@@ -1719,24 +1722,86 @@ fn print_disk_inventory(specs: &[DiskSpec]) -> Result<(), String> {
 }
 
 fn inspect_disk(path: &PathBuf) -> Result<(), String> {
-    let image = DiskImage::open_with_access(path, false)
-        .map_err(|error| format!("cannot inspect disk {}: {error}", path.display()))?;
-    let lock = DiskImage::inspect_lock(path)
-        .map_err(|error| format!("cannot inspect disk lock: {error}"))?;
-    let health = match SystemDiskProvisioner::validate(path) {
-        Ok(_) => "healthy system installation".to_string(),
-        Err(_) => "valid image, no installed system".to_string(),
-    };
+    let report = DiskImage::inspect_report(path);
+    print_inspection_report(&report);
+    if report.is_healthy() {
+        Ok(())
+    } else {
+        Err(format!("disk inspection found errors in {}", path.display()))
+    }
+}
+
+fn repair_disk(path: &PathBuf) -> Result<(), String> {
+    let result = DiskImage::repair(path)
+        .map(|report| (report.path, report.actions))
+        .or_else(|_| {
+            SystemDiskProvisioner::repair(path).map(|report| (report.path, report.actions))
+        });
+
+    match result {
+        Ok((path, actions)) => {
+            if actions.is_empty() {
+                println!("repair: no changes needed path={}", path.display());
+            } else {
+                for action in actions {
+                    println!("repair: path={} action={action}", path.display());
+                }
+            }
+            let report = DiskImage::inspect_report(path);
+            print_inspection_report(&report);
+            if report.is_healthy() {
+                Ok(())
+            } else {
+                Err("repair completed but inspection still reports errors".to_string())
+            }
+        }
+        Err(error) => Err(format!("disk repair failed for {}: {error}", path.display())),
+    }
+}
+
+fn print_inspection_report(report: &synos_vm::DiskInspectionReport) {
+    let format = report
+        .format
+        .map(format_name)
+        .unwrap_or("unknown");
+    let capacity = report
+        .capacity
+        .map(format_bytes)
+        .unwrap_or_else(|| "unknown".to_string());
+    let file_size = report
+        .file_size
+        .map(format_bytes)
+        .unwrap_or_else(|| "unknown".to_string());
+    let lock = report
+        .lock
+        .as_ref()
+        .map(|value| format!("present(stale={})", value.stale))
+        .unwrap_or_else(|| "absent".to_string());
     println!(
-        "path={} format={} capacity={} health={} lock={}",
-        canonical_display(path)?,
-        format_name(image.format()),
-        format_bytes(image.size()),
-        health,
-        lock.map(|value| format!("present(stale={})", value.stale))
-            .unwrap_or_else(|| "absent".to_string()),
+        "path={} format={} capacity={} file-size={} status={} lock={}",
+        report.path.display(),
+        format,
+        capacity,
+        file_size,
+        if report.is_healthy() { "healthy" } else { "error" },
+        lock,
     );
-    Ok(())
+    for finding in &report.findings {
+        println!(
+            "finding={} severity={} repairable={} message={}",
+            finding.code,
+            finding_severity_name(finding.severity),
+            finding.repairable,
+            finding.message.replace('\n', "; "),
+        );
+    }
+    if report.format.is_some() && report.capacity.is_some() {
+        let system = match SystemDiskProvisioner::validate(&report.path) {
+            Ok(manifest) => format!("installed(generation={})", manifest.generation),
+            Err(_) => "not-installed-or-invalid".to_string(),
+        };
+        println!("system-disk={system}");
+    }
 }
 
 fn print_lock_status(path: &PathBuf) -> Result<(), String> {
@@ -1785,6 +1850,14 @@ fn format_name(format: DiskFormat) -> &'static str {
         DiskFormat::Raw => "raw",
         DiskFormat::Vhd => "vhd",
         DiskFormat::Qcow2 => "qcow2",
+    }
+}
+
+fn finding_severity_name(severity: synos_vm::DiskFindingSeverity) -> &'static str {
+    match severity {
+        synos_vm::DiskFindingSeverity::Info => "info",
+        synos_vm::DiskFindingSeverity::Warning => "warning",
+        synos_vm::DiskFindingSeverity::Error => "error",
     }
 }
 
@@ -1878,6 +1951,7 @@ Commands:
   synos-vm disk list          List disk health and guest identities
   synos-vm disk inspect PATH  Inspect an image without modifying it
   synos-vm disk validate PATH Validate an installed system disk
+  synos-vm disk repair PATH   Repair supported redundant image metadata
   synos-vm disk provision PATH --kernel PATH [OPTIONS]
                               Create/install a system disk without booting
   synos-vm disk lock PATH     Diagnose an ownership lock

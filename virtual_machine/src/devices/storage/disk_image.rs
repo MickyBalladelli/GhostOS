@@ -102,6 +102,51 @@ pub struct DiskLockInfo {
     pub stale: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskFindingSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskInspectionFinding {
+    pub code: String,
+    pub severity: DiskFindingSeverity,
+    pub message: String,
+    pub repairable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskInspectionReport {
+    pub path: PathBuf,
+    pub file_size: Option<u64>,
+    pub format: Option<DiskFormat>,
+    pub capacity: Option<u64>,
+    pub lock: Option<DiskLockInfo>,
+    pub findings: Vec<DiskInspectionFinding>,
+}
+
+impl DiskInspectionReport {
+    pub fn is_healthy(&self) -> bool {
+        !self
+            .findings
+            .iter()
+            .any(|finding| finding.severity == DiskFindingSeverity::Error)
+    }
+
+    pub fn repairable_findings(&self) -> impl Iterator<Item = &DiskInspectionFinding> {
+        self.findings.iter().filter(|finding| finding.repairable)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskRepairReport {
+    pub path: PathBuf,
+    pub format: DiskFormat,
+    pub actions: Vec<String>,
+}
+
 impl Drop for DiskLock {
     fn drop(&mut self) {
         if fs::remove_file(&self.path).is_ok() {
@@ -150,25 +195,7 @@ impl DiskImage {
 
         // VHD stores its "conectix" cookie in a 512-byte footer at the end
         // of the file, so detect it last by seeking to the tail.
-        let format = if magic.starts_with(QCOW2_MAGIC) {
-            DiskFormat::Qcow2
-        } else if &magic[..8] == VHD_MAGIC {
-            DiskFormat::Vhd
-        } else {
-            if file_len >= 512 {
-                let mut footer = [0u8; 8];
-                file.seek(SeekFrom::End(-512))?;
-                file.read_exact(&mut footer)?;
-                file.seek(SeekFrom::Start(0))?;
-                if &footer[..8] == VHD_MAGIC {
-                    DiskFormat::Vhd
-                } else {
-                    DiskFormat::Raw
-                }
-            } else {
-                DiskFormat::Raw
-            }
-        };
+        let format = detect_format(&mut file, file_len, magic)?;
 
         match format {
             DiskFormat::Raw => {
@@ -217,6 +244,91 @@ impl DiskImage {
                 })
             }
         }
+    }
+
+    /// Inspect an image without taking a writable lock or opening it for
+    /// writes. Failed checks remain in the report so callers can see why an
+    /// image is unhealthy.
+    pub fn inspect_report<P: AsRef<Path>>(path: P) -> DiskInspectionReport {
+        let requested_path = path.as_ref();
+        let canonical_path = fs::canonicalize(requested_path)
+            .unwrap_or_else(|_| requested_path.to_path_buf());
+        let file_size = fs::metadata(requested_path).ok().map(|metadata| metadata.len());
+        let mut report = DiskInspectionReport {
+            path: canonical_path,
+            file_size,
+            format: None,
+            capacity: None,
+            lock: None,
+            findings: Vec::new(),
+        };
+
+        match Self::inspect_lock(requested_path) {
+            Ok(lock) => report.lock = lock,
+            Err(error) => report.findings.push(DiskInspectionFinding {
+                code: "lock.inspect".to_string(),
+                severity: DiskFindingSeverity::Warning,
+                message: format!("could not inspect ownership lock: {error}"),
+                repairable: false,
+            }),
+        }
+
+        match Self::open_with_access(requested_path, false) {
+            Ok(image) => {
+                report.format = Some(image.format());
+                report.capacity = Some(image.size());
+                report.findings.push(DiskInspectionFinding {
+                    code: "image.valid".to_string(),
+                    severity: DiskFindingSeverity::Info,
+                    message: format!(
+                        "{} image is structurally valid with {} bytes capacity",
+                        format_name(image.format()),
+                        image.size()
+                    ),
+                    repairable: false,
+                });
+            }
+            Err(error) => {
+                if vhd_footer_is_repairable(requested_path).unwrap_or(false) {
+                    report.format = Some(DiskFormat::Vhd);
+                    report.findings.push(DiskInspectionFinding {
+                        code: "vhd.footer_checksum".to_string(),
+                        severity: DiskFindingSeverity::Error,
+                        message: "fixed VHD footer checksum is incorrect".to_string(),
+                        repairable: true,
+                    });
+                } else {
+                    report.findings.push(DiskInspectionFinding {
+                        code: "image.invalid".to_string(),
+                        severity: DiskFindingSeverity::Error,
+                        message: error.to_string(),
+                        repairable: false,
+                    });
+                }
+            }
+        }
+
+        report
+    }
+
+    /// Repair only metadata that can be reconstructed without guessing guest
+    /// data. The caller must select this operation explicitly.
+    pub fn repair<P: AsRef<Path>>(path: P) -> Result<DiskRepairReport, StorageError> {
+        let path = fs::canonicalize(path)?;
+        if !vhd_footer_is_repairable(&path)? {
+            return Err(StorageError::InvalidImage(
+                "no supported, safe repair is available".to_string(),
+            ));
+        }
+
+        let lock = Self::acquire_lock(&path, DiskFormat::Vhd)?;
+        let result = repair_vhd_footer_checksum(&path);
+        drop(lock);
+        result.map(|_| DiskRepairReport {
+            path,
+            format: DiskFormat::Vhd,
+            actions: vec!["recomputed fixed VHD footer checksum".to_string()],
+        })
     }
 
     /// Path used for the ownership marker of a writable VM attachment.
@@ -824,6 +936,77 @@ fn validate_sector_capacity(size: u64, format: &str) -> Result<(), StorageError>
             "{format} capacity {size} is not a non-zero sector multiple"
         )));
     }
+    Ok(())
+}
+
+fn detect_format(file: &mut File, file_len: u64, magic: [u8; 8]) -> Result<DiskFormat, StorageError> {
+    if magic.starts_with(QCOW2_MAGIC) {
+        return Ok(DiskFormat::Qcow2);
+    }
+    if &magic[..8] == VHD_MAGIC {
+        return Ok(DiskFormat::Vhd);
+    }
+    if file_len >= 512 {
+        let mut footer = [0u8; 8];
+        file.seek(SeekFrom::End(-512))?;
+        file.read_exact(&mut footer)?;
+        file.seek(SeekFrom::Start(0))?;
+        if &footer[..8] == VHD_MAGIC {
+            return Ok(DiskFormat::Vhd);
+        }
+    }
+    Ok(DiskFormat::Raw)
+}
+
+fn vhd_footer_is_repairable<P: AsRef<Path>>(path: P) -> Result<bool, StorageError> {
+    let mut file = File::open(path)?;
+    let file_len = file.metadata()?.len();
+    if file_len < 1024 {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::End(-512))?;
+    let mut footer = [0u8; 512];
+    file.read_exact(&mut footer)?;
+    if &footer[..8] != VHD_MAGIC {
+        return Ok(false);
+    }
+
+    let disk_size = u32::from_be_bytes(footer[40..44].try_into().unwrap()) as u64;
+    let original_size = u32::from_be_bytes(footer[36..40].try_into().unwrap()) as u64;
+    let disk_type = u32::from_be_bytes(footer[48..52].try_into().unwrap());
+    if disk_type != 2 || original_size != disk_size {
+        return Ok(false);
+    }
+    validate_sector_capacity(disk_size, "VHD")?;
+    if disk_size.checked_add(512) != Some(file_len) {
+        return Ok(false);
+    }
+    let stored_checksum = u32::from_be_bytes(footer[52..56].try_into().unwrap());
+    let sum: u32 = footer
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !(52..56).contains(index))
+        .map(|(_, value)| *value as u32)
+        .sum();
+    Ok(!sum != stored_checksum)
+}
+
+fn repair_vhd_footer_checksum<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
+    let mut file = OpenOptions::new().read(true).write(true).open(&path)?;
+    file.seek(SeekFrom::End(-512))?;
+    let mut footer = [0u8; 512];
+    file.read_exact(&mut footer)?;
+    let sum: u32 = footer
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !(52..56).contains(index))
+        .map(|(_, value)| *value as u32)
+        .sum();
+    footer[52..56].copy_from_slice(&(!sum).to_be_bytes());
+    file.seek(SeekFrom::End(-512))?;
+    file.write_all(&footer)?;
+    file.sync_all()?;
+    sync_parent_directory(path.as_ref())?;
     Ok(())
 }
 

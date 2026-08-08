@@ -63,7 +63,7 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Verify RAW, fixed VHD, and QCOW2 behavior against independent fixtures,
       including sparse files, malformed metadata, maximum sizes, discard,
       flush, and read-only/COW isolation.
-- [ ] Add a repair and inspection report that never mutates the image unless a
+- [x] Add a repair and inspection report that never mutates the image unless a
       separate repair command is explicitly selected.
 
 ## P1: Terminal and host portability

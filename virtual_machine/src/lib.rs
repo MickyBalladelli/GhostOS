@@ -15,7 +15,9 @@ pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
 pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
 pub use devices::{
-    Ahci, ApicTrigger, Device, DiskController, DiskFormat, DiskImage, DiskInfo, DiskLockInfo, DiskManager,
+    Ahci, ApicTrigger, Device, DiskController, DiskFindingSeverity, DiskFormat, DiskImage,
+    DiskInfo, DiskInspectionFinding, DiskInspectionReport, DiskLockInfo, DiskManager,
+    DiskRepairReport,
     DiskMode, DiskPersistence, DiskRole, DiskSpec, DisplayState, E1000, E1000_MMIO_SIZE,
     GopMode,
     GopPixelFormat, Hpet, InterruptController, LegacyPic, LocalApic, Nvme, PciDeviceId, PciHostBridge, Pit,
@@ -29,7 +31,8 @@ pub use devices::{
     StorageError, VirtioBlk, VirtioConsole, VirtioNet, VirtioRng,
     SynosPersistencePort,
     SystemDiskBootArtifacts, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout,
-    SystemDiskManifest, SystemDiskProvisioner, SystemSetting, SYSTEM_DISK_ALIGNMENT,
+    SystemDiskManifest, SystemDiskProvisioner, SystemDiskRepairReport, SystemSetting,
+    SYSTEM_DISK_ALIGNMENT,
     SYSTEM_DISK_FORMAT_VERSION,
     SYSTEM_DISK_MANIFEST_SIZE, SYSTEM_DISK_MIN_SIZE, SYSTEM_DISK_PAYLOAD_OFFSET,
     SYSTEM_DISK_SETTINGS_SIZE, SYNFS_SYSTEM_BLOCKS, SYNFS_SYSTEM_VOLUME_SIZE,
