@@ -7,6 +7,11 @@ use crate::{Error, Text};
 
 pub const MAX_RENDERED_OUTPUT_BYTES: usize = 4096;
 
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_REVERSE_CYAN: &str = "\x1b[1;7;36m";
+const ANSI_REVERSE_GREEN: &str = "\x1b[1;7;32m";
+const ANSI_REVERSE_MAGENTA: &str = "\x1b[1;7;35m";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutputFormat {
     List,
@@ -235,16 +240,28 @@ fn render_interfaces(
         Some(OutputValue::Text(value)) if value.as_str() == "show-network"
     );
     if network {
+        rendered.push_str(ANSI_REVERSE_CYAN)?;
+        rendered.push_str("  NETWORK  ")?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
         rendered.push_str("Network: ")?;
         if let Some(hostname) = find_value(output, "hostname") {
             write_value(&mut rendered, hostname, false)?;
         }
     } else if singular {
+        rendered.push_str(ANSI_REVERSE_CYAN)?;
+        rendered.push_str("  INTERFACE  ")?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
         rendered.push_str("Interface: ")?;
         if let Some(name) = find_value(output, "interface1-name") {
             write_value(&mut rendered, name, false)?;
         }
     } else {
+        rendered.push_str(ANSI_REVERSE_GREEN)?;
+        rendered.push_str("  INTERFACES  ")?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
         rendered.push_str("Interfaces: ")?;
         if let Some(count) = find_value(output, "interface-count") {
             write_value(&mut rendered, count, false)?;
@@ -315,6 +332,10 @@ fn render_interfaces(
         rendered.push_str(")\n")?;
     }
     if network {
+        rendered.push_str(ANSI_REVERSE_MAGENTA)?;
+        rendered.push_str("  ROUTES  ")?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
         rendered.push_str("Routes: ")?;
         if let Some(count) = find_value(output, "route-count") {
             write_value(&mut rendered, count, false)?;
