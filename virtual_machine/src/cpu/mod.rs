@@ -532,7 +532,7 @@ impl CpuState {
         }
 
         // Interrupt gates clear IF (bit 9); trap gates leave it.
-        let type_low = (gate.type_attr >> 3) & 0x0F;
+        let type_low = gate.type_attr & 0x0F;
         if type_low == 0xE {
             self.rflags &= !(1 << 9);
         }

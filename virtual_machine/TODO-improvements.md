@@ -17,7 +17,7 @@ remaining proof, portability, safety, and fidelity work.
 
 - [x] Make malformed or unsupported guest instruction encodings return a
       structured decode or CPU exception instead of panicking.
-- [ ] Add differential instruction tests for supported x86_64 instructions,
+- [x] Add differential instruction tests for supported x86_64 instructions,
       flags, privilege transitions, segmentation, paging faults, interrupts,
       string operations, and reset state.
 - [ ] Define the exact unsupported-instruction policy: injected exception,
