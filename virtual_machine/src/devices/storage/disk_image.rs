@@ -1054,6 +1054,172 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static LOCK_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn lock_test_path(label: &str) -> PathBuf {
+        let counter = LOCK_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "synos-vm-lock-{label}-{}-{counter}.raw",
+            std::process::id()
+        ))
+    }
+
+    fn create_lock_test_image(path: &Path) {
+        File::create(path).unwrap().set_len(4096).unwrap();
+    }
+
+    fn remove_lock_test_image(path: &Path) {
+        let _ = fs::remove_file(DiskImage::lock_path(path));
+        let _ = fs::remove_file(path);
+    }
+
+    fn write_lock_test_record(path: &Path, pid: u32, start_time: &str) {
+        let image = fs::canonicalize(path).unwrap();
+        let mut lock = File::create(DiskImage::lock_path(path)).unwrap();
+        writeln!(
+            lock,
+            "version={LOCK_RECORD_VERSION}\nimage_identity={}\nowner_identity=test\npid={pid}\nstart_time={start_time}\nhost_identity={}\nformat=raw",
+            image.display(),
+            host_identity(),
+        )
+        .unwrap();
+        lock.sync_all().unwrap();
+    }
+
+    #[test]
+    fn writable_open_rejects_concurrent_owner_and_releases_lock() {
+        let path = lock_test_path("concurrent");
+        create_lock_test_image(&path);
+
+        let first = DiskImage::open_for_vm(&path, true).unwrap();
+        let info = DiskImage::inspect_lock(&path).unwrap().unwrap();
+        assert_eq!(info.image_path, Some(fs::canonicalize(&path).unwrap()));
+        assert_eq!(info.format, Some(DiskFormat::Raw));
+        assert!(info.owner_identity.is_some());
+        assert!(info.start_time.is_some());
+        assert!(info.host_identity.is_some());
+        assert!(!info.stale);
+
+        let error = DiskImage::open_for_vm(&path, true).unwrap_err();
+        assert!(matches!(error, StorageError::Locked { .. }));
+
+        drop(first);
+        let second = DiskImage::open_for_vm(&path, true).unwrap();
+        drop(second);
+        remove_lock_test_image(&path);
+    }
+
+    #[test]
+    fn crashed_owner_lock_is_recoverable() {
+        let path = lock_test_path("crash");
+        create_lock_test_image(&path);
+        write_lock_test_record(&path, 0, "crashed-process");
+
+        let info = DiskImage::inspect_lock(&path).unwrap().unwrap();
+        assert!(info.stale);
+        DiskImage::recover_stale_lock(&path).unwrap();
+        assert!(DiskImage::inspect_lock(&path).unwrap().is_none());
+
+        remove_lock_test_image(&path);
+    }
+
+    #[test]
+    fn reused_pid_with_new_start_time_is_stale() {
+        let path = lock_test_path("pid-reuse");
+        create_lock_test_image(&path);
+        write_lock_test_record(&path, std::process::id(), "old-process-start");
+
+        let info = DiskImage::inspect_lock(&path).unwrap().unwrap();
+        assert!(info.stale);
+        DiskImage::recover_stale_lock(&path).unwrap();
+
+        remove_lock_test_image(&path);
+    }
+
+    #[test]
+    fn copied_image_lock_is_stale_for_new_image_identity() {
+        let source = lock_test_path("copy-source");
+        let copy = lock_test_path("copy-target");
+        create_lock_test_image(&source);
+        let owner = DiskImage::open_for_vm(&source, true).unwrap();
+        create_lock_test_image(&copy);
+        fs::copy(&source, &copy).unwrap();
+        fs::copy(DiskImage::lock_path(&source), DiskImage::lock_path(&copy)).unwrap();
+        drop(owner);
+
+        let info = DiskImage::inspect_lock(&copy).unwrap().unwrap();
+        assert!(info.stale);
+        DiskImage::recover_stale_lock(&copy).unwrap();
+        let copied_owner = DiskImage::open_for_vm(&copy, true).unwrap();
+        drop(copied_owner);
+
+        remove_lock_test_image(&source);
+        remove_lock_test_image(&copy);
+    }
+
+    #[test]
+    fn read_only_attachment_does_not_claim_writable_lock() {
+        let path = lock_test_path("read-only");
+        create_lock_test_image(&path);
+
+        let read_only = DiskImage::open_for_vm(&path, false).unwrap();
+        assert!(DiskImage::inspect_lock(&path).unwrap().is_none());
+        let writable = DiskImage::open_for_vm(&path, true).unwrap();
+        drop(writable);
+        drop(read_only);
+
+        remove_lock_test_image(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_aliases_share_one_canonical_lock() {
+        let path = lock_test_path("symlink-target");
+        let alias = lock_test_path("symlink-alias");
+        create_lock_test_image(&path);
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+
+        let owner = DiskImage::open_for_vm(&alias, true).unwrap();
+        assert_eq!(DiskImage::lock_path(&path), DiskImage::lock_path(&alias));
+        assert!(!DiskImage::inspect_lock(&path).unwrap().unwrap().stale);
+        let error = DiskImage::open_for_vm(&path, true).unwrap_err();
+        assert!(matches!(error, StorageError::Locked { .. }));
+        drop(owner);
+
+        let _ = fs::remove_file(&alias);
+        remove_lock_test_image(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lock_permission_failure_is_reported() {
+        let directory = lock_test_path("permission-directory");
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("disk.raw");
+        create_lock_test_image(&path);
+
+        let original_permissions = fs::metadata(&directory).unwrap().permissions();
+        let mut blocked_permissions = original_permissions.clone();
+        blocked_permissions.set_mode(0o555);
+        fs::set_permissions(&directory, blocked_permissions).unwrap();
+        let result = DiskImage::open_for_vm(&path, true);
+        fs::set_permissions(&directory, original_permissions).unwrap();
+
+        if result.is_ok() {
+            // Root can bypass directory write permissions.
+            drop(result.unwrap());
+        } else {
+            assert!(matches!(
+                result,
+                Err(StorageError::Io(error))
+                    if error.kind() == std::io::ErrorKind::PermissionDenied
+            ));
+        }
+        remove_lock_test_image(&path);
+        fs::remove_dir(&directory).unwrap();
+    }
 
     #[test]
     fn raw_image_round_trip() {

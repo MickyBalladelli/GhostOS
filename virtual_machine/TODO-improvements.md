@@ -55,7 +55,7 @@ remaining proof, portability, safety, and fidelity work.
       explicit force token for unconditional lock removal.
 - [x] Store canonical image identity, owner identity, start time, host identity,
       and format in the lock record. Handle PID reuse and cross-host copies.
-- [ ] Add lock tests for concurrent open, crash, PID reuse, copied images,
+- [x] Add lock tests for concurrent open, crash, PID reuse, copied images,
       read-only attachment, symlink/path aliasing, and permission failure.
 - [ ] Make disk creation, format writes, system-disk manifests, migration
       checkpoints, and lock publication crash-safe with file and directory
