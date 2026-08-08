@@ -142,6 +142,11 @@ id = "vm.boot.bios-uefi-single-and-smp-bounded"
 file = "tests/firmware_boot_synos_10_4.rs"
 tiers = ["vm-integration"]
 
+[[test]]
+id = "vm.migration.failure-matrix"
+file = "src/main.rs"
+tiers = ["cli"]
+
 [[source]]
 path = "src/lib.rs"
 tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
@@ -659,7 +664,7 @@ tests = ["vm.gates.inventory-contract", "vm.config.bounded-boot-and-power-lifecy
 
 [[source]]
 path = "src/main.rs"
-tests = ["vm.gates.inventory-contract"]
+tests = ["vm.gates.inventory-contract", "vm.migration.failure-matrix"]
 
 [[source]]
 path = "src/net/mac.rs"

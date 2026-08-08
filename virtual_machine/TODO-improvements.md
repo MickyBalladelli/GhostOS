@@ -45,7 +45,7 @@ remaining proof, portability, safety, and fidelity work.
       limit memory before allocation, and reject replayed or stale checkpoints.
 - [x] Publish received checkpoints with file and directory sync ordering, then
       verify them after reopen. Preserve the old target on every failure.
-- [ ] Add migration tests for interrupted transfer, malicious length, corrupt
+- [x] Add migration tests for interrupted transfer, malicious length, corrupt
       pages, wrong VM topology, incompatible device state, duplicate delivery,
       and destination crash.
 

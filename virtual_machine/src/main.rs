@@ -843,67 +843,105 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 .and_then(|_| stream.write_all(&receiver_nonce))
                 .and_then(|_| stream.write_all(&response_tag))
                 .map_err(|error| format!("migration schema response failed: {error}"))?;
-            let mut issued_at = [0u8; 8];
-            stream
-                .read_exact(&mut issued_at)
-                .map_err(|error| format!("migration checkpoint time read failed: {error}"))?;
-            let issued_at = u64::from_le_bytes(issued_at);
-            validate_checkpoint_time(issued_at)?;
-            let mut checkpoint_id = [0u8; 32];
-            stream
-                .read_exact(&mut checkpoint_id)
-                .map_err(|error| format!("migration checkpoint identity read failed: {error}"))?;
-            let mut length = [0u8; 8];
-            stream
-                .read_exact(&mut length)
-                .map_err(|error| format!("migration length read failed: {error}"))?;
-            let length = u64::from_le_bytes(length);
-            if length == 0 || length > MAX_MIGRATION_ALLOCATION_BYTES {
-                return Err(format!("migration payload is too large: {length} bytes"));
-            }
-            let payload_length = usize::try_from(length)
-                .map_err(|_| "migration payload does not fit in host memory".to_string())?;
-            let mut bytes = vec![0u8; payload_length];
-            stream
-                .read_exact(&mut bytes)
-                .map_err(|error| format!("migration payload read failed: {error}"))?;
-            let mut received_tag = [0u8; 32];
-            stream
-                .read_exact(&mut received_tag)
-                .map_err(|error| format!("migration authentication tag read failed: {error}"))?;
-            let expected_tag = migration_auth_tag(
+            let frame = read_migration_checkpoint(
+                &mut stream,
                 key,
                 negotiated,
                 &sender_nonce,
                 &receiver_nonce,
-                issued_at,
-                &checkpoint_id,
-                length,
-                &bytes,
+                validate_checkpoint_time,
             );
-            key.verify_tag(&expected_tag, &received_tag)
-                .map_err(|error| format!("migration authentication failed: {error}"))?;
-            if snapshot_digest(&bytes) != checkpoint_id {
-                return Err("migration checkpoint identity does not match its payload".to_string());
-            }
-            let received = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
-                .map_err(|error| format!("received invalid authenticated VM checkpoint: {error}"))?;
-            if received.format_version != negotiated.max_version
-                || !negotiated.accepts(received.format_version, received.feature_flags)
-            {
-                return Err("received checkpoint does not match negotiated schema".to_string());
-            }
+            let frame = frame?;
             reserve_replay(
                 &replay_ledger_path(&snapshot),
                 key.key_id(),
-                checkpoint_id,
-                issued_at,
+                frame.checkpoint_id,
+                frame.issued_at,
             )?;
-            publish_received_checkpoint(&snapshot, &bytes, key, &received)?;
+            publish_received_checkpoint(&snapshot, &frame.bytes, key, &frame.snapshot)?;
             println!("received VM checkpoint from {peer} at {}", snapshot.display());
             Ok(())
         }
     }
+}
+
+#[derive(Debug)]
+struct MigrationCheckpointFrame {
+    issued_at: u64,
+    checkpoint_id: [u8; 32],
+    bytes: Vec<u8>,
+    snapshot: synos_vm::VmSnapshot,
+}
+
+fn read_migration_checkpoint<R, F>(
+    reader: &mut R,
+    key: SnapshotAuthKey,
+    negotiated: SnapshotSchema,
+    sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    validate_timestamp: F,
+) -> Result<MigrationCheckpointFrame, String>
+where
+    R: Read,
+    F: Fn(u64) -> Result<(), String>,
+{
+    let mut issued_at = [0u8; 8];
+    reader
+        .read_exact(&mut issued_at)
+        .map_err(|error| format!("migration checkpoint time read failed: {error}"))?;
+    let issued_at = u64::from_le_bytes(issued_at);
+    validate_timestamp(issued_at)?;
+
+    let mut checkpoint_id = [0u8; 32];
+    reader
+        .read_exact(&mut checkpoint_id)
+        .map_err(|error| format!("migration checkpoint identity read failed: {error}"))?;
+    let mut length = [0u8; 8];
+    reader
+        .read_exact(&mut length)
+        .map_err(|error| format!("migration length read failed: {error}"))?;
+    let length = u64::from_le_bytes(length);
+    if length == 0 || length > MAX_MIGRATION_ALLOCATION_BYTES {
+        return Err(format!("migration payload is too large: {length} bytes"));
+    }
+    let payload_length = usize::try_from(length)
+        .map_err(|_| "migration payload does not fit in host memory".to_string())?;
+    let mut bytes = vec![0u8; payload_length];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|error| format!("migration payload read failed: {error}"))?;
+    let mut received_tag = [0u8; 32];
+    reader
+        .read_exact(&mut received_tag)
+        .map_err(|error| format!("migration authentication tag read failed: {error}"))?;
+    let expected_tag = migration_auth_tag(
+        key,
+        negotiated,
+        sender_nonce,
+        receiver_nonce,
+        issued_at,
+        &checkpoint_id,
+        length,
+        &bytes,
+    );
+    key.verify_tag(&expected_tag, &received_tag)
+        .map_err(|error| format!("migration authentication failed: {error}"))?;
+    if snapshot_digest(&bytes) != checkpoint_id {
+        return Err("migration checkpoint identity does not match its payload".to_string());
+    }
+    let snapshot = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
+        .map_err(|error| format!("received invalid authenticated VM checkpoint: {error}"))?;
+    if snapshot.format_version != negotiated.max_version
+        || !negotiated.accepts(snapshot.format_version, snapshot.feature_flags)
+    {
+        return Err("received checkpoint does not match negotiated schema".to_string());
+    }
+    Ok(MigrationCheckpointFrame {
+        issued_at,
+        checkpoint_id,
+        bytes,
+        snapshot,
+    })
 }
 
 fn publish_received_checkpoint(
@@ -1852,9 +1890,242 @@ Other options:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static MIGRATION_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn migration_test_path(label: &str) -> PathBuf {
+        let id = MIGRATION_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "synos-vm-migration-{label}-{}-{id}.bin",
+            std::process::id()
+        ))
+    }
+
+    fn migration_fixture() -> (
+        SnapshotAuthKey,
+        SnapshotSchema,
+        [u8; MIGRATION_NONCE_BYTES],
+        [u8; MIGRATION_NONCE_BYTES],
+        synos_vm::VmSnapshot,
+        Vec<u8>,
+    ) {
+        let key = SnapshotAuthKey::new([0x42; 32]);
+        let schema = SnapshotSchema::for_version(2);
+        let sender_nonce = [0x11; MIGRATION_NONCE_BYTES];
+        let receiver_nonce = [0x22; MIGRATION_NONCE_BYTES];
+        let mut vm = Vm::with_config(VmConfig {
+            memory_size: 4 * 1024 * 1024,
+            ..VmConfig::default()
+        });
+        vm.mmu_mut().write_byte(0x2000, 0xA5).expect("fixture memory");
+        let snapshot = vm.snapshot();
+        let bytes = snapshot
+            .to_authenticated_bytes(key)
+            .expect("authenticate fixture");
+        (key, schema, sender_nonce, receiver_nonce, snapshot, bytes)
+    }
+
+    fn migration_wire(
+        key: SnapshotAuthKey,
+        schema: SnapshotSchema,
+        sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
+        receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
+        issued_at: u64,
+        checkpoint_id: [u8; 32],
+        length: u64,
+        bytes: &[u8],
+    ) -> Vec<u8> {
+        let tag = migration_auth_tag(
+            key,
+            schema,
+            sender_nonce,
+            receiver_nonce,
+            issued_at,
+            &checkpoint_id,
+            length,
+            bytes,
+        );
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&issued_at.to_le_bytes());
+        frame.extend_from_slice(&checkpoint_id);
+        frame.extend_from_slice(&length.to_le_bytes());
+        frame.extend_from_slice(bytes);
+        frame.extend_from_slice(&tag);
+        frame
+    }
+
+    fn read_test_migration_frame(
+        wire: &[u8],
+        key: SnapshotAuthKey,
+        schema: SnapshotSchema,
+        sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
+        receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
+    ) -> Result<MigrationCheckpointFrame, String> {
+        read_migration_checkpoint(
+            &mut Cursor::new(wire),
+            key,
+            schema,
+            sender_nonce,
+            receiver_nonce,
+            |_| Ok(()),
+        )
+    }
+
+    #[test]
+    fn migration_interrupted_transfer_is_rejected() {
+        let (key, schema, sender_nonce, receiver_nonce, _snapshot, bytes) = migration_fixture();
+        let checkpoint_id = snapshot_digest(&bytes);
+        let mut wire = migration_wire(
+            key,
+            schema,
+            &sender_nonce,
+            &receiver_nonce,
+            1,
+            checkpoint_id,
+            bytes.len() as u64,
+            &bytes,
+        );
+        wire.truncate(48 + bytes.len() / 2);
+        let error = read_test_migration_frame(
+            &wire,
+            key,
+            schema,
+            &sender_nonce,
+            &receiver_nonce,
+        )
+        .expect_err("truncated migration must fail");
+        assert!(error.contains("migration payload read failed"));
+    }
+
+    #[test]
+    fn migration_malicious_length_is_rejected_before_allocation() {
+        let (key, schema, sender_nonce, receiver_nonce, _snapshot, _bytes) = migration_fixture();
+        let wire = migration_wire(
+            key,
+            schema,
+            &sender_nonce,
+            &receiver_nonce,
+            1,
+            [0; 32],
+            MAX_MIGRATION_ALLOCATION_BYTES + 1,
+            &[],
+        );
+        let error = read_test_migration_frame(
+            &wire,
+            key,
+            schema,
+            &sender_nonce,
+            &receiver_nonce,
+        )
+        .expect_err("oversized migration must fail");
+        assert!(error.contains("migration payload is too large"));
+    }
+
+    #[test]
+    fn migration_corrupt_pages_are_rejected_by_checkpoint_identity() {
+        let (key, schema, sender_nonce, receiver_nonce, _snapshot, bytes) = migration_fixture();
+        let mut corrupted = bytes.clone();
+        corrupted[412] ^= 1;
+        let wire = migration_wire(
+            key,
+            schema,
+            &sender_nonce,
+            &receiver_nonce,
+            1,
+            snapshot_digest(&bytes),
+            corrupted.len() as u64,
+            &corrupted,
+        );
+        let error = read_test_migration_frame(
+            &wire,
+            key,
+            schema,
+            &sender_nonce,
+            &receiver_nonce,
+        )
+        .expect_err("corrupt migration pages must fail");
+        assert!(error.contains("identity does not match"));
+    }
+
+    #[test]
+    fn migration_wrong_vm_topology_is_rejected() {
+        let (_key, _schema, _sender_nonce, _receiver_nonce, snapshot, _bytes) =
+            migration_fixture();
+        let mut incompatible = Vm::with_config(VmConfig {
+            memory_size: 8 * 1024 * 1024,
+            ..VmConfig::default()
+        });
+        assert!(matches!(
+            snapshot.restore_into(&mut incompatible),
+            Err(synos_vm::snapshot::SnapshotError::IncompatibleMemory { .. })
+        ));
+    }
+
+    #[test]
+    fn migration_incompatible_device_state_is_rejected() {
+        let incompatible = SnapshotSchema {
+            min_version: 2,
+            max_version: 2,
+            features: SnapshotFeatures::ALL - SnapshotFeatures::APIC_STATE,
+        };
+        assert!(matches!(
+            SnapshotSchema::negotiate(incompatible),
+            Err(synos_vm::snapshot::SnapshotError::MissingFeatures { missing })
+                if missing & SnapshotFeatures::APIC_STATE.bits() != 0
+        ));
+    }
+
+    #[test]
+    fn migration_duplicate_delivery_is_rejected() {
+        let key = SnapshotAuthKey::new([0x24; 32]);
+        let ledger = migration_test_path("replay");
+        let checkpoint_id = [0xA7; 32];
+        let issued_at = u64::MAX;
+        reserve_replay(&ledger, key.key_id(), checkpoint_id, issued_at)
+            .expect("first delivery is accepted");
+        let error = reserve_replay(&ledger, key.key_id(), checkpoint_id, issued_at)
+            .expect_err("duplicate delivery must fail");
+        assert!(error.contains("checkpoint replay detected"));
+        let _ = fs::remove_file(ledger);
+    }
+
+    #[test]
+    fn migration_destination_crash_keeps_old_target() {
+        let (key, _schema, _sender_nonce, _receiver_nonce, new_snapshot, new_bytes) =
+            migration_fixture();
+        let mut old_vm = Vm::with_config(VmConfig {
+            memory_size: 4 * 1024 * 1024,
+            ..VmConfig::default()
+        });
+        old_vm.mmu_mut().write_byte(0x2000, 0x5A).expect("old memory");
+        let old_snapshot = old_vm.snapshot();
+        let old_bytes = old_snapshot
+            .to_authenticated_bytes(key)
+            .expect("authenticate old fixture");
+        let target = migration_test_path("target");
+        let partial = migration_test_path("partial");
+        fs::write(&target, &old_bytes).expect("write old target");
+        fs::write(&partial, &new_bytes).expect("write staged checkpoint");
+
+        let error = publish_checkpoint_file(
+            &partial,
+            &target,
+            target.parent().expect("target parent"),
+            key,
+            &old_snapshot,
+        )
+        .expect_err("post-publish verification must fail for mismatched state");
+        assert!(error.contains("changed during publication"));
+        assert_eq!(fs::read(&target).expect("read restored target"), old_bytes);
+        assert_ne!(new_snapshot, old_snapshot);
+        let _ = fs::remove_file(target);
+        let _ = fs::remove_file(partial);
     }
 
     #[test]
