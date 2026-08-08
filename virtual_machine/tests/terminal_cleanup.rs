@@ -112,6 +112,8 @@ mod unix_pty {
     use std::process::{Child, Command, Stdio};
     use std::ptr;
 
+    static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     unsafe extern "C" {
         fn openpty(
             master: *mut libc::c_int,
@@ -270,6 +272,7 @@ mod unix_pty {
 
     #[test]
     fn terminal_restores_pty_after_success_signal_panic_and_input_error() {
+        let _lock = PTY_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for action in ["success", "signal", "panic", "close"] {
             exercise_child(action, false);
         }
@@ -277,6 +280,7 @@ mod unix_pty {
 
     #[test]
     fn terminal_cleanup_harness_reaps_child_and_restores_pty() {
+        let _lock = PTY_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         exercise_child("hold", true);
     }
 }

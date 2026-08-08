@@ -17,3 +17,4 @@ You inspect: /tmp/bonsai.xml
 Then answer from that context.
 ```
 Do not touch the formatting of files you are not working on.
+If you need to edit new temp files, use the temp folder. Clean up once done.
