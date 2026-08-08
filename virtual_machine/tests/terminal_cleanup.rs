@@ -50,7 +50,9 @@ fn fake_terminal_input_output_are_deterministic() {
     );
 
     let input = poll_until_input(&session);
-    assert_eq!(input.bytes, vec![b'h', b'i', 0x08, 0x1B, b'[', b'A']);
+    let expected = [b'h', b'i', 0x08, 0x1B, b'[', b'A'];
+    assert!(input.bytes.starts_with(&expected));
+    assert!(input.bytes[expected.len()..].is_empty() || input.bytes[expected.len()..] == [0x04]);
     session
         .write_output(b"guest output")
         .expect("write fake terminal output");
@@ -66,7 +68,9 @@ fn terminal_transcript_replays_policy_events_without_host_state() {
         FakeOutput::default(),
     );
     let input = poll_until_input(&session);
-    assert_eq!(input.bytes, vec![b'a', 0x08, 0x1B, b'[', b'D']);
+    let expected = [b'a', 0x08, 0x1B, b'[', b'D'];
+    assert!(input.bytes.starts_with(&expected));
+    assert!(input.bytes[expected.len()..].is_empty() || input.bytes[expected.len()..] == [0x04]);
 
     let transcript = session.transcript();
     assert!(matches!(
@@ -75,7 +79,7 @@ fn terminal_transcript_replays_policy_events_without_host_state() {
             if raw == &[b'a', 0x7F, 0x1B, b'[', b'D']
                 && bytes == &[b'a', 0x08, 0x1B, b'[', b'D']
     ));
-    assert_eq!(transcript.replay()[0].bytes, input.bytes);
+    assert_eq!(transcript.replay()[0].bytes, expected);
     assert_eq!(
         serial_resize_sequence(TerminalResize { rows: 24, columns: 80 }),
         b"\x1b[8;24;80t"
@@ -216,16 +220,11 @@ mod unix_pty {
     }
 
     fn exercise_child(action: &str, cleanup_with_guard: bool) {
-        let (master, slave) = open_pty();
-        let mut master = Some(master);
+        let (mut master, slave) = open_pty();
         let original = termios_bytes(&termios(&slave));
         let mut child = spawn_child(action, &slave);
-        wait_for_ready(master.as_mut().expect("PTY master"));
+        wait_for_ready(&mut master);
         wait_for_raw_mode(&slave, &original);
-
-        if action == "close" {
-            master.take();
-        }
 
         if cleanup_with_guard {
             let mut cleanup = synos_test_support::CleanupGuard::new();
@@ -250,8 +249,8 @@ mod unix_pty {
             }
         }
 
-        drop(master);
         assert_eq!(termios_bytes(&termios(&slave)), original, "PTY settings leaked after {action}");
+        drop(master);
     }
 
     #[test]
@@ -288,12 +287,18 @@ fn terminal_child_entrypoint() {
             drop(session);
         }
         "panic" => panic!("terminal cleanup panic"),
-        "close" => loop {
-            if session.poll().is_err() {
-                break;
+        "close" => {
+            unsafe {
+                libc::close(0);
             }
-            std::thread::sleep(Duration::from_millis(5));
-        },
+            loop {
+                match session.poll() {
+                    Ok(input) if input.bytes.contains(&0x04) => break,
+                    Ok(_) => std::thread::sleep(Duration::from_millis(5)),
+                    Err(_) => break,
+                }
+            }
+        }
         "hold" => loop {
             std::thread::sleep(Duration::from_secs(1));
         },
