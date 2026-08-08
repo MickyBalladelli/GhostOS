@@ -3224,32 +3224,32 @@ impl KernelExecutor {
     }
 
     fn print_memory(&self) {
-        crate::println!("\x1b[1;7;34mPROPERTY             VALUE\x1b[0m");
-        crate::println!("Total                {}", memory_size(self.memory_total_bytes));
+        crate::println!("\x1b[1;97;44mPROPERTY             VALUE\x1b[0m");
+        crate::println!("\x1b[1mTotal\x1b[0m                {}", memory_size(self.memory_total_bytes));
         crate::println!(
-            "Used                 {}  ({:>4}.{}%)",
+            "\x1b[1mUsed\x1b[0m                 {}  ({:>4}.{}%)",
             memory_size(self.memory_used_bytes),
             memory_percent(self.memory_used_bytes, self.memory_total_bytes) / 10,
             memory_percent(self.memory_used_bytes, self.memory_total_bytes) % 10,
         );
         crate::println!(
-            "Available            {}  ({:>4}.{}%)",
+            "\x1b[1mAvailable\x1b[0m            {}  ({:>4}.{}%)",
             memory_size(self.memory_available_bytes),
             memory_percent(self.memory_available_bytes, self.memory_total_bytes) / 10,
             memory_percent(self.memory_available_bytes, self.memory_total_bytes) % 10,
         );
-        crate::println!("Regions              {}", self.memory_region_count);
+        crate::println!("\x1b[1mRegions\x1b[0m              {}", self.memory_region_count);
         crate::println!();
         for (index, region) in self.memory_regions.iter().enumerate() {
             let available_bytes = region_available_bytes(region.kind, region.length);
             let used_bytes = region_used_bytes(region.kind, region.length);
             crate::println!(
-                "Region {}             {}",
+                "\x1b[1;96mRegion {}             {}\x1b[0m",
                 index,
                 memory_kind_name(region.kind),
             );
-            crate::println!("  Used                {}", memory_size(used_bytes));
-            crate::println!("  Available           {}", memory_size(available_bytes));
+            crate::println!("  \x1b[1mUsed\x1b[0m                {}", memory_size(used_bytes));
+            crate::println!("  \x1b[1mAvailable\x1b[0m           {}", memory_size(available_bytes));
         }
     }
 
