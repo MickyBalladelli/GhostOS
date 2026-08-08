@@ -60,7 +60,7 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Make disk creation, format writes, system-disk manifests, migration
       checkpoints, and lock publication crash-safe with file and directory
       sync ordering.
-- [ ] Verify RAW, fixed VHD, and QCOW2 behavior against independent fixtures,
+- [x] Verify RAW, fixed VHD, and QCOW2 behavior against independent fixtures,
       including sparse files, malformed metadata, maximum sizes, discard,
       flush, and read-only/COW isolation.
 - [ ] Add a repair and inspection report that never mutates the image unless a

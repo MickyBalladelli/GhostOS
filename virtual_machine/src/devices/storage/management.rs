@@ -401,3 +401,71 @@ fn clone_to_temporary(source: &Path) -> Result<PathBuf, StorageError> {
         "could not allocate a unique temporary disk clone".to_string(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_path(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "synos-disk-management-{label}-{}-{stamp}.raw",
+            std::process::id()
+        ))
+    }
+
+    fn create_raw(path: &Path) {
+        File::create(path).unwrap().set_len(4096).unwrap();
+    }
+
+    fn read_sector(path: &Path) -> [u8; 512] {
+        let mut image = DiskImage::open_with_access(path, false).unwrap();
+        let mut sector = [0u8; 512];
+        image.read_sector(0, &mut sector).unwrap();
+        sector
+    }
+
+    #[test]
+    fn copy_on_write_and_disposable_discard_guest_writes() {
+        for persistence in [DiskPersistence::CopyOnWrite, DiskPersistence::Disposable] {
+            let path = test_path("discard");
+            create_raw(&path);
+            let spec = DiskSpec::new("data", &path).with_persistence(persistence);
+            let (mut overlay, info) = DiskManager::open(&spec).unwrap();
+            assert_eq!(info.persistence, persistence);
+            let overlay_path = PathBuf::from(overlay.filename());
+            let sector = [0xD7u8; 512];
+            overlay.write_sector(0, &sector).unwrap();
+            overlay.sync().unwrap();
+            drop(overlay);
+
+            assert!(!overlay_path.exists());
+            assert_eq!(read_sector(&path), [0u8; 512]);
+            let _ = fs::remove_file(DiskImage::lock_path(&path));
+            let _ = fs::remove_file(&path);
+        }
+    }
+
+    #[test]
+    fn read_only_attachment_isolated_from_writes() {
+        let path = test_path("read-only");
+        create_raw(&path);
+        let spec = DiskSpec::new("data", &path).read_only(true);
+        let (mut image, info) = DiskManager::open(&spec).unwrap();
+        assert!(info.read_only);
+        assert!(matches!(
+            image.write_sector(0, &[0xE1u8; 512]),
+            Err(StorageError::ReadOnly)
+        ));
+        drop(image);
+
+        assert_eq!(read_sector(&path), [0u8; 512]);
+        let _ = fs::remove_file(DiskImage::lock_path(&path));
+        let _ = fs::remove_file(&path);
+    }
+}

@@ -1115,6 +1115,56 @@ mod tests {
         lock.sync_all().unwrap();
     }
 
+    fn write_vhd_fixture(path: &Path, disk_size: u64, disk_type: u32, valid_checksum: bool) {
+        let mut file = File::create(path).unwrap();
+        file.set_len(disk_size + 512).unwrap();
+        let mut footer = [0u8; 512];
+        footer[0..8].copy_from_slice(VHD_MAGIC);
+        footer[12..16].copy_from_slice(&1u32.to_be_bytes());
+        footer[16..20].copy_from_slice(&u32::MAX.to_be_bytes());
+        footer[36..40].copy_from_slice(&(disk_size as u32).to_be_bytes());
+        footer[40..44].copy_from_slice(&(disk_size as u32).to_be_bytes());
+        footer[48..52].copy_from_slice(&disk_type.to_be_bytes());
+        let sum: u32 = footer
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !(52..56).contains(index))
+            .map(|(_, value)| *value as u32)
+            .sum();
+        footer[52..56].copy_from_slice(&(if valid_checksum { !sum } else { 0 }).to_be_bytes());
+        file.seek(SeekFrom::End(-512)).unwrap();
+        file.write_all(&footer).unwrap();
+        file.sync_all().unwrap();
+    }
+
+    fn write_qcow2_fixture(
+        path: &Path,
+        disk_size: u64,
+        l1_size: u32,
+        incompatible_features: u64,
+    ) {
+        let cluster_size = 64 * 1024u64;
+        let l1_offset = cluster_size;
+        let l2_offset = cluster_size * 2;
+        let mut file = File::create(path).unwrap();
+        file.set_len(cluster_size * 3).unwrap();
+        let mut header = [0u8; 104];
+        header[0..4].copy_from_slice(QCOW2_MAGIC);
+        header[4..8].copy_from_slice(&2u32.to_be_bytes());
+        header[20..24].copy_from_slice(&16u32.to_be_bytes());
+        header[24..32].copy_from_slice(&disk_size.to_be_bytes());
+        header[36..40].copy_from_slice(&l1_size.to_be_bytes());
+        header[40..48].copy_from_slice(&l1_offset.to_be_bytes());
+        header[72..80].copy_from_slice(&incompatible_features.to_be_bytes());
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write_all(&header).unwrap();
+        if l1_size == 1 {
+            file.seek(SeekFrom::Start(l1_offset)).unwrap();
+            file.write_all(&l2_offset.to_be_bytes()).unwrap();
+        }
+        file.sync_all().unwrap();
+    }
+
     #[test]
     fn writable_open_rejects_concurrent_owner_and_releases_lock() {
         let path = lock_test_path("concurrent");
@@ -1198,6 +1248,128 @@ mod tests {
         drop(read_only);
 
         remove_lock_test_image(&path);
+    }
+
+    #[test]
+    fn independent_raw_sparse_fixture_flushes_and_reopens() {
+        let path = lock_test_path("raw-independent");
+        let sparse_size = 32 * 1024 * 1024u64;
+        File::create(&path).unwrap().set_len(sparse_size).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().len(), sparse_size);
+
+        let mut image = DiskImage::open_with_access(&path, true).unwrap();
+        assert_eq!(image.format(), DiskFormat::Raw);
+        let mut zeroes = [0xA5u8; 512];
+        image.read_sector(0, &mut zeroes).unwrap();
+        assert_eq!(zeroes, [0u8; 512]);
+        let sector = [0x5Au8; 512];
+        image.write_sector(7, &sector).unwrap();
+        image.flush().unwrap();
+        image.sync().unwrap();
+        drop(image);
+
+        let mut reopened = DiskImage::open_with_access(&path, false).unwrap();
+        let mut read = [0u8; 512];
+        reopened.read_sector(7, &mut read).unwrap();
+        assert_eq!(read, sector);
+        assert!(matches!(
+            reopened.write_sector(7, &sector),
+            Err(StorageError::ReadOnly)
+        ));
+        drop(reopened);
+        remove_lock_test_image(&path);
+    }
+
+    #[test]
+    fn independent_fixed_vhd_fixture_handles_maximum_capacity_and_flush() {
+        let path = lock_test_path("vhd-independent");
+        let disk_size = u32::MAX as u64 - 511;
+        write_vhd_fixture(&path, disk_size, 2, true);
+
+        let mut image = DiskImage::open_with_access(&path, true).unwrap();
+        assert_eq!(image.format(), DiskFormat::Vhd);
+        assert_eq!(image.size(), disk_size);
+        let sector = [0x3Cu8; 512];
+        image.write_sector(image.sector_count() - 1, &sector).unwrap();
+        image.flush().unwrap();
+        image.sync().unwrap();
+        drop(image);
+
+        let mut reopened = DiskImage::open_with_access(&path, false).unwrap();
+        let mut read = [0u8; 512];
+        reopened
+            .read_sector(reopened.sector_count() - 1, &mut read)
+            .unwrap();
+        assert_eq!(read, sector);
+        drop(reopened);
+        remove_lock_test_image(&path);
+    }
+
+    #[test]
+    fn independent_qcow2_fixture_reads_zeroes_allocates_and_flushes() {
+        let path = lock_test_path("qcow2-independent");
+        let cluster_size = 64 * 1024u64;
+        let disk_size = cluster_size * (cluster_size / 8);
+        write_qcow2_fixture(&path, disk_size, 1, 0);
+
+        let mut image = DiskImage::open_with_access(&path, true).unwrap();
+        assert_eq!(image.format(), DiskFormat::Qcow2);
+        assert_eq!(image.size(), disk_size);
+        let mut zeroes = [0xA5u8; 512];
+        image.read_sector(0, &mut zeroes).unwrap();
+        assert_eq!(zeroes, [0u8; 512]);
+        let sector = [0xC3u8; 512];
+        image.write_sector(0, &sector).unwrap();
+        image.flush().unwrap();
+        image.sync().unwrap();
+        drop(image);
+
+        let mut reopened = DiskImage::open_with_access(&path, false).unwrap();
+        let mut read = [0u8; 512];
+        reopened.read_sector(0, &mut read).unwrap();
+        assert_eq!(read, sector);
+        drop(reopened);
+        remove_lock_test_image(&path);
+    }
+
+    #[test]
+    fn independent_fixtures_reject_malformed_metadata_and_size_limits() {
+        let bad_vhd_checksum = lock_test_path("vhd-bad-checksum");
+        write_vhd_fixture(&bad_vhd_checksum, 1024 * 1024, 2, false);
+        assert!(matches!(
+            DiskImage::open_with_access(&bad_vhd_checksum, false),
+            Err(StorageError::InvalidImage(_))
+        ));
+
+        let bad_vhd_type = lock_test_path("vhd-bad-type");
+        write_vhd_fixture(&bad_vhd_type, 1024 * 1024, 3, true);
+        assert!(matches!(
+            DiskImage::open_with_access(&bad_vhd_type, false),
+            Err(StorageError::Unsupported(_))
+        ));
+
+        let bad_qcow_features = lock_test_path("qcow2-bad-features");
+        write_qcow2_fixture(&bad_qcow_features, 512 * 1024 * 1024, 1, 1);
+        assert!(matches!(
+            DiskImage::open_with_access(&bad_qcow_features, false),
+            Err(StorageError::Unsupported(_))
+        ));
+
+        let oversized_qcow_l1 = lock_test_path("qcow2-oversized-l1");
+        write_qcow2_fixture(&oversized_qcow_l1, 512 * 1024 * 1024, (1 << 22) + 1, 0);
+        assert!(matches!(
+            DiskImage::open_with_access(&oversized_qcow_l1, false),
+            Err(StorageError::InvalidImage(_))
+        ));
+
+        for path in [
+            bad_vhd_checksum,
+            bad_vhd_type,
+            bad_qcow_features,
+            oversized_qcow_l1,
+        ] {
+            remove_lock_test_image(&path);
+        }
     }
 
     #[cfg(unix)]
