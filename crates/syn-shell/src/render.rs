@@ -59,6 +59,9 @@ fn render_list(
     if is_set_interface_output(output) {
         return render_set_interface(output)
     }
+    if is_cluster_output(output) {
+        return render_cluster(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -162,6 +165,41 @@ fn is_set_interface_output(output: &StructuredOutput) -> bool {
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "set-interface"
     )
+}
+
+fn is_cluster_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-cluster"
+    )
+}
+
+fn render_cluster(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    if let Some(name) = find_value(output, "cluster-name") {
+        rendered.push_str(ANSI_BOLD)?;
+        rendered.push_str("Cluster: ")?;
+        write_value(&mut rendered, name, false)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+    }
+    rendered.push_str(ANSI_TABLE_HEADER)?;
+    rendered.push_str("PROPERTY                         VALUE")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+
+    for field in output.fields() {
+        if field.name.as_str() == "operation"
+            || field.name.as_str() == "cluster-name"
+        {
+            continue
+        }
+        render_labeled_value(&mut rendered, field.name.as_str(), field.value)?;
+    }
+    Ok(rendered)
 }
 
 const INTERFACE_FIELD_NAMES: [[&str; 7]; 4] = [
