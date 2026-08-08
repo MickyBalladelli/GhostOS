@@ -10,7 +10,7 @@ use synos_vm::{
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
     HardwareAcceleration, TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig,
-    COM1_PORT, COM2_PORT,
+    SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -660,7 +660,9 @@ fn run(mut cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
-const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG1";
+const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG2";
+const LEGACY_MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG1";
+const MIGRATION_PROTOCOL_VERSION: u32 = 2;
 const MAX_MIGRATION_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
 fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
@@ -670,12 +672,20 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 .map_err(|error| format!("cannot read snapshot {}: {error}", snapshot.display()))?;
             let snapshot_value = synos_vm::VmSnapshot::from_bytes(&bytes)
                 .map_err(|error| format!("cannot validate snapshot {}: {error}", snapshot.display()))?;
-            let bytes = snapshot_value.to_bytes();
             let mut stream = TcpStream::connect(&address)
                 .map_err(|error| format!("cannot connect to migration target {address}: {error}"))?;
             stream
                 .write_all(MIGRATION_MAGIC)
-                .and_then(|_| stream.write_all(&(bytes.len() as u64).to_le_bytes()))
+                .and_then(|_| write_migration_u32(&mut stream, MIGRATION_PROTOCOL_VERSION))
+                .and_then(|_| write_migration_schema(&mut stream, SnapshotSchema::local()))
+                .map_err(|error| format!("migration schema handshake failed: {error}"))?;
+            let negotiated = read_migration_response(&mut stream)?;
+            let mut wire_snapshot = snapshot_value;
+            wire_snapshot.format_version = negotiated.max_version;
+            wire_snapshot.feature_flags = negotiated.features;
+            let bytes = wire_snapshot.to_bytes();
+            stream
+                .write_all(&(bytes.len() as u64).to_le_bytes())
                 .and_then(|_| stream.write_all(&bytes))
                 .map_err(|error| format!("migration send failed: {error}"))?;
             println!("sent VM checkpoint {} to {address}", snapshot.display());
@@ -698,9 +708,26 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             stream
                 .read_exact(&mut magic)
                 .map_err(|error| format!("migration header read failed: {error}"))?;
-            if &magic != MIGRATION_MAGIC {
+            let legacy_protocol = &magic == LEGACY_MIGRATION_MAGIC;
+            if &magic != MIGRATION_MAGIC && !legacy_protocol {
                 return Err("migration stream has an invalid header".to_string());
             }
+            let negotiated = if legacy_protocol {
+                SnapshotSchema::for_version(1)
+            } else {
+                let protocol = read_migration_u32(&mut stream)?;
+                if protocol != MIGRATION_PROTOCOL_VERSION {
+                    return Err(format!("unsupported migration protocol {protocol}"));
+                }
+                let peer_schema = read_migration_schema(&mut stream)?;
+                let negotiated = SnapshotSchema::negotiate(peer_schema)
+                    .map_err(|error| format!("migration schema negotiation failed: {error}"))?;
+                stream
+                    .write_all(&[0])
+                    .and_then(|_| write_migration_schema(&mut stream, negotiated))
+                    .map_err(|error| format!("migration schema response failed: {error}"))?;
+                negotiated
+            };
             let mut length = [0u8; 8];
             stream
                 .read_exact(&mut length)
@@ -715,8 +742,13 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             stream
                 .read_exact(&mut bytes)
                 .map_err(|error| format!("migration payload read failed: {error}"))?;
-            synos_vm::VmSnapshot::from_bytes(&bytes)
+            let received = synos_vm::VmSnapshot::from_bytes(&bytes)
                 .map_err(|error| format!("received invalid VM checkpoint: {error}"))?;
+            if received.format_version != negotiated.max_version
+                || !negotiated.accepts(received.format_version, received.feature_flags)
+            {
+                return Err("received checkpoint does not match negotiated schema".to_string());
+            }
             let partial = snapshot.with_extension("synos-migration-partial");
             std::fs::write(&partial, bytes)
                 .map_err(|error| format!("cannot write migration checkpoint: {error}"))?;
@@ -726,6 +758,54 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn write_migration_u32(stream: &mut TcpStream, value: u32) -> std::io::Result<()> {
+    stream.write_all(&value.to_le_bytes())
+}
+
+fn read_migration_u32(stream: &mut TcpStream) -> Result<u32, String> {
+    let mut bytes = [0u8; 4];
+    stream
+        .read_exact(&mut bytes)
+        .map_err(|error| format!("migration schema read failed: {error}"))?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn write_migration_schema(stream: &mut TcpStream, schema: SnapshotSchema) -> std::io::Result<()> {
+    write_migration_u32(stream, schema.min_version)?;
+    write_migration_u32(stream, schema.max_version)?;
+    stream.write_all(&schema.features.bits().to_le_bytes())
+}
+
+fn read_migration_schema(stream: &mut TcpStream) -> Result<SnapshotSchema, String> {
+    let min_version = read_migration_u32(stream)?;
+    let max_version = read_migration_u32(stream)?;
+    let mut features = [0u8; 8];
+    stream
+        .read_exact(&mut features)
+        .map_err(|error| format!("migration feature read failed: {error}"))?;
+    let raw_features = u64::from_le_bytes(features);
+    let unsupported = raw_features & !SnapshotFeatures::ALL.bits();
+    if min_version > max_version || unsupported != 0 {
+        return Err("migration peer advertised an invalid schema".to_string());
+    }
+    Ok(SnapshotSchema {
+        min_version,
+        max_version,
+        features: SnapshotFeatures::from_bits_retain(raw_features),
+    })
+}
+
+fn read_migration_response(stream: &mut TcpStream) -> Result<SnapshotSchema, String> {
+    let mut status = [0u8; 1];
+    stream
+        .read_exact(&mut status)
+        .map_err(|error| format!("migration schema response read failed: {error}"))?;
+    if status[0] != 0 {
+        return Err("migration target rejected the snapshot schema".to_string());
+    }
+    read_migration_schema(stream)
 }
 
 struct MonitorSession {

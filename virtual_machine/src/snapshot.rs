@@ -5,14 +5,100 @@ use crate::devices::{InterruptControllerState, LocalApicState};
 use crate::firmware::bios::BiosState;
 use crate::memory::{MmuState, PAGE_SIZE};
 use crate::Vm;
+use bitflags::bitflags;
 use std::fs;
 use std::path::Path;
 
 const MAGIC: &[u8; 8] = b"SYNOVM01";
-pub const SNAPSHOT_FORMAT_VERSION: u32 = 1;
+pub const SNAPSHOT_FORMAT_VERSION: u32 = 2;
+pub const SNAPSHOT_MIN_FORMAT_VERSION: u32 = 1;
+pub const MAX_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const MAX_ITEMS: usize = 16 * 1024 * 1024;
 
 pub type SnapshotId = u64;
+
+bitflags! {
+    /// State components understood by the snapshot wire format.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct SnapshotFeatures: u64 {
+        const CPU_STATE = 1 << 0;
+        const MMU_STATE = 1 << 1;
+        const INTERRUPT_CONTROLLER = 1 << 2;
+        const APIC_STATE = 1 << 3;
+        const BIOS_STATE = 1 << 4;
+        const ALL = Self::CPU_STATE.bits()
+            | Self::MMU_STATE.bits()
+            | Self::INTERRUPT_CONTROLLER.bits()
+            | Self::APIC_STATE.bits()
+            | Self::BIOS_STATE.bits();
+    }
+}
+
+/// Version and feature range advertised by a snapshot or migration peer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotSchema {
+    pub min_version: u32,
+    pub max_version: u32,
+    pub features: SnapshotFeatures,
+}
+
+impl SnapshotSchema {
+    pub const fn local() -> Self {
+        Self {
+            min_version: SNAPSHOT_MIN_FORMAT_VERSION,
+            max_version: SNAPSHOT_FORMAT_VERSION,
+            features: SnapshotFeatures::ALL,
+        }
+    }
+
+    pub const fn for_version(version: u32) -> Self {
+        Self {
+            min_version: version,
+            max_version: version,
+            features: SnapshotFeatures::ALL,
+        }
+    }
+
+    pub fn negotiate(peer: Self) -> Result<Self, SnapshotError> {
+        let min_version = self_min(SnapshotSchema::local().min_version, peer.min_version);
+        let max_version = self_max(SnapshotSchema::local().max_version, peer.max_version);
+        if min_version > max_version {
+            return Err(SnapshotError::SchemaMismatch {
+                local_min: SNAPSHOT_MIN_FORMAT_VERSION,
+                local_max: SNAPSHOT_FORMAT_VERSION,
+                peer_min: peer.min_version,
+                peer_max: peer.max_version,
+            })
+        }
+        let version = max_version;
+        let features = SnapshotSchema::local().features & peer.features;
+        if version >= 2 && !features.contains(SnapshotFeatures::ALL) {
+            return Err(SnapshotError::MissingFeatures {
+                missing: (SnapshotFeatures::ALL - features).bits(),
+            })
+        }
+        Ok(Self {
+            min_version: version,
+            max_version: version,
+            features,
+        })
+    }
+
+    pub fn accepts(&self, version: u32, features: SnapshotFeatures) -> bool {
+        version >= self.min_version
+            && version <= self.max_version
+            && (version < 2 || features.contains(SnapshotFeatures::ALL))
+            && (features - self.features).is_empty()
+    }
+}
+
+const fn self_min(left: u32, right: u32) -> u32 {
+    if left > right { left } else { right }
+}
+
+const fn self_max(left: u32, right: u32) -> u32 {
+    if left < right { left } else { right }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {
@@ -22,6 +108,19 @@ pub enum SnapshotError {
     InvalidFormat,
     #[error("unsupported snapshot version {0}")]
     VersionMismatch(u32),
+    #[error("snapshot schema ranges do not overlap: local {local_min}..={local_max}, peer {peer_min}..={peer_max}")]
+    SchemaMismatch {
+        local_min: u32,
+        local_max: u32,
+        peer_min: u32,
+        peer_max: u32,
+    },
+    #[error("snapshot requires unsupported feature bits 0x{unsupported:016x}")]
+    UnsupportedFeatures { unsupported: u64 },
+    #[error("snapshot is missing required feature bits 0x{missing:016x}")]
+    MissingFeatures { missing: u64 },
+    #[error("snapshot exceeds the {max} byte decode limit")]
+    SizeLimit { max: u64 },
     #[error("snapshot belongs to a VM with {expected} bytes of RAM, not {actual}")]
     IncompatibleMemory { expected: usize, actual: usize },
     #[error("snapshot state is invalid")]
@@ -38,6 +137,7 @@ pub enum SnapshotError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VmSnapshot {
     pub format_version: u32,
+    pub feature_flags: SnapshotFeatures,
     pub memory_size: usize,
     pub cpu: CpuState,
     pub mmu: MmuState,
@@ -54,6 +154,7 @@ impl VmSnapshot {
     pub fn capture(vm: &Vm) -> Self {
         Self {
             format_version: SNAPSHOT_FORMAT_VERSION,
+            feature_flags: SnapshotFeatures::ALL,
             memory_size: vm.mmu.ram_size(),
             cpu: vm.cpu.state,
             mmu: vm.mmu.snapshot_state(),
@@ -71,6 +172,9 @@ impl VmSnapshot {
         let mut writer = Writer::new();
         writer.bytes(MAGIC);
         writer.u32(self.format_version);
+        if self.format_version >= 2 {
+            writer.u64(self.feature_flags.bits());
+        }
         writer.u64(self.memory_size as u64);
         encode_cpu(&mut writer, &self.cpu);
         encode_mmu(&mut writer, &self.mmu);
@@ -91,15 +195,46 @@ impl VmSnapshot {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, SnapshotError> {
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_SNAPSHOT_BYTES {
+            return Err(SnapshotError::SizeLimit {
+                max: MAX_SNAPSHOT_BYTES,
+            })
+        }
         let mut reader = Reader::new(bytes);
         if reader.bytes_exact(8)? != MAGIC {
             return Err(SnapshotError::InvalidFormat)
         }
         let format_version = reader.u32()?;
-        if format_version != SNAPSHOT_FORMAT_VERSION {
+        let feature_flags = match format_version {
+            1 => SnapshotFeatures::ALL,
+            2 => {
+                let raw = reader.u64()?;
+                let unsupported = raw & !SnapshotFeatures::ALL.bits();
+                if unsupported != 0 {
+                    return Err(SnapshotError::UnsupportedFeatures { unsupported })
+                }
+                let flags = SnapshotFeatures::from_bits_retain(raw);
+                if !flags.contains(SnapshotFeatures::ALL) {
+                    return Err(SnapshotError::MissingFeatures {
+                        missing: (SnapshotFeatures::ALL - flags).bits(),
+                    })
+                }
+                flags
+            }
+            _ => {
+                return Err(SnapshotError::VersionMismatch(format_version))
+            }
+        };
+        if !(SNAPSHOT_MIN_FORMAT_VERSION..=SNAPSHOT_FORMAT_VERSION).contains(&format_version) {
             return Err(SnapshotError::VersionMismatch(format_version))
         }
-        let memory_size = reader.u64()? as usize;
+        let memory_size = reader.u64()?;
+        if memory_size > MAX_SNAPSHOT_BYTES {
+            return Err(SnapshotError::SizeLimit {
+                max: MAX_SNAPSHOT_BYTES,
+            })
+        }
+        let memory_size = usize::try_from(memory_size).map_err(|_| SnapshotError::InvalidFormat)?;
         let cpu = decode_cpu(&mut reader)?;
         let mmu = decode_mmu(&mut reader)?;
         if mmu.ram.len() != memory_size {
@@ -120,6 +255,7 @@ impl VmSnapshot {
         }
         Ok(Self {
             format_version,
+            feature_flags,
             memory_size,
             cpu,
             mmu,
@@ -147,6 +283,14 @@ impl VmSnapshot {
 
     pub fn checksum(&self) -> u64 {
         checksum(&self.to_bytes())
+    }
+
+    pub fn schema(&self) -> SnapshotSchema {
+        SnapshotSchema {
+            min_version: self.format_version,
+            max_version: self.format_version,
+            features: self.feature_flags,
+        }
     }
 
     /// Build a page-level delta from `self` to `target`.
@@ -177,6 +321,7 @@ impl VmSnapshot {
         Ok(SnapshotDiff {
             base_checksum: self.checksum(),
             target_memory_size: target.memory_size,
+            target_feature_flags: target.feature_flags,
             target_cpu: target.cpu,
             target_mmu,
             target_interrupt_controller: target.interrupt_controller.clone(),
@@ -193,8 +338,13 @@ impl VmSnapshot {
 
 impl VmSnapshot {
     pub fn restore_into(&self, vm: &mut Vm) -> Result<(), SnapshotError> {
-        if self.format_version != SNAPSHOT_FORMAT_VERSION {
+        if !(SNAPSHOT_MIN_FORMAT_VERSION..=SNAPSHOT_FORMAT_VERSION).contains(&self.format_version) {
             return Err(SnapshotError::VersionMismatch(self.format_version))
+        }
+        if !self.feature_flags.contains(SnapshotFeatures::ALL) {
+            return Err(SnapshotError::MissingFeatures {
+                missing: (SnapshotFeatures::ALL - self.feature_flags).bits(),
+            })
         }
         if vm.mmu.ram_size() != self.memory_size {
             return Err(SnapshotError::IncompatibleMemory {
@@ -232,6 +382,7 @@ pub struct SnapshotPage {
 pub struct SnapshotDiff {
     pub base_checksum: u64,
     pub target_memory_size: usize,
+    pub target_feature_flags: SnapshotFeatures,
     pub target_cpu: CpuState,
     pub target_mmu: MmuState,
     pub target_interrupt_controller: InterruptControllerState,
@@ -271,7 +422,12 @@ impl SnapshotDiff {
             mmu.ram[start..end].copy_from_slice(&page.data)
         }
         Ok(VmSnapshot {
-            format_version: SNAPSHOT_FORMAT_VERSION,
+            format_version: if self.target_feature_flags == SnapshotFeatures::ALL {
+                SNAPSHOT_FORMAT_VERSION
+            } else {
+                base.format_version
+            },
+            feature_flags: self.target_feature_flags,
             memory_size: self.target_memory_size,
             cpu: self.target_cpu,
             mmu,
@@ -782,52 +938,53 @@ impl<'a> Reader<'a> {
         usize::try_from(self.u64()?).map_err(|_| SnapshotError::InvalidFormat)
     }
 
-    fn count(&mut self) -> Result<usize, SnapshotError> {
+    fn count_at_least(&mut self, minimum_bytes: usize) -> Result<usize, SnapshotError> {
         let count = self.usize()?;
-        if count > MAX_ITEMS {
+        let remaining = self.bytes.len().saturating_sub(self.offset);
+        if count > MAX_ITEMS || count > remaining / minimum_bytes.max(1) {
             return Err(SnapshotError::InvalidFormat)
         }
         Ok(count)
     }
 
     fn bytes_vec(&mut self) -> Result<Vec<u8>, SnapshotError> {
-        let len = self.count()?;
+        let len = self.count_at_least(1)?;
         Ok(self.take(len)?.to_vec())
     }
 
     fn usize_vec(&mut self) -> Result<Vec<usize>, SnapshotError> {
-        let count = self.count()?;
+        let count = self.count_at_least(8)?;
         (0..count).map(|_| self.usize()).collect()
     }
 
     fn u64_vec(&mut self) -> Result<Vec<u64>, SnapshotError> {
-        let count = self.count()?;
+        let count = self.count_at_least(8)?;
         (0..count).map(|_| self.u64()).collect()
     }
 
     fn u64_pairs(&mut self) -> Result<Vec<(u64, u64)>, SnapshotError> {
-        let count = self.count()?;
+        let count = self.count_at_least(16)?;
         (0..count)
             .map(|_| Ok((self.u64()?, self.u64()?)))
             .collect()
     }
 
     fn u64_pairs_u8(&mut self) -> Result<Vec<(u8, u64)>, SnapshotError> {
-        let count = self.count()?;
+        let count = self.count_at_least(9)?;
         (0..count)
             .map(|_| Ok((self.u8()?, self.u64()?)))
             .collect()
     }
 
     fn u64_usize_pairs(&mut self) -> Result<Vec<(u64, usize)>, SnapshotError> {
-        let count = self.count()?;
+        let count = self.count_at_least(16)?;
         (0..count)
             .map(|_| Ok((self.u64()?, self.usize()?)))
             .collect()
     }
 
     fn u64_u64_u64_bool(&mut self) -> Result<Vec<(u64, u64, u64, bool)>, SnapshotError> {
-        let count = self.count()?;
+        let count = self.count_at_least(25)?;
         (0..count)
             .map(|_| Ok((self.u64()?, self.u64()?, self.u64()?, self.bool()?)))
             .collect()
