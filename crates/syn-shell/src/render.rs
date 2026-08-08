@@ -44,17 +44,17 @@ fn render_list(
     if is_removed_output(output) {
         return render_removed(output)
     }
-    if is_metadata_output(output) {
-        return render_metadata(output)
-    }
-    if is_uptime_output(output) {
-        return render_uptime(output)
-    }
     if is_show_interfaces_output(output) {
         return render_interfaces(output)
     }
     if is_set_interface_output(output) {
         return render_set_interface(output)
+    }
+    if is_metadata_output(output) {
+        return render_metadata(output)
+    }
+    if is_uptime_output(output) {
+        return render_uptime(output)
     }
 
     let mut rendered = Text::empty();
