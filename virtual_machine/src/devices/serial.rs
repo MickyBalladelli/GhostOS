@@ -63,6 +63,7 @@ pub struct Serial16550 {
     host_last_was_cr: bool,
     host_output: Vec<u8>,
     rx_buffer: VecDeque<u8>,
+    pending_input: VecDeque<u8>,
     output: Vec<u8>,
     panic_marker_progress: usize,
     panic_detected: bool,
@@ -89,6 +90,7 @@ impl Serial16550 {
             host_last_was_cr: false,
             host_output: Vec::with_capacity(4096),
             rx_buffer: VecDeque::new(),
+            pending_input: VecDeque::new(),
             output: Vec::new(),
             panic_marker_progress: 0,
             panic_detected: false,
@@ -112,6 +114,7 @@ impl Serial16550 {
 
     /// Put host input into the UART receive FIFO.
     pub fn push_input(&mut self, bytes: &[u8]) {
+        self.refill_rx_buffer();
         let was_empty = self.rx_buffer.is_empty();
         for &byte in bytes {
             if self.rx_buffer.len() >= FIFO_SIZE {
@@ -125,8 +128,23 @@ impl Serial16550 {
         }
     }
 
+    /// Queue host input without losing bytes when a paste is larger than the
+    /// emulated UART FIFO. The guest still sees a 16550-sized FIFO; excess
+    /// input waits here until the guest reads it.
+    pub(crate) fn push_input_lossless(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return
+        }
+        let was_empty = self.rx_buffer.is_empty();
+        self.pending_input.extend(bytes.iter().copied());
+        self.refill_rx_buffer();
+        if was_empty && !self.rx_buffer.is_empty() {
+            self.signal_receive_irq()
+        }
+    }
+
     pub fn input_pending(&self) -> bool {
-        !self.rx_buffer.is_empty()
+        !self.rx_buffer.is_empty() || !self.pending_input.is_empty()
     }
 
     pub fn output(&self) -> &[u8] {
@@ -193,6 +211,15 @@ impl Serial16550 {
             self.panic_marker_progress = usize::from(byte == GUEST_PANIC_MARKER[0]);
         }
     }
+
+    fn refill_rx_buffer(&mut self) {
+        while self.rx_buffer.len() < FIFO_SIZE {
+            let Some(byte) = self.pending_input.pop_front() else {
+                break
+            };
+            self.rx_buffer.push_back(byte)
+        }
+    }
 }
 
 impl PortDevice for Serial16550 {
@@ -206,7 +233,9 @@ impl PortDevice for Serial16550 {
                 if self.dlab {
                     self.divisor_low
                 } else {
-                    self.rx_buffer.pop_front().unwrap_or(0)
+                    let byte = self.rx_buffer.pop_front().unwrap_or(0);
+                    self.refill_rx_buffer();
+                    byte
                 }
             }
             REG_IER => {
@@ -385,6 +414,22 @@ mod tests {
         assert_ne!(s.read(base + REG_LSR, 1).unwrap() as u8 & LSR_OVERRUN, 0);
         assert_eq!(apic.borrow_mut().pending_vector(), Some(0x24));
         s.reset();
+        assert!(!s.input_pending());
+    }
+
+    #[test]
+    fn lossless_host_input_drains_past_fifo_capacity() {
+        let base = 0x3F8;
+        let mut s = Serial16550::new(base);
+        let input = b"0123456789abcdefghijklmnop\r";
+        s.push_input_lossless(input);
+
+        let mut received = Vec::new();
+        for _ in input {
+            received.push(s.read(base, 1).unwrap() as u8);
+        }
+
+        assert_eq!(received, input);
         assert!(!s.input_pending());
     }
 

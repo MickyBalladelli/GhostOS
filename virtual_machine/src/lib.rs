@@ -1326,7 +1326,7 @@ impl Vm {
             self.cpu.state.halted = false
         }
         if let Some(serial) = &self.serial {
-            serial.borrow_mut().push_input(bytes)
+            serial.borrow_mut().push_input_lossless(bytes)
         }
     }
 
