@@ -420,4 +420,4 @@ cargo build --release
 - [x] Make SHOW INTERFACES output easy to read
 - [x] Make SET INTERFACE eth0 /dhcp easy to read
 ### 2.0 NETWORK command
-- [ ] Make SHOW INTERFACE easy to read
+- [x] Make SHOW INTERFACE easy to read

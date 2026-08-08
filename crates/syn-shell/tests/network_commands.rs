@@ -96,6 +96,7 @@ fn network_commands_use_single_noun_names() {
         ("SHOW NETWORK", SHOW_NETWORK_ROUTE),
         ("SHOW INTERFACES", SHOW_INTERFACES_ROUTE),
         ("SHOW INTERFACE", SHOW_INTERFACES_ROUTE),
+        ("SHOW INTERFACE eth0", SHOW_INTERFACES_ROUTE),
         ("SHOW ROUTES", SHOW_ROUTES_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
@@ -256,6 +257,22 @@ fn show_and_set_commands_emit_structured_network_output() {
     let hostname = execute(&mut executor, "SET HOSTNAME node-1").unwrap();
     assert!(has_text(&hostname, "hostname", "node-1"));
     assert!(has_unsigned(&hostname, "generation", 2));
+}
+
+#[test]
+fn show_interface_selects_one_named_interface() {
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
+    let interface = execute(&mut executor, "SHOW INTERFACE eth0").unwrap();
+    assert!(has_text(&interface, "operation", "show-interface"));
+    assert!(has_text(&interface, "interface1-name", "eth0"));
+    assert!(has_text(&interface, "interface1-address", "10.0.0.2"));
+    assert_eq!(
+        interface
+            .fields()
+            .filter(|field| field.name.as_str().starts_with("interface2-"))
+            .count(),
+        0
+    );
 }
 
 #[test]
@@ -576,4 +593,3 @@ impl NetworkSource for FakeNetwork {
         Ok(self.view)
     }
 }
-

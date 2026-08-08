@@ -109,7 +109,8 @@ fn is_uptime_output(output: &StructuredOutput) -> bool {
 fn is_show_interfaces_output(output: &StructuredOutput) -> bool {
     matches!(
         find_value(output, "operation"),
-        Some(OutputValue::Text(value)) if value.as_str() == "show-interfaces"
+        Some(OutputValue::Text(value))
+            if value.as_str() == "show-interfaces" || value.as_str() == "show-interface"
     )
 }
 
@@ -196,9 +197,20 @@ fn render_interfaces(
 ) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
     let mut rendered = Text::empty();
     render_error_status(output, &mut rendered)?;
-    rendered.push_str("Interfaces: ")?;
-    if let Some(count) = find_value(output, "interface-count") {
-        write_value(&mut rendered, count, false)?;
+    let singular = matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-interface"
+    );
+    if singular {
+        rendered.push_str("Interface: ")?;
+        if let Some(name) = find_value(output, "interface1-name") {
+            write_value(&mut rendered, name, false)?;
+        }
+    } else {
+        rendered.push_str("Interfaces: ")?;
+        if let Some(count) = find_value(output, "interface-count") {
+            write_value(&mut rendered, count, false)?;
+        }
     }
     rendered.push_str(" (generation ")?;
     if let Some(generation) = find_value(output, "generation") {

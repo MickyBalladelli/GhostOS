@@ -37,8 +37,8 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
     },
     NetworkCommandHelp {
         name: "SHOW-INTERFACES",
-        synopsis: "SHOW INTERFACES",
-        description: "Show bounded interface settings, address mode, link state, and DHCP lease details.",
+        synopsis: "SHOW INTERFACES [name]",
+        description: "Show all interfaces or one named interface, including address mode, link state, and DHCP lease details.",
         aliases: "INTERFACES",
         qualifiers: "",
     },
@@ -219,7 +219,11 @@ pub fn register_network_commands<const CAPACITY: usize>(
         route(SHOW_NETWORK_ROUTE),
     )?;
     registry.register(
-        CommandSpec::new("SHOW-INTERFACES", &[]).map_err(|_| Error::InvalidValue)?,
+        CommandSpec::new(
+            "SHOW-INTERFACES",
+            &[positional("INTERFACE", ArgumentKind::Text, false)?],
+        )
+        .map_err(|_| Error::InvalidValue)?,
         route(SHOW_INTERFACES_ROUTE),
     )?;
     registry.register(
@@ -305,7 +309,16 @@ pub fn dispatch_network_command<Source: NetworkSource>(
 ) -> Result<StructuredOutput, Status> {
     match command.route.raw() {
         SHOW_NETWORK_ROUTE => source.show_network().and_then(network_output),
-        SHOW_INTERFACES_ROUTE => source.show_interfaces().and_then(interfaces_output),
+        SHOW_INTERFACES_ROUTE => {
+            let interface = command.get_text("INTERFACE");
+            if interface.is_some_and(str::is_empty) {
+                return Err(Status::INVALID_ARGUMENT);
+            }
+            source.show_interfaces().and_then(|view| match interface {
+                Some(name) => show_interface_output(view, name),
+                None => interfaces_output(view),
+            })
+        }
         SHOW_ROUTES_ROUTE => source.show_routes().and_then(routes_output),
         SET_HOSTNAME_ROUTE => {
             let hostname = command
@@ -572,6 +585,27 @@ pub fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> 
     if let Some(next) = omitted.or(view.next_interface) {
         insert(&mut output, "next-interface", OutputValue::Unsigned(next))?;
     }
+    Ok(output)
+}
+
+pub fn show_interface_output(
+    view: NetworkView,
+    name: &str,
+) -> Result<StructuredOutput, Status> {
+    let interface = view
+        .interfaces
+        .iter()
+        .flatten()
+        .find(|interface| interface.name.as_str().eq_ignore_ascii_case(name))
+        .copied()
+        .ok_or(Status::NOT_FOUND)?;
+    let mut selected = view;
+    selected.interfaces = [None; MAX_NETWORK_OUTPUT_ROWS];
+    selected.interfaces[0] = Some(interface);
+    selected.interface_count = 1;
+    selected.next_interface = None;
+    let mut output = interfaces_output(selected)?;
+    insert_text(&mut output, "operation", "show-interface")?;
     Ok(output)
 }
 
