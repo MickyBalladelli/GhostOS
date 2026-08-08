@@ -14,7 +14,7 @@ use synos_vm::{
     run_synos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
-    HardwareAcceleration, TerminalExit, TerminalInputMode, TerminalSession, Vm, VmConfig,
+    GuestInputMode, HardwareAcceleration, TerminalExit, TerminalSession, Vm, VmConfig,
     snapshot_digest, SnapshotAuthKey, SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
 };
 
@@ -27,7 +27,7 @@ struct Cli {
     efi_path: Option<PathBuf>,
     integration: bool,
     terminal: Option<bool>,
-    input_mode: TerminalInputMode,
+    input_mode: GuestInputMode,
     disk_options: DiskOptions,
     snapshot_save: Option<PathBuf>,
     snapshot_restore: Option<PathBuf>,
@@ -158,7 +158,7 @@ where
     let mut efi_path = None;
     let mut integration = false;
     let mut terminal = None;
-    let mut input_mode = TerminalInputMode::Serial;
+    let mut input_mode = GuestInputMode::Serial;
     let mut command = Command::Run;
     let mut disk_options = DiskOptions::default();
     let mut snapshot_save = None;
@@ -219,8 +219,8 @@ where
             "--non-interactive" | "--no-terminal" => terminal = Some(false),
             "--input" => {
                 input_mode = match next_value(&mut args, "--input")?.to_ascii_lowercase().as_str() {
-                    "serial" => TerminalInputMode::Serial,
-                    "ps2" | "keyboard" => TerminalInputMode::Ps2,
+                    "serial" => GuestInputMode::Serial,
+                    "ps2" | "keyboard" => GuestInputMode::Ps2,
                     value => return Err(format!("invalid input mode `{value}`; use `serial` or `ps2`")),
                 };
             }
@@ -275,7 +275,7 @@ where
         return Err("--integration requires --kernel <path>".to_string());
     }
     if terminal == Some(true)
-        && input_mode == TerminalInputMode::Serial
+        && input_mode == GuestInputMode::Serial
         && !config.enable_serial
     {
         return Err("--interactive requires serial output".to_string());
@@ -2233,7 +2233,7 @@ mod tests {
         assert_eq!(cli.config.memory_size, 64 * 1024 * 1024);
         assert_eq!(cli.config.smp_cores, 2);
         assert_eq!(cli.config.serial_port, COM2_PORT);
-        assert_eq!(cli.input_mode, TerminalInputMode::Ps2);
+        assert_eq!(cli.input_mode, GuestInputMode::Ps2);
         assert_eq!(cli.terminal, Some(false));
         assert_eq!(cli.config.max_steps, Some(12));
     }

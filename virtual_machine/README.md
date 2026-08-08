@@ -205,6 +205,10 @@ settings. Select `--serial-port com1`, `--serial-port com2`, or a hex I/O base;
 COM1 (`0x3f8`) is the default. Guests using the PS/2 keyboard path can use
 `--input ps2` instead of the default `--input serial`.
 
+`--input` selects the guest device target. It does not change host terminal
+policy: terminal bytes, EOF, and resize events are recorded before the VM
+routes them to serial or PS/2 input.
+
 Input is passed through as terminal bytes, including Enter, Tab, Ctrl-D, and
 ANSI escape sequences. Backspace is normalized to BS. Ctrl-C is sent to the
 guest shell and does not stop the VM. EOF sends Ctrl-D to the guest. Only guest
@@ -225,6 +229,12 @@ Terminal behavior is platform-defined:
 An external termination signal restores the saved host terminal state before
 the process exits. The PS/2 input path does not receive serial resize control
 sequences.
+
+`TerminalSession` records host-policy events in a deterministic
+`TerminalTranscript`. Call `transcript()` during or after a session, then
+`replay()` to get the same normalized input and resize events without reading
+stdin or querying host terminal state. Serial resize escape bytes and PS/2
+scancodes are added only by the guest input router, not by terminal policy.
 
 ## Documentation and examples
 

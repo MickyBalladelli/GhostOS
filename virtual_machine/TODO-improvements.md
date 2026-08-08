@@ -75,7 +75,7 @@ remaining proof, portability, safety, and fidelity work.
       resize, escape sequences, output flushing, and Ctrl-C.
 - [x] Add terminal tests with fake input/output and a child-process cleanup
       harness. Prove no host terminal state remains changed after every exit.
-- [ ] Separate terminal policy from serial and PS/2 emulation, and expose a
+- [x] Separate terminal policy from serial and PS/2 emulation, and expose a
       deterministic input transcript for replay.
 - [ ] Add structured terminal session diagnostics without writing guest escape
       bytes into host error messages.

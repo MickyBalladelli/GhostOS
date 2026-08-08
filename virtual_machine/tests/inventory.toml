@@ -272,9 +272,14 @@ path = "src/terminal.rs"
 tests = [
     "vm.terminal.translation-ps2-fallback",
     "vm.terminal.fake-input-output",
+    "vm.terminal.transcript-replay",
     "vm.terminal.exit-cleanup",
     "vm.foundation.cleanup-golden",
 ]
+
+[[source]]
+path = "src/input.rs"
+tests = ["vm.terminal.translation-ps2-fallback"]
 
 [[source]]
 path = "src/terminal_platform.rs"
@@ -318,6 +323,11 @@ tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
 id = "vm.terminal.fake-input-output"
+file = "tests/terminal_cleanup.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.terminal.transcript-replay"
 file = "tests/terminal_cleanup.rs"
 tiers = ["fast-unit"]
 
@@ -542,6 +552,11 @@ source = "src/terminal.rs"
 tests = ["vm.terminal.translation-ps2-fallback"]
 
 [[public_api]]
+name = "ascii_to_scancodes and serial_resize_sequence"
+source = "src/input.rs"
+tests = ["vm.terminal.translation-ps2-fallback"]
+
+[[public_api]]
 name = "LoopbackHub::{set_link_up,queued_packets,clear}"
 source = "src/net/backend.rs"
 tests = ["vm.network.loopback-routing-isolation-faults"]
@@ -567,9 +582,14 @@ source = "src/boot/mod.rs"
 tests = ["vm.foundation.cleanup-golden"]
 
 [[public_api]]
-name = "TerminalSession::{new,new_with_io,poll,write_output,flush_output}"
+name = "TerminalSession::{new,new_with_io,poll,transcript,write_output,flush_output}"
 source = "src/terminal.rs"
 tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+
+[[public_api]]
+name = "TerminalTranscript::{events,replay}"
+source = "src/terminal.rs"
+tests = ["vm.terminal.transcript-replay"]
 
 [[public_api]]
 name = "VmSnapshot::{capture,to_bytes,from_bytes,restore_into}"

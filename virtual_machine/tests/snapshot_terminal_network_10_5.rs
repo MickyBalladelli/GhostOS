@@ -12,7 +12,7 @@ use synos_vm::net::NetError;
 use synos_vm::{
     ascii_to_scancodes, translate_input_bytes, DiskController, DiskSpec, FirmwareMode,
     LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue, SnapshotChain,
-    SnapshotError, TerminalInputMode, Vm, VmConfig,
+    GuestInputMode, SnapshotError, Vm, VmConfig,
 };
 
 fn frame(destination: MacAddress, source: MacAddress) -> Vec<u8> {
@@ -119,7 +119,7 @@ fn terminal_translation_and_ps2_fallback_are_stable() {
         translate_input_bytes(&input),
         vec![b'h', b'i', b'\r', 0x08, b'\t', 0x03, 0x04, 0x1B, b'[', b'A']
     );
-    assert_eq!(TerminalInputMode::Serial, TerminalInputMode::Serial);
+    assert_eq!(GuestInputMode::Serial, GuestInputMode::Serial);
     assert_eq!(
         ascii_to_scancodes(0x03),
         vec![0x1D, 0x2E, 0xAE, 0x9D]

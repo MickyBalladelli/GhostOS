@@ -43,6 +43,54 @@ enum InputEvent {
 #[derive(Debug, Default)]
 pub struct TerminalInput {
     pub bytes: Vec<u8>,
+    pub resize: Option<TerminalResize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalResize {
+    pub rows: u16,
+    pub columns: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalTranscriptEvent {
+    Input { raw: Vec<u8>, bytes: Vec<u8> },
+    Eof { bytes: Vec<u8> },
+    Resize(TerminalResize),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalTranscript {
+    events: Vec<TerminalTranscriptEvent>,
+}
+
+impl TerminalTranscript {
+    pub fn events(&self) -> &[TerminalTranscriptEvent] {
+        &self.events
+    }
+
+    /// Replay terminal policy events in deterministic order. The result is
+    /// independent of wall clock, host terminal size, and process input.
+    pub fn replay(&self) -> Vec<TerminalInput> {
+        self.events
+            .iter()
+            .map(|event| match event {
+                TerminalTranscriptEvent::Input { bytes, .. }
+                | TerminalTranscriptEvent::Eof { bytes } => TerminalInput {
+                    bytes: bytes.clone(),
+                    resize: None,
+                },
+                TerminalTranscriptEvent::Resize(resize) => TerminalInput {
+                    bytes: Vec::new(),
+                    resize: Some(*resize),
+                },
+            })
+            .collect()
+    }
+
+    fn record(&mut self, event: TerminalTranscriptEvent) {
+        self.events.push(event)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,17 +98,12 @@ pub enum TerminalExit {
     GuestShutdown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TerminalInputMode {
-    Serial,
-    Ps2,
-}
-
 /// Owns host input polling and terminal restoration for one VM session.
 pub struct TerminalSession {
     events: Receiver<InputEvent>,
     output: RefCell<Box<dyn Write + Send>>,
     raw_mode: RawMode,
+    transcript: RefCell<TerminalTranscript>,
     has_terminal: bool,
     last_size: Cell<Option<(u16, u16)>>,
     last_size_check: Cell<Option<Instant>>,
@@ -85,6 +128,7 @@ impl TerminalSession {
             events,
             output: RefCell::new(Box::new(io::stdout())),
             raw_mode,
+            transcript: RefCell::new(TerminalTranscript::default()),
             has_terminal: is_tty,
             last_size: Cell::new(None),
             last_size_check: Cell::new(None),
@@ -103,6 +147,7 @@ impl TerminalSession {
             events: spawn_input_reader(Box::new(input)),
             output: RefCell::new(Box::new(output)),
             raw_mode: RawMode::inactive(),
+            transcript: RefCell::new(TerminalTranscript::default()),
             has_terminal: false,
             last_size: Cell::new(None),
             last_size_check: Cell::new(None),
@@ -111,24 +156,11 @@ impl TerminalSession {
 
     /// Drain available host input without blocking the VM execution loop.
     pub fn poll(&self) -> Result<TerminalInput, TerminalError> {
-        self.poll_for_mode(TerminalInputMode::Serial)
-    }
-
-    pub fn poll_for_mode(
-        &self,
-        input_mode: TerminalInputMode,
-    ) -> Result<TerminalInput, TerminalError> {
         let mut input = TerminalInput::default();
+        let mut pending = Vec::new();
 
         while let Ok(event) = self.events.try_recv() {
-            match event {
-                InputEvent::Bytes(bytes) => input.bytes.extend(translate_input_bytes(&bytes)),
-                InputEvent::Eof => {
-                    input.bytes.push(0x04);
-                    self.raw_mode.restore()?
-                }
-                InputEvent::Error(error) => return Err(TerminalError::Io(error)),
-            }
+            pending.push(event)
         }
 
         let size_check_due = self.last_size.get().is_none()
@@ -136,23 +168,46 @@ impl TerminalSession {
                 .last_size_check
                 .get()
                 .is_none_or(|last| last.elapsed() >= TERMINAL_SIZE_POLL_INTERVAL);
-        if input_mode == TerminalInputMode::Serial
-            && self.has_terminal
-            && size_check_due
-        {
+        if self.has_terminal && size_check_due {
             self.last_size_check.set(Some(Instant::now()));
             if let Some((rows, columns)) = terminal_platform::size() {
-                let size = (rows, columns);
-                if self.last_size.get() != Some(size) {
-                    let mut resized = format!("\x1b[8;{};{}t", rows, columns).into_bytes();
-                    resized.extend(input.bytes);
-                    input.bytes = resized;
-                    self.last_size.set(Some(size));
+                let resize = TerminalResize { rows, columns };
+                if self.last_size.get() != Some((rows, columns)) {
+                    input.resize = Some(resize);
+                    self.last_size.set(Some((rows, columns)));
+                    self.transcript
+                        .borrow_mut()
+                        .record(TerminalTranscriptEvent::Resize(resize));
                 }
             }
         }
 
+        for event in pending {
+            match event {
+                InputEvent::Bytes(raw) => {
+                    let bytes = translate_input_bytes(&raw);
+                    input.bytes.extend(&bytes);
+                    self.transcript
+                        .borrow_mut()
+                        .record(TerminalTranscriptEvent::Input { raw, bytes });
+                }
+                InputEvent::Eof => {
+                    let bytes = vec![0x04];
+                    input.bytes.extend(&bytes);
+                    self.transcript
+                        .borrow_mut()
+                        .record(TerminalTranscriptEvent::Eof { bytes });
+                    self.raw_mode.restore()?
+                }
+                InputEvent::Error(error) => return Err(TerminalError::Io(error)),
+            }
+        }
+
         Ok(input)
+    }
+
+    pub fn transcript(&self) -> TerminalTranscript {
+        self.transcript.borrow().clone()
     }
 
     pub fn flush_output(&self) -> Result<(), TerminalError> {
@@ -195,7 +250,7 @@ fn spawn_input_reader(mut input: Box<dyn Read + Send>) -> Receiver<InputEvent> {
     events
 }
 
-/// Translate host terminal bytes into the guest console contract.
+/// Apply host terminal policy to raw input bytes.
 ///
 /// This stays independent from stdin so the exact input policy can be tested
 /// without taking ownership of the process terminal.
@@ -204,99 +259,6 @@ pub fn translate_input_bytes(bytes: &[u8]) -> Vec<u8> {
         .iter()
         .map(|byte| if *byte == 0x7F { 0x08 } else { *byte })
         .collect()
-}
-
-/// Convert one ASCII byte to PS/2 set-1 make/break bytes.
-pub fn ascii_to_scancodes(byte: u8) -> Vec<u8> {
-    let (byte, control) = if (1..=26).contains(&byte)
-        && !matches!(byte, b'\t' | b'\n' | b'\r' | 0x08)
-    {
-        (b'a' + byte - 1, true)
-    } else {
-        (byte, false)
-    };
-    let (code, shift) = match byte {
-        b'a'..=b'z' => {
-            let codes = [
-                0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24,
-                0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14,
-                0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,
-            ];
-            (codes[(byte - b'a') as usize], false)
-        }
-        b'A'..=b'Z' => {
-            let codes = [
-                0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24,
-                0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14,
-                0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,
-            ];
-            (codes[(byte - b'A') as usize], true)
-        }
-        b'1' => (0x02, false),
-        b'2' => (0x03, false),
-        b'3' => (0x04, false),
-        b'4' => (0x05, false),
-        b'5' => (0x06, false),
-        b'6' => (0x07, false),
-        b'7' => (0x08, false),
-        b'8' => (0x09, false),
-        b'9' => (0x0A, false),
-        b'0' => (0x0B, false),
-        b'!' => (0x02, true),
-        b'@' => (0x03, true),
-        b'#' => (0x04, true),
-        b'$' => (0x05, true),
-        b'%' => (0x06, true),
-        b'^' => (0x07, true),
-        b'&' => (0x08, true),
-        b'*' => (0x09, true),
-        b'(' => (0x0A, true),
-        b')' => (0x0B, true),
-        b' ' => (0x39, false),
-        b'\n' | b'\r' => (0x1C, false),
-        b'\t' => (0x0F, false),
-        0x08 | 0x7F => (0x0E, false),
-        b'-' => (0x0C, false),
-        b'_' => (0x0C, true),
-        b'=' => (0x0D, false),
-        b'+' => (0x0D, true),
-        b'[' => (0x1A, false),
-        b'{' => (0x1A, true),
-        b']' => (0x1B, false),
-        b'}' => (0x1B, true),
-        b'\\' => (0x2B, false),
-        b'|' => (0x2B, true),
-        b';' => (0x27, false),
-        b':' => (0x27, true),
-        b'\'' => (0x28, false),
-        b'"' => (0x28, true),
-        b',' => (0x33, false),
-        b'<' => (0x33, true),
-        b'.' => (0x34, false),
-        b'>' => (0x34, true),
-        b'/' => (0x35, false),
-        b'?' => (0x35, true),
-        b'`' => (0x29, false),
-        b'~' => (0x29, true),
-        _ => return Vec::new(),
-    };
-
-    let mut result = Vec::with_capacity(if shift || control { 4 } else { 2 });
-    if shift {
-        result.push(0x2A)
-    }
-    if control {
-        result.push(0x1D)
-    }
-    result.push(code);
-    result.push(code | 0x80);
-    if control {
-        result.push(0x9D)
-    }
-    if shift {
-        result.push(0xAA)
-    }
-    result
 }
 
 struct RawMode {

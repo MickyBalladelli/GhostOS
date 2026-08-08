@@ -10,6 +10,7 @@ pub mod execution;
 pub mod hardware_acceleration;
 pub mod snapshot;
 pub mod terminal;
+pub mod input;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -77,9 +78,13 @@ pub use snapshot::{
     SNAPSHOT_MIN_FORMAT_VERSION,
 };
 pub use terminal::{
-    ascii_to_scancodes, translate_input_bytes, TerminalError, TerminalExit, TerminalInput, TerminalInputMode,
-    TerminalSession,
+    translate_input_bytes, TerminalError, TerminalExit, TerminalInput, TerminalResize,
+    TerminalSession, TerminalTranscript, TerminalTranscriptEvent,
 };
+pub use input::{ascii_to_scancodes, serial_resize_sequence, GuestInputMode};
+
+/// Compatibility alias. Guest routing is no longer part of terminal policy.
+pub type TerminalInputMode = GuestInputMode;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -867,13 +872,13 @@ impl Vm {
         &mut self,
         terminal: &TerminalSession,
     ) -> Result<TerminalExit, VmError> {
-        self.run_with_terminal_mode(terminal, TerminalInputMode::Serial)
+        self.run_with_terminal_mode(terminal, GuestInputMode::Serial)
     }
 
     pub fn run_with_terminal_mode(
         &mut self,
         terminal: &TerminalSession,
-        input_mode: TerminalInputMode,
+        input_mode: GuestInputMode,
     ) -> Result<TerminalExit, VmError> {
         self.run_with_terminal_mode_and_monitor(terminal, input_mode, |_| Ok(true))
     }
@@ -883,7 +888,7 @@ impl Vm {
     pub fn run_with_terminal_mode_and_monitor<F>(
         &mut self,
         terminal: &TerminalSession,
-        input_mode: TerminalInputMode,
+        input_mode: GuestInputMode,
         mut monitor: F,
     ) -> Result<TerminalExit, VmError>
     where
@@ -893,13 +898,16 @@ impl Vm {
 
         let mut started = std::time::Instant::now();
         loop {
-            let input = terminal
-                .poll_for_mode(input_mode)
-                .map_err(|_| VmError::IoError)?;
+            let input = terminal.poll().map_err(|_| VmError::IoError)?;
+            if input_mode == GuestInputMode::Serial {
+                if let Some(resize) = input.resize {
+                    self.queue_serial_input(&serial_resize_sequence(resize));
+                }
+            }
             for byte in input.bytes {
                 match input_mode {
-                    TerminalInputMode::Serial => self.queue_serial_input(&[byte]),
-                    TerminalInputMode::Ps2 => {
+                    GuestInputMode::Serial => self.queue_serial_input(&[byte]),
+                    GuestInputMode::Ps2 => {
                         for scancode in ascii_to_scancodes(byte) {
                             self.queue_keyboard_scancode(scancode)
                         }

@@ -5,7 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use synos_vm::{TerminalSession, TerminalInput};
+use synos_vm::{
+    serial_resize_sequence, TerminalInput, TerminalResize, TerminalSession,
+    TerminalTranscriptEvent,
+};
 
 #[derive(Clone, Default)]
 struct FakeOutput {
@@ -54,6 +57,29 @@ fn fake_terminal_input_output_are_deterministic() {
     session.flush_output().expect("flush fake terminal output");
     assert_eq!(output_state.flushes.load(Ordering::Relaxed), 1);
     assert_eq!(&*output_state.bytes.lock().unwrap(), b"guest output");
+}
+
+#[test]
+fn terminal_transcript_replays_policy_events_without_host_state() {
+    let session = TerminalSession::new_with_io(
+        Cursor::new(vec![b'a', 0x7F, 0x1B, b'[', b'D']),
+        FakeOutput::default(),
+    );
+    let input = poll_until_input(&session);
+    assert_eq!(input.bytes, vec![b'a', 0x08, 0x1B, b'[', b'D']);
+
+    let transcript = session.transcript();
+    assert!(matches!(
+        transcript.events().first(),
+        Some(TerminalTranscriptEvent::Input { raw, bytes })
+            if raw == &[b'a', 0x7F, 0x1B, b'[', b'D']
+                && bytes == &[b'a', 0x08, 0x1B, b'[', b'D']
+    ));
+    assert_eq!(transcript.replay()[0].bytes, input.bytes);
+    assert_eq!(
+        serial_resize_sequence(TerminalResize { rows: 24, columns: 80 }),
+        b"\x1b[8;24;80t"
+    );
 }
 
 #[test]
