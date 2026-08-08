@@ -104,7 +104,8 @@ fn fake_terminal_eof_becomes_ctrl_d() {
 #[cfg(all(unix, any(target_os = "linux", target_os = "macos")))]
 mod unix_pty {
     use super::*;
-    use std::fs::File;
+    use std::ffi::CStr;
+    use std::fs::{File, OpenOptions};
     use std::mem::MaybeUninit;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::process::CommandExt;
@@ -123,22 +124,33 @@ mod unix_pty {
         ) -> libc::c_int;
     }
 
-    fn open_pty() -> (File, File) {
+    fn open_pty() -> (File, File, File) {
         let mut master = -1;
         let mut slave = -1;
+        let mut name = [0 as libc::c_char; 128];
         let result = unsafe {
             openpty(
                 &mut master,
                 &mut slave,
-                ptr::null_mut(),
+                name.as_mut_ptr(),
                 ptr::null_mut(),
                 ptr::null_mut(),
             )
         };
         assert_eq!(result, 0, "openpty failed: {}", io::Error::last_os_error());
+        let slave_path = unsafe { CStr::from_ptr(name.as_ptr()) }
+            .to_str()
+            .expect("PTY path is UTF-8")
+            .to_string();
+        let probe = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(slave_path)
+            .expect("open PTY probe");
         (
             unsafe { File::from_raw_fd(master) },
             unsafe { File::from_raw_fd(slave) },
+            probe,
         )
     }
 
@@ -212,10 +224,7 @@ mod unix_pty {
             .stderr(Stdio::from(stderr));
         unsafe {
             command.pre_exec(|| {
-                if libc::setsid() < 0 {
-                    return Err(io::Error::last_os_error())
-                }
-                if libc::ioctl(0, libc::TIOCSCTTY as libc::c_ulong, 0) < 0 {
+                if libc::login_tty(0) < 0 {
                     return Err(io::Error::last_os_error())
                 }
                 Ok(())
@@ -225,11 +234,11 @@ mod unix_pty {
     }
 
     fn exercise_child(action: &str, cleanup_with_guard: bool) {
-        let (mut master, slave) = open_pty();
-        let original = termios_bytes(&termios(&slave));
+        let (mut master, slave, probe) = open_pty();
+        let original = termios_bytes(&termios(&probe));
         let mut child = spawn_child(action, &slave);
         wait_for_ready(&mut master);
-        wait_for_raw_mode(&slave, &original);
+        wait_for_raw_mode(&probe, &original);
 
         if cleanup_with_guard {
             let mut cleanup = synos_test_support::CleanupGuard::new();
@@ -254,7 +263,7 @@ mod unix_pty {
             }
         }
 
-        assert_eq!(termios_bytes(&termios(&slave)), original, "PTY settings leaked after {action}");
+        assert_eq!(termios_bytes(&termios(&probe)), original, "PTY settings leaked after {action}");
         drop(master);
     }
 
