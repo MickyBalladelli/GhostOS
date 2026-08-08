@@ -42,10 +42,16 @@ impl PacketQueue {
     }
 
     pub fn push(&mut self, packet: Vec<u8>) -> bool {
-        if packet.len() > self.max_bytes || self.queue.len() >= self.max_packets {
+        let Some(new_bytes) = self.bytes.checked_add(packet.len()) else {
+            return false
+        };
+        if packet.len() > self.max_bytes
+            || new_bytes > self.max_bytes
+            || self.queue.len() >= self.max_packets
+        {
             return false;
         }
-        self.bytes += packet.len();
+        self.bytes = new_bytes;
         self.queue.push_back(packet);
         true
     }

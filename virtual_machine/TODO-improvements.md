@@ -26,7 +26,7 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Centralize DMA and MMIO validation so every device rejects overflow,
       wraparound, unaligned ranges where forbidden, bad ownership, and stale
       descriptor chains with the same error contract.
-- [ ] Add device-model tests for ordering, interrupt coalescing, queue
+- [x] Add device-model tests for ordering, interrupt coalescing, queue
       backpressure, reset during I/O, hot removal, and completion after reset.
 - [ ] Compare AHCI, NVMe, and Virtio block behavior for identical reads,
       writes, flushes, failures, and guest-visible capacity.
