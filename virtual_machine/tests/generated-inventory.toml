@@ -201,7 +201,7 @@ symbols = [
 
 [[source]]
 path = "src/cpu/decoder.rs"
-tests = ["vm.foundation.cleanup-golden"]
+tests = ["vm.foundation.cleanup-golden", "vm.fuzz.decoder"]
 
 [[source.public_api]]
 tests = ["vm.cpu.decoder-prefixes-and-malformed-streams"]
@@ -530,7 +530,7 @@ symbols = [
 
 [[source]]
 path = "src/devices/mod.rs"
-tests = ["vm.foundation.fault-device"]
+tests = ["vm.foundation.fault-device", "vm.fuzz.device"]
 
 [[source.public_api]]
 tests = ["vm.foundation.fault-device", "vm.foundation.serial-boundary"]
@@ -914,7 +914,7 @@ symbols = [
 
 [[source]]
 path = "src/devices/storage/disk_image.rs"
-tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device"]
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device", "vm.fuzz.disk-image"]
 
 [[source.public_api]]
 tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device"]
@@ -1752,6 +1752,19 @@ symbols = [
     "use:translate_input_bytes",
 ]
 
+[[source.public_api]]
+tests = ["vm.fuzz.migration", "vm.migration.failure-matrix"]
+symbols = [
+    "mod:migration",
+    "use:MAX_MIGRATION_ALLOCATION_BYTES",
+    "use:MIGRATION_NONCE_BYTES",
+    "use:MigrationCheckpointFrame",
+    "use:MigrationFrameError",
+    "use:decode_migration_checkpoint",
+    "use:migration_checkpoint_tag",
+    "use:validate_migration_checkpoint",
+]
+
 [[source]]
 path = "src/main.rs"
 tests = ["vm.gates.inventory-contract", "vm.migration.failure-matrix"]
@@ -1842,6 +1855,22 @@ symbols = [
     "struct:Mmu",
     "struct:MmuState",
     "struct:PageFlags",
+]
+
+[[source]]
+path = "src/migration.rs"
+tests = ["vm.fuzz.migration", "vm.migration.failure-matrix"]
+
+[[source.public_api]]
+tests = ["vm.fuzz.migration", "vm.migration.failure-matrix"]
+symbols = [
+    "const:MAX_MIGRATION_ALLOCATION_BYTES",
+    "const:MIGRATION_NONCE_BYTES",
+    "enum:MigrationFrameError",
+    "fn:decode_migration_checkpoint",
+    "fn:migration_checkpoint_tag",
+    "fn:validate_migration_checkpoint",
+    "struct:MigrationCheckpointFrame",
 ]
 
 [[source]]
@@ -1976,7 +2005,7 @@ symbols = [
 
 [[source]]
 path = "src/snapshot.rs"
-tests = ["vm.snapshot.serialization-restore-chain-failures"]
+tests = ["vm.fuzz.snapshot", "vm.snapshot.serialization-restore-chain-failures"]
 
 [[source.public_api]]
 tests = ["vm.foundation.cleanup-golden"]
@@ -2043,7 +2072,7 @@ symbols = [
 
 [[source]]
 path = "src/terminal.rs"
-tests = ["vm.foundation.cleanup-golden", "vm.terminal.exit-cleanup", "vm.terminal.fake-input-output", "vm.terminal.transcript-replay", "vm.terminal.translation-ps2-fallback"]
+tests = ["vm.foundation.cleanup-golden", "vm.fuzz.terminal", "vm.terminal.exit-cleanup", "vm.terminal.fake-input-output", "vm.terminal.transcript-replay", "vm.terminal.translation-ps2-fallback"]
 
 [[source.public_api]]
 tests = ["vm.foundation.cleanup-golden", "vm.foundation.deterministic-fixtures", "vm.terminal.transcript-replay", "vm.terminal.translation-ps2-fallback"]

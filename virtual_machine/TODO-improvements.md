@@ -115,7 +115,7 @@ remaining proof, portability, safety, and fidelity work.
       fail CI when a new device or API has no named test.
 - [x] Replace static test names with executed evidence containing command,
       revision, host, firmware, CPU count, image digest, and result state.
-- [ ] Add decoder, device, disk-image, snapshot, terminal, and migration fuzz
+- [x] Add decoder, device, disk-image, snapshot, terminal, and migration fuzz
       targets with retained crashing inputs and deterministic replay.
 - [ ] Add QEMU evidence for BIOS, UEFI, one CPU, SMP, attached disks, reboot,
       shutdown, terminal wakeup, snapshot restore, and failure cleanup.

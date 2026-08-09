@@ -13,6 +13,7 @@ pub mod terminal;
 pub mod input;
 pub mod clock;
 pub mod replay;
+pub mod migration;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -90,6 +91,11 @@ pub use clock::{HostMonotonicClock, ManualMonotonicClock, MonotonicClock, Shared
 pub use replay::{
     shared_replay, ReplayDmaWrite, ReplayError, ReplayEvent, ReplayEventKind, ReplayHostInput,
     ReplayMode, ReplaySession, ReplayTrace, SharedReplay,
+};
+pub use migration::{
+    decode_migration_checkpoint, migration_checkpoint_tag, validate_migration_checkpoint,
+    MigrationCheckpointFrame, MigrationFrameError, MIGRATION_NONCE_BYTES,
+    MAX_MIGRATION_ALLOCATION_BYTES,
 };
 
 /// Compatibility alias. Guest routing is no longer part of terminal policy.

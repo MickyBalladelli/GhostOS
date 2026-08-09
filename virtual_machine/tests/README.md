@@ -31,6 +31,8 @@ evidence, including the boot-image SHA-256 digest.
   storage, network, and terminal performance data in JSON Lines format.
 - `snapshot_terminal_network_10_5.rs`: deterministic snapshot, terminal,
   loopback, and storage/network matrix checks.
+- `../fuzz/fuzz_targets/vm_*.rs`: decoder, device, disk-image, snapshot,
+  terminal, and migration fuzz boundaries with retained replayable inputs.
 - cluster and hardware-accelerated runs are opt-in external tiers named in the
   inventory; they reuse the same cleanup and evidence contract.
 - `quality_gates.rs`: deterministic checks for the inventory contract and the

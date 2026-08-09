@@ -19,7 +19,8 @@ use synos_vm::{
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
     GuestInputMode, HardwareAcceleration, TerminalExit, TerminalSession, Vm, VmConfig,
-    snapshot_digest, SnapshotAuthKey, SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
+    migration_checkpoint_tag, validate_migration_checkpoint, snapshot_digest, SnapshotAuthKey,
+    SnapshotFeatures, SnapshotSchema, MAX_MIGRATION_ALLOCATION_BYTES, COM1_PORT, COM2_PORT,
 };
 
 mod control;
@@ -905,7 +906,6 @@ fn run(mut cli: Cli) -> Result<(), String> {
 const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG3";
 const MIGRATION_AUTH_DOMAIN: &[u8] = b"SYNOS-MIGRATION-HMAC-SHA256-V3";
 const MIGRATION_NONCE_BYTES: usize = 32;
-const MAX_MIGRATION_ALLOCATION_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const MAX_CHECKPOINT_AGE_SECS: u64 = 24 * 60 * 60;
 const MAX_CLOCK_SKEW_SECS: u64 = 5 * 60;
 const REPLAY_RECORD_BYTES: usize = 56;
@@ -1156,14 +1156,6 @@ fn run_migrate_operation(command: MigrateCommand) -> Result<(), String> {
     }
 }
 
-#[derive(Debug)]
-struct MigrationCheckpointFrame {
-    issued_at: u64,
-    checkpoint_id: [u8; 32],
-    bytes: Vec<u8>,
-    snapshot: synos_vm::VmSnapshot,
-}
-
 fn read_migration_checkpoint<R, F>(
     reader: &mut R,
     key: SnapshotAuthKey,
@@ -1171,7 +1163,7 @@ fn read_migration_checkpoint<R, F>(
     sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
     receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
     validate_timestamp: F,
-) -> Result<MigrationCheckpointFrame, String>
+) -> Result<synos_vm::MigrationCheckpointFrame, String>
 where
     R: Read,
     F: Fn(u64) -> Result<(), String>,
@@ -1205,34 +1197,17 @@ where
     reader
         .read_exact(&mut received_tag)
         .map_err(|error| format!("migration authentication tag read failed: {error}"))?;
-    let expected_tag = migration_auth_tag(
+    validate_migration_checkpoint(
         key,
         negotiated,
         sender_nonce,
         receiver_nonce,
         issued_at,
-        &checkpoint_id,
-        length,
-        &bytes,
-    );
-    key.verify_tag(&expected_tag, &received_tag)
-        .map_err(|error| format!("migration authentication failed: {error}"))?;
-    if snapshot_digest(&bytes) != checkpoint_id {
-        return Err("migration checkpoint identity does not match its payload".to_string());
-    }
-    let snapshot = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
-        .map_err(|error| format!("received invalid authenticated VM checkpoint: {error}"))?;
-    if snapshot.format_version != negotiated.max_version
-        || !negotiated.accepts(snapshot.format_version, snapshot.feature_flags)
-    {
-        return Err("received checkpoint does not match negotiated schema".to_string());
-    }
-    Ok(MigrationCheckpointFrame {
-        issued_at,
         checkpoint_id,
         bytes,
-        snapshot,
-    })
+        received_tag,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn publish_received_checkpoint(
@@ -1593,25 +1568,16 @@ fn migration_auth_tag(
     length: u64,
     payload: &[u8],
 ) -> [u8; 32] {
-    let min_version = schema.min_version.to_le_bytes();
-    let max_version = schema.max_version.to_le_bytes();
-    let features = schema.features.bits().to_le_bytes();
-    let issued_at = issued_at.to_le_bytes();
-    let length = length.to_le_bytes();
-    key.authenticate_parts(&[
-        MIGRATION_AUTH_DOMAIN,
-        b"frame",
-        &key.key_id(),
+    migration_checkpoint_tag(
+        key,
+        schema,
         sender_nonce,
         receiver_nonce,
-        &min_version,
-        &max_version,
-        &features,
-        &issued_at,
+        issued_at,
         checkpoint_id,
-        &length,
+        length,
         payload,
-    ])
+    )
 }
 
 fn migration_handshake_tag(

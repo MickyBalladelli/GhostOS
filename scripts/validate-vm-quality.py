@@ -174,9 +174,20 @@ def validate_commands(errors: list[str]) -> None:
     if "synos-vm" not in mutation or "cargo mutants" not in mutation:
         fail(errors, "VM mutation testing is not wired")
     fuzz_cargo = (ROOT / "fuzz/Cargo.toml").read_text()
-    for target in ("vm-decoder", "vm-devices", "vm-images"):
+    for target in (
+        "vm-decoder",
+        "vm-devices",
+        "vm-images",
+        "vm-snapshot",
+        "vm-terminal",
+        "vm-migration",
+    ):
         if f'name = "{target}"' not in fuzz_cargo:
             fail(errors, f"missing VM fuzz target: {target}")
+        if not (ROOT / "fuzz/corpus" / target).is_dir():
+            fail(errors, f"missing retained corpus directory for {target}")
+    for script in ("scripts/retain-vm-fuzz-crash.py", "scripts/replay-vm-fuzz.sh"):
+        check_file(errors, script)
 
 
 def validate_ci(errors: list[str]) -> None:

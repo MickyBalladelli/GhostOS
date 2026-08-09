@@ -149,11 +149,12 @@ inventory checks. Push and scheduled CI add QEMU and fuzz smoke tests. The
 scheduled workflow also runs coverage, mutation, Miri, sanitizer, cross-target,
 and reproducibility checks. CI uploads logs, coverage, and fuzz corpora.
 
-VM fuzz targets cover the decoder, device configuration/I/O boundaries, and
-disk-image parsers. They run in the nightly fuzz job. Mutation testing includes
-`synos-vm`; coverage emits workspace and per-crate reports. Full validation
-records separate `pass`, `fail`, and `skipped` results for QEMU, cluster,
-hardware-accelerated, performance, fuzz, and soak tiers.
+VM fuzz targets cover the decoder, device configuration/I/O boundaries,
+disk-image parsers, snapshot decoding, terminal input/replay, and authenticated
+migration frames. They run in the full-validation fuzz tier. Mutation testing
+includes `synos-vm`; coverage emits workspace and per-crate reports. Full
+validation records separate `pass`, `fail`, and `skipped` results for QEMU,
+cluster, hardware-accelerated, performance, fuzz, and soak tiers.
 
 ### Cluster lifecycle validation
 
@@ -306,6 +307,14 @@ inventory link. The dashboard command writes
 
 ```sh
 ./scripts/test-dashboard.py build/test-evidence/<run-id>
+```
+
+VM fuzz smoke runs automatically retain crash, timeout, OOM, and leak inputs
+by SHA-256. Replay a retained input exactly with:
+
+```sh
+scripts/replay-vm-fuzz.sh vm-migration \
+  fuzz/corpus/vm-migration/regression-<sha256>
 ```
 
 Coverage uses `coverage.toml`: the workspace threshold is 60% lines and each

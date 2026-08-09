@@ -1,6 +1,8 @@
 # Rust and local build output
 /build/
 /target/
+/fuzz/artifacts/
+/fuzz/target/
 /clients/apple/.build/
 /clients/apple/.swiftpm/
 *.o

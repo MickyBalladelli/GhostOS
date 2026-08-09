@@ -79,4 +79,25 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "vm-snapshot"
+path = "fuzz_targets/vm_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vm-terminal"
+path = "fuzz_targets/vm_terminal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vm-migration"
+path = "fuzz_targets/vm_migration.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

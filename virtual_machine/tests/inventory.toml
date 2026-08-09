@@ -48,6 +48,11 @@ name = "soak"
 command = "SYNOS_VM_SOAK_RUNS=3 ./scripts/vm-soak.sh"
 status = "opt-in"
 
+[[tier]]
+name = "fuzz"
+command = "./scripts/fuzz-smoke.sh"
+status = "opt-in"
+
 [[test]]
 id = "vm.foundation.deterministic-fixtures"
 file = "tests/foundation_59_1.rs"
@@ -183,7 +188,7 @@ tests = ["vm.foundation.deterministic-fixtures"]
 
 [[source]]
 path = "src/cpu/decoder.rs"
-tests = ["vm.foundation.cleanup-golden"]
+tests = ["vm.foundation.cleanup-golden", "vm.fuzz.decoder"]
 
 [[source]]
 path = "src/cpu/executor.rs"
@@ -195,7 +200,7 @@ tests = ["vm.foundation.deterministic-fixtures"]
 
 [[source]]
 path = "src/devices/mod.rs"
-tests = ["vm.foundation.fault-device"]
+tests = ["vm.foundation.fault-device", "vm.fuzz.device"]
 
 [[source]]
 path = "src/devices/apic.rs"
@@ -247,7 +252,7 @@ tests = ["vm.foundation.fault-device"]
 
 [[source]]
 path = "src/devices/storage/disk_image.rs"
-tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device"]
+tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.fault-device", "vm.fuzz.disk-image"]
 
 [[source]]
 path = "src/firmware/bios.rs"
@@ -305,7 +310,7 @@ tests = [
 
 [[source]]
 path = "src/snapshot.rs"
-tests = ["vm.snapshot.serialization-restore-chain-failures"]
+tests = ["vm.snapshot.serialization-restore-chain-failures", "vm.fuzz.snapshot"]
 
 [[source]]
 path = "src/terminal.rs"
@@ -315,6 +320,7 @@ tests = [
     "vm.terminal.transcript-replay",
     "vm.terminal.exit-cleanup",
     "vm.foundation.cleanup-golden",
+    "vm.fuzz.terminal",
 ]
 
 [[source]]
@@ -905,3 +911,42 @@ name = "persistence-port"
 source = "src/devices/storage/persistence.rs"
 scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
 tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[test]]
+id = "vm.fuzz.decoder"
+file = "../fuzz/fuzz_targets/vm_decoder.rs"
+tiers = ["fuzz"]
+
+[[test]]
+id = "vm.fuzz.device"
+file = "../fuzz/fuzz_targets/vm_devices.rs"
+tiers = ["fuzz"]
+
+[[test]]
+id = "vm.fuzz.disk-image"
+file = "../fuzz/fuzz_targets/vm_images.rs"
+tiers = ["fuzz"]
+
+[[test]]
+id = "vm.fuzz.snapshot"
+file = "../fuzz/fuzz_targets/vm_snapshot.rs"
+tiers = ["fuzz"]
+
+[[test]]
+id = "vm.fuzz.terminal"
+file = "../fuzz/fuzz_targets/vm_terminal.rs"
+tiers = ["fuzz"]
+
+[[test]]
+id = "vm.fuzz.migration"
+file = "../fuzz/fuzz_targets/vm_migration.rs"
+tiers = ["fuzz"]
+
+[[source]]
+path = "src/migration.rs"
+tests = ["vm.migration.failure-matrix", "vm.fuzz.migration"]
+
+[[public_api]]
+name = "migration checkpoint framing and authentication"
+source = "src/migration.rs"
+tests = ["vm.migration.failure-matrix", "vm.fuzz.migration"]
