@@ -650,34 +650,6 @@ A comprehensive architectural roadmap for building **SynOS**—an active-active,
 
 ---
 
-## 37. Microkernel Cyber Defense & Runtime Protection (`synos-shield`)
-- [x] **Sandboxed IPC & Behavior Tracing (`syn-probes`)
-  - [x] Build a zero-overhead Rust tracing probe framework to detect abnormal capability usage and unauthorized memory accesses.
-- [x] **Memory Fabric & CXL Safeguards**
-  - [x] Implement cryptographic frame signatures and page-fault rate-limiting to prevent Software DSM memory hijacking and remote DMA attacks.
-- [x] **TPM & Hardware Attestation**
-  - [x] Require cryptographic hardware attestation (TPM 2.0/TrustZone) before allowing new physical PCs/nodes into the cluster.
-
----
-
-## 38. Dynamic Incident Response & Active Countermeasures
-- [x] **Sub-Millisecond Capability Revocation**
-  - [x] Implement immediate microkernel handle revocation to instantly isolate compromised processes or agents from network and memory resources.
-- [x] **Honeypot Memory & Deception Primitives**
-  - [x] Expose decoy memory pages (`SYS$HONEYPOT`) in the global address space to instantly flag and quarantine unauthorized memory scanners.
-- [x] **Automated Self-Healing & CoW Forensics**
-  - [x] Freeze compromised process trees into immutable SynFS CoW snapshots for post-mortem analysis while automatically re-spawning clean workers.
-
----
-
-## 39. Supply Chain Security & Memory Integrity
-- [x] **Signed Content-Addressed Binaries**
-  - [x] Enforce cryptographically signed package validation (Sigstore/TUF) prior to process instantiation.
-- [x] **Runtime Page Hash Verification**
-  - [x] Continuously audit running executable memory pages against signed storage hashes to detect memory-injection exploits in real time.
-
-
-
 ┌─────────────────────────┐               ┌─────────────────────────┐
 │       CLUSTER A         │               │       CLUSTER B         │
 │  (Running Heavy App)    │               │     (Idle Worker)       │

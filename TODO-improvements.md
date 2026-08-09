@@ -19,7 +19,7 @@ evidence.
 
 ## P0: Make roadmap status truthful
 
-- [ ] Renumber or merge the duplicate root sections 37, 38, and 39 while
+- [x] Merge the duplicate root sections 37, 38, and 39 while
       preserving their links and inventory mappings.
 - [ ] Replace the empty `60.0 True VT100 emulator` heading with a real scoped
       feature, or move it to a dedicated terminal roadmap.

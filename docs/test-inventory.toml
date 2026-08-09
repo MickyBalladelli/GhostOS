@@ -6,8 +6,6 @@
 schema = 1
 source = "TODO.md"
 source_scope = "numbered feature sections 1 through 58"
-duplicate_source_headings = ["37", "38", "39"]
-duplicate_source_policy = "one inventory entry per roadmap number; duplicate TODO headings share the entry"
 evidence_root = "build/test-evidence/{run-id}/{tier}/{test-id}"
 test_id_format = "{tier}.{feature-id}.{behavior}"
 coverage_state = "enforced"
