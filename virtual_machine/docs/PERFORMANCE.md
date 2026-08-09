@@ -1,5 +1,34 @@
 # Performance tuning guide
 
+## Bounded benchmark suite
+
+Run all VM microbenchmarks from the repository root:
+
+```bash
+SYNOS_BENCH_REVISION=$(git rev-parse HEAD) \
+  cargo bench -p synos-vm --bench bounded
+```
+
+The harness has fixed work limits and emits one JSON Lines metadata record,
+followed by one result record for each workload:
+
+| Workload | Fixed work |
+| --- | --- |
+| Decode | 200,000 complex instruction decodes |
+| Translation | 20,000 cold 16-instruction blocks |
+| Memory | Four write/read passes over 4 MiB |
+| Interrupt | 200,000 APIC signal/accept/EOI cycles |
+| Storage | Write and read 256 RAW sectors |
+| Network | 100,000 loopback Ethernet deliveries |
+| Terminal | 10,000 translations of a 4 KiB input block |
+
+Each result includes `work_units`, `elapsed_ns`, `rate_per_second`, and a
+deterministic `checksum`. The checksum and work count make workload drift
+visible; elapsed time remains machine-dependent. Metadata records the crate
+version, supplied revision, host OS/architecture, logical CPU count, and build
+profile. Setup and temporary-file creation happen outside measured intervals.
+The storage image is cleaned up after the bounded run.
+
 The VM is an interpreter with a translated-block cache. Tune the execution
 engine through the library API:
 

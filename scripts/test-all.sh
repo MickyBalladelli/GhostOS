@@ -73,7 +73,8 @@ run_tier integration cargo test -p synos-vm --tests
 run_tier workspace cargo test --workspace --all-targets
 run_tier vm cargo test -p synos-vm --all-targets
 run_tier vm-quality python3 "$root_dir/scripts/validate-vm-quality.py"
-run_tier performance cargo test -p synos-vm --test test_environments storage_io_performance_and_integrity
+benchmark_revision=$(git rev-parse HEAD 2>/dev/null || printf unknown)
+run_tier performance env SYNOS_BENCH_REVISION="$benchmark_revision" cargo bench -p synos-vm --bench bounded
 run_tier recovery cargo test --workspace --all-targets
 
 printf '%s\n' "$(git rev-parse HEAD 2>/dev/null || printf unknown)" > "$evidence_dir/revision.txt"

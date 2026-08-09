@@ -93,7 +93,7 @@ remaining proof, portability, safety, and fidelity work.
       differential runs for CPU state, memory, exceptions, and device effects.
 - [x] Make hardware acceleration report supported features, limitations, and
       fallback behavior. Never silently change correctness semantics.
-- [ ] Add bounded benchmarks for decode, translation, memory, interrupt load,
+- [x] Add bounded benchmarks for decode, translation, memory, interrupt load,
       storage, network, and terminal workloads with repeatable machine data.
 
 ## P1: CLI, monitor, and remote control security

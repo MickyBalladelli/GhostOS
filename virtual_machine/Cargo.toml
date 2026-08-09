@@ -22,3 +22,7 @@ synos-test-support = { path = "../crates/test-support" }
 [features]
 default = []
 softmmu = []
+
+[[bench]]
+name = "bounded"
+harness = false

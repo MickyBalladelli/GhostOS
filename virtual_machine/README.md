@@ -283,6 +283,8 @@ and initrd paths take precedence.
 
 ```
 virtual_machine/
+├── benches/
+│   └── bounded.rs          # Fixed-work JSONL benchmarks
 ├── src/
 │   ├── main.rs              # VM entry point
 │   ├── lib.rs               # Public API

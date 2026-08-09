@@ -10,8 +10,10 @@ The VM tests use stable names from `inventory.toml`.
   harness is bounded and exposes deterministic evidence snapshots; QEMU cluster
   validation remains opt-in.
 - `main.rs` unit tests: CLI parsing and command behavior.
-- `qemu_matrix_59_11.rs` and `test_environments.rs`: opt-in QEMU and bounded
-  performance checks.
+- `qemu_matrix_59_11.rs` and `test_environments.rs`: opt-in QEMU and storage
+  integrity checks.
+- `benches/bounded.rs`: bounded decode, translation, memory, interrupt,
+  storage, network, and terminal performance data in JSON Lines format.
 - `snapshot_terminal_network_10_5.rs`: deterministic snapshot, terminal,
   loopback, and storage/network matrix checks.
 - cluster and hardware-accelerated runs are opt-in external tiers named in the

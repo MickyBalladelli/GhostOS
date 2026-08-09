@@ -29,7 +29,7 @@ status = "opt-in"
 
 [[tier]]
 name = "performance"
-command = "cargo test -p synos-vm --test test_environments storage_io_performance_and_integrity"
+command = "cargo bench -p synos-vm --bench bounded"
 status = "deterministic"
 
 [[tier]]
