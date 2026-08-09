@@ -38,6 +38,16 @@ cargo build -p synos-vm --release
 ./start-synos.sh
 ```
 
+Start named VMs with separate persistent disks so they can run side by side:
+
+```sh
+./start-synos.sh vm1
+./start-synos.sh vm2
+```
+
+Run a temporary copy with `./start-synos.sh --new`. Its disk changes are
+discarded when the VM exits.
+
 Writable disks create a `<image>.synos.lock` ownership marker. If start fails
 with `disk is already locked` after a crashed or killed VM, inspect and recover
 the stale lock:
