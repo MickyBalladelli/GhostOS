@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve roadmap test plans into honest execution statuses."""
+"""Resolve roadmap test plans into honest test and feature statuses."""
 
 from __future__ import annotations
 
@@ -39,6 +39,10 @@ def load_inventory(errors: list[str]) -> dict:
         )
     if status.get("named_test_policy") != "plan-only":
         errors.append("docs/test-inventory.toml: named_test_policy must be 'plan-only'")
+    if not isinstance(status.get("default_owner"), str) or not status["default_owner"].strip():
+        errors.append("docs/test-inventory.toml: status.default_owner must be non-empty")
+    if not isinstance(status.get("stale_after_days"), int) or status["stale_after_days"] <= 0:
+        errors.append("docs/test-inventory.toml: status.stale_after_days must be positive")
     return inventory
 
 
@@ -78,7 +82,7 @@ def read_json(path: Path, errors: list[str]) -> dict | None:
     return value
 
 
-def read_status_record(path: Path, errors: list[str], evidence: bool) -> tuple[str, str] | None:
+def read_status_record(path: Path, errors: list[str], evidence: bool) -> dict[str, str] | None:
     value = read_json(path, errors)
     if value is None:
         return None
@@ -111,7 +115,25 @@ def read_status_record(path: Path, errors: list[str], evidence: bool) -> tuple[s
                     errors.append(f"{path}: {field} is not an ISO-8601 timestamp")
     if evidence and state in {"passed", "failed"} and "revision" not in value:
         errors.append(f"{path}: {state} evidence requires a source revision")
-    return state, path.as_posix()
+    record = {
+        "state": state,
+        "evidence": path.as_posix(),
+    }
+    for field in ("ended_at", "updated_at", "started_at", "reason", "prerequisite"):
+        field_value = value.get(field)
+        if isinstance(field_value, str) and field_value.strip():
+            record[field] = field_value.strip()
+    return record
+
+
+def parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def resolve_status(test: dict[str, str], evidence_dir: Path | None, errors: list[str]) -> dict[str, str]:
@@ -125,17 +147,124 @@ def resolve_status(test: dict[str, str], evidence_dir: Path | None, errors: list
     if evidence_path.is_file():
         record = read_status_record(evidence_path, errors, evidence=True)
         if record is not None:
-            result["state"], result["evidence"] = record
+            result.update(record)
         return result
     if status_path.is_file():
         record = read_status_record(status_path, errors, evidence=False)
         if record is not None:
-            state, source = record
-            if state in {"passed", "failed"}:
-                errors.append(f"{status_path}: {state} requires evidence.json, not status.json")
+            if record["state"] in {"passed", "failed"}:
+                errors.append(
+                    f"{status_path}: {record['state']} requires evidence.json, not status.json"
+                )
             else:
-                result["state"], result["evidence"] = state, source
+                result.update(record)
+    if evidence_dir is not None and "evidence" not in result:
+        tier_result_path = evidence_dir / test["tier"] / "result.json"
+        if tier_result_path.is_file():
+            tier_result = read_json(tier_result_path, errors)
+            if tier_result and tier_result.get("state") == "skipped":
+                prerequisite = tier_result.get("prerequisite") or tier_result.get("reason")
+                if isinstance(prerequisite, str) and prerequisite.strip():
+                    result["prerequisite"] = prerequisite.strip()
     return result
+
+
+def aggregate_feature_status(statuses: list[dict[str, str]]) -> str:
+    states = {status["state"] for status in statuses}
+    if "failed" in states:
+        return "failed"
+    if "blocked" in states:
+        return "blocked"
+    if "running" in states:
+        return "running"
+    if statuses and states == {"passed"}:
+        return "passed"
+    return "planned"
+
+
+def feature_report(inventory: dict, statuses: list[dict[str, str]], now: datetime) -> list[dict[str, object]]:
+    status_config = inventory.get("status", {})
+    default_owner = status_config.get("default_owner", "unassigned")
+    stale_after_days = status_config.get("stale_after_days", 30)
+    by_feature: dict[str, list[dict[str, str]]] = {}
+    for status in statuses:
+        by_feature.setdefault(status["feature_id"], []).append(status)
+
+    report = []
+    for feature in inventory.get("feature", []):
+        feature_id = str(feature.get("id", "")).zfill(2)
+        feature_statuses = by_feature.get(feature_id, [])
+        evidence_times = [
+            parsed
+            for status in feature_statuses
+            if (parsed := parse_timestamp(status.get("ended_at"))) is not None
+        ]
+        last_evidence_time = max(evidence_times) if evidence_times else None
+        evidence_age_days = (
+            round(max(0.0, (now - last_evidence_time).total_seconds() / 86400), 2)
+            if last_evidence_time
+            else None
+        )
+        prerequisites = sorted(
+            {
+                status["prerequisite"]
+                for status in feature_statuses
+                if status.get("prerequisite")
+            }
+        )
+        report.append(
+            {
+                "feature_id": feature_id,
+                "feature": feature.get("todo_heading", ""),
+                "code_owner": feature.get("owner", default_owner),
+                "state": aggregate_feature_status(feature_statuses),
+                "test_count": len(feature_statuses),
+                "last_evidence": last_evidence_time.isoformat() if last_evidence_time else None,
+                "evidence_age_days": evidence_age_days,
+                "evidence_stale": evidence_age_days is not None and evidence_age_days > stale_after_days,
+                "stale_after_days": stale_after_days,
+                "skipped_prerequisites": prerequisites,
+                "test_ids": [status["test_id"] for status in feature_statuses],
+            }
+        )
+    return report
+
+
+def write_markdown(path: Path, report: dict[str, object]) -> None:
+    def cell(value: object) -> str:
+        return str(value if value not in (None, "") else "—").replace("|", "\\|")
+
+    lines = [
+        "# SynOS roadmap status",
+        "",
+        f"Generated: `{report['generated_at']}`",
+        f"Evidence age threshold: `{report['stale_after_days']} days`",
+        "",
+        "| ID | Feature | Code owner | State | Last evidence | Age (days) | Skipped prerequisites |",
+        "| --- | --- | --- | --- | --- | ---: | --- |",
+    ]
+    for feature in report["features"]:
+        prerequisites = ", ".join(feature["skipped_prerequisites"]) or "—"
+        age = feature["evidence_age_days"]
+        if feature["evidence_stale"]:
+            age = f"{age} (stale)"
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    cell(feature["feature_id"]),
+                    cell(feature["feature"]),
+                    cell(feature["code_owner"]),
+                    cell(feature["state"]),
+                    cell(feature["last_evidence"]),
+                    cell(age),
+                    cell(prerequisites),
+                ]
+            )
+            + " |"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
 
 
 def main() -> int:
@@ -151,6 +280,11 @@ def main() -> int:
         default=ROOT / "build/test-status.json",
         help="JSON status report path",
     )
+    parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        help="Markdown feature status report path; defaults beside --output",
+    )
     args = parser.parse_args()
 
     errors: list[str] = []
@@ -164,19 +298,29 @@ def main() -> int:
         return 1
 
     counts = Counter(status["state"] for status in statuses)
+    generated_at = datetime.now(timezone.utc)
+    features = feature_report(inventory, statuses, generated_at)
+    feature_counts = Counter(feature["state"] for feature in features)
+    status_config = inventory.get("status", {})
     report = {
         "schema": 1,
         "source": "docs/test-inventory.toml",
         "named_test_policy": "plan-only",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": generated_at.isoformat(),
+        "stale_after_days": status_config.get("stale_after_days", 30),
         "counts": {state: counts.get(state, 0) for state in STATES},
+        "feature_counts": {state: feature_counts.get(state, 0) for state in STATES},
         "tests": statuses,
+        "features": features,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    markdown_output = args.markdown_output or args.output.with_suffix(".md")
+    write_markdown(markdown_output, report)
     print(
         f"test status valid: {len(statuses)} named tests; "
         + ", ".join(f"{state}={counts.get(state, 0)}" for state in STATES)
+        + f"; {len(features)} feature reports written"
     )
     return 0
 

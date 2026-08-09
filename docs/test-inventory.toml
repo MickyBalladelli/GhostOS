@@ -17,6 +17,8 @@ default = "planned"
 evidence_values = ["passed", "failed", "blocked"]
 evidence_path = "build/test-evidence/{run-id}/{tier}/{test-id}/evidence.json"
 named_test_policy = "plan-only"
+default_owner = "unassigned"
+stale_after_days = 30
 
 [contract]
 required_tiers = ["unit", "integration", "qemu", "fault", "fuzz", "performance"]

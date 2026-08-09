@@ -61,6 +61,11 @@ Generate the machine-readable status report with:
 python3 scripts/validate-test-status.py --output build/test-status.json
 ```
 
+The command also writes `build/test-status.md`. Each feature row shows its
+owner, aggregate state, last evidence timestamp, evidence age, stale flag, and
+skipped prerequisites. Owners default to `unassigned` until the inventory names
+one.
+
 A feature that crosses a process, device, boot, persistence, or cluster
 boundary needs the relevant integration and end-to-end evidence. A green
 happy-path test alone never completes a feature.

@@ -29,7 +29,7 @@ evidence.
       machine-readable inventory. A named test must not count as evidence.
 - [x] Require a result artifact, source revision, command, host, and timestamp
       before a roadmap checkbox can be marked `[x]`.
-- [ ] Generate a status report showing feature, code owner, last evidence,
+- [x] Generate a status report showing feature, code owner, last evidence,
       skipped prerequisites, and stale evidence age.
 - [ ] Add local validation coverage for the new roadmap files and make roadmap changes fail
       when their evidence mappings are missing.
