@@ -50,6 +50,7 @@ struct Cli {
     monitor_permissions: MonitorPermissions,
     replay_record: Option<PathBuf>,
     replay_path: Option<PathBuf>,
+    verbose: bool,
 }
 
 enum Command {
@@ -221,12 +222,14 @@ where
     let mut monitor_permissions_explicit = false;
     let mut replay_record = None;
     let mut replay_path = None;
+    let mut verbose = false;
     let mut args = values.into_iter().peekable();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => return Ok(ParseResult::Help),
             "-V" | "--version" => return Ok(ParseResult::Version),
+            "-v" | "--v" | "-verbose" | "--verbose" => verbose = true,
             "-f" | "--firmware" => {
                 let value = next_value(&mut args, "--firmware")?;
                 config.firmware = parse_firmware(&value)?;
@@ -404,6 +407,7 @@ where
         monitor_permissions,
         replay_record,
         replay_path,
+        verbose,
     }))
 }
 
@@ -770,6 +774,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
                 .map_err(|error| format!("cannot load authenticated snapshot: {error}"))
         })
         .transpose()?;
+    let verbose = cli.verbose;
     let mut config = cli.config;
     if let Some(snapshot) = restore_snapshot.as_ref() {
         if !cli.memory_explicit {
@@ -828,7 +833,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
     }
 
     let mut vm = Vm::try_with_config(config)
-        .map_err(|error| format!("VM configuration error: {}", vm_error_message(&error)))?;
+        .map_err(|error| format!("VM configuration error: {}", vm_error_message(&error, verbose)))?;
     synos_vm::host_println(format_args!(
         "Hardware acceleration: {}",
         vm.hardware_acceleration()
@@ -2202,8 +2207,13 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
     }
 }
 
-fn vm_error_message(error: &synos_vm::VmError) -> String {
+fn vm_error_message(error: &synos_vm::VmError, verbose: bool) -> String {
     match error {
+        synos_vm::VmError::Disk(message) if !verbose => message
+            .lines()
+            .next()
+            .unwrap_or(message)
+            .to_string(),
         synos_vm::VmError::Disk(message) => message.clone(),
         other => format!("{other:?}"),
     }
@@ -2489,6 +2499,7 @@ Machine options:
       --serial-port <PORT>   Serial port: com1, com2, or a hex I/O base
       --interactive          Force raw interactive terminal mode
       --non-interactive      Disable raw mode; keep pipe input usable
+  -v, --v, -verbose         Show verbose error details
       --input <MODE>         Host input path: serial (default) or ps2
       --steps <COUNT>        Run a bounded number of instructions
 

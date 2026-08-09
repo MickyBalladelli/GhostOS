@@ -10,4 +10,4 @@ exec ./target/release/synos-vm \
   --disk-size 64M \
   --disk-format raw \
   --disk-controller virtio-blk \
-  --firmware bios --interactive
+  --firmware bios --interactive "$@"
