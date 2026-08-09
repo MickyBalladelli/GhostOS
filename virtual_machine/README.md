@@ -4,6 +4,8 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
 
 The stable embedding, guest-hardware, checkpoint, disk, migration, and host
 terminal behavior is defined in [the public VM contract](docs/PUBLIC_VM_CONTRACT.md).
+Compatibility combinations and CLI constraints are listed in
+[the compatibility matrices](docs/COMPATIBILITY.md).
 
 ## Features
 

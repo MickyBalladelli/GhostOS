@@ -129,7 +129,7 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Regenerate the Project Structure section from the current source tree.
 - [x] Document the public VM API invariants, device map, interrupt routes,
       snapshot schema, disk formats, migration protocol, and terminal contract.
-- [ ] Add compatibility matrices for VM snapshots, system disks, guest boot
+- [x] Add compatibility matrices for VM snapshots, system disks, guest boot
       images, device models, and CLI options.
 - [ ] Make release artifacts include image digests, firmware mode, device
       topology, test evidence, and known host limitations.
