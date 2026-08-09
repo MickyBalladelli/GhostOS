@@ -182,10 +182,13 @@ receiver with `--snapshot-restore`:
 
 ```bash
 openssl rand -out ./state/vm.key 32
+PEER_KEY_ID=$(openssl dgst -sha256 -binary ./state/vm.key | xxd -p -c 256 | cut -c1-32)
 ../target/release/synos-vm migrate receive 0.0.0.0:9000 ./state/incoming.vm \
-  --key ./state/vm.key
+  --key ./state/vm.key --peer-key-id "$PEER_KEY_ID" \
+  --audit-log ./state/migration-audit.jsonl --secure-transport
 ../target/release/synos-vm migrate send ./state/checkpoint.vm HOST:9000 \
-  --key ./state/vm.key
+  --key ./state/vm.key --peer-key-id "$PEER_KEY_ID" \
+  --audit-log ./state/migration-audit.jsonl --secure-transport
 ```
 
 Snapshot files and migration frames use HMAC-SHA256 with the shared key.
@@ -193,8 +196,13 @@ Version 1 and 2 payloads remain compatible after authentication. Version 1 has
 implicit feature flags; version 2 negotiates explicit flags and bounds every
 decoded length. See [the snapshot format and upgrade path](docs/SNAPSHOT_FORMAT.md)
 before moving checkpoints between VM builds. Authentication does not encrypt
-the migration transport; migration also uses mutual challenges, timeouts,
-freshness checks, and a replay ledger. Manage key rotation separately.
+the migration transport. Direct TCP over an untrusted network is forbidden;
+run it inside mutually authenticated TLS, an authorized VPN, or an SSH tunnel,
+then pass `--secure-transport` to acknowledge that requirement. Migration also
+uses mutual challenges, explicit peer key-ID authorization, timeouts, freshness
+checks, and a locked durable replay ledger. `--audit-log` is fail-closed and
+records JSONL `started`, `succeeded`, and `failed` security events. Manage key
+rotation separately.
 
 Expose a Unix monitor socket with `--monitor PATH`. Connect with a Unix-socket
 client and use `help`, `info registers`, `info devices`, `info disks`, `info

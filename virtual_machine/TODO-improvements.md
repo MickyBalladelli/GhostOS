@@ -104,7 +104,7 @@ remaining proof, portability, safety, and fidelity work.
       disk, and migration actions separately.
 - [x] Bound monitor commands, connection lifetime, request size, response size,
       and concurrent clients. Test malformed and partial commands.
-- [ ] Add migration encryption or a documented secure transport requirement,
+- [x] Add migration encryption or a documented secure transport requirement,
       peer authorization, replay protection, and audit events.
 - [ ] Redact host paths, credentials, image metadata, and guest data from
       diagnostics unless explicitly requested by an authorized operator.

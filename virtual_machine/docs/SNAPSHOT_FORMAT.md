@@ -46,7 +46,8 @@ Migration reads and writes have a ten-second timeout. The receiver rejects
 payloads above its 8 GiB pre-allocation migration cap, rejects checkpoints older than
 24 hours or more than five minutes in the future, and records accepted
 checkpoint identities in `.synos-vm-migration-replay` beside the destination.
-The bounded ledger rejects duplicate deliveries during the freshness window.
+The bounded ledger is locked across processes and synced before publication;
+it rejects duplicate deliveries during the freshness window.
 Received checkpoints are written to a unique temporary file in the destination
 directory, synced, atomically published, and followed by a directory sync.
 The published file is reopened and authenticated before the receive succeeds;
@@ -79,5 +80,8 @@ bit.
 Snapshot envelopes and migration frames use HMAC-SHA256 with a configured
 32-byte shared key. The migration tag covers the negotiated schema, payload
 length, freshness metadata, both nonces, and authenticated snapshot bytes.
-Authentication does not encrypt the TCP path; use an authorized protected
-transport and rotate keys through an external key-management process.
+Authentication does not encrypt the TCP path. Direct TCP over an untrusted
+network is forbidden. Use mutually authenticated TLS, an authorized VPN, or an
+SSH tunnel and pass `--secure-transport` only after that protection exists.
+Every migration also requires an allow-listed peer key ID and a private durable
+JSONL audit log. Rotate keys through an external key-management process.

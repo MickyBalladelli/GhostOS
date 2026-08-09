@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -8,7 +8,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
 
@@ -58,13 +60,40 @@ enum MigrateCommand {
     Send {
         snapshot: PathBuf,
         address: String,
-        key: PathBuf,
+        security: MigrationSecurity,
     },
     Receive {
         address: String,
         snapshot: PathBuf,
-        key: PathBuf,
+        security: MigrationSecurity,
     },
+}
+
+struct MigrationSecurity {
+    key: PathBuf,
+    authorized_peer_key_id: [u8; 16],
+    audit_log: PathBuf,
+}
+
+impl MigrateCommand {
+    fn security(&self) -> &MigrationSecurity {
+        match self {
+            Self::Send { security, .. } | Self::Receive { security, .. } => security,
+        }
+    }
+
+    fn direction(&self) -> &'static str {
+        match self {
+            Self::Send { .. } => "send",
+            Self::Receive { .. } => "receive",
+        }
+    }
+
+    fn address(&self) -> &str {
+        match self {
+            Self::Send { address, .. } | Self::Receive { address, .. } => address,
+        }
+    }
 }
 
 enum DiskCommand {
@@ -371,36 +400,88 @@ where
 }
 
 fn parse_migrate_command(values: &[String]) -> Result<ParseResult, String> {
-    match values {
-        [command, snapshot, address, key_flag, key]
-            if command == "send" && key_flag == "--key" =>
-        {
+    match values.first().map(String::as_str) {
+        Some("send") if values.len() >= 3 => {
             Ok(ParseResult::Migrate(MigrateCommand::Send {
-                snapshot: PathBuf::from(snapshot),
-                address: address.clone(),
-                key: PathBuf::from(key),
+                snapshot: PathBuf::from(&values[1]),
+                address: values[2].clone(),
+                security: parse_migration_security(&values[3..])?,
             }))
         }
-        [command, address, snapshot, key_flag, key]
-            if command == "receive" && key_flag == "--key" =>
-        {
+        Some("receive") if values.len() >= 3 => {
             Ok(ParseResult::Migrate(MigrateCommand::Receive {
-                address: address.clone(),
-                snapshot: PathBuf::from(snapshot),
-                key: PathBuf::from(key),
+                address: values[1].clone(),
+                snapshot: PathBuf::from(&values[2]),
+                security: parse_migration_security(&values[3..])?,
             }))
         }
-        [command] if command == "help" || command == "--help" || command == "-h" => {
+        Some("help" | "--help" | "-h") if values.len() == 1 => {
             Ok(ParseResult::Help)
         }
-        [] => Err(
-            "migrate needs `send SNAPSHOT ADDRESS --key KEY` or `receive ADDRESS SNAPSHOT --key KEY`"
-                .to_string(),
-        ),
+        None => Err("migrate needs `send SNAPSHOT ADDRESS` or `receive ADDRESS SNAPSHOT` plus security options".to_string()),
         _ => Err(
-            "usage: synos-vm migrate send SNAPSHOT ADDRESS --key KEY | receive ADDRESS SNAPSHOT --key KEY"
+            "usage: synos-vm migrate send SNAPSHOT ADDRESS|receive ADDRESS SNAPSHOT --key KEY --peer-key-id ID --audit-log PATH --secure-transport"
                 .to_string(),
         ),
+    }
+}
+
+fn parse_migration_security(values: &[String]) -> Result<MigrationSecurity, String> {
+    let mut key = None;
+    let mut authorized_peer_key_id = None;
+    let mut audit_log = None;
+    let mut secure_transport = false;
+    let mut args = values.iter().peekable();
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--key" => key = Some(PathBuf::from(next_ref(&mut args, "--key")?)),
+            "--peer-key-id" => {
+                authorized_peer_key_id = Some(parse_migration_key_id(next_ref(
+                    &mut args,
+                    "--peer-key-id",
+                )?)?)
+            }
+            "--audit-log" => {
+                audit_log = Some(PathBuf::from(next_ref(&mut args, "--audit-log")?))
+            }
+            "--secure-transport" => secure_transport = true,
+            value => return Err(format!("unknown migration security option `{value}`")),
+        }
+    }
+    if !secure_transport {
+        return Err("migration requires --secure-transport to confirm TLS, VPN, or SSH tunnel protection".to_string())
+    }
+    Ok(MigrationSecurity {
+        key: key.ok_or_else(|| "migration requires --key KEY".to_string())?,
+        authorized_peer_key_id: authorized_peer_key_id
+            .ok_or_else(|| "migration requires --peer-key-id ID".to_string())?,
+        audit_log: audit_log
+            .ok_or_else(|| "migration requires --audit-log PATH".to_string())?,
+    })
+}
+
+fn parse_migration_key_id(value: &str) -> Result<[u8; 16], String> {
+    if value.len() != 32 {
+        return Err("migration peer key ID must contain 32 hexadecimal characters".to_string())
+    }
+    let mut output = [0; 16];
+    for (index, byte) in output.iter_mut().enumerate() {
+        let high = migration_hex_value(value.as_bytes()[index * 2]);
+        let low = migration_hex_value(value.as_bytes()[index * 2 + 1]);
+        let (Some(high), Some(low)) = (high, low) else {
+            return Err("migration peer key ID is not hexadecimal".to_string())
+        };
+        *byte = (high << 4) | low;
+    }
+    Ok(output)
+}
+
+fn migration_hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -829,18 +910,111 @@ const MAX_CHECKPOINT_AGE_SECS: u64 = 24 * 60 * 60;
 const MAX_CLOCK_SKEW_SECS: u64 = 5 * 60;
 const REPLAY_RECORD_BYTES: usize = 56;
 const MAX_REPLAY_RECORDS: usize = 4096;
+const MAX_REPLAY_LEDGER_BYTES: u64 = (REPLAY_RECORD_BYTES * MAX_REPLAY_RECORDS) as u64;
 #[cfg(not(unix))]
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+fn authorize_migration_key(
+    key: SnapshotAuthKey,
+    authorized_peer_key_id: [u8; 16],
+) -> Result<(), String> {
+    if key.key_id() != authorized_peer_key_id {
+        return Err(
+            "configured peer key ID does not match the migration authentication key".to_string(),
+        )
+    }
+    Ok(())
+}
+
+fn append_migration_audit(
+    path: &Path,
+    event: &str,
+    direction: &str,
+    address: &str,
+    peer_key_id: [u8; 16],
+) -> Result<(), String> {
+    let timestamp = now_seconds()?;
+    let peer_key_id = encode_migration_key_id(peer_key_id);
+    let record = format!(
+        "{{\"timestamp\":{timestamp},\"event\":{},\"direction\":{},\"peer\":{},\"peer_key_id\":{},\"protocol_version\":{},\"secure_transport_required\":true}}\n",
+        control::json_string(event),
+        control::json_string(direction),
+        control::json_string(address),
+        control::json_string(&peer_key_id),
+        MIGRATION_PROTOCOL_VERSION,
+    );
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("cannot open migration audit log {}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect migration audit log: {error}"))?;
+    if !metadata.is_file() {
+        return Err("migration audit log must be a regular file".to_string())
+    }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err("migration audit log must not be accessible by group or other users".to_string())
+    }
+    file.write_all(record.as_bytes())
+        .and_then(|_| file.sync_data())
+        .map_err(|error| format!("cannot append migration audit event: {error}"))
+}
+
+fn encode_migration_key_id(value: [u8; 16]) -> String {
+    let mut output = String::with_capacity(32);
+    for byte in value {
+        use std::fmt::Write as _;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
+}
+
 fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
+    let audit_log = command.security().audit_log.clone();
+    let direction = command.direction();
+    let address = command.address().to_string();
+    let peer_key_id = command.security().authorized_peer_key_id;
+    append_migration_audit(
+        &audit_log,
+        "started",
+        direction,
+        &address,
+        peer_key_id,
+    )?;
+    let result = run_migrate_operation(command);
+    let outcome = if result.is_ok() { "succeeded" } else { "failed" };
+    if let Err(audit_error) = append_migration_audit(
+        &audit_log,
+        outcome,
+        direction,
+        &address,
+        peer_key_id,
+    ) {
+        return match result {
+            Ok(()) => Err(format!("migration completed but final audit write failed: {audit_error}")),
+            Err(error) => Err(format!("{error}; final audit write failed: {audit_error}")),
+        }
+    }
+    result
+}
+
+fn run_migrate_operation(command: MigrateCommand) -> Result<(), String> {
     match command {
         MigrateCommand::Send {
             snapshot,
             address,
-            key: key_path,
+            security,
         } => {
-            let key = SnapshotAuthKey::from_file(&key_path)
+            let key = SnapshotAuthKey::from_file(&security.key)
                 .map_err(|error| format!("cannot load migration authentication key: {error}"))?;
+            authorize_migration_key(key, security.authorized_peer_key_id)?;
             let bytes = std::fs::read(&snapshot)
                 .map_err(|error| format!("cannot read snapshot {}: {error}", snapshot.display()))?;
             let snapshot_value = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
@@ -861,7 +1035,12 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
                 .and_then(|_| stream.write_all(&sender_auth))
                 .map_err(|error| format!("migration schema handshake failed: {error}"))?;
             let (negotiated, receiver_nonce) =
-                read_migration_response(&mut stream, key, &sender_nonce)?;
+                read_migration_response(
+                    &mut stream,
+                    key,
+                    security.authorized_peer_key_id,
+                    &sender_nonce,
+                )?;
             let wire_snapshot = snapshot_value
                 .convert_to_schema(negotiated)
                 .map_err(|error| format!("migration schema conversion failed: {error}"))?;
@@ -894,10 +1073,11 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
         MigrateCommand::Receive {
             address,
             snapshot,
-            key: key_path,
+            security,
         } => {
-            let key = SnapshotAuthKey::from_file(&key_path)
+            let key = SnapshotAuthKey::from_file(&security.key)
                 .map_err(|error| format!("cannot load migration authentication key: {error}"))?;
+            authorize_migration_key(key, security.authorized_peer_key_id)?;
             let listener = TcpListener::bind(&address)
                 .map_err(|error| format!("cannot listen for migration on {address}: {error}"))?;
             println!("waiting for VM checkpoint on {address}");
@@ -924,8 +1104,8 @@ fn run_migrate_command(command: MigrateCommand) -> Result<(), String> {
             stream
                 .read_exact(&mut peer_key_id)
                 .map_err(|error| format!("migration key identity read failed: {error}"))?;
-            if peer_key_id != key.key_id() {
-                return Err("migration peer uses a different authentication key".to_string());
+            if peer_key_id != security.authorized_peer_key_id {
+                return Err("migration peer is not in the configured authorization policy".to_string());
             }
             let mut sender_nonce = [0u8; MIGRATION_NONCE_BYTES];
             stream
@@ -1344,11 +1524,33 @@ fn reserve_replay(
     issued_at: u64,
 ) -> Result<(), String> {
     let now = now_seconds()?;
-    let existing = match std::fs::read(ledger) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(format!("cannot read migration replay ledger: {error}")),
-    };
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut ledger_file = options
+        .open(ledger)
+        .map_err(|error| format!("cannot open migration replay ledger: {error}"))?;
+    #[cfg(unix)]
+    if unsafe { libc::flock(ledger_file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(format!(
+            "cannot lock migration replay ledger: {}",
+            std::io::Error::last_os_error()
+        ))
+    }
+    let ledger_length = ledger_file
+        .metadata()
+        .map_err(|error| format!("cannot inspect migration replay ledger: {error}"))?
+        .len();
+    if ledger_length > MAX_REPLAY_LEDGER_BYTES {
+        return Err("migration replay ledger exceeds its byte limit".to_string())
+    }
+    let mut existing = Vec::new();
+    ledger_file
+        .read_to_end(&mut existing)
+        .map_err(|error| format!("cannot read migration replay ledger: {error}"))?;
     if existing.len() % REPLAY_RECORD_BYTES != 0 {
         return Err("migration replay ledger is corrupt".to_string());
     }
@@ -1373,7 +1575,11 @@ fn reserve_replay(
     next.extend_from_slice(&issued_at.to_le_bytes());
     next.extend_from_slice(&key_id);
     next.extend_from_slice(&checkpoint_id);
-    std::fs::write(ledger, next)
+    ledger_file
+        .seek(SeekFrom::Start(0))
+        .and_then(|_| ledger_file.set_len(0))
+        .and_then(|_| ledger_file.write_all(&next))
+        .and_then(|_| ledger_file.sync_all())
         .map_err(|error| format!("cannot update migration replay ledger: {error}"))
 }
 
@@ -1488,6 +1694,7 @@ fn read_migration_schema(stream: &mut TcpStream) -> Result<SnapshotSchema, Strin
 fn read_migration_response(
     stream: &mut TcpStream,
     key: SnapshotAuthKey,
+    authorized_peer_key_id: [u8; 16],
     sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
 ) -> Result<(SnapshotSchema, [u8; MIGRATION_NONCE_BYTES]), String> {
     let mut status = [0u8; 1];
@@ -1505,8 +1712,8 @@ fn read_migration_response(
     stream
         .read_exact(&mut key_id)
         .map_err(|error| format!("migration key identity response read failed: {error}"))?;
-    if key_id != key.key_id() {
-        return Err("migration target uses a different authentication key".to_string());
+    if key_id != authorized_peer_key_id {
+        return Err("migration target is not in the configured authorization policy".to_string());
     }
     let mut receiver_nonce = [0u8; MIGRATION_NONCE_BYTES];
     stream
@@ -2191,10 +2398,16 @@ Commands:
   synos-vm disk lock PATH     Diagnose an ownership lock
   synos-vm disk recover-lock PATH
                               Recover a lock only when its owner is stale
-  synos-vm migrate send SNAPSHOT ADDRESS --key KEY
+  synos-vm migrate send SNAPSHOT ADDRESS [SECURITY OPTIONS]
                               Send an authenticated checkpoint
-  synos-vm migrate receive ADDRESS SNAPSHOT --key KEY
+  synos-vm migrate receive ADDRESS SNAPSHOT [SECURITY OPTIONS]
                               Receive an authenticated checkpoint
+
+Migration security options:
+      --key <PATH>           Shared 32-byte migration authentication key
+      --peer-key-id <ID>     Authorized peer key ID (32 hexadecimal digits)
+      --audit-log <PATH>     Private durable JSONL security audit log
+      --secure-transport     Confirm TCP runs inside TLS, VPN, or SSH protection
 
 Other options:
   -h, --help                Show this help
