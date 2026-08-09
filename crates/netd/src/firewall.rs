@@ -912,10 +912,13 @@ fn sha256(message: &[u8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
-    use super::{FirewallError, FirewallPolicy};
+    use super::{FirewallError, FirewallPolicy, MAX_FIREWALL_RULES};
 
     #[test]
     fn truncated_policy_is_rejected() {
-        assert_eq!(FirewallPolicy::decode(&[0; 23]), Err(FirewallError::InvalidPolicy));
+        assert_eq!(
+            FirewallPolicy::<MAX_FIREWALL_RULES>::decode(&[0; 23]),
+            Err(FirewallError::InvalidPolicy)
+        );
     }
 }
