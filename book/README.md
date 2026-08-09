@@ -82,10 +82,9 @@ The code is the final authority. The main companion documents are:
 
 - [`README.md`](../README.md) — project introduction and major contracts.
 - [`TODO.md`](../TODO.md) — the numbered feature and test-completion plan.
-- [`docs/testing.md`](../docs/testing.md) — test tiers, evidence, and CI rules.
+- [`docs/testing.md`](../docs/testing.md) — test tiers, evidence, and validation rules.
 - [`docs/system-configuration.md`](../docs/system-configuration.md) — system configuration model.
 - [`virtual_machine/README.md`](../virtual_machine/README.md) — VM usage.
 - [`virtual_machine/TODO.md`](../virtual_machine/TODO.md) — VM-specific roadmap and quality gates.
 
 Some examples in this book are teaching examples. They show the shape of an API or workflow and may omit imports, error plumbing, or platform setup. Commands are intended to be copied from the repository root unless the text says otherwise.
-

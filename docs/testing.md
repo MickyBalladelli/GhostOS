@@ -44,8 +44,8 @@ inventory entry beside it:
 
 Every public type, operation, status code, wire message, and error variant
 gets one direct test and one boundary test. Every bug fix adds a regression
-test before the fix is marked complete. Hardware behavior that cannot run in
-CI is recorded as a manual hardware-smoke test with its required evidence;
+test before the fix is marked complete. Hardware behavior that cannot run
+locally is recorded as a manual hardware-smoke test with its required evidence;
 an unexecuted or skipped test is never counted as passing.
 
 ## Hosts and tools
@@ -78,7 +78,7 @@ evidence described in `platforms/README.md`.
 | Tier | Command or entry point | Default | Evidence |
 | --- | --- | --- | --- |
 | host-unit | `cargo test` | required | test output and package metadata |
-| workspace | `cargo test --workspace --all-targets` | required for CI | test output and package metadata |
+| workspace | `cargo test --workspace --all-targets` | required for workspace validation | test output and package metadata |
 | vm | `cargo test -p synos-vm --all-targets` | required for VM changes | test output and VM metadata |
 | recovery | `cargo test --workspace --all-targets` | required | failure, restart, and recovery output |
 | qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
@@ -91,7 +91,7 @@ evidence described in `platforms/README.md`.
 The root workspace includes both `synos-test-support` and `synos-vm` in
 `default-members`. Therefore `cargo test` runs every deterministic SynOS and VM
 unit/integration test. `cargo test --workspace --all-targets` is the explicit
-CI command that checks every workspace target.
+workspace command that checks every workspace target.
 
 The VM-specific contract is checked by:
 
@@ -103,7 +103,7 @@ It requires a named inventory test for every VM source module and public API,
 all six device boundary scenarios (register/configuration, normal I/O, reset,
 interrupt, malformed input, and failure), and BIOS, UEFI, and Multiboot serial
 boot evidence. A VM source change must include a VM regression or integration
-test change; CI runs the check with `--changed`.
+test change; local validation runs the check with `--changed`.
 
 When a VM source module, public symbol, or device implementation changes,
 refresh the committed generated inventory first:
@@ -112,7 +112,7 @@ refresh the committed generated inventory first:
 python3 scripts/generate-vm-inventory.py
 ```
 
-CI runs the same command with `--check` and rejects stale or unnamed entries.
+Local validation runs the same command with `--check` and rejects stale or unnamed entries.
 
 VM inventory IDs are backed by executed records at
 `build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. Every record
@@ -144,10 +144,18 @@ SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
 Optional tiers record `skipped` with the missing prerequisite. A release gate
 does not count any skipped, blocked, or not-implemented result as passing.
 
-Fast pull-request CI runs formatting, host, VM, no-std, documentation, and
-inventory checks. Push and scheduled CI add QEMU and fuzz smoke tests. The
-scheduled workflow also runs coverage, mutation, Miri, sanitizer, cross-target,
-and reproducibility checks. CI uploads logs, coverage, and fuzz corpora.
+Local validation runs formatting, host, VM, no-std, documentation, inventory,
+QEMU, fuzz, coverage, mutation, cross-target, and reproducibility checks when
+the required tools exist. The platform probe records accelerator and QEMU
+prerequisite state as `available` or `skipped` with a reason; missing
+`/dev/kvm`, Hypervisor.framework, WHPX, QEMU, images, or UEFI firmware stays an
+explicit skip.
+
+Run the platform probe locally with:
+
+```sh
+python3 scripts/check-vm-platform.py --output build/platform-vm.json --run-qemu
+```
 
 VM fuzz targets cover the decoder, device configuration/I/O boundaries,
 disk-image parsers, snapshot decoding, terminal input/replay, and authenticated

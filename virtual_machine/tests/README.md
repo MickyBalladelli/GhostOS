@@ -40,6 +40,6 @@ evidence, including the boot-image SHA-256 digest.
 
 Run `python3 scripts/validate-vm-quality.py` from the repository root to check
 source-module/API inventory, device scenarios, serial boot paths, fuzz targets,
-mutation wiring, and CI inventory enforcement.
+mutation wiring, and local inventory enforcement.
 
 Do not put wall-clock, host-random, or host-path assumptions in the fast tier.

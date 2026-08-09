@@ -1047,7 +1047,7 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 - [x] Require every public type, operation, status code, wire message, and error variant to have at least one direct test and one boundary test.
 - [x] Require every bug fix to add a regression test before the fix is marked complete.
 - [x] Record known untestable hardware behavior as an explicit hardware-smoke test with required evidence; never count an unexecuted test as passing.
-- [x] Define stable test names and test evidence paths so local runs and CI produce comparable results.
+- [x] Define stable test names and test evidence paths so local runs and automation produce comparable results.
 
 ### 59.2 Test Harness and Fixtures
 
@@ -1164,14 +1164,14 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 - [x] Add remote-terminal tests for interactive shell behavior, resize, ANSI output, input cancellation, reconnect, and cleanup after guest failure.
 - [x] Separate fast deterministic VM tests from opt-in QEMU, hardware, KVM/HVF, cluster, performance, and long-running soak tests.
 
-### 59.12 CI, Coverage, Fuzzing, and Release Gates
+### 59.12 Coverage, Fuzzing, and Release Gates
 
 - [x] Make one top-level `cargo test` command run every deterministic SynOS and VM unit/integration test; promote `virtual_machine` into the root workspace or add a tested Cargo test runner that includes its manifest.
 - [x] Make `cargo test --workspace --all-targets` cover every testable root crate and document the exact command in `docs/testing.md`.
 - [x] Keep QEMU, cluster, hardware, performance, fuzz, and soak tests in explicit opt-in tiers, with one documented full-validation command that runs those tiers in order and reports skipped prerequisites.
 - [x] Ensure the unified test command preserves per-test isolation, forwards environment variables, returns failure if any tier fails, and saves logs/evidence for the failing tier.
-- [x] Add CI jobs for formatting, host unit tests, no-std/kernel tests, VM tests, integration tests, QEMU tests, fuzz smoke tests, and documentation/test-inventory validation.
-- [x] Add a fast pull-request tier and scheduled full tier; publish which tests were skipped and why.
+- [x] Add local validation commands for formatting, host unit tests, no-std/kernel tests, VM tests, integration tests, QEMU tests, fuzz smoke tests, and documentation/test-inventory validation.
+- [x] Publish which optional tests were skipped and why.
 - [x] Add coverage reporting per crate and per TODO feature, with thresholds that prevent total coverage from hiding untested crates.
 - [x] Add mutation testing for parsers, status mapping, capabilities, storage commits, protocol framing, and VM device behavior.
 - [x] Add nightly fuzzing and corpus retention; promote every discovered bug into a deterministic regression test.

@@ -101,9 +101,9 @@ Every fuzz crash should become a deterministic regression test with the original
 
 `scripts/mutation.sh` runs `cargo-mutants` across high-risk boundaries including status, auth, filesystem, SynFS, HTTP, and the VM.
 
-## Cross-platform CI
+## Cross-platform validation
 
-The VM quality workflow runs deterministic tests on Ubuntu, macOS, and Windows. Nightly validation runs fuzzing and full validation. Hardware, QEMU, cluster, and long-running tiers remain explicit so their environmental requirements are visible.
+Local validation runs deterministic tests on Linux, macOS, and Windows through the repository scripts. Fuzzing and full validation are opt-in. Hardware, QEMU, cluster, and long-running tiers remain explicit so their environmental requirements are visible.
 
 ## The rule for contributors
 

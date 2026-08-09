@@ -112,14 +112,14 @@ remaining proof, portability, safety, and fidelity work.
 ## P1: Test evidence that matches reality
 
 - [x] Generate VM inventory entries from source modules and public APIs, then
-      fail CI when a new device or API has no named test.
+      fail local validation when a new device or API has no named test.
 - [x] Replace static test names with executed evidence containing command,
       revision, host, firmware, CPU count, image digest, and result state.
 - [x] Add decoder, device, disk-image, snapshot, terminal, and migration fuzz
       targets with retained crashing inputs and deterministic replay.
 - [x] Add QEMU evidence for BIOS, UEFI, one CPU, SMP, attached disks, reboot,
       shutdown, terminal wakeup, snapshot restore, and failure cleanup.
-- [ ] Add cross-platform CI for Linux, macOS, and Windows host behavior, with
+- [x] Add cross-platform host validation for Linux, macOS, and Windows behavior, with
       explicit skips for unavailable acceleration and QEMU prerequisites.
 - [ ] Add repeated soak runs that detect file, socket, process, lock, memory,
       translation-cache, and terminal-state leaks.

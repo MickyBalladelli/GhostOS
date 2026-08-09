@@ -178,7 +178,7 @@ A lightweight virtual machine implementation in Rust designed to serve as a test
         first interactive path, with VGA/framebuffer output remaining available
         for future graphical terminals.
   - [x] Add terminal CLI options for enabling/disabling the terminal, choosing
-        the serial port, and running non-interactively for scripts and CI.
+        the serial port, and running non-interactively for scripts and local validation.
   - [x] Detect whether stdin/stdout are attached to a TTY. Keep pipe and file
         execution usable without raw-terminal setup.
   - [x] Put the host terminal in raw, non-canonical mode so every key reaches
@@ -334,7 +334,7 @@ The VM is the SynOS test machine. Every device and every public VM API needs dir
 - [x] Require every emulated device to have register/configuration, normal I/O, reset, interrupt, malformed input, and failure coverage.
 - [x] Require every SynOS boot path to have a VM or QEMU test with serial evidence.
 - [x] Require every VM bug fix to add a deterministic regression test.
-- [x] Add VM coverage reporting, mutation testing for device boundaries, nightly fuzzing for decoder/devices/images, and cross-platform CI.
+- [x] Add VM coverage reporting, mutation testing for device boundaries, fuzzing for decoder/devices/images, and cross-platform host validation.
 - [x] Publish separate pass/fail/skip status for unit, integration, QEMU, cluster, performance, and hardware-accelerated tests.
 - [x] Do not mark a VM feature complete until its tests pass with clean resource and terminal cleanup.
 

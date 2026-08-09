@@ -121,7 +121,7 @@ isolated concurrent jobs, cancellation and crash recovery, stage-2 ordering,
 signed/corrupt/unsigned package handling, hello-world compilation and host
 execution, build scripts, proc macros, application bundles, production Ring 3
 builds, reproducibility, and Aarch64 cross-builds. Use `--skip-build` for the
-fast in-memory contract pass and `--json` for CI records. Pass `--clean-root`
+fast in-memory contract pass and `--json` for local evidence records. Pass `--clean-root`
 to choose a new artifact root explicitly.
 
 The boot contract is now wired, but the actual native executable still needs

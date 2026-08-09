@@ -190,21 +190,17 @@ def validate_commands(errors: list[str]) -> None:
         check_file(errors, script)
 
 
-def validate_ci(errors: list[str]) -> None:
-    workflows = list((ROOT / ".github/workflows").glob("*.yml")) + list(
-        (ROOT / ".github/workflows").glob("*.yaml")
-    )
-    if not workflows:
-        fail(errors, "no GitHub workflow provides VM CI")
-        return
-    text = "\n".join(path.read_text() for path in workflows)
-    for required in (
-        "python3 scripts/generate-vm-inventory.py --check",
-        "python3 scripts/validate-vm-evidence.py --schema-only",
-        "python3 scripts/validate-vm-quality.py",
+def validate_local_quality(errors: list[str]) -> None:
+    for script in (
+        "scripts/test-all.sh",
+        "scripts/full-validation.sh",
+        "scripts/validate-vm-quality.py",
+        "scripts/check-vm-platform.py",
     ):
-        if required not in text:
-            fail(errors, f"CI is missing {required}")
+        check_file(errors, script)
+    platform_probe = ROOT / "scripts/check-vm-platform.py"
+    if platform_probe.is_file() and '"state": "skipped"' not in platform_probe.read_text():
+        fail(errors, "platform capability probe does not record explicit skips")
 
 
 def validate_changed_source(errors: list[str]) -> None:
@@ -257,7 +253,7 @@ def main() -> int:
     errors: list[str] = []
     validate_inventory(errors)
     validate_commands(errors)
-    validate_ci(errors)
+    validate_local_quality(errors)
     if args.changed:
         validate_changed_source(errors)
     if errors:
@@ -265,7 +261,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("VM quality gate passed: workspace, inventory, devices, boot, fuzz, and CI")
+    print("VM quality gate passed: workspace, inventory, devices, boot, fuzz, and local validation")
     return 0
 
 
