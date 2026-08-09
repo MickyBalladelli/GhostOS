@@ -89,7 +89,7 @@ remaining proof, portability, safety, and fidelity work.
 - [x] Prove translation-cache invalidation for self-modifying code, page-table
       changes, permission changes, code aliases, interrupts, reset, and
       snapshot restore.
-- [ ] Define JIT/translated execution equivalence with the interpreter and add
+- [x] Define JIT/translated execution equivalence with the interpreter and add
       differential runs for CPU state, memory, exceptions, and device effects.
 - [ ] Make hardware acceleration report supported features, limitations, and
       fallback behavior. Never silently change correctness semantics.

@@ -4,7 +4,7 @@ crate = "synos-vm"
 
 [[tier]]
 name = "fast-unit"
-command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test snapshot_terminal_network_10_5 --test terminal_cleanup"
+command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test cpu_differential --test snapshot_terminal_network_10_5 --test terminal_cleanup"
 status = "deterministic"
 
 [[tier]]
@@ -91,6 +91,21 @@ tiers = ["fast-unit", "vm-integration"]
 id = "vm.execution.translation-cache-invalidation-proof-matrix"
 file = "tests/cpu_memory_execution.rs"
 tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.execution.interpreter-translated-cpu-memory-equivalence"
+file = "tests/cpu_differential.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.execution.interpreter-translated-exception-equivalence"
+file = "tests/cpu_differential.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.execution.interpreter-translated-device-effect-equivalence"
+file = "tests/cpu_differential.rs"
+tiers = ["fast-unit"]
 
 [[test]]
 id = "vm.cluster.deterministic-harness"
@@ -256,7 +271,12 @@ tests = [
 
 [[source]]
 path = "src/execution.rs"
-tests = ["vm.foundation.deterministic-fixtures"]
+tests = [
+    "vm.foundation.deterministic-fixtures",
+    "vm.execution.interpreter-translated-cpu-memory-equivalence",
+    "vm.execution.interpreter-translated-exception-equivalence",
+    "vm.execution.interpreter-translated-device-effect-equivalence",
+]
 
 [[source]]
 path = "tests/cpu_memory_execution.rs"
@@ -267,6 +287,14 @@ tests = [
     "vm.memory.paging-cow-mmio-and-statistics",
     "vm.execution.translation-cache-profiling-and-cleanup",
     "vm.execution.translation-cache-invalidation-proof-matrix",
+]
+
+[[source]]
+path = "tests/cpu_differential.rs"
+tests = [
+    "vm.execution.interpreter-translated-cpu-memory-equivalence",
+    "vm.execution.interpreter-translated-exception-equivalence",
+    "vm.execution.interpreter-translated-device-effect-equivalence",
 ]
 
 [[source]]
@@ -796,7 +824,12 @@ tests = ["vm.device.normal-io"]
 [[public_api]]
 name = "execution public surface"
 source = "src/execution.rs"
-tests = ["vm.execution.translation-cache-profiling-and-cleanup"]
+tests = [
+    "vm.execution.translation-cache-profiling-and-cleanup",
+    "vm.execution.interpreter-translated-cpu-memory-equivalence",
+    "vm.execution.interpreter-translated-exception-equivalence",
+    "vm.execution.interpreter-translated-device-effect-equivalence",
+]
 
 [[public_api]]
 name = "firmware::bios public surface"

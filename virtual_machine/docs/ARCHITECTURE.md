@@ -103,6 +103,11 @@ ends the current block when either version changes. Reset and snapshot restore
 clear the cache before execution resumes. The translation-cache proof matrix
 covers remaps, NX changes, aliases, interrupt boundaries, reset, and restore.
 
+The interpreter and translated engine share an explicit guest-visible
+equivalence contract in docs/EXECUTION_EQUIVALENCE.md. Bounded differential
+runs compare complete CPU state and RAM, exception timing, hot-loop promotion,
+and ordered device effects.
+
 Snapshots contain CPU, RAM, paging, interrupt, APIC, and BIOS state. Host
 translation caches and network backends are not serialized. Restore rebuilds
 the execution cache while keeping the VM device topology attached.

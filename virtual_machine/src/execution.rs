@@ -232,6 +232,7 @@ impl ExecutionEngine {
             }
 
             let mode = cpu.state.mode;
+            let previous_interrupt_shadow = cpu.state.interrupt_shadow;
             cpu.prepare_instruction();
             mmu.set_replay_instruction_ip(Some(instruction.ip));
             ports.set_replay_instruction_ip(Some(instruction.ip));
@@ -240,6 +241,9 @@ impl ExecutionEngine {
             mmu.set_replay_instruction_ip(None);
             ports.set_replay_instruction_ip(None);
             bios.set_replay_instruction_ip(None);
+            if matches!(result, Err(CpuError::UnsupportedInstruction)) {
+                cpu.state.interrupt_shadow = previous_interrupt_shadow;
+            }
             result?;
             executed += 1;
             self.record_instruction(instruction.ip, key.rip, block.compiled);
@@ -353,7 +357,11 @@ impl ExecutionEngine {
         let mut ip = rip;
         let mut instructions = Vec::with_capacity(limit);
         for _ in 0..limit {
-            let instruction = cpu.decode_instruction(ip, mmu)?;
+            let instruction = match cpu.decode_instruction(ip, mmu) {
+                Ok(instruction) => instruction,
+                Err(error) if instructions.is_empty() => return Err(error),
+                Err(_) => break,
+            };
             ip = instruction.next_ip;
             let boundary = is_block_boundary(&instruction);
             instructions.push(instruction);
@@ -432,6 +440,16 @@ fn is_block_boundary(instruction: &DecodedInstruction) -> bool {
             | "JRCXZ"
             | "WRMSR"
             | "RDMSR"
+            | "IN"
+            | "OUT"
+            | "INSB"
+            | "INSW"
+            | "INSD"
+            | "INSQ"
+            | "OUTSB"
+            | "OUTSW"
+            | "OUTSD"
+            | "OUTSQ"
             | "STI"
             | "CLI"
     )

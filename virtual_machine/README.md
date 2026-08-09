@@ -252,6 +252,8 @@ Read the guides in this order:
    VM safely.
 4. [Performance tuning](docs/PERFORMANCE.md) — translated blocks, profiling,
    and cache settings.
+5. [Execution equivalence](docs/EXECUTION_EQUIVALENCE.md) — interpreter,
+   translated-block, and compiled-IR correctness contract.
 
 Runnable examples live in [`examples/`](examples/):
 
