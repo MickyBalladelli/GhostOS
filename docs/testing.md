@@ -13,6 +13,13 @@ locally with:
 python3 scripts/validate-review-baseline.py
 ```
 
+Roadmap IDs, feature bodies, local links, and root inventory mappings are
+checked with:
+
+```sh
+python3 scripts/validate-roadmaps.py
+```
+
 When adding or removing a workspace member or changing roadmap structure,
 refresh the committed baseline with:
 

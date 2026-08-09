@@ -23,7 +23,7 @@ evidence.
       preserving their links and inventory mappings.
 - [x] Replace the empty `60.0 True VT100 emulator` heading with a real scoped
       feature, or move it to a dedicated terminal roadmap.
-- [ ] Add a roadmap validator that rejects duplicate IDs, empty feature
+- [x] Add a roadmap validator that rejects duplicate IDs, empty feature
       bodies, stale links, and TODO headings missing from the inventory.
 - [ ] Separate `planned`, `running`, `passed`, `failed`, and `blocked` in the
       machine-readable inventory. A named test must not count as evidence.

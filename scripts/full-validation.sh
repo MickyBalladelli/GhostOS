@@ -140,6 +140,7 @@ if ! SYNOS_EVIDENCE_DIR="$evidence_dir" "$root_dir/scripts/test-all.sh"; then
 fi
 
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
+python3 "$root_dir/scripts/validate-roadmaps.py"
 python3 "$root_dir/scripts/validate-review-baseline.py"
 qemu_image=${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}
 qemu_uefi_image=${SYNOS_QEMU_UEFI_IMAGE:-$qemu_image}
