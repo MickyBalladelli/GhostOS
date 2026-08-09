@@ -107,6 +107,7 @@ pub enum MonitorPermission {
     Migration,
     Save,
     Quit,
+    Sensitive,
 }
 
 impl MonitorPermission {
@@ -118,6 +119,7 @@ impl MonitorPermission {
             Self::Migration => 1 << 3,
             Self::Save => 1 << 4,
             Self::Quit => 1 << 5,
+            Self::Sensitive => 1 << 6,
         }
     }
 
@@ -129,6 +131,7 @@ impl MonitorPermission {
             Self::Migration => "migration",
             Self::Save => "save",
             Self::Quit => "quit",
+            Self::Sensitive => "sensitive",
         }
     }
 }
@@ -166,8 +169,9 @@ impl MonitorPermissions {
                 "migration" => MonitorPermission::Migration,
                 "save" | "snapshot-save" => MonitorPermission::Save,
                 "quit" | "stop" => MonitorPermission::Quit,
+                "sensitive" | "diagnostics" => MonitorPermission::Sensitive,
                 _ => return Err(format!(
-                    "invalid monitor permission `{name}`; use status, device, disk, migration, save, quit, or all"
+                    "invalid monitor permission `{name}`; use status, device, disk, migration, save, quit, sensitive, or all"
                 )),
             };
             permissions.insert(permission)
@@ -239,12 +243,22 @@ impl MonitorAuthenticator {
                 message: format!("monitor client lacks `{}` permission", permission.name()),
             })
         }
+        if parsed.requests_sensitive_data()
+            && !self.permissions.allows(MonitorPermission::Sensitive)
+        {
+            return Err(MonitorRequestError {
+                code: "permission-denied",
+                command: Some(parsed.name().to_string()),
+                message: "monitor client lacks `sensitive` permission".to_string(),
+            })
+        }
         if self.seen_nonces.len() == MAX_SEEN_NONCES {
             self.seen_nonces.pop_front();
         }
         self.seen_nonces.push_back(nonce);
         Ok(parsed)
     }
+
 }
 
 fn validate_timestamp(timestamp: u64) -> Result<(), MonitorRequestError> {
@@ -305,7 +319,10 @@ fn auth_error(code: &'static str, message: &str) -> MonitorRequestError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MonitorCommand {
     Help,
-    Info(MonitorTopic),
+    Info {
+        topic: MonitorTopic,
+        disclose_sensitive: bool,
+    },
     SaveSnapshot(PathBuf),
     Quit,
 }
@@ -331,12 +348,14 @@ impl MonitorCommand {
         match input {
             "help" | "?" => Ok(Self::Help),
             "quit" | "exit" => Ok(Self::Quit),
-            "status" | "info status" => Ok(Self::Info(MonitorTopic::Status)),
-            "devices" | "info devices" => Ok(Self::Info(MonitorTopic::Devices)),
-            "disks" | "info disks" => Ok(Self::Info(MonitorTopic::Disks)),
-            "snapshots" | "info snapshots" => Ok(Self::Info(MonitorTopic::Snapshots)),
-            "migration" | "info migration" => Ok(Self::Info(MonitorTopic::Migration)),
-            "registers" | "info registers" => Ok(Self::Info(MonitorTopic::Registers)),
+            "status" | "info status" => Ok(Self::info(MonitorTopic::Status, false)),
+            "info status --show-sensitive" => Ok(Self::info(MonitorTopic::Status, true)),
+            "devices" | "info devices" => Ok(Self::info(MonitorTopic::Devices, false)),
+            "disks" | "info disks" => Ok(Self::info(MonitorTopic::Disks, false)),
+            "info disks --show-sensitive" => Ok(Self::info(MonitorTopic::Disks, true)),
+            "snapshots" | "info snapshots" => Ok(Self::info(MonitorTopic::Snapshots, false)),
+            "migration" | "info migration" => Ok(Self::info(MonitorTopic::Migration, false)),
+            "registers" | "info registers" => Ok(Self::info(MonitorTopic::Registers, true)),
             _ => {
                 if let Some(path) = input.strip_prefix("save ").map(str::trim) {
                     if path.is_empty() {
@@ -344,31 +363,52 @@ impl MonitorCommand {
                     }
                     return Ok(Self::SaveSnapshot(PathBuf::from(path)))
                 }
-                Err(format!("unknown monitor command `{input}`"))
+                Err("unknown monitor command".to_string())
             }
+        }
+    }
+
+    const fn info(topic: MonitorTopic, disclose_sensitive: bool) -> Self {
+        Self::Info {
+            topic,
+            disclose_sensitive,
         }
     }
 
     pub const fn permission(&self) -> MonitorPermission {
         match self {
-            Self::Help | Self::Info(MonitorTopic::Status | MonitorTopic::Snapshots | MonitorTopic::Registers) => MonitorPermission::Status,
-            Self::Info(MonitorTopic::Devices) => MonitorPermission::Device,
-            Self::Info(MonitorTopic::Disks) => MonitorPermission::Disk,
-            Self::Info(MonitorTopic::Migration) => MonitorPermission::Migration,
+            Self::Help
+            | Self::Info {
+                topic: MonitorTopic::Status | MonitorTopic::Snapshots | MonitorTopic::Registers,
+                ..
+            } => MonitorPermission::Status,
+            Self::Info { topic: MonitorTopic::Devices, .. } => MonitorPermission::Device,
+            Self::Info { topic: MonitorTopic::Disks, .. } => MonitorPermission::Disk,
+            Self::Info { topic: MonitorTopic::Migration, .. } => MonitorPermission::Migration,
             Self::SaveSnapshot(_) => MonitorPermission::Save,
             Self::Quit => MonitorPermission::Quit,
+        }
+    }
+
+    pub const fn requests_sensitive_data(&self) -> bool {
+        match self {
+            Self::Info {
+                disclose_sensitive,
+                ..
+            } => *disclose_sensitive,
+            _ => false,
         }
     }
 
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Help => "help",
-            Self::Info(MonitorTopic::Status) => "status",
-            Self::Info(MonitorTopic::Devices) => "devices",
-            Self::Info(MonitorTopic::Disks) => "disks",
-            Self::Info(MonitorTopic::Snapshots) => "snapshots",
-            Self::Info(MonitorTopic::Migration) => "migration",
-            Self::Info(MonitorTopic::Registers) => "registers",
+            Self::Info { topic: MonitorTopic::Status, .. } => "status",
+            Self::Info { topic: MonitorTopic::Devices, .. } => "devices",
+            Self::Info { topic: MonitorTopic::Disks, .. } => "disks",
+            Self::Info { topic: MonitorTopic::Snapshots, .. } => "snapshots",
+            Self::Info { topic: MonitorTopic::Migration, .. } => "migration",
+            Self::Info { topic: MonitorTopic::Registers, .. } => "registers",
             Self::SaveSnapshot(_) => "snapshot-save",
             Self::Quit => "quit",
         }
@@ -379,8 +419,10 @@ pub fn help_response() -> String {
     let commands = [
         "help",
         "info status",
+        "info status --show-sensitive",
         "info devices",
         "info disks",
+        "info disks --show-sensitive",
         "info snapshots",
         "info migration",
         "info registers",
@@ -404,28 +446,25 @@ pub fn failure_response(command: Option<&str>, code: &str, message: &str) -> Str
     )
 }
 
-pub fn action_response(command: &str, action: &str, path: Option<&str>) -> String {
-    let path = path
-        .map(|value| format!(",\"path\":{}", json_string(value)))
-        .unwrap_or_default();
+pub fn action_response(command: &str, action: &str) -> String {
     envelope(
         command,
-        &format!("{{\"action\":{},\"completed\":true{path}}}", json_string(action)),
+        &format!("{{\"action\":{},\"completed\":true}}", json_string(action)),
     )
 }
 
-pub fn info_response(vm: &Vm, topic: MonitorTopic) -> String {
+pub fn info_response(vm: &Vm, topic: MonitorTopic, disclose_sensitive: bool) -> String {
     match topic {
-        MonitorTopic::Status => status_response(vm),
+        MonitorTopic::Status => status_response(vm, disclose_sensitive),
         MonitorTopic::Devices => devices_response(vm),
-        MonitorTopic::Disks => disks_response(vm),
+        MonitorTopic::Disks => disks_response(vm, disclose_sensitive),
         MonitorTopic::Snapshots => snapshots_response(),
         MonitorTopic::Migration => migration_response(),
         MonitorTopic::Registers => registers_response(vm),
     }
 }
 
-fn status_response(vm: &Vm) -> String {
+fn status_response(vm: &Vm, disclose_sensitive: bool) -> String {
     let power = match vm.power_state() {
         PowerState::Running => "running",
         PowerState::Shutdown => "shutdown",
@@ -444,8 +483,13 @@ fn status_response(vm: &Vm) -> String {
         .map(|limitation| json_string(&limitation.to_string()))
         .collect::<Vec<_>>()
         .join(",");
+    let guest_data = if disclose_sensitive {
+        format!(",\"rip\":{}", vm.cpu().state.rip)
+    } else {
+        ",\"guest_data_redacted\":true".to_string()
+    };
     let data = format!(
-        "{{\"power\":{},\"hardware_acceleration\":{{\"requested\":{},\"host\":{},\"execution\":{},\"fallback\":{},\"supported_features\":[{}],\"limitations\":[{}]}},\"cpus\":{},\"memory_bytes\":{},\"rip\":{}}}",
+        "{{\"power\":{},\"hardware_acceleration\":{{\"requested\":{},\"host\":{},\"execution\":{},\"fallback\":{},\"supported_features\":[{}],\"limitations\":[{}]}},\"cpus\":{},\"memory_bytes\":{}{guest_data}}}",
         json_string(power),
         json_string(&acceleration.requested.to_string()),
         json_string(&acceleration.active.to_string()),
@@ -455,7 +499,6 @@ fn status_response(vm: &Vm) -> String {
         limitations,
         vm.config().smp_cores,
         vm.config().memory_size,
-        vm.cpu().state.rip,
     );
     envelope("status", &data)
 }
@@ -509,25 +552,35 @@ fn device(name: &str, kind: &str, bus: &str, address: &str, enabled: bool) -> St
     )
 }
 
-fn disks_response(vm: &Vm) -> String {
+fn disks_response(vm: &Vm, disclose_sensitive: bool) -> String {
     let disks = vm
         .disks()
         .into_iter()
         .map(|disk| {
-            format!(
-                "{{\"id\":{},\"role\":{},\"controller\":{},\"bus\":{},\"slot\":{},\"format\":{},\"capacity_bytes\":{},\"read_only\":{},\"persistence\":{},\"guest_id\":{},\"path\":{}}}",
-                json_string(&disk.id),
-                json_string(role_name(disk.role)),
-                json_string(controller_name(disk.controller)),
-                disk.bus,
-                disk.slot,
-                json_string(format_name(disk.format)),
-                disk.capacity,
-                disk.read_only,
-                json_string(persistence_name(disk.persistence)),
-                json_string(&disk.guest_id),
-                json_string(&disk.image_path.to_string_lossy()),
-            )
+            if disclose_sensitive {
+                format!(
+                    "{{\"id\":{},\"role\":{},\"controller\":{},\"bus\":{},\"slot\":{},\"format\":{},\"capacity_bytes\":{},\"read_only\":{},\"persistence\":{},\"guest_id\":{},\"path\":{}}}",
+                    json_string(&disk.id),
+                    json_string(role_name(disk.role)),
+                    json_string(controller_name(disk.controller)),
+                    disk.bus,
+                    disk.slot,
+                    json_string(format_name(disk.format)),
+                    disk.capacity,
+                    disk.read_only,
+                    json_string(persistence_name(disk.persistence)),
+                    json_string(&disk.guest_id),
+                    json_string(&disk.image_path.to_string_lossy()),
+                )
+            } else {
+                format!(
+                    "{{\"id\":{},\"role\":{},\"controller\":{},\"read_only\":{},\"image_metadata_redacted\":true,\"host_path_redacted\":true}}",
+                    json_string(&disk.id),
+                    json_string(role_name(disk.role)),
+                    json_string(controller_name(disk.controller)),
+                    disk.read_only,
+                )
+            }
         })
         .collect::<Vec<_>>();
     envelope(

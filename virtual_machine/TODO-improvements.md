@@ -106,7 +106,7 @@ remaining proof, portability, safety, and fidelity work.
       and concurrent clients. Test malformed and partial commands.
 - [x] Add migration encryption or a documented secure transport requirement,
       peer authorization, replay protection, and audit events.
-- [ ] Redact host paths, credentials, image metadata, and guest data from
+- [x] Redact host paths, credentials, image metadata, and guest data from
       diagnostics unless explicitly requested by an authorized operator.
 
 ## P1: Test evidence that matches reality

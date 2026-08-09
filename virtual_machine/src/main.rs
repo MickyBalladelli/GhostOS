@@ -1950,8 +1950,13 @@ fn monitor_command(
 ) -> Result<(bool, String), String> {
     match command {
         MonitorCommand::Help => Ok((true, control::help_response())),
-        MonitorCommand::Info(topic) => Ok((true, control::info_response(vm, topic))),
-        MonitorCommand::Quit => Ok((false, control::action_response("quit", "stop", None))),
+        MonitorCommand::Info {
+            topic,
+            disclose_sensitive,
+        } => {
+            Ok((true, control::info_response(vm, topic, disclose_sensitive)))
+        }
+        MonitorCommand::Quit => Ok((false, control::action_response("quit", "stop"))),
         MonitorCommand::SaveSnapshot(path) => {
             let Some(key) = auth_key else {
                 return Ok((true, control::failure_response(
@@ -1960,18 +1965,14 @@ fn monitor_command(
                     "monitor snapshot save needs an authentication key",
                 )))
             };
-            if let Err(error) = vm.save_authenticated_snapshot(&path, *key) {
+            if let Err(_error) = vm.save_authenticated_snapshot(&path, *key) {
                 return Ok((true, control::failure_response(
                     Some("snapshot-save"),
                     "snapshot-save-failed",
-                    &format!("cannot save authenticated snapshot: {error}"),
+                    "authenticated snapshot save failed; details redacted",
                 )))
             }
-            Ok((true, control::action_response(
-                "snapshot-save",
-                "save",
-                Some(&path.to_string_lossy()),
-            )))
+            Ok((true, control::action_response("snapshot-save", "save")))
         }
     }
 }
@@ -2383,7 +2384,7 @@ State and management:
       --monitor-auth-key <PATH>
                               Private monitor HMAC key (required with --monitor)
       --monitor-allow <LIST> Allow status, device, disk, migration, save, quit,
-                              or all (default: status)
+                              sensitive, or all (default: status)
       --replay-record <PATH> Record deterministic VM inputs to a trace
       --replay <PATH>        Replay a deterministic VM input trace
 

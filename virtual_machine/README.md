@@ -242,6 +242,16 @@ the JSON response to 64 KiB. Partial lines remain buffered until completed;
 EOF before the newline, extra commands, invalid UTF-8, and oversized input get
 bounded structured errors.
 
+Monitor diagnostics redact host paths, disk format/capacity/guest identifiers,
+CPU registers, snapshot-save paths, and detailed host errors by default.
+Sensitive status or disk fields require both `sensitive` authorization in
+`--monitor-allow` and an explicit `--show-sensitive` suffix on that request,
+for example `info disks --show-sensitive`. `info registers` is itself an
+explicit guest-data request and requires both `status` and `sensitive`.
+Snapshot-save responses never echo their host path. Local CLI disk inspection
+commands count as explicit operator requests because the operator supplies the
+image path directly.
+
 ### Interactive terminal
 
 When stdin and stdout are TTYs, an unbounded VM run attaches the host terminal
