@@ -65,7 +65,7 @@ evidence.
       added-line detection, line reporting, removed lines, tests, examples,
       and comments. The check reports exact file and line locations and points
       reviewers to stable errors/status values or `fatal_kernel_halt`.
-- [ ] Make every externally visible error include a stable code, operation,
+- [x] Make every externally visible error include a stable code, operation,
       retry hint, and audit context without leaking secrets.
       Progress: added the allocation-free `synos-status::PublicError`
       contract with stable status codes, operation IDs, retry hints, and
