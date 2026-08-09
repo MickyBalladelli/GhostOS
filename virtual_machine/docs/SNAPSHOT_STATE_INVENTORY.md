@@ -11,8 +11,12 @@ This is the state boundary for `VmSnapshot` versions 1 and 2. Every mutable
   continuation needs it.
 
 `VmSnapshot::restore_into` restores only serialized state. It also clears the
-translation cache. It does not silently serialize device queues, host handles,
-or external disk contents.
+translation cache. `VmSnapshot::restore_into_with_report` and
+`Vm::restore_snapshot_with_report` explicitly report the restored,
+rebuild-required, and excluded state boundary. Device queues, host handles, and
+external disk contents are not silently treated as checkpoint state. For exact
+continuation, create a fresh VM from the same configuration before restoring;
+reconnect external resources listed by the report.
 
 ## `Vm` fields
 

@@ -304,6 +304,69 @@ pub struct VmSnapshot {
     pub bios_reset_vector: u64,
 }
 
+const SNAPSHOT_RESTORED_STATE: &[&str] = &[
+    "CPU registers and execution state",
+    "guest RAM and MMU/page-table state",
+    "interrupt controller state",
+    "local APIC state",
+    "BIOS lifecycle state and BIOS tables",
+];
+
+const SNAPSHOT_REBUILT_STATE: &[&str] = &[
+    "port and MMIO device topology",
+    "PCI topology and BAR defaults",
+    "disk and network backend handles",
+    "host clock and hardware-acceleration handles",
+    "translation cache",
+];
+
+const SNAPSHOT_EXCLUDED_STATE: &[&str] = &[
+    "serial, PS/2, and virtio-console input/output queues",
+    "device queues and in-flight DMA requests",
+    "PIT and HPET host-time progress",
+    "display host state",
+    "guest-agent, hotplug, and power-notification queues",
+    "virtio RNG host entropy state",
+    "external disk contents and host cache/lock state",
+    "network backend queues and link state",
+    "UEFI runtime/application host pointers",
+];
+
+/// Explains what a snapshot restore did and which host-owned state must be
+/// recreated or remains outside the checkpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotRestoreReport {
+    restored_state: &'static [&'static str],
+    rebuild_required_state: &'static [&'static str],
+    excluded_state: &'static [&'static str],
+}
+
+impl SnapshotRestoreReport {
+    fn new() -> Self {
+        Self {
+            restored_state: SNAPSHOT_RESTORED_STATE,
+            rebuild_required_state: SNAPSHOT_REBUILT_STATE,
+            excluded_state: SNAPSHOT_EXCLUDED_STATE,
+        }
+    }
+
+    pub fn restored_state(&self) -> &'static [&'static str] {
+        self.restored_state
+    }
+
+    pub fn rebuild_required_state(&self) -> &'static [&'static str] {
+        self.rebuild_required_state
+    }
+
+    pub fn excluded_state(&self) -> &'static [&'static str] {
+        self.excluded_state
+    }
+
+    pub fn has_excluded_state(&self) -> bool {
+        !self.excluded_state.is_empty()
+    }
+}
+
 impl VmSnapshot {
     pub fn capture(vm: &Vm) -> Self {
         Self {
@@ -710,7 +773,11 @@ impl VmSnapshot {
 }
 
 impl VmSnapshot {
-    pub fn restore_into(&self, vm: &mut Vm) -> Result<(), SnapshotError> {
+    /// Restore serialized guest state and return the host-state boundary.
+    pub fn restore_into_with_report(
+        &self,
+        vm: &mut Vm,
+    ) -> Result<SnapshotRestoreReport, SnapshotError> {
         self.validate()?;
         if vm.mmu.ram_size() != self.memory_size {
             return Err(SnapshotError::IncompatibleMemory {
@@ -731,7 +798,11 @@ impl VmSnapshot {
         vm.bios.reset_vector = self.bios_reset_vector;
         vm.initialized = self.bios_state != BiosState::Reset;
         vm.execution.clear_cache();
-        Ok(())
+        Ok(SnapshotRestoreReport::new())
+    }
+
+    pub fn restore_into(&self, vm: &mut Vm) -> Result<(), SnapshotError> {
+        self.restore_into_with_report(vm).map(|_| ())
     }
 }
 
@@ -869,6 +940,14 @@ impl SnapshotChain {
 
     pub fn restore_into(&self, id: SnapshotId, vm: &mut Vm) -> Result<(), SnapshotError> {
         self.snapshot(id)?.restore_into(vm)
+    }
+
+    pub fn restore_into_with_report(
+        &self,
+        id: SnapshotId,
+        vm: &mut Vm,
+    ) -> Result<SnapshotRestoreReport, SnapshotError> {
+        self.snapshot(id)?.restore_into_with_report(vm)
     }
 }
 

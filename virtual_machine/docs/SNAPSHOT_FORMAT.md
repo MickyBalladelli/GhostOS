@@ -3,6 +3,11 @@
 `VmSnapshot` is a portable checkpoint for guest CPU, RAM/MMU, interrupt,
 APIC, and BIOS state. Host handles, device queues, timers, disks, and network
 backends stay outside the checkpoint; see [the state inventory](SNAPSHOT_STATE_INVENTORY.md).
+`VmSnapshot::restore_into_with_report` and
+`Vm::restore_snapshot_with_report` report what was restored, what must be
+rebuilt by VM construction, and what remains excluded. The CLI prints this
+boundary during restore. For exact continuation, restore into a fresh VM made
+from the same configuration and reconnect the reported external resources.
 
 ## Wire formats
 

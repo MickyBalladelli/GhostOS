@@ -834,9 +834,22 @@ fn run(mut cli: Cli) -> Result<(), String> {
         vm.set_efi_application(image);
     }
     if let Some(snapshot) = restore_snapshot.as_ref() {
-        vm.restore_snapshot(snapshot)
+        let restore_report = vm
+            .restore_snapshot_with_report(snapshot)
             .map_err(|error| format!("cannot restore snapshot: {error}"))?;
         println!("Restored VM snapshot (checksum=0x{:016x})", snapshot.checksum());
+        println!(
+            "Snapshot restored: {}",
+            restore_report.restored_state().join(", ")
+        );
+        for state in restore_report.rebuild_required_state() {
+            eprintln!("Snapshot restore needs host state rebuilt: {state}");
+        }
+        if restore_report.has_excluded_state() {
+            for state in restore_report.excluded_state() {
+                eprintln!("Snapshot restore excluded host state: {state}");
+            }
+        }
     }
     if let Some(path) = replay_path.as_ref() {
         let trace = Vm::load_replay(path)

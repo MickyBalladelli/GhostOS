@@ -76,7 +76,8 @@ pub use hardware_acceleration::{
 };
 pub use snapshot::{
     SnapshotChain, SnapshotDiff, SnapshotError, SnapshotFeatures, SnapshotId, SnapshotPage,
-    snapshot_digest, SnapshotAuthKey, SnapshotSchema, VmSnapshot, MAX_SNAPSHOT_BYTES,
+    snapshot_digest, SnapshotAuthKey, SnapshotRestoreReport, SnapshotSchema, VmSnapshot,
+    MAX_SNAPSHOT_BYTES,
     MAX_SNAPSHOT_MEMORY_BYTES, SNAPSHOT_AUTH_FORMAT_VERSION, SNAPSHOT_AUTH_KEY_BYTES,
     SNAPSHOT_AUTH_TAG_BYTES, SNAPSHOT_FORMAT_VERSION,
     SNAPSHOT_MIN_FORMAT_VERSION,
@@ -1614,6 +1615,15 @@ impl Vm {
     /// Restore a checkpoint captured from a VM with the same RAM size.
     pub fn restore_snapshot(&mut self, snapshot: &VmSnapshot) -> Result<(), SnapshotError> {
         snapshot.restore_into(self)
+    }
+
+    /// Restore a checkpoint and report which host-owned state must be rebuilt
+    /// or remains outside the checkpoint.
+    pub fn restore_snapshot_with_report(
+        &mut self,
+        snapshot: &VmSnapshot,
+    ) -> Result<snapshot::SnapshotRestoreReport, SnapshotError> {
+        snapshot.restore_into_with_report(self)
     }
 
     /// Alias for [`Self::restore_snapshot`].

@@ -139,7 +139,7 @@ remaining proof, portability, safety, and fidelity work.
 ## Immediate acceptance gate
 
 - [x] No malformed guest bytes or external command input can panic the VM.
-- [ ] A snapshot restores the same guest-visible state, or clearly reports why
+- [x] A snapshot restores the same guest-visible state, or clearly reports why
       excluded host state must be rebuilt.
 - [ ] A migration stream is bounded, authenticated, replay-safe, and atomic at
       the destination.
