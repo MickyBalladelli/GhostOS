@@ -44,7 +44,7 @@ evidence.
       and invalid queue state now return stable errors or status values.
       Added direct malformed-input regression tests for ELF loader fields and
       firewall policy decoding. Changed crates pass compile validation.
-- [ ] Allow panics only at an explicit fatal kernel halt boundary. Convert
+- [x] Allow panics only at an explicit fatal kernel halt boundary. Convert
       malformed guest data and user input into stable errors or status values.
       Progress: added the named `fatal_kernel_halt` boundary, converted bad
       boot metadata and page-table addresses to stable status/errors, removed

@@ -104,6 +104,8 @@ pub type TerminalInputMode = GuestInputMode;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::fmt;
+use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
 use replay::ReplayMode as VmReplayMode;
@@ -113,6 +115,15 @@ use synos_boot_protocol::{
 
 pub const COM1_PORT: u16 = 0x3F8;
 pub const COM2_PORT: u16 = 0x2F8;
+
+/// Write one host VM log line with the same CRLF convention as guest serial.
+pub fn host_println(args: fmt::Arguments<'_>) {
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_fmt(args);
+    let _ = stdout.write_all(b"\r\n");
+    let _ = stdout.flush();
+}
+
 pub const PCI_CONFIG_PORT: u16 = 0xCF8;
 pub const PCI_CONFIG_PORT_SIZE: u16 = 8;
 
@@ -779,7 +790,7 @@ impl Vm {
         if self.initialized {
             return Ok(())
         }
-        println!("Initializing VM...");
+        host_println(format_args!("Initializing VM..."));
 
         match self.config.firmware {
             FirmwareMode::Bios => {
@@ -892,7 +903,7 @@ impl Vm {
     {
         self.initialize()?;
 
-        println!("Starting CPU emulation...");
+        host_println(format_args!("Starting CPU emulation..."));
 
         loop {
             if !monitor(self)? {

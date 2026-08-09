@@ -829,7 +829,10 @@ fn run(mut cli: Cli) -> Result<(), String> {
 
     let mut vm = Vm::try_with_config(config)
         .map_err(|error| format!("VM configuration error: {error:?}"))?;
-    println!("Hardware acceleration: {}", vm.hardware_acceleration());
+    synos_vm::host_println(format_args!(
+        "Hardware acceleration: {}",
+        vm.hardware_acceleration()
+    ));
     if let Some(image) = efi_image {
         vm.set_efi_application(image);
     }
@@ -891,7 +894,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
             report.steps, report.rip, report.halted
         );
     } else {
-        println!("Starting CPU emulation...");
+        synos_vm::host_println(format_args!("Starting CPU emulation..."));
         let terminal = TerminalSession::new(if replay_path.is_some() {
             Some(false)
         } else {
