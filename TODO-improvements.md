@@ -164,3 +164,135 @@ evidence.
       limit, restart, observability, and compatibility coverage as applicable.
 - [ ] Full validation passes with no unexplained skip and produces a signed or
       otherwise integrity-protected evidence manifest.
+
+## P1: Complete guest networking, DHCP, and network diagnostics
+
+The current DHCP client and shell syntax exist, but the kernel still seeds
+`eth0` with `link_up: false`, the VM uses an in-memory loopback backend, and no
+runtime DHCP transport connects those pieces. These tasks make two running
+SynOS VMs communicate and obtain distinct leases.
+
+### VM link and packet plumbing
+
+- [ ] Replace the seeded `KernelNetwork` interface view with a runtime network
+      provider backed by the actual e1000 or virtio-net device.
+- [ ] Expose each NIC MAC address, carrier state, administrative enabled state,
+      RX/TX queue state, and link-change events to the kernel network service.
+- [ ] Make `SET INTERFACE ... /ENABLE` and `/DISABLE` control administrative
+      state while preserving the separate physical `link up` state.
+- [ ] Start DHCP only when the interface is enabled and the carrier is up;
+      stop transmission immediately on link loss and restart cleanly on link
+      restoration.
+- [ ] Define the VM network topology contract: distinct MAC addresses, one
+      shared L2 segment for peer VMs, broadcast delivery, frame-size limits, and
+      behavior when no peer or uplink is attached.
+- [ ] Add a real host/VM network backend for bridged, user-mode/NAT, and
+      deterministic test networking; keep the in-memory loopback backend only
+      for isolated unit tests.
+- [ ] Add a bounded DHCP server to the deterministic VM network fixture, with a
+      configurable pool, gateway, DNS, lease duration, and per-MAC reservations.
+- [ ] Ensure two VMs on one fixture receive different addresses and can send
+      Ethernet, ARP, IPv4, ICMP, UDP, and TCP traffic to each other.
+- [ ] Report missing NIC, carrier-down, queue-full, and backend-unavailable
+      conditions as stable network errors instead of leaving DHCP at `init`.
+
+### DHCP client integration
+
+- [ ] Connect `DhcpClient` to the real Ethernet/IPv4/UDP transport on ports 67
+      and 68, including broadcast source address and destination MAC handling.
+- [ ] Drive DHCP polling from the kernel monotonic clock and network service
+      scheduler without blocking the shell or starving other sockets.
+- [ ] Apply the complete lease atomically: address, subnet mask, gateway,
+      routes, DNS servers, lease timers, server identity, and interface state.
+- [ ] Add subnet-mask/prefix representation to the declarative interface model
+      and shell output; do not infer a mask from an IPv4 address string.
+- [ ] Preserve the previous static or last-known-good lease until a new lease
+      is acknowledged and the interface health check succeeds.
+- [ ] Implement INIT, SELECTING, REQUESTING, BOUND, RENEWING, REBINDING, and
+      INIT-REBOOT transitions against real packets and real timer deadlines.
+- [ ] Handle no-offer, NAK, malformed offer, conflicting offer, server change,
+      duplicate ACK, lease expiry, release, restart recovery, and link flaps.
+- [ ] Add bounded exponential retry, jitter, attempt limits, and an observable
+      next-action deadline for DHCP that cannot spin on a failed link.
+- [ ] Persist enough lease metadata for safe reboot recovery while rejecting
+      stale, expired, wrong-interface, wrong-MAC, and wrong-server leases.
+- [ ] Validate every accepted option and reject invalid subnet masks, gateways
+      outside the subnet, broadcast addresses, duplicate routes, bad DNS data,
+      timer ordering, oversized option lists, and conflicting server IDs.
+- [ ] Reconcile DHCP routes and DNS settings when a lease changes, then remove
+      only DHCP-owned state on release or expiry.
+- [ ] Add `SHOW DHCP` or an equivalent detailed view for transaction ID, MAC,
+      attempt, timers, server, offered address, failure reason, and last packet
+      time; keep secrets and raw payloads out of normal output.
+- [ ] Add packet capture and audit evidence for discover, offer, request, ACK,
+      NAK, renew, rebind, release, rollback, and link-down transitions.
+
+### IP, ARP, and ICMP foundations
+
+- [ ] Connect the configured interface address, subnet, gateway, and routes to
+      the smoltcp interface after every successful static or DHCP update.
+- [ ] Enable bounded ARP/neighbor discovery and expose pending, reachable,
+      stale, failed, and permanent neighbor states.
+- [ ] Add IPv4 ICMP echo request/reply support with checksum validation,
+      identifier/sequence matching, TTL handling, bounded payloads, and a
+      monotonic send/receive timestamp.
+- [ ] Add firewall and capability policy for ARP, ICMP echo, DHCP broadcast,
+      UDP, and TCP traffic with explicit ingress and egress decisions.
+- [ ] Add interface and network statistics for RX/TX packets, bytes, drops,
+      errors, queue depth, ARP failures, DHCP retries, and ICMP loss.
+
+### `PING` command
+
+- [ ] Add `PING destination` with qualifiers for `/COUNT`, `/TIMEOUT`, `/SIZE`,
+      `/INTERFACE`, `/SOURCE`, and optional `/IPV4` or `/IPV6` selection.
+- [ ] Resolve a literal IPv4 address first; add bounded DNS resolution for host
+      names without making command execution block indefinitely.
+- [ ] Execute each echo request asynchronously with cancellation, per-packet
+      timeout, total deadline, sequence tracking, and a hard packet/count limit.
+- [ ] Return stable results for success, timeout, unreachable, no route, link
+      down, DNS failure, permission denial, malformed reply, and cancellation.
+- [ ] Add human-readable summary output showing transmitted, received, loss,
+      minimum/average/maximum RTT, and destination identity.
+- [ ] Add structured and JSON output containing every reply, sequence, TTL,
+      payload size, RTT, error, and final summary.
+- [ ] Require the network diagnostic capability and record the target,
+      interface, source, count, timeout, and result in the audit stream.
+- [ ] Add shell parser, help, authorization, output, timeout, cancellation,
+      and malformed-qualifier coverage for `PING`.
+
+### Additional useful network commands
+
+- [ ] Add `SHOW NEIGHBORS` to inspect ARP/IPv6 neighbor cache entries and
+      `CLEAR NEIGHBORS` with an explicit safety guard.
+- [ ] Add `SHOW DNS` and `SET DNS` for ordered resolver configuration, DHCP
+      ownership, static overrides, search domains, and bounded query status.
+- [ ] Add `RESOLVE hostname` with IPv4/IPv6 answers, resolver used, TTL, and
+      bounded timeout/error output.
+- [ ] Add `SHOW SOCKETS` for protocol, local endpoint, remote endpoint, owner,
+      capability, state, queue sizes, and lifetime; redact unauthorized owners.
+- [ ] Add `SHOW NETWORK-STATS` for interface, DHCP, ARP, ICMP, UDP, TCP, and
+      firewall counters with reset-safe generation numbers.
+- [ ] Add `TRACEROUTE destination` only after bounded TTL expiry, ICMP time
+      exceeded handling, route selection, and rate limits are implemented.
+- [ ] Add `SHOW PACKETS` or a capability-gated bounded packet capture for
+      diagnostics, with filters, truncation, redaction, and automatic expiry.
+- [ ] Add command aliases and help entries consistently for singular/plural
+      network nouns, structured output, JSON output, and continuation limits.
+
+### End-to-end proof
+
+- [ ] Add two-VM integration coverage for link-up, DHCP lease acquisition,
+      distinct addresses, peer ping, peer TCP connection, and lease renewal.
+- [ ] Add negative integration coverage for disabled NIC, carrier loss, absent
+      DHCP server, DHCP NAK, duplicate address, full lease pool, packet loss,
+      queue saturation, and backend disconnect.
+- [ ] Add restart and snapshot coverage proving NIC topology, MAC identity,
+      active leases, routes, neighbor state, and DHCP timers recover according
+      to the documented portability rules.
+- [ ] Add fuzz/property coverage for DHCP, ARP, IPv4, ICMP, DNS, and command
+      qualifiers with bounded memory and no panic paths.
+- [ ] Document VM networking setup, DHCP modes, bridge/NAT limitations, sample
+      two-VM commands, expected `SHOW INTERFACES` output, and troubleshooting
+      for `link down` versus `DHCP init`.
+- [ ] Add roadmap evidence mappings for every network task and do not mark the
+      existing DHCP checklist complete until a real two-VM lease and ping pass.
