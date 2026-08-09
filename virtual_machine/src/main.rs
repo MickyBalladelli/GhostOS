@@ -18,6 +18,10 @@ use synos_vm::{
     snapshot_digest, SnapshotAuthKey, SnapshotFeatures, SnapshotSchema, COM1_PORT, COM2_PORT,
 };
 
+mod control;
+
+use control::{MonitorCommand, MIGRATION_PROTOCOL_VERSION};
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct Cli {
@@ -752,7 +756,6 @@ fn run(mut cli: Cli) -> Result<(), String> {
 }
 
 const MIGRATION_MAGIC: &[u8; 8] = b"SYNOMIG3";
-const MIGRATION_PROTOCOL_VERSION: u32 = 3;
 const MIGRATION_AUTH_DOMAIN: &[u8] = b"SYNOS-MIGRATION-HMAC-SHA256-V3";
 const MIGRATION_NONCE_BYTES: usize = 32;
 const MAX_MIGRATION_ALLOCATION_BYTES: u64 = 8 * 1024 * 1024 * 1024;
@@ -1502,8 +1505,16 @@ impl MonitorSession {
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
                 Err(error) => return Err(format!("monitor read failed: {error}")),
             };
-            let command = String::from_utf8_lossy(&buffer[..count]).trim().to_string();
-            let (keep_running, response) = monitor_command(vm, &command, auth_key)?;
+            let command = match std::str::from_utf8(&buffer[..count]) {
+                Ok(command) => command.trim(),
+                Err(_) => {
+                    stream
+                        .write_all(control::error_response(None, "monitor command is not valid UTF-8").as_bytes())
+                        .map_err(|error| format!("monitor write failed: {error}"))?;
+                    return Ok(true)
+                }
+            };
+            let (keep_running, response) = monitor_command(vm, command, auth_key)?;
             stream
                 .write_all(response.as_bytes())
                 .map_err(|error| format!("monitor write failed: {error}"))?;
@@ -1531,60 +1542,35 @@ fn monitor_command(
     command: &str,
     auth_key: Option<&SnapshotAuthKey>,
 ) -> Result<(bool, String), String> {
-    match command {
-        "help" | "?" => Ok((true, "help\ninfo registers\ninfo disks\ninfo status\nsave PATH\nquit\n".to_string())),
-        "info registers" => Ok((
-            true,
-            format!(
-                "rip=0x{:016x} rax=0x{:016x} rbx=0x{:016x} rcx=0x{:016x} rdx=0x{:016x} rflags=0x{:016x} halted={}\n",
-                vm.cpu().state.rip,
-                vm.cpu().state.rax,
-                vm.cpu().state.rbx,
-                vm.cpu().state.rcx,
-                vm.cpu().state.rdx,
-                vm.cpu().state.rflags,
-                vm.cpu().state.halted,
-            ),
-        )),
-        "info disks" => {
-            let mut response = String::new();
-            for disk in vm.disks() {
-                response.push_str(&format!(
-                    "id={} role={:?} controller={:?} capacity={} read-only={} path={}\n",
-                    disk.id,
-                    disk.role,
-                    disk.controller,
-                    disk.capacity,
-                    disk.read_only,
-                    disk.image_path.display(),
-                ));
+    let parsed = match MonitorCommand::parse(command) {
+        Ok(command) => command,
+        Err(error) => return Ok((true, control::error_response(Some(command), &error))),
+    };
+    match parsed {
+        MonitorCommand::Help => Ok((true, control::help_response())),
+        MonitorCommand::Info(topic) => Ok((true, control::info_response(vm, topic))),
+        MonitorCommand::Quit => Ok((false, control::action_response("quit", "stop", None))),
+        MonitorCommand::SaveSnapshot(path) => {
+            let Some(key) = auth_key else {
+                return Ok((true, control::failure_response(
+                    Some("snapshot-save"),
+                    "authentication-required",
+                    "monitor snapshot save needs an authentication key",
+                )))
+            };
+            if let Err(error) = vm.save_authenticated_snapshot(&path, *key) {
+                return Ok((true, control::failure_response(
+                    Some("snapshot-save"),
+                    "snapshot-save-failed",
+                    &format!("cannot save authenticated snapshot: {error}"),
+                )))
             }
-            if response.is_empty() {
-                response.push_str("no disks attached\n");
-            }
-            Ok((true, response))
+            Ok((true, control::action_response(
+                "snapshot-save",
+                "save",
+                Some(&path.to_string_lossy()),
+            )))
         }
-        "info status" => Ok((
-            true,
-            format!(
-                "power={:?}\nhardware-acceleration={}\n",
-                vm.power_state(),
-                vm.hardware_acceleration(),
-            ),
-        )),
-        "quit" | "exit" => Ok((false, "stopping VM\n".to_string())),
-        command if command.strip_prefix("save ").is_some() => {
-            let path = command.strip_prefix("save ").unwrap().trim();
-            if path.is_empty() {
-                return Err("save needs a snapshot PATH".to_string());
-            }
-            let path = PathBuf::from(path);
-            let key = auth_key.ok_or_else(|| "monitor snapshot save needs an authentication key".to_string())?;
-            vm.save_authenticated_snapshot(&path, *key)
-                .map_err(|error| format!("cannot save authenticated snapshot: {error}"))?;
-            Ok((true, format!("saved {}\n", path.display())))
-        }
-        _ => Ok((true, "unknown monitor command; try help\n".to_string())),
     }
 }
 

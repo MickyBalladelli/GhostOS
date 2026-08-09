@@ -197,8 +197,11 @@ the migration transport; migration also uses mutual challenges, timeouts,
 freshness checks, and a replay ledger. Manage key rotation separately.
 
 Expose a Unix monitor socket with `--monitor PATH`. Connect with a Unix-socket
-client and use `help`, `info registers`, `info disks`, `info status`, `save
-PATH`, or `quit`. Monitor `quit` cleanly stops the VM.
+client and use `help`, `info registers`, `info devices`, `info disks`, `info
+status`, `info snapshots`, `info migration`, `save PATH`, or `quit`. Every
+request returns one newline-delimited JSON object with an `ok`, `command`, and
+typed `data`, `error`, or completed action payload. Monitor `quit` cleanly stops
+the VM.
 
 ### Interactive terminal
 
