@@ -59,7 +59,12 @@ evidence.
       error/status assertions for all nine boundary classes. `cargo check
       -p synos-vm --tests` passes; test execution remains required before
       marking complete.
-- [ ] Add a policy check that reports new production panic paths in review.
+- [x] Add a policy check that reports new production panic paths in review.
+      Progress: added `scripts/validate-panic-policy.py`, wired it into full
+      validation, and added direct regression coverage for production-only
+      added-line detection, line reporting, removed lines, tests, examples,
+      and comments. The check reports exact file and line locations and points
+      reviewers to stable errors/status values or `fatal_kernel_halt`.
 - [ ] Make every externally visible error include a stable code, operation,
       retry hint, and audit context without leaking secrets.
 

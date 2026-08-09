@@ -142,6 +142,8 @@ fi
 python3 "$root_dir/scripts/validate-test-status.py" \
     --evidence-dir "$evidence_dir" \
     --output "$evidence_dir/test-status.json"
+python3 "$root_dir/scripts/test_validate_panic_policy.py"
+python3 "$root_dir/scripts/validate-panic-policy.py"
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
 python3 "$root_dir/scripts/validate-roadmaps.py"
 python3 "$root_dir/scripts/validate-review-baseline.py"
