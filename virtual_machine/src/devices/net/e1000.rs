@@ -318,6 +318,10 @@ impl E1000 {
             let buf_addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
             let buf_len = (u32::from_le_bytes(desc[8..12].try_into().unwrap()) & 0xFFFF) as usize;
             let frame_len = packet.len();
+            if frame_len < 6 {
+                let _ = self.pending_rx.pop();
+                continue
+            }
             if frame_len > buf_len {
                 break;
             }

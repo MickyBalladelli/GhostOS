@@ -257,7 +257,11 @@ impl BiosContext {
             set_ah(cpu, 0x80);
             return;
         };
-        let header = mmu.read_phys(dap_addr, 16).unwrap_or_default();
+        let Ok(header) = mmu.read_phys(dap_addr, 16) else {
+            set_cf(cpu);
+            set_ah(cpu, 0x01);
+            return
+        };
         if header[0] < 0x10 {
             set_cf(cpu);
             set_ah(cpu, 0x01);
@@ -266,7 +270,10 @@ impl BiosContext {
         let count = header[2] as u64;
         let seg = u16::from_le_bytes([header[4], header[5]]);
         let off = u16::from_le_bytes([header[6], header[7]]);
-        let lba = u64::from_le_bytes(header[8..16].try_into().unwrap());
+        let lba = u64::from_le_bytes([
+            header[8], header[9], header[10], header[11],
+            header[12], header[13], header[14], header[15],
+        ]);
         let dest = ((seg as u64) << 4) + off as u64;
         let available = (image.len() / 512) as u64;
         let to_read = count.min(available.saturating_sub(lba));
@@ -277,7 +284,11 @@ impl BiosContext {
         }
         let offset = (lba * 512) as usize;
         let bytes = &image[offset..offset + (to_read as usize) * 512];
-        let _ = mmu.write_phys(dest, bytes);
+        if mmu.write_phys(dest, bytes).is_err() {
+            set_cf(cpu);
+            set_ah(cpu, 0x09);
+            return
+        }
         clear_cf(cpu);
         set_ah(cpu, 0);
     }
@@ -334,7 +345,11 @@ impl BiosContext {
         buf[8..16].copy_from_slice(&len.to_le_bytes());
         buf[16..20].copy_from_slice(&ty.to_le_bytes());
         buf[20..24].copy_from_slice(&1u32.to_le_bytes());
-        let _ = mmu.write_phys(dest, &buf[..ecx.min(24)]);
+        if mmu.write_phys(dest, &buf[..ecx.min(24)]).is_err() {
+            set_cf(cpu);
+            set_ah(cpu, 0x86);
+            return
+        }
         cpu.rbx = ((ebx + 1) as u64) & 0xFFFF_FFFF;
         set_ah(cpu, 0);
         clear_cf(cpu);

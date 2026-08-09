@@ -476,12 +476,28 @@ fn elf_segments(bytes: &[u8]) -> Result<Vec<ElfSegment<'_>>, LoaderError> {
     if !is_elf64(bytes) || bytes.len() < 0x40 {
         return Err(LoaderError::InvalidFormat);
     }
-    let phoff = u64::from_le_bytes(bytes[0x20..0x28].try_into().unwrap()) as usize;
-    let phentsize = u16::from_le_bytes(bytes[0x36..0x38].try_into().unwrap()) as usize;
-    let phnum = u16::from_le_bytes(bytes[0x38..0x3A].try_into().unwrap()) as usize;
+    let phoff = usize::try_from(
+        u64::from_le_bytes(
+            bytes[0x20..0x28]
+                .try_into()
+                .map_err(|_| LoaderError::InvalidFormat)?,
+        ),
+    )
+    .map_err(|_| LoaderError::InvalidFormat)?;
+    let phentsize = u16::from_le_bytes(
+        bytes[0x36..0x38]
+            .try_into()
+            .map_err(|_| LoaderError::InvalidFormat)?,
+    ) as usize;
+    let phnum = u16::from_le_bytes(
+        bytes[0x38..0x3A]
+            .try_into()
+            .map_err(|_| LoaderError::InvalidFormat)?,
+    ) as usize;
     if phentsize < 56
-        || phoff
-            .checked_add(phentsize * phnum)
+        || phentsize
+            .checked_mul(phnum)
+            .and_then(|size| phoff.checked_add(size))
             .filter(|end| *end <= bytes.len())
             .is_none()
     {
@@ -490,22 +506,52 @@ fn elf_segments(bytes: &[u8]) -> Result<Vec<ElfSegment<'_>>, LoaderError> {
 
     let mut segments = Vec::new();
     for index in 0..phnum {
-        let ph = phoff + index * phentsize;
-        let kind = u32::from_le_bytes(bytes[ph..ph + 4].try_into().unwrap());
+        let ph = phoff
+            .checked_add(
+                index
+                    .checked_mul(phentsize)
+                    .ok_or(LoaderError::InvalidFormat)?,
+            )
+            .ok_or(LoaderError::InvalidFormat)?;
+        let kind = u32::from_le_bytes(
+            bytes[ph..ph + 4]
+                .try_into()
+                .map_err(|_| LoaderError::InvalidFormat)?,
+        );
         if kind != 1 {
             continue;
         }
-        let file_offset = u64::from_le_bytes(bytes[ph + 8..ph + 16].try_into().unwrap());
-        let virtual_address = u64::from_le_bytes(bytes[ph + 16..ph + 24].try_into().unwrap());
-        let physical_address = u64::from_le_bytes(bytes[ph + 24..ph + 32].try_into().unwrap());
-        let file_size = u64::from_le_bytes(bytes[ph + 32..ph + 40].try_into().unwrap());
-        let memory_size = u64::from_le_bytes(bytes[ph + 40..ph + 48].try_into().unwrap());
+        let file_offset = u64::from_le_bytes(
+            bytes[ph + 8..ph + 16]
+                .try_into()
+                .map_err(|_| LoaderError::InvalidFormat)?,
+        );
+        let virtual_address = u64::from_le_bytes(
+            bytes[ph + 16..ph + 24]
+                .try_into()
+                .map_err(|_| LoaderError::InvalidFormat)?,
+        );
+        let physical_address = u64::from_le_bytes(
+            bytes[ph + 24..ph + 32]
+                .try_into()
+                .map_err(|_| LoaderError::InvalidFormat)?,
+        );
+        let file_size = u64::from_le_bytes(
+            bytes[ph + 32..ph + 40]
+                .try_into()
+                .map_err(|_| LoaderError::InvalidFormat)?,
+        );
+        let memory_size = u64::from_le_bytes(
+            bytes[ph + 40..ph + 48]
+                .try_into()
+                .map_err(|_| LoaderError::InvalidFormat)?,
+        );
         let address = if physical_address != 0 {
             physical_address
         } else {
             virtual_address
         };
-        let start = file_offset as usize;
+        let start = usize::try_from(file_offset).map_err(|_| LoaderError::InvalidFormat)?;
         let end = file_offset
             .checked_add(file_size)
             .and_then(|end| usize::try_from(end).ok())
@@ -530,16 +576,25 @@ fn load_elf64(mmu: &mut Mmu, bytes: &[u8], entry: &mut u64) -> Result<u64, Loade
     let segments = elf_segments(bytes)?;
     let mut end = 0;
     for segment in segments {
+        let segment_end = segment
+            .address
+            .checked_add(segment.memory_size)
+            .filter(|end| *end <= mmu.ram_size() as u64)
+            .ok_or(LoaderError::OutOfMemory)?;
         mmu.write_phys(segment.address, segment.data)
             .map_err(|_| LoaderError::LoadFailed)?;
         let zeroes = segment.memory_size - segment.data.len() as u64;
         if zeroes > 0 {
             let zeroes =
                 vec![0u8; usize::try_from(zeroes).map_err(|_| LoaderError::InvalidFormat)?];
-            mmu.write_phys(segment.address + segment.data.len() as u64, &zeroes)
+            let zero_start = segment
+                .address
+                .checked_add(segment.data.len() as u64)
+                .ok_or(LoaderError::OutOfMemory)?;
+            mmu.write_phys(zero_start, &zeroes)
                 .map_err(|_| LoaderError::LoadFailed)?;
         }
-        end = end.max(segment.address.saturating_add(segment.memory_size));
+        end = end.max(segment_end);
     }
     if *entry == 0 {
         *entry = KERNEL_LOAD_ADDR;

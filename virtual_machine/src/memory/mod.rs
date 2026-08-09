@@ -221,11 +221,10 @@ pub struct MmuState {
 /// physical address `cr3`, reading tables from guest RAM.
 fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> {
     let read_ptr = |addr: u64| -> Option<u64> {
-        let addr = addr as usize;
-        if addr.saturating_add(8) > mem.len() {
-            return None;
-        }
-        Some(u64::from_le_bytes(mem[addr..addr + 8].try_into().unwrap()))
+        let addr = usize::try_from(addr).ok()?;
+        let end = addr.checked_add(8)?;
+        let bytes = mem.get(addr..end)?;
+        Some(u64::from_le_bytes(bytes.try_into().ok()?))
     };
 
     let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
@@ -327,7 +326,13 @@ fn collect_page_table_pages(mem: &[u8], cr3: u64) -> HashSet<u64> {
             if end > mem.len() {
                 return
             }
-            let raw = u64::from_le_bytes(mem[start + offset..end].try_into().unwrap());
+            let Some(raw) = mem[start + offset..end]
+                .try_into()
+                .ok()
+                .map(u64::from_le_bytes)
+            else {
+                return
+            };
             let entry = Pte { raw };
             if !entry.present() || (level <= 3 && entry.large()) {
                 continue
@@ -1027,17 +1032,25 @@ impl Mmu {
         let mut out = Vec::with_capacity(len);
         let mut offset = 0usize;
         while offset < len {
-            let addr = virt + offset as u64;
+            let addr = virt
+                .checked_add(offset as u64)
+                .ok_or(MemoryError::InvalidAddress)?;
             let remaining = len - offset;
-            let chunk = remaining.min(PAGE_SIZE - (addr as usize & (PAGE_SIZE - 1)));
+            let page_offset = usize::try_from(addr)
+                .map_err(|_| MemoryError::InvalidAddress)?
+                & (PAGE_SIZE - 1);
+            let chunk = remaining.min(PAGE_SIZE - page_offset);
             let phys = self.physical_address(addr, AccessKind::Read, chunk as u64)?;
             if let Some(region) = self.find_mmio(phys, chunk as u64) {
                 for i in 0..chunk {
-                    out.push(region.read(addr + i as u64, 1)? as u8);
+                    let byte_addr = addr
+                        .checked_add(i as u64)
+                        .ok_or(MemoryError::InvalidAddress)?;
+                    out.push(region.read(byte_addr, 1)? as u8);
                 }
             } else {
-                let start = phys as usize;
-                let end = start + chunk;
+                let start = usize::try_from(phys).map_err(|_| MemoryError::InvalidAddress)?;
+                let end = start.checked_add(chunk).ok_or(MemoryError::InvalidAddress)?;
                 if end > self.ram.len() {
                     return Err(MemoryError::InvalidAddress);
                 }
@@ -1084,16 +1097,21 @@ impl Mmu {
         let len = bytes.len();
         let mut offset = 0usize;
         while offset < len {
-            let addr = virt + offset as u64;
+            let addr = virt
+                .checked_add(offset as u64)
+                .ok_or(MemoryError::InvalidAddress)?;
             let remaining = len - offset;
-            let chunk = remaining.min(PAGE_SIZE - (addr as usize & (PAGE_SIZE - 1)));
+            let page_offset = usize::try_from(addr)
+                .map_err(|_| MemoryError::InvalidAddress)?
+                & (PAGE_SIZE - 1);
+            let chunk = remaining.min(PAGE_SIZE - page_offset);
             self.prepare_write(addr, chunk as u64)?;
             let phys = self.physical_address(addr, AccessKind::Write, chunk as u64)?;
             if self.find_mmio(phys, chunk as u64).is_some() {
                 return Err(MemoryError::AccessDenied);
             }
-            let start = phys as usize;
-            let end = start + chunk;
+            let start = usize::try_from(phys).map_err(|_| MemoryError::InvalidAddress)?;
+            let end = start.checked_add(chunk).ok_or(MemoryError::InvalidAddress)?;
             if end > self.ram.len() {
                 return Err(MemoryError::InvalidAddress);
             }
@@ -1115,8 +1133,9 @@ impl Mmu {
         if let Some(region) = self.find_mmio(addr, 1) {
             return Ok(region.read(addr, 1)? as u8);
         }
-        if (addr as usize) < self.ram.len() {
-            Ok(self.ram[addr as usize])
+        let addr = usize::try_from(addr).map_err(|_| MemoryError::InvalidAddress)?;
+        if addr < self.ram.len() {
+            Ok(self.ram[addr])
         } else {
             Err(MemoryError::InvalidAddress)
         }
@@ -1138,9 +1157,10 @@ impl Mmu {
             if self.find_mmio(phys, 1).is_some() {
                 return Err(MemoryError::AccessDenied);
             }
-            if (phys as usize) < self.ram.len() {
-                self.ram[phys as usize] = value;
-                self.record_ram_write(phys, 1);
+            let phys = usize::try_from(phys).map_err(|_| MemoryError::InvalidAddress)?;
+            if phys < self.ram.len() {
+                self.ram[phys] = value;
+                self.record_ram_write(phys as u64, 1);
                 return Ok(());
             }
             return Err(MemoryError::InvalidAddress);
@@ -1148,9 +1168,10 @@ impl Mmu {
         if self.find_mmio(addr, 1).is_some() {
             return Err(MemoryError::AccessDenied);
         }
-        if (addr as usize) < self.ram.len() {
-            self.ram[addr as usize] = value;
-            self.record_ram_write(addr, 1);
+        let addr = usize::try_from(addr).map_err(|_| MemoryError::InvalidAddress)?;
+        if addr < self.ram.len() {
+            self.ram[addr] = value;
+            self.record_ram_write(addr as u64, 1);
             Ok(())
         } else {
             Err(MemoryError::InvalidAddress)
@@ -1168,7 +1189,9 @@ impl Mmu {
 
     pub fn read_u32(&self, addr: u64) -> Result<u32, MemoryError> {
         let bytes = self.read_bytes(addr, 4)?;
-        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(u32::from_le_bytes(
+            bytes.try_into().map_err(|_| MemoryError::InvalidAddress)?,
+        ))
     }
 
     pub fn write_u32(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
@@ -1177,7 +1200,9 @@ impl Mmu {
 
     pub fn read_u64(&self, addr: u64) -> Result<u64, MemoryError> {
         let bytes = self.read_bytes(addr, 8)?;
-        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(u64::from_le_bytes(
+            bytes.try_into().map_err(|_| MemoryError::InvalidAddress)?,
+        ))
     }
 
     pub fn write_u64(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
@@ -1187,7 +1212,7 @@ impl Mmu {
     /// Read a 16-byte IDT/GDT descriptor from guest memory.
     pub fn read_descriptor(&self, addr: u64) -> Result<[u8; 16], MemoryError> {
         let bytes = self.read_bytes(addr, 16)?;
-        Ok(bytes.try_into().unwrap())
+        bytes.try_into().map_err(|_| MemoryError::InvalidAddress)
     }
 
     /// Allocate a physical frame from the allocator.

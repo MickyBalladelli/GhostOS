@@ -1288,7 +1288,11 @@ impl Vm {
                 self.enqueue_keyboard_scancode(input.bytes[0]);
             }
             HOST_INPUT_MOUSE if input.rows.is_none() && input.bytes.len() == 3 => {
-                self.enqueue_mouse_packet(input.bytes.try_into().unwrap());
+                let packet = input
+                    .bytes
+                    .try_into()
+                    .map_err(|_| VmError::Replay(ReplayError::Corrupt))?;
+                self.enqueue_mouse_packet(packet);
             }
             _ => return Err(VmError::Replay(ReplayError::Corrupt)),
         }

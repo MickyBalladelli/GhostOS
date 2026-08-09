@@ -610,47 +610,63 @@ impl UefiContext {
         if bytes.len() < 0x40 || &bytes[0..2] != b"MZ" {
             return Err(UefiError::InvalidImage);
         }
-        let e_lfanew = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
-        if e_lfanew.checked_add(24).filter(|end| *end <= bytes.len()).is_none()
-            || &bytes[e_lfanew..e_lfanew + 4] != b"PE\0\0"
-        {
+        let read_u16 = |offset: usize| -> Result<u16, UefiError> {
+            let end = offset.checked_add(2).ok_or(UefiError::InvalidImage)?;
+            let raw = bytes.get(offset..end).ok_or(UefiError::InvalidImage)?;
+            Ok(u16::from_le_bytes(
+                raw.try_into().map_err(|_| UefiError::InvalidImage)?,
+            ))
+        };
+        let read_u32 = |offset: usize| -> Result<u32, UefiError> {
+            let end = offset.checked_add(4).ok_or(UefiError::InvalidImage)?;
+            let raw = bytes.get(offset..end).ok_or(UefiError::InvalidImage)?;
+            Ok(u32::from_le_bytes(
+                raw.try_into().map_err(|_| UefiError::InvalidImage)?,
+            ))
+        };
+        let read_u64 = |offset: usize| -> Result<u64, UefiError> {
+            let end = offset.checked_add(8).ok_or(UefiError::InvalidImage)?;
+            let raw = bytes.get(offset..end).ok_or(UefiError::InvalidImage)?;
+            Ok(u64::from_le_bytes(
+                raw.try_into().map_err(|_| UefiError::InvalidImage)?,
+            ))
+        };
+        let e_lfanew = usize::try_from(read_u32(0x3C)?).map_err(|_| UefiError::InvalidImage)?;
+        let pe_end = e_lfanew.checked_add(24).ok_or(UefiError::InvalidImage)?;
+        if pe_end > bytes.len() || bytes.get(e_lfanew..e_lfanew + 4) != Some(b"PE\0\0") {
             return Err(UefiError::InvalidImage);
         }
-        let coff = e_lfanew + 4;
-        let machine = u16::from_le_bytes(bytes[coff..coff + 2].try_into().unwrap());
+        let coff = e_lfanew.checked_add(4).ok_or(UefiError::InvalidImage)?;
+        let machine = read_u16(coff)?;
         if machine != 0x8664 {
             return Err(UefiError::Unsupported);
         }
-        let num_sections =
-            u16::from_le_bytes(bytes[coff + 2..coff + 4].try_into().unwrap()) as usize;
+        let num_sections = read_u16(coff.checked_add(2).ok_or(UefiError::InvalidImage)?)? as usize;
         let size_opt =
-            u16::from_le_bytes(bytes[coff + 16..coff + 18].try_into().unwrap()) as usize;
-        let opt = coff + 20;
-        if size_opt < 112 || opt.checked_add(size_opt).filter(|end| *end <= bytes.len()).is_none() {
+            read_u16(coff.checked_add(16).ok_or(UefiError::InvalidImage)?)? as usize;
+        let opt = coff.checked_add(20).ok_or(UefiError::InvalidImage)?;
+        let opt_end = opt.checked_add(size_opt).ok_or(UefiError::InvalidImage)?;
+        if size_opt < 112 || opt_end > bytes.len() {
             return Err(UefiError::InvalidImage);
         }
-        let magic = u16::from_le_bytes(bytes[opt..opt + 2].try_into().unwrap());
+        let magic = read_u16(opt)?;
         if magic != 0x20B {
             // PE32+ only.
             return Err(UefiError::Unsupported);
         }
-        let entry_rva = u32::from_le_bytes(bytes[opt + 16..opt + 20].try_into().unwrap());
-        let image_base = u64::from_le_bytes(bytes[opt + 24..opt + 32].try_into().unwrap());
-        let size_of_image = u32::from_le_bytes(bytes[opt + 56..opt + 60].try_into().unwrap());
+        let entry_rva = read_u32(opt.checked_add(16).ok_or(UefiError::InvalidImage)?)?;
+        let image_base = read_u64(opt.checked_add(24).ok_or(UefiError::InvalidImage)?)?;
+        let size_of_image = read_u32(opt.checked_add(56).ok_or(UefiError::InvalidImage)?)?;
         if size_of_image == 0 || entry_rva >= size_of_image {
             return Err(UefiError::InvalidImage);
         }
-        let num_dirs =
-            u32::from_le_bytes(bytes[opt + 108..opt + 112].try_into().unwrap()) as usize;
+        let num_dirs = read_u32(opt.checked_add(108).ok_or(UefiError::InvalidImage)?)? as usize;
         let (reloc_rva, reloc_size) = if num_dirs > 5 {
             if size_opt < 112 + 6 * 8 {
                 return Err(UefiError::InvalidImage);
             }
-            let d = opt + 112 + 5 * 8;
-            let reloc = (
-                u32::from_le_bytes(bytes[d..d + 4].try_into().unwrap()),
-                u32::from_le_bytes(bytes[d + 4..d + 8].try_into().unwrap()),
-            );
+            let d = opt.checked_add(112 + 5 * 8).ok_or(UefiError::InvalidImage)?;
+            let reloc = (read_u32(d)?, read_u32(d.checked_add(4).ok_or(UefiError::InvalidImage)?)?);
             if reloc.1 > 0
                 && reloc.0.checked_add(reloc.1).filter(|end| *end <= size_of_image).is_none()
             {
@@ -661,19 +677,19 @@ impl UefiContext {
             (0, 0)
         };
 
-        let sections_start = opt + size_opt;
+        let sections_start = opt_end;
         let mut sections = Vec::new();
         for i in 0..num_sections {
-            let s = sections_start + i * 40;
-            if s.checked_add(40).filter(|end| *end <= bytes.len()).is_none() {
+            let s = sections_start
+                .checked_add(i.checked_mul(40).ok_or(UefiError::InvalidImage)?)
+                .ok_or(UefiError::InvalidImage)?;
+            let section_end = s.checked_add(40).ok_or(UefiError::InvalidImage)?;
+            if section_end > bytes.len() {
                 return Err(UefiError::InvalidImage);
             }
-            let virtual_address =
-                u32::from_le_bytes(bytes[s + 12..s + 16].try_into().unwrap());
-            let raw_size =
-                u32::from_le_bytes(bytes[s + 16..s + 20].try_into().unwrap()) as usize;
-            let raw_ptr =
-                u32::from_le_bytes(bytes[s + 20..s + 24].try_into().unwrap()) as usize;
+            let virtual_address = read_u32(s.checked_add(12).ok_or(UefiError::InvalidImage)?)?;
+            let raw_size = read_u32(s.checked_add(16).ok_or(UefiError::InvalidImage)?)? as usize;
+            let raw_ptr = read_u32(s.checked_add(20).ok_or(UefiError::InvalidImage)?)? as usize;
             if virtual_address
                 .checked_add(raw_size as u32)
                 .filter(|end| *end <= size_of_image)
@@ -729,8 +745,17 @@ impl UefiContext {
         }
 
         // Zero-fill the whole image region, then lay sections.
-        let zeros = vec![0u8; image.size_of_image as usize];
-        mmu.write_phys(requested, &zeros).map_err(|_| UefiError::LoadFailed)?;
+        let zeros = [0u8; 4096];
+        let mut zeroed = 0u64;
+        while zeroed < image.size_of_image as u64 {
+            let count = (image.size_of_image as u64 - zeroed).min(zeros.len() as u64) as usize;
+            let address = requested
+                .checked_add(zeroed)
+                .ok_or(UefiError::OutOfMemory)?;
+            mmu.write_phys(address, &zeros[..count])
+                .map_err(|_| UefiError::LoadFailed)?;
+            zeroed += count as u64;
+        }
         for sec in &image.sections {
             if sec.raw_data.is_empty() {
                 continue;
@@ -966,8 +991,12 @@ impl UefiContext {
         if let Some(c) = self.pending_keys.first().copied() {
             self.pending_keys.remove(0);
             if key_ptr != 0 {
+                let Some(unicode_ptr) = key_ptr.checked_add(2) else {
+                    cpu.rax = EFI_INVALID_PARAMETER;
+                    return
+                };
                 let _ = mmu.write_u16(key_ptr, 0); // scan code
-                let _ = mmu.write_u16(key_ptr + 2, c); // unicode char
+                let _ = mmu.write_u16(unicode_ptr, c); // unicode char
             }
             cpu.rax = EFI_SUCCESS;
         } else {
@@ -1009,11 +1038,20 @@ impl UefiContext {
         }
 
         for (i, desc) in descriptors.iter().enumerate() {
-            let addr = map_buf + (i as u64) * MEMORY_DESCRIPTOR_SIZE as u64;
-            let _ = mmu.write_phys(addr, desc);
+            let Some(addr) = (i as u64)
+                .checked_mul(MEMORY_DESCRIPTOR_SIZE as u64)
+                .and_then(|offset| map_buf.checked_add(offset))
+            else {
+                cpu.rax = EFI_INVALID_PARAMETER;
+                return
+            };
+            if mmu.write_phys(addr, desc).is_err() {
+                cpu.rax = EFI_INVALID_PARAMETER;
+                return
+            }
         }
         let _ = mmu.write_u64(map_size_ptr, needed);
-        self.map_key += 1;
+        self.map_key = self.map_key.wrapping_add(1);
         let _ = mmu.write_u64(map_key_ptr, self.map_key as u64);
         let _ = mmu.write_u64(desc_size_ptr, MEMORY_DESCRIPTOR_SIZE as u64);
         if desc_ver_ptr != 0 {
@@ -1348,7 +1386,11 @@ impl UefiContext {
         let name = read_utf16(mmu, name_ptr, 1024);
         let mut data = Vec::new();
         if data_size > 0 && data_ptr != 0 {
-            data = mmu.read_phys(data_ptr, data_size as usize).unwrap_or_default();
+            let Ok(data_len) = usize::try_from(data_size) else {
+                cpu.rax = EFI_INVALID_PARAMETER;
+                return
+            };
+            data = mmu.read_phys(data_ptr, data_len).unwrap_or_default();
         }
 
         if data_size == 0 {
@@ -1531,7 +1573,14 @@ fn stack_arg(mmu: &Mmu, cpu: &CpuState, idx: u64) -> u64 {
             _ => 0,
         }
     } else {
-        mmu.read_u64(cpu.rsp + 0x28 + (idx - 5) * 8).unwrap_or(0)
+        let Some(addr) = (idx - 5)
+            .checked_mul(8)
+            .and_then(|offset| 0x28u64.checked_add(offset))
+            .and_then(|offset| cpu.rsp.checked_add(offset))
+        else {
+            return 0
+        };
+        mmu.read_u64(addr).unwrap_or(0)
     }
 }
 
@@ -1540,7 +1589,7 @@ fn read_guid(mmu: &Mmu, ptr: u64) -> Option<[u8; 16]> {
         return None;
     }
     let bytes = mmu.read_phys(ptr, 16).ok()?;
-    Some(bytes.try_into().unwrap())
+    bytes.try_into().ok()
 }
 
 fn read_utf16(mmu: &Mmu, ptr: u64, max: usize) -> Vec<u16> {
@@ -1549,7 +1598,13 @@ fn read_utf16(mmu: &Mmu, ptr: u64, max: usize) -> Vec<u16> {
         return out;
     }
     for i in 0..max {
-        let c = mmu.read_u16(ptr + (i as u64) * 2).unwrap_or(0);
+        let Some(addr) = (i as u64)
+            .checked_mul(2)
+            .and_then(|offset| ptr.checked_add(offset))
+        else {
+            break
+        };
+        let c = mmu.read_u16(addr).unwrap_or(0);
         if c == 0 {
             break;
         }
@@ -1567,7 +1622,10 @@ fn device_path_filename(mmu: &Mmu, path_ptr: u64) -> Vec<u16> {
     }
     let mut off = 0u64;
     for _ in 0..16 {
-        let hdr = mmu.read_phys(path_ptr + off, 4).unwrap_or_default();
+        let Some(node_addr) = path_ptr.checked_add(off) else {
+            break
+        };
+        let hdr = mmu.read_phys(node_addr, 4).unwrap_or_default();
         if hdr.len() < 4 {
             break;
         }
@@ -1584,9 +1642,14 @@ fn device_path_filename(mmu: &Mmu, path_ptr: u64) -> Vec<u16> {
             // Media FilePath: UTF-16 file name follows the 4-byte header.
             let name_bytes = (len - 4) as usize;
             for i in 0..name_bytes / 2 {
-                let c = mmu
-                    .read_u16(path_ptr + off + 4 + (i as u64) * 2)
-                    .unwrap_or(0);
+                let Some(addr) = (i as u64)
+                    .checked_mul(2)
+                    .and_then(|index| off.checked_add(4 + index))
+                    .and_then(|index| path_ptr.checked_add(index))
+                else {
+                    break
+                };
+                let c = mmu.read_u16(addr).unwrap_or(0);
                 if c == 0 {
                     break;
                 }
@@ -1594,7 +1657,10 @@ fn device_path_filename(mmu: &Mmu, path_ptr: u64) -> Vec<u16> {
             }
             break;
         }
-        off += len;
+        let Some(next) = off.checked_add(len) else {
+            break
+        };
+        off = next;
     }
     out
 }

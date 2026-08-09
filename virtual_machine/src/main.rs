@@ -152,7 +152,14 @@ enum ParseResult {
 }
 
 fn main() {
-    match parse_args(std::env::args().skip(1)) {
+    let args = std::env::args_os()
+        .skip(1)
+        .map(|arg| {
+            arg.into_string()
+                .map_err(|_| "command argument is not valid UTF-8".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>();
+    match args.and_then(parse_args) {
         Ok(ParseResult::Help) => {
             print_help();
         }

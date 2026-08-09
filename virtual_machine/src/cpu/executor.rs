@@ -187,6 +187,10 @@ fn read_operand(
     read_operand_sized(ins, state, mmu, op, operand_bytes(ins.opsize))
 }
 
+fn operand_at(ins: &DecodedInstruction, index: usize) -> Result<&Operand, CpuError> {
+    ins.operands.get(index).ok_or(CpuError::InvalidOpcode)
+}
+
 fn write_operand(
     ins: &DecodedInstruction,
     state: &mut CpuState,
@@ -593,7 +597,7 @@ impl InstructionExecutor {
             return Ok(());
         }
 
-        match (&ins.operands[0], ins.operands.get(1)) {
+        match (operand_at(ins, 0)?, ins.operands.get(1)) {
             (Operand::ControlRegister(cr), Some(Operand::Register(reg))) => {
                 let v = state.reg(*reg);
                 write_cr(state, mmu, *cr, v)?;
@@ -663,8 +667,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let dst = ins.operands[0].clone();
-        let src = ins.operands[1].clone();
+        let dst = operand_at(ins, 0)?.clone();
+        let src = operand_at(ins, 1)?.clone();
         let a = read_operand(ins, state, mmu, &dst)?;
         let b = read_operand(ins, state, mmu, &src)?;
         let r = if is_sub {
@@ -687,8 +691,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let dst = ins.operands[0].clone();
-        let src = ins.operands[1].clone();
+        let dst = operand_at(ins, 0)?.clone();
+        let src = operand_at(ins, 1)?.clone();
         let a = read_operand(ins, state, mmu, &dst)?;
         let b = read_operand(ins, state, mmu, &src)?;
         let r = match ins.mnemonic {
@@ -712,8 +716,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let a = read_operand(ins, state, mmu, &ins.operands[0])?;
-        let b = read_operand(ins, state, mmu, &ins.operands[1])?;
+        let a = read_operand(ins, state, mmu, operand_at(ins, 0)?)?;
+        let b = read_operand(ins, state, mmu, operand_at(ins, 1)?)?;
         let _ = alu_sub(state, a, b, ins.opsize, 0);
         state.rip = ins.next_ip;
         Ok(())
@@ -729,8 +733,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let a = read_operand(ins, state, mmu, &ins.operands[0])?;
-        let b = read_operand(ins, state, mmu, &ins.operands[1])?;
+        let a = read_operand(ins, state, mmu, operand_at(ins, 0)?)?;
+        let b = read_operand(ins, state, mmu, operand_at(ins, 1)?)?;
         let _ = alu_logic(state, a & b, ins.opsize);
         state.rip = ins.next_ip;
         Ok(())
@@ -743,7 +747,7 @@ impl InstructionExecutor {
         mmu: &mut Mmu,
         increment: bool,
     ) -> Result<(), CpuError> {
-        let op = ins.operands[0].clone();
+        let op = operand_at(ins, 0)?.clone();
         let v = read_operand(ins, state, mmu, &op)?;
         let r = alu_inc_dec(state, v, ins.opsize, increment);
         write_operand(ins, state, mmu, &op, r)?;
@@ -757,7 +761,7 @@ impl InstructionExecutor {
         state: &mut CpuState,
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
-        let op = ins.operands[0].clone();
+        let op = operand_at(ins, 0)?.clone();
         let v = read_operand(ins, state, mmu, &op)?;
         let r = !v & operand_mask(ins.opsize);
         write_operand(ins, state, mmu, &op, r)?;
@@ -771,7 +775,7 @@ impl InstructionExecutor {
         state: &mut CpuState,
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
-        let op = ins.operands[0].clone();
+        let op = operand_at(ins, 0)?.clone();
         let v = read_operand(ins, state, mmu, &op)?;
         let r = alu_neg(state, v, ins.opsize);
         write_operand(ins, state, mmu, &op, r)?;
@@ -792,7 +796,7 @@ impl InstructionExecutor {
     ) -> Result<(), CpuError> {
         // Single-operand MUL/IMUL.
         if ins.operands.len() == 1 {
-            let rm = read_operand(ins, state, mmu, &ins.operands[0])?;
+            let rm = read_operand(ins, state, mmu, operand_at(ins, 0)?)?;
             let mask = operand_mask(ins.opsize);
             let m = rm & mask;
             let bits = ins.opsize as u32;
@@ -831,8 +835,8 @@ impl InstructionExecutor {
         }
 
         // Two/three-operand IMUL: dest = rm * src (or rm * imm).
-        let dst = ins.operands[0].clone();
-        let rm = ins.operands[1].clone();
+        let dst = operand_at(ins, 0)?.clone();
+        let rm = operand_at(ins, 1)?.clone();
         let a = read_operand(ins, state, mmu, &rm)?;
         let b = if let Some(Operand::Immediate(v)) = ins.operands.get(2) {
             *v
@@ -875,7 +879,7 @@ impl InstructionExecutor {
         mmu: &mut Mmu,
         signed: bool,
     ) -> Result<(), CpuError> {
-        let rm = read_operand(ins, state, mmu, &ins.operands[0])?;
+        let rm = read_operand(ins, state, mmu, operand_at(ins, 0)?)?;
         let mask = operand_mask(ins.opsize);
 
         let (quotient, remainder, overflow) = if signed {
@@ -985,7 +989,7 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        match &ins.operands[0] {
+        match operand_at(ins, 0)? {
             Operand::Register(r) => {
                 let v = state.reg_size(*r, operand_bytes(ins.opsize));
                 push_value(state, mmu, v, size)?;
@@ -1022,7 +1026,7 @@ impl InstructionExecutor {
             return Ok(());
         }
         let size = stack_operand_size(state, ins.opsize);
-        let op = ins.operands[0].clone();
+        let op = operand_at(ins, 0)?.clone();
         let v = pop_value(state, mmu, size)?;
         write_operand(ins, state, mmu, &op, v)?;
         state.rip = ins.next_ip;
@@ -1295,7 +1299,7 @@ impl InstructionExecutor {
         state: &mut CpuState,
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
-        let op = ins.operands[0].clone();
+        let op = operand_at(ins, 0)?.clone();
         write_operand(ins, state, mmu, &op, state.cr0)?;
         state.rip = ins.next_ip;
         Ok(())
@@ -1307,7 +1311,7 @@ impl InstructionExecutor {
         state: &mut CpuState,
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
-        let v = read_operand(ins, state, mmu, &ins.operands[0])?;
+        let v = read_operand(ins, state, mmu, operand_at(ins, 0)?)?;
         state.cr0 = (state.cr0 & !0x0F) | (v & 0x0F);
         state.update_paging(mmu)?;
         state.rip = ins.next_ip;
@@ -1329,8 +1333,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let dst = ins.operands[0].clone();
-        let src = ins.operands[1].clone();
+        let dst = operand_at(ins, 0)?.clone();
+        let src = operand_at(ins, 1)?.clone();
 
         let src_size = match ins.mnemonic {
             "MOVSXD" => 4,
@@ -1373,7 +1377,7 @@ impl InstructionExecutor {
         state: &mut CpuState,
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
-        let dst = ins.operands[0].clone();
+        let dst = operand_at(ins, 0)?.clone();
         let v = read_operand(ins, state, mmu, &dst)?;
         let count_raw = match ins.operands.get(1) {
             Some(Operand::Immediate(c)) => *c,
@@ -1765,8 +1769,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let a = ins.operands[0].clone();
-        let b = ins.operands[1].clone();
+        let a = operand_at(ins, 0)?.clone();
+        let b = operand_at(ins, 1)?.clone();
         let va = read_operand(ins, state, mmu, &a)?;
         let vb = read_operand(ins, state, mmu, &b)?;
         write_operand(ins, state, mmu, &a, vb)?;
@@ -1785,8 +1789,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let dst = ins.operands[0].clone();
-        let src = ins.operands[1].clone();
+        let dst = operand_at(ins, 0)?.clone();
+        let src = operand_at(ins, 1)?.clone();
         let mask = operand_mask(ins.opsize);
         let dst_val = read_operand(ins, state, mmu, &dst)? & mask;
         let acc = state.rax & mask;
@@ -1813,8 +1817,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let dst = ins.operands[0].clone();
-        let src = ins.operands[1].clone();
+        let dst = operand_at(ins, 0)?.clone();
+        let src = operand_at(ins, 1)?.clone();
         let old_dst = read_operand(ins, state, mmu, &dst)?;
         let src_value = read_operand(ins, state, mmu, &src)?;
         let result = alu_add(state, old_dst, src_value, ins.opsize, 0);
@@ -1830,7 +1834,7 @@ impl InstructionExecutor {
         state: &mut CpuState,
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
-        let op = ins.operands[0].clone();
+        let op = operand_at(ins, 0)?.clone();
         let v = if condition_met(state, ins.condition) { 1u64 } else { 0 };
         write_operand(ins, state, mmu, &op, v)?;
         state.rip = ins.next_ip;
@@ -1847,9 +1851,9 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let value = read_operand(ins, state, mmu, &ins.operands[1])?;
+        let value = read_operand(ins, state, mmu, operand_at(ins, 1)?)?;
         if condition_met(state, ins.condition) {
-            let destination = ins.operands[0].clone();
+            let destination = operand_at(ins, 0)?.clone();
             write_operand(ins, state, mmu, &destination, value)?;
         }
         state.rip = ins.next_ip;
@@ -1866,8 +1870,8 @@ impl InstructionExecutor {
             state.rip = ins.next_ip;
             return Ok(());
         }
-        let dst = ins.operands[0].clone();
-        let src = ins.operands[1].clone();
+        let dst = operand_at(ins, 0)?.clone();
+        let src = operand_at(ins, 1)?.clone();
         let v = read_operand(ins, state, mmu, &src)? & operand_mask(ins.opsize);
 
         if v == 0 {
@@ -1898,9 +1902,9 @@ impl InstructionExecutor {
         }
 
         let bits = ins.opsize as u64;
-        let index = read_operand(ins, state, mmu, &ins.operands[1])?;
+        let index = read_operand(ins, state, mmu, operand_at(ins, 1)?)?;
         let bit = index & (bits - 1);
-        let value = match &ins.operands[0] {
+        let value = match operand_at(ins, 0)? {
             Operand::Memory(mem) => {
                 let size = operand_bytes(ins.opsize);
                 let address = effective_address(ins, state, mem)
