@@ -1765,6 +1765,14 @@ symbols = [
     "use:validate_migration_checkpoint",
 ]
 
+[[source.public_api]]
+tests = ["vm.negative.malformed-input-matrix"]
+symbols = [
+    "fn:Vm::restore_snapshot_with_report",
+    "fn:host_println",
+    "use:SnapshotRestoreReport",
+]
+
 [[source]]
 path = "src/main.rs"
 tests = ["vm.gates.inventory-contract", "vm.migration.failure-matrix"]
@@ -2068,6 +2076,18 @@ symbols = [
     "struct:SnapshotSchema",
     "struct:VmSnapshot",
     "type:SnapshotId",
+]
+
+[[source.public_api]]
+tests = ["vm.negative.malformed-input-matrix"]
+symbols = [
+    "fn:SnapshotChain::restore_into_with_report",
+    "fn:SnapshotRestoreReport::excluded_state",
+    "fn:SnapshotRestoreReport::has_excluded_state",
+    "fn:SnapshotRestoreReport::rebuild_required_state",
+    "fn:SnapshotRestoreReport::restored_state",
+    "fn:VmSnapshot::restore_into_with_report",
+    "struct:SnapshotRestoreReport",
 ]
 
 [[source]]

@@ -17,7 +17,14 @@ synos-synfs = { path = "../crates/synfs" }
 libc = "0.2"
 
 [dev-dependencies]
+synos-app = { path = "../crates/app" }
+synos-ipc = { path = "../crates/ipc" }
+synos-netd = { path = "../crates/netd" }
+synos-pkg = { path = "../crates/pkg" }
+synos-runtime = { path = "../crates/runtime" }
+synos-status = { path = "../crates/status" }
 synos-test-support = { path = "../crates/test-support" }
+synos-webterm = { path = "../crates/synos-webterm" }
 
 [features]
 default = []

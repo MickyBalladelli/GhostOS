@@ -52,9 +52,13 @@ evidence.
       terminal sessions, and added direct malformed-input regression tests.
       Compile evidence passes for the affected crates; test evidence remains
       pending.
-- [ ] Add a negative-test matrix for malformed boot info, ABI frames, shared
+- [x] Add a negative-test matrix for malformed boot info, ABI frames, shared
       buffers, capabilities, package manifests, filesystem metadata, packets,
       terminal input, and snapshot data.
+      Progress: added `virtual_machine/tests/negative_matrix.rs` with stable
+      error/status assertions for all nine boundary classes. `cargo check
+      -p synos-vm --tests` passes; test execution remains required before
+      marking complete.
 - [ ] Add a policy check that reports new production panic paths in review.
 - [ ] Make every externally visible error include a stable code, operation,
       retry hint, and audit context without leaking secrets.

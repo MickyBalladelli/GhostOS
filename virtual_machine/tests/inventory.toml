@@ -10,7 +10,7 @@ result_states = ["passed", "failed", "skipped"]
 
 [[tier]]
 name = "fast-unit"
-command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test cpu_differential --test snapshot_terminal_network_10_5 --test terminal_cleanup"
+command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test cpu_differential --test snapshot_terminal_network_10_5 --test terminal_cleanup --test negative_matrix"
 status = "deterministic"
 
 [[tier]]
@@ -361,6 +361,11 @@ tests = ["vm.network.loopback-routing-isolation-faults"]
 id = "vm.snapshot.serialization-restore-chain-failures"
 file = "tests/snapshot_terminal_network_10_5.rs"
 tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.negative.malformed-input-matrix"
+file = "tests/negative_matrix.rs"
+tiers = ["fast-unit"]
 
 [[test]]
 id = "vm.terminal.translation-ps2-fallback"

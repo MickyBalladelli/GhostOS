@@ -913,11 +913,18 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "libc",
+ "synos-app",
  "synos-boot-protocol",
  "synos-fabric",
+ "synos-ipc",
  "synos-kernel",
+ "synos-netd",
+ "synos-pkg",
+ "synos-runtime",
+ "synos-status",
  "synos-synfs",
  "synos-test-support",
+ "synos-webterm",
  "thiserror",
 ]
 
