@@ -69,13 +69,16 @@ evidence.
       retry hint, and audit context without leaking secrets.
       Progress: added the allocation-free `synos-status::PublicError`
       contract with stable status codes, operation IDs, retry hints, and
-      correlation/node audit context. HTTP parser, router, server, and RPC
-      failures now have JSON error responses containing only fixed public
-      messages and those safe fields; remote client SDK failures preserve the
-      RPC status and expose the same metadata. Added direct HTTP, status, and
-      SDK regression coverage. `cargo check -p synos-status -p synos-http
-      -p synos-client-sdk --tests` passes; full boundary inventory and test
-      execution remain pending.
+      correlation/node audit context. Every existing `IntoStatus` error can
+      now be wrapped at a boundary without exposing backend details. HTTP
+      parser, router, server, gRPC, and RPC failures now expose structured
+      metadata; remote client, SynFS IPC, and netd IPC responses expose the
+      same operation/retry/audit contract. Error payloads contain only fixed
+      public messages and safe identifiers. Added direct HTTP, gRPC, status,
+      and SDK regression coverage. `cargo check -p synos-status -p synos-http
+      -p synos-client-sdk -p synos-fsd -p synos-netd --tests` passes; test
+      execution and audit of non-`IntoStatus` CLI/VM error surfaces remain
+      pending.
 
 ## P0: Prove persistence and recovery
 

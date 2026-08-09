@@ -1,5 +1,5 @@
 use synos_ipc::{Envelope, SharedBuffer};
-use synos_status::Status;
+use synos_status::{AuditContext, PublicError, Status};
 
 pub const REQUEST_LABEL: u64 = 0x5346_5300_0000_0000;
 pub const RESPONSE_LABEL: u64 = 0x5346_5301_0000_0000;
@@ -239,6 +239,18 @@ impl Response {
             status,
             values: [0; 4],
         }
+    }
+
+    pub const fn public_error(
+        self,
+        operation: Operation,
+        correlation: u128,
+        node: u32,
+    ) -> PublicError {
+        self.status.public_error(
+            operation.raw(),
+            AuditContext::new(correlation, node),
+        )
     }
 
     pub fn to_envelope(self, correlation: u128) -> Envelope {

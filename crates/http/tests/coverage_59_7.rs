@@ -65,3 +65,13 @@ fn public_http_error_contains_contract_fields_without_request_data() {
     assert!(body.contains("\"node\":2"));
     assert!(!body.contains("capability-secret"));
 }
+
+#[test]
+fn grpc_errors_expose_safe_retry_and_audit_metadata() {
+    let error = GrpcError::AccessDenied.public_error(synos_status::AuditContext::new(7, 4));
+    assert_eq!(error.code, Status::ACCESS_DENIED);
+    assert_eq!(error.operation, synos_status::operation::GRPC);
+    assert_eq!(error.audit.correlation, 7);
+    assert_eq!(error.audit.node, 4);
+    assert_eq!(error.retry, RetryHint::Never);
+}

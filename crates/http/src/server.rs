@@ -40,6 +40,20 @@ pub enum ServerError {
     Protocol,
 }
 
+impl ServerError {
+    pub const fn public_error(self, audit: AuditContext) -> PublicError {
+        let status = match self {
+            Self::BufferDescriptor => Status::INVALID_ARGUMENT,
+            Self::Encode(EncodeError::BufferTooSmall { .. }) => Status::NO_SPACE,
+            Self::Encode(EncodeError::HeaderCapacity | EncodeError::InvalidHeader)
+            | Self::Netd(_)
+            | Self::Protocol => Status::INTERNAL,
+            Self::NetdStatus(status) => status,
+        };
+        status.public_error(operation::HTTP_SERVER, audit)
+    }
+}
+
 impl From<NetdError> for ServerError {
     fn from(error: NetdError) -> Self {
         Self::Netd(error)

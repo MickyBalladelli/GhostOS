@@ -1,4 +1,5 @@
 use crate::{DEFAULT_RESPONSE_HEADERS, Method, RequestContext, Response, StatusCode, WebRights};
+use synos_status::{AuditContext, PublicError, Status};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -13,6 +14,26 @@ pub enum GrpcStatus {
     Unimplemented = 12,
     Internal = 13,
     Unavailable = 14,
+}
+
+impl GrpcStatus {
+    pub const fn public_status(self) -> Status {
+        match self {
+            Self::Ok => Status::NORMAL,
+            Self::Cancelled => Status::CANCELLED,
+            Self::InvalidArgument => Status::INVALID_ARGUMENT,
+            Self::NotFound | Self::Unimplemented => Status::NOT_FOUND,
+            Self::PermissionDenied => Status::ACCESS_DENIED,
+            Self::ResourceExhausted => Status::NO_SPACE,
+            Self::Unavailable => Status::BUSY,
+            Self::Unknown | Self::Internal => Status::INTERNAL,
+        }
+    }
+
+    pub const fn public_error(self, audit: AuditContext) -> PublicError {
+        self.public_status()
+            .public_error(synos_status::operation::GRPC, audit)
+    }
 }
 
 impl GrpcStatus {
@@ -71,6 +92,23 @@ pub enum GrpcError {
     InvalidPath,
     MethodNotAllowed,
     NotFound,
+}
+
+impl GrpcError {
+    pub const fn public_error(self, audit: AuditContext) -> PublicError {
+        let status = match self {
+            Self::AccessDenied => Status::ACCESS_DENIED,
+            Self::BufferTooSmall { .. } | Self::Capacity => Status::NO_SPACE,
+            Self::Compressed
+            | Self::InvalidContentType
+            | Self::InvalidFrame
+            | Self::InvalidPath
+            | Self::MethodNotAllowed => Status::INVALID_ARGUMENT,
+            Self::Duplicate => Status::ALREADY_EXISTS,
+            Self::NotFound => Status::NOT_FOUND,
+        };
+        status.public_error(synos_status::operation::GRPC, audit)
+    }
 }
 
 pub struct GrpcRouter<State, const SERVICES: usize> {

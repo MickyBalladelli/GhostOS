@@ -2,7 +2,7 @@ use core::convert::Infallible;
 
 use synos_auth::CryptographicCapability;
 use synos_fabric::NodeId;
-use synos_status::{AuditContext, PublicError, RetryHint, Status};
+use synos_status::PublicError;
 
 use crate::{
     AuditEventList, CapabilityDelegation, ChangeBatch, ClusterCreateRequest, ClusterHealthSnapshot,
@@ -67,25 +67,9 @@ pub struct RemoteError {
 
 impl RemoteError {
     pub const fn new(status: RpcStatus, operation: Method, request_id: u64) -> Self {
-        let (code, retry) = match status {
-            RpcStatus::InvalidRequest => (Status::INVALID_ARGUMENT, RetryHint::Never),
-            RpcStatus::Unauthenticated | RpcStatus::AccessDenied => {
-                (Status::ACCESS_DENIED, RetryHint::Never)
-            }
-            RpcStatus::NotFound => (Status::NOT_FOUND, RetryHint::Never),
-            RpcStatus::Busy => (Status::BUSY, RetryHint::AfterUs(1_000_000)),
-            RpcStatus::Capacity => (Status::NO_SPACE, RetryHint::AfterUs(1_000_000)),
-            RpcStatus::Internal => (Status::INTERNAL, RetryHint::AfterUs(1_000_000)),
-            RpcStatus::Ok => (Status::NORMAL, RetryHint::Never),
-        };
         Self {
             status,
-            error: PublicError::new(
-                code,
-                operation as u16,
-                retry,
-                AuditContext::new(request_id as u128, 0),
-            ),
+            error: status.public_error(operation, request_id),
         }
     }
 }

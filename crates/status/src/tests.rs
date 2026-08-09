@@ -1,4 +1,4 @@
-use super::{AuditContext, PublicError, RetryHint, Severity, Status, facility};
+use super::{AuditContext, IntoPublicError, IntoStatus, PublicError, RetryHint, Severity, Status, facility};
 
 #[test]
 fn status_round_trips_all_fields() {
@@ -40,6 +40,23 @@ fn public_error_keeps_only_stable_safe_context() {
     assert_eq!(error.operation, 7);
     assert!(!error.retry.is_retryable());
     assert_eq!(error.audit, AuditContext::new(0xfeed, 3));
+}
+
+#[test]
+fn every_status_error_can_be_wrapped_at_a_boundary() {
+    struct ExampleError;
+
+    impl IntoStatus for ExampleError {
+        fn status(self) -> Status {
+            Status::BUSY
+        }
+    }
+
+    let error = ExampleError.public_error(12, AuditContext::new(8, 1));
+    assert_eq!(error.code, Status::BUSY);
+    assert_eq!(error.operation, 12);
+    assert_eq!(error.retry, RetryHint::AfterUs(1_000_000));
+    assert_eq!(error.audit.correlation, 8);
 }
 
 #[test]

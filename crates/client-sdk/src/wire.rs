@@ -69,6 +69,29 @@ pub enum RpcStatus {
 }
 
 impl RpcStatus {
+    pub const fn public_status(self) -> synos_status::Status {
+        match self {
+            Self::Ok => synos_status::Status::NORMAL,
+            Self::InvalidRequest => synos_status::Status::INVALID_ARGUMENT,
+            Self::Unauthenticated | Self::AccessDenied => synos_status::Status::ACCESS_DENIED,
+            Self::NotFound => synos_status::Status::NOT_FOUND,
+            Self::Busy => synos_status::Status::BUSY,
+            Self::Capacity => synos_status::Status::NO_SPACE,
+            Self::Internal => synos_status::Status::INTERNAL,
+        }
+    }
+
+    pub const fn public_error(
+        self,
+        operation: Method,
+        request_id: u64,
+    ) -> synos_status::PublicError {
+        self.public_status()
+            .public_error(operation as u16, synos_status::AuditContext::new(request_id as u128, 0))
+    }
+}
+
+impl RpcStatus {
     pub(crate) const fn from_wire(value: u16) -> Result<Self, ProtocolError> {
         match value {
             0 => Ok(Self::Ok),

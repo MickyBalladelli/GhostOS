@@ -1,5 +1,5 @@
 use synos_ipc::{Envelope, SharedBuffer};
-use synos_status::Status;
+use synos_status::{AuditContext, PublicError, Status};
 
 use crate::{SocketCapability, SocketRights};
 
@@ -31,6 +31,10 @@ impl SocketOperation {
             7 => Some(Self::State),
             _ => None,
         }
+    }
+
+    pub const fn raw(self) -> u16 {
+        self as u16
     }
 }
 
@@ -157,6 +161,13 @@ impl SocketResponse {
             value: envelope.words[3],
             buffer: envelope.buffer,
         })
+    }
+
+    pub const fn public_error(self, operation: SocketOperation, node: u32) -> PublicError {
+        self.status.public_error(
+            operation.raw(),
+            AuditContext::new(self.correlation, node),
+        )
     }
 }
 

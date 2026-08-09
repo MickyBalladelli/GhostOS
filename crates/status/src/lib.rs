@@ -181,11 +181,31 @@ impl Status {
             _ => "unknown status",
         }
     }
+
+    pub const fn retry_hint(self) -> RetryHint {
+        match self {
+            Self::BUSY | Self::NO_SPACE | Self::INTERNAL => RetryHint::AfterUs(1_000_000),
+            _ => RetryHint::Never,
+        }
+    }
+
+    pub const fn public_error(self, operation: u16, audit: AuditContext) -> PublicError {
+        PublicError::new(self, operation, self.retry_hint(), audit)
+    }
 }
 
 pub trait IntoStatus {
     fn status(self) -> Status;
 }
+
+/// Converts any status-bearing error into the safe boundary contract.
+pub trait IntoPublicError: IntoStatus + Sized {
+    fn public_error(self, operation: u16, audit: AuditContext) -> PublicError {
+        self.status().public_error(operation, audit)
+    }
+}
+
+impl<T: IntoStatus> IntoPublicError for T {}
 
 /// The retry advice exposed at a service boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
