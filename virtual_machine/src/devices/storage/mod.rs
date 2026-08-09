@@ -77,8 +77,10 @@ impl fmt::Display for StorageError {
                 if !printed_owner {
                     writeln!(f, "  owner: {}", owner.trim().replace('\n', "; "))?;
                 }
-                f.write_str(
-                    "  action: inspect with `synos-vm disk lock PATH`; recover only when stale",
+                let image_path = path.strip_suffix(".synos.lock").unwrap_or(path);
+                write!(
+                    f,
+                    "  action: run `./target/release/synos-vm disk lock {image_path}`; recover only when stale",
                 )
             }
             StorageError::ReadOnly => write!(f, "disk image opened read-only"),
