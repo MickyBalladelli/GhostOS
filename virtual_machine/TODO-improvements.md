@@ -102,7 +102,7 @@ remaining proof, portability, safety, and fidelity work.
       disks, snapshots, migration, and monitor responses.
 - [x] Authenticate and authorize monitor clients. Restrict save, quit, device,
       disk, and migration actions separately.
-- [ ] Bound monitor commands, connection lifetime, request size, response size,
+- [x] Bound monitor commands, connection lifetime, request size, response size,
       and concurrent clients. Test malformed and partial commands.
 - [ ] Add migration encryption or a documented secure transport requirement,
       peer authorization, replay protection, and audit events.

@@ -8,10 +8,96 @@ use synos_vm::{
 
 pub const MIGRATION_PROTOCOL_VERSION: u32 = 3;
 pub const MONITOR_AUTH_DOMAIN: &[u8] = b"SYNOS-MONITOR-HMAC-SHA256-V1";
+pub const MAX_MONITOR_COMMAND_BYTES: usize = 2048;
+pub const MAX_MONITOR_REQUEST_BYTES: usize = 4096;
+pub const MAX_MONITOR_RESPONSE_BYTES: usize = 64 * 1024;
+pub const MAX_MONITOR_CLIENTS: usize = 8;
+pub const MONITOR_CONNECTION_LIFETIME_SECS: u64 = 10;
 const MONITOR_AUTH_WINDOW_SECS: u64 = 5 * 60;
 const MONITOR_NONCE_BYTES: usize = 32;
 const MONITOR_TAG_BYTES: usize = 32;
 const MAX_SEEN_NONCES: usize = 1024;
+
+pub enum MonitorRequestFrame {
+    Pending,
+    Complete(String),
+    Rejected {
+        code: &'static str,
+        message: String,
+    },
+}
+
+pub struct MonitorRequestBuffer {
+    bytes: Vec<u8>,
+}
+
+impl MonitorRequestBuffer {
+    pub fn new() -> Self {
+        Self { bytes: Vec::new() }
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) -> MonitorRequestFrame {
+        if self.bytes.len().saturating_add(bytes.len()) > MAX_MONITOR_REQUEST_BYTES {
+            return MonitorRequestFrame::Rejected {
+                code: "request-too-large",
+                message: format!(
+                    "monitor request exceeds the {MAX_MONITOR_REQUEST_BYTES} byte limit"
+                ),
+            }
+        }
+        self.bytes.extend_from_slice(bytes);
+        self.frame(false)
+    }
+
+    pub fn end_of_stream(&self) -> MonitorRequestFrame {
+        self.frame(true)
+    }
+
+    fn frame(&self, eof: bool) -> MonitorRequestFrame {
+        let Some(newline) = self.bytes.iter().position(|byte| *byte == b'\n') else {
+            return if eof {
+                MonitorRequestFrame::Rejected {
+                    code: "partial-command",
+                    message: "monitor connection closed before a complete command line".to_string(),
+                }
+            } else {
+                MonitorRequestFrame::Pending
+            }
+        };
+        if self.bytes[newline + 1..]
+            .iter()
+            .any(|byte| !byte.is_ascii_whitespace())
+        {
+            return MonitorRequestFrame::Rejected {
+                code: "multiple-commands",
+                message: "monitor connection accepts exactly one command".to_string(),
+            }
+        }
+        let mut command = &self.bytes[..newline];
+        if command.last() == Some(&b'\r') {
+            command = &command[..command.len() - 1]
+        }
+        match std::str::from_utf8(command) {
+            Ok(command) => MonitorRequestFrame::Complete(command.to_string()),
+            Err(_) => MonitorRequestFrame::Rejected {
+                code: "invalid-encoding",
+                message: "monitor command is not valid UTF-8".to_string(),
+            },
+        }
+    }
+}
+
+pub fn bounded_response(response: String) -> Vec<u8> {
+    if response.len() <= MAX_MONITOR_RESPONSE_BYTES {
+        return response.into_bytes()
+    }
+    failure_response(
+        None,
+        "response-too-large",
+        &format!("monitor response exceeds the {MAX_MONITOR_RESPONSE_BYTES} byte limit"),
+    )
+    .into_bytes()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorPermission {
@@ -237,6 +323,11 @@ pub enum MonitorTopic {
 impl MonitorCommand {
     pub fn parse(input: &str) -> Result<Self, String> {
         let input = input.trim();
+        if input.len() > MAX_MONITOR_COMMAND_BYTES {
+            return Err(format!(
+                "monitor command exceeds the {MAX_MONITOR_COMMAND_BYTES} byte limit"
+            ))
+        }
         match input {
             "help" | "?" => Ok(Self::Help),
             "quit" | "exit" => Ok(Self::Quit),
@@ -302,10 +393,6 @@ pub fn help_response() -> String {
         .collect::<Vec<_>>()
         .join(",");
     envelope("help", &format!("{{\"commands\":[{values}]}}"))
-}
-
-pub fn error_response(command: Option<&str>, message: &str) -> String {
-    failure_response(command, "invalid-command", message)
 }
 
 pub fn failure_response(command: Option<&str>, code: &str, message: &str) -> String {
@@ -535,5 +622,72 @@ fn persistence_name(persistence: DiskPersistence) -> &'static str {
         DiskPersistence::Persistent => "persistent",
         DiskPersistence::CopyOnWrite => "copy-on-write",
         DiskPersistence::Disposable => "disposable",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_monitor_command_waits_for_newline() {
+        let mut request = MonitorRequestBuffer::new();
+        assert!(matches!(
+            request.push(b"auth 1 0000"),
+            MonitorRequestFrame::Pending
+        ));
+        assert!(matches!(
+            request.push(b" status\n"),
+            MonitorRequestFrame::Complete(command) if command == "auth 1 0000 status"
+        ));
+    }
+
+    #[test]
+    fn closed_partial_monitor_command_is_rejected() {
+        let mut request = MonitorRequestBuffer::new();
+        assert!(matches!(request.push(b"auth incomplete"), MonitorRequestFrame::Pending));
+        assert!(matches!(
+            request.end_of_stream(),
+            MonitorRequestFrame::Rejected { code: "partial-command", .. }
+        ));
+    }
+
+    #[test]
+    fn oversized_monitor_request_is_rejected() {
+        let mut request = MonitorRequestBuffer::new();
+        let oversized = vec![b'a'; MAX_MONITOR_REQUEST_BYTES + 1];
+        assert!(matches!(
+            request.push(&oversized),
+            MonitorRequestFrame::Rejected { code: "request-too-large", .. }
+        ));
+    }
+
+    #[test]
+    fn malformed_monitor_framing_and_encoding_are_rejected() {
+        let mut multiple = MonitorRequestBuffer::new();
+        assert!(matches!(
+            multiple.push(b"first\nsecond\n"),
+            MonitorRequestFrame::Rejected { code: "multiple-commands", .. }
+        ));
+
+        let mut invalid_utf8 = MonitorRequestBuffer::new();
+        assert!(matches!(
+            invalid_utf8.push(&[0xff, b'\n']),
+            MonitorRequestFrame::Rejected { code: "invalid-encoding", .. }
+        ));
+    }
+
+    #[test]
+    fn command_and_response_limits_are_enforced() {
+        let command = "x".repeat(MAX_MONITOR_COMMAND_BYTES + 1);
+        assert!(MonitorCommand::parse(&command)
+            .expect_err("oversized command must fail")
+            .contains("byte limit"));
+
+        let response = bounded_response("x".repeat(MAX_MONITOR_RESPONSE_BYTES + 1));
+        assert!(response.len() <= MAX_MONITOR_RESPONSE_BYTES);
+        assert!(std::str::from_utf8(&response)
+            .expect("bounded response is UTF-8")
+            .contains("response-too-large"));
     }
 }

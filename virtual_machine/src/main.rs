@@ -2,7 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(not(unix))]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,7 +22,11 @@ use synos_vm::{
 
 mod control;
 
-use control::{MonitorAuthenticator, MonitorCommand, MonitorPermissions, MIGRATION_PROTOCOL_VERSION};
+use control::{
+    MonitorAuthenticator, MonitorCommand, MonitorPermissions, MonitorRequestBuffer,
+    MonitorRequestFrame, MAX_MONITOR_CLIENTS, MIGRATION_PROTOCOL_VERSION,
+    MONITOR_CONNECTION_LIFETIME_SECS,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -1523,6 +1527,50 @@ struct MonitorSession {
     listener: UnixListener,
     path: PathBuf,
     authenticator: MonitorAuthenticator,
+    #[cfg(unix)]
+    clients: Vec<MonitorClient>,
+}
+
+#[cfg(unix)]
+struct MonitorClient {
+    stream: std::os::unix::net::UnixStream,
+    accepted_at: Instant,
+    request: MonitorRequestBuffer,
+    response: Option<Vec<u8>>,
+    written: usize,
+}
+
+#[cfg(unix)]
+impl MonitorClient {
+    fn new(stream: std::os::unix::net::UnixStream) -> Self {
+        Self {
+            stream,
+            accepted_at: Instant::now(),
+            request: MonitorRequestBuffer::new(),
+            response: None,
+            written: 0,
+        }
+    }
+
+    fn set_response(&mut self, response: String) {
+        self.response = Some(control::bounded_response(response));
+        self.written = 0
+    }
+
+    fn flush_response(&mut self) -> bool {
+        let Some(response) = self.response.as_ref() else {
+            return false
+        };
+        while self.written < response.len() {
+            match self.stream.write(&response[self.written..]) {
+                Ok(0) => return true,
+                Ok(count) => self.written += count,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return false,
+                Err(_) => return true,
+            }
+        }
+        true
+    }
 }
 
 impl MonitorSession {
@@ -1553,6 +1601,7 @@ impl MonitorSession {
                 listener,
                 path,
                 authenticator: MonitorAuthenticator::new(auth_key, permissions),
+                clients: Vec::new(),
             })
         }
         #[cfg(not(unix))]
@@ -1569,52 +1618,111 @@ impl MonitorSession {
     ) -> Result<bool, String> {
         #[cfg(unix)]
         {
-            let (mut stream, _) = match self.listener.accept() {
-                Ok(connection) => connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
-                Err(error) => return Err(format!("monitor accept failed: {error}")),
-            };
-            stream
-                .set_nonblocking(true)
-                .map_err(|error| format!("cannot configure monitor client: {error}"))?;
-            let mut buffer = [0u8; 4096];
-            let count = match stream.read(&mut buffer) {
-                Ok(count) => count,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
-                Err(error) => return Err(format!("monitor read failed: {error}")),
-            };
-            let command = match std::str::from_utf8(&buffer[..count]) {
-                Ok(command) => command.trim(),
-                Err(_) => {
-                    stream
-                        .write_all(control::error_response(None, "monitor command is not valid UTF-8").as_bytes())
-                        .map_err(|error| format!("monitor write failed: {error}"))?;
-                    return Ok(true)
+            self.accept_clients()?;
+            let mut keep_running = true;
+            let mut index = 0;
+            while index < self.clients.len() {
+                if self.clients[index].accepted_at.elapsed()
+                    >= Duration::from_secs(MONITOR_CONNECTION_LIFETIME_SECS)
+                {
+                    if self.clients[index].response.is_none() {
+                        self.clients[index].set_response(control::failure_response(
+                            None,
+                            "connection-timeout",
+                            "monitor connection exceeded its lifetime",
+                        ));
+                    }
+                    self.clients[index].flush_response();
+                    self.clients.swap_remove(index);
+                    continue
                 }
-            };
-            let command = match self.authenticator.authenticate(command) {
-                Ok(command) => command,
-                Err(error) => {
-                    stream
-                        .write_all(control::failure_response(
-                            error.command.as_deref(),
-                            error.code,
-                            &error.message,
-                        ).as_bytes())
-                        .map_err(|error| format!("monitor write failed: {error}"))?;
-                    return Ok(true)
+
+                if self.clients[index].response.is_some() {
+                    if self.clients[index].flush_response() {
+                        self.clients.swap_remove(index);
+                    } else {
+                        index += 1;
+                    }
+                    continue
                 }
-            };
-            let (keep_running, response) = monitor_command(vm, command, auth_key)?;
-            stream
-                .write_all(response.as_bytes())
-                .map_err(|error| format!("monitor write failed: {error}"))?;
+
+                let frame = read_monitor_frame(&mut self.clients[index]);
+                let Some(frame) = frame else {
+                    index += 1;
+                    continue
+                };
+                let response = match frame {
+                    MonitorRequestFrame::Pending => {
+                        index += 1;
+                        continue
+                    }
+                    MonitorRequestFrame::Rejected { code, message } => {
+                        control::failure_response(None, code, &message)
+                    }
+                    MonitorRequestFrame::Complete(request) => {
+                        match self.authenticator.authenticate(&request) {
+                            Ok(command) => {
+                                let (command_keep_running, response) =
+                                    monitor_command(vm, command, auth_key)?;
+                                keep_running &= command_keep_running;
+                                response
+                            }
+                            Err(error) => control::failure_response(
+                                error.command.as_deref(),
+                                error.code,
+                                &error.message,
+                            ),
+                        }
+                    }
+                };
+                self.clients[index].set_response(response);
+                if self.clients[index].flush_response() {
+                    self.clients.swap_remove(index);
+                } else {
+                    index += 1;
+                }
+            }
             return Ok(keep_running)
         }
         #[cfg(not(unix))]
         {
             let _ = (vm, auth_key);
             Ok(true)
+        }
+    }
+
+    #[cfg(unix)]
+    fn accept_clients(&mut self) -> Result<(), String> {
+        while self.clients.len() < MAX_MONITOR_CLIENTS {
+            let (stream, _) = match self.listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) => return Err(format!("monitor accept failed: {error}")),
+            };
+            stream
+                .set_nonblocking(true)
+                .map_err(|error| format!("cannot configure monitor client: {error}"))?;
+            self.clients.push(MonitorClient::new(stream));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn read_monitor_frame(client: &mut MonitorClient) -> Option<MonitorRequestFrame> {
+    let mut buffer = [0u8; 1024];
+    loop {
+        match client.stream.read(&mut buffer) {
+            Ok(0) => return Some(client.request.end_of_stream()),
+            Ok(count) => match client.request.push(&buffer[..count]) {
+                MonitorRequestFrame::Pending => continue,
+                frame => return Some(frame),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return None,
+            Err(error) => return Some(MonitorRequestFrame::Rejected {
+                code: "connection-read-failed",
+                message: format!("monitor read failed: {error}"),
+            }),
         }
     }
 }

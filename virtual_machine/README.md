@@ -214,7 +214,7 @@ regular file accessible only by its owner. The socket is created with mode
   --snapshot-key ./state/snapshot.key
 ```
 
-Each request has this wire form:
+Each request is one newline-terminated line with this wire form:
 
 ```text
 auth TIMESTAMP NONCE_HEX TAG_HEX COMMAND
@@ -226,6 +226,13 @@ is HMAC-SHA256 with the monitor key over the concatenation of
 raw nonce, and the exact UTF-8 command. Requests outside a five-minute window
 or reusing one of the last 1024 accepted nonces are rejected. Use a different
 key for snapshot files.
+
+The monitor keeps at most 8 clients at once. Each connection handles exactly
+one request and closes after its response or after 10 seconds. The complete
+authenticated request is limited to 4096 bytes, its command to 2048 bytes, and
+the JSON response to 64 KiB. Partial lines remain buffered until completed;
+EOF before the newline, extra commands, invalid UTF-8, and oversized input get
+bounded structured errors.
 
 ### Interactive terminal
 
