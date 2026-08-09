@@ -114,8 +114,8 @@ enum DiskCommand {
         machine_identity: String,
         network_identity: String,
     },
-    Lock(PathBuf),
-    RecoverLock(PathBuf),
+    Lock { path: PathBuf, verbose: bool },
+    RecoverLock { path: PathBuf, verbose: bool },
 }
 
 struct DiskOptions {
@@ -507,12 +507,40 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
         "inspect" => Ok(ParseResult::Disk(DiskCommand::Inspect(command_path(values, "inspect")?))),
         "validate" => Ok(ParseResult::Disk(DiskCommand::Validate(command_path(values, "validate")?))),
         "repair" => Ok(ParseResult::Disk(DiskCommand::Repair(command_path(values, "repair")?))),
-        "lock" => Ok(ParseResult::Disk(DiskCommand::Lock(command_path(values, "lock")?))),
-        "recover-lock" => Ok(ParseResult::Disk(DiskCommand::RecoverLock(command_path(values, "recover-lock")?))),
+        "lock" => parse_lock_command(values),
+        "recover-lock" => parse_recover_lock_command(values),
         "provision" => parse_provision_command(&values[1..]),
         "help" | "--help" | "-h" => Ok(ParseResult::Help),
         value => Err(format!("unknown disk command `{value}`")),
     }
+}
+
+fn parse_lock_command(values: &[String]) -> Result<ParseResult, String> {
+    let mut path = None;
+    let mut verbose = false;
+    for value in &values[1..] {
+        match value.as_str() {
+            "-v" | "--v" | "-verbose" | "--verbose" => verbose = true,
+            _ if path.is_none() => path = Some(PathBuf::from(value)),
+            _ => return Err("disk lock needs exactly one PATH".to_string()),
+        }
+    }
+    let path = path.ok_or_else(|| "disk lock needs exactly one PATH".to_string())?;
+    Ok(ParseResult::Disk(DiskCommand::Lock { path, verbose }))
+}
+
+fn parse_recover_lock_command(values: &[String]) -> Result<ParseResult, String> {
+    let mut path = None;
+    let mut verbose = false;
+    for value in &values[1..] {
+        match value.as_str() {
+            "-v" | "--v" | "-verbose" | "--verbose" => verbose = true,
+            _ if path.is_none() => path = Some(PathBuf::from(value)),
+            _ => return Err("disk recover-lock needs exactly one PATH".to_string()),
+        }
+    }
+    let path = path.ok_or_else(|| "disk recover-lock needs exactly one PATH".to_string())?;
+    Ok(ParseResult::Disk(DiskCommand::RecoverLock { path, verbose }))
 }
 
 fn command_path(values: &[String], command: &str) -> Result<PathBuf, String> {
@@ -2197,11 +2225,18 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             );
             Ok(())
         }
-        DiskCommand::Lock(path) => print_lock_status(&path),
-        DiskCommand::RecoverLock(path) => {
+        DiskCommand::Lock { path, verbose } => print_lock_status(&path, verbose),
+        DiskCommand::RecoverLock { path, verbose } => {
             let info = DiskImage::recover_stale_lock(&path)
                 .map_err(|error| format!("cannot recover lock for {}: {error}", path.display()))?;
-            println!("recovered stale disk lock {} (owner: {})", info.path.display(), info.owner.trim());
+            println!("recovered stale disk lock {}", info.path.display());
+            if verbose {
+                println!();
+                println!("owner:");
+                for line in info.owner.lines() {
+                    println!("  {line}");
+                }
+            }
             Ok(())
         }
     }
@@ -2213,7 +2248,7 @@ fn vm_error_message(error: &synos_vm::VmError, verbose: bool) -> String {
             let summary = message.lines().next().unwrap_or(message);
             let action = message.lines().find(|line| line.starts_with("  action:"));
             match action {
-                Some(action) => format!("{summary}\n{}", action.trim_start()),
+                Some(action) => format!("{summary}\n\n{}", action.trim_start()),
                 None => summary.to_string(),
             }
         }
@@ -2349,11 +2384,30 @@ fn print_inspection_report(report: &synos_vm::DiskInspectionReport) {
     }
 }
 
-fn print_lock_status(path: &PathBuf) -> Result<(), String> {
+fn print_lock_status(path: &PathBuf, verbose: bool) -> Result<(), String> {
     match DiskImage::inspect_lock(path)
         .map_err(|error| format!("cannot inspect lock for {}: {error}", path.display()))?
     {
         Some(info) => {
+            if !verbose {
+                if info.stale {
+                    println!("disk lock: stale");
+                    if let Some(image) = info.image_path.as_ref() {
+                        println!();
+                        println!(
+                            "action: ./target/release/synos-vm disk recover-lock {}",
+                            image.display(),
+                        );
+                    }
+                } else {
+                    println!("disk lock: active");
+                    if let Some(pid) = info.pid {
+                        println!();
+                        println!("action: stop process {pid} before starting another VM");
+                    }
+                }
+                return Ok(());
+            }
             println!("disk lock");
             if info.stale {
                 println!("  state: stale (owner process is gone)");
@@ -2385,6 +2439,7 @@ fn print_lock_status(path: &PathBuf) -> Result<(), String> {
                 info.host_identity.as_deref().unwrap_or("unknown"),
             );
             println!("  format: {}", info.format.map(format_name).unwrap_or("unknown"));
+            println!();
             if info.stale {
                 if let Some(image) = info.image_path.as_ref() {
                     println!(

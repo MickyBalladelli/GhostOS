@@ -78,6 +78,7 @@ impl fmt::Display for StorageError {
                     writeln!(f, "  owner: {}", owner.trim().replace('\n', "; "))?;
                 }
                 let image_path = path.strip_suffix(".synos.lock").unwrap_or(path);
+                writeln!(f)?;
                 write!(
                     f,
                     "  action: ./target/release/synos-vm disk lock {image_path}",

@@ -124,6 +124,6 @@ fn locked_disk_error_is_readable() {
 
     assert_eq!(
         error.to_string(),
-        "disk is already locked\n  lock: /tmp/data.raw.synos.lock\n  image: /tmp/data.raw\n  owner: micky\n  pid: 25765\n  started: Sun Aug 9 19:11:20 2026\n  host: hostname=unknown;machine=unknown\n  format: raw\n  action: ./target/release/synos-vm disk lock /tmp/data.raw"
+        "disk is already locked\n  lock: /tmp/data.raw.synos.lock\n  image: /tmp/data.raw\n  owner: micky\n  pid: 25765\n  started: Sun Aug 9 19:11:20 2026\n  host: hostname=unknown;machine=unknown\n  format: raw\n\n  action: ./target/release/synos-vm disk lock /tmp/data.raw"
     );
 }

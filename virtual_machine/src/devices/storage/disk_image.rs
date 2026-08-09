@@ -500,17 +500,19 @@ impl DiskImage {
         let host_matches = stored_host_identity
             .as_deref()
             .is_some_and(|stored| stored == host_identity());
-        let process_matches = pid
-            .zip(start_time.as_deref())
-            .is_some_and(|(pid, start)| {
-                process_exists(pid)
-                    && process_start_time(pid).is_some_and(|actual| actual == start)
-            });
+        let process_matches = pid.is_some_and(|pid| {
+            if !process_exists(pid) {
+                return false;
+            }
+            start_time.as_deref().map_or(true, |start| {
+                process_start_time(pid).is_some_and(|actual| actual == start)
+            })
+        });
         let format_mismatch = format
             .zip(Self::open_with_access(image_path, false).ok().map(|image| image.format()))
             .is_some_and(|(stored, actual)| stored != actual);
-        let stale = metadata_complete
-            && (!image_matches || !host_matches || !process_matches || format_mismatch);
+        let stale = !process_matches
+            || (metadata_complete && (!image_matches || !host_matches || format_mismatch));
 
         Ok(Some(DiskLockInfo {
             path: lock_path,
