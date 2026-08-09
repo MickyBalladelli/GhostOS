@@ -27,6 +27,9 @@ evidence, including the boot-image SHA-256 digest.
 - `main.rs` unit tests: CLI parsing and command behavior.
 - `qemu_matrix_59_11.rs` and `test_environments.rs`: opt-in QEMU and storage
   integrity checks.
+- `soak_leaks.rs`: repeated translation-cache and terminal teardown checks;
+  `scripts/vm-soak.py` adds host file, socket, process, lock, and memory
+  snapshots around each run.
 - `benches/bounded.rs`: bounded decode, translation, memory, interrupt,
   storage, network, and terminal performance data in JSON Lines format.
 - `snapshot_terminal_network_10_5.rs`: deterministic snapshot, terminal,

@@ -86,7 +86,7 @@ evidence described in `platforms/README.md`.
 | hardware-accelerated | `SYNOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
 | performance | `cargo test -p synos-vm --test test_environments storage_io_performance_and_integrity` | required | throughput output and test metadata |
-| soak | `SYNOS_VM_SOAK_RUNS=3 ./scripts/vm-soak.sh` | opt-in | repeated bounded test output |
+| soak | `SYNOS_VM_SOAK_RUNS=3 ./scripts/vm-soak.sh` | opt-in | leak report, logs, and resource snapshots |
 
 The root workspace includes both `synos-test-support` and `synos-vm` in
 `default-members`. Therefore `cargo test` runs every deterministic SynOS and VM
@@ -156,6 +156,9 @@ Run the platform probe locally with:
 ```sh
 python3 scripts/check-vm-platform.py --output build/platform-vm.json --run-qemu
 ```
+
+Run the leak soak locally with `SYNOS_VM_SOAK_RUNS=3 ./scripts/vm-soak.sh`;
+it writes `build/vm-soak/report.json` plus per-run stdout and stderr logs.
 
 VM fuzz targets cover the decoder, device configuration/I/O boundaries,
 disk-image parsers, snapshot decoding, terminal input/replay, and authenticated
@@ -247,7 +250,10 @@ corresponding compatibility decision.
 | `SYNOS_FULL_VALIDATION` | unset | Enable opt-in QEMU, fuzz, coverage, mutation, and release tiers. |
 | `SYNOS_EVIDENCE_DIR` | `build/test-evidence/<run-id>` | Evidence output directory for the unified runners. |
 | `SYNOS_FUZZ_RUNS` | `1000` | Bounded fuzz smoke iterations per target. |
-| `SYNOS_VM_SOAK_RUNS` | `3` | Number of bounded deterministic VM soak repetitions. |
+| `SYNOS_VM_SOAK_RUNS` | `3` | Number of bounded VM soak repetitions. |
+| `SYNOS_VM_SOAK_INNER_RUNS` | `32` | In-process VM lifecycle repetitions per soak run. |
+| `SYNOS_VM_SOAK_MEMORY_TOLERANCE_BYTES` | `67108864` | Allowed runner RSS growth per soak run. |
+| `SYNOS_VM_SOAK_COMMAND` | focused soak test | Optional command override for the soak runner. |
 | `VM_QUALITY_BASE` | `HEAD^` | Git base used by `validate-vm-quality.py --changed`. |
 
 Tests are isolated from one another and must not depend on an unset variable

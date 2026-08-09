@@ -164,7 +164,11 @@ def validate_commands(errors: list[str]) -> None:
         path = check_file(errors, script)
         if path and "set -Eeuo pipefail" not in path.read_text():
             fail(errors, f"{script} is not strict-mode")
-    for script in ("scripts/record-vm-evidence.py", "scripts/validate-vm-evidence.py"):
+    for script in (
+        "scripts/vm-soak.py",
+        "scripts/record-vm-evidence.py",
+        "scripts/validate-vm-evidence.py",
+    ):
         check_file(errors, script)
     test_runner = (ROOT / "scripts/test-all.sh").read_text()
     for field in ("--command", "--firmware", "--cpu-count", "--result-file"):

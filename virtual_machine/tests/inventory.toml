@@ -443,6 +443,11 @@ file = "tests/qemu_matrix_59_11.rs"
 tiers = ["qemu"]
 
 [[test]]
+id = "vm.soak.resource-leak-probe"
+file = "tests/soak_leaks.rs"
+tiers = ["soak"]
+
+[[test]]
 id = "vm.gates.inventory-contract"
 file = "tests/quality_gates.rs"
 tiers = ["fast-unit"]

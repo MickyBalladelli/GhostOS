@@ -121,7 +121,7 @@ remaining proof, portability, safety, and fidelity work.
       shutdown, terminal wakeup, snapshot restore, and failure cleanup.
 - [x] Add cross-platform host validation for Linux, macOS, and Windows behavior, with
       explicit skips for unavailable acceleration and QEMU prerequisites.
-- [ ] Add repeated soak runs that detect file, socket, process, lock, memory,
+- [x] Add repeated soak runs that detect file, socket, process, lock, memory,
       translation-cache, and terminal-state leaks.
 
 ## P2: Documentation and release quality
