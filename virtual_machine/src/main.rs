@@ -2375,7 +2375,7 @@ fn print_lock_status(path: &PathBuf) -> Result<(), String> {
             if info.stale {
                 if let Some(image) = info.image_path.as_ref() {
                     println!(
-                        "  action: recover with `./target/release/synos-vm disk recover-lock {}`",
+                        "  action: ./target/release/synos-vm disk recover-lock {}",
                         image.display(),
                     );
                 }
