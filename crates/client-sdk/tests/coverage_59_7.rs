@@ -42,7 +42,14 @@ fn rpc_frames_reject_unknown_flags_and_truncated_payloads() {
 #[test]
 fn client_propagates_busy_and_model_guards_duplicates() {
     let mut client = Client::new(BusyTransport);
-    assert_eq!(client.cluster_state(), Err(ClientError::Remote(RpcStatus::Busy)));
+    assert_eq!(
+        client.cluster_state(),
+        Err(ClientError::Remote(synos_client_sdk::RemoteError::new(
+            RpcStatus::Busy,
+            Method::ClusterState,
+            1,
+        )))
+    );
 
     let node = ClusterNode {
         node: NodeId::new(2).unwrap(),

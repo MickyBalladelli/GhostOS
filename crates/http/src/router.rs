@@ -1,5 +1,5 @@
 use crate::{
-    DEFAULT_REQUEST_HEADERS, DEFAULT_RESPONSE_HEADERS, Method, Request, Response, StatusCode,
+    DEFAULT_REQUEST_HEADERS, DEFAULT_RESPONSE_HEADERS, Method, Request, Response,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,23 +161,6 @@ impl<State, const ROUTES: usize> Router<State, ROUTES> {
         }
     }
 
-    pub fn handle_or_error<'body>(
-        &mut self,
-        principal: u64,
-        granted_rights: WebRights,
-        request: Request<'_, DEFAULT_REQUEST_HEADERS>,
-        body: &'body mut [u8],
-    ) -> Response<'body, DEFAULT_RESPONSE_HEADERS> {
-        match self.handle(principal, granted_rights, request, body) {
-            Ok(response) => response,
-            Err(RouteError::AccessDenied) => Response::new(StatusCode::FORBIDDEN, b"forbidden"),
-            Err(RouteError::MethodNotAllowed) => {
-                Response::new(StatusCode::METHOD_NOT_ALLOWED, b"method not allowed")
-            }
-            Err(RouteError::NotFound) => Response::new(StatusCode::NOT_FOUND, b"not found"),
-            Err(_) => Response::new(StatusCode::INTERNAL_SERVER_ERROR, b"handler error"),
-        }
-    }
 }
 
 impl<State: Default, const ROUTES: usize> Default for Router<State, ROUTES> {

@@ -1,3 +1,5 @@
+use synos_status::{AuditContext, PublicError, RetryHint, Status, operation};
+
 use crate::{DEFAULT_RESPONSE_HEADERS, Method, Request, Response, StatusCode};
 
 pub const SYNOS_RPC_CONTENT_TYPE: &str = "application/vnd.synos.rpc";
@@ -9,6 +11,26 @@ pub enum RpcHttpError {
     EmptyBody,
     BufferTooSmall { required: usize },
     Encode(crate::EncodeError),
+}
+
+pub fn rpc_error_response<'a>(
+    error: RpcHttpError,
+    audit: AuditContext,
+    destination: &'a mut [u8],
+) -> Result<Response<'a, DEFAULT_RESPONSE_HEADERS>, crate::EncodeError> {
+    let (code, retry) = match error {
+        RpcHttpError::MethodNotAllowed
+        | RpcHttpError::InvalidContentType
+        | RpcHttpError::EmptyBody => (Status::INVALID_ARGUMENT, RetryHint::Never),
+        RpcHttpError::BufferTooSmall { .. } => {
+            (Status::NO_SPACE, RetryHint::AfterUs(1_000_000))
+        }
+        RpcHttpError::Encode(_) => (Status::INTERNAL, RetryHint::AfterUs(1_000_000)),
+    };
+    crate::error_response(
+        PublicError::new(code, operation::HTTP_RPC, retry, audit),
+        destination,
+    )
 }
 
 pub fn is_rpc_content_type(value: &str) -> bool {

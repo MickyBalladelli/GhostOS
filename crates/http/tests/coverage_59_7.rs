@@ -1,7 +1,8 @@
 use synos_http::{
-    GrpcError, Method, ParseError, StatusCode, decode_grpc_frame, encode_grpc_frame,
-    encode_response, parse_request,
+    GrpcError, Method, ParseError, StatusCode, decode_grpc_frame, encode_error_body,
+    encode_grpc_frame, encode_response, parse_request,
 };
+use synos_status::{AuditContext, PublicError, RetryHint, Status};
 
 #[test]
 fn http_parser_handles_query_body_and_rejects_ambiguous_lengths() {
@@ -43,4 +44,24 @@ fn http_response_encoder_preserves_status_and_capacity_limits() {
     let written = encode_response(response, &mut output).unwrap();
     assert!(core::str::from_utf8(&output[..written]).unwrap().starts_with("HTTP/1.1 201 Created"));
     assert!(matches!(encode_response(response, &mut [0; 4]), Err(synos_http::EncodeError::BufferTooSmall { .. })));
+}
+
+#[test]
+fn public_http_error_contains_contract_fields_without_request_data() {
+    let error = PublicError::new(
+        Status::ACCESS_DENIED,
+        synos_status::operation::HTTP_ROUTE,
+        RetryHint::Never,
+        AuditContext::new(0xfeed, 2),
+    );
+    let mut body = [0; 256];
+    let length = encode_error_body(error, &mut body).unwrap();
+    let body = core::str::from_utf8(&body[..length]).unwrap();
+
+    assert!(body.contains("\"code\":"));
+    assert!(body.contains("\"operation\":2"));
+    assert!(body.contains("\"retry\":\"never\""));
+    assert!(body.contains("0000000000000000000000000000feed"));
+    assert!(body.contains("\"node\":2"));
+    assert!(!body.contains("capability-secret"));
 }

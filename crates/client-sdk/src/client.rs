@@ -2,6 +2,7 @@ use core::convert::Infallible;
 
 use synos_auth::CryptographicCapability;
 use synos_fabric::NodeId;
+use synos_status::{AuditContext, PublicError, RetryHint, Status};
 
 use crate::{
     AuditEventList, CapabilityDelegation, ChangeBatch, ClusterCreateRequest, ClusterHealthSnapshot,
@@ -54,8 +55,39 @@ pub trait RpcTransport {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClientError<E> {
     Protocol(ProtocolError),
-    Remote(RpcStatus),
+    Remote(RemoteError),
     Transport(E),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RemoteError {
+    pub status: RpcStatus,
+    pub error: PublicError,
+}
+
+impl RemoteError {
+    pub const fn new(status: RpcStatus, operation: Method, request_id: u64) -> Self {
+        let (code, retry) = match status {
+            RpcStatus::InvalidRequest => (Status::INVALID_ARGUMENT, RetryHint::Never),
+            RpcStatus::Unauthenticated | RpcStatus::AccessDenied => {
+                (Status::ACCESS_DENIED, RetryHint::Never)
+            }
+            RpcStatus::NotFound => (Status::NOT_FOUND, RetryHint::Never),
+            RpcStatus::Busy => (Status::BUSY, RetryHint::AfterUs(1_000_000)),
+            RpcStatus::Capacity => (Status::NO_SPACE, RetryHint::AfterUs(1_000_000)),
+            RpcStatus::Internal => (Status::INTERNAL, RetryHint::AfterUs(1_000_000)),
+            RpcStatus::Ok => (Status::NORMAL, RetryHint::Never),
+        };
+        Self {
+            status,
+            error: PublicError::new(
+                code,
+                operation as u16,
+                retry,
+                AuditContext::new(request_id as u128, 0),
+            ),
+        }
+    }
 }
 
 impl From<ProtocolError> for ClientError<Infallible> {
@@ -364,7 +396,11 @@ impl<T: RpcTransport> Client<T> {
             return Err(ClientError::Protocol(ProtocolError::MismatchedResponse));
         }
         if response_header.status != RpcStatus::Ok {
-            return Err(ClientError::Remote(response_header.status));
+            return Err(ClientError::Remote(RemoteError::new(
+                response_header.status,
+                method,
+                request_id,
+            )));
         }
         Ok((response, response_bytes, response_header))
     }

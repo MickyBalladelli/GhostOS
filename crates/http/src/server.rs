@@ -1,10 +1,11 @@
 use synos_ipc::SharedBuffer;
 use synos_netd::{SocketCapability, SocketRights};
-use synos_status::Status;
+use synos_status::{AuditContext, PublicError, RetryHint, Status, operation};
 
 use crate::{
-    DEFAULT_REQUEST_HEADERS, DEFAULT_RESPONSE_HEADERS, EncodeError, NetdClient, NetdError,
-    ParseError, Response, Router, StatusCode, WebRights, encode_response, parse_request,
+    DEFAULT_REQUEST_HEADERS, EncodeError, NetdClient, NetdError,
+    ParseError, Router, WebRights, encode_error_http_response, encode_response, parse_error,
+    parse_request, route_error,
 };
 
 pub const SERVER_SOCKET_RIGHTS: SocketRights = SocketRights::LISTEN
@@ -160,32 +161,39 @@ impl<'a, State, const ROUTES: usize, const RING_CAPACITY: usize>
                 self.received += count;
                 match parse_request::<DEFAULT_REQUEST_HEADERS>(&request_bytes[..self.received]) {
                     Ok(parsed) => {
-                        let response = self.router.handle_or_error(
+                        let audit = AuditContext::new(completion.correlation, 1);
+                        match self.router.handle(
                             self.principal,
                             self.web_rights,
                             parsed.request,
                             handler_body,
-                        );
-                        self.response_length = encode_response(response, response_bytes)?;
+                        ) {
+                            Ok(response) => {
+                                self.response_length = encode_response(response, response_bytes)?;
+                            }
+                            Err(error) => {
+                                self.response_length = encode_error_http_response(
+                                    route_error(error, audit),
+                                    response_bytes,
+                                )?;
+                            }
+                        }
                     }
                     Err(ParseError::Incomplete) if self.received < request_bytes.len() => {
                         return self.submit_next(receive_descriptor, send_descriptor);
                     }
                     Err(ParseError::Incomplete) => {
-                        self.response_length = encode_response(
-                            Response::<DEFAULT_RESPONSE_HEADERS>::new(
-                                StatusCode::PAYLOAD_TOO_LARGE,
-                                b"request too large",
-                            ),
-                            response_bytes,
-                        )?;
+                        let error = PublicError::new(
+                            Status::REQUEST_TOO_LARGE,
+                            operation::HTTP_PARSE,
+                            RetryHint::Never,
+                            AuditContext::new(completion.correlation, 1),
+                        );
+                        self.response_length = encode_error_http_response(error, response_bytes)?;
                     }
-                    Err(_) => {
-                        self.response_length = encode_response(
-                            Response::<DEFAULT_RESPONSE_HEADERS>::new(
-                                StatusCode::BAD_REQUEST,
-                                b"bad request",
-                            ),
+                    Err(error) => {
+                        self.response_length = encode_error_http_response(
+                            parse_error(error, AuditContext::new(completion.correlation, 1)),
                             response_bytes,
                         )?;
                     }

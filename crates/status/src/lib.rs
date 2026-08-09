@@ -52,6 +52,12 @@ impl Status {
         Self::new(Severity::Warning, facility::SYSTEM, 7, 0).expect("valid status");
     pub const CANCELLED: Self =
         Self::new(Severity::Warning, facility::SYSTEM, 8, 0).expect("valid status");
+    pub const INTERNAL: Self =
+        Self::new(Severity::Error, facility::SYSTEM, 9, 0).expect("valid status");
+    pub const METHOD_NOT_ALLOWED: Self =
+        Self::new(Severity::Error, facility::SYSTEM, 10, 0).expect("valid status");
+    pub const REQUEST_TOO_LARGE: Self =
+        Self::new(Severity::Error, facility::SYSTEM, 11, 0).expect("valid status");
     pub const ALREADY_EXISTS: Self =
         Self::new(Severity::Error, facility::FILESYSTEM, 2, 0).expect("valid status");
     pub const CONFLICT: Self =
@@ -149,6 +155,9 @@ impl Status {
             (facility::SYSTEM, 6) => "corrupt",
             (facility::SYSTEM, 7) => "busy",
             (facility::SYSTEM, 8) => "cancelled",
+            (facility::SYSTEM, 9) => "internal error",
+            (facility::SYSTEM, 10) => "method not allowed",
+            (facility::SYSTEM, 11) => "request too large",
             (facility::SECURITY, 1) => "access denied",
             (facility::FILESYSTEM, 2) => "already exists",
             (facility::FILESYSTEM, 3) => "conflict",
@@ -176,6 +185,77 @@ impl Status {
 
 pub trait IntoStatus {
     fn status(self) -> Status;
+}
+
+/// The retry advice exposed at a service boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetryHint {
+    Never,
+    Immediate,
+    AfterUs(u64),
+}
+
+impl RetryHint {
+    pub const fn is_retryable(self) -> bool {
+        !matches!(self, Self::Never)
+    }
+}
+
+/// Safe correlation data that lets an operator find the matching audit event.
+///
+/// This deliberately contains identifiers only. It must not contain request
+/// bodies, paths, credentials, capabilities, or backend error strings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub struct AuditContext {
+    pub correlation: u128,
+    pub node: u32,
+}
+
+impl AuditContext {
+    pub const NONE: Self = Self {
+        correlation: 0,
+        node: 0,
+    };
+
+    pub const fn new(correlation: u128, node: u32) -> Self {
+        Self { correlation, node }
+    }
+}
+
+/// Stable, externally safe error metadata shared by service boundaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublicError {
+    pub code: Status,
+    pub operation: u16,
+    pub retry: RetryHint,
+    pub audit: AuditContext,
+}
+
+impl PublicError {
+    pub const fn new(
+        code: Status,
+        operation: u16,
+        retry: RetryHint,
+        audit: AuditContext,
+    ) -> Self {
+        Self {
+            code,
+            operation,
+            retry,
+            audit,
+        }
+    }
+}
+
+/// Stable operation identifiers used by the externally visible HTTP/RPC
+/// boundaries. These are identifiers, not user-controlled strings.
+pub mod operation {
+    pub const HTTP_PARSE: u16 = 1;
+    pub const HTTP_ROUTE: u16 = 2;
+    pub const HTTP_RPC: u16 = 3;
+    pub const HTTP_SERVER: u16 = 4;
+    pub const GRPC: u16 = 5;
+    pub const FRONTEND_RPC: u16 = 6;
 }
 
 pub mod facility {

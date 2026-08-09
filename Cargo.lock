@@ -491,6 +491,7 @@ dependencies = [
  "synos-auth",
  "synos-fabric",
  "synos-kernel",
+ "synos-status",
 ]
 
 [[package]]

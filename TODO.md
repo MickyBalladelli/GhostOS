@@ -67,6 +67,15 @@ evidence.
       reviewers to stable errors/status values or `fatal_kernel_halt`.
 - [ ] Make every externally visible error include a stable code, operation,
       retry hint, and audit context without leaking secrets.
+      Progress: added the allocation-free `synos-status::PublicError`
+      contract with stable status codes, operation IDs, retry hints, and
+      correlation/node audit context. HTTP parser, router, server, and RPC
+      failures now have JSON error responses containing only fixed public
+      messages and those safe fields; remote client SDK failures preserve the
+      RPC status and expose the same metadata. Added direct HTTP, status, and
+      SDK regression coverage. `cargo check -p synos-status -p synos-http
+      -p synos-client-sdk --tests` passes; full boundary inventory and test
+      execution remain pending.
 
 ## P0: Prove persistence and recovery
 

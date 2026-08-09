@@ -1,4 +1,4 @@
-use super::{Severity, Status, facility};
+use super::{AuditContext, PublicError, RetryHint, Severity, Status, facility};
 
 #[test]
 fn status_round_trips_all_fields() {
@@ -28,9 +28,25 @@ fn success_uses_openvms_low_bit_convention() {
 }
 
 #[test]
+fn public_error_keeps_only_stable_safe_context() {
+    let error = PublicError::new(
+        Status::ACCESS_DENIED,
+        7,
+        RetryHint::Never,
+        AuditContext::new(0xfeed, 3),
+    );
+
+    assert_eq!(error.code.raw(), Status::ACCESS_DENIED.raw());
+    assert_eq!(error.operation, 7);
+    assert!(!error.retry.is_retryable());
+    assert_eq!(error.audit, AuditContext::new(0xfeed, 3));
+}
+
+#[test]
 fn stable_messages_cover_public_status_constants() {
     assert_eq!(Status::NORMAL.message(), "normal");
     assert_eq!(Status::ACCESS_DENIED.message(), "access denied");
+    assert_eq!(Status::METHOD_NOT_ALLOWED.message(), "method not allowed");
     assert_eq!(Status::DIRECTORY_NOT_EMPTY.message(), "directory not empty");
     assert_eq!(Status::INVALID_PATH.message(), "invalid path");
     assert_eq!(Status::NOT_DIRECTORY.message(), "not a directory");
