@@ -131,7 +131,7 @@ remaining proof, portability, safety, and fidelity work.
       snapshot schema, disk formats, migration protocol, and terminal contract.
 - [x] Add compatibility matrices for VM snapshots, system disks, guest boot
       images, device models, and CLI options.
-- [ ] Make release artifacts include image digests, firmware mode, device
+- [x] Make release artifacts include image digests, firmware mode, device
       topology, test evidence, and known host limitations.
 - [ ] Add a changelog rule for guest-visible behavior changes and snapshot or
       disk-format changes.

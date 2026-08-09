@@ -77,6 +77,23 @@ result.json
 
 The dashboard summarizes pass, fail, and skip state. The release gate rejects unexpected failures, invalid result JSON, bad revision provenance, panic markers, missing clean QEMU boot evidence, and unexplained image provenance.
 
+Package the VM release only after the evidence run passes:
+
+```sh
+python3 scripts/package-vm-release.py \
+  --output build/release/synos-vm.tar.gz \
+  --artifact target/release/synos-vm \
+  --artifact build/bios/synos-bios.img \
+  --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
+  --evidence-dir build/test-evidence/<run-id> \
+  --firmware bios --firmware uefi
+```
+
+The archive manifest records SHA-256 digests, source revision, firmware
+coverage, default device topology, every executed evidence record, and known
+host limitations. Failed evidence prevents packaging; skipped evidence stays
+in the manifest with its prerequisite reason.
+
 ## Test contract
 
 Every feature needs direct behavior, boundary/error, integration, and end-to-end evidence when it crosses a process, device, boot, persistence, or cluster boundary. Persistent and distributed features need restart, corruption, timeout, duplicate, and partial-failure cases.

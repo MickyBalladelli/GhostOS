@@ -7,6 +7,25 @@ terminal behavior is defined in [the public VM contract](docs/PUBLIC_VM_CONTRACT
 Compatibility combinations and CLI constraints are listed in
 [the compatibility matrices](docs/COMPATIBILITY.md).
 
+Package a release archive with immutable artifact digests, firmware modes,
+default device topology, executed test evidence, and host limitations:
+
+```bash
+python3 scripts/package-vm-release.py \
+  --output build/release/synos-vm.tar.gz \
+  --artifact target/release/synos-vm \
+  --artifact build/bios/synos-bios.img \
+  --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
+  --evidence-dir build/test-evidence/<run-id> \
+  --firmware bios --firmware uefi
+```
+
+The archive contains `release-manifest.json`, `artifacts/`, and `evidence/`.
+The package refuses failed evidence and records skipped evidence with its
+reason.
+See [release artifact details](docs/RELEASE_ARTIFACTS.md) for the manifest
+schema and verification rules.
+
 ## Features
 
 - **x86_64 CPU Emulation**: Instruction decoder and executor with support for protected mode and long mode transitions
