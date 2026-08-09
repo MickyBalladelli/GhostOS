@@ -133,7 +133,7 @@ remaining proof, portability, safety, and fidelity work.
       images, device models, and CLI options.
 - [x] Make release artifacts include image digests, firmware mode, device
       topology, test evidence, and known host limitations.
-- [ ] Add a changelog rule for guest-visible behavior changes and snapshot or
+- [x] Add a changelog rule for guest-visible behavior changes and snapshot or
       disk-format changes.
 
 ## Immediate acceptance gate

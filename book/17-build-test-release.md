@@ -91,8 +91,17 @@ python3 scripts/package-vm-release.py \
 
 The archive manifest records SHA-256 digests, source revision, firmware
 coverage, default device topology, every executed evidence record, and known
-host limitations. Failed evidence prevents packaging; skipped evidence stays
-in the manifest with its prerequisite reason.
+host limitations. It also carries the exact changelog and its digest. Failed
+evidence prevents packaging; skipped evidence stays in the manifest with its
+prerequisite reason.
+
+For a release diff, run the changelog validator once per changed VM source
+path, for example:
+
+```sh
+python3 scripts/validate-changelog.py \
+  --changed-file virtual_machine/src/devices/storage/disk_image.rs
+```
 
 ## Test contract
 

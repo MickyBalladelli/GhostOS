@@ -51,6 +51,8 @@ if [[ -f "$evidence_dir/qemu/result.json" ]] && rg -q '"state":"pass"' "$evidenc
     fi
 fi
 
+python3 "$root_dir/scripts/validate-changelog.py"
+
 revision=$(git -C "$root_dir" rev-parse HEAD)
 if [[ -f "$evidence_dir/revision.txt" ]] && [[ "$(<"$evidence_dir/revision.txt")" != "$revision" ]]; then
     echo "release gate: evidence revision does not match HEAD" >&2

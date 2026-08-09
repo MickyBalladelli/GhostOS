@@ -20,7 +20,8 @@ python3 scripts/package-vm-release.py \
   --firmware bios --firmware uefi
 ```
 
-The archive contains `release-manifest.json`, `artifacts/`, and `evidence/`.
+The archive contains `release-manifest.json`, the exact `CHANGELOG.md`,
+`artifacts/`, and `evidence/`.
 The package refuses failed evidence and records skipped evidence with its
 reason.
 See [release artifact details](docs/RELEASE_ARTIFACTS.md) for the manifest

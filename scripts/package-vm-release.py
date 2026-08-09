@@ -26,6 +26,7 @@ from typing import Iterable
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VM_MANIFEST = ROOT / "virtual_machine/Cargo.toml"
+CHANGELOG = ROOT / "CHANGELOG.md"
 
 DEFAULT_TOPOLOGY = [
     {"name": "legacy-pic", "transport": "io", "address": "0x20,0xa0", "interrupt": "isa-pic"},
@@ -178,6 +179,7 @@ def write_archive(
     output: pathlib.Path,
     manifest: dict[str, object],
     artifacts: list[tuple[str, pathlib.Path]],
+    changelog: pathlib.Path,
     evidence_root: pathlib.Path,
     evidence_files: Iterable[pathlib.Path],
     timestamp: int,
@@ -202,6 +204,7 @@ def write_archive(
                     info.uname = ""
                     info.gname = ""
                     archive.addfile(info, io.BytesIO(manifest_bytes))
+                    add_file(archive, changelog, "CHANGELOG.md", timestamp)
                     for name, path in artifacts:
                         add_file(archive, path, f"artifacts/{name}", timestamp)
                     for path in evidence_files:
@@ -232,6 +235,13 @@ def main() -> int:
             raise ValueError("output archive must not replace an input artifact")
         evidence_root = args.evidence_dir.expanduser().resolve()
         records, evidence_files = evidence_records(evidence_root)
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts/validate-changelog.py")],
+            check=True,
+            cwd=ROOT,
+        )
+        if not CHANGELOG.is_file():
+            raise ValueError(f"changelog does not exist: {CHANGELOG}")
         timestamp = source_date_epoch()
         manifest = {
             "schema": 1,
@@ -241,6 +251,7 @@ def main() -> int:
             "source_date_epoch": timestamp,
             "firmware_modes": sorted(set(args.firmware)),
             "artifacts": [artifact_entry(name, path) for name, path in artifacts],
+            "changelog": {"path": "CHANGELOG.md", "sha256": sha256(CHANGELOG)},
             "device_topology": DEFAULT_TOPOLOGY,
             "test_evidence": records,
             "known_host_limitations": sorted(set(KNOWN_HOST_LIMITATIONS + args.host_limitation)),
@@ -249,7 +260,15 @@ def main() -> int:
             raise ValueError("release evidence contains failed results")
         if any(record["state"] == "skipped" and not record["reason"] for record in records):
             raise ValueError("skipped release evidence must include a reason")
-        write_archive(args.output, manifest, artifacts, evidence_root, evidence_files, timestamp)
+        write_archive(
+            args.output,
+            manifest,
+            artifacts,
+            CHANGELOG,
+            evidence_root,
+            evidence_files,
+            timestamp,
+        )
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"cannot package VM release: {error}", file=sys.stderr)
         return 1

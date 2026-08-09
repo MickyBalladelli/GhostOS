@@ -6,6 +6,7 @@ reproducible `tar.gz` archive and refuses to package failed evidence:
 ```text
 release archive/
 ├── release-manifest.json
+├── CHANGELOG.md
 ├── artifacts/
 │   ├── synos-vm
 │   ├── synos-bios.img
@@ -22,6 +23,7 @@ The archive has manifest schema `1`. `release-manifest.json` contains:
 | `source_date_epoch` | Timestamp used for deterministic archive metadata |
 | `firmware_modes` | Firmware modes covered by this artifact (`bios`, `uefi`) |
 | `artifacts` | Each packaged file's name, size, and SHA-256 digest |
+| `changelog` | The packaged changelog path and SHA-256 digest |
 | `device_topology` | Default guest device names, transports, addresses, and interrupt vectors |
 | `test_evidence` | Evidence JSON paths, digests, tier, test ID, state, command, firmware, host, and skip reason |
 | `known_host_limitations` | Hardware acceleration, terminal, networking, migration, and optional-test limits |
@@ -40,4 +42,3 @@ source revision and firmware mode against their deployment record.
 The topology describes the default `VmConfig`; custom serial ports, attached
 disks, firmware application images, and host backends must be recorded by the
 operator as deployment-specific metadata.
-
