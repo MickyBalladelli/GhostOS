@@ -44,6 +44,18 @@ The entry names one test in each applicable tier:
   machine, revision, input size, and elapsed time; it must not use a flaky
   wall-clock assertion.
 
+These names are plans only. The inventory keeps five separate statuses:
+`planned`, `running`, `passed`, `failed`, and `blocked`. A test becomes
+`passed`, `failed`, or `blocked` only from a per-test `evidence.json`; a
+`status.json` may mark work `running` or `blocked`. A named test without one
+of those records stays `planned`.
+
+Generate the machine-readable status report with:
+
+```sh
+python3 scripts/validate-test-status.py --output build/test-status.json
+```
+
 A feature that crosses a process, device, boot, persistence, or cluster
 boundary needs the relevant integration and end-to-end evidence. A green
 happy-path test alone never completes a feature.

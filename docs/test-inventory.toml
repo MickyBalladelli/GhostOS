@@ -11,6 +11,13 @@ test_id_format = "{tier}.{feature-id}.{behavior}"
 coverage_state = "enforced"
 definition_of_done = "docs/test-coverage.toml"
 
+[status]
+values = ["planned", "running", "passed", "failed", "blocked"]
+default = "planned"
+evidence_values = ["passed", "failed", "blocked"]
+evidence_path = "build/test-evidence/{run-id}/{tier}/{test-id}/evidence.json"
+named_test_policy = "plan-only"
+
 [contract]
 required_tiers = ["unit", "integration", "qemu", "fault", "fuzz", "performance"]
 required_checklist = [
@@ -23,7 +30,7 @@ required_checklist = [
   "compatibility-versioning",
   "inventory-evidence",
 ]
-unexecuted_states = ["skipped", "blocked", "not_implemented"]
+unexecuted_states = ["planned", "running", "blocked"]
 
 [tiers.unit]
 command = "cargo test"

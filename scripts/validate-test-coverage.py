@@ -343,12 +343,18 @@ def main() -> int:
         print("\n".join(f"- {item}" for item in errors))
         return 1
 
-    print(
-        "59.13 coverage definition passed: "
-        f"{len(todo_features())} roadmap features, "
-        f"{len(policy.get('vm_device', []))} VM device families, "
-        f"{len(policy.get('boot_path', []))} boot paths"
-    )
+    if args.evidence_dir is None:
+        print(
+            "59.13 coverage definition valid: mappings checked; execution "
+            "evidence not supplied, so named tests remain planned"
+        )
+    else:
+        print(
+            "59.13 coverage definition passed: "
+            f"{len(todo_features())} roadmap features, "
+            f"{len(policy.get('vm_device', []))} VM device families, "
+            f"{len(policy.get('boot_path', []))} boot paths"
+        )
     return 0
 
 

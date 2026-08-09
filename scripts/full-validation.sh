@@ -139,6 +139,9 @@ if ! SYNOS_EVIDENCE_DIR="$evidence_dir" "$root_dir/scripts/test-all.sh"; then
     exit 1
 fi
 
+python3 "$root_dir/scripts/validate-test-status.py" \
+    --evidence-dir "$evidence_dir" \
+    --output "$evidence_dir/test-status.json"
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
 python3 "$root_dir/scripts/validate-roadmaps.py"
 python3 "$root_dir/scripts/validate-review-baseline.py"

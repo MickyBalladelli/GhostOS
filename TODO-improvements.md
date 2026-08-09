@@ -25,7 +25,7 @@ evidence.
       feature, or move it to a dedicated terminal roadmap.
 - [x] Add a roadmap validator that rejects duplicate IDs, empty feature
       bodies, stale links, and TODO headings missing from the inventory.
-- [ ] Separate `planned`, `running`, `passed`, `failed`, and `blocked` in the
+- [x] Separate `planned`, `running`, `passed`, `failed`, and `blocked` in the
       machine-readable inventory. A named test must not count as evidence.
 - [ ] Require a result artifact, source revision, command, host, and timestamp
       before a roadmap checkbox can be marked `[x]`.
