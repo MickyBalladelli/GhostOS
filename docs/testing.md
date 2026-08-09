@@ -81,7 +81,7 @@ evidence described in `platforms/README.md`.
 | workspace | `cargo test --workspace --all-targets` | required for CI | test output and package metadata |
 | vm | `cargo test -p synos-vm --all-targets` | required for VM changes | test output and VM metadata |
 | recovery | `cargo test --workspace --all-targets` | required | failure, restart, and recovery output |
-| qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
+| qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
 | cluster | `scripts/qemu-cluster-validation.sh` | opt-in | node serial logs, command logs, QMP input, failover log |
 | hardware-accelerated | `SYNOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |

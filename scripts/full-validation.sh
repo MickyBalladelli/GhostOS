@@ -21,9 +21,13 @@ run_optional() {
     fi
     case "$tier" in
         qemu)
-            if ! command -v "${SYNOS_QEMU_BIN:-qemu-system-x86_64}" >/dev/null 2>&1 || [[ ! -f "${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]]; then
-                printf '{"state":"skipped","tier":"%s","reason":"missing QEMU or boot image","prerequisite":"qemu-system-x86_64 and SYNOS_QEMU_IMAGE"}\n' "$tier" > "$output_dir/result.json"
-                echo "== $tier: skipped; missing QEMU or boot image"
+            if ! command -v "${SYNOS_QEMU_BIN:-qemu-system-x86_64}" >/dev/null 2>&1 \
+                || ! command -v "${SYNOS_QEMU_IMG_BIN:-qemu-img}" >/dev/null 2>&1 \
+                || [[ ! -f "${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]] \
+                || [[ ! -f "${SYNOS_QEMU_UEFI_IMAGE:-${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}}" ]] \
+                || [[ ! -f "${SYNOS_QEMU_UEFI_FIRMWARE:-}" ]]; then
+                printf '{"state":"skipped","tier":"%s","reason":"missing QEMU, qemu-img, BIOS image, UEFI image, or UEFI firmware","prerequisite":"qemu-system-x86_64, qemu-img, SYNOS_QEMU_IMAGE, SYNOS_QEMU_UEFI_IMAGE, and SYNOS_QEMU_UEFI_FIRMWARE"}\n' "$tier" > "$output_dir/result.json"
+                echo "== $tier: skipped; missing QEMU, qemu-img, image, or firmware"
                 return 0
             fi
             ;;
@@ -96,8 +100,9 @@ run_optional_with_vm_evidence() {
     local inventory_tier=$2
     local firmware=$3
     local cpu_count=$4
-    local image=$5
-    shift 5
+    local bios_image=$5
+    local uefi_image=$6
+    shift 6
     local command="$*"
     local started_at
     local ended_at
@@ -110,8 +115,11 @@ run_optional_with_vm_evidence() {
         status=$?
     fi
     ended_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    if [[ -f "$image" ]]; then
-        image_args+=(--image "$image")
+    if [[ -f "$bios_image" ]]; then
+        image_args+=(--image "$bios_image")
+    fi
+    if [[ -f "$uefi_image" && "$uefi_image" != "$bios_image" ]]; then
+        image_args+=(--image "$uefi_image")
     fi
     python3 "$root_dir/scripts/record-vm-evidence.py" \
         --evidence-dir "$evidence_dir" \
@@ -133,7 +141,8 @@ fi
 
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
 qemu_image=${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}
-run_optional_with_vm_evidence qemu qemu bios 2 "$qemu_image" env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test test_environments -- --ignored
+qemu_uefi_image=${SYNOS_QEMU_UEFI_IMAGE:-$qemu_image}
+run_optional_with_vm_evidence qemu qemu "bios,uefi" 2 "$qemu_image" "$qemu_uefi_image" env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored
 hardware_accel=${SYNOS_QEMU_ACCEL:-kvm}
 if [[ -z "${SYNOS_QEMU_ACCEL:-}" && "$(uname -s)" == Darwin ]]; then
     hardware_accel=hvf

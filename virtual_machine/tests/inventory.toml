@@ -25,7 +25,7 @@ status = "deterministic"
 
 [[tier]]
 name = "qemu"
-command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored"
+command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored"
 status = "opt-in"
 
 [[tier]]
@@ -405,6 +405,41 @@ tiers = ["qemu"]
 [[test]]
 id = "vm.qemu.remote-terminal-workflows"
 file = "tests/test_environments.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.bios-one-and-smp"
+file = "tests/qemu_matrix_59_11.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.uefi-one-and-smp"
+file = "tests/qemu_matrix_59_11.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.attached-disk-boot"
+file = "tests/qemu_matrix_59_11.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.reboot-shutdown-lifecycle"
+file = "tests/qemu_matrix_59_11.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.terminal-wakeup"
+file = "tests/qemu_matrix_59_11.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.snapshot-restore"
+file = "tests/qemu_matrix_59_11.rs"
+tiers = ["qemu"]
+
+[[test]]
+id = "vm.qemu.failure-cleanup"
+file = "tests/qemu_matrix_59_11.rs"
 tiers = ["qemu"]
 
 [[test]]

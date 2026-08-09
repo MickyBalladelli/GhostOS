@@ -44,7 +44,7 @@ command = "cargo test --workspace --all-targets"
 artifact = "stdout.log"
 
 [tiers.qemu]
-command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored"
+command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored"
 artifact = "serial.log"
 
 [tiers.fault]

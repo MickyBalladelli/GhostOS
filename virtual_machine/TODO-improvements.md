@@ -117,7 +117,7 @@ remaining proof, portability, safety, and fidelity work.
       revision, host, firmware, CPU count, image digest, and result state.
 - [x] Add decoder, device, disk-image, snapshot, terminal, and migration fuzz
       targets with retained crashing inputs and deterministic replay.
-- [ ] Add QEMU evidence for BIOS, UEFI, one CPU, SMP, attached disks, reboot,
+- [x] Add QEMU evidence for BIOS, UEFI, one CPU, SMP, attached disks, reboot,
       shutdown, terminal wakeup, snapshot restore, and failure cleanup.
 - [ ] Add cross-platform CI for Linux, macOS, and Windows host behavior, with
       explicit skips for unavailable acceleration and QEMU prerequisites.

@@ -12,8 +12,7 @@ cargo test -p synos-vm --test test_environments
 
 if [[ "${SYNOS_RUN_QEMU_TESTS:-}" == "1" ]]; then
     echo "opt-in QEMU matrix"
-    cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
-    cargo test -p synos-vm --test test_environments -- --ignored
+    cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored
 else
     echo "QEMU matrix skipped; set SYNOS_RUN_QEMU_TESTS=1"
 fi
