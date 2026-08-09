@@ -372,6 +372,19 @@ fn allocator_skips_reserved_memory_aligns_frames_and_reports_exhaustion() {
 }
 
 #[test]
+fn allocator_falls_back_below_early_floor_when_needed() {
+    let regions = [MemoryRegion {
+        start: 0x1000,
+        length: 0x2000,
+        kind: MemoryKind::Usable,
+        attributes: 0,
+    }];
+    let mut allocator = EarlyFrameAllocator::new(&regions);
+
+    assert_eq!(allocator.allocate(), Ok(0x1000));
+}
+
+#[test]
 fn allocator_refunds_quota_when_no_frame_is_available() {
     let regions = [MemoryRegion {
         start: 0x1000,

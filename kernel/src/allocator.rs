@@ -123,8 +123,17 @@ impl<'a> EarlyFrameAllocator<'a> {
     fn advance_to_usable_region(&mut self) {
         while let Some(region) = self.regions.get(self.region_index) {
             if region.kind == MemoryKind::Usable && region.length >= FRAME_SIZE {
-                self.next_frame = align_up(region.start.max(EARLY_ALLOCATION_FLOOR), FRAME_SIZE);
-                return
+                let preferred = align_up(region.start.max(EARLY_ALLOCATION_FLOOR), FRAME_SIZE);
+                let fallback = align_up(region.start, FRAME_SIZE);
+                let candidate = if preferred.saturating_add(FRAME_SIZE) <= region.end() {
+                    preferred
+                } else {
+                    fallback
+                };
+                if candidate.saturating_add(FRAME_SIZE) <= region.end() {
+                    self.next_frame = candidate;
+                    return
+                }
             }
             self.region_index += 1;
         }
