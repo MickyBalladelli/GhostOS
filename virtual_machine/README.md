@@ -316,9 +316,9 @@ Terminal behavior is platform-defined:
 | Windows | Console mode disables line/echo/processed input, disables Quick Edit, and enables VT input; Ctrl-C is byte `0x03` | Console buffer query; same serial resize sequence; VT input/output preserve ANSI bytes | stdout flushes after guest output; no console mode changes for redirected streams |
 | Non-TTY | Input is read as supplied; no host mode changes; Ctrl-C stays a byte | No host resize query or generated resize sequence; escape bytes stay unchanged | stdout is flushed normally |
 
-An external termination signal restores the saved host terminal state before
-the process exits. The PS/2 input path does not receive serial resize control
-sequences.
+An external termination or fatal Unix crash signal restores the saved host
+terminal state before the process exits. The PS/2 input path does not receive
+serial resize control sequences.
 
 `TerminalSession` records host-policy events in a deterministic
 `TerminalTranscript`. Call `transcript()` during or after a session, then

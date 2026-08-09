@@ -249,10 +249,10 @@ external storage must already be compatible.
   `Some(false)` never changes terminal settings; `None` enables interaction
   only when both stdin and stdout are TTYs.
 - Linux and macOS use the Unix raw-mode path. It opens `/dev/tty`, saves
-  termios, and installs restoration handlers for `SIGINT`, `SIGTERM`,
-  `SIGHUP`, `SIGQUIT`, and `SIGABRT`. Settings are restored on EOF, session
-  drop (including unwind or after an error), or those signals before the signal
-  is re-raised. Only one process-wide Unix raw session may be active.
+  termios, and installs restoration handlers for normal termination and fatal
+  crash signals. Settings are restored on EOF, session drop (including unwind
+  or after an error), or those signals before the signal is re-raised. Only one
+  process-wide Unix raw session may be active.
 - Windows raw mode saves input/output console modes, disables processed,
   line, echo, and quick-edit input, enables virtual-terminal input/output, and
   restores both handles on error or drop. Other platforms use non-mutating

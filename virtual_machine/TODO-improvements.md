@@ -143,6 +143,6 @@ remaining proof, portability, safety, and fidelity work.
       excluded host state must be rebuilt.
 - [x] A migration stream is bounded, authenticated, replay-safe, and atomic at
       the destination.
-- [ ] A crashed VM cannot leave a live disk lock or modified host terminal.
+- [x] A crashed VM cannot leave a live disk lock or modified host terminal.
 - [ ] Fast, QEMU, fuzz, and soak evidence is separated and each result says
       `passed`, `failed`, or `skipped` with a reason.

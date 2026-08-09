@@ -16,12 +16,19 @@ mod unix {
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
-    const SIGNALS: [libc::c_int; 5] = [
+    const SIGNALS: [libc::c_int; 12] = [
         libc::SIGINT,
         libc::SIGTERM,
         libc::SIGHUP,
         libc::SIGQUIT,
         libc::SIGABRT,
+        libc::SIGILL,
+        libc::SIGTRAP,
+        libc::SIGBUS,
+        libc::SIGFPE,
+        libc::SIGSEGV,
+        libc::SIGPIPE,
+        libc::SIGSYS,
     ];
 
     static SIGNAL_ACTIVE: AtomicBool = AtomicBool::new(false);

@@ -14,8 +14,13 @@ use crate::devices::storage::StorageError;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_os = "linux"))]
 use std::process::Command;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 /// Disk image format as detected from the file header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,9 +89,12 @@ pub struct DiskImage {
 /// relying on platform-specific file-locking APIs.
 struct DiskLock {
     path: PathBuf,
+    token: String,
+    file: Option<File>,
 }
 
 const LOCK_RECORD_VERSION: u32 = 2;
+static LOCK_TOKEN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Metadata for a disk ownership marker.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +157,12 @@ pub struct DiskRepairReport {
 
 impl Drop for DiskLock {
     fn drop(&mut self) {
-        if fs::remove_file(&self.path).is_ok() {
+        let owned = fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|record| lock_field(&record, "lock_token").map(str::to_string))
+            .is_some_and(|token| token == self.token);
+        drop(self.file.take());
+        if owned && fs::remove_file(&self.path).is_ok() {
             let _ = sync_parent_directory(&self.path);
         }
     }
@@ -364,11 +377,11 @@ impl DiskImage {
 
     fn acquire_lock(path: &Path, format: DiskFormat) -> Result<DiskLock, StorageError> {
         let lock_path = Self::lock_path(path);
-        let mut lock_file = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut lock_file = match options.open(&lock_path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let owner = fs::read_to_string(&lock_path)
@@ -380,9 +393,17 @@ impl DiskImage {
             }
             Err(error) => return Err(StorageError::Io(error)),
         };
+        #[cfg(unix)]
+        if let Err(error) = lock_file_exclusive(&lock_file, true) {
+            drop(lock_file);
+            let _ = fs::remove_file(&lock_path);
+            let _ = sync_parent_directory(&lock_path);
+            return Err(StorageError::Io(error));
+        }
+        let lock_token = new_lock_token();
         let publication = writeln!(
             lock_file,
-            "version={}\nimage_identity={}\nowner_identity={}\npid={}\nstart_time={}\nhost_identity={}\nformat={}",
+            "version={}\nimage_identity={}\nowner_identity={}\npid={}\nstart_time={}\nhost_identity={}\nformat={}\nlock_token={}",
             LOCK_RECORD_VERSION,
             path.display(),
             owner_identity(),
@@ -390,6 +411,7 @@ impl DiskImage {
             process_start_time(std::process::id()).unwrap_or_else(|| "unknown".to_string()),
             host_identity(),
             format_name(format),
+            lock_token,
         )
         .and_then(|_| lock_file.sync_all())
         .and_then(|_| sync_parent_directory(&lock_path));
@@ -399,15 +421,43 @@ impl DiskImage {
             let _ = sync_parent_directory(&lock_path);
             return Err(StorageError::Io(error));
         }
-        Ok(DiskLock { path: lock_path })
+        Ok(DiskLock {
+            path: lock_path,
+            token: lock_token,
+            file: Some(lock_file),
+        })
     }
 
     /// Remove an ownership marker after stale-state validation.
     ///
     /// Keep this helper private so every public recovery request must pass
     /// through `recover_stale_lock`.
-    fn recover_lock<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
+    fn recover_lock<P: AsRef<Path>>(path: P, expected_owner: &str) -> Result<(), StorageError> {
         let lock_path = Self::lock_path(path);
+        let mut lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+        let mut owner = String::new();
+        lock_file.read_to_string(&mut owner)?;
+        if owner != expected_owner {
+            return Err(StorageError::Locked {
+                path: lock_path.display().to_string(),
+                owner,
+            });
+        }
+        #[cfg(unix)]
+        lock_file_exclusive(&lock_file, true).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                StorageError::Locked {
+                    path: lock_path.display().to_string(),
+                    owner: expected_owner.to_string(),
+                }
+            } else {
+                StorageError::Io(error)
+            }
+        })?;
+        drop(lock_file);
         fs::remove_file(&lock_path)?;
         sync_parent_directory(&lock_path)?;
         Ok(())
@@ -485,7 +535,7 @@ impl DiskImage {
                 owner: info.owner.clone(),
             });
         }
-        Self::recover_lock(path)?;
+        Self::recover_lock(path, &info.owner)?;
         Ok(info)
     }
 
@@ -855,6 +905,24 @@ fn lock_field<'a>(record: &'a str, key: &str) -> Option<&'a str> {
         let (field, value) = line.split_once('=')?;
         (field == key).then_some(value.trim())
     })
+}
+
+fn new_lock_token() -> String {
+    let sequence = LOCK_TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{sequence}", std::process::id())
+}
+
+#[cfg(unix)]
+fn lock_file_exclusive(file: &File, nonblocking: bool) -> std::io::Result<()> {
+    let mut operation = libc::LOCK_EX;
+    if nonblocking {
+        operation |= libc::LOCK_NB;
+    }
+    if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 fn parse_format(value: &str) -> Option<DiskFormat> {
