@@ -100,7 +100,7 @@ remaining proof, portability, safety, and fidelity work.
 
 - [x] Add typed command parsing and structured output for VM status, devices,
       disks, snapshots, migration, and monitor responses.
-- [ ] Authenticate and authorize monitor clients. Restrict save, quit, device,
+- [x] Authenticate and authorize monitor clients. Restrict save, quit, device,
       disk, and migration actions separately.
 - [ ] Bound monitor commands, connection lifetime, request size, response size,
       and concurrent clients. Test malformed and partial commands.

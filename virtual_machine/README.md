@@ -203,6 +203,30 @@ request returns one newline-delimited JSON object with an `ok`, `command`, and
 typed `data`, `error`, or completed action payload. Monitor `quit` cleanly stops
 the VM.
 
+The monitor requires a separate 32-byte authentication key. Its file must be a
+regular file accessible only by its owner. The socket is created with mode
+`0600`. Permissions are opt-in and independent; `status` is the safe default:
+
+```bash
+../target/release/synos-vm --monitor ./state/vm.sock \
+  --monitor-auth-key ./state/monitor.key \
+  --monitor-allow status,device,disk,migration,save,quit \
+  --snapshot-key ./state/snapshot.key
+```
+
+Each request has this wire form:
+
+```text
+auth TIMESTAMP NONCE_HEX TAG_HEX COMMAND
+```
+
+`TIMESTAMP` is Unix seconds, `NONCE_HEX` encodes 32 random bytes, and `TAG_HEX`
+is HMAC-SHA256 with the monitor key over the concatenation of
+`SYNOS-MONITOR-HMAC-SHA256-V1`, the timestamp as eight little-endian bytes, the
+raw nonce, and the exact UTF-8 command. Requests outside a five-minute window
+or reusing one of the last 1024 accepted nonces are rejected. Use a different
+key for snapshot files.
+
 ### Interactive terminal
 
 When stdin and stdout are TTYs, an unbounded VM run attaches the host terminal

@@ -1,10 +1,220 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use synos_vm::{
     DiskController, DiskPersistence, DiskRole, PowerState, SnapshotFeatures, SnapshotSchema, Vm,
 };
 
 pub const MIGRATION_PROTOCOL_VERSION: u32 = 3;
+pub const MONITOR_AUTH_DOMAIN: &[u8] = b"SYNOS-MONITOR-HMAC-SHA256-V1";
+const MONITOR_AUTH_WINDOW_SECS: u64 = 5 * 60;
+const MONITOR_NONCE_BYTES: usize = 32;
+const MONITOR_TAG_BYTES: usize = 32;
+const MAX_SEEN_NONCES: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MonitorPermission {
+    Status,
+    Device,
+    Disk,
+    Migration,
+    Save,
+    Quit,
+}
+
+impl MonitorPermission {
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Status => 1 << 0,
+            Self::Device => 1 << 1,
+            Self::Disk => 1 << 2,
+            Self::Migration => 1 << 3,
+            Self::Save => 1 << 4,
+            Self::Quit => 1 << 5,
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Device => "device",
+            Self::Disk => "disk",
+            Self::Migration => "migration",
+            Self::Save => "save",
+            Self::Quit => "quit",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonitorPermissions(u8);
+
+impl MonitorPermissions {
+    pub const fn status_only() -> Self {
+        Self(MonitorPermission::Status.bit())
+    }
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn allows(self, permission: MonitorPermission) -> bool {
+        self.0 & permission.bit() != 0
+    }
+
+    pub fn insert(&mut self, permission: MonitorPermission) {
+        self.0 |= permission.bit()
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let mut permissions = Self::empty();
+        for name in value.split(',').map(str::trim).filter(|name| !name.is_empty()) {
+            if name == "all" {
+                return Ok(Self(u8::MAX))
+            }
+            let permission = match name {
+                "status" => MonitorPermission::Status,
+                "device" | "devices" => MonitorPermission::Device,
+                "disk" | "disks" => MonitorPermission::Disk,
+                "migration" => MonitorPermission::Migration,
+                "save" | "snapshot-save" => MonitorPermission::Save,
+                "quit" | "stop" => MonitorPermission::Quit,
+                _ => return Err(format!(
+                    "invalid monitor permission `{name}`; use status, device, disk, migration, save, quit, or all"
+                )),
+            };
+            permissions.insert(permission)
+        }
+        if permissions == Self::empty() {
+            return Err("monitor permission list cannot be empty".to_string())
+        }
+        Ok(permissions)
+    }
+}
+
+pub struct MonitorRequestError {
+    pub code: &'static str,
+    pub command: Option<String>,
+    pub message: String,
+}
+
+pub struct MonitorAuthenticator {
+    key: synos_vm::SnapshotAuthKey,
+    permissions: MonitorPermissions,
+    seen_nonces: VecDeque<[u8; MONITOR_NONCE_BYTES]>,
+}
+
+impl MonitorAuthenticator {
+    pub fn new(key: synos_vm::SnapshotAuthKey, permissions: MonitorPermissions) -> Self {
+        Self {
+            key,
+            permissions,
+            seen_nonces: VecDeque::new(),
+        }
+    }
+
+    pub fn authenticate(&mut self, request: &str) -> Result<MonitorCommand, MonitorRequestError> {
+        let (scheme, rest) = take_word(request).ok_or_else(|| auth_error("authentication-required", "monitor request needs authentication"))?;
+        if scheme != "auth" {
+            return Err(auth_error("authentication-required", "monitor request must start with `auth`"))
+        }
+        let (timestamp, rest) = take_word(rest).ok_or_else(|| auth_error("invalid-authentication", "authenticated request needs a timestamp"))?;
+        let (nonce, rest) = take_word(rest).ok_or_else(|| auth_error("invalid-authentication", "authenticated request needs a nonce"))?;
+        let (tag, command) = take_word(rest).ok_or_else(|| auth_error("invalid-authentication", "authenticated request needs a tag and command"))?;
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(auth_error("invalid-authentication", "authenticated request needs a command"))
+        }
+
+        let timestamp = timestamp.parse::<u64>()
+            .map_err(|_| auth_error("invalid-authentication", "monitor timestamp is invalid"))?;
+        validate_timestamp(timestamp)?;
+        let nonce = decode_hex::<MONITOR_NONCE_BYTES>(nonce, "monitor nonce")?;
+        let tag = decode_hex::<MONITOR_TAG_BYTES>(tag, "monitor authentication tag")?;
+        if self.seen_nonces.contains(&nonce) {
+            return Err(auth_error("authentication-replay", "monitor nonce was already used"))
+        }
+        let timestamp_bytes = timestamp.to_le_bytes();
+        self.key
+            .verify_parts(&[MONITOR_AUTH_DOMAIN, &timestamp_bytes, &nonce, command.as_bytes()], &tag)
+            .map_err(|_| auth_error("authentication-failed", "monitor authentication failed"))?;
+
+        let parsed = MonitorCommand::parse(command).map_err(|message| MonitorRequestError {
+            code: "invalid-command",
+            command: Some(command.to_string()),
+            message,
+        })?;
+        let permission = parsed.permission();
+        if !self.permissions.allows(permission) {
+            return Err(MonitorRequestError {
+                code: "permission-denied",
+                command: Some(parsed.name().to_string()),
+                message: format!("monitor client lacks `{}` permission", permission.name()),
+            })
+        }
+        if self.seen_nonces.len() == MAX_SEEN_NONCES {
+            self.seen_nonces.pop_front();
+        }
+        self.seen_nonces.push_back(nonce);
+        Ok(parsed)
+    }
+}
+
+fn validate_timestamp(timestamp: u64) -> Result<(), MonitorRequestError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| auth_error("authentication-failed", "host clock is before the Unix epoch"))?
+        .as_secs();
+    if now.abs_diff(timestamp) > MONITOR_AUTH_WINDOW_SECS {
+        return Err(auth_error("authentication-expired", "monitor request timestamp is outside the five-minute window"))
+    }
+    Ok(())
+}
+
+fn take_word(value: &str) -> Option<(&str, &str)> {
+    let value = value.trim_start();
+    if value.is_empty() {
+        return None
+    }
+    match value.find(char::is_whitespace) {
+        Some(index) => Some((&value[..index], &value[index..])),
+        None => Some((value, "")),
+    }
+}
+
+fn decode_hex<const N: usize>(value: &str, name: &str) -> Result<[u8; N], MonitorRequestError> {
+    if value.len() != N * 2 {
+        return Err(auth_error("invalid-authentication", &format!("{name} must be {} hexadecimal characters", N * 2)))
+    }
+    let mut output = [0; N];
+    for (index, byte) in output.iter_mut().enumerate() {
+        let high = hex_value(value.as_bytes()[index * 2]);
+        let low = hex_value(value.as_bytes()[index * 2 + 1]);
+        let (Some(high), Some(low)) = (high, low) else {
+            return Err(auth_error("invalid-authentication", &format!("{name} is not hexadecimal")))
+        };
+        *byte = (high << 4) | low;
+    }
+    Ok(output)
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn auth_error(code: &'static str, message: &str) -> MonitorRequestError {
+    MonitorRequestError {
+        code,
+        command: None,
+        message: message.to_string(),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MonitorCommand {
@@ -45,6 +255,31 @@ impl MonitorCommand {
                 }
                 Err(format!("unknown monitor command `{input}`"))
             }
+        }
+    }
+
+    pub const fn permission(&self) -> MonitorPermission {
+        match self {
+            Self::Help | Self::Info(MonitorTopic::Status | MonitorTopic::Snapshots | MonitorTopic::Registers) => MonitorPermission::Status,
+            Self::Info(MonitorTopic::Devices) => MonitorPermission::Device,
+            Self::Info(MonitorTopic::Disks) => MonitorPermission::Disk,
+            Self::Info(MonitorTopic::Migration) => MonitorPermission::Migration,
+            Self::SaveSnapshot(_) => MonitorPermission::Save,
+            Self::Quit => MonitorPermission::Quit,
+        }
+    }
+
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Help => "help",
+            Self::Info(MonitorTopic::Status) => "status",
+            Self::Info(MonitorTopic::Devices) => "devices",
+            Self::Info(MonitorTopic::Disks) => "disks",
+            Self::Info(MonitorTopic::Snapshots) => "snapshots",
+            Self::Info(MonitorTopic::Migration) => "migration",
+            Self::Info(MonitorTopic::Registers) => "registers",
+            Self::SaveSnapshot(_) => "snapshot-save",
+            Self::Quit => "quit",
         }
     }
 }

@@ -8,6 +8,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
 
 use synos_vm::{
@@ -20,7 +22,7 @@ use synos_vm::{
 
 mod control;
 
-use control::{MonitorCommand, MIGRATION_PROTOCOL_VERSION};
+use control::{MonitorAuthenticator, MonitorCommand, MonitorPermissions, MIGRATION_PROTOCOL_VERSION};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -37,6 +39,8 @@ struct Cli {
     snapshot_restore: Option<PathBuf>,
     snapshot_key: Option<PathBuf>,
     monitor_path: Option<PathBuf>,
+    monitor_auth_key: Option<PathBuf>,
+    monitor_permissions: MonitorPermissions,
     replay_record: Option<PathBuf>,
     replay_path: Option<PathBuf>,
 }
@@ -171,6 +175,9 @@ where
     let mut snapshot_restore = None;
     let mut snapshot_key = None;
     let mut monitor_path = None;
+    let mut monitor_auth_key = None;
+    let mut monitor_permissions = MonitorPermissions::status_only();
+    let mut monitor_permissions_explicit = false;
     let mut replay_record = None;
     let mut replay_path = None;
     let mut args = values.into_iter().peekable();
@@ -269,6 +276,17 @@ where
             "--monitor" => {
                 monitor_path = Some(PathBuf::from(next_value(&mut args, "--monitor")?));
             }
+            "--monitor-auth-key" => {
+                monitor_auth_key = Some(PathBuf::from(next_value(&mut args, "--monitor-auth-key")?));
+            }
+            "--monitor-allow" => {
+                let parsed = MonitorPermissions::parse(&next_value(&mut args, "--monitor-allow")?)?;
+                if monitor_permissions_explicit {
+                    return Err("--monitor-allow may only be supplied once".to_string())
+                }
+                monitor_permissions = parsed;
+                monitor_permissions_explicit = true;
+            }
             "--replay-record" => {
                 replay_record = Some(PathBuf::from(next_value(&mut args, "--replay-record")?));
             }
@@ -306,12 +324,23 @@ where
     if replay_record.is_some() && replay_path.is_some() {
         return Err("--replay-record and --replay cannot be combined".to_string());
     }
-    if (snapshot_save.is_some() || snapshot_restore.is_some() || monitor_path.is_some())
-        && snapshot_key.is_none()
+    if (snapshot_save.is_some() || snapshot_restore.is_some()) && snapshot_key.is_none()
     {
         return Err(
-            "snapshot save, restore, and monitor save require --snapshot-key <PATH>".to_string(),
+            "snapshot save and restore require --snapshot-key <PATH>".to_string(),
         );
+    }
+    if monitor_path.is_some() && monitor_auth_key.is_none() {
+        return Err("--monitor requires --monitor-auth-key <PATH>".to_string())
+    }
+    if monitor_path.is_none() && (monitor_auth_key.is_some() || monitor_permissions_explicit) {
+        return Err("--monitor-auth-key and --monitor-allow require --monitor <SOCKET>".to_string())
+    }
+    if monitor_path.is_some()
+        && monitor_permissions.allows(control::MonitorPermission::Save)
+        && snapshot_key.is_none()
+    {
+        return Err("monitor `save` permission requires --snapshot-key <PATH>".to_string())
     }
     if terminal == Some(true) && monitor_path.is_some() {
         return Err("--monitor cannot be combined with --interactive".to_string());
@@ -330,6 +359,8 @@ where
         snapshot_restore,
         snapshot_key,
         monitor_path,
+        monitor_auth_key,
+        monitor_permissions,
         replay_record,
         replay_path,
     }))
@@ -597,6 +628,21 @@ fn parse_serial_port(value: &str) -> Result<u16, String> {
     }
 }
 
+fn load_monitor_auth_key(path: &Path) -> Result<SnapshotAuthKey, String> {
+    #[cfg(unix)]
+    {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err(format!("{} must be a regular file, not a symlink", path.display()))
+        }
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(format!("{} must not be accessible by group or other users", path.display()))
+        }
+    }
+    SnapshotAuthKey::from_file(path).map_err(|error| error.to_string())
+}
+
 fn run(mut cli: Cli) -> Result<(), String> {
     let list_disks = matches!(&cli.command, Command::ListDisks);
     cli.config.disks = prepare_disk_specs(&cli.disk_options)?;
@@ -610,6 +656,17 @@ fn run(mut cli: Cli) -> Result<(), String> {
         .map(SnapshotAuthKey::from_file)
         .transpose()
         .map_err(|error| format!("cannot load snapshot authentication key: {error}"))?;
+    let monitor_auth_key = cli
+        .monitor_auth_key
+        .as_ref()
+        .map(|path| load_monitor_auth_key(path))
+        .transpose()
+        .map_err(|error| format!("cannot load monitor authentication key: {error}"))?;
+    if snapshot_key.is_some()
+        && monitor_auth_key.map(SnapshotAuthKey::key_id) == snapshot_key.map(SnapshotAuthKey::key_id)
+    {
+        return Err("monitor and snapshot authentication keys must be different".to_string())
+    }
     let auth_key = snapshot_key.as_ref();
     let restore_snapshot = cli
         .snapshot_restore
@@ -642,6 +699,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
     let input_mode = cli.input_mode;
     let snapshot_save = cli.snapshot_save;
     let monitor_path = cli.monitor_path;
+    let monitor_permissions = cli.monitor_permissions;
     let replay_record = cli.replay_record;
     let replay_path = cli.replay_path;
     let efi_image = cli
@@ -703,7 +761,11 @@ fn run(mut cli: Cli) -> Result<(), String> {
         terminal_mode
     };
     let mut monitor = monitor_path
-        .map(|path| MonitorSession::bind(path))
+        .map(|path| {
+            let key = monitor_auth_key
+                .ok_or_else(|| "monitor authentication key is missing".to_string())?;
+            MonitorSession::bind(path, key, monitor_permissions)
+        })
         .transpose()?;
     let mut poll_monitor = |vm: &mut Vm| {
         monitor
@@ -1460,10 +1522,15 @@ struct MonitorSession {
     #[cfg(unix)]
     listener: UnixListener,
     path: PathBuf,
+    authenticator: MonitorAuthenticator,
 }
 
 impl MonitorSession {
-    fn bind(path: PathBuf) -> Result<Self, String> {
+    fn bind(
+        path: PathBuf,
+        auth_key: SnapshotAuthKey,
+        permissions: MonitorPermissions,
+    ) -> Result<Self, String> {
         #[cfg(unix)]
         {
             if path.exists() {
@@ -1471,15 +1538,26 @@ impl MonitorSession {
             }
             let listener = UnixListener::bind(&path)
                 .map_err(|error| format!("cannot create monitor socket {}: {error}", path.display()))?;
+            if let Err(error) = std::fs::set_permissions(
+                &path,
+                std::fs::Permissions::from_mode(0o600),
+            ) {
+                let _ = std::fs::remove_file(&path);
+                return Err(format!("cannot restrict monitor socket permissions: {error}"))
+            }
             listener
                 .set_nonblocking(true)
                 .map_err(|error| format!("cannot configure monitor socket: {error}"))?;
             println!("monitor console listening at {}", path.display());
-            Ok(Self { listener, path })
+            Ok(Self {
+                listener,
+                path,
+                authenticator: MonitorAuthenticator::new(auth_key, permissions),
+            })
         }
         #[cfg(not(unix))]
         {
-            let _ = path;
+            let _ = (path, auth_key, permissions);
             Err("monitor console is only supported on Unix hosts".to_string())
         }
     }
@@ -1514,6 +1592,19 @@ impl MonitorSession {
                     return Ok(true)
                 }
             };
+            let command = match self.authenticator.authenticate(command) {
+                Ok(command) => command,
+                Err(error) => {
+                    stream
+                        .write_all(control::failure_response(
+                            error.command.as_deref(),
+                            error.code,
+                            &error.message,
+                        ).as_bytes())
+                        .map_err(|error| format!("monitor write failed: {error}"))?;
+                    return Ok(true)
+                }
+            };
             let (keep_running, response) = monitor_command(vm, command, auth_key)?;
             stream
                 .write_all(response.as_bytes())
@@ -1539,14 +1630,10 @@ impl Drop for MonitorSession {
 
 fn monitor_command(
     vm: &mut Vm,
-    command: &str,
+    command: MonitorCommand,
     auth_key: Option<&SnapshotAuthKey>,
 ) -> Result<(bool, String), String> {
-    let parsed = match MonitorCommand::parse(command) {
-        Ok(command) => command,
-        Err(error) => return Ok((true, control::error_response(Some(command), &error))),
-    };
-    match parsed {
+    match command {
         MonitorCommand::Help => Ok((true, control::help_response())),
         MonitorCommand::Info(topic) => Ok((true, control::info_response(vm, topic))),
         MonitorCommand::Quit => Ok((false, control::action_response("quit", "stop", None))),
@@ -1978,6 +2065,10 @@ State and management:
                               Restore a checkpoint before running
       --snapshot-key <PATH>  Raw 32-byte or 64-hex-byte auth key
       --monitor <SOCKET>     Expose a local monitor console socket
+      --monitor-auth-key <PATH>
+                              Private monitor HMAC key (required with --monitor)
+      --monitor-allow <LIST> Allow status, device, disk, migration, save, quit,
+                              or all (default: status)
       --replay-record <PATH> Record deterministic VM inputs to a trace
       --replay <PATH>        Replay a deterministic VM input trace
 
