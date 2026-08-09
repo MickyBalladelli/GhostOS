@@ -149,11 +149,20 @@ bounded run or `--integration` to run the SynOS integration checks.
 ### Hardware acceleration
 
 Select a host backend with `--accel software|auto|kvm|haxm|hvf|whpx`.
-`software` is the default. `auto` probes native backends in host order and
-falls back to the portable executor when none is available. An explicit
-backend fails at VM creation if its host interface is unavailable. KVM opens
-and validates `/dev/kvm`; HAXM opens its device node; HVF and WHPX are selected
-only on their supported operating systems.
+`software` is the default. Startup and monitor `info status` output report the
+requested backend, the host handle selected, the execution backend, supported
+features, limitations, every `auto` probe, and the fallback taken.
+
+The current native backends provide host-interface probing and handle
+acquisition only. Guest CPU instructions still run through the portable
+executor, and guest memory and devices still use the VM models. This is an
+explicit `native-execution-unavailable` fallback, including when a native host
+handle was acquired, so selecting a backend never silently changes correctness
+semantics. `auto` reports `no-native-backend` with each failed probe when no
+host interface is usable. An explicit backend fails at VM creation if its host
+interface is unavailable. KVM opens and validates `/dev/kvm`; HAXM opens its
+device node; HVF and WHPX are selected only on their supported operating
+systems.
 
 ### Checkpoints, migration, and monitor
 

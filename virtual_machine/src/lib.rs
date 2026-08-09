@@ -69,8 +69,9 @@ pub use execution::{
     BlockProfile, ExecutionEngine, ExecutionEngineConfig, ExecutionStats,
 };
 pub use hardware_acceleration::{
-    HardwareAcceleration, HardwareAccelerationError, HardwareAccelerationHandle,
-    HardwareAccelerationSession, HardwareAccelerationStatus,
+    HardwareAcceleration, HardwareAccelerationAttempt, HardwareAccelerationError,
+    HardwareAccelerationFallback, HardwareAccelerationFeature, HardwareAccelerationHandle,
+    HardwareAccelerationLimitation, HardwareAccelerationSession, HardwareAccelerationStatus,
 };
 pub use snapshot::{
     SnapshotChain, SnapshotDiff, SnapshotError, SnapshotFeatures, SnapshotId, SnapshotPage,
@@ -1334,8 +1335,9 @@ impl Vm {
         &mut self.execution
     }
 
-    /// Report the selected host accelerator and whether its native handle is
-    /// available. Software remains the default and is always portable.
+    /// Report host probing, actual execution, supported features, limitations,
+    /// and any fallback. Native host handles do not change guest semantics
+    /// until a native executor is integrated and equivalence-tested.
     pub fn hardware_acceleration(&self) -> HardwareAccelerationStatus {
         self.hardware_acceleration.status()
     }

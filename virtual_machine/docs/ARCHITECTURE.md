@@ -108,6 +108,14 @@ equivalence contract in docs/EXECUTION_EQUIVALENCE.md. Bounded differential
 runs compare complete CPU state and RAM, exception timing, hot-loop promotion,
 and ordered device effects.
 
+Hardware acceleration currently probes the host interface and retains its
+handle, but does not connect that handle to guest CPU, memory, or device
+execution. `Vm::hardware_acceleration` reports the requested mode, selected
+host backend, actual execution backend, supported features, limitations,
+probe attempts, and explicit fallback. Native requests therefore keep the
+portable executor active until a native path has an equivalence proof; a host
+handle cannot silently change guest-visible semantics.
+
 Snapshots contain CPU, RAM, paging, interrupt, APIC, and BIOS state. Host
 translation caches and network backends are not serialized. Restore rebuilds
 the execution cache while keeping the VM device topology attached.

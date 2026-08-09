@@ -91,7 +91,7 @@ remaining proof, portability, safety, and fidelity work.
       snapshot restore.
 - [x] Define JIT/translated execution equivalence with the interpreter and add
       differential runs for CPU state, memory, exceptions, and device effects.
-- [ ] Make hardware acceleration report supported features, limitations, and
+- [x] Make hardware acceleration report supported features, limitations, and
       fallback behavior. Never silently change correctness semantics.
 - [ ] Add bounded benchmarks for decode, translation, memory, interrupt load,
       storage, network, and terminal workloads with repeatable machine data.

@@ -674,6 +674,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
 
     let mut vm = Vm::try_with_config(config)
         .map_err(|error| format!("VM configuration error: {error:?}"))?;
+    println!("Hardware acceleration: {}", vm.hardware_acceleration());
     if let Some(image) = efi_image {
         vm.set_efi_application(image);
     }
@@ -1563,7 +1564,14 @@ fn monitor_command(
             }
             Ok((true, response))
         }
-        "info status" => Ok((true, format!("power={:?}\n", vm.power_state()))),
+        "info status" => Ok((
+            true,
+            format!(
+                "power={:?}\nhardware-acceleration={}\n",
+                vm.power_state(),
+                vm.hardware_acceleration(),
+            ),
+        )),
         "quit" | "exit" => Ok((false, "stopping VM\n".to_string())),
         command if command.strip_prefix("save ").is_some() => {
             let path = command.strip_prefix("save ").unwrap().trim();
@@ -1957,7 +1965,7 @@ Boot options:
 Machine options:
   -m, --memory <SIZE>       Guest RAM, such as 128M, 1GiB, or 4096K
   -c, --cpus <COUNT>        Number of guest CPUs
-      --accel <BACKEND>     CPU backend: software (default), auto, kvm, haxm, hvf, or whpx
+      --accel <BACKEND>     Host acceleration: software (default), auto, kvm, haxm, hvf, or whpx
       --serial              Enable COM1 serial output (default)
       --no-serial            Disable COM1 serial output
       --serial-port <PORT>   Serial port: com1, com2, or a hex I/O base

@@ -1,8 +1,9 @@
 //! Host hardware-acceleration backend selection.
 //!
 //! Device emulation remains owned by the VM. This module owns the host-side
-//! accelerator handle and makes backend selection explicit, so a caller never
-//! silently gets a partially configured native backend.
+//! accelerator handle and makes backend selection explicit. A host handle is
+//! not guest execution: the status report says when portable execution is
+//! retained, so a caller never silently changes correctness semantics.
 
 use std::fmt;
 use std::fs::File;
@@ -78,32 +79,50 @@ impl HardwareAccelerationHandle {
 pub struct HardwareAccelerationSession {
     requested: HardwareAcceleration,
     handle: Option<HardwareAccelerationHandle>,
+    attempts: Vec<HardwareAccelerationAttempt>,
 }
 
 impl HardwareAccelerationSession {
     /// Negotiate and, for file-backed accelerators, acquire the host handle.
+    /// The handle is not connected to guest execution; inspect [`Self::status`]
+    /// for the actual execution backend and fallback.
     pub fn open(requested: HardwareAcceleration) -> Result<Self, HardwareAccelerationError> {
         if requested == HardwareAcceleration::Software {
             return Ok(Self {
                 requested,
                 handle: None,
+                attempts: Vec::new(),
             });
         }
 
         if requested == HardwareAcceleration::Auto {
+            let mut attempts = Vec::new();
             for &backend in native_backend_order() {
-                if let Ok(mut session) = Self::open_native(backend) {
-                    session.requested = requested;
-                    return Ok(session);
+                match Self::open_native(backend) {
+                    Ok(mut session) => {
+                        attempts.push(HardwareAccelerationAttempt::available(backend));
+                        session.requested = requested;
+                        session.attempts = attempts;
+                        return Ok(session);
+                    }
+                    Err(error) => {
+                        attempts.push(HardwareAccelerationAttempt::unavailable(
+                            backend,
+                            error.to_string(),
+                        ));
+                    }
                 }
             }
             return Ok(Self {
                 requested,
                 handle: None,
+                attempts,
             });
         }
 
-        Self::open_native(requested)
+        let mut session = Self::open_native(requested)?;
+        session.attempts.push(HardwareAccelerationAttempt::available(requested));
+        Ok(session)
     }
 
     fn open_native(backend: HardwareAcceleration) -> Result<Self, HardwareAccelerationError> {
@@ -129,6 +148,7 @@ impl HardwareAccelerationSession {
         Ok(Self {
             requested: backend,
             handle: Some(handle),
+            attempts: Vec::new(),
         })
     }
 
@@ -153,28 +173,236 @@ impl HardwareAccelerationSession {
 
     pub fn status(&self) -> HardwareAccelerationStatus {
         let active = self.active_backend();
+        let native_handle = active != HardwareAcceleration::Software;
+        let fallback_behavior = match (self.requested, native_handle) {
+            (HardwareAcceleration::Software, _) => HardwareAccelerationFallback::None,
+            (_, false) => HardwareAccelerationFallback::NoNativeBackend,
+            (_, true) => HardwareAccelerationFallback::NativeExecutionUnavailable,
+        };
         HardwareAccelerationStatus {
             requested: self.requested,
             active,
-            fallback: self.requested == HardwareAcceleration::Auto
-                && active == HardwareAcceleration::Software,
-            description: if active == HardwareAcceleration::Software {
-                "portable software execution"
+            execution_backend: HardwareAcceleration::Software,
+            fallback: !matches!(fallback_behavior, HardwareAccelerationFallback::None),
+            fallback_behavior,
+            supported_features: if native_handle {
+                NATIVE_HANDLE_FEATURES
             } else {
-                "native accelerator handle acquired"
+                SOFTWARE_FEATURES
+            },
+            limitations: if native_handle {
+                NATIVE_HANDLE_LIMITATIONS
+            } else {
+                SOFTWARE_LIMITATIONS
+            },
+            attempts: self.attempts.clone(),
+            description: if native_handle {
+                "native host handle acquired; portable software execution remains active"
+            } else {
+                "portable software execution"
             },
         }
     }
 }
 
-/// Stable, printable accelerator state for monitors and CLI output.
+/// A capability that the VM can honestly provide for the selected mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HardwareAccelerationFeature {
+    /// Guest instructions run through the portable CPU executor.
+    PortableCpuExecution,
+    /// Guest devices remain implemented by the VM's device models.
+    GuestDeviceEmulation,
+    /// Replay can keep using deterministic VM-owned inputs and events.
+    DeterministicReplay,
+    /// Snapshots can restore VM state and rebuild host-side handles.
+    SnapshotRestore,
+    /// A host accelerator interface was opened and retained by the session.
+    NativeHostHandle,
+}
+
+impl HardwareAccelerationFeature {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::PortableCpuExecution => "portable-cpu-execution",
+            Self::GuestDeviceEmulation => "guest-device-emulation",
+            Self::DeterministicReplay => "deterministic-replay",
+            Self::SnapshotRestore => "snapshot-restore",
+            Self::NativeHostHandle => "native-host-handle",
+        }
+    }
+}
+
+impl fmt::Display for HardwareAccelerationFeature {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+/// A limitation that affects what a selected host accelerator changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HardwareAccelerationLimitation {
+    /// The host handle is not connected to a native guest CPU executor yet.
+    NativeExecutionNotIntegrated,
+    /// Guest memory and devices are not backed by host virtualization yet.
+    NativeMemoryAndDeviceVirtualizationNotIntegrated,
+    /// Native handles are host state and are reopened after snapshot restore.
+    NativeHandleReopenedOnSnapshotRestore,
+}
+
+impl HardwareAccelerationLimitation {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::NativeExecutionNotIntegrated => "native-execution-not-integrated",
+            Self::NativeMemoryAndDeviceVirtualizationNotIntegrated => {
+                "native-memory-and-device-virtualization-not-integrated"
+            }
+            Self::NativeHandleReopenedOnSnapshotRestore => {
+                "native-handle-reopened-on-snapshot-restore"
+            }
+        }
+    }
+}
+
+impl fmt::Display for HardwareAccelerationLimitation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+/// The explicit fallback taken by a hardware-acceleration request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HardwareAccelerationFallback {
+    /// Software was requested, so no fallback was needed.
+    None,
+    /// `auto` found no usable native host interface.
+    NoNativeBackend,
+    /// A host handle exists, but native VM execution is not integrated.
+    NativeExecutionUnavailable,
+}
+
+impl HardwareAccelerationFallback {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::NoNativeBackend => "no-native-backend",
+            Self::NativeExecutionUnavailable => "native-execution-unavailable",
+        }
+    }
+}
+
+impl fmt::Display for HardwareAccelerationFallback {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+/// One native backend considered during host capability negotiation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HardwareAccelerationAttempt {
+    pub backend: HardwareAcceleration,
+    pub available: bool,
+    pub reason: String,
+}
+
+impl HardwareAccelerationAttempt {
+    fn available(backend: HardwareAcceleration) -> Self {
+        Self {
+            backend,
+            available: true,
+            reason: "host accelerator handle acquired".to_string(),
+        }
+    }
+
+    fn unavailable(backend: HardwareAcceleration, reason: String) -> Self {
+        Self {
+            backend,
+            available: false,
+            reason,
+        }
+    }
+}
+
+/// Stable, printable accelerator state for monitors and CLI output.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HardwareAccelerationStatus {
     pub requested: HardwareAcceleration,
+    /// Host backend whose interface was selected, or software when none was.
     pub active: HardwareAcceleration,
+    /// Backend actually executing guest instructions. This is software until
+    /// a native CPU executor is integrated and equivalence-tested.
+    pub execution_backend: HardwareAcceleration,
+    /// Kept for callers that only need a simple fallback flag.
     pub fallback: bool,
+    pub fallback_behavior: HardwareAccelerationFallback,
+    pub supported_features: &'static [HardwareAccelerationFeature],
+    pub limitations: &'static [HardwareAccelerationLimitation],
+    pub attempts: Vec<HardwareAccelerationAttempt>,
     pub description: &'static str,
 }
+
+impl fmt::Display for HardwareAccelerationStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "requested={} host={} execution={} fallback={} supported=",
+            self.requested, self.active, self.execution_backend, self.fallback_behavior,
+        )?;
+        for (index, feature) in self.supported_features.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(",")?;
+            }
+            write!(formatter, "{feature}")?;
+        }
+        formatter.write_str(" limitations=")?;
+        for (index, limitation) in self.limitations.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(",")?;
+            }
+            write!(formatter, "{limitation}")?;
+        }
+        if !self.attempts.is_empty() {
+            formatter.write_str(" attempts=")?;
+            for (index, attempt) in self.attempts.iter().enumerate() {
+                if index > 0 {
+                    formatter.write_str(",")?;
+                }
+                write!(
+                    formatter,
+                    "{}:{}({})",
+                    attempt.backend,
+                    if attempt.available { "available" } else { "unavailable" },
+                    attempt.reason,
+                )?;
+            }
+        }
+        write!(formatter, " ({})", self.description)
+    }
+}
+
+const SOFTWARE_FEATURES: &[HardwareAccelerationFeature] = &[
+    HardwareAccelerationFeature::PortableCpuExecution,
+    HardwareAccelerationFeature::GuestDeviceEmulation,
+    HardwareAccelerationFeature::DeterministicReplay,
+    HardwareAccelerationFeature::SnapshotRestore,
+];
+
+const NATIVE_HANDLE_FEATURES: &[HardwareAccelerationFeature] = &[
+    HardwareAccelerationFeature::PortableCpuExecution,
+    HardwareAccelerationFeature::GuestDeviceEmulation,
+    HardwareAccelerationFeature::DeterministicReplay,
+    HardwareAccelerationFeature::SnapshotRestore,
+    HardwareAccelerationFeature::NativeHostHandle,
+];
+
+const SOFTWARE_LIMITATIONS: &[HardwareAccelerationLimitation] = &[
+    HardwareAccelerationLimitation::NativeExecutionNotIntegrated,
+];
+
+const NATIVE_HANDLE_LIMITATIONS: &[HardwareAccelerationLimitation] = &[
+    HardwareAccelerationLimitation::NativeExecutionNotIntegrated,
+    HardwareAccelerationLimitation::NativeMemoryAndDeviceVirtualizationNotIntegrated,
+    HardwareAccelerationLimitation::NativeHandleReopenedOnSnapshotRestore,
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum HardwareAccelerationError {
