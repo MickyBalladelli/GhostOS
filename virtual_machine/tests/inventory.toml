@@ -840,3 +840,62 @@ tests = ["vm.firmware.bios-post-services-and-mbr"]
 name = "firmware::uefi public surface"
 source = "src/firmware/uefi.rs"
 tests = ["vm.firmware.uefi-tables-services-and-images"]
+
+[[test]]
+id = "vm.clock.monotonic-control"
+file = "src/clock.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.replay.deterministic-events"
+file = "tests/cpu_differential.rs"
+tiers = ["fast-unit"]
+
+[[test]]
+id = "vm.control.monitor-protocol"
+file = "src/control.rs"
+tiers = ["cli"]
+
+[[source]]
+path = "src/clock.rs"
+tests = ["vm.clock.monotonic-control"]
+
+[[source]]
+path = "src/control.rs"
+tests = ["vm.control.monitor-protocol"]
+
+[[source]]
+path = "src/replay.rs"
+tests = ["vm.replay.deterministic-events"]
+
+[[public_api]]
+name = "clock public surface"
+source = "src/clock.rs"
+tests = ["vm.clock.monotonic-control"]
+
+[[public_api]]
+name = "control public surface"
+source = "src/control.rs"
+tests = ["vm.control.monitor-protocol"]
+
+[[public_api]]
+name = "replay public surface"
+source = "src/replay.rs"
+tests = ["vm.replay.deterministic-events"]
+
+[[public_api]]
+name = "terminal platform public surface"
+source = "src/terminal_platform.rs"
+tests = ["vm.terminal.exit-cleanup"]
+
+[[device]]
+name = "legacy-pic"
+source = "src/devices/interrupt_controller.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]
+
+[[device]]
+name = "persistence-port"
+source = "src/devices/storage/persistence.rs"
+scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
+tests = ["vm.device.register-configuration", "vm.device.normal-io", "vm.device.reset", "vm.device.interrupt", "vm.device.malformed-input", "vm.device.failure"]

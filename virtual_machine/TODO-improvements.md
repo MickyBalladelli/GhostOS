@@ -111,7 +111,7 @@ remaining proof, portability, safety, and fidelity work.
 
 ## P1: Test evidence that matches reality
 
-- [ ] Generate VM inventory entries from source modules and public APIs, then
+- [x] Generate VM inventory entries from source modules and public APIs, then
       fail CI when a new device or API has no named test.
 - [ ] Replace static test names with executed evidence containing command,
       revision, host, firmware, CPU count, image digest, and result state.

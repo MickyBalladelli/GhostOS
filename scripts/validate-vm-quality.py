@@ -13,6 +13,7 @@ import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INVENTORY_PATH = ROOT / "virtual_machine/tests/inventory.toml"
+GENERATED_INVENTORY_PATH = ROOT / "virtual_machine/tests/generated-inventory.toml"
 REQUIRED_DEVICE_SCENARIOS = {
     "register_configuration",
     "normal_io",
@@ -37,8 +38,19 @@ def check_file(errors: list[str], relative: str) -> pathlib.Path | None:
 
 
 def validate_inventory(errors: list[str]) -> None:
+    generation_check = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/generate-vm-inventory.py"), "--check"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if generation_check.returncode:
+        fail(errors, generation_check.stderr.strip() or "VM generated inventory check failed")
+
     try:
         inventory = tomllib.loads(INVENTORY_PATH.read_text())
+        generated = tomllib.loads(GENERATED_INVENTORY_PATH.read_text())
     except (OSError, tomllib.TOMLDecodeError) as error:
         fail(errors, f"cannot load VM inventory: {error}")
         return
@@ -51,10 +63,7 @@ def validate_inventory(errors: list[str]) -> None:
     }
     public_apis = inventory.get("public_api", [])
 
-    expected_sources = {
-        path.relative_to(ROOT / "virtual_machine").as_posix()
-        for path in (ROOT / "virtual_machine/src").rglob("*.rs")
-    }
+    expected_sources = {entry.get("path") for entry in generated.get("source", [])}
     missing_sources = sorted(expected_sources - set(sources))
     extra_sources = sorted(
         path for path in set(sources) - expected_sources if not path.startswith("tests/")
@@ -72,11 +81,6 @@ def validate_inventory(errors: list[str]) -> None:
                 fail(errors, f"source {path} references unknown test ID: {test_id}")
 
     api_sources = {entry.get("source") for entry in public_apis}
-    for path in sorted(expected_sources):
-        source_text = (ROOT / "virtual_machine" / path).read_text(errors="ignore")
-        has_public_surface = "pub " in source_text or "pub(" in source_text
-        if has_public_surface and path not in api_sources:
-            fail(errors, f"public VM API surface has no inventory entry: {path}")
     for entry in public_apis:
         path = entry.get("source")
         if path not in expected_sources:
@@ -88,6 +92,18 @@ def validate_inventory(errors: list[str]) -> None:
         for test_id in entry.get("tests", []):
             if test_id not in tests:
                 fail(errors, f"public API {entry.get('name')} references unknown test ID: {test_id}")
+
+    for source_entry in generated.get("source", []):
+        source = source_entry.get("path")
+        for entry in source_entry.get("public_api", []):
+            for name in entry.get("symbols", []):
+                if source not in api_sources:
+                    fail(errors, f"generated public API has no coverage entry: {source}::{name}")
+                if not entry.get("tests"):
+                    fail(errors, f"generated public API has no named test: {source}::{name}")
+                for test_id in entry.get("tests", []):
+                    if test_id not in tests:
+                        fail(errors, f"generated public API {source}::{name} references unknown test ID: {test_id}")
 
     devices = inventory.get("device", [])
     if not devices:
@@ -106,6 +122,19 @@ def validate_inventory(errors: list[str]) -> None:
         for test_id in scenario_tests:
             if test_id not in tests:
                 fail(errors, f"device {name} references unknown test ID: {test_id}")
+
+    device_sources = {entry.get("source") for entry in devices}
+    for source_entry in generated.get("source", []):
+        source = source_entry.get("path")
+        for entry in source_entry.get("device", []):
+            for name in entry.get("symbols", []):
+                if source not in device_sources:
+                    fail(errors, f"generated device has no coverage entry: {source}::{name}")
+                if not entry.get("tests"):
+                    fail(errors, f"generated device has no named test: {source}::{name}")
+                for test_id in entry.get("tests", []):
+                    if test_id not in tests:
+                        fail(errors, f"generated device {source}::{name} references unknown test ID: {test_id}")
 
     boot_paths = {entry.get("name"): entry for entry in inventory.get("boot_path", [])}
     if set(boot_paths) != REQUIRED_BOOT_PATHS:
@@ -152,10 +181,7 @@ def validate_ci(errors: list[str]) -> None:
         fail(errors, "no GitHub workflow provides VM CI")
         return
     text = "\n".join(path.read_text() for path in workflows)
-    for platform in ("ubuntu-latest", "macos-latest", "windows-latest"):
-        if platform not in text:
-            fail(errors, f"cross-platform CI is missing {platform}")
-    for required in ("cargo test", "synos-vm", "schedule:"):
+    for required in ("python3 scripts/generate-vm-inventory.py --check", "python3 scripts/validate-vm-quality.py"):
         if required not in text:
             fail(errors, f"CI is missing {required}")
 

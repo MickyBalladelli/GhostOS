@@ -1,0 +1,25 @@
+name: VM inventory
+
+on:
+  pull_request:
+    paths:
+      - "virtual_machine/**"
+      - "scripts/generate-vm-inventory.py"
+      - "scripts/validate-vm-quality.py"
+      - ".github/workflows/vm-inventory.yml"
+  push:
+    paths:
+      - "virtual_machine/**"
+      - "scripts/generate-vm-inventory.py"
+      - "scripts/validate-vm-quality.py"
+      - ".github/workflows/vm-inventory.yml"
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check generated VM inventory
+        run: python3 scripts/generate-vm-inventory.py --check
+      - name: Check VM quality contract
+        run: python3 scripts/validate-vm-quality.py

@@ -105,6 +105,15 @@ interrupt, malformed input, and failure), and BIOS, UEFI, and Multiboot serial
 boot evidence. A VM source change must include a VM regression or integration
 test change; CI runs the check with `--changed`.
 
+When a VM source module, public symbol, or device implementation changes,
+refresh the committed generated inventory first:
+
+```sh
+python3 scripts/generate-vm-inventory.py
+```
+
+CI runs the same command with `--check` and rejects stale or unnamed entries.
+
 For one evidence-producing deterministic run, use:
 
 ```sh

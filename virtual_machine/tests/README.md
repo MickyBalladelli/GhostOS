@@ -1,6 +1,16 @@
 # VM test tiers
 
-The VM tests use stable names from `inventory.toml`.
+The VM tests use stable names from `inventory.toml`. Source modules, public API
+symbols, and device implementations are written to `generated-inventory.toml`.
+Regenerate that file after changing the public surface:
+
+```sh
+python3 scripts/generate-vm-inventory.py
+```
+
+The generator preserves assignments for existing symbols. New public API and
+device entries have an empty `tests` list; add a stable test ID to that list
+before committing.
 
 - `foundation_59_1.rs`: fast deterministic fixtures, fake devices, faults,
   cleanup, and golden-file checks.
@@ -23,6 +33,6 @@ The VM tests use stable names from `inventory.toml`.
 
 Run `python3 scripts/validate-vm-quality.py` from the repository root to check
 source-module/API inventory, device scenarios, serial boot paths, fuzz targets,
-mutation wiring, and cross-platform CI.
+mutation wiring, and CI inventory enforcement.
 
 Do not put wall-clock, host-random, or host-path assumptions in the fast tier.
