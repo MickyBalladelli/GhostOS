@@ -114,3 +114,16 @@ fn malformed_input_matrix_returns_stable_errors() {
         Err(synos_vm::SnapshotError::InvalidFormat)
     ));
 }
+
+#[test]
+fn locked_disk_error_is_readable() {
+    let error = synos_vm::devices::StorageError::Locked {
+        path: "/tmp/data.raw.synos.lock".to_string(),
+        owner: "version=2\nimage_identity=/tmp/data.raw\nowner_identity=micky\npid=25765\nstart_time=Sun Aug 9 19:11:20 2026\nhost_identity=hostname=unknown;machine=unknown\nformat=raw\nlock_token=25765-0".to_string(),
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "disk is already locked\n  lock: /tmp/data.raw.synos.lock\n  image: /tmp/data.raw\n  owner: micky\n  pid: 25765\n  started: Sun Aug 9 19:11:20 2026\n  host: hostname=unknown;machine=unknown\n  format: raw\n  action: inspect with `synos-vm disk lock PATH`; recover only when stale"
+    );
+}

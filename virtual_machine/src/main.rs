@@ -828,7 +828,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
     }
 
     let mut vm = Vm::try_with_config(config)
-        .map_err(|error| format!("VM configuration error: {error:?}"))?;
+        .map_err(|error| format!("VM configuration error: {}", vm_error_message(&error)))?;
     synos_vm::host_println(format_args!(
         "Hardware acceleration: {}",
         vm.hardware_acceleration()
@@ -2199,6 +2199,13 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             println!("recovered stale disk lock {} (owner: {})", info.path.display(), info.owner.trim());
             Ok(())
         }
+    }
+}
+
+fn vm_error_message(error: &synos_vm::VmError) -> String {
+    match error {
+        synos_vm::VmError::Disk(message) => message.clone(),
+        other => format!("{other:?}"),
     }
 }
 

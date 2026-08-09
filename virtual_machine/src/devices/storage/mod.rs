@@ -55,7 +55,31 @@ impl fmt::Display for StorageError {
             StorageError::Io(e) => write!(f, "storage I/O error: {e}"),
             StorageError::InvalidImage(msg) => write!(f, "invalid disk image: {msg}"),
             StorageError::Locked { path, owner } => {
-                write!(f, "disk is already locked by {path} ({owner})")
+                writeln!(f, "disk is already locked")?;
+                writeln!(f, "  lock: {path}")?;
+                let mut printed_owner = false;
+                for line in owner.lines() {
+                    let Some((key, value)) = line.split_once('=') else {
+                        continue;
+                    };
+                    let label = match key {
+                        "image_identity" => "image",
+                        "owner_identity" => "owner",
+                        "pid" => "pid",
+                        "start_time" => "started",
+                        "host_identity" => "host",
+                        "format" => "format",
+                        _ => continue,
+                    };
+                    writeln!(f, "  {label}: {}", value.trim())?;
+                    printed_owner = true;
+                }
+                if !printed_owner {
+                    writeln!(f, "  owner: {}", owner.trim().replace('\n', "; "))?;
+                }
+                f.write_str(
+                    "  action: inspect with `synos-vm disk lock PATH`; recover only when stale",
+                )
             }
             StorageError::ReadOnly => write!(f, "disk image opened read-only"),
             StorageError::OutOfRange => write!(f, "storage access out of range"),
