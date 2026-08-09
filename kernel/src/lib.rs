@@ -56,6 +56,7 @@ mod usb_keyboard;
 use core::panic::PanicInfo;
 use synos_boot_protocol::BootInfo;
 use synos_observability::{EventField, EventKind, field, info};
+use synos_status::Status;
 
 pub use allocator::{
     AllocationError, EarlyFrameAllocator, QuotaAllocationError, FRAME_SIZE,
@@ -96,16 +97,16 @@ static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
+    if let Err(status) = validate_boot_info(boot_info) {
+        fatal_kernel_halt(status)
+    }
+
     console::init(boot_info.framebuffer);
     info!(
         EventKind::Boot,
         EventField::unsigned(field::OPERATION, 1),
     );
     println!("SynOS kernel bootstrap");
-
-    if !boot_info.is_valid() {
-        panic!("bootloader gave invalid BootInfo")
-    }
 
     println!(
         "boot method={} memory regions={}",
@@ -116,7 +117,10 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     let mut frames = EarlyFrameAllocator::new(boot_info.regions());
     let mut page_tables = [0; arch::paging::TABLE_FRAME_COUNT];
     for frame in &mut page_tables {
-        *frame = frames.allocate().expect("no frame for paging");
+        let Ok(address) = frames.allocate() else {
+            fatal_kernel_halt(Status::NO_SPACE)
+        };
+        *frame = address;
     }
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
@@ -153,9 +157,21 @@ pub fn halt() -> ! {
     }
 }
 
+/// Validate bootloader data before any operation can use its variable-length
+/// regions. Invalid metadata is an external input failure, not a panic.
+pub fn validate_boot_info(boot_info: &BootInfo) -> Result<(), Status> {
+    boot_info.is_valid().then_some(()).ok_or(Status::INVALID_ARGUMENT)
+}
+
+/// The only deliberate non-returning failure boundary in kernel code.
+pub fn fatal_kernel_halt(status: Status) -> ! {
+    println!("KERNEL HALT: status={} ({})", status.raw(), status.message());
+    halt()
+}
+
 pub fn panic_report(info: &PanicInfo<'_>) -> ! {
     println!("KERNEL PANIC: {info}");
-    halt()
+    fatal_kernel_halt(Status::CORRUPT)
 }
 
 #[macro_export]

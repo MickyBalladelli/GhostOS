@@ -7,11 +7,19 @@ use crate::ipc::{Channel, IpcError, Message};
 use crate::runtime::{Dispatcher, FilesystemIpc, FilesystemIdentity};
 use crate::scheduler::SchedulerError;
 use crate::task::{ExecutionMode, SchedulingPolicy, ThreadState};
-use synos_boot_protocol::{MemoryKind, MemoryRegion};
+use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind, MemoryRegion, MAX_MEMORY_REGIONS};
 use synos_fsd::{Capability as FsdCapability, ProcessId as FsdProcessId, Response as FsdResponse};
 use synos_ipc::{SharedBuffer, SharedRegionId};
 use synos_runtime::{Operation, Request};
 use synos_status::Status;
+
+#[test]
+fn malformed_boot_info_returns_a_stable_status() {
+    let mut boot_info = BootInfo::empty(BootMethod::Uefi);
+    boot_info.memory_region_count = MAX_MEMORY_REGIONS + 1;
+
+    assert_eq!(crate::validate_boot_info(&boot_info), Err(Status::INVALID_ARGUMENT));
+}
 
 fn address_space(raw: u32) -> AddressSpaceId {
     AddressSpaceId::new(raw).expect("non-zero address space")

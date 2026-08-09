@@ -39,6 +39,19 @@ fn records_are_bounded_round_trip_and_reject_corruption() {
 }
 
 #[test]
+fn malformed_record_fields_return_errors() {
+    let mut encoded = [0; JOURNAL_RECORD_SIZE];
+    encode_record(TraceEvent::new(Level::Info, EventKind::Kernel), &mut encoded).unwrap();
+    encoded[7] = 5;
+    let checksum = encoded[..120].iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ *byte as u64).wrapping_mul(0x100000001b3)
+    });
+    encoded[120..128].copy_from_slice(&checksum.to_le_bytes());
+
+    assert_eq!(decode_record(&encoded), Err(CodecError::InvalidField));
+}
+
+#[test]
 fn ring_overflow_reports_drops_and_audit_query_is_stable() {
     let ring = TraceRing::<2>::new();
     ring.push(TraceEvent::new(Level::Info, EventKind::Kernel).at(1));

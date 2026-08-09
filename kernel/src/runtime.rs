@@ -645,13 +645,10 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         buffer: Option<SharedBuffer>,
         response: Response,
     ) -> Result<Response, RuntimeDispatchError> {
-        if Status::from_raw(response.status).is_none() {
+        let Some(status) = Status::from_raw(response.status) else {
             return Err(RuntimeDispatchError::TransportFailure)
-        }
-        if !Status::from_raw(response.status)
-            .expect("validated status")
-            .is_success()
-        {
+        };
+        if !status.is_success() {
             return Ok(response)
         }
         match operation {

@@ -610,13 +610,13 @@ pub fn decode_record(source: &[u8]) -> Result<TraceEvent, CodecError> {
     if source.len() < JOURNAL_RECORD_SIZE {
         return Err(CodecError::BufferTooSmall);
     }
-    if u32::from_le_bytes(source[..4].try_into().expect("four bytes")) != JOURNAL_MAGIC {
+    if u32::from_le_bytes(record_bytes(source, 0)?) != JOURNAL_MAGIC {
         return Err(CodecError::InvalidMagic);
     }
     if source[4] != JOURNAL_VERSION {
         return Err(CodecError::InvalidVersion);
     }
-    if u64::from_le_bytes(source[120..128].try_into().expect("eight bytes"))
+    if u64::from_le_bytes(record_bytes(source, 120)?)
         != checksum(&source[..120])
     {
         return Err(CodecError::Checksum);
@@ -628,27 +628,26 @@ pub fn decode_record(source: &[u8]) -> Result<TraceEvent, CodecError> {
         return Err(CodecError::InvalidField);
     }
     let mut event = TraceEvent::new(level, kind)
-        .at(u64::from_le_bytes(
-            source[8..16].try_into().expect("eight bytes"),
-        ))
+        .at(u64::from_le_bytes(record_bytes(source, 8)?))
         .correlated(CorrelationId::from_raw(u128::from_le_bytes(
-            source[16..32].try_into().expect("sixteen bytes"),
+            record_bytes(source, 16)?,
         )))
-        .on_node(u32::from_le_bytes(
-            source[32..36].try_into().expect("four bytes"),
-        ));
+        .on_node(u32::from_le_bytes(record_bytes(source, 32)?));
     for index in 0..field_count {
         let offset = 40 + index * 20;
-        let key = u16::from_le_bytes(source[offset..offset + 2].try_into().expect("two bytes"));
+        let key = u16::from_le_bytes(record_bytes(source, offset)?);
         let kind = FieldKind::from_raw(source[offset + 2]).ok_or(CodecError::InvalidField)?;
-        let value = u128::from_le_bytes(
-            source[offset + 4..offset + 20]
-                .try_into()
-                .expect("sixteen bytes"),
-        );
+        let value = u128::from_le_bytes(record_bytes(source, offset + 4)?);
         event = event.with_field(EventField { key, kind, value })
     }
     Ok(event)
+}
+
+fn record_bytes<const SIZE: usize>(source: &[u8], start: usize) -> Result<[u8; SIZE], CodecError> {
+    source
+        .get(start..start.checked_add(SIZE).ok_or(CodecError::BufferTooSmall)?)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(CodecError::BufferTooSmall)
 }
 
 const fn checksum(bytes: &[u8]) -> u64 {

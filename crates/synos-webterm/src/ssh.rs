@@ -174,7 +174,7 @@ impl<A: SshAuthenticator, B: ShellBackend, const SESSION_CAPACITY: usize>
         if bytes.len() > MAX_LINE_BYTES {
             return Err(SshError::BufferTooLarge);
         }
-        let handle = self.session(session)?.handle.expect("live session");
+        let handle = self.session(session)?.handle.ok_or(SshError::InvalidSession)?;
         self.shell.input(handle, bytes)
     }
 
@@ -186,20 +186,20 @@ impl<A: SshAuthenticator, B: ShellBackend, const SESSION_CAPACITY: usize>
         if terminal.columns == 0 || terminal.rows == 0 {
             return Err(SshError::InvalidTerminal);
         }
-        let handle = self.session(session)?.handle.expect("live session");
+        let handle = self.session(session)?.handle.ok_or(SshError::InvalidSession)?;
         self.shell.resize(handle, terminal)?;
         self.session_mut(session)?.terminal = Some(terminal);
         Ok(())
     }
 
     pub fn output(&mut self, session: SshSessionId, bytes: &mut [u8]) -> Result<usize, SshError> {
-        let handle = self.session(session)?.handle.expect("live session");
+        let handle = self.session(session)?.handle.ok_or(SshError::InvalidSession)?;
         self.shell.output(handle, bytes)
     }
 
     pub fn close(&mut self, session: SshSessionId) -> Result<(), SshError> {
         let slot = self.session_mut(session)?;
-        let handle = slot.handle.take().expect("live session");
+        let handle = slot.handle.take().ok_or(SshError::InvalidSession)?;
         slot.principal = None;
         slot.terminal = None;
         self.shell.close(handle);

@@ -797,13 +797,21 @@ impl Mmu {
     }
 
     fn read_pte(&self, addr: u64) -> Result<Pte, MemoryError> {
-        let start = addr as usize;
+        let start = usize::try_from(addr).map_err(|_| MemoryError::InvalidAddress)?;
         let end = start.checked_add(8).ok_or(MemoryError::InvalidAddress)?;
         if end > self.ram.len() {
             return Err(MemoryError::InvalidAddress);
         }
+        let bytes = self
+            .ram
+            .get(start..end)
+            .ok_or(MemoryError::InvalidAddress)?;
         Ok(Pte {
-            raw: u64::from_le_bytes(self.ram[start..end].try_into().unwrap()),
+            raw: u64::from_le_bytes(
+                bytes
+                    .try_into()
+                    .map_err(|_| MemoryError::InvalidAddress)?,
+            ),
         })
     }
 

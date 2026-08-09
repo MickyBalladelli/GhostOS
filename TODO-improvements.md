@@ -46,6 +46,12 @@ evidence.
       firewall policy decoding. Changed crates pass compile validation.
 - [ ] Allow panics only at an explicit fatal kernel halt boundary. Convert
       malformed guest data and user input into stable errors or status values.
+      Progress: added the named `fatal_kernel_halt` boundary, converted bad
+      boot metadata and page-table addresses to stable status/errors, removed
+      panic paths from runtime status validation, journal decoding, and closed
+      terminal sessions, and added direct malformed-input regression tests.
+      Compile evidence passes for the affected crates; test evidence remains
+      pending.
 - [ ] Add a negative-test matrix for malformed boot info, ABI frames, shared
       buffers, capabilities, package manifests, filesystem metadata, packets,
       terminal input, and snapshot data.
