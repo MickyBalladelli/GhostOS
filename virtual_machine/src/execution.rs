@@ -224,7 +224,14 @@ impl ExecutionEngine {
 
             let mode = cpu.state.mode;
             cpu.prepare_instruction();
-            cpu.execute_decoded(instruction, mmu, intc, ports, bios)?;
+            mmu.set_replay_instruction_ip(Some(instruction.ip));
+            ports.set_replay_instruction_ip(Some(instruction.ip));
+            bios.set_replay_instruction_ip(Some(instruction.ip));
+            let result = cpu.execute_decoded(instruction, mmu, intc, ports, bios);
+            mmu.set_replay_instruction_ip(None);
+            ports.set_replay_instruction_ip(None);
+            bios.set_replay_instruction_ip(None);
+            result?;
             executed += 1;
             self.record_instruction(instruction.ip, key.rip, block.compiled);
 

@@ -64,6 +64,7 @@ pub use storage::{
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
+use crate::replay::{ReplayMode, SharedReplay};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceError {
@@ -72,6 +73,7 @@ pub enum DeviceError {
     NotReady,
     UnsupportedSize,
     NotFound,
+    ReplayDivergence,
 }
 
 impl fmt::Display for DeviceError {
@@ -82,6 +84,7 @@ impl fmt::Display for DeviceError {
             DeviceError::NotReady => write!(f, "device not ready"),
             DeviceError::UnsupportedSize => write!(f, "unsupported access size"),
             DeviceError::NotFound => write!(f, "device not found"),
+            DeviceError::ReplayDivergence => write!(f, "replay divergence"),
         }
     }
 }
@@ -140,11 +143,25 @@ pub trait PortDevice {
 /// Bus that dispatches `in`/`out` instructions to port-mapped devices.
 pub struct PortBus {
     devices: Vec<(u16, u16, Box<dyn PortDevice>)>,
+    replay: Option<SharedReplay>,
+    instruction_ip: Option<u64>,
 }
 
 impl PortBus {
     pub fn new() -> Self {
-        Self { devices: Vec::new() }
+        Self {
+            devices: Vec::new(),
+            replay: None,
+            instruction_ip: None,
+        }
+    }
+
+    pub fn attach_replay(&mut self, replay: SharedReplay) {
+        self.replay = Some(replay)
+    }
+
+    pub fn set_replay_instruction_ip(&mut self, instruction_ip: Option<u64>) {
+        self.instruction_ip = instruction_ip
     }
 
     pub fn is_empty(&self) -> bool {
@@ -162,11 +179,36 @@ impl PortBus {
                 && (port as u32).saturating_add(size as u32)
                     <= (*base as u32).saturating_add(*len as u32)
             {
-                return dev.read(port, size);
+                let result = dev.read(port, size);
+                return self.replay_read(port, size, result);
             }
         }
         // Unhandled port reads return all-ones, as real hardware does.
-        Ok(if size == 8 { u64::MAX } else { (1u64 << (size * 8)) - 1 })
+        self.replay_read(
+            port,
+            size,
+            Ok(if size == 8 { u64::MAX } else { (1u64 << (size * 8)) - 1 }),
+        )
+    }
+
+    fn replay_read(
+        &self,
+        port: u16,
+        size: u8,
+        result: Result<u64, DeviceError>,
+    ) -> Result<u64, DeviceError> {
+        let Some(replay) = &self.replay else {
+            return result
+        };
+        let mode = replay.borrow().mode();
+        let actual = match mode {
+            ReplayMode::Replaying => result.unwrap_or(0),
+            ReplayMode::Disabled | ReplayMode::Recording => result?,
+        };
+        replay
+            .borrow_mut()
+            .instruction_input(self.instruction_ip.unwrap_or(0), port as u64, size, actual)
+            .map_err(|_| DeviceError::ReplayDivergence)
     }
 
     pub fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
@@ -187,6 +229,7 @@ impl PortBus {
         for (_, _, dev) in &mut self.devices {
             dev.reset();
         }
+        self.instruction_ip = None;
     }
 }
 

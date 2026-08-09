@@ -61,6 +61,10 @@ cargo build --release
 
 Pass `--initrd <PATH>` only when you have a separate initrd image.
 
+Record and replay nondeterministic VM inputs with `--replay-record PATH` and
+`--replay PATH`. The trace covers device reads, DMA completions, timers,
+interrupt delivery, VM time, and host input.
+
 ### Disk operations
 
 Disk paths are always supplied explicitly. The VM canonicalizes them before

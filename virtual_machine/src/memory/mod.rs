@@ -2,6 +2,7 @@
 //! access validation.
 
 use crate::devices::{Device, DeviceError, MmioRegion};
+use crate::replay::{ReplayDmaWrite, ReplayMode, SharedReplay};
 use std::collections::{HashMap, HashSet};
 
 pub const PAGE_SIZE: usize = 4096;
@@ -44,6 +45,7 @@ pub enum MemoryError {
     AlignmentError,
     OutOfMemory,
     MmioError,
+    ReplayDivergence,
 }
 
 impl From<DeviceError> for MemoryError {
@@ -330,6 +332,10 @@ pub struct Mmu {
     paging_enabled: bool,
     cr3: u64,
     privilege: bool, // false = kernel (ring 0), true = user (ring 3)
+    replay: Option<SharedReplay>,
+    instruction_ip: Option<u64>,
+    dma_capture: bool,
+    dma_writes: Vec<ReplayDmaWrite>,
 }
 
 fn validate_flags(
@@ -377,6 +383,10 @@ impl Mmu {
             paging_enabled: false,
             cr3: 0,
             privilege: false,
+            replay: None,
+            instruction_ip: None,
+            dma_capture: false,
+            dma_writes: Vec::new(),
         }
     }
 
@@ -638,6 +648,34 @@ impl Mmu {
         self.mmio.push(MmioRegion::new(base, size, device));
     }
 
+    pub fn attach_replay(&mut self, replay: SharedReplay) {
+        self.replay = Some(replay)
+    }
+
+    pub fn set_replay_instruction_ip(&mut self, instruction_ip: Option<u64>) {
+        self.instruction_ip = instruction_ip
+    }
+
+    pub(crate) fn begin_dma_capture(&mut self) {
+        self.dma_capture = true;
+        self.dma_writes.clear();
+    }
+
+    pub(crate) fn take_dma_writes(&mut self) -> Vec<ReplayDmaWrite> {
+        self.dma_capture = false;
+        std::mem::take(&mut self.dma_writes)
+    }
+
+    pub(crate) fn apply_dma_writes(
+        &mut self,
+        writes: &[ReplayDmaWrite],
+    ) -> Result<(), MemoryError> {
+        for write in writes {
+            self.write_phys(write.address, &write.bytes)?;
+        }
+        Ok(())
+    }
+
     pub fn mmio_regions(&self) -> &[MmioRegion] {
         &self.mmio
     }
@@ -859,7 +897,26 @@ impl Mmu {
         }
         let phys = self.physical_address(addr, AccessKind::Read, size as u64)?;
         if let Some(region) = self.find_mmio(phys, size as u64) {
-            return region.read(addr, size).map_err(|_| MemoryError::MmioError);
+            let result = region.read(addr, size);
+            let Some(replay) = &self.replay else {
+                return result.map_err(|_| MemoryError::MmioError)
+            };
+            let mode = replay.borrow().mode();
+            let actual = match mode {
+                ReplayMode::Replaying => result.unwrap_or(0),
+                ReplayMode::Disabled | ReplayMode::Recording => {
+                    result.map_err(|_| MemoryError::MmioError)?
+                }
+            };
+            return replay
+                .borrow_mut()
+                .instruction_input(
+                    self.instruction_ip.unwrap_or(0),
+                    phys,
+                    size,
+                    actual,
+                )
+                .map_err(|_| MemoryError::ReplayDivergence);
         }
         self.ram_read(phys, size as usize)
     }
@@ -1098,6 +1155,12 @@ impl Mmu {
         }
         self.ram[start..end].copy_from_slice(bytes);
         self.record_ram_write(phys, bytes.len());
+        if self.dma_capture {
+            self.dma_writes.push(ReplayDmaWrite {
+                address: phys,
+                bytes: bytes.to_vec(),
+            });
+        }
         Ok(())
     }
 
@@ -1521,6 +1584,9 @@ impl Mmu {
         self.paging_enabled = false;
         self.cr3 = 0;
         self.privilege = false;
+        self.instruction_ip = None;
+        self.dma_capture = false;
+        self.dma_writes.clear();
     }
 }
 

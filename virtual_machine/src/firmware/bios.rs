@@ -4,6 +4,7 @@ use crate::cpu::{CpuMode, CpuState, PrivilegeLevel, SegmentRegister};
 use crate::devices::DisplayState;
 use crate::firmware::uefi::{UefiContext, UEFI_CALL_VECTOR};
 use crate::memory::Mmu;
+use crate::replay::SharedReplay;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -51,6 +52,8 @@ pub struct BiosContext {
     /// UEFI firmware context, shared with the executor through `call_int`
     /// so vector 0xE0 (UEFI service dispatch) reaches the boot services.
     pub uefi: Option<UefiContext>,
+    replay: Option<SharedReplay>,
+    replay_instruction_ip: Option<u64>,
 }
 
 impl BiosContext {
@@ -64,6 +67,22 @@ impl BiosContext {
             boot_image: None,
             memory_size: 128 * 1024 * 1024,
             uefi: None,
+            replay: None,
+            replay_instruction_ip: None,
+        }
+    }
+
+    pub fn attach_replay(&mut self, replay: SharedReplay) {
+        self.replay = Some(replay.clone());
+        if let Some(uefi) = &mut self.uefi {
+            uefi.attach_replay(replay);
+        }
+    }
+
+    pub fn set_replay_instruction_ip(&mut self, instruction_ip: Option<u64>) {
+        self.replay_instruction_ip = instruction_ip;
+        if let Some(uefi) = &mut self.uefi {
+            uefi.set_replay_instruction_ip(instruction_ip);
         }
     }
 
@@ -103,6 +122,9 @@ impl BiosContext {
             let mut uefi = UefiContext::new();
             uefi.set_display(self.display.clone());
             uefi.set_memory_size(self.memory_size);
+            if let Some(replay) = &self.replay {
+                uefi.attach_replay(replay.clone());
+            }
             self.uefi = Some(uefi);
         }
         self.state = BiosState::UefiInitialized;
@@ -117,6 +139,7 @@ impl BiosContext {
         if let Some(uefi) = &mut self.uefi {
             uefi.reset();
         }
+        self.replay_instruction_ip = None;
     }
 
     pub fn call_int(

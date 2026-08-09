@@ -100,6 +100,7 @@ fn mem_err(e: MemoryError) -> CpuError {
     match e {
         MemoryError::PageFault => CpuError::PageFault,
         MemoryError::AccessDenied => CpuError::GeneralProtectionFault,
+        MemoryError::ReplayDivergence => CpuError::ReplayDivergence,
         _ => CpuError::MemoryAccessError,
     }
 }
@@ -107,6 +108,7 @@ fn mem_err(e: MemoryError) -> CpuError {
 fn port_err(e: DeviceError) -> CpuError {
     match e {
         DeviceError::AccessDenied => CpuError::GeneralProtectionFault,
+        DeviceError::ReplayDivergence => CpuError::ReplayDivergence,
         _ => CpuError::MemoryAccessError,
     }
 }

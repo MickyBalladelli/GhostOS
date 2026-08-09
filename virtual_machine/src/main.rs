@@ -33,6 +33,8 @@ struct Cli {
     snapshot_restore: Option<PathBuf>,
     snapshot_key: Option<PathBuf>,
     monitor_path: Option<PathBuf>,
+    replay_record: Option<PathBuf>,
+    replay_path: Option<PathBuf>,
 }
 
 enum Command {
@@ -165,6 +167,8 @@ where
     let mut snapshot_restore = None;
     let mut snapshot_key = None;
     let mut monitor_path = None;
+    let mut replay_record = None;
+    let mut replay_path = None;
     let mut args = values.into_iter().peekable();
 
     while let Some(arg) = args.next() {
@@ -261,6 +265,12 @@ where
             "--monitor" => {
                 monitor_path = Some(PathBuf::from(next_value(&mut args, "--monitor")?));
             }
+            "--replay-record" => {
+                replay_record = Some(PathBuf::from(next_value(&mut args, "--replay-record")?));
+            }
+            "--replay" => {
+                replay_path = Some(PathBuf::from(next_value(&mut args, "--replay")?));
+            }
             value if value.starts_with('-') => {
                 return Err(format!("unknown option `{value}`"));
             }
@@ -286,6 +296,12 @@ where
     if integration && (snapshot_save.is_some() || snapshot_restore.is_some()) {
         return Err("snapshot options cannot be combined with --integration".to_string());
     }
+    if integration && (replay_record.is_some() || replay_path.is_some()) {
+        return Err("replay options cannot be combined with --integration".to_string());
+    }
+    if replay_record.is_some() && replay_path.is_some() {
+        return Err("--replay-record and --replay cannot be combined".to_string());
+    }
     if (snapshot_save.is_some() || snapshot_restore.is_some() || monitor_path.is_some())
         && snapshot_key.is_none()
     {
@@ -310,6 +326,8 @@ where
         snapshot_restore,
         snapshot_key,
         monitor_path,
+        replay_record,
+        replay_path,
     }))
 }
 
@@ -620,6 +638,8 @@ fn run(mut cli: Cli) -> Result<(), String> {
     let input_mode = cli.input_mode;
     let snapshot_save = cli.snapshot_save;
     let monitor_path = cli.monitor_path;
+    let replay_record = cli.replay_record;
+    let replay_path = cli.replay_path;
     let efi_image = cli
         .efi_path
         .map(|path| {
@@ -662,6 +682,15 @@ fn run(mut cli: Cli) -> Result<(), String> {
             .map_err(|error| format!("cannot restore snapshot: {error}"))?;
         println!("Restored VM snapshot (checksum=0x{:016x})", snapshot.checksum());
     }
+    if let Some(path) = replay_path.as_ref() {
+        let trace = Vm::load_replay(path)
+            .map_err(|error| format!("cannot load replay trace {}: {error}", path.display()))?;
+        vm.begin_replay(trace)
+            .map_err(|error| format!("cannot start replay: {error}"))?;
+        println!("Replaying VM input trace from {}", path.display());
+    } else if replay_record.is_some() {
+        vm.begin_replay_recording();
+    }
 
     let terminal_mode = if monitor_path.is_some() && terminal_mode.is_none() {
         Some(false)
@@ -690,7 +719,11 @@ fn run(mut cli: Cli) -> Result<(), String> {
         );
     } else {
         println!("Starting CPU emulation...");
-        let terminal = TerminalSession::new(terminal_mode)
+        let terminal = TerminalSession::new(if replay_path.is_some() {
+            Some(false)
+        } else {
+            terminal_mode
+        })
             .map_err(|error| format!("terminal error: {error}"))?;
         let exit = vm
             .run_with_terminal_mode_and_monitor(&terminal, input_mode, &mut poll_monitor)
@@ -706,6 +739,12 @@ fn run(mut cli: Cli) -> Result<(), String> {
         vm.save_authenticated_snapshot(&path, *key)
             .map_err(|error| format!("cannot save authenticated snapshot {}: {error}", path.display()))?;
         println!("Saved VM snapshot to {}", path.display());
+    }
+
+    if let Some(path) = replay_record {
+        vm.save_replay(&path)
+            .map_err(|error| format!("cannot save replay trace {}: {error}", path.display()))?;
+        println!("Saved VM replay trace to {}", path.display());
     }
 
     Ok(())
@@ -1945,6 +1984,8 @@ State and management:
                               Restore a checkpoint before running
       --snapshot-key <PATH>  Raw 32-byte or 64-hex-byte auth key
       --monitor <SOCKET>     Expose a local monitor console socket
+      --replay-record <PATH> Record deterministic VM inputs to a trace
+      --replay <PATH>        Replay a deterministic VM input trace
 
 Commands:
       --integration          Run SynOS integration checks

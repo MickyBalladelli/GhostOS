@@ -84,7 +84,7 @@ remaining proof, portability, safety, and fidelity work.
 
 - [x] Add an injectable monotonic clock for PIT, HPET, APIC, PV clock, timers,
       terminal polling, and guest scheduling.
-- [ ] Add deterministic replay of instruction inputs, interrupts, device
+- [x] Add deterministic replay of instruction inputs, interrupts, device
       completions, timers, and host-facing input.
 - [ ] Prove translation-cache invalidation for self-modifying code, page-table
       changes, permission changes, code aliases, interrupts, reset, and

@@ -51,6 +51,21 @@ BIOS kernel boot uses the SynOS multiboot handoff. UEFI mode starts the EFI
 application supplied with `Vm::set_efi_application`. A kernel path cannot be
 used as a UEFI application.
 
+## Deterministic replay
+
+`Vm::begin_replay_recording` starts one ordered trace. The MMU and `PortBus`
+record device-read values with the guest instruction address. Each VM batch
+also records the virtual clock value, timer result, accepted interrupt, and
+all guest-RAM writes made by device completion. Serial, keyboard, mouse, and
+terminal resize input are recorded before they reach the guest. Replay uses
+the saved values and does not trust host clocks, terminal input, entropy, or
+device completion bytes.
+
+Use `Vm::save_replay` and `Vm::load_replay` for the bounded binary trace
+format. The CLI exposes the same flow with `--replay-record PATH` and
+`--replay PATH`. A mismatch returns `VmError::Replay` at the first divergent
+event.
+
 ## Device map
 
 | Device | Guest interface | Address | IRQ/vector |
@@ -95,3 +110,4 @@ the execution cache while keeping the VM device topology attached.
 - `src/execution.rs`: translated block cache and profiling.
 - `src/snapshot.rs`: full snapshots, page diffs, and snapshot chains.
 - `src/integration.rs`: bounded SynOS kernel/service checks.
+- `src/replay.rs`: ordered event trace, bounded binary persistence, and replay.

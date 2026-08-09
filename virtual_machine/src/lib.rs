@@ -12,6 +12,7 @@ pub mod snapshot;
 pub mod terminal;
 pub mod input;
 pub mod clock;
+pub mod replay;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -85,6 +86,10 @@ pub use terminal::{
 };
 pub use input::{ascii_to_scancodes, serial_resize_sequence, GuestInputMode};
 pub use clock::{HostMonotonicClock, ManualMonotonicClock, MonotonicClock, SharedMonotonicClock};
+pub use replay::{
+    shared_replay, ReplayDmaWrite, ReplayError, ReplayEvent, ReplayEventKind, ReplayHostInput,
+    ReplayMode, ReplaySession, ReplayTrace, SharedReplay,
+};
 
 /// Compatibility alias. Guest routing is no longer part of terminal policy.
 pub type TerminalInputMode = GuestInputMode;
@@ -93,6 +98,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
+use replay::ReplayMode as VmReplayMode;
 use synos_boot_protocol::{
     BootMethod, FramebufferInfo, SYNOS_PERSISTENCE_PORT, SYNOS_PERSISTENCE_PORT_SIZE,
 };
@@ -114,6 +120,11 @@ pub const VIRTIO_NET_IO_BASE: u16 = 0x5000;
 pub const VIRTIO_BLK_IO_BASE: u16 = 0x5100;
 pub const VIRTIO_CONSOLE_IO_BASE: u16 = 0x5200;
 pub const VIRTIO_RNG_IO_BASE: u16 = 0x5300;
+
+const HOST_INPUT_SERIAL: u64 = 1;
+const HOST_INPUT_KEYBOARD: u64 = 2;
+const HOST_INPUT_MOUSE: u64 = 3;
+const HOST_INPUT_TERMINAL_PS2: u64 = 4;
 
 #[derive(Clone)]
 pub struct VmConfig {
@@ -183,6 +194,7 @@ pub struct Vm {
     booted_system_disk: Option<SystemDiskBootArtifacts>,
     config: VmConfig,
     clock: SharedMonotonicClock,
+    replay: SharedReplay,
     initialized: bool,
 }
 
@@ -232,6 +244,8 @@ impl Vm {
 
     fn build_with_config(config: VmConfig, clock: SharedMonotonicClock) -> Self {
         let mut mmu = Mmu::new(config.memory_size);
+        let replay = shared_replay();
+        mmu.attach_replay(replay.clone());
 
         // One shared PCI Express host bridge exposed through both the legacy
         // 0xCF8/0xCFC config ports and the ECAM (MMCONFIG) memory aperture.
@@ -239,6 +253,7 @@ impl Vm {
 
         let apic: Rc<RefCell<LocalApic>> = Rc::new(RefCell::new(LocalApic::new(0)));
         let mut ports = PortBus::new();
+        ports.attach_replay(replay.clone());
         ports.attach(0x20, 2, Box::new(LegacyPic::new(apic.clone())));
         ports.attach(0xa0, 2, Box::new(LegacyPic::new(apic.clone())));
         let power_state = Rc::new(RefCell::new(PowerState::Running));
@@ -247,6 +262,7 @@ impl Vm {
         let guest_agent = Rc::new(RefCell::new(GuestAgent::new()));
         guest_agent.borrow().attach_apic(apic.clone());
         let pv_clock = Rc::new(RefCell::new(PvClock::new()));
+        pv_clock.borrow_mut().attach_replay(replay.clone());
         let memory_hotplug = Rc::new(RefCell::new(MemoryHotplugDevice::new(
             config.memory_size as u64,
             config.max_memory_size.max(config.memory_size) as u64,
@@ -532,6 +548,7 @@ impl Vm {
             uefi.set_memory_size(config.memory_size);
             bios.context.uefi = Some(uefi);
         }
+        bios.context.attach_replay(replay.clone());
 
         Self {
             cpu,
@@ -567,6 +584,7 @@ impl Vm {
             booted_system_disk: None,
             config,
             clock,
+            replay,
             initialized: false,
         }
     }
@@ -579,6 +597,7 @@ impl Vm {
                 let mut uefi = UefiContext::new();
                 uefi.set_display(self.display.clone());
                 uefi.set_memory_size(self.config.memory_size);
+                uefi.attach_replay(self.replay.clone());
                 self.bios.context.uefi = Some(uefi);
             }
         } else {
@@ -791,6 +810,10 @@ impl Vm {
     }
 
     fn step_cpu(&mut self, max_instructions: usize) -> Result<usize, VmError> {
+        self.inject_replay_host_inputs()?;
+        if let Some(error) = self.replay.borrow_mut().take_error() {
+            return Err(VmError::Replay(error))
+        }
         let executed = match self.execution.execute(
             &mut self.cpu,
             &mut self.mmu,
@@ -801,15 +824,25 @@ impl Vm {
         ) {
             Ok(executed) => executed,
             Err(error) => {
+                if error == CpuError::ReplayDivergence {
+                    if let Some(replay_error) = self.replay.borrow_mut().take_error() {
+                        return Err(VmError::Replay(replay_error))
+                    }
+                    return Err(VmError::Replay(ReplayError::Corrupt))
+                }
                 eprintln!("CPU error at RIP 0x{:016x}", self.cpu.state.rip);
                 return Err(error.into());
             }
         };
 
         // Deferred DMA for storage and NICs issued during the step.
-        self.poll_devices();
+        self.poll_devices()?;
 
-        let now_ns = self.clock.now_ns();
+        let now_ns = self
+            .replay
+            .borrow_mut()
+            .clock(self.clock.now_ns())
+            .map_err(VmError::Replay)?;
         self.poll_guest_features();
         self.pv_clock.borrow_mut().update(&mut self.mmu, now_ns);
         self.poll_apic(now_ns)?;
@@ -914,23 +947,13 @@ impl Vm {
         self.initialize()?;
 
         loop {
-            let input = terminal
-                .poll_at(self.clock.now_ns())
-                .map_err(|error| VmError::Terminal(error.diagnostic()))?;
-            if input_mode == GuestInputMode::Serial {
-                if let Some(resize) = input.resize {
-                    self.queue_serial_input(&serial_resize_sequence(resize));
-                }
-            }
-            for byte in input.bytes {
-                match input_mode {
-                    GuestInputMode::Serial => self.queue_serial_input(&[byte]),
-                    GuestInputMode::Ps2 => {
-                        for scancode in ascii_to_scancodes(byte) {
-                            self.queue_keyboard_scancode(scancode)
-                        }
-                    }
-                }
+            if self.replay_mode() == VmReplayMode::Replaying {
+                self.inject_replay_host_inputs()?;
+            } else {
+                let input = terminal
+                    .poll_at(self.clock.now_ns())
+                    .map_err(|error| VmError::Terminal(error.diagnostic()))?;
+                self.record_terminal_input(input, input_mode)?;
             }
 
             if !monitor(self)? {
@@ -1104,7 +1127,8 @@ impl Vm {
     /// Process deferred DMA for storage controllers and NICs issued during
     /// the last CPU step. Runs outside the executor's `&mut Mmu` borrow so
     /// devices can DMA directly into guest physical memory.
-    fn poll_devices(&mut self) {
+    fn poll_devices(&mut self) -> Result<(), VmError> {
+        self.mmu.begin_dma_capture();
         self.ps2.borrow_mut().poll_interrupt();
         if self.ahci.borrow().has_pending() {
             self.ahci.borrow_mut().poll_dma(&mut self.mmu);
@@ -1125,6 +1149,18 @@ impl Vm {
         if self.virtio_rng.borrow().has_pending() {
             self.virtio_rng.borrow_mut().poll(&mut self.mmu);
         }
+        let writes = self.mmu.take_dma_writes();
+        let replay_writes = self
+            .replay
+            .borrow_mut()
+            .device_completion(&writes)
+            .map_err(VmError::Replay)?;
+        if self.replay_mode() == VmReplayMode::Replaying {
+            self.mmu
+                .apply_dma_writes(&replay_writes)
+                .map_err(|_| VmError::MemoryError)?;
+        }
+        Ok(())
     }
 
     /// Advance the local APIC timer plus the PIT/HPET timebase and deliver
@@ -1138,6 +1174,10 @@ impl Vm {
         self.apic.borrow_mut().advance(now_ns);
 
         let pending = self.apic.borrow_mut().pending_vector();
+        self.replay
+            .borrow_mut()
+            .timer(now_ns, pending)
+            .map_err(VmError::Replay)?;
         let Some(vector) = pending else {
             return Ok(());
         };
@@ -1149,12 +1189,102 @@ impl Vm {
         }
 
         self.apic.borrow_mut().accept_pending(vector);
+        self.replay
+            .borrow_mut()
+            .interrupt(vector)
+            .map_err(VmError::Replay)?;
         self.cpu
             .handle_interrupt(
                 vector,
                 &mut self.mmu,
                 &mut self.interrupt_controller,
             )?;
+        Ok(())
+    }
+
+    fn record_terminal_input(
+        &mut self,
+        input: TerminalInput,
+        input_mode: GuestInputMode,
+    ) -> Result<(), VmError> {
+        let channel = match input_mode {
+            GuestInputMode::Serial => HOST_INPUT_SERIAL,
+            GuestInputMode::Ps2 => HOST_INPUT_TERMINAL_PS2,
+        };
+        if let Some(resize) = input.resize {
+            self.replay
+                .borrow_mut()
+                .host_input(channel, Some(resize.rows), Some(resize.columns), &[])
+                .map_err(VmError::Replay)?;
+            if input_mode == GuestInputMode::Serial {
+                self.enqueue_serial_input(&serial_resize_sequence(resize));
+            }
+        }
+        if !input.bytes.is_empty() {
+            self.replay
+                .borrow_mut()
+                .host_input(channel, None, None, &input.bytes)
+                .map_err(VmError::Replay)?;
+            match input_mode {
+                GuestInputMode::Serial => self.enqueue_serial_input(&input.bytes),
+                GuestInputMode::Ps2 => {
+                    for byte in input.bytes {
+                        for scancode in ascii_to_scancodes(byte) {
+                            self.enqueue_keyboard_scancode(scancode)
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn inject_replay_host_inputs(&mut self) -> Result<(), VmError> {
+        if self.replay_mode() != VmReplayMode::Replaying {
+            return Ok(())
+        }
+        loop {
+            let input = self
+                .replay
+                .borrow_mut()
+                .next_host_input()
+                .map_err(VmError::Replay)?;
+            let Some(input) = input else {
+                return Ok(())
+            };
+            self.apply_replay_host_input(input)?;
+        }
+    }
+
+    fn apply_replay_host_input(
+        &mut self,
+        input: crate::replay::ReplayHostInput,
+    ) -> Result<(), VmError> {
+        match input.channel {
+            HOST_INPUT_SERIAL => {
+                if let (Some(rows), Some(columns)) = (input.rows, input.columns) {
+                    self.enqueue_serial_input(&serial_resize_sequence(TerminalResize {
+                        rows,
+                        columns,
+                    }));
+                }
+                self.enqueue_serial_input(&input.bytes);
+            }
+            HOST_INPUT_TERMINAL_PS2 => {
+                for byte in input.bytes {
+                    for scancode in ascii_to_scancodes(byte) {
+                        self.enqueue_keyboard_scancode(scancode)
+                    }
+                }
+            }
+            HOST_INPUT_KEYBOARD if input.rows.is_none() && input.bytes.len() == 1 => {
+                self.enqueue_keyboard_scancode(input.bytes[0]);
+            }
+            HOST_INPUT_MOUSE if input.rows.is_none() && input.bytes.len() == 3 => {
+                self.enqueue_mouse_packet(input.bytes.try_into().unwrap());
+            }
+            _ => return Err(VmError::Replay(ReplayError::Corrupt)),
+        }
         Ok(())
     }
 
@@ -1252,6 +1382,38 @@ impl Vm {
         self.clock.clone()
     }
 
+    pub fn replay_session(&self) -> SharedReplay {
+        self.replay.clone()
+    }
+
+    pub fn replay_mode(&self) -> ReplayMode {
+        self.replay.borrow().mode()
+    }
+
+    pub fn begin_replay_recording(&mut self) {
+        self.replay.borrow_mut().begin_recording()
+    }
+
+    pub fn begin_replay(&mut self, trace: ReplayTrace) -> Result<(), ReplayError> {
+        self.replay.borrow_mut().begin_replay(trace)
+    }
+
+    pub fn stop_replay(&mut self) {
+        self.replay.borrow_mut().stop()
+    }
+
+    pub fn replay_trace(&self) -> ReplayTrace {
+        self.replay.borrow().trace()
+    }
+
+    pub fn save_replay(&self, path: impl AsRef<std::path::Path>) -> Result<(), ReplayError> {
+        self.replay_trace().save(path)
+    }
+
+    pub fn load_replay(path: impl AsRef<std::path::Path>) -> Result<ReplayTrace, ReplayError> {
+        ReplayTrace::load(path)
+    }
+
     pub fn memory_hotplug(&self) -> Rc<RefCell<MemoryHotplugDevice>> {
         self.memory_hotplug.clone()
     }
@@ -1343,6 +1505,14 @@ impl Vm {
     }
 
     pub fn queue_serial_input(&mut self, bytes: &[u8]) {
+        let _ = self
+            .replay
+            .borrow_mut()
+            .host_input(HOST_INPUT_SERIAL, None, None, bytes);
+        self.enqueue_serial_input(bytes)
+    }
+
+    fn enqueue_serial_input(&mut self, bytes: &[u8]) {
         if !bytes.is_empty() {
             self.cpu.state.halted = false
         }
@@ -1373,15 +1543,40 @@ impl Vm {
     }
 
     pub fn queue_keyboard_scancode(&mut self, scancode: u8) {
+        let _ = self
+            .replay
+            .borrow_mut()
+            .host_input(HOST_INPUT_KEYBOARD, None, None, &[scancode]);
+        self.enqueue_keyboard_scancode(scancode)
+    }
+
+    fn enqueue_keyboard_scancode(&mut self, scancode: u8) {
         self.cpu.state.halted = false;
         self.ps2.borrow_mut().push_keyboard_scancode(scancode)
     }
 
     pub fn queue_mouse_packet(&mut self, packet: [u8; 3]) {
+        let _ = self
+            .replay
+            .borrow_mut()
+            .host_input(HOST_INPUT_MOUSE, None, None, &packet);
+        self.enqueue_mouse_packet(packet)
+    }
+
+    fn enqueue_mouse_packet(&mut self, packet: [u8; 3]) {
         self.ps2.borrow_mut().push_mouse_packet(packet)
     }
 
     pub fn queue_mouse_motion(&mut self, dx: i16, dy: i16, buttons: u8) {
+        let packet = [
+            0x08 | (buttons & 0x07),
+            dx.clamp(-127, 127) as i8 as u8,
+            dy.clamp(-127, 127) as i8 as u8,
+        ];
+        let _ = self
+            .replay
+            .borrow_mut()
+            .host_input(HOST_INPUT_MOUSE, None, None, &packet);
         self.ps2.borrow_mut().push_mouse_motion(dx, dy, buttons)
     }
 
@@ -1458,6 +1653,7 @@ pub enum VmError {
     BiosError,
     IoError,
     Terminal(TerminalFailure),
+    Replay(ReplayError),
     InvalidConfiguration,
     Disk(String),
     KernelLoadError,

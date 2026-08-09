@@ -36,6 +36,7 @@
 use crate::cpu::{CpuMode, CpuState};
 use crate::devices::{DisplayState, VGA_COLS, VGA_ROWS, VGA_TEXT_BASE};
 use crate::memory::{Mmu, PageFlags};
+use crate::replay::SharedReplay;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -260,6 +261,8 @@ pub struct UefiContext {
     console_y: u8,
     /// Runtime variable store.
     variables: Vec<(Vec<u16>, [u8; 16], Vec<u8>, u32)>,
+    replay: Option<SharedReplay>,
+    replay_instruction_ip: Option<u64>,
 }
 
 impl Default for UefiContext {
@@ -288,10 +291,13 @@ impl UefiContext {
             console_x: 0,
             console_y: 0,
             variables: Vec::new(),
+            replay: None,
+            replay_instruction_ip: None,
         }
     }
 
     pub fn reset(&mut self) {
+        let replay = self.replay.clone();
         self.state = UefiState::Reset;
         self.images.clear();
         self.map_key = 0;
@@ -301,6 +307,16 @@ impl UefiContext {
         self.console_x = 0;
         self.console_y = 0;
         self.variables.clear();
+        self.replay = replay;
+        self.replay_instruction_ip = None;
+    }
+
+    pub fn attach_replay(&mut self, replay: SharedReplay) {
+        self.replay = Some(replay)
+    }
+
+    pub fn set_replay_instruction_ip(&mut self, instruction_ip: Option<u64>) {
+        self.replay_instruction_ip = instruction_ip
     }
 
     pub fn set_display(&mut self, display: Rc<RefCell<DisplayState>>) {
@@ -1237,7 +1253,7 @@ impl UefiContext {
     // Runtime services
     // ------------------------------------------------------------------
 
-    fn rs_get_time(&self, cpu: &mut CpuState, mmu: &mut Mmu) {
+    fn rs_get_time(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) {
         let time_ptr = cpu.rcx;
         if time_ptr == 0 {
             cpu.rax = EFI_INVALID_PARAMETER;
@@ -1247,6 +1263,21 @@ impl UefiContext {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        let now = self
+            .replay
+            .as_ref()
+            .map(|replay| {
+                replay
+                    .borrow_mut()
+                    .instruction_input(
+                        self.replay_instruction_ip.unwrap_or(0),
+                        0x5545_4649_4745_5454,
+                        8,
+                        now,
+                    )
+                    .unwrap_or(now)
+            })
+            .unwrap_or(now);
         let days = now / 86400;
         let secs = now % 86400;
         let (year, month, day) = civil_date_from_days(days as i64);

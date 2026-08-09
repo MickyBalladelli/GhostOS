@@ -3,6 +3,7 @@
 
 use super::{ApicTrigger, Device, DeviceError, LocalApic};
 use crate::memory::Mmu;
+use crate::replay::SharedReplay;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -358,6 +359,7 @@ pub struct PvClock {
     system_time_page: Option<u64>,
     wall_clock_page: Option<u64>,
     version: u32,
+    replay: Option<SharedReplay>,
 }
 
 impl PvClock {
@@ -366,7 +368,12 @@ impl PvClock {
             system_time_page: None,
             wall_clock_page: None,
             version: 0,
+            replay: None,
         }
+    }
+
+    pub fn attach_replay(&mut self, replay: SharedReplay) {
+        self.replay = Some(replay)
     }
 
     pub fn write_msr(&mut self, msr: u32, value: u64) {
@@ -384,9 +391,11 @@ impl PvClock {
     }
 
     pub fn reset(&mut self) {
+        let replay = self.replay.clone();
         self.system_time_page = None;
         self.wall_clock_page = None;
         self.version = 0;
+        self.replay = replay;
     }
 
     pub fn update(&mut self, mmu: &mut Mmu, monotonic_ns: u64) {
@@ -406,9 +415,26 @@ impl PvClock {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default();
+            let wall_clock_ns = self
+                .replay
+                .as_ref()
+                .map(|replay| {
+                    replay
+                        .borrow_mut()
+                        .instruction_input(
+                            0,
+                            0x5056_434C_4F43_4B54,
+                            8,
+                            now.as_nanos().min(u64::MAX as u128) as u64,
+                        )
+                        .unwrap_or(now.as_nanos().min(u64::MAX as u128) as u64)
+                })
+                .unwrap_or(now.as_nanos().min(u64::MAX as u128) as u64);
+            let seconds = wall_clock_ns / 1_000_000_000;
+            let nanos = (wall_clock_ns % 1_000_000_000) as u32;
             let mut wall_clock = [0u8; 12];
-            wall_clock[4..8].copy_from_slice(&(now.as_secs() as u32).to_le_bytes());
-            wall_clock[8..12].copy_from_slice(&now.subsec_nanos().to_le_bytes());
+            wall_clock[4..8].copy_from_slice(&(seconds as u32).to_le_bytes());
+            wall_clock[8..12].copy_from_slice(&nanos.to_le_bytes());
             let _ = mmu.write_phys(page, &wall_clock);
         }
     }

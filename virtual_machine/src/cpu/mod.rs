@@ -838,6 +838,7 @@ pub enum CpuError {
     /// guest. The caller must stop or report the VM error.
     UnsupportedInstruction,
     MemoryAccessError,
+    ReplayDivergence,
     AlignmentCheck,
     DoubleFault,
     DivideError,
