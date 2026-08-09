@@ -5,6 +5,21 @@ This document defines the minimum test evidence for every feature in
 [`test-inventory.toml`](test-inventory.toml), and the enforceable 59.13
 definition is [`test-coverage.toml`](test-coverage.toml).
 
+The review baseline records the workspace member list and roadmap heading and
+checkbox structure in [`review-baseline.toml`](review-baseline.toml). Check it
+locally with:
+
+```sh
+python3 scripts/validate-review-baseline.py
+```
+
+When adding or removing a workspace member or changing roadmap structure,
+refresh the committed baseline with:
+
+```sh
+python3 scripts/validate-review-baseline.py --update
+```
+
 ## Contract
 
 Every feature change adds or updates its inventory entry in the same change.

@@ -14,7 +14,7 @@ evidence.
 - [x] Inspect the workspace layout, test inventory, coverage rules, kernel
       boundaries, runtime services, storage, networking, and VM integration
       surfaces.
-- [ ] Keep this review baseline current when the workspace or roadmap schema
+- [x] Keep this review baseline current when the workspace or roadmap schema
       changes.
 
 ## P0: Make roadmap status truthful
