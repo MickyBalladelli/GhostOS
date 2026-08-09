@@ -1163,4 +1163,26 @@ Every new SynOS feature must land with tests in the same change. A feature is no
 - [x] The test suite is deterministic, isolated, bounded, and runnable by a new developer from the documented commands.
 
 
-### 60.0 True VT100 emulator
+### 60.0 Bounded VT100/VT420/DECterm terminal model
+
+This feature owns the heap-free terminal state machine used by remote shell and
+browser clients. It is a fixed-size cell model, not host terminal control or a
+full hardware terminal emulator.
+
+- [x] **UTF-8 and control-byte decoding**
+  - [x] Decode printable UTF-8 glyphs, replacement characters for malformed
+        sequences, control bytes, escape sequences, CSI parameters, and OSC
+        termination without allocation.
+- [x] **Cursor, screen, and style semantics**
+  - [x] Implement bounded cursor movement, save/restore, wrapping, tabs,
+        scrolling regions, insert/delete/erase operations, reset, SGR colors
+        and attributes, and DEC private modes.
+- [x] **Incremental rendering contract**
+  - [x] Expose fixed cell rows, cursor state, terminal modes, and dirty-row
+        tracking for WebGPU upload; reject zero-sized or oversized grids.
+- [x] **Transport-independent integration**
+  - [x] Keep terminal parsing independent from SSH, serial, and browser
+        transport so the same byte stream drives every client.
+- [ ] **Conformance corpus and compatibility policy**
+  - [ ] Add deterministic VT100/VT420/DECterm transcript fixtures for every
+        supported sequence and document behavior for unsupported sequences.

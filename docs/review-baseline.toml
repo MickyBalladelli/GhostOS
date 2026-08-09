@@ -28,9 +28,9 @@ checkbox_count = 25
 
 [[roadmap]]
 path = "TODO.md"
-heading_digest = "04cf5c2bfeb631cc0711f040c62e71a30797bbabacd0c29453418175cb1615c2"
+heading_digest = "c6dd6dcecb79466d813e93f189d823a9de040deaa043945e53a20cffbff69320"
 heading_count = 76
-checkbox_count = 302
+checkbox_count = 307
 
 [[roadmap]]
 path = "virtual_machine/TODO-improvements.md"

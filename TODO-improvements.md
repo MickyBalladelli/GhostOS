@@ -21,7 +21,7 @@ evidence.
 
 - [x] Merge the duplicate root sections 37, 38, and 39 while
       preserving their links and inventory mappings.
-- [ ] Replace the empty `60.0 True VT100 emulator` heading with a real scoped
+- [x] Replace the empty `60.0 True VT100 emulator` heading with a real scoped
       feature, or move it to a dedicated terminal roadmap.
 - [ ] Add a roadmap validator that rejects duplicate IDs, empty feature
       bodies, stale links, and TODO headings missing from the inventory.
