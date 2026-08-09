@@ -141,7 +141,7 @@ remaining proof, portability, safety, and fidelity work.
 - [x] No malformed guest bytes or external command input can panic the VM.
 - [x] A snapshot restores the same guest-visible state, or clearly reports why
       excluded host state must be rebuilt.
-- [ ] A migration stream is bounded, authenticated, replay-safe, and atomic at
+- [x] A migration stream is bounded, authenticated, replay-safe, and atomic at
       the destination.
 - [ ] A crashed VM cannot leave a live disk lock or modified host terminal.
 - [ ] Fast, QEMU, fuzz, and soak evidence is separated and each result says

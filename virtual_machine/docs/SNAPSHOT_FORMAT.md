@@ -51,8 +51,10 @@ Migration reads and writes have a ten-second timeout. The receiver rejects
 payloads above its 8 GiB pre-allocation migration cap, rejects checkpoints older than
 24 hours or more than five minutes in the future, and records accepted
 checkpoint identities in `.synos-vm-migration-replay` beside the destination.
-The bounded ledger is locked across processes and synced before publication;
-it rejects duplicate deliveries during the freshness window.
+The sender also bounds and regular-file-checks the source before reading it.
+The bounded ledger is private, locked across processes, and synced before
+publication; it rejects duplicate deliveries during the freshness window and
+rolls back a reservation when publication fails.
 Received checkpoints are written to a unique temporary file in the destination
 directory, synced, atomically published, and followed by a directory sync.
 The published file is reopened and authenticated before the receive succeeds;

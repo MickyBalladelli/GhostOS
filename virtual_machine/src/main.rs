@@ -1035,8 +1035,7 @@ fn run_migrate_operation(command: MigrateCommand) -> Result<(), String> {
             let key = SnapshotAuthKey::from_file(&security.key)
                 .map_err(|error| format!("cannot load migration authentication key: {error}"))?;
             authorize_migration_key(key, security.authorized_peer_key_id)?;
-            let bytes = std::fs::read(&snapshot)
-                .map_err(|error| format!("cannot read snapshot {}: {error}", snapshot.display()))?;
+            let bytes = read_bounded_migration_file(&snapshot)?;
             let snapshot_value = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
                 .map_err(|error| format!("cannot validate authenticated snapshot {}: {error}", snapshot.display()))?;
             let issued_at = checkpoint_timestamp(&snapshot)?;
@@ -1169,11 +1168,50 @@ fn run_migrate_operation(command: MigrateCommand) -> Result<(), String> {
                 frame.checkpoint_id,
                 frame.issued_at,
             )?;
-            publish_received_checkpoint(&snapshot, &frame.bytes, key, &frame.snapshot)?;
+            let ledger = replay_ledger_path(&snapshot);
+            if let Err(error) = publish_received_checkpoint(&snapshot, &frame.bytes, key, &frame.snapshot) {
+                if let Err(release_error) = release_replay(
+                    &ledger,
+                    key.key_id(),
+                    frame.checkpoint_id,
+                ) {
+                    return Err(format!(
+                        "{error}; cannot release migration replay reservation: {release_error}"
+                    ));
+                }
+                return Err(error)
+            }
             println!("received VM checkpoint from {peer} at {}", snapshot.display());
             Ok(())
         }
     }
+}
+
+fn read_bounded_migration_file(path: &Path) -> Result<Vec<u8>, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("cannot inspect snapshot {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("migration snapshot {} is not a regular file", path.display()))
+    }
+    if metadata.len() == 0 || metadata.len() > MAX_MIGRATION_ALLOCATION_BYTES {
+        return Err(format!(
+            "migration snapshot is too large: {} bytes",
+            metadata.len()
+        ))
+    }
+    let file = File::open(path)
+        .map_err(|error| format!("cannot read snapshot {}: {error}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_MIGRATION_ALLOCATION_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read snapshot {}: {error}", path.display()))?;
+    if bytes.len() as u64 > MAX_MIGRATION_ALLOCATION_BYTES {
+        return Err("migration snapshot grew beyond its byte limit".to_string())
+    }
+    if bytes.len() as u64 != metadata.len() {
+        return Err("migration snapshot changed while it was being read".to_string())
+    }
+    Ok(bytes)
 }
 
 fn read_migration_checkpoint<R, F>(
@@ -1269,10 +1307,13 @@ fn create_migration_temp(parent: &Path, target: &Path) -> Result<(PathBuf, File)
             ".{name}.synos-migration-{}-{attempt}.partial",
             std::process::id()
         ));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&partial)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        match options.open(&partial)
         {
             Ok(file) => return Ok((partial, file)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -1528,6 +1569,16 @@ fn reserve_replay(
     let mut ledger_file = options
         .open(ledger)
         .map_err(|error| format!("cannot open migration replay ledger: {error}"))?;
+    let metadata = ledger_file
+        .metadata()
+        .map_err(|error| format!("cannot inspect migration replay ledger: {error}"))?;
+    if !metadata.is_file() {
+        return Err("migration replay ledger must be a regular file".to_string())
+    }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err("migration replay ledger must not be accessible by group or other users".to_string())
+    }
     #[cfg(unix)]
     if unsafe { libc::flock(ledger_file.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(format!(
@@ -1576,6 +1627,55 @@ fn reserve_replay(
         .and_then(|_| ledger_file.write_all(&next))
         .and_then(|_| ledger_file.sync_all())
         .map_err(|error| format!("cannot update migration replay ledger: {error}"))
+}
+
+fn release_replay(
+    ledger: &Path,
+    key_id: [u8; 16],
+    checkpoint_id: [u8; 32],
+) -> Result<(), String> {
+    let mut options = OpenOptions::new();
+    options.create(false).read(true).write(true);
+    #[cfg(unix)]
+    {
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut ledger_file = options
+        .open(ledger)
+        .map_err(|error| format!("cannot open migration replay ledger for rollback: {error}"))?;
+    #[cfg(unix)]
+    if unsafe { libc::flock(ledger_file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(format!(
+            "cannot lock migration replay ledger for rollback: {}",
+            std::io::Error::last_os_error()
+        ))
+    }
+    let metadata = ledger_file
+        .metadata()
+        .map_err(|error| format!("cannot inspect migration replay ledger for rollback: {error}"))?;
+    if !metadata.is_file() || metadata.len() > MAX_REPLAY_LEDGER_BYTES {
+        return Err("migration replay ledger is invalid during rollback".to_string())
+    }
+    let mut existing = Vec::new();
+    ledger_file
+        .read_to_end(&mut existing)
+        .map_err(|error| format!("cannot read migration replay ledger for rollback: {error}"))?;
+    if existing.len() % REPLAY_RECORD_BYTES != 0 {
+        return Err("migration replay ledger is corrupt during rollback".to_string())
+    }
+    let mut next = Vec::with_capacity(existing.len());
+    for record in existing.chunks_exact(REPLAY_RECORD_BYTES) {
+        if record[8..24] == key_id && record[24..] == checkpoint_id {
+            continue
+        }
+        next.extend_from_slice(record);
+    }
+    ledger_file
+        .seek(SeekFrom::Start(0))
+        .and_then(|_| ledger_file.set_len(0))
+        .and_then(|_| ledger_file.write_all(&next))
+        .and_then(|_| ledger_file.sync_all())
+        .map_err(|error| format!("cannot roll back migration replay ledger: {error}"))
 }
 
 fn migration_auth_tag(
