@@ -95,6 +95,14 @@ be promoted to the portable compiled IR form. It is not host-native machine
 code. Device boundaries, interrupts, control flow, and self-modifying code
 end a block so the VM can poll devices safely.
 
+Each block is guarded by both a guest-code version and an address-translation
+version. Writes through code aliases increment the code version. Page-table
+and permission changes increment the translation version; guest writes to the
+active page-table tree are tracked after the tree is discovered. The executor
+ends the current block when either version changes. Reset and snapshot restore
+clear the cache before execution resumes. The translation-cache proof matrix
+covers remaps, NX changes, aliases, interrupt boundaries, reset, and restore.
+
 Snapshots contain CPU, RAM, paging, interrupt, APIC, and BIOS state. Host
 translation caches and network backends are not serialized. Restore rebuilds
 the execution cache while keeping the VM device topology attached.

@@ -88,6 +88,11 @@ file = "tests/cpu_memory_execution.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
+id = "vm.execution.translation-cache-invalidation-proof-matrix"
+file = "tests/cpu_memory_execution.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
 id = "vm.cluster.deterministic-harness"
 file = "tests/cluster.rs"
 tiers = ["fast-unit", "vm-integration"]
@@ -261,6 +266,7 @@ tests = [
     "vm.cpu.modes-interrupts-and-hlt",
     "vm.memory.paging-cow-mmio-and-statistics",
     "vm.execution.translation-cache-profiling-and-cleanup",
+    "vm.execution.translation-cache-invalidation-proof-matrix",
 ]
 
 [[source]]

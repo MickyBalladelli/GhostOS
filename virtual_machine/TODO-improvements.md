@@ -86,7 +86,7 @@ remaining proof, portability, safety, and fidelity work.
       terminal polling, and guest scheduling.
 - [x] Add deterministic replay of instruction inputs, interrupts, device
       completions, timers, and host-facing input.
-- [ ] Prove translation-cache invalidation for self-modifying code, page-table
+- [x] Prove translation-cache invalidation for self-modifying code, page-table
       changes, permission changes, code aliases, interrupts, reset, and
       snapshot restore.
 - [ ] Define JIT/translated execution equivalence with the interpreter and add

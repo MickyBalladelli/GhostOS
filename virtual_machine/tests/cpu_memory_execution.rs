@@ -399,3 +399,94 @@ fn execution_engine_profiles_blocks_invalidates_code_honors_limits_and_resets_cl
         .expect("execute without JIT");
     assert_eq!(engine.stats().compiled_blocks, 0);
 }
+
+#[test]
+fn translation_cache_invalidation_proof_matrix() {
+    let mut mmu = Mmu::new(8 * 1024 * 1024);
+    let alternate = 0x2000;
+    let alias = 0x3000;
+    mmu.write_phys(CODE, &[0x90]).expect("initial code");
+    mmu.write_phys(alternate, &[0xF4]).expect("alternate code");
+    let executable = PageFlags::PRESENT | PageFlags::WRITABLE;
+    mmu.map_page(CODE, CODE, executable).expect("map initial code");
+    mmu.set_paging(true, mmu.cr3());
+
+    let mut cpu = Cpu::new();
+    cpu.set_rip(CODE);
+    let mut intc = InterruptController::new();
+    let mut ports = PortBus::new();
+    let mut bios = BiosContext::new();
+    let mut engine = ExecutionEngine::with_config(ExecutionEngineConfig {
+        max_block_instructions: 4,
+        hot_threshold: 100,
+        cache_capacity: 8,
+        enable_jit: true,
+        enable_profiling: false,
+    });
+
+    engine
+        .execute(&mut cpu, &mut mmu, &mut intc, &mut ports, &mut bios, 1)
+        .expect("execute initial mapping");
+    let misses_before_remap = engine.stats().cache_misses;
+
+    mmu.write_phys(alternate, &[0xF4]).expect("write remapped code");
+    mmu.map_page(alternate, alternate, executable).expect("map alternate page");
+    mmu.map_page(CODE, alternate, executable).expect("remap code page");
+    cpu.state.halted = false;
+    cpu.set_rip(CODE);
+    engine
+        .execute(&mut cpu, &mut mmu, &mut intc, &mut ports, &mut bios, 1)
+        .expect("execute remapped code");
+    assert!(cpu.state.halted);
+    assert!(engine.stats().cache_misses > misses_before_remap);
+
+    mmu.map_page(CODE, CODE, executable | PageFlags::NX)
+        .expect("make code non-executable");
+    cpu.state.halted = false;
+    cpu.set_rip(CODE);
+    let misses_before_permission = engine.stats().cache_misses;
+    assert!(engine
+        .execute(&mut cpu, &mut mmu, &mut intc, &mut ports, &mut bios, 1)
+        .is_err());
+    assert!(engine.stats().cache_misses > misses_before_permission);
+
+    mmu.map_page(CODE, CODE, executable)
+        .expect("restore executable permission");
+    mmu.map_page(alias, CODE, executable)
+        .expect("map code alias");
+    cpu.state.halted = false;
+    cpu.set_rip(CODE);
+    mmu.write_phys(CODE, &[0x90]).expect("restore aliased code");
+    engine
+        .execute(&mut cpu, &mut mmu, &mut intc, &mut ports, &mut bios, 1)
+        .expect("execute code before alias write");
+    let misses_before_alias_write = engine.stats().cache_misses;
+    mmu.write_byte(alias, 0xF4).expect("write through code alias");
+    cpu.state.halted = false;
+    cpu.set_rip(CODE);
+    engine
+        .execute(&mut cpu, &mut mmu, &mut intc, &mut ports, &mut bios, 1)
+        .expect("execute aliased self-modification");
+    assert!(cpu.state.halted);
+    assert!(engine.stats().cache_misses > misses_before_alias_write);
+
+    mmu.set_paging(false, 0);
+    mmu.write_phys(CODE, &[0xCD, 0x20]).expect("interrupt instruction");
+    mmu.write_phys(0x6000, &[0xF4]).expect("interrupt handler");
+    install_gate(&mut mmu, &mut intc, 0x20, 0x6000);
+    cpu.set_idtr(0x2000, 0x0FFF, &mut intc);
+    cpu.state.rsp = 0x9000;
+    cpu.state.halted = false;
+    cpu.set_rip(CODE);
+    assert_eq!(
+        engine
+            .execute(&mut cpu, &mut mmu, &mut intc, &mut ports, &mut bios, 4)
+            .expect("execute interrupt boundary"),
+        1
+    );
+    assert_eq!(cpu.rip(), 0x6000);
+
+    engine.reset();
+    assert_eq!(engine.cache_len(), 0);
+    assert_eq!(engine.stats().instructions, 0);
+}

@@ -1653,4 +1653,44 @@ mod tests {
             Err(SnapshotError::AuthenticationRequired)
         ));
     }
+
+    #[test]
+    fn snapshot_restore_clears_translated_blocks_before_resume() {
+        let mut vm = Vm::with_config(crate::VmConfig {
+            memory_size: 4 * 1024 * 1024,
+            ..crate::VmConfig::default()
+        });
+        vm.mmu.write_phys(0x1000, &[0x90, 0xF4]).expect("snapshot code");
+        vm.cpu.set_rip(0x1000);
+        let snapshot = VmSnapshot::capture(&vm);
+
+        vm.execution
+            .execute(
+                &mut vm.cpu,
+                &mut vm.mmu,
+                &mut vm.interrupt_controller,
+                &mut vm.ports,
+                &mut vm.bios.context,
+                1,
+            )
+            .expect("populate translation cache");
+        assert!(vm.execution.cache_len() > 0);
+
+        vm.mmu.write_phys(0x1000, &[0xF4]).expect("mutate guest code");
+        snapshot.restore_into(&mut vm).expect("restore snapshot");
+        assert_eq!(vm.cpu.rip(), 0x1000);
+        assert_eq!(vm.execution.cache_len(), 0);
+
+        vm.execution
+            .execute(
+                &mut vm.cpu,
+                &mut vm.mmu,
+                &mut vm.interrupt_controller,
+                &mut vm.ports,
+                &mut vm.bios.context,
+                1,
+            )
+            .expect("resume from restored code");
+        assert!(!vm.cpu.state.halted);
+    }
 }

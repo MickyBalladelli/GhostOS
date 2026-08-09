@@ -306,6 +306,43 @@ fn walk_page_table(mem: &[u8], cr3: u64, virt: u64) -> Option<(u64, PageFlags)> 
     ))
 }
 
+/// Return every guest-physical page currently used by the active page-table
+/// tree. Guest writes to one of these pages can change the meaning or
+/// permissions of a translated virtual address.
+fn collect_page_table_pages(mem: &[u8], cr3: u64) -> HashSet<u64> {
+    fn visit(mem: &[u8], page: u64, level: u8, pages: &mut HashSet<u64>) {
+        let page = page & !(PAGE_SIZE as u64 - 1);
+        if (page as usize) >= mem.len() || !pages.insert(page) {
+            return
+        }
+        if level == 1 {
+            return
+        }
+        let start = page as usize;
+        for index in 0..512usize {
+            let offset = index * 8;
+            let Some(end) = start.checked_add(offset + 8) else {
+                return
+            };
+            if end > mem.len() {
+                return
+            }
+            let raw = u64::from_le_bytes(mem[start + offset..end].try_into().unwrap());
+            let entry = Pte { raw };
+            if !entry.present() || (level <= 3 && entry.large()) {
+                continue
+            }
+            visit(mem, entry.phys(), level - 1, pages);
+        }
+    }
+
+    let mut pages = HashSet::new();
+    if cr3 != 0 {
+        visit(mem, cr3, 4, &mut pages);
+    }
+    pages
+}
+
 /// Central MMU: physical RAM, frame allocation, page tables, MMIO routing,
 /// and permission checks.
 pub struct Mmu {
@@ -316,6 +353,11 @@ pub struct Mmu {
     /// translated guest code.
     code_version: u64,
     translated_code_pages: HashSet<u64>,
+    /// Monotonically increasing version for changes to address translation or
+    /// access permissions. This is separate from code bytes because a page
+    /// can keep the same bytes while its virtual mapping changes.
+    translation_version: u64,
+    page_table_pages: HashSet<u64>,
     // Identity/physical mappings the CPU sets up for bootstrap. Key: physical
     // frame address, value: PageFlags.
     identity: HashMap<u64, PageFlags>,
@@ -372,6 +414,8 @@ impl Mmu {
             mmio: Vec::new(),
             code_version: 0,
             translated_code_pages: HashSet::new(),
+            translation_version: 0,
+            page_table_pages: HashSet::new(),
             identity: HashMap::new(),
             cow_pages: HashMap::new(),
             mapped_frames: HashMap::new(),
@@ -488,12 +532,27 @@ impl Mmu {
         self.paging_enabled = state.paging_enabled;
         self.cr3 = state.cr3;
         self.privilege = state.privilege;
+        self.translation_version = self.translation_version.wrapping_add(1);
+        self.page_table_pages = collect_page_table_pages(&self.ram, self.cr3);
         Ok(())
     }
 
     /// Version of guest RAM used by the CPU translation cache.
     pub fn code_version(&self) -> u64 {
         self.code_version
+    }
+
+    /// Version of the address-translation and permission state used by the
+    /// CPU translation cache.
+    pub fn translation_version(&self) -> u64 {
+        self.translation_version
+    }
+
+    /// Refresh the set of guest pages that form the active page-table tree.
+    /// The execution engine calls this at dispatch boundaries so direct guest
+    /// edits to newly linked tables are tracked on the next block.
+    pub(crate) fn refresh_page_table_pages(&mut self) {
+        self.page_table_pages = collect_page_table_pages(&self.ram, self.cr3);
     }
 
     pub(crate) fn mark_code_range(&mut self, virt: u64, len: usize) {
@@ -526,15 +585,21 @@ impl Mmu {
         };
         let mut page = phys & !(PAGE_SIZE as u64 - 1);
         let last_page = end & !(PAGE_SIZE as u64 - 1);
+        let mut page_table_changed = false;
         loop {
+            if self.page_table_pages.contains(&page) {
+                page_table_changed = true;
+            }
             if self.translated_code_pages.contains(&page) {
                 self.code_version = self.code_version.wrapping_add(1);
-                break
             }
             if page == last_page {
                 break
             }
             page = page.saturating_add(PAGE_SIZE as u64);
+        }
+        if page_table_changed {
+            self.translation_version = self.translation_version.wrapping_add(1);
         }
     }
 
@@ -628,8 +693,12 @@ impl Mmu {
     }
 
     pub fn set_paging(&mut self, enabled: bool, cr3: u64) {
+        if self.paging_enabled != enabled || self.cr3 != cr3 {
+            self.translation_version = self.translation_version.wrapping_add(1);
+        }
         self.paging_enabled = enabled;
         self.cr3 = cr3;
+        self.refresh_page_table_pages();
     }
 
     pub fn paging_enabled(&self) -> bool {
@@ -641,6 +710,9 @@ impl Mmu {
     }
 
     pub fn set_privilege(&mut self, user: bool) {
+        if self.privilege != user {
+            self.translation_version = self.translation_version.wrapping_add(1);
+        }
         self.privilege = user;
     }
 
@@ -737,6 +809,9 @@ impl Mmu {
             return Err(MemoryError::InvalidAddress);
         }
         self.ram[start..end].copy_from_slice(&pte.raw.to_le_bytes());
+        self.page_table_pages
+            .insert(addr & !(PAGE_SIZE as u64 - 1));
+        self.translation_version = self.translation_version.wrapping_add(1);
         Ok(())
     }
 
@@ -1221,6 +1296,7 @@ impl Mmu {
         size: u64,
         flags: PageFlags,
     ) -> Result<(), MemoryError> {
+        self.translation_version = self.translation_version.wrapping_add(1);
         let page = PAGE_SIZE as u64;
         let mut addr = start & !(page - 1);
         let end = start.saturating_add(size);
@@ -1232,6 +1308,9 @@ impl Mmu {
     }
 
     pub fn clear_identity_map(&mut self) {
+        if !self.identity.is_empty() {
+            self.translation_version = self.translation_version.wrapping_add(1);
+        }
         self.identity.clear();
     }
 
@@ -1570,10 +1649,12 @@ impl Mmu {
     }
 
     pub fn reset(&mut self) {
+        self.translation_version = self.translation_version.wrapping_add(1);
         self.allocator.reset();
         self.ram.fill(0);
         self.code_version = 0;
         self.translated_code_pages.clear();
+        self.page_table_pages.clear();
         self.identity.clear();
         self.cow_pages.clear();
         self.mapped_frames.clear();

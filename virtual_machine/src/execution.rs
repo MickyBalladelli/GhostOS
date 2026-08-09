@@ -110,6 +110,7 @@ pub struct ExecutionEngine {
     instruction_counts: HashMap<u64, u64>,
     stats: ExecutionStats,
     observed_code_version: u64,
+    observed_translation_version: u64,
     profile_hook: Option<Box<dyn FnMut(&ExecutionStats)>>,
 }
 
@@ -127,6 +128,7 @@ impl ExecutionEngine {
             instruction_counts: HashMap::new(),
             stats: ExecutionStats::default(),
             observed_code_version: 0,
+            observed_translation_version: 0,
             profile_hook: None,
         }
     }
@@ -175,6 +177,7 @@ impl ExecutionEngine {
         self.instruction_counts.clear();
         self.stats = ExecutionStats::default();
         self.observed_code_version = 0;
+        self.observed_translation_version = 0;
     }
 
     pub fn clear_cache(&mut self) {
@@ -199,7 +202,9 @@ impl ExecutionEngine {
             return Ok(0);
         }
 
+        mmu.refresh_page_table_pages();
         let code_changed = self.invalidate_if_guest_code_changed(mmu);
+        let translation_changed = self.invalidate_if_guest_translation_changed(mmu);
 
         let key = BlockKey {
             rip: cpu.state.rip,
@@ -207,10 +212,11 @@ impl ExecutionEngine {
             privilege: cpu.state.privilege,
             cr3: cpu.state.cr3,
         };
-        let block = self.get_block(key, cpu, mmu, code_changed)?;
+        let block = self.get_block(key, cpu, mmu, code_changed || translation_changed)?;
         let block_len = block.instructions.len().min(max_instructions);
         let mut executed = 0usize;
         let initial_code_version = mmu.code_version();
+        let initial_translation_version = mmu.translation_version();
 
         for instruction in block.instructions.iter().take(block_len) {
             if cpu.state.halted || cpu.state.rip != instruction.ip {
@@ -219,6 +225,9 @@ impl ExecutionEngine {
             if mmu.code_version() != initial_code_version
                 && !block.instruction_source_is_valid(instruction, mmu)
             {
+                break;
+            }
+            if mmu.translation_version() != initial_translation_version {
                 break;
             }
 
@@ -253,6 +262,16 @@ impl ExecutionEngine {
         let version = mmu.code_version();
         if version != self.observed_code_version {
             self.observed_code_version = version;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn invalidate_if_guest_translation_changed(&mut self, mmu: &Mmu) -> bool {
+        let version = mmu.translation_version();
+        if version != self.observed_translation_version {
+            self.observed_translation_version = version;
             true
         } else {
             false
