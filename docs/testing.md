@@ -114,6 +114,20 @@ python3 scripts/generate-vm-inventory.py
 
 CI runs the same command with `--check` and rejects stale or unnamed entries.
 
+VM inventory IDs are backed by executed records at
+`build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. Every record
+contains the exact command, Git revision, host OS/release/architecture,
+firmware mode, guest CPU count, SHA-256 image digest (or `not-applicable` for
+host-model tests), and one of `passed`, `failed`, or `skipped`. Validate a run
+with:
+
+```sh
+python3 scripts/validate-vm-evidence.py build/test-evidence/<run-id> \
+  --require-tier fast-unit \
+  --require-tier vm-integration \
+  --require-tier cli
+```
+
 For one evidence-producing deterministic run, use:
 
 ```sh

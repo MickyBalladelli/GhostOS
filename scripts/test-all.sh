@@ -50,6 +50,7 @@ run_tier() {
     local output_dir="$evidence_dir/$tier"
     local command="$*"
     local started_at
+    local ended_at
     mkdir -p "$output_dir"
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -58,13 +59,27 @@ run_tier() {
     "$@" > >(tee "$output_dir/stdout.log") 2> >(tee "$output_dir/stderr.log" >&2)
     local status=$?
     set -e
-    write_metadata "$tier" "$command" "$output_dir" "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    ended_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    write_metadata "$tier" "$command" "$output_dir" "$started_at" "$ended_at"
     if [[ $status -eq 0 ]]; then
         printf '{"state":"pass","tier":"%s"}\n' "$tier" > "$output_dir/result.json"
     else
         printf '{"state":"fail","tier":"%s","exit_code":%d}\n' "$tier" "$status" > "$output_dir/result.json"
-        return "$status"
     fi
+    if [[ "$tier" == vm ]]; then
+        for inventory_tier in fast-unit vm-integration cli; do
+            python3 "$root_dir/scripts/record-vm-evidence.py" \
+                --evidence-dir "$evidence_dir" \
+                --tier "$inventory_tier" \
+                --command "$command" \
+                --firmware "bios,uefi,multiboot" \
+                --cpu-count "${SYNOS_VM_CPUS:-2}" \
+                --result-file "$output_dir/result.json" \
+                --started-at "$started_at" \
+                --ended-at "$ended_at"
+        done
+    fi
+    [[ $status -eq 0 ]] || return "$status"
 }
 
 run_tier host-unit cargo test
@@ -76,6 +91,11 @@ run_tier vm-quality python3 "$root_dir/scripts/validate-vm-quality.py"
 benchmark_revision=$(git rev-parse HEAD 2>/dev/null || printf unknown)
 run_tier performance env SYNOS_BENCH_REVISION="$benchmark_revision" cargo bench -p synos-vm --bench bounded
 run_tier recovery cargo test --workspace --all-targets
+
+python3 "$root_dir/scripts/validate-vm-evidence.py" "$evidence_dir" \
+    --require-tier fast-unit \
+    --require-tier vm-integration \
+    --require-tier cli
 
 printf '%s\n' "$(git rev-parse HEAD 2>/dev/null || printf unknown)" > "$evidence_dir/revision.txt"
 printf '%s\n' "$evidence_dir" > "$evidence_dir/run-path.txt"

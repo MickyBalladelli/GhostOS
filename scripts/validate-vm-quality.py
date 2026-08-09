@@ -164,6 +164,12 @@ def validate_commands(errors: list[str]) -> None:
         path = check_file(errors, script)
         if path and "set -Eeuo pipefail" not in path.read_text():
             fail(errors, f"{script} is not strict-mode")
+    for script in ("scripts/record-vm-evidence.py", "scripts/validate-vm-evidence.py"):
+        check_file(errors, script)
+    test_runner = (ROOT / "scripts/test-all.sh").read_text()
+    for field in ("--command", "--firmware", "--cpu-count", "--result-file"):
+        if field not in test_runner:
+            fail(errors, f"VM runner does not record {field}")
     mutation = (ROOT / "scripts/mutation.sh").read_text()
     if "synos-vm" not in mutation or "cargo mutants" not in mutation:
         fail(errors, "VM mutation testing is not wired")
@@ -181,7 +187,11 @@ def validate_ci(errors: list[str]) -> None:
         fail(errors, "no GitHub workflow provides VM CI")
         return
     text = "\n".join(path.read_text() for path in workflows)
-    for required in ("python3 scripts/generate-vm-inventory.py --check", "python3 scripts/validate-vm-quality.py"):
+    for required in (
+        "python3 scripts/generate-vm-inventory.py --check",
+        "python3 scripts/validate-vm-evidence.py --schema-only",
+        "python3 scripts/validate-vm-quality.py",
+    ):
         if required not in text:
             fail(errors, f"CI is missing {required}")
 

@@ -81,7 +81,7 @@ The dashboard summarizes pass, fail, and skip state. The release gate rejects un
 
 Every feature needs direct behavior, boundary/error, integration, and end-to-end evidence when it crosses a process, device, boot, persistence, or cluster boundary. Persistent and distributed features need restart, corruption, timeout, duplicate, and partial-failure cases.
 
-The VM inventory uses stable IDs for source modules, public APIs, devices, boot paths, and test files. `scripts/validate-vm-quality.py` checks that every VM source module and public API has a named test.
+The VM inventory uses stable IDs for source modules, public APIs, devices, boot paths, and test files. Each ID resolves to an executed evidence record containing its command, revision, host, firmware, CPU count, image digest, and result state. `scripts/validate-vm-quality.py` checks that every VM source module and public API has a named test.
 
 ## Fuzzing
 
@@ -118,4 +118,3 @@ When fixing a bug:
 ```text
 reproduce -> add deterministic regression -> fix -> preserve evidence
 ```
-

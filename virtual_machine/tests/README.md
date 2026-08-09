@@ -12,6 +12,11 @@ The generator preserves assignments for existing symbols. New public API and
 device entries have an empty `tests` list; add a stable test ID to that list
 before committing.
 
+The IDs point to executed records under
+`build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. `test-all.sh`
+records deterministic VM evidence. `full-validation.sh` also records QEMU
+evidence, including the boot-image SHA-256 digest.
+
 - `foundation_59_1.rs`: fast deterministic fixtures, fake devices, faults,
   cleanup, and golden-file checks.
 - `matrix_59_11.rs`: deterministic VM integration matrix.

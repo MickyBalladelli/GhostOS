@@ -113,7 +113,7 @@ remaining proof, portability, safety, and fidelity work.
 
 - [x] Generate VM inventory entries from source modules and public APIs, then
       fail CI when a new device or API has no named test.
-- [ ] Replace static test names with executed evidence containing command,
+- [x] Replace static test names with executed evidence containing command,
       revision, host, firmware, CPU count, image digest, and result state.
 - [ ] Add decoder, device, disk-image, snapshot, terminal, and migration fuzz
       targets with retained crashing inputs and deterministic replay.

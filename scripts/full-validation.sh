@@ -91,13 +91,49 @@ run_optional() {
     fi
 }
 
+run_optional_with_vm_evidence() {
+    local runner_tier=$1
+    local inventory_tier=$2
+    local firmware=$3
+    local cpu_count=$4
+    local image=$5
+    shift 5
+    local command="$*"
+    local started_at
+    local ended_at
+    local status
+    local -a image_args=()
+    started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    if run_optional "$runner_tier" "$@"; then
+        status=0
+    else
+        status=$?
+    fi
+    ended_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    if [[ -f "$image" ]]; then
+        image_args+=(--image "$image")
+    fi
+    python3 "$root_dir/scripts/record-vm-evidence.py" \
+        --evidence-dir "$evidence_dir" \
+        --tier "$inventory_tier" \
+        --command "$command" \
+        --firmware "$firmware" \
+        --cpu-count "$cpu_count" \
+        "${image_args[@]}" \
+        --result-file "$evidence_dir/$runner_tier/result.json" \
+        --started-at "$started_at" \
+        --ended-at "$ended_at"
+    [[ $status -eq 0 ]] || return "$status"
+}
+
 if ! SYNOS_EVIDENCE_DIR="$evidence_dir" "$root_dir/scripts/test-all.sh"; then
     echo "deterministic validation failed; evidence: $evidence_dir" >&2
     exit 1
 fi
 
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
-run_optional qemu env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
+qemu_image=${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}
+run_optional_with_vm_evidence qemu qemu bios 2 "$qemu_image" env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test test_environments -- --ignored
 hardware_accel=${SYNOS_QEMU_ACCEL:-kvm}
 if [[ -z "${SYNOS_QEMU_ACCEL:-}" && "$(uname -s)" == Darwin ]]; then
     hardware_accel=hvf
@@ -111,6 +147,12 @@ run_optional soak "$root_dir/scripts/vm-soak.sh"
 run_optional reproducibility "$root_dir/scripts/check-reproducible-image.sh"
 run_optional dashboard "$root_dir/scripts/test-dashboard.py" "$evidence_dir"
 run_optional coverage-contract python3 "$root_dir/scripts/validate-test-coverage.py" "$evidence_dir"
+
+python3 "$root_dir/scripts/validate-vm-evidence.py" "$evidence_dir" \
+    --require-tier fast-unit \
+    --require-tier vm-integration \
+    --require-tier cli \
+    --require-tier qemu
 
 "$root_dir/scripts/release-gate.sh" "$evidence_dir"
 echo "full validation passed; evidence: $evidence_dir"

@@ -410,8 +410,19 @@ fn run_qemu_boot(vcpus: usize) -> Option<String> {
 
     wait_for_qemu(&mut child);
     let output = fs::read_to_string(&serial_path).unwrap_or_default();
+    persist_qemu_log(&format!("bios-{vcpus}cpu"), &output);
     let _ = fs::remove_file(serial_path);
     Some(output)
+}
+
+fn persist_qemu_log(label: &str, output: &str) {
+    let Some(directory) = std::env::var_os("SYNOS_QEMU_LOG_DIR") else {
+        return;
+    };
+    let directory = PathBuf::from(directory);
+    fs::create_dir_all(&directory).expect("create QEMU evidence directory");
+    fs::write(directory.join(format!("{label}.log")), output)
+        .expect("write QEMU serial evidence");
 }
 
 #[cfg(unix)]
@@ -490,7 +501,9 @@ where
     std::thread::sleep(Duration::from_millis(500));
     let _ = child.kill();
     let _ = child.wait();
-    fs::read_to_string(&serial_path).ok()
+    let output = fs::read_to_string(&serial_path).ok()?;
+    persist_qemu_log(label, &output);
+    Some(output)
 }
 
 #[cfg(unix)]

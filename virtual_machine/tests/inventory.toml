@@ -1,6 +1,12 @@
-# Stable VM test inventory. Test IDs are evidence names, not Rust symbols.
+# VM behavior inventory. Test IDs resolve to executed evidence records.
 schema = 1
 crate = "synos-vm"
+
+[evidence]
+record_schema = 1
+path = "build/test-evidence/{run-id}/{tier}/{test-id}/evidence.json"
+required_fields = ["command", "revision", "host", "firmware", "cpu_count", "image_digest", "result_state"]
+result_states = ["passed", "failed", "skipped"]
 
 [[tier]]
 name = "fast-unit"
@@ -19,7 +25,7 @@ status = "deterministic"
 
 [[tier]]
 name = "qemu"
-command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored"
+command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test test_environments -- --ignored"
 status = "opt-in"
 
 [[tier]]
