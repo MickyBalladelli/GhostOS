@@ -2209,11 +2209,14 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
 
 fn vm_error_message(error: &synos_vm::VmError, verbose: bool) -> String {
     match error {
-        synos_vm::VmError::Disk(message) if !verbose => message
-            .lines()
-            .next()
-            .unwrap_or(message)
-            .to_string(),
+        synos_vm::VmError::Disk(message) if !verbose => {
+            let summary = message.lines().next().unwrap_or(message);
+            let action = message.lines().find(|line| line.starts_with("  action:"));
+            match action {
+                Some(action) => format!("{summary}\n{}", action.trim_start()),
+                None => summary.to_string(),
+            }
+        }
         synos_vm::VmError::Disk(message) => message.clone(),
         other => format!("{other:?}"),
     }
