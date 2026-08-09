@@ -20,6 +20,12 @@ checked with:
 python3 scripts/validate-roadmaps.py
 ```
 
+The same check discovers every `TODO*.md` roadmap and compares it with the
+`roadmap_validation.paths` and `[[roadmap]]` evidence mappings in
+[`test-inventory.toml`](test-inventory.toml). A new roadmap, removed roadmap,
+duplicate mapping, empty mapping, or unknown evidence ID fails local
+validation.
+
 When adding or removing a workspace member or changing roadmap structure,
 refresh the committed baseline with:
 

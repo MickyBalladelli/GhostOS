@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate roadmap structure, local links, and the root feature inventory."""
+"""Validate roadmap structure, links, and evidence mappings."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent
 INVENTORY_PATH = ROOT / "docs" / "test-inventory.toml"
+COVERAGE_PATH = ROOT / "docs" / "test-coverage.toml"
 NUMBERED_HEADING = re.compile(
     r"^(?P<marks>#{1,6})[ \t]+(?P<id>\d+(?:\.\d+)*)(?:\.[ \t]*|[ \t]+)(?P<title>.*?)[ \t]*$"
 )
@@ -196,6 +197,110 @@ def validate_root_inventory(errors: list[str]) -> None:
         errors.append(f"docs/test-inventory.toml: feature {feature_id} has no TODO.md heading")
 
 
+def known_evidence_ids(inventory: dict[str, object], errors: list[str]) -> set[str]:
+    evidence_ids: set[str] = set()
+    for feature in inventory.get("feature", []):
+        if not isinstance(feature, dict):
+            continue
+        raw_id = str(feature.get("id", ""))
+        if re.fullmatch(r"\d+", raw_id):
+            feature_id = f"{int(raw_id):02d}"
+            evidence_ids.add(f"feature.{feature_id}")
+        for tier, values in feature.items():
+            if tier in {"id", "todo_heading", "owner"} or not isinstance(values, list):
+                continue
+            evidence_ids.update(str(value) for value in values if str(value).strip())
+
+    try:
+        coverage = tomllib.loads(COVERAGE_PATH.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        errors.append(f"cannot load {COVERAGE_PATH.relative_to(ROOT)}: {exc}")
+        return evidence_ids
+
+    for section_name in ("vm_device", "boot_path"):
+        entries = coverage.get(section_name, [])
+        if not isinstance(entries, list):
+            errors.append(f"docs/test-coverage.toml: {section_name} entries are not an array")
+            continue
+        for entry in entries:
+            if isinstance(entry, dict) and str(entry.get("test_id", "")).strip():
+                evidence_ids.add(str(entry["test_id"]))
+    return evidence_ids
+
+
+def validate_roadmap_mappings(paths: list[Path], errors: list[str]) -> None:
+    try:
+        inventory = tomllib.loads(INVENTORY_PATH.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        errors.append(f"cannot load {INVENTORY_PATH.relative_to(ROOT)}: {exc}")
+        return
+
+    config = inventory.get("roadmap_validation")
+    if not isinstance(config, dict):
+        errors.append("docs/test-inventory.toml: missing [roadmap_validation] table")
+        return
+
+    expected_paths = config.get("paths")
+    if not isinstance(expected_paths, list) or not expected_paths or not all(
+        isinstance(path, str) and path.strip() for path in expected_paths
+    ):
+        errors.append("docs/test-inventory.toml: roadmap_validation.paths must be a non-empty string array")
+        return
+
+    discovered = {path.relative_to(ROOT).as_posix() for path in paths}
+    expected = {str(path) for path in expected_paths}
+    for path in sorted(discovered - expected):
+        errors.append(f"docs/test-inventory.toml: roadmap file {path} is missing from roadmap_validation.paths")
+    for path in sorted(expected - discovered):
+        errors.append(f"docs/test-inventory.toml: roadmap_validation.paths lists missing file {path}")
+
+    mappings = inventory.get("roadmap")
+    if not isinstance(mappings, list):
+        errors.append("docs/test-inventory.toml: roadmap evidence mappings are missing")
+        return
+
+    mapping_by_path: dict[str, dict[str, object]] = {}
+    for index, mapping in enumerate(mappings, start=1):
+        if not isinstance(mapping, dict):
+            errors.append(f"docs/test-inventory.toml: roadmap mapping {index} is not a table")
+            continue
+        path = str(mapping.get("path", "")).strip()
+        if not path:
+            errors.append(f"docs/test-inventory.toml: roadmap mapping {index} has no path")
+            continue
+        if path in mapping_by_path:
+            errors.append(f"docs/test-inventory.toml: duplicate roadmap mapping for {path}")
+        else:
+            mapping_by_path[path] = mapping
+
+        if not str(mapping.get("scope", "")).strip():
+            errors.append(f"docs/test-inventory.toml: roadmap mapping {path} has no scope")
+        evidence = mapping.get("evidence_ids")
+        if not isinstance(evidence, list) or not evidence:
+            errors.append(f"docs/test-inventory.toml: roadmap {path} has no evidence mappings")
+            continue
+        if not all(isinstance(value, str) and value.strip() for value in evidence):
+            errors.append(f"docs/test-inventory.toml: roadmap {path} has an empty evidence ID")
+
+    known_ids = known_evidence_ids(inventory, errors)
+    for path in sorted(discovered):
+        mapping = mapping_by_path.get(path)
+        if mapping is None:
+            errors.append(f"docs/test-inventory.toml: roadmap {path} has no evidence mapping")
+            continue
+        evidence = mapping.get("evidence_ids", [])
+        if not isinstance(evidence, list):
+            continue
+        for evidence_id in evidence:
+            if isinstance(evidence_id, str) and evidence_id.strip() and evidence_id not in known_ids:
+                errors.append(
+                    f"docs/test-inventory.toml: roadmap {path} references unknown evidence ID {evidence_id}"
+                )
+
+    for path in sorted(set(mapping_by_path) - discovered):
+        errors.append(f"docs/test-inventory.toml: evidence mapping has no roadmap file {path}")
+
+
 def main() -> int:
     errors: list[str] = []
     paths = roadmap_paths()
@@ -203,6 +308,7 @@ def main() -> int:
         validate_numbered_headings(path, errors)
         validate_links(path, errors)
     validate_root_inventory(errors)
+    validate_roadmap_mappings(paths, errors)
 
     if errors:
         for error in errors:

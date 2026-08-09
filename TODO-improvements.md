@@ -31,7 +31,7 @@ evidence.
       before a roadmap checkbox can be marked `[x]`.
 - [x] Generate a status report showing feature, code owner, last evidence,
       skipped prerequisites, and stale evidence age.
-- [ ] Add local validation coverage for the new roadmap files and make roadmap changes fail
+- [x] Add local validation coverage for the new roadmap files and make roadmap changes fail
       when their evidence mappings are missing.
 
 ## P0: Remove unsafe boundary behavior
