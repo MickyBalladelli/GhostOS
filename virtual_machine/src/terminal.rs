@@ -10,18 +10,74 @@ mod terminal_platform;
 
 const TERMINAL_SIZE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-#[derive(Debug)]
-pub enum TerminalError {
-    Io(io::Error),
-    RawMode(String),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalOperation {
+    EnableRawMode,
+    RestoreTerminal,
+    ReadInput,
+    WriteOutput,
+    FlushOutput,
+}
+
+impl std::fmt::Display for TerminalOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EnableRawMode => f.write_str("enable raw mode"),
+            Self::RestoreTerminal => f.write_str("restore terminal settings"),
+            Self::ReadInput => f.write_str("read input"),
+            Self::WriteOutput => f.write_str("write output"),
+            Self::FlushOutput => f.write_str("flush output"),
+        }
+    }
+}
+
+/// Safe, structured description of a terminal failure.
+///
+/// It deliberately excludes the `io::Error` message and terminal byte data.
+/// Those strings can contain guest-controlled escape sequences when supplied
+/// by an embedding stream and must not reach host logs or error displays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalFailure {
+    pub operation: TerminalOperation,
+    pub error_kind: io::ErrorKind,
+    pub os_error: Option<i32>,
+}
+
+impl TerminalFailure {
+    fn from_io(operation: TerminalOperation, error: &io::Error) -> Self {
+        Self {
+            operation,
+            error_kind: error.kind(),
+            os_error: error.raw_os_error(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalError {
+    diagnostic: TerminalFailure,
+}
+
+impl TerminalError {
+    fn from_io(operation: TerminalOperation, error: io::Error) -> Self {
+        Self {
+            diagnostic: TerminalFailure::from_io(operation, &error),
+        }
+    }
+
+    pub fn diagnostic(&self) -> TerminalFailure {
+        self.diagnostic
+    }
 }
 
 impl std::fmt::Display for TerminalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "terminal I/O failed: {error}"),
-            Self::RawMode(error) => write!(f, "terminal setup failed: {error}"),
+        let diagnostic = self.diagnostic;
+        write!(f, "terminal {} failed ({:?}", diagnostic.operation, diagnostic.error_kind)?;
+        if let Some(code) = diagnostic.os_error {
+            write!(f, ", OS error {code}")?;
         }
+        f.write_str(")")
     }
 }
 
@@ -29,14 +85,25 @@ impl std::error::Error for TerminalError {}
 
 impl From<io::Error> for TerminalError {
     fn from(error: io::Error) -> Self {
-        Self::Io(error)
+        Self::from_io(TerminalOperation::ReadInput, error)
     }
 }
 
 enum InputEvent {
     Bytes(Vec<u8>),
     Eof,
-    Error(io::Error),
+    Error(TerminalFailure),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TerminalSessionDiagnostics {
+    pub polls: u64,
+    pub input_bytes: u64,
+    pub output_bytes: u64,
+    pub output_flushes: u64,
+    pub eof_events: u64,
+    pub resize_events: u64,
+    pub last_failure: Option<TerminalFailure>,
 }
 
 /// Input collected since the previous VM poll.
@@ -107,6 +174,7 @@ pub struct TerminalSession {
     has_terminal: bool,
     last_size: Cell<Option<(u16, u16)>>,
     last_size_check: Cell<Option<Instant>>,
+    diagnostics: Cell<TerminalSessionDiagnostics>,
 }
 
 impl TerminalSession {
@@ -132,6 +200,7 @@ impl TerminalSession {
             has_terminal: is_tty,
             last_size: Cell::new(None),
             last_size_check: Cell::new(None),
+            diagnostics: Cell::new(TerminalSessionDiagnostics::default()),
         })
     }
 
@@ -151,11 +220,13 @@ impl TerminalSession {
             has_terminal: false,
             last_size: Cell::new(None),
             last_size_check: Cell::new(None),
+            diagnostics: Cell::new(TerminalSessionDiagnostics::default()),
         }
     }
 
     /// Drain available host input without blocking the VM execution loop.
     pub fn poll(&self) -> Result<TerminalInput, TerminalError> {
+        self.update_diagnostics(|diagnostics| diagnostics.polls += 1);
         let mut input = TerminalInput::default();
         let mut pending = Vec::new();
 
@@ -178,6 +249,7 @@ impl TerminalSession {
                     self.transcript
                         .borrow_mut()
                         .record(TerminalTranscriptEvent::Resize(resize));
+                    self.update_diagnostics(|diagnostics| diagnostics.resize_events += 1);
                 }
             }
         }
@@ -187,19 +259,27 @@ impl TerminalSession {
                 InputEvent::Bytes(raw) => {
                     let bytes = translate_input_bytes(&raw);
                     input.bytes.extend(&bytes);
+                    self.update_diagnostics(|diagnostics| {
+                        diagnostics.input_bytes += raw.len() as u64
+                    });
                     self.transcript
                         .borrow_mut()
                         .record(TerminalTranscriptEvent::Input { raw, bytes });
                 }
                 InputEvent::Eof => {
+                    self.update_diagnostics(|diagnostics| diagnostics.eof_events += 1);
                     let bytes = vec![0x04];
                     input.bytes.extend(&bytes);
                     self.transcript
                         .borrow_mut()
                         .record(TerminalTranscriptEvent::Eof { bytes });
-                    self.raw_mode.restore()?
+                    if let Err(error) = self.raw_mode.restore() {
+                        return Err(self.record_failure(error))
+                    }
                 }
-                InputEvent::Error(error) => return Err(TerminalError::Io(error)),
+                InputEvent::Error(diagnostic) => {
+                    return Err(self.record_failure(TerminalError { diagnostic }))
+                }
             }
         }
 
@@ -210,18 +290,51 @@ impl TerminalSession {
         self.transcript.borrow().clone()
     }
 
+    pub fn diagnostics(&self) -> TerminalSessionDiagnostics {
+        self.diagnostics.get()
+    }
+
     pub fn flush_output(&self) -> Result<(), TerminalError> {
-        self.output
+        let result = self.output
             .borrow_mut()
             .flush()
-            .map_err(TerminalError::Io)
+            .map_err(|error| TerminalError::from_io(TerminalOperation::FlushOutput, error));
+        match result {
+            Ok(()) => {
+                self.update_diagnostics(|diagnostics| diagnostics.output_flushes += 1);
+                Ok(())
+            }
+            Err(error) => Err(self.record_failure(error)),
+        }
     }
 
     pub fn write_output(&self, bytes: &[u8]) -> Result<(), TerminalError> {
-        self.output
+        let result = self.output
             .borrow_mut()
             .write_all(bytes)
-            .map_err(TerminalError::Io)
+            .map_err(|error| TerminalError::from_io(TerminalOperation::WriteOutput, error));
+        match result {
+            Ok(()) => {
+                self.update_diagnostics(|diagnostics| {
+                    diagnostics.output_bytes += bytes.len() as u64
+                });
+                Ok(())
+            }
+            Err(error) => Err(self.record_failure(error)),
+        }
+    }
+
+    fn update_diagnostics(&self, update: impl FnOnce(&mut TerminalSessionDiagnostics)) {
+        let mut diagnostics = self.diagnostics.get();
+        update(&mut diagnostics);
+        self.diagnostics.set(diagnostics)
+    }
+
+    fn record_failure(&self, error: TerminalError) -> TerminalError {
+        self.update_diagnostics(|diagnostics| {
+            diagnostics.last_failure = Some(error.diagnostic())
+        });
+        error
     }
 }
 
@@ -241,7 +354,8 @@ fn spawn_input_reader(mut input: Box<dyn Read + Send>) -> Receiver<InputEvent> {
                     }
                 }
                 Err(error) => {
-                    let _ = sender.send(InputEvent::Error(error));
+                    let diagnostic = TerminalFailure::from_io(TerminalOperation::ReadInput, &error);
+                    let _ = sender.send(InputEvent::Error(diagnostic));
                     break
                 }
             }
@@ -270,7 +384,7 @@ impl RawMode {
         Ok(Self {
             mode: RefCell::new(Some(
                 terminal_platform::TerminalMode::enter().map_err(|error| {
-                    TerminalError::RawMode(format!("cannot enable raw mode: {error}"))
+                    TerminalError::from_io(TerminalOperation::EnableRawMode, error)
                 })?,
             )),
         })
@@ -286,9 +400,8 @@ impl RawMode {
         let Some(mut mode) = self.mode.borrow_mut().take() else {
             return Ok(())
         };
-        mode.restore().map_err(|error| {
-            TerminalError::RawMode(format!("cannot restore terminal settings: {error}"))
-        })
+        mode.restore()
+            .map_err(|error| TerminalError::from_io(TerminalOperation::RestoreTerminal, error))
     }
 }
 

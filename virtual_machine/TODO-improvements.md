@@ -77,7 +77,7 @@ remaining proof, portability, safety, and fidelity work.
       harness. Prove no host terminal state remains changed after every exit.
 - [x] Separate terminal policy from serial and PS/2 emulation, and expose a
       deterministic input transcript for replay.
-- [ ] Add structured terminal session diagnostics without writing guest escape
+- [x] Add structured terminal session diagnostics without writing guest escape
       bytes into host error messages.
 
 ## P1: Execution, time, and acceleration parity

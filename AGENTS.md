@@ -19,3 +19,4 @@ Then answer from that context.
 Do not touch the formatting of files you are not working on.
 If you need to edit new temp files, use the temp folder. Clean up once done.
 Do not guess, find the real root cause of an issue when you are trying to fix a bug.
+Do not use a code formatter.

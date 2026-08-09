@@ -78,8 +78,9 @@ pub use snapshot::{
     SNAPSHOT_MIN_FORMAT_VERSION,
 };
 pub use terminal::{
-    translate_input_bytes, TerminalError, TerminalExit, TerminalInput, TerminalResize,
-    TerminalSession, TerminalTranscript, TerminalTranscriptEvent,
+    translate_input_bytes, TerminalError, TerminalExit, TerminalFailure, TerminalInput,
+    TerminalOperation, TerminalResize, TerminalSession, TerminalSessionDiagnostics,
+    TerminalTranscript, TerminalTranscriptEvent,
 };
 pub use input::{ascii_to_scancodes, serial_resize_sequence, GuestInputMode};
 
@@ -898,7 +899,9 @@ impl Vm {
 
         let mut started = std::time::Instant::now();
         loop {
-            let input = terminal.poll().map_err(|_| VmError::IoError)?;
+            let input = terminal
+                .poll()
+                .map_err(|error| VmError::Terminal(error.diagnostic()))?;
             if input_mode == GuestInputMode::Serial {
                 if let Some(resize) = input.resize {
                     self.queue_serial_input(&serial_resize_sequence(resize));
@@ -1436,6 +1439,7 @@ pub enum VmError {
     MemoryError,
     BiosError,
     IoError,
+    Terminal(TerminalFailure),
     InvalidConfiguration,
     Disk(String),
     KernelLoadError,

@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use synos_vm::{
-    serial_resize_sequence, TerminalInput, TerminalResize, TerminalSession,
-    TerminalTranscriptEvent,
+    serial_resize_sequence, TerminalInput, TerminalOperation, TerminalResize,
+    TerminalSession, TerminalTranscriptEvent,
 };
 
 #[derive(Clone, Default)]
@@ -22,7 +22,7 @@ impl Read for FailingInput {
     fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
         Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            "synthetic terminal input failure",
+            "\x1b[31mguest-controlled failure\x1b[0m",
         ))
     }
 }
@@ -70,6 +70,10 @@ fn fake_terminal_input_output_are_deterministic() {
     session.flush_output().expect("flush fake terminal output");
     assert_eq!(output_state.flushes.load(Ordering::Relaxed), 1);
     assert_eq!(&*output_state.bytes.lock().unwrap(), b"guest output");
+    let diagnostics = session.diagnostics();
+    assert_eq!(diagnostics.output_bytes, 12);
+    assert_eq!(diagnostics.output_flushes, 1);
+    assert_eq!(diagnostics.last_failure, None);
 }
 
 #[test]
@@ -118,7 +122,11 @@ fn fake_terminal_input_error_is_reported() {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         if let Err(error) = session.poll() {
-            assert!(error.to_string().contains("synthetic terminal input failure"));
+            assert_eq!(error.diagnostic().operation, TerminalOperation::ReadInput);
+            assert_eq!(error.diagnostic().error_kind, io::ErrorKind::BrokenPipe);
+            assert!(!error.to_string().contains('\x1b'));
+            assert!(!error.to_string().contains("guest-controlled failure"));
+            assert_eq!(session.diagnostics().last_failure, Some(error.diagnostic()));
             break;
         }
         assert!(Instant::now() < deadline, "fake input reader did not report an error");
