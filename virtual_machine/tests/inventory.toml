@@ -5,7 +5,7 @@ crate = "synos-vm"
 [evidence]
 record_schema = 1
 path = "build/test-evidence/{run-id}/{tier}/{test-id}/evidence.json"
-required_fields = ["command", "revision", "host", "firmware", "cpu_count", "image_digest", "result_state"]
+required_fields = ["command", "revision", "host", "firmware", "cpu_count", "image_digest", "result_state", "reason"]
 result_states = ["passed", "failed", "skipped"]
 
 [[tier]]

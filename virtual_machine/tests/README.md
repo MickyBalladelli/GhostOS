@@ -13,9 +13,11 @@ device entries have an empty `tests` list; add a stable test ID to that list
 before committing.
 
 The IDs point to executed records under
-`build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. `test-all.sh`
-records deterministic VM evidence. `full-validation.sh` also records QEMU
-evidence, including the boot-image SHA-256 digest.
+`build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. Each tier also
+has a `result.json` with `passed`, `failed`, or `skipped` plus a reason.
+`test-all.sh` records fast deterministic VM evidence. `full-validation.sh`
+keeps QEMU, fuzz, and soak evidence in separate tier directories, including
+the boot-image SHA-256 digest where applicable.
 
 - `foundation_59_1.rs`: fast deterministic fixtures, fake devices, faults,
   cleanup, and golden-file checks.

@@ -1,7 +1,7 @@
 # The enforceable checklist for TODO.md section 59.13.
 #
 # This file describes evidence, not a claim that an opt-in tier was run. A
-# claim becomes a pass only when the evidence directory contains a pass result.
+# claim becomes passed only when the evidence directory contains a passed result.
 
 schema = 1
 source = "TODO.md"
@@ -15,7 +15,7 @@ negative_tier = "fault"
 persistent_scenarios = ["restart", "corruption", "timeout", "duplicate", "partial_failure"]
 vm_device_scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
 boot_evidence = ["vm_or_qemu", "serial"]
-passing_state = "pass"
+passing_state = "passed"
 
 [commands]
 deterministic = "./scripts/test-all.sh"

@@ -27,8 +27,12 @@ for path in results:
         failures.append(f"{path}: invalid JSON ({error})")
         continue
     state = result.get("state")
-    if state != "pass":
-        reason = result.get("reason") or result.get("prerequisite") or "no reason recorded"
+    reason = result.get("reason")
+    if state not in {"passed", "failed", "skipped"}:
+        failures.append(f"{path}: invalid state {state!r}")
+    elif not isinstance(reason, str) or not reason.strip():
+        failures.append(f"{path}: result has no reason")
+    elif state != "passed":
         failures.append(f"{path}: {state!r} ({reason})")
 
 if failures:
@@ -36,7 +40,7 @@ if failures:
     print("\n".join(f"- {failure}" for failure in failures))
     raise SystemExit(1)
 
-print(f"release gate passed: {len(results)} evidence results are pass")
+print(f"release gate passed: {len(results)} evidence results are passed")
 PY
 
 if rg -l "KERNEL PANIC|guest panic" "$evidence_dir" --glob '*.log' >/dev/null 2>&1; then
@@ -44,7 +48,7 @@ if rg -l "KERNEL PANIC|guest panic" "$evidence_dir" --glob '*.log' >/dev/null 2>
     exit 1
 fi
 
-if [[ -f "$evidence_dir/qemu/result.json" ]] && rg -q '"state":"pass"' "$evidence_dir/qemu/result.json"; then
+if [[ -f "$evidence_dir/qemu/result.json" ]] && rg -q '"state"[[:space:]]*:[[:space:]]*"passed"' "$evidence_dir/qemu/result.json"; then
     if ! rg -q "SynOS kernel bootstrap" "$evidence_dir/qemu" --glob '*.log'; then
         echo "release gate: clean QEMU boot marker is missing" >&2
         exit 1

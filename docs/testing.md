@@ -118,14 +118,20 @@ VM inventory IDs are backed by executed records at
 `build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. Every record
 contains the exact command, Git revision, host OS/release/architecture,
 firmware mode, guest CPU count, SHA-256 image digest (or `not-applicable` for
-host-model tests), and one of `passed`, `failed`, or `skipped`. Validate a run
+host-model tests), a non-empty reason, and one of `passed`, `failed`, or
+`skipped`. Fast deterministic evidence uses `fast-unit`, `vm-integration`, and
+`cli`; QEMU, fuzz, and soak evidence use separate `qemu`, `fuzz`, and `soak`
+directories. Validate a run
 with:
 
 ```sh
 python3 scripts/validate-vm-evidence.py build/test-evidence/<run-id> \
   --require-tier fast-unit \
   --require-tier vm-integration \
-  --require-tier cli
+  --require-tier cli \
+  --require-tier qemu \
+  --require-tier fuzz \
+  --require-tier soak
 ```
 
 For one evidence-producing deterministic run, use:
@@ -164,7 +170,7 @@ VM fuzz targets cover the decoder, device configuration/I/O boundaries,
 disk-image parsers, snapshot decoding, terminal input/replay, and authenticated
 migration frames. They run in the full-validation fuzz tier. Mutation testing
 includes `synos-vm`; coverage emits workspace and per-crate reports. Full
-validation records separate `pass`, `fail`, and `skipped` results for QEMU,
+validation records separate `passed`, `failed`, and `skipped` results for QEMU,
 cluster, hardware-accelerated, performance, fuzz, and soak tiers.
 
 ### Cluster lifecycle validation
@@ -289,14 +295,14 @@ Each run writes under:
 build/test-evidence/<run-id>/<tier>/<test-id>/
 ```
 
-The directory contains `result.json`, `metadata.json`, `stdout.log`, and
-`stderr.log`. QEMU, cluster, and hardware tests also save their serial,
-command, inventory, and failure-injection logs. `result.json` uses only these
-states: `pass`, `fail`, `skipped`, `blocked`, or `not_implemented`.
-
-`skipped` requires a reason and the missing prerequisite. `blocked` requires
-an owner and a follow-up issue. `not_implemented` is inventory debt. None of
-these states counts as `pass` in a release gate.
+The directory contains a tier `result.json`, `metadata.json`, `stdout.log`, and
+`stderr.log`. Every result uses `passed`, `failed`, or `skipped` and includes a
+reason; skipped results name the missing prerequisite. QEMU, cluster, and
+hardware tests also save their serial, command, inventory, and failure-injection
+logs. `result.json` uses only these
+states: `passed`, `failed`, or `skipped`. Every state requires a reason, and
+skipped results name the missing prerequisite. None of these states counts as
+`passed` in a release gate.
 
 `metadata.json` records the Git revision, UTC start/end times, host OS and
 architecture, Rust version, test command, environment-variable names and

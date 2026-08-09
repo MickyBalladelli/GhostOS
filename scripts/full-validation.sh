@@ -15,7 +15,7 @@ run_optional() {
     mkdir -p "$output_dir"
     local command="$*"
     if [[ -z "${SYNOS_FULL_VALIDATION:-}" && "$tier" != docs && "$tier" != reproducibility ]]; then
-        printf '{"state":"skipped","tier":"%s","reason":"full validation is opt-in","prerequisite":"SYNOS_FULL_VALIDATION=1"}\n' "$tier" > "$output_dir/result.json"
+        printf '{"schema":1,"state":"skipped","tier":"%s","reason":"full validation is opt-in","prerequisite":"SYNOS_FULL_VALIDATION=1"}\n' "$tier" > "$output_dir/result.json"
         echo "== $tier: skipped; set SYNOS_FULL_VALIDATION=1"
         return 0
     fi
@@ -26,59 +26,59 @@ run_optional() {
                 || [[ ! -f "${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]] \
                 || [[ ! -f "${SYNOS_QEMU_UEFI_IMAGE:-${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}}" ]] \
                 || [[ ! -f "${SYNOS_QEMU_UEFI_FIRMWARE:-}" ]]; then
-                printf '{"state":"skipped","tier":"%s","reason":"missing QEMU, qemu-img, BIOS image, UEFI image, or UEFI firmware","prerequisite":"qemu-system-x86_64, qemu-img, SYNOS_QEMU_IMAGE, SYNOS_QEMU_UEFI_IMAGE, and SYNOS_QEMU_UEFI_FIRMWARE"}\n' "$tier" > "$output_dir/result.json"
+                printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing QEMU, qemu-img, BIOS image, UEFI image, or UEFI firmware","prerequisite":"qemu-system-x86_64, qemu-img, SYNOS_QEMU_IMAGE, SYNOS_QEMU_UEFI_IMAGE, and SYNOS_QEMU_UEFI_FIRMWARE"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; missing QEMU, qemu-img, image, or firmware"
                 return 0
             fi
             ;;
         fuzz)
             if ! command -v cargo-fuzz >/dev/null 2>&1; then
-                printf '{"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"cargo-fuzz"}\n' "$tier" > "$output_dir/result.json"
+                printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"cargo-fuzz"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; missing cargo-fuzz"
                 return 0
             fi
             ;;
         coverage)
             if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
-                printf '{"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"cargo-llvm-cov"}\n' "$tier" > "$output_dir/result.json"
+                printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"cargo-llvm-cov"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; missing cargo-llvm-cov"
                 return 0
             fi
             ;;
         mutation)
             if ! command -v cargo-mutants >/dev/null 2>&1; then
-                printf '{"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"cargo-mutants"}\n' "$tier" > "$output_dir/result.json"
+                printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"cargo-mutants"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; missing cargo-mutants"
                 return 0
             fi
             ;;
         cluster)
             if [[ "$(uname -s)" != Linux ]]; then
-                printf '{"state":"skipped","tier":"%s","reason":"cluster QEMU requires Linux","prerequisite":"Linux with QEMU CXL and ivshmem devices"}\n' "$tier" > "$output_dir/result.json"
+                printf '{"schema":1,"state":"skipped","tier":"%s","reason":"cluster QEMU requires Linux","prerequisite":"Linux with QEMU CXL and ivshmem devices"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; cluster QEMU requires Linux"
                 return 0
             fi
             if ! command -v "${SYNOS_QEMU_BIN:-qemu-system-x86_64}" >/dev/null 2>&1 || [[ ! -f "${SYNOS_DISK_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]]; then
-                printf '{"state":"skipped","tier":"%s","reason":"missing QEMU or cluster image","prerequisite":"qemu-system-x86_64 and SYNOS_DISK_IMAGE"}\n' "$tier" > "$output_dir/result.json"
+                printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing QEMU or cluster image","prerequisite":"qemu-system-x86_64 and SYNOS_DISK_IMAGE"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; missing QEMU or cluster image"
                 return 0
             fi
             ;;
         hardware)
             if ! command -v "${SYNOS_QEMU_BIN:-qemu-system-x86_64}" >/dev/null 2>&1 || [[ ! -f "${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]]; then
-                printf '{"state":"skipped","tier":"%s","reason":"missing QEMU or boot image","prerequisite":"qemu-system-x86_64 and SYNOS_QEMU_IMAGE"}\n' "$tier" > "$output_dir/result.json"
+                printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing QEMU or boot image","prerequisite":"qemu-system-x86_64 and SYNOS_QEMU_IMAGE"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; missing QEMU or boot image"
                 return 0
             fi
             case "$(uname -s)" in
-                Linux) [[ -e /dev/kvm ]] || { printf '{"state":"skipped","tier":"%s","reason":"KVM is unavailable","prerequisite":"/dev/kvm"}\n' "$tier" > "$output_dir/result.json"; echo "== $tier: skipped; KVM is unavailable"; return 0; } ;;
+                Linux) [[ -e /dev/kvm ]] || { printf '{"schema":1,"state":"skipped","tier":"%s","reason":"KVM is unavailable","prerequisite":"/dev/kvm"}\n' "$tier" > "$output_dir/result.json"; echo "== $tier: skipped; KVM is unavailable"; return 0; } ;;
                 Darwin) : ;;
-                *) printf '{"state":"skipped","tier":"%s","reason":"no supported hardware accelerator","prerequisite":"KVM or HVF"}\n' "$tier" > "$output_dir/result.json"; echo "== $tier: skipped; no supported hardware accelerator"; return 0 ;;
+                *) printf '{"schema":1,"state":"skipped","tier":"%s","reason":"no supported hardware accelerator","prerequisite":"KVM or HVF"}\n' "$tier" > "$output_dir/result.json"; echo "== $tier: skipped; no supported hardware accelerator"; return 0 ;;
             esac
             ;;
     esac
     if ! command -v "$1" >/dev/null 2>&1; then
-        printf '{"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"%s"}\n' "$tier" "$1" > "$output_dir/result.json"
+        printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing prerequisite","prerequisite":"%s"}\n' "$tier" "$1" > "$output_dir/result.json"
         echo "== $tier: skipped; missing $1"
         return 0
     fi
@@ -88,9 +88,9 @@ run_optional() {
     local status=$?
     set -e
     if [[ $status -eq 0 ]]; then
-        printf '{"state":"pass","tier":"%s"}\n' "$tier" > "$output_dir/result.json"
+        printf '{"schema":1,"state":"passed","tier":"%s","reason":"command completed successfully"}\n' "$tier" > "$output_dir/result.json"
     else
-        printf '{"state":"fail","tier":"%s","exit_code":%d}\n' "$tier" "$status" > "$output_dir/result.json"
+        printf '{"schema":1,"state":"failed","tier":"%s","exit_code":%d,"reason":"command exited with status %d"}\n' "$tier" "$status" "$status" > "$output_dir/result.json"
         return "$status"
     fi
 }
@@ -149,10 +149,10 @@ if [[ -z "${SYNOS_QEMU_ACCEL:-}" && "$(uname -s)" == Darwin ]]; then
 fi
 run_optional hardware env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/hardware" SYNOS_QEMU_ACCEL="$hardware_accel" cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
 run_optional cluster env SYNOS_RUN_QEMU_TESTS=1 "$root_dir/scripts/qemu-cluster-validation.sh"
-run_optional fuzz "$root_dir/scripts/fuzz-smoke.sh"
+run_optional_with_vm_evidence fuzz fuzz "not-applicable" 1 "" "" "$root_dir/scripts/fuzz-smoke.sh"
 run_optional coverage "$root_dir/scripts/coverage.sh"
 run_optional mutation "$root_dir/scripts/mutation.sh"
-run_optional soak env SYNOS_VM_SOAK_REPORT="$evidence_dir/soak/report.json" "$root_dir/scripts/vm-soak.sh"
+run_optional_with_vm_evidence soak soak "not-applicable" 1 "" "" env SYNOS_VM_SOAK_REPORT="$evidence_dir/soak/report.json" "$root_dir/scripts/vm-soak.sh"
 run_optional reproducibility "$root_dir/scripts/check-reproducible-image.sh"
 run_optional dashboard "$root_dir/scripts/test-dashboard.py" "$evidence_dir"
 run_optional coverage-contract python3 "$root_dir/scripts/validate-test-coverage.py" "$evidence_dir"
@@ -161,7 +161,9 @@ python3 "$root_dir/scripts/validate-vm-evidence.py" "$evidence_dir" \
     --require-tier fast-unit \
     --require-tier vm-integration \
     --require-tier cli \
-    --require-tier qemu
+    --require-tier qemu \
+    --require-tier fuzz \
+    --require-tier soak
 
 "$root_dir/scripts/release-gate.sh" "$evidence_dir"
 echo "full validation passed; evidence: $evidence_dir"

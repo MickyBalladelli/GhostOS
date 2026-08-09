@@ -62,9 +62,9 @@ run_tier() {
     ended_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     write_metadata "$tier" "$command" "$output_dir" "$started_at" "$ended_at"
     if [[ $status -eq 0 ]]; then
-        printf '{"state":"pass","tier":"%s"}\n' "$tier" > "$output_dir/result.json"
+        printf '{"schema":1,"state":"passed","tier":"%s","reason":"command completed successfully"}\n' "$tier" > "$output_dir/result.json"
     else
-        printf '{"state":"fail","tier":"%s","exit_code":%d}\n' "$tier" "$status" > "$output_dir/result.json"
+        printf '{"schema":1,"state":"failed","tier":"%s","exit_code":%d,"reason":"command exited with status %d"}\n' "$tier" "$status" "$status" > "$output_dir/result.json"
     fi
     if [[ "$tier" == vm ]]; then
         for inventory_tier in fast-unit vm-integration cli; do

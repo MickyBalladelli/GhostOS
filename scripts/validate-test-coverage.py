@@ -282,8 +282,8 @@ def validate_evidence(evidence_dir: pathlib.Path, policy: dict, errors: list[str
             continue
         state = result.get("state")
         states[tier] = state
-        if state != policy.get("policy", {}).get("passing_state", "pass"):
-            error(errors, f"{result_path}: state is {state!r}, expected 'pass'")
+        if state != policy.get("policy", {}).get("passing_state", "passed"):
+            error(errors, f"{result_path}: state is {state!r}, expected 'passed'")
 
     qemu_logs = [
         path.read_text(errors="ignore")
@@ -297,7 +297,7 @@ def validate_evidence(evidence_dir: pathlib.Path, policy: dict, errors: list[str
 
     report = {
         "section": "59.13",
-        "state": "pass" if not errors else "fail",
+        "state": "passed" if not errors else "failed",
         "tiers": states,
         "checked": {
             "persistent_scenarios": policy.get("policy", {}).get("persistent_scenarios", []),

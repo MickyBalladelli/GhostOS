@@ -15,7 +15,13 @@ import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INVENTORY_PATH = ROOT / "virtual_machine/tests/inventory.toml"
-STATES = {"pass": "passed", "fail": "failed", "skipped": "skipped"}
+STATES = {
+    "pass": "passed",
+    "passed": "passed",
+    "fail": "failed",
+    "failed": "failed",
+    "skipped": "skipped",
+}
 
 
 def image_digest(paths: list[pathlib.Path]) -> tuple[list[dict[str, str]], str]:
@@ -55,16 +61,34 @@ def revision() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def load_result(args: argparse.Namespace) -> tuple[str, int | None, str | None]:
+def load_result(args: argparse.Namespace) -> tuple[str, int | None, str, str | None]:
     if args.result_file:
         value = json.loads(args.result_file.read_text())
-        raw_state = value.get("state")
-        if raw_state not in STATES:
+        raw_state = value.get("state", value.get("result_state"))
+        state = STATES.get(raw_state) if isinstance(raw_state, str) else None
+        if state is None:
             raise ValueError(f"unsupported result state {raw_state!r}")
-        return STATES[raw_state], value.get("exit_code"), value.get("reason")
-    if args.state not in {"passed", "failed", "skipped"}:
-        raise ValueError(f"unsupported result state {args.state!r}")
-    return args.state, args.exit_code, args.reason
+        exit_code = value.get("exit_code")
+        reason = value.get("reason")
+        prerequisite = value.get("prerequisite")
+    else:
+        state = args.state
+        if state not in {"passed", "failed", "skipped"}:
+            raise ValueError(f"unsupported result state {state!r}")
+        exit_code = args.exit_code
+        reason = args.reason
+        prerequisite = None
+
+    if not isinstance(reason, str) or not reason.strip():
+        if state == "passed":
+            reason = "command completed successfully"
+        elif state == "failed" and exit_code is not None:
+            reason = f"command exited with status {exit_code}"
+        else:
+            raise ValueError(f"{state} evidence requires a reason")
+    if state == "failed" and (not isinstance(exit_code, int) or exit_code == 0):
+        raise ValueError("failed evidence requires a non-zero integer exit code")
+    return state, exit_code, reason.strip(), prerequisite
 
 
 def main() -> int:
@@ -90,7 +114,7 @@ def main() -> int:
             parser.error(f"image does not exist: {image}")
 
     try:
-        state, exit_code, reason = load_result(args)
+        state, exit_code, reason, prerequisite = load_result(args)
         inventory = tomllib.loads(INVENTORY_PATH.read_text())
     except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
         print(f"cannot record VM evidence: {error}", file=sys.stderr)
@@ -110,6 +134,19 @@ def main() -> int:
         "architecture": platform.machine(),
     }
     commit = revision()
+    tier_output = args.evidence_dir / args.tier / "result.json"
+    tier_result = {
+        "schema": 1,
+        "tier": args.tier,
+        "state": state,
+        "reason": reason,
+    }
+    if exit_code is not None:
+        tier_result["exit_code"] = exit_code
+    if prerequisite:
+        tier_result["prerequisite"] = prerequisite
+    tier_output.parent.mkdir(parents=True, exist_ok=True)
+    tier_output.write_text(json.dumps(tier_result, indent=2, sort_keys=True) + "\n")
     for test in tests:
         record = {
             "schema": 1,

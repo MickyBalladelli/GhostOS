@@ -17,7 +17,11 @@ for path in sorted(evidence.rglob("result.json")) if evidence.exists() else []:
         continue
     results.append((path, result))
 
-counts = Counter(result.get("state", "unknown") for _, result in results)
+state_aliases = {"pass": "passed", "fail": "failed"}
+for _, result in results:
+    state = result.get("state", "unknown")
+    result["state"] = state_aliases.get(state, state)
+counts = Counter(result["state"] for _, result in results)
 dashboard = root / "build/test-dashboard.md"
 dashboard.parent.mkdir(parents=True, exist_ok=True)
 lines = [
@@ -29,8 +33,11 @@ lines = [
     "| --- | ---: |",
 ]
 lines.extend(f"| {state} | {counts[state]} |" for state in sorted(counts))
-lines += ["", "| Tier | State | Evidence |", "| --- | --- | --- |"]
+lines += ["", "| Tier | State | Reason | Evidence |", "| --- | --- | --- | --- |"]
 for path, result in results:
-    lines.append(f"| {result.get('tier', path.parent.name)} | {result.get('state')} | `{path}` |")
+    reason = str(result.get("reason", "missing reason")).replace("|", "\\|")
+    lines.append(
+        f"| {result.get('tier', path.parent.name)} | {result.get('state')} | {reason} | `{path}` |"
+    )
 dashboard.write_text("\n".join(lines) + "\n")
 print(dashboard)

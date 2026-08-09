@@ -294,7 +294,13 @@ def run_once(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", type=pathlib.Path, default=ROOT / "build/vm-soak/report.json")
+    parser.add_argument(
+        "--report",
+        type=pathlib.Path,
+        default=pathlib.Path(
+            os.environ.get("SYNOS_VM_SOAK_REPORT", ROOT / "build/vm-soak/report.json")
+        ),
+    )
     args = parser.parse_args()
     try:
         runs = positive_env("SYNOS_VM_SOAK_RUNS", 3)
@@ -350,7 +356,14 @@ def main() -> int:
                 break
     finally:
         report["ended_at"] = now()
-        report["result_state"] = "passed" if failures == 0 and len(report["runs"]) == runs else "failed"
+        final_state = "passed" if failures == 0 and len(report["runs"]) == runs else "failed"
+        report["state"] = final_state
+        report["result_state"] = final_state
+        report["reason"] = (
+            f"all {runs} soak runs completed without resource leaks"
+            if final_state == "passed"
+            else "one or more soak runs reported a resource leak or command failure"
+        )
         report["scratch"] = str(scratch)
         if failures == 0:
             shutil.rmtree(scratch, ignore_errors=True)

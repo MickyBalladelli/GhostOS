@@ -18,6 +18,31 @@ RESULT_STATES = {"passed", "failed", "skipped"}
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
+def validate_tier_result(path: pathlib.Path, expected_tier: str, errors: list[str]) -> None:
+    try:
+        result = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        errors.append(f"{path}: invalid tier result JSON ({error})")
+        return
+    if not isinstance(result, dict):
+        errors.append(f"{path}: tier result must be an object")
+        return
+    if result.get("schema") != 1:
+        errors.append(f"{path}: schema must be 1")
+    if result.get("tier") != expected_tier:
+        errors.append(f"{path}: tier is {result.get('tier')!r}, expected {expected_tier!r}")
+    state = result.get("state")
+    if state not in RESULT_STATES:
+        errors.append(f"{path}: invalid state {state!r}")
+    reason = result.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        errors.append(f"{path}: every result must contain a reason")
+    if state == "failed" and (
+        not isinstance(result.get("exit_code"), int) or result["exit_code"] == 0
+    ):
+        errors.append(f"{path}: failed result must contain a non-zero exit_code")
+
+
 def validate_record(path: pathlib.Path, expected_id: str, expected_tier: str, errors: list[str]) -> None:
     try:
         record = json.loads(path.read_text())
@@ -33,7 +58,7 @@ def validate_record(path: pathlib.Path, expected_id: str, expected_tier: str, er
     for field, value in expected.items():
         if record.get(field) != value:
             errors.append(f"{path}: {field} is {record.get(field)!r}, expected {value!r}")
-    for field in ("command", "revision", "firmware", "started_at", "ended_at"):
+    for field in ("command", "revision", "firmware", "started_at", "ended_at", "reason"):
         if not isinstance(record.get(field), str) or not record[field].strip():
             errors.append(f"{path}: missing {field}")
     host = record.get("host")
@@ -72,7 +97,9 @@ def validate_record(path: pathlib.Path, expected_id: str, expected_tier: str, er
     state = record.get("result_state")
     if state not in RESULT_STATES:
         errors.append(f"{path}: invalid result_state {state!r}")
-    if state == "failed" and record.get("exit_code") in (None, 0):
+    if state == "failed" and (
+        not isinstance(record.get("exit_code"), int) or record["exit_code"] == 0
+    ):
         errors.append(f"{path}: failed evidence must contain a non-zero exit_code")
     if state == "skipped" and not record.get("reason"):
         errors.append(f"{path}: skipped evidence must contain a reason")
@@ -97,7 +124,7 @@ def main() -> int:
     tier_names = {entry.get("name") for entry in inventory.get("tier", [])}
     tests = inventory.get("test", [])
     evidence = inventory.get("evidence", {})
-    required_fields = {"command", "revision", "host", "firmware", "cpu_count", "image_digest", "result_state"}
+    required_fields = {"command", "revision", "host", "firmware", "cpu_count", "image_digest", "result_state", "reason"}
     if set(evidence.get("required_fields", [])) != required_fields:
         errors.append("inventory evidence contract does not name every required execution field")
     if set(evidence.get("result_states", [])) != RESULT_STATES:
@@ -120,6 +147,11 @@ def main() -> int:
             if tier not in tier_names:
                 errors.append(f"required unknown tier: {tier}")
                 continue
+            tier_result = args.evidence_dir / tier / "result.json"
+            if not tier_result.is_file():
+                errors.append(f"missing tier result: {tier_result}")
+            else:
+                validate_tier_result(tier_result, tier, errors)
             for test in tests:
                 if tier not in test.get("tiers", []):
                     continue
