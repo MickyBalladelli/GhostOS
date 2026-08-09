@@ -2461,7 +2461,7 @@ mod tests {
         schema: SnapshotSchema,
         sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
         receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
-    ) -> Result<MigrationCheckpointFrame, String> {
+    ) -> Result<synos_vm::MigrationCheckpointFrame, String> {
         read_migration_checkpoint(
             &mut Cursor::new(wire),
             key,
