@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from datetime import datetime
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -311,6 +312,79 @@ def validate_evidence(evidence_dir: pathlib.Path, policy: dict, errors: list[str
     return report
 
 
+def validate_checked_feature_artifacts(
+    inventory: dict,
+    policy: dict,
+    evidence_dir: pathlib.Path,
+    errors: list[str],
+) -> None:
+    features = {
+        str(entry.get("id", "")).zfill(2): entry
+        for entry in inventory.get("feature", [])
+        if entry.get("id")
+    }
+    aliases = {
+        "boundary": policy.get("policy", {}).get("boundary_tier", "integration"),
+        "end_to_end": policy.get("policy", {}).get("end_to_end_tier", "qemu"),
+    }
+    required = policy.get("policy", {}).get(
+        "required_feature_evidence",
+        ["unit", "boundary", "integration", "end_to_end"],
+    )
+    required_fields = policy.get("policy", {}).get(
+        "evidence_required_fields",
+        ["test_id", "command", "revision", "host", "started_at", "ended_at", "reason"],
+    )
+    checked_features = {
+        feature_id
+        for feature_id, body in todo_features().items()
+        if re.search(r"^-\s*\[x\]", body, re.MULTILINE)
+    }
+
+    for feature_id in sorted(checked_features):
+        entry = features.get(feature_id)
+        if entry is None:
+            continue
+        test_ids: set[tuple[str, str]] = set()
+        for evidence_kind in required + [policy.get("policy", {}).get("negative_tier", "fault")]:
+            tier = aliases.get(evidence_kind, evidence_kind)
+            for test_id in entry.get(tier, []):
+                if isinstance(test_id, str):
+                    test_ids.add((tier, test_id))
+
+        for tier, test_id in sorted(test_ids):
+            artifact = evidence_dir / tier / test_id / "evidence.json"
+            if not artifact.is_file():
+                error(errors, f"checked feature {feature_id} lacks result artifact: {artifact}")
+                continue
+            result = read_result(artifact, errors)
+            if result is None:
+                continue
+            for field in required_fields:
+                value = result.get(field)
+                valid = (
+                    (isinstance(value, dict) and bool(value))
+                    or (isinstance(value, str) and bool(value.strip()))
+                    if field == "host"
+                    else isinstance(value, str) and bool(value.strip())
+                )
+                if not valid:
+                    error(errors, f"{artifact}: checked evidence lacks non-empty {field}")
+            for field in ("started_at", "ended_at"):
+                value = result.get(field)
+                if isinstance(value, str):
+                    try:
+                        datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    except ValueError:
+                        error(errors, f"{artifact}: {field} is not an ISO-8601 timestamp")
+            if result.get("revision") in {None, "", "unknown"}:
+                error(errors, f"{artifact}: checked evidence needs a real source revision")
+            if result.get("test_id") != test_id:
+                error(errors, f"{artifact}: evidence test_id does not match {test_id!r}")
+            if result.get("result_state") != "passed":
+                error(errors, f"{artifact}: checked feature evidence must be 'passed'")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -337,6 +411,7 @@ def main() -> int:
 
     if args.evidence_dir is not None:
         validate_evidence(args.evidence_dir, policy, errors)
+        validate_checked_feature_artifacts(inventory, policy, args.evidence_dir, errors)
 
     if errors:
         print("59.13 coverage definition failed:")

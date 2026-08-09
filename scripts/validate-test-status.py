@@ -18,6 +18,7 @@ TIERS = ("unit", "integration", "qemu", "fault", "fuzz", "performance")
 STATES = ("planned", "running", "passed", "failed", "blocked")
 EVIDENCE_STATES = {"passed", "failed", "blocked"}
 STATE_ALIASES = {"pass": "passed", "fail": "failed", "skipped": "blocked"}
+EVIDENCE_TEXT_FIELDS = ("test_id", "command", "revision", "started_at", "ended_at", "reason")
 
 
 def load_inventory(errors: list[str]) -> dict:
@@ -91,6 +92,23 @@ def read_status_record(path: Path, errors: list[str], evidence: bool) -> tuple[s
         return None
     if not isinstance(value.get("reason"), str) or not value["reason"].strip():
         errors.append(f"{path}: status requires a non-empty reason")
+    if evidence:
+        for field in EVIDENCE_TEXT_FIELDS:
+            field_value = value.get(field)
+            if not isinstance(field_value, str) or not field_value.strip():
+                errors.append(f"{path}: evidence requires a non-empty {field}")
+        host = value.get("host")
+        if not isinstance(host, (str, dict)) or not host:
+            errors.append(f"{path}: evidence requires a non-empty host")
+        if value.get("revision") in {None, "", "unknown"}:
+            errors.append(f"{path}: evidence requires a real source revision")
+        for field in ("started_at", "ended_at"):
+            timestamp = value.get(field)
+            if isinstance(timestamp, str):
+                try:
+                    datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    errors.append(f"{path}: {field} is not an ISO-8601 timestamp")
     if evidence and state in {"passed", "failed"} and "revision" not in value:
         errors.append(f"{path}: {state} evidence requires a source revision")
     return state, path.as_posix()

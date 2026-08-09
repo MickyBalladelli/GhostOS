@@ -50,6 +50,11 @@ These names are plans only. The inventory keeps five separate statuses:
 `status.json` may mark work `running` or `blocked`. A named test without one
 of those records stays `planned`.
 
+A checked roadmap feature also needs a per-test `evidence.json` containing the
+result state, source revision, command, host, start/end timestamps, and reason.
+The checked-feature gate rejects `[x]` claims when any required artifact or
+field is missing.
+
 Generate the machine-readable status report with:
 
 ```sh

@@ -1,7 +1,8 @@
 # The enforceable checklist for TODO.md section 59.13.
 #
-# This file describes evidence, not a claim that an opt-in tier was run. A
-# claim becomes passed only when the evidence directory contains a passed result.
+# This file describes evidence, not a claim that an opt-in tier was run.
+# A checked feature becomes passed only when every required mapping has a
+# per-test evidence artifact with the required execution metadata.
 
 schema = 1
 source = "TODO.md"
@@ -16,6 +17,8 @@ persistent_scenarios = ["restart", "corruption", "timeout", "duplicate", "partia
 vm_device_scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malformed_input", "failure"]
 boot_evidence = ["vm_or_qemu", "serial"]
 passing_state = "passed"
+evidence_required_fields = ["test_id", "command", "revision", "host", "started_at", "ended_at", "result_state", "reason"]
+evidence_artifact = "evidence.json"
 
 [commands]
 deterministic = "./scripts/test-all.sh"

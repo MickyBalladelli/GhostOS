@@ -27,7 +27,7 @@ evidence.
       bodies, stale links, and TODO headings missing from the inventory.
 - [x] Separate `planned`, `running`, `passed`, `failed`, and `blocked` in the
       machine-readable inventory. A named test must not count as evidence.
-- [ ] Require a result artifact, source revision, command, host, and timestamp
+- [x] Require a result artifact, source revision, command, host, and timestamp
       before a roadmap checkbox can be marked `[x]`.
 - [ ] Generate a status report showing feature, code owner, last evidence,
       skipped prerequisites, and stale evidence age.
