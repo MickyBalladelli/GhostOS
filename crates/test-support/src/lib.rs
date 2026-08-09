@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Child;
 
 pub mod property;
+pub mod crash;
 
 pub const BLOCK_SIZE: usize = 512;
 pub const DEFAULT_SEED: u64 = 0x5359_4e4f_535f_5445;
@@ -165,6 +166,7 @@ impl DeterministicEntropy {
 #[derive(Clone, Debug)]
 pub struct FixtureSet {
     pub context: DeterministicContext,
+    pub crash: crash::CrashHarness,
     pub boot: BootInfoFixture,
     pub identity: IdentityFixture,
     pub packet: PacketFixture,
@@ -181,6 +183,7 @@ impl FixtureSet {
         let node_id = NodeId::from_seed(context.derived_seed("node"));
         Self {
             context,
+            crash: crash::CrashHarness::without_crash(),
             boot: BootInfoFixture::default(),
             identity: IdentityFixture::new(node_id),
             packet: PacketFixture::default(),

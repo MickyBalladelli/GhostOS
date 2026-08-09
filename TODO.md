@@ -82,8 +82,17 @@ evidence.
 
 ## P0: Prove persistence and recovery
 
-- [ ] Build one deterministic crash-injection harness shared by SynFS, storage,
+- [x] Build one deterministic crash-injection harness shared by SynFS, storage,
       package activation, configuration, compiler jobs, and update recovery.
+      Progress: added `synos-test-support::crash::CrashHarness` with one
+      deterministic matrix covering all six domains and the shared Flush,
+      JournalRecord, ManifestSlot, Rename, CapabilityChange, and
+      ServiceRestart boundaries. Targets are selected by exact occurrence or
+      stable seed; injection is one-shot and every boundary event is logged
+      for replay evidence. Added direct matrix/replay regression coverage;
+      `cargo check -p synos-test-support --tests` passes. Threading the
+      checkpoint calls into each production persistence workflow and running
+      recovery cases remain pending.
 - [ ] Inject interruption after every flush, journal record, manifest slot,
       rename, capability change, and service restart boundary.
 - [ ] Verify recovery chooses one committed generation, never publishes a
