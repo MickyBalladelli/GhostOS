@@ -127,7 +127,7 @@ remaining proof, portability, safety, and fidelity work.
 ## P2: Documentation and release quality
 
 - [x] Regenerate the Project Structure section from the current source tree.
-- [ ] Document the public VM API invariants, device map, interrupt routes,
+- [x] Document the public VM API invariants, device map, interrupt routes,
       snapshot schema, disk formats, migration protocol, and terminal contract.
 - [ ] Add compatibility matrices for VM snapshots, system disks, guest boot
       images, device models, and CLI options.

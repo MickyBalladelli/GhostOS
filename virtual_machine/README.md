@@ -2,6 +2,9 @@
 
 A lightweight virtual machine implementation in Rust designed to serve as a test environment for booting SynOS.
 
+The stable embedding, guest-hardware, checkpoint, disk, migration, and host
+terminal behavior is defined in [the public VM contract](docs/PUBLIC_VM_CONTRACT.md).
+
 ## Features
 
 - **x86_64 CPU Emulation**: Instruction decoder and executor with support for protected mode and long mode transitions
