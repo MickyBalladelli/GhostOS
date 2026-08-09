@@ -2340,21 +2340,54 @@ fn print_lock_status(path: &PathBuf) -> Result<(), String> {
     match DiskImage::inspect_lock(path)
         .map_err(|error| format!("cannot inspect lock for {}: {error}", path.display()))?
     {
-        Some(info) => println!(
-            "lock={} stale={} pid={} start={} host={} format={} image={} owner={} owner_identity={}",
-            info.path.display(),
-            info.stale,
-            info.pid.map(|pid| pid.to_string()).unwrap_or_else(|| "unknown".to_string()),
-            info.start_time.unwrap_or_else(|| "unknown".to_string()),
-            info.host_identity.unwrap_or_else(|| "unknown".to_string()),
-            info.format.map(format_name).unwrap_or("unknown"),
-            info.image_path
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-            info.owner.trim().replace('\n', "; "),
-            info.owner_identity.unwrap_or_else(|| "unknown".to_string()),
-        ),
-        None => println!("lock={} state=absent", DiskImage::lock_path(path).display()),
+        Some(info) => {
+            println!("disk lock");
+            if info.stale {
+                println!("  state: stale (owner process is gone)");
+            } else {
+                println!("  state: active");
+            }
+            println!("  lock: {}", info.path.display());
+            println!(
+                "  image: {}",
+                info.image_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
+            println!(
+                "  owner: {}",
+                info.owner_identity.as_deref().unwrap_or("unknown"),
+            );
+            println!(
+                "  pid: {}",
+                info.pid.map(|pid| pid.to_string()).unwrap_or_else(|| "unknown".to_string()),
+            );
+            println!(
+                "  started: {}",
+                info.start_time.as_deref().unwrap_or("unknown"),
+            );
+            println!(
+                "  host: {}",
+                info.host_identity.as_deref().unwrap_or("unknown"),
+            );
+            println!("  format: {}", info.format.map(format_name).unwrap_or("unknown"));
+            if info.stale {
+                if let Some(image) = info.image_path.as_ref() {
+                    println!(
+                        "  action: recover with `./target/release/synos-vm disk recover-lock {}`",
+                        image.display(),
+                    );
+                }
+            } else if let Some(pid) = info.pid {
+                println!("  action: stop process {pid} before starting another VM");
+            }
+        }
+        None => {
+            println!("disk lock");
+            println!("  state: absent");
+            println!("  lock: {}", DiskImage::lock_path(path).display());
+        }
     }
     Ok(())
 }

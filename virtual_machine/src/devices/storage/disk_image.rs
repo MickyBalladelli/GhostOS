@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_os = "linux"))]
 use std::process::Command;
+use std::process::Stdio;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
@@ -895,6 +896,8 @@ fn process_exists(pid: u32) -> bool {
     }
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
