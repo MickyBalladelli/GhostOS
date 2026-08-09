@@ -3,7 +3,9 @@
 use std::cell::{Cell, RefCell};
 use std::io::{self, IsTerminal, Read, Write};
 use std::sync::mpsc::{self, Receiver};
-use std::time::{Duration, Instant};
+use crate::{HostMonotonicClock, SharedMonotonicClock};
+use std::rc::Rc;
+use std::time::Duration;
 
 #[path = "terminal_platform.rs"]
 mod terminal_platform;
@@ -173,7 +175,8 @@ pub struct TerminalSession {
     transcript: RefCell<TerminalTranscript>,
     has_terminal: bool,
     last_size: Cell<Option<(u16, u16)>>,
-    last_size_check: Cell<Option<Instant>>,
+    last_size_check_ns: Cell<Option<u64>>,
+    clock: SharedMonotonicClock,
     diagnostics: Cell<TerminalSessionDiagnostics>,
 }
 
@@ -182,6 +185,14 @@ impl TerminalSession {
     /// `Some(false)` keeps stdin usable without changing terminal settings.
     /// With `None`, raw mode is selected only when stdin and stdout are TTYs.
     pub fn new(requested_interactive: Option<bool>) -> Result<Self, TerminalError> {
+        Self::new_with_clock(requested_interactive, Rc::new(HostMonotonicClock::new()))
+    }
+
+    /// Create a terminal session with an injected monotonic clock.
+    pub fn new_with_clock(
+        requested_interactive: Option<bool>,
+        clock: SharedMonotonicClock,
+    ) -> Result<Self, TerminalError> {
         let is_tty = io::stdin().is_terminal() && io::stdout().is_terminal();
         let interactive = requested_interactive.unwrap_or(is_tty);
         let raw_mode = if interactive && is_tty {
@@ -199,7 +210,8 @@ impl TerminalSession {
             transcript: RefCell::new(TerminalTranscript::default()),
             has_terminal: is_tty,
             last_size: Cell::new(None),
-            last_size_check: Cell::new(None),
+            last_size_check_ns: Cell::new(None),
+            clock,
             diagnostics: Cell::new(TerminalSessionDiagnostics::default()),
         })
     }
@@ -212,6 +224,15 @@ impl TerminalSession {
         I: Read + Send + 'static,
         O: Write + Send + 'static,
     {
+        Self::new_with_io_and_clock(input, output, Rc::new(HostMonotonicClock::new()))
+    }
+
+    /// Create a non-interactive session with an injected monotonic clock.
+    pub fn new_with_io_and_clock<I, O>(input: I, output: O, clock: SharedMonotonicClock) -> Self
+    where
+        I: Read + Send + 'static,
+        O: Write + Send + 'static,
+    {
         Self {
             events: spawn_input_reader(Box::new(input)),
             output: RefCell::new(Box::new(output)),
@@ -219,13 +240,19 @@ impl TerminalSession {
             transcript: RefCell::new(TerminalTranscript::default()),
             has_terminal: false,
             last_size: Cell::new(None),
-            last_size_check: Cell::new(None),
+            last_size_check_ns: Cell::new(None),
+            clock,
             diagnostics: Cell::new(TerminalSessionDiagnostics::default()),
         }
     }
 
     /// Drain available host input without blocking the VM execution loop.
     pub fn poll(&self) -> Result<TerminalInput, TerminalError> {
+        self.poll_at(self.clock.now_ns())
+    }
+
+    /// Drain available input at a caller-provided VM time.
+    pub fn poll_at(&self, now_ns: u64) -> Result<TerminalInput, TerminalError> {
         self.update_diagnostics(|diagnostics| diagnostics.polls += 1);
         let mut input = TerminalInput::default();
         let mut pending = Vec::new();
@@ -236,11 +263,11 @@ impl TerminalSession {
 
         let size_check_due = self.last_size.get().is_none()
             || self
-                .last_size_check
+                .last_size_check_ns
                 .get()
-                .is_none_or(|last| last.elapsed() >= TERMINAL_SIZE_POLL_INTERVAL);
+                .is_none_or(|last| now_ns.saturating_sub(last) >= TERMINAL_SIZE_POLL_INTERVAL.as_nanos() as u64);
         if self.has_terminal && size_check_due {
-            self.last_size_check.set(Some(Instant::now()));
+            self.last_size_check_ns.set(Some(now_ns));
             if let Some((rows, columns)) = terminal_platform::size() {
                 let resize = TerminalResize { rows, columns };
                 if self.last_size.get() != Some((rows, columns)) {

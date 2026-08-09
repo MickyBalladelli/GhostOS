@@ -82,7 +82,7 @@ remaining proof, portability, safety, and fidelity work.
 
 ## P1: Execution, time, and acceleration parity
 
-- [ ] Add an injectable monotonic clock for PIT, HPET, APIC, PV clock, timers,
+- [x] Add an injectable monotonic clock for PIT, HPET, APIC, PV clock, timers,
       terminal polling, and guest scheduling.
 - [ ] Add deterministic replay of instruction inputs, interrupts, device
       completions, timers, and host-facing input.

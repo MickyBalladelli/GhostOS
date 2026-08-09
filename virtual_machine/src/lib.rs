@@ -11,6 +11,7 @@ pub mod hardware_acceleration;
 pub mod snapshot;
 pub mod terminal;
 pub mod input;
+pub mod clock;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -83,6 +84,7 @@ pub use terminal::{
     TerminalTranscript, TerminalTranscriptEvent,
 };
 pub use input::{ascii_to_scancodes, serial_resize_sequence, GuestInputMode};
+pub use clock::{HostMonotonicClock, ManualMonotonicClock, MonotonicClock, SharedMonotonicClock};
 
 /// Compatibility alias. Guest routing is no longer part of terminal policy.
 pub type TerminalInputMode = GuestInputMode;
@@ -180,6 +182,7 @@ pub struct Vm {
     disk_manager: DiskManager,
     booted_system_disk: Option<SystemDiskBootArtifacts>,
     config: VmConfig,
+    clock: SharedMonotonicClock,
     initialized: bool,
 }
 
@@ -188,18 +191,36 @@ impl Vm {
         Self::with_config(VmConfig::default())
     }
 
+    /// Create a default VM driven by `clock`.
+    pub fn with_clock(clock: SharedMonotonicClock) -> Self {
+        Self::with_config_and_clock(VmConfig::default(), clock)
+    }
+
     pub fn with_config(config: VmConfig) -> Self {
-        Self::try_with_config(config)
+        Self::with_config_and_clock(config, Rc::new(HostMonotonicClock::new()))
+    }
+
+    /// Create a VM driven by `clock` instead of the host clock.
+    pub fn with_config_and_clock(config: VmConfig, clock: SharedMonotonicClock) -> Self {
+        Self::try_with_config_and_clock(config, clock)
             .unwrap_or_else(|error| panic!("cannot create VM: {error:?}"))
     }
 
     /// Create a VM and attach every configured disk before firmware starts.
-    pub fn try_with_config(mut config: VmConfig) -> Result<Self, VmError> {
+    pub fn try_with_config(config: VmConfig) -> Result<Self, VmError> {
+        Self::try_with_config_and_clock(config, Rc::new(HostMonotonicClock::new()))
+    }
+
+    /// Fallible variant of [`Vm::with_config_and_clock`].
+    pub fn try_with_config_and_clock(
+        mut config: VmConfig,
+        clock: SharedMonotonicClock,
+    ) -> Result<Self, VmError> {
         config.max_memory_size = config.max_memory_size.max(config.memory_size);
         DiskManager::validate_specs(&config.disks).map_err(disk_error_to_vm)?;
         let hardware_acceleration = HardwareAccelerationSession::open(config.hardware_acceleration)
             .map_err(|error| VmError::HardwareAcceleration(error.to_string()))?;
-        let mut vm = Self::build_with_config(config);
+        let mut vm = Self::build_with_config(config, clock);
         vm.hardware_acceleration = hardware_acceleration;
         vm.attach_configured_disks()?;
         if let Err(error) = vm.configure_persistence() {
@@ -209,7 +230,7 @@ impl Vm {
         Ok(vm)
     }
 
-    fn build_with_config(config: VmConfig) -> Self {
+    fn build_with_config(config: VmConfig, clock: SharedMonotonicClock) -> Self {
         let mut mmu = Mmu::new(config.memory_size);
 
         // One shared PCI Express host bridge exposed through both the legacy
@@ -545,6 +566,7 @@ impl Vm {
             disk_manager: DiskManager::new(),
             booted_system_disk: None,
             config,
+            clock,
             initialized: false,
         }
     }
@@ -768,11 +790,7 @@ impl Vm {
         Ok(())
     }
 
-    fn step_cpu(
-        &mut self,
-        started: &std::time::Instant,
-        max_instructions: usize,
-    ) -> Result<usize, VmError> {
+    fn step_cpu(&mut self, max_instructions: usize) -> Result<usize, VmError> {
         let executed = match self.execution.execute(
             &mut self.cpu,
             &mut self.mmu,
@@ -791,7 +809,7 @@ impl Vm {
         // Deferred DMA for storage and NICs issued during the step.
         self.poll_devices();
 
-        let now_ns = started.elapsed().as_nanos() as u64;
+        let now_ns = self.clock.now_ns();
         self.poll_guest_features();
         self.pv_clock.borrow_mut().update(&mut self.mmu, now_ns);
         self.poll_apic(now_ns)?;
@@ -835,13 +853,12 @@ impl Vm {
 
         println!("Starting CPU emulation...");
 
-        let mut started = std::time::Instant::now();
         loop {
             if !monitor(self)? {
                 self.close_disks()?;
                 return Ok(())
             }
-            self.step_cpu(&started, usize::MAX)?;
+            self.step_cpu(usize::MAX)?;
             self.flush_serial_output();
             self.return_if_guest_panicked()?;
 
@@ -855,7 +872,6 @@ impl Vm {
                     self.sync_disks()?;
                     self.reset();
                     self.initialize()?;
-                    started = std::time::Instant::now();
                     continue
                 }
             }
@@ -897,10 +913,9 @@ impl Vm {
     {
         self.initialize()?;
 
-        let mut started = std::time::Instant::now();
         loop {
             let input = terminal
-                .poll()
+                .poll_at(self.clock.now_ns())
                 .map_err(|error| VmError::Terminal(error.diagnostic()))?;
             if input_mode == GuestInputMode::Serial {
                 if let Some(resize) = input.resize {
@@ -923,7 +938,7 @@ impl Vm {
                 return Ok(TerminalExit::GuestShutdown)
             }
 
-            self.step_cpu(&started, 256)?;
+            self.step_cpu(256)?;
             self.flush_serial_output();
             self.return_if_guest_panicked()?;
 
@@ -937,7 +952,6 @@ impl Vm {
                     self.sync_disks()?;
                     self.reset();
                     self.initialize()?;
-                    started = std::time::Instant::now();
                     continue
                 }
             }
@@ -967,14 +981,13 @@ impl Vm {
         F: FnMut(&mut Self) -> Result<bool, VmError>,
     {
         self.initialize()?;
-        let started = std::time::Instant::now();
         let mut steps = 0;
         while steps < max_steps {
             if !monitor(self)? {
                 break
             }
             let remaining = (max_steps - steps).min(usize::MAX as u64) as usize;
-            let executed = self.step_cpu(&started, remaining)?;
+            let executed = self.step_cpu(remaining)?;
             self.return_if_guest_panicked()?;
             if executed == 0 {
                 if self.cpu.state.halted {
@@ -1232,6 +1245,11 @@ impl Vm {
 
     pub fn pv_clock(&self) -> Rc<RefCell<PvClock>> {
         self.pv_clock.clone()
+    }
+
+    /// Monotonic time source shared by VM scheduling and timers.
+    pub fn clock(&self) -> SharedMonotonicClock {
+        self.clock.clone()
     }
 
     pub fn memory_hotplug(&self) -> Rc<RefCell<MemoryHotplugDevice>> {
