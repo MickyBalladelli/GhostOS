@@ -95,11 +95,12 @@ impl StoragePath {
         }
         value[..prefix.len()].copy_from_slice(prefix);
         value[prefix.len()..length].copy_from_slice(name.as_bytes());
-        Self::new(core::str::from_utf8(&value[..length]).expect("storage path bytes"))
+        let value = core::str::from_utf8(&value[..length]).map_err(|_| StoragePathError::InvalidPath)?;
+        Self::new(value)
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("storage path invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 
     pub fn contains(self, candidate: Self) -> bool {

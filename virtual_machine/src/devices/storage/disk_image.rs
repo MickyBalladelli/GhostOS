@@ -554,10 +554,10 @@ impl DiskImage {
         // Fixed VHD footer layout (all multi-byte fields are big-endian):
         //   36..39 original size, 40..43 current size, 44..47 disk geometry,
         //   48..51 disk type (2 = fixed), 52..55 checksum.
-        let original_size = u32::from_be_bytes(footer[36..40].try_into().unwrap());
-        let current_size = u32::from_be_bytes(footer[40..44].try_into().unwrap());
-        let disk_type = u32::from_be_bytes(footer[48..52].try_into().unwrap());
-        let stored_checksum = u32::from_be_bytes(footer[52..56].try_into().unwrap());
+        let original_size = read_be_u32(&footer, 36, "VHD original size")?;
+        let current_size = read_be_u32(&footer, 40, "VHD current size")?;
+        let disk_type = read_be_u32(&footer, 48, "VHD disk type")?;
+        let stored_checksum = read_be_u32(&footer, 52, "VHD checksum")?;
 
         if disk_type != 2 {
             return Err(StorageError::Unsupported(format!(
@@ -616,28 +616,44 @@ impl DiskImage {
         let mut hdr = [0u8; 104];
         file.read_exact(&mut hdr)?;
 
-        let u32_at = |o: usize| u32::from_be_bytes(hdr[o..o + 4].try_into().unwrap());
-        let u64_at = |o: usize| u64::from_be_bytes(hdr[o..o + 8].try_into().unwrap());
+        let u32_at = |o: usize| {
+            let bytes = hdr
+                .get(o..o + 4)
+                .ok_or_else(|| StorageError::InvalidImage("QCOW2 header field is truncated".to_string()))?;
+            let bytes: [u8; 4] = bytes
+                .try_into()
+                .map_err(|_| StorageError::InvalidImage("QCOW2 header field is truncated".to_string()))?;
+            Ok::<u32, StorageError>(u32::from_be_bytes(bytes))
+        };
+        let u64_at = |o: usize| {
+            let bytes = hdr
+                .get(o..o + 8)
+                .ok_or_else(|| StorageError::InvalidImage("QCOW2 header field is truncated".to_string()))?;
+            let bytes: [u8; 8] = bytes
+                .try_into()
+                .map_err(|_| StorageError::InvalidImage("QCOW2 header field is truncated".to_string()))?;
+            Ok::<u64, StorageError>(u64::from_be_bytes(bytes))
+        };
 
-        let version = u32_at(4);
+        let version = u32_at(4)?;
         if version != 2 && version != 3 {
             return Err(StorageError::Unsupported(format!(
                 "QCOW version {version} (only 2 and 3 are supported)"
             )));
         }
-        let backing_file_offset = u64_at(8);
-        let backing_file_size = u32_at(16);
+        let backing_file_offset = u64_at(8)?;
+        let backing_file_size = u32_at(16)?;
         if backing_file_offset != 0 || backing_file_size != 0 {
             return Err(StorageError::Unsupported(
                 "QCOW2 backing files are not supported".to_string(),
             ));
         }
-        if u32_at(32) != 0 {
+        if u32_at(32)? != 0 {
             return Err(StorageError::Unsupported(
                 "QCOW2 encryption is not supported".to_string(),
             ));
         }
-        let cluster_bits = u32_at(20);
+        let cluster_bits = u32_at(20)?;
         if !(9..=21).contains(&cluster_bits) {
             return Err(StorageError::InvalidImage(format!(
                 "invalid QCOW2 cluster_bits {cluster_bits}"
@@ -646,7 +662,7 @@ impl DiskImage {
         // Incompatible features: bit 0 = dirty bit, bit 1 = corrupt bit.
         // We do not perform journal recovery, so refuse damaged images to
         // avoid silent corruption.
-        let incompatible = u64_at(72);
+        let incompatible = u64_at(72)?;
         if incompatible != 0 {
             return Err(StorageError::Unsupported(format!(
                 "QCOW2 incompatible features 0x{incompatible:x} (dirty/corrupt images unsupported)"
@@ -654,7 +670,7 @@ impl DiskImage {
         }
         // L1 table size (number of 8-byte entries) at offset 36; the L1
         // table itself at offset 40.
-        let l1_size = u32_at(36);
+        let l1_size = u32_at(36)?;
         if l1_size == 0 || l1_size > (1 << 22) {
             return Err(StorageError::InvalidImage(
                 "invalid QCOW2 L1 size".to_string(),
@@ -662,10 +678,10 @@ impl DiskImage {
         }
 
         let cluster_size = 1u64 << cluster_bits;
-        let disk_size = u64_at(24);
+        let disk_size = u64_at(24)?;
         validate_sector_capacity(disk_size, "QCOW2")?;
         if version == 3 {
-            let header_length = u32_at(100) as u64;
+            let header_length = u32_at(100)? as u64;
             if header_length < 104 || header_length > file_len {
                 return Err(StorageError::InvalidImage(
                     "invalid QCOW2 header length".to_string(),
@@ -681,7 +697,7 @@ impl DiskImage {
             StorageError::InvalidImage("QCOW2 L1 coverage overflows".to_string())
         })?;
 
-        let l1_table_offset = u64_at(40);
+        let l1_table_offset = u64_at(40)?;
         if l1_table_offset % cluster_size != 0 {
             return Err(StorageError::InvalidImage(
                 "QCOW2 L1 table is not cluster-aligned".to_string(),
@@ -1039,9 +1055,9 @@ fn vhd_footer_is_repairable<P: AsRef<Path>>(path: P) -> Result<bool, StorageErro
         return Ok(false);
     }
 
-    let disk_size = u32::from_be_bytes(footer[40..44].try_into().unwrap()) as u64;
-    let original_size = u32::from_be_bytes(footer[36..40].try_into().unwrap()) as u64;
-    let disk_type = u32::from_be_bytes(footer[48..52].try_into().unwrap());
+    let disk_size = read_be_u32(&footer, 40, "VHD current size")? as u64;
+    let original_size = read_be_u32(&footer, 36, "VHD original size")? as u64;
+    let disk_type = read_be_u32(&footer, 48, "VHD disk type")?;
     if disk_type != 2 || original_size != disk_size {
         return Ok(false);
     }
@@ -1049,7 +1065,7 @@ fn vhd_footer_is_repairable<P: AsRef<Path>>(path: P) -> Result<bool, StorageErro
     if disk_size.checked_add(512) != Some(file_len) {
         return Ok(false);
     }
-    let stored_checksum = u32::from_be_bytes(footer[52..56].try_into().unwrap());
+    let stored_checksum = read_be_u32(&footer, 52, "VHD checksum")?;
     let sum: u32 = footer
         .iter()
         .enumerate()
@@ -1057,6 +1073,16 @@ fn vhd_footer_is_repairable<P: AsRef<Path>>(path: P) -> Result<bool, StorageErro
         .map(|(_, value)| *value as u32)
         .sum();
     Ok(!sum != stored_checksum)
+}
+
+fn read_be_u32(bytes: &[u8], offset: usize, field: &str) -> Result<u32, StorageError> {
+    let value = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| StorageError::InvalidImage(format!("{field} is truncated")))?;
+    let value: [u8; 4] = value
+        .try_into()
+        .map_err(|_| StorageError::InvalidImage(format!("{field} is truncated")))?;
+    Ok(u32::from_be_bytes(value))
 }
 
 fn repair_vhd_footer_checksum<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {

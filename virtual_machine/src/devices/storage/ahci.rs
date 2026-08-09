@@ -317,7 +317,10 @@ impl Ahci {
         let mut header = [0u8; 32];
         Self::dma_read(mmu, header_addr, &mut header)?;
 
-        let dw0 = u32::from_le_bytes(header[0..4].try_into().unwrap());
+        let Ok(dw0_bytes) = header[0..4].try_into() else {
+            return Err(StorageError::Dma("invalid AHCI command header".into()))
+        };
+        let dw0 = u32::from_le_bytes(dw0_bytes);
         let prdtl = (dw0 & 0xFFFF) as usize;
         if prdtl == 0 || prdtl > 256 {
             return Err(StorageError::Dma("invalid PRDT length".into()));
@@ -325,7 +328,10 @@ impl Ahci {
         if dw0 & (1 << 28) != 0 {
             return Err(StorageError::Unsupported("ATAPI".into()));
         }
-        let ctba = u64::from_le_bytes(header[8..16].try_into().unwrap());
+        let Ok(ctba_bytes) = header[8..16].try_into() else {
+            return Err(StorageError::Dma("invalid AHCI command table address".into()))
+        };
+        let ctba = u64::from_le_bytes(ctba_bytes);
         if ctba % 128 != 0 {
             return Err(StorageError::Dma("unaligned AHCI command table".into()));
         }
@@ -350,8 +356,14 @@ impl Ahci {
                 .and_then(|address| address.checked_add((i as u64) * 16))
                 .ok_or_else(|| StorageError::Dma("PRD address overflow".into()))?;
             Self::dma_read(mmu, prd_addr, &mut prd)?;
-            let dba = u64::from_le_bytes(prd[0..8].try_into().unwrap());
-            let dbc = u32::from_le_bytes(prd[12..16].try_into().unwrap());
+            let Ok(dba_bytes) = prd[0..8].try_into() else {
+                return Err(StorageError::Dma("invalid AHCI PRD address".into()))
+            };
+            let Ok(dbc_bytes) = prd[12..16].try_into() else {
+                return Err(StorageError::Dma("invalid AHCI PRD length".into()))
+            };
+            let dba = u64::from_le_bytes(dba_bytes);
+            let dbc = u32::from_le_bytes(dbc_bytes);
             prds.push((dba, (dbc & 0x003F_FFFF) as usize + 1));
         }
 

@@ -72,8 +72,7 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
     }
 
     pub fn line(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len])
-            .expect("line editor UTF-8 invariant")
+        core::str::from_utf8(&self.bytes[..self.len]).unwrap_or("")
     }
 
     pub const fn cursor(&self) -> usize {
@@ -255,7 +254,10 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
         };
         self.history_offset = Some(offset);
         let index = (self.history_next + HISTORY - 1 - offset) % HISTORY;
-        let line = self.history[index].expect("history occupancy invariant");
+        let Some(line) = self.history[index] else {
+            self.history_offset = None;
+            return Ok(())
+        };
         self.load(line);
         Ok(())
     }
@@ -271,7 +273,11 @@ impl<const HISTORY: usize> LineEditor<HISTORY> {
             let next = offset - 1;
             self.history_offset = Some(next);
             let index = (self.history_next + HISTORY - 1 - next) % HISTORY;
-            self.load(self.history[index].expect("history occupancy invariant"))
+            let Some(line) = self.history[index] else {
+                self.history_offset = None;
+                return Ok(())
+            };
+            self.load(line)
         }
         Ok(())
     }

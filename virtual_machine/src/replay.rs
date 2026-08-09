@@ -519,7 +519,9 @@ fn decode_dma_writes(input: &[u8]) -> Result<Vec<ReplayDmaWrite>, ReplayError> {
     if input.len() < 4 {
         return Err(ReplayError::Corrupt)
     }
-    let count = u32::from_le_bytes(input[..4].try_into().unwrap()) as usize;
+    let count = u32::from_le_bytes(
+        input[..4].try_into().map_err(|_| ReplayError::Corrupt)?,
+    ) as usize;
     let mut offset = 4usize;
     let mut writes = Vec::with_capacity(count.min(1024));
     for _ in 0..count {
@@ -527,8 +529,16 @@ fn decode_dma_writes(input: &[u8]) -> Result<Vec<ReplayDmaWrite>, ReplayError> {
         if header_end > input.len() {
             return Err(ReplayError::Corrupt)
         }
-        let address = u64::from_le_bytes(input[offset..offset + 8].try_into().unwrap());
-        let length = u32::from_le_bytes(input[offset + 8..header_end].try_into().unwrap()) as usize;
+        let address = u64::from_le_bytes(
+            input[offset..offset + 8]
+                .try_into()
+                .map_err(|_| ReplayError::Corrupt)?,
+        );
+        let length = u32::from_le_bytes(
+            input[offset + 8..header_end]
+                .try_into()
+                .map_err(|_| ReplayError::Corrupt)?,
+        ) as usize;
         offset = header_end;
         let end = offset.checked_add(length).ok_or(ReplayError::Corrupt)?;
         if end > input.len() {
@@ -597,10 +607,14 @@ fn load_events(path: &Path) -> Result<Vec<ReplayEvent>, ReplayError> {
     if &bytes[..8] != REPLAY_MAGIC {
         return Err(ReplayError::Corrupt)
     }
-    if u16::from_le_bytes(bytes[8..10].try_into().unwrap()) != REPLAY_FORMAT_VERSION {
+    if u16::from_le_bytes(
+        bytes[8..10].try_into().map_err(|_| ReplayError::Corrupt)?,
+    ) != REPLAY_FORMAT_VERSION {
         return Err(ReplayError::Corrupt)
     }
-    let count = u64::from_le_bytes(bytes[12..20].try_into().unwrap());
+    let count = u64::from_le_bytes(
+        bytes[12..20].try_into().map_err(|_| ReplayError::Corrupt)?,
+    );
     if count > DEFAULT_MAX_EVENTS as u64 {
         return Err(ReplayError::Capacity)
     }
@@ -612,11 +626,19 @@ fn load_events(path: &Path) -> Result<Vec<ReplayEvent>, ReplayError> {
             return Err(ReplayError::Corrupt)
         }
         let kind = ReplayEventKind::from_raw(bytes[offset]).ok_or(ReplayError::Corrupt)?;
-        let event_sequence = u64::from_le_bytes(bytes[offset + 8..offset + 16].try_into().unwrap());
+        let event_sequence = u64::from_le_bytes(
+            bytes[offset + 8..offset + 16]
+                .try_into()
+                .map_err(|_| ReplayError::Corrupt)?,
+        );
         if event_sequence != sequence {
             return Err(ReplayError::Corrupt)
         }
-        let data_len = u64::from_le_bytes(bytes[offset + 48..offset + 56].try_into().unwrap());
+        let data_len = u64::from_le_bytes(
+            bytes[offset + 48..offset + 56]
+                .try_into()
+                .map_err(|_| ReplayError::Corrupt)?,
+        );
         let data_len = usize::try_from(data_len).map_err(|_| ReplayError::Corrupt)?;
         if data_len > MAX_EVENT_PAYLOAD_BYTES {
             return Err(ReplayError::PayloadTooLarge)
@@ -629,10 +651,26 @@ fn load_events(path: &Path) -> Result<Vec<ReplayEvent>, ReplayError> {
         events.push(ReplayEvent {
             sequence: event_sequence,
             kind,
-            a: u64::from_le_bytes(bytes[offset + 16..offset + 24].try_into().unwrap()),
-            b: u64::from_le_bytes(bytes[offset + 24..offset + 32].try_into().unwrap()),
-            c: u64::from_le_bytes(bytes[offset + 32..offset + 40].try_into().unwrap()),
-            d: u64::from_le_bytes(bytes[offset + 40..offset + 48].try_into().unwrap()),
+            a: u64::from_le_bytes(
+                bytes[offset + 16..offset + 24]
+                    .try_into()
+                    .map_err(|_| ReplayError::Corrupt)?,
+            ),
+            b: u64::from_le_bytes(
+                bytes[offset + 24..offset + 32]
+                    .try_into()
+                    .map_err(|_| ReplayError::Corrupt)?,
+            ),
+            c: u64::from_le_bytes(
+                bytes[offset + 32..offset + 40]
+                    .try_into()
+                    .map_err(|_| ReplayError::Corrupt)?,
+            ),
+            d: u64::from_le_bytes(
+                bytes[offset + 40..offset + 48]
+                    .try_into()
+                    .map_err(|_| ReplayError::Corrupt)?,
+            ),
             data: bytes[data_start..data_end].to_vec(),
         });
         offset = data_end;

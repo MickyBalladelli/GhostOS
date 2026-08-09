@@ -75,6 +75,22 @@ const STS_NS_NOT_READY: u32 = 0x0085;
 const CQ_ENTRY_SIZE: u64 = 16;
 const SQ_ENTRY_SIZE: u64 = 64;
 
+fn command_u32(command: &[u8; 64], offset: usize) -> Option<u32> {
+    command
+        .get(offset..offset.checked_add(4)?)?
+        .try_into()
+        .ok()
+        .map(u32::from_le_bytes)
+}
+
+fn command_u64(command: &[u8; 64], offset: usize) -> Option<u64> {
+    command
+        .get(offset..offset.checked_add(8)?)?
+        .try_into()
+        .ok()
+        .map(u64::from_le_bytes)
+}
+
 #[derive(Clone, Copy)]
 struct Queue {
     base: u64,
@@ -423,13 +439,13 @@ impl Nvme {
         // NSID at DW1.
         let nsid = u32::from_le_bytes([cmd[4], cmd[5], cmd[6], cmd[7]]);
         // PRP1 at DW2.
-        let prp1 = u64::from_le_bytes(cmd[8..16].try_into().unwrap());
+        let Some(prp1) = command_u64(cmd, 8) else { return STS_INVALID_FIELD };
         // CDW10 at bytes 40..44.
-        let cdw10 = u32::from_le_bytes(cmd[40..44].try_into().unwrap());
+        let Some(cdw10) = command_u32(cmd, 40) else { return STS_INVALID_FIELD };
         // CDW11 at bytes 44..48.
-        let cdw11 = u32::from_le_bytes(cmd[44..48].try_into().unwrap());
+        let Some(cdw11) = command_u32(cmd, 44) else { return STS_INVALID_FIELD };
         // CDW12 at bytes 48..52.
-        let cdw12 = u32::from_le_bytes(cmd[48..52].try_into().unwrap());
+        let Some(cdw12) = command_u32(cmd, 48) else { return STS_INVALID_FIELD };
 
         match opcode {
             ADMIN_CREATE_IOCQ => {
@@ -598,11 +614,11 @@ impl Nvme {
         if nsid != 1 {
             return STS_INVALID_NS;
         }
-        let prp1 = u64::from_le_bytes(cmd[8..16].try_into().unwrap());
+        let Some(prp1) = command_u64(cmd, 8) else { return STS_INVALID_FIELD };
         // CDW10 = SLBA lower 32 bits; CDW11 bits 15:0 = SLBA upper,
         // bits 31:16 = NLB.
-        let cdw10 = u32::from_le_bytes(cmd[40..44].try_into().unwrap());
-        let cdw11 = u32::from_le_bytes(cmd[44..48].try_into().unwrap());
+        let Some(cdw10) = command_u32(cmd, 40) else { return STS_INVALID_FIELD };
+        let Some(cdw11) = command_u32(cmd, 44) else { return STS_INVALID_FIELD };
         let slba = (cdw10 as u64) | (((cdw11 & 0xFFFF) as u64) << 32);
         let nlb = ((cdw11 >> 16) & 0xFFFF) as u64 + 1;
 
@@ -638,8 +654,10 @@ impl Nvme {
                         return STS_CAP_EXCEEDED;
                     }
                     for i in 0..nlb as usize {
-                        let sector: [u8; 512] = buf[i * 512..i * 512 + 512].try_into().unwrap();
-                        if ns.image.write_sector(slba + i as u64, &sector).is_err() {
+                        let Ok(sector) = <&[u8; 512]>::try_from(&buf[i * 512..i * 512 + 512]) else {
+                            return STS_CAP_EXCEEDED
+                        };
+                        if ns.image.write_sector(slba + i as u64, sector).is_err() {
                             return STS_LBA_OUT_OF_RANGE;
                         }
                     }

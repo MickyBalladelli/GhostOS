@@ -1113,8 +1113,8 @@ impl SecureFrame {
         tag.copy_from_slice(&input[SECURE_FRAME_HEADER_BYTES + MAX_SECURE_PAYLOAD..SECURE_FRAME_WIRE_BYTES]);
         Ok(Self {
             class,
-            epoch: u64::from_be_bytes(input[8..16].try_into().unwrap()),
-            sequence: u64::from_be_bytes(input[16..24].try_into().unwrap()),
+            epoch: u64::from_be_bytes(input[8..16].try_into().map_err(|_| SecurityError::InvalidFrame)?),
+            sequence: u64::from_be_bytes(input[16..24].try_into().map_err(|_| SecurityError::InvalidFrame)?),
             payload_len: u16::from_be_bytes([input[24], input[25]]),
             ciphertext,
             tag,
@@ -1200,8 +1200,8 @@ impl SecureChannel {
             frame.sequence,
             payload,
             &mut frame.ciphertext[..payload.len()],
-        );
-        frame.tag = tag(self.send_key, &frame);
+        )?;
+        frame.tag = tag(self.send_key, &frame)?;
         self.next_send = self.next_send.checked_add(1).ok_or(SecurityError::SequenceExhausted)?;
         Ok(frame)
     }
@@ -1212,7 +1212,7 @@ impl SecureChannel {
             || length > MAX_SECURE_PAYLOAD
             || output.len() < length
             || frame.sequence <= self.last_received
-            || !constant_time_equal(&tag(self.receive_key, &frame), &frame.tag)
+            || !constant_time_equal(&tag(self.receive_key, &frame)?, &frame.tag)
         {
             return Err(SecurityError::InvalidFrame)
         }
@@ -1221,32 +1221,40 @@ impl SecureChannel {
             frame.sequence,
             &frame.ciphertext[..length],
             &mut output[..length],
-        );
+        )?;
         self.last_received = frame.sequence;
         Ok(length)
     }
 }
 
-fn xor_payload(key: CapabilityKey, sequence: u64, input: &[u8], output: &mut [u8]) {
+fn xor_payload(
+    key: CapabilityKey,
+    sequence: u64,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), SecurityError> {
     for (block, chunk) in input.chunks(32).enumerate() {
         let mut material = [0; 24];
         material[..8].copy_from_slice(b"SYNCRYPT");
         material[8..16].copy_from_slice(&sequence.to_be_bytes());
         material[16..24].copy_from_slice(&(block as u64).to_be_bytes());
-        let stream = key.authenticate(&material).expect("bounded crypto input");
+        let stream = key
+            .authenticate(&material)
+            .map_err(|_| SecurityError::InvalidKey)?;
         for (index, byte) in chunk.iter().enumerate() {
             output[block * 32 + index] = *byte ^ stream[index];
         }
     }
+    Ok(())
 }
 
-fn tag(key: CapabilityKey, frame: &SecureFrame) -> [u8; SECURE_FRAME_TAG_BYTES] {
+fn tag(key: CapabilityKey, frame: &SecureFrame) -> Result<[u8; SECURE_FRAME_TAG_BYTES], SecurityError> {
     let mut material = [0; SECURE_FRAME_HEADER_BYTES + MAX_SECURE_PAYLOAD];
     material[..SECURE_FRAME_HEADER_BYTES].copy_from_slice(&frame.header());
     material[SECURE_FRAME_HEADER_BYTES..SECURE_FRAME_HEADER_BYTES + frame.payload_len as usize]
         .copy_from_slice(&frame.ciphertext[..frame.payload_len as usize]);
     key.authenticate(&material[..SECURE_FRAME_HEADER_BYTES + frame.payload_len as usize])
-        .expect("bounded crypto input")
+        .map_err(|_| SecurityError::InvalidKey)
 }
 
 fn node_bytes(node: NodeId) -> [u8; 32] {

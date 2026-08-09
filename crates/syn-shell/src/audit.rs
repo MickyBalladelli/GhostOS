@@ -28,7 +28,7 @@ pub fn register_audit_command<const CAPACITY: usize>(
     registry.register(
         CommandSpec::new("ANALYZE-AUDIT", &[since, before, capability, node, status])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(ANALYZE_AUDIT_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(ANALYZE_AUDIT_ROUTE),
     )
 }
 

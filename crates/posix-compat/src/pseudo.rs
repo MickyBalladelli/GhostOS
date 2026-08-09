@@ -73,13 +73,13 @@ impl PseudoPath {
         self.kind
     }
 
-    pub fn logical_name(self) -> LogicalName {
-        LogicalName::new(self.logical_name_str()).expect("PseudoPath invariant")
+    pub fn logical_name(self) -> Result<LogicalName, PseudoPathError> {
+        LogicalName::new(self.logical_name_str()).map_err(|_| PseudoPathError::InvalidPath)
     }
 
     fn logical_name_str(&self) -> &str {
         core::str::from_utf8(&self.logical[..self.logical_length as usize])
-            .expect("PseudoPath invariant")
+            .unwrap_or("")
     }
 }
 
@@ -168,7 +168,7 @@ mod tests {
     fn normalizes_proc_paths_to_logical_names() {
         let path = PseudoPath::parse(b"/proc/meminfo").expect("valid pseudo path");
         assert_eq!(path.kind(), PseudoResourceKind::Proc);
-        assert_eq!(path.logical_name().as_str(), "PROC_MEMINFO");
+        assert_eq!(path.logical_name().expect("valid pseudo path").as_str(), "PROC_MEMINFO");
     }
 
     #[test]

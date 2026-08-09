@@ -58,7 +58,7 @@ impl IntoStatus for DriverError {
             Self::TimedOut => (Severity::Error, 13),
             Self::ControllerFault => (Severity::Fatal, 14),
         };
-        Status::new(severity, facility::DRIVER, code, 0).expect("valid storage status")
+        Status::new(severity, facility::DRIVER, code, 0).unwrap_or(Status::INVALID_ARGUMENT)
     }
 }
 

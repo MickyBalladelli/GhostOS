@@ -89,7 +89,7 @@ impl MembershipLabel {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("label invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 }
 

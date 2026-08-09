@@ -248,12 +248,18 @@ impl<const RULES: usize> FirewallPolicy<RULES> {
         let mut policy = Self::new();
         policy.default_action = default_action;
         policy.require_cluster_signatures = input[6] != 0;
-        policy.version = u64::from_le_bytes(input[8..16].try_into().unwrap());
+        let Ok(version) = input[8..16].try_into() else {
+            return Err(FirewallError::InvalidPolicy)
+        };
+        policy.version = u64::from_le_bytes(version);
         policy.host_intranet = host_intranet;
         for index in 0..count {
             policy.add_rule(decode_rule(&input[24 + index * 40..64 + index * 40])?)?;
         }
-        policy.version = u64::from_le_bytes(input[8..16].try_into().unwrap());
+        let Ok(version) = input[8..16].try_into() else {
+            return Err(FirewallError::InvalidPolicy)
+        };
+        policy.version = u64::from_le_bytes(version);
         Ok(policy)
     }
 }
@@ -292,7 +298,14 @@ impl<const VERSIONS: usize, const IMAGE_BYTES: usize> PolicyStore<VERSIONS, IMAG
     }
 
     pub const fn current(&self) -> Option<u64> {
-        if self.count == 0 { None } else { Some(self.images[self.count - 1].unwrap().version) }
+        if self.count == 0 {
+            None
+        } else {
+            match self.images[self.count - 1] {
+                Some(image) => Some(image.version),
+                None => None,
+            }
+        }
     }
 
     pub fn image(&self, version: u64) -> Option<&[u8]> {
@@ -802,7 +815,17 @@ fn decode_rule(input: &[u8]) -> Result<FirewallRule, FirewallError> {
     let destination = if input[11] == 0 { None } else { Some(Ipv4Cidr::new([input[12], input[13], input[14], input[15]], input[16]).ok_or(FirewallError::InvalidPolicy)?) };
     let source_ports = if input[17] == 0 { None } else { Some(PortRange::new(u16::from_le_bytes([input[18], input[19]]), u16::from_le_bytes([input[20], input[21]])).ok_or(FirewallError::InvalidPolicy)?) };
     let destination_ports = if input[22] == 0 { None } else { Some(PortRange::new(u16::from_le_bytes([input[23], input[24]]), u16::from_le_bytes([input[25], input[26]])).ok_or(FirewallError::InvalidPolicy)?) };
-    let rate_limit = if input[27] == 0 { None } else { RateLimit::new(u32::from_le_bytes([input[28], input[29], input[30], input[31]]), u64::from_le_bytes(input[32..40].try_into().unwrap())) };
+    let rate_limit = if input[27] == 0 {
+        None
+    } else {
+        let Ok(window_ms) = input[32..40].try_into() else {
+            return Err(FirewallError::InvalidPolicy)
+        };
+        RateLimit::new(
+            u32::from_le_bytes([input[28], input[29], input[30], input[31]]),
+            u64::from_le_bytes(window_ms),
+        )
+    };
     Ok(FirewallRule { direction, protocol, source, destination, source_ports, destination_ports, action: action(input[2]).ok_or(FirewallError::InvalidPolicy)?, stateful: input[3] != 0, capability: match input[4] { 0 => None, 1 => Some(CapabilityRight::Listen), 2 => Some(CapabilityRight::Connect), 4 => Some(CapabilityRight::Raw), 8 => Some(CapabilityRight::Ingress), _ => return Err(FirewallError::InvalidPolicy) }, rate_limit })
 }
 
@@ -841,7 +864,10 @@ fn sha256(message: &[u8]) -> [u8; 32] {
         for (index, word) in schedule[..16].iter_mut().enumerate() {
             let offset = block * 64 + index * 4;
             let value = if offset + 4 <= message.len() {
-                u32::from_be_bytes(message[offset..offset + 4].try_into().unwrap())
+                let Ok(word) = message[offset..offset + 4].try_into() else {
+                    return [0; 32]
+                };
+                u32::from_be_bytes(word)
             } else {
                 let mut bytes = [0; 4];
                 for byte in 0..4 {
@@ -882,4 +908,14 @@ fn sha256(message: &[u8]) -> [u8; 32] {
     let mut output = [0; 32];
     for (index, word) in state.iter().enumerate() { output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes()) }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FirewallError, FirewallPolicy};
+
+    #[test]
+    fn truncated_policy_is_rejected() {
+        assert_eq!(FirewallPolicy::decode(&[0; 23]), Err(FirewallError::InvalidPolicy));
+    }
 }

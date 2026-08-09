@@ -41,6 +41,10 @@ impl ClusterId {
         None
     }
 
+    pub const fn from_valid_raw(bytes: [u8; CLUSTER_ID_BYTES]) -> Self {
+        Self(bytes)
+    }
+
     pub const fn raw(self) -> [u8; CLUSTER_ID_BYTES] {
         self.0
     }
@@ -76,7 +80,7 @@ impl<const CAPACITY: usize> MetadataText<CAPACITY> {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("metadata text invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 
     pub fn as_bytes(&self) -> &[u8] {

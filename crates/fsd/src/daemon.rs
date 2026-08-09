@@ -236,7 +236,7 @@ impl IntoStatus for DaemonError {
             | Self::ScratchTooSmall { .. } => Status::NO_SPACE,
             Self::NotFound => Status::NOT_FOUND,
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
-                .expect("valid filesystem status"),
+                .unwrap_or(Status::INVALID_ARGUMENT),
             Self::Namespace(error) => match error {
                 NamespaceError::InvalidPath => Status::INVALID_PATH,
                 NamespaceError::InvalidPartition => Status::INVALID_ARGUMENT,
@@ -319,7 +319,7 @@ impl Name {
     }
 
     fn as_str(&self) -> &str {
-        core::str::from_utf8(self.as_bytes()).expect("Name invariant")
+        core::str::from_utf8(self.as_bytes()).unwrap_or("")
     }
 }
 
@@ -355,7 +355,7 @@ impl OpenFileSlot {
     const EMPTY: Self = Self {
         occupied: false,
         generation: 0,
-        owner: ProcessId::new(1).expect("non-zero placeholder process"),
+        owner: ProcessId::from_valid_raw(1),
         path: Name::EMPTY,
         rights: FileRights(0),
         read_only_mount: false,
@@ -375,9 +375,9 @@ impl SnapshotSlot {
     const EMPTY: Self = Self {
         occupied: false,
         generation: 0,
-        owner: ProcessId::new(1).expect("non-zero placeholder process"),
+        owner: ProcessId::from_valid_raw(1),
         checkpoint: CheckpointInfo {
-            id: synos_synfs::CheckpointId::from_raw(1).expect("non-zero checkpoint id"),
+            id: synos_synfs::CheckpointId::from_valid_raw(1),
             generation: 0,
         },
     };
@@ -1869,13 +1869,22 @@ impl<
     for Daemon<MAX_BLOCKS, MAX_PROCESSES, MAX_OPEN_FILES, MAX_SNAPSHOTS, MAX_MOUNTS, SCRATCH_BYTES>
 {
     fn default() -> Self {
-        Self::new(SynFs::new()).expect("daemon has a root mount")
+        Self::new(SynFs::new()).unwrap_or_else(|_| Self {
+            filesystem: SynFs::new(),
+            processes: [ProcessSlot::EMPTY; MAX_PROCESSES],
+            open_files: [OpenFileSlot::EMPTY; MAX_OPEN_FILES],
+            snapshots: [SnapshotSlot::EMPTY; MAX_SNAPSHOTS],
+            mounts: [MountSlot::EMPTY; MAX_MOUNTS],
+            next_mount_id: 1,
+            namespace: Namespace::new(),
+            root_activation: RootActivation::default(),
+            scratch: [0; SCRATCH_BYTES],
+        })
     }
 }
 
 fn token(index: usize, generation: u32) -> Capability {
-    Capability::from_raw(((generation as u64) << 32) | (index as u64 + 1))
-        .expect("daemon token has a generation")
+    Capability::from_valid_raw(((generation as u64) << 32) | (index as u64 + 1))
 }
 
 fn capability_generation(capability: Capability) -> u32 {
@@ -1957,8 +1966,7 @@ fn validate_buffer(
 }
 
 fn rms_capability() -> synos_synfs::RmsMapHandle {
-    synos_synfs::RmsMapHandle::from_capability(INTERNAL_MAPPING_CAPABILITY)
-        .expect("internal mapping capability has a generation")
+    synos_synfs::RmsMapHandle::from_valid_capability(INTERNAL_MAPPING_CAPABILITY)
 }
 
 fn mount_path(path: &str) -> &str {

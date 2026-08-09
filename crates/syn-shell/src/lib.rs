@@ -55,7 +55,7 @@ impl IntoStatus for Error {
             Self::AlreadyRunning => Status::BUSY,
             Self::DependencyFailed => {
                 Status::new(Severity::Error, facility::SHELL, 1, 0)
-                    .expect("valid shell status")
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
             Self::InvalidHandle
             | Self::InvalidSyntax
@@ -122,8 +122,7 @@ impl<const CAPACITY: usize> Text<CAPACITY> {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len()])
-            .expect("shell text invariant")
+        core::str::from_utf8(&self.bytes[..self.len()]).unwrap_or("")
     }
 
     pub fn clear(&mut self) {

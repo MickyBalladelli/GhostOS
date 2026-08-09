@@ -23,6 +23,10 @@ impl RouteId {
         }
     }
 
+    pub const fn from_valid_raw(raw: u16) -> Self {
+        Self(raw)
+    }
+
     pub const fn raw(self) -> u16 {
         self.0
     }

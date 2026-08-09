@@ -86,8 +86,7 @@ impl<const CAPACITY: usize> BoundedText<CAPACITY> {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.length as usize])
-            .expect("BoundedText contains valid UTF-8")
+        core::str::from_utf8(&self.bytes[..self.length as usize]).unwrap_or("")
     }
 }
 

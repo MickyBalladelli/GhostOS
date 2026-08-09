@@ -71,7 +71,7 @@ impl IntoStatus for EthernetError {
             Self::TimedOut => 3,
         };
         Status::new(Severity::Error, facility::DRIVER, code, 0)
-            .expect("valid Ethernet status")
+            .unwrap_or(Status::INVALID_ARGUMENT)
     }
 }
 

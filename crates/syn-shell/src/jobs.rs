@@ -226,6 +226,10 @@ impl<const CAPACITY: usize> JobQueue<CAPACITY> {
             return Ok(None)
         };
         let entry = &mut self.jobs[slot];
+        let Some(program) = entry.program else {
+            entry.state = JobState::Failed;
+            return Ok(None)
+        };
         entry.state = JobState::Running;
         entry.worker = Some(worker);
         entry.attempts = entry.attempts.saturating_add(1);
@@ -233,7 +237,7 @@ impl<const CAPACITY: usize> JobQueue<CAPACITY> {
         Ok(Some(JobLease {
             id: JobId::from_parts(slot, entry.generation),
             worker,
-            program: entry.program.expect("queued job program invariant"),
+            program,
             deadline_us: entry.lease_deadline_us,
         }))
     }

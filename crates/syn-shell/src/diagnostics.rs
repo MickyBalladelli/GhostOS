@@ -164,7 +164,7 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
     registry.register(
         CommandSpec::new("SHOW-MEMORY", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(SHOW_MEMORY_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(SHOW_MEMORY_ROUTE),
     )?;
 
     let pid = ArgumentSpec::new("PID", ArgumentKind::Integer, false, true)
@@ -172,36 +172,36 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
     registry.register(
         CommandSpec::new("SHOW-PROCESS", &[pid])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(SHOW_PROCESS_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(SHOW_PROCESS_ROUTE),
     )?;
 
     registry.register(
         CommandSpec::new("SHOW-DISK", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(SHOW_DISK_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(SHOW_DISK_ROUTE),
     )?;
 
     registry.register(
         CommandSpec::new("SHOW-CPU", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(SHOW_CPU_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(SHOW_CPU_ROUTE),
     )?;
 
     registry.register(
         CommandSpec::new("SHOW-USERS", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(SHOW_USERS_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(SHOW_USERS_ROUTE),
     )?;
 
     registry.register(
         CommandSpec::new("SHOW-OBSOLETE", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(SHOW_OBSOLETE_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(SHOW_OBSOLETE_ROUTE),
     )?;
 
     registry.register(
         CommandSpec::new("UPTIME", &[]).map_err(|_| Error::InvalidValue)?,
-        RouteId::new(UPTIME_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(UPTIME_ROUTE),
     )?;
 
     let interval =
@@ -212,7 +212,7 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
     registry.register(
         CommandSpec::new("MONITOR", &[interval, samples])
             .map_err(|_| Error::InvalidValue)?,
-        RouteId::new(MONITOR_ROUTE).expect("nonzero route"),
+        RouteId::from_valid_raw(MONITOR_ROUTE),
     )
 }
 

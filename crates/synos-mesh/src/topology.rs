@@ -112,6 +112,10 @@ impl ClusterId {
     pub const fn raw(self) -> [u8; 16] {
         self.0
     }
+
+    pub const fn from_valid_raw(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,7 +145,7 @@ impl EndpointAddress {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("endpoint invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 }
 
@@ -296,9 +300,15 @@ impl ClusterAdvertisement {
     }
 
     pub fn decode(input: [u8; ADVERTISEMENT_WIRE_BYTES]) -> Result<Self, TopologyError> {
-        let cluster = ClusterId::new(input[..16].try_into().unwrap())
+        let Ok(cluster_bytes) = input[..16].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let cluster = ClusterId::new(cluster_bytes)
             .ok_or(TopologyError::CorruptAdvertisement)?;
-        let node = NodeId::new(u32::from_be_bytes(input[16..20].try_into().unwrap()))
+        let Ok(node_bytes) = input[16..20].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let node = NodeId::new(u32::from_be_bytes(node_bytes))
             .ok_or(TopologyError::CorruptAdvertisement)?;
         let endpoint_count = input[50] as usize;
         if endpoint_count == 0 || endpoint_count > MAX_ENDPOINTS {
@@ -313,18 +323,37 @@ impl ClusterAdvertisement {
         }
         let mut signature = [0; 32];
         signature.copy_from_slice(&input[ADVERTISEMENT_PAYLOAD_BYTES..]);
+        let Ok(sequence_bytes) = input[20..28].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let Ok(issued_at_bytes) = input[28..36].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let Ok(expires_at_bytes) = input[36..44].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let Ok(control_version_bytes) = input[44..46].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let Ok(data_version_bytes) = input[46..48].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let Ok(minimum_version_bytes) = input[48..50].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
+        let Ok(capabilities_bytes) = input[52..56].try_into() else {
+            return Err(TopologyError::CorruptAdvertisement)
+        };
         let advertisement = Self {
             cluster,
             node,
-            sequence: u64::from_be_bytes(input[20..28].try_into().unwrap()),
-            issued_at_us: u64::from_be_bytes(input[28..36].try_into().unwrap()),
-            expires_at_us: u64::from_be_bytes(input[36..44].try_into().unwrap()),
-            control_version: u16::from_be_bytes(input[44..46].try_into().unwrap()),
-            data_version: u16::from_be_bytes(input[46..48].try_into().unwrap()),
-            minimum_version: u16::from_be_bytes(input[48..50].try_into().unwrap()),
-            capabilities: ClusterCapabilities::from_bits(u32::from_be_bytes(
-                input[52..56].try_into().unwrap(),
-            )),
+            sequence: u64::from_be_bytes(sequence_bytes),
+            issued_at_us: u64::from_be_bytes(issued_at_bytes),
+            expires_at_us: u64::from_be_bytes(expires_at_bytes),
+            control_version: u16::from_be_bytes(control_version_bytes),
+            data_version: u16::from_be_bytes(data_version_bytes),
+            minimum_version: u16::from_be_bytes(minimum_version_bytes),
+            capabilities: ClusterCapabilities::from_bits(u32::from_be_bytes(capabilities_bytes)),
             endpoints,
             signature,
         };
@@ -404,7 +433,7 @@ impl Zone {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("zone invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 }
 

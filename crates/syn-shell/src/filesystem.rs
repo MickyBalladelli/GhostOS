@@ -66,7 +66,7 @@ impl Path {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("path invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 }
 
@@ -884,7 +884,7 @@ pub fn register_filesystem_commands<const CAPACITY: usize>(
 }
 
 fn route(raw: u16) -> RouteId {
-    RouteId::new(raw).expect("filesystem route is non-zero")
+    RouteId::from_valid_raw(raw)
 }
 
 struct TypeBuffer {

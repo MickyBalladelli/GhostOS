@@ -77,7 +77,9 @@ impl<const STATEMENTS: usize> ScriptEngine<STATEMENTS> {
         }
 
         loop {
-            let script = self.script.expect("active script invariant");
+            let Some(script) = self.script else {
+                return Err(Error::Inactive)
+            };
             let Some(statement) = script.statement(self.program_counter) else {
                 let status = self.status;
                 self.clear();

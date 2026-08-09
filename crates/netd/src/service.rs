@@ -115,7 +115,7 @@ impl IntoStatus for ServiceError {
             | Self::InvalidOperation
             | Self::InvalidRights => Status::INVALID_ARGUMENT,
             Self::Backend => Status::new(Severity::Error, facility::NETWORK, 1, 0)
-                .expect("valid network status"),
+                .unwrap_or(Status::INVALID_ARGUMENT),
             Self::Firewall(FirewallError::ExpiredCapability | FirewallError::InvalidCapability) => {
                 Status::ACCESS_DENIED
             }

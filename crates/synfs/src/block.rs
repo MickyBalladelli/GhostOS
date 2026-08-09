@@ -125,7 +125,7 @@ impl IntoStatus for BlockIoError {
             }
             Self::DeviceIo { .. } | Self::Pool(StoragePoolError::DeviceFailed) => {
                 Status::new(Severity::Error, facility::DRIVER, 20, 0)
-                    .expect("valid block I/O status")
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
             Self::InvalidToken | Self::InvalidRequest | Self::InvalidBlockSize | Self::Pool(_) => {
                 Status::INVALID_ARGUMENT
@@ -223,9 +223,10 @@ impl<const CAPACITY: usize> BlockIoQueue<CAPACITY> {
     {
         let mut dispatched = 0;
         while let Some(index) = self.find_from(self.submit_cursor, SlotState::Queued) {
-            let request = self.slots[index]
-                .request
-                .expect("queued block request invariant");
+            let Some(request) = self.slots[index].request else {
+                self.slots[index].state = SlotState::Vacant;
+                continue
+            };
             let token = BlockRequestToken::new(index, self.slots[index].generation);
             let completion = storage.execute(token, request);
             self.slots[index].completion = Some(completion);
@@ -239,7 +240,12 @@ impl<const CAPACITY: usize> BlockIoQueue<CAPACITY> {
     pub fn poll(&mut self) -> Option<BlockCompletion> {
         let index = self.find_from(self.completion_cursor, SlotState::Completed)?;
         let slot = &mut self.slots[index];
-        let completion = slot.completion.take().expect("completion invariant");
+        let Some(completion) = slot.completion.take() else {
+            slot.state = SlotState::Vacant;
+            slot.request = None;
+            self.completion_cursor = Self::next(index);
+            return None
+        };
         slot.state = SlotState::Vacant;
         slot.request = None;
         self.completion_cursor = Self::next(index);
@@ -363,7 +369,7 @@ where
             .devices
             .iter_mut()
             .find(|entry| entry.is_none())
-            .unwrap();
+            .ok_or(BlockIoError::Pool(StoragePoolError::RegistryFull))?;
         *slot = Some(RegisteredDevice { id, backend });
         Ok(())
     }
@@ -379,7 +385,8 @@ where
             .iter_mut()
             .find(|entry| entry.as_ref().is_some_and(|entry| entry.id == id))
             .ok_or(BlockIoError::DeviceUnavailable)?;
-        Ok(slot.take().expect("registered device invariant").backend)
+        let registered = slot.take().ok_or(BlockIoError::DeviceUnavailable)?;
+        Ok(registered.backend)
     }
 
     pub fn complete_remove(&mut self, id: StorageDeviceId) -> Result<D, BlockIoError> {

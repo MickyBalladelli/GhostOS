@@ -36,8 +36,14 @@ evidence.
 
 ## P0: Remove unsafe boundary behavior
 
-- [ ] Audit production `panic!`, `unwrap`, and `expect` calls at boot, parser,
+- [x] Audit production `panic!`, `unwrap`, and `expect` calls at boot, parser,
       IPC, device, storage, package, and network boundaries.
+      Progress: implementation pass completed across the audited boot,
+      parser, IPC, device, storage, package, network, shell, snapshot, and
+      replay paths. Malformed wire data, guest descriptors, filesystem records,
+      and invalid queue state now return stable errors or status values.
+      Added direct malformed-input regression tests for ELF loader fields and
+      firewall policy decoding. Changed crates pass compile validation.
 - [ ] Allow panics only at an explicit fatal kernel halt boundary. Convert
       malformed guest data and user input into stable errors or status values.
 - [ ] Add a negative-test matrix for malformed boot info, ABI frames, shared

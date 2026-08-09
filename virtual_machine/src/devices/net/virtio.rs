@@ -209,8 +209,10 @@ impl VirtioNet {
             if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
-            let addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
-            let len = u32::from_le_bytes(desc[8..12].try_into().unwrap()) as usize;
+            let Ok(addr_bytes) = desc[0..8].try_into() else { break };
+            let Ok(len_bytes) = desc[8..12].try_into() else { break };
+            let addr = u64::from_le_bytes(addr_bytes);
+            let len = u32::from_le_bytes(len_bytes) as usize;
             if len == 0 {
                 break;
             }
@@ -257,8 +259,10 @@ impl VirtioNet {
             if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
-            let addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
-            let len = u32::from_le_bytes(desc[8..12].try_into().unwrap()) as usize;
+            let Ok(addr_bytes) = desc[0..8].try_into() else { break };
+            let Ok(len_bytes) = desc[8..12].try_into() else { break };
+            let addr = u64::from_le_bytes(addr_bytes);
+            let len = u32::from_le_bytes(len_bytes) as usize;
             let Some(packet) = self.pending_rx.pop() else { break };
             if packet.len() + HEADER_LEN > len {
                 break;

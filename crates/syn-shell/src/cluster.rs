@@ -779,7 +779,7 @@ fn register<const CAPACITY: usize>(
 ) -> Result<(), Error> {
     registry.register(
         CommandSpec::new(name, arguments).map_err(|_| Error::InvalidValue)?,
-        RouteId::new(route).expect("cluster route is non-zero"),
+        RouteId::from_valid_raw(route),
     )
 }
 
@@ -2018,7 +2018,7 @@ fn help_output(command: CommandCall) -> Result<StructuredOutput, Status> {
                 field[field_len] = digits[digit_count];
                 field_len += 1;
             }
-            let field = core::str::from_utf8(&field[..field_len]).expect("help field invariant");
+            let field = core::str::from_utf8(&field[..field_len]).unwrap_or("");
             insert_text(&mut output, field, help.name)?;
         }
     }

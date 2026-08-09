@@ -151,8 +151,7 @@ impl ApplicationPackageManifest {
     }
 
     pub fn name(&self) -> &str {
-        core::str::from_utf8(&self.name[..self.name_length as usize])
-            .expect("application name is UTF-8")
+        core::str::from_utf8(&self.name[..self.name_length as usize]).unwrap_or("")
     }
 
     fn encode(self, destination: &mut [u8]) -> Result<(), PackageError> {

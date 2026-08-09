@@ -881,14 +881,15 @@ impl ClusterBootstrapState {
     }
 
     pub fn decode(input: &[u8]) -> Result<Self, ClusterBootstrapError> {
+        let checksum_bytes: [u8; 8] = input
+            .get(CHECKSUM_OFFSET..Self::encoded_len())
+            .ok_or(ClusterBootstrapError::Corrupt)?
+            .try_into()
+            .map_err(|_| ClusterBootstrapError::Corrupt)?;
         if input.len() < Self::encoded_len()
             || &input[..8] != CLUSTER_BOOTSTRAP_MAGIC
             || u16::from_le_bytes([input[8], input[9]]) != CLUSTER_BOOTSTRAP_FORMAT_VERSION
-            || u64::from_le_bytes(
-                input[CHECKSUM_OFFSET..Self::encoded_len()]
-                    .try_into()
-                    .unwrap(),
-            ) != checksum(&input[..CHECKSUM_OFFSET])
+            || u64::from_le_bytes(checksum_bytes) != checksum(&input[..CHECKSUM_OFFSET])
         {
             return Err(ClusterBootstrapError::Corrupt);
         }

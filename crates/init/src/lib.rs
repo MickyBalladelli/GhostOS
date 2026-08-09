@@ -55,7 +55,7 @@ impl ServiceName {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("ServiceName invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 }
 
@@ -201,7 +201,8 @@ impl IntoStatus for SupervisorError {
             Self::Capacity => Status::NO_SPACE,
             Self::NotFound | Self::StaleExit => Status::NOT_FOUND,
             Self::FenceFailed | Self::SpawnFailed => {
-                Status::new(Severity::Error, facility::DRIVER, 1, 0).expect("valid driver status")
+                Status::new(Severity::Error, facility::DRIVER, 1, 0)
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
         }
     }

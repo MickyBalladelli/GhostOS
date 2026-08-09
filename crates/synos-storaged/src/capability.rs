@@ -169,7 +169,7 @@ fn key(secret: u64) -> CapabilityKey {
 }
 
 fn node() -> NodeId {
-    NodeId::new(1).expect("storage node id is non-zero")
+    NodeId::from_valid_raw(1)
 }
 
 fn kernel_rights(rights: StorageRights) -> Rights {

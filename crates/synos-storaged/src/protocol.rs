@@ -67,11 +67,11 @@ impl Endpoint {
     }
 
     pub fn host(&self) -> &str {
-        core::str::from_utf8(&self.host[..self.host_len as usize]).expect("endpoint invariant")
+        core::str::from_utf8(&self.host[..self.host_len as usize]).unwrap_or("")
     }
 
     pub fn path(&self) -> &str {
-        core::str::from_utf8(&self.path[..self.path_len as usize]).expect("endpoint invariant")
+        core::str::from_utf8(&self.path[..self.path_len as usize]).unwrap_or("")
     }
 
     pub const fn port(self) -> u16 {
@@ -199,7 +199,7 @@ impl ObjectKey {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("object key invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 }
 

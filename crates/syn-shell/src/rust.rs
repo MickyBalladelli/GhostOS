@@ -165,7 +165,7 @@ fn flag(name: &str) -> Result<ArgumentSpec, Error> {
 }
 
 fn route(raw: u16) -> RouteId {
-    RouteId::new(raw).expect("rust shell route is non-zero")
+    RouteId::from_valid_raw(raw)
 }
 
 fn boolean(value: Option<Value>) -> Result<bool, Status> {

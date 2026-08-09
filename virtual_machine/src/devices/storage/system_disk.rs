@@ -407,7 +407,11 @@ impl SystemDiskProvisioner {
             ));
         }
         if valid.len() == 2 {
-            let generation = valid.iter().map(|(_, _, generation)| *generation).max().unwrap();
+            let generation = valid
+                .iter()
+                .map(|(_, _, generation)| *generation)
+                .max()
+                .unwrap_or(0);
             return Ok(SystemDiskRepairReport {
                 path,
                 repaired_manifest_slot: None,
@@ -416,7 +420,11 @@ impl SystemDiskProvisioner {
             });
         }
 
-        let (source_offset, bytes, generation) = valid.pop().unwrap();
+        let Some((source_offset, bytes, generation)) = valid.pop() else {
+            return Err(StorageError::InvalidImage(
+                "no valid system-disk manifest is available for repair".to_string(),
+            ))
+        };
         let target_offset = if source_offset == MANIFEST_A_OFFSET {
             MANIFEST_B_OFFSET
         } else {
@@ -708,9 +716,8 @@ fn decode_settings(bytes: &[u8]) -> Result<Vec<SystemSetting>, StorageError> {
                 "truncated system settings".to_string(),
             ));
         }
-        let key_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
-        let value_len =
-            u32::from_le_bytes(bytes[cursor + 2..header_end].try_into().unwrap()) as usize;
+        let key_len = get_u16(bytes, cursor) as usize;
+        let value_len = get_u32(bytes, cursor + 2) as usize;
         if key_len == 0 {
             return Err(StorageError::InvalidImage(
                 "system setting key is empty".to_string(),
@@ -751,9 +758,8 @@ fn decode_settings(bytes: &[u8]) -> Result<Vec<SystemSetting>, StorageError> {
     let mut settings = Vec::new();
     cursor = SETTINGS_MAGIC.len();
     while cursor < checksum_offset {
-        let key_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
-        let value_len =
-            u32::from_le_bytes(bytes[cursor + 2..cursor + 6].try_into().unwrap()) as usize;
+        let key_len = get_u16(bytes, cursor) as usize;
+        let value_len = get_u32(bytes, cursor + 2) as usize;
         let key_start = cursor + 6;
         let value_start = key_start + key_len;
         let end = value_start + value_len;
@@ -1236,10 +1242,10 @@ fn validate_header(image: &mut DiskImage) -> Result<(), StorageError> {
     let mut header = [0u8; HEADER_SIZE];
     image.read_sector(0, &mut header)?;
     if &header[0..8] != HEADER_MAGIC
-        || u32::from_le_bytes(header[8..12].try_into().unwrap()) != SYSTEM_DISK_FORMAT_VERSION
-        || u64::from_le_bytes(header[12..20].try_into().unwrap()) != image.size()
-        || u64::from_le_bytes(header[20..28].try_into().unwrap()) != MANIFEST_A_OFFSET
-        || u64::from_le_bytes(header[28..36].try_into().unwrap()) != MANIFEST_B_OFFSET
+        || get_u32(&header, 8) != SYSTEM_DISK_FORMAT_VERSION
+        || get_u64(&header, 12) != image.size()
+        || get_u64(&header, 20) != MANIFEST_A_OFFSET
+        || get_u64(&header, 28) != MANIFEST_B_OFFSET
     {
         return Err(StorageError::InvalidImage(
             "invalid system-disk header".to_string(),
@@ -1373,15 +1379,27 @@ fn put_u64(bytes: &mut [u8], offset: usize, value: u64) {
 }
 
 fn get_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+    bytes
+        .get(offset..offset.saturating_add(2))
+        .and_then(|value| value.try_into().ok())
+        .map(u16::from_le_bytes)
+        .unwrap_or(0)
 }
 
 fn get_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    bytes
+        .get(offset..offset.saturating_add(4))
+        .and_then(|value| value.try_into().ok())
+        .map(u32::from_le_bytes)
+        .unwrap_or(0)
 }
 
 fn get_u64(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+    bytes
+        .get(offset..offset.saturating_add(8))
+        .and_then(|value| value.try_into().ok())
+        .map(u64::from_le_bytes)
+        .unwrap_or(0)
 }
 
 fn checksum(bytes: &[u8]) -> u32 {

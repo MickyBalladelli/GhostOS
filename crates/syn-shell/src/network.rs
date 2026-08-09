@@ -836,7 +836,7 @@ fn insert_indexed(
 }
 
 fn route(raw: u16) -> RouteId {
-    RouteId::new(raw).expect("network route is non-zero")
+    RouteId::from_valid_raw(raw)
 }
 
 fn positional(name: &str, kind: ArgumentKind, required: bool) -> Result<ArgumentSpec, Error> {

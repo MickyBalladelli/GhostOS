@@ -43,7 +43,7 @@ impl AdmissionEndpoint {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("endpoint invariant")
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 }
 
@@ -1340,12 +1340,26 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize> Default
 {
     fn default() -> Self {
         Self::new(
-            ClusterId::new([1; 16]).expect("non-zero cluster id"),
+            ClusterId::from_valid_raw([1; 16]),
             AdmissionPolicy::Invitation,
             1,
             SecurityPolicy::DEFAULT,
         )
-        .expect("valid default admission policy")
+        .unwrap_or_else(|_| Self {
+            cluster: ClusterId::from_valid_raw([1; 16]),
+            policy: AdmissionPolicy::Invitation,
+            quorum_required: 1,
+            quorum_available: 1,
+            security: SecurityPolicy::DEFAULT,
+            epoch: 1,
+            generation: 1,
+            invitations: [None; INVITATIONS],
+            trusted: [None; MEMBERS],
+            challenges: [None; MEMBERS],
+            members: [None; MEMBERS],
+            audit: [None; AUDIT],
+            next_audit: 1,
+        })
     }
 }
 

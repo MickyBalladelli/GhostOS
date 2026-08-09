@@ -29,6 +29,10 @@ impl NodeId {
     pub const fn raw(self) -> u32 {
         self.0
     }
+
+    pub const fn from_valid_raw(raw: u32) -> Self {
+        Self(raw)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

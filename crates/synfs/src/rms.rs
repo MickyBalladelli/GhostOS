@@ -85,6 +85,10 @@ impl RmsMapHandle {
         }
     }
 
+    pub const fn from_valid_capability(raw: u64) -> Self {
+        Self(raw)
+    }
+
     pub const fn raw(self) -> u64 {
         self.0
     }
@@ -303,10 +307,12 @@ impl IntoStatus for RmsError {
         match self {
             Self::File(error) => error.status(),
             Self::BufferTooSmall { .. } => {
-                Status::new(Severity::Error, facility::RMS, 1, 0).expect("valid RMS status")
+                Status::new(Severity::Error, facility::RMS, 1, 0)
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
             Self::DuplicateKey => {
-                Status::new(Severity::Error, facility::RMS, 2, 0).expect("valid RMS status")
+                Status::new(Severity::Error, facility::RMS, 2, 0)
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
             Self::IncompleteImage { .. }
             | Self::InvalidDescriptor
@@ -315,7 +321,8 @@ impl IntoStatus for RmsError {
                 Status::INVALID_ARGUMENT
             }
             Self::NotRecordFile => {
-                Status::new(Severity::Error, facility::RMS, 3, 0).expect("valid RMS status")
+                Status::new(Severity::Error, facility::RMS, 3, 0)
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
             Self::RecordNotFound => Status::NOT_FOUND,
         }

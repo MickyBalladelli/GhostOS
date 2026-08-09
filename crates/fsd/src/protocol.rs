@@ -102,6 +102,10 @@ impl ProcessId {
         if raw == 0 { None } else { Some(Self(raw)) }
     }
 
+    pub const fn from_valid_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
     pub const fn raw(self) -> u64 {
         self.0
     }
@@ -118,6 +122,10 @@ impl Capability {
         } else {
             Some(Self(raw))
         }
+    }
+
+    pub const fn from_valid_raw(raw: u64) -> Self {
+        Self(raw)
     }
 
     pub const fn raw(self) -> u64 {

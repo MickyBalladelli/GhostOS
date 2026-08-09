@@ -131,7 +131,7 @@ impl ClusterSpec {
         let mut spec = Self {
             identity: ClusterIdentitySpec {
                 id: 1,
-                name: BoundedText::new("synos").expect("valid default cluster name"),
+                name: BoundedText::new("synos").unwrap_or(BoundedText::EMPTY),
                 description: BoundedText::EMPTY,
             },
             discovery: DiscoveryPolicy::Hybrid,
@@ -171,15 +171,16 @@ impl ClusterSpec {
             overrides: [None; MAX_NODE_OVERRIDES],
             override_count: 0,
         };
-        spec.push_transport(TransportSpec {
-            name: BoundedText::new("loopback").expect("valid default transport name"),
-            kind: TransportKind::Loopback,
-            endpoint: BoundedText::EMPTY,
-            enabled: true,
-            priority: 0,
-            mtu: 65_535,
-        })
-        .expect("default transport fits");
+        if let Ok(name) = BoundedText::new("loopback") {
+            let _ = spec.push_transport(TransportSpec {
+                name,
+                kind: TransportKind::Loopback,
+                endpoint: BoundedText::EMPTY,
+                enabled: true,
+                priority: 0,
+                mtu: 65_535,
+            });
+        }
         spec
     }
 

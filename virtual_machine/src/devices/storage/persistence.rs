@@ -80,14 +80,18 @@ impl SynosPersistencePort {
         self.bytes.fill(0);
         let mut region = [0u8; REGION_BYTES];
         for (index, sector) in region.chunks_exact_mut(SECTOR_SIZE).enumerate() {
-            let sector: &mut [u8; SECTOR_SIZE] = sector.try_into().expect("exact sector");
+            let Ok(sector) = <&mut [u8; SECTOR_SIZE]>::try_from(sector) else {
+                return Err(StorageError::InvalidImage("invalid persistence sector".to_string()))
+            };
             image.read_sector(self.base_sector + index as u64, sector)?;
         }
-        if &region[..8] != MAGIC || u32::from_le_bytes(region[8..12].try_into().unwrap()) != VERSION {
+        if &region[..8] != MAGIC
+            || u32::from_le_bytes([region[8], region[9], region[10], region[11]]) != VERSION
+        {
             return Ok(())
         }
-        let length = u32::from_le_bytes(region[12..16].try_into().unwrap()) as usize;
-        let stored_checksum = u32::from_le_bytes(region[16..20].try_into().unwrap());
+        let length = u32::from_le_bytes([region[12], region[13], region[14], region[15]]) as usize;
+        let stored_checksum = u32::from_le_bytes([region[16], region[17], region[18], region[19]]);
         if length > SYNOS_PERSISTENCE_MAX_BYTES {
             return Ok(())
         }
@@ -121,7 +125,9 @@ impl SynosPersistencePort {
         region[HEADER_BYTES..HEADER_BYTES + self.length]
             .copy_from_slice(&self.bytes[..self.length]);
         for (index, sector) in region.chunks_exact(SECTOR_SIZE).enumerate() {
-            let sector: &[u8; SECTOR_SIZE] = sector.try_into().expect("exact sector");
+            let Ok(sector) = <&[u8; SECTOR_SIZE]>::try_from(sector) else {
+                return Err(StorageError::InvalidImage("invalid persistence sector".to_string()))
+            };
             image.write_sector(self.base_sector + index as u64, sector)?;
         }
         image.sync()

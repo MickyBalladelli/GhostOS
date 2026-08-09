@@ -354,8 +354,14 @@ impl VirtioBlk {
             Ok(bytes) => bytes,
             Err(_) => return (BLK_S_IOERR, 1),
         };
-        let request_type = u32::from_le_bytes(header_bytes[0..4].try_into().unwrap());
-        let sector = u64::from_le_bytes(header_bytes[8..16].try_into().unwrap());
+        let Ok(request_type_bytes) = header_bytes[0..4].try_into() else {
+            return (BLK_S_IOERR, 1)
+        };
+        let Ok(sector_bytes) = header_bytes[8..16].try_into() else {
+            return (BLK_S_IOERR, 1)
+        };
+        let request_type = u32::from_le_bytes(request_type_bytes);
+        let sector = u64::from_le_bytes(sector_bytes);
         if !matches!(
             chain.last(),
             Some(desc) if desc.flags & DESC_WRITE != 0 && desc.len >= 1
@@ -406,7 +412,9 @@ impl VirtioBlk {
                     return (BLK_S_IOERR, 1);
                 };
                 for (index, sector_bytes) in bytes.chunks_exact(512).enumerate() {
-                    let sector_bytes: &[u8; 512] = sector_bytes.try_into().unwrap();
+                    let Ok(sector_bytes) = <&[u8; 512]>::try_from(sector_bytes) else {
+                        return (BLK_S_IOERR, 1)
+                    };
                     if disk.write_sector(sector + index as u64, sector_bytes).is_err() {
                         return (BLK_S_IOERR, 1);
                     }

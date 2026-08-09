@@ -1534,15 +1534,21 @@ impl<'a> Reader<'a> {
     }
 
     fn u16(&mut self) -> Result<u16, SnapshotError> {
-        Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+        Ok(u16::from_le_bytes(
+            self.take(2)?.try_into().map_err(|_| SnapshotError::InvalidFormat)?,
+        ))
     }
 
     fn u32(&mut self) -> Result<u32, SnapshotError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+        Ok(u32::from_le_bytes(
+            self.take(4)?.try_into().map_err(|_| SnapshotError::InvalidFormat)?,
+        ))
     }
 
     fn u64(&mut self) -> Result<u64, SnapshotError> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+        Ok(u64::from_le_bytes(
+            self.take(8)?.try_into().map_err(|_| SnapshotError::InvalidFormat)?,
+        ))
     }
 
     fn usize(&mut self) -> Result<usize, SnapshotError> {

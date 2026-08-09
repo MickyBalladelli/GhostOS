@@ -74,7 +74,8 @@ impl IntoStatus for Error {
             Self::Inactive => Status::NOT_FOUND,
             Self::WireCorrupt => Status::CORRUPT,
             Self::WireSchemaMismatch => {
-                Status::new(Severity::Error, facility::SCRIPT, 2, 0).expect("valid script status")
+                Status::new(Severity::Error, facility::SCRIPT, 2, 0)
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
             Self::InvalidCapability
             | Self::InvalidCondition
@@ -87,7 +88,8 @@ impl IntoStatus for Error {
             | Self::LineTooLong
             | Self::Token(TokenError::Invalid | TokenError::InvalidSignature)
             | Self::UnterminatedQuote => {
-                Status::new(Severity::Error, facility::SCRIPT, 1, 0).expect("valid script status")
+                Status::new(Severity::Error, facility::SCRIPT, 1, 0)
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
         }
     }

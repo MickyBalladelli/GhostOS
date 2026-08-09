@@ -251,8 +251,10 @@ impl E1000 {
             if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
-            let addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
-            let cmd_len = u32::from_le_bytes(desc[8..12].try_into().unwrap());
+            let Ok(addr_bytes) = desc[0..8].try_into() else { break };
+            let Ok(cmd_len_bytes) = desc[8..12].try_into() else { break };
+            let addr = u64::from_le_bytes(addr_bytes);
+            let cmd_len = u32::from_le_bytes(cmd_len_bytes);
             let length = (cmd_len & 0x0FFF) as usize;
             if length == 0 {
                 break;
@@ -315,8 +317,10 @@ impl E1000 {
             if !Self::dma_read(mmu, desc_addr, &mut desc) {
                 break;
             }
-            let buf_addr = u64::from_le_bytes(desc[0..8].try_into().unwrap());
-            let buf_len = (u32::from_le_bytes(desc[8..12].try_into().unwrap()) & 0xFFFF) as usize;
+            let Ok(buf_addr_bytes) = desc[0..8].try_into() else { break };
+            let Ok(buf_len_bytes) = desc[8..12].try_into() else { break };
+            let buf_addr = u64::from_le_bytes(buf_addr_bytes);
+            let buf_len = (u32::from_le_bytes(buf_len_bytes) & 0xFFFF) as usize;
             let frame_len = packet.len();
             if frame_len < 6 {
                 let _ = self.pending_rx.pop();

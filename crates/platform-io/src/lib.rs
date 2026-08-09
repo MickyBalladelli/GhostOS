@@ -25,7 +25,8 @@ impl IntoStatus for Error {
             Self::QueueFull => Status::BUSY,
             Self::InvalidDevice => Status::NOT_FOUND,
             Self::CannotCancel | Self::RequestNotDispatched => {
-                Status::new(Severity::Warning, facility::DRIVER, 1, 0).expect("valid I/O status")
+                Status::new(Severity::Warning, facility::DRIVER, 1, 0)
+                    .unwrap_or(Status::INVALID_ARGUMENT)
             }
             Self::EmptyBuffer
             | Self::InvalidBufferAccess
@@ -133,11 +134,12 @@ impl<Request: Copy, Response: Copy, const CAPACITY: usize> AsyncQueue<Request, R
     pub fn dispatch(&mut self) -> Option<Submission<Request>> {
         let slot_index = self.find_from(self.dispatch_cursor, SlotState::Queued)?;
         let slot = &mut self.slots[slot_index];
+        let request = slot.request?;
         slot.state = SlotState::Dispatched;
         self.dispatch_cursor = Self::next(slot_index);
         Some(Submission {
             token: RequestToken::from_parts(slot_index, slot.generation),
-            request: slot.request.expect("queued request invariant"),
+            request,
         })
     }
 
@@ -154,9 +156,15 @@ impl<Request: Copy, Response: Copy, const CAPACITY: usize> AsyncQueue<Request, R
     pub fn poll(&mut self) -> Option<Completion<Response>> {
         let slot_index = self.find_from(self.completion_cursor, SlotState::Completed)?;
         let slot = &mut self.slots[slot_index];
+        let Some(result) = slot.result else {
+            slot.state = SlotState::Vacant;
+            slot.request = None;
+            self.completion_cursor = Self::next(slot_index);
+            return None
+        };
         let completion = Completion {
             token: RequestToken::from_parts(slot_index, slot.generation),
-            result: slot.result.expect("completed result invariant"),
+            result,
         };
         slot.state = SlotState::Vacant;
         slot.request = None;

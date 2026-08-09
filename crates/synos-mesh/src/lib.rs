@@ -71,5 +71,5 @@ impl IntoStatus for Error {
 }
 
 fn mesh_status(code: u16, severity: Severity) -> Status {
-    Status::new(severity, facility::NETWORK, code, 0).expect("valid mesh status")
+    Status::new(severity, facility::NETWORK, code, 0).unwrap_or(Status::INVALID_ARGUMENT)
 }

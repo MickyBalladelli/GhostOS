@@ -703,7 +703,20 @@ impl<const CAPACITY: usize> FileEditor<CAPACITY> {
 
 impl<const CAPACITY: usize> Default for FileEditor<CAPACITY> {
     fn default() -> Self {
-        Self::new("", 0, &[]).expect("empty editor is valid")
+        Self {
+            bytes: [0; CAPACITY],
+            len: 0,
+            cursor: 0,
+            anchor: None,
+            scroll_row: 0,
+            scroll_column: 0,
+            clipboard: [0; CAPACITY],
+            clipboard_len: 0,
+            name: Text::empty(),
+            version: 0,
+            saved_checksum: checksum(&[]),
+            mode: EditorMode::Insert,
+        }
     }
 }
 

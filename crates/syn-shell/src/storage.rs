@@ -77,17 +77,17 @@ pub fn register_storage_commands<const CAPACITY: usize>(
             ],
         )
         .map_err(|_| Error::InvalidValue)?,
-        crate::parser::RouteId::new(MOUNT_ROUTE).expect("storage route is non-zero"),
+        crate::parser::RouteId::from_valid_raw(MOUNT_ROUTE),
     )?;
     let mount_id = ArgumentSpec::new("MOUNT", ArgumentKind::Integer, true, true)
         .map_err(|_| Error::InvalidValue)?;
     registry.register(
         CommandSpec::new("UNMOUNT", &[mount_id]).map_err(|_| Error::InvalidValue)?,
-        crate::parser::RouteId::new(UNMOUNT_ROUTE).expect("storage route is non-zero"),
+        crate::parser::RouteId::from_valid_raw(UNMOUNT_ROUTE),
     )?;
     registry.register(
         CommandSpec::new("SHOW-MOUNTS", &[]).map_err(|_| Error::InvalidValue)?,
-        crate::parser::RouteId::new(SHOW_MOUNTS_ROUTE).expect("storage route is non-zero"),
+        crate::parser::RouteId::from_valid_raw(SHOW_MOUNTS_ROUTE),
     )?;
     Ok(())
 }

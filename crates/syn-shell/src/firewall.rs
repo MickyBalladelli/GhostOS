@@ -103,7 +103,7 @@ impl<Source: FirewallSource, const CAPACITY: usize> CommandExecutor
     }
 }
 
-fn route(raw: u16) -> RouteId { RouteId::new(raw).expect("firewall route is non-zero") }
+fn route(raw: u16) -> RouteId { RouteId::from_valid_raw(raw) }
 
 fn unsigned(value: Option<Value>) -> Result<Option<u64>, Error> {
     match value {

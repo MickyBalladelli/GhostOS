@@ -57,7 +57,7 @@ impl PoolName {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.length as usize]).expect("PoolName invariant")
+        core::str::from_utf8(&self.bytes[..self.length as usize]).unwrap_or("")
     }
 }
 

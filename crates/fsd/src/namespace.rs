@@ -61,7 +61,7 @@ impl NamespacePath {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.length as usize]).expect("NamespacePath invariant")
+        core::str::from_utf8(&self.bytes[..self.length as usize]).unwrap_or("")
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -177,6 +177,15 @@ impl MountSlot {
 pub struct RootActivation {
     pub generation: u64,
     pub host_mount_authority: HostMountAuthority,
+}
+
+impl Default for RootActivation {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            host_mount_authority: HostMountAuthority(0),
+        }
+    }
 }
 
 pub struct RootFilesystem;

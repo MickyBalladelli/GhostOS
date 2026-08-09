@@ -72,13 +72,13 @@ impl IntoStatus for Error {
             Self::DirectoryNotEmpty => Status::DIRECTORY_NOT_EMPTY,
             Self::TransactionAborted => Status::BUSY,
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
-                .expect("valid filesystem status"),
+                .unwrap_or(Status::INVALID_ARGUMENT),
             Self::AlreadyExists => Status::new(Severity::Error, facility::FILESYSTEM, 2, 0)
-                .expect("valid filesystem status"),
+                .unwrap_or(Status::INVALID_ARGUMENT),
             Self::VersionOverflow => Status::new(Severity::Fatal, facility::FILESYSTEM, 3, 0)
-                .expect("valid filesystem status"),
+                .unwrap_or(Status::CORRUPT),
             Self::Io => Status::new(Severity::Error, facility::FILESYSTEM, 4, 0)
-                .expect("valid filesystem status"),
+                .unwrap_or(Status::INVALID_ARGUMENT),
             Self::QuotaExceeded => Status::NO_SPACE,
         }
     }
@@ -154,7 +154,7 @@ impl FileName {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(self.as_bytes()).expect("FileName invariant")
+        core::str::from_utf8(self.as_bytes()).unwrap_or("")
     }
 }
 
@@ -483,6 +483,10 @@ pub struct CheckpointId(u64);
 impl CheckpointId {
     pub const fn from_raw(raw: u64) -> Option<Self> {
         if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
+    pub const fn from_valid_raw(raw: u64) -> Self {
+        Self(raw)
     }
 
     pub const fn raw(self) -> u64 {
@@ -1369,7 +1373,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         if moved == 0 {
             return Err(Error::NotFound)
         }
-        Ok(first.expect("rename moved one record"))
+        first.ok_or(Error::Corrupt)
     }
 
     fn renamed_name(old: FileName, new: FileName, current: FileName) -> Result<FileName, Error> {

@@ -838,9 +838,10 @@ fn parse_dynamic_relocations(
     let mut rel = None;
     let mut relsz = 0u64;
     let mut relent = 16u64;
-    for chunk in dynamic_bytes.chunks_exact(16) {
-        let tag = i64::from_le_bytes(chunk[..8].try_into().unwrap());
-        let value = u64::from_le_bytes(chunk[8..].try_into().unwrap());
+    let mut chunks = dynamic_bytes.chunks_exact(16);
+    for chunk in &mut chunks {
+        let tag = read_i64(chunk, 0)?;
+        let value = read_u64(chunk, 8)?;
         match tag {
             DT_NULL => break,
             DT_RELA => rela = Some(value),
@@ -851,6 +852,9 @@ fn parse_dynamic_relocations(
             DT_RELENT => relent = value,
             _ => {}
         }
+    }
+    if !chunks.remainder().is_empty() {
+        return Err(LoaderError::InvalidSectionHeader)
     }
     if let Some(address) = rela {
         let file_offset = virtual_to_file(bytes, segments, segment_count, address)?;
@@ -1047,41 +1051,47 @@ fn range(bytes: &[u8], offset: u64, length: u64) -> Result<&[u8], LoaderError> {
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, LoaderError> {
-    Ok(u16::from_le_bytes(
-        bytes
-            .get(offset..offset + 2)
-            .ok_or(LoaderError::Truncated)?
-            .try_into()
-            .unwrap(),
-    ))
+    let value = bytes
+        .get(offset..offset + 2)
+        .ok_or(LoaderError::Truncated)?
+        .try_into()
+        .map_err(|_| LoaderError::Truncated)?;
+    Ok(u16::from_le_bytes(value))
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, LoaderError> {
-    Ok(u32::from_le_bytes(
-        bytes
-            .get(offset..offset + 4)
-            .ok_or(LoaderError::Truncated)?
-            .try_into()
-            .unwrap(),
-    ))
+    let value = bytes
+        .get(offset..offset + 4)
+        .ok_or(LoaderError::Truncated)?
+        .try_into()
+        .map_err(|_| LoaderError::Truncated)?;
+    Ok(u32::from_le_bytes(value))
 }
 
 fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, LoaderError> {
-    Ok(u64::from_le_bytes(
-        bytes
-            .get(offset..offset + 8)
-            .ok_or(LoaderError::Truncated)?
-            .try_into()
-            .unwrap(),
-    ))
+    let value = bytes
+        .get(offset..offset + 8)
+        .ok_or(LoaderError::Truncated)?
+        .try_into()
+        .map_err(|_| LoaderError::Truncated)?;
+    Ok(u64::from_le_bytes(value))
 }
 
 fn read_i64(bytes: &[u8], offset: usize) -> Result<i64, LoaderError> {
-    Ok(i64::from_le_bytes(
-        bytes
-            .get(offset..offset + 8)
-            .ok_or(LoaderError::Truncated)?
-            .try_into()
-            .unwrap(),
-    ))
+    let value = bytes
+        .get(offset..offset + 8)
+        .ok_or(LoaderError::Truncated)?
+        .try_into()
+        .map_err(|_| LoaderError::Truncated)?;
+    Ok(i64::from_le_bytes(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LoaderError, read_u32};
+
+    #[test]
+    fn truncated_loader_scalar_is_an_error() {
+        assert_eq!(read_u32(&[0; 3], 0), Err(LoaderError::Truncated));
+    }
 }

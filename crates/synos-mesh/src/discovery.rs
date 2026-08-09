@@ -128,9 +128,9 @@ impl NodeAdvertisement {
     }
 
     pub fn decode(bytes: [u8; Self::WIRE_BYTES]) -> Result<Self, DiscoveryError> {
-        let node = NodeId::new(u32::from_be_bytes(bytes[0..4].try_into().unwrap()))
+        let node = NodeId::new(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
             .ok_or(DiscoveryError::CorruptPacket)?;
-        let incarnation = u64::from_be_bytes(bytes[4..12].try_into().unwrap());
+        let incarnation = u64::from_be_bytes(bytes[4..12].try_into().map_err(|_| DiscoveryError::CorruptPacket)?);
         let role = NodeRole::from_raw(bytes[12]).ok_or(DiscoveryError::CorruptPacket)?;
         let interfaces = InterfaceSet::new(bytes[13]).ok_or(DiscoveryError::CorruptPacket)?;
         let advertisement = Self::new(
@@ -138,11 +138,11 @@ impl NodeAdvertisement {
             incarnation,
             role,
             interfaces,
-            u32::from_be_bytes(bytes[16..20].try_into().unwrap()),
-            u64::from_be_bytes(bytes[20..28].try_into().unwrap()),
-            u32::from_be_bytes(bytes[28..32].try_into().unwrap()),
-            u32::from_be_bytes(bytes[32..36].try_into().unwrap()),
-            u64::from_be_bytes(bytes[40..48].try_into().unwrap()),
+            u32::from_be_bytes(bytes[16..20].try_into().map_err(|_| DiscoveryError::CorruptPacket)?),
+            u64::from_be_bytes(bytes[20..28].try_into().map_err(|_| DiscoveryError::CorruptPacket)?),
+            u32::from_be_bytes(bytes[28..32].try_into().map_err(|_| DiscoveryError::CorruptPacket)?),
+            u32::from_be_bytes(bytes[32..36].try_into().map_err(|_| DiscoveryError::CorruptPacket)?),
+            u64::from_be_bytes(bytes[40..48].try_into().map_err(|_| DiscoveryError::CorruptPacket)?),
         )
         .ok_or(DiscoveryError::InvalidAdvertisement)?;
         Ok(advertisement)
@@ -170,14 +170,18 @@ impl GossipAnnouncement {
     }
 
     pub fn decode(bytes: [u8; Self::WIRE_BYTES]) -> Result<Self, DiscoveryError> {
-        let relay = NodeId::new(u32::from_be_bytes(bytes[0..4].try_into().unwrap()))
+        let relay = NodeId::new(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
             .ok_or(DiscoveryError::CorruptPacket)?;
         let interface = MeshInterface::from_raw(bytes[8]).ok_or(DiscoveryError::CorruptPacket)?;
         Ok(Self {
             relay,
-            sequence: u32::from_be_bytes(bytes[4..8].try_into().unwrap()),
+            sequence: u32::from_be_bytes(bytes[4..8].try_into().map_err(|_| DiscoveryError::CorruptPacket)?),
             interface,
-            advertisement: NodeAdvertisement::decode(bytes[16..].try_into().unwrap())?,
+            advertisement: NodeAdvertisement::decode(
+                bytes[16..]
+                    .try_into()
+                    .map_err(|_| DiscoveryError::CorruptPacket)?,
+            )?,
         })
     }
 }

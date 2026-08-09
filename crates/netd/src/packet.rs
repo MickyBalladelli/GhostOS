@@ -223,15 +223,12 @@ impl<const MTU: usize> TxToken for QueueTxToken<'_, MTU> {
     where
         F: FnOnce(&mut [u8]) -> R,
     {
-        let result = transmit(
-            self.0
-                .buffer()
-                .get_mut(..length)
-                .expect("smoltcp frame exceeds advertised MTU"),
-        );
-        self.0
-            .commit(length)
-            .expect("smoltcp frame exceeds advertised MTU");
+        let length = length.min(self.0.buffer().len());
+        let result = match self.0.buffer().get_mut(..length) {
+            Some(buffer) => transmit(buffer),
+            None => transmit(&mut []),
+        };
+        let _ = self.0.commit(length);
         result
     }
 }
