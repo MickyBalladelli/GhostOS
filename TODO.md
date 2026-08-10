@@ -167,8 +167,11 @@ evidence.
       `ManualClock`; clock-backed entry points now drive fabric leases and
       heartbeats, DHCP and TCP timers, shell job leases, process/compiler
       deadlines, cluster health, and topology sampling.
-- [ ] Add model tests for queue saturation, duplicate completion, cancellation
-      races, stale generations, timeout boundaries, and restart storms.
+- [x] Add model tests for queue saturation, duplicate completion, cancellation
+      races, stale generations, timeout boundaries, and restart storms. Added
+      deterministic state-machine coverage for `AsyncQueue`, compiler deadline
+      and cancellation boundaries, and supervisor restart generation fencing
+      and storm limits.
 - [ ] Define memory, CPU, IPC, storage, network, log, and audit quotas in one
       policy vocabulary and expose consumption and rejection reasons.
 - [ ] Add backpressure tests for every producer/consumer queue and document
