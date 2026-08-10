@@ -328,6 +328,25 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         &mut self.firewall
     }
 
+    /// Processes at most `budget` requests. The caller regains control after
+    /// the budget or the first backend error, so network work cannot monopolize
+    /// the service thread or starve other scheduler tasks.
+    pub fn process_budget<M: SharedMemory, const RING_CAPACITY: usize>(
+        &mut self,
+        channel: &ClientChannel<'_, RING_CAPACITY>,
+        memory: &mut M,
+        budget: usize,
+    ) -> Result<usize, ServiceError> {
+        let mut processed = 0;
+        for _ in 0..budget {
+            match self.process_one(channel, memory)? {
+                true => processed += 1,
+                false => break,
+            }
+        }
+        Ok(processed)
+    }
+
     /// Handles at most one request so the scheduler controls daemon latency.
     pub fn process_one<M: SharedMemory, const RING_CAPACITY: usize>(
         &mut self,

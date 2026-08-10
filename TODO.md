@@ -346,7 +346,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 - [x] Connect `DhcpClient` to the real Ethernet/IPv4/UDP transport on ports 67
       and 68, including broadcast source address and destination MAC handling.
-- [ ] Drive DHCP polling from the kernel monotonic clock and network service
+- [x] Drive DHCP polling from the kernel monotonic clock and network service
       scheduler without blocking the shell or starving other sockets.
 - [ ] Apply the complete lease atomically: address, subnet mask, gateway,
       routes, DNS servers, lease timers, server identity, and interface state.

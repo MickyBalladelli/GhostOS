@@ -37,6 +37,10 @@ pub struct PollActivity {
     pub socket_state_changed: bool,
 }
 
+pub trait NetworkPoller {
+    fn poll_network(&mut self, now_millis: i64, ingress_budget: usize) -> PollActivity;
+}
+
 /// Heap-free `smoltcp` TCP/IP stack owned by the Ring 3 network daemon.
 pub struct SmolTcpStack<'a, D, const SOCKETS: usize> {
     interface: Interface,
@@ -135,6 +139,12 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             .copied()
             .flatten()
             .ok_or(ServiceError::InvalidCapability)
+    }
+}
+
+impl<D: Device, const SOCKETS: usize> NetworkPoller for SmolTcpStack<'_, D, SOCKETS> {
+    fn poll_network(&mut self, now_millis: i64, ingress_budget: usize) -> PollActivity {
+        self.poll(now_millis, ingress_budget)
     }
 }
 

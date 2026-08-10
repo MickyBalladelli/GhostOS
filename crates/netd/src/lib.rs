@@ -9,6 +9,7 @@ mod packet;
 mod protocol;
 mod service;
 mod stack;
+mod scheduler;
 mod transport;
 
 pub use memory::{MappedRegion, MemoryError, SharedMemory};
@@ -37,7 +38,11 @@ pub use service::{
     ClientChannel, DefaultFirewall, NetworkDaemon, ServiceError, SocketBackend, SocketCapability,
     SocketRights, SocketState,
 };
-pub use stack::{PollActivity, SmolTcpStack, TcpBuffers, TcpHandle};
+pub use scheduler::{
+    NetworkServiceActivity, NetworkServiceScheduler, DEFAULT_SOCKET_INGRESS_BUDGET,
+    DEFAULT_SOCKET_REQUEST_BUDGET,
+};
+pub use stack::{NetworkPoller, PollActivity, SmolTcpStack, TcpBuffers, TcpHandle};
 pub use transport::{
     DhcpIngress, EthernetDhcpTransport, DHCP_BROADCAST_IPV4, DHCP_BROADCAST_MAC,
     DHCP_MIN_ETHERNET_FRAME, DHCP_UNSPECIFIED_IPV4,

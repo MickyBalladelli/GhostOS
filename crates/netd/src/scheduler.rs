@@ -1,0 +1,107 @@
+use synos_time_sync::MonotonicClock;
+
+use crate::memory::SharedMemory;
+use crate::service::{ClientChannel, NetworkDaemon, ServiceError, SocketBackend};
+use crate::stack::{NetworkPoller, PollActivity};
+use crate::{DhcpClient, DhcpError, DhcpLeaseRuntime, DhcpTransport};
+
+pub const DEFAULT_SOCKET_REQUEST_BUDGET: usize = 4;
+pub const DEFAULT_SOCKET_INGRESS_BUDGET: usize = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkServiceActivity {
+    pub now_ms: u64,
+    pub stack: PollActivity,
+    pub dhcp_error: Option<DhcpError>,
+    pub socket_requests: usize,
+    pub service_error: Option<ServiceError>,
+}
+
+/// Bounded coordinator for the Ring 3 network service.
+///
+/// Bounded stack work and one DHCP state-machine step run per scheduler turn.
+/// Socket IPC work then receives a fixed budget, even when DHCP is retrying or
+/// reports a failure.
+pub struct NetworkServiceScheduler {
+    socket_request_budget: usize,
+    stack_ingress_budget: usize,
+}
+
+impl NetworkServiceScheduler {
+    pub const fn new(socket_request_budget: usize) -> Self {
+        Self {
+            socket_request_budget,
+            stack_ingress_budget: DEFAULT_SOCKET_INGRESS_BUDGET,
+        }
+    }
+
+    pub const fn with_budgets(
+        socket_request_budget: usize,
+        stack_ingress_budget: usize,
+    ) -> Self {
+        Self {
+            socket_request_budget,
+            stack_ingress_budget,
+        }
+    }
+
+    pub const fn default_budget() -> usize {
+        DEFAULT_SOCKET_REQUEST_BUDGET
+    }
+
+    pub const fn socket_request_budget(&self) -> usize {
+        self.socket_request_budget
+    }
+
+    pub const fn stack_ingress_budget(&self) -> usize {
+        self.stack_ingress_budget
+    }
+
+    pub fn poll<C, T, R, B, M, const SOCKET_CAPACITY: usize, const RING_CAPACITY: usize>(
+        &mut self,
+        clock: &C,
+        dhcp: &mut DhcpClient,
+        transport: &mut T,
+        runtime: &mut R,
+        daemon: &mut NetworkDaemon<B, SOCKET_CAPACITY>,
+        channel: &ClientChannel<'_, RING_CAPACITY>,
+        memory: &mut M,
+    ) -> NetworkServiceActivity
+    where
+        C: MonotonicClock,
+        T: DhcpTransport,
+        R: DhcpLeaseRuntime,
+        B: SocketBackend + NetworkPoller,
+        M: SharedMemory,
+    {
+        let now_ms = clock.now_us() / 1_000;
+        let stack = daemon.backend_mut().poll_network(
+            core::cmp::min(now_ms, i64::MAX as u64) as i64,
+            self.stack_ingress_budget,
+        );
+        let dhcp_error = dhcp
+            .poll(now_ms, transport, runtime)
+            .err();
+        let (socket_requests, service_error) = match daemon.process_budget(
+            channel,
+            memory,
+            self.socket_request_budget,
+        ) {
+            Ok(processed) => (processed, None),
+            Err(error) => (0, Some(error)),
+        };
+        NetworkServiceActivity {
+            now_ms,
+            stack,
+            dhcp_error,
+            socket_requests,
+            service_error,
+        }
+    }
+}
+
+impl Default for NetworkServiceScheduler {
+    fn default() -> Self {
+        Self::new(DEFAULT_SOCKET_REQUEST_BUDGET)
+    }
+}
