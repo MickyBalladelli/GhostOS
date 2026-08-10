@@ -11,14 +11,14 @@ use synos_system_model::logical::{LogicalScope, LogicalTarget, LogicalTargetKind
 fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
     let caller_space = AddressSpaceId::new(7).unwrap();
     let caller = Principal::new(8).unwrap();
-    let namespace = LogicalScope::Process(7);
-    let other_namespace = LogicalScope::Process(8);
+    let namespace = LogicalScope::Job(8);
+    let other_namespace = LogicalScope::Group(99);
     let target = LogicalTarget::new(LogicalTargetKind::File, "SYS$DISK:TARGET").unwrap();
     let mut capabilities = CapabilitySpace::<8>::new();
     let root = capabilities
         .mint_root(
             caller_space,
-            CapabilityObject::LogicalNamespace { scope: 1, id: 7 },
+            CapabilityObject::LogicalNamespace { scope: 2, id: 8 },
             Rights::READ
                 .union(Rights::WRITE)
                 .union(Rights::DELEGATE)
@@ -28,7 +28,7 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
     let other_root = capabilities
         .mint_root(
             caller_space,
-            CapabilityObject::LogicalNamespace { scope: 1, id: 8 },
+            CapabilityObject::LogicalNamespace { scope: 3, id: 0 },
             Rights::WRITE,
         )
         .unwrap();
@@ -57,9 +57,9 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
             caller_space,
             read_write,
             caller,
-            8,
+            7,
             None,
-            None,
+            Some(99),
             "OTHER",
         ),
         Err(synos_system_model::logical::LogicalError::AccessDenied)
@@ -81,7 +81,7 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
             read_write,
             caller,
             7,
-            None,
+            Some(8),
             None,
             "TARGET",
         )
@@ -94,7 +94,7 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
             read_write,
             caller,
             7,
-            None,
+            Some(8),
             None,
             "TARGET",
         ),
