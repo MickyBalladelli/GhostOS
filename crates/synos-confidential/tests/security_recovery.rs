@@ -91,7 +91,10 @@ fn evidence_key_rotation_revocation_replay_downgrade_and_root_recovery_are_fence
     );
 
     manager.revoke(node).unwrap();
-    assert_eq!(manager.admit(new_quote, 6), Err(Error::Unauthorized));
+    assert_eq!(
+        manager.admit(new_quote, 6),
+        Err(Error::Attestation(ShieldError::Unauthorized))
+    );
     assert_eq!(manager.revoke(node), Err(Error::NotFound));
 
     let old_pair = MlKemKeypair::from_seed([86; 32]);
