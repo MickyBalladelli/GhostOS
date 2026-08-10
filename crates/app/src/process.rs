@@ -3,6 +3,7 @@
 use synos_init::{CrashReason, ExitReason, ProcessId};
 use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
+use synos_time_sync::MonotonicClock;
 
 use crate::loader::{ImageArchitecture, ProcessArguments};
 
@@ -167,6 +168,15 @@ impl<const CAPACITY: usize> ProcessSupervisor<CAPACITY> {
         }
     }
 
+    pub fn spawn_with_clock<B: ProcessBackend, C: MonotonicClock>(
+        &mut self,
+        request: NativeSpawnRequest<'_>,
+        clock: &C,
+        backend: &mut B,
+    ) -> Result<ProcessId, ProcessError> {
+        self.spawn(request, clock.now_us(), backend)
+    }
+
     pub fn spawn<B: ProcessBackend>(
         &mut self,
         request: NativeSpawnRequest<'_>,
@@ -262,6 +272,15 @@ impl<const CAPACITY: usize> ProcessSupervisor<CAPACITY> {
         }
     }
 
+    pub fn cancel_with_clock<B: ProcessBackend, C: MonotonicClock>(
+        &mut self,
+        process: ProcessId,
+        clock: &C,
+        backend: &mut B,
+    ) -> Result<(), ProcessError> {
+        self.cancel(process, clock.now_us(), backend)
+    }
+
     pub fn fence<B: ProcessBackend>(
         &mut self,
         process: ProcessId,
@@ -314,6 +333,14 @@ impl<const CAPACITY: usize> ProcessSupervisor<CAPACITY> {
             }
         }
         Ok(())
+    }
+
+    pub fn tick_with_clock<B: ProcessBackend, C: MonotonicClock>(
+        &mut self,
+        clock: &C,
+        backend: &mut B,
+    ) -> Result<(), ProcessError> {
+        self.tick(clock.now_us(), backend)
     }
 
     pub fn status(&self, process: ProcessId) -> Result<ProcessStatus, ProcessError> {

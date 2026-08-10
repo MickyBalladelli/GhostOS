@@ -5,6 +5,7 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{IpAddress, IpEndpoint, Ipv4Address};
 
 use crate::{ServiceError, SocketBackend, SocketState};
+use synos_time_sync::MonotonicClock;
 
 pub struct TcpBuffers<const BUFFER_SIZE: usize> {
     receive: [u8; BUFFER_SIZE],
@@ -115,6 +116,14 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
         activity.socket_state_changed |=
             matches!(egress, smoltcp::iface::PollResult::SocketStateChanged);
         activity
+    }
+
+    pub fn poll_with_clock<C: MonotonicClock>(
+        &mut self,
+        clock: &C,
+        ingress_budget: usize,
+    ) -> PollActivity {
+        self.poll((clock.now_us() / 1_000) as i64, ingress_budget)
     }
 
     fn socket_handle(&self, handle: TcpHandle) -> Result<SocketHandle, ServiceError> {

@@ -4,6 +4,7 @@ use synos_observability::{
     CorrelationId, EventField, EventKind, Level, TraceEvent, emit, field,
     next_correlation_id,
 };
+use synos_time_sync::MonotonicClock;
 
 pub const DEFAULT_POOL_CAPACITY: usize = 64;
 pub const DEFAULT_LEASE_CAPACITY: usize = 256;
@@ -593,6 +594,29 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
         }
     }
 
+    pub fn allocate_with_clock<C: MonotonicClock, const POOLS: usize, const OVERRIDES: usize>(
+        &mut self,
+        space: &GlobalAddressSpace<POOLS, OVERRIDES>,
+        owner: LeaseOwner,
+        pool_id: PoolId,
+        length: u64,
+        alignment: u64,
+        rights: LeaseRights,
+        clock: &C,
+        duration_us: u64,
+    ) -> Result<(LeaseHandle, AddressRange), Error> {
+        self.allocate(
+            space,
+            owner,
+            pool_id,
+            length,
+            alignment,
+            rights,
+            clock.now_us(),
+            duration_us,
+        )
+    }
+
     pub fn allocate<const POOLS: usize, const OVERRIDES: usize>(
         &mut self,
         space: &GlobalAddressSpace<POOLS, OVERRIDES>,
@@ -714,6 +738,20 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
         }
     }
 
+    pub fn largest_free_range_with_clock<
+        C: MonotonicClock,
+        const POOLS: usize,
+        const OVERRIDES: usize,
+    >(
+        &mut self,
+        space: &GlobalAddressSpace<POOLS, OVERRIDES>,
+        pool_id: PoolId,
+        alignment: u64,
+        clock: &C,
+    ) -> Result<AddressRange, Error> {
+        self.largest_free_range(space, pool_id, alignment, clock.now_us())
+    }
+
     pub fn authorize(
         &self,
         handle: LeaseHandle,
@@ -733,6 +771,17 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
             return Err(Error::NotOwner)
         }
         Ok(())
+    }
+
+    pub fn authorize_with_clock<C: MonotonicClock>(
+        &self,
+        handle: LeaseHandle,
+        owner: LeaseOwner,
+        address: u64,
+        access: Access,
+        clock: &C,
+    ) -> Result<(), Error> {
+        self.authorize(handle, owner, address, access, clock.now_us())
     }
 
     pub fn renew(
@@ -756,6 +805,16 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
         }
         lease.expires_at_us = now_us.saturating_add(duration_us);
         Ok(())
+    }
+
+    pub fn renew_with_clock<C: MonotonicClock>(
+        &mut self,
+        handle: LeaseHandle,
+        owner: LeaseOwner,
+        clock: &C,
+        duration_us: u64,
+    ) -> Result<(), Error> {
+        self.renew(handle, owner, clock.now_us(), duration_us)
     }
 
     pub fn release(&mut self, handle: LeaseHandle, owner: LeaseOwner) -> Result<(), Error> {
@@ -820,6 +879,10 @@ impl<const CAPACITY: usize> LeaseTable<CAPACITY> {
             }
         }
         expired
+    }
+
+    pub fn expire_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> usize {
+        self.expire(clock.now_us())
     }
 
     fn valid(&self, handle: LeaseHandle) -> Result<&Lease, Error> {

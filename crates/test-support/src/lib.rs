@@ -132,6 +132,12 @@ impl TestClock for DeterministicClock {
     }
 }
 
+impl synos_time_sync::MonotonicClock for DeterministicClock {
+    fn now_us(&self) -> u64 {
+        self.now_us()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeterministicEntropy {
     state: u64,

@@ -11,3 +11,4 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-durability = { path = "../durability" }
+synos-time-sync = { path = "../time-sync" }

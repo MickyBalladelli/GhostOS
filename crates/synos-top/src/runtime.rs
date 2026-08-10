@@ -1,4 +1,5 @@
 use crate::{SnapshotError, TopologySnapshot};
+use synos_time_sync::MonotonicClock;
 
 pub trait TopologySource<const NODES: usize, const CAPABILITIES: usize> {
     type Error;
@@ -44,6 +45,14 @@ impl<Source, const NODES: usize, const CAPABILITIES: usize>
             interval_us,
             next_sample_us: now_us,
         })
+    }
+
+    pub fn new_with_clock<C: MonotonicClock>(
+        source: Source,
+        interval_us: u64,
+        clock: &C,
+    ) -> Option<Self> {
+        Self::new(source, interval_us, clock.now_us())
     }
 
     pub const fn snapshot(&self) -> &TopologySnapshot<NODES, CAPABILITIES> {
@@ -97,5 +106,9 @@ where
         self.snapshot = next;
         self.next_sample_us = now_us.saturating_add(self.interval_us);
         Poll::Updated { generation }
+    }
+
+    pub fn poll_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> Poll<Source::Error> {
+        self.poll(clock.now_us())
     }
 }

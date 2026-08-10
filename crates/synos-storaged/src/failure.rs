@@ -2,6 +2,7 @@ use synos_fabric::NodeId;
 use synos_mesh::{CowDelta, DeltaApplyReceipt, DeltaMode};
 use synos_status::{IntoStatus, Status};
 use synos_synfs::SynFs;
+use synos_time_sync::MonotonicClock;
 
 pub const MAX_FAILURE_EVENTS: usize = 32;
 pub const MAX_RECOVERY_NODES: usize = 64;
@@ -364,6 +365,16 @@ impl<const NODES: usize, const EVENTS: usize> FailureController<NODES, EVENTS> {
         self.health = health;
         report.health = health;
         report
+    }
+
+    pub fn observe_with_clock<C: MonotonicClock, const SAMPLES: usize>(
+        &mut self,
+        mut cluster: ClusterSample,
+        samples: &[NodeHealthSample; SAMPLES],
+        clock: &C,
+    ) -> FailureReport<EVENTS> {
+        cluster.sampled_at_us = clock.now_us();
+        self.observe(cluster, samples)
     }
 
     pub fn apply<H: RecoveryHooks>(

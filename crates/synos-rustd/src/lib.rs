@@ -51,6 +51,7 @@ use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStag
 use synos_status::{IntoStatus, Status};
 use synos_synfs::{DirectoryEntry, Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
+use synos_time_sync::MonotonicClock;
 
 pub const MAX_PATH_BYTES: usize = 192;
 pub const MAX_BINARY_BYTES: usize = 64;
@@ -808,6 +809,14 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         self.start_at(id, 0)
     }
 
+    pub fn start_with_clock<C: MonotonicClock>(
+        &mut self,
+        id: JobId,
+        clock: &C,
+    ) -> Result<(), Error> {
+        self.start_at(id, clock.now_us())
+    }
+
     pub fn start_at(&mut self, id: JobId, now_us: u64) -> Result<(), Error> {
         let job = self.job_mut(id)?;
         if job.status.state != JobState::Queued {
@@ -848,6 +857,10 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             self.emit_log(id, CompilerLogLevel::Error, CompilerEventKind::Failed, "build deadline expired");
         }
         expired
+    }
+
+    pub fn expire_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> usize {
+        self.expire(clock.now_us())
     }
 
     pub fn request_cancel(&mut self, id: JobId, now_us: u64) -> Result<CancellationDisposition, Error> {
@@ -905,6 +918,14 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         Ok(disposition)
     }
 
+    pub fn request_cancel_with_clock<C: MonotonicClock>(
+        &mut self,
+        id: JobId,
+        clock: &C,
+    ) -> Result<CancellationDisposition, Error> {
+        self.request_cancel(id, clock.now_us())
+    }
+
     pub fn tick(&mut self, now_us: u64) -> usize {
         let expired = self.expire(now_us);
         let mut ids = [None; JOB_CAPACITY];
@@ -924,6 +945,10 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             }
         }
         expired + fenced
+    }
+
+    pub fn tick_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> usize {
+        self.tick(clock.now_us())
     }
 
     pub fn complete(&mut self, id: JobId, result: BuildResult) -> Result<(), Error> {

@@ -3,6 +3,7 @@ use crate::{
     dsm::CoherenceDirectory,
     memory::{GlobalAddressSpace, LeaseTable},
 };
+use synos_time_sync::MonotonicClock;
 
 pub const MAX_CLUSTER_NODES: usize = 64;
 pub const MAX_HEARTBEAT_PERIOD_US: u32 = 999;
@@ -86,6 +87,15 @@ pub struct HeartbeatMonitor<const CAPACITY: usize = MAX_CLUSTER_NODES> {
 }
 
 impl<const CAPACITY: usize> HeartbeatMonitor<CAPACITY> {
+    pub fn new_with_clock<C: MonotonicClock>(
+        local: NodeId,
+        period_us: u32,
+        missed_limit: u8,
+        clock: &C,
+    ) -> Result<Self, Error> {
+        Self::new(local, period_us, missed_limit, clock.now_us())
+    }
+
     pub fn new(
         local: NodeId,
         period_us: u32,
@@ -129,6 +139,14 @@ impl<const CAPACITY: usize> HeartbeatMonitor<CAPACITY> {
         Ok(())
     }
 
+    pub fn add_node_with_clock<C: MonotonicClock>(
+        &mut self,
+        node: NodeId,
+        clock: &C,
+    ) -> Result<(), Error> {
+        self.add_node(node, clock.now_us())
+    }
+
     pub fn due(&mut self, now_us: u64) -> Option<Heartbeat> {
         if now_us < self.next_send_us {
             return None
@@ -141,6 +159,10 @@ impl<const CAPACITY: usize> HeartbeatMonitor<CAPACITY> {
         self.next_sequence = self.next_sequence.wrapping_add(1);
         self.next_send_us = now_us.saturating_add(self.period_us as u64);
         Some(heartbeat)
+    }
+
+    pub fn due_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> Option<Heartbeat> {
+        self.due(clock.now_us())
     }
 
     pub fn observe(&mut self, heartbeat: Heartbeat, received_at_us: u64) -> Result<(), Error> {
@@ -175,6 +197,10 @@ impl<const CAPACITY: usize> HeartbeatMonitor<CAPACITY> {
             detected_at_us: now_us,
             silence_us: now_us.saturating_sub(entry.last_seen_us),
         })
+    }
+
+    pub fn detect_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> Option<NodeFailure> {
+        self.detect(clock.now_us())
     }
 
     pub fn state(&self, node: NodeId) -> Option<NodeState> {

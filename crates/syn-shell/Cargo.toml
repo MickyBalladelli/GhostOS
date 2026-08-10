@@ -11,4 +11,5 @@ path = "src/lib.rs"
 synos-observability = { path = "../observability" }
 synos-path-pattern = { path = "../path-pattern" }
 synos-status = { path = "../status" }
+synos-time-sync = { path = "../time-sync" }
 synos-system-model = { path = "../system-model" }

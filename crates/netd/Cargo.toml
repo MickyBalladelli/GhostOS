@@ -17,3 +17,4 @@ smoltcp = { version = "0.13.1", default-features = false, features = [
 synos-ipc = { path = "../ipc" }
 synos-observability = { path = "../observability" }
 synos-status = { path = "../status" }
+synos-time-sync = { path = "../time-sync" }

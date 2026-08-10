@@ -1,4 +1,5 @@
 use synos_status::Status;
+use synos_time_sync::MonotonicClock;
 
 use crate::{Error, parser::Program};
 
@@ -156,6 +157,15 @@ impl<const CAPACITY: usize> JobQueue<CAPACITY> {
         }
     }
 
+    pub fn claim_with_clock<C: MonotonicClock>(
+        &mut self,
+        worker: WorkerId,
+        clock: &C,
+        lease_duration_us: u64,
+    ) -> Result<Option<JobLease>, Error> {
+        self.claim(worker, clock.now_us(), lease_duration_us)
+    }
+
     pub fn submit(
         &mut self,
         owner: JobOwner,
@@ -261,6 +271,15 @@ impl<const CAPACITY: usize> JobQueue<CAPACITY> {
             deadline_us: entry.lease_deadline_us,
             ..lease
         })
+    }
+
+    pub fn renew_with_clock<C: MonotonicClock>(
+        &mut self,
+        lease: JobLease,
+        clock: &C,
+        duration_us: u64,
+    ) -> Result<JobLease, Error> {
+        self.renew(lease, clock.now_us(), duration_us)
     }
 
     pub fn finish(
@@ -383,6 +402,10 @@ impl<const CAPACITY: usize> JobQueue<CAPACITY> {
             }
         }
         recovered
+    }
+
+    pub fn recover_expired_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> usize {
+        self.recover_expired(clock.now_us())
     }
 
     fn propagate_dependencies(&mut self) {

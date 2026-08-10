@@ -1,7 +1,19 @@
 use synos_time_sync::{
-    ClusterClock, EpochStamp, MonotonicEpochCounter, PtpDaemon, PtpMessage, PtpRole,
+    ClusterClock, EpochStamp, ManualClock, MonotonicClock, MonotonicEpochCounter, PtpDaemon,
+    PtpMessage, PtpRole,
     PtpTimestamp, SyncError, SyncMeasurement,
 };
+
+#[test]
+fn manual_clock_is_injectable_and_never_moves_backwards() {
+    let clock = ManualClock::new(10);
+    assert_eq!(clock.now_us(), 10);
+    clock.advance_us(5);
+    assert_eq!(clock.now_us(), 15);
+    clock.set_us(3);
+    assert_eq!(clock.now_us(), 15);
+    assert_eq!(MonotonicClock::now_us(&clock), 15);
+}
 
 #[test]
 fn ptp_wire_round_trip_and_timestamp_bounds() {

@@ -8,6 +8,66 @@ pub const PTP_VERSION: u8 = 2;
 pub const NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
 pub const MAX_FREQUENCY_ADJUSTMENT_PPB: i64 = 500_000;
 
+/// Source of monotonic time for deadline-driven state machines.
+///
+/// Implementations must never use wall-clock corrections for this value. The
+/// clock is deliberately tiny so kernel clocks, VM clocks, and deterministic
+/// test clocks can all drive the same lease and timer code.
+pub trait MonotonicClock {
+    fn now_us(&self) -> u64;
+}
+
+/// Deterministic monotonic clock for model tests and replay.
+#[derive(Debug)]
+pub struct ManualClock {
+    now_us: core::sync::atomic::AtomicU64,
+}
+
+impl ManualClock {
+    pub const fn new(now_us: u64) -> Self {
+        Self {
+            now_us: core::sync::atomic::AtomicU64::new(now_us),
+        }
+    }
+
+    pub fn now_us(&self) -> u64 {
+        self.now_us.load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn set_us(&self, now_us: u64) {
+        self.now_us
+            .fetch_max(now_us, core::sync::atomic::Ordering::AcqRel);
+    }
+
+    pub fn advance_us(&self, delta_us: u64) {
+        let _ = self.now_us.fetch_update(
+            core::sync::atomic::Ordering::AcqRel,
+            core::sync::atomic::Ordering::Acquire,
+            |now| Some(now.saturating_add(delta_us)),
+        );
+    }
+}
+
+impl Clone for ManualClock {
+    fn clone(&self) -> Self {
+        Self::new(self.now_us())
+    }
+}
+
+impl PartialEq for ManualClock {
+    fn eq(&self, other: &Self) -> bool {
+        self.now_us() == other.now_us()
+    }
+}
+
+impl Eq for ManualClock {}
+
+impl MonotonicClock for ManualClock {
+    fn now_us(&self) -> u64 {
+        self.now_us()
+    }
+}
+
 const PTP_MAGIC: [u8; 4] = *b"SPTP";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -7,6 +7,7 @@
 use crate::firewall::{
     CapabilityRight, Direction, FirewallRule, Ipv4Cidr, PortRange, Protocol, RateLimit, RuleAction,
 };
+use synos_time_sync::MonotonicClock;
 
 pub const DHCP_CLIENT_PORT: u16 = 68;
 pub const DHCP_SERVER_PORT: u16 = 67;
@@ -310,6 +311,10 @@ impl DhcpClient {
         }
     }
 
+    pub fn set_link_with_clock<C: MonotonicClock>(&mut self, up: bool, clock: &C) {
+        self.set_link(up, clock.now_us() / 1_000)
+    }
+
     pub fn start(&mut self, now_ms: u64) -> Result<(), DhcpError> {
         self.require_auth()?;
         if !self.link_up {
@@ -324,6 +329,10 @@ impl DhcpClient {
         self.selected = None;
         self.next_action_ms = Some(now_ms);
         Ok(())
+    }
+
+    pub fn start_with_clock<C: MonotonicClock>(&mut self, clock: &C) -> Result<(), DhcpError> {
+        self.start(clock.now_us() / 1_000)
     }
 
     pub fn poll<T: DhcpTransport, R: DhcpLeaseRuntime>(
@@ -375,6 +384,15 @@ impl DhcpClient {
         result
     }
 
+    pub fn poll_with_clock<C: MonotonicClock, T: DhcpTransport, R: DhcpLeaseRuntime>(
+        &mut self,
+        clock: &C,
+        transport: &mut T,
+        runtime: &mut R,
+    ) -> Result<(), DhcpError> {
+        self.poll(clock.now_us() / 1_000, transport, runtime)
+    }
+
     pub fn handle_packet<R: DhcpLeaseRuntime>(
         &mut self,
         packet: &[u8],
@@ -392,6 +410,15 @@ impl DhcpClient {
             DhcpMessageType::Nak => self.handle_nak(now_ms, runtime),
             _ => Err(DhcpError::InvalidPacket),
         }
+    }
+
+    pub fn handle_packet_with_clock<C: MonotonicClock, R: DhcpLeaseRuntime>(
+        &mut self,
+        packet: &[u8],
+        clock: &C,
+        runtime: &mut R,
+    ) -> Result<(), DhcpError> {
+        self.handle_packet(packet, clock.now_us() / 1_000, runtime)
     }
 
     pub fn release<T: DhcpTransport, R: DhcpLeaseRuntime>(
@@ -423,6 +450,15 @@ impl DhcpClient {
         self.state = DhcpClientState::Init;
         self.next_action_ms = Some(now_ms);
         Ok(())
+    }
+
+    pub fn release_with_clock<C: MonotonicClock, T: DhcpTransport, R: DhcpLeaseRuntime>(
+        &mut self,
+        clock: &C,
+        transport: &mut T,
+        runtime: &mut R,
+    ) -> Result<(), DhcpError> {
+        self.release(clock.now_us() / 1_000, transport, runtime)
     }
 
     fn handle_offer(&mut self, message: DhcpMessage, now_ms: u64) -> Result<(), DhcpError> {

@@ -161,9 +161,12 @@ evidence.
 
 ## P1: Make time, limits, and concurrency deterministic
 
-- [ ] Route timers, leases, retries, scheduler deadlines, DHCP renewal,
+- [x] Route timers, leases, retries, scheduler deadlines, DHCP renewal,
       cancellation grace, and cluster health through injectable monotonic
-      clocks.
+      clocks. Added the no-std `MonotonicClock` contract and monotonic
+      `ManualClock`; clock-backed entry points now drive fabric leases and
+      heartbeats, DHCP and TCP timers, shell job leases, process/compiler
+      deadlines, cluster health, and topology sampling.
 - [ ] Add model tests for queue saturation, duplicate completion, cancellation
       races, stale generations, timeout boundaries, and restart storms.
 - [ ] Define memory, CPU, IPC, storage, network, log, and audit quotas in one

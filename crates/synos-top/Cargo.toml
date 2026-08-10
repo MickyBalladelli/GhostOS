@@ -9,3 +9,4 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-fabric = { path = "../fabric" }
+synos-time-sync = { path = "../time-sync" }
