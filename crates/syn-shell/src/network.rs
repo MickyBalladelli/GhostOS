@@ -109,8 +109,18 @@ impl InterfaceAddressMode {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DhcpLeaseView {
     pub state: NetworkText,
+    pub transaction_id: Option<u32>,
+    pub client_mac: Option<NetworkText>,
+    pub attempt: Option<u8>,
     pub server: Option<NetworkText>,
+    pub offered_address: Option<NetworkText>,
+    pub bound_at_ms: Option<u64>,
+    pub next_action_ms: Option<u64>,
+    pub t1_at_ms: Option<u64>,
+    pub t2_at_ms: Option<u64>,
     pub expires_at_ms: Option<u64>,
+    pub failure_reason: Option<NetworkText>,
+    pub last_packet_at_ms: Option<u64>,
     pub dns0: Option<NetworkText>,
     pub dns1: Option<NetworkText>,
 }
@@ -589,11 +599,45 @@ fn emit_interface_details(
     insert_text(output, "mode", interface.mode.as_str())?;
     if let Some(dhcp) = interface.dhcp {
         insert_text(output, "dhcp-state", dhcp.state.as_str())?;
+        if let Some(transaction_id) = dhcp.transaction_id {
+            insert(output, "dhcp-transaction-id", OutputValue::Unsigned(transaction_id as u64))?;
+        }
+        if let Some(client_mac) = dhcp.client_mac {
+            insert_text(output, "dhcp-client-mac", client_mac.as_str())?;
+        }
+        if let Some(attempt) = dhcp.attempt {
+            insert(output, "dhcp-attempt", OutputValue::Unsigned(attempt as u64))?;
+        }
         if let Some(server) = dhcp.server {
             insert_text(output, "dhcp-server", server.as_str())?;
         }
+        if let Some(offered_address) = dhcp.offered_address {
+            insert_text(output, "dhcp-offered-address", offered_address.as_str())?;
+        }
+        if let Some(bound_at_ms) = dhcp.bound_at_ms {
+            insert(output, "dhcp-bound-ms", OutputValue::Unsigned(bound_at_ms))?;
+        }
+        if let Some(next_action_ms) = dhcp.next_action_ms {
+            insert(output, "dhcp-next-action-ms", OutputValue::Unsigned(next_action_ms))?;
+        }
+        if let Some(t1_at_ms) = dhcp.t1_at_ms {
+            insert(output, "dhcp-t1-ms", OutputValue::Unsigned(t1_at_ms))?;
+        }
+        if let Some(t2_at_ms) = dhcp.t2_at_ms {
+            insert(output, "dhcp-t2-ms", OutputValue::Unsigned(t2_at_ms))?;
+        }
         if let Some(expires) = dhcp.expires_at_ms {
             insert(output, "dhcp-expires-ms", OutputValue::Unsigned(expires))?;
+        }
+        if let Some(failure_reason) = dhcp.failure_reason {
+            insert_text(output, "dhcp-failure", failure_reason.as_str())?;
+        }
+        if let Some(last_packet_at_ms) = dhcp.last_packet_at_ms {
+            insert(
+                output,
+                "dhcp-last-packet-ms",
+                OutputValue::Unsigned(last_packet_at_ms),
+            )?;
         }
         if let Some(dns0) = dhcp.dns0 {
             insert_text(output, "dns0", dns0.as_str())?;
@@ -720,10 +764,40 @@ fn interface_field_count(interface: &NetworkInterfaceView) -> usize {
     }
     if let Some(dhcp) = interface.dhcp {
         count += 1; // dhcp-state
+        if dhcp.transaction_id.is_some() {
+            count += 1;
+        }
+        if dhcp.client_mac.is_some() {
+            count += 1;
+        }
+        if dhcp.attempt.is_some() {
+            count += 1;
+        }
         if dhcp.server.is_some() {
             count += 1;
         }
+        if dhcp.offered_address.is_some() {
+            count += 1;
+        }
+        if dhcp.bound_at_ms.is_some() {
+            count += 1;
+        }
+        if dhcp.next_action_ms.is_some() {
+            count += 1;
+        }
+        if dhcp.t1_at_ms.is_some() {
+            count += 1;
+        }
+        if dhcp.t2_at_ms.is_some() {
+            count += 1;
+        }
         if dhcp.expires_at_ms.is_some() {
+            count += 1;
+        }
+        if dhcp.failure_reason.is_some() {
+            count += 1;
+        }
+        if dhcp.last_packet_at_ms.is_some() {
             count += 1;
         }
         if dhcp.dns0.is_some() {
@@ -794,8 +868,74 @@ fn emit_interface(
     insert_indexed_text(output, "interface", index, "mode", interface.mode.as_str())?;
     if let Some(dhcp) = interface.dhcp {
         insert_indexed_text(output, "interface", index, "dhcp-state", dhcp.state.as_str())?;
+        if let Some(transaction_id) = dhcp.transaction_id {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-transaction-id",
+                OutputValue::Unsigned(transaction_id as u64),
+            )?;
+        }
+        if let Some(client_mac) = dhcp.client_mac {
+            insert_indexed_text(output, "interface", index, "dhcp-client-mac", client_mac.as_str())?;
+        }
+        if let Some(attempt) = dhcp.attempt {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-attempt",
+                OutputValue::Unsigned(attempt as u64),
+            )?;
+        }
         if let Some(server) = dhcp.server {
             insert_indexed_text(output, "interface", index, "dhcp-server", server.as_str())?;
+        }
+        if let Some(offered_address) = dhcp.offered_address {
+            insert_indexed_text(
+                output,
+                "interface",
+                index,
+                "dhcp-offered-address",
+                offered_address.as_str(),
+            )?;
+        }
+        if let Some(bound_at_ms) = dhcp.bound_at_ms {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-bound-ms",
+                OutputValue::Unsigned(bound_at_ms),
+            )?;
+        }
+        if let Some(next_action_ms) = dhcp.next_action_ms {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-next-action-ms",
+                OutputValue::Unsigned(next_action_ms),
+            )?;
+        }
+        if let Some(t1_at_ms) = dhcp.t1_at_ms {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-t1-ms",
+                OutputValue::Unsigned(t1_at_ms),
+            )?;
+        }
+        if let Some(t2_at_ms) = dhcp.t2_at_ms {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-t2-ms",
+                OutputValue::Unsigned(t2_at_ms),
+            )?;
         }
         if let Some(expires) = dhcp.expires_at_ms {
             insert_indexed(
@@ -804,6 +944,24 @@ fn emit_interface(
                 index,
                 "dhcp-expires-ms",
                 OutputValue::Unsigned(expires),
+            )?;
+        }
+        if let Some(failure_reason) = dhcp.failure_reason {
+            insert_indexed_text(
+                output,
+                "interface",
+                index,
+                "dhcp-failure",
+                failure_reason.as_str(),
+            )?;
+        }
+        if let Some(last_packet_at_ms) = dhcp.last_packet_at_ms {
+            insert_indexed(
+                output,
+                "interface",
+                index,
+                "dhcp-last-packet-ms",
+                OutputValue::Unsigned(last_packet_at_ms),
             )?;
         }
         if let Some(dns0) = dhcp.dns0 {

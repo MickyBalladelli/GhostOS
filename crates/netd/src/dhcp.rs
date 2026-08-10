@@ -450,15 +450,23 @@ impl<T: DhcpTransport, const CAPACITY: usize> DhcpTransport
 pub struct DhcpClientView {
     pub interface: [u8; MAX_INTERFACE_NAME],
     pub interface_len: u8,
+    pub client_mac: [u8; 6],
     pub state: DhcpClientState,
     pub enabled: bool,
     pub link_up: bool,
     pub xid: u32,
     pub attempt: u8,
+    pub offered_address: Option<[u8; 4]>,
+    pub server_id: Option<[u8; 4]>,
     pub lease: Option<DhcpLease>,
     pub bound_at_ms: Option<u64>,
     pub next_action_ms: Option<u64>,
+    pub t1_at_ms: Option<u64>,
+    pub t2_at_ms: Option<u64>,
+    pub expires_at_ms: Option<u64>,
+    pub last_packet_at_ms: Option<u64>,
     pub preserved: Option<StaticSnapshot>,
+    pub failure_reason: Option<DhcpError>,
     pub network_error: Option<DhcpNetworkError>,
     pub server_mac: Option<[u8; 6]>,
 }
@@ -489,6 +497,8 @@ pub struct DhcpClient {
     lease: Option<DhcpLease>,
     bound_at_ms: Option<u64>,
     preserved: Option<StaticSnapshot>,
+    last_packet_at_ms: Option<u64>,
+    last_error: Option<DhcpError>,
     last_network_error: Option<DhcpNetworkError>,
     server_mac: Option<[u8; 6]>,
     txid_seed: u32,
@@ -516,6 +526,8 @@ impl DhcpClient {
             lease: None,
             bound_at_ms: None,
             preserved: None,
+            last_packet_at_ms: None,
+            last_error: None,
             last_network_error: None,
             server_mac: None,
             txid_seed: xid_seed,
@@ -556,18 +568,44 @@ impl DhcpClient {
     }
 
     pub fn view(&self) -> DhcpClientView {
+        let offered_address = self
+            .selected
+            .map(|pending| pending.offer.yiaddr)
+            .or_else(|| self.lease.map(|lease| lease.yiaddr));
+        let server_id = self
+            .selected
+            .map(|pending| pending.offer.server_id)
+            .or_else(|| self.lease.map(|lease| lease.server_id));
+        let (t1_at_ms, t2_at_ms, expires_at_ms) =
+            if let (Some(lease), Some(bound_at_ms)) = (self.lease, self.bound_at_ms) {
+                (
+                    Some(lease.renew_at_ms(bound_at_ms)),
+                    Some(lease.rebind_at_ms(bound_at_ms)),
+                    Some(lease.expires_at_ms(bound_at_ms)),
+                )
+            } else {
+                (None, None, None)
+            };
         DhcpClientView {
             interface: self.interface,
             interface_len: self.interface_len,
+            client_mac: self.mac,
             state: self.state,
             enabled: self.enabled,
             link_up: self.link_up,
             xid: self.xid,
             attempt: self.attempt,
+            offered_address,
+            server_id,
             lease: self.lease,
             bound_at_ms: self.bound_at_ms,
             next_action_ms: self.next_action_ms,
+            t1_at_ms,
+            t2_at_ms,
+            expires_at_ms,
+            last_packet_at_ms: self.last_packet_at_ms,
             preserved: self.preserved,
+            failure_reason: self.last_error,
             network_error: self.last_network_error,
             server_mac: self.server_mac,
         }
@@ -589,6 +627,7 @@ impl DhcpClient {
     /// caller may clear the failure by changing the NIC state or calling
     /// `start` after the backend is healthy again.
     pub fn report_network_error(&mut self, error: DhcpNetworkError) {
+        self.last_error = Some(DhcpError::Network(error));
         if self.last_network_error.is_none() {
             self.last_network_error = Some(error);
         }
@@ -660,6 +699,7 @@ impl DhcpClient {
         self.selected = None;
         self.attempt = 0;
         self.last_network_error = None;
+        self.last_error = None;
         self.state = DhcpClientState::InitReboot;
         self.next_action_ms = Some(now_ms);
         Ok(())
@@ -683,6 +723,7 @@ impl DhcpClient {
             return
         }
         self.last_network_error = None;
+        self.last_error = None;
         self.state = if self.lease.is_some() {
             DhcpClientState::InitReboot
         } else {
@@ -708,6 +749,7 @@ impl DhcpClient {
             return;
         }
         self.last_network_error = None;
+        self.last_error = None;
         self.state = if self.lease.is_some() {
             DhcpClientState::InitReboot
         } else {
@@ -728,6 +770,7 @@ impl DhcpClient {
             return Err(DhcpError::InvalidState);
         }
         self.last_network_error = None;
+        self.last_error = None;
         self.state = if self.lease.is_some() {
             DhcpClientState::InitReboot
         } else {
@@ -785,6 +828,9 @@ impl DhcpClient {
             DhcpClientState::Rebinding => self.send_rebind(now_ms, transport),
             DhcpClientState::Bound | DhcpClientState::Error => Ok(()),
         };
+        if let Err(error) = result {
+            self.last_error = Some(error);
+        }
         match result {
             Err(DhcpError::ServerUnavailable) => {
                 // Keep the last-known-good lease during a transient outage.
@@ -818,8 +864,16 @@ impl DhcpClient {
         if !self.enabled || !self.link_up {
             return Err(DhcpError::InvalidState)
         }
-        let message = DhcpMessage::decode(packet)?;
+        self.last_packet_at_ms = Some(now_ms);
+        let message = match DhcpMessage::decode(packet) {
+            Ok(message) => message,
+            Err(error) => {
+                self.last_error = Some(error);
+                return Err(error)
+            }
+        };
         if message.xid != self.xid || message.chaddr != self.mac {
+            self.last_error = Some(DhcpError::InvalidPacket);
             return Err(DhcpError::InvalidPacket);
         }
         let result = match message.message_type {
@@ -828,6 +882,9 @@ impl DhcpClient {
             DhcpMessageType::Nak => self.handle_nak(now_ms, runtime),
             _ => Err(DhcpError::InvalidPacket),
         };
+        if let Err(error) = result {
+            self.last_error = Some(error);
+        }
         if let Err(DhcpError::Network(error)) = result {
             self.report_network_error(error);
         }
@@ -841,7 +898,9 @@ impl DhcpClient {
         runtime: &mut R,
     ) -> Result<(), DhcpError> {
         let source_mac = frame.source_mac;
+        self.last_packet_at_ms = Some(now_ms);
         if !self.accept_server_mac(source_mac) {
+            self.last_error = Some(DhcpError::ConflictingOffer);
             return Err(DhcpError::ConflictingOffer);
         }
         let result = self.handle_packet(frame.payload, now_ms, runtime);
@@ -899,6 +958,7 @@ impl DhcpClient {
             DHCP_SERVER_PORT,
             &packet[..length],
         )?;
+        self.last_packet_at_ms = Some(now_ms);
         self.clear_lease(runtime)?;
         self.state = DhcpClientState::Init;
         self.next_action_ms = Some(now_ms);
@@ -991,6 +1051,7 @@ impl DhcpClient {
         self.attempt = 0;
         self.state = DhcpClientState::Bound;
         self.next_action_ms = Some(lease.renew_at_ms(now_ms));
+        self.last_error = None;
         Ok(())
     }
 
@@ -1082,6 +1143,7 @@ impl DhcpClient {
             DHCP_SERVER_PORT,
             &packet[..length],
         )?;
+        self.last_packet_at_ms = Some(now_ms);
         self.schedule_retry(now_ms);
         Ok(())
     }
@@ -1128,6 +1190,7 @@ impl DhcpClient {
             DHCP_SERVER_PORT,
             &packet[..length],
         )?;
+        self.last_packet_at_ms = Some(now_ms);
         if !init_reboot {
             self.state = DhcpClientState::Requesting;
         }
@@ -1157,6 +1220,7 @@ impl DhcpClient {
             DHCP_SERVER_PORT,
             &packet[..length],
         )?;
+        self.last_packet_at_ms = Some(now_ms);
         self.schedule_retry(now_ms);
         Ok(())
     }
@@ -1184,6 +1248,7 @@ impl DhcpClient {
             DHCP_SERVER_PORT,
             &packet[..length],
         )?;
+        self.last_packet_at_ms = Some(now_ms);
         self.schedule_retry(now_ms);
         Ok(())
     }

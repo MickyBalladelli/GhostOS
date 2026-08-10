@@ -2531,8 +2531,18 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
                 }
                 interface.dhcp = Some(DhcpLeaseView {
                     state: Self::network_text("init")?,
+                    transaction_id: None,
+                    client_mac: None,
+                    attempt: None,
                     server: None,
+                    offered_address: None,
+                    bound_at_ms: None,
+                    next_action_ms: None,
+                    t1_at_ms: None,
+                    t2_at_ms: None,
                     expires_at_ms: None,
+                    failure_reason: None,
+                    last_packet_at_ms: None,
                     dns0: None,
                     dns1: None,
                 });

@@ -312,8 +312,27 @@ fn set_interface_dhcp_exposes_lease_details_on_show_interfaces() {
     let interfaces = execute(&mut executor, "SHOW INTERFACES").unwrap();
     assert!(has_text(&interfaces, "interface1-mode", "dhcp"));
     assert!(has_text(&interfaces, "interface1-dhcp-state", "bound"));
+    assert!(has_unsigned(&interfaces, "interface1-dhcp-transaction-id", 0x1234));
+    assert!(has_text(
+        &interfaces,
+        "interface1-dhcp-client-mac",
+        "02:00:00:00:00:01"
+    ));
+    assert!(has_unsigned(&interfaces, "interface1-dhcp-attempt", 1));
     assert!(has_text(&interfaces, "interface1-dhcp-server", "10.0.0.1"));
+    assert!(has_text(
+        &interfaces,
+        "interface1-dhcp-offered-address",
+        "10.0.0.2"
+    ));
+    assert!(has_unsigned(&interfaces, "interface1-dhcp-t1-ms", 50_000));
+    assert!(has_unsigned(&interfaces, "interface1-dhcp-t2-ms", 87_000));
     assert!(has_unsigned(&interfaces, "interface1-dhcp-expires-ms", 60_000));
+    assert!(has_unsigned(
+        &interfaces,
+        "interface1-dhcp-last-packet-ms",
+        1_000
+    ));
     assert!(has_text(&interfaces, "interface1-dns0", "10.0.0.53"));
     assert!(has_text(&interfaces, "interface1-address", "10.0.0.50"));
 }
@@ -445,8 +464,18 @@ fn four_full_interfaces_paginate_within_output_budget() {
             mode: InterfaceAddressMode::Dhcp,
             dhcp: Some(DhcpLeaseView {
                 state: text("bound"),
+                transaction_id: Some(0x1234),
+                client_mac: Some(text("02:00:00:00:00:01")),
+                attempt: Some(1),
                 server: Some(text("10.0.0.1")),
+                offered_address: Some(text("10.0.0.2")),
+                bound_at_ms: Some(1_000),
+                next_action_ms: Some(50_000),
+                t1_at_ms: Some(50_000),
+                t2_at_ms: Some(87_000),
                 expires_at_ms: Some(60_000),
+                failure_reason: None,
+                last_packet_at_ms: Some(1_000),
                 dns0: Some(text("10.0.0.53")),
                 dns1: Some(text("10.0.0.54")),
             }),
@@ -598,8 +627,18 @@ impl NetworkSource for FakeNetwork {
                 interface.gateway = Some(text("10.0.0.1"));
                 interface.dhcp = Some(DhcpLeaseView {
                     state: text("bound"),
+                    transaction_id: Some(0x1234),
+                    client_mac: Some(text("02:00:00:00:00:01")),
+                    attempt: Some(1),
                     server: Some(text("10.0.0.1")),
+                    offered_address: Some(text("10.0.0.2")),
+                    bound_at_ms: Some(1_000),
+                    next_action_ms: Some(50_000),
+                    t1_at_ms: Some(50_000),
+                    t2_at_ms: Some(87_000),
                     expires_at_ms: Some(60_000),
+                    failure_reason: None,
+                    last_packet_at_ms: Some(1_000),
                     dns0: Some(text("10.0.0.53")),
                     dns1: None,
                 });

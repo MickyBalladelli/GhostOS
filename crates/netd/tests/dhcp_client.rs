@@ -229,6 +229,15 @@ fn dora_assigns_lease_atomically_and_exposes_state() {
     assert_eq!(runtime.applied, Some(lease));
     assert_eq!(runtime.reconciled, 1);
     assert_eq!(runtime.previous_lease, None);
+    let view = client.view();
+    assert_eq!(view.client_mac, MAC);
+    assert_eq!(view.offered_address, Some([10, 0, 0, 50]));
+    assert_eq!(view.server_id, Some([10, 0, 0, 1]));
+    assert_eq!(view.bound_at_ms, Some(20));
+    assert_eq!(view.t1_at_ms, Some(50_020));
+    assert_eq!(view.t2_at_ms, Some(87_020));
+    assert_eq!(view.expires_at_ms, Some(100_020));
+    assert_eq!(view.last_packet_at_ms, Some(20));
     assert_eq!(client.view().state, DhcpClientState::Bound);
 }
 

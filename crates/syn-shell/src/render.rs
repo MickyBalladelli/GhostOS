@@ -278,32 +278,72 @@ const INTERFACE_FIELD_NAMES: [[&str; 7]; 4] = [
     ],
 ];
 
-const INTERFACE_DHCP_FIELD_NAMES: [[&str; 5]; 4] = [
+const INTERFACE_DHCP_FIELD_NAMES: [[&str; 15]; 4] = [
     [
         "interface1-dhcp-state",
+        "interface1-dhcp-transaction-id",
+        "interface1-dhcp-client-mac",
+        "interface1-dhcp-attempt",
         "interface1-dhcp-server",
+        "interface1-dhcp-offered-address",
+        "interface1-dhcp-bound-ms",
+        "interface1-dhcp-next-action-ms",
+        "interface1-dhcp-t1-ms",
+        "interface1-dhcp-t2-ms",
         "interface1-dhcp-expires-ms",
+        "interface1-dhcp-failure",
+        "interface1-dhcp-last-packet-ms",
         "interface1-dns0",
         "interface1-dns1",
     ],
     [
         "interface2-dhcp-state",
+        "interface2-dhcp-transaction-id",
+        "interface2-dhcp-client-mac",
+        "interface2-dhcp-attempt",
         "interface2-dhcp-server",
+        "interface2-dhcp-offered-address",
+        "interface2-dhcp-bound-ms",
+        "interface2-dhcp-next-action-ms",
+        "interface2-dhcp-t1-ms",
+        "interface2-dhcp-t2-ms",
         "interface2-dhcp-expires-ms",
+        "interface2-dhcp-failure",
+        "interface2-dhcp-last-packet-ms",
         "interface2-dns0",
         "interface2-dns1",
     ],
     [
         "interface3-dhcp-state",
+        "interface3-dhcp-transaction-id",
+        "interface3-dhcp-client-mac",
+        "interface3-dhcp-attempt",
         "interface3-dhcp-server",
+        "interface3-dhcp-offered-address",
+        "interface3-dhcp-bound-ms",
+        "interface3-dhcp-next-action-ms",
+        "interface3-dhcp-t1-ms",
+        "interface3-dhcp-t2-ms",
         "interface3-dhcp-expires-ms",
+        "interface3-dhcp-failure",
+        "interface3-dhcp-last-packet-ms",
         "interface3-dns0",
         "interface3-dns1",
     ],
     [
         "interface4-dhcp-state",
+        "interface4-dhcp-transaction-id",
+        "interface4-dhcp-client-mac",
+        "interface4-dhcp-attempt",
         "interface4-dhcp-server",
+        "interface4-dhcp-offered-address",
+        "interface4-dhcp-bound-ms",
+        "interface4-dhcp-next-action-ms",
+        "interface4-dhcp-t1-ms",
+        "interface4-dhcp-t2-ms",
         "interface4-dhcp-expires-ms",
+        "interface4-dhcp-failure",
+        "interface4-dhcp-last-packet-ms",
         "interface4-dns0",
         "interface4-dns1",
     ],
@@ -415,24 +455,84 @@ fn render_interfaces(
                 &mut rendered,
                 output,
                 INTERFACE_DHCP_FIELD_NAMES[index][1],
-                "  DHCP server",
+                "  DHCP transaction ID",
             )?;
             render_interface_field(
                 &mut rendered,
                 output,
                 INTERFACE_DHCP_FIELD_NAMES[index][2],
-                "  DHCP expires (ms)",
+                "  DHCP client MAC",
             )?;
             render_interface_field(
                 &mut rendered,
                 output,
                 INTERFACE_DHCP_FIELD_NAMES[index][3],
-                "  DNS 1",
+                "  DHCP attempt",
             )?;
             render_interface_field(
                 &mut rendered,
                 output,
                 INTERFACE_DHCP_FIELD_NAMES[index][4],
+                "  DHCP server",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][5],
+                "  DHCP offered address",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][6],
+                "  DHCP bound (ms)",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][7],
+                "  DHCP next action (ms)",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][8],
+                "  DHCP T1 (ms)",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][9],
+                "  DHCP T2 (ms)",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][10],
+                "  DHCP expires (ms)",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][11],
+                "  DHCP failure",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][12],
+                "  DHCP last packet (ms)",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][13],
+                "  DNS 1",
+            )?;
+            render_interface_field(
+                &mut rendered,
+                output,
+                INTERFACE_DHCP_FIELD_NAMES[index][14],
                 "  DNS 2",
             )?;
         }
@@ -529,8 +629,18 @@ fn render_set_interface(
         ("enabled", "  Enabled"),
         ("link-up", "  Link up"),
         ("dhcp-state", "  DHCP state"),
+        ("dhcp-transaction-id", "  DHCP transaction ID"),
+        ("dhcp-client-mac", "  DHCP client MAC"),
+        ("dhcp-attempt", "  DHCP attempt"),
         ("dhcp-server", "  DHCP server"),
+        ("dhcp-offered-address", "  DHCP offered address"),
+        ("dhcp-bound-ms", "  DHCP bound (ms)"),
+        ("dhcp-next-action-ms", "  DHCP next action (ms)"),
+        ("dhcp-t1-ms", "  DHCP T1 (ms)"),
+        ("dhcp-t2-ms", "  DHCP T2 (ms)"),
         ("dhcp-expires-ms", "  DHCP expires (ms)"),
+        ("dhcp-failure", "  DHCP failure"),
+        ("dhcp-last-packet-ms", "  DHCP last packet (ms)"),
         ("dns0", "  DNS 1"),
         ("dns1", "  DNS 2"),
         ("generation", "  Generation"),

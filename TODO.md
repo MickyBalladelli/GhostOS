@@ -367,7 +367,7 @@ SynOS VMs communicate and obtain distinct leases.
       timer ordering, oversized option lists, and conflicting server IDs.
 - [x] Reconcile DHCP routes and DNS settings when a lease changes, then remove
       only DHCP-owned state on release or expiry.
-- [ ] Add `SHOW DHCP` or an equivalent detailed view for transaction ID, MAC,
+- [x] Add `SHOW DHCP` or an equivalent detailed view for transaction ID, MAC,
       attempt, timers, server, offered address, failure reason, and last packet
       time; keep secrets and raw payloads out of normal output.
 - [ ] Add packet capture and audit evidence for discover, offer, request, ACK,
