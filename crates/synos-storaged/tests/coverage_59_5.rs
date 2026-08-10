@@ -7,7 +7,8 @@ use synos_storaged::{
     ProtocolCompatibility, QuorumPolicy, SeedEntropy, StorageDaemon, StorageError, StoragePath,
     StorageRights, AdmissionEndpoint, ClusterBootstrapError, ClusterBootstrapState, Endpoint,
     ClusterCreateRequest,
-    MembershipChangeKind, MembershipReason, MembershipState, SecurityPolicy,
+    MembershipChangeKind, MembershipReason, MembershipState, NvmeCommand, NvmeQueue,
+    SecurityPolicy, MAX_PENDING_IO,
 };
 use synos_auth::CapabilityKey;
 use synos_fabric::NodeId;
@@ -68,7 +69,46 @@ fn storage_paths_capabilities_and_io_boundaries_are_enforced() {
     let completion = daemon.complete_next(Ok(()), 99).expect("complete pending IO");
     assert_eq!(completion.bytes, 4);
     assert_eq!(daemon.poll_completion(), Some(completion));
+    for _ in 0..MAX_PENDING_IO {
+        daemon
+            .submit_io(
+                scoped,
+                IoOperation::Read,
+                StoragePath::new("SYS$STORAGE:DATA/files/a").unwrap(),
+                4,
+                10,
+            )
+            .unwrap();
+    }
+    assert!(matches!(
+        daemon.submit_io(
+            scoped,
+            IoOperation::Read,
+            StoragePath::new("SYS$STORAGE:DATA/files/a").unwrap(),
+            4,
+            10,
+        ),
+        Err(StorageError::QueueFull)
+    ));
     assert!(matches!(daemon.bootstrap_capability(0), Err(_)));
+}
+
+#[test]
+fn remote_nvme_queue_fails_fast_and_reuses_completed_slots() {
+    let mut queue = NvmeQueue::<2>::new();
+    let command = |command_id| NvmeCommand {
+        command_id,
+        offset: 0,
+        length: 4096,
+        write: false,
+    };
+
+    queue.submit(command(1)).unwrap();
+    queue.submit(command(2)).unwrap();
+    assert!(queue.submit(command(3)).is_err());
+    assert_eq!(queue.complete(1), Some(command(1)));
+    queue.submit(command(3)).unwrap();
+    assert_eq!(queue.complete(99), None);
 }
 
 #[test]

@@ -140,3 +140,32 @@ fn job_lease_expiry_requeues_and_owner_checks_are_enforced() {
     assert_eq!(jobs.info(id).unwrap().state, JobState::Queued);
     assert_eq!(jobs.claim(WorkerId::new(2).unwrap(), 5, 5).unwrap().unwrap().id, id);
 }
+
+#[test]
+fn job_queue_fails_fast_until_a_completed_job_is_reaped() {
+    let registry = registry();
+    let owner = JobOwner::new(9).unwrap();
+    let mut jobs = JobQueue::<1>::new();
+    let first = jobs
+        .submit(
+            owner,
+            registry.parse("FIRST").unwrap(),
+            JobPolicy::immediate(),
+        )
+        .unwrap();
+    assert_eq!(
+        jobs.submit(owner, registry.parse("SECOND").unwrap(), JobPolicy::immediate()),
+        Err(Error::QueueFull)
+    );
+
+    let lease = jobs.claim(WorkerId::new(1).unwrap(), 0, 10).unwrap().unwrap();
+    assert_eq!(jobs.finish(lease, Status::NORMAL), Ok(JobState::Completed));
+    assert_eq!(
+        jobs.submit(owner, registry.parse("SECOND").unwrap(), JobPolicy::immediate()),
+        Err(Error::QueueFull)
+    );
+    jobs.reap(first, owner).unwrap();
+    assert!(jobs
+        .submit(owner, registry.parse("SECOND").unwrap(), JobPolicy::immediate())
+        .is_ok());
+}

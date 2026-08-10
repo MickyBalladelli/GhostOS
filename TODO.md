@@ -177,8 +177,11 @@ evidence.
       the fixed-size `QuotaPolicy`, `QuotaLedger`, atomic batch accounting,
       usage inspection, and structured rejection/status mapping in the shared
       system model.
-- [ ] Add backpressure tests for every producer/consumer queue and document
-      whether each operation blocks, drops, retries, or fails fast.
+- [x] Add backpressure tests for every producer/consumer queue and document
+      whether each operation blocks, drops, retries, or fails fast. Added the
+      queue contract matrix in `docs/backpressure.md`, plus saturation tests
+      for agent ingestion, shell jobs, and remote NVMe alongside the existing
+      IPC, I/O, filesystem, network, observability, and replay coverage.
 - [ ] Add bounded soak runs for boot, shell, filesystem, network, compiler,
       cluster, and VM workflows with leak and resource-drift reports.
 

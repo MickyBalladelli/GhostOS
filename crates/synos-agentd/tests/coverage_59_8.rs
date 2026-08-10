@@ -58,3 +58,29 @@ fn semantic_bus_rejects_bad_inputs_and_revoked_capabilities() {
     let mut output = [None; 1];
     assert!(matches!(bus.query(&token, owner, TransportRights::LAYER2, &[1.0; 2], 1, 1, &mut output), Err(AgentError::AccessDenied)));
 }
+
+#[test]
+fn semantic_ingest_queue_coalesces_duplicates_and_fails_fast_when_full() {
+    let owner = NodeId::new(2).unwrap();
+    let mut bus = ContextBus::<2, 2, 2, 8>::new(
+        NodeId::LOCAL,
+        CapabilityKey::new([5; 32]),
+        9,
+    )
+    .unwrap();
+    let options = IngestOptions::new(owner, 0, 100).unwrap();
+    let first = SourceRef::new(SourceKind::KvState, 1).unwrap();
+    let second = SourceRef::new(SourceKind::KvState, 2).unwrap();
+    let third = SourceRef::new(SourceKind::KvState, 3).unwrap();
+
+    assert_eq!(bus.submit(first, b"one", b"1", options).unwrap().queued, 1);
+    assert!(bus.submit(first, b"one", b"2", options).unwrap().replaced);
+    assert_eq!(bus.submit(second, b"two", b"2", options).unwrap().queued, 2);
+    assert_eq!(
+        bus.submit(third, b"three", b"3", options),
+        Err(AgentError::QueueFull)
+    );
+
+    assert_eq!(bus.poll(&mut CpuEmbedding, 1, 1).unwrap().processed, 1);
+    assert_eq!(bus.submit(third, b"three", b"3", options).unwrap().queued, 2);
+}

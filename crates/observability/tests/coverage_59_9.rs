@@ -1,6 +1,8 @@
 use synos_observability::{
     AuditQuery, CodecError, CorrelationId, EventField, EventKind, FieldKind, JOURNAL_RECORD_SIZE,
-    Level, QueryError, TraceEvent, TraceRing, analyze_audit, decode_record, encode_record, field,
+    Alert, AlertLevel, AlertRegistry, AuditJournal, AuditJournalError, AuditKey, Level,
+    MetricError, MetricKind, MetricRegistry, MetricSample, QueryError, TelemetryDimensions,
+    TraceEvent, TraceRing, analyze_audit, decode_record, encode_record, field,
     parse_audit_command,
 };
 use synos_status::Status;
@@ -74,4 +76,39 @@ fn ring_overflow_reports_drops_and_audit_query_is_stable() {
     assert_eq!(seen, vec![10]);
     assert_eq!(parse_audit_command(["/unknown=1"]), Err(QueryError::InvalidArgument));
     assert_eq!(analyze_audit(&journal[..journal.len() - 1], AuditQuery::default(), |_| {}), Err(QueryError::TrailingBytes));
+}
+
+#[test]
+fn durable_audit_and_observability_buffers_have_explicit_full_behavior() {
+    let mut journal = AuditJournal::<1>::new(AuditKey::new([7; 32]).unwrap()).unwrap();
+    journal.append(audit(1, 1, 1, Status::NORMAL)).unwrap();
+    assert_eq!(
+        journal.append(audit(2, 1, 2, Status::BUSY)),
+        Err(AuditJournalError::Capacity)
+    );
+    assert_eq!(journal.dropped(), 1);
+
+    let dimensions = TelemetryDimensions::new(1, 1, 0, 0, 0);
+    let mut metrics = MetricRegistry::<1>::new();
+    metrics
+        .record(MetricSample::new(1, MetricKind::Gauge, 1, 10, dimensions))
+        .unwrap();
+    assert_eq!(
+        metrics.record(MetricSample::new(2, MetricKind::Gauge, 2, 20, dimensions)),
+        Err(MetricError::Capacity)
+    );
+    assert_eq!(metrics.dropped(), 1);
+
+    let mut alerts = AlertRegistry::<1>::new();
+    let alert = Alert {
+        sequence: 0,
+        timestamp: 1,
+        level: AlertLevel::Warning,
+        code: 1,
+        dimensions,
+        correlation: CorrelationId::from_raw(1),
+    };
+    alerts.push(alert).unwrap();
+    assert_eq!(alerts.push(alert), Err(MetricError::Capacity));
+    assert_eq!(alerts.dropped(), 1);
 }
