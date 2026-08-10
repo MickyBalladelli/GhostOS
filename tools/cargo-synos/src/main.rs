@@ -471,15 +471,15 @@ fn hex_digit(byte: u8) -> Result<u8, String> {
 
 fn json_string(value: &str) -> String {
     let mut output = String::from("\"");
-    for byte in value.bytes() {
-        match byte {
-            b'"' => output.push_str("\\\""),
-            b'\\' => output.push_str("\\\\"),
-            b'\n' => output.push_str("\\n"),
-            b'\r' => output.push_str("\\r"),
-            b'\t' => output.push_str("\\t"),
-            0..=0x1f => output.push_str(&format!("\\u{:04x}", byte)),
-            _ => output.push(byte as char),
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            value if value <= '\u{1f}' => output.push_str(&format!("\\u{:04x}", value as u32)),
+            value => output.push(value),
         }
     }
     output.push('"');
