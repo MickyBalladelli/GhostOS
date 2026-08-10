@@ -160,7 +160,9 @@ fn long_run_retention_is_bounded_across_restart_and_releases_checkpoint_blocks()
 
     let mut image = vec![0; SynFs::<BLOCKS>::volume_bytes()];
     SynFs::<BLOCKS>::format(&mut image).expect("format volume");
-    let mut filesystem = SynFs::<BLOCKS>::load(&image).expect("load volume");
+    // SynFs keeps its fixed arena inline. Heap the long-run fixture so the
+    // restart path does not stack two half-megabyte filesystem values.
+    let mut filesystem = Box::new(SynFs::<BLOCKS>::load(&image).expect("load volume"));
     filesystem
         .create_directory("/data", true)
         .expect("create data directory");
@@ -202,7 +204,9 @@ fn long_run_retention_is_bounded_across_restart_and_releases_checkpoint_blocks()
         if cycle % CHECKPOINT_INTERVAL == CHECKPOINT_HOLD {
             let (info, expected) = checkpoint.expect("checkpoint is held");
             filesystem.flush(&mut image).expect("persist checkpoint");
-            filesystem = SynFs::<BLOCKS>::load(&image).expect("restart from checkpoint");
+            filesystem = Box::new(
+                SynFs::<BLOCKS>::load(&image).expect("restart from checkpoint"),
+            );
             assert_eq!(filesystem.checkpoint_info(info.id), Ok(info));
 
             let snapshot = filesystem
