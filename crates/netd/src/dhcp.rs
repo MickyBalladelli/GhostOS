@@ -1153,8 +1153,10 @@ impl DhcpClient {
                 | DhcpClientState::Renewing
                 | DhcpClientState::Rebinding
         ) {
-            if self.lease.is_none() {
+            if self.lease.is_some() {
                 self.clear_lease(runtime)?;
+            } else if let Some(snapshot) = self.preserved {
+                runtime.restore_static(self.interface_name(), &snapshot)?;
             }
             self.selected = None;
             self.state = DhcpClientState::Init;
