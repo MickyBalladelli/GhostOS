@@ -138,6 +138,33 @@ fn dhcp_requires_capability_and_binds_interface() {
 }
 
 #[test]
+fn dhcp_admin_and_carrier_gates_stop_and_restart_transmission() {
+    let mut client = authorized_client();
+    let mut transport = CaptureTransport::new();
+    let mut runtime = RecordingRuntime::new();
+
+    client.start(0).unwrap();
+    client.poll(0, &mut transport, &mut runtime).unwrap();
+    assert_eq!(transport.count, 1);
+
+    client.set_enabled(false, 1);
+    assert!(!client.view().enabled);
+    client.poll(1_000, &mut transport, &mut runtime).unwrap();
+    assert_eq!(transport.count, 1);
+
+    client.set_enabled(true, 2);
+    client.set_link(false, 3);
+    client.poll(2_000, &mut transport, &mut runtime).unwrap();
+    assert_eq!(transport.count, 1);
+
+    client.set_link(true, 4);
+    client.poll(4, &mut transport, &mut runtime).unwrap();
+    assert_eq!(transport.count, 2);
+    assert!(client.view().enabled);
+    assert!(client.view().link_up);
+}
+
+#[test]
 fn dora_assigns_lease_atomically_and_exposes_state() {
     let mut client = authorized_client();
     let mut transport = CaptureTransport::new();

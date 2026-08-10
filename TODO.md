@@ -317,7 +317,7 @@ SynOS VMs communicate and obtain distinct leases.
       RX/TX queue state, and link-change events to the kernel network service.
 - [x] Make `SET INTERFACE ... /ENABLE` and `/DISABLE` control administrative
       state while preserving the separate physical `link up` state.
-- [ ] Start DHCP only when the interface is enabled and the carrier is up;
+- [x] Start DHCP only when the interface is enabled and the carrier is up;
       stop transmission immediately on link loss and restart cleanly on link
       restoration.
 - [x] Define the VM network topology contract: distinct MAC addresses, one

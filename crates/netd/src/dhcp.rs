@@ -233,6 +233,7 @@ pub struct DhcpClientView {
     pub interface: [u8; MAX_INTERFACE_NAME],
     pub interface_len: u8,
     pub state: DhcpClientState,
+    pub enabled: bool,
     pub link_up: bool,
     pub xid: u32,
     pub attempt: u8,
@@ -258,6 +259,7 @@ pub struct DhcpClient {
     interface_len: u8,
     mac: [u8; 6],
     state: DhcpClientState,
+    enabled: bool,
     link_up: bool,
     authorized: bool,
     xid: u32,
@@ -282,6 +284,7 @@ impl DhcpClient {
             interface_len: interface.len() as u8,
             mac,
             state: DhcpClientState::Init,
+            enabled: true,
             link_up: true,
             authorized: false,
             xid: 0,
@@ -329,6 +332,7 @@ impl DhcpClient {
             interface: self.interface,
             interface_len: self.interface_len,
             state: self.state,
+            enabled: self.enabled,
             link_up: self.link_up,
             xid: self.xid,
             attempt: self.attempt,
@@ -343,9 +347,40 @@ impl DhcpClient {
         self.preserved = Some(snapshot);
     }
 
+    pub const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Changes administrative state without changing physical carrier state.
+    /// A disabled client retains its lease for safe init-reboot recovery, but
+    /// never schedules or transmits DHCP packets.
+    pub fn set_enabled(&mut self, enabled: bool, now_ms: u64) {
+        self.enabled = enabled;
+        if !enabled {
+            self.next_action_ms = None;
+            return
+        }
+        if !self.link_up {
+            self.next_action_ms = None;
+            return
+        }
+        self.state = if self.lease.is_some() {
+            DhcpClientState::InitReboot
+        } else {
+            DhcpClientState::Init
+        };
+        self.attempt = 0;
+        self.selected = None;
+        self.next_action_ms = Some(now_ms);
+    }
+
+    pub fn set_enabled_with_clock<C: MonotonicClock>(&mut self, enabled: bool, clock: &C) {
+        self.set_enabled(enabled, clock.now_us() / 1_000)
+    }
+
     pub fn set_link(&mut self, up: bool, now_ms: u64) {
         self.link_up = up;
-        if !up {
+        if !up || !self.enabled {
             self.next_action_ms = None;
             return;
         }
@@ -372,7 +407,7 @@ impl DhcpClient {
 
     pub fn start(&mut self, now_ms: u64) -> Result<(), DhcpError> {
         self.require_auth()?;
-        if !self.link_up {
+        if !self.enabled || !self.link_up {
             return Err(DhcpError::InvalidState);
         }
         self.state = if self.lease.is_some() {
@@ -397,7 +432,7 @@ impl DhcpClient {
         runtime: &mut R,
     ) -> Result<(), DhcpError> {
         self.require_auth()?;
-        if !self.link_up {
+        if !self.enabled || !self.link_up {
             return Ok(());
         }
         if let (Some(lease), Some(bound_at)) = (self.lease, self.bound_at_ms) {
@@ -455,6 +490,9 @@ impl DhcpClient {
         runtime: &mut R,
     ) -> Result<(), DhcpError> {
         self.require_auth()?;
+        if !self.enabled || !self.link_up {
+            return Err(DhcpError::InvalidState)
+        }
         let message = DhcpMessage::decode(packet)?;
         if message.xid != self.xid || message.chaddr != self.mac {
             return Err(DhcpError::InvalidPacket);
@@ -483,6 +521,9 @@ impl DhcpClient {
         runtime: &mut R,
     ) -> Result<(), DhcpError> {
         self.require_auth()?;
+        if !self.enabled || !self.link_up {
+            return Err(DhcpError::InvalidState)
+        }
         let Some(lease) = self.lease else {
             return Err(DhcpError::InvalidState);
         };
