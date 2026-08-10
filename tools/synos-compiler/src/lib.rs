@@ -345,6 +345,19 @@ impl Compiler {
         if request.offline {
             command.arg("--offline");
         }
+        let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
+        if let Some(linker) = self.linker.as_ref() {
+            append_linker(&mut rustflags, linker);
+        }
+        append_remap_path(
+            &mut rustflags,
+            source_root,
+            "/synos-source",
+        );
+        if let Some(target_directory) = &request.target_directory {
+            append_remap_path(&mut rustflags, target_directory, "/synos-target");
+        }
+        command.env("RUSTFLAGS", rustflags);
         let status = command
             .status()
             .map_err(|error| CompileError::CargoUnavailable(error.to_string()))?;
@@ -699,6 +712,14 @@ impl Compiler {
     fn base_command(&self) -> Command {
         let mut command = Command::new(&self.cargo);
         command
+            .env("CARGO_INCREMENTAL", "0")
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("CONST_RANDOM_SEED", "synos-reproducible-seed-v1")
+            .env("TZ", "UTC")
+            .env("LC_ALL", "C")
+            .env("LANG", "C")
+            .env("CARGO_BUILD_JOBS", "1")
+            .env("CARGO_TERM_COLOR", "never")
             .env("RUSTC_BOOTSTRAP", "1")
             .env_remove("RUSTC_WRAPPER")
             .env_remove("RUSTC_WORKSPACE_WRAPPER")
@@ -878,6 +899,24 @@ fn build_clean_workspace(
     } else {
         Err(CompileError::BuildFailed(status))
     }
+}
+
+fn append_remap_path(flags: &mut String, source: &Path, destination: &str) {
+    if !flags.is_empty() {
+        flags.push(' ')
+    }
+    flags.push_str("--remap-path-prefix=");
+    flags.push_str(&source.to_string_lossy());
+    flags.push('=');
+    flags.push_str(destination);
+}
+
+fn append_linker(flags: &mut String, linker: &Path) {
+    if !flags.is_empty() {
+        flags.push(' ')
+    }
+    flags.push_str("-C linker=");
+    flags.push_str(&linker.to_string_lossy());
 }
 
 fn workspace_output_directory(target_directory: &Path, target: Target, release: bool) -> PathBuf {

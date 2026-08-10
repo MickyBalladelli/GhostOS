@@ -103,10 +103,10 @@ cargo run -p cargo-synos -- synos reproduce --target x86_64 --release
 
 The command creates one fresh source workspace, builds it twice from clean
 target state with `--locked --offline`, disables incremental state, remaps
-workspace paths, and compares the final `.rlib`, `.rmeta`, `.a`, `.o`, and
-`.so` artifacts by content ID. For `.rlib` files, it hashes code archive
-members while ignoring Cargo metadata whose generated declaration order is
-not stable.
+workspace and target paths, fixes locale/time/entropy inputs, and compares the
+final `.rlib`, `.rmeta`, `.a`, `.o`, and `.so` artifacts by content ID. For
+`.rlib` files, it hashes code archive members while ignoring Cargo metadata
+whose generated declaration order is not stable.
 
 ## Acceptance gate
 
@@ -120,10 +120,15 @@ The gate checks signed boot and storage contracts, offline locked requests,
 isolated concurrent jobs, cancellation and crash recovery, stage-2 ordering,
 signed/corrupt/unsigned package handling, hello-world compilation and host
 execution, build scripts, proc macros, application bundles, production Ring 3
-builds, reproducibility, and Aarch64 cross-builds. Use `--skip-build` for the
-fast in-memory contract pass and `--json` for local evidence records. Pass `--clean-root`
-to choose a new artifact root explicitly. Use `--boot-only` to run just the
-booted native compiler artifact without the longer host build matrix.
+builds, reproducibility, fresh persisted SynFS roots, and Aarch64 cross-builds.
+The fresh-root check compiles two identical SynFS snapshots in parallel, then
+writes `stage2-reproducibility-evidence.json` with canonical inputs, source,
+root-image, executable digests, and the executing host platform. Use
+`--skip-build` for the fast in-memory contract pass and `--json` for local
+evidence records. Pass `--clean-root` to choose a new artifact root explicitly.
+Use `--boot-only` to run just the booted native compiler artifact without the
+longer host build matrix. Run the gate on each additional native host to extend
+the recorded host-platform matrix.
 
 The acceptance gate also produces a booted evidence artifact under its chosen
 root. It boots the real kernel in the VM, builds the native `synos-rustd`

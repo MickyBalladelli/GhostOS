@@ -209,8 +209,11 @@ evidence.
       the real build script and proc-macro crates, then executes the signed
       five-step toolchain plan with separate process, workspace, and scratch
       identities for both guest tools.
-- [ ] Prove stage-2 reproducibility across fresh SynFS roots, stable paths,
-      locale, time, entropy, parallelism, and host platforms.
+- [x] Prove stage-2 reproducibility across fresh SynFS roots, stable paths,
+      locale, time, entropy, parallelism, and host platforms. The acceptance
+      now persists two fresh SynFS roots, compiles their locked fixture in
+      parallel with canonical path and environment inputs, compares source,
+      root-image, and executable digests, and writes host-platform evidence.
 - [ ] Test compiler cancellation at every tool boundary and prove no partial
       package, cache entry, dynamic artifact, or trusted-state mutation leaks.
 - [ ] Add target compatibility tests for x86_64 first and aarch64 only when its

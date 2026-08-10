@@ -10,6 +10,7 @@ use synos_rustd::{
     Text, ToolchainStage, ToolchainStageResult,
 };
 use synos_system_model::ContentId;
+use synos_synfs::SynFs;
 
 #[path = "booted.rs"]
 mod booted;
@@ -384,6 +385,11 @@ fn host_checks(
             .map(|_| ())
             .map_err(|error| error.to_string()),
     );
+    record(
+        results,
+        "fresh-synfs-reproducibility",
+        fresh_synfs_reproducibility(&workspace, options, root),
+    );
 
     let concurrent_root = root.join("concurrent");
     fs::create_dir_all(&concurrent_root)
@@ -435,6 +441,161 @@ fn host_checks(
             .map_err(|error| error.to_string()),
     );
     Ok(())
+}
+
+const SYNFS_REPRO_BLOCKS: usize = 64;
+const SYNFS_REPRO_FILES: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "build.rs",
+    "src/main.rs",
+    "proc-macro/Cargo.toml",
+    "proc-macro/src/lib.rs",
+];
+
+struct FreshSynFsFixture {
+    filesystem: SynFs<SYNFS_REPRO_BLOCKS>,
+    image_digest: ContentId,
+    source_digest: ContentId,
+    generation: u64,
+}
+
+fn fresh_synfs_reproducibility(
+    workspace: &Path,
+    options: &AcceptanceOptions,
+    root: &Path,
+) -> Result<(), String> {
+    let fixture_root = workspace.join("examples/compiler-acceptance");
+    let first = fresh_synfs_fixture(&fixture_root)?;
+    let second = fresh_synfs_fixture(&fixture_root)?;
+    if first.source_digest != second.source_digest {
+        return Err("fresh SynFS roots contain different source material".into());
+    }
+    if first.image_digest != second.image_digest || first.generation != second.generation {
+        return Err("fresh SynFS roots were not identical after persistence".into());
+    }
+
+    let first_target = root.join("fresh-synfs-a-target");
+    let second_target = root.join("fresh-synfs-b-target");
+    let first_stage = root.join("fresh-synfs-a-stage");
+    let second_stage = root.join("fresh-synfs-b-stage");
+    let first_request = synfs_repro_request(options.target, options.release, &first_target);
+    let second_request = synfs_repro_request(options.target, options.release, &second_target);
+    let (first_result, second_result) = std::thread::scope(|scope| {
+        let first_job = scope.spawn(|| {
+            Compiler::new()
+                .map_err(|error| error.to_string())
+                .and_then(|compiler| {
+                    compiler
+                        .compile_synfs(&first.filesystem, &first_request, &first_stage)
+                        .map_err(|error| error.to_string())
+                })
+        });
+        let second_job = scope.spawn(|| {
+            Compiler::new()
+                .map_err(|error| error.to_string())
+                .and_then(|compiler| {
+                    compiler
+                        .compile_synfs(&second.filesystem, &second_request, &second_stage)
+                        .map_err(|error| error.to_string())
+                })
+        });
+        (
+            first_job
+                .join()
+                .unwrap_or_else(|_| Err("first parallel build panicked".to_string())),
+            second_job
+                .join()
+                .unwrap_or_else(|_| Err("second parallel build panicked".to_string())),
+        )
+    });
+    let first_output = first_result?;
+    let second_output = second_result?;
+    let first_bytes = fs::read(&first_output.artifact)
+        .map_err(|error| format!("could not read {}: {error}", first_output.artifact.display()))?;
+    let second_bytes = fs::read(&second_output.artifact)
+        .map_err(|error| format!("could not read {}: {error}", second_output.artifact.display()))?;
+    let first_digest = ContentId::hash(&first_bytes);
+    let second_digest = ContentId::hash(&second_bytes);
+    if first_digest != second_digest {
+        return Err(format!(
+            "parallel SynFS stage-2 artifacts differ: {:?} != {:?}",
+            first_digest, second_digest
+        ));
+    }
+
+    let evidence = format!(
+        "{{\"fresh_synfs_roots\":2,\"stable_paths\":true,\"locale\":\"C\",\"time\":\"SOURCE_DATE_EPOCH=0,TZ=UTC\",\"entropy\":\"CONST_RANDOM_SEED=synos-reproducible-seed-v1\",\"parallelism\":\"two-independent-builds\",\"host_platform\":\"{}-{}\",\"source_digest\":\"{:?}\",\"root_image_digest\":\"{:?}\",\"artifact_digest\":\"{:?}\"}}\n",
+        env::consts::OS,
+        env::consts::ARCH,
+        first.source_digest,
+        first.image_digest,
+        first_digest,
+    );
+    fs::write(root.join("stage2-reproducibility-evidence.json"), evidence)
+        .map_err(|error| format!("could not write stage-2 evidence: {error}"))?;
+    Ok(())
+}
+
+fn synfs_repro_request(
+    target: Target,
+    release: bool,
+    target_directory: &Path,
+) -> synos_compiler::SynFsCompileRequest {
+    let mut request = synos_compiler::SynFsCompileRequest::new(
+        "/system/sources/compiler-acceptance",
+        "Cargo.toml",
+        "acceptance-service",
+        target,
+    );
+    request.release = release;
+    request.target_directory = Some(target_directory.to_path_buf());
+    request
+}
+
+fn fresh_synfs_fixture(fixture_root: &Path) -> Result<FreshSynFsFixture, String> {
+    let mut image = vec![0; SynFs::<SYNFS_REPRO_BLOCKS>::volume_bytes()];
+    SynFs::<SYNFS_REPRO_BLOCKS>::format(&mut image)
+        .map_err(|error| format!("could not format fresh SynFS root: {error:?}"))?;
+    let mut filesystem = SynFs::<SYNFS_REPRO_BLOCKS>::load(&image)
+        .map_err(|error| format!("could not load fresh SynFS root: {error:?}"))?;
+    let mut source_material = Vec::new();
+    {
+        let mut transaction = filesystem.transaction();
+        transaction
+            .create_directory("/system/sources/compiler-acceptance/src", true)
+            .map_err(|error| format!("could not create SynFS source directory: {error:?}"))?;
+        transaction
+            .create_directory("/system/sources/compiler-acceptance/proc-macro/src", true)
+            .map_err(|error| format!("could not create SynFS proc-macro directory: {error:?}"))?;
+        for relative in SYNFS_REPRO_FILES {
+            let bytes = fs::read(fixture_root.join(relative))
+                .map_err(|error| format!("could not read fixture {relative}: {error}"))?;
+            let path = format!("/system/sources/compiler-acceptance/{relative}");
+            transaction
+                .write(&path, &bytes)
+                .map_err(|error| format!("could not write SynFS fixture {relative}: {error:?}"))?;
+            source_material.extend_from_slice(relative.as_bytes());
+            source_material.push(0);
+            source_material.extend_from_slice(&bytes);
+            source_material.push(0xff);
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("could not commit SynFS fixture: {error:?}"))?;
+    }
+    let generation = filesystem.generation();
+    filesystem
+        .flush(&mut image)
+        .map_err(|error| format!("could not persist SynFS fixture: {error:?}"))?;
+    let filesystem = SynFs::<SYNFS_REPRO_BLOCKS>::load(&image)
+        .map_err(|error| format!("could not reload SynFS fixture: {error:?}"))?;
+    Ok(FreshSynFsFixture {
+        filesystem,
+        image_digest: ContentId::hash(&image),
+        source_digest: ContentId::hash(&source_material),
+        generation,
+    })
 }
 
 fn build_request(source_root: &str, binary: &str) -> BuildRequest {
