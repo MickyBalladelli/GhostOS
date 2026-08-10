@@ -5,12 +5,18 @@
 //! loopback/shared-segment fixtures.
 
 pub mod backend;
+pub mod dhcp;
 pub mod mac;
 pub mod packet;
 
 pub use backend::{
     DeterministicPort, DeterministicSegment, HostNetworkBackend, LoopbackHub, LoopbackPort,
     NetBackend, NetQueueState, NetworkBackendConfig,
+};
+pub use dhcp::{
+    DhcpConfigError, DhcpLeaseInfo, DhcpReservation, DhcpServerConfig,
+    DeterministicDhcpServer, DHCP_CLIENT_PORT as VM_DHCP_CLIENT_PORT,
+    DHCP_SERVER_MAC, DHCP_SERVER_PORT as VM_DHCP_SERVER_PORT,
 };
 pub use mac::{mac_matches, MacAddress, MAC_ADDRESS_LEN};
 pub use packet::{NetError, PacketQueue, ETHERNET_FRAME_MAX, ETHERNET_FRAME_MIN, ETHERNET_HEADER_LEN};

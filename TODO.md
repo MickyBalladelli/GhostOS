@@ -330,7 +330,7 @@ SynOS VMs communicate and obtain distinct leases.
 - [x] Add a real host/VM network backend for bridged, user-mode/NAT, and
       deterministic test networking; keep the in-memory loopback backend only
       for isolated unit tests.
-- [ ] Add a bounded DHCP server to the deterministic VM network fixture, with a
+- [x] Add a bounded DHCP server to the deterministic VM network fixture, with a
       configurable pool, gateway, DNS, lease duration, and per-MAC reservations.
 - [ ] Ensure two VMs on one fixture receive different addresses and can send
       Ethernet, ARP, IPv4, ICMP, UDP, and TCP traffic to each other.

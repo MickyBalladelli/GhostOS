@@ -1,0 +1,549 @@
+//! Bounded DHCP server attached to the deterministic Ethernet segment.
+
+use super::backend::{DeterministicPort, DeterministicSegment, NetBackend};
+use super::mac::MacAddress;
+use super::packet::{pad_frame, NetError, ETHERNET_HEADER_LEN};
+use std::cell::RefCell;
+use std::fmt;
+use std::rc::Rc;
+
+pub const DHCP_SERVER_MAC: MacAddress = MacAddress::synos_default(0xD0);
+pub const DHCP_SERVER_PORT: u16 = 67;
+pub const DHCP_CLIENT_PORT: u16 = 68;
+pub const MAX_DHCP_SERVER_LEASES: usize = 256;
+pub const MAX_DHCP_SERVER_RESERVATIONS: usize = 32;
+pub const MAX_DHCP_SERVER_PACKETS_PER_POLL: usize = 32;
+pub const DHCP_MAGIC_COOKIE: u32 = 0x6382_5363;
+
+const DHCP_DISCOVER: u8 = 1;
+const DHCP_OFFER: u8 = 2;
+const DHCP_REQUEST: u8 = 3;
+const DHCP_ACK: u8 = 5;
+const DHCP_NAK: u8 = 6;
+const DHCP_RELEASE: u8 = 7;
+const DHCP_OPTION_MESSAGE_TYPE: u8 = 53;
+const DHCP_OPTION_REQUESTED_IP: u8 = 50;
+const DHCP_OPTION_SERVER_ID: u8 = 54;
+const DHCP_OPTION_SUBNET_MASK: u8 = 1;
+const DHCP_OPTION_ROUTER: u8 = 3;
+const DHCP_OPTION_DNS: u8 = 6;
+const DHCP_OPTION_LEASE_TIME: u8 = 51;
+const DHCP_OPTION_RENEWAL_TIME: u8 = 58;
+const DHCP_OPTION_REBINDING_TIME: u8 = 59;
+const DHCP_OPTION_END: u8 = 255;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum DhcpConfigError {
+    InvalidPool,
+    PoolTooLarge,
+    InvalidLeaseDuration,
+    TooManyReservations,
+    DuplicateReservation,
+    ReservationOutsidePool,
+    SegmentUnavailable,
+}
+
+impl fmt::Display for DhcpConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidPool => "invalid DHCP address pool",
+            Self::PoolTooLarge => "DHCP address pool is too large",
+            Self::InvalidLeaseDuration => "DHCP lease duration must be at least three seconds",
+            Self::TooManyReservations => "too many DHCP reservations",
+            Self::DuplicateReservation => "duplicate DHCP reservation",
+            Self::ReservationOutsidePool => "DHCP reservation is outside the address pool",
+            Self::SegmentUnavailable => "DHCP server cannot attach to the segment",
+        };
+        f.write_str(message)
+    }
+}
+
+impl std::error::Error for DhcpConfigError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DhcpReservation {
+    pub mac: MacAddress,
+    pub address: [u8; 4],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DhcpServerConfig {
+    pub server_ip: [u8; 4],
+    pub pool_start: [u8; 4],
+    pub pool_end: [u8; 4],
+    pub subnet_mask: [u8; 4],
+    pub gateway: [u8; 4],
+    pub dns: [u8; 4],
+    pub lease_time_secs: u32,
+    pub reservations: Vec<DhcpReservation>,
+}
+
+impl Default for DhcpServerConfig {
+    fn default() -> Self {
+        Self {
+            server_ip: [10, 5, 0, 1],
+            pool_start: [10, 5, 0, 100],
+            pool_end: [10, 5, 0, 199],
+            subnet_mask: [255, 255, 255, 0],
+            gateway: [10, 5, 0, 1],
+            dns: [10, 5, 0, 1],
+            lease_time_secs: 3_600,
+            reservations: Vec::new(),
+        }
+    }
+}
+
+impl DhcpServerConfig {
+    pub fn validate(&self) -> Result<(), DhcpConfigError> {
+        let start = ipv4_number(self.pool_start);
+        let end = ipv4_number(self.pool_end);
+        if start > end || start == 0 || end == u32::MAX {
+            return Err(DhcpConfigError::InvalidPool);
+        }
+        let size = end.saturating_sub(start).saturating_add(1);
+        if size as usize > MAX_DHCP_SERVER_LEASES {
+            return Err(DhcpConfigError::PoolTooLarge);
+        }
+        if self.lease_time_secs < 3 {
+            return Err(DhcpConfigError::InvalidLeaseDuration);
+        }
+        if self.reservations.len() > MAX_DHCP_SERVER_RESERVATIONS {
+            return Err(DhcpConfigError::TooManyReservations);
+        }
+        for (index, reservation) in self.reservations.iter().enumerate() {
+            if !self.address_in_pool(reservation.address) {
+                return Err(DhcpConfigError::ReservationOutsidePool);
+            }
+            if self
+                .reservations
+                .iter()
+                .skip(index + 1)
+                .any(|other| other.mac == reservation.mac || other.address == reservation.address)
+            {
+                return Err(DhcpConfigError::DuplicateReservation);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn add_reservation(
+        &mut self,
+        reservation: DhcpReservation,
+    ) -> Result<(), DhcpConfigError> {
+        if self.reservations.len() >= MAX_DHCP_SERVER_RESERVATIONS {
+            return Err(DhcpConfigError::TooManyReservations);
+        }
+        self.reservations.push(reservation);
+        if let Err(error) = self.validate() {
+            self.reservations.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn address_in_pool(&self, address: [u8; 4]) -> bool {
+        let value = ipv4_number(address);
+        value >= ipv4_number(self.pool_start) && value <= ipv4_number(self.pool_end)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DhcpLeaseInfo {
+    pub mac: MacAddress,
+    pub address: [u8; 4],
+    pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Copy)]
+struct Lease {
+    info: DhcpLeaseInfo,
+    offered: bool,
+}
+
+#[derive(Clone, Copy)]
+struct DhcpRequest {
+    source_mac: MacAddress,
+    mac: MacAddress,
+    xid: u32,
+    flags: u16,
+    ciaddr: [u8; 4],
+    message_type: u8,
+    requested_ip: Option<[u8; 4]>,
+    server_id: Option<[u8; 4]>,
+}
+
+/// DHCP server running as a synthetic port on a deterministic segment.
+pub struct DeterministicDhcpServer {
+    port: DeterministicPort,
+    config: DhcpServerConfig,
+    leases: Vec<Lease>,
+}
+
+impl DeterministicDhcpServer {
+    pub fn new(
+        segment: Rc<RefCell<DeterministicSegment>>,
+        config: DhcpServerConfig,
+    ) -> Result<Self, DhcpConfigError> {
+        config.validate()?;
+        let port = DeterministicSegment::connect(segment, DHCP_SERVER_MAC)
+            .map_err(|_| DhcpConfigError::SegmentUnavailable)?;
+        Ok(Self {
+            port,
+            config,
+            leases: Vec::new(),
+        })
+    }
+
+    pub fn config(&self) -> &DhcpServerConfig {
+        &self.config
+    }
+
+    pub fn leases(&self) -> Vec<DhcpLeaseInfo> {
+        self.leases.iter().map(|lease| lease.info).collect()
+    }
+
+    pub fn lease_for(&self, mac: MacAddress) -> Option<DhcpLeaseInfo> {
+        self.leases
+            .iter()
+            .find(|lease| lease.info.mac == mac)
+            .map(|lease| lease.info)
+    }
+
+    pub fn poll(&mut self, now_ms: u64) -> Result<usize, NetError> {
+        self.expire(now_ms);
+        let mut handled = 0;
+        for _ in 0..MAX_DHCP_SERVER_PACKETS_PER_POLL {
+            let Some(frame) = self.port.receive()? else {
+                break;
+            };
+            if let Some(reply) = self.handle_frame(&frame, now_ms) {
+                self.port.transmit(&reply)?;
+                handled += 1;
+            }
+        }
+        Ok(handled)
+    }
+
+    fn handle_frame(&mut self, frame: &[u8], now_ms: u64) -> Option<Vec<u8>> {
+        let request = decode_request(frame)?;
+        if request.source_mac != request.mac {
+            return None;
+        }
+        if request.server_id.is_some_and(|server| server != self.config.server_ip) {
+            return None;
+        }
+        match request.message_type {
+            DHCP_DISCOVER => {
+                let address = self.choose_address(request.mac, request.requested_ip, now_ms)?;
+                self.set_lease(request.mac, address, now_ms, true);
+                Some(encode_reply(&self.config, request, DHCP_OFFER, address))
+            }
+            DHCP_REQUEST => {
+                let requested = request.requested_ip.or_else(|| nonzero(request.ciaddr));
+                let address = self.choose_requested(request.mac, requested, now_ms);
+                match address {
+                    Some(address) => {
+                        self.set_lease(request.mac, address, now_ms, false);
+                        Some(encode_reply(&self.config, request, DHCP_ACK, address))
+                    }
+                    None => Some(encode_reply(&self.config, request, DHCP_NAK, [0; 4])),
+                }
+            }
+            DHCP_RELEASE => {
+                self.leases.retain(|lease| lease.info.mac != request.mac);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn choose_requested(
+        &self,
+        mac: MacAddress,
+        requested: Option<[u8; 4]>,
+        now_ms: u64,
+    ) -> Option<[u8; 4]> {
+        let reservation = self.reservation_for(mac);
+        if reservation.is_some_and(|address| requested.is_some_and(|wanted| wanted != address)) {
+            return None;
+        }
+        if let Some(address) = reservation {
+            return self.address_available(address, mac, now_ms).then_some(address);
+        }
+        if let Some(address) = requested {
+            return self
+                .config
+                .address_in_pool(address)
+                .then(|| self.address_available(address, mac, now_ms).then_some(address))
+                .flatten();
+        }
+        self.choose_address(mac, None, now_ms)
+    }
+
+    fn choose_address(
+        &self,
+        mac: MacAddress,
+        requested: Option<[u8; 4]>,
+        now_ms: u64,
+    ) -> Option<[u8; 4]> {
+        if let Some(address) = self.reservation_for(mac) {
+            return self.address_available(address, mac, now_ms).then_some(address);
+        }
+        if let Some(existing) = self
+            .leases
+            .iter()
+            .find(|lease| lease.info.mac == mac && lease.info.expires_at_ms > now_ms)
+            .map(|lease| lease.info.address)
+        {
+            return Some(existing);
+        }
+        if let Some(requested) = requested {
+            if self.config.address_in_pool(requested)
+                && self.address_available(requested, mac, now_ms)
+            {
+                return Some(requested);
+            }
+        }
+        let start = ipv4_number(self.config.pool_start);
+        let end = ipv4_number(self.config.pool_end);
+        for value in start..=end {
+            let address = ipv4_bytes(value);
+            if !self.is_reserved(address) && self.address_available(address, mac, now_ms) {
+                return Some(address);
+            }
+        }
+        None
+    }
+
+    fn address_available(&self, address: [u8; 4], mac: MacAddress, now_ms: u64) -> bool {
+        !self.leases.iter().any(|lease| {
+            lease.info.address == address
+                && lease.info.mac != mac
+                && lease.info.expires_at_ms > now_ms
+        })
+    }
+
+    fn is_reserved(&self, address: [u8; 4]) -> bool {
+        self.config
+            .reservations
+            .iter()
+            .any(|reservation| reservation.address == address)
+    }
+
+    fn reservation_for(&self, mac: MacAddress) -> Option<[u8; 4]> {
+        self.config
+            .reservations
+            .iter()
+            .find(|reservation| reservation.mac == mac)
+            .map(|reservation| reservation.address)
+    }
+
+    fn set_lease(&mut self, mac: MacAddress, address: [u8; 4], now_ms: u64, offered: bool) {
+        let expires_at_ms = now_ms.saturating_add(self.config.lease_time_secs as u64 * 1_000);
+        if let Some(lease) = self.leases.iter_mut().find(|lease| lease.info.mac == mac) {
+            lease.info.address = address;
+            lease.info.expires_at_ms = expires_at_ms;
+            lease.offered = offered;
+            return;
+        }
+        if self.leases.len() < MAX_DHCP_SERVER_LEASES {
+            self.leases.push(Lease {
+                info: DhcpLeaseInfo {
+                    mac,
+                    address,
+                    expires_at_ms,
+                },
+                offered,
+            });
+        }
+    }
+
+    fn expire(&mut self, now_ms: u64) {
+        self.leases
+            .retain(|lease| lease.info.expires_at_ms > now_ms);
+    }
+}
+
+fn decode_request(frame: &[u8]) -> Option<DhcpRequest> {
+    if frame.len() < ETHERNET_HEADER_LEN + 20 + 8 + 240 {
+        return None;
+    }
+    if frame[12..14] != [0x08, 0x00] {
+        return None;
+    }
+    let ip = ETHERNET_HEADER_LEN;
+    if frame[ip] >> 4 != 4 || frame[ip] & 0x0F < 5 {
+        return None;
+    }
+    let ip_header_len = (frame[ip] as usize & 0x0F) * 4;
+    if frame.len() < ip + ip_header_len + 8 {
+        return None;
+    }
+    if frame[ip + 9] != 17 {
+        return None;
+    }
+    let total_len = u16::from_be_bytes([frame[ip + 2], frame[ip + 3]]) as usize;
+    if total_len < ip_header_len + 8 || ip + total_len > frame.len() {
+        return None;
+    }
+    let udp = ip + ip_header_len;
+    if u16::from_be_bytes([frame[udp], frame[udp + 1]]) != DHCP_CLIENT_PORT
+        || u16::from_be_bytes([frame[udp + 2], frame[udp + 3]]) != DHCP_SERVER_PORT
+    {
+        return None;
+    }
+    let udp_len = u16::from_be_bytes([frame[udp + 4], frame[udp + 5]]) as usize;
+    if udp_len < 8 + 240 || udp + udp_len > ip + total_len {
+        return None;
+    }
+    let payload = &frame[udp + 8..udp + udp_len];
+    if payload[0] != 1
+        || payload[1] != 1
+        || payload[2] != 6
+        || u32::from_be_bytes([payload[236], payload[237], payload[238], payload[239]])
+            != DHCP_MAGIC_COOKIE
+    {
+        return None;
+    }
+    let mut request = DhcpRequest {
+        source_mac: MacAddress::from_bytes(&frame[6..12])?,
+        mac: MacAddress::from_bytes(&payload[28..34])?,
+        xid: u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]),
+        flags: u16::from_be_bytes([payload[10], payload[11]]),
+        ciaddr: [payload[12], payload[13], payload[14], payload[15]],
+        message_type: 0,
+        requested_ip: None,
+        server_id: None,
+    };
+    let mut cursor = 240;
+    while cursor < payload.len() {
+        let code = payload[cursor];
+        cursor += 1;
+        if code == DHCP_OPTION_END {
+            break;
+        }
+        if code == 0 {
+            continue;
+        }
+        let length = *payload.get(cursor)? as usize;
+        cursor += 1;
+        let value = payload.get(cursor..cursor.checked_add(length)?)?;
+        cursor += length;
+        match code {
+            DHCP_OPTION_MESSAGE_TYPE if value.len() == 1 => request.message_type = value[0],
+            DHCP_OPTION_REQUESTED_IP if value.len() == 4 => {
+                request.requested_ip = Some([value[0], value[1], value[2], value[3]])
+            }
+            DHCP_OPTION_SERVER_ID if value.len() == 4 => {
+                request.server_id = Some([value[0], value[1], value[2], value[3]])
+            }
+            _ => {}
+        }
+    }
+    (request.message_type != 0).then_some(request)
+}
+
+fn encode_reply(
+    config: &DhcpServerConfig,
+    request: DhcpRequest,
+    message_type: u8,
+    address: [u8; 4],
+) -> Vec<u8> {
+    let mut dhcp = [0u8; 576];
+    dhcp[0] = 2;
+    dhcp[1] = 1;
+    dhcp[2] = 6;
+    dhcp[4..8].copy_from_slice(&request.xid.to_be_bytes());
+    dhcp[10..12].copy_from_slice(&request.flags.to_be_bytes());
+    dhcp[16..20].copy_from_slice(&address);
+    dhcp[20..24].copy_from_slice(&config.server_ip);
+    dhcp[28..34].copy_from_slice(&request.mac.to_bytes());
+    dhcp[236..240].copy_from_slice(&DHCP_MAGIC_COOKIE.to_be_bytes());
+    let mut cursor = 240;
+    cursor = write_option(&mut dhcp, cursor, DHCP_OPTION_MESSAGE_TYPE, &[message_type]);
+    if message_type != DHCP_NAK {
+        cursor = write_option(&mut dhcp, cursor, DHCP_OPTION_SUBNET_MASK, &config.subnet_mask);
+        cursor = write_option(&mut dhcp, cursor, DHCP_OPTION_ROUTER, &config.gateway);
+        cursor = write_option(&mut dhcp, cursor, DHCP_OPTION_DNS, &config.dns);
+        cursor = write_option(
+            &mut dhcp,
+            cursor,
+            DHCP_OPTION_LEASE_TIME,
+            &config.lease_time_secs.to_be_bytes(),
+        );
+        let t1 = (config.lease_time_secs / 2).max(1);
+        let t2 = (config.lease_time_secs.saturating_mul(7) / 8)
+            .max(t1.saturating_add(1))
+            .min(config.lease_time_secs.saturating_sub(1));
+        cursor = write_option(&mut dhcp, cursor, DHCP_OPTION_RENEWAL_TIME, &t1.to_be_bytes());
+        cursor = write_option(&mut dhcp, cursor, DHCP_OPTION_REBINDING_TIME, &t2.to_be_bytes());
+    }
+    cursor = write_option(&mut dhcp, cursor, DHCP_OPTION_SERVER_ID, &config.server_ip);
+    dhcp[cursor] = DHCP_OPTION_END;
+    let dhcp_len = cursor + 1;
+
+    let ip_len = 20 + 8 + dhcp_len;
+    let mut frame = vec![0u8; ETHERNET_HEADER_LEN + ip_len];
+    frame[..6].fill(0xFF);
+    frame[6..12].copy_from_slice(&DHCP_SERVER_MAC.to_bytes());
+    frame[12..14].copy_from_slice(&[0x08, 0x00]);
+    let ip = ETHERNET_HEADER_LEN;
+    frame[ip] = 0x45;
+    frame[ip + 2..ip + 4].copy_from_slice(&(ip_len as u16).to_be_bytes());
+    frame[ip + 6..ip + 8].copy_from_slice(&0x4000u16.to_be_bytes());
+    frame[ip + 8] = 64;
+    frame[ip + 9] = 17;
+    frame[ip + 12..ip + 16].copy_from_slice(&config.server_ip);
+    frame[ip + 16..ip + 20].copy_from_slice(&[255, 255, 255, 255]);
+    let ip_checksum = checksum(&frame[ip..ip + 20]);
+    frame[ip + 10..ip + 12].copy_from_slice(&ip_checksum.to_be_bytes());
+    let udp = ip + 20;
+    frame[udp..udp + 2].copy_from_slice(&DHCP_SERVER_PORT.to_be_bytes());
+    frame[udp + 2..udp + 4].copy_from_slice(&DHCP_CLIENT_PORT.to_be_bytes());
+    frame[udp + 4..udp + 6].copy_from_slice(&((8 + dhcp_len) as u16).to_be_bytes());
+    frame[udp + 8..udp + 8 + dhcp_len].copy_from_slice(&dhcp[..dhcp_len]);
+    let mut pseudo = Vec::with_capacity(12 + 8 + dhcp_len);
+    pseudo.extend_from_slice(&config.server_ip);
+    pseudo.extend_from_slice(&[255, 255, 255, 255]);
+    pseudo.extend_from_slice(&[0, 17]);
+    pseudo.extend_from_slice(&((8 + dhcp_len) as u16).to_be_bytes());
+    pseudo.extend_from_slice(&frame[udp..udp + 8 + dhcp_len]);
+    let udp_checksum = checksum(&pseudo);
+    frame[udp + 6..udp + 8].copy_from_slice(&udp_checksum.to_be_bytes());
+    pad_frame(&frame)
+}
+
+fn write_option(output: &mut [u8], cursor: usize, code: u8, value: &[u8]) -> usize {
+    output[cursor] = code;
+    output[cursor + 1] = value.len() as u8;
+    output[cursor + 2..cursor + 2 + value.len()].copy_from_slice(value);
+    cursor + 2 + value.len()
+}
+
+fn checksum(bytes: &[u8]) -> u16 {
+    let mut sum = 0u32;
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        sum += u16::from_be_bytes([bytes[index], bytes[index + 1]]) as u32;
+        index += 2;
+    }
+    if index < bytes.len() {
+        sum += (bytes[index] as u32) << 8;
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    !sum as u16
+}
+
+fn nonzero(address: [u8; 4]) -> Option<[u8; 4]> {
+    (address != [0; 4]).then_some(address)
+}
+
+fn ipv4_number(address: [u8; 4]) -> u32 {
+    u32::from_be_bytes(address)
+}
+
+fn ipv4_bytes(address: u32) -> [u8; 4] {
+    address.to_be_bytes()
+}
