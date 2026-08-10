@@ -519,21 +519,14 @@ impl DhcpClient {
             return;
         }
         self.last_network_error = None;
-        match self.state {
-            DhcpClientState::Bound | DhcpClientState::Renewing | DhcpClientState::Rebinding
-                if self.lease.is_some() =>
-            {
-                self.state = DhcpClientState::InitReboot;
-                self.attempt = 0;
-                self.next_action_ms = Some(now_ms);
-            }
-            _ => {
-                self.state = DhcpClientState::Init;
-                self.attempt = 0;
-                self.selected = None;
-                self.next_action_ms = Some(now_ms);
-            }
-        }
+        self.state = if self.lease.is_some() {
+            DhcpClientState::InitReboot
+        } else {
+            DhcpClientState::Init
+        };
+        self.attempt = 0;
+        self.selected = None;
+        self.next_action_ms = Some(now_ms);
     }
 
     pub fn set_link_with_clock<C: MonotonicClock>(&mut self, up: bool, clock: &C) {
@@ -573,7 +566,7 @@ impl DhcpClient {
         }
         if let (Some(lease), Some(bound_at)) = (self.lease, self.bound_at_ms) {
             if now_ms >= lease.expires_at_ms(bound_at) {
-                return self.expire(runtime);
+                return self.expire(now_ms, runtime);
             }
             match self.state {
                 DhcpClientState::Bound if now_ms >= lease.renew_at_ms(bound_at) => {
@@ -659,11 +652,25 @@ impl DhcpClient {
         runtime: &mut R,
     ) -> Result<(), DhcpError> {
         let source_mac = frame.source_mac;
+        if !self.accept_server_mac(source_mac) {
+            return Err(DhcpError::ConflictingOffer);
+        }
         let result = self.handle_packet(frame.payload, now_ms, runtime);
         if result.is_ok() && source_mac != [0; 6] && source_mac != [0xff; 6] {
             self.server_mac = Some(source_mac);
         }
         result
+    }
+
+    fn accept_server_mac(&self, source_mac: [u8; 6]) -> bool {
+        if source_mac == [0; 6] || source_mac == [0xff; 6] {
+            return true;
+        }
+        let Some(server_mac) = self.server_mac else {
+            return true;
+        };
+        matches!(self.state, DhcpClientState::Rebinding | DhcpClientState::InitReboot)
+            || source_mac == server_mac
     }
 
     pub fn handle_packet_with_clock<C: MonotonicClock, R: DhcpLeaseRuntime>(
@@ -746,6 +753,14 @@ impl DhcpClient {
         now_ms: u64,
         runtime: &mut R,
     ) -> Result<(), DhcpError> {
+        let lease = message.into_lease()?;
+        if self.state == DhcpClientState::Bound {
+            return if self.lease == Some(lease) {
+                Ok(())
+            } else {
+                Err(DhcpError::ConflictingOffer)
+            };
+        }
         if !matches!(
             self.state,
             DhcpClientState::Requesting
@@ -755,7 +770,6 @@ impl DhcpClient {
         ) {
             return Err(DhcpError::InvalidState);
         }
-        let lease = message.into_lease()?;
         if let Some(selected) = self.selected {
             if selected.offer.server_id != lease.server_id || selected.offer.yiaddr != lease.yiaddr {
                 return Err(DhcpError::ConflictingOffer);
@@ -815,12 +829,16 @@ impl DhcpClient {
         }
     }
 
-    fn expire<R: DhcpLeaseRuntime>(&mut self, runtime: &mut R) -> Result<(), DhcpError> {
+    fn expire<R: DhcpLeaseRuntime>(
+        &mut self,
+        now_ms: u64,
+        runtime: &mut R,
+    ) -> Result<(), DhcpError> {
         self.clear_lease(runtime)?;
         self.state = DhcpClientState::Init;
         self.attempt = 0;
         self.selected = None;
-        self.next_action_ms = Some(0);
+        self.next_action_ms = Some(now_ms);
         Ok(())
     }
 

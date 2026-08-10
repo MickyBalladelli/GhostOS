@@ -356,7 +356,7 @@ SynOS VMs communicate and obtain distinct leases.
       is acknowledged and the interface health check succeeds.
 - [x] Implement INIT, SELECTING, REQUESTING, BOUND, RENEWING, REBINDING, and
       INIT-REBOOT transitions against real packets and real timer deadlines.
-- [ ] Handle no-offer, NAK, malformed offer, conflicting offer, server change,
+- [x] Handle no-offer, NAK, malformed offer, conflicting offer, server change,
       duplicate ACK, lease expiry, release, restart recovery, and link flaps.
 - [ ] Add bounded exponential retry, jitter, attempt limits, and an observable
       next-action deadline for DHCP that cannot spin on a failed link.
