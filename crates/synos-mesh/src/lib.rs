@@ -8,6 +8,18 @@
 //! bounded protocol state, CoW reconciliation, and deterministic placement
 //! decisions.
 
+pub use synos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
+
+pub fn validate_mesh_message(
+    guard: &mut ProtocolGuard,
+    sequence: u64,
+    bytes: usize,
+) -> Result<(), ProtocolError> {
+    guard.require_class(TrafficClass::Mesh)?;
+    guard.validate_message(bytes)?;
+    guard.accept_sequence(sequence)
+}
+
 mod delta;
 mod discovery;
 mod offload;

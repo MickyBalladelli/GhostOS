@@ -2,10 +2,16 @@
 #![forbid(unsafe_code)]
 
 //! Cross-platform SynOS client protocol.
+
 //!
 //! The crate contains no sockets, executor, allocator, or platform APIs. A
 //! macOS, iOS, Android, or WebAssembly host supplies an [`RpcTransport`] and
 //! receives the same versioned binary RPC contract on every platform.
+
+pub use synos_protocol::{
+    ProtocolError as TransportProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass,
+    VersionRange,
+};
 
 mod client;
 mod cluster;
@@ -31,8 +37,8 @@ pub use model::{
     TopologyRoute, TopologyState, TopologyTransport,
 };
 pub use wire::{
-    FRAME_HEADER_BYTES, FrameHeader, MAX_FRAME_BYTES, Method, PROTOCOL_VERSION, ProtocolError,
-    RpcStatus,
+    decode_frame_checked, FRAME_HEADER_BYTES, FrameHeader, MAX_FRAME_BYTES, Method,
+    PROTOCOL_VERSION, ProtocolError, RpcStatus,
 };
 
 pub use synos_auth::{CryptographicCapability, TransportRights};

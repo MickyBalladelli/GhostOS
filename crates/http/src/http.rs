@@ -107,9 +107,28 @@ pub enum ParseError {
     InvalidPath,
     InvalidRequestLine,
     InvalidUtf8,
+    Protocol(synos_protocol::ProtocolError),
     UnsupportedMethod,
     UnsupportedTransferEncoding,
     UnsupportedVersion,
+}
+
+pub fn parse_request_checked<'a, const HEADERS: usize>(
+    guard: &mut synos_protocol::ProtocolGuard,
+    sequence: u64,
+    bytes: &'a [u8],
+) -> Result<ParsedRequest<'a, HEADERS>, ParseError> {
+    guard
+        .require_class(synos_protocol::TrafficClass::Http)
+        .map_err(ParseError::Protocol)?;
+    guard
+        .validate_message(bytes.len())
+        .map_err(ParseError::Protocol)?;
+    let parsed = parse_request(bytes)?;
+    guard
+        .accept_sequence(sequence)
+        .map_err(ParseError::Protocol)?;
+    Ok(parsed)
 }
 
 pub fn parse_request<const HEADERS: usize>(

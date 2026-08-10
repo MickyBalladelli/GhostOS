@@ -8,6 +8,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+synos-protocol = { path = "../protocol" }
 synos-observability = { path = "../observability" }
 synos-status = { path = "../status" }
 synos-time-sync = { path = "../time-sync" }

@@ -499,6 +499,7 @@ dependencies = [
  "synos-auth",
  "synos-fabric",
  "synos-kernel",
+ "synos-protocol",
  "synos-status",
 ]
 
@@ -572,6 +573,7 @@ name = "synos-fabric"
 version = "0.1.0"
 dependencies = [
  "synos-observability",
+ "synos-protocol",
  "synos-status",
  "synos-time-sync",
 ]
@@ -617,6 +619,7 @@ version = "0.1.0"
 dependencies = [
  "synos-ipc",
  "synos-netd",
+ "synos-protocol",
  "synos-status",
  "synos-test-support",
 ]
@@ -715,6 +718,7 @@ version = "0.1.0"
 dependencies = [
  "synos-auth",
  "synos-fabric",
+ "synos-protocol",
  "synos-status",
  "synos-synfs",
 ]
@@ -784,6 +788,10 @@ dependencies = [
  "synos-status",
  "synos-synfs",
 ]
+
+[[package]]
+name = "synos-protocol"
+version = "0.1.0"
 
 [[package]]
 name = "synos-ras"
@@ -978,6 +986,7 @@ name = "synos-webterm"
 version = "0.1.0"
 dependencies = [
  "syn-shell",
+ "synos-protocol",
  "synos-status",
 ]
 

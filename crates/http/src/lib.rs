@@ -7,6 +7,8 @@
 //! to networking only through `synos-netd` IPC requests carrying an
 //! owner-bound `SocketCapability`.
 
+pub use synos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
+
 mod grpc;
 mod http;
 mod netd;
@@ -17,7 +19,7 @@ mod error;
 
 pub use grpc::{
     GrpcError, GrpcHandler, GrpcRequest, GrpcRouter, GrpcStatus, decode_grpc_frame,
-    encode_grpc_frame,
+    decode_grpc_frame_checked, encode_grpc_frame,
 };
 pub use error::{
     encode_error_body, encode_error_http_response, error_response, parse_error, route_error,
@@ -26,6 +28,7 @@ pub use error::{
 pub use http::{
     DEFAULT_REQUEST_HEADERS, DEFAULT_RESPONSE_HEADERS, EncodeError, Header, Method, ParseError,
     ParsedRequest, Request, Response, StatusCode, Version, encode_response, parse_request,
+    parse_request_checked,
 };
 pub use netd::{NetdClient, NetdError};
 pub use rpc::{

@@ -9,6 +9,7 @@ description = "Heap-free HTTP and gRPC service primitives for SynOS"
 path = "src/lib.rs"
 
 [dependencies]
+synos-protocol = { path = "../protocol" }
 synos-ipc = { path = "../ipc" }
 synos-netd = { path = "../netd" }
 synos-status = { path = "../status" }

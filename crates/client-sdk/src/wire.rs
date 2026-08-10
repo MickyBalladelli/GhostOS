@@ -168,7 +168,26 @@ pub enum ProtocolError {
     InvalidUtf8,
     InvalidValue,
     MismatchedResponse,
+    Transport(synos_protocol::ProtocolError),
     UnknownMethod,
+}
+
+pub fn decode_frame_checked(
+    guard: &mut synos_protocol::ProtocolGuard,
+    sequence: u64,
+    input: &[u8],
+) -> Result<FrameHeader, ProtocolError> {
+    guard
+        .require_class(synos_protocol::TrafficClass::Sdk)
+        .map_err(ProtocolError::Transport)?;
+    guard
+        .validate_message(input.len())
+        .map_err(ProtocolError::Transport)?;
+    let header = FrameHeader::decode(input)?;
+    guard
+        .accept_sequence(sequence)
+        .map_err(ProtocolError::Transport)?;
+    Ok(header)
 }
 
 pub(crate) fn write_u16(output: &mut [u8], offset: usize, value: u16) -> Result<(), ProtocolError> {

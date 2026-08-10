@@ -8,6 +8,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+synos-protocol = { path = "../protocol" }
 syn-shell = { path = "../syn-shell" }
 
 [dev-dependencies]

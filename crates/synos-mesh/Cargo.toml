@@ -9,6 +9,7 @@ description = "Heap-free edge-to-cloud dynamic cluster mesh coordination"
 path = "src/lib.rs"
 
 [dependencies]
+synos-protocol = { path = "../protocol" }
 synos-auth = { path = "../auth" }
 synos-fabric = { path = "../fabric" }
 synos-status = { path = "../status" }

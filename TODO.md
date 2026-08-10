@@ -239,9 +239,16 @@ evidence.
       Evidence: `synos-netd` rejects conflicting offers, stale renewal ACKs,
       and changed renewal servers; declarative network tests cover persisted
       DHCP activation, default-route replacement, and stale revisions.
-- [ ] Define and test protocol version negotiation, replay windows, message
+- [x] Define and test protocol version negotiation, replay windows, message
       size limits, authentication failure, backpressure, and reconnect behavior
       for HTTP, gRPC, SDK, remote terminal, mesh, and cluster traffic.
+      Progress: added the shared no-std `synos-protocol::ProtocolGuard`, traffic
+      limits and compatibility matrix in `docs/protocol-compatibility.md`, and
+      checked HTTP, gRPC, SDK, remote-terminal, mesh, and cluster entry points.
+      Direct matrix regressions cover all six traffic classes. `cargo check
+      -p synos-protocol -p synos-http -p synos-client-sdk -p synos-webterm
+      -p synos-mesh -p synos-fabric --tests` passes; test execution remains
+      pending.
 - [ ] Add partition and clock-skew tests that prove fencing happens before
       mutable storage or memory ownership is recovered.
 - [ ] Expose structured health, queue depth, dropped packets, retries, and

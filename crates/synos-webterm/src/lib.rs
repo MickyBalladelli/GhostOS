@@ -8,6 +8,18 @@
 //! WebGPU instances. SSH transport and cryptography stay behind traits so the
 //! daemon can use SynOS networking, crypto, and `syn-authd` capabilities.
 
+pub use synos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
+
+pub fn validate_remote_terminal_message(
+    guard: &mut ProtocolGuard,
+    sequence: u64,
+    bytes: usize,
+) -> Result<(), ProtocolError> {
+    guard.require_class(TrafficClass::RemoteTerminal)?;
+    guard.validate_message(bytes)?;
+    guard.accept_sequence(sequence)
+}
+
 mod frontend;
 mod ssh;
 mod terminal;

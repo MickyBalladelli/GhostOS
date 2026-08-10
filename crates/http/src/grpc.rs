@@ -92,6 +92,7 @@ pub enum GrpcError {
     InvalidPath,
     MethodNotAllowed,
     NotFound,
+    Protocol(synos_protocol::ProtocolError),
 }
 
 impl GrpcError {
@@ -106,6 +107,7 @@ impl GrpcError {
             | Self::MethodNotAllowed => Status::INVALID_ARGUMENT,
             Self::Duplicate => Status::ALREADY_EXISTS,
             Self::NotFound => Status::NOT_FOUND,
+            Self::Protocol(_) => Status::INVALID_ARGUMENT,
         };
         status.public_error(synos_status::operation::GRPC, audit)
     }
@@ -237,6 +239,24 @@ pub fn decode_grpc_frame(bytes: &[u8]) -> Result<(bool, &[u8], usize), GrpcError
     let consumed = length.checked_add(5).ok_or(GrpcError::InvalidFrame)?;
     let message = bytes.get(5..consumed).ok_or(GrpcError::InvalidFrame)?;
     Ok((bytes[0] == 1, message, consumed))
+}
+
+pub fn decode_grpc_frame_checked<'a>(
+    guard: &mut synos_protocol::ProtocolGuard,
+    sequence: u64,
+    bytes: &'a [u8],
+) -> Result<(bool, &'a [u8], usize), GrpcError> {
+    guard
+        .require_class(synos_protocol::TrafficClass::Grpc)
+        .map_err(GrpcError::Protocol)?;
+    guard
+        .validate_message(bytes.len())
+        .map_err(GrpcError::Protocol)?;
+    let frame = decode_grpc_frame(bytes)?;
+    guard
+        .accept_sequence(sequence)
+        .map_err(GrpcError::Protocol)?;
+    Ok(frame)
 }
 
 pub fn encode_grpc_frame(
