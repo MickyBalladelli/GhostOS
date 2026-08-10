@@ -71,6 +71,9 @@ fn render_list(
     if is_neighbors_output(output) {
         return render_neighbors(output)
     }
+    if is_dns_output(output) {
+        return render_dns(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -200,6 +203,63 @@ fn is_neighbors_output(output: &StructuredOutput) -> bool {
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "show-neighbors"
     )
+}
+
+fn is_dns_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-dns"
+    )
+}
+
+fn render_dns(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("DNS")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    render_interface_field(&mut rendered, output, "mode", "Mode")?;
+    render_interface_field(&mut rendered, output, "server-count", "Servers")?;
+    render_interface_field(&mut rendered, output, "search-count", "Search domains")?;
+    render_interface_field(&mut rendered, output, "query-status", "Query status")?;
+    render_interface_field(&mut rendered, output, "query-name", "Query name")?;
+    render_interface_field(&mut rendered, output, "query-timeout-ms", "Query timeout (ms)")?;
+    const SERVERS: [[&str; 3]; 3] = [
+        ["server1-address", "server1-source", "server1-order"],
+        ["server2-address", "server2-source", "server2-order"],
+        ["server3-address", "server3-source", "server3-order"],
+    ];
+    for (index, fields) in SERVERS.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Server {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        render_interface_field(&mut rendered, output, fields[0], "  Address")?;
+        render_interface_field(&mut rendered, output, fields[1], "  Source")?;
+        render_interface_field(&mut rendered, output, fields[2], "  Order")?;
+    }
+    const SEARCH: [&str; 3] = [
+        "search1-domain",
+        "search2-domain",
+        "search3-domain",
+    ];
+    for (index, field) in SEARCH.iter().enumerate() {
+        if let Some(value) = find_value(output, field) {
+            rendered.push_str(ANSI_BOLD)?;
+            write!(&mut rendered, "Search {}", index + 1).map_err(|_| Error::Capacity)?;
+            rendered.push_str(ANSI_RESET)?;
+            rendered.push_str(": ")?;
+            write_value(&mut rendered, value, false)?;
+            rendered.push_str("\n")?;
+        }
+    }
+    Ok(rendered)
 }
 
 fn render_neighbors(

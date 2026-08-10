@@ -2,12 +2,14 @@ use syn_shell::{
     network::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
+        DnsMode, DnsQueryStatus, DnsServerSource, DnsServerView, DnsUpdate, DnsView,
         NeighborEntryView, NeighborIpVersion, NeighborState, NeighborView, NetworkRouteView,
         NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
         PingHandle, PingReply, PingResult, PingSummary, PingTarget, ResolvedPingRequest, RouteUpdate,
         SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
         SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, SHOW_NEIGHBORS_ROUTE,
-        CLEAR_NEIGHBORS_ROUTE, MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
+        CLEAR_NEIGHBORS_ROUTE, SHOW_DNS_ROUTE, SET_DNS_ROUTE, MAX_NETWORK_LINK_EVENTS,
+        MAX_NETWORK_OUTPUT_ROWS,
     },
     interpreter::CommandExecutor,
     parser::CommandRegistry,
@@ -103,6 +105,8 @@ fn network_commands_use_single_noun_names() {
         ("SHOW ROUTES", SHOW_ROUTES_ROUTE),
         ("SHOW NEIGHBORS", SHOW_NEIGHBORS_ROUTE),
         ("CLEAR NEIGHBORS /CONFIRM", CLEAR_NEIGHBORS_ROUTE),
+        ("SHOW DNS", SHOW_DNS_ROUTE),
+        ("SET DNS /STATIC /SERVERS=1.1.1.1,8.8.8.8", SET_DNS_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
             "SET INTERFACE eth0 /ADDRESS=10.0.0.2 /GATEWAY=10.0.0.1 /MTU=1500 /ENABLE",
@@ -479,6 +483,13 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
     assert!(neighbors.description.contains("ARP"));
     let clear_neighbors = command_help("CLEAR-NEIGHBORS").unwrap();
     assert!(clear_neighbors.qualifiers.contains("/CONFIRM"));
+    let dns = command_help("SHOW-DNS").unwrap();
+    assert!(dns.description.contains("resolver"));
+    let set_dns = command_help("SET-DNS").unwrap();
+    assert!(set_dns.qualifiers.contains("/SERVERS"));
+    assert!(set_dns.qualifiers.contains("/SEARCH"));
+    assert!(set_dns.qualifiers.contains("/DHCP"));
+    assert!(set_dns.qualifiers.contains("/STATIC"));
 }
 
 #[test]
@@ -489,6 +500,7 @@ fn mutations_require_network_administration_capability() {
         "SET INTERFACE eth0 /DHCP",
         "SET INTERFACE eth0 /ADDRESS=10.0.0.3",
         "SET ROUTE 0.0.0.0/0 /GATEWAY=10.0.0.1 /INTERFACE=eth0",
+        "SET DNS /STATIC /SERVERS=1.1.1.1",
     ] {
         assert!(matches!(
             execute(&mut executor, input),
@@ -716,6 +728,7 @@ fn two_seeded_interfaces_fit_output_budget() {
         ping_pending: false,
         ping_cancelled: false,
         neighbors: NeighborView::EMPTY,
+        dns: DnsView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let interfaces = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -784,6 +797,7 @@ fn four_full_interfaces_paginate_within_output_budget() {
         ping_pending: false,
         ping_cancelled: false,
         neighbors: NeighborView::EMPTY,
+        dns: DnsView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let output = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -862,6 +876,53 @@ fn neighbors_show_both_ip_versions_and_clear_requires_confirmation() {
     assert!(has_unsigned(&empty, "entry-count", 0));
 }
 
+#[test]
+fn dns_tracks_ordered_static_servers_dhcp_ownership_and_query_status() {
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
+    let initial = execute(&mut executor, "SHOW DNS").unwrap();
+    assert!(has_text(&initial, "operation", "show-dns"));
+    assert!(has_text(&initial, "mode", "dhcp"));
+    assert!(has_bool(&initial, "dhcp-owned", true));
+    assert!(has_text(&initial, "query-status", "idle"));
+    assert!(syn_shell::render::render(&initial, syn_shell::render::OutputFormat::List)
+        .unwrap()
+        .as_str()
+        .contains("DNS"));
+
+    let static_dns = execute(
+        &mut executor,
+        "SET DNS /STATIC /SERVERS=1.1.1.1,2001:4860:4860::8888 /SEARCH=corp.example,example.com",
+    )
+    .unwrap();
+    assert!(has_text(&static_dns, "mode", "static"));
+    assert!(has_bool(&static_dns, "static-override", true));
+    assert!(has_unsigned(&static_dns, "server-count", 2));
+    assert!(has_text(&static_dns, "server1-address", "1.1.1.1"));
+    assert!(has_text(&static_dns, "server2-address", "2001:4860:4860::8888"));
+    assert!(has_unsigned(&static_dns, "server1-order", 1));
+    assert!(has_unsigned(&static_dns, "server2-order", 2));
+    assert!(has_text(&static_dns, "server1-source", "static"));
+    assert!(has_text(&static_dns, "search1-domain", "corp.example"));
+    assert!(has_text(&static_dns, "search2-domain", "example.com"));
+    assert!(syn_shell::render::render(&static_dns, syn_shell::render::OutputFormat::Json)
+        .unwrap()
+        .as_str()
+        .contains("\"server2-order\":2"));
+
+    assert!(matches!(
+        execute(&mut executor, "SET DNS /STATIC"),
+        Err(Status::INVALID_ARGUMENT)
+    ));
+    assert!(matches!(
+        execute(&mut executor, "SET DNS /DHCP /SERVERS=1.1.1.1"),
+        Err(Status::INVALID_ARGUMENT)
+    ));
+    let dhcp = execute(&mut executor, "SET DNS /DHCP").unwrap();
+    assert!(has_text(&dhcp, "mode", "dhcp"));
+    assert!(has_bool(&dhcp, "dhcp-owned", true));
+    assert!(has_unsigned(&dhcp, "server-count", 0));
+}
+
 
 struct FakeNetwork {
     allowed: bool,
@@ -872,6 +933,7 @@ struct FakeNetwork {
     ping_pending: bool,
     ping_cancelled: bool,
     neighbors: NeighborView,
+    dns: DnsView,
 }
 
 impl FakeNetwork {
@@ -885,6 +947,7 @@ impl FakeNetwork {
             ping_pending: false,
             ping_cancelled: false,
             neighbors: NeighborView::EMPTY,
+            dns: DnsView::EMPTY,
         }
     }
 
@@ -930,6 +993,7 @@ impl FakeNetwork {
             ping_pending: false,
             ping_cancelled: false,
             neighbors: NeighborView::EMPTY,
+            dns: DnsView::EMPTY,
         }
     }
 
@@ -989,6 +1053,38 @@ impl NetworkSource for FakeNetwork {
         let cleared = self.neighbors.entry_count;
         self.neighbors = NeighborView::EMPTY;
         Ok(cleared)
+    }
+
+    fn show_dns(&mut self) -> Result<DnsView, Status> {
+        Ok(self.dns)
+    }
+
+    fn set_dns(&mut self, update: DnsUpdate) -> Result<DnsView, Status> {
+        let mut servers = [None; syn_shell::network::MAX_DNS_SERVERS];
+        for (index, server) in update.servers.iter().take(update.server_count as usize).enumerate() {
+            if let Some(address) = server {
+                servers[index] = Some(DnsServerView {
+                    address: *address,
+                    source: match update.mode {
+                        DnsMode::Dhcp => DnsServerSource::Dhcp,
+                        DnsMode::Static => DnsServerSource::Static,
+                    },
+                    order: index as u8 + 1,
+                });
+            }
+        }
+        self.dns = DnsView {
+            generation: self.dns.generation.saturating_add(1),
+            mode: update.mode,
+            servers,
+            server_count: update.server_count,
+            search_domains: update.search_domains,
+            search_count: update.search_count,
+            query_status: DnsQueryStatus::Idle,
+            query_name: None,
+            query_timeout_ms: syn_shell::network::MAX_PING_DNS_TIMEOUT_MS,
+        };
+        Ok(self.dns)
     }
 
     fn set_hostname(&mut self, hostname: &str) -> Result<NetworkView, Status> {

@@ -1210,7 +1210,7 @@ fn command_category(route: u16) -> &'static str {
         syn_shell::firewall::SHOW_FIREWALL_ROUTE..=syn_shell::firewall::SET_FIREWALL_ROUTE => {
             "FIREWALL"
         }
-        syn_shell::network::SHOW_NETWORK_ROUTE..=syn_shell::network::PING_ROUTE => "NETWORK",
+        syn_shell::network::SHOW_NETWORK_ROUTE..=syn_shell::network::SET_DNS_ROUTE => "NETWORK",
         _ => "SHELL",
     }
 }
@@ -2260,6 +2260,7 @@ struct KernelNetwork {
         syn_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1],
     diagnostic_capability: crate::CapabilityHandle,
     neighbors: syn_shell::network::NeighborView,
+    dns: syn_shell::network::DnsView,
 }
 
 impl KernelNetwork {
@@ -2304,6 +2305,7 @@ impl KernelNetwork {
             devices,
             diagnostic_capability,
             neighbors: syn_shell::network::NeighborView::EMPTY,
+            dns: syn_shell::network::DnsView::EMPTY,
         };
         network.refresh();
         network
@@ -2510,6 +2512,41 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
         let cleared = self.neighbors.entry_count;
         self.neighbors = syn_shell::network::NeighborView::EMPTY;
         Ok(cleared)
+    }
+
+    fn show_dns(&mut self) -> Result<syn_shell::network::DnsView, Status> {
+        Ok(self.dns)
+    }
+
+    fn set_dns(
+        &mut self,
+        update: syn_shell::network::DnsUpdate,
+    ) -> Result<syn_shell::network::DnsView, Status> {
+        let mut servers = [None; syn_shell::network::MAX_DNS_SERVERS];
+        for (index, server) in update.servers.iter().take(update.server_count as usize).enumerate() {
+            if let Some(address) = server {
+                servers[index] = Some(syn_shell::network::DnsServerView {
+                    address: *address,
+                    source: match update.mode {
+                        syn_shell::network::DnsMode::Dhcp => syn_shell::network::DnsServerSource::Dhcp,
+                        syn_shell::network::DnsMode::Static => syn_shell::network::DnsServerSource::Static,
+                    },
+                    order: index as u8 + 1,
+                });
+            }
+        }
+        self.dns = syn_shell::network::DnsView {
+            generation: self.dns.generation.saturating_add(1),
+            mode: update.mode,
+            servers,
+            server_count: update.server_count,
+            search_domains: update.search_domains,
+            search_count: update.search_count,
+            query_status: syn_shell::network::DnsQueryStatus::Idle,
+            query_name: None,
+            query_timeout_ms: syn_shell::network::MAX_PING_DNS_TIMEOUT_MS,
+        };
+        Ok(self.dns)
     }
 
     fn set_hostname(
@@ -2739,7 +2776,7 @@ impl KernelExecutor {
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
             route if (syn_shell::network::SHOW_NETWORK_ROUTE
-                ..=syn_shell::network::CLEAR_NEIGHBORS_ROUTE)
+                ..=syn_shell::network::SET_DNS_ROUTE)
                 .contains(&route) =>
             {
                 if route == syn_shell::network::PING_ROUTE {

@@ -21,10 +21,14 @@ pub const SET_ROUTE_ROUTE: u16 = 65;
 pub const PING_ROUTE: u16 = 66;
 pub const SHOW_NEIGHBORS_ROUTE: u16 = 67;
 pub const CLEAR_NEIGHBORS_ROUTE: u16 = 68;
+pub const SHOW_DNS_ROUTE: u16 = 69;
+pub const SET_DNS_ROUTE: u16 = 70;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
 pub const MAX_NEIGHBOR_OUTPUT_ROWS: usize = 2;
+pub const MAX_DNS_SERVERS: usize = 3;
+pub const MAX_DNS_SEARCH_DOMAINS: usize = 3;
 pub const MAX_PING_REPLY_OUTPUT: usize = 3;
 pub const DEFAULT_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
 pub const MAX_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
@@ -108,6 +112,20 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         description: "Clear the neighbor cache only with explicit confirmation.",
         aliases: "",
         qualifiers: "/CONFIRM",
+    },
+    NetworkCommandHelp {
+        name: "SHOW-DNS",
+        synopsis: "SHOW DNS",
+        description: "Show ordered DHCP or static DNS servers, search domains, and bounded query status.",
+        aliases: "DNS",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "SET-DNS",
+        synopsis: "SET DNS /STATIC /SERVERS=addresses",
+        description: "Set static resolver overrides or restore DHCP-owned DNS configuration.",
+        aliases: "",
+        qualifiers: "/SERVERS /SEARCH /DHCP /STATIC",
     },
 ];
 
@@ -265,6 +283,100 @@ impl NeighborView {
         entries: [None; MAX_NEIGHBOR_OUTPUT_ROWS],
         next_entry: None,
     };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DnsMode {
+    Dhcp,
+    Static,
+}
+
+impl DnsMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dhcp => "dhcp",
+            Self::Static => "static",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DnsServerSource {
+    Dhcp,
+    Static,
+}
+
+impl DnsServerSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dhcp => "dhcp",
+            Self::Static => "static",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DnsQueryStatus {
+    Idle,
+    Pending,
+    Success,
+    Timeout,
+    Failed,
+}
+
+impl DnsQueryStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Pending => "pending",
+            Self::Success => "success",
+            Self::Timeout => "timeout",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DnsServerView {
+    pub address: NetworkText,
+    pub source: DnsServerSource,
+    pub order: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DnsView {
+    pub generation: u64,
+    pub mode: DnsMode,
+    pub servers: [Option<DnsServerView>; MAX_DNS_SERVERS],
+    pub server_count: u8,
+    pub search_domains: [Option<NetworkText>; MAX_DNS_SEARCH_DOMAINS],
+    pub search_count: u8,
+    pub query_status: DnsQueryStatus,
+    pub query_name: Option<NetworkText>,
+    pub query_timeout_ms: u32,
+}
+
+impl DnsView {
+    pub const EMPTY: Self = Self {
+        generation: 0,
+        mode: DnsMode::Dhcp,
+        servers: [None; MAX_DNS_SERVERS],
+        server_count: 0,
+        search_domains: [None; MAX_DNS_SEARCH_DOMAINS],
+        search_count: 0,
+        query_status: DnsQueryStatus::Idle,
+        query_name: None,
+        query_timeout_ms: MAX_PING_DNS_TIMEOUT_MS,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DnsUpdate {
+    pub mode: DnsMode,
+    pub servers: [Option<NetworkText>; MAX_DNS_SERVERS],
+    pub server_count: u8,
+    pub search_domains: [Option<NetworkText>; MAX_DNS_SEARCH_DOMAINS],
+    pub search_count: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -620,6 +732,14 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
+    fn show_dns(&mut self) -> Result<DnsView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn set_dns(&mut self, _update: DnsUpdate) -> Result<DnsView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -782,6 +902,19 @@ pub fn register_network_commands<const CAPACITY: usize>(
             .map_err(|_| Error::InvalidValue)?,
         route(CLEAR_NEIGHBORS_ROUTE),
     )?;
+    registry.register(
+        CommandSpec::new("SHOW-DNS", &[]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_DNS_ROUTE),
+    )?;
+    let servers = qualifier("SERVERS", ArgumentKind::Text)?;
+    let search = qualifier("SEARCH", ArgumentKind::Text)?;
+    let dhcp = qualifier("DHCP", ArgumentKind::Boolean)?;
+    let static_mode = qualifier("STATIC", ArgumentKind::Boolean)?;
+    registry.register(
+        CommandSpec::new("SET-DNS", &[servers, search, dhcp, static_mode])
+            .map_err(|_| Error::InvalidValue)?,
+        route(SET_DNS_ROUTE),
+    )?;
 
     let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
     registry.register(
@@ -910,6 +1043,12 @@ pub fn dispatch_network_command<Source: NetworkSource>(
             }
             source.authorize_mutation()?;
             source.clear_neighbors().and_then(clear_neighbors_output)
+        }
+        SHOW_DNS_ROUTE => source.show_dns().and_then(dns_output),
+        SET_DNS_ROUTE => {
+            let update = dns_update_request(&command)?;
+            source.authorize_mutation()?;
+            source.set_dns(update).and_then(dns_output)
         }
         SET_HOSTNAME_ROUTE => {
             let hostname = command
@@ -1188,6 +1327,71 @@ pub fn ping_request<'a>(command: &'a CommandCall) -> Result<PingRequest<'a>, Sta
         source,
         ip_version,
     })
+}
+
+pub fn dns_update_request(command: &CommandCall) -> Result<DnsUpdate, Status> {
+    let dhcp = boolean(command.get("DHCP"))?;
+    let static_mode = boolean(command.get("STATIC"))?;
+    if dhcp == static_mode {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let servers = match optional_text(command, "SERVERS")? {
+        Some(value) => parse_dns_list::<MAX_DNS_SERVERS>(value, true)?,
+        None => ([None; MAX_DNS_SERVERS], 0),
+    };
+    let search_domains = match optional_text(command, "SEARCH")? {
+        Some(value) => parse_dns_list::<MAX_DNS_SEARCH_DOMAINS>(value, false)?,
+        None => ([None; MAX_DNS_SEARCH_DOMAINS], 0),
+    };
+    if dhcp && servers.1 != 0 || static_mode && servers.1 == 0 {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    Ok(DnsUpdate {
+        mode: if dhcp { DnsMode::Dhcp } else { DnsMode::Static },
+        servers: servers.0,
+        server_count: servers.1,
+        search_domains: search_domains.0,
+        search_count: search_domains.1,
+    })
+}
+
+fn parse_dns_list<const CAPACITY: usize>(
+    value: &str,
+    addresses: bool,
+) -> Result<([Option<NetworkText>; CAPACITY], u8), Status> {
+    let mut values = [None; CAPACITY];
+    let mut count = 0usize;
+    for item in value.split(',') {
+        if item.is_empty()
+            || count == CAPACITY
+            || item.bytes().any(|byte| byte.is_ascii_whitespace())
+            || (addresses && !valid_dns_server(item))
+            || (!addresses && !valid_search_domain(item))
+        {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        values[count] = Some(NetworkText::new(item).map_err(|_| Status::NO_SPACE)?);
+        count += 1;
+    }
+    Ok((values, count as u8))
+}
+
+fn valid_dns_server(value: &str) -> bool {
+    if looks_like_ipv4_literal(value) {
+        return parse_ipv4_literal(value).is_some()
+    }
+    value.contains(':')
+        && value.bytes().any(|byte| byte.is_ascii_hexdigit())
+        && value.bytes().all(|byte| byte == b':' || byte.is_ascii_hexdigit())
+}
+
+fn valid_search_domain(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')
+        })
+        && !value.starts_with('.')
+        && !value.ends_with('.')
 }
 
 pub fn resolve_literal_ipv4_target(
@@ -1566,6 +1770,67 @@ fn clear_neighbors_output(cleared: u64) -> Result<StructuredOutput, Status> {
         "cleared-count",
         OutputValue::Unsigned(cleared),
     )?;
+    Ok(output)
+}
+
+pub fn dns_output(view: DnsView) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "show-dns")?;
+    insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
+    insert_text(&mut output, "mode", view.mode.as_str())?;
+    insert(
+        &mut output,
+        "server-count",
+        OutputValue::Unsigned(view.server_count as u64),
+    )?;
+    insert(
+        &mut output,
+        "search-count",
+        OutputValue::Unsigned(view.search_count as u64),
+    )?;
+    insert(
+        &mut output,
+        "dhcp-owned",
+        OutputValue::Boolean(matches!(view.mode, DnsMode::Dhcp)),
+    )?;
+    insert(
+        &mut output,
+        "static-override",
+        OutputValue::Boolean(matches!(view.mode, DnsMode::Static)),
+    )?;
+    insert_text(&mut output, "query-status", view.query_status.as_str())?;
+    insert(
+        &mut output,
+        "query-timeout-ms",
+        OutputValue::Unsigned(view.query_timeout_ms as u64),
+    )?;
+    if let Some(query_name) = view.query_name {
+        insert_text(&mut output, "query-name", query_name.as_str())?;
+    }
+    for (index, server) in view.servers.iter().flatten().enumerate() {
+        let fields = match index {
+            0 => ["server1-address", "server1-source", "server1-order"],
+            1 => ["server2-address", "server2-source", "server2-order"],
+            2 => ["server3-address", "server3-source", "server3-order"],
+            _ => return Err(Status::INVALID_ARGUMENT),
+        };
+        insert_text(&mut output, fields[0], server.address.as_str())?;
+        insert_text(&mut output, fields[1], server.source.as_str())?;
+        insert(
+            &mut output,
+            fields[2],
+            OutputValue::Unsigned(server.order as u64),
+        )?;
+    }
+    for (index, domain) in view.search_domains.iter().flatten().enumerate() {
+        let field = match index {
+            0 => "search1-domain",
+            1 => "search2-domain",
+            2 => "search3-domain",
+            _ => return Err(Status::INVALID_ARGUMENT),
+        };
+        insert_text(&mut output, field, domain.as_str())?;
+    }
     Ok(output)
 }
 

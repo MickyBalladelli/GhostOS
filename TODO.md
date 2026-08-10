@@ -410,7 +410,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 - [x] Add `SHOW NEIGHBORS` to inspect ARP/IPv6 neighbor cache entries and
       `CLEAR NEIGHBORS` with an explicit safety guard.
-- [ ] Add `SHOW DNS` and `SET DNS` for ordered resolver configuration, DHCP
+- [x] Add `SHOW DNS` and `SET DNS` for ordered resolver configuration, DHCP
       ownership, static overrides, search domains, and bounded query status.
 - [ ] Add `RESOLVE hostname` with IPv4/IPv6 answers, resolver used, TTL, and
       bounded timeout/error output.
