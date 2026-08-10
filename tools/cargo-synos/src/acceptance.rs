@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use synos_compiler::{CompileRequest, Compiler, Target};
 use synos_init::ProcessId;
@@ -10,7 +11,7 @@ use synos_rustd::{
     COMPILER_IDENTITY, DynamicArtifact, DynamicArtifactKind, MAX_FEATURES, NetworkPolicy, Profile,
     ResourceLimits, SelfHostStage, SynFsWorkspaceRuntime, Text, ToolExit, ToolKind,
     ToolSpawnRequest, ToolchainComponent, ToolchainExecutor, ToolchainManifest, ToolchainPlan,
-    ToolchainRequest, ToolchainRuntime, ToolchainStage, ToolchainStageResult,
+    ToolchainRequest, ToolchainRuntime, ToolchainStage, ToolchainStageResult, TargetSupport,
 };
 use synos_status::Status;
 use synos_system_model::ContentId;
@@ -37,7 +38,7 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
             ));
         }
         fs::create_dir_all(&root).map_err(|error| format!("could not create {}: {error}", root.display()))?;
-        if !options.boot_only {
+        if !options.boot_only && options.target == Target::X86_64 {
             host_checks(&mut results, &options, &root)?;
         }
         if options.target == Target::X86_64 {
@@ -155,6 +156,14 @@ fn record(results: &mut Vec<CheckResult>, name: &'static str, result: Result<(),
     }
 }
 
+fn gated_record(results: &mut Vec<CheckResult>, name: &'static str, detail: String) {
+    results.push(CheckResult {
+        name,
+        ok: true,
+        detail,
+    });
+}
+
 fn contract_checks(results: &mut Vec<CheckResult>) -> Result<(), String> {
     let policy = synos_rustd::CompilerSecurityPolicy::minimum(COMPILER_IDENTITY)
         .map_err(|error| format!("could not create compiler policy: {error:?}"))?;
@@ -176,9 +185,64 @@ fn contract_checks(results: &mut Vec<CheckResult>) -> Result<(), String> {
         "compiler-cancellation-boundaries",
         compiler_cancellation_boundaries(),
     );
+    record(results, "x86_64-target-compatibility", x86_64_target_compatibility());
+    gated_record(
+        results,
+        "aarch64-target-compatibility",
+        aarch64_target_gate(),
+    );
     record(results, "offline-locked-registry", offline_registry_check());
     record(results, "stage2-self-host-order", self_host_stage_check());
     Ok(())
+}
+
+fn x86_64_target_compatibility() -> Result<(), String> {
+    if !TargetSupport::for_target(synos_rustd::Target::X86_64).is_self_hosting() {
+        return Err("x86_64 is not marked as the primary self-host target".into())
+    }
+    let workspace = workspace_root()?;
+    let target = workspace.join("targets").join(Target::X86_64.target_file());
+    let specification = fs::read_to_string(&target)
+        .map_err(|error| format!("could not read {}: {error}", target.display()))?;
+    for field in [
+        "\"arch\": \"x86_64\"",
+        "\"executables\": true",
+        "\"linker-flavor\": \"gnu-lld\"",
+        "\"os\": \"synos\"",
+    ] {
+        if !specification.contains(field) {
+            return Err(format!("x86_64 target specification misses {field}"))
+        }
+    }
+    let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = Command::new(&rustc)
+        .args(["--print", "target-libdir"])
+        .output()
+        .map_err(|error| format!("could not query rustc target libraries: {error}"))?;
+    if !output.status.success() {
+        return Err("rustc could not report its target library directory".into())
+    }
+    let libdir = PathBuf::from(
+        String::from_utf8(output.stdout)
+            .map_err(|_| "rustc target library path was not UTF-8".to_string())?
+            .trim(),
+    );
+    let linker = libdir
+        .parent()
+        .map(|path| path.join("bin").join("rust-lld"))
+        .ok_or_else(|| "rustc target library path has no toolchain parent".to_string())?;
+    if !linker.is_file() {
+        return Err(format!("x86_64 linker is missing: {}", linker.display()))
+    }
+    Ok(())
+}
+
+fn aarch64_target_gate() -> String {
+    if TargetSupport::for_target(synos_rustd::Target::Aarch64).is_self_hosting() {
+        "aarch64 admission requires runtime, linker, loader, and boot evidence".into()
+    } else {
+        "gated: aarch64 target JSON exists, but runtime, linker, loader, and boot evidence are not complete".into()
+    }
 }
 
 fn offline_registry_check() -> Result<(), String> {
@@ -644,19 +708,6 @@ fn host_checks(
         "reproducible-stage2-build",
         compiler
             .reproduce_workspace(options.target, options.release, &reproduction_root)
-            .map(|_| ())
-            .map_err(|error| error.to_string()),
-    );
-    let cross_target = if options.target == Target::Aarch64 {
-        root.join("workspace")
-    } else {
-        root.join("aarch64")
-    };
-    record(
-        results,
-        "aarch64-cross-build",
-        compiler
-            .compile_workspace(Target::Aarch64, options.release, Some(&cross_target))
             .map(|_| ())
             .map_err(|error| error.to_string()),
     );

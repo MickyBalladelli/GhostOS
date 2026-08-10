@@ -220,8 +220,11 @@ evidence.
       boundaries, fences the active process, removes workspace and scratch
       roots, releases artifacts, preserves cache/package/policy state, and
       records zero package/payload identities in the cancelled audit.
-- [ ] Add target compatibility tests for x86_64 first and aarch64 only when its
-      runtime, linker, loader, and boot evidence are real.
+- [x] Add target compatibility tests for x86_64 first and aarch64 only when its
+      runtime, linker, loader, and boot evidence are real. The acceptance now
+      checks the x86_64 target specification and real rust-lld, while aarch64
+      stays explicitly gated and its cross-build is not treated as native
+      compatibility evidence.
 
 ## P1: Harden networking and federation
 

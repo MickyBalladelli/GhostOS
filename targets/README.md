@@ -22,3 +22,7 @@ The `cargo-synos` extension automates the custom-target and `build-std` flags:
 cargo install --path tools/cargo-synos
 cargo synos build --target x86_64 --package my-service
 ```
+
+The acceptance gate admits x86_64 first. Aarch64 stays a cross-build target
+until its SynOS runtime, linker, process loader, and boot acceptance evidence
+all exist; a successful Aarch64 compile alone is not compatibility proof.

@@ -120,7 +120,11 @@ The gate checks signed boot and storage contracts, offline locked requests,
 isolated concurrent jobs, cancellation and crash recovery, stage-2 ordering,
 signed/corrupt/unsigned package handling, hello-world compilation and host
 execution, build scripts, proc macros, application bundles, production Ring 3
-builds, reproducibility, fresh persisted SynFS roots, and Aarch64 cross-builds.
+builds, reproducibility, fresh persisted SynFS roots, and target compatibility.
+The x86_64 check validates the admitted target specification and rust-lld; the
+full x86_64 gate also supplies the real runtime, loader, and boot evidence.
+The aarch64 target remains gated: its target JSON may be used for cross-build
+work, but cross-compilation alone cannot admit native compatibility.
 The fresh-root check compiles two identical SynFS snapshots in parallel, then
 writes `stage2-reproducibility-evidence.json` with canonical inputs, source,
 root-image, executable digests, and the executing host platform. Use
