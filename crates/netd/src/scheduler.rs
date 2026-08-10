@@ -12,6 +12,7 @@ pub const DEFAULT_SOCKET_INGRESS_BUDGET: usize = 8;
 pub struct NetworkServiceActivity {
     pub now_ms: u64,
     pub stack: PollActivity,
+    pub dhcp_retries: u64,
     pub dhcp_error: Option<DhcpError>,
     pub socket_requests: usize,
     pub service_error: Option<ServiceError>,
@@ -79,9 +80,11 @@ impl NetworkServiceScheduler {
             core::cmp::min(now_ms, i64::MAX as u64) as i64,
             self.stack_ingress_budget,
         );
-        let dhcp_error = dhcp
-            .poll(now_ms, transport, runtime)
-            .err();
+        let dhcp_error = dhcp.poll(now_ms, transport, runtime).err();
+        let dhcp_retries = dhcp.retry_count();
+        daemon.backend_mut().set_dhcp_retries(dhcp_retries);
+        let mut stack = stack;
+        stack.stats.dhcp_retries = dhcp_retries;
         let (socket_requests, service_error) = match daemon.process_budget(
             channel,
             memory,
@@ -93,6 +96,7 @@ impl NetworkServiceScheduler {
         NetworkServiceActivity {
             now_ms,
             stack,
+            dhcp_retries,
             dhcp_error,
             socket_requests,
             service_error,
@@ -136,6 +140,10 @@ impl NetworkServiceScheduler {
             let backend = daemon.backend_mut();
             dhcp.poll(now_ms, transport, backend).err()
         };
+        let dhcp_retries = dhcp.retry_count();
+        daemon.backend_mut().set_dhcp_retries(dhcp_retries);
+        let mut stack = stack;
+        stack.stats.dhcp_retries = dhcp_retries;
         let (socket_requests, service_error) = match daemon.process_budget(
             channel,
             memory,
@@ -147,6 +155,7 @@ impl NetworkServiceScheduler {
         NetworkServiceActivity {
             now_ms,
             stack,
+            dhcp_retries,
             dhcp_error,
             socket_requests,
             service_error,

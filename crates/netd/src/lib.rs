@@ -10,6 +10,7 @@ mod protocol;
 mod service;
 mod stack;
 mod scheduler;
+mod stats;
 mod transport;
 
 pub use memory::{MappedRegion, MemoryError, SharedMemory};
@@ -35,7 +36,7 @@ pub use firewall::{
     PortRange, Protocol, RateLimit, RuleAction, SignedHeader, PolicyImage, PolicyStore,
     MAX_CORE_NETWORK_RULES, POLICY_PATH,
 };
-pub use packet::{PacketError, PacketQueue, PacketReader, PacketWriter, QueueDevice};
+pub use packet::{PacketError, PacketQueue, PacketReader, PacketWriter, QueueDevice, QueueMetrics};
 pub use protocol::{
     SOCKET_PROTOCOL_VERSION, SOCKET_REQUEST_SCHEMA, SOCKET_RESPONSE_SCHEMA, SocketOperation,
     SocketRequest, SocketResponse, socket_response,
@@ -48,6 +49,7 @@ pub use scheduler::{
     NetworkServiceActivity, NetworkServiceScheduler, DEFAULT_SOCKET_INGRESS_BUDGET,
     DEFAULT_SOCKET_REQUEST_BUDGET,
 };
+pub use stats::NetworkStats;
 pub use stack::{
     InterfaceConfig, InterfaceConfigError, InterfaceRoute, NeighborEntry, NeighborState,
     NeighborTable, NeighborTableError, IcmpEchoObservation, NetworkPoller, PollActivity,

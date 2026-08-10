@@ -384,7 +384,7 @@ SynOS VMs communicate and obtain distinct leases.
       monotonic send/receive timestamp.
 - [x] Add firewall and capability policy for ARP, ICMP echo, DHCP broadcast,
       UDP, and TCP traffic with explicit ingress and egress decisions.
-- [ ] Add interface and network statistics for RX/TX packets, bytes, drops,
+- [x] Add interface and network statistics for RX/TX packets, bytes, drops,
       errors, queue depth, ARP failures, DHCP retries, and ICMP loss.
 
 ### `PING` command

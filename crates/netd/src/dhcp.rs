@@ -534,6 +534,7 @@ pub struct DhcpClientView {
     pub link_up: bool,
     pub xid: u32,
     pub attempt: u8,
+    pub retry_count: u64,
     pub offered_address: Option<[u8; 4]>,
     pub server_id: Option<[u8; 4]>,
     pub lease: Option<DhcpLease>,
@@ -570,6 +571,7 @@ pub struct DhcpClient {
     authorized: bool,
     xid: u32,
     attempt: u8,
+    retry_count: u64,
     next_action_ms: Option<u64>,
     selected: Option<PendingOffer>,
     lease: Option<DhcpLease>,
@@ -599,6 +601,7 @@ impl DhcpClient {
             authorized: false,
             xid: 0,
             attempt: 0,
+            retry_count: 0,
             next_action_ms: Some(0),
             selected: None,
             lease: None,
@@ -637,6 +640,10 @@ impl DhcpClient {
         self.next_action_ms
     }
 
+    pub const fn retry_count(&self) -> u64 {
+        self.retry_count
+    }
+
     pub const fn lease(&self) -> Option<DhcpLease> {
         self.lease
     }
@@ -673,6 +680,7 @@ impl DhcpClient {
             link_up: self.link_up,
             xid: self.xid,
             attempt: self.attempt,
+            retry_count: self.retry_count,
             offered_address,
             server_id,
             lease: self.lease,
@@ -1339,6 +1347,9 @@ impl DhcpClient {
             % jitter_window.saturating_add(1);
         let delay = base.saturating_sub(jitter).max(1);
         self.next_action_ms = Some(now_ms.saturating_add(delay));
+        if self.attempt != 0 {
+            self.retry_count = self.retry_count.saturating_add(1);
+        }
         self.attempt = self.attempt.saturating_add(1);
     }
 

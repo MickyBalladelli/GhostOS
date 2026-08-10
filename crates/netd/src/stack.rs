@@ -1,7 +1,11 @@
+use core::cell::Cell;
+
 use smoltcp::iface::{
     Interface, PollIngressSingleResult, Route, SocketHandle, SocketSet, SocketStorage,
 };
-use smoltcp::phy::{ChecksumCapabilities, Device, DeviceCapabilities, PacketMeta, RxToken};
+use smoltcp::phy::{
+    ChecksumCapabilities, Device, DeviceCapabilities, PacketMeta, RxToken, TxToken,
+};
 use smoltcp::socket::tcp;
 use smoltcp::time::Instant;
 use smoltcp::wire::{
@@ -11,7 +15,7 @@ use smoltcp::wire::{
 
 use crate::{
     DhcpError, DhcpLease, DhcpLeaseRuntime, ServiceError, SocketBackend, SocketState,
-    StaticSnapshot,
+    QueueMetrics, StaticSnapshot, NetworkStats,
 };
 use synos_time_sync::MonotonicClock;
 
@@ -203,7 +207,8 @@ impl NeighborTable {
         Ok(())
     }
 
-    pub fn maintain(&mut self, now_ms: u64) {
+    pub fn maintain(&mut self, now_ms: u64) -> usize {
+        let mut failures = 0;
         for entry in self.entries.iter_mut().flatten() {
             match entry.state {
                 NeighborState::Reachable if entry.expires_at_ms.is_some_and(|expires| now_ms >= expires) => {
@@ -214,6 +219,7 @@ impl NeighborTable {
                     if entry.attempts >= MAX_NEIGHBOR_ATTEMPTS {
                         entry.state = NeighborState::Failed;
                         entry.expires_at_ms = None;
+                        failures += 1;
                     } else {
                         entry.attempts += 1;
                         entry.last_seen_ms = now_ms;
@@ -223,6 +229,7 @@ impl NeighborTable {
                 _ => {}
             }
         }
+        failures
     }
 
     pub fn clear(&mut self) {
@@ -267,6 +274,7 @@ struct NeighborTrackingDevice<'a, D> {
     device: &'a mut D,
     neighbors: &'a mut NeighborTable,
     last_icmp_echo: &'a mut Option<IcmpEchoObservation>,
+    stats: &'a Cell<NetworkStats>,
     now_ms: u64,
     checksum: ChecksumCapabilities,
 }
@@ -275,7 +283,14 @@ struct NeighborTrackingRxToken<'a, T> {
     token: T,
     neighbors: &'a mut NeighborTable,
     last_icmp_echo: &'a mut Option<IcmpEchoObservation>,
+    stats: &'a Cell<NetworkStats>,
     now_ms: u64,
+    checksum: ChecksumCapabilities,
+}
+
+struct NeighborTrackingTxToken<'a, T> {
+    token: T,
+    stats: &'a Cell<NetworkStats>,
     checksum: ChecksumCapabilities,
 }
 
@@ -286,10 +301,14 @@ impl<T: RxToken> RxToken for NeighborTrackingRxToken<'_, T> {
     {
         let neighbors = self.neighbors;
         let last_icmp_echo = self.last_icmp_echo;
+        let stats = self.stats;
         let checksum = self.checksum;
         self.token.consume(|frame| {
+            let mut snapshot = stats.get();
+            snapshot.record_rx(frame.len());
+            stats.set(snapshot);
             observe_arp_frame(neighbors, frame, self.now_ms);
-            let accepted = observe_icmp_echo(last_icmp_echo, frame, self.now_ms, checksum);
+            let accepted = observe_icmp_echo(last_icmp_echo, frame, self.now_ms, checksum, stats);
             if accepted {
                 f(frame)
             } else {
@@ -303,13 +322,31 @@ impl<T: RxToken> RxToken for NeighborTrackingRxToken<'_, T> {
     }
 }
 
+impl<T: TxToken> TxToken for NeighborTrackingTxToken<'_, T> {
+    fn consume<R, F>(self, length: usize, transmit: F) -> R
+    where
+        F: FnOnce(&mut [u8]) -> R,
+    {
+        let stats = self.stats;
+        let checksum = self.checksum;
+        self.token.consume(length, |buffer| {
+            let result = transmit(buffer);
+            let mut snapshot = stats.get();
+            snapshot.record_tx(buffer.len());
+            observe_icmp_tx(buffer, checksum, &mut snapshot);
+            stats.set(snapshot);
+            result
+        })
+    }
+}
+
 impl<'outer, D: Device> Device for NeighborTrackingDevice<'outer, D> {
     type RxToken<'a>
         = NeighborTrackingRxToken<'a, D::RxToken<'a>>
     where
         Self: 'a;
     type TxToken<'a>
-        = D::TxToken<'a>
+        = NeighborTrackingTxToken<'a, D::TxToken<'a>>
     where
         Self: 'a;
 
@@ -323,15 +360,24 @@ impl<'outer, D: Device> Device for NeighborTrackingDevice<'outer, D> {
                 token,
                 neighbors: &mut *self.neighbors,
                 last_icmp_echo: &mut *self.last_icmp_echo,
+                stats: self.stats,
                 now_ms: self.now_ms,
                 checksum: self.checksum.clone(),
             },
-            tx_token,
+            NeighborTrackingTxToken {
+                token: tx_token,
+                stats: self.stats,
+                checksum: self.checksum.clone(),
+            },
         ))
     }
 
     fn transmit<'a>(&'a mut self, timestamp: Instant) -> Option<Self::TxToken<'a>> {
-        self.device.transmit(timestamp)
+        self.device.transmit(timestamp).map(|token| NeighborTrackingTxToken {
+            token,
+            stats: self.stats,
+            checksum: self.checksum.clone(),
+        })
     }
 
     fn capabilities(&self) -> DeviceCapabilities {
@@ -370,6 +416,7 @@ fn observe_icmp_echo(
     frame: &[u8],
     now_ms: u64,
     checksum: ChecksumCapabilities,
+    stats: &Cell<NetworkStats>,
 ) -> bool {
     let Ok(ethernet) = EthernetFrame::new_checked(frame) else {
         return true
@@ -378,18 +425,22 @@ fn observe_icmp_echo(
         return true
     }
     let Ok(ipv4) = Ipv4Packet::new_checked(ethernet.payload()) else {
+        record_packet_error(stats, false);
         return false
     };
     if ipv4.next_header() != IpProtocol::Icmp {
         return true
     }
     if ipv4.hop_limit() == 0 {
+        record_packet_error(stats, true);
         return false
     }
     let Ok(icmp_packet) = Icmpv4Packet::new_checked(ipv4.payload()) else {
+        record_packet_error(stats, true);
         return false
     };
     let Ok(repr) = Icmpv4Repr::parse(&icmp_packet, &checksum) else {
+        record_packet_error(stats, true);
         return false
     };
     let (identifier, sequence, payload_len) = match repr {
@@ -406,8 +457,12 @@ fn observe_icmp_echo(
         _ => return true,
     };
     if payload_len > MAX_ICMP_ECHO_PAYLOAD {
+        record_packet_error(stats, true);
         return false
     }
+    let mut snapshot = stats.get();
+    snapshot.record_icmp_rx();
+    stats.set(snapshot);
     *last_icmp_echo = Some(IcmpEchoObservation {
         source: ipv4.src_addr().octets(),
         destination: ipv4.dst_addr().octets(),
@@ -418,6 +473,44 @@ fn observe_icmp_echo(
         received_at_ms: now_ms,
     });
     true
+}
+
+fn observe_icmp_tx(
+    frame: &[u8],
+    checksum: ChecksumCapabilities,
+    stats: &mut NetworkStats,
+) {
+    let Ok(ethernet) = EthernetFrame::new_checked(frame) else {
+        return
+    };
+    if ethernet.ethertype() != EthernetProtocol::Ipv4 {
+        return
+    }
+    let Ok(ipv4) = Ipv4Packet::new_checked(ethernet.payload()) else {
+        return
+    };
+    if ipv4.next_header() != IpProtocol::Icmp {
+        return
+    }
+    let Ok(icmp_packet) = Icmpv4Packet::new_checked(ipv4.payload()) else {
+        return
+    };
+    let Ok(repr) = Icmpv4Repr::parse(&icmp_packet, &checksum) else {
+        return
+    };
+    if matches!(repr, Icmpv4Repr::EchoRequest { .. } | Icmpv4Repr::EchoReply { .. }) {
+        stats.record_icmp_tx()
+    }
+}
+
+fn record_packet_error(stats: &Cell<NetworkStats>, icmp_loss: bool) {
+    let mut snapshot = stats.get();
+    if icmp_loss {
+        snapshot.record_icmp_loss();
+    }
+    snapshot.record_drop();
+    snapshot.record_error();
+    stats.set(snapshot);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -598,10 +691,13 @@ pub struct TcpHandle(usize);
 pub struct PollActivity {
     pub ingress_packets: usize,
     pub socket_state_changed: bool,
+    pub stats: NetworkStats,
 }
 
 pub trait NetworkPoller {
     fn poll_network(&mut self, now_millis: i64, ingress_budget: usize) -> PollActivity;
+
+    fn set_dhcp_retries(&mut self, _retries: u64) {}
 }
 
 /// Heap-free `smoltcp` TCP/IP stack owned by the Ring 3 network daemon.
@@ -616,6 +712,8 @@ pub struct SmolTcpStack<'a, D, const SOCKETS: usize> {
     active_config: Option<InterfaceConfig>,
     neighbors: NeighborTable,
     last_icmp_echo: Option<IcmpEchoObservation>,
+    stats: Cell<NetworkStats>,
+    queue_drops_seen: u64,
     last_poll_ms: u64,
 }
 
@@ -645,6 +743,8 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             active_config: None,
             neighbors: NeighborTable::new(),
             last_icmp_echo: None,
+            stats: Cell::new(NetworkStats::new()),
+            queue_drops_seen: 0,
             last_poll_ms: 0,
         }
     }
@@ -784,14 +884,60 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
         self.last_icmp_echo
     }
 
+    pub const fn stats(&self) -> NetworkStats {
+        self.stats.get().snapshot()
+    }
+
+    pub fn set_queue_depth(&self, rx: usize, tx: usize) {
+        let mut stats = self.stats.get();
+        stats.set_queue_depth(rx, tx);
+        self.stats.set(stats);
+    }
+
+    pub fn sync_queue_metrics(&mut self)
+    where
+        D: QueueMetrics,
+    {
+        let (rx, tx) = self.device.queue_depth();
+        let queue_drops = self.device.queue_drops();
+        let mut stats = self.stats.get();
+        stats.set_queue_depth(rx, tx);
+        stats.drops = stats
+            .drops
+            .saturating_add(queue_drops.saturating_sub(self.queue_drops_seen));
+        self.queue_drops_seen = queue_drops;
+        self.stats.set(stats);
+    }
+
+    pub fn record_dhcp_retry(&self) {
+        let mut stats = self.stats.get();
+        stats.record_dhcp_retry();
+        self.stats.set(stats);
+    }
+
+    pub fn set_dhcp_retries(&self, retries: u64) {
+        let mut stats = self.stats.get();
+        stats.dhcp_retries = retries;
+        self.stats.set(stats);
+    }
+
     /// Performs bounded ingress work, then one bounded egress pass.
     pub fn poll(&mut self, now_millis: i64, ingress_budget: usize) -> PollActivity {
         let timestamp = Instant::from_millis(now_millis);
         self.last_poll_ms = now_millis.max(0) as u64;
-        self.neighbors.maintain(self.last_poll_ms);
+        let arp_failures = self.neighbors.maintain(self.last_poll_ms);
+        if arp_failures != 0 {
+            let mut stats = self.stats.get();
+            stats.arp_failures = stats
+                .arp_failures
+                .saturating_add(arp_failures as u64);
+            stats.drops = stats.drops.saturating_add(arp_failures as u64);
+            self.stats.set(stats);
+        }
         let mut activity = PollActivity {
             ingress_packets: 0,
             socket_state_changed: false,
+            stats: self.stats.get(),
         };
         self.interface.poll_maintenance(timestamp);
         let checksum = self.device.capabilities().checksum;
@@ -799,6 +945,7 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             device: &mut self.device,
             neighbors: &mut self.neighbors,
             last_icmp_echo: &mut self.last_icmp_echo,
+            stats: &self.stats,
             now_ms: self.last_poll_ms,
             checksum,
         };
@@ -821,6 +968,21 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             .poll_egress(timestamp, &mut device, &mut self.sockets);
         activity.socket_state_changed |=
             matches!(egress, smoltcp::iface::PollResult::SocketStateChanged);
+        activity.stats = self.stats.get();
+        activity
+    }
+
+    pub fn poll_with_queue_metrics(
+        &mut self,
+        now_millis: i64,
+        ingress_budget: usize,
+    ) -> PollActivity
+    where
+        D: QueueMetrics,
+    {
+        let mut activity = self.poll(now_millis, ingress_budget);
+        self.sync_queue_metrics();
+        activity.stats = self.stats.get();
         activity
     }
 
@@ -847,6 +1009,10 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
 impl<D: Device, const SOCKETS: usize> NetworkPoller for SmolTcpStack<'_, D, SOCKETS> {
     fn poll_network(&mut self, now_millis: i64, ingress_budget: usize) -> PollActivity {
         self.poll(now_millis, ingress_budget)
+    }
+
+    fn set_dhcp_retries(&mut self, retries: u64) {
+        SmolTcpStack::set_dhcp_retries(self, retries)
     }
 }
 

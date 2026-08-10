@@ -38,6 +38,7 @@ pub struct PacketQueue<const CAPACITY: usize, const MTU: usize> {
     slots: [PacketSlot<MTU>; CAPACITY],
     reserve_cursor: usize,
     receive_cursor: usize,
+    drops: u64,
 }
 
 impl<const CAPACITY: usize, const MTU: usize> PacketQueue<CAPACITY, MTU> {
@@ -46,17 +47,22 @@ impl<const CAPACITY: usize, const MTU: usize> PacketQueue<CAPACITY, MTU> {
             slots: [const { PacketSlot::EMPTY }; CAPACITY],
             reserve_cursor: 0,
             receive_cursor: 0,
+            drops: 0,
         }
     }
 
     pub fn reserve(&mut self) -> Result<PacketWriter<'_, MTU>, PacketError> {
         if CAPACITY == 0 || MTU == 0 {
+            self.drops = self.drops.saturating_add(1);
             return Err(PacketError::Full)
         }
         let index = (0..CAPACITY)
             .map(|distance| (self.reserve_cursor + distance) % CAPACITY)
             .find(|index| self.slots[*index].state == SlotState::Free)
-            .ok_or(PacketError::Full)?;
+            .ok_or_else(|| {
+                self.drops = self.drops.saturating_add(1);
+                PacketError::Full
+            })?;
         self.reserve_cursor = (index + 1) % CAPACITY;
         let slot = &mut self.slots[index];
         slot.state = SlotState::Loaned;
@@ -125,6 +131,10 @@ impl<const CAPACITY: usize, const MTU: usize> PacketQueue<CAPACITY, MTU> {
             .iter()
             .filter(|slot| slot.state == SlotState::Free)
             .count()
+    }
+
+    pub const fn drops(&self) -> u64 {
+        self.drops
     }
 }
 
@@ -197,6 +207,29 @@ impl<const CAPACITY: usize, const MTU: usize> QueueDevice<CAPACITY, MTU> {
             ingress: PacketQueue::new(),
             egress: PacketQueue::new(),
         }
+    }
+
+    pub fn queue_depth(&self) -> (usize, usize) {
+        (self.ingress.pending(), self.egress.pending())
+    }
+
+    pub const fn queue_drops(&self) -> u64 {
+        self.ingress.drops().saturating_add(self.egress.drops())
+    }
+}
+
+pub trait QueueMetrics {
+    fn queue_depth(&self) -> (usize, usize);
+    fn queue_drops(&self) -> u64;
+}
+
+impl<const CAPACITY: usize, const MTU: usize> QueueMetrics for QueueDevice<CAPACITY, MTU> {
+    fn queue_depth(&self) -> (usize, usize) {
+        self.queue_depth()
+    }
+
+    fn queue_drops(&self) -> u64 {
+        self.queue_drops()
     }
 }
 
