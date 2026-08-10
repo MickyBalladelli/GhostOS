@@ -356,7 +356,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
 
 #[test]
 fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
-    let (mut daemon, process, mut authority) = daemon_with_capacity::<64>();
+    let (mut daemon, process, mut authority) = daemon();
     let mut stale_file = None;
 
     for cycle in 0..32 {
@@ -382,6 +382,11 @@ fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
             .expect("close retained file");
         stale_file = Some(file.capability);
 
+        let report = daemon
+            .garbage_collect(process, authority, 1)
+            .expect("collect after write");
+        assert!(report.freed_blocks <= 1);
+
         daemon
             .filesystem_mut()
             .purge("/data/long-run", 1, 1)
@@ -402,6 +407,11 @@ fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
                 daemon.snapshot_release(process, snapshot.capability),
                 Err(DaemonError::AccessDenied)
             );
+        } else {
+            let report = daemon
+                .garbage_collect(process, authority, 1)
+                .expect("collect after purge");
+            assert!(report.freed_blocks <= 1);
         }
 
         let diagnostics = daemon.diagnostics().expect("daemon diagnostics");
