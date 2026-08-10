@@ -4,9 +4,32 @@ use synos_synfs::{
     StoragePoolError, StoragePoolId, StoragePoolIo, SynFs, VersionSelector, VersionedPath,
     VolumeLimits, BLOCK_SIZE, MAX_PATH_BYTES,
 };
+use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
 const BLOCKS: usize = 128;
 const FORMAT_BLOCKS: usize = 16;
+
+#[test]
+fn interruption_hook_runs_after_flush_and_rename() {
+    let mut image = vec![0; SynFs::<FORMAT_BLOCKS>::volume_bytes()];
+    let mut filesystem = SynFs::<FORMAT_BLOCKS>::new();
+    filesystem.write("/state", b"durable").expect("write state");
+    let point = CrashPoint::new(CrashDomain::SynFs, CrashBoundary::Flush, 1);
+    let mut harness = CrashHarness::new(Some(point));
+    assert_eq!(
+        filesystem.flush_with_interruption(&mut image, &mut harness),
+        Err(Error::Interrupted)
+    );
+
+    let mut filesystem = SynFs::<FORMAT_BLOCKS>::new();
+    filesystem.write("/old", b"value").expect("write old path");
+    let point = CrashPoint::new(CrashDomain::SynFs, CrashBoundary::Rename, 1);
+    let mut harness = CrashHarness::new(Some(point));
+    assert_eq!(
+        filesystem.rename_with_interruption("/old", "/new", &mut harness),
+        Err(Error::Interrupted)
+    );
+}
 
 #[test]
 fn format_generation_selection_and_checksum_validation() {

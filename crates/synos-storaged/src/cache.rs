@@ -1,4 +1,5 @@
 use crate::service::StoragePath;
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheMode {
@@ -14,6 +15,7 @@ pub enum CacheError {
     NotFound,
     ReadOnly,
     Remote(u16),
+    Interrupted,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,6 +115,15 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
     }
 
     pub fn flush(&mut self, backend: &mut impl RemoteFileBackend) -> Result<usize, CacheError> {
+        let mut no_interruption = NoInterruption;
+        self.flush_with_interruption(backend, &mut no_interruption)
+    }
+
+    pub fn flush_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        backend: &mut impl RemoteFileBackend,
+        injector: &mut I,
+    ) -> Result<usize, CacheError> {
         let mut flushed = 0;
         for entry in &mut self.entries {
             if !entry.occupied || !entry.dirty {
@@ -123,6 +134,9 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
                 .map_err(CacheError::Remote)?;
             entry.dirty = false;
             flushed += 1;
+        }
+        if injector.checkpoint(CrashDomain::Storage, CrashBoundary::Flush) {
+            return Err(CacheError::Interrupted)
         }
         Ok(flushed)
     }

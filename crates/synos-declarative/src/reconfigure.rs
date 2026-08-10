@@ -1,4 +1,5 @@
 use synos_fabric::NodeId;
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_status::Status;
 use synos_synfs::{CheckpointId, Error as SynFsError, SynFs};
 
@@ -24,6 +25,7 @@ pub enum ReconfigureError<E> {
     HealthCheck(Status),
     Runtime(E),
     NoRollbackTarget,
+    Interrupted,
 }
 
 /// Runtime bridge used by init, netd, and policy daemons. `stage` must only
@@ -82,6 +84,24 @@ impl<const HISTORY: usize> ReconfigureManager<HISTORY> {
         node: NodeId,
         runtime: &mut R,
     ) -> Result<ActivationReceipt, ReconfigureError<R::Error>> {
+        let mut no_interruption = NoInterruption;
+        self.activate_with_interruption(filesystem, enforcer, update, node, runtime, &mut no_interruption)
+    }
+
+    pub fn activate_with_interruption<
+        const BLOCKS: usize,
+        const KEYS: usize,
+        R: ConfigurationRuntime,
+        I: InterruptionInjector,
+    >(
+        &mut self,
+        filesystem: &mut SynFs<BLOCKS>,
+        enforcer: &TpmConfigurationEnforcer<KEYS>,
+        update: &SignedConfiguration,
+        node: NodeId,
+        runtime: &mut R,
+        injector: &mut I,
+    ) -> Result<ActivationReceipt, ReconfigureError<R::Error>> {
         enforcer
             .verify(update, node)
             .map_err(ReconfigureError::Signature)?;
@@ -129,6 +149,9 @@ impl<const HISTORY: usize> ReconfigureManager<HISTORY> {
             generation: filesystem.generation(),
             previous_generation: checkpoint.generation,
         };
+        if injector.checkpoint(CrashDomain::Configuration, CrashBoundary::ManifestSlot) {
+            return Err(ReconfigureError::Interrupted)
+        }
         self.entries[self.history_len()] = Some(HistoryEntry {
             checkpoint: checkpoint.id,
             previous,

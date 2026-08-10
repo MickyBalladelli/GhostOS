@@ -3,6 +3,7 @@
 
 use core::cmp::Ordering;
 use core::fmt;
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub use synos_path_pattern::{MAX_PATTERN_BYTES, Pattern, PatternError};
@@ -56,6 +57,7 @@ pub enum Error {
     TooManyRetentionRules,
     VersionOverflow,
     Io,
+    Interrupted,
 }
 
 impl IntoStatus for Error {
@@ -79,6 +81,7 @@ impl IntoStatus for Error {
                 .unwrap_or(Status::CORRUPT),
             Self::Io => Status::new(Severity::Error, facility::FILESYSTEM, 4, 0)
                 .unwrap_or(Status::INVALID_ARGUMENT),
+            Self::Interrupted => Status::BUSY,
             Self::QuotaExceeded => Status::NO_SPACE,
         }
     }
@@ -1296,6 +1299,16 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
+        let mut no_interruption = NoInterruption;
+        self.rename_with_interruption(old_path, new_path, &mut no_interruption)
+    }
+
+    pub fn rename_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        old_path: &str,
+        new_path: &str,
+        injector: &mut I,
+    ) -> Result<FileVersion, Error> {
         let mut retried = false;
         loop {
             let result = (|| {
@@ -1304,7 +1317,12 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 transaction.commit()
             })();
             match result {
-                Ok(_) => return self.lookup(new_path),
+                Ok(_) => {
+                    if injector.checkpoint(CrashDomain::SynFs, CrashBoundary::Rename) {
+                        return Err(Error::Interrupted)
+                    }
+                    return self.lookup(new_path)
+                }
                 Err(Error::OutOfSpace) if !retried => {
                     retried = true;
                     self.collect_garbage();

@@ -4,6 +4,7 @@ use synos_pkg::{
 };
 use synos_synfs::SynFs;
 use synos_system_model::ContentId;
+use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
 #[test]
 fn signed_bundle_round_trip_detects_tampering_and_trust_failures() {
@@ -55,6 +56,12 @@ fn package_install_and_activation_survive_duplicate_and_rollback_attempts() {
     let mut configuration = SystemConfiguration::new(1);
     configuration.bind("init", installed).expect("bind package");
     assert_eq!(configuration.bind("init", installed), Err(PackageError::DuplicateBinding));
+    let point = CrashPoint::new(CrashDomain::PackageActivation, CrashBoundary::ManifestSlot, 1);
+    let mut harness = CrashHarness::new(Some(point));
+    assert_eq!(
+        daemon.activate_with_interruption(&mut filesystem, &configuration, &mut harness),
+        Err(PackageError::Interrupted)
+    );
     daemon.activate(&mut filesystem, &configuration).expect("activate package root");
     assert!(daemon.active_configuration().is_some());
     assert!(matches!(

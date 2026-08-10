@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 use synos_status::{IntoStatus, Status};
+use synos_durability::{InterruptionInjector, NoInterruption};
 use synos_synfs::SynFs;
 use synos_system_model::{
     ContentId, DEFAULT_PACKAGE_CAPACITY, DEFAULT_ROOT_BINDINGS, Error as ModelError, LogicalName,
@@ -32,6 +33,7 @@ pub enum PackageError {
     InstantiationDenied,
     Model(ModelError),
     Repository(RepositoryError),
+    Interrupted,
     TooManyDependencies,
     TrustStoreFull,
     UnknownSigningKey,
@@ -52,6 +54,7 @@ impl IntoStatus for PackageError {
             }
             Self::Model(error) => error.status(),
             Self::Repository(error) => error.status(),
+            Self::Interrupted => Status::BUSY,
         }
     }
 }
@@ -717,13 +720,29 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         fs: &mut SynFs<BLOCKS>,
         configuration: &SystemConfiguration,
     ) -> Result<Option<RootManifest<DEFAULT_ROOT_BINDINGS>>, PackageError> {
+        let mut no_interruption = NoInterruption;
+        self.activate_with_interruption(fs, configuration, &mut no_interruption)
+    }
+
+    pub fn activate_with_interruption<const BLOCKS: usize, I: InterruptionInjector>(
+        &mut self,
+        fs: &mut SynFs<BLOCKS>,
+        configuration: &SystemConfiguration,
+        injector: &mut I,
+    ) -> Result<Option<RootManifest<DEFAULT_ROOT_BINDINGS>>, PackageError> {
         if configuration
             .bindings()
             .any(|binding| !self.is_instantiation_authorized(binding.package))
         {
             return Err(PackageError::InstantiationDenied);
         }
-        Ok(self.repository.activate(fs, configuration.root()?)?)
+        Ok(self
+            .repository
+            .activate_with_interruption(fs, configuration.root()?, injector)
+            .map_err(|error| match error {
+                RepositoryError::Interrupted => PackageError::Interrupted,
+                other => PackageError::Repository(other),
+            })?)
     }
 
     pub const fn active_configuration(&self) -> Option<&RootManifest<DEFAULT_ROOT_BINDINGS>> {

@@ -1,5 +1,6 @@
 use synos_auth::CapabilityKey;
 use synos_fabric::NodeId;
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_status::{IntoStatus, Status};
 
 use crate::{
@@ -699,6 +700,7 @@ pub enum AdmissionError {
     ForcedActionNotAuthorized,
     DrainFailed,
     ReconciliationFailed,
+    Interrupted,
     Bootstrap(ClusterBootstrapError),
 }
 
@@ -717,6 +719,7 @@ impl IntoStatus for AdmissionError {
             Self::QuorumUnavailable | Self::DrainFailed | Self::ReconciliationFailed => Status::BUSY,
             Self::DuplicateIdentity | Self::Replay | Self::InvalidState => Status::CONFLICT,
             Self::Bootstrap(error) => error.status(),
+            Self::Interrupted => Status::BUSY,
             Self::InvalidConfiguration
             | Self::InvalidEndpoint
             | Self::ProtocolMismatch
@@ -920,6 +923,17 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         cluster_offer: ProtocolOffer,
         now_us: u64,
     ) -> Result<MembershipRecord, AdmissionError> {
+        let mut no_interruption = NoInterruption;
+        self.request_join_with_interruption(request, cluster_offer, now_us, &mut no_interruption)
+    }
+
+    pub fn request_join_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        request: JoinRequest,
+        cluster_offer: ProtocolOffer,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<MembershipRecord, AdmissionError> {
         let trusted = self
             .trusted
             .iter()
@@ -1004,18 +1018,38 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
                 }
             }
         }
-        self.commit_pending(request.node, now_us)?;
+        self.commit_pending_with_interruption(request.node, now_us, injector)?;
         Ok(record)
     }
 
     pub fn approve(&mut self, node: NodeId, now_us: u64) -> Result<QuorumReceipt, AdmissionError> {
-        let receipt = self.transition(node, MembershipState::Approved, MembershipReason::Approved, MembershipChangeKind::Approve, now_us)?;
+        let mut no_interruption = NoInterruption;
+        self.approve_with_interruption(node, now_us, &mut no_interruption)
+    }
+
+    pub fn approve_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        node: NodeId,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<QuorumReceipt, AdmissionError> {
+        let receipt = self.transition_with_interruption(node, MembershipState::Approved, MembershipReason::Approved, MembershipChangeKind::Approve, now_us, injector)?;
         self.set_invitation_decision(node, InvitationDecision::Approved);
         Ok(receipt)
     }
 
     pub fn reject(&mut self, node: NodeId, now_us: u64) -> Result<QuorumReceipt, AdmissionError> {
-        let receipt = self.transition(node, MembershipState::Rejected, MembershipReason::Rejected, MembershipChangeKind::Reject, now_us)?;
+        let mut no_interruption = NoInterruption;
+        self.reject_with_interruption(node, now_us, &mut no_interruption)
+    }
+
+    pub fn reject_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        node: NodeId,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<QuorumReceipt, AdmissionError> {
+        let receipt = self.transition_with_interruption(node, MembershipState::Rejected, MembershipReason::Rejected, MembershipChangeKind::Reject, now_us, injector)?;
         self.set_invitation_decision(node, InvitationDecision::Rejected);
         Ok(receipt)
     }
@@ -1025,7 +1059,17 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         node: NodeId,
         now_us: u64,
     ) -> Result<QuorumReceipt, AdmissionError> {
-        self.transition(node, MembershipState::Joined, MembershipReason::Approved, MembershipChangeKind::Join, now_us)
+        let mut no_interruption = NoInterruption;
+        self.join_approved_with_interruption(node, now_us, &mut no_interruption)
+    }
+
+    pub fn join_approved_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        node: NodeId,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<QuorumReceipt, AdmissionError> {
+        self.transition_with_interruption(node, MembershipState::Joined, MembershipReason::Approved, MembershipChangeKind::Join, now_us, injector)
     }
 
     pub fn member(&self, node: NodeId) -> Option<MembershipRecord> {
@@ -1047,6 +1091,18 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         now_us: u64,
         hooks: &mut impl LeaveHooks,
     ) -> Result<LeaveOutcome, AdmissionError> {
+        let mut no_interruption = NoInterruption;
+        self.leave_with_interruption(node, plan, now_us, hooks, &mut no_interruption)
+    }
+
+    pub fn leave_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        node: NodeId,
+        plan: LeavePlan,
+        now_us: u64,
+        hooks: &mut impl LeaveHooks,
+        injector: &mut I,
+    ) -> Result<LeaveOutcome, AdmissionError> {
         let current = self.member(node).ok_or(AdmissionError::UnknownNode)?;
         if !matches!(current.state, MembershipState::Joined | MembershipState::Approved) {
             return Err(AdmissionError::InvalidState)
@@ -1062,12 +1118,13 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
             hooks.fence(node, self.epoch)?;
             hooks.revoke_capabilities(node)?;
             hooks.close_ipc_streams(node)?;
-            let receipt = self.transition_with_epoch(
+            let receipt = self.transition_with_epoch_with_interruption(
                 node,
                 MembershipState::Fenced,
                 MembershipReason::Forced,
                 MembershipChangeKind::Fence,
                 now_us,
+                injector,
             )?;
             return Ok(LeaveOutcome {
                 node,
@@ -1078,7 +1135,7 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
                 receipt,
             })
         }
-        self.transition(node, MembershipState::Draining, MembershipReason::Requested, MembershipChangeKind::Drain, now_us)?;
+        self.transition_with_interruption(node, MembershipState::Draining, MembershipReason::Requested, MembershipChangeKind::Drain, now_us, injector)?;
         hooks.drain_workloads(node, plan.timeout_us)?;
         hooks.release_dlm_leases(node)?;
         hooks.flush_remote_pages(node)?;
@@ -1087,7 +1144,7 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         }
         hooks.revoke_capabilities(node)?;
         hooks.close_ipc_streams(node)?;
-        let receipt = self.transition(node, MembershipState::Left, MembershipReason::Drained, MembershipChangeKind::Leave, now_us)?;
+        let receipt = self.transition_with_interruption(node, MembershipState::Left, MembershipReason::Drained, MembershipChangeKind::Leave, now_us, injector)?;
         Ok(LeaveOutcome {
             node,
             state: MembershipState::Left,
@@ -1103,6 +1160,17 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         request: JoinRequest,
         cluster_offer: ProtocolOffer,
         now_us: u64,
+    ) -> Result<QuorumReceipt, AdmissionError> {
+        let mut no_interruption = NoInterruption;
+        self.rejoin_with_interruption(request, cluster_offer, now_us, &mut no_interruption)
+    }
+
+    pub fn rejoin_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        request: JoinRequest,
+        cluster_offer: ProtocolOffer,
+        now_us: u64,
+        injector: &mut I,
     ) -> Result<QuorumReceipt, AdmissionError> {
         let old = self.member(request.node).ok_or(AdmissionError::UnknownNode)?;
         if !matches!(old.state, MembershipState::Joined | MembershipState::Left | MembershipState::Fenced) {
@@ -1164,12 +1232,13 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
             member.last_seen_generation = request.last_seen_generation;
             member.membership_epoch = self.epoch;
         }
-        self.commit_change(
+        self.commit_change_with_interruption(
             MembershipChangeKind::Rejoin,
             request.node,
             MembershipState::Joined,
             MembershipReason::Rejoined,
             now_us,
+            injector,
         )
     }
 
@@ -1179,6 +1248,18 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         confirm: bool,
         now_us: u64,
         hooks: &mut impl LeaveHooks,
+    ) -> Result<LeaveOutcome, AdmissionError> {
+        let mut no_interruption = NoInterruption;
+        self.force_remove_with_interruption(node, confirm, now_us, hooks, &mut no_interruption)
+    }
+
+    pub fn force_remove_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        node: NodeId,
+        confirm: bool,
+        now_us: u64,
+        hooks: &mut impl LeaveHooks,
+        injector: &mut I,
     ) -> Result<LeaveOutcome, AdmissionError> {
         if !confirm {
             return Err(AdmissionError::ForcedActionNotAuthorized)
@@ -1191,12 +1272,13 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         hooks.fence(node, self.epoch)?;
         hooks.revoke_capabilities(node)?;
         hooks.close_ipc_streams(node)?;
-        let receipt = self.transition_with_epoch(
+        let receipt = self.transition_with_epoch_with_interruption(
             node,
             MembershipState::Expelled,
             MembershipReason::Forced,
             MembershipChangeKind::Expel,
             now_us,
+            injector,
         )?;
         Ok(LeaveOutcome {
             node,
@@ -1208,13 +1290,19 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         })
     }
 
-    fn commit_pending(&mut self, node: NodeId, now_us: u64) -> Result<QuorumReceipt, AdmissionError> {
-        self.commit_change(
+    fn commit_pending_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        node: NodeId,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<QuorumReceipt, AdmissionError> {
+        self.commit_change_with_interruption(
             MembershipChangeKind::Pending,
             node,
             MembershipState::Pending,
             MembershipReason::Requested,
             now_us,
+            injector,
         )
         .map(|_| QuorumReceipt {
             acknowledged_votes: self.quorum_available,
@@ -1223,13 +1311,14 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         })
     }
 
-    fn transition(
+    fn transition_with_interruption<I: InterruptionInjector>(
         &mut self,
         node: NodeId,
         state: MembershipState,
         reason: MembershipReason,
         kind: MembershipChangeKind,
         now_us: u64,
+        injector: &mut I,
     ) -> Result<QuorumReceipt, AdmissionError> {
         let member = self.member(node).ok_or(AdmissionError::UnknownNode)?;
         if !valid_transition(member.state, state) {
@@ -1242,27 +1331,29 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
             member.generation = self.generation;
             member.membership_epoch = self.epoch;
         }
-        self.transition_with_epoch(node, state, reason, kind, now_us)
+        self.transition_with_epoch_with_interruption(node, state, reason, kind, now_us, injector)
     }
 
-    fn transition_with_epoch(
+    fn transition_with_epoch_with_interruption<I: InterruptionInjector>(
         &mut self,
         node: NodeId,
         state: MembershipState,
         reason: MembershipReason,
         kind: MembershipChangeKind,
         now_us: u64,
+        injector: &mut I,
     ) -> Result<QuorumReceipt, AdmissionError> {
-        self.commit_change(kind, node, state, reason, now_us)
+        self.commit_change_with_interruption(kind, node, state, reason, now_us, injector)
     }
 
-    fn commit_change(
+    pub fn commit_change_with_interruption<I: InterruptionInjector>(
         &mut self,
         kind: MembershipChangeKind,
         node: NodeId,
         state: MembershipState,
         reason: MembershipReason,
         now_us: u64,
+        injector: &mut I,
     ) -> Result<QuorumReceipt, AdmissionError> {
         self.ensure_commit_ready()?;
         let sequence = self.next_audit;
@@ -1283,6 +1374,9 @@ impl<const MEMBERS: usize, const INVITATIONS: usize, const AUDIT: usize>
         });
         self.next_audit = self.next_audit.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
+        if injector.checkpoint(CrashDomain::Storage, CrashBoundary::JournalRecord) {
+            return Err(AdmissionError::Interrupted)
+        }
         Ok(QuorumReceipt {
             acknowledged_votes: self.quorum_available,
             required_votes: self.quorum_required,

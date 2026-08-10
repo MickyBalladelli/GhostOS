@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 use core::fmt;
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_status::{IntoStatus, Severity, Status, facility};
 use synos_synfs::{Error as SynFsError, SynFs};
 
@@ -52,6 +53,7 @@ pub enum RepositoryError {
     CorruptObject,
     Model(Error),
     SynFs(SynFsError),
+    Interrupted,
     VerificationBufferTooSmall { required: usize },
 }
 
@@ -61,6 +63,7 @@ impl IntoStatus for RepositoryError {
             Self::CorruptObject => Status::CORRUPT,
             Self::Model(error) => error.status(),
             Self::SynFs(error) => error.status(),
+            Self::Interrupted => Status::BUSY,
             Self::VerificationBufferTooSmall { .. } => {
                 Status::new(Severity::Error, facility::SYSTEM, 22, 0)
                     .expect("valid repository status")
@@ -527,12 +530,25 @@ impl<const PACKAGES: usize> SynFsRepository<PACKAGES> {
         fs: &mut SynFs<BLOCKS>,
         manifest: RootManifest<DEFAULT_ROOT_BINDINGS>,
     ) -> Result<Option<RootManifest<DEFAULT_ROOT_BINDINGS>>, RepositoryError> {
+        let mut no_interruption = NoInterruption;
+        self.activate_with_interruption(fs, manifest, &mut no_interruption)
+    }
+
+    pub fn activate_with_interruption<const BLOCKS: usize, I: InterruptionInjector>(
+        &mut self,
+        fs: &mut SynFs<BLOCKS>,
+        manifest: RootManifest<DEFAULT_ROOT_BINDINGS>,
+        injector: &mut I,
+    ) -> Result<Option<RootManifest<DEFAULT_ROOT_BINDINGS>>, RepositoryError> {
         self.root
             .validate(&manifest, &self.packages)
             .map_err(RepositoryError::Model)?;
         let (snapshot, snapshot_length) = encode_root_snapshot(&manifest);
         fs.write("system/root.manifest", &snapshot[..snapshot_length])
             .map_err(RepositoryError::SynFs)?;
+        if injector.checkpoint(CrashDomain::PackageActivation, CrashBoundary::ManifestSlot) {
+            return Err(RepositoryError::Interrupted)
+        }
         self.root
             .activate(manifest, &self.packages)
             .map_err(RepositoryError::Model)

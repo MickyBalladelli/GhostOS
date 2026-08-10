@@ -8,3 +8,6 @@ description = "Deterministic fixtures and failure injection for SynOS tests"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+synos-durability = { path = "../durability" }

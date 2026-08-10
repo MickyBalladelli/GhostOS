@@ -1,74 +1,9 @@
 use std::fmt;
 
+pub use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector};
+
 const DOMAIN_COUNT: usize = 6;
 const BOUNDARY_COUNT: usize = 6;
-
-/// Persistence owners that share the crash matrix.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum CrashDomain {
-    SynFs,
-    Storage,
-    PackageActivation,
-    Configuration,
-    CompilerJob,
-    UpdateRecovery,
-}
-
-impl CrashDomain {
-    pub const ALL: [Self; DOMAIN_COUNT] = [
-        Self::SynFs,
-        Self::Storage,
-        Self::PackageActivation,
-        Self::Configuration,
-        Self::CompilerJob,
-        Self::UpdateRecovery,
-    ];
-
-    const fn index(self) -> usize {
-        match self {
-            Self::SynFs => 0,
-            Self::Storage => 1,
-            Self::PackageActivation => 2,
-            Self::Configuration => 3,
-            Self::CompilerJob => 4,
-            Self::UpdateRecovery => 5,
-        }
-    }
-}
-
-/// Shared durable-operation boundaries. Call [`CrashHarness::checkpoint`]
-/// immediately after the named operation becomes observable.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum CrashBoundary {
-    Flush,
-    JournalRecord,
-    ManifestSlot,
-    Rename,
-    CapabilityChange,
-    ServiceRestart,
-}
-
-impl CrashBoundary {
-    pub const ALL: [Self; BOUNDARY_COUNT] = [
-        Self::Flush,
-        Self::JournalRecord,
-        Self::ManifestSlot,
-        Self::Rename,
-        Self::CapabilityChange,
-        Self::ServiceRestart,
-    ];
-
-    const fn index(self) -> usize {
-        match self {
-            Self::Flush => 0,
-            Self::JournalRecord => 1,
-            Self::ManifestSlot => 2,
-            Self::Rename => 3,
-            Self::CapabilityChange => 4,
-            Self::ServiceRestart => 5,
-        }
-    }
-}
 
 /// One deterministic crash target. Occurrences start at one for each
 /// domain/boundary pair.
@@ -215,5 +150,11 @@ impl CrashHarness {
 impl Default for CrashHarness {
     fn default() -> Self {
         Self::without_crash()
+    }
+}
+
+impl InterruptionInjector for CrashHarness {
+    fn checkpoint(&mut self, domain: CrashDomain, boundary: CrashBoundary) -> bool {
+        Self::checkpoint(self, domain, boundary).is_err()
     }
 }

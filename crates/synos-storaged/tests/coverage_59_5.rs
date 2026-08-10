@@ -1,5 +1,5 @@
 use synos_storaged::{
-    AdmissionInvitation, AdmissionError, Certificate, ClusterId, ClusterMetadata,
+    AdmissionInvitation, AdmissionError, AdmissionPolicy, AdmissionWorkflow, Certificate, ClusterId, ClusterMetadata,
     ClusterMetadataCatalog, ClusterMetadataError, NodeAttestation, NodeCapabilities,
     ClusterOperation, ClusterRole, ClusterSecurityAuthority, ClusterSecurityPolicy,
     InvitationDecision, IoOperation, MemberHealth, MemberRole, MemberSpec,
@@ -7,10 +7,12 @@ use synos_storaged::{
     ProtocolCompatibility, QuorumPolicy, SeedEntropy, StorageDaemon, StorageError, StoragePath,
     StorageRights, AdmissionEndpoint, ClusterBootstrapError, ClusterBootstrapState, Endpoint,
     ClusterCreateRequest,
+    MembershipChangeKind, MembershipReason, MembershipState, SecurityPolicy,
 };
 use synos_auth::CapabilityKey;
 use synos_fabric::NodeId;
 use synos_synfs::SynFs;
+use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
 #[test]
 fn storage_paths_capabilities_and_io_boundaries_are_enforced() {
@@ -194,6 +196,26 @@ fn cluster_metadata_is_generation_safe_and_persistent() {
 #[test]
 fn admission_states_and_security_authorization_reject_stale_or_unsafe_actions() {
     let cluster = ClusterId::new([2; 16]).unwrap();
+    let mut workflow = AdmissionWorkflow::<4, 4, 4>::new(
+        cluster,
+        AdmissionPolicy::Open,
+        1,
+        SecurityPolicy::DEFAULT,
+    )
+    .unwrap();
+    let point = CrashPoint::new(CrashDomain::Storage, CrashBoundary::JournalRecord, 1);
+    let mut harness = CrashHarness::new(Some(point));
+    assert_eq!(
+        workflow.commit_change_with_interruption(
+            MembershipChangeKind::Join,
+            NodeId::new(4).unwrap(),
+            MembershipState::Joined,
+            MembershipReason::Approved,
+            1,
+            &mut harness,
+        ),
+        Err(AdmissionError::Interrupted)
+    );
     let invitation = AdmissionInvitation {
         cluster,
         token: [3; 32],
@@ -229,6 +251,12 @@ fn admission_states_and_security_authorization_reject_stale_or_unsafe_actions() 
     let admin = authority
         .bootstrap_capability(node, ClusterRole::Administrator, 100, 1)
         .unwrap();
+    let point = CrashPoint::new(CrashDomain::Storage, CrashBoundary::CapabilityChange, 1);
+    let mut harness = CrashHarness::new(Some(point));
+    assert_eq!(
+        authority.revoke_capability_with_interruption(&admin, node, 77, 2, &mut harness),
+        Err(synos_storaged::SecurityError::Interrupted)
+    );
     authority
         .authorize(&admin, node, ClusterOperation::Fence, Some(node), 2)
         .unwrap();

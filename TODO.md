@@ -93,8 +93,15 @@ evidence.
       `cargo check -p synos-test-support --tests` passes. Threading the
       checkpoint calls into each production persistence workflow and running
       recovery cases remain pending.
-- [ ] Inject interruption after every flush, journal record, manifest slot,
+- [x] Inject interruption after every flush, journal record, manifest slot,
       rename, capability change, and service restart boundary.
+      Progress: added the shared `synos-durability` boundary contract and
+      wired hook-enabled APIs through SynFS flush/rename, storage journal and
+      capability revocation, package manifest activation, configuration and
+      update publication, and init service spawn/restart. Added direct
+      interruption regressions in SynFS, package activation, storaged, and
+      init. `cargo check` passes for all affected crates and their test
+      targets.
 - [ ] Verify recovery chooses one committed generation, never publishes a
       partial object, and reports unrecoverable corruption clearly.
 - [ ] Add long-run retention and garbage-collection tests with bounded work,

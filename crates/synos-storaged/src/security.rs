@@ -1,4 +1,5 @@
 use synos_auth::CapabilityKey;
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_fabric::NodeId;
 use synos_observability::{CorrelationId, next_correlation_id};
 use synos_status::{IntoStatus, Status};
@@ -893,8 +894,25 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         id: [u8; 16],
         now_us: u64,
     ) -> Result<u64, SecurityError> {
+        let mut no_interruption = NoInterruption;
+        self.rotate_key_with_interruption(capability, actor, key, id, now_us, &mut no_interruption)
+    }
+
+    pub fn rotate_key_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        capability: &ClusterCapability,
+        actor: NodeId,
+        key: CapabilityKey,
+        id: [u8; 16],
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<u64, SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Modify, None, now_us)?;
-        self.keyring.rotate(key, id, now_us)
+        let epoch = self.keyring.rotate(key, id, now_us)?;
+        if injector.checkpoint(CrashDomain::Storage, CrashBoundary::CapabilityChange) {
+            return Err(SecurityError::Interrupted)
+        }
+        Ok(epoch)
     }
 
     pub fn revoke_key(
@@ -904,8 +922,24 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         epoch: u64,
         now_us: u64,
     ) -> Result<(), SecurityError> {
+        let mut no_interruption = NoInterruption;
+        self.revoke_key_with_interruption(capability, actor, epoch, now_us, &mut no_interruption)
+    }
+
+    pub fn revoke_key_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        capability: &ClusterCapability,
+        actor: NodeId,
+        epoch: u64,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<(), SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Modify, None, now_us)?;
-        self.keyring.revoke_epoch(epoch)
+        self.keyring.revoke_epoch(epoch)?;
+        if injector.checkpoint(CrashDomain::Storage, CrashBoundary::CapabilityChange) {
+            return Err(SecurityError::Interrupted)
+        }
+        Ok(())
     }
 
     pub fn open_channel(
@@ -933,8 +967,20 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         node: NodeId,
         now_us: u64,
     ) -> Result<(), SecurityError> {
+        let mut no_interruption = NoInterruption;
+        self.revoke_node_with_interruption(capability, actor, node, now_us, &mut no_interruption)
+    }
+
+    pub fn revoke_node_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        capability: &ClusterCapability,
+        actor: NodeId,
+        node: NodeId,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<(), SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Fence, Some(node), now_us)?;
-        self.revoke(RevocationKind::Node, node_bytes(node), now_us)
+        self.revoke_with_interruption(RevocationKind::Node, node_bytes(node), now_us, injector)
     }
 
     pub fn revoke_invitation(
@@ -944,8 +990,20 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         token: [u8; 32],
         now_us: u64,
     ) -> Result<(), SecurityError> {
+        let mut no_interruption = NoInterruption;
+        self.revoke_invitation_with_interruption(capability, actor, token, now_us, &mut no_interruption)
+    }
+
+    pub fn revoke_invitation_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        capability: &ClusterCapability,
+        actor: NodeId,
+        token: [u8; 32],
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<(), SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Invite, None, now_us)?;
-        self.revoke(RevocationKind::Invitation, token, now_us)
+        self.revoke_with_interruption(RevocationKind::Invitation, token, now_us, injector)
     }
 
     pub fn revoke_certificate(
@@ -955,8 +1013,20 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         certificate: [u8; 32],
         now_us: u64,
     ) -> Result<(), SecurityError> {
+        let mut no_interruption = NoInterruption;
+        self.revoke_certificate_with_interruption(capability, actor, certificate, now_us, &mut no_interruption)
+    }
+
+    pub fn revoke_certificate_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        capability: &ClusterCapability,
+        actor: NodeId,
+        certificate: [u8; 32],
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<(), SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Modify, None, now_us)?;
-        self.revoke(RevocationKind::Certificate, certificate, now_us)
+        self.revoke_with_interruption(RevocationKind::Certificate, certificate, now_us, injector)
     }
 
     pub fn revoke_capability(
@@ -966,8 +1036,25 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         nonce: u64,
         now_us: u64,
     ) -> Result<(), SecurityError> {
+        let mut no_interruption = NoInterruption;
+        self.revoke_capability_with_interruption(capability, actor, nonce, now_us, &mut no_interruption)
+    }
+
+    pub fn revoke_capability_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        capability: &ClusterCapability,
+        actor: NodeId,
+        nonce: u64,
+        now_us: u64,
+        injector: &mut I,
+    ) -> Result<(), SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Modify, None, now_us)?;
-        self.revoke(RevocationKind::Capability, u64_bytes(nonce), now_us)
+        self.revoke_with_interruption(
+            RevocationKind::Capability,
+            u64_bytes(nonce),
+            now_us,
+            injector,
+        )
     }
 
     fn verify_admission(
@@ -1012,11 +1099,12 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         Ok(role)
     }
 
-    fn revoke(
+    fn revoke_with_interruption<I: InterruptionInjector>(
         &mut self,
         kind: RevocationKind,
         id: [u8; 32],
         at_us: u64,
+        injector: &mut I,
     ) -> Result<(), SecurityError> {
         if self.is_revoked(kind, id) {
             return Err(SecurityError::AlreadyRevoked)
@@ -1027,6 +1115,9 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
             .find(|entry| entry.is_none())
             .ok_or(SecurityError::RevocationCapacity)?;
         *slot = Some(RevocationEntry { kind, id, at_us });
+        if injector.checkpoint(CrashDomain::Storage, CrashBoundary::CapabilityChange) {
+            return Err(SecurityError::Interrupted)
+        }
         Ok(())
     }
 
@@ -1297,6 +1388,7 @@ pub enum SecurityError {
     TrustRootCapacity,
     TrustRootNotFound,
     InvalidTrustRoot,
+    Interrupted,
 }
 
 impl IntoStatus for SecurityError {
@@ -1322,6 +1414,7 @@ impl IntoStatus for SecurityError {
             | Self::KeyNotFound
             | Self::SequenceExhausted
             | Self::InvalidTrustRoot => Status::INVALID_ARGUMENT,
+            Self::Interrupted => Status::BUSY,
         }
     }
 }

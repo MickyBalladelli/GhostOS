@@ -1,6 +1,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub const DEFAULT_SERVICE_CAPACITY: usize = 32;
@@ -190,6 +191,7 @@ pub enum SupervisorError {
     NotFound,
     SpawnFailed,
     StaleExit,
+    Interrupted,
 }
 
 impl IntoStatus for SupervisorError {
@@ -204,6 +206,7 @@ impl IntoStatus for SupervisorError {
                 Status::new(Severity::Error, facility::DRIVER, 1, 0)
                     .unwrap_or(Status::INVALID_ARGUMENT)
             }
+            Self::Interrupted => Status::BUSY,
         }
     }
 }
@@ -311,11 +314,21 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         id: ServiceId,
         runtime: &mut R,
     ) -> Result<SupervisorEvent, SupervisorError> {
+        let mut no_interruption = NoInterruption;
+        self.start_with_interruption(id, runtime, &mut no_interruption)
+    }
+
+    pub fn start_with_interruption<R: SupervisorRuntime, I: InterruptionInjector>(
+        &mut self,
+        id: ServiceId,
+        runtime: &mut R,
+        injector: &mut I,
+    ) -> Result<SupervisorEvent, SupervisorError> {
         let slot = self.slot_mut(id)?;
         if slot.state == ServiceState::Running {
             return Err(SupervisorError::AlreadyRegistered);
         }
-        spawn(slot, runtime)
+        spawn(slot, runtime, injector)
     }
 
     pub fn report_exit<R: SupervisorRuntime>(
@@ -387,12 +400,22 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         now_us: u64,
         runtime: &mut R,
     ) -> Result<Option<SupervisorEvent>, SupervisorError> {
+        let mut no_interruption = NoInterruption;
+        self.tick_with_interruption(now_us, runtime, &mut no_interruption)
+    }
+
+    pub fn tick_with_interruption<R: SupervisorRuntime, I: InterruptionInjector>(
+        &mut self,
+        now_us: u64,
+        runtime: &mut R,
+        injector: &mut I,
+    ) -> Result<Option<SupervisorEvent>, SupervisorError> {
         let Some(slot) = self.services.iter_mut().find(|slot| {
             slot.occupied && slot.state == ServiceState::Backoff && now_us >= slot.restart_at_us
         }) else {
             return Ok(None);
         };
-        spawn(slot, runtime).map(Some)
+        spawn(slot, runtime, injector).map(Some)
     }
 
     pub fn status(&self, id: ServiceId) -> Result<ServiceStatus, SupervisorError> {
@@ -457,6 +480,7 @@ fn validate_policy(policy: RestartPolicy) -> Result<(), SupervisorError> {
 fn spawn<R: SupervisorRuntime>(
     slot: &mut ServiceSlot,
     runtime: &mut R,
+    injector: &mut impl InterruptionInjector,
 ) -> Result<SupervisorEvent, SupervisorError> {
     let generation = slot.generation.wrapping_add(1).max(1);
     let process = runtime
@@ -468,6 +492,9 @@ fn spawn<R: SupervisorRuntime>(
         })
         .map_err(|_| SupervisorError::SpawnFailed)?;
     slot.generation = generation;
+    if injector.checkpoint(CrashDomain::CompilerJob, CrashBoundary::ServiceRestart) {
+        return Err(SupervisorError::Interrupted)
+    }
     slot.process = Some(process);
     slot.state = ServiceState::Running;
     Ok(SupervisorEvent::Started {

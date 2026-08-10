@@ -1,5 +1,6 @@
 use super::*;
 use crate::block::BlockStore;
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 
 const SUPERBLOCK_MAGIC: &[u8; 8] = b"SYNFSVOL";
 const TYPE_MAP_MAGIC: &[u8; 8] = b"SYNFSMAP";
@@ -252,6 +253,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn flush(&mut self, image: &mut [u8]) -> Result<VolumeCommit, Error> {
+        let mut no_interruption = NoInterruption;
+        self.flush_with_interruption(image, &mut no_interruption)
+    }
+
+    pub fn flush_with_interruption<I: InterruptionInjector>(
+        &mut self,
+        image: &mut [u8],
+        injector: &mut I,
+    ) -> Result<VolumeCommit, Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
         if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
             return Err(Error::Corrupt);
@@ -285,6 +295,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         write_superblock::<MAX_BLOCKS>(image, bank, superblock)?;
         self.volume_bank = bank;
         self.volume_sequence = next_sequence;
+        if injector.checkpoint(CrashDomain::SynFs, CrashBoundary::Flush) {
+            return Err(Error::Interrupted)
+        }
         Ok(VolumeCommit {
             sequence: next_sequence,
             generation: self.generation,
@@ -298,6 +311,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     pub fn flush_to_device<D: BlockStore>(
         &mut self,
         device: &mut D,
+    ) -> Result<VolumeCommit, Error> {
+        let mut no_interruption = NoInterruption;
+        self.flush_to_device_with_interruption(device, &mut no_interruption)
+    }
+
+    pub fn flush_to_device_with_interruption<D: BlockStore, I: InterruptionInjector>(
+        &mut self,
+        device: &mut D,
+        injector: &mut I,
     ) -> Result<VolumeCommit, Error> {
         if MAX_BLOCKS > (BLOCK_SIZE - 8) * 4 {
             return Err(Error::Corrupt);
@@ -342,6 +364,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         device.flush().map_err(|_| Error::Io)?;
         self.volume_bank = bank;
         self.volume_sequence = next_sequence;
+        if injector.checkpoint(CrashDomain::SynFs, CrashBoundary::Flush) {
+            return Err(Error::Interrupted)
+        }
         Ok(VolumeCommit {
             sequence: next_sequence,
             generation: self.generation,
@@ -351,10 +376,21 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     /// Discard both on-device generation banks after the caller has removed
     /// the volume. This is explicit because discard is destructive.
     pub fn discard_from_device<D: BlockStore>(device: &mut D) -> Result<(), Error> {
+        let mut no_interruption = NoInterruption;
+        Self::discard_from_device_with_interruption(device, &mut no_interruption)
+    }
+
+    pub fn discard_from_device_with_interruption<D: BlockStore, I: InterruptionInjector>(
+        device: &mut D,
+        injector: &mut I,
+    ) -> Result<(), Error> {
         for block in 0..Self::volume_blocks() {
             device.discard_block(block as u64).map_err(|_| Error::Io)?;
         }
         device.flush().map_err(|_| Error::Io)?;
+        if injector.checkpoint(CrashDomain::SynFs, CrashBoundary::Flush) {
+            return Err(Error::Interrupted)
+        }
         device
             .release(Self::volume_blocks() as u64)
             .map_err(|_| Error::Io)

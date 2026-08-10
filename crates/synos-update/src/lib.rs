@@ -16,6 +16,7 @@ pub use patch::{
 pub use synos_ipc::InheritableDescriptor;
 
 use synos_pkg::{PackageDaemon, PackageError, SystemConfiguration};
+use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_status::{IntoStatus, Status};
 use synos_synfs::{CheckpointInfo, Error as SynFsError, SynFs};
 use synos_system_model::RootManifest;
@@ -32,6 +33,7 @@ pub enum UpdateError {
     Rollback(SynFsError),
     Storage(SynFsError),
     HealthCheck(Status),
+    Interrupted,
 }
 
 impl IntoStatus for UpdateError {
@@ -43,6 +45,7 @@ impl IntoStatus for UpdateError {
             Self::Package(error) => error.status(),
             Self::Rollback(error) | Self::Storage(error) => error.status(),
             Self::HealthCheck(status) => status,
+            Self::Interrupted => Status::BUSY,
         }
     }
 }
@@ -172,6 +175,30 @@ impl<const HISTORY: usize> UpdateManager<HISTORY> {
         plan: UpdatePlan,
         health_check: &mut H,
     ) -> Result<UpdateReceipt, UpdateError> {
+        let mut no_interruption = NoInterruption;
+        self.apply_with_interruption(
+            filesystem,
+            packages,
+            plan,
+            health_check,
+            &mut no_interruption,
+        )
+    }
+
+    pub fn apply_with_interruption<
+        const BLOCKS: usize,
+        const PACKAGES: usize,
+        const KEYS: usize,
+        H: HealthCheck,
+        I: InterruptionInjector,
+    >(
+        &mut self,
+        filesystem: &mut SynFs<BLOCKS>,
+        packages: &mut PackageDaemon<PACKAGES, KEYS>,
+        plan: UpdatePlan,
+        health_check: &mut H,
+        injector: &mut I,
+    ) -> Result<UpdateReceipt, UpdateError> {
         if plan.revision() == 0 {
             return Err(UpdateError::InvalidPlan);
         }
@@ -193,7 +220,11 @@ impl<const HISTORY: usize> UpdateManager<HISTORY> {
             .create_checkpoint()
             .map_err(UpdateError::Storage)?;
         let previous_generation = checkpoint.generation;
-        let activation = packages.activate(filesystem, plan.configuration());
+        let activation = packages.activate_with_interruption(
+            filesystem,
+            plan.configuration(),
+            injector,
+        );
         if let Err(error) = activation {
             let _ = filesystem.release_checkpoint(checkpoint.id);
             return Err(error.into());
@@ -218,6 +249,9 @@ impl<const HISTORY: usize> UpdateManager<HISTORY> {
             previous,
             record,
         });
+        if injector.checkpoint(CrashDomain::UpdateRecovery, CrashBoundary::ManifestSlot) {
+            return Err(UpdateError::Interrupted)
+        }
         Ok(UpdateReceipt {
             record,
             rolled_back: false,
