@@ -75,113 +75,113 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         name: "SHOW-NETWORK",
         synopsis: "SHOW NETWORK",
         description: "Show network hostname and bounded interface and route counts.",
-        aliases: "NETWORK",
-        qualifiers: "",
+        aliases: "NETWORK, NETWORKS, SHOW-NETWORKS",
+        qualifiers: "/STRUCTURED /JSON /CONTINUATION /LIMIT",
     },
     NetworkCommandHelp {
         name: "SHOW-INTERFACES",
         synopsis: "SHOW INTERFACES [name]",
         description: "Show all interfaces or one named interface, including address mode, link state, and DHCP lease details.",
-        aliases: "INTERFACES",
-        qualifiers: "",
+        aliases: "SHOW-INTERFACE, INTERFACES",
+        qualifiers: "/STRUCTURED /JSON /CONTINUATION /LIMIT",
     },
     NetworkCommandHelp {
         name: "SHOW-ROUTES",
         synopsis: "SHOW ROUTES",
         description: "Show bounded network routes.",
-        aliases: "ROUTES",
-        qualifiers: "",
+        aliases: "SHOW-ROUTE, ROUTES",
+        qualifiers: "/STRUCTURED /JSON /CONTINUATION /LIMIT",
     },
     NetworkCommandHelp {
         name: "SET-HOSTNAME",
         synopsis: "SET HOSTNAME hostname",
         description: "Set the host name through the versioned network configuration.",
         aliases: "HOSTNAME",
-        qualifiers: "",
+        qualifiers: "/STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "SET-INTERFACE",
         synopsis: "SET INTERFACE name",
         description: "Change interface address mode, address, gateway, MTU, or enabled state.",
         aliases: "INTERFACE",
-        qualifiers: "/ADDRESS /GATEWAY /MTU /ENABLE /DISABLE /DHCP /STATIC",
+        qualifiers: "/ADDRESS /GATEWAY /MTU /ENABLE /DISABLE /DHCP /STATIC /STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "SET-ROUTE",
         synopsis: "SET ROUTE destination",
         description: "Add or replace a route through the versioned network configuration.",
         aliases: "ROUTE",
-        qualifiers: "/GATEWAY /INTERFACE /METRIC",
+        qualifiers: "/GATEWAY /INTERFACE /METRIC /STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "PING",
         synopsis: "PING destination",
         description: "Send bounded ICMP echo requests through the network provider.",
         aliases: "",
-        qualifiers: "/COUNT /TIMEOUT /SIZE /INTERFACE /SOURCE /IPV4 /IPV6",
+        qualifiers: "/COUNT /TIMEOUT /SIZE /INTERFACE /SOURCE /IPV4 /IPV6 /STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "SHOW-NEIGHBORS",
         synopsis: "SHOW NEIGHBORS",
         description: "Show bounded ARP and IPv6 neighbor cache entries.",
-        aliases: "NEIGHBORS",
-        qualifiers: "",
+        aliases: "SHOW-NEIGHBOR, NEIGHBORS, NEIGHBOR",
+        qualifiers: "/STRUCTURED /JSON /CONTINUATION /LIMIT",
     },
     NetworkCommandHelp {
         name: "CLEAR-NEIGHBORS",
         synopsis: "CLEAR NEIGHBORS /CONFIRM",
         description: "Clear the neighbor cache only with explicit confirmation.",
-        aliases: "",
-        qualifiers: "/CONFIRM",
+        aliases: "CLEAR-NEIGHBOR",
+        qualifiers: "/CONFIRM /STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "SHOW-DNS",
         synopsis: "SHOW DNS",
         description: "Show ordered DHCP or static DNS servers, search domains, and bounded query status.",
         aliases: "DNS",
-        qualifiers: "",
+        qualifiers: "/STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "SET-DNS",
         synopsis: "SET DNS /STATIC /SERVERS=addresses",
         description: "Set static resolver overrides or restore DHCP-owned DNS configuration.",
         aliases: "",
-        qualifiers: "/SERVERS /SEARCH /DHCP /STATIC",
+        qualifiers: "/SERVERS /SEARCH /DHCP /STATIC /STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "RESOLVE",
         synopsis: "RESOLVE hostname",
         description: "Resolve a hostname with bounded timeout and IPv4 or IPv6 selection.",
         aliases: "",
-        qualifiers: "/TIMEOUT /IPV4 /IPV6",
+        qualifiers: "/TIMEOUT /IPV4 /IPV6 /STRUCTURED /JSON",
     },
     NetworkCommandHelp {
         name: "SHOW-SOCKETS",
         synopsis: "SHOW SOCKETS",
         description: "Show bounded socket endpoints, ownership, state, queues, and lifetime.",
-        aliases: "SOCKETS",
-        qualifiers: "",
+        aliases: "SHOW-SOCKET, SOCKETS, SOCKET",
+        qualifiers: "/STRUCTURED /JSON /CONTINUATION /LIMIT",
     },
     NetworkCommandHelp {
         name: "SHOW-NETWORK-STATS",
         synopsis: "SHOW NETWORK-STATS",
         description: "Show bounded interface, protocol, DHCP, and firewall counters with reset generations.",
-        aliases: "NETWORK-STATS",
-        qualifiers: "",
+        aliases: "SHOW-NETWORK-STAT, NETWORK-STATS, NETWORK-STAT",
+        qualifiers: "/STRUCTURED /JSON /CONTINUATION /LIMIT",
     },
     NetworkCommandHelp {
         name: "TRACEROUTE",
         synopsis: "TRACEROUTE destination",
         description: "Trace a bounded route using TTL-limited probes and ICMP time-exceeded replies.",
         aliases: "",
-        qualifiers: "",
+        qualifiers: "/STRUCTURED /JSON /CONTINUATION /LIMIT",
     },
     NetworkCommandHelp {
         name: "SHOW-PACKETS",
         synopsis: "SHOW PACKETS",
         description: "Show a capability-gated, bounded packet capture with filter and expiry metadata.",
-        aliases: "PACKETS",
-        qualifiers: "/INTERFACE /DIRECTION /PROTOCOL /MAX",
+        aliases: "SHOW-PACKET, PACKETS, PACKET",
+        qualifiers: "/INTERFACE /DIRECTION /PROTOCOL /MAX /LIMIT /CONTINUATION /STRUCTURED /JSON",
     },
 ];
 
@@ -198,6 +198,53 @@ pub fn command_help(name: &str) -> Option<&'static NetworkCommandHelp> {
                     .any(|alias| !alias.is_empty() && alias.eq_ignore_ascii_case(name))
             })
         })
+}
+
+/// Convert the network command spellings accepted by the shell into the
+/// registered command name.
+pub fn canonical_command_alias(name: &str) -> Option<&'static str> {
+    let canonical = if name.eq_ignore_ascii_case("NETWORK")
+        || name.eq_ignore_ascii_case("NETWORKS")
+        || name.eq_ignore_ascii_case("SHOW-NETWORKS")
+    {
+        "SHOW-NETWORK"
+    } else if name.eq_ignore_ascii_case("SHOW-INTERFACE") {
+        "SHOW-INTERFACES"
+    } else if name.eq_ignore_ascii_case("SHOW-ROUTE") {
+        "SHOW-ROUTES"
+    } else if name.eq_ignore_ascii_case("SHOW-NEIGHBOR") {
+        "SHOW-NEIGHBORS"
+    } else if name.eq_ignore_ascii_case("CLEAR-NEIGHBOR") {
+        "CLEAR-NEIGHBORS"
+    } else if name.eq_ignore_ascii_case("SHOW-SOCKET") {
+        "SHOW-SOCKETS"
+    } else if name.eq_ignore_ascii_case("SHOW-NETWORK-STAT")
+        || name.eq_ignore_ascii_case("NETWORK-STAT")
+        || name.eq_ignore_ascii_case("NETWORK-STATS")
+    {
+        "SHOW-NETWORK-STATS"
+    } else if name.eq_ignore_ascii_case("SHOW-PACKET") {
+        "SHOW-PACKETS"
+    } else if name.eq_ignore_ascii_case("ROUTES") {
+        "SHOW-ROUTES"
+    } else if name.eq_ignore_ascii_case("NEIGHBOR")
+        || name.eq_ignore_ascii_case("NEIGHBORS")
+    {
+        "SHOW-NEIGHBORS"
+    } else if name.eq_ignore_ascii_case("SOCKET") || name.eq_ignore_ascii_case("SOCKETS") {
+        "SHOW-SOCKETS"
+    } else if name.eq_ignore_ascii_case("PACKET") || name.eq_ignore_ascii_case("PACKETS") {
+        "SHOW-PACKETS"
+    } else if name.eq_ignore_ascii_case("DNS") {
+        "SHOW-DNS"
+    } else if name.eq_ignore_ascii_case("HOSTNAME") {
+        "SET-HOSTNAME"
+    } else if name.eq_ignore_ascii_case("ROUTE") {
+        "SET-ROUTE"
+    } else {
+        return None
+    };
+    Some(canonical)
 }
 
 pub type NetworkText = Text<MAX_TOKEN_BYTES>;
@@ -1604,24 +1651,33 @@ fn record_packet_capture_request(
 pub fn register_network_commands<const CAPACITY: usize>(
     registry: &mut CommandRegistry<CAPACITY>,
 ) -> Result<(), Error> {
+    let continuation = qualifier("CONTINUATION", ArgumentKind::Integer)?;
+    let limit = qualifier("LIMIT", ArgumentKind::Integer)?;
     registry.register(
-        CommandSpec::new("SHOW-NETWORK", &[]).map_err(|_| Error::InvalidValue)?,
+        CommandSpec::new("SHOW-NETWORK", &[continuation, limit])
+            .map_err(|_| Error::InvalidValue)?,
         route(SHOW_NETWORK_ROUTE),
     )?;
     registry.register(
         CommandSpec::new(
             "SHOW-INTERFACES",
-            &[positional("INTERFACE", ArgumentKind::Text, false)?],
+            &[
+                positional("INTERFACE", ArgumentKind::Text, false)?,
+                continuation,
+                limit,
+            ],
         )
         .map_err(|_| Error::InvalidValue)?,
         route(SHOW_INTERFACES_ROUTE),
     )?;
     registry.register(
-        CommandSpec::new("SHOW-ROUTES", &[]).map_err(|_| Error::InvalidValue)?,
+        CommandSpec::new("SHOW-ROUTES", &[continuation, limit])
+            .map_err(|_| Error::InvalidValue)?,
         route(SHOW_ROUTES_ROUTE),
     )?;
     registry.register(
-        CommandSpec::new("SHOW-NEIGHBORS", &[]).map_err(|_| Error::InvalidValue)?,
+        CommandSpec::new("SHOW-NEIGHBORS", &[continuation, limit])
+            .map_err(|_| Error::InvalidValue)?,
         route(SHOW_NEIGHBORS_ROUTE),
     )?;
     let confirm = qualifier("CONFIRM", ArgumentKind::Boolean)?;
@@ -1653,17 +1709,18 @@ pub fn register_network_commands<const CAPACITY: usize>(
         route(RESOLVE_ROUTE),
     )?;
     registry.register(
-        CommandSpec::new("SHOW-SOCKETS", &[]).map_err(|_| Error::InvalidValue)?,
+        CommandSpec::new("SHOW-SOCKETS", &[continuation, limit])
+            .map_err(|_| Error::InvalidValue)?,
         route(SHOW_SOCKETS_ROUTE),
     )?;
     registry.register(
-        CommandSpec::new("SHOW-NETWORK-STATS", &[])
+        CommandSpec::new("SHOW-NETWORK-STATS", &[continuation, limit])
             .map_err(|_| Error::InvalidValue)?,
         route(SHOW_NETWORK_STATS_ROUTE),
     )?;
     let destination = positional("DESTINATION", ArgumentKind::Text, true)?;
     registry.register(
-        CommandSpec::new("TRACEROUTE", &[destination])
+        CommandSpec::new("TRACEROUTE", &[destination, continuation, limit])
             .map_err(|_| Error::InvalidValue)?,
         route(TRACEROUTE_ROUTE),
     )?;
@@ -1673,7 +1730,10 @@ pub fn register_network_commands<const CAPACITY: usize>(
     let protocol = qualifier("PROTOCOL", ArgumentKind::Text)?;
     let max = qualifier("MAX", ArgumentKind::Integer)?;
     registry.register(
-        CommandSpec::new("SHOW-PACKETS", &[interface, direction, protocol, max])
+        CommandSpec::new(
+            "SHOW-PACKETS",
+            &[interface, direction, protocol, max, continuation, limit],
+        )
             .map_err(|_| Error::InvalidValue)?,
         route(SHOW_PACKETS_ROUTE),
     )?;

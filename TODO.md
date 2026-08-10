@@ -426,7 +426,7 @@ SynOS VMs communicate and obtain distinct leases.
       accepts interface, direction, protocol, and record-limit filters, and
       returns fixed-size metadata with explicit truncation, payload-redaction,
       dropped-record, and expiry fields.
-- [ ] Add command aliases and help entries consistently for singular/plural
+- [x] Add command aliases and help entries consistently for singular/plural
       network nouns, structured output, JSON output, and continuation limits.
 
 ### End-to-end proof

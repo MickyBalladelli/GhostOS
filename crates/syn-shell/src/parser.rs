@@ -77,6 +77,10 @@ impl CommandCall {
     pub fn json(&self) -> bool {
         matches!(self.get("JSON"), Some(Value::Boolean(true)))
     }
+
+    pub fn structured(&self) -> bool {
+        matches!(self.get("STRUCTURED"), Some(Value::Boolean(true)))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -452,6 +456,8 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name = Text::new("SHOW-INTERFACES")?;
         } else if command_name.as_str().eq_ignore_ascii_case("NETWORK") {
             command_name = Text::new("SHOW-NETWORK")?;
+        } else if let Some(canonical) = crate::network::canonical_command_alias(command_name.as_str()) {
+            command_name = Text::new(canonical)?;
         }
         let registration = self.find_registration(command_name.as_str())?;
         let mut arguments = [None; MAX_COMMAND_ARGUMENTS];
@@ -571,8 +577,8 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 _ => return Err(Error::InvalidValue),
             };
             (spec, raw)
-        } else if name.eq_ignore_ascii_case("JSON") {
-            let spec = ArgumentSpec::new("JSON", ArgumentKind::Boolean, false, false)
+        } else if name.eq_ignore_ascii_case("JSON") || name.eq_ignore_ascii_case("STRUCTURED") {
+            let spec = ArgumentSpec::new(name, ArgumentKind::Boolean, false, false)
                 .map_err(|_| Error::InvalidValue)?;
             let raw = explicit.unwrap_or("true");
             (spec, raw)
@@ -690,6 +696,7 @@ fn is_known_qualifier(command: &CommandSpec, qualifier: &str) -> bool {
         .split_once('=')
         .map_or((qualifier, None), |(name, value)| (name, Some(value)));
     name.eq_ignore_ascii_case("JSON")
+        || name.eq_ignore_ascii_case("STRUCTURED")
         || command
         .arguments()
         .any(|spec| spec.name.as_str().eq_ignore_ascii_case(name))
