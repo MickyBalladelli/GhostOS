@@ -117,12 +117,6 @@ fn application_signature_rotation_replay_and_rollback_are_fenced() {
     assert_eq!(replay.package, old_package);
     assert_eq!(daemon.application_manifest(old_package), Some(old_metadata));
     let old_receipt = daemon.authorize_instantiation(old_package).unwrap();
-    daemon.revoke_key(old_key.id()).unwrap();
-    assert_eq!(
-        daemon.validate_instantiation(old_receipt),
-        Err(PackageError::InstantiationDenied)
-    );
-
     daemon
         .install_application_bundle(&mut filesystem, &new_app, &mut verification)
         .unwrap();
@@ -137,6 +131,11 @@ fn application_signature_rotation_replay_and_rollback_are_fenced() {
             ModelError::StaleRevision
         )))
     ));
+    daemon.revoke_key(old_key.id()).unwrap();
+    assert_eq!(
+        daemon.validate_instantiation(old_receipt),
+        Err(PackageError::InstantiationDenied)
+    );
 }
 
 #[test]
