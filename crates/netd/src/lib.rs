@@ -9,6 +9,7 @@ mod packet;
 mod protocol;
 mod service;
 mod stack;
+mod transport;
 
 pub use memory::{MappedRegion, MemoryError, SharedMemory};
 pub use capture::{CaptureDirection, CaptureKind, CaptureRecord, PacketCapture, MAX_CAPTURE_BYTES,
@@ -37,3 +38,7 @@ pub use service::{
     SocketRights, SocketState,
 };
 pub use stack::{PollActivity, SmolTcpStack, TcpBuffers, TcpHandle};
+pub use transport::{
+    DhcpIngress, EthernetDhcpTransport, DHCP_BROADCAST_IPV4, DHCP_BROADCAST_MAC,
+    DHCP_MIN_ETHERNET_FRAME, DHCP_UNSPECIFIED_IPV4,
+};

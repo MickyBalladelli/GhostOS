@@ -8,6 +8,7 @@ use crate::capture::{CaptureDirection, PacketCapture, MAX_CAPTURE_RECORDS};
 use crate::firewall::{
     CapabilityRight, Direction, FirewallRule, Ipv4Cidr, PortRange, Protocol, RateLimit, RuleAction,
 };
+use crate::transport::DhcpIngress;
 use synos_time_sync::MonotonicClock;
 
 pub const DHCP_CLIENT_PORT: u16 = 68;
@@ -284,6 +285,7 @@ pub struct DhcpClientView {
     pub next_action_ms: Option<u64>,
     pub preserved: Option<StaticSnapshot>,
     pub network_error: Option<DhcpNetworkError>,
+    pub server_mac: Option<[u8; 6]>,
 }
 
 impl DhcpClientView {
@@ -313,6 +315,7 @@ pub struct DhcpClient {
     bound_at_ms: Option<u64>,
     preserved: Option<StaticSnapshot>,
     last_network_error: Option<DhcpNetworkError>,
+    server_mac: Option<[u8; 6]>,
     txid_seed: u32,
 }
 
@@ -339,6 +342,7 @@ impl DhcpClient {
             bound_at_ms: None,
             preserved: None,
             last_network_error: None,
+            server_mac: None,
             txid_seed: xid_seed,
         })
     }
@@ -386,11 +390,16 @@ impl DhcpClient {
             next_action_ms: self.next_action_ms,
             preserved: self.preserved,
             network_error: self.last_network_error,
+            server_mac: self.server_mac,
         }
     }
 
     pub const fn network_error(&self) -> Option<DhcpNetworkError> {
         self.last_network_error
+    }
+
+    pub const fn server_mac(&self) -> Option<[u8; 6]> {
+        self.server_mac
     }
 
     pub fn take_network_error(&mut self) -> Option<DhcpNetworkError> {
@@ -589,6 +598,20 @@ impl DhcpClient {
         result
     }
 
+    pub fn handle_frame<R: DhcpLeaseRuntime>(
+        &mut self,
+        frame: DhcpIngress<'_>,
+        now_ms: u64,
+        runtime: &mut R,
+    ) -> Result<(), DhcpError> {
+        let source_mac = frame.source_mac;
+        let result = self.handle_packet(frame.payload, now_ms, runtime);
+        if result.is_ok() && source_mac != [0; 6] && source_mac != [0xff; 6] {
+            self.server_mac = Some(source_mac);
+        }
+        result
+    }
+
     pub fn handle_packet_with_clock<C: MonotonicClock, R: DhcpLeaseRuntime>(
         &mut self,
         packet: &[u8],
@@ -621,7 +644,7 @@ impl DhcpClient {
             self.mac,
             lease.address,
             lease.server_id,
-            [0xff; 6],
+            self.server_mac.unwrap_or([0xff; 6]),
             DHCP_CLIENT_PORT,
             DHCP_SERVER_PORT,
             &packet[..length],
@@ -737,6 +760,7 @@ impl DhcpClient {
         }
         self.lease = None;
         self.bound_at_ms = None;
+        self.server_mac = None;
         Ok(())
     }
 
@@ -832,7 +856,7 @@ impl DhcpClient {
             self.mac,
             lease.address,
             lease.server_id,
-            [0xff; 6],
+            self.server_mac.unwrap_or([0xff; 6]),
             DHCP_CLIENT_PORT,
             DHCP_SERVER_PORT,
             &packet[..length],

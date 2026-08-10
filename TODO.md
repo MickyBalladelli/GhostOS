@@ -344,7 +344,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 ### DHCP client integration
 
-- [ ] Connect `DhcpClient` to the real Ethernet/IPv4/UDP transport on ports 67
+- [x] Connect `DhcpClient` to the real Ethernet/IPv4/UDP transport on ports 67
       and 68, including broadcast source address and destination MAC handling.
 - [ ] Drive DHCP polling from the kernel monotonic clock and network service
       scheduler without blocking the shell or starving other sockets.
