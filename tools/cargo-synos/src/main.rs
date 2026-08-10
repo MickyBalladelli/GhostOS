@@ -30,7 +30,7 @@ cargo synos compile --manifest-path PATH --bin NAME
 cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH]
 cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH]
 cargo synos acceptance [--target x86_64|aarch64] [--release]
-    [--clean-root PATH] [--skip-build] [--json]
+    [--clean-root PATH] [--skip-build|--boot-only] [--json]
 cargo synos toolchain package --key PATH --output PATH
     [--stage 0|1|2] [--target x86_64|aarch64] [--root PATH] [--rust-version TEXT]
 cargo synos toolchain verify --bundle PATH --key PATH

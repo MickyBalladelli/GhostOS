@@ -276,6 +276,12 @@ also builds the no-std hello world, runs the host std hello world, compiles
 the build-script/proc-macro fixture, runs two isolated builds concurrently,
 builds the production workspace for the selected target and Aarch64, checks
 reproducibility, and verifies an application bundle.
+On x86_64 it also boots the real kernel in the VM and writes
+`booted-synos-compiler-acceptance.json` plus the boot serial transcript. The
+artifact records the linked native runtime PAL, signed `synos-rustd` image,
+ELF mapping and executable-page measurement, static-only dynamic-artifact
+cleanup, and init service generation. Use `--boot-only` to rerun this proof
+without the host build matrix.
 
 ## Existing pieces to connect
 

@@ -122,11 +122,16 @@ signed/corrupt/unsigned package handling, hello-world compilation and host
 execution, build scripts, proc macros, application bundles, production Ring 3
 builds, reproducibility, and Aarch64 cross-builds. Use `--skip-build` for the
 fast in-memory contract pass and `--json` for local evidence records. Pass `--clean-root`
-to choose a new artifact root explicitly.
+to choose a new artifact root explicitly. Use `--boot-only` to run just the
+booted native compiler artifact without the longer host build matrix.
 
-The boot contract is now wired, but the actual native executable still needs
-the SynOS `std` port, process loader, and service image described in
-`TODO-compiler.md`.
+The acceptance gate also produces a booted evidence artifact under its chosen
+root. It boots the real kernel in the VM, builds the native `synos-rustd`
+process image with the runtime PAL linked in, signs and authorizes that image,
+maps and measures it through `synos-app`, verifies static-only dynamic artifact
+cleanup, starts the service through init, and preserves the kernel serial log.
+The artifact is the acceptance boundary for the native `std` PAL and process
+image; it does not treat a host Cargo run as an in-guest execution result.
 
 The compiler service boundary now includes the operational Ring 3 path:
 signed local-registry pins are resolved by content ID, source reads require a

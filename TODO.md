@@ -190,9 +190,13 @@ evidence.
 
 ## P1: Finish the native compiler proof
 
-- [ ] Replace the host/service contract claim with a booted SynOS acceptance
+- [x] Replace the host/service contract claim with a booted SynOS acceptance
       artifact for the real native `std`, executable loader, dynamic artifact
       policy, and `synos-rustd` process image.
+      Progress: `cargo synos acceptance` now boots the real kernel in the VM,
+      builds and signs the native `synos-rustd` ELF, maps and measures it with
+      the executable loader, proves static-only dynamic artifact cleanup, and
+      writes `booted-synos-compiler-acceptance.json` with serial evidence.
 - [ ] Compile and run the same small `std` application entirely inside a
       booted SynOS instance, then preserve its source, package, and audit
       evidence across reboot.

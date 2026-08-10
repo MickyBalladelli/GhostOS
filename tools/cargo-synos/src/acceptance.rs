@@ -11,13 +11,16 @@ use synos_rustd::{
 };
 use synos_system_model::ContentId;
 
+#[path = "booted.rs"]
+mod booted;
+
 pub fn run(arguments: &[String]) -> Result<(), String> {
     let options = AcceptanceOptions::parse(arguments)?;
     let mut results = Vec::new();
     contract_checks(&mut results)?;
     signed_bundle_check(&mut results)?;
 
-    if !options.skip_build {
+    if !options.skip_build || options.boot_only {
         let root = options
             .clean_root
             .clone()
@@ -29,7 +32,17 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
             ));
         }
         fs::create_dir_all(&root).map_err(|error| format!("could not create {}: {error}", root.display()))?;
-        host_checks(&mut results, &options, &root)?;
+        if !options.boot_only {
+            host_checks(&mut results, &options, &root)?;
+        }
+        if options.target == Target::X86_64 {
+            let workspace = workspace_root()?;
+            record(
+                &mut results,
+                "booted-synos-native-compiler",
+                booted::run(&workspace, &root, options.release),
+            );
+        }
     }
 
     let failed = results.iter().filter(|result| !result.ok).count();
@@ -62,6 +75,7 @@ struct AcceptanceOptions {
     release: bool,
     clean_root: Option<PathBuf>,
     skip_build: bool,
+    boot_only: bool,
     json: bool,
 }
 
@@ -72,6 +86,7 @@ impl AcceptanceOptions {
             release: false,
             clean_root: None,
             skip_build: false,
+            boot_only: false,
             json: false,
         };
         let mut index = 0;
@@ -97,6 +112,10 @@ impl AcceptanceOptions {
                 }
                 "--skip-build" => {
                     options.skip_build = true;
+                    index += 1;
+                }
+                "--boot-only" => {
+                    options.boot_only = true;
                     index += 1;
                 }
                 "--json" => {

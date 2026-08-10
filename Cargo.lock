@@ -55,10 +55,15 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 name = "cargo-synos"
 version = "0.1.0"
 dependencies = [
+ "synos-app",
  "synos-compiler",
+ "synos-init",
  "synos-pkg",
+ "synos-runtime",
  "synos-rustd",
+ "synos-synfs",
  "synos-system-model",
+ "synos-vm",
 ]
 
 [[package]]
@@ -830,6 +835,7 @@ dependencies = [
  "synos-init",
  "synos-observability",
  "synos-pkg",
+ "synos-runtime",
  "synos-status",
  "synos-synfs",
  "synos-system-model",
