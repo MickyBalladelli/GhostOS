@@ -172,8 +172,11 @@ evidence.
       deterministic state-machine coverage for `AsyncQueue`, compiler deadline
       and cancellation boundaries, and supervisor restart generation fencing
       and storm limits.
-- [ ] Define memory, CPU, IPC, storage, network, log, and audit quotas in one
-      policy vocabulary and expose consumption and rejection reasons.
+- [x] Define memory, CPU, IPC, storage, network, log, and audit quotas in one
+      policy vocabulary and expose consumption and rejection reasons. Added
+      the fixed-size `QuotaPolicy`, `QuotaLedger`, atomic batch accounting,
+      usage inspection, and structured rejection/status mapping in the shared
+      system model.
 - [ ] Add backpressure tests for every producer/consumer queue and document
       whether each operation blocks, drops, retries, or fails fast.
 - [ ] Add bounded soak runs for boot, shell, filesystem, network, compiler,
