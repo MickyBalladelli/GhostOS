@@ -137,6 +137,11 @@ def main() -> int:
     check_crate_catalog(errors)
 
     run_check(
+        "roadmap metadata",
+        [sys.executable, str(ROOT / "scripts" / "validate-roadmap-metadata.py")],
+        errors,
+    )
+    run_check(
         "test inventory",
         [sys.executable, str(ROOT / "scripts" / "validate-test-inventory.py")],
         errors,
