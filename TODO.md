@@ -136,8 +136,11 @@ evidence.
       direct `capability_trace_round_trips_every_operation_domain_and_stage`
       regression test. `cargo check` passed for all affected crates and
       `cargo check -p synos-observability --tests` passed on 2026-08-10.
-- [ ] Add confused-deputy tests where a service receives a valid capability
+- [x] Add confused-deputy tests where a service receives a valid capability
       for the wrong object, namespace, generation, tenant, or operation.
+      Added focused regressions for logical namespaces, stale kernel
+      generations, borrowed-resource object and tenant binding, federation
+      epochs, and operation rights.
 - [ ] Add key rotation, revocation, replay, rollback, downgrade, and trust-root
       recovery tests for boot, packages, applications, compiler toolchains,
       cluster membership, and confidential-computing evidence.
