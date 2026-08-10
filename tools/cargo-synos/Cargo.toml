@@ -13,6 +13,7 @@ synos-pkg = { path = "../../crates/pkg" }
 synos-app = { path = "../../crates/app" }
 synos-init = { path = "../../crates/init" }
 synos-rustd = { path = "../../crates/synos-rustd" }
+synos-status = { path = "../../crates/status" }
 synos-runtime = { path = "../../crates/runtime" }
 synos-synfs = { path = "../../crates/synfs" }
 synos-system-model = { path = "../../crates/system-model" }

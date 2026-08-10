@@ -61,6 +61,7 @@ dependencies = [
  "synos-pkg",
  "synos-runtime",
  "synos-rustd",
+ "synos-status",
  "synos-synfs",
  "synos-system-model",
  "synos-vm",

@@ -592,6 +592,10 @@ impl Compiler {
         ContentId::hash(&material)
     }
 
+    pub fn toolchain_content_id(&self) -> ContentId {
+        self.toolchain_identity()
+    }
+
     fn strip_image(&self, input: &Path, output: &Path) -> Result<(), CompileError> {
         let stripper = self.stripper.as_ref().ok_or(CompileError::StripperUnavailable)?;
         let status = Command::new(stripper)

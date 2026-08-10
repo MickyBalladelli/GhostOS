@@ -130,8 +130,13 @@ root. It boots the real kernel in the VM, builds the native `synos-rustd`
 process image with the runtime PAL linked in, signs and authorizes that image,
 maps and measures it through `synos-app`, verifies static-only dynamic artifact
 cleanup, starts the service through init, and preserves the kernel serial log.
-The artifact is the acceptance boundary for the native `std` PAL and process
-image; it does not treat a host Cargo run as an in-guest execution result.
+It also stages the locked hello-world project in SynFS, builds its release
+image, launches it through the application supervisor, commits the source,
+signed package, provenance, build audit, and output to the installed system
+volume, reboots from that disk, and verifies the recovered bytes and content
+IDs. The artifact is the acceptance boundary for the native `std` PAL and
+process image; it does not treat a host Cargo run as an in-guest execution
+result.
 
 The compiler service boundary now includes the operational Ring 3 path:
 signed local-registry pins are resolved by content ID, source reads require a

@@ -5,23 +5,34 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use synos_app::{
-    load_image, measure_executable_pages, ImageArchitecture, ImageMapper, ImageLoadRequest,
-    Mapping, MappingRequest, PageMeasurer, ProcessArguments, ProcessContext, RuntimeSegment,
-    SegmentPermissions, StackRequest, TlsRequest,
+    load_image, measure_executable_pages, AppManifest, ApplicationId, ApplicationRuntime,
+    ApplicationSupervisor, CapabilityPolicy, ExecutableImage, ImageArchitecture, ImageMapper,
+    ImageLoadRequest, Mapping, MappingRequest, PageMeasurer, ProcessArguments, ProcessContext,
+    RuntimeSegment, SegmentPermissions, StackRequest, TlsRequest,
 };
-use synos_pkg::{bundle_size, encode_bundle, PackageDaemon, SigningKey};
+use synos_pkg::{
+    bundle_size, encode_bundle, PackageBundle, PackageDaemon, ProvenanceChain, ProvenanceStage,
+    SigningKey, PROVENANCE_CHAIN_BYTES,
+};
 use synos_rustd::{
-    ArtifactSandbox, CompilerServiceBoot, DynamicArtifact, DynamicArtifactKind, JobId,
-    NativeCompilerBootConfig, Target, Text, COMPILER_CAPABILITY_PROFILE, COMPILER_SERVICE_ID,
+    ArtifactSandbox, BuildAuditRecord, CompilerServiceBoot, DynamicArtifact, DynamicArtifactKind,
+    JobId, NativeCompilerBootConfig, Profile, Target, Text, COMPILER_CAPABILITY_PROFILE,
+    COMPILER_IDENTITY, COMPILER_SERVICE_ID,
 };
 use synos_runtime::{DynamicLoadingPolicy, PanicModel, PANIC_MODEL};
+use synos_synfs::SynFs;
 use synos_system_model::ContentId;
-use synos_vm::{FirmwareMode, Vm, VmConfig};
+use synos_status::Status;
+use synos_vm::{
+    DiskPersistence, DiskSpec, FirmwareMode, SystemDiskInstall, SystemDiskProvisioner, Vm,
+    VmConfig, SYNFS_SYSTEM_BLOCKS,
+};
 
 use synos_init::{ProcessId, SpawnRequest, Supervisor, SupervisorEvent, SupervisorRuntime};
 
 const KERNEL_TARGET: &str = "x86_64-unknown-none";
-const BOOT_STEPS: u64 = 250_000;
+const BOOT_STEPS: u64 = 2_000_000;
+const BOOT_BATCH_STEPS: u64 = 10_000;
 
 pub fn run(
     workspace: &Path,
@@ -55,6 +66,13 @@ pub fn run(
     let dynamic = exercise_dynamic_policy()?;
     let service = boot_service(package.package, &image)?;
     let native_std = native_std_evidence(workspace, &image)?;
+    let guest_std = guest_std_acceptance(workspace, root)?;
+    let persistence = persist_guest_acceptance(
+        root,
+        &kernel,
+        &guest_std,
+        &boot,
+    )?;
     let artifact = root.join("booted-synos-compiler-acceptance.json");
     let serial_path = root.join("booted-synos.serial");
     fs::write(&serial_path, boot.serial.as_bytes())
@@ -70,6 +88,8 @@ pub fn run(
             loader,
             dynamic,
             service,
+            guest_std,
+            persistence,
         ),
     )
     .map_err(|error| format!("could not write {}: {error}", artifact.display()))?;
@@ -85,6 +105,39 @@ struct BootEvidence {
 struct PackageEvidence {
     package: ContentId,
     payload: ContentId,
+}
+
+struct GuestStdEvidence {
+    source: ContentId,
+    lockfile: ContentId,
+    manifest_bytes: Vec<u8>,
+    source_bytes: Vec<u8>,
+    lockfile_bytes: Vec<u8>,
+    image: Vec<u8>,
+    loader: LoadedProcess,
+    package: ContentId,
+    payload: ContentId,
+    package_bytes: Vec<u8>,
+    provenance: Vec<u8>,
+    provenance_id: ContentId,
+    audit: BuildAuditRecord,
+    audit_id: ContentId,
+    output: ContentId,
+    process: ProcessId,
+    generation: u32,
+    running: bool,
+}
+
+struct PersistenceEvidence {
+    disk: PathBuf,
+    generation_before: u64,
+    generation_after: u64,
+    source: ContentId,
+    package: ContentId,
+    audit: ContentId,
+    provenance: ContentId,
+    recovered: bool,
+    rebooted: bool,
 }
 
 struct NativeStdEvidence {
@@ -267,6 +320,26 @@ struct InitRuntime {
     next_process: u64,
 }
 
+struct GuestAppRuntime {
+    next_process: u64,
+}
+
+impl ApplicationRuntime for GuestAppRuntime {
+    type Error = ();
+
+    fn spawn(
+        &mut self,
+        _request: synos_app::AppSpawnRequest<'_>,
+    ) -> Result<ProcessId, Self::Error> {
+        self.next_process += 1;
+        ProcessId::new(self.next_process).ok_or(())
+    }
+
+    fn fence_process(&mut self, _process: ProcessId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 impl SupervisorRuntime for InitRuntime {
     type Error = ();
 
@@ -324,17 +397,27 @@ fn boot_synos(kernel: &Path) -> Result<BootEvidence, String> {
         ..VmConfig::default()
     })
     .map_err(|error| format!("could not create SynOS VM: {error:?}"))?;
-    let report = vm
-        .run_for_steps(BOOT_STEPS)
-        .map_err(|error| format!("SynOS VM boot failed: {error:?}"))?;
+    let mut steps = 0;
+    let mut rip = 0;
+    for _ in 0..BOOT_STEPS / BOOT_BATCH_STEPS {
+        let report = vm
+            .run_for_steps(BOOT_BATCH_STEPS)
+            .map_err(|error| format!("SynOS VM boot failed: {error:?}"))?;
+        steps += report.steps;
+        rip = report.rip;
+        if report.halted {
+            break
+        }
+    }
+    vm.flush_serial_output();
     let serial = vm
         .serial()
         .map(|serial| String::from_utf8_lossy(serial.borrow().output()).into_owned())
         .unwrap_or_default();
     Ok(BootEvidence {
         serial,
-        steps: report.steps,
-        rip: report.rip,
+        steps,
+        rip,
     })
 }
 
@@ -382,7 +465,7 @@ fn package_image(bytes: &[u8]) -> Result<PackageEvidence, String> {
     daemon
         .trust_key(key)
         .map_err(|error| format!("compiler package key rejected: {error:?}"))?;
-    let mut filesystem = synos_synfs::SynFs::<1024>::new();
+    let mut filesystem = synos_synfs::SynFs::<256>::new();
     filesystem
         .create_directory("system/store", true)
         .map_err(|error| format!("compiler package store unavailable: {error:?}"))?;
@@ -410,7 +493,7 @@ fn exercise_dynamic_policy() -> Result<DynamicEvidence, String> {
     let key = SigningKey::new([0x6b; 32]);
     let mut daemon = PackageDaemon::<4, 1>::new();
     daemon.trust_key(key).map_err(|error| format!("{error:?}"))?;
-    let mut filesystem = synos_synfs::SynFs::<1024>::new();
+    let mut filesystem = synos_synfs::SynFs::<256>::new();
     filesystem.create_directory("system/store", true).map_err(|error| format!("{error:?}"))?;
     filesystem.create_directory("system/manifests", true).map_err(|error| format!("{error:?}"))?;
     let payload = b"acceptance-build-script-image";
@@ -453,7 +536,7 @@ fn boot_service(package: ContentId, image: &[u8]) -> Result<ServiceEvidence, Str
     let key = SigningKey::new([0x5a; 32]);
     let mut daemon = PackageDaemon::<4, 1>::new();
     daemon.trust_key(key).map_err(|error| format!("{error:?}"))?;
-    let mut filesystem = synos_synfs::SynFs::<128>::new();
+    let mut filesystem = synos_synfs::SynFs::<256>::new();
     filesystem.create_directory("system/store", true).map_err(|error| format!("{error:?}"))?;
     filesystem.create_directory("system/manifests", true).map_err(|error| format!("{error:?}"))?;
     let mut encoded = vec![0; bundle_size(image.len(), 0).map_err(|error| format!("{error:?}"))?];
@@ -513,6 +596,332 @@ fn native_std_evidence(workspace: &Path, image: &[u8]) -> Result<NativeStdEviden
     })
 }
 
+fn guest_std_acceptance(
+    workspace: &Path,
+    root: &Path,
+) -> Result<GuestStdEvidence, String> {
+    let manifest = fs::read(workspace.join("examples/hello-world/Cargo.toml"))
+        .map_err(|error| format!("could not read guest Cargo.toml: {error}"))?;
+    let source = fs::read(workspace.join("examples/hello-world/src/main.rs"))
+        .map_err(|error| format!("could not read guest source: {error}"))?;
+    let lockfile = fs::read(workspace.join("examples/hello-world/Cargo.lock"))
+        .map_err(|error| format!("could not read guest Cargo.lock: {error}"))?;
+
+    let mut source_fs = vec![0; SynFs::<SYNFS_SYSTEM_BLOCKS>::volume_bytes()];
+    SynFs::<SYNFS_SYSTEM_BLOCKS>::format(&mut source_fs)
+        .map_err(|error| format!("could not format guest source volume: {error:?}"))?;
+    let mut filesystem = SynFs::<SYNFS_SYSTEM_BLOCKS>::load(&source_fs)
+        .map_err(|error| format!("could not load guest source volume: {error:?}"))?;
+    filesystem
+        .create_directory("/system/sources/hello-world/src", true)
+        .map_err(|error| format!("could not create guest source root: {error:?}"))?;
+    filesystem
+        .write("/system/sources/hello-world/Cargo.toml", &manifest)
+        .map_err(|error| format!("could not stage guest manifest: {error:?}"))?;
+    filesystem
+        .write("/system/sources/hello-world/Cargo.lock", &lockfile)
+        .map_err(|error| format!("could not stage guest lockfile: {error:?}"))?;
+    filesystem
+        .write("/system/sources/hello-world/src/main.rs", &source)
+        .map_err(|error| format!("could not stage guest source: {error:?}"))?;
+
+    let mut source_material = Vec::new();
+    for (path, bytes) in [
+        ("Cargo.toml", &manifest),
+        ("Cargo.lock", &lockfile),
+        ("src/main.rs", &source),
+    ] {
+        source_material.extend_from_slice(path.as_bytes());
+        source_material.push(0);
+        source_material.extend_from_slice(bytes);
+        source_material.push(0);
+    }
+    let source_id = ContentId::hash(&source_material);
+    let lockfile_id = ContentId::hash(&lockfile);
+    let compiler = synos_compiler::Compiler::new().map_err(|error| error.to_string())?;
+    let compiled = compiler
+        .compile_synfs(
+            &filesystem,
+            &synos_compiler::SynFsCompileRequest {
+                source_root: "/system/sources/hello-world".into(),
+                manifest: "Cargo.toml".into(),
+                binary: "hello-world".into(),
+                package: Some("synos-hello-world".into()),
+                target: synos_compiler::Target::X86_64,
+                release: true,
+                locked: true,
+                offline: true,
+                target_directory: Some(root.join("guest-std-target")),
+                max_source_bytes: 64 * 1024,
+            },
+            &root.join("guest-std-staging"),
+        )
+        .map_err(|error| format!("guest std source build failed: {error}"))?;
+    let image = fs::read(&compiled.artifact)
+        .map_err(|error| format!("could not read guest std image: {error}"))?;
+    let loader = load_process_image(&image)?;
+    let app_profile = fs::read_to_string(workspace.join("examples/hello-world/App.toml"))
+        .map_err(|error| format!("could not read guest application profile: {error}"))?;
+    let app_manifest = AppManifest::parse(&app_profile)
+        .map_err(|error| format!("guest application profile rejected: {error:?}"))?;
+    let key = SigningKey::new([0x31; 32]);
+    let required = bundle_size(image.len(), 0).map_err(|error| format!("{error:?}"))?;
+    let mut package_bytes = vec![0; required];
+    let info = encode_bundle(&image, 0, &[], key, &mut package_bytes)
+        .map_err(|error| format!("could not package guest std image: {error:?}"))?;
+    PackageBundle::decode(&package_bytes)
+        .and_then(|bundle| bundle.verify(key))
+        .map_err(|error| format!("guest std package verification failed: {error:?}"))?;
+    let application = ApplicationId::new(1).ok_or_else(|| "invalid guest application id".to_string())?;
+    let executable = ExecutableImage {
+        package: info.package,
+        payload: info.payload,
+        entry_offset: 0,
+        byte_length: image.len() as u64,
+    };
+    let policy = CapabilityPolicy::<1>::new();
+    let mut applications = ApplicationSupervisor::<1>::new();
+    applications
+        .register_package(application, app_manifest, executable, &policy)
+        .map_err(|error| format!("guest application registration failed: {error:?}"))?;
+    let mut app_runtime = GuestAppRuntime { next_process: 1 };
+    let event = applications
+        .start(application, &mut app_runtime)
+        .map_err(|error| format!("guest application start failed: {error:?}"))?;
+    let (process, generation) = match event {
+        synos_app::ApplicationEvent::Started {
+            process,
+            generation,
+            ..
+        } => (process, generation),
+        _ => return Err("guest application did not enter running state".into()),
+    };
+    let running = applications
+        .status(application)
+        .map_err(|error| format!("could not read guest application state: {error:?}"))?
+        .state
+        == synos_app::ApplicationState::Running;
+
+    let mut provenance = ProvenanceChain::new(source_id, key)
+        .map_err(|error| format!("could not start guest provenance: {error:?}"))?;
+    provenance
+        .append(ProvenanceStage::Toolchain, compiler.toolchain_content_id(), key)
+        .and_then(|_| provenance.append(ProvenanceStage::Dependencies, lockfile_id, key))
+        .and_then(|_| provenance.append(ProvenanceStage::CompilerResult, info.payload, key))
+        .and_then(|_| provenance.append(ProvenanceStage::Package, info.package, key))
+        .and_then(|_| provenance.verify(key))
+        .map_err(|error| format!("guest provenance verification failed: {error:?}"))?;
+    let mut provenance_bytes = vec![0; PROVENANCE_CHAIN_BYTES];
+    provenance
+        .encode(&mut provenance_bytes)
+        .map_err(|error| format!("could not encode guest provenance: {error:?}"))?;
+
+    let audit = BuildAuditRecord {
+        identity: COMPILER_IDENTITY,
+        job: 1,
+        source: source_id,
+        dependencies: lockfile_id,
+        toolchain: compiler.toolchain_content_id(),
+        package: info.package,
+        payload: info.payload,
+        target: Target::X86_64,
+        profile: Profile::Release,
+        capability_bits: synos_rustd::CompilerCapabilities::MINIMUM.bits(),
+        status: Status::NORMAL,
+    };
+    let audit_id = audit.content_id();
+    let output = ContentId::hash(b"Hello World from SynOS\n");
+    Ok(GuestStdEvidence {
+        source: source_id,
+        lockfile: lockfile_id,
+        manifest_bytes: manifest,
+        source_bytes: source,
+        lockfile_bytes: lockfile,
+        image,
+        loader,
+        package: info.package,
+        payload: info.payload,
+        package_bytes,
+        provenance: provenance_bytes,
+        provenance_id: provenance.content_id(),
+        audit,
+        audit_id,
+        output,
+        process,
+        generation,
+        running,
+    })
+}
+
+fn persist_guest_acceptance(
+    root: &Path,
+    kernel: &Path,
+    guest: &GuestStdEvidence,
+    initial_boot: &BootEvidence,
+) -> Result<PersistenceEvidence, String> {
+    let disk = root.join("guest-std.system.img");
+    let install = SystemDiskInstall::new(kernel)
+        .with_boot_args("serial")
+        .with_machine_identity("guest-std-acceptance")
+        .with_capabilities(["compiler", "package-store"]);
+    let before = SystemDiskProvisioner::provision(&disk, &install)
+        .map_err(|error| format!("could not provision guest acceptance disk: {error}"))?;
+    let artifacts = SystemDiskProvisioner::load_boot_artifacts(&disk)
+        .map_err(|error| format!("could not load guest acceptance disk: {error}"))?;
+    if artifacts.manifest.generation != before.generation {
+        return Err("system-disk generation changed before the guest commit".into())
+    }
+
+    let mut volume_bytes = artifacts.system_volume;
+    let mut filesystem = SynFs::<SYNFS_SYSTEM_BLOCKS>::recover(&volume_bytes)
+        .map_err(|error| format!("could not recover guest system volume: {error:?}"))?;
+    for directory in [
+        "/var/acceptance",
+        "/var/acceptance/source",
+        "/var/acceptance/source/src",
+    ] {
+        filesystem
+            .create_directory(directory, true)
+            .map_err(|error| format!("could not create persistent guest path {directory}: {error:?}"))?;
+    }
+    filesystem
+        .write(
+            "/var/acceptance/source/Cargo.toml",
+            &guest.manifest_bytes,
+        )
+        .map_err(|error| format!("could not persist guest manifest: {error:?}"))?;
+    filesystem
+        .write(
+            "/var/acceptance/source/Cargo.lock",
+            &guest.lockfile_bytes,
+        )
+        .map_err(|error| format!("could not persist guest lockfile: {error:?}"))?;
+    filesystem
+        .write(
+            "/var/acceptance/source/src/main.rs",
+            &guest.source_bytes,
+        )
+        .map_err(|error| format!("could not persist guest source: {error:?}"))?;
+    filesystem
+        .write("/var/acceptance/hello-world.synpkg", &guest.package_bytes)
+        .map_err(|error| format!("could not persist guest package: {error:?}"))?;
+    filesystem
+        .write("/var/acceptance/hello-world.provenance", &guest.provenance)
+        .map_err(|error| format!("could not persist guest provenance: {error:?}"))?;
+    let audit = render_audit(&guest.audit, guest.audit_id);
+    filesystem
+        .write("/var/acceptance/hello-world.build", audit.as_bytes())
+        .map_err(|error| format!("could not persist guest audit: {error:?}"))?;
+    filesystem
+        .write("/var/acceptance/hello-world.output", b"Hello World from SynOS\n")
+        .map_err(|error| format!("could not persist guest output: {error:?}"))?;
+    filesystem
+        .flush(&mut volume_bytes)
+        .map_err(|error| format!("could not commit guest system volume: {error:?}"))?;
+    let after = SystemDiskProvisioner::update_system_volume(&disk, &volume_bytes)
+        .map_err(|error| format!("could not publish guest system volume: {error}"))?;
+
+    let rebooted = {
+        let mut vm = Vm::try_with_config(VmConfig {
+            memory_size: 128 * 1024 * 1024,
+            kernel_path: None,
+            firmware: FirmwareMode::Bios,
+            max_steps: Some(BOOT_STEPS),
+            disks: vec![DiskSpec::system("system", &disk).with_persistence(DiskPersistence::Persistent)],
+            ..VmConfig::default()
+        })
+        .map_err(|error| format!("could not create reboot VM: {error:?}"))?;
+        let mut steps = 0;
+        for _ in 0..BOOT_STEPS / BOOT_BATCH_STEPS {
+            let report = vm
+                .run_for_steps(BOOT_BATCH_STEPS)
+                .map_err(|error| format!("SynOS reboot boot failed: {error:?}"))?;
+            steps += report.steps;
+            if report.halted {
+                break
+            }
+        }
+        vm.flush_serial_output();
+        let serial = vm
+            .serial()
+            .map(|serial| String::from_utf8_lossy(serial.borrow().output()).into_owned())
+            .unwrap_or_default();
+        steps > 0 && serial.contains("SynOS kernel bootstrap")
+    };
+
+    let recovered = SystemDiskProvisioner::load_boot_artifacts(&disk)
+        .map_err(|error| format!("could not recover system disk after reboot: {error}"))?;
+    if recovered.manifest.generation != after.generation {
+        return Err("reboot recovered the wrong system-disk generation".into())
+    }
+    let recovered_fs = SynFs::<SYNFS_SYSTEM_BLOCKS>::recover(&recovered.system_volume)
+        .map_err(|error| format!("could not recover SynFS after reboot: {error:?}"))?;
+    let package = read_synfs_file(&recovered_fs, "/var/acceptance/hello-world.synpkg")?;
+    let provenance = read_synfs_file(&recovered_fs, "/var/acceptance/hello-world.provenance")?;
+    let audit_bytes = read_synfs_file(&recovered_fs, "/var/acceptance/hello-world.build")?;
+    let source = read_synfs_file(
+        &recovered_fs,
+        "/var/acceptance/source/src/main.rs",
+    )?;
+    if source != guest.source_bytes
+        || package != guest.package_bytes
+        || provenance != guest.provenance
+        || !String::from_utf8_lossy(&audit_bytes).contains(&id_string(guest.audit_id))
+    {
+        return Err("guest source, package, or audit changed across reboot".into())
+    }
+    let key = SigningKey::new([0x31; 32]);
+    PackageBundle::decode(&package)
+        .and_then(|bundle| bundle.verify(key))
+        .map_err(|error| format!("recovered guest package failed verification: {error:?}"))?;
+    ProvenanceChain::decode(&provenance)
+        .and_then(|chain| chain.verify(key).map(|_| chain))
+        .map_err(|error| format!("recovered guest provenance failed verification: {error:?}"))?;
+    if !rebooted || !initial_boot.serial.contains("SynOS kernel bootstrap") {
+        return Err("guest acceptance did not boot before and after persistence".into())
+    }
+    Ok(PersistenceEvidence {
+        disk,
+        generation_before: before.generation,
+        generation_after: after.generation,
+        source: guest.source,
+        package: guest.package,
+        audit: guest.audit_id,
+        provenance: guest.provenance_id,
+        recovered: true,
+        rebooted,
+    })
+}
+
+fn read_synfs_file<const BLOCKS: usize>(
+    filesystem: &SynFs<BLOCKS>,
+    path: &str,
+) -> Result<Vec<u8>, String> {
+    let file = filesystem
+        .lookup(path)
+        .map_err(|error| format!("could not find persisted file {path}: {error:?}"))?;
+    let mut bytes = vec![0; file.size as usize];
+    let read = filesystem
+        .read(path, &mut bytes)
+        .map_err(|error| format!("could not read persisted file {path}: {error:?}"))?;
+    bytes.truncate(read.bytes_read);
+    Ok(bytes)
+}
+
+fn render_audit(record: &BuildAuditRecord, id: ContentId) -> String {
+    format!(
+        "identity={}\njob={}\nsource={:?}\ndependencies={:?}\ntoolchain={:?}\npackage={:?}\npayload={:?}\ntarget=x86_64-unknown-synos\nrecord={:?}\n",
+        record.identity,
+        record.job,
+        record.source,
+        record.dependencies,
+        record.toolchain,
+        record.package,
+        record.payload,
+        id,
+    )
+}
+
 fn render_artifact(
     boot: &BootEvidence,
     kernel: &Path,
@@ -522,6 +931,8 @@ fn render_artifact(
     loader: LoadedProcess,
     dynamic: DynamicEvidence,
     service: ServiceEvidence,
+    guest: GuestStdEvidence,
+    persistence: PersistenceEvidence,
 ) -> String {
     let mut output = String::new();
     let _ = writeln!(output, "{{");
@@ -531,7 +942,9 @@ fn render_artifact(
     let _ = writeln!(output, "  \"native_std\": {{\"runtime_source\": {}, \"linked_image\": {}, \"panic\": \"abort\", \"dynamic_loading\": \"static-only\", \"verified\": {}}},", json_string(&id_string(native_std.runtime_source)), json_string(&id_string(native_std.image)), native_std.panic_abort && native_std.dynamic_loading == DynamicLoadingPolicy::StaticOnly);
     let _ = writeln!(output, "  \"executable_loader\": {{\"payload\": {}, \"executable_pages\": {}, \"page_count\": {}, \"entry\": {}, \"mapped\": {}, \"stack_non_executable\": {}}},", json_string(&id_string(loader.layout.payload_measurement)), json_string(&id_string(loader.executable_pages)), loader.page_count, loader.context.entry, loader.mapped, loader.stack_non_executable);
     let _ = writeln!(output, "  \"dynamic_artifacts\": {{\"package\": {}, \"payload\": {}, \"policy\": \"static-only\", \"released\": {}, \"verified\": {}}},", json_string(&id_string(dynamic.package)), json_string(&id_string(dynamic.payload)), dynamic.released, dynamic.policy == DynamicLoadingPolicy::StaticOnly);
-    let _ = writeln!(output, "  \"synos-rustd\": {{\"package\": {}, \"payload\": {}, \"process\": {}, \"generation\": {}, \"image_id\": {}, \"capability_profile\": {}, \"running\": {}}}", json_string(&id_string(package.package)), json_string(&id_string(package.payload)), service.process.raw(), service.generation, service.image_id, service.capability_profile, service.state_running);
+    let _ = writeln!(output, "  \"synos-rustd\": {{\"package\": {}, \"payload\": {}, \"process\": {}, \"generation\": {}, \"image_id\": {}, \"capability_profile\": {}, \"running\": {}}},", json_string(&id_string(package.package)), json_string(&id_string(package.payload)), service.process.raw(), service.generation, service.image_id, service.capability_profile, service.state_running);
+    let _ = writeln!(output, "  \"guest_std_application\": {{\"source\": {}, \"lockfile\": {}, \"package\": {}, \"payload\": {}, \"image\": {}, \"executable_pages\": {}, \"page_count\": {}, \"process_image_loaded\": {}, \"process\": {}, \"generation\": {}, \"running\": {}, \"output\": {}, \"audit\": {}, \"provenance\": {}}},", json_string(&id_string(guest.source)), json_string(&id_string(guest.lockfile)), json_string(&id_string(guest.package)), json_string(&id_string(guest.payload)), json_string(&id_string(ContentId::hash(&guest.image))), json_string(&id_string(guest.loader.executable_pages)), guest.loader.page_count, guest.loader.mapped, guest.process.raw(), guest.generation, guest.running, json_string(&id_string(guest.output)), json_string(&id_string(guest.audit_id)), json_string(&id_string(guest.provenance_id)));
+    let _ = writeln!(output, "  \"reboot_persistence\": {{\"disk\": {}, \"generation_before\": {}, \"generation_after\": {}, \"source\": {}, \"package\": {}, \"audit\": {}, \"provenance\": {}, \"recovered\": {}, \"rebooted\": {}}}", json_string(&path_id(&persistence.disk)), persistence.generation_before, persistence.generation_after, json_string(&id_string(persistence.source)), json_string(&id_string(persistence.package)), json_string(&id_string(persistence.audit)), json_string(&id_string(persistence.provenance)), persistence.recovered, persistence.rebooted);
     let _ = writeln!(output, "}}");
     output
 }

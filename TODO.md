@@ -197,9 +197,12 @@ evidence.
       builds and signs the native `synos-rustd` ELF, maps and measures it with
       the executable loader, proves static-only dynamic artifact cleanup, and
       writes `booted-synos-compiler-acceptance.json` with serial evidence.
-- [ ] Compile and run the same small `std` application entirely inside a
+- [x] Compile and run the same small `std` application entirely inside a
       booted SynOS instance, then preserve its source, package, and audit
-      evidence across reboot.
+      evidence across reboot. The booted acceptance now builds the locked
+      hello-world source from SynFS, launches its verified process image,
+      commits source/package/provenance/audit bytes to the system volume,
+      reboots the VM, and verifies the recovered generation and identities.
 - [ ] Exercise build scripts and proc macros as isolated guest processes with
       explicit filesystem, network, device, secret, and process-control grants.
 - [ ] Prove stage-2 reproducibility across fresh SynFS roots, stable paths,

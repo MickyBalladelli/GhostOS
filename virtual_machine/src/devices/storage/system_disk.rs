@@ -489,6 +489,57 @@ impl SystemDiskProvisioner {
             system_volume,
         })
     }
+
+    /// Commit a new validated SynFS system volume and publish its manifest.
+    ///
+    /// The volume is written before the redundant manifest slot. A reboot can
+    /// therefore recover either the old complete generation or the new one.
+    pub fn update_system_volume<P: AsRef<Path>>(
+        path: P,
+        volume: &[u8],
+    ) -> Result<SystemDiskManifest, StorageError> {
+        if volume.len() != SYNFS_SYSTEM_VOLUME_SIZE as usize {
+            return Err(StorageError::InvalidImage(
+                "system volume has the wrong size".to_string(),
+            ));
+        }
+        let filesystem = SynFs::<SYNFS_SYSTEM_BLOCKS>::recover(volume)
+            .map_err(|_| StorageError::InvalidImage("SynFS system volume is corrupt".to_string()))?;
+        filesystem
+            .check_consistency()
+            .map_err(|_| StorageError::InvalidImage("SynFS system volume is inconsistent".to_string()))?;
+
+        let path = path.as_ref();
+        let mut image = DiskImage::open_for_vm(path, true)?;
+        let mut manifest = read_best_manifest(&mut image)?;
+        if manifest.layout.system_volume_size != volume.len() as u64 {
+            return Err(StorageError::InvalidImage(
+                "system volume does not match the installed disk layout".to_string(),
+            ));
+        }
+        write_extent(
+            &mut image,
+            &manifest.layout.system_volume_offset,
+            manifest.layout.system_volume_size,
+            volume,
+        )?;
+        image.sync()?;
+
+        manifest.generation = manifest
+            .generation
+            .checked_add(1)
+            .ok_or_else(|| StorageError::InvalidImage("system-disk generation overflow".to_string()))?;
+        manifest.system_volume_checksum = checksum(volume);
+        let slot = if manifest.generation % 2 == 1 {
+            MANIFEST_A_OFFSET
+        } else {
+            MANIFEST_B_OFFSET
+        };
+        write_manifest(&mut image, slot, &manifest)?;
+        image.sync()?;
+        sync_parent_directory(path).map_err(StorageError::Io)?;
+        Ok(manifest)
+    }
 }
 
 fn default_settings() -> Vec<SystemSetting> {
