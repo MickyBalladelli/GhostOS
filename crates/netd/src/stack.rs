@@ -1,12 +1,12 @@
 use smoltcp::iface::{
     Interface, PollIngressSingleResult, Route, SocketHandle, SocketSet, SocketStorage,
 };
-use smoltcp::phy::{Device, DeviceCapabilities, PacketMeta, RxToken};
+use smoltcp::phy::{ChecksumCapabilities, Device, DeviceCapabilities, PacketMeta, RxToken};
 use smoltcp::socket::tcp;
 use smoltcp::time::Instant;
 use smoltcp::wire::{
     ArpOperation, ArpPacket, ArpRepr, EthernetFrame, EthernetProtocol, IpAddress, IpCidr,
-    IpEndpoint, Ipv4Address, Ipv4Cidr,
+    IpEndpoint, IpProtocol, Icmpv4Packet, Icmpv4Repr, Ipv4Address, Ipv4Cidr, Ipv4Packet,
 };
 
 use crate::{
@@ -21,6 +21,7 @@ pub const MAX_NEIGHBOR_ENTRIES: usize = 8;
 pub const NEIGHBOR_REACHABLE_MS: u64 = 60_000;
 pub const NEIGHBOR_RESOLUTION_TIMEOUT_MS: u64 = 1_000;
 pub const MAX_NEIGHBOR_ATTEMPTS: u8 = 3;
+pub const MAX_ICMP_ECHO_PAYLOAD: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InterfaceConfigError {
@@ -44,6 +45,23 @@ pub enum NeighborTableError {
     InvalidAddress,
     InvalidHardwareAddress,
     Capacity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IcmpEchoObservation {
+    pub source: [u8; 4],
+    pub destination: [u8; 4],
+    pub identifier: u16,
+    pub sequence: u16,
+    pub payload_len: usize,
+    pub ttl: u8,
+    pub received_at_ms: u64,
+}
+
+impl IcmpEchoObservation {
+    pub const fn matches(self, identifier: u16, sequence: u16) -> bool {
+        self.identifier == identifier && self.sequence == sequence
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -248,13 +266,17 @@ impl Default for NeighborTable {
 struct NeighborTrackingDevice<'a, D> {
     device: &'a mut D,
     neighbors: &'a mut NeighborTable,
+    last_icmp_echo: &'a mut Option<IcmpEchoObservation>,
     now_ms: u64,
+    checksum: ChecksumCapabilities,
 }
 
 struct NeighborTrackingRxToken<'a, T> {
     token: T,
     neighbors: &'a mut NeighborTable,
+    last_icmp_echo: &'a mut Option<IcmpEchoObservation>,
     now_ms: u64,
+    checksum: ChecksumCapabilities,
 }
 
 impl<T: RxToken> RxToken for NeighborTrackingRxToken<'_, T> {
@@ -263,9 +285,16 @@ impl<T: RxToken> RxToken for NeighborTrackingRxToken<'_, T> {
         F: FnOnce(&[u8]) -> R,
     {
         let neighbors = self.neighbors;
+        let last_icmp_echo = self.last_icmp_echo;
+        let checksum = self.checksum;
         self.token.consume(|frame| {
             observe_arp_frame(neighbors, frame, self.now_ms);
-            f(frame)
+            let accepted = observe_icmp_echo(last_icmp_echo, frame, self.now_ms, checksum);
+            if accepted {
+                f(frame)
+            } else {
+                f(&[])
+            }
         })
     }
 
@@ -293,7 +322,9 @@ impl<'outer, D: Device> Device for NeighborTrackingDevice<'outer, D> {
             NeighborTrackingRxToken {
                 token,
                 neighbors: &mut *self.neighbors,
+                last_icmp_echo: &mut *self.last_icmp_echo,
                 now_ms: self.now_ms,
+                checksum: self.checksum.clone(),
             },
             tx_token,
         ))
@@ -332,6 +363,61 @@ fn observe_arp_frame(neighbors: &mut NeighborTable, frame: &[u8], now_ms: u64) {
         source_hardware_addr.0,
         now_ms,
     );
+}
+
+fn observe_icmp_echo(
+    last_icmp_echo: &mut Option<IcmpEchoObservation>,
+    frame: &[u8],
+    now_ms: u64,
+    checksum: ChecksumCapabilities,
+) -> bool {
+    let Ok(ethernet) = EthernetFrame::new_checked(frame) else {
+        return true
+    };
+    if ethernet.ethertype() != EthernetProtocol::Ipv4 {
+        return true
+    }
+    let Ok(ipv4) = Ipv4Packet::new_checked(ethernet.payload()) else {
+        return false
+    };
+    if ipv4.next_header() != IpProtocol::Icmp {
+        return true
+    }
+    if ipv4.hop_limit() == 0 {
+        return false
+    }
+    let Ok(icmp_packet) = Icmpv4Packet::new_checked(ipv4.payload()) else {
+        return false
+    };
+    let Ok(repr) = Icmpv4Repr::parse(&icmp_packet, &checksum) else {
+        return false
+    };
+    let (identifier, sequence, payload_len) = match repr {
+        Icmpv4Repr::EchoRequest {
+            ident,
+            seq_no,
+            data,
+        }
+        | Icmpv4Repr::EchoReply {
+            ident,
+            seq_no,
+            data,
+        } => (ident, seq_no, data.len()),
+        _ => return true,
+    };
+    if payload_len > MAX_ICMP_ECHO_PAYLOAD {
+        return false
+    }
+    *last_icmp_echo = Some(IcmpEchoObservation {
+        source: ipv4.src_addr().octets(),
+        destination: ipv4.dst_addr().octets(),
+        identifier,
+        sequence,
+        payload_len,
+        ttl: ipv4.hop_limit(),
+        received_at_ms: now_ms,
+    });
+    true
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -529,6 +615,7 @@ pub struct SmolTcpStack<'a, D, const SOCKETS: usize> {
     static_config: Option<InterfaceConfig>,
     active_config: Option<InterfaceConfig>,
     neighbors: NeighborTable,
+    last_icmp_echo: Option<IcmpEchoObservation>,
     last_poll_ms: u64,
 }
 
@@ -557,6 +644,7 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             static_config: None,
             active_config: None,
             neighbors: NeighborTable::new(),
+            last_icmp_echo: None,
             last_poll_ms: 0,
         }
     }
@@ -692,6 +780,10 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             .install_permanent(address, hardware_address, now_ms)
     }
 
+    pub const fn last_icmp_echo(&self) -> Option<IcmpEchoObservation> {
+        self.last_icmp_echo
+    }
+
     /// Performs bounded ingress work, then one bounded egress pass.
     pub fn poll(&mut self, now_millis: i64, ingress_budget: usize) -> PollActivity {
         let timestamp = Instant::from_millis(now_millis);
@@ -702,10 +794,13 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             socket_state_changed: false,
         };
         self.interface.poll_maintenance(timestamp);
+        let checksum = self.device.capabilities().checksum;
         let mut device = NeighborTrackingDevice {
             device: &mut self.device,
             neighbors: &mut self.neighbors,
+            last_icmp_echo: &mut self.last_icmp_echo,
             now_ms: self.last_poll_ms,
+            checksum,
         };
         for _ in 0..ingress_budget {
             match self.interface.poll_ingress_single(

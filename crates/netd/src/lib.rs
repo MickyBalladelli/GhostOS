@@ -49,9 +49,10 @@ pub use scheduler::{
 };
 pub use stack::{
     InterfaceConfig, InterfaceConfigError, InterfaceRoute, NeighborEntry, NeighborState,
-    NeighborTable, NeighborTableError, NetworkPoller, PollActivity, SmolTcpStack, TcpBuffers,
-    TcpHandle, MAX_INTERFACE_ROUTES, MAX_NEIGHBOR_ATTEMPTS, MAX_NEIGHBOR_ENTRIES,
-    NEIGHBOR_REACHABLE_MS, NEIGHBOR_RESOLUTION_TIMEOUT_MS,
+    NeighborTable, NeighborTableError, IcmpEchoObservation, NetworkPoller, PollActivity,
+    SmolTcpStack, TcpBuffers, TcpHandle, MAX_ICMP_ECHO_PAYLOAD, MAX_INTERFACE_ROUTES,
+    MAX_NEIGHBOR_ATTEMPTS, MAX_NEIGHBOR_ENTRIES, NEIGHBOR_REACHABLE_MS,
+    NEIGHBOR_RESOLUTION_TIMEOUT_MS,
 };
 pub use transport::{
     DhcpIngress, EthernetDhcpTransport, DHCP_BROADCAST_IPV4, DHCP_BROADCAST_MAC,

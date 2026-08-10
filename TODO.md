@@ -379,7 +379,7 @@ SynOS VMs communicate and obtain distinct leases.
       the smoltcp interface after every successful static or DHCP update.
 - [x] Enable bounded ARP/neighbor discovery and expose pending, reachable,
       stale, failed, and permanent neighbor states.
-- [ ] Add IPv4 ICMP echo request/reply support with checksum validation,
+- [x] Add IPv4 ICMP echo request/reply support with checksum validation,
       identifier/sequence matching, TTL handling, bounded payloads, and a
       monotonic send/receive timestamp.
 - [ ] Add firewall and capability policy for ARP, ICMP echo, DHCP broadcast,

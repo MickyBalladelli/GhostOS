@@ -13,6 +13,7 @@ smoltcp = { version = "0.13.1", default-features = false, features = [
     "proto-ipv4",
     "proto-ipv6",
     "socket-tcp",
+    "auto-icmp-echo-reply",
 ] }
 synos-ipc = { path = "../ipc" }
 synos-observability = { path = "../observability" }
