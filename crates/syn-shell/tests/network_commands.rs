@@ -7,9 +7,11 @@ use syn_shell::{
         NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
         PingHandle, PingReply, PingResult, PingSummary, PingTarget, ResolveAnswer,
         ResolveRequest, ResolveResult, ResolveView, ResolvedPingRequest, RouteUpdate,
+        SocketEntryView, SocketProtocol, SocketState, SocketView,
         SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
         SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, SHOW_NEIGHBORS_ROUTE,
         CLEAR_NEIGHBORS_ROUTE, SHOW_DNS_ROUTE, SET_DNS_ROUTE, RESOLVE_ROUTE,
+        SHOW_SOCKETS_ROUTE,
         MAX_NETWORK_LINK_EVENTS,
         MAX_NETWORK_OUTPUT_ROWS,
     },
@@ -110,6 +112,7 @@ fn network_commands_use_single_noun_names() {
         ("SHOW DNS", SHOW_DNS_ROUTE),
         ("SET DNS /STATIC /SERVERS=1.1.1.1,8.8.8.8", SET_DNS_ROUTE),
         ("RESOLVE host.example /TIMEOUT=2000 /IPV4", RESOLVE_ROUTE),
+        ("SHOW SOCKETS", SHOW_SOCKETS_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
             "SET INTERFACE eth0 /ADDRESS=10.0.0.2 /GATEWAY=10.0.0.1 /MTU=1500 /ENABLE",
@@ -497,6 +500,8 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
     assert!(resolve.qualifiers.contains("/TIMEOUT"));
     assert!(resolve.qualifiers.contains("/IPV4"));
     assert!(resolve.qualifiers.contains("/IPV6"));
+    let sockets = command_help("SOCKETS").unwrap();
+    assert!(sockets.description.contains("ownership"));
 }
 
 #[test]
@@ -736,6 +741,7 @@ fn two_seeded_interfaces_fit_output_budget() {
         ping_cancelled: false,
         neighbors: NeighborView::EMPTY,
         dns: DnsView::EMPTY,
+        sockets: SocketView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let interfaces = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -805,6 +811,7 @@ fn four_full_interfaces_paginate_within_output_budget() {
         ping_cancelled: false,
         neighbors: NeighborView::EMPTY,
         dns: DnsView::EMPTY,
+        sockets: SocketView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let output = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -931,6 +938,61 @@ fn dns_tracks_ordered_static_servers_dhcp_ownership_and_query_status() {
 }
 
 #[test]
+fn sockets_show_endpoints_state_queues_lifetime_and_redact_owner() {
+    let mut source = FakeNetwork::seeded();
+    source.sockets = SocketView {
+        generation: 9,
+        socket_count: 2,
+        sockets: [
+            Some(SocketEntryView {
+                protocol: SocketProtocol::Tcp,
+                local_endpoint: text("10.0.0.2:443"),
+                remote_endpoint: Some(text("10.0.0.8:51234")),
+                owner: Some(text("service:web")),
+                owner_redacted: false,
+                capability: 0x100000001,
+                state: SocketState::Established,
+                rx_queue_bytes: 128,
+                tx_queue_bytes: 256,
+                lifetime_ms: 12_000,
+            }),
+            Some(SocketEntryView {
+                protocol: SocketProtocol::Udp,
+                local_endpoint: text("0.0.0.0:53"),
+                remote_endpoint: None,
+                owner: Some(text("service:dns")),
+                owner_redacted: true,
+                capability: 0x100000002,
+                state: SocketState::Listening,
+                rx_queue_bytes: 64,
+                tx_queue_bytes: 0,
+                lifetime_ms: 30_000,
+            }),
+        ],
+        next_socket: None,
+    };
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
+    let output = execute(&mut executor, "SHOW SOCKETS").unwrap();
+    assert!(has_text(&output, "operation", "show-sockets"));
+    assert!(has_text(&output, "socket1-protocol", "tcp"));
+    assert!(has_text(&output, "socket1-local-endpoint", "10.0.0.2:443"));
+    assert!(has_text(&output, "socket1-owner", "service:web"));
+    assert!(has_unsigned(&output, "socket1-capability", 0x100000001));
+    assert!(has_unsigned(&output, "socket1-rx-queue-bytes", 128));
+    assert!(has_unsigned(&output, "socket1-lifetime-ms", 12_000));
+    assert!(has_bool(&output, "socket2-owner-redacted", true));
+    assert!(lacks_field(&output, "socket2-owner"));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::List)
+        .unwrap()
+        .as_str()
+        .contains("Sockets"));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::Json)
+        .unwrap()
+        .as_str()
+        .contains("socket2-owner-redacted"));
+}
+
+#[test]
 fn resolve_returns_bounded_dual_stack_answers_and_failure_output() {
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
     let output = execute(&mut executor, "RESOLVE host.example /TIMEOUT=2000").unwrap();
@@ -982,6 +1044,7 @@ struct FakeNetwork {
     ping_cancelled: bool,
     neighbors: NeighborView,
     dns: DnsView,
+    sockets: SocketView,
 }
 
 impl FakeNetwork {
@@ -996,6 +1059,7 @@ impl FakeNetwork {
             ping_cancelled: false,
             neighbors: NeighborView::EMPTY,
             dns: DnsView::EMPTY,
+            sockets: SocketView::EMPTY,
         }
     }
 
@@ -1042,6 +1106,7 @@ impl FakeNetwork {
             ping_cancelled: false,
             neighbors: NeighborView::EMPTY,
             dns: DnsView::EMPTY,
+            sockets: SocketView::EMPTY,
         }
     }
 
@@ -1105,6 +1170,10 @@ impl NetworkSource for FakeNetwork {
 
     fn show_dns(&mut self) -> Result<DnsView, Status> {
         Ok(self.dns)
+    }
+
+    fn show_sockets(&mut self) -> Result<SocketView, Status> {
+        Ok(self.sockets)
     }
 
     fn set_dns(&mut self, update: DnsUpdate) -> Result<DnsView, Status> {

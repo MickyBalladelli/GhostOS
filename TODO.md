@@ -414,7 +414,7 @@ SynOS VMs communicate and obtain distinct leases.
       ownership, static overrides, search domains, and bounded query status.
 - [x] Add `RESOLVE hostname` with IPv4/IPv6 answers, resolver used, TTL, and
       bounded timeout/error output.
-- [ ] Add `SHOW SOCKETS` for protocol, local endpoint, remote endpoint, owner,
+- [x] Add `SHOW SOCKETS` for protocol, local endpoint, remote endpoint, owner,
       capability, state, queue sizes, and lifetime; redact unauthorized owners.
 - [ ] Add `SHOW NETWORK-STATS` for interface, DHCP, ARP, ICMP, UDP, TCP, and
       firewall counters with reset-safe generation numbers.

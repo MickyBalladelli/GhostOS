@@ -77,6 +77,9 @@ fn render_list(
     if is_dns_output(output) {
         return render_dns(output)
     }
+    if is_sockets_output(output) {
+        return render_sockets(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -212,6 +215,13 @@ fn is_dns_output(output: &StructuredOutput) -> bool {
     matches!(
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "show-dns"
+    )
+}
+
+fn is_sockets_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-sockets"
     )
 }
 
@@ -361,6 +371,67 @@ fn render_neighbors(
     }
     if let Some(next) = find_value(output, "next-neighbor") {
         render_labeled_value(&mut rendered, "Next neighbor", next)?;
+    }
+    Ok(rendered)
+}
+
+fn render_sockets(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("Sockets")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    render_interface_field(&mut rendered, output, "socket-count", "Sockets")?;
+    const FIELDS: [[&str; 10]; 2] = [
+        [
+            "socket1-protocol",
+            "socket1-local-endpoint",
+            "socket1-remote-endpoint",
+            "socket1-owner",
+            "socket1-owner-redacted",
+            "socket1-capability",
+            "socket1-state",
+            "socket1-rx-queue-bytes",
+            "socket1-tx-queue-bytes",
+            "socket1-lifetime-ms",
+        ],
+        [
+            "socket2-protocol",
+            "socket2-local-endpoint",
+            "socket2-remote-endpoint",
+            "socket2-owner",
+            "socket2-owner-redacted",
+            "socket2-capability",
+            "socket2-state",
+            "socket2-rx-queue-bytes",
+            "socket2-tx-queue-bytes",
+            "socket2-lifetime-ms",
+        ],
+    ];
+    for (index, fields) in FIELDS.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Socket {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        render_interface_field(&mut rendered, output, fields[0], "  Protocol")?;
+        render_interface_field(&mut rendered, output, fields[1], "  Local endpoint")?;
+        render_interface_field(&mut rendered, output, fields[2], "  Remote endpoint")?;
+        render_interface_field(&mut rendered, output, fields[3], "  Owner")?;
+        render_interface_field(&mut rendered, output, fields[4], "  Owner redacted")?;
+        render_interface_field(&mut rendered, output, fields[5], "  Capability")?;
+        render_interface_field(&mut rendered, output, fields[6], "  State")?;
+        render_interface_field(&mut rendered, output, fields[7], "  RX queue (bytes)")?;
+        render_interface_field(&mut rendered, output, fields[8], "  TX queue (bytes)")?;
+        render_interface_field(&mut rendered, output, fields[9], "  Lifetime (ms)")?;
+    }
+    if let Some(next) = find_value(output, "next-socket") {
+        render_labeled_value(&mut rendered, "Next socket", next)?;
     }
     Ok(rendered)
 }

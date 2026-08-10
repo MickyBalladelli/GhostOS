@@ -24,10 +24,12 @@ pub const CLEAR_NEIGHBORS_ROUTE: u16 = 68;
 pub const SHOW_DNS_ROUTE: u16 = 69;
 pub const SET_DNS_ROUTE: u16 = 70;
 pub const RESOLVE_ROUTE: u16 = 71;
+pub const SHOW_SOCKETS_ROUTE: u16 = 72;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
 pub const MAX_NEIGHBOR_OUTPUT_ROWS: usize = 2;
+pub const MAX_SOCKET_OUTPUT_ROWS: usize = 2;
 pub const MAX_DNS_SERVERS: usize = 3;
 pub const MAX_DNS_SEARCH_DOMAINS: usize = 3;
 pub const MAX_RESOLVE_ANSWERS: usize = 4;
@@ -137,6 +139,13 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         description: "Resolve a hostname with bounded timeout and IPv4 or IPv6 selection.",
         aliases: "",
         qualifiers: "/TIMEOUT /IPV4 /IPV6",
+    },
+    NetworkCommandHelp {
+        name: "SHOW-SOCKETS",
+        synopsis: "SHOW SOCKETS",
+        description: "Show bounded socket endpoints, ownership, state, queues, and lifetime.",
+        aliases: "SOCKETS",
+        qualifiers: "",
     },
 ];
 
@@ -444,6 +453,77 @@ pub struct ResolveView {
     pub elapsed_ms: u32,
     pub answers: [Option<ResolveAnswer>; MAX_RESOLVE_ANSWERS],
     pub answer_count: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SocketProtocol {
+    Tcp,
+    Udp,
+    Icmp,
+    Other,
+}
+
+impl SocketProtocol {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+            Self::Icmp => "icmp",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SocketState {
+    Closed,
+    Listening,
+    Connecting,
+    Established,
+    Closing,
+}
+
+impl SocketState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::Listening => "listening",
+            Self::Connecting => "connecting",
+            Self::Established => "established",
+            Self::Closing => "closing",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SocketEntryView {
+    pub protocol: SocketProtocol,
+    pub local_endpoint: NetworkText,
+    pub remote_endpoint: Option<NetworkText>,
+    pub owner: Option<NetworkText>,
+    pub owner_redacted: bool,
+    pub capability: u64,
+    pub state: SocketState,
+    pub rx_queue_bytes: u64,
+    pub tx_queue_bytes: u64,
+    pub lifetime_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SocketView {
+    pub generation: u64,
+    pub socket_count: u64,
+    pub sockets: [Option<SocketEntryView>; MAX_SOCKET_OUTPUT_ROWS],
+    pub next_socket: Option<u64>,
+}
+
+impl SocketView {
+    pub const EMPTY: Self = Self {
+        generation: 0,
+        socket_count: 0,
+        sockets: [None; MAX_SOCKET_OUTPUT_ROWS],
+        next_socket: None,
+    };
 }
 
 impl ResolveView {
@@ -825,6 +905,12 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
+    /// Return a bounded socket snapshot. Providers must omit owners the
+    /// caller cannot inspect and set `owner_redacted` for those entries.
+    fn show_sockets(&mut self) -> Result<SocketView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -1021,6 +1107,10 @@ pub fn register_network_commands<const CAPACITY: usize>(
             .map_err(|_| Error::InvalidValue)?,
         route(RESOLVE_ROUTE),
     )?;
+    registry.register(
+        CommandSpec::new("SHOW-SOCKETS", &[]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_SOCKETS_ROUTE),
+    )?;
 
     let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
     registry.register(
@@ -1164,6 +1254,7 @@ pub fn dispatch_network_command<Source: NetworkSource>(
                     .and_then(resolve_output),
             }
         }
+        SHOW_SOCKETS_ROUTE => source.show_sockets().and_then(sockets_output),
         SET_HOSTNAME_ROUTE => {
             let hostname = command
                 .get_text("HOSTNAME")
@@ -2022,6 +2113,111 @@ pub fn resolve_output(view: ResolveView) -> Result<StructuredOutput, Status> {
             PingIpVersion::Ipv6 => "ipv6",
         })?;
         insert(&mut output, fields[2], OutputValue::Unsigned(answer.ttl_ms))?;
+    }
+    Ok(output)
+}
+
+pub fn sockets_output(view: SocketView) -> Result<StructuredOutput, Status> {
+    let actual_count = view.sockets.iter().filter(|socket| socket.is_some()).count();
+    if actual_count > MAX_SOCKET_OUTPUT_ROWS || actual_count as u64 > view.socket_count {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "show-sockets")?;
+    insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
+    insert(
+        &mut output,
+        "socket-count",
+        OutputValue::Unsigned(view.socket_count),
+    )?;
+    let mut used = output.fields().count();
+    let mut omitted = None;
+    for (index, socket) in view.sockets.iter().flatten().enumerate() {
+        let needed = 10;
+        let remaining = view
+            .sockets
+            .iter()
+            .flatten()
+            .skip(index + 1)
+            .count()
+            .saturating_add(usize::from(view.next_socket.is_some()));
+        if used.saturating_add(needed).saturating_add(usize::from(remaining > 0))
+            > MAX_OUTPUT_FIELDS
+        {
+            omitted = Some(index as u64);
+            break
+        }
+        let fields = match index {
+            0 => [
+                "socket1-protocol",
+                "socket1-local-endpoint",
+                "socket1-remote-endpoint",
+                "socket1-owner",
+                "socket1-owner-redacted",
+                "socket1-capability",
+                "socket1-state",
+                "socket1-rx-queue-bytes",
+                "socket1-tx-queue-bytes",
+                "socket1-lifetime-ms",
+            ],
+            1 => [
+                "socket2-protocol",
+                "socket2-local-endpoint",
+                "socket2-remote-endpoint",
+                "socket2-owner",
+                "socket2-owner-redacted",
+                "socket2-capability",
+                "socket2-state",
+                "socket2-rx-queue-bytes",
+                "socket2-tx-queue-bytes",
+                "socket2-lifetime-ms",
+            ],
+            _ => return Err(Status::INVALID_ARGUMENT),
+        };
+        insert_text(&mut output, fields[0], socket.protocol.as_str())?;
+        insert_text(&mut output, fields[1], socket.local_endpoint.as_str())?;
+        if let Some(remote_endpoint) = socket.remote_endpoint {
+            insert_text(&mut output, fields[2], remote_endpoint.as_str())?;
+        }
+        if !socket.owner_redacted {
+            if let Some(owner) = socket.owner {
+                insert_text(&mut output, fields[3], owner.as_str())?;
+            }
+        }
+        insert(
+            &mut output,
+            fields[4],
+            OutputValue::Boolean(socket.owner_redacted),
+        )?;
+        insert(
+            &mut output,
+            fields[5],
+            OutputValue::Unsigned(socket.capability),
+        )?;
+        insert_text(&mut output, fields[6], socket.state.as_str())?;
+        insert(
+            &mut output,
+            fields[7],
+            OutputValue::Unsigned(socket.rx_queue_bytes),
+        )?;
+        insert(
+            &mut output,
+            fields[8],
+            OutputValue::Unsigned(socket.tx_queue_bytes),
+        )?;
+        insert(
+            &mut output,
+            fields[9],
+            OutputValue::Unsigned(socket.lifetime_ms),
+        )?;
+        used = used.saturating_add(needed);
+    }
+    if let Some(next) = omitted.or(view.next_socket) {
+        insert(
+            &mut output,
+            "next-socket",
+            OutputValue::Unsigned(next),
+        )?;
     }
     Ok(output)
 }

@@ -1210,7 +1210,7 @@ fn command_category(route: u16) -> &'static str {
         syn_shell::firewall::SHOW_FIREWALL_ROUTE..=syn_shell::firewall::SET_FIREWALL_ROUTE => {
             "FIREWALL"
         }
-        syn_shell::network::SHOW_NETWORK_ROUTE..=syn_shell::network::RESOLVE_ROUTE => "NETWORK",
+        syn_shell::network::SHOW_NETWORK_ROUTE..=syn_shell::network::SHOW_SOCKETS_ROUTE => "NETWORK",
         _ => "SHELL",
     }
 }
@@ -2261,6 +2261,7 @@ struct KernelNetwork {
     diagnostic_capability: crate::CapabilityHandle,
     neighbors: syn_shell::network::NeighborView,
     dns: syn_shell::network::DnsView,
+    sockets: syn_shell::network::SocketView,
 }
 
 impl KernelNetwork {
@@ -2306,6 +2307,7 @@ impl KernelNetwork {
             diagnostic_capability,
             neighbors: syn_shell::network::NeighborView::EMPTY,
             dns: syn_shell::network::DnsView::EMPTY,
+            sockets: syn_shell::network::SocketView::EMPTY,
         };
         network.refresh();
         network
@@ -2516,6 +2518,10 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 
     fn show_dns(&mut self) -> Result<syn_shell::network::DnsView, Status> {
         Ok(self.dns)
+    }
+
+    fn show_sockets(&mut self) -> Result<syn_shell::network::SocketView, Status> {
+        Ok(self.sockets)
     }
 
     fn set_dns(
@@ -2776,7 +2782,7 @@ impl KernelExecutor {
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
             route if (syn_shell::network::SHOW_NETWORK_ROUTE
-                ..=syn_shell::network::RESOLVE_ROUTE)
+                ..=syn_shell::network::SHOW_SOCKETS_ROUTE)
                 .contains(&route) =>
             {
                 if route == syn_shell::network::PING_ROUTE {
