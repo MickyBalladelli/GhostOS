@@ -9,3 +9,4 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-status = { path = "../status" }
+synos-system-model = { path = "../system-model" }

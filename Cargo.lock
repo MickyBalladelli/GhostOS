@@ -725,6 +725,7 @@ name = "synos-observability"
 version = "0.1.0"
 dependencies = [
  "synos-status",
+ "synos-system-model",
 ]
 
 [[package]]

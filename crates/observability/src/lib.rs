@@ -4,6 +4,7 @@
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use synos_status::Status;
+use synos_system_model::ContentId;
 
 pub const MAX_EVENT_FIELDS: usize = 4;
 pub const JOURNAL_RECORD_SIZE: usize = 128;
@@ -12,6 +13,11 @@ pub const GLOBAL_AUDIT_CAPACITY: usize = 256;
 pub const MAX_METRIC_SAMPLES: usize = 256;
 pub const MAX_ALERTS: usize = 128;
 pub const MAX_TELEMETRY_BATCH: usize = 32;
+pub const DEFAULT_RECOVERY_AUDIT_CAPACITY: usize = 256;
+pub const AUDIT_EXPORT_HEADER_BYTES: usize = 64;
+pub const SEALED_AUDIT_RECORD_BYTES: usize = 200;
+pub const AUDIT_EXPORT_MAGIC: &[u8; 8] = b"SNAUDIT1";
+pub const AUDIT_EXPORT_VERSION: u16 = 1;
 
 const JOURNAL_MAGIC: u32 = u32::from_le_bytes(*b"SLOG");
 const JOURNAL_VERSION: u8 = 1;
@@ -802,6 +808,263 @@ pub fn decode_record(source: &[u8]) -> Result<TraceEvent, CodecError> {
         event = event.with_field(EventField { key, kind, value })
     }
     Ok(event)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct AuditKey([u8; 32]);
+
+impl AuditKey {
+    pub const fn new(bytes: [u8; 32]) -> Option<Self> {
+        let mut nonzero = false;
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] != 0 {
+                nonzero = true;
+                break
+            }
+            index += 1;
+        }
+        if nonzero { Some(Self(bytes)) } else { None }
+    }
+
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn id(self) -> [u8; 32] {
+        *ContentId::hash(&self.0).as_bytes()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SealedAuditRecord {
+    pub sequence: u64,
+    pub event: TraceEvent,
+    pub previous: [u8; 32],
+    pub tag: [u8; 32],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuditJournalError {
+    Capacity,
+    InvalidKey,
+    InvalidEvent,
+    BufferTooSmall { required: usize },
+    Corrupt,
+    KeyMismatch,
+    Tampered,
+}
+
+impl AuditJournalError {
+    pub const fn status(self) -> Status {
+        match self {
+            Self::Capacity | Self::BufferTooSmall { .. } => Status::NO_SPACE,
+            Self::InvalidKey | Self::InvalidEvent => Status::INVALID_ARGUMENT,
+            Self::Corrupt | Self::KeyMismatch | Self::Tampered => Status::CORRUPT,
+        }
+    }
+}
+
+/// Fixed-size, append-only audit evidence for recovery mode.
+///
+/// The normal log ring may drop old records. This journal never overwrites a
+/// record. Once full, it reports capacity so the caller can raise a durable
+/// audit alarm instead of silently losing security evidence.
+#[derive(Clone, Copy)]
+pub struct AuditJournal<const CAPACITY: usize = DEFAULT_RECOVERY_AUDIT_CAPACITY> {
+    key: AuditKey,
+    records: [Option<SealedAuditRecord>; CAPACITY],
+    next_sequence: u64,
+    dropped: u64,
+}
+
+impl<const CAPACITY: usize> AuditJournal<CAPACITY> {
+    pub const fn encoded_len() -> usize {
+        AUDIT_EXPORT_HEADER_BYTES + CAPACITY * SEALED_AUDIT_RECORD_BYTES
+    }
+
+    pub fn new(key: AuditKey) -> Result<Self, AuditJournalError> {
+        if key.0.iter().all(|byte| *byte == 0) {
+            return Err(AuditJournalError::InvalidKey)
+        }
+        Ok(Self {
+            key,
+            records: [None; CAPACITY],
+            next_sequence: 1,
+            dropped: 0,
+        })
+    }
+
+    pub fn key_id(&self) -> [u8; 32] {
+        self.key.id()
+    }
+
+    pub const fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    pub fn records(&self) -> impl Iterator<Item = SealedAuditRecord> + '_ {
+        self.records.iter().flatten().copied()
+    }
+
+    pub fn events(&self) -> impl Iterator<Item = TraceEvent> + '_ {
+        self.records().map(|record| record.event)
+    }
+
+    pub fn append(&mut self, event: TraceEvent) -> Result<u64, AuditJournalError> {
+        if event.kind != EventKind::Audit || event.timestamp == 0 {
+            return Err(AuditJournalError::InvalidEvent)
+        }
+        let previous = self
+            .records
+            .iter()
+            .flatten()
+            .last()
+            .map(|record| record.tag)
+            .unwrap_or([0; 32]);
+        let Some(slot) = self.records.iter_mut().find(|entry| entry.is_none()) else {
+            self.dropped = self.dropped.saturating_add(1);
+            return Err(AuditJournalError::Capacity)
+        };
+        let sequence = self.next_sequence;
+        let record = SealedAuditRecord {
+            sequence,
+            event,
+            previous,
+            tag: audit_tag(self.key, sequence, event, previous),
+        };
+        *slot = Some(record);
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        Ok(sequence)
+    }
+
+    pub fn verify(&self) -> Result<(), AuditJournalError> {
+        let mut previous = [0; 32];
+        let mut expected = 1_u64;
+        for record in self.records.iter().flatten() {
+            if record.sequence != expected
+                || record.previous != previous
+                || record.event.kind != EventKind::Audit
+                || record.event.timestamp == 0
+                || record.tag != audit_tag(self.key, record.sequence, record.event, record.previous)
+            {
+                return Err(AuditJournalError::Tampered)
+            }
+            previous = record.tag;
+            expected = expected.saturating_add(1);
+        }
+        if self.next_sequence != expected {
+            return Err(AuditJournalError::Corrupt)
+        }
+        Ok(())
+    }
+
+    pub fn export(&self, destination: &mut [u8]) -> Result<usize, AuditJournalError> {
+        self.verify()?;
+        let required = Self::encoded_len();
+        if destination.len() < required {
+            return Err(AuditJournalError::BufferTooSmall { required })
+        }
+        destination[..required].fill(0);
+        destination[..8].copy_from_slice(AUDIT_EXPORT_MAGIC);
+        destination[8..10].copy_from_slice(&AUDIT_EXPORT_VERSION.to_le_bytes());
+        destination[10..12].copy_from_slice(&(AUDIT_EXPORT_HEADER_BYTES as u16).to_le_bytes());
+        destination[12..16].copy_from_slice(&(self.records().count() as u32).to_le_bytes());
+        destination[16..24].copy_from_slice(&self.next_sequence.to_le_bytes());
+        destination[24..32].copy_from_slice(&self.dropped.to_le_bytes());
+        destination[32..64].copy_from_slice(&self.key_id());
+        for (index, record) in self.records().enumerate() {
+            let offset = AUDIT_EXPORT_HEADER_BYTES + index * SEALED_AUDIT_RECORD_BYTES;
+            destination[offset..offset + 8].copy_from_slice(&record.sequence.to_le_bytes());
+            encode_record(
+                record.event,
+                &mut destination[offset + 8..offset + 8 + JOURNAL_RECORD_SIZE],
+            ).map_err(|_| AuditJournalError::Corrupt)?;
+            destination[offset + 136..offset + 168].copy_from_slice(&record.previous);
+            destination[offset + 168..offset + 200].copy_from_slice(&record.tag);
+        }
+        Ok(required)
+    }
+
+    pub fn decode(input: &[u8], key: AuditKey) -> Result<Self, AuditJournalError> {
+        let required = Self::encoded_len();
+        if input.len() != required
+            || &input[..8] != AUDIT_EXPORT_MAGIC
+            || u16::from_le_bytes([input[8], input[9]]) != AUDIT_EXPORT_VERSION
+            || u16::from_le_bytes([input[10], input[11]]) != AUDIT_EXPORT_HEADER_BYTES as u16
+        {
+            return Err(AuditJournalError::Corrupt)
+        }
+        if input[32..64] != key.id() {
+            return Err(AuditJournalError::KeyMismatch)
+        }
+        let count = u32::from_le_bytes(input[12..16].try_into().map_err(|_| AuditJournalError::Corrupt)?) as usize;
+        if count > CAPACITY {
+            return Err(AuditJournalError::Corrupt)
+        }
+        let next_sequence = u64::from_le_bytes(input[16..24].try_into().map_err(|_| AuditJournalError::Corrupt)?);
+        if next_sequence != (count as u64).saturating_add(1) {
+            return Err(AuditJournalError::Corrupt)
+        }
+        let mut journal = Self::new(key)?;
+        journal.next_sequence = next_sequence;
+        journal.dropped = u64::from_le_bytes(input[24..32].try_into().map_err(|_| AuditJournalError::Corrupt)?);
+        for index in 0..count {
+            let offset = AUDIT_EXPORT_HEADER_BYTES + index * SEALED_AUDIT_RECORD_BYTES;
+            let event = decode_record(&input[offset + 8..offset + 136])
+                .map_err(|_| AuditJournalError::Corrupt)?;
+            let mut previous = [0; 32];
+            previous.copy_from_slice(&input[offset + 136..offset + 168]);
+            let mut tag = [0; 32];
+            tag.copy_from_slice(&input[offset + 168..offset + 200]);
+            journal.records[index] = Some(SealedAuditRecord {
+                sequence: u64::from_le_bytes(
+                    input[offset..offset + 8]
+                        .try_into()
+                        .map_err(|_| AuditJournalError::Corrupt)?,
+                ),
+                event,
+                previous,
+                tag,
+            });
+        }
+        if input[AUDIT_EXPORT_HEADER_BYTES + count * SEALED_AUDIT_RECORD_BYTES..]
+            .iter()
+            .any(|byte| *byte != 0)
+        {
+            return Err(AuditJournalError::Corrupt)
+        }
+        journal.verify()?;
+        Ok(journal)
+    }
+
+    pub fn recover(input: &[u8], key: AuditKey) -> Result<Self, AuditJournalError> {
+        Self::decode(input, key)
+    }
+
+    pub fn replay(
+        &self,
+        query: AuditQuery,
+        mut visitor: impl FnMut(TraceEvent),
+    ) -> Result<usize, AuditJournalError> {
+        self.verify()?;
+        let mut count = 0;
+        for event in self.events().filter(|event| query.matches(*event)) {
+            visitor(event);
+            count += 1;
+        }
+        Ok(count)
+    }
+}
+
+fn audit_tag(key: AuditKey, sequence: u64, event: TraceEvent, previous: [u8; 32]) -> [u8; 32] {
+    let mut material = [0; 32 + 8 + JOURNAL_RECORD_SIZE + 32];
+    material[..32].copy_from_slice(&key.0);
+    material[32..40].copy_from_slice(&sequence.to_le_bytes());
+    encode_record(event, &mut material[40..40 + JOURNAL_RECORD_SIZE])
+        .expect("fixed audit record buffer");
+    material[40 + JOURNAL_RECORD_SIZE..].copy_from_slice(&previous);
+    *ContentId::hash(&material).as_bytes()
 }
 
 fn record_bytes<const SIZE: usize>(source: &[u8], start: usize) -> Result<[u8; SIZE], CodecError> {

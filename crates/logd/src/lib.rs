@@ -2,13 +2,15 @@
 #![forbid(unsafe_code)]
 
 use synos_observability::{
-    AuditQuery, EventKind, JOURNAL_RECORD_SIZE, Level, SECURITY_AUDIT, SYSTEM_TRACE, TraceEvent,
-    TraceRing, decode_record, encode_record,
+    AuditJournal, AuditKey, AuditQuery, EventKind, JOURNAL_RECORD_SIZE, Level,
+    SECURITY_AUDIT, SYSTEM_TRACE, TraceEvent, TraceRing, decode_record, encode_record,
+    DEFAULT_RECOVERY_AUDIT_CAPACITY,
 };
 use synos_synfs::{Error as SynFsError, SynFs, SynfsPurged};
 
 pub const SYSTEM_JOURNAL: &str = "SYS$LOG:SYSTEM.JOURNAL";
 pub const SECURITY_JOURNAL: &str = "SYS$LOG:SECURITY.AUDIT";
+pub const RECOVERY_AUDIT_JOURNAL: &str = "SYS$LOG:SECURITY.RECOVERY";
 pub const DEFAULT_JOURNAL_RETENTION: u32 = 1024;
 pub const DEFAULT_OPCOM_SUBSCRIBERS: usize = 16;
 
@@ -16,6 +18,8 @@ pub const DEFAULT_OPCOM_SUBSCRIBERS: usize = 16;
 pub enum LogError {
     Codec,
     Journal,
+    Recovery,
+    RecoveryUnavailable,
     SubscriberCapacity,
     UnknownSubscriber,
 }
@@ -37,6 +41,7 @@ pub trait JournalWriter {
 pub struct SynFsJournal<'a, const BLOCKS: usize> {
     filesystem: &'a mut SynFs<BLOCKS>,
     purger: SynfsPurged,
+    recovery: Option<AuditJournal<DEFAULT_RECOVERY_AUDIT_CAPACITY>>,
 }
 
 impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
@@ -48,11 +53,77 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
         purger
             .add_rule(SECURITY_JOURNAL, keep_latest)
             .map_err(|_| LogError::Journal)?;
-        Ok(Self { filesystem, purger })
+        purger
+            .add_rule(RECOVERY_AUDIT_JOURNAL, keep_latest)
+            .map_err(|_| LogError::Journal)?;
+        Ok(Self {
+            filesystem,
+            purger,
+            recovery: None,
+        })
+    }
+
+    /// Create a journal with a bounded in-memory audit copy. The copy is
+    /// sealed independently, so it remains exportable if normal log writes
+    /// fail or the log daemon stops.
+    pub fn new_with_recovery_key(
+        filesystem: &'a mut SynFs<BLOCKS>,
+        keep_latest: u32,
+        key: AuditKey,
+    ) -> Result<Self, LogError> {
+        let mut journal = Self::new(filesystem, keep_latest)?;
+        journal.recovery = Some(
+            AuditJournal::new(key).map_err(|_| LogError::Recovery)?,
+        );
+        Ok(journal)
     }
 
     pub fn filesystem(&self) -> &SynFs<BLOCKS> {
         self.filesystem
+    }
+
+    pub fn recovery_audit(
+        &self,
+    ) -> Option<&AuditJournal<DEFAULT_RECOVERY_AUDIT_CAPACITY>> {
+        self.recovery.as_ref()
+    }
+
+    pub fn export_recovery_audit(&self, output: &mut [u8]) -> Result<usize, LogError> {
+        self.recovery
+            .as_ref()
+            .ok_or(LogError::RecoveryUnavailable)?
+            .export(output)
+            .map_err(|_| LogError::Recovery)
+    }
+
+    /// Persist the fallback journal with caller-owned bounded scratch space.
+    /// Recovery can load this file without starting the normal log consumer.
+    pub fn persist_recovery_audit(&mut self, staging: &mut [u8]) -> Result<(), LogError> {
+        let length = self.export_recovery_audit(staging)?;
+        self.filesystem
+            .write(RECOVERY_AUDIT_JOURNAL, &staging[..length])
+            .map_err(|_| LogError::Recovery)?;
+        Ok(())
+    }
+
+    pub fn load_recovery_audit<const CAPACITY: usize>(
+        &self,
+        staging: &mut [u8],
+        key: AuditKey,
+    ) -> Result<AuditJournal<CAPACITY>, LogError> {
+        let read = self
+            .filesystem
+            .read(RECOVERY_AUDIT_JOURNAL, staging)
+            .map_err(|_| LogError::Recovery)?;
+        AuditJournal::recover(&staging[..read.bytes_read], key)
+            .map_err(|_| LogError::Recovery)
+    }
+
+    pub fn recover_audit<const CAPACITY: usize>(
+        input: &[u8],
+        key: AuditKey,
+    ) -> Result<AuditJournal<CAPACITY>, LogError> {
+        AuditJournal::recover(input, key).map_err(|_| LogError::Recovery)
     }
 
     pub fn analyze_security(
@@ -94,6 +165,11 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
 
 impl<const BLOCKS: usize> JournalWriter for SynFsJournal<'_, BLOCKS> {
     fn append(&mut self, stream: JournalStream, event: TraceEvent) -> Result<(), LogError> {
+        if stream == JournalStream::SecurityAudit {
+            if let Some(recovery) = self.recovery.as_mut() {
+                recovery.append(event).map_err(|_| LogError::Recovery)?;
+            }
+        }
         let mut record = [0; JOURNAL_RECORD_SIZE];
         encode_record(event, &mut record).map_err(|_| LogError::Codec)?;
         let path = match stream {

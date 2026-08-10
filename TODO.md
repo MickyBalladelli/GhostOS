@@ -154,8 +154,10 @@ evidence.
       Progress: added fixed-size HMAC-signed chain records, compiler sidecar
       export, package-daemon activation verification, and process-launch
       fencing when provenance recording fails.
-- [ ] Make audit records tamper-evident, bounded, exportable, and usable during
+- [x] Make audit records tamper-evident, bounded, exportable, and usable during
       recovery when the normal log service is unavailable.
+      Progress: added a fixed-capacity keyed hash-chain journal, strict export
+      and recovery decoding, and a SynFS logd fallback stream.
 
 ## P1: Make time, limits, and concurrency deterministic
 
