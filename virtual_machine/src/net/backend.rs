@@ -5,7 +5,32 @@ use crate::net::mac::{mac_matches, MacAddress};
 use crate::net::packet::{pad_frame, NetError, ETHERNET_FRAME_MAX, ETHERNET_HEADER_LEN};
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io;
+use std::net::{SocketAddr, UdpSocket};
 use std::rc::Rc;
+
+const HOST_FRAME_MAGIC: [u8; 4] = *b"SNET";
+
+/// Host-facing network selection for a VM.
+///
+/// Loopback is intentionally not a VM configuration option. It remains
+/// available through [`LoopbackHub`] for isolated backend tests only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NetworkBackendConfig {
+    /// Bounded, reproducible Ethernet segment for deterministic VM tests.
+    Deterministic,
+    /// User-mode networking transport. A host-side gateway receives the
+    /// Ethernet frames over UDP and performs the NAT/user-mode service.
+    UserNat { bind: SocketAddr, peer: SocketAddr },
+    /// Attach the guest directly to a host Ethernet interface.
+    Bridged { interface: String },
+}
+
+impl Default for NetworkBackendConfig {
+    fn default() -> Self {
+        Self::Deterministic
+    }
+}
 
 pub trait NetBackend {
     fn transmit(&mut self, packet: &[u8]) -> Result<(), NetError>;
@@ -20,6 +45,252 @@ pub trait NetBackend {
     }
     fn set_promiscuous(&mut self, enabled: bool) {
         let _ = enabled;
+    }
+}
+
+/// Host transport used by user-mode/NAT and bridged VM networking.
+pub struct HostNetworkBackend {
+    transport: HostTransport,
+    mac: MacAddress,
+    admin_up: bool,
+    promiscuous: bool,
+    tx_packets: usize,
+    rx_packets: usize,
+}
+
+enum HostTransport {
+    Udp(UdpSocket),
+    #[cfg(target_os = "linux")]
+    Raw {
+        fd: libc::c_int,
+        interface: String,
+    },
+}
+
+impl HostNetworkBackend {
+    /// Open a UDP Ethernet frame transport for a user-mode/NAT gateway.
+    pub fn user_nat(bind: SocketAddr, peer: SocketAddr, mac: MacAddress) -> io::Result<Self> {
+        let socket = UdpSocket::bind(bind)?;
+        socket.connect(peer)?;
+        socket.set_nonblocking(true)?;
+        Ok(Self {
+            transport: HostTransport::Udp(socket),
+            mac,
+            admin_up: true,
+            promiscuous: false,
+            tx_packets: 0,
+            rx_packets: 0,
+        })
+    }
+
+    /// Open a host Ethernet interface for bridged networking.
+    #[cfg(target_os = "linux")]
+    pub fn bridged(interface: &str, mac: MacAddress) -> io::Result<Self> {
+        use std::ffi::CString;
+        use std::mem;
+        let name = CString::new(interface.as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid interface name"))?;
+        let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+        if index == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let protocol = (libc::ETH_P_ALL as u16).to_be() as i32;
+        let fd = unsafe {
+            libc::socket(
+                libc::AF_PACKET,
+                libc::SOCK_RAW | libc::SOCK_NONBLOCK,
+                protocol,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut address: libc::sockaddr_ll = unsafe { mem::zeroed() };
+        address.sll_family = libc::AF_PACKET as u16;
+        address.sll_protocol = (libc::ETH_P_ALL as u16).to_be();
+        address.sll_ifindex = index as i32;
+        let result = unsafe {
+            libc::bind(
+                fd,
+                (&address as *const libc::sockaddr_ll).cast(),
+                mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
+            )
+        };
+        if result < 0 {
+            let error = io::Error::last_os_error();
+            unsafe { libc::close(fd) };
+            return Err(error);
+        }
+
+        Ok(Self {
+            transport: HostTransport::Raw {
+                fd,
+                interface: interface.to_string(),
+            },
+            mac,
+            admin_up: true,
+            promiscuous: false,
+            tx_packets: 0,
+            rx_packets: 0,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn bridged(_interface: &str, _mac: MacAddress) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "bridged Ethernet backend requires Linux AF_PACKET support",
+        ))
+    }
+
+    fn transport_link_up(&self) -> bool {
+        match &self.transport {
+            HostTransport::Udp(_) => true,
+            #[cfg(target_os = "linux")]
+            HostTransport::Raw { interface, .. } => {
+                let carrier = std::fs::read_to_string(format!(
+                    "/sys/class/net/{interface}/carrier"
+                ));
+                carrier
+                    .map(|state| state.trim() == "1")
+                    .unwrap_or_else(|_| {
+                        std::fs::read_to_string(format!(
+                            "/sys/class/net/{interface}/operstate"
+                        ))
+                        .map(|state| state.trim() != "down")
+                        .unwrap_or(false)
+                    })
+            }
+        }
+    }
+
+    fn transmit_udp(socket: &UdpSocket, packet: &[u8]) -> Result<(), NetError> {
+        let mut frame = Vec::with_capacity(HOST_FRAME_MAGIC.len() + packet.len());
+        frame.extend_from_slice(&HOST_FRAME_MAGIC);
+        frame.extend_from_slice(&pad_frame(packet));
+        socket.send(&frame).map_err(|error| match error.kind() {
+            io::ErrorKind::WouldBlock => NetError::QueueFull,
+            _ => NetError::BackendUnavailable,
+        })?;
+        Ok(())
+    }
+}
+
+impl Drop for HostNetworkBackend {
+    fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let HostTransport::Raw { fd, .. } = &self.transport {
+            unsafe { libc::close(*fd) };
+        }
+    }
+}
+
+impl NetBackend for HostNetworkBackend {
+    fn transmit(&mut self, packet: &[u8]) -> Result<(), NetError> {
+        if !self.admin_up {
+            return Err(NetError::AdminDown);
+        }
+        if !self.link_up() {
+            return Err(NetError::LinkDown);
+        }
+        if packet.len() < ETHERNET_HEADER_LEN {
+            return Err(NetError::Truncated);
+        }
+        if packet.len() > ETHERNET_FRAME_MAX {
+            return Err(NetError::PacketTooLarge);
+        }
+        match &self.transport {
+            HostTransport::Udp(socket) => Self::transmit_udp(socket, packet)?,
+            #[cfg(target_os = "linux")]
+            HostTransport::Raw { fd, .. } => {
+                let frame = pad_frame(packet);
+                let sent = unsafe {
+                    libc::send(fd, frame.as_ptr().cast(), frame.len(), libc::MSG_DONTWAIT)
+                };
+                if sent < 0 {
+                    return Err(match io::Error::last_os_error().kind() {
+                        io::ErrorKind::WouldBlock => NetError::QueueFull,
+                        _ => NetError::BackendUnavailable,
+                    });
+                }
+                if sent as usize != frame.len() {
+                    return Err(NetError::BackendUnavailable);
+                }
+            }
+        }
+        self.tx_packets = self.tx_packets.saturating_add(1);
+        Ok(())
+    }
+
+    fn receive(&mut self) -> Result<Option<Vec<u8>>, NetError> {
+        if !self.admin_up {
+            return Err(NetError::AdminDown);
+        }
+        if !self.link_up() {
+            return Err(NetError::LinkDown);
+        }
+        let packet = match &self.transport {
+            HostTransport::Udp(socket) => {
+                let mut frame = [0u8; HOST_FRAME_MAGIC.len() + ETHERNET_FRAME_MAX];
+                match socket.recv(&mut frame) {
+                    Ok(length) if length >= HOST_FRAME_MAGIC.len() => {
+                        if frame[..HOST_FRAME_MAGIC.len()] != HOST_FRAME_MAGIC {
+                            return Ok(None);
+                        }
+                        frame[HOST_FRAME_MAGIC.len()..length].to_vec()
+                    }
+                    Ok(_) => return Ok(None),
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                    Err(_) => return Err(NetError::BackendUnavailable),
+                }
+            }
+            #[cfg(target_os = "linux")]
+            HostTransport::Raw { fd, .. } => {
+                let mut frame = [0u8; ETHERNET_FRAME_MAX];
+                let length = unsafe {
+                    libc::recv(fd, frame.as_mut_ptr().cast(), frame.len(), libc::MSG_DONTWAIT)
+                };
+                if length < 0 {
+                    if io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock {
+                        return Ok(None);
+                    }
+                    return Err(NetError::BackendUnavailable);
+                }
+                frame[..length as usize].to_vec()
+            }
+        };
+        if packet.len() < ETHERNET_HEADER_LEN {
+            return Ok(None);
+        }
+        if !mac_matches(&packet[..6], &self.mac, self.promiscuous) {
+            return Ok(None);
+        }
+        self.rx_packets = self.rx_packets.saturating_add(1);
+        Ok(Some(packet))
+    }
+
+    fn link_up(&self) -> bool {
+        self.transport_link_up()
+    }
+
+    fn admin_up(&self) -> bool {
+        self.admin_up
+    }
+
+    fn set_admin_up(&mut self, up: bool) {
+        self.admin_up = up;
+    }
+
+    fn queue_state(&self) -> NetQueueState {
+        NetQueueState {
+            rx_packets: 0,
+            tx_packets: self.tx_packets,
+        }
+    }
+
+    fn set_promiscuous(&mut self, enabled: bool) {
+        self.promiscuous = enabled;
     }
 }
 

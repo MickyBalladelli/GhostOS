@@ -17,7 +17,10 @@ pub mod migration;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
-pub use net::{DeterministicPort, DeterministicSegment, LoopbackHub, LoopbackPort, MacAddress, NetBackend, NetQueueState, PacketQueue};
+pub use net::{
+    DeterministicPort, DeterministicSegment, HostNetworkBackend, LoopbackHub, LoopbackPort,
+    MacAddress, NetBackend, NetQueueState, NetworkBackendConfig, PacketQueue,
+};
 pub use devices::{
     Ahci, ApicTrigger, Device, DiskController, DiskFindingSeverity, DiskFormat, DiskImage,
     DiskInfo, DiskInspectionFinding, DiskInspectionReport, DiskLockInfo, DiskManager,
@@ -106,6 +109,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::Write;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
 use replay::ReplayMode as VmReplayMode;
@@ -159,6 +163,7 @@ pub struct VmConfig {
     pub max_steps: Option<u64>,
     pub hardware_acceleration: HardwareAcceleration,
     pub disks: Vec<DiskSpec>,
+    pub network: NetworkBackendConfig,
 }
 
 impl Default for VmConfig {
@@ -176,6 +181,7 @@ impl Default for VmConfig {
             max_steps: None,
             hardware_acceleration: HardwareAcceleration::Software,
             disks: Vec::new(),
+            network: NetworkBackendConfig::default(),
         }
     }
 }
@@ -251,7 +257,7 @@ impl Vm {
         DiskManager::validate_specs(&config.disks).map_err(disk_error_to_vm)?;
         let hardware_acceleration = HardwareAccelerationSession::open(config.hardware_acceleration)
             .map_err(|error| VmError::HardwareAcceleration(error.to_string()))?;
-        let mut vm = Self::build_with_config(config, clock);
+        let mut vm = Self::build_with_config(config, clock)?;
         vm.hardware_acceleration = hardware_acceleration;
         vm.attach_configured_disks()?;
         if let Err(error) = vm.configure_persistence() {
@@ -261,7 +267,7 @@ impl Vm {
         Ok(vm)
     }
 
-    fn build_with_config(config: VmConfig, clock: SharedMonotonicClock) -> Self {
+    fn build_with_config(config: VmConfig, clock: SharedMonotonicClock) -> Result<Self, VmError> {
         let mut mmu = Mmu::new(config.memory_size);
         let replay = shared_replay();
         mmu.attach_replay(replay.clone());
@@ -400,17 +406,20 @@ impl Vm {
         pci.borrow_mut().set_bar_size(0, 5, 0, 0, NVME_BAR0_SIZE as u32).ok();
         pci.borrow_mut().write_config(0, 5, 0, 0x10, NVME_MMIO_BASE as u32);
 
-        // Networking: e1000 + virtio-net on a loopback hub.
-        let hub = Rc::new(RefCell::new(LoopbackHub::new()));
+        // Networking: deterministic segment by default, or a real host
+        // transport selected by VmConfig.
         let e1000_mac = MacAddress::synos_default(0x56);
         let virtio_mac = MacAddress::synos_default(0x57);
+        let (e1000_backend, virtio_backend) = create_network_backends(
+            &config.network,
+            e1000_mac,
+            virtio_mac,
+        )?;
         let e1000 =
             Rc::new(RefCell::new(E1000::new(e1000_mac)));
         e1000.borrow_mut().attach_apic(apic.clone());
         e1000.borrow_mut().set_irq_vector(0x2D);
-        e1000.borrow_mut().attach_backend(Box::new(
-            LoopbackPort::new(hub.clone(), 0, e1000_mac),
-        ));
+        e1000.borrow_mut().attach_backend(e1000_backend);
         mmu.attach_mmio(E1000_MMIO_BASE, E1000_MMIO_SIZE, Box::new(e1000.clone()));
         pci.borrow_mut().add_device(
             0, 6, 0,
@@ -428,9 +437,7 @@ impl Vm {
         let virtio_net = Rc::new(RefCell::new(VirtioNet::new(virtio_mac)));
         virtio_net.borrow_mut().attach_apic(apic.clone());
         virtio_net.borrow_mut().set_irq_vector(0x2E);
-        virtio_net.borrow_mut().attach_backend(Box::new(
-            LoopbackPort::new(hub.clone(), 1, virtio_mac),
-        ));
+        virtio_net.borrow_mut().attach_backend(virtio_backend);
         ports.attach(
             VIRTIO_NET_IO_BASE,
             VIRTIO_PCI_BAR0_SIZE as u16,
@@ -569,7 +576,7 @@ impl Vm {
         }
         bios.context.attach_replay(replay.clone());
 
-        Self {
+        Ok(Self {
             cpu,
             mmu,
             interrupt_controller: InterruptController::new(),
@@ -605,7 +612,7 @@ impl Vm {
             clock,
             replay,
             initialized: false,
-        }
+        })
     }
 
     /// Set the firmware mode (BIOS or UEFI) before calling `run`.
@@ -1689,6 +1696,7 @@ pub enum VmError {
     Replay(ReplayError),
     InvalidConfiguration,
     Disk(String),
+    Network(String),
     KernelLoadError,
     BootFailure,
     HardwareAcceleration(String),
@@ -1716,6 +1724,38 @@ fn loader_error_to_vm(error: crate::boot::LoaderError) -> VmError {
 
 fn disk_error_to_vm(error: StorageError) -> VmError {
     VmError::Disk(error.to_string())
+}
+
+fn create_network_backends(
+    config: &NetworkBackendConfig,
+    e1000_mac: MacAddress,
+    virtio_mac: MacAddress,
+) -> Result<(Box<dyn NetBackend>, Box<dyn NetBackend>), VmError> {
+    match config {
+        NetworkBackendConfig::Deterministic => {
+            let segment = DeterministicSegment::new(2);
+            let e1000 = DeterministicSegment::connect(segment.clone(), e1000_mac)
+                .map_err(|error| VmError::Network(error.to_string()))?;
+            let virtio = DeterministicSegment::connect(segment, virtio_mac)
+                .map_err(|error| VmError::Network(error.to_string()))?;
+            Ok((Box::new(e1000), Box::new(virtio)))
+        }
+        NetworkBackendConfig::UserNat { bind, peer } => {
+            let e1000 = HostNetworkBackend::user_nat(*bind, *peer, e1000_mac)
+                .map_err(|error| VmError::Network(format!("cannot open user-mode network: {error}")))?;
+            let virtio_bind = SocketAddr::new(bind.ip(), 0);
+            let virtio = HostNetworkBackend::user_nat(virtio_bind, *peer, virtio_mac)
+                .map_err(|error| VmError::Network(format!("cannot open user-mode network: {error}")))?;
+            Ok((Box::new(e1000), Box::new(virtio)))
+        }
+        NetworkBackendConfig::Bridged { interface } => {
+            let e1000 = HostNetworkBackend::bridged(interface, e1000_mac)
+                .map_err(|error| VmError::Network(format!("cannot open bridged network: {error}")))?;
+            let virtio = HostNetworkBackend::bridged(interface, virtio_mac)
+                .map_err(|error| VmError::Network(format!("cannot open bridged network: {error}")))?;
+            Ok((Box::new(e1000), Box::new(virtio)))
+        }
+    }
 }
 
 fn disk_controller_name(controller: DiskController) -> &'static str {

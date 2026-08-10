@@ -1,6 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -18,7 +18,8 @@ use synos_vm::{
     run_synos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
-    GuestInputMode, HardwareAcceleration, TerminalExit, TerminalSession, Vm, VmConfig,
+    GuestInputMode, HardwareAcceleration, NetworkBackendConfig, TerminalExit, TerminalSession,
+    Vm, VmConfig,
     migration_checkpoint_tag, validate_migration_checkpoint, snapshot_digest, SnapshotAuthKey,
     SnapshotFeatures, SnapshotSchema, MAX_MIGRATION_ALLOCATION_BYTES, COM1_PORT, COM2_PORT,
 };
@@ -271,6 +272,38 @@ where
                 let value = next_value(&mut args, "--accel")?;
                 config.hardware_acceleration = parse_hardware_acceleration(&value)?;
             }
+            "--network" => {
+                config.network = parse_network_backend(&next_value(&mut args, "--network")?)?;
+            }
+            "--network-peer" => {
+                let peer = parse_socket_addr(&next_value(&mut args, "--network-peer")?, "network peer")?;
+                config.network = match config.network {
+                    NetworkBackendConfig::UserNat { bind, .. } => {
+                        NetworkBackendConfig::UserNat { bind, peer }
+                    }
+                    _ => NetworkBackendConfig::UserNat {
+                        bind: SocketAddr::from(([0, 0, 0, 0], 0)),
+                        peer,
+                    },
+                };
+            }
+            "--network-bind" => {
+                let bind = parse_socket_addr(&next_value(&mut args, "--network-bind")?, "network bind")?;
+                config.network = match config.network {
+                    NetworkBackendConfig::UserNat { peer, .. } => {
+                        NetworkBackendConfig::UserNat { bind, peer }
+                    }
+                    _ => NetworkBackendConfig::UserNat {
+                        bind,
+                        peer: SocketAddr::from(([127, 0, 0, 1], 5555)),
+                    },
+                };
+            }
+            "--network-interface" => {
+                config.network = NetworkBackendConfig::Bridged {
+                    interface: next_value(&mut args, "--network-interface")?,
+                };
+            }
             "--serial" => config.enable_serial = true,
             "--no-serial" => config.enable_serial = false,
             "--serial-port" => {
@@ -370,6 +403,9 @@ where
     }
     if replay_record.is_some() && replay_path.is_some() {
         return Err("--replay-record and --replay cannot be combined".to_string());
+    }
+    if matches!(config.network, NetworkBackendConfig::Bridged { ref interface } if interface.is_empty()) {
+        return Err("bridged networking requires --network-interface <NAME>".to_string());
     }
     if (snapshot_save.is_some() || snapshot_restore.is_some()) && snapshot_key.is_none()
     {
@@ -690,6 +726,28 @@ fn parse_hardware_acceleration(value: &str) -> Result<HardwareAcceleration, Stri
             "invalid accelerator `{value}`; use software, auto, kvm, haxm, hvf, or whpx"
         )),
     }
+}
+
+fn parse_network_backend(value: &str) -> Result<NetworkBackendConfig, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "deterministic" | "test" => Ok(NetworkBackendConfig::Deterministic),
+        "nat" | "user" | "user-mode" => Ok(NetworkBackendConfig::UserNat {
+            bind: SocketAddr::from(([0, 0, 0, 0], 0)),
+            peer: SocketAddr::from(([127, 0, 0, 1], 5555)),
+        }),
+        "bridged" | "bridge" => Ok(NetworkBackendConfig::Bridged {
+            interface: String::new(),
+        }),
+        _ => Err(format!(
+            "invalid network backend `{value}`; use deterministic, nat, or bridged"
+        )),
+    }
+}
+
+fn parse_socket_addr(value: &str, name: &str) -> Result<SocketAddr, String> {
+    value
+        .parse()
+        .map_err(|_| format!("invalid {name} `{value}`; use HOST:PORT"))
 }
 
 fn parse_positive_usize(value: &str, name: &str) -> Result<usize, String> {
@@ -2700,6 +2758,11 @@ Machine options:
   -v, --v, -verbose         Show verbose error details
       --input <MODE>         Host input path: serial (default) or ps2
       --steps <COUNT>        Run a bounded number of instructions
+      --network <MODE>       Network: deterministic (default), nat, or bridged
+      --network-peer <ADDR>  NAT gateway UDP address, such as 127.0.0.1:5555
+      --network-bind <ADDR>  NAT local UDP address, such as 0.0.0.0:0
+      --network-interface <NAME>
+                              Host interface for bridged networking
 
 Disk options:
       --disk <PATH>          Attach a data disk; repeat for more disks

@@ -8,7 +8,10 @@ pub mod backend;
 pub mod mac;
 pub mod packet;
 
-pub use backend::{DeterministicPort, DeterministicSegment, LoopbackHub, LoopbackPort, NetBackend, NetQueueState};
+pub use backend::{
+    DeterministicPort, DeterministicSegment, HostNetworkBackend, LoopbackHub, LoopbackPort,
+    NetBackend, NetQueueState, NetworkBackendConfig,
+};
 pub use mac::{mac_matches, MacAddress, MAC_ADDRESS_LEN};
 pub use packet::{NetError, PacketQueue, ETHERNET_FRAME_MAX, ETHERNET_FRAME_MIN, ETHERNET_HEADER_LEN};
 

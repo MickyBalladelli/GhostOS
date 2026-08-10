@@ -304,9 +304,8 @@ evidence.
 
 ## P1: Complete guest networking, DHCP, and network diagnostics
 
-The current DHCP client and shell syntax exist, but the kernel still seeds
-`eth0` with `link_up: false`, the VM uses an in-memory loopback backend, and no
-runtime DHCP transport connects those pieces. These tasks make two running
+The current DHCP client and shell syntax exist, and the VM now has deterministic
+test networking plus selectable host transports. These tasks make two running
 SynOS VMs communicate and obtain distinct leases.
 
 ### VM link and packet plumbing
@@ -328,7 +327,7 @@ SynOS VMs communicate and obtain distinct leases.
       filtering, Ethernet frame limits, carrier-down behavior, queue limits,
       and no-peer drop semantics. Direct regression coverage is in the backend
       module; `cargo check -p synos-vm --tests` passes.
-- [ ] Add a real host/VM network backend for bridged, user-mode/NAT, and
+- [x] Add a real host/VM network backend for bridged, user-mode/NAT, and
       deterministic test networking; keep the in-memory loopback backend only
       for isolated unit tests.
 - [ ] Add a bounded DHCP server to the deterministic VM network fixture, with a
