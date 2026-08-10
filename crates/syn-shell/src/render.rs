@@ -83,6 +83,9 @@ fn render_list(
     if is_network_stats_output(output) {
         return render_network_stats(output)
     }
+    if is_traceroute_output(output) {
+        return render_traceroute(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -232,6 +235,13 @@ fn is_network_stats_output(output: &StructuredOutput) -> bool {
     matches!(
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "show-network-stats"
+    )
+}
+
+fn is_traceroute_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "traceroute"
     )
 }
 
@@ -520,6 +530,52 @@ fn render_network_stats(
     }
     if let Some(next) = find_value(output, "next-interface") {
         render_labeled_value(&mut rendered, "Next interface", next)?;
+    }
+    Ok(rendered)
+}
+
+fn render_traceroute(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("TRACEROUTE ")?;
+    if let Some(destination) = find_value(output, "destination") {
+        write_value(&mut rendered, destination, false)?;
+    }
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    render_interface_field(&mut rendered, output, "result", "Result")?;
+    render_interface_field(&mut rendered, output, "route-interface", "Route interface")?;
+    render_interface_field(&mut rendered, output, "route-gateway", "Route gateway")?;
+    render_interface_field(&mut rendered, output, "max-hops", "Max hops")?;
+    render_interface_field(&mut rendered, output, "hop-count", "Hops")?;
+    render_interface_field(&mut rendered, output, "hop-timeout-ms", "Hop timeout (ms)")?;
+    render_interface_field(&mut rendered, output, "probe-interval-ms", "Probe interval (ms)")?;
+    render_interface_field(&mut rendered, output, "total-deadline-ms", "Total deadline (ms)")?;
+    const HOPS: [[&str; 5]; 4] = [
+        ["hop1-ttl", "hop1-address", "hop1-result", "hop1-rtt-ms", "hop1-error"],
+        ["hop2-ttl", "hop2-address", "hop2-result", "hop2-rtt-ms", "hop2-error"],
+        ["hop3-ttl", "hop3-address", "hop3-result", "hop3-rtt-ms", "hop3-error"],
+        ["hop4-ttl", "hop4-address", "hop4-result", "hop4-rtt-ms", "hop4-error"],
+    ];
+    for (index, fields) in HOPS.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Hop {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        render_interface_field(&mut rendered, output, fields[0], "  TTL")?;
+        render_interface_field(&mut rendered, output, fields[1], "  Address")?;
+        render_interface_field(&mut rendered, output, fields[2], "  Result")?;
+        render_interface_field(&mut rendered, output, fields[3], "  RTT (ms)")?;
+        render_interface_field(&mut rendered, output, fields[4], "  Error")?;
+    }
+    if let Some(next) = find_value(output, "next-hop") {
+        render_labeled_value(&mut rendered, "Next hop", next)?;
     }
     Ok(rendered)
 }

@@ -1211,7 +1211,7 @@ fn command_category(route: u16) -> &'static str {
             "FIREWALL"
         }
         syn_shell::network::SHOW_NETWORK_ROUTE
-            ..=syn_shell::network::SHOW_NETWORK_STATS_ROUTE => "NETWORK",
+            ..=syn_shell::network::TRACEROUTE_ROUTE => "NETWORK",
         _ => "SHELL",
     }
 }
@@ -2817,7 +2817,7 @@ impl KernelExecutor {
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
             route if (syn_shell::network::SHOW_NETWORK_ROUTE
-                ..=syn_shell::network::SHOW_NETWORK_STATS_ROUTE)
+                ..=syn_shell::network::TRACEROUTE_ROUTE)
                 .contains(&route) =>
             {
                 if route == syn_shell::network::PING_ROUTE {

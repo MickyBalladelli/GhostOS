@@ -26,12 +26,18 @@ pub const SET_DNS_ROUTE: u16 = 70;
 pub const RESOLVE_ROUTE: u16 = 71;
 pub const SHOW_SOCKETS_ROUTE: u16 = 72;
 pub const SHOW_NETWORK_STATS_ROUTE: u16 = 73;
+pub const TRACEROUTE_ROUTE: u16 = 74;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
 pub const MAX_NEIGHBOR_OUTPUT_ROWS: usize = 2;
 pub const MAX_SOCKET_OUTPUT_ROWS: usize = 2;
 pub const MAX_NETWORK_STATS_INTERFACES: usize = 2;
+pub const MAX_TRACEROUTE_OUTPUT_HOPS: usize = 4;
+pub const TRACEROUTE_MAX_HOPS: u8 = 8;
+pub const TRACEROUTE_HOP_TIMEOUT_MS: u32 = 1_000;
+pub const TRACEROUTE_PROBE_INTERVAL_MS: u32 = 100;
+pub const TRACEROUTE_TOTAL_DEADLINE_MS: u32 = 10_000;
 pub const MAX_DNS_SERVERS: usize = 3;
 pub const MAX_DNS_SEARCH_DOMAINS: usize = 3;
 pub const MAX_RESOLVE_ANSWERS: usize = 4;
@@ -154,6 +160,13 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         synopsis: "SHOW NETWORK-STATS",
         description: "Show bounded interface, protocol, DHCP, and firewall counters with reset generations.",
         aliases: "NETWORK-STATS",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "TRACEROUTE",
+        synopsis: "TRACEROUTE destination",
+        description: "Trace a bounded route using TTL-limited probes and ICMP time-exceeded replies.",
+        aliases: "",
         qualifiers: "",
     },
 ];
@@ -638,6 +651,137 @@ impl NetworkStatsView {
     };
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TracerouteResult {
+    Complete,
+    Timeout,
+    Unreachable,
+    NoRoute,
+    PermissionDenied,
+    RateLimited,
+    MalformedReply,
+    Cancelled,
+}
+
+impl TracerouteResult {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Timeout => "timeout",
+            Self::Unreachable => "unreachable",
+            Self::NoRoute => "no-route",
+            Self::PermissionDenied => "permission-denied",
+            Self::RateLimited => "rate-limited",
+            Self::MalformedReply => "malformed-reply",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn status(self) -> Status {
+        match self {
+            Self::Complete => Status::NORMAL,
+            Self::Timeout => ping_status(115),
+            Self::Unreachable => ping_status(116),
+            Self::NoRoute => ping_status(117),
+            Self::PermissionDenied => Status::ACCESS_DENIED,
+            Self::RateLimited => Status::BUSY,
+            Self::MalformedReply => ping_status(118),
+            Self::Cancelled => Status::CANCELLED,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TracerouteHopResult {
+    TimeExceeded,
+    DestinationReached,
+    Timeout,
+    Unreachable,
+    NoRoute,
+    RateLimited,
+    MalformedReply,
+}
+
+impl TracerouteHopResult {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TimeExceeded => "time-exceeded",
+            Self::DestinationReached => "destination-reached",
+            Self::Timeout => "timeout",
+            Self::Unreachable => "unreachable",
+            Self::NoRoute => "no-route",
+            Self::RateLimited => "rate-limited",
+            Self::MalformedReply => "malformed-reply",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TracerouteRequest<'a> {
+    pub destination: &'a str,
+    pub max_hops: u8,
+    pub hop_timeout_ms: u32,
+    pub probe_interval_ms: u32,
+    pub total_deadline_ms: u32,
+}
+
+impl TracerouteRequest<'_> {
+    pub const fn defaults(destination: &str) -> TracerouteRequest<'_> {
+        TracerouteRequest {
+            destination,
+            max_hops: TRACEROUTE_MAX_HOPS,
+            hop_timeout_ms: TRACEROUTE_HOP_TIMEOUT_MS,
+            probe_interval_ms: TRACEROUTE_PROBE_INTERVAL_MS,
+            total_deadline_ms: TRACEROUTE_TOTAL_DEADLINE_MS,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TracerouteHop {
+    pub ttl: u8,
+    pub address: Option<NetworkText>,
+    pub result: TracerouteHopResult,
+    pub rtt_ms: Option<u64>,
+    pub error: Option<NetworkText>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TracerouteView {
+    pub destination: NetworkText,
+    pub route_interface: Option<NetworkText>,
+    pub route_gateway: Option<NetworkText>,
+    pub result: TracerouteResult,
+    pub max_hops: u8,
+    pub hop_timeout_ms: u32,
+    pub probe_interval_ms: u32,
+    pub total_deadline_ms: u32,
+    pub hop_count: u8,
+    pub hops: [Option<TracerouteHop>; MAX_TRACEROUTE_OUTPUT_HOPS],
+    pub next_hop: Option<u64>,
+}
+
+impl TracerouteView {
+    pub fn failure(
+        request: TracerouteRequest<'_>,
+        result: TracerouteResult,
+    ) -> Result<Self, Status> {
+        Ok(Self {
+            destination: NetworkText::new(request.destination).map_err(|_| Status::NO_SPACE)?,
+            route_interface: None,
+            route_gateway: None,
+            result,
+            max_hops: request.max_hops,
+            hop_timeout_ms: request.hop_timeout_ms,
+            probe_interval_ms: request.probe_interval_ms,
+            total_deadline_ms: request.total_deadline_ms,
+            hop_count: 0,
+            hops: [None; MAX_TRACEROUTE_OUTPUT_HOPS],
+            next_hop: None,
+        })
+    }
+}
+
 impl ResolveView {
     pub fn failure(request: ResolveRequest<'_>, result: ResolveResult) -> Result<Self, Status> {
         Ok(Self {
@@ -1029,6 +1173,16 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
+    /// Run a bounded TTL trace. Providers must select the route before
+    /// probing, rate-limit probes, honor the total deadline, and distinguish
+    /// ICMP time-exceeded replies from destination replies.
+    fn traceroute(
+        &mut self,
+        _request: TracerouteRequest<'_>,
+    ) -> Result<TracerouteView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -1174,6 +1328,24 @@ fn resolve_result_from_status(status: Status) -> ResolveResult {
     }
 }
 
+fn traceroute_result_from_status(status: Status) -> TracerouteResult {
+    if status == Status::ACCESS_DENIED {
+        TracerouteResult::PermissionDenied
+    } else if status == Status::BUSY {
+        TracerouteResult::RateLimited
+    } else if status == Status::CANCELLED {
+        TracerouteResult::Cancelled
+    } else if status == TracerouteResult::Timeout.status() {
+        TracerouteResult::Timeout
+    } else if status == TracerouteResult::MalformedReply.status() {
+        TracerouteResult::MalformedReply
+    } else if status == TracerouteResult::NoRoute.status() {
+        TracerouteResult::NoRoute
+    } else {
+        TracerouteResult::Unreachable
+    }
+}
+
 pub fn register_network_commands<const CAPACITY: usize>(
     registry: &mut CommandRegistry<CAPACITY>,
 ) -> Result<(), Error> {
@@ -1233,6 +1405,12 @@ pub fn register_network_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-NETWORK-STATS", &[])
             .map_err(|_| Error::InvalidValue)?,
         route(SHOW_NETWORK_STATS_ROUTE),
+    )?;
+    let destination = positional("DESTINATION", ArgumentKind::Text, true)?;
+    registry.register(
+        CommandSpec::new("TRACEROUTE", &[destination])
+            .map_err(|_| Error::InvalidValue)?,
+        route(TRACEROUTE_ROUTE),
     )?;
 
     let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
@@ -1381,6 +1559,14 @@ pub fn dispatch_network_command<Source: NetworkSource>(
         SHOW_NETWORK_STATS_ROUTE => source
             .show_network_stats()
             .and_then(network_stats_output),
+        TRACEROUTE_ROUTE => {
+            let request = traceroute_request(&command)?;
+            match source.traceroute(request) {
+                Ok(view) => traceroute_output(view),
+                Err(status) => TracerouteView::failure(request, traceroute_result_from_status(status))
+                    .and_then(traceroute_output),
+            }
+        }
         SET_HOSTNAME_ROUTE => {
             let hostname = command
                 .get_text("HOSTNAME")
@@ -1709,6 +1895,16 @@ pub fn resolve_request<'a>(command: &'a CommandCall) -> Result<ResolveRequest<'a
             _ => None,
         },
     })
+}
+
+pub fn traceroute_request<'a>(
+    command: &'a CommandCall,
+) -> Result<TracerouteRequest<'a>, Status> {
+    let destination = command
+        .get_text("DESTINATION")
+        .filter(|value| !value.is_empty())
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    Ok(TracerouteRequest::defaults(destination))
 }
 
 fn parse_dns_list<const CAPACITY: usize>(
@@ -2546,6 +2742,122 @@ pub fn network_stats_output(view: NetworkStatsView) -> Result<StructuredOutput, 
             "next-interface",
             OutputValue::Unsigned(next),
         )?;
+    }
+    Ok(output)
+}
+
+pub fn traceroute_output(view: TracerouteView) -> Result<StructuredOutput, Status> {
+    let actual_count = view.hops.iter().filter(|hop| hop.is_some()).count();
+    if actual_count > MAX_TRACEROUTE_OUTPUT_HOPS
+        || actual_count > view.hop_count as usize
+        || view.max_hops == 0
+        || view.max_hops > TRACEROUTE_MAX_HOPS
+        || view.hop_timeout_ms == 0
+        || view.hop_timeout_ms > TRACEROUTE_HOP_TIMEOUT_MS
+        || view.probe_interval_ms < TRACEROUTE_PROBE_INTERVAL_MS
+        || view.total_deadline_ms == 0
+        || view.total_deadline_ms > TRACEROUTE_TOTAL_DEADLINE_MS
+        || view.hop_count > view.max_hops
+    {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let mut output = StructuredOutput::new(view.result.status());
+    insert_text(&mut output, "operation", "traceroute")?;
+    insert_text(&mut output, "destination", view.destination.as_str())?;
+    insert_text(&mut output, "result", view.result.as_str())?;
+    insert(
+        &mut output,
+        "result-status",
+        OutputValue::Status(view.result.status()),
+    )?;
+    if let Some(interface) = view.route_interface {
+        insert_text(&mut output, "route-interface", interface.as_str())?;
+    }
+    if let Some(gateway) = view.route_gateway {
+        insert_text(&mut output, "route-gateway", gateway.as_str())?;
+    }
+    insert(
+        &mut output,
+        "max-hops",
+        OutputValue::Unsigned(view.max_hops as u64),
+    )?;
+    insert(
+        &mut output,
+        "hop-count",
+        OutputValue::Unsigned(view.hop_count as u64),
+    )?;
+    insert(
+        &mut output,
+        "hop-timeout-ms",
+        OutputValue::Unsigned(view.hop_timeout_ms as u64),
+    )?;
+    insert(
+        &mut output,
+        "probe-interval-ms",
+        OutputValue::Unsigned(view.probe_interval_ms as u64),
+    )?;
+    insert(
+        &mut output,
+        "total-deadline-ms",
+        OutputValue::Unsigned(view.total_deadline_ms as u64),
+    )?;
+    for (index, hop) in view.hops.iter().flatten().enumerate() {
+        if hop.ttl == 0 || hop.ttl > view.max_hops {
+            return Err(Status::INVALID_ARGUMENT)
+        }
+        let fields = match index {
+            0 => [
+                "hop1-ttl",
+                "hop1-address",
+                "hop1-result",
+                "hop1-rtt-ms",
+                "hop1-error",
+            ],
+            1 => [
+                "hop2-ttl",
+                "hop2-address",
+                "hop2-result",
+                "hop2-rtt-ms",
+                "hop2-error",
+            ],
+            2 => [
+                "hop3-ttl",
+                "hop3-address",
+                "hop3-result",
+                "hop3-rtt-ms",
+                "hop3-error",
+            ],
+            3 => [
+                "hop4-ttl",
+                "hop4-address",
+                "hop4-result",
+                "hop4-rtt-ms",
+                "hop4-error",
+            ],
+            _ => return Err(Status::INVALID_ARGUMENT),
+        };
+        insert(
+            &mut output,
+            fields[0],
+            OutputValue::Unsigned(hop.ttl as u64),
+        )?;
+        if let Some(address) = hop.address {
+            insert_text(&mut output, fields[1], address.as_str())?;
+        }
+        insert_text(&mut output, fields[2], hop.result.as_str())?;
+        if let Some(rtt_ms) = hop.rtt_ms {
+            insert(
+                &mut output,
+                fields[3],
+                OutputValue::Unsigned(rtt_ms),
+            )?;
+        }
+        if let Some(error) = hop.error {
+            insert_text(&mut output, fields[4], error.as_str())?;
+        }
+    }
+    if let Some(next) = view.next_hop {
+        insert(&mut output, "next-hop", OutputValue::Unsigned(next))?;
     }
     Ok(output)
 }

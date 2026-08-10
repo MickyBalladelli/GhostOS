@@ -11,11 +11,14 @@ use syn_shell::{
         NetworkStatsArpView, NetworkStatsDhcpView, NetworkStatsFirewallView,
         NetworkStatsIcmpView, NetworkStatsInterfaceView, NetworkStatsTransportView,
         NetworkStatsView,
+        TracerouteHop, TracerouteHopResult, TracerouteRequest, TracerouteResult,
+        TracerouteView,
         SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
         SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, SHOW_NEIGHBORS_ROUTE,
         CLEAR_NEIGHBORS_ROUTE, SHOW_DNS_ROUTE, SET_DNS_ROUTE, RESOLVE_ROUTE,
         SHOW_SOCKETS_ROUTE,
         SHOW_NETWORK_STATS_ROUTE,
+        TRACEROUTE_ROUTE,
         MAX_NETWORK_LINK_EVENTS,
         MAX_NETWORK_OUTPUT_ROWS,
     },
@@ -118,6 +121,7 @@ fn network_commands_use_single_noun_names() {
         ("RESOLVE host.example /TIMEOUT=2000 /IPV4", RESOLVE_ROUTE),
         ("SHOW SOCKETS", SHOW_SOCKETS_ROUTE),
         ("SHOW NETWORK-STATS", SHOW_NETWORK_STATS_ROUTE),
+        ("TRACEROUTE 198.51.100.4", TRACEROUTE_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
             "SET INTERFACE eth0 /ADDRESS=10.0.0.2 /GATEWAY=10.0.0.1 /MTU=1500 /ENABLE",
@@ -509,6 +513,8 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
     assert!(sockets.description.contains("ownership"));
     let stats = command_help("NETWORK-STATS").unwrap();
     assert!(stats.description.contains("counters"));
+    let traceroute = command_help("TRACEROUTE").unwrap();
+    assert!(traceroute.description.contains("TTL"));
 }
 
 #[test]
@@ -750,6 +756,7 @@ fn two_seeded_interfaces_fit_output_budget() {
         dns: DnsView::EMPTY,
         sockets: SocketView::EMPTY,
         stats: NetworkStatsView::EMPTY,
+        traceroute: None,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let interfaces = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -821,6 +828,7 @@ fn four_full_interfaces_paginate_within_output_budget() {
         dns: DnsView::EMPTY,
         sockets: SocketView::EMPTY,
         stats: NetworkStatsView::EMPTY,
+        traceroute: None,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let output = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -1086,6 +1094,75 @@ fn network_stats_show_counter_groups_and_reset_generation() {
 }
 
 #[test]
+fn traceroute_reports_route_ttl_expiry_and_rate_limits() {
+    let mut source = FakeNetwork::seeded();
+    source.traceroute = Some(TracerouteView {
+        destination: text("198.51.100.4"),
+        route_interface: Some(text("eth0")),
+        route_gateway: Some(text("10.0.0.1")),
+        result: TracerouteResult::Complete,
+        max_hops: 8,
+        hop_timeout_ms: 1_000,
+        probe_interval_ms: 100,
+        total_deadline_ms: 10_000,
+        hop_count: 4,
+        hops: [
+            Some(TracerouteHop {
+                ttl: 1,
+                address: Some(text("10.0.0.1")),
+                result: TracerouteHopResult::TimeExceeded,
+                rtt_ms: Some(2),
+                error: None,
+            }),
+            Some(TracerouteHop {
+                ttl: 2,
+                address: Some(text("192.0.2.1")),
+                result: TracerouteHopResult::TimeExceeded,
+                rtt_ms: Some(4),
+                error: None,
+            }),
+            Some(TracerouteHop {
+                ttl: 3,
+                address: None,
+                result: TracerouteHopResult::Timeout,
+                rtt_ms: None,
+                error: Some(text("deadline")),
+            }),
+            Some(TracerouteHop {
+                ttl: 4,
+                address: Some(text("198.51.100.4")),
+                result: TracerouteHopResult::DestinationReached,
+                rtt_ms: Some(8),
+                error: None,
+            }),
+        ],
+        next_hop: None,
+    });
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
+    let output = execute(&mut executor, "TRACEROUTE 198.51.100.4").unwrap();
+    assert!(has_text(&output, "operation", "traceroute"));
+    assert!(has_text(&output, "route-interface", "eth0"));
+    assert!(has_text(&output, "hop1-result", "time-exceeded"));
+    assert!(has_text(&output, "hop4-result", "destination-reached"));
+    assert!(has_text(&output, "hop3-error", "deadline"));
+    assert!(has_unsigned(&output, "probe-interval-ms", 100));
+    assert!(has_unsigned(&output, "total-deadline-ms", 10_000));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::List)
+        .unwrap()
+        .as_str()
+        .contains("TRACEROUTE 198.51.100.4"));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::Json)
+        .unwrap()
+        .as_str()
+        .contains("time-exceeded"));
+
+    let mut unavailable: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
+    let failure = execute(&mut unavailable, "TRACEROUTE missing.example").unwrap();
+    assert!(has_text(&failure, "result", "no-route"));
+    assert!(has_unsigned(&failure, "max-hops", 8));
+}
+
+#[test]
 fn resolve_returns_bounded_dual_stack_answers_and_failure_output() {
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
     let output = execute(&mut executor, "RESOLVE host.example /TIMEOUT=2000").unwrap();
@@ -1139,6 +1216,7 @@ struct FakeNetwork {
     dns: DnsView,
     sockets: SocketView,
     stats: NetworkStatsView,
+    traceroute: Option<TracerouteView>,
 }
 
 impl FakeNetwork {
@@ -1155,6 +1233,7 @@ impl FakeNetwork {
             dns: DnsView::EMPTY,
             sockets: SocketView::EMPTY,
             stats: NetworkStatsView::EMPTY,
+            traceroute: None,
         }
     }
 
@@ -1203,6 +1282,7 @@ impl FakeNetwork {
             dns: DnsView::EMPTY,
             sockets: SocketView::EMPTY,
             stats: NetworkStatsView::EMPTY,
+            traceroute: None,
         }
     }
 
@@ -1274,6 +1354,13 @@ impl NetworkSource for FakeNetwork {
 
     fn show_network_stats(&mut self) -> Result<NetworkStatsView, Status> {
         Ok(self.stats)
+    }
+
+    fn traceroute(
+        &mut self,
+        _request: TracerouteRequest<'_>,
+    ) -> Result<TracerouteView, Status> {
+        self.traceroute.ok_or(Status::NOT_FOUND)
     }
 
     fn set_dns(&mut self, update: DnsUpdate) -> Result<DnsView, Status> {
