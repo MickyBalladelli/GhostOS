@@ -214,6 +214,43 @@ fn render_ping(
     render_interface_field(&mut rendered, output, "received", "Received")?;
     render_interface_field(&mut rendered, output, "lost", "Lost")?;
     render_interface_field(&mut rendered, output, "loss-percent", "Loss")?;
+    const REPLY_FIELDS: [[&str; 5]; 3] = [
+        [
+            "reply1-sequence",
+            "reply1-ttl",
+            "reply1-payload-size",
+            "reply1-rtt-ms",
+            "reply1-error",
+        ],
+        [
+            "reply2-sequence",
+            "reply2-ttl",
+            "reply2-payload-size",
+            "reply2-rtt-ms",
+            "reply2-error",
+        ],
+        [
+            "reply3-sequence",
+            "reply3-ttl",
+            "reply3-payload-size",
+            "reply3-rtt-ms",
+            "reply3-error",
+        ],
+    ];
+    for (index, fields) in REPLY_FIELDS.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Reply {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        render_interface_field(&mut rendered, output, fields[0], "  Sequence")?;
+        render_ping_metric(&mut rendered, output, fields[1], "  TTL")?;
+        render_interface_field(&mut rendered, output, fields[2], "  Payload size")?;
+        render_ping_metric(&mut rendered, output, fields[3], "  RTT (ms)")?;
+        render_ping_metric(&mut rendered, output, fields[4], "  Error")?;
+    }
     render_ping_metric(&mut rendered, output, "rtt-min-ms", "Minimum RTT (ms)")?;
     render_ping_metric(&mut rendered, output, "rtt-average-ms", "Average RTT (ms)")?;
     render_ping_metric(&mut rendered, output, "rtt-max-ms", "Maximum RTT (ms)")?;

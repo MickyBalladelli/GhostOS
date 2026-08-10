@@ -21,8 +21,9 @@ pub const PING_ROUTE: u16 = 66;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
-pub const DEFAULT_PING_COUNT: u32 = 4;
-pub const MAX_PING_COUNT: u32 = 64;
+pub const MAX_PING_REPLY_OUTPUT: usize = 3;
+pub const DEFAULT_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
+pub const MAX_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
 pub const DEFAULT_PING_TIMEOUT_MS: u32 = 1_000;
 pub const MAX_PING_TIMEOUT_MS: u32 = 60_000;
 pub const DEFAULT_PING_SIZE: u32 = 32;
@@ -248,27 +249,55 @@ pub enum PingResult {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PingReply {
+    pub sequence: u32,
+    pub ttl: Option<u8>,
+    pub payload_size: u32,
+    pub rtt_ms: Option<u64>,
+    pub error: Option<PingResult>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PingSummary {
     pub transmitted: u32,
     pub received: u32,
     pub minimum_rtt_ms: Option<u64>,
     pub average_rtt_ms: Option<u64>,
     pub maximum_rtt_ms: Option<u64>,
+    pub replies: [Option<PingReply>; MAX_PING_REPLY_OUTPUT],
 }
 
 impl PingSummary {
-    pub const fn for_result(request: PingRequest<'_>, result: PingResult) -> Self {
+    pub fn for_result(request: PingRequest<'_>, result: PingResult) -> Self {
         let received = if matches!(result, PingResult::Success) {
             request.count
         } else {
             0
         };
+        let mut replies = [None; MAX_PING_REPLY_OUTPUT];
+        let reply_count = core::cmp::min(request.count as usize, MAX_PING_REPLY_OUTPUT);
+        let mut index = 0;
+        while index < reply_count {
+            replies[index] = Some(PingReply {
+                sequence: PING_FIRST_SEQUENCE + index as u32,
+                ttl: None,
+                payload_size: request.size,
+                rtt_ms: None,
+                error: if matches!(result, PingResult::Success) {
+                    None
+                } else {
+                    Some(result)
+                },
+            });
+            index += 1;
+        }
         Self {
             transmitted: request.count,
             received,
             minimum_rtt_ms: None,
             average_rtt_ms: None,
             maximum_rtt_ms: None,
+            replies,
         }
     }
 
@@ -896,6 +925,10 @@ pub fn ping_summary_output(
     if summary.received > summary.transmitted || summary.transmitted > request.request.count {
         return Err(Status::INVALID_ARGUMENT)
     }
+    let reply_count = summary.replies.iter().filter(|reply| reply.is_some()).count();
+    if reply_count as u32 > summary.transmitted {
+        return Err(Status::INVALID_ARGUMENT)
+    }
     if summary.received == 0
         && (summary.minimum_rtt_ms.is_some()
             || summary.average_rtt_ms.is_some()
@@ -917,6 +950,57 @@ pub fn ping_summary_output(
     insert_text(&mut output, "address", request.target.address.as_str())?;
     insert_text(&mut output, "result", result.as_str())?;
     insert(&mut output, "result-status", OutputValue::Status(result.status()))?;
+    insert(
+        &mut output,
+        "reply-count",
+        OutputValue::Unsigned(reply_count as u64),
+    )?;
+    const REPLY_FIELDS: [[&str; 5]; MAX_PING_REPLY_OUTPUT] = [
+        [
+            "reply1-sequence",
+            "reply1-ttl",
+            "reply1-payload-size",
+            "reply1-rtt-ms",
+            "reply1-error",
+        ],
+        [
+            "reply2-sequence",
+            "reply2-ttl",
+            "reply2-payload-size",
+            "reply2-rtt-ms",
+            "reply2-error",
+        ],
+        [
+            "reply3-sequence",
+            "reply3-ttl",
+            "reply3-payload-size",
+            "reply3-rtt-ms",
+            "reply3-error",
+        ],
+    ];
+    for (index, reply) in summary.replies.iter().enumerate() {
+        let Some(reply) = reply else { continue };
+        let fields = REPLY_FIELDS[index];
+        insert(
+            &mut output,
+            fields[0],
+            OutputValue::Unsigned(reply.sequence as u64),
+        )?;
+        if let Some(ttl) = reply.ttl {
+            insert(&mut output, fields[1], OutputValue::Unsigned(ttl as u64))?;
+        }
+        insert(
+            &mut output,
+            fields[2],
+            OutputValue::Unsigned(reply.payload_size as u64),
+        )?;
+        if let Some(rtt_ms) = reply.rtt_ms {
+            insert(&mut output, fields[3], OutputValue::Unsigned(rtt_ms))?;
+        }
+        if let Some(error) = reply.error {
+            insert_text(&mut output, fields[4], error.as_str())?;
+        }
+    }
     insert(
         &mut output,
         "transmitted",

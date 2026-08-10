@@ -399,7 +399,7 @@ SynOS VMs communicate and obtain distinct leases.
       down, DNS failure, permission denial, malformed reply, and cancellation.
 - [x] Add human-readable summary output showing transmitted, received, loss,
       minimum/average/maximum RTT, and destination identity.
-- [ ] Add structured and JSON output containing every reply, sequence, TTL,
+- [x] Add structured and JSON output containing every reply, sequence, TTL,
       payload size, RTT, error, and final summary.
 - [ ] Require the network diagnostic capability and record the target,
       interface, source, count, timeout, and result in the audit stream.

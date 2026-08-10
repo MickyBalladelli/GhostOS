@@ -3,7 +3,7 @@ use syn_shell::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
         NetworkRouteView, NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
-        PingHandle, PingResult, PingSummary, PingTarget, ResolvedPingRequest, RouteUpdate,
+        PingHandle, PingReply, PingResult, PingSummary, PingTarget, ResolvedPingRequest, RouteUpdate,
         SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
         SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS,
         MAX_NETWORK_OUTPUT_ROWS,
@@ -136,7 +136,7 @@ fn ping_request_applies_defaults_and_qualifiers() {
         syn_shell::network::ping_request(&defaults).unwrap(),
         PingRequest {
             destination: "198.51.100.4",
-            count: 4,
+            count: 3,
             timeout_ms: 1_000,
             size: 32,
             interface: None,
@@ -245,20 +245,48 @@ fn ping_summary_contains_loss_rtt_and_human_readable_identity() {
         ResolvedPingRequest { request, target },
         PingResult::Success,
         PingSummary {
-            transmitted: 4,
-            received: 3,
+            transmitted: 3,
+            received: 2,
             minimum_rtt_ms: Some(4),
             average_rtt_ms: Some(7),
             maximum_rtt_ms: Some(10),
+            replies: [
+                Some(PingReply {
+                    sequence: 1,
+                    ttl: Some(64),
+                    payload_size: 32,
+                    rtt_ms: Some(4),
+                    error: None,
+                }),
+                Some(PingReply {
+                    sequence: 2,
+                    ttl: Some(63),
+                    payload_size: 32,
+                    rtt_ms: Some(10),
+                    error: None,
+                }),
+                Some(PingReply {
+                    sequence: 3,
+                    ttl: None,
+                    payload_size: 32,
+                    rtt_ms: None,
+                    error: Some(PingResult::Timeout),
+                }),
+            ],
         },
     )
     .unwrap();
     assert!(has_text(&output, "destination", "198.51.100.4"));
     assert!(has_text(&output, "address", "198.51.100.4"));
-    assert!(has_unsigned(&output, "transmitted", 4));
-    assert!(has_unsigned(&output, "received", 3));
+    assert!(has_unsigned(&output, "transmitted", 3));
+    assert!(has_unsigned(&output, "received", 2));
     assert!(has_unsigned(&output, "lost", 1));
-    assert!(has_unsigned(&output, "loss-percent", 25));
+    assert!(has_unsigned(&output, "loss-percent", 33));
+    assert!(has_unsigned(&output, "reply1-sequence", 1));
+    assert!(has_unsigned(&output, "reply1-ttl", 64));
+    assert!(has_unsigned(&output, "reply1-payload-size", 32));
+    assert!(has_unsigned(&output, "reply1-rtt-ms", 4));
+    assert!(has_text(&output, "reply3-error", "timeout"));
     assert!(has_unsigned(&output, "rtt-min-ms", 4));
     assert!(has_unsigned(&output, "rtt-average-ms", 7));
     assert!(has_unsigned(&output, "rtt-max-ms", 10));
@@ -267,6 +295,13 @@ fn ping_summary_contains_loss_rtt_and_human_readable_identity() {
     assert!(rendered.as_str().contains("Transmitted"));
     assert!(rendered.as_str().contains("Average RTT (ms)"));
     assert!(rendered.as_str().contains("198.51.100.4"));
+    assert!(rendered.as_str().contains("Reply 1"));
+    assert!(rendered.as_str().contains("Payload size"));
+    assert!(rendered.as_str().contains("timeout"));
+    let json = syn_shell::render::render(&output, syn_shell::render::OutputFormat::Json)
+        .unwrap();
+    assert!(json.as_str().contains("\"reply1-sequence\":1"));
+    assert!(json.as_str().contains("\"reply3-error\":\"timeout\""));
 }
 
 #[test]
