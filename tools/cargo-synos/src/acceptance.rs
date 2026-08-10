@@ -3,12 +3,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use synos_compiler::{CompileRequest, Compiler, Target};
-use synos_pkg::{ApplicationBundle, PackageBundle, SigningKey, bundle_size, encode_bundle};
+use synos_init::ProcessId;
+use synos_pkg::{ApplicationBundle, PackageBundle, PackageDaemon, SigningKey, bundle_size, encode_bundle};
 use synos_rustd::{
-    BuildPolicy, BuildRequest, CompilerService, CANCELLATION_GRACE_US,
-    COMPILER_IDENTITY, MAX_FEATURES, NetworkPolicy, Profile, ResourceLimits, SelfHostStage,
-    Text, ToolchainStage, ToolchainStageResult,
+    BuildPolicy, BuildRequest, CompilerCapabilities, CompilerService, CANCELLATION_GRACE_US,
+    COMPILER_IDENTITY, DynamicArtifact, DynamicArtifactKind, MAX_FEATURES, NetworkPolicy, Profile,
+    ResourceLimits, SelfHostStage, SynFsWorkspaceRuntime, Text, ToolExit, ToolKind,
+    ToolSpawnRequest, ToolchainComponent, ToolchainExecutor, ToolchainManifest, ToolchainPlan,
+    ToolchainRequest, ToolchainRuntime, ToolchainStage, ToolchainStageResult,
 };
+use synos_status::Status;
 use synos_system_model::ContentId;
 use synos_synfs::SynFs;
 
@@ -167,6 +171,11 @@ fn contract_checks(results: &mut Vec<CheckResult>) -> Result<(), String> {
         },
     );
     record(results, "isolated-concurrent-builds", service_contract_check());
+    record(
+        results,
+        "compiler-cancellation-boundaries",
+        compiler_cancellation_boundaries(),
+    );
     record(results, "offline-locked-registry", offline_registry_check());
     record(results, "stage2-self-host-order", self_host_stage_check());
     Ok(())
@@ -241,6 +250,217 @@ fn service_contract_check() -> Result<(), String> {
         != synos_rustd::JobState::Failed
     {
         return Err("crashed build was not fenced".into());
+    }
+    Ok(())
+}
+
+struct CancellationToolRuntime {
+    boundary: usize,
+    current: usize,
+    active: Option<ProcessId>,
+    spawned: usize,
+    waited: usize,
+    fenced: usize,
+}
+
+impl CancellationToolRuntime {
+    fn new(boundary: usize) -> Self {
+        Self {
+            boundary,
+            current: 0,
+            active: None,
+            spawned: 0,
+            waited: 0,
+            fenced: 0,
+        }
+    }
+}
+
+impl ToolchainRuntime for CancellationToolRuntime {
+    type Error = &'static str;
+
+    fn spawn_tool(&mut self, _request: ToolSpawnRequest) -> Result<ProcessId, Self::Error> {
+        let process = ProcessId::new((self.spawned + 1) as u64).ok_or("invalid fake process")?;
+        self.spawned += 1;
+        self.active = Some(process);
+        Ok(process)
+    }
+
+    fn wait_tool(&mut self, process: ProcessId) -> Result<ToolExit, Self::Error> {
+        if self.active != Some(process) {
+            return Err("tool process was not active")
+        }
+        if self.current == self.boundary {
+            return Err("tool boundary cancellation")
+        }
+        self.current += 1;
+        self.waited += 1;
+        self.active = None;
+        Ok(ToolExit { code: 0 })
+    }
+
+    fn fence_tool(&mut self, process: ProcessId) -> Result<(), Self::Error> {
+        if self.active != Some(process) {
+            return Err("cancelled tool was not fenced")
+        }
+        self.active = None;
+        self.fenced += 1;
+        Ok(())
+    }
+}
+
+fn compiler_cancellation_boundaries() -> Result<(), String> {
+    let request = ToolchainRequest {
+        build: build_request("/system/sources/cancellation", "cancellation-service"),
+        run_build_scripts: true,
+        run_proc_macros: true,
+        capabilities: CompilerCapabilities::MINIMUM,
+    };
+    let key = SigningKey::new([0x61; 32]);
+    let mut package_filesystem = SynFs::<128>::new();
+    package_filesystem
+        .create_directory("system/store", true)
+        .map_err(|error| format!("could not create cancellation package store: {error:?}"))?;
+    package_filesystem
+        .create_directory("system/manifests", true)
+        .map_err(|error| format!("could not create cancellation manifest store: {error:?}"))?;
+    let mut packages = PackageDaemon::<8, 2>::new();
+    packages
+        .trust_key(key)
+        .map_err(|error| format!("could not trust cancellation package key: {error:?}"))?;
+    let payload = b"compiler cancellation boundary package";
+    let required = bundle_size(payload.len(), 0).map_err(|error| format!("{error:?}"))?;
+    let mut encoded = vec![0; required];
+    let info = encode_bundle(payload, 0, &[], key, &mut encoded)
+        .map_err(|error| format!("could not encode cancellation package: {error:?}"))?;
+    packages
+        .install_bundle(&mut package_filesystem, &encoded, &mut [0; 128])
+        .map_err(|error| format!("could not install cancellation package: {error:?}"))?;
+    let baseline_packages = packages.manifests().map(|manifest| manifest.content).collect::<Vec<_>>();
+    let mut manifest = ToolchainManifest::new();
+    for kind in [
+        ToolKind::Cargo,
+        ToolKind::BuildScript,
+        ToolKind::ProcMacro,
+        ToolKind::Rustc,
+        ToolKind::Linker,
+    ] {
+        let component = ToolchainComponent::new(
+            kind,
+            info.package,
+            "/system/toolchain/tool",
+            synos_rustd::Target::X86_64,
+        )
+        .map_err(|error| format!("could not create cancellation component: {error:?}"))?;
+        manifest
+            .install_authorized(&packages, component)
+            .map_err(|error| format!("could not install cancellation component: {error:?}"))?;
+    }
+    let plan = ToolchainPlan::build(&manifest, request, synos_rustd::ToolchainPolicy::OFFLINE)
+        .map_err(|error| format!("could not build cancellation plan: {error:?}"))?;
+    if plan.len() != 5 {
+        return Err(format!("cancellation plan has {} steps, expected 5", plan.len()))
+    }
+
+    let mut service = CompilerService::<2, 8>::new(BuildPolicy::OFFLINE);
+    let baseline_policy = service.security_policy();
+    let baseline_snapshot = service.snapshot();
+    let mut filesystem = SynFs::<256>::new();
+    let mut workspace_clean = true;
+    let mut process_fencing = true;
+    let mut audit_clean = true;
+    for boundary in 0..plan.len() {
+        let job = service
+            .submit(request.build)
+            .map_err(|error| format!("could not submit boundary {boundary}: {error:?}"))?;
+        let isolation = service
+            .isolation(job)
+            .map_err(|error| format!("could not read boundary isolation: {error:?}"))?;
+        {
+            let mut runtime = SynFsWorkspaceRuntime::new(&mut filesystem);
+            service
+                .prepare_job(job, &mut runtime)
+                .map_err(|error| format!("could not prepare boundary {boundary}: {error:?}"))?;
+        }
+        let artifact = DynamicArtifact {
+            kind: if boundary == 1 {
+                DynamicArtifactKind::BuildScript
+            } else if boundary == 2 {
+                DynamicArtifactKind::ProcMacro
+            } else {
+                DynamicArtifactKind::CodeGenerator
+            },
+            package: info.package,
+            payload: ContentId::hash(format!("cancelled-artifact-{boundary}").as_bytes()),
+            executable: Text::new("/system/toolchain/tool")
+                .map_err(|error| format!("could not create artifact path: {error:?}"))?,
+            target: synos_rustd::Target::X86_64,
+        };
+        service
+            .stage_job_artifact(job, &packages, artifact)
+            .map_err(|error| format!("could not stage boundary {boundary} artifact: {error:?}"))?;
+        service
+            .start(job)
+            .map_err(|error| format!("could not start boundary {boundary}: {error:?}"))?;
+        let mut tool_runtime = CancellationToolRuntime::new(boundary);
+        let execution = ToolchainExecutor::new().execute(&plan, &mut tool_runtime);
+        if execution.is_ok()
+            || tool_runtime.active.is_some()
+            || tool_runtime.fenced != 1
+            || tool_runtime.spawned != boundary + 1
+            || tool_runtime.waited != boundary
+        {
+            process_fencing = false;
+        }
+        service
+            .request_cancel(job, 0)
+            .map_err(|error| format!("could not request boundary {boundary} cancellation: {error:?}"))?;
+        service
+            .request_cancel(job, CANCELLATION_GRACE_US)
+            .map_err(|error| format!("could not fence boundary {boundary}: {error:?}"))?;
+        if service
+            .status(job)
+            .map_err(|error| format!("could not read boundary status: {error:?}"))?
+            .state
+            != synos_rustd::JobState::Cancelled
+        {
+            return Err(format!("boundary {boundary} did not reach cancelled state"))
+        }
+        {
+            let mut runtime = SynFsWorkspaceRuntime::new(&mut filesystem);
+            service
+                .cleanup_job(job, &mut runtime)
+                .map_err(|error| format!("could not clean boundary {boundary}: {error:?}"))?;
+        }
+        if service.active_artifacts().next().is_some()
+            || filesystem.lookup(isolation.workspace.as_str()).is_ok()
+            || filesystem.lookup(isolation.scratch.as_str()).is_ok()
+        {
+            workspace_clean = false;
+        }
+        let audit = service
+            .audit_records()
+            .find(|record| record.job == job.raw())
+            .ok_or_else(|| format!("boundary {boundary} has no audit record"))?;
+        if audit.status != Status::CANCELLED || !audit.package.is_zero() || !audit.payload.is_zero() {
+            audit_clean = false;
+        }
+        service
+            .release(job)
+            .map_err(|error| format!("could not release boundary {boundary}: {error:?}"))?;
+        if service.snapshot() != baseline_snapshot
+            || service.security_policy() != baseline_policy
+            || !packages.is_instantiation_authorized(info.package)
+            || packages.manifests().map(|manifest| manifest.content).collect::<Vec<_>>()
+                != baseline_packages
+        {
+            return Err(format!("boundary {boundary} leaked compiler state"))
+        }
+    }
+    if !workspace_clean || !process_fencing || !audit_clean {
+        return Err(format!(
+            "cancellation cleanup failed: workspace_clean={workspace_clean}, process_fencing={process_fencing}, audit_clean={audit_clean}"
+        ))
     }
     Ok(())
 }

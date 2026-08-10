@@ -130,6 +130,13 @@ Use `--boot-only` to run just the booted native compiler artifact without the
 longer host build matrix. Run the gate on each additional native host to extend
 the recorded host-platform matrix.
 
+The cancellation contract runs the five-step toolchain plan with cancellation
+injected at Cargo, build-script, proc-macro, rustc, and linker boundaries. Each
+case fences the active tool, removes its SynFS workspace and scratch roots,
+releases dynamic artifacts, leaves both cache counts unchanged, keeps the
+verified package and compiler policy unchanged, and records only a cancelled
+audit with zero package/payload identities.
+
 The acceptance gate also produces a booted evidence artifact under its chosen
 root. It boots the real kernel in the VM, builds the native `synos-rustd`
 process image with the runtime PAL linked in, signs and authorizes that image,

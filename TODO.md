@@ -214,8 +214,12 @@ evidence.
       now persists two fresh SynFS roots, compiles their locked fixture in
       parallel with canonical path and environment inputs, compares source,
       root-image, and executable digests, and writes host-platform evidence.
-- [ ] Test compiler cancellation at every tool boundary and prove no partial
+- [x] Test compiler cancellation at every tool boundary and prove no partial
       package, cache entry, dynamic artifact, or trusted-state mutation leaks.
+      The acceptance cancels Cargo, build-script, proc-macro, rustc, and linker
+      boundaries, fences the active process, removes workspace and scratch
+      roots, releases artifacts, preserves cache/package/policy state, and
+      records zero package/payload identities in the cancelled audit.
 - [ ] Add target compatibility tests for x86_64 first and aarch64 only when its
       runtime, linker, loader, and boot evidence are real.
 
