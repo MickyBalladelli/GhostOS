@@ -373,6 +373,7 @@ fn two_seeded_interfaces_fit_output_budget() {
     interfaces[0] = Some(NetworkInterfaceView {
         name: text("lo"),
         address: text("127.0.0.1"),
+        prefix_len: None,
         mac: None,
         gateway: None,
         mtu: 65_535,
@@ -386,6 +387,7 @@ fn two_seeded_interfaces_fit_output_budget() {
     interfaces[1] = Some(NetworkInterfaceView {
         name: text("eth0"),
         address: text("0.0.0.0"),
+        prefix_len: None,
         mac: None,
         gateway: None,
         mtu: 1500,
@@ -432,6 +434,7 @@ fn four_full_interfaces_paginate_within_output_budget() {
         interfaces[i] = Some(NetworkInterfaceView {
             name: text(name),
             address: text("10.0.0.2"),
+            prefix_len: Some(24),
             mac: None,
             gateway: Some(text("10.0.0.1")),
             mtu: 1500,
@@ -505,6 +508,7 @@ impl FakeNetwork {
         interfaces[0] = Some(NetworkInterfaceView {
             name: text("eth0"),
             address: text("10.0.0.2"),
+            prefix_len: Some(24),
             mac: None,
             gateway: Some(text("10.0.0.1")),
             mtu: 1500,

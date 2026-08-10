@@ -134,6 +134,7 @@ pub struct NetworkLinkEvent {
 pub struct NetworkInterfaceView {
     pub name: NetworkText,
     pub address: NetworkText,
+    pub prefix_len: Option<u8>,
     pub mac: Option<NetworkText>,
     pub gateway: Option<NetworkText>,
     pub mtu: u32,
@@ -567,6 +568,9 @@ fn emit_interface_details(
     interface: &NetworkInterfaceView,
 ) -> Result<(), Status> {
     insert_text(output, "address", interface.address.as_str())?;
+    if let Some(prefix_len) = interface.prefix_len {
+        insert(output, "prefix-len", OutputValue::Unsigned(prefix_len as u64))?;
+    }
     if let Some(mac) = interface.mac {
         insert_text(output, "mac", mac.as_str())?;
     }
@@ -699,6 +703,9 @@ pub fn show_interface_output(
 
 fn interface_field_count(interface: &NetworkInterfaceView) -> usize {
     let mut count = 6; // name address mtu enabled link-up mode
+    if interface.prefix_len.is_some() {
+        count += 1;
+    }
     if interface.mac.is_some() {
         count += 1;
     }
@@ -742,6 +749,15 @@ fn emit_interface(
         "address",
         interface.address.as_str(),
     )?;
+    if let Some(prefix_len) = interface.prefix_len {
+        insert_indexed(
+            output,
+            "interface",
+            index,
+            "prefix-len",
+            OutputValue::Unsigned(prefix_len as u64),
+        )?;
+    }
     if let Some(gateway) = interface.gateway {
         insert_indexed_text(output, "interface", index, "gateway", gateway.as_str())?;
     }

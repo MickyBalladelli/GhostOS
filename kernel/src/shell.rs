@@ -2272,6 +2272,7 @@ impl KernelNetwork {
         interfaces[0] = Some(NetworkInterfaceView {
             name: text("lo"),
             address: text("127.0.0.1"),
+            prefix_len: None,
             mac: None,
             gateway: None,
             mtu: 65_535,
@@ -2394,6 +2395,7 @@ impl KernelNetwork {
             let next = syn_shell::network::NetworkInterfaceView {
                 name,
                 address,
+                prefix_len: current.and_then(|interface| interface.prefix_len),
                 mac: Some(Self::mac_text(snapshot.mac)),
                 gateway: current.and_then(|interface| interface.gateway),
                 mtu: current.map_or(1500, |interface| interface.mtu),

@@ -350,7 +350,7 @@ SynOS VMs communicate and obtain distinct leases.
       scheduler without blocking the shell or starving other sockets.
 - [x] Apply the complete lease atomically: address, subnet mask, gateway,
       routes, DNS servers, lease timers, server identity, and interface state.
-- [ ] Add subnet-mask/prefix representation to the declarative interface model
+- [x] Add subnet-mask/prefix representation to the declarative interface model
       and shell output; do not infer a mask from an IPv4 address string.
 - [ ] Preserve the previous static or last-known-good lease until a new lease
       is acknowledged and the interface health check succeeds.

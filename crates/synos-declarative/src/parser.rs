@@ -190,6 +190,7 @@ impl AddressMode {
 pub struct NetworkInterface {
     pub name: BoundedText<MAX_SERVICE_NAME_BYTES>,
     pub address: BoundedText<MAX_ADDRESS_BYTES>,
+    pub prefix_len: Option<u8>,
     pub gateway: Option<BoundedText<MAX_ADDRESS_BYTES>>,
     pub mtu: u32,
     pub enabled: bool,
@@ -228,6 +229,7 @@ impl NetworkSpec {
             };
             if interface.name.is_empty()
                 || !address_ok
+                || interface.prefix_len.is_some_and(|prefix_len| prefix_len > 32)
                 || !(576..=65_535).contains(&interface.mtu)
                 || self
                     .interfaces()
@@ -265,7 +267,21 @@ impl NetworkSpec {
         enabled: Option<bool>,
         mode: Option<AddressMode>,
     ) -> Result<(), ParseError> {
+        self.update_interface_with_prefix(name, address, None, gateway, mtu, enabled, mode)
+    }
+
+    pub fn update_interface_with_prefix(
+        &mut self,
+        name: &str,
+        address: Option<&str>,
+        prefix_len: Option<u8>,
+        gateway: Option<&str>,
+        mtu: Option<u32>,
+        enabled: Option<bool>,
+        mode: Option<AddressMode>,
+    ) -> Result<(), ParseError> {
         if address.is_none()
+            && prefix_len.is_none()
             && gateway.is_none()
             && mtu.is_none()
             && enabled.is_none()
@@ -293,6 +309,9 @@ impl NetworkSpec {
                 interface.mode = AddressMode::Static;
             }
         }
+        if let Some(prefix_len) = prefix_len {
+            interface.prefix_len = Some(prefix_len);
+        }
         if let Some(gateway) = gateway {
             interface.gateway = Some(BoundedText::new(gateway)?);
         }
@@ -317,6 +336,16 @@ impl NetworkSpec {
         address: &str,
         gateway: Option<&str>,
     ) -> Result<(), ParseError> {
+        self.apply_dhcp_lease_with_prefix(name, address, None, gateway)
+    }
+
+    pub fn apply_dhcp_lease_with_prefix(
+        &mut self,
+        name: &str,
+        address: &str,
+        prefix_len: Option<u8>,
+        gateway: Option<&str>,
+    ) -> Result<(), ParseError> {
         let previous = *self;
         let name = BoundedText::new(name)?;
         let interface = self
@@ -329,6 +358,7 @@ impl NetworkSpec {
             return Err(ParseError::InvalidValue);
         }
         interface.address = BoundedText::new(address)?;
+        interface.prefix_len = prefix_len;
         interface.gateway = match gateway {
             Some(value) => Some(BoundedText::new(value)?),
             None => None,
@@ -458,10 +488,27 @@ impl SystemSpec {
         enabled: Option<bool>,
         mode: Option<AddressMode>,
     ) -> Result<(), ParseError> {
+        self.update_network_interface_with_prefix(
+            name, address, None, gateway, mtu, enabled, mode,
+        )
+    }
+
+    pub fn update_network_interface_with_prefix(
+        &mut self,
+        name: &str,
+        address: Option<&str>,
+        prefix_len: Option<u8>,
+        gateway: Option<&str>,
+        mtu: Option<u32>,
+        enabled: Option<bool>,
+        mode: Option<AddressMode>,
+    ) -> Result<(), ParseError> {
         let previous = self.network;
         let result = self
             .network
-            .update_interface(name, address, gateway, mtu, enabled, mode);
+            .update_interface_with_prefix(
+                name, address, prefix_len, gateway, mtu, enabled, mode,
+            );
         if result.is_ok() {
             self.revision = self.revision.saturating_add(1);
         } else {
@@ -476,8 +523,20 @@ impl SystemSpec {
         address: &str,
         gateway: Option<&str>,
     ) -> Result<(), ParseError> {
+        self.apply_network_dhcp_lease_with_prefix(name, address, None, gateway)
+    }
+
+    pub fn apply_network_dhcp_lease_with_prefix(
+        &mut self,
+        name: &str,
+        address: &str,
+        prefix_len: Option<u8>,
+        gateway: Option<&str>,
+    ) -> Result<(), ParseError> {
         let previous = self.network;
-        let result = self.network.apply_dhcp_lease(name, address, gateway);
+        let result = self
+            .network
+            .apply_dhcp_lease_with_prefix(name, address, prefix_len, gateway);
         if result.is_ok() {
             self.revision = self.revision.saturating_add(1);
         } else {
@@ -562,6 +621,7 @@ impl SystemSpec {
             encoder.u8(4);
             encoder.text(interface.name.as_str());
             encoder.text(interface.address.as_str());
+            encode_optional_u8(&mut encoder, interface.prefix_len);
             encode_optional_text(&mut encoder, interface.gateway);
             encoder.u32(interface.mtu);
             encoder.u8(interface.enabled as u8);
@@ -639,6 +699,16 @@ fn encode_optional_text<const CAPACITY: usize>(
     }
 }
 
+fn encode_optional_u8(encoder: &mut Encoder, value: Option<u8>) {
+    match value {
+        Some(value) => {
+            encoder.u8(1);
+            encoder.u8(value);
+        }
+        None => encoder.u8(0),
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ServicePartial {
     name: Option<BoundedText<MAX_SERVICE_NAME_BYTES>>,
@@ -685,6 +755,7 @@ impl CapabilityPartial {
 struct InterfacePartial {
     name: Option<BoundedText<MAX_SERVICE_NAME_BYTES>>,
     address: Option<BoundedText<MAX_ADDRESS_BYTES>>,
+    prefix_len: Option<u8>,
     gateway: Option<BoundedText<MAX_ADDRESS_BYTES>>,
     mtu: Option<u32>,
     enabled: Option<bool>,
@@ -696,6 +767,7 @@ impl InterfacePartial {
         Self {
             name: None,
             address: None,
+            prefix_len: None,
             gateway: None,
             mtu: None,
             enabled: None,
@@ -1093,6 +1165,7 @@ impl Parser {
                 let interface = NetworkInterface {
                     name: partial.name.ok_or(ParseError::MissingField)?,
                     address,
+                    prefix_len: partial.prefix_len,
                     gateway: partial.gateway,
                     mtu: partial.mtu.unwrap_or(1500),
                     enabled: partial.enabled.unwrap_or(true),
@@ -1289,6 +1362,9 @@ impl Parser {
         match key {
             "name" => set_once(&mut partial.name, parse_text(value)?),
             "address" => set_once(&mut partial.address, parse_text(value)?),
+            "prefix" | "prefix-len" | "prefix_len" | "subnet-prefix" | "subnet_prefix" => {
+                set_once(&mut partial.prefix_len, parse_u8(value)?)
+            }
             "gateway" => set_once(&mut partial.gateway, parse_text(value)?),
             "mtu" => set_once(&mut partial.mtu, parse_u32(value)?),
             "enabled" => set_once(&mut partial.enabled, parse_bool(value)?),
@@ -1494,6 +1570,11 @@ fn parse_bool(value: &str) -> Result<bool, ParseError> {
 fn parse_u16(value: &str) -> Result<u16, ParseError> {
     parse_integer(value)
         .and_then(|value| u16::try_from(value).map_err(|_| ParseError::InvalidInteger))
+}
+
+fn parse_u8(value: &str) -> Result<u8, ParseError> {
+    parse_integer(value)
+        .and_then(|value| u8::try_from(value).map_err(|_| ParseError::InvalidInteger))
 }
 
 fn parse_u32(value: &str) -> Result<u32, ParseError> {
