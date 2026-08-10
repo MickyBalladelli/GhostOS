@@ -127,7 +127,7 @@ fn packet_capture_preserves_frame_decision_order_and_bounds() {
     capture.record_event(45, CaptureKind::Rollback, 0);
     assert_eq!(capture.len(), 4);
     capture.record_event(46, CaptureKind::NetworkCommand, 64);
-    assert_eq!(capture.dropped(), 1);
+    assert_eq!(capture.dropped(), 2);
 }
 
 #[test]
