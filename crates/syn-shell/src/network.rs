@@ -247,6 +247,44 @@ pub enum PingResult {
     Cancelled,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PingSummary {
+    pub transmitted: u32,
+    pub received: u32,
+    pub minimum_rtt_ms: Option<u64>,
+    pub average_rtt_ms: Option<u64>,
+    pub maximum_rtt_ms: Option<u64>,
+}
+
+impl PingSummary {
+    pub const fn for_result(request: PingRequest<'_>, result: PingResult) -> Self {
+        let received = if matches!(result, PingResult::Success) {
+            request.count
+        } else {
+            0
+        };
+        Self {
+            transmitted: request.count,
+            received,
+            minimum_rtt_ms: None,
+            average_rtt_ms: None,
+            maximum_rtt_ms: None,
+        }
+    }
+
+    pub const fn lost(self) -> u32 {
+        self.transmitted.saturating_sub(self.received)
+    }
+
+    pub const fn loss_percent(self) -> u64 {
+        if self.transmitted == 0 {
+            0
+        } else {
+            self.lost() as u64 * 100 / self.transmitted as u64
+        }
+    }
+}
+
 impl PingResult {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -847,12 +885,79 @@ pub fn ping_result_output(
     request: ResolvedPingRequest<'_>,
     result: PingResult,
 ) -> Result<StructuredOutput, Status> {
+    ping_summary_output(request, result, PingSummary::for_result(request.request, result))
+}
+
+pub fn ping_summary_output(
+    request: ResolvedPingRequest<'_>,
+    result: PingResult,
+    summary: PingSummary,
+) -> Result<StructuredOutput, Status> {
+    if summary.received > summary.transmitted || summary.transmitted > request.request.count {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    if summary.received == 0
+        && (summary.minimum_rtt_ms.is_some()
+            || summary.average_rtt_ms.is_some()
+            || summary.maximum_rtt_ms.is_some())
+    {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    if let (Some(minimum), Some(average), Some(maximum)) = (
+        summary.minimum_rtt_ms,
+        summary.average_rtt_ms,
+        summary.maximum_rtt_ms,
+    ) && (minimum > average || average > maximum)
+    {
+        return Err(Status::INVALID_ARGUMENT)
+    }
     let mut output = StructuredOutput::new(result.status());
     insert_text(&mut output, "operation", "ping")?;
     insert_text(&mut output, "destination", request.request.destination)?;
     insert_text(&mut output, "address", request.target.address.as_str())?;
     insert_text(&mut output, "result", result.as_str())?;
     insert(&mut output, "result-status", OutputValue::Status(result.status()))?;
+    insert(
+        &mut output,
+        "transmitted",
+        OutputValue::Unsigned(summary.transmitted as u64),
+    )?;
+    insert(
+        &mut output,
+        "received",
+        OutputValue::Unsigned(summary.received as u64),
+    )?;
+    insert(
+        &mut output,
+        "lost",
+        OutputValue::Unsigned(summary.lost() as u64),
+    )?;
+    insert(
+        &mut output,
+        "loss-percent",
+        OutputValue::Unsigned(summary.loss_percent()),
+    )?;
+    if let Some(minimum) = summary.minimum_rtt_ms {
+        insert(
+            &mut output,
+            "rtt-min-ms",
+            OutputValue::Unsigned(minimum),
+        )?;
+    }
+    if let Some(average) = summary.average_rtt_ms {
+        insert(
+            &mut output,
+            "rtt-average-ms",
+            OutputValue::Unsigned(average),
+        )?;
+    }
+    if let Some(maximum) = summary.maximum_rtt_ms {
+        insert(
+            &mut output,
+            "rtt-max-ms",
+            OutputValue::Unsigned(maximum),
+        )?;
+    }
     insert(
         &mut output,
         "count",

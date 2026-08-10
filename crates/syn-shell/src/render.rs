@@ -65,6 +65,9 @@ fn render_list(
     if is_firewall_output(output) {
         return render_firewall(output)
     }
+    if is_ping_output(output) {
+        return render_ping(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -180,6 +183,58 @@ fn is_cluster_output(output: &StructuredOutput) -> bool {
 fn is_firewall_output(output: &StructuredOutput) -> bool {
     find_value(output, "policy-path").is_some()
         && find_value(output, "policy-version").is_some()
+}
+
+fn is_ping_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "ping"
+    )
+}
+
+fn render_ping(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("PING ")?;
+    if let Some(destination) = find_value(output, "destination") {
+        write_value(&mut rendered, destination, false)?;
+    }
+    if let Some(address) = find_value(output, "address") {
+        rendered.push_str(" (")?;
+        write_value(&mut rendered, address, false)?;
+        rendered.push_str(")")?;
+    }
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    render_interface_field(&mut rendered, output, "result", "Result")?;
+    render_interface_field(&mut rendered, output, "transmitted", "Transmitted")?;
+    render_interface_field(&mut rendered, output, "received", "Received")?;
+    render_interface_field(&mut rendered, output, "lost", "Lost")?;
+    render_interface_field(&mut rendered, output, "loss-percent", "Loss")?;
+    render_ping_metric(&mut rendered, output, "rtt-min-ms", "Minimum RTT (ms)")?;
+    render_ping_metric(&mut rendered, output, "rtt-average-ms", "Average RTT (ms)")?;
+    render_ping_metric(&mut rendered, output, "rtt-max-ms", "Maximum RTT (ms)")?;
+    Ok(rendered)
+}
+
+fn render_ping_metric(
+    rendered: &mut Text<MAX_RENDERED_OUTPUT_BYTES>,
+    output: &StructuredOutput,
+    field: &str,
+    label: &str,
+) -> Result<(), Error> {
+    if let Some(value) = find_value(output, field) {
+        render_labeled_value(rendered, label, value)
+    } else {
+        rendered.push_str(ANSI_BOLD)?;
+        rendered.push_str(label)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str(": n/a\n")?;
+        Ok(())
+    }
 }
 
 fn render_firewall(

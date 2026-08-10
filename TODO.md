@@ -397,7 +397,7 @@ SynOS VMs communicate and obtain distinct leases.
       timeout, total deadline, sequence tracking, and a hard packet/count limit.
 - [x] Return stable results for success, timeout, unreachable, no route, link
       down, DNS failure, permission denial, malformed reply, and cancellation.
-- [ ] Add human-readable summary output showing transmitted, received, loss,
+- [x] Add human-readable summary output showing transmitted, received, loss,
       minimum/average/maximum RTT, and destination identity.
 - [ ] Add structured and JSON output containing every reply, sequence, TTL,
       payload size, RTT, error, and final summary.

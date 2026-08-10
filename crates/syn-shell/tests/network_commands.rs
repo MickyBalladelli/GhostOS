@@ -3,9 +3,10 @@ use syn_shell::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
         NetworkRouteView, NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
-        PingHandle, PingResult, PingTarget, ResolvedPingRequest, RouteUpdate, SET_HOSTNAME_ROUTE,
-        SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE,
-        SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
+        PingHandle, PingResult, PingSummary, PingTarget, ResolvedPingRequest, RouteUpdate,
+        SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
+        SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS,
+        MAX_NETWORK_OUTPUT_ROWS,
     },
     interpreter::CommandExecutor,
     parser::CommandRegistry,
@@ -228,6 +229,44 @@ fn ping_results_have_stable_names_and_statuses() {
         assert!(has_text(&output, "result", result.as_str()));
         assert_eq!(output.status(), result.status());
     }
+}
+
+#[test]
+fn ping_summary_contains_loss_rtt_and_human_readable_identity() {
+    let registry = registry();
+    let call = registry
+        .parse("PING 198.51.100.4")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    let request = syn_shell::network::ping_request(&call).unwrap();
+    let target = syn_shell::network::resolve_literal_ipv4_target(request).unwrap();
+    let output = syn_shell::network::ping_summary_output(
+        ResolvedPingRequest { request, target },
+        PingResult::Success,
+        PingSummary {
+            transmitted: 4,
+            received: 3,
+            minimum_rtt_ms: Some(4),
+            average_rtt_ms: Some(7),
+            maximum_rtt_ms: Some(10),
+        },
+    )
+    .unwrap();
+    assert!(has_text(&output, "destination", "198.51.100.4"));
+    assert!(has_text(&output, "address", "198.51.100.4"));
+    assert!(has_unsigned(&output, "transmitted", 4));
+    assert!(has_unsigned(&output, "received", 3));
+    assert!(has_unsigned(&output, "lost", 1));
+    assert!(has_unsigned(&output, "loss-percent", 25));
+    assert!(has_unsigned(&output, "rtt-min-ms", 4));
+    assert!(has_unsigned(&output, "rtt-average-ms", 7));
+    assert!(has_unsigned(&output, "rtt-max-ms", 10));
+    let rendered = syn_shell::render::render(&output, syn_shell::render::OutputFormat::List)
+        .unwrap();
+    assert!(rendered.as_str().contains("Transmitted"));
+    assert!(rendered.as_str().contains("Average RTT (ms)"));
+    assert!(rendered.as_str().contains("198.51.100.4"));
 }
 
 #[test]
