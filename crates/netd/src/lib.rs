@@ -48,8 +48,10 @@ pub use scheduler::{
     DEFAULT_SOCKET_REQUEST_BUDGET,
 };
 pub use stack::{
-    InterfaceConfig, InterfaceConfigError, InterfaceRoute, NetworkPoller, PollActivity,
-    SmolTcpStack, TcpBuffers, TcpHandle, MAX_INTERFACE_ROUTES,
+    InterfaceConfig, InterfaceConfigError, InterfaceRoute, NeighborEntry, NeighborState,
+    NeighborTable, NeighborTableError, NetworkPoller, PollActivity, SmolTcpStack, TcpBuffers,
+    TcpHandle, MAX_INTERFACE_ROUTES, MAX_NEIGHBOR_ATTEMPTS, MAX_NEIGHBOR_ENTRIES,
+    NEIGHBOR_REACHABLE_MS, NEIGHBOR_RESOLUTION_TIMEOUT_MS,
 };
 pub use transport::{
     DhcpIngress, EthernetDhcpTransport, DHCP_BROADCAST_IPV4, DHCP_BROADCAST_MAC,

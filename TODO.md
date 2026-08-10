@@ -377,7 +377,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 - [x] Connect the configured interface address, subnet, gateway, and routes to
       the smoltcp interface after every successful static or DHCP update.
-- [ ] Enable bounded ARP/neighbor discovery and expose pending, reachable,
+- [x] Enable bounded ARP/neighbor discovery and expose pending, reachable,
       stale, failed, and permanent neighbor states.
 - [ ] Add IPv4 ICMP echo request/reply support with checksum validation,
       identifier/sequence matching, TTL handling, bounded payloads, and a

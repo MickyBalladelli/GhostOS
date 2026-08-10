@@ -1,10 +1,13 @@
 use smoltcp::iface::{
     Interface, PollIngressSingleResult, Route, SocketHandle, SocketSet, SocketStorage,
 };
-use smoltcp::phy::Device;
+use smoltcp::phy::{Device, DeviceCapabilities, PacketMeta, RxToken};
 use smoltcp::socket::tcp;
 use smoltcp::time::Instant;
-use smoltcp::wire::{IpAddress, IpCidr, IpEndpoint, Ipv4Address, Ipv4Cidr};
+use smoltcp::wire::{
+    ArpOperation, ArpPacket, ArpRepr, EthernetFrame, EthernetProtocol, IpAddress, IpCidr,
+    IpEndpoint, Ipv4Address, Ipv4Cidr,
+};
 
 use crate::{
     DhcpError, DhcpLease, DhcpLeaseRuntime, ServiceError, SocketBackend, SocketState,
@@ -14,6 +17,10 @@ use synos_time_sync::MonotonicClock;
 
 /// smoltcp 0.13 keeps four routes per interface by default.
 pub const MAX_INTERFACE_ROUTES: usize = 4;
+pub const MAX_NEIGHBOR_ENTRIES: usize = 8;
+pub const NEIGHBOR_REACHABLE_MS: u64 = 60_000;
+pub const NEIGHBOR_RESOLUTION_TIMEOUT_MS: u64 = 1_000;
+pub const MAX_NEIGHBOR_ATTEMPTS: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InterfaceConfigError {
@@ -21,6 +28,310 @@ pub enum InterfaceConfigError {
     InvalidSubnetMask,
     InvalidRoute,
     TooManyRoutes,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NeighborState {
+    Pending,
+    Reachable,
+    Stale,
+    Failed,
+    Permanent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NeighborTableError {
+    InvalidAddress,
+    InvalidHardwareAddress,
+    Capacity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NeighborEntry {
+    pub address: [u8; 4],
+    pub hardware_address: [u8; 6],
+    pub state: NeighborState,
+    pub last_seen_ms: u64,
+    pub expires_at_ms: Option<u64>,
+    pub attempts: u8,
+}
+
+pub struct NeighborTable {
+    entries: [Option<NeighborEntry>; MAX_NEIGHBOR_ENTRIES],
+}
+
+impl NeighborTable {
+    pub const fn new() -> Self {
+        Self {
+            entries: [None; MAX_NEIGHBOR_ENTRIES],
+        }
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = NeighborEntry> + '_ {
+        self.entries.iter().flatten().copied()
+    }
+
+    pub fn get(&self, address: [u8; 4]) -> Option<NeighborEntry> {
+        self.entries.iter().flatten().find(|entry| entry.address == address).copied()
+    }
+
+    pub fn request(
+        &mut self,
+        address: [u8; 4],
+        now_ms: u64,
+    ) -> Result<NeighborState, NeighborTableError> {
+        if !valid_unicast_ipv4(address) {
+            return Err(NeighborTableError::InvalidAddress)
+        }
+        if let Some(entry) = self.entries.iter_mut().flatten().find(|entry| entry.address == address) {
+            match entry.state {
+                NeighborState::Permanent => return Ok(NeighborState::Permanent),
+                NeighborState::Reachable if entry.expires_at_ms.is_some_and(|expires| now_ms < expires) => {
+                    return Ok(NeighborState::Reachable)
+                }
+                NeighborState::Pending if entry.expires_at_ms.is_some_and(|expires| now_ms < expires) => {
+                    return Ok(NeighborState::Pending)
+                }
+                NeighborState::Pending | NeighborState::Reachable | NeighborState::Stale => {
+                    entry.state = NeighborState::Pending;
+                    entry.attempts = entry.attempts.saturating_add(1).max(1);
+                }
+                NeighborState::Failed => {
+                    entry.state = NeighborState::Pending;
+                    entry.attempts = 1;
+                }
+            }
+            entry.last_seen_ms = now_ms;
+            entry.expires_at_ms = Some(now_ms.saturating_add(NEIGHBOR_RESOLUTION_TIMEOUT_MS));
+            return Ok(entry.state)
+        }
+
+        let slot = self.find_slot()?;
+        self.entries[slot] = Some(NeighborEntry {
+            address,
+            hardware_address: [0; 6],
+            state: NeighborState::Pending,
+            last_seen_ms: now_ms,
+            expires_at_ms: Some(now_ms.saturating_add(NEIGHBOR_RESOLUTION_TIMEOUT_MS)),
+            attempts: 1,
+        });
+        Ok(NeighborState::Pending)
+    }
+
+    pub fn record_reachable(
+        &mut self,
+        address: [u8; 4],
+        hardware_address: [u8; 6],
+        now_ms: u64,
+    ) -> Result<NeighborState, NeighborTableError> {
+        self.validate_addresses(address, hardware_address)?;
+        let slot = match self.entries.iter().position(|entry| entry.is_some_and(|entry| entry.address == address)) {
+            Some(slot) => slot,
+            None => self.find_slot()?,
+        };
+        if self.entries[slot].is_some_and(|entry| entry.state == NeighborState::Permanent) {
+            return Ok(NeighborState::Permanent)
+        }
+        self.entries[slot] = Some(NeighborEntry {
+            address,
+            hardware_address,
+            state: NeighborState::Reachable,
+            last_seen_ms: now_ms,
+            expires_at_ms: Some(now_ms.saturating_add(NEIGHBOR_REACHABLE_MS)),
+            attempts: 0,
+        });
+        Ok(NeighborState::Reachable)
+    }
+
+    pub fn mark_failed(
+        &mut self,
+        address: [u8; 4],
+        now_ms: u64,
+    ) -> Result<(), NeighborTableError> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.address == address)
+            .ok_or(NeighborTableError::InvalidAddress)?;
+        if entry.state != NeighborState::Permanent {
+            entry.state = NeighborState::Failed;
+            entry.last_seen_ms = now_ms;
+            entry.expires_at_ms = None;
+            entry.attempts = MAX_NEIGHBOR_ATTEMPTS;
+        }
+        Ok(())
+    }
+
+    pub fn install_permanent(
+        &mut self,
+        address: [u8; 4],
+        hardware_address: [u8; 6],
+        now_ms: u64,
+    ) -> Result<(), NeighborTableError> {
+        self.validate_addresses(address, hardware_address)?;
+        let slot = match self.entries.iter().position(|entry| entry.is_some_and(|entry| entry.address == address)) {
+            Some(slot) => slot,
+            None => self.find_slot()?,
+        };
+        self.entries[slot] = Some(NeighborEntry {
+            address,
+            hardware_address,
+            state: NeighborState::Permanent,
+            last_seen_ms: now_ms,
+            expires_at_ms: None,
+            attempts: 0,
+        });
+        Ok(())
+    }
+
+    pub fn maintain(&mut self, now_ms: u64) {
+        for entry in self.entries.iter_mut().flatten() {
+            match entry.state {
+                NeighborState::Reachable if entry.expires_at_ms.is_some_and(|expires| now_ms >= expires) => {
+                    entry.state = NeighborState::Stale;
+                    entry.expires_at_ms = None;
+                }
+                NeighborState::Pending if entry.expires_at_ms.is_some_and(|expires| now_ms >= expires) => {
+                    if entry.attempts >= MAX_NEIGHBOR_ATTEMPTS {
+                        entry.state = NeighborState::Failed;
+                        entry.expires_at_ms = None;
+                    } else {
+                        entry.attempts += 1;
+                        entry.last_seen_ms = now_ms;
+                        entry.expires_at_ms = Some(now_ms.saturating_add(NEIGHBOR_RESOLUTION_TIMEOUT_MS));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries = [None; MAX_NEIGHBOR_ENTRIES]
+    }
+
+    fn validate_addresses(
+        &self,
+        address: [u8; 4],
+        hardware_address: [u8; 6],
+    ) -> Result<(), NeighborTableError> {
+        if !valid_unicast_ipv4(address) {
+            return Err(NeighborTableError::InvalidAddress)
+        }
+        if hardware_address == [0; 6] || hardware_address[0] & 1 != 0 {
+            return Err(NeighborTableError::InvalidHardwareAddress)
+        }
+        Ok(())
+    }
+
+    fn find_slot(&self) -> Result<usize, NeighborTableError> {
+        if let Some(slot) = self.entries.iter().position(Option::is_none) {
+            return Ok(slot)
+        }
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.is_some_and(|entry| matches!(entry.state, NeighborState::Stale | NeighborState::Failed)))
+            .min_by_key(|(_, entry)| entry.map_or(0, |entry| entry.last_seen_ms))
+            .map(|(slot, _)| slot)
+            .ok_or(NeighborTableError::Capacity)
+    }
+}
+
+impl Default for NeighborTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct NeighborTrackingDevice<'a, D> {
+    device: &'a mut D,
+    neighbors: &'a mut NeighborTable,
+    now_ms: u64,
+}
+
+struct NeighborTrackingRxToken<'a, T> {
+    token: T,
+    neighbors: &'a mut NeighborTable,
+    now_ms: u64,
+}
+
+impl<T: RxToken> RxToken for NeighborTrackingRxToken<'_, T> {
+    fn consume<R, F>(self, f: F) -> R
+    where
+        F: FnOnce(&[u8]) -> R,
+    {
+        let neighbors = self.neighbors;
+        self.token.consume(|frame| {
+            observe_arp_frame(neighbors, frame, self.now_ms);
+            f(frame)
+        })
+    }
+
+    fn meta(&self) -> PacketMeta {
+        self.token.meta()
+    }
+}
+
+impl<'outer, D: Device> Device for NeighborTrackingDevice<'outer, D> {
+    type RxToken<'a>
+        = NeighborTrackingRxToken<'a, D::RxToken<'a>>
+    where
+        Self: 'a;
+    type TxToken<'a>
+        = D::TxToken<'a>
+    where
+        Self: 'a;
+
+    fn receive<'a>(
+        &'a mut self,
+        timestamp: Instant,
+    ) -> Option<(Self::RxToken<'a>, Self::TxToken<'a>)> {
+        let (token, tx_token) = self.device.receive(timestamp)?;
+        Some((
+            NeighborTrackingRxToken {
+                token,
+                neighbors: &mut *self.neighbors,
+                now_ms: self.now_ms,
+            },
+            tx_token,
+        ))
+    }
+
+    fn transmit<'a>(&'a mut self, timestamp: Instant) -> Option<Self::TxToken<'a>> {
+        self.device.transmit(timestamp)
+    }
+
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.device.capabilities()
+    }
+}
+
+fn observe_arp_frame(neighbors: &mut NeighborTable, frame: &[u8], now_ms: u64) {
+    let Ok(ethernet) = EthernetFrame::new_checked(frame) else {
+        return
+    };
+    if ethernet.ethertype() != EthernetProtocol::Arp {
+        return
+    }
+    let Ok(arp) = ArpPacket::new_checked(ethernet.payload()) else {
+        return
+    };
+    let Ok(ArpRepr::EthernetIpv4 {
+        operation: ArpOperation::Request | ArpOperation::Reply,
+        source_hardware_addr,
+        source_protocol_addr,
+        ..
+    }) = ArpRepr::parse(&arp)
+    else {
+        return
+    };
+    let _ = neighbors.record_reachable(
+        source_protocol_addr.octets(),
+        source_hardware_addr.0,
+        now_ms,
+    );
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +347,31 @@ pub struct InterfaceConfig {
     pub subnet_mask: [u8; 4],
     pub gateway: Option<[u8; 4]>,
     pub routes: [Option<InterfaceRoute>; MAX_INTERFACE_ROUTES],
+}
+
+impl InterfaceConfig {
+    fn next_hop(&self, address: [u8; 4]) -> Option<[u8; 4]> {
+        let target = Ipv4Address::from_octets(address);
+        let prefix_len = self.prefix_len().ok()?;
+        if Ipv4Cidr::new(Ipv4Address::from_octets(self.address), prefix_len)
+            .contains_addr(&target)
+        {
+            return Some(address)
+        }
+        let mut best = None;
+        for route in self.routes.iter().flatten() {
+            if Ipv4Cidr::new(
+                Ipv4Address::from_octets(route.destination),
+                route.prefix_len,
+            )
+            .contains_addr(&target)
+                && best.is_none_or(|previous: InterfaceRoute| route.prefix_len > previous.prefix_len)
+            {
+                best = Some(*route);
+            }
+        }
+        best.map(|route| route.gateway).or(self.gateway)
+    }
 }
 
 impl InterfaceConfig {
@@ -191,6 +527,9 @@ pub struct SmolTcpStack<'a, D, const SOCKETS: usize> {
     leased: [bool; SOCKETS],
     next_ephemeral: u16,
     static_config: Option<InterfaceConfig>,
+    active_config: Option<InterfaceConfig>,
+    neighbors: NeighborTable,
+    last_poll_ms: u64,
 }
 
 impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
@@ -216,6 +555,9 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
             leased: [false; SOCKETS],
             next_ephemeral: 49_152,
             static_config: None,
+            active_config: None,
+            neighbors: NeighborTable::new(),
+            last_poll_ms: 0,
         }
     }
 
@@ -290,6 +632,8 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
                     .expect("validated gateway fits smoltcp route table")
             }
         });
+        self.active_config = Some(config);
+        self.neighbors.clear();
         Ok(())
     }
 
@@ -308,18 +652,65 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
         self.apply_config(config)
     }
 
+    pub fn neighbors(&self) -> &NeighborTable {
+        &self.neighbors
+    }
+
+    pub fn request_neighbor(
+        &mut self,
+        address: [u8; 4],
+        now_ms: u64,
+    ) -> Result<NeighborState, NeighborTableError> {
+        self.neighbors.request(address, now_ms)
+    }
+
+    pub fn record_neighbor_reachable(
+        &mut self,
+        address: [u8; 4],
+        hardware_address: [u8; 6],
+        now_ms: u64,
+    ) -> Result<NeighborState, NeighborTableError> {
+        self.neighbors
+            .record_reachable(address, hardware_address, now_ms)
+    }
+
+    pub fn mark_neighbor_failed(
+        &mut self,
+        address: [u8; 4],
+        now_ms: u64,
+    ) -> Result<(), NeighborTableError> {
+        self.neighbors.mark_failed(address, now_ms)
+    }
+
+    pub fn install_permanent_neighbor(
+        &mut self,
+        address: [u8; 4],
+        hardware_address: [u8; 6],
+        now_ms: u64,
+    ) -> Result<(), NeighborTableError> {
+        self.neighbors
+            .install_permanent(address, hardware_address, now_ms)
+    }
+
     /// Performs bounded ingress work, then one bounded egress pass.
     pub fn poll(&mut self, now_millis: i64, ingress_budget: usize) -> PollActivity {
         let timestamp = Instant::from_millis(now_millis);
+        self.last_poll_ms = now_millis.max(0) as u64;
+        self.neighbors.maintain(self.last_poll_ms);
         let mut activity = PollActivity {
             ingress_packets: 0,
             socket_state_changed: false,
         };
         self.interface.poll_maintenance(timestamp);
+        let mut device = NeighborTrackingDevice {
+            device: &mut self.device,
+            neighbors: &mut self.neighbors,
+            now_ms: self.last_poll_ms,
+        };
         for _ in 0..ingress_budget {
             match self.interface.poll_ingress_single(
                 timestamp,
-                &mut self.device,
+                &mut device,
                 &mut self.sockets,
             ) {
                 PollIngressSingleResult::None => break,
@@ -332,7 +723,7 @@ impl<'a, D: Device, const SOCKETS: usize> SmolTcpStack<'a, D, SOCKETS> {
         }
         let egress = self
             .interface
-            .poll_egress(timestamp, &mut self.device, &mut self.sockets);
+            .poll_egress(timestamp, &mut device, &mut self.sockets);
         activity.socket_state_changed |=
             matches!(egress, smoltcp::iface::PollResult::SocketStateChanged);
         activity
@@ -420,6 +811,11 @@ impl<D: Device, const SOCKETS: usize> SocketBackend for SmolTcpStack<'_, D, SOCK
             IpAddress::Ipv4(Ipv4Address::from_octets(address)),
             port,
         );
+        if let Some(config) = self.active_config
+            && let Some(next_hop) = config.next_hop(address)
+        {
+            let _ = self.neighbors.request(next_hop, self.last_poll_ms);
+        }
         self.sockets
             .get_mut::<tcp::Socket>(handle)
             .connect(self.interface.context(), remote, local_port)
