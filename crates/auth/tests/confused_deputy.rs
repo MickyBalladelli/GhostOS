@@ -28,7 +28,7 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
     let other_root = capabilities
         .mint_root(
             caller_space,
-            CapabilityObject::LogicalNamespace { scope: 3, id: 0 },
+            CapabilityObject::LogicalNamespace { scope: 3, id: 99 },
             Rights::WRITE,
         )
         .unwrap();
