@@ -9,6 +9,53 @@ use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashP
 const BLOCKS: usize = 128;
 const FORMAT_BLOCKS: usize = 16;
 
+fn corrupt_first_allocated_block<const BLOCKS: usize>(image: &mut [u8], bank: usize) {
+    let bank_offset = bank * (BLOCKS + 2) * BLOCK_SIZE;
+    for index in 0..BLOCKS {
+        let map_byte = image[bank_offset + BLOCK_SIZE + 8 + index / 4];
+        let kind = (map_byte >> ((index % 4) * 2)) & 0x03;
+        if kind != 0 {
+            image[bank_offset + (index + 2) * BLOCK_SIZE] ^= 1;
+            return
+        }
+    }
+    panic!("test volume has no allocated blocks")
+}
+
+#[test]
+fn recovery_uses_newest_complete_generation_and_rejects_partial_objects() {
+    let mut image = vec![0; SynFs::<FORMAT_BLOCKS>::volume_bytes()];
+    SynFs::<FORMAT_BLOCKS>::format(&mut image).expect("format volume");
+    let mut filesystem = SynFs::<FORMAT_BLOCKS>::load(&image).expect("load formatted volume");
+    filesystem.write("/state", b"old").expect("write old state");
+    filesystem.flush(&mut image).expect("commit old state");
+    filesystem.write("/state", b"new").expect("write new state");
+    filesystem.flush(&mut image).expect("commit new state");
+
+    corrupt_first_allocated_block::<FORMAT_BLOCKS>(&mut image, 0);
+    let recovered = SynFs::<FORMAT_BLOCKS>::recover(&image).expect("recover old complete generation");
+    let mut contents = [0; 3];
+    recovered.read("/state", &mut contents).expect("read recovered state");
+    assert_eq!(&contents, b"old");
+    let loaded = SynFs::<FORMAT_BLOCKS>::load(&image).expect("load complete generation");
+    loaded.check_consistency().expect("complete generation is consistent");
+}
+
+#[test]
+fn recovery_reports_corruption_when_no_complete_generation_remains() {
+    let mut image = vec![0; SynFs::<FORMAT_BLOCKS>::volume_bytes()];
+    SynFs::<FORMAT_BLOCKS>::format(&mut image).expect("format volume");
+    let mut filesystem = SynFs::<FORMAT_BLOCKS>::load(&image).expect("load formatted volume");
+    filesystem.write("/state", b"old").expect("write old state");
+    filesystem.flush(&mut image).expect("commit old state");
+    filesystem.write("/state", b"new").expect("write new state");
+    filesystem.flush(&mut image).expect("commit new state");
+
+    corrupt_first_allocated_block::<FORMAT_BLOCKS>(&mut image, 0);
+    corrupt_first_allocated_block::<FORMAT_BLOCKS>(&mut image, 1);
+    assert!(matches!(SynFs::<FORMAT_BLOCKS>::recover(&image), Err(Error::Corrupt)));
+}
+
 #[test]
 fn interruption_hook_runs_after_flush_and_rename() {
     let mut image = vec![0; SynFs::<FORMAT_BLOCKS>::volume_bytes()];

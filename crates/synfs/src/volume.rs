@@ -190,15 +190,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub fn load(image: &[u8]) -> Result<Self, Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
-        let first = read_superblock::<MAX_BLOCKS>(image, 0)?;
-        let second = read_superblock::<MAX_BLOCKS>(image, 1)?;
-        let (bank, superblock) = match (first, second) {
-            (Some(left), Some(right)) if right.sequence > left.sequence => (1, right),
-            (Some(left), _) => (0, left),
-            (None, Some(right)) => (1, right),
-            (None, None) => return Err(Error::Corrupt),
-        };
-        load_bank::<MAX_BLOCKS>(image, bank, superblock)
+        load_committed_generation::<MAX_BLOCKS>(image)
     }
 
     pub fn load_volume(image: &[u8]) -> Result<Self, Error> {
@@ -231,21 +223,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub fn recover(image: &[u8]) -> Result<Self, Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
-        let first = read_superblock::<MAX_BLOCKS>(image, 0)?;
-        let second = read_superblock::<MAX_BLOCKS>(image, 1)?;
-        let candidate = match (first, second) {
-            (Some(left), Some(right)) if right.sequence > left.sequence => (1, right, Some(left)),
-            (Some(left), Some(right)) => (0, left, Some(right)),
-            (Some(left), None) => (0, left, None),
-            (None, Some(right)) => (1, right, None),
-            (None, None) => return Err(Error::Corrupt),
-        };
-        match load_bank::<MAX_BLOCKS>(image, candidate.0, candidate.1) {
-            Ok(filesystem) => Ok(filesystem),
-            Err(_) => candidate.2.map_or(Err(Error::Corrupt), |superblock| {
-                load_bank::<MAX_BLOCKS>(image, 1 - candidate.0, superblock)
-            }),
-        }
+        load_committed_generation::<MAX_BLOCKS>(image)
     }
 
     pub fn recover_volume(image: &[u8]) -> Result<Self, Error> {
@@ -522,6 +500,40 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
         Ok(())
     }
+}
+
+/// Select the newest generation whose header and every referenced block are
+/// valid. A durable header alone is not a commit: a torn object or map makes
+/// that bank ineligible, so recovery tries the other bank before reporting
+/// unrecoverable corruption.
+fn load_committed_generation<const MAX_BLOCKS: usize>(
+    image: &[u8],
+) -> Result<SynFs<MAX_BLOCKS>, Error> {
+    let candidates = [
+        read_superblock::<MAX_BLOCKS>(image, 0)?.map(|superblock| (0, superblock)),
+        read_superblock::<MAX_BLOCKS>(image, 1)?.map(|superblock| (1, superblock)),
+    ];
+    let mut attempted = [false; 2];
+
+    for _ in 0..candidates.len() {
+        let mut selected: Option<(usize, Superblock)> = None;
+        for (index, candidate) in candidates.iter().enumerate() {
+            if attempted[index] {
+                continue
+            }
+            if selected.is_none_or(|(_, current)| candidate.is_some_and(|(_, next)| next.sequence > current.sequence)) {
+                selected = *candidate;
+            }
+        }
+        let Some((index, superblock)) = selected else {
+            break
+        };
+        attempted[index] = true;
+        if let Ok(filesystem) = load_bank::<MAX_BLOCKS>(image, index, superblock) {
+            return Ok(filesystem)
+        }
+    }
+    Err(Error::Corrupt)
 }
 
 fn require_image_size<const MAX_BLOCKS: usize>(image: &[u8]) -> Result<(), Error> {

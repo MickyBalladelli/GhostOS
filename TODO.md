@@ -102,8 +102,15 @@ evidence.
       interruption regressions in SynFS, package activation, storaged, and
       init. `cargo check` passes for all affected crates and their test
       targets.
-- [ ] Verify recovery chooses one committed generation, never publishes a
+- [x] Verify recovery chooses one committed generation, never publishes a
       partial object, and reports unrecoverable corruption clearly.
+      Progress: SynFS `load` and `recover` now share a committed-generation
+      selector. It tries generations newest-first, validates the complete
+      bank and object graph, falls back after a torn object, and returns
+      `Error::Corrupt` when no complete generation remains. Added direct
+      regressions for partial newest data, fallback to the prior generation,
+      and corruption of both generations. `cargo check -p synos-synfs --tests`
+      passes.
 - [ ] Add long-run retention and garbage-collection tests with bounded work,
       restart checkpoints, and no orphaned blocks or capabilities.
 - [ ] Document backup compatibility, format migration, downgrade behavior,
