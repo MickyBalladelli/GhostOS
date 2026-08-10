@@ -382,7 +382,7 @@ SynOS VMs communicate and obtain distinct leases.
 - [x] Add IPv4 ICMP echo request/reply support with checksum validation,
       identifier/sequence matching, TTL handling, bounded payloads, and a
       monotonic send/receive timestamp.
-- [ ] Add firewall and capability policy for ARP, ICMP echo, DHCP broadcast,
+- [x] Add firewall and capability policy for ARP, ICMP echo, DHCP broadcast,
       UDP, and TCP traffic with explicit ingress and egress decisions.
 - [ ] Add interface and network statistics for RX/TX packets, bytes, drops,
       errors, queue depth, ARP failures, DHCP retries, and ICMP loss.

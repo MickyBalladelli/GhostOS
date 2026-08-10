@@ -297,10 +297,13 @@ pub struct NetworkDaemon<B: SocketBackend, const SOCKET_CAPACITY: usize> {
 
 impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAPACITY> {
     pub fn new(backend: B) -> Self {
+        let mut policy = crate::FirewallPolicy::new();
+        crate::install_core_network_rules(&mut policy)
+            .expect("core network firewall rules fit the default policy");
         Self {
             backend,
             sockets: SocketTable::new(),
-            firewall: DefaultFirewall::new(crate::FirewallPolicy::new()),
+            firewall: DefaultFirewall::new(policy),
         }
     }
 

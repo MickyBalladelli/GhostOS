@@ -29,10 +29,11 @@ pub use dhcp::{
     DhcpServerFixture, DhcpTransport, StaticSnapshot,
 };
 pub use firewall::{
-    CapabilityKey, CapabilityRight, Direction, Firewall, FirewallDecision, FirewallError,
-    FirewallPolicy, FirewallRule, FirewallSnapshot, Ipv4Cidr, NetworkCapability, PacketContext,
-    PacketSignature, PacketView, PortRange, Protocol, RateLimit, RuleAction, SignedHeader,
-    PolicyImage, PolicyStore, POLICY_PATH,
+    core_network_firewall_rules, install_core_network_rules, CapabilityKey, CapabilityRight,
+    Direction, Firewall, FirewallDecision, FirewallError, FirewallPolicy, FirewallRule,
+    FirewallSnapshot, Ipv4Cidr, NetworkCapability, PacketContext, PacketSignature, PacketView,
+    PortRange, Protocol, RateLimit, RuleAction, SignedHeader, PolicyImage, PolicyStore,
+    MAX_CORE_NETWORK_RULES, POLICY_PATH,
 };
 pub use packet::{PacketError, PacketQueue, PacketReader, PacketWriter, QueueDevice};
 pub use protocol::{

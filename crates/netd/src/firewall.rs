@@ -5,6 +5,7 @@ pub const MAX_FIREWALL_RULES: usize = 32;
 pub const MAX_CONNECTIONS: usize = 64;
 pub const MAX_RATE_BUCKETS: usize = 32;
 pub const MAX_POLICY_IMAGE_BYTES: usize = 24 + MAX_FIREWALL_RULES * 40;
+pub const MAX_CORE_NETWORK_RULES: usize = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Direction {
@@ -16,6 +17,8 @@ pub enum Direction {
 pub enum Protocol {
     Tcp,
     Udp,
+    Icmp,
+    Arp,
     Other(u8),
 }
 
@@ -24,6 +27,8 @@ impl Protocol {
         match raw {
             6 => Self::Tcp,
             17 => Self::Udp,
+            1 => Self::Icmp,
+            0xfe => Self::Arp,
             value => Self::Other(value),
         }
     }
@@ -32,6 +37,8 @@ impl Protocol {
         match self {
             Self::Tcp => 6,
             Self::Udp => 17,
+            Self::Icmp => 1,
+            Self::Arp => 0xfe,
             Self::Other(value) => value,
         }
     }
@@ -137,6 +144,145 @@ pub struct FirewallRule {
     pub stateful: bool,
     pub capability: Option<CapabilityRight>,
     pub rate_limit: Option<RateLimit>,
+}
+
+/// Explicit baseline rules for traffic owned by the network service.
+///
+/// The policy remains deny-by-default. Callers can install these rules and
+/// then add narrower workload rules before publishing the policy image.
+pub fn core_network_firewall_rules() -> [FirewallRule; MAX_CORE_NETWORK_RULES] {
+    let any = Some(PortRange::ANY);
+    [
+        FirewallRule {
+            direction: Some(Direction::Ingress),
+            protocol: Some(Protocol::Arp),
+            source: None,
+            destination: None,
+            source_ports: None,
+            destination_ports: None,
+            action: RuleAction::Allow,
+            stateful: false,
+            capability: Some(CapabilityRight::Arp),
+            rate_limit: RateLimit::new(32, 1_000),
+        },
+        FirewallRule {
+            direction: Some(Direction::Egress),
+            protocol: Some(Protocol::Arp),
+            source: None,
+            destination: None,
+            source_ports: None,
+            destination_ports: None,
+            action: RuleAction::Allow,
+            stateful: false,
+            capability: Some(CapabilityRight::Arp),
+            rate_limit: RateLimit::new(32, 1_000),
+        },
+        FirewallRule {
+            direction: Some(Direction::Ingress),
+            protocol: Some(Protocol::Icmp),
+            source: None,
+            destination: None,
+            source_ports: None,
+            destination_ports: None,
+            action: RuleAction::Allow,
+            stateful: false,
+            capability: Some(CapabilityRight::Icmp),
+            rate_limit: RateLimit::new(16, 1_000),
+        },
+        FirewallRule {
+            direction: Some(Direction::Egress),
+            protocol: Some(Protocol::Icmp),
+            source: None,
+            destination: None,
+            source_ports: None,
+            destination_ports: None,
+            action: RuleAction::Allow,
+            stateful: false,
+            capability: Some(CapabilityRight::Icmp),
+            rate_limit: RateLimit::new(16, 1_000),
+        },
+        FirewallRule {
+            direction: Some(Direction::Ingress),
+            protocol: Some(Protocol::Udp),
+            source: None,
+            destination: None,
+            source_ports: Some(PortRange { first: 67, last: 67 }),
+            destination_ports: Some(PortRange { first: 68, last: 68 }),
+            action: RuleAction::Allow,
+            stateful: false,
+            capability: Some(CapabilityRight::Dhcp),
+            rate_limit: RateLimit::new(8, 1_000),
+        },
+        FirewallRule {
+            direction: Some(Direction::Egress),
+            protocol: Some(Protocol::Udp),
+            source: None,
+            destination: None,
+            source_ports: Some(PortRange { first: 68, last: 68 }),
+            destination_ports: Some(PortRange { first: 67, last: 67 }),
+            action: RuleAction::Allow,
+            stateful: false,
+            capability: Some(CapabilityRight::Dhcp),
+            rate_limit: RateLimit::new(8, 1_000),
+        },
+        FirewallRule {
+            direction: Some(Direction::Ingress),
+            protocol: Some(Protocol::Udp),
+            source: None,
+            destination: None,
+            source_ports: any,
+            destination_ports: any,
+            action: RuleAction::Allow,
+            stateful: true,
+            capability: Some(CapabilityRight::Listen),
+            rate_limit: None,
+        },
+        FirewallRule {
+            direction: Some(Direction::Egress),
+            protocol: Some(Protocol::Udp),
+            source: None,
+            destination: None,
+            source_ports: any,
+            destination_ports: any,
+            action: RuleAction::Allow,
+            stateful: true,
+            capability: Some(CapabilityRight::Connect),
+            rate_limit: None,
+        },
+        FirewallRule {
+            direction: Some(Direction::Ingress),
+            protocol: Some(Protocol::Tcp),
+            source: None,
+            destination: None,
+            source_ports: any,
+            destination_ports: any,
+            action: RuleAction::Allow,
+            stateful: true,
+            capability: Some(CapabilityRight::Listen),
+            rate_limit: None,
+        },
+        FirewallRule {
+            direction: Some(Direction::Egress),
+            protocol: Some(Protocol::Tcp),
+            source: None,
+            destination: None,
+            source_ports: any,
+            destination_ports: any,
+            action: RuleAction::Allow,
+            stateful: true,
+            capability: Some(CapabilityRight::Connect),
+            rate_limit: None,
+        },
+    ]
+}
+
+pub fn install_core_network_rules<const RULES: usize>(
+    policy: &mut FirewallPolicy<RULES>,
+) -> Result<(), FirewallError> {
+    for rule in core_network_firewall_rules() {
+        policy.add_rule(rule)?;
+    }
+    Ok(())
 }
 
 impl FirewallRule {
@@ -352,7 +498,14 @@ pub struct PacketView<'a> {
 
 impl<'a> PacketView<'a> {
     pub fn parse(frame: &'a [u8]) -> Result<Self, FirewallError> {
-        if frame.len() < 14 || u16::from_be_bytes([frame[12], frame[13]]) != 0x0800 {
+        if frame.len() < 14 {
+            return Err(FirewallError::InvalidFrame)
+        }
+        let ethertype = u16::from_be_bytes([frame[12], frame[13]]);
+        if ethertype == 0x0806 {
+            return Self::parse_arp(frame)
+        }
+        if ethertype != 0x0800 {
             return Err(FirewallError::InvalidFrame)
         }
         let ip = &frame[14..];
@@ -369,7 +522,9 @@ impl<'a> PacketView<'a> {
         let transport_header = match protocol {
             Protocol::Tcp => 20,
             Protocol::Udp => 8,
+            Protocol::Icmp => 8,
             Protocol::Other(_) => 0,
+            Protocol::Arp => return Err(FirewallError::InvalidFrame),
         };
         if transport.len() < transport_header {
             return Err(FirewallError::InvalidFrame)
@@ -399,6 +554,37 @@ impl<'a> PacketView<'a> {
             tcp_flags,
             payload: &transport[payload_start..],
         })
+    }
+
+    fn parse_arp(frame: &'a [u8]) -> Result<Self, FirewallError> {
+        if frame.len() < 42
+            || u16::from_be_bytes([frame[14], frame[15]]) != 1
+            || u16::from_be_bytes([frame[16], frame[17]]) != 0x0800
+            || frame[18] != 6
+            || frame[19] != 4
+        {
+            return Err(FirewallError::InvalidFrame)
+        }
+        let operation = u16::from_be_bytes([frame[20], frame[21]]);
+        if operation != 1 && operation != 2 {
+            return Err(FirewallError::InvalidFrame)
+        }
+        Ok(Self {
+            frame,
+            source: [frame[28], frame[29], frame[30], frame[31]],
+            destination: [frame[38], frame[39], frame[40], frame[41]],
+            source_port: 0,
+            destination_port: 0,
+            protocol: Protocol::Arp,
+            tcp_flags: 0,
+            payload: &frame[42..],
+        })
+    }
+
+    pub const fn is_dhcp(self) -> bool {
+        matches!(self.protocol, Protocol::Udp)
+            && ((self.source_port == 67 && self.destination_port == 68)
+                || (self.source_port == 68 && self.destination_port == 67))
     }
 
     fn key(self) -> ConnectionKey {
@@ -448,6 +634,9 @@ pub enum CapabilityRight {
     Connect = 2,
     Raw = 4,
     Ingress = 8,
+    Arp = 16,
+    Icmp = 32,
+    Dhcp = 64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -834,11 +1023,16 @@ fn endpoint_matches(
     destination: [u8; 4],
     port: u16,
 ) -> bool {
-    let direction = match right {
-        CapabilityRight::Listen | CapabilityRight::Ingress => Direction::Ingress,
-        CapabilityRight::Connect | CapabilityRight::Raw => Direction::Egress,
+    let direction_matches = match right {
+        CapabilityRight::Listen | CapabilityRight::Ingress => {
+            rule.direction.is_none_or(|value| value == Direction::Ingress)
+        }
+        CapabilityRight::Connect | CapabilityRight::Raw => {
+            rule.direction.is_none_or(|value| value == Direction::Egress)
+        }
+        CapabilityRight::Arp | CapabilityRight::Icmp | CapabilityRight::Dhcp => true,
     };
-    rule.direction.is_none_or(|value| value == direction)
+    direction_matches
         && rule.destination.is_none_or(|value| value.contains(destination))
         && rule.destination_ports.is_none_or(|value| value.contains(port))
 }
@@ -884,7 +1078,7 @@ fn decode_rule(input: &[u8]) -> Result<FirewallRule, FirewallError> {
             u64::from_le_bytes(window_ms),
         )
     };
-    Ok(FirewallRule { direction, protocol, source, destination, source_ports, destination_ports, action: action(input[2]).ok_or(FirewallError::InvalidPolicy)?, stateful: input[3] != 0, capability: match input[4] { 0 => None, 1 => Some(CapabilityRight::Listen), 2 => Some(CapabilityRight::Connect), 4 => Some(CapabilityRight::Raw), 8 => Some(CapabilityRight::Ingress), _ => return Err(FirewallError::InvalidPolicy) }, rate_limit })
+    Ok(FirewallRule { direction, protocol, source, destination, source_ports, destination_ports, action: action(input[2]).ok_or(FirewallError::InvalidPolicy)?, stateful: input[3] != 0, capability: match input[4] { 0 => None, 1 => Some(CapabilityRight::Listen), 2 => Some(CapabilityRight::Connect), 4 => Some(CapabilityRight::Raw), 8 => Some(CapabilityRight::Ingress), 16 => Some(CapabilityRight::Arp), 32 => Some(CapabilityRight::Icmp), 64 => Some(CapabilityRight::Dhcp), _ => return Err(FirewallError::InvalidPolicy) }, rate_limit })
 }
 
 fn action(value: u8) -> Option<RuleAction> {
