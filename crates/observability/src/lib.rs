@@ -760,9 +760,11 @@ impl AtomicEvent {
             timestamp: AtomicU64::new(0),
             correlation_low: AtomicU64::new(0),
             correlation_high: AtomicU64::new(0),
-            node: AtomicU32::new(1),
-            level: AtomicU8::new(Level::Trace as u8),
-            kind: AtomicU8::new(EventKind::Kernel as u8),
+            // An event is not readable until `published` is set after every
+            // field is written. Zero is therefore a valid BSS initializer.
+            node: AtomicU32::new(0),
+            level: AtomicU8::new(0),
+            kind: AtomicU8::new(0),
             field_count: AtomicU8::new(0),
             fields: [const { AtomicField::new() }; MAX_EVENT_FIELDS],
         }
@@ -815,7 +817,11 @@ struct TraceSlot {
 impl TraceSlot {
     const fn new() -> Self {
         Self {
-            published: AtomicU64::new(u64::MAX),
+            // Zero is also the empty marker for a newly-created ring. A
+            // reader only examines slots below `read_position`, so no
+            // uninitialized slot can be mistaken for a published event.
+            // Keeping this zero-valued lets global rings live in BSS.
+            published: AtomicU64::new(0),
             event: AtomicEvent::new(),
         }
     }
