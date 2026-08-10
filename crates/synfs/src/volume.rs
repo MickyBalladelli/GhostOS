@@ -763,19 +763,8 @@ fn load_bank<const MAX_BLOCKS: usize>(
     superblock: Superblock,
 ) -> Result<SynFs<MAX_BLOCKS>, Error> {
     let map = read_type_map::<MAX_BLOCKS>(image, bank, superblock.type_map_checksum)?;
-    let mut arena = BlockArena::new();
-    for index in 0..MAX_BLOCKS {
-        let block = block_slice::<MAX_BLOCKS>(image, bank, index)?;
-        let decoded = match map_kind(&map, index) {
-            TYPE_MAP_EMPTY => None,
-            TYPE_MAP_TREE | TYPE_MAP_BRANCH => Some(decode_tree::<MAX_BLOCKS>(block)?),
-            TYPE_MAP_DATA => Some(decode_data(block)?),
-            _ => return Err(Error::Corrupt),
-        };
-        arena.slots[index].block = decoded;
-    }
-    let filesystem = SynFs {
-        arena,
+    let mut filesystem = SynFs {
+        arena: BlockArena::new(),
         root: superblock.root,
         generation: superblock.generation,
         checkpoints: superblock.checkpoints,
@@ -785,6 +774,16 @@ fn load_bank<const MAX_BLOCKS: usize>(
         volume_sequence: superblock.sequence,
         next_object_id: superblock.next_object_id,
     };
+    for index in 0..MAX_BLOCKS {
+        let block = block_slice::<MAX_BLOCKS>(image, bank, index)?;
+        let decoded = match map_kind(&map, index) {
+            TYPE_MAP_EMPTY => None,
+            TYPE_MAP_TREE | TYPE_MAP_BRANCH => Some(decode_tree::<MAX_BLOCKS>(block)?),
+            TYPE_MAP_DATA => Some(decode_data(block)?),
+            _ => return Err(Error::Corrupt),
+        };
+        filesystem.arena.slots[index].block = decoded;
+    }
     filesystem.check_consistency()?;
     Ok(filesystem)
 }

@@ -375,7 +375,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
 
 #[test]
 fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
-    let (mut daemon, process, mut authority) = boxed_daemon_with_capacity::<64>();
+    let (mut daemon, process, authority) = boxed_daemon_with_capacity::<64>();
     let mut stale_file = None;
 
     for cycle in 0..32 {
@@ -439,6 +439,13 @@ fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
         assert!(diagnostics.checkpoints <= 1);
     }
 
+    let report = daemon
+        .garbage_collect(process, authority, usize::MAX)
+        .expect("final garbage collection");
+    assert!(report.freed_blocks <= daemon.diagnostics().unwrap().capacity_blocks);
+    let diagnostics = daemon.diagnostics().expect("pre-unregister diagnostics");
+    assert_eq!(diagnostics.allocated_blocks, diagnostics.live_blocks);
+
     let stale_file = stale_file.expect("stale file capability");
     assert_eq!(daemon.close(process, stale_file), Err(DaemonError::AccessDenied));
     daemon
@@ -450,7 +457,7 @@ fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
         Err(DaemonError::ProcessNotRegistered)
     );
 
-    authority = daemon
+    let _read_only_authority = daemon
         .register_process(process, ProcessRights::from_bits(ProcessRights::READ.bits()))
         .expect("register process after cleanup");
     assert_eq!(
@@ -458,10 +465,5 @@ fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
         Err(DaemonError::AccessDenied)
     );
     let diagnostics = daemon.diagnostics().expect("post-restart diagnostics");
-    let report = daemon
-        .garbage_collect(process, authority, usize::MAX)
-        .expect("final garbage collection");
-    assert!(report.freed_blocks <= diagnostics.capacity_blocks);
-    let diagnostics = daemon.diagnostics().expect("final diagnostics");
     assert_eq!(diagnostics.allocated_blocks, diagnostics.live_blocks);
 }
