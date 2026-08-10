@@ -4,6 +4,8 @@ set -Eeuo pipefail
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root_dir"
 
+python3 "$root_dir/scripts/bootstrap.py"
+
 run_id=${SYNOS_TEST_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
 evidence_dir=${SYNOS_EVIDENCE_DIR:-$root_dir/build/test-evidence/$run_id}
 mkdir -p "$evidence_dir"

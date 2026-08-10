@@ -111,6 +111,19 @@ Required for the host tier:
 - Cargo and the repository checkout.
 - `rg` for the repository scripts and evidence checks.
 
+Check the complete local setup with one deterministic command:
+
+```sh
+python3 scripts/bootstrap.py
+```
+
+It reads `rust-toolchain.toml`, verifies Rust components and targets, checks
+the custom target specifications and bundled LLVM tools, reports optional
+QEMU availability, and validates the Git revision recorded beside any built
+BIOS or portable image. Use `--require-qemu` or `--require-images` when
+those artifacts are part of the current workflow. Add `--json build/bootstrap.json`
+to preserve the machine-readable report.
+
 Optional tools enable higher tiers:
 
 - QEMU `qemu-system-x86_64` for guest tests.

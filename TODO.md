@@ -274,8 +274,10 @@ evidence.
       lists by hand. `scripts/generate-inventory-diagrams.py` reads Cargo
       metadata, Rust declarations, format magics, and test sources to produce
       [`docs/inventory-diagrams.md`](docs/inventory-diagrams.md).
-- [ ] Add one reproducible developer bootstrap command that checks toolchains,
-      optional QEMU tools, target availability, and expected image versions.
+- [x] Add one reproducible developer bootstrap command that checks toolchains,
+  optional QEMU tools, target availability, and expected image versions.
+      Use python3 scripts/bootstrap.py; QEMU and unbuilt images are optional
+      by default, while built images must match their Git revision sidecars.
 - [ ] Make structured JSON output available for diagnostics, disk, network,
       cluster, compiler, package, and recovery commands.
 - [ ] Add redaction tests for logs, snapshots, migration streams, diagnostics,
