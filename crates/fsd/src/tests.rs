@@ -356,7 +356,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
 
 #[test]
 fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
-    let (mut daemon, process, mut authority) = daemon_with_capacity::<128>();
+    let (mut daemon, process, mut authority) = daemon_with_capacity::<64>();
     let mut stale_file = None;
 
     for cycle in 0..32 {
