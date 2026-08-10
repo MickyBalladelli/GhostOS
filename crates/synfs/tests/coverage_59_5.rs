@@ -2,7 +2,7 @@ use synos_synfs::{
     BlockDevice, BlockIoError, BlockIoQueue, BlockIoResult, BlockOperation, BlockRequest,
     DeviceHealth, Error, PoolLayout, StorageClass, StorageDeviceId,
     StoragePoolError, StoragePoolId, StoragePoolIo, SynFs, VersionSelector, VersionedPath,
-    VolumeLimits, BLOCK_SIZE, MAX_PATH_BYTES,
+    SynfsPurged, VolumeLimits, BLOCK_SIZE, MAX_PATH_BYTES,
 };
 use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
@@ -149,6 +149,100 @@ fn versions_directories_links_snapshots_and_retention_are_consistent() {
     let report = filesystem.collect_garbage();
     assert!(report.freed_blocks > 0);
     filesystem.check_consistency().expect("consistent retained tree");
+}
+
+#[test]
+fn long_run_retention_is_bounded_across_restart_and_releases_checkpoint_blocks() {
+    const CYCLES: usize = 48;
+    const CHECKPOINT_INTERVAL: usize = 8;
+    const CHECKPOINT_HOLD: usize = 3;
+    const KEEP_LATEST: u32 = 2;
+
+    let mut image = vec![0; SynFs::<BLOCKS>::volume_bytes()];
+    SynFs::<BLOCKS>::format(&mut image).expect("format volume");
+    let mut filesystem = SynFs::<BLOCKS>::load(&image).expect("load volume");
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+
+    let mut purged = SynfsPurged::new();
+    purged
+        .add_rule("/data/long-run", KEEP_LATEST)
+        .expect("add retention rule");
+    let mut checkpoint = None;
+
+    for cycle in 0..CYCLES {
+        let mut contents = [0; 32];
+        contents.fill(cycle as u8);
+        filesystem
+            .write("/data/long-run", &contents)
+            .expect("write retained version");
+
+        if cycle % CHECKPOINT_INTERVAL == 0 {
+            let info = filesystem.create_checkpoint().expect("create checkpoint");
+            checkpoint = Some((info, cycle as u8));
+        }
+
+        let report = purged
+            .poll(&mut filesystem, 1)
+            .expect("bounded retention poll");
+        assert!(report.versions_purged <= 1);
+        let (retained, _) = filesystem
+            .retained_version_span("/data/long-run")
+            .expect("retained version span");
+        assert!(retained <= KEEP_LATEST);
+        let diagnostics = filesystem.diagnostics().expect("retention diagnostics");
+        assert!(diagnostics.retained_versions <= (cycle as u64).saturating_add(2));
+        assert!(diagnostics.allocated_blocks <= BLOCKS);
+        assert!(diagnostics.live_blocks <= diagnostics.allocated_blocks);
+        filesystem
+            .check_consistency()
+            .expect("retention tree stays consistent");
+
+        if cycle % CHECKPOINT_INTERVAL == CHECKPOINT_HOLD {
+            let (info, expected) = checkpoint.expect("checkpoint is held");
+            filesystem.flush(&mut image).expect("persist checkpoint");
+            filesystem = SynFs::<BLOCKS>::load(&image).expect("restart from checkpoint");
+            assert_eq!(filesystem.checkpoint_info(info.id), Ok(info));
+
+            let snapshot = filesystem
+                .checkpoint_snapshot(
+                    info.id,
+                    synos_synfs::RmsMapHandle::from_capability((1 << 32) | 1).unwrap(),
+                )
+                .expect("open persisted checkpoint");
+            let mut snapshot_contents = [0; 32];
+            let mut copied = 0;
+            snapshot
+                .visit_file_pages("/data/long-run", |page| {
+                    snapshot_contents[copied..copied + page.bytes.len()]
+                        .copy_from_slice(page.bytes);
+                    copied += page.bytes.len();
+                })
+                .expect("read persisted checkpoint");
+            assert_eq!(snapshot_contents, [expected; 32]);
+
+            filesystem
+                .release_checkpoint(info.id)
+                .expect("release checkpoint");
+            assert_eq!(
+                filesystem.checkpoint_info(info.id),
+                Err(Error::CheckpointNotFound)
+            );
+            checkpoint = None;
+        }
+    }
+
+    let first = filesystem.collect_garbage();
+    let diagnostics = filesystem.diagnostics().expect("final diagnostics");
+    assert_eq!(diagnostics.allocated_blocks, diagnostics.live_blocks);
+    assert!(first.freed_blocks <= BLOCKS);
+    let second = filesystem.collect_garbage();
+    assert_eq!(second.freed_blocks, 0);
+    assert_eq!(filesystem.diagnostics().unwrap().checkpoints, 0);
+    filesystem
+        .check_consistency()
+        .expect("final retained tree is consistent");
 }
 
 #[test]

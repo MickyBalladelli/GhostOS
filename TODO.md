@@ -111,8 +111,12 @@ evidence.
       regressions for partial newest data, fallback to the prior generation,
       and corruption of both generations. `cargo check -p synos-synfs --tests`
       passes.
-- [ ] Add long-run retention and garbage-collection tests with bounded work,
-      restart checkpoints, and no orphaned blocks or capabilities.
+- [x] Add long-run retention and garbage-collection tests with bounded work,
+      restart checkpoints, and no orphaned blocks or capabilities. Regression
+      coverage now runs 48 retention cycles with one-version polls, persists
+      and reopens checkpoints, verifies no orphaned blocks, and checks daemon
+      handle cleanup. `cargo check -p synos-synfs --tests` and `cargo check
+      -p synos-fsd --tests` pass.
 - [ ] Document backup compatibility, format migration, downgrade behavior,
       and recovery evidence for every persistent format.
 

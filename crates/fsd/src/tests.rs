@@ -347,3 +347,86 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
     );
     assert_eq!(response.status, Status::NOT_FOUND);
 }
+
+#[test]
+fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
+    let (mut daemon, process, mut authority) = daemon();
+    let mut stale_file = None;
+
+    for cycle in 0..32 {
+        let file = if cycle == 0 {
+            daemon
+                .open(
+                    process,
+                    authority,
+                    "/data/long-run",
+                    file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+                )
+                .expect("open retained file")
+        } else {
+            daemon
+                .open(process, authority, "/data/long-run", file_flags())
+                .expect("reopen retained file")
+        };
+        daemon
+            .write(process, file.capability, 0, &[cycle as u8; 32])
+            .expect("write retained version");
+        daemon
+            .close(process, file.capability)
+            .expect("close retained file");
+        stale_file = Some(file.capability);
+
+        daemon
+            .filesystem_mut()
+            .purge("/data/long-run", 1, 1)
+            .expect("bounded purge");
+
+        if cycle % 4 == 0 {
+            let snapshot = daemon
+                .snapshot_create(process, authority)
+                .expect("create snapshot capability");
+            let report = daemon
+                .garbage_collect(process, authority, 1)
+                .expect("bounded garbage collection");
+            assert!(report.freed_blocks <= 1);
+            daemon
+                .snapshot_release(process, snapshot.capability)
+                .expect("release snapshot capability");
+            assert_eq!(
+                daemon.snapshot_release(process, snapshot.capability),
+                Err(DaemonError::AccessDenied)
+            );
+        }
+
+        let diagnostics = daemon.diagnostics().expect("daemon diagnostics");
+        assert!(diagnostics.allocated_blocks <= diagnostics.capacity_blocks);
+        assert!(diagnostics.live_blocks <= diagnostics.allocated_blocks);
+        assert!(diagnostics.checkpoints <= 1);
+    }
+
+    let stale_file = stale_file.expect("stale file capability");
+    assert_eq!(daemon.close(process, stale_file), Err(DaemonError::AccessDenied));
+    daemon
+        .unregister_process(process)
+        .expect("unregister process and release handles");
+    assert_eq!(daemon.diagnostics().unwrap().checkpoints, 0);
+    assert_eq!(
+        daemon.garbage_collect(process, authority, usize::MAX),
+        Err(DaemonError::ProcessNotRegistered)
+    );
+
+    authority = daemon
+        .register_process(process, ProcessRights::from_bits(ProcessRights::READ.bits()))
+        .expect("register process after cleanup");
+    assert_eq!(
+        daemon.read(process, stale_file, 0, &mut [0; 32]),
+        Err(DaemonError::AccessDenied)
+    );
+    let diagnostics = daemon.diagnostics().expect("post-restart diagnostics");
+    let report = daemon
+        .garbage_collect(process, authority, usize::MAX)
+        .expect("final garbage collection");
+    assert!(report.freed_blocks <= diagnostics.capacity_blocks);
+    let diagnostics = daemon.diagnostics().expect("final diagnostics");
+    assert_eq!(diagnostics.allocated_blocks, diagnostics.live_blocks);
+}
