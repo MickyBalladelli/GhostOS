@@ -235,6 +235,19 @@ fn dhcp_capture_records_dora_and_link_recovery_evidence() {
     transport.capture.record_event(4, CaptureKind::Link, 1);
     transport.set_timestamp(4);
     client.poll(4, &mut transport, &mut runtime).unwrap();
+    let reboot_ack = server.respond(transport.transport.last()).unwrap();
+    transport.capture.record_packet(
+        5,
+        CaptureDirection::Ingress,
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        DHCP_SERVER_PORT,
+        DHCP_CLIENT_PORT,
+        &reboot_ack,
+    );
+    client.handle_packet(&reboot_ack, 5, &mut runtime).unwrap();
     assert_eq!(client.state(), DhcpClientState::Bound);
     assert_eq!(transport.capture.records().last().unwrap().kind, CaptureKind::Packet);
 }
