@@ -360,7 +360,7 @@ SynOS VMs communicate and obtain distinct leases.
       duplicate ACK, lease expiry, release, restart recovery, and link flaps.
 - [x] Add bounded exponential retry, jitter, attempt limits, and an observable
       next-action deadline for DHCP that cannot spin on a failed link.
-- [ ] Persist enough lease metadata for safe reboot recovery while rejecting
+- [x] Persist enough lease metadata for safe reboot recovery while rejecting
       stale, expired, wrong-interface, wrong-MAC, and wrong-server leases.
 - [ ] Validate every accepted option and reject invalid subnet masks, gateways
       outside the subnet, broadcast addresses, duplicate routes, bad DNS data,

@@ -37,6 +37,8 @@ pub const BACKOFF_MS: [u64; 5] = [4_000, 8_000, 16_000, 32_000, 64_000];
 pub const MAX_DISCOVER_ATTEMPTS: u8 = 8;
 pub const RETRY_JITTER_PERCENT: u64 = 50;
 pub const MAX_RETRY_DELAY_MS: u64 = BACKOFF_MS[BACKOFF_MS.len() - 1];
+pub const DHCP_LEASE_RECORD_VERSION: u8 = 1;
+pub const DHCP_LEASE_RECORD_BYTES: usize = 166;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DhcpNetworkError {
@@ -198,6 +200,95 @@ impl DhcpLease {
 
     pub const fn rebind_at_ms(self, bound_at_ms: u64) -> u64 {
         bound_at_ms.saturating_add((self.t2_secs as u64).saturating_mul(1_000))
+    }
+}
+
+/// Fixed-size, versioned lease metadata suitable for durable storage.
+/// Remaining times are stored relative to the persistence point so a reboot
+/// does not mistake a reset monotonic clock for lease time remaining.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DhcpLeaseRecord {
+    pub version: u8,
+    pub interface: [u8; MAX_INTERFACE_NAME],
+    pub interface_len: u8,
+    pub client_mac: [u8; 6],
+    pub server_mac: Option<[u8; 6]>,
+    pub lease: DhcpLease,
+    pub remaining_lease_ms: u64,
+    pub remaining_t1_ms: u64,
+    pub remaining_t2_ms: u64,
+}
+
+impl DhcpLeaseRecord {
+    pub fn encode(self, output: &mut [u8]) -> Result<usize, DhcpError> {
+        if output.len() < DHCP_LEASE_RECORD_BYTES {
+            return Err(DhcpError::Capacity);
+        }
+        validate_lease_record(self)?;
+        let mut cursor = 0;
+        record_put_u8(output, &mut cursor, self.version)?;
+        record_put_u8(output, &mut cursor, self.interface_len)?;
+        record_put_bytes(output, &mut cursor, &self.interface)?;
+        record_put_bytes(output, &mut cursor, &self.client_mac)?;
+        match self.server_mac {
+            Some(mac) => {
+                record_put_u8(output, &mut cursor, 1)?;
+                record_put_bytes(output, &mut cursor, &mac)?;
+            }
+            None => {
+                record_put_u8(output, &mut cursor, 0)?;
+                record_put_bytes(output, &mut cursor, &[0; 6])?;
+            }
+        }
+        record_put_u64(output, &mut cursor, self.remaining_lease_ms)?;
+        record_put_u64(output, &mut cursor, self.remaining_t1_ms)?;
+        record_put_u64(output, &mut cursor, self.remaining_t2_ms)?;
+        encode_lease_record_lease(output, &mut cursor, self.lease)?;
+        if cursor != DHCP_LEASE_RECORD_BYTES {
+            return Err(DhcpError::Capacity);
+        }
+        Ok(cursor)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<Self, DhcpError> {
+        if input.len() != DHCP_LEASE_RECORD_BYTES {
+            return Err(DhcpError::InvalidLease);
+        }
+        let mut cursor = 0;
+        let version = record_get_u8(input, &mut cursor)?;
+        let interface_len = record_get_u8(input, &mut cursor)?;
+        let mut interface = [0; MAX_INTERFACE_NAME];
+        interface.copy_from_slice(record_get_bytes(input, &mut cursor, MAX_INTERFACE_NAME)?);
+        let mut client_mac = [0; 6];
+        client_mac.copy_from_slice(record_get_bytes(input, &mut cursor, 6)?);
+        let server_mac_present = record_get_u8(input, &mut cursor)?;
+        let mut server_mac_bytes = [0; 6];
+        server_mac_bytes.copy_from_slice(record_get_bytes(input, &mut cursor, 6)?);
+        let server_mac = match server_mac_present {
+            0 => None,
+            1 => Some(server_mac_bytes),
+            _ => return Err(DhcpError::InvalidLease),
+        };
+        let remaining_lease_ms = record_get_u64(input, &mut cursor)?;
+        let remaining_t1_ms = record_get_u64(input, &mut cursor)?;
+        let remaining_t2_ms = record_get_u64(input, &mut cursor)?;
+        let lease = decode_lease_record_lease(input, &mut cursor)?;
+        let record = Self {
+            version,
+            interface,
+            interface_len,
+            client_mac,
+            server_mac,
+            lease,
+            remaining_lease_ms,
+            remaining_t1_ms,
+            remaining_t2_ms,
+        };
+        validate_lease_record(record)?;
+        if cursor != DHCP_LEASE_RECORD_BYTES {
+            return Err(DhcpError::InvalidLease);
+        }
+        Ok(record)
     }
 }
 
@@ -480,6 +571,70 @@ impl DhcpClient {
 
     pub fn preserve_static(&mut self, snapshot: StaticSnapshot) {
         self.preserved = Some(snapshot);
+    }
+
+    pub fn persist_lease(&self, now_ms: u64) -> Result<DhcpLeaseRecord, DhcpError> {
+        let lease = self.lease.ok_or(DhcpError::InvalidState)?;
+        let bound_at_ms = self.bound_at_ms.ok_or(DhcpError::InvalidState)?;
+        let expires_at_ms = lease.expires_at_ms(bound_at_ms);
+        if now_ms >= expires_at_ms {
+            return Err(DhcpError::InvalidLease);
+        }
+        let record = DhcpLeaseRecord {
+            version: DHCP_LEASE_RECORD_VERSION,
+            interface: self.interface,
+            interface_len: self.interface_len,
+            client_mac: self.mac,
+            server_mac: self.server_mac,
+            lease,
+            remaining_lease_ms: expires_at_ms.saturating_sub(now_ms),
+            remaining_t1_ms: lease.renew_at_ms(bound_at_ms).saturating_sub(now_ms),
+            remaining_t2_ms: lease.rebind_at_ms(bound_at_ms).saturating_sub(now_ms),
+        };
+        validate_lease_record(record)?;
+        Ok(record)
+    }
+
+    pub fn recover_lease(
+        &mut self,
+        record: DhcpLeaseRecord,
+        now_ms: u64,
+        elapsed_since_persist_ms: u64,
+        expected_server_id: Option<[u8; 4]>,
+        expected_server_mac: Option<[u8; 6]>,
+    ) -> Result<(), DhcpError> {
+        self.require_auth()?;
+        validate_lease_record(record)?;
+        if record.version != DHCP_LEASE_RECORD_VERSION
+            || record.interface_len != self.interface_len
+            || record.interface[..record.interface_len as usize]
+                != self.interface[..self.interface_len as usize]
+            || record.client_mac != self.mac
+        {
+            return Err(DhcpError::InvalidInterface);
+        }
+        if expected_server_id.is_some_and(|server_id| server_id != record.lease.server_id)
+            || expected_server_mac.is_some_and(|server_mac| record.server_mac != Some(server_mac))
+        {
+            return Err(DhcpError::ConflictingOffer);
+        }
+        if elapsed_since_persist_ms >= record.remaining_lease_ms {
+            return Err(DhcpError::InvalidLease);
+        }
+        let remaining_lease_ms = record
+            .remaining_lease_ms
+            .saturating_sub(elapsed_since_persist_ms);
+        let lease_duration_ms = (record.lease.lease_time_secs as u64).saturating_mul(1_000);
+        let lease_age_ms = lease_duration_ms.saturating_sub(remaining_lease_ms);
+        self.lease = Some(record.lease);
+        self.bound_at_ms = Some(now_ms.saturating_sub(lease_age_ms));
+        self.server_mac = record.server_mac;
+        self.selected = None;
+        self.attempt = 0;
+        self.last_network_error = None;
+        self.state = DhcpClientState::InitReboot;
+        self.next_action_ms = Some(now_ms);
+        Ok(())
     }
 
     pub const fn is_enabled(&self) -> bool {
@@ -1343,6 +1498,214 @@ fn write_option(output: &mut [u8], cursor: usize, code: u8, value: &[u8]) -> Res
 
 fn next_xid(seed: u32, attempt: u8) -> u32 {
     seed.wrapping_mul(0x9E37_79B9).wrapping_add(u32::from(attempt)).wrapping_add(1)
+}
+
+fn validate_lease_record(record: DhcpLeaseRecord) -> Result<(), DhcpError> {
+    if record.version != DHCP_LEASE_RECORD_VERSION
+        || record.interface_len == 0
+        || record.interface_len as usize > MAX_INTERFACE_NAME
+        || core::str::from_utf8(&record.interface[..record.interface_len as usize]).is_err()
+        || record.interface[record.interface_len as usize..]
+            .iter()
+            .any(|byte| *byte != 0)
+        || !valid_mac(record.client_mac)
+        || record.server_mac.is_some_and(|mac| !valid_mac(mac))
+        || record.remaining_t1_ms > record.remaining_lease_ms
+        || record.remaining_t2_ms > record.remaining_lease_ms
+    {
+        return Err(DhcpError::InvalidLease);
+    }
+    validate_lease(record.lease)
+}
+
+fn validate_lease(lease: DhcpLease) -> Result<(), DhcpError> {
+    if lease.address == [0; 4]
+        || lease.address != lease.yiaddr
+        || lease.server_id == [0; 4]
+        || !valid_subnet_mask(lease.subnet_mask)
+        || lease.lease_time_secs == 0
+        || lease.t1_secs == 0
+        || lease.t1_secs >= lease.lease_time_secs
+        || lease.t2_secs < lease.t1_secs
+        || lease.t2_secs > lease.lease_time_secs
+        || lease.dns_count > MAX_DHCP_DNS_SERVERS as u8
+        || lease.route_count > MAX_DHCP_ROUTES as u8
+        || lease.gateway.is_some_and(|gateway| gateway == [0; 4])
+    {
+        return Err(DhcpError::InvalidLease);
+    }
+    for route in lease.routes.iter().take(lease.route_count as usize) {
+        if route.prefix_len > 32 || route.gateway == [0; 4] {
+            return Err(DhcpError::InvalidLease);
+        }
+    }
+    Ok(())
+}
+
+fn valid_mac(mac: [u8; 6]) -> bool {
+    mac != [0; 6] && mac != [0xff; 6]
+}
+
+fn valid_subnet_mask(mask: [u8; 4]) -> bool {
+    let mut saw_zero = false;
+    for byte in mask {
+        for bit in [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01] {
+            if byte & bit == 0 {
+                saw_zero = true;
+            } else if saw_zero {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn encode_lease_record_lease(
+    output: &mut [u8],
+    cursor: &mut usize,
+    lease: DhcpLease,
+) -> Result<(), DhcpError> {
+    record_put_bytes(output, cursor, &lease.address)?;
+    record_put_bytes(output, cursor, &lease.subnet_mask)?;
+    match lease.gateway {
+        Some(gateway) => {
+            record_put_u8(output, cursor, 1)?;
+            record_put_bytes(output, cursor, &gateway)?;
+        }
+        None => {
+            record_put_u8(output, cursor, 0)?;
+            record_put_bytes(output, cursor, &[0; 4])?;
+        }
+    }
+    for dns in lease.dns {
+        record_put_bytes(output, cursor, &dns)?;
+    }
+    record_put_u8(output, cursor, lease.dns_count)?;
+    record_put_bytes(output, cursor, &lease.server_id)?;
+    record_put_u32(output, cursor, lease.lease_time_secs)?;
+    record_put_u32(output, cursor, lease.t1_secs)?;
+    record_put_u32(output, cursor, lease.t2_secs)?;
+    record_put_bytes(output, cursor, &lease.yiaddr)?;
+    for route in lease.routes {
+        record_put_bytes(output, cursor, &route.destination)?;
+        record_put_u8(output, cursor, route.prefix_len)?;
+        record_put_bytes(output, cursor, &route.gateway)?;
+    }
+    record_put_u8(output, cursor, lease.route_count)
+}
+
+fn decode_lease_record_lease(
+    input: &[u8],
+    cursor: &mut usize,
+) -> Result<DhcpLease, DhcpError> {
+    let mut address = [0; 4];
+    address.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+    let mut subnet_mask = [0; 4];
+    subnet_mask.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+    let gateway_present = record_get_u8(input, cursor)?;
+    let mut gateway_bytes = [0; 4];
+    gateway_bytes.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+    let gateway = match gateway_present {
+        0 => None,
+        1 => Some(gateway_bytes),
+        _ => return Err(DhcpError::InvalidLease),
+    };
+    let mut dns = [[0; 4]; MAX_DHCP_DNS_SERVERS];
+    for entry in &mut dns {
+        entry.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+    }
+    let dns_count = record_get_u8(input, cursor)?;
+    let mut server_id = [0; 4];
+    server_id.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+    let lease_time_secs = record_get_u32(input, cursor)?;
+    let t1_secs = record_get_u32(input, cursor)?;
+    let t2_secs = record_get_u32(input, cursor)?;
+    let mut yiaddr = [0; 4];
+    yiaddr.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+    let mut routes = [DhcpRoute::DEFAULT; MAX_DHCP_ROUTES];
+    for route in &mut routes {
+        let mut destination = [0; 4];
+        destination.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+        let prefix_len = record_get_u8(input, cursor)?;
+        let mut gateway = [0; 4];
+        gateway.copy_from_slice(record_get_bytes(input, cursor, 4)?);
+        *route = DhcpRoute {
+            destination,
+            prefix_len,
+            gateway,
+        };
+    }
+    let route_count = record_get_u8(input, cursor)?;
+    Ok(DhcpLease {
+        address,
+        subnet_mask,
+        gateway,
+        dns,
+        dns_count,
+        server_id,
+        lease_time_secs,
+        t1_secs,
+        t2_secs,
+        yiaddr,
+        routes,
+        route_count,
+    })
+}
+
+fn record_put_bytes(output: &mut [u8], cursor: &mut usize, bytes: &[u8]) -> Result<(), DhcpError> {
+    let end = cursor
+        .checked_add(bytes.len())
+        .ok_or(DhcpError::Capacity)?;
+    if end > output.len() {
+        return Err(DhcpError::Capacity);
+    }
+    output[*cursor..end].copy_from_slice(bytes);
+    *cursor = end;
+    Ok(())
+}
+
+fn record_put_u8(output: &mut [u8], cursor: &mut usize, value: u8) -> Result<(), DhcpError> {
+    record_put_bytes(output, cursor, &[value])
+}
+
+fn record_put_u32(output: &mut [u8], cursor: &mut usize, value: u32) -> Result<(), DhcpError> {
+    record_put_bytes(output, cursor, &value.to_be_bytes())
+}
+
+fn record_put_u64(output: &mut [u8], cursor: &mut usize, value: u64) -> Result<(), DhcpError> {
+    record_put_bytes(output, cursor, &value.to_be_bytes())
+}
+
+fn record_get_bytes<'a>(
+    input: &'a [u8],
+    cursor: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], DhcpError> {
+    let end = cursor
+        .checked_add(length)
+        .ok_or(DhcpError::InvalidLease)?;
+    if end > input.len() {
+        return Err(DhcpError::InvalidLease);
+    }
+    let bytes = &input[*cursor..end];
+    *cursor = end;
+    Ok(bytes)
+}
+
+fn record_get_u8(input: &[u8], cursor: &mut usize) -> Result<u8, DhcpError> {
+    Ok(record_get_bytes(input, cursor, 1)?[0])
+}
+
+fn record_get_u32(input: &[u8], cursor: &mut usize) -> Result<u32, DhcpError> {
+    let bytes = record_get_bytes(input, cursor, 4)?;
+    Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn record_get_u64(input: &[u8], cursor: &mut usize) -> Result<u64, DhcpError> {
+    let bytes = record_get_bytes(input, cursor, 8)?;
+    Ok(u64::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]))
 }
 
 fn retry_jitter(seed: u32, attempt: u8) -> u32 {
