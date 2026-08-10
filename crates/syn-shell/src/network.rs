@@ -1,5 +1,6 @@
 use core::fmt::Write;
 
+use synos_observability::{EventField, Level, audit_event, field};
 use synos_status::{Severity, Status, facility};
 use synos_system_model::command::{
     ArgumentKind, ArgumentSpec, CommandSpec, OutputValue, StructuredOutput, MAX_OUTPUT_FIELDS,
@@ -342,10 +343,70 @@ impl PingResult {
             Self::Cancelled => Status::CANCELLED,
         }
     }
+
+    pub const fn audit_code(self) -> u64 {
+        match self {
+            Self::Success => 1,
+            Self::Timeout => 2,
+            Self::Unreachable => 3,
+            Self::NoRoute => 4,
+            Self::LinkDown => 5,
+            Self::DnsFailure => 6,
+            Self::PermissionDenied => 7,
+            Self::MalformedReply => 8,
+            Self::Cancelled => 9,
+        }
+    }
 }
 
 fn ping_status(code: u16) -> Status {
     Status::new(Severity::Error, facility::NETWORK, code, 0).unwrap_or(Status::INTERNAL)
+}
+
+fn audit_identity(value: &str) -> u128 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash as u128
+}
+
+fn record_ping_request(context: PingAuditContext) {
+    let level = if context.capability == 0 {
+        Level::Warn
+    } else {
+        Level::Info
+    };
+    audit_event!(
+        level,
+        EventField::unsigned(field::OPERATION, PING_ROUTE as u64),
+        EventField::unsigned(field::CAPABILITY, context.capability),
+        EventField::identifier(field::PING_TARGET, context.target),
+        EventField::identifier(field::PING_INTERFACE, context.interface),
+    );
+    audit_event!(
+        level,
+        EventField::unsigned(field::CAPABILITY, context.capability),
+        EventField::identifier(field::PING_SOURCE, context.source),
+        EventField::unsigned(field::PING_COUNT, context.count as u64),
+        EventField::unsigned(field::PING_TIMEOUT, context.timeout_ms as u64),
+    );
+}
+
+fn record_ping_result(context: PingAuditContext, result: PingResult) {
+    let level = if matches!(result, PingResult::Success) {
+        Level::Info
+    } else {
+        Level::Warn
+    };
+    audit_event!(
+        level,
+        EventField::unsigned(field::CAPABILITY, context.capability),
+        EventField::identifier(field::PING_TARGET, context.target),
+        EventField::unsigned(field::PING_RESULT, result.audit_code()),
+        EventField::status(result.status()),
+    );
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -417,6 +478,29 @@ impl PingHandle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PingAuditContext {
+    capability: u64,
+    target: u128,
+    interface: u128,
+    source: u128,
+    count: u32,
+    timeout_ms: u32,
+}
+
+impl PingAuditContext {
+    fn new(capability: u64, request: PingRequest<'_>) -> Self {
+        Self {
+            capability,
+            target: audit_identity(request.destination),
+            interface: request.interface.map_or(0, audit_identity),
+            source: request.source.map_or(0, audit_identity),
+            count: request.count,
+            timeout_ms: request.timeout_ms,
+        }
+    }
+}
+
 /// Source of truth for network settings.
 ///
 /// A system provider should validate the caller's network-administration
@@ -425,6 +509,12 @@ impl PingHandle {
 pub trait NetworkSource {
     /// Prove the caller has the network-administration capability.
     fn authorize_mutation(&mut self) -> Result<(), Status>;
+
+    /// Prove the caller has the network diagnostic capability and return its
+    /// opaque audit handle.
+    fn authorize_ping(&mut self, _request: ResolvedPingRequest<'_>) -> Result<u64, Status> {
+        Err(Status::ACCESS_DENIED)
+    }
 
     fn show_network(&mut self) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
@@ -520,6 +610,54 @@ fn map_ping_provider_status(status: Status) -> Status {
         Status::NOT_FOUND => PingResult::NoRoute.status(),
         Status::ACCESS_DENIED => PingResult::PermissionDenied.status(),
         _ => status,
+    }
+}
+
+fn ping_result_from_output(output: &StructuredOutput) -> PingResult {
+    for field in output.fields() {
+        if field.name.as_str() != "result" {
+            continue
+        }
+        let OutputValue::Text(value) = field.value else {
+            break
+        };
+        return match value.as_str() {
+            "success" => PingResult::Success,
+            "timeout" => PingResult::Timeout,
+            "unreachable" => PingResult::Unreachable,
+            "no-route" => PingResult::NoRoute,
+            "link-down" => PingResult::LinkDown,
+            "dns-failure" => PingResult::DnsFailure,
+            "permission-denied" => PingResult::PermissionDenied,
+            "malformed-reply" => PingResult::MalformedReply,
+            "cancelled" => PingResult::Cancelled,
+            _ => ping_result_from_status(output.status()),
+        }
+    }
+    ping_result_from_status(output.status())
+}
+
+fn ping_result_from_status(status: Status) -> PingResult {
+    if status == Status::NORMAL {
+        PingResult::Success
+    } else if status == Status::ACCESS_DENIED {
+        PingResult::PermissionDenied
+    } else if status == Status::CANCELLED {
+        PingResult::Cancelled
+    } else if status == PingResult::Timeout.status() {
+        PingResult::Timeout
+    } else if status == PingResult::Unreachable.status() {
+        PingResult::Unreachable
+    } else if status == PingResult::NoRoute.status() {
+        PingResult::NoRoute
+    } else if status == PingResult::LinkDown.status() {
+        PingResult::LinkDown
+    } else if status == PingResult::DnsFailure.status() {
+        PingResult::DnsFailure
+    } else if status == PingResult::MalformedReply.status() {
+        PingResult::MalformedReply
+    } else {
+        PingResult::NoRoute
     }
 }
 
@@ -619,7 +757,7 @@ pub struct NetworkExecutor<Source, const CAPACITY: usize = 16> {
 
 enum NetworkCompletion {
     Ready(Result<StructuredOutput, Status>),
-    Ping(PingHandle),
+    Ping(PingHandle, PingAuditContext),
 }
 
 impl<Source, const CAPACITY: usize> NetworkExecutor<Source, CAPACITY> {
@@ -689,10 +827,39 @@ pub fn dispatch_network_command<Source: NetworkSource>(
         }
         PING_ROUTE => {
             let request = ping_request(&command)?;
-            let target = source
-                .resolve_ping_target(request)
-                .map_err(map_ping_resolution_status)?;
-            source.ping(ResolvedPingRequest { request, target })
+            let target = match source.resolve_ping_target(request) {
+                Ok(target) => target,
+                Err(status) => {
+                    let status = map_ping_resolution_status(status);
+                    let audit = PingAuditContext::new(0, request);
+                    record_ping_request(audit);
+                    record_ping_result(audit, ping_result_from_status(status));
+                    return Err(status)
+                }
+            };
+            let resolved = ResolvedPingRequest { request, target };
+            let capability = match source.authorize_ping(resolved) {
+                Ok(capability) => capability,
+                Err(status) => {
+                    let audit = PingAuditContext::new(0, request);
+                    record_ping_request(audit);
+                    record_ping_result(audit, ping_result_from_status(status));
+                    return Err(status)
+                }
+            };
+            let audit = PingAuditContext::new(capability, request);
+            record_ping_request(audit);
+            match source.ping(resolved) {
+                Ok(output) => {
+                    record_ping_result(audit, ping_result_from_output(&output));
+                    Ok(output)
+                }
+                Err(status) => {
+                    let status = map_ping_provider_status(status);
+                    record_ping_result(audit, ping_result_from_status(status));
+                    Err(status)
+                }
+            }
         }
         _ => Err(Status::NOT_FOUND),
     }
@@ -713,20 +880,37 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
             .ok_or(Error::Capacity)?;
         let completion = if command.route.raw() == PING_ROUTE {
             let request = ping_request(&command).map_err(Error::CommandFailed)?;
-            let target = self
-                .source
-                .resolve_ping_target(request)
-                .map_err(map_ping_resolution_status)
-                .map_err(Error::CommandFailed)?;
-            let handle = self
-                .source
-                .start_ping(
-                    ResolvedPingRequest { request, target },
-                    request.schedule(),
-                )
-                .map_err(map_ping_provider_status)
-                .map_err(Error::CommandFailed)?;
-            NetworkCompletion::Ping(handle)
+            let target = match self.source.resolve_ping_target(request) {
+                Ok(target) => target,
+                Err(status) => {
+                    let status = map_ping_resolution_status(status);
+                    let audit = PingAuditContext::new(0, request);
+                    record_ping_request(audit);
+                    record_ping_result(audit, ping_result_from_status(status));
+                    return Err(Error::CommandFailed(status))
+                }
+            };
+            let resolved = ResolvedPingRequest { request, target };
+            let capability = match self.source.authorize_ping(resolved) {
+                Ok(capability) => capability,
+                Err(status) => {
+                    let audit = PingAuditContext::new(0, request);
+                    record_ping_request(audit);
+                    record_ping_result(audit, ping_result_from_status(status));
+                    return Err(Error::CommandFailed(status))
+                }
+            };
+            let audit = PingAuditContext::new(capability, request);
+            record_ping_request(audit);
+            let handle = match self.source.start_ping(resolved, request.schedule()) {
+                Ok(handle) => handle,
+                Err(status) => {
+                    let status = map_ping_provider_status(status);
+                    record_ping_result(audit, ping_result_from_status(status));
+                    return Err(Error::CommandFailed(status))
+                }
+            };
+            NetworkCompletion::Ping(handle, audit)
         } else {
             NetworkCompletion::Ready(dispatch_network_command(&mut self.source, command))
         };
@@ -740,11 +924,18 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
             .get_mut(token.raw().checked_sub(1)? as usize)?;
         match slot.take()? {
             NetworkCompletion::Ready(result) => Some(result),
-            NetworkCompletion::Ping(handle) => match self.source.poll_ping(handle) {
-                Some(Ok(output)) => Some(Ok(output)),
-                Some(Err(status)) => Some(Err(map_ping_provider_status(status))),
+            NetworkCompletion::Ping(handle, audit) => match self.source.poll_ping(handle) {
+                Some(Ok(output)) => {
+                    record_ping_result(audit, ping_result_from_output(&output));
+                    Some(Ok(output))
+                }
+                Some(Err(status)) => {
+                    let status = map_ping_provider_status(status);
+                    record_ping_result(audit, ping_result_from_status(status));
+                    Some(Err(status))
+                }
                 None => {
-                    *slot = Some(NetworkCompletion::Ping(handle));
+                    *slot = Some(NetworkCompletion::Ping(handle, audit));
                     None
                 }
             },
@@ -758,11 +949,19 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
             .ok_or(Error::InvalidHandle)?;
         match slot.take() {
             Some(NetworkCompletion::Ready(_)) | None => Ok(()),
-            Some(NetworkCompletion::Ping(handle)) => self
-                .source
-                .cancel_ping(handle)
-                .map_err(map_ping_provider_status)
-                .map_err(Error::CommandFailed),
+            Some(NetworkCompletion::Ping(handle, audit)) => {
+                match self.source.cancel_ping(handle) {
+                    Ok(()) => {
+                        record_ping_result(audit, PingResult::Cancelled);
+                        Ok(())
+                    }
+                    Err(status) => {
+                        let status = map_ping_provider_status(status);
+                        record_ping_result(audit, ping_result_from_status(status));
+                        Err(Error::CommandFailed(status))
+                    }
+                }
+            }
         }
     }
 }

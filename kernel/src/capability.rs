@@ -123,6 +123,7 @@ pub enum CapabilityObject {
     AddressSpace(AddressSpaceId),
     Thread(crate::task::ThreadId),
     SystemControl,
+    NetworkDiagnostic,
     IpcChannel(ChannelId),
     DistributedResource(ResourceId),
     LogicalNamespace { scope: u8, id: u64 },

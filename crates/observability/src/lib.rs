@@ -50,6 +50,12 @@ pub mod field {
     pub const DROPPED_PACKETS: u16 = 23;
     pub const RETRIES: u16 = 24;
     pub const DEGRADED_MODE: u16 = 25;
+    pub const PING_TARGET: u16 = 26;
+    pub const PING_INTERFACE: u16 = 27;
+    pub const PING_SOURCE: u16 = 28;
+    pub const PING_COUNT: u16 = 29;
+    pub const PING_TIMEOUT: u16 = 30;
+    pub const PING_RESULT: u16 = 31;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

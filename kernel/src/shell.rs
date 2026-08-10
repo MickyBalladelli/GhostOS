@@ -2258,10 +2258,14 @@ struct KernelNetwork {
     view: syn_shell::network::NetworkView,
     devices: [Option<synos_legacy_pc_drivers::EthernetRuntime>;
         syn_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1],
+    diagnostic_capability: crate::CapabilityHandle,
 }
 
 impl KernelNetwork {
-    fn new(boot_info: &'static BootInfo) -> Self {
+    fn new(
+        boot_info: &'static BootInfo,
+        diagnostic_capability: crate::CapabilityHandle,
+    ) -> Self {
         use syn_shell::network::{
             InterfaceAddressMode, MAX_NETWORK_OUTPUT_ROWS, NetworkInterfaceView, NetworkText,
             NetworkView,
@@ -2297,6 +2301,7 @@ impl KernelNetwork {
                 next_route: None,
             },
             devices,
+            diagnostic_capability,
         };
         network.refresh();
         network
@@ -2471,6 +2476,13 @@ fn discover_runtime_network(
 impl syn_shell::network::NetworkSource for KernelNetwork {
     fn authorize_mutation(&mut self) -> Result<(), Status> {
         Ok(())
+    }
+
+    fn authorize_ping(
+        &mut self,
+        _request: syn_shell::network::ResolvedPingRequest<'_>,
+    ) -> Result<u64, Status> {
+        Ok(self.diagnostic_capability.raw())
     }
 
     fn show_network(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
@@ -2662,6 +2674,13 @@ impl KernelExecutor {
                 Rights::CONTROL,
             )
             .expect("kernel control capability");
+        let network_diagnostic = capabilities
+            .mint_root(
+                AddressSpaceId::KERNEL,
+                CapabilityObject::NetworkDiagnostic,
+                Rights::CONTROL,
+            )
+            .expect("network diagnostic capability");
         let filesystem = KernelFilesystem::new();
         crate::println!("root filesystem mounted");
 
@@ -2684,7 +2703,7 @@ impl KernelExecutor {
             control_authority,
             dlm,
             filesystem: FilesystemExecutor::new(filesystem),
-            network: KernelNetwork::new(boot_info),
+            network: KernelNetwork::new(boot_info, network_diagnostic),
             firewall_policy_version: 1,
             firewall_rule_count: 0,
         }
@@ -2711,6 +2730,16 @@ impl KernelExecutor {
                 ..=syn_shell::network::PING_ROUTE)
                 .contains(&route) =>
             {
+                if route == syn_shell::network::PING_ROUTE {
+                    self.capabilities
+                        .authorize(
+                            AddressSpaceId::KERNEL,
+                            self.network.diagnostic_capability,
+                            CapabilityObject::NetworkDiagnostic,
+                            Rights::CONTROL,
+                        )
+                        .map_err(|_| Status::ACCESS_DENIED)?;
+                }
                 syn_shell::network::dispatch_network_command(&mut self.network, command)
             }
             route if (syn_shell::cluster::SHOW_CLUSTER_ROUTE

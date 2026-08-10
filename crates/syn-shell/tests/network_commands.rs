@@ -463,6 +463,7 @@ fn mutations_require_network_administration_capability() {
         "SET INTERFACE eth0 /DHCP",
         "SET INTERFACE eth0 /ADDRESS=10.0.0.3",
         "SET ROUTE 0.0.0.0/0 /GATEWAY=10.0.0.1 /INTERFACE=eth0",
+        "PING 198.51.100.4",
     ] {
         assert!(matches!(
             execute(&mut executor, input),
@@ -853,6 +854,17 @@ impl NetworkSource for FakeNetwork {
     fn authorize_mutation(&mut self) -> Result<(), Status> {
         if self.allowed {
             Ok(())
+        } else {
+            Err(Status::ACCESS_DENIED)
+        }
+    }
+
+    fn authorize_ping(
+        &mut self,
+        _request: ResolvedPingRequest<'_>,
+    ) -> Result<u64, Status> {
+        if self.allowed {
+            Ok(0x50494e47)
         } else {
             Err(Status::ACCESS_DENIED)
         }

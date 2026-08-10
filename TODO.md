@@ -401,7 +401,7 @@ SynOS VMs communicate and obtain distinct leases.
       minimum/average/maximum RTT, and destination identity.
 - [x] Add structured and JSON output containing every reply, sequence, TTL,
       payload size, RTT, error, and final summary.
-- [ ] Require the network diagnostic capability and record the target,
+- [x] Require the network diagnostic capability and record the target,
       interface, source, count, timeout, and result in the audit stream.
 - [ ] Add shell parser, help, authorization, output, timeout, cancellation,
       and malformed-qualifier coverage for `PING`.
