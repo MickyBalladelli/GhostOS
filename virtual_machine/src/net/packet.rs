@@ -13,6 +13,8 @@ pub enum NetError {
     Truncated,
     QueueFull,
     LinkDown,
+    AdminDown,
+    BackendUnavailable,
 }
 
 impl fmt::Display for NetError {
@@ -22,8 +24,23 @@ impl fmt::Display for NetError {
             NetError::Truncated => "packet too short to contain an Ethernet header",
             NetError::QueueFull => "receive queue full, packet dropped",
             NetError::LinkDown => "network link is down",
+            NetError::AdminDown => "network interface is administratively down",
+            NetError::BackendUnavailable => "network backend is unavailable",
         };
         write!(f, "{}", msg)
+    }
+}
+
+impl NetError {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::PacketTooLarge => "NET_PACKET_TOO_LARGE",
+            Self::Truncated => "NET_TRUNCATED",
+            Self::QueueFull => "NET_QUEUE_FULL",
+            Self::LinkDown => "NET_LINK_DOWN",
+            Self::AdminDown => "NET_ADMIN_DOWN",
+            Self::BackendUnavailable => "NET_BACKEND_UNAVAILABLE",
+        }
     }
 }
 

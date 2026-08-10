@@ -204,9 +204,14 @@ SynOS VMs communicate and obtain distinct leases.
 - [ ] Start DHCP only when the interface is enabled and the carrier is up;
       stop transmission immediately on link loss and restart cleanly on link
       restoration.
-- [ ] Define the VM network topology contract: distinct MAC addresses, one
+- [x] Define the VM network topology contract: distinct MAC addresses, one
       shared L2 segment for peer VMs, broadcast delivery, frame-size limits, and
       behavior when no peer or uplink is attached.
+      Evidence: `synos_vm::DeterministicSegment` provides bounded multi-port
+      delivery with distinct-MAC validation, unicast/broadcast/multicast
+      filtering, Ethernet frame limits, carrier-down behavior, queue limits,
+      and no-peer drop semantics. Direct regression coverage is in the backend
+      module; `cargo check -p synos-vm --tests` passes.
 - [ ] Add a real host/VM network backend for bridged, user-mode/NAT, and
       deterministic test networking; keep the in-memory loopback backend only
       for isolated unit tests.
@@ -216,6 +221,10 @@ SynOS VMs communicate and obtain distinct leases.
       Ethernet, ARP, IPv4, ICMP, UDP, and TCP traffic to each other.
 - [ ] Report missing NIC, carrier-down, queue-full, and backend-unavailable
       conditions as stable network errors instead of leaving DHCP at `init`.
+      Progress: `NetError` now has stable public codes for those conditions,
+      and e1000/virtio polling records the first backend, carrier, admin-state,
+      and queue failure for retrieval with `take_network_error()`. DHCP
+      scheduler propagation remains pending.
 
 ### DHCP client integration
 

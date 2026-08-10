@@ -2,7 +2,7 @@
 
 use crate::devices::{ApicTrigger, Device, DeviceError, LocalApic, PortDevice};
 use crate::memory::Mmu;
-use crate::net::{MacAddress, NetBackend, PacketQueue, ETHERNET_FRAME_MAX};
+use crate::net::{MacAddress, NetBackend, NetError, NetQueueState, PacketQueue, ETHERNET_FRAME_MAX};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -47,6 +47,7 @@ pub struct VirtioNet {
     apic: Option<Rc<RefCell<LocalApic>>>,
     irq_vector: u8,
     backend: Option<Box<dyn NetBackend>>,
+    last_network_error: Option<NetError>,
 }
 
 impl VirtioNet {
@@ -66,6 +67,7 @@ impl VirtioNet {
             apic: None,
             irq_vector: 0,
             backend: None,
+            last_network_error: None,
         }
     }
 
@@ -84,6 +86,30 @@ impl VirtioNet {
 
     pub fn mac(&self) -> MacAddress {
         self.mac
+    }
+
+    pub fn carrier_up(&self) -> bool {
+        self.backend.as_ref().is_some_and(|backend| backend.link_up())
+    }
+
+    pub fn admin_up(&self) -> bool {
+        self.backend.as_ref().is_none_or(|backend| backend.admin_up())
+    }
+
+    pub fn queue_state(&self) -> NetQueueState {
+        self.backend
+            .as_ref()
+            .map_or(NetQueueState::EMPTY, |backend| backend.queue_state())
+    }
+
+    pub fn set_admin_up(&mut self, up: bool) {
+        if let Some(backend) = &mut self.backend {
+            backend.set_admin_up(up);
+        }
+    }
+
+    pub fn take_network_error(&mut self) -> Option<NetError> {
+        self.last_network_error.take()
     }
 
     pub fn has_pending(&self) -> bool {
@@ -161,11 +187,23 @@ impl VirtioNet {
 
     pub fn poll(&mut self, mmu: &mut Mmu) {
         if let Some(backend) = &mut self.backend {
-            while let Ok(Some(packet)) = backend.receive() {
-                if !self.pending_rx.push(packet) {
-                    break;
+            loop {
+                match backend.receive() {
+                    Ok(Some(packet)) => {
+                        if !self.pending_rx.push(packet) {
+                            self.last_network_error = Some(NetError::QueueFull);
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        self.last_network_error = Some(error);
+                        break;
+                    }
                 }
             }
+        } else {
+            self.last_network_error = Some(NetError::BackendUnavailable);
         }
         if self.poll_pending || !self.pending_rx.is_empty() {
             self.poll_tx(mmu);
@@ -221,7 +259,11 @@ impl VirtioNet {
                 break;
             }
             if let Some(backend) = &mut self.backend {
-                let _ = backend.transmit(&packet);
+                if let Err(error) = backend.transmit(&packet) {
+                    self.last_network_error = Some(error);
+                }
+            } else {
+                self.last_network_error = Some(NetError::BackendUnavailable);
             }
             let used_slot = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
             let Some(used_off) = self

@@ -17,7 +17,7 @@ pub mod migration;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
-pub use net::{LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue};
+pub use net::{DeterministicPort, DeterministicSegment, LoopbackHub, LoopbackPort, MacAddress, NetBackend, NetQueueState, PacketQueue};
 pub use devices::{
     Ahci, ApicTrigger, Device, DiskController, DiskFindingSeverity, DiskFormat, DiskImage,
     DiskInfo, DiskInspectionFinding, DiskInspectionReport, DiskLockInfo, DiskManager,
