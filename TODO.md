@@ -315,7 +315,7 @@ SynOS VMs communicate and obtain distinct leases.
       provider backed by the actual e1000 or virtio-net device.
 - [x] Expose each NIC MAC address, carrier state, administrative enabled state,
       RX/TX queue state, and link-change events to the kernel network service.
-- [ ] Make `SET INTERFACE ... /ENABLE` and `/DISABLE` control administrative
+- [x] Make `SET INTERFACE ... /ENABLE` and `/DISABLE` control administrative
       state while preserving the separate physical `link up` state.
 - [ ] Start DHCP only when the interface is enabled and the carrier is up;
       stop transmission immediately on link loss and restart cleanly on link

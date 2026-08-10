@@ -197,18 +197,18 @@ impl IntelE1000 {
         self.read(Self::STATUS) & (1 << 1) != 0
     }
 
-    pub fn admin_up(&self) -> bool {
-        self.read(Self::CTRL) & (1 << 6) != 0
-    }
-
     pub fn set_admin_up(&mut self, enabled: bool) {
-        let mut control = self.read(Self::CTRL);
         if enabled {
-            control |= 1 << 6;
+            if self.read(Self::RDLEN) != 0 {
+                self.write(Self::RCTL, self.read(Self::RCTL) | 1);
+            }
+            if self.read(Self::TDLEN) != 0 {
+                self.write(Self::TCTL, self.read(Self::TCTL) | 1);
+            }
         } else {
-            control &= !(1 << 6);
+            self.write(Self::RCTL, self.read(Self::RCTL) & !1);
+            self.write(Self::TCTL, self.read(Self::TCTL) & !1);
         }
-        self.write(Self::CTRL, control)
     }
 
     pub fn queue_snapshot(&self, receive: bool) -> EthernetQueueSnapshot {
@@ -313,7 +313,7 @@ pub struct EthernetRuntime {
     e1000: Option<IntelE1000>,
     virtio_port: Option<u16>,
     mac: [u8; 6],
-    virtio_admin_up: bool,
+    admin_up: bool,
 }
 
 impl EthernetRuntime {
@@ -341,7 +341,7 @@ impl EthernetRuntime {
                     e1000: Some(e1000),
                     virtio_port: None,
                     mac,
-                    virtio_admin_up: true,
+                    admin_up: true,
                 })
             }
             EthernetKind::VirtioNet => {
@@ -358,7 +358,7 @@ impl EthernetRuntime {
                     e1000: None,
                     virtio_port: Some(port),
                     mac,
-                    virtio_admin_up: true,
+                    admin_up: true,
                 })
             }
             EthernetKind::RealtekRtl8169 => Err(EthernetError::UnsupportedDevice),
@@ -374,7 +374,7 @@ impl EthernetRuntime {
             return EthernetSnapshot {
                 mac: self.mac,
                 link_up: e1000.link_up(),
-                admin_up: e1000.admin_up(),
+                admin_up: self.admin_up,
                 rx_queue: e1000.queue_snapshot(true),
                 tx_queue: e1000.queue_snapshot(false),
             }
@@ -396,7 +396,7 @@ impl EthernetRuntime {
         EthernetSnapshot {
             mac: self.mac,
             link_up: link,
-            admin_up: self.virtio_admin_up,
+            admin_up: self.admin_up,
             rx_queue,
             tx_queue,
         }
@@ -419,7 +419,7 @@ impl EthernetRuntime {
     }
 
     pub fn set_admin_up(&mut self, enabled: bool) {
-        self.virtio_admin_up = enabled;
+        self.admin_up = enabled;
         if let Some(e1000) = &mut self.e1000 {
             e1000.set_admin_up(enabled)
         }
