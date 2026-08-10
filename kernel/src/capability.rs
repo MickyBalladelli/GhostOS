@@ -3,8 +3,8 @@ use crate::ipc::{ChannelId, SharedRegionId};
 use crate::quota::{CapabilityQuota, QuotaDecision, QuotaPolicy, QuotaResource, QuotaUsage};
 use crate::task::AddressSpaceId;
 use synos_observability::{
-    CapabilityDomain, CapabilityTrace, CapabilityTraceStage, EventField, Level, audit_event,
-    field,
+    CapabilityDomain, CapabilityTraceStage, EventField, Level, audit_event,
+    emit_capability_trace, field,
 };
 use synos_status::{IntoStatus, Severity, Status, facility};
 
@@ -675,14 +675,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::OWNER, owner.raw() as u64),
             EventField::unsigned(field::RIGHTS, rights.bits() as u64),
         );
-        if let Some(trace) = CapabilityTrace::new(
+        emit_capability_trace(
+            Level::Info,
             CapabilityDomain::Kernel,
             CapabilityTraceStage::Created,
             handle.raw(),
             1,
-        ) {
-            trace.emit(Level::Info)
-        }
+        );
         Ok(handle)
     }
 
@@ -723,14 +722,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::CALLER, caller.raw() as u64),
             EventField::status(Status::NORMAL),
         );
-        if let Some(trace) = CapabilityTrace::new(
+        emit_capability_trace(
+            Level::Trace,
             CapabilityDomain::Kernel,
             CapabilityTraceStage::KernelIpc,
             handle.raw(),
             3,
-        ) {
-            trace.emit(Level::Trace)
-        }
+        );
         Ok(info)
     }
 
@@ -843,14 +841,13 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
     }
 
     fn trace_revocation(&self, handle: CapabilityHandle, operation: u16) {
-        if let Some(trace) = CapabilityTrace::new(
+        emit_capability_trace(
+            Level::Info,
             CapabilityDomain::Kernel,
             CapabilityTraceStage::Revoked,
             handle.raw(),
             operation,
-        ) {
-            trace.emit(Level::Info)
-        }
+        );
     }
 }
 

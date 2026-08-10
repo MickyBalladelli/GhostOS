@@ -5,8 +5,8 @@ use crate::scheduler::Scheduler;
 use crate::task::{AddressSpaceId, CpuId, ThreadId};
 use synos_ipc::{Envelope, Ring, RingError};
 use synos_observability::{
-    CapabilityDomain, CapabilityTrace, CapabilityTraceStage, CorrelationId, EventField,
-    EventKind, field, next_correlation_id, trace,
+    CapabilityDomain, CapabilityTraceStage, CorrelationId, EventField, EventKind,
+    emit_capability_trace, field, next_correlation_id, trace,
 };
 use synos_status::{IntoStatus, Severity, Status, facility};
 
@@ -161,14 +161,13 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         }
         match self.enqueue(message) {
             Ok(()) => {
-                if let Some(trace) = CapabilityTrace::new(
+                emit_capability_trace(
+                    synos_observability::Level::Trace,
                     CapabilityDomain::Kernel,
                     CapabilityTraceStage::KernelIpc,
                     endpoint.raw(),
                     message.label as u16,
-                ) {
-                    trace.emit(synos_observability::Level::Trace)
-                }
+                );
                 Ok(())
             }
             Err(error) => {
@@ -350,14 +349,13 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
             );
             return Err(error);
         }
-        if let Some(trace) = CapabilityTrace::new(
+        emit_capability_trace(
+            synos_observability::Level::Trace,
             CapabilityDomain::Kernel,
             CapabilityTraceStage::KernelIpc,
             delegated.raw(),
             message.label as u16,
-        ) {
-            trace.emit(synos_observability::Level::Trace)
-        }
+        );
         Ok(CapabilityTransfer {
             delegated,
             receiver,

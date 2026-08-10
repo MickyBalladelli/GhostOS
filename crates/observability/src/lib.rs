@@ -425,7 +425,26 @@ impl CapabilityTrace {
     }
 
     pub fn emit(self, level: Level) {
-        emit_audit(self.event(level))
+        emit_capability_trace(
+            level,
+            self.domain,
+            self.stage,
+            self.capability,
+            self.operation,
+        )
+    }
+}
+
+#[inline(never)]
+pub fn emit_capability_trace(
+    level: Level,
+    domain: CapabilityDomain,
+    stage: CapabilityTraceStage,
+    capability: u64,
+    operation: u16,
+) {
+    if let Some(trace) = CapabilityTrace::new(domain, stage, capability, operation) {
+        emit_audit(trace.event(level))
     }
 }
 

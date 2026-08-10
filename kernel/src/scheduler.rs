@@ -5,7 +5,9 @@ use crate::task::{
     ThreadId, ThreadState,
 };
 use crate::partition::{CorePartition, CorePartitionError};
-use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
+use synos_observability::{
+    CapabilityDomain, CapabilityTraceStage, Level, emit_capability_trace,
+};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,14 +147,13 @@ impl Scheduler {
         }
         self.clear_ipc_waits(id);
         self.threads[slot] = Thread::VACANT;
-        if let Some(trace) = CapabilityTrace::new(
+        emit_capability_trace(
+            Level::Info,
             CapabilityDomain::Process,
             CapabilityTraceStage::Revoked,
             authority.raw(),
             id.raw() as u16,
-        ) {
-            trace.emit(Level::Info)
-        }
+        );
         Ok(())
     }
 
@@ -537,14 +538,13 @@ impl Scheduler {
                 .authorize(caller, authority, CapabilityObject::SystemControl, Rights::CONTROL)
                 .is_ok()
         {
-            if let Some(trace) = CapabilityTrace::new(
+            emit_capability_trace(
+                Level::Trace,
                 CapabilityDomain::Process,
                 CapabilityTraceStage::DaemonAuthorized,
                 authority.raw(),
                 id.raw() as u16,
-            ) {
-                trace.emit(Level::Trace)
-            }
+            );
             Ok(slot)
         } else {
             Err(SchedulerError::AccessDenied)
