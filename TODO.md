@@ -234,8 +234,11 @@ evidence.
       bytes, firewall decisions, DHCP DORA/link events, while shell network
       command and declarative rollback tests preserve ordered control-plane
       evidence.
-- [ ] Add DHCP conflict detection, lease persistence, renewal race, server
+- [x] Add DHCP conflict detection, lease persistence, renewal race, server
       identity, route replacement, and stale-configuration tests.
+      Evidence: `synos-netd` rejects conflicting offers, stale renewal ACKs,
+      and changed renewal servers; declarative network tests cover persisted
+      DHCP activation, default-route replacement, and stale revisions.
 - [ ] Define and test protocol version negotiation, replay windows, message
       size limits, authentication failure, backpressure, and reconnect behavior
       for HTTP, gRPC, SDK, remote terminal, mesh, and cluster traffic.

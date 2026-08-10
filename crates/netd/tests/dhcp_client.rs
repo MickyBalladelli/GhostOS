@@ -342,6 +342,40 @@ fn renew_rebind_expiry_and_release_restore_static() {
 }
 
 #[test]
+fn renewal_race_rejects_stale_ack_and_changed_server_identity() {
+    let server = fixture();
+    let mut client = authorized_client();
+    let mut transport = CaptureTransport::new();
+    let mut runtime = RecordingRuntime::new();
+    bind_lease(&mut client, &mut transport, &mut runtime, &server, 0);
+
+    client.poll(50_000, &mut transport, &mut runtime).unwrap();
+    let stale_ack = server.respond(transport.last()).unwrap();
+    client.poll(54_000, &mut transport, &mut runtime).unwrap();
+    assert_eq!(
+        client.handle_packet(&stale_ack, 54_001, &mut runtime),
+        Err(DhcpError::InvalidPacket)
+    );
+    let fresh_ack = server.respond(transport.last()).unwrap();
+    client.handle_packet(&fresh_ack, 54_002, &mut runtime).unwrap();
+    assert_eq!(client.state(), DhcpClientState::Bound);
+
+    let mut client = authorized_client();
+    let mut transport = CaptureTransport::new();
+    let mut runtime = RecordingRuntime::new();
+    bind_lease(&mut client, &mut transport, &mut runtime, &server, 0);
+    client.poll(50_000, &mut transport, &mut runtime).unwrap();
+    let mut changed_server = server.respond(transport.last()).unwrap();
+    set_option_u32(&mut changed_server, 54, u32::from_be_bytes([10, 0, 0, 9]));
+    assert_eq!(
+        client.handle_packet(&changed_server, 50_001, &mut runtime),
+        Err(DhcpError::ConflictingOffer)
+    );
+    assert_eq!(client.state(), DhcpClientState::Renewing);
+    assert_eq!(runtime.applied.unwrap().server_id, server.server_id);
+}
+
+#[test]
 fn link_down_and_restart_recover_through_init_reboot() {
     let mut client = authorized_client();
     let mut transport = CaptureTransport::new();

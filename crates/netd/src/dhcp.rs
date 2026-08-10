@@ -559,6 +559,11 @@ impl DhcpClient {
                 return Err(DhcpError::ConflictingOffer);
             }
         }
+        if self.state == DhcpClientState::Renewing
+            && self.lease.is_some_and(|current| current.server_id != lease.server_id)
+        {
+            return Err(DhcpError::ConflictingOffer);
+        }
         runtime.apply_lease(self.interface_name(), &lease)?;
         self.lease = Some(lease);
         self.bound_at_ms = Some(now_ms);

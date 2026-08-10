@@ -360,6 +360,64 @@ fn network_reconfigure_persists_dhcp_lease_and_rolls_back_on_health_failure() {
 }
 
 #[test]
+fn dhcp_persistence_replaces_default_route_and_rejects_stale_revision() {
+    let key = TpmSigningKey::new([12; 32]);
+    let mut enforcer = TpmConfigurationEnforcer::<2>::new();
+    enforcer.trust_key(key).unwrap();
+    let local = NodeId::LOCAL;
+    let mut configuration = SystemSpec::parse(CONFIG).unwrap();
+    configuration
+        .update_network_interface("eth0", None, None, None, None, Some(AddressMode::Dhcp))
+        .unwrap();
+    configuration
+        .apply_network_dhcp_lease("eth0", "10.0.0.50", Some("10.0.0.1"))
+        .unwrap();
+    configuration
+        .upsert_network_route("0.0.0.0/0", "10.0.0.254", "eth0", Some(25))
+        .unwrap();
+    assert_eq!(configuration.revision(), 4);
+
+    let mut filesystem = SynFs::<64>::new();
+    let mut manager = ReconfigureManager::<4>::new();
+    let mut runtime = Runtime::new();
+    let initial = SignedConfiguration::new(SystemSpec::parse(CONFIG).unwrap(), key, Some(local));
+    manager
+        .activate(&mut filesystem, &enforcer, &initial, local, &mut runtime)
+        .unwrap();
+    let leased = SignedConfiguration::new(configuration, key, Some(local))
+        .expect_previous_revision(1);
+    manager
+        .activate(&mut filesystem, &enforcer, &leased, local, &mut runtime)
+        .unwrap();
+
+    let active = manager.active().unwrap();
+    let interface = active.network().interfaces().next().unwrap();
+    assert_eq!(interface.mode, AddressMode::Dhcp);
+    assert_eq!(interface.address.as_str(), "10.0.0.50");
+    let routes: Vec<_> = active.network().routes().collect();
+    assert_eq!(routes.len(), 1);
+    assert_eq!(routes[0].gateway.as_str(), "10.0.0.254");
+    assert_eq!(routes[0].metric, 25);
+
+    let mut stale = SystemSpec::parse(CONFIG).unwrap();
+    stale.set_network_hostname("stale-node").unwrap();
+    let stale_update = SignedConfiguration::new(stale, key, Some(local))
+        .expect_previous_revision(1);
+    assert_eq!(
+        manager.activate(
+            &mut filesystem,
+            &enforcer,
+            &stale_update,
+            local,
+            &mut runtime,
+        ),
+        Err(ReconfigureError::StaleRevision)
+    );
+    assert_eq!(manager.active().unwrap().revision(), 4);
+    assert_eq!(manager.active().unwrap().network().hostname.unwrap().as_str(), "synos");
+}
+
+#[test]
 fn empty_update_and_empty_hostname_are_rejected() {
     let mut configuration = SystemSpec::parse(CONFIG).unwrap();
     assert_eq!(
