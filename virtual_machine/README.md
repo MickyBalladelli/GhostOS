@@ -6,6 +6,8 @@ The stable embedding, guest-hardware, checkpoint, disk, migration, and host
 terminal behavior is defined in [the public VM contract](docs/PUBLIC_VM_CONTRACT.md).
 Compatibility combinations and CLI constraints are listed in
 [the compatibility matrices](docs/COMPATIBILITY.md).
+VM network backends and deterministic two-VM setup are documented in
+[the VM networking guide](docs/NETWORKING.md).
 
 Package a release archive with immutable artifact digests, firmware modes,
 default device topology, executed test evidence, and host limitations:

@@ -56,7 +56,7 @@ full_validation = "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
 release = "./scripts/release-gate.sh build/test-evidence/<run-id>"
 coverage_policy = "coverage.toml"
 mutation_scope = "status, auth, fsd, synfs, http, virtual_machine"
-fuzz_targets = ["path", "volume", "operations", "mount", "http", "script"]
+fuzz_targets = ["path", "volume", "operations", "mount", "http", "script", "network"]
 
 [evidence_manifest]
 manifest = "evidence-manifest.json"
@@ -217,11 +217,18 @@ performance = ["performance.13.parse-pipeline"]
 [[feature]]
 id = "14"
 todo_heading = "User-Space Async Networking"
-unit = ["unit.14.network"]
-integration = ["integration.14.network-services"]
+unit = ["unit.14.network", "unit.14.vm-network-contract"]
+integration = [
+  "integration.14.network-services",
+  "integration.14.two-vm-dhcp-peer-traffic",
+]
 qemu = ["qemu.14.network-boot"]
-fault = ["fault.14.packet-disconnect"]
-fuzz = ["fuzz.14.network-packets"]
+fault = [
+  "fault.14.packet-disconnect",
+  "fault.14.vm-network-negative-matrix",
+  "fault.14.snapshot-network-portability",
+]
+fuzz = ["fuzz.14.network-packets", "fuzz.14.network-protocols"]
 performance = ["performance.14.packet-throughput"]
 
 [[feature]]
@@ -708,6 +715,10 @@ evidence_ids = [
   "feature.46", "feature.47", "feature.48", "feature.49", "feature.50",
   "feature.51", "feature.52", "feature.53", "feature.54", "feature.55",
   "feature.56", "feature.57", "feature.58", "vm.59.13.serial-ps2",
+  "integration.14.two-vm-dhcp-peer-traffic",
+  "fault.14.vm-network-negative-matrix",
+  "fault.14.snapshot-network-portability",
+  "fuzz.14.network-protocols",
 ]
 
 [[roadmap]]

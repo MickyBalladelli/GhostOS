@@ -1,0 +1,41 @@
+# Evidence mapping for TODO.md / P1 guest networking / End-to-end proof.
+# IDs name executable inventory entries; result artifacts are produced by the
+# normal evidence runner and are not implied by this mapping.
+schema = 1
+source = "TODO.md"
+section = "End-to-end proof"
+
+[[mapping]]
+roadmap_evidence_id = "roadmap.3b35e24f6897"
+title = "two-VM DHCP, peer ping, TCP, and renewal"
+test_ids = ["vm.network.two-vm-dhcp-peer-traffic", "integration.14.two-vm-dhcp-peer-traffic"]
+
+[[mapping]]
+roadmap_evidence_id = "roadmap.9fe368ebe58b"
+title = "negative NIC, DHCP, loss, queue, and backend matrix"
+test_ids = ["vm.network.negative-fault-matrix", "fault.14.vm-network-negative-matrix"]
+
+[[mapping]]
+roadmap_evidence_id = "roadmap.9f5d91e02f08"
+title = "restart and snapshot portability contract"
+test_ids = ["vm.network.snapshot-portability", "fault.14.snapshot-network-portability"]
+
+[[mapping]]
+roadmap_evidence_id = "roadmap.21339f1cce20"
+title = "DHCP, ARP, IPv4, ICMP, DNS, and qualifier fuzzing"
+test_ids = ["fuzz.14.network-protocols"]
+
+[[mapping]]
+roadmap_evidence_id = "roadmap.e92835850300"
+title = "VM networking setup and troubleshooting"
+test_ids = ["integration.14.two-vm-dhcp-peer-traffic"]
+
+[[mapping]]
+roadmap_evidence_id = "roadmap.e995a3ed4ff6"
+title = "network roadmap evidence inventory"
+test_ids = [
+  "integration.14.two-vm-dhcp-peer-traffic",
+  "fault.14.vm-network-negative-matrix",
+  "fault.14.snapshot-network-portability",
+  "fuzz.14.network-protocols",
+]

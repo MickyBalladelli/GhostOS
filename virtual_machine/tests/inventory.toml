@@ -368,6 +368,16 @@ file = "tests/network_integration.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
+id = "vm.network.negative-fault-matrix"
+file = "tests/network_integration.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.network.snapshot-portability"
+file = "tests/network_integration.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
 id = "vm.negative.malformed-input-matrix"
 file = "tests/negative_matrix.rs"
 tiers = ["fast-unit"]

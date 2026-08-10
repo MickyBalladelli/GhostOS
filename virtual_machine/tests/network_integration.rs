@@ -1,7 +1,8 @@
 //! Two-VM deterministic Ethernet integration coverage.
 
 use synos_vm::{
-    DhcpServerConfig, DeterministicVmNetwork, MacAddress, NetworkBackendConfig, Vm, VmConfig,
+    DhcpServerConfig, DeterministicVmNetwork, MacAddress, NetError, NetworkBackendConfig, Vm,
+    VmConfig,
 };
 
 const SERVER_IP: [u8; 4] = [10, 5, 0, 1];
@@ -451,4 +452,236 @@ fn two_vms_acquire_distinct_dhcp_leases_ping_connect_and_renew() {
         .expect("renewed second lease")
         .expires_at_ms
         > second_lease.expires_at_ms);
+}
+
+fn shared_vm_config(network: std::rc::Rc<std::cell::RefCell<DeterministicVmNetwork>>) -> VmConfig {
+    VmConfig {
+        memory_size: 4 * 1024 * 1024,
+        network: NetworkBackendConfig::DeterministicShared { network },
+        dhcp_server: None,
+        ..VmConfig::default()
+    }
+}
+
+#[test]
+fn network_negative_matrix_reports_stable_failures() {
+    let network = DeterministicVmNetwork::new(None).expect("create network without DHCP");
+    let config = shared_vm_config(network.clone());
+    let mut disabled = Vm::try_with_config(config.clone()).expect("create disabled-NIC VM");
+    let disabled_mac = disabled.network_mac_addresses()[0];
+    disabled.set_network_admin_up(false);
+    assert!(!disabled.network_admin_up());
+    assert_eq!(
+        disabled.transmit_network_frame(&ethernet(
+            MacAddress::BROADCAST,
+            disabled_mac,
+            0x88B5,
+            &[1],
+        )),
+        Err(NetError::AdminDown)
+    );
+
+    let carrier_network = DeterministicVmNetwork::new(None).expect("create carrier network");
+    let mut carrier = Vm::try_with_config(shared_vm_config(carrier_network.clone()))
+        .expect("create carrier VM");
+    carrier_network.borrow().segment().borrow_mut().set_link_up(false);
+    assert!(!carrier.network_link_up());
+    assert_eq!(
+        carrier.transmit_network_frame(&ethernet(
+            MacAddress::BROADCAST,
+            carrier.network_mac_addresses()[0],
+            0x88B5,
+            &[2],
+        )),
+        Err(NetError::LinkDown)
+    );
+
+    let absent_network = DeterministicVmNetwork::new(None).expect("create absent-DHCP network");
+    let mut absent = Vm::try_with_config(shared_vm_config(absent_network.clone()))
+        .expect("create absent-DHCP VM");
+    let absent_mac = absent.network_mac_addresses()[0];
+    absent
+        .transmit_network_frame(&dhcp_frame(absent_mac, 10, 1, [0; 4], None, None))
+        .expect("send discover without server");
+    assert_eq!(absent_network.borrow_mut().poll(0).expect("poll absent server"), 0);
+    assert_eq!(absent.receive_network_frame().expect("read absent-DHCP queue"), None);
+
+    let nak_network = DeterministicVmNetwork::new(Some(DhcpServerConfig::default()))
+        .expect("create NAK network");
+    let mut nak_vm = Vm::try_with_config(shared_vm_config(nak_network.clone()))
+        .expect("create NAK VM");
+    let nak_mac = nak_vm.network_mac_addresses()[0];
+    nak_vm
+        .transmit_network_frame(&dhcp_frame(nak_mac, 11, 3, [0; 4], Some([10, 5, 0, 99]), None))
+        .expect("send invalid DHCP request");
+    nak_network.borrow_mut().poll(0).expect("poll NAK server");
+    let (message_type, address) = receive_dhcp(&mut nak_vm, nak_mac, 11);
+    assert_eq!(message_type, 6);
+    assert_eq!(address, [0; 4]);
+
+    let duplicate_network = DeterministicVmNetwork::new(Some(DhcpServerConfig {
+        pool_start: [10, 5, 0, 100],
+        pool_end: [10, 5, 0, 100],
+        ..DhcpServerConfig::default()
+    }))
+    .expect("create duplicate-address network");
+    let duplicate_config = shared_vm_config(duplicate_network.clone());
+    let mut owner = Vm::try_with_config(duplicate_config.clone()).expect("create address owner");
+    let mut contender = Vm::try_with_config(duplicate_config).expect("create address contender");
+    let owner_mac = owner.network_mac_addresses()[0];
+    let contender_mac = contender.network_mac_addresses()[0];
+    owner
+        .transmit_network_frame(&dhcp_frame(owner_mac, 12, 1, [0; 4], None, None))
+        .expect("send owner discover");
+    duplicate_network.borrow_mut().poll(0).expect("poll owner offer");
+    let (_, owned_address) = receive_dhcp(&mut owner, owner_mac, 12);
+    owner
+        .transmit_network_frame(&dhcp_frame(
+            owner_mac,
+            12,
+            3,
+            [0; 4],
+            Some(owned_address),
+            Some(SERVER_IP),
+        ))
+        .expect("send owner request");
+    duplicate_network.borrow_mut().poll(1).expect("poll owner ACK");
+    assert_eq!(receive_dhcp(&mut owner, owner_mac, 12).0, 5);
+    contender
+        .transmit_network_frame(&dhcp_frame(
+            contender_mac,
+            13,
+            3,
+            [0; 4],
+            Some(owned_address),
+            Some(SERVER_IP),
+        ))
+        .expect("send duplicate request");
+    duplicate_network.borrow_mut().poll(2).expect("poll duplicate NAK");
+    assert_eq!(receive_dhcp(&mut contender, contender_mac, 13).0, 6);
+
+    let full_network = DeterministicVmNetwork::new(Some(DhcpServerConfig {
+        pool_start: [10, 5, 0, 100],
+        pool_end: [10, 5, 0, 100],
+        ..DhcpServerConfig::default()
+    }))
+    .expect("create full-pool network");
+    let full_config = shared_vm_config(full_network.clone());
+    let mut first = Vm::try_with_config(full_config.clone()).expect("create first full-pool VM");
+    let mut second = Vm::try_with_config(full_config).expect("create second full-pool VM");
+    let first_mac = first.network_mac_addresses()[0];
+    let second_mac = second.network_mac_addresses()[0];
+    first
+        .transmit_network_frame(&dhcp_frame(first_mac, 14, 1, [0; 4], None, None))
+        .expect("send first full-pool discover");
+    full_network.borrow_mut().poll(0).expect("poll first offer");
+    let (_, first_address) = receive_dhcp(&mut first, first_mac, 14);
+    drain_network(&mut second);
+    first
+        .transmit_network_frame(&dhcp_frame(
+            first_mac,
+            14,
+            3,
+            [0; 4],
+            Some(first_address),
+            Some(SERVER_IP),
+        ))
+        .expect("send first full-pool request");
+    full_network.borrow_mut().poll(1).expect("poll first ACK");
+    let _ = receive_dhcp(&mut first, first_mac, 14);
+    drain_network(&mut second);
+    second
+        .transmit_network_frame(&dhcp_frame(second_mac, 15, 1, [0; 4], None, None))
+        .expect("send full-pool discover");
+    full_network.borrow_mut().poll(2).expect("poll full pool");
+    assert_eq!(second.receive_network_frame().expect("read full pool"), None);
+
+    let fault_network = DeterministicVmNetwork::new(None).expect("create fault network");
+    let fault_config = shared_vm_config(fault_network.clone());
+    let mut sender = Vm::try_with_config(fault_config.clone()).expect("create fault sender");
+    let mut receiver = Vm::try_with_config(fault_config).expect("create fault receiver");
+    let sender_mac = sender.network_mac_addresses()[0];
+    let receiver_mac = receiver.network_mac_addresses()[0];
+    let test_frame = ethernet(receiver_mac, sender_mac, 0x88B5, &[3]);
+    fault_network.borrow().segment().borrow_mut().drop_next(1);
+    sender.transmit_network_frame(&test_frame).expect("inject packet loss");
+    assert_eq!(receiver.receive_network_frame().expect("read dropped packet"), None);
+
+    fault_network.borrow().segment().borrow_mut().set_max_queue(1);
+    sender.transmit_network_frame(&test_frame).expect("fill receiver queue");
+    assert_eq!(sender.transmit_network_frame(&test_frame), Err(NetError::QueueFull));
+
+    fault_network
+        .borrow()
+        .segment()
+        .borrow_mut()
+        .disconnect(sender_mac);
+    assert_eq!(sender.transmit_network_frame(&test_frame), Err(NetError::BackendUnavailable));
+}
+
+#[test]
+fn network_restart_and_snapshot_follow_portability_contract() {
+    let network = DeterministicVmNetwork::new(Some(DhcpServerConfig {
+        lease_time_secs: 30,
+        ..DhcpServerConfig::default()
+    }))
+    .expect("create restart network");
+    let config = shared_vm_config(network.clone());
+    let mut vm = Vm::try_with_config(config.clone()).expect("create checkpoint VM");
+    let mac = vm.network_mac_addresses()[0];
+
+    vm.transmit_network_frame(&dhcp_frame(mac, 20, 1, [0; 4], None, None))
+        .expect("send checkpoint discover");
+    network.borrow_mut().poll(100).expect("poll checkpoint offer");
+    let (_, address) = receive_dhcp(&mut vm, mac, 20);
+    vm.transmit_network_frame(&dhcp_frame(
+        mac,
+        20,
+        3,
+        [0; 4],
+        Some(address),
+        Some(SERVER_IP),
+    ))
+    .expect("send checkpoint request");
+    network.borrow_mut().poll(200).expect("poll checkpoint ACK");
+    assert_eq!(receive_dhcp(&mut vm, mac, 20).0, 5);
+    let lease_before = network
+        .borrow()
+        .dhcp_server()
+        .expect("checkpoint DHCP server")
+        .lease_for(mac)
+        .expect("active lease before snapshot");
+    let checkpoint = vm.snapshot();
+
+    network.borrow().segment().borrow_mut().set_link_up(false);
+    let report = vm
+        .restore_snapshot_with_report(&checkpoint)
+        .expect("restore checkpoint");
+    assert_eq!(vm.network_mac_addresses()[0], mac);
+    assert!(!vm.network_link_up(), "carrier state must stay external");
+    assert!(report
+        .rebuild_required_state()
+        .iter()
+        .any(|state| state.contains("network backend handles")));
+    assert!(report
+        .excluded_state()
+        .iter()
+        .any(|state| state.contains("network backend queues and link state")));
+    let lease_after = network
+        .borrow()
+        .dhcp_server()
+        .expect("restored DHCP server")
+        .lease_for(mac)
+        .expect("active lease after snapshot");
+    assert_eq!(lease_after, lease_before);
+
+    let restarted = Vm::try_with_config(config).expect("recreate VM from topology");
+    let restarted_mac = restarted.network_mac_addresses()[0];
+    assert_ne!(restarted_mac, mac, "fresh fixture attachment must not reuse a MAC");
+    assert!(network
+        .borrow()
+        .dhcp_server()
+        .expect("restart DHCP server")
+        .lease_for(mac)
+        .is_some(), "external lease record survives VM reconstruction");
 }

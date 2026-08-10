@@ -55,7 +55,7 @@ pub use stack::{
     NeighborTable, NeighborTableError, IcmpEchoObservation, NetworkPoller, PollActivity,
     SmolTcpStack, TcpBuffers, TcpHandle, MAX_ICMP_ECHO_PAYLOAD, MAX_INTERFACE_ROUTES,
     MAX_NEIGHBOR_ATTEMPTS, MAX_NEIGHBOR_ENTRIES, NEIGHBOR_REACHABLE_MS,
-    NEIGHBOR_RESOLUTION_TIMEOUT_MS,
+    NEIGHBOR_RESOLUTION_TIMEOUT_MS, NetworkFrameKind, inspect_frame,
 };
 pub use transport::{
     DhcpIngress, EthernetDhcpTransport, DHCP_BROADCAST_IPV4, DHCP_BROADCAST_MAC,

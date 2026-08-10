@@ -194,6 +194,7 @@ dependencies = [
  "synos-path-pattern",
  "synos-status",
  "synos-system-model",
+ "synos-time-sync",
 ]
 
 [[package]]
@@ -212,11 +213,17 @@ name = "synos-boot-protocol"
 version = "0.1.0"
 
 [[package]]
+name = "synos-durability"
+version = "0.1.0"
+
+[[package]]
 name = "synos-fabric"
 version = "0.1.0"
 dependencies = [
  "synos-observability",
+ "synos-protocol",
  "synos-status",
+ "synos-time-sync",
 ]
 
 [[package]]
@@ -225,6 +232,7 @@ version = "0.1.0"
 dependencies = [
  "synos-host-filesystems",
  "synos-ipc",
+ "synos-observability",
  "synos-path-pattern",
  "synos-status",
  "synos-synfs",
@@ -236,9 +244,11 @@ version = "0.1.0"
 dependencies = [
  "libfuzzer-sys",
  "syn-script",
+ "syn-shell",
  "synos-fsd",
  "synos-host-filesystems",
  "synos-http",
+ "synos-netd",
  "synos-synfs",
  "synos-vm",
 ]
@@ -256,6 +266,7 @@ version = "0.1.0"
 dependencies = [
  "synos-ipc",
  "synos-netd",
+ "synos-protocol",
  "synos-status",
 ]
 
@@ -296,7 +307,9 @@ version = "0.1.0"
 dependencies = [
  "smoltcp",
  "synos-ipc",
+ "synos-observability",
  "synos-status",
+ "synos-time-sync",
 ]
 
 [[package]]
@@ -304,6 +317,7 @@ name = "synos-observability"
 version = "0.1.0"
 dependencies = [
  "synos-status",
+ "synos-system-model",
 ]
 
 [[package]]
@@ -319,6 +333,10 @@ dependencies = [
  "synos-status",
  "synos-synfs",
 ]
+
+[[package]]
+name = "synos-protocol"
+version = "0.1.0"
 
 [[package]]
 name = "synos-runtime"
@@ -337,6 +355,7 @@ version = "0.1.0"
 name = "synos-synfs"
 version = "0.1.0"
 dependencies = [
+ "synos-durability",
  "synos-path-pattern",
  "synos-status",
 ]
@@ -345,8 +364,16 @@ dependencies = [
 name = "synos-system-model"
 version = "0.1.0"
 dependencies = [
+ "synos-durability",
  "synos-status",
  "synos-synfs",
+]
+
+[[package]]
+name = "synos-time-sync"
+version = "0.1.0"
+dependencies = [
+ "synos-status",
 ]
 
 [[package]]

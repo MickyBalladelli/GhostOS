@@ -15,6 +15,8 @@ synos-synfs = { path = "../crates/synfs" }
 synos-http = { path = "../crates/http" }
 syn-script = { path = "../crates/syn-script" }
 synos-vm = { path = "../virtual_machine" }
+synos-netd = { path = "../crates/netd" }
+syn-shell = { path = "../crates/syn-shell" }
 
 [[bin]]
 name = "path"
@@ -96,6 +98,13 @@ bench = false
 [[bin]]
 name = "vm-migration"
 path = "fuzz_targets/vm_migration.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "network"
+path = "fuzz_targets/network.rs"
 test = false
 doc = false
 bench = false

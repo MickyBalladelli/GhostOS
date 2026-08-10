@@ -435,16 +435,30 @@ SynOS VMs communicate and obtain distinct leases.
       distinct addresses, peer ping, peer TCP connection, and lease renewal.
       Coverage: `vm.network.two-vm-dhcp-peer-traffic` exercises the shared
       deterministic Ethernet segment with two VMs and valid protocol frames.
-- [ ] Add negative integration coverage for disabled NIC, carrier loss, absent
+- [x] Add negative integration coverage for disabled NIC, carrier loss, absent
       DHCP server, DHCP NAK, duplicate address, full lease pool, packet loss,
-      queue saturation, and backend disconnect.
-- [ ] Add restart and snapshot coverage proving NIC topology, MAC identity,
+      queue saturation, and backend disconnect. Progress: `vm.network.negative-fault-matrix`
+      drives the deterministic segment through all nine failure modes and
+      asserts stable `NetError` results.
+- [x] Add restart and snapshot coverage proving NIC topology, MAC identity,
       active leases, routes, neighbor state, and DHCP timers recover according
-      to the documented portability rules.
-- [ ] Add fuzz/property coverage for DHCP, ARP, IPv4, ICMP, DNS, and command
-      qualifiers with bounded memory and no panic paths.
-- [ ] Document VM networking setup, DHCP modes, bridge/NAT limitations, sample
+      to the documented portability rules. Progress: `vm.network.snapshot-portability`
+      proves the report boundary, MAC/topology ownership, external lease
+      retention, and carrier exclusion documented in
+      [`virtual_machine/docs/SNAPSHOT_STATE_INVENTORY.md`](virtual_machine/docs/SNAPSHOT_STATE_INVENTORY.md).
+- [x] Add fuzz/property coverage for DHCP, ARP, IPv4, ICMP, DNS, and command
+      qualifiers with bounded memory and no panic paths. Progress:
+      `fuzz/fuzz_targets/network.rs` is registered as
+      `fuzz.14.network-protocols`; it bounds input at 4096 bytes and drives
+      the DHCP client, lease decoder, Ethernet/ARP/IPv4/ICMP classifier, and
+      PING/RESOLVE qualifier parser.
+- [x] Document VM networking setup, DHCP modes, bridge/NAT limitations, sample
       two-VM commands, expected `SHOW INTERFACES` output, and troubleshooting
-      for `link down` versus `DHCP init`.
-- [ ] Add roadmap evidence mappings for every network task and do not mark the
+      for `link down` versus `DHCP init`. Progress: see
+      [`virtual_machine/docs/NETWORKING.md`](virtual_machine/docs/NETWORKING.md).
+- [x] Add roadmap evidence mappings for every network task and do not mark the
       existing DHCP checklist complete until a real two-VM lease and ping pass.
+      Progress: [`docs/network-evidence.toml`](docs/network-evidence.toml)
+      maps all six End-to-end proof items to VM and tier evidence IDs; the
+      two-VM lease, ping, TCP, and renewal proof is
+      `vm.network.two-vm-dhcp-peer-traffic`.

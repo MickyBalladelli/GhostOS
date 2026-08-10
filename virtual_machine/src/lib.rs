@@ -1654,6 +1654,18 @@ impl Vm {
         [self.e1000.borrow().mac(), self.virtio_net.borrow().mac()]
     }
 
+    pub fn set_network_admin_up(&mut self, up: bool) {
+        self.e1000.borrow_mut().set_admin_up(up);
+    }
+
+    pub fn network_admin_up(&self) -> bool {
+        self.e1000.borrow().admin_up()
+    }
+
+    pub fn network_link_up(&self) -> bool {
+        self.e1000.borrow().carrier_up()
+    }
+
     pub fn take_network_error(&mut self) -> Option<NetError> {
         self.last_network_error.take()
     }

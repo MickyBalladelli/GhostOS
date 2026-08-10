@@ -11,6 +11,7 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{
     ArpOperation, ArpPacket, ArpRepr, EthernetFrame, EthernetProtocol, IpAddress, IpCidr,
     IpEndpoint, IpProtocol, Icmpv4Packet, Icmpv4Repr, Ipv4Address, Ipv4Cidr, Ipv4Packet,
+    Ipv4Repr,
 };
 
 use crate::{
@@ -26,6 +27,55 @@ pub const NEIGHBOR_REACHABLE_MS: u64 = 60_000;
 pub const NEIGHBOR_RESOLUTION_TIMEOUT_MS: u64 = 1_000;
 pub const MAX_NEIGHBOR_ATTEMPTS: u8 = 3;
 pub const MAX_ICMP_ECHO_PAYLOAD: usize = 256;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkFrameKind {
+    Invalid,
+    Other,
+    Arp,
+    Ipv4,
+    Icmpv4,
+}
+
+/// Classify one bounded Ethernet frame without allocating or panicking.
+pub fn inspect_frame(frame: &[u8]) -> NetworkFrameKind {
+    let Ok(ethernet) = EthernetFrame::new_checked(frame) else {
+        return NetworkFrameKind::Invalid
+    };
+    let checksum = ChecksumCapabilities::default();
+    match ethernet.ethertype() {
+        EthernetProtocol::Arp => {
+            let Ok(arp) = ArpPacket::new_checked(ethernet.payload()) else {
+                return NetworkFrameKind::Invalid
+            };
+            if ArpRepr::parse(&arp).is_ok() {
+                NetworkFrameKind::Arp
+            } else {
+                NetworkFrameKind::Invalid
+            }
+        }
+        EthernetProtocol::Ipv4 => {
+            let Ok(ipv4) = Ipv4Packet::new_checked(ethernet.payload()) else {
+                return NetworkFrameKind::Invalid
+            };
+            if Ipv4Repr::parse(&ipv4, &checksum).is_err() {
+                return NetworkFrameKind::Invalid
+            }
+            if ipv4.next_header() != IpProtocol::Icmp {
+                return NetworkFrameKind::Ipv4
+            }
+            let Ok(icmp) = Icmpv4Packet::new_checked(ipv4.payload()) else {
+                return NetworkFrameKind::Invalid
+            };
+            if Icmpv4Repr::parse(&icmp, &checksum).is_ok() {
+                NetworkFrameKind::Icmpv4
+            } else {
+                NetworkFrameKind::Invalid
+            }
+        }
+        _ => NetworkFrameKind::Other,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InterfaceConfigError {

@@ -455,6 +455,7 @@ struct SegmentPort {
     queue: VecDeque<Vec<u8>>,
     admin_up: bool,
     promiscuous: bool,
+    connected: bool,
 }
 
 /// Deterministic, bounded shared L2 segment for VM integration tests.
@@ -468,6 +469,7 @@ pub struct DeterministicSegment {
     up: bool,
     max_queue: usize,
     tx_packets: usize,
+    drop_next: usize,
 }
 
 impl DeterministicSegment {
@@ -477,6 +479,7 @@ impl DeterministicSegment {
             up: true,
             max_queue: 256,
             tx_packets: 0,
+            drop_next: 0,
         }))
     }
 
@@ -491,6 +494,32 @@ impl DeterministicSegment {
 
     pub fn link_up(&self) -> bool {
         self.up
+    }
+
+    /// Bound the per-port queue for saturation and backpressure tests.
+    pub fn set_max_queue(&mut self, max_queue: usize) {
+        self.max_queue = max_queue;
+        for port in &mut self.ports {
+            while port.queue.len() > max_queue {
+                port.queue.pop_front();
+            }
+        }
+    }
+
+    /// Drop the next `count` frames after validation, without making loss
+    /// look like a backend failure.
+    pub fn drop_next(&mut self, count: usize) {
+        self.drop_next = count;
+    }
+
+    /// Disconnect one port while keeping its slot and MAC identity stable.
+    pub fn disconnect(&mut self, mac: MacAddress) -> bool {
+        let Some(port) = self.ports.iter_mut().find(|port| port.mac == mac) else {
+            return false;
+        };
+        port.connected = false;
+        port.queue.clear();
+        true
     }
 
     pub fn connect(
@@ -510,6 +539,7 @@ impl DeterministicSegment {
             queue: VecDeque::new(),
             admin_up: true,
             promiscuous: false,
+            connected: true,
         });
         drop(segment_ref);
         Ok(DeterministicPort {
@@ -536,6 +566,9 @@ impl DeterministicSegment {
         let Some(source) = self.ports.get(from) else {
             return Err(NetError::BackendUnavailable);
         };
+        if !source.connected {
+            return Err(NetError::BackendUnavailable);
+        }
         if !source.admin_up {
             return Err(NetError::AdminDown);
         }
@@ -546,6 +579,7 @@ impl DeterministicSegment {
             .enumerate()
             .filter(|(index, port)| {
                 *index != from
+                    && port.connected
                     && port.admin_up
                     && (destination.is_broadcast()
                         || destination.is_multicast()
@@ -558,6 +592,11 @@ impl DeterministicSegment {
             .any(|index| self.ports[*index].queue.len() >= self.max_queue)
         {
             return Err(NetError::QueueFull);
+        }
+        if self.drop_next > 0 {
+            self.drop_next -= 1;
+            self.tx_packets = self.tx_packets.saturating_add(1);
+            return Ok(())
         }
         let frame = pad_frame(packet);
         for index in recipients {
@@ -594,6 +633,9 @@ impl NetBackend for DeterministicPort {
             .ports
             .get_mut(self.index)
             .ok_or(NetError::BackendUnavailable)?;
+        if !port.connected {
+            return Err(NetError::BackendUnavailable);
+        }
         if !port.admin_up {
             return Err(NetError::AdminDown);
         }

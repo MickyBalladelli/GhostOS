@@ -8,7 +8,7 @@ This is the state boundary for `VmSnapshot` versions 1 and 2. Every mutable
   constructed. It is not part of the portable checkpoint.
 - **Intentionally excluded**: host-owned, nondeterministic, or transient
   state. It must be quiesced or recreated by the caller when exact
-  continuation needs it.
+continuation needs it.
 
 `VmSnapshot::restore_into` restores only serialized state. It also clears the
 translation cache. `VmSnapshot::restore_into_with_report` and
@@ -17,6 +17,20 @@ rebuild-required, and excluded state boundary. Device queues, host handles, and
 external disk contents are not silently treated as checkpoint state. For exact
 continuation, create a fresh VM from the same configuration before restoring;
 reconnect external resources listed by the report.
+
+VM networking follows these portability rules:
+
+- NIC topology and MAC addresses come from the VM configuration/backend. A
+  snapshot never invents or serializes a MAC. A restart must reattach the same
+  topology when stable identity is required; a new deterministic fixture
+  attachment gets a new MAC slot by design.
+- DHCP leases, routes, DNS, neighbor entries, and DHCP timer deadlines belong
+  to the guest network service or external fixture. They are not restored by
+  `VmSnapshot`. The service must recover a lease from its bounded lease record,
+  validate remaining relative time, and reapply routes/DNS atomically.
+- Pending frames, queue depth, carrier state, and backend handles are
+  explicitly excluded. Restore must report them and the caller must reconnect
+  or re-establish link state before sending traffic.
 
 ## `Vm` fields
 
@@ -40,7 +54,7 @@ reconnect external resources listed by the report.
 | `hpet` | Intentionally excluded | Host-time timer progress is not portable |
 | `ahci` | Rebuilt | Controller and attached disk topology come from configuration |
 | `nvme` | Rebuilt | Controller and attached namespace topology come from configuration |
-| `e1000` | Rebuilt | NIC topology and backend wiring come from VM construction |
+| `e1000` | Rebuilt | NIC topology and backend wiring come from VM construction; MAC identity is supplied by that topology |
 | `virtio_net` | Rebuilt | NIC topology and backend wiring come from VM construction |
 | `virtio_blk` | Rebuilt | Disk attachment comes from disk configuration |
 | `virtio_console` | Intentionally excluded | Console output buffer and queue are transient host-facing state |

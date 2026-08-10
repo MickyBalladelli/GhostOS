@@ -3,6 +3,11 @@
 `VmSnapshot` is a portable checkpoint for guest CPU, RAM/MMU, interrupt,
 APIC, and BIOS state. Host handles, device queues, timers, disks, and network
 backends stay outside the checkpoint; see [the state inventory](SNAPSHOT_STATE_INVENTORY.md).
+Networking restart state follows one rule: the VM configuration rebuilds NIC
+topology and MAC identity, while the network service or fixture separately
+recovers DHCP lease records, routes, DNS, neighbors, and relative timer
+deadlines. Pending packets, queue depth, carrier state, and backend handles
+must be re-established after restore.
 `VmSnapshot::restore_into_with_report` and
 `Vm::restore_snapshot_with_report` report what was restored, what must be
 rebuilt by VM construction, and what remains excluded. The CLI prints this
