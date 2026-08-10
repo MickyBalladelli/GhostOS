@@ -1275,7 +1275,11 @@ impl DhcpMessage {
     }
 
     fn decode(input: &[u8]) -> Result<Self, DhcpError> {
-        if input.len() < 241 || input[1] != 1 || input[2] != 6 {
+        if input.len() < 241
+            || input.len() > MAX_DHCP_PACKET
+            || input[1] != 1
+            || input[2] != 6
+        {
             return Err(DhcpError::InvalidPacket);
         }
         let magic = u32::from_be_bytes([input[236], input[237], input[238], input[239]]);
@@ -1293,10 +1297,12 @@ impl DhcpMessage {
 
         let mut index = 240;
         let mut message_type = None;
+        let mut ended = false;
         while index < input.len() {
             let code = input[index];
             index += 1;
             if code == OPT_END {
+                ended = true;
                 break;
             }
             if code == 0 {
@@ -1307,26 +1313,48 @@ impl DhcpMessage {
             }
             let length = input[index] as usize;
             index += 1;
-            if index + length > input.len() {
+            let end = index
+                .checked_add(length)
+                .ok_or(DhcpError::InvalidPacket)?;
+            if end > input.len() {
                 return Err(DhcpError::InvalidPacket);
             }
-            let value = &input[index..index + length];
-            index += length;
+            let value = &input[index..end];
+            index = end;
             match code {
-                OPT_MESSAGE_TYPE if length == 1 => {
-                    message_type = DhcpMessageType::from_raw(value[0]);
+                OPT_MESSAGE_TYPE => {
+                    if length != 1 || message_type.is_some() {
+                        return Err(DhcpError::InvalidPacket);
+                    }
+                    message_type = Some(
+                        DhcpMessageType::from_raw(value[0])
+                            .ok_or(DhcpError::InvalidPacket)?,
+                    );
                 }
-                OPT_SUBNET_MASK if length == 4 => {
+                OPT_SUBNET_MASK => {
+                    if length != 4 || message.subnet_mask.is_some() {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     message.subnet_mask = Some([value[0], value[1], value[2], value[3]]);
                 }
-                OPT_ROUTER if length >= 4 => {
+                OPT_ROUTER => {
+                    if length != 4 || message.gateway.is_some() {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     message.gateway = Some([value[0], value[1], value[2], value[3]]);
                 }
                 OPT_DNS => {
+                    if length == 0
+                        || length % 4 != 0
+                        || length / 4 > MAX_DHCP_DNS_SERVERS
+                        || message.dns_count != 0
+                    {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     let mut count = 0u8;
                     let mut dns = [[0; 4]; MAX_DHCP_DNS_SERVERS];
                     let mut offset = 0;
-                    while offset + 4 <= value.len() && count < MAX_DHCP_DNS_SERVERS as u8 {
+                    while offset < value.len() {
                         dns[count as usize] =
                             [value[offset], value[offset + 1], value[offset + 2], value[offset + 3]];
                         count += 1;
@@ -1335,19 +1363,31 @@ impl DhcpMessage {
                     message.dns = dns;
                     message.dns_count = count;
                 }
-                OPT_LEASE_TIME if length == 4 => {
+                OPT_LEASE_TIME => {
+                    if length != 4 || message.lease_time_secs.is_some() {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     message.lease_time_secs =
                         Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]));
                 }
-                OPT_RENEWAL_TIME if length == 4 => {
+                OPT_RENEWAL_TIME => {
+                    if length != 4 || message.t1_secs.is_some() {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     message.t1_secs =
                         Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]));
                 }
-                OPT_REBINDING_TIME if length == 4 => {
+                OPT_REBINDING_TIME => {
+                    if length != 4 || message.t2_secs.is_some() {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     message.t2_secs =
                         Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]));
                 }
                 OPT_CLASSLESS_ROUTE => {
+                    if value.is_empty() || message.classless_routes {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     message.classless_routes = true;
                     let mut cursor = 0usize;
                     while cursor < value.len() {
@@ -1386,14 +1426,31 @@ impl DhcpMessage {
                         message.route_count += 1;
                     }
                 }
-                OPT_SERVER_ID if length == 4 => {
-                    message.server_id = Some([value[0], value[1], value[2], value[3]]);
+                OPT_SERVER_ID => {
+                    if length != 4 {
+                        return Err(DhcpError::InvalidPacket);
+                    }
+                    let server_id = [value[0], value[1], value[2], value[3]];
+                    if let Some(previous) = message.server_id {
+                        return if previous == server_id {
+                            Err(DhcpError::InvalidPacket)
+                        } else {
+                            Err(DhcpError::ConflictingOffer)
+                        };
+                    }
+                    message.server_id = Some(server_id);
                 }
-                OPT_REQUESTED_IP if length == 4 => {
+                OPT_REQUESTED_IP => {
+                    if length != 4 || message.requested_ip.is_some() {
+                        return Err(DhcpError::InvalidPacket);
+                    }
                     message.requested_ip = Some([value[0], value[1], value[2], value[3]]);
                 }
                 _ => {}
             }
+        }
+        if !ended {
+            return Err(DhcpError::InvalidPacket);
         }
         message.message_type = message_type.ok_or(DhcpError::InvalidPacket)?;
         // Server replies are BOOTREPLY.
@@ -1413,13 +1470,13 @@ impl DhcpMessage {
         if self.yiaddr == [0; 4] {
             return Err(DhcpError::InvalidLease);
         }
-        let t1 = self.t1_secs.unwrap_or(lease_time / 2).max(1);
-        let t2 = self
-            .t2_secs
-            .unwrap_or(lease_time.saturating_mul(7) / 8)
-            .max(t1);
-        if t1 >= lease_time || t2 > lease_time || t1 > t2 {
+        let t1 = self.t1_secs.unwrap_or(lease_time / 2);
+        let t2 = self.t2_secs.unwrap_or(lease_time.saturating_mul(7) / 8);
+        if t1 == 0 || t2 == 0 || t1 >= lease_time || t2 > lease_time || t1 > t2 {
             return Err(DhcpError::InvalidLease);
+        }
+        if let Some(gateway) = self.gateway {
+            validate_gateway(gateway, self.yiaddr, subnet_mask)?;
         }
         let mut routes = self.routes;
         let mut route_count = self.route_count;
@@ -1442,7 +1499,7 @@ impl DhcpMessage {
         } else {
             None
         };
-        Ok(DhcpOffer {
+        let offer = DhcpOffer {
             xid: self.xid,
             yiaddr: self.yiaddr,
             server_id,
@@ -1456,7 +1513,9 @@ impl DhcpMessage {
             chaddr: self.chaddr,
             routes,
             route_count,
-        })
+        };
+        validate_offer(offer)?;
+        Ok(offer)
     }
 
     fn into_lease(self) -> Result<DhcpLease, DhcpError> {
@@ -1521,7 +1580,7 @@ fn validate_lease_record(record: DhcpLeaseRecord) -> Result<(), DhcpError> {
 fn validate_lease(lease: DhcpLease) -> Result<(), DhcpError> {
     if lease.address == [0; 4]
         || lease.address != lease.yiaddr
-        || lease.server_id == [0; 4]
+        || !valid_unicast_ipv4(lease.server_id)
         || !valid_subnet_mask(lease.subnet_mask)
         || lease.lease_time_secs == 0
         || lease.t1_secs == 0
@@ -1530,20 +1589,74 @@ fn validate_lease(lease: DhcpLease) -> Result<(), DhcpError> {
         || lease.t2_secs > lease.lease_time_secs
         || lease.dns_count > MAX_DHCP_DNS_SERVERS as u8
         || lease.route_count > MAX_DHCP_ROUTES as u8
-        || lease.gateway.is_some_and(|gateway| gateway == [0; 4])
     {
         return Err(DhcpError::InvalidLease);
     }
-    for route in lease.routes.iter().take(lease.route_count as usize) {
-        if route.prefix_len > 32 || route.gateway == [0; 4] {
+    if !valid_host_on_subnet(lease.address, lease.address, lease.subnet_mask) {
+        return Err(DhcpError::InvalidLease);
+    }
+    if let Some(gateway) = lease.gateway {
+        validate_gateway(gateway, lease.address, lease.subnet_mask)?;
+    }
+    let subnet_broadcast = subnet_broadcast(lease.address, lease.subnet_mask);
+    let has_directed_broadcast = ipv4_value(lease.subnet_mask).count_ones() <= 30;
+    for (index, route) in lease
+        .routes
+        .iter()
+        .take(lease.route_count as usize)
+        .enumerate()
+    {
+        if route.prefix_len > 32
+            || !valid_unicast_ipv4(route.gateway)
+            || !valid_host_on_subnet(route.gateway, lease.address, lease.subnet_mask)
+            || !canonical_route_destination(route.destination, route.prefix_len)
+            || (has_directed_broadcast && route.destination == subnet_broadcast)
+        {
+            return Err(DhcpError::InvalidLease);
+        }
+        if lease.routes[..index]
+            .iter()
+            .any(|previous| {
+                previous.destination == route.destination
+                    && previous.prefix_len == route.prefix_len
+            })
+        {
+            return Err(DhcpError::InvalidLease);
+        }
+    }
+    for dns in lease.dns.iter().take(lease.dns_count as usize) {
+        if !valid_unicast_ipv4(*dns)
+            || (has_directed_broadcast && *dns == subnet_broadcast)
+        {
             return Err(DhcpError::InvalidLease);
         }
     }
     Ok(())
 }
 
+fn validate_offer(offer: DhcpOffer) -> Result<(), DhcpError> {
+    validate_lease(DhcpLease {
+        address: offer.yiaddr,
+        subnet_mask: offer.subnet_mask,
+        gateway: offer.gateway,
+        dns: offer.dns,
+        dns_count: offer.dns_count,
+        server_id: offer.server_id,
+        lease_time_secs: offer.lease_time_secs,
+        t1_secs: offer.t1_secs,
+        t2_secs: offer.t2_secs,
+        yiaddr: offer.yiaddr,
+        routes: offer.routes,
+        route_count: offer.route_count,
+    })
+}
+
 fn valid_mac(mac: [u8; 6]) -> bool {
     mac != [0; 6] && mac != [0xff; 6]
+}
+
+fn valid_unicast_ipv4(address: [u8; 4]) -> bool {
+    address != [0; 4] && address != [255; 4] && address[0] < 224
 }
 
 fn valid_subnet_mask(mask: [u8; 4]) -> bool {
@@ -1558,6 +1671,59 @@ fn valid_subnet_mask(mask: [u8; 4]) -> bool {
         }
     }
     true
+}
+
+fn validate_gateway(
+    gateway: [u8; 4],
+    interface_address: [u8; 4],
+    subnet_mask: [u8; 4],
+) -> Result<(), DhcpError> {
+    if !valid_host_on_subnet(gateway, interface_address, subnet_mask) {
+        return Err(DhcpError::InvalidLease);
+    }
+    Ok(())
+}
+
+fn valid_host_on_subnet(
+    address: [u8; 4],
+    interface_address: [u8; 4],
+    subnet_mask: [u8; 4],
+) -> bool {
+    if !valid_unicast_ipv4(address) || !valid_subnet_mask(subnet_mask) {
+        return false;
+    }
+    let mask = ipv4_value(subnet_mask);
+    let interface = ipv4_value(interface_address);
+    let value = ipv4_value(address);
+    if value & mask != interface & mask {
+        return false;
+    }
+    let prefix_len = mask.count_ones();
+    prefix_len > 30 || (value != (interface & mask) && value != ((interface & mask) | !mask))
+}
+
+fn canonical_route_destination(destination: [u8; 4], prefix_len: u8) -> bool {
+    if !valid_unicast_ipv4(destination) && prefix_len != 0 {
+        return false;
+    }
+    let mask = prefix_mask(prefix_len);
+    ipv4_value(destination) & mask == ipv4_value(destination)
+}
+
+fn prefix_mask(prefix_len: u8) -> u32 {
+    if prefix_len == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix_len)
+    }
+}
+
+fn subnet_broadcast(address: [u8; 4], subnet_mask: [u8; 4]) -> [u8; 4] {
+    (ipv4_value(address) | !ipv4_value(subnet_mask)).to_be_bytes()
+}
+
+fn ipv4_value(address: [u8; 4]) -> u32 {
+    u32::from_be_bytes(address)
 }
 
 fn encode_lease_record_lease(

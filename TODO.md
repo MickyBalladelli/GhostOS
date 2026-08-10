@@ -362,7 +362,7 @@ SynOS VMs communicate and obtain distinct leases.
       next-action deadline for DHCP that cannot spin on a failed link.
 - [x] Persist enough lease metadata for safe reboot recovery while rejecting
       stale, expired, wrong-interface, wrong-MAC, and wrong-server leases.
-- [ ] Validate every accepted option and reject invalid subnet masks, gateways
+- [x] Validate every accepted option and reject invalid subnet masks, gateways
       outside the subnet, broadcast addresses, duplicate routes, bad DNS data,
       timer ordering, oversized option lists, and conflicting server IDs.
 - [ ] Reconcile DHCP routes and DNS settings when a lease changes, then remove
