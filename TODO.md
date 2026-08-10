@@ -348,7 +348,7 @@ SynOS VMs communicate and obtain distinct leases.
       and 68, including broadcast source address and destination MAC handling.
 - [x] Drive DHCP polling from the kernel monotonic clock and network service
       scheduler without blocking the shell or starving other sockets.
-- [ ] Apply the complete lease atomically: address, subnet mask, gateway,
+- [x] Apply the complete lease atomically: address, subnet mask, gateway,
       routes, DNS servers, lease timers, server identity, and interface state.
 - [ ] Add subnet-mask/prefix representation to the declarative interface model
       and shell output; do not infer a mask from an IPv4 address string.

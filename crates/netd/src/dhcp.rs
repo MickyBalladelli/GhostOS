@@ -29,6 +29,7 @@ const OPT_SERVER_ID: u8 = 54;
 const OPT_PARAMETER_REQUEST: u8 = 55;
 const OPT_RENEWAL_TIME: u8 = 58;
 const OPT_REBINDING_TIME: u8 = 59;
+const OPT_CLASSLESS_ROUTE: u8 = 121;
 const OPT_END: u8 = 255;
 
 /// Initial discover/request backoff schedule in milliseconds (bounded).
@@ -154,6 +155,21 @@ pub struct StaticSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DhcpRoute {
+    pub destination: [u8; 4],
+    pub prefix_len: u8,
+    pub gateway: [u8; 4],
+}
+
+impl DhcpRoute {
+    pub const DEFAULT: Self = Self {
+        destination: [0; 4],
+        prefix_len: 0,
+        gateway: [0; 4],
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DhcpLease {
     pub address: [u8; 4],
     pub subnet_mask: [u8; 4],
@@ -165,6 +181,8 @@ pub struct DhcpLease {
     pub t1_secs: u32,
     pub t2_secs: u32,
     pub yiaddr: [u8; 4],
+    pub routes: [DhcpRoute; MAX_DHCP_ROUTES],
+    pub route_count: u8,
 }
 
 impl DhcpLease {
@@ -194,12 +212,38 @@ pub struct DhcpOffer {
     pub t1_secs: u32,
     pub t2_secs: u32,
     pub chaddr: [u8; 6],
+    pub routes: [DhcpRoute; MAX_DHCP_ROUTES],
+    pub route_count: u8,
 }
 
-/// Applies or restores interface addressing through the network configuration runtime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DhcpInterfaceState {
+    pub enabled: bool,
+    pub link_up: bool,
+    pub configured: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DhcpLeaseApplication {
+    pub lease: DhcpLease,
+    pub interface: DhcpInterfaceState,
+}
+
+/// Applies or restores the complete interface configuration through the
+/// network configuration runtime. Implementations of `apply_lease_atomically`
+/// must commit address, routes, DNS, timers, identity, and interface state as
+/// one transaction or leave the previous configuration untouched.
 pub trait DhcpLeaseRuntime {
     fn apply_lease(&mut self, interface: &str, lease: &DhcpLease) -> Result<(), DhcpError>;
     fn restore_static(&mut self, interface: &str, snapshot: &StaticSnapshot) -> Result<(), DhcpError>;
+
+    fn apply_lease_atomically(
+        &mut self,
+        interface: &str,
+        application: &DhcpLeaseApplication,
+    ) -> Result<(), DhcpError> {
+        self.apply_lease(interface, &application.lease)
+    }
 }
 
 /// Bound UDP/Ethernet transport used by the DHCP client.
@@ -712,7 +756,15 @@ impl DhcpClient {
         {
             return Err(DhcpError::ConflictingOffer);
         }
-        runtime.apply_lease(self.interface_name(), &lease)?;
+        let application = DhcpLeaseApplication {
+            lease,
+            interface: DhcpInterfaceState {
+                enabled: self.enabled,
+                link_up: self.link_up,
+                configured: true,
+            },
+        };
+        runtime.apply_lease_atomically(self.interface_name(), &application)?;
         self.lease = Some(lease);
         self.bound_at_ms = Some(now_ms);
         self.selected = None;
@@ -927,6 +979,9 @@ struct DhcpMessage {
     server_id: Option<[u8; 4]>,
     requested_ip: Option<[u8; 4]>,
     parameter_request: bool,
+    routes: [DhcpRoute; MAX_DHCP_ROUTES],
+    route_count: u8,
+    classless_routes: bool,
 }
 
 impl DhcpMessage {
@@ -950,6 +1005,9 @@ impl DhcpMessage {
             server_id: None,
             requested_ip: None,
             parameter_request: false,
+            routes: [DhcpRoute::DEFAULT; MAX_DHCP_ROUTES],
+            route_count: 0,
+            classless_routes: false,
         }
     }
 
@@ -982,7 +1040,15 @@ impl DhcpMessage {
                 output,
                 cursor,
                 OPT_PARAMETER_REQUEST,
-                &[OPT_SUBNET_MASK, OPT_ROUTER, OPT_DNS, OPT_LEASE_TIME, OPT_RENEWAL_TIME, OPT_REBINDING_TIME],
+                &[
+                    OPT_SUBNET_MASK,
+                    OPT_ROUTER,
+                    OPT_DNS,
+                    OPT_LEASE_TIME,
+                    OPT_RENEWAL_TIME,
+                    OPT_REBINDING_TIME,
+                    OPT_CLASSLESS_ROUTE,
+                ],
             )?;
         }
         if cursor >= output.len() {
@@ -1065,6 +1131,45 @@ impl DhcpMessage {
                     message.t2_secs =
                         Some(u32::from_be_bytes([value[0], value[1], value[2], value[3]]));
                 }
+                OPT_CLASSLESS_ROUTE => {
+                    message.classless_routes = true;
+                    let mut cursor = 0usize;
+                    while cursor < value.len() {
+                        if message.route_count as usize >= MAX_DHCP_ROUTES {
+                            return Err(DhcpError::Capacity);
+                        }
+                        let prefix_len = value[cursor];
+                        cursor += 1;
+                        if prefix_len > 32 {
+                            return Err(DhcpError::InvalidPacket);
+                        }
+                        let destination_bytes = (prefix_len as usize).div_ceil(8);
+                        let end = cursor
+                            .checked_add(destination_bytes + 4)
+                            .ok_or(DhcpError::InvalidPacket)?;
+                        if end > value.len() {
+                            return Err(DhcpError::InvalidPacket);
+                        }
+                        let mut destination = [0; 4];
+                        destination[..destination_bytes]
+                            .copy_from_slice(&value[cursor..cursor + destination_bytes]);
+                        cursor += destination_bytes;
+                        let gateway = [
+                            value[cursor],
+                            value[cursor + 1],
+                            value[cursor + 2],
+                            value[cursor + 3],
+                        ];
+                        cursor += 4;
+                        let index = message.route_count as usize;
+                        message.routes[index] = DhcpRoute {
+                            destination,
+                            prefix_len,
+                            gateway,
+                        };
+                        message.route_count += 1;
+                    }
+                }
                 OPT_SERVER_ID if length == 4 => {
                     message.server_id = Some([value[0], value[1], value[2], value[3]]);
                 }
@@ -1100,18 +1205,41 @@ impl DhcpMessage {
         if t1 >= lease_time || t2 > lease_time || t1 > t2 {
             return Err(DhcpError::InvalidLease);
         }
+        let mut routes = self.routes;
+        let mut route_count = self.route_count;
+        let gateway = if self.classless_routes {
+            routes[..route_count as usize]
+                .iter()
+                .find(|route| route.prefix_len == 0)
+                .map(|route| route.gateway)
+        } else if let Some(gateway) = self.gateway {
+            if route_count >= MAX_DHCP_ROUTES as u8 {
+                return Err(DhcpError::Capacity);
+            }
+            routes[route_count as usize] = DhcpRoute {
+                destination: [0; 4],
+                prefix_len: 0,
+                gateway,
+            };
+            route_count += 1;
+            Some(gateway)
+        } else {
+            None
+        };
         Ok(DhcpOffer {
             xid: self.xid,
             yiaddr: self.yiaddr,
             server_id,
             subnet_mask,
-            gateway: self.gateway,
+            gateway,
             dns: self.dns,
             dns_count: self.dns_count,
             lease_time_secs: lease_time,
             t1_secs: t1,
             t2_secs: t2,
             chaddr: self.chaddr,
+            routes,
+            route_count,
         })
     }
 
@@ -1133,6 +1261,8 @@ impl DhcpMessage {
             t1_secs: offer.t1_secs,
             t2_secs: offer.t2_secs,
             yiaddr: offer.yiaddr,
+            routes: offer.routes,
+            route_count: offer.route_count,
         })
     }
 }
