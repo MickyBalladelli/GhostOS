@@ -358,7 +358,7 @@ SynOS VMs communicate and obtain distinct leases.
       INIT-REBOOT transitions against real packets and real timer deadlines.
 - [x] Handle no-offer, NAK, malformed offer, conflicting offer, server change,
       duplicate ACK, lease expiry, release, restart recovery, and link flaps.
-- [ ] Add bounded exponential retry, jitter, attempt limits, and an observable
+- [x] Add bounded exponential retry, jitter, attempt limits, and an observable
       next-action deadline for DHCP that cannot spin on a failed link.
 - [ ] Persist enough lease metadata for safe reboot recovery while rejecting
       stale, expired, wrong-interface, wrong-MAC, and wrong-server leases.

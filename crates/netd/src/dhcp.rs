@@ -35,6 +35,8 @@ const OPT_END: u8 = 255;
 /// Initial discover/request backoff schedule in milliseconds (bounded).
 pub const BACKOFF_MS: [u64; 5] = [4_000, 8_000, 16_000, 32_000, 64_000];
 pub const MAX_DISCOVER_ATTEMPTS: u8 = 8;
+pub const RETRY_JITTER_PERCENT: u64 = 50;
+pub const MAX_RETRY_DELAY_MS: u64 = BACKOFF_MS[BACKOFF_MS.len() - 1];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DhcpNetworkError {
@@ -420,6 +422,10 @@ impl DhcpClient {
 
     pub const fn state(&self) -> DhcpClientState {
         self.state
+    }
+
+    pub const fn next_action_ms(&self) -> Option<u64> {
+        self.next_action_ms
     }
 
     pub const fn lease(&self) -> Option<DhcpLease> {
@@ -996,7 +1002,12 @@ impl DhcpClient {
 
     fn schedule_retry(&mut self, now_ms: u64) {
         let index = core::cmp::min(self.attempt as usize, BACKOFF_MS.len() - 1);
-        self.next_action_ms = Some(now_ms.saturating_add(BACKOFF_MS[index]));
+        let base = BACKOFF_MS[index];
+        let jitter_window = base.saturating_mul(RETRY_JITTER_PERCENT) / 100;
+        let jitter = u64::from(retry_jitter(self.txid_seed, self.attempt))
+            % jitter_window.saturating_add(1);
+        let delay = base.saturating_sub(jitter).max(1);
+        self.next_action_ms = Some(now_ms.saturating_add(delay));
         self.attempt = self.attempt.saturating_add(1);
     }
 
@@ -1332,6 +1343,16 @@ fn write_option(output: &mut [u8], cursor: usize, code: u8, value: &[u8]) -> Res
 
 fn next_xid(seed: u32, attempt: u8) -> u32 {
     seed.wrapping_mul(0x9E37_79B9).wrapping_add(u32::from(attempt)).wrapping_add(1)
+}
+
+fn retry_jitter(seed: u32, attempt: u8) -> u32 {
+    let mut value = seed
+        .wrapping_add(u32::from(attempt).wrapping_mul(0x85EB_CA6B))
+        .wrapping_add(0xC2B2_AE35);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value
 }
 
 /// Firewall rules and rate limits for DHCP client traffic on UDP 67/68.

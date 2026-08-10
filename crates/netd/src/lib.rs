@@ -18,7 +18,8 @@ pub use capture::{CaptureDirection, CaptureKind, CaptureRecord, PacketCapture, M
 pub use dhcp::{
     dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, BACKOFF_MS,
     DHCP_CLIENT_PORT, DHCP_MAGIC_COOKIE, DHCP_SERVER_PORT, MAX_DHCP_DNS_SERVERS, MAX_DHCP_PACKET,
-    MAX_DHCP_ROUTES, MAX_DISCOVER_ATTEMPTS, MAX_INTERFACE_NAME, DhcpClient, DhcpClientState,
+    MAX_DHCP_ROUTES, MAX_DISCOVER_ATTEMPTS, MAX_INTERFACE_NAME, MAX_RETRY_DELAY_MS,
+    RETRY_JITTER_PERCENT, DhcpClient, DhcpClientState,
     CapturingDhcpTransport, DhcpClientView, DhcpError, DhcpInterfaceState, DhcpLease,
     DhcpLeaseApplication, DhcpLeaseRuntime, DhcpMessageType, DhcpNetworkError, DhcpOffer,
     DhcpRoute,
