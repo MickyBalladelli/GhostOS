@@ -58,6 +58,12 @@ coverage_policy = "coverage.toml"
 mutation_scope = "status, auth, fsd, synfs, http, virtual_machine"
 fuzz_targets = ["path", "volume", "operations", "mount", "http", "script"]
 
+[evidence_manifest]
+manifest = "evidence-manifest.json"
+detached_digest = "evidence-manifest.json.sha256"
+algorithm = "SHA-256"
+skip_requires_reason = true
+
 [tiers.integration]
 command = "cargo test --workspace --all-targets"
 artifact = "stdout.log"

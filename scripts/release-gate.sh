@@ -9,6 +9,10 @@ if [[ ! -d "$evidence_dir" ]]; then
     exit 1
 fi
 
+python3 "$root_dir/scripts/evidence-manifest.py" \
+    --evidence-dir "$evidence_dir" \
+    --check
+
 python3 - "$evidence_dir" <<'PY'
 import json
 import pathlib

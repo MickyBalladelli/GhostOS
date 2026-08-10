@@ -77,6 +77,12 @@ result.json
 
 The dashboard summarizes pass, fail, and skip state. The release gate rejects unexpected failures, invalid result JSON, bad revision provenance, panic markers, missing clean QEMU boot evidence, and unexplained image provenance.
 
+Full validation also writes `evidence-manifest.json` and the detached
+`evidence-manifest.json.sha256` digest at the evidence root. The manifest
+records every evidence file's size and SHA-256 digest, result state, and Git
+revision. Full validation verifies the manifest before the release gate; a
+changed, missing, or unexplained evidence record fails validation.
+
 Package the VM release only after the evidence run passes:
 
 ```sh

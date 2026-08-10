@@ -297,9 +297,9 @@ evidence.
 - [x] Every item above has an owner, issue link, risk rating, and evidence ID.
       Metadata is in [`docs/roadmap-metadata.toml`](docs/roadmap-metadata.toml)
       and checked by [`scripts/validate-roadmap-metadata.py`](scripts/validate-roadmap-metadata.py).
-- [ ] Every changed boundary has success, malformed-input, authorization,
+- [x] Every changed boundary has success, malformed-input, authorization,
       limit, restart, observability, and compatibility coverage as applicable.
-- [ ] Full validation passes with no unexplained skip and produces a signed or
+- [x] Full validation passes with no unexplained skip and produces a signed or
       otherwise integrity-protected evidence manifest.
 
 ## P1: Complete guest networking, DHCP, and network diagnostics

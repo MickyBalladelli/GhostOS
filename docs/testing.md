@@ -233,6 +233,11 @@ SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
 
 Optional tiers record `skipped` with the missing prerequisite. A release gate
 does not count any skipped, blocked, or not-implemented result as passing.
+Before the release gate runs, full validation writes
+`evidence-manifest.json` and its detached `evidence-manifest.json.sha256`
+digest. The manifest records every evidence file's size and SHA-256 digest,
+the current Git revision, and every result state. The gate verifies those
+digests and rejects malformed or unexplained result records.
 
 Local validation runs formatting, host, VM, no-std, documentation, inventory,
 QEMU, fuzz, coverage, mutation, cross-target, and reproducibility checks when
@@ -394,6 +399,11 @@ logs. `result.json` uses only these
 states: `passed`, `failed`, or `skipped`. Every state requires a reason, and
 skipped results name the missing prerequisite. None of these states counts as
 `passed` in a release gate.
+
+Full validation also writes `evidence-manifest.json` at the evidence root and
+checks it immediately. Its detached SHA-256 file protects the evidence index;
+the index protects every other evidence file and binds the run to the current
+Git revision. A changed, missing, or newly added evidence file fails the gate.
 
 `metadata.json` records the Git revision, UTC start/end times, host OS and
 architecture, Rust version, test command, environment-variable names and
