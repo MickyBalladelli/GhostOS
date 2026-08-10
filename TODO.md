@@ -286,8 +286,9 @@ evidence.
       and audit exports. Coverage checks fixed-format logs and audit exports
       do not carry free-form payloads or authentication keys; VM monitor,
       snapshot, migration, and shell diagnostic tests cover redacted output.
-- [ ] Publish a compatibility table for on-disk formats, wire protocols,
+- [x] Publish a compatibility table for on-disk formats, wire protocols,
       snapshots, package schemas, target triples, and client SDK versions.
+      See [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md).
 - [ ] Keep README, book, source maps, and test inventory synchronized through
       documentation checks.
 
