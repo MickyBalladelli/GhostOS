@@ -3,7 +3,7 @@ use syn_shell::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
         NetworkRouteView, NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
-        PingHandle, PingTarget, ResolvedPingRequest, RouteUpdate, SET_HOSTNAME_ROUTE,
+        PingHandle, PingResult, PingTarget, ResolvedPingRequest, RouteUpdate, SET_HOSTNAME_ROUTE,
         SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE,
         SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
     },
@@ -200,6 +200,34 @@ fn ping_resolves_literal_ipv4_before_dns() {
         syn_shell::network::resolve_literal_ipv4_target(request),
         Err(Status::INVALID_ARGUMENT)
     );
+}
+
+#[test]
+fn ping_results_have_stable_names_and_statuses() {
+    let registry = registry();
+    let call = registry
+        .parse("PING 198.51.100.4")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    let request = syn_shell::network::ping_request(&call).unwrap();
+    let target = syn_shell::network::resolve_literal_ipv4_target(request).unwrap();
+    let request = ResolvedPingRequest { request, target };
+    for result in [
+        PingResult::Success,
+        PingResult::Timeout,
+        PingResult::Unreachable,
+        PingResult::NoRoute,
+        PingResult::LinkDown,
+        PingResult::DnsFailure,
+        PingResult::PermissionDenied,
+        PingResult::MalformedReply,
+        PingResult::Cancelled,
+    ] {
+        let output = syn_shell::network::ping_result_output(request, result).unwrap();
+        assert!(has_text(&output, "result", result.as_str()));
+        assert_eq!(output.status(), result.status());
+    }
 }
 
 #[test]

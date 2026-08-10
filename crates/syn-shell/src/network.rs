@@ -1,6 +1,6 @@
 use core::fmt::Write;
 
-use synos_status::Status;
+use synos_status::{Severity, Status, facility};
 use synos_system_model::command::{
     ArgumentKind, ArgumentSpec, CommandSpec, OutputValue, StructuredOutput, MAX_OUTPUT_FIELDS,
 };
@@ -235,6 +235,53 @@ pub enum PingIpVersion {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PingResult {
+    Success,
+    Timeout,
+    Unreachable,
+    NoRoute,
+    LinkDown,
+    DnsFailure,
+    PermissionDenied,
+    MalformedReply,
+    Cancelled,
+}
+
+impl PingResult {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Timeout => "timeout",
+            Self::Unreachable => "unreachable",
+            Self::NoRoute => "no-route",
+            Self::LinkDown => "link-down",
+            Self::DnsFailure => "dns-failure",
+            Self::PermissionDenied => "permission-denied",
+            Self::MalformedReply => "malformed-reply",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn status(self) -> Status {
+        match self {
+            Self::Success => Status::NORMAL,
+            Self::Timeout => ping_status(100),
+            Self::Unreachable => ping_status(101),
+            Self::NoRoute => ping_status(102),
+            Self::LinkDown => ping_status(103),
+            Self::DnsFailure => ping_status(104),
+            Self::PermissionDenied => Status::ACCESS_DENIED,
+            Self::MalformedReply => ping_status(105),
+            Self::Cancelled => Status::CANCELLED,
+        }
+    }
+}
+
+fn ping_status(code: u16) -> Status {
+    Status::new(Severity::Error, facility::NETWORK, code, 0).unwrap_or(Status::INTERNAL)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PingRequest<'a> {
     pub destination: &'a str,
     pub count: u32,
@@ -350,11 +397,13 @@ pub trait NetworkSource {
     fn resolve_ping_target(&mut self, request: PingRequest<'_>) -> Result<PingTarget, Status> {
         match resolve_literal_ipv4_target(request) {
             Ok(target) => Ok(target),
-            Err(Status::NOT_FOUND) => self.resolve_ping_hostname(
-                request.destination,
-                request.ip_version.unwrap_or(PingIpVersion::Ipv4),
-                request.dns_timeout_ms(),
-            ),
+            Err(Status::NOT_FOUND) => self
+                .resolve_ping_hostname(
+                    request.destination,
+                    request.ip_version.unwrap_or(PingIpVersion::Ipv4),
+                    request.dns_timeout_ms(),
+                )
+                .map_err(map_ping_resolution_status),
             Err(status) => Err(status),
         }
     }
@@ -371,6 +420,8 @@ pub trait NetworkSource {
     }
 
     /// Poll a ping session. `None` means still running; `Some` completes it.
+    /// Completed output must use [`ping_result_output`] for one of the stable
+    /// [`PingResult`] values.
     fn poll_ping(
         &mut self,
         _handle: PingHandle,
@@ -382,8 +433,26 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
+    /// Synchronous compatibility path. Completed output must use
+    /// [`ping_result_output`] for a stable [`PingResult`].
     fn ping(&mut self, _request: ResolvedPingRequest<'_>) -> Result<StructuredOutput, Status> {
         Err(Status::NOT_FOUND)
+    }
+}
+
+fn map_ping_resolution_status(status: Status) -> Status {
+    match status {
+        Status::NOT_FOUND => PingResult::DnsFailure.status(),
+        Status::ACCESS_DENIED => PingResult::PermissionDenied.status(),
+        _ => status,
+    }
+}
+
+fn map_ping_provider_status(status: Status) -> Status {
+    match status {
+        Status::NOT_FOUND => PingResult::NoRoute.status(),
+        Status::ACCESS_DENIED => PingResult::PermissionDenied.status(),
+        _ => status,
     }
 }
 
@@ -553,7 +622,9 @@ pub fn dispatch_network_command<Source: NetworkSource>(
         }
         PING_ROUTE => {
             let request = ping_request(&command)?;
-            let target = source.resolve_ping_target(request)?;
+            let target = source
+                .resolve_ping_target(request)
+                .map_err(map_ping_resolution_status)?;
             source.ping(ResolvedPingRequest { request, target })
         }
         _ => Err(Status::NOT_FOUND),
@@ -578,6 +649,7 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
             let target = self
                 .source
                 .resolve_ping_target(request)
+                .map_err(map_ping_resolution_status)
                 .map_err(Error::CommandFailed)?;
             let handle = self
                 .source
@@ -585,6 +657,7 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
                     ResolvedPingRequest { request, target },
                     request.schedule(),
                 )
+                .map_err(map_ping_provider_status)
                 .map_err(Error::CommandFailed)?;
             NetworkCompletion::Ping(handle)
         } else {
@@ -601,7 +674,8 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
         match slot.take()? {
             NetworkCompletion::Ready(result) => Some(result),
             NetworkCompletion::Ping(handle) => match self.source.poll_ping(handle) {
-                Some(result) => Some(result),
+                Some(Ok(output)) => Some(Ok(output)),
+                Some(Err(status)) => Some(Err(map_ping_provider_status(status))),
                 None => {
                     *slot = Some(NetworkCompletion::Ping(handle));
                     None
@@ -620,6 +694,7 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
             Some(NetworkCompletion::Ping(handle)) => self
                 .source
                 .cancel_ping(handle)
+                .map_err(map_ping_provider_status)
                 .map_err(Error::CommandFailed),
         }
     }
@@ -765,10 +840,19 @@ pub fn resolve_literal_ipv4_target(
 pub fn ping_request_output(
     request: ResolvedPingRequest<'_>,
 ) -> Result<StructuredOutput, Status> {
-    let mut output = StructuredOutput::new(Status::NORMAL);
+    ping_result_output(request, PingResult::Success)
+}
+
+pub fn ping_result_output(
+    request: ResolvedPingRequest<'_>,
+    result: PingResult,
+) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(result.status());
     insert_text(&mut output, "operation", "ping")?;
     insert_text(&mut output, "destination", request.request.destination)?;
     insert_text(&mut output, "address", request.target.address.as_str())?;
+    insert_text(&mut output, "result", result.as_str())?;
+    insert(&mut output, "result-status", OutputValue::Status(result.status()))?;
     insert(
         &mut output,
         "count",

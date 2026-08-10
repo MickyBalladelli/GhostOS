@@ -395,7 +395,7 @@ SynOS VMs communicate and obtain distinct leases.
       names without making command execution block indefinitely.
 - [x] Execute each echo request asynchronously with cancellation, per-packet
       timeout, total deadline, sequence tracking, and a hard packet/count limit.
-- [ ] Return stable results for success, timeout, unreachable, no route, link
+- [x] Return stable results for success, timeout, unreachable, no route, link
       down, DNS failure, permission denial, malformed reply, and cancellation.
 - [ ] Add human-readable summary output showing transmitted, received, loss,
       minimum/average/maximum RTT, and destination identity.
