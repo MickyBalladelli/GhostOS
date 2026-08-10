@@ -408,7 +408,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 ### Additional useful network commands
 
-- [ ] Add `SHOW NEIGHBORS` to inspect ARP/IPv6 neighbor cache entries and
+- [x] Add `SHOW NEIGHBORS` to inspect ARP/IPv6 neighbor cache entries and
       `CLEAR NEIGHBORS` with an explicit safety guard.
 - [ ] Add `SHOW DNS` and `SET DNS` for ordered resolver configuration, DHCP
       ownership, static overrides, search domains, and bounded query status.

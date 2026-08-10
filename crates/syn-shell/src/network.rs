@@ -19,9 +19,12 @@ pub const SET_HOSTNAME_ROUTE: u16 = 63;
 pub const SET_INTERFACE_ROUTE: u16 = 64;
 pub const SET_ROUTE_ROUTE: u16 = 65;
 pub const PING_ROUTE: u16 = 66;
+pub const SHOW_NEIGHBORS_ROUTE: u16 = 67;
+pub const CLEAR_NEIGHBORS_ROUTE: u16 = 68;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
+pub const MAX_NEIGHBOR_OUTPUT_ROWS: usize = 2;
 pub const MAX_PING_REPLY_OUTPUT: usize = 3;
 pub const DEFAULT_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
 pub const MAX_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
@@ -91,6 +94,20 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         description: "Send bounded ICMP echo requests through the network provider.",
         aliases: "",
         qualifiers: "/COUNT /TIMEOUT /SIZE /INTERFACE /SOURCE /IPV4 /IPV6",
+    },
+    NetworkCommandHelp {
+        name: "SHOW-NEIGHBORS",
+        synopsis: "SHOW NEIGHBORS",
+        description: "Show bounded ARP and IPv6 neighbor cache entries.",
+        aliases: "NEIGHBORS",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "CLEAR-NEIGHBORS",
+        synopsis: "CLEAR NEIGHBORS /CONFIRM",
+        description: "Clear the neighbor cache only with explicit confirmation.",
+        aliases: "",
+        qualifiers: "/CONFIRM",
     },
 ];
 
@@ -183,6 +200,71 @@ pub struct NetworkRouteView {
     pub gateway: NetworkText,
     pub interface: NetworkText,
     pub metric: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NeighborIpVersion {
+    Ipv4,
+    Ipv6,
+}
+
+impl NeighborIpVersion {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ipv4 => "ipv4",
+            Self::Ipv6 => "ipv6",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NeighborState {
+    Pending,
+    Reachable,
+    Stale,
+    Failed,
+    Permanent,
+}
+
+impl NeighborState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Reachable => "reachable",
+            Self::Stale => "stale",
+            Self::Failed => "failed",
+            Self::Permanent => "permanent",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NeighborEntryView {
+    pub interface: NetworkText,
+    pub address: NetworkText,
+    pub ip_version: NeighborIpVersion,
+    pub hardware_address: Option<NetworkText>,
+    pub state: NeighborState,
+    pub last_seen_ms: u64,
+    pub expires_at_ms: Option<u64>,
+    pub attempts: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NeighborView {
+    pub generation: u64,
+    pub entry_count: u64,
+    pub entries: [Option<NeighborEntryView>; MAX_NEIGHBOR_OUTPUT_ROWS],
+    pub next_entry: Option<u64>,
+}
+
+impl NeighborView {
+    pub const EMPTY: Self = Self {
+        generation: 0,
+        entry_count: 0,
+        entries: [None; MAX_NEIGHBOR_OUTPUT_ROWS],
+        next_entry: None,
+    };
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -528,6 +610,16 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
+    fn show_neighbors(&mut self) -> Result<NeighborView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    /// Clear dynamic and permanent neighbor entries after the shell has
+    /// checked the explicit confirmation guard and mutation capability.
+    fn clear_neighbors(&mut self) -> Result<u64, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -680,6 +772,16 @@ pub fn register_network_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-ROUTES", &[]).map_err(|_| Error::InvalidValue)?,
         route(SHOW_ROUTES_ROUTE),
     )?;
+    registry.register(
+        CommandSpec::new("SHOW-NEIGHBORS", &[]).map_err(|_| Error::InvalidValue)?,
+        route(SHOW_NEIGHBORS_ROUTE),
+    )?;
+    let confirm = qualifier("CONFIRM", ArgumentKind::Boolean)?;
+    registry.register(
+        CommandSpec::new("CLEAR-NEIGHBORS", &[confirm])
+            .map_err(|_| Error::InvalidValue)?,
+        route(CLEAR_NEIGHBORS_ROUTE),
+    )?;
 
     let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
     registry.register(
@@ -801,6 +903,14 @@ pub fn dispatch_network_command<Source: NetworkSource>(
             })
         }
         SHOW_ROUTES_ROUTE => source.show_routes().and_then(routes_output),
+        SHOW_NEIGHBORS_ROUTE => source.show_neighbors().and_then(neighbors_output),
+        CLEAR_NEIGHBORS_ROUTE => {
+            if !boolean(command.get("CONFIRM"))? {
+                return Err(Status::INVALID_ARGUMENT)
+            }
+            source.authorize_mutation()?;
+            source.clear_neighbors().and_then(clear_neighbors_output)
+        }
         SET_HOSTNAME_ROUTE => {
             let hostname = command
                 .get_text("HOSTNAME")
@@ -1359,6 +1469,102 @@ pub fn network_output(view: NetworkView) -> Result<StructuredOutput, Status> {
         &mut output,
         "route-count",
         OutputValue::Unsigned(view.route_count),
+    )?;
+    Ok(output)
+}
+
+pub fn neighbors_output(view: NeighborView) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "show-neighbors")?;
+    insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
+    insert(
+        &mut output,
+        "entry-count",
+        OutputValue::Unsigned(view.entry_count),
+    )?;
+    let mut used = output.fields().count();
+    let mut omitted = None;
+    for (index, entry) in view.entries.iter().flatten().enumerate() {
+        let needed = 8;
+        let remaining = view
+            .entries
+            .iter()
+            .flatten()
+            .skip(index + 1)
+            .count()
+            .saturating_add(usize::from(view.next_entry.is_some()));
+        if used.saturating_add(needed).saturating_add(usize::from(remaining > 0))
+            > MAX_OUTPUT_FIELDS
+        {
+            omitted = Some(index as u64);
+            break
+        }
+        let fields = match index {
+            0 => [
+                "neighbor1-interface",
+                "neighbor1-address",
+                "neighbor1-ip-version",
+                "neighbor1-hardware-address",
+                "neighbor1-state",
+                "neighbor1-last-seen-ms",
+                "neighbor1-expires-ms",
+                "neighbor1-attempts",
+            ],
+            1 => [
+                "neighbor2-interface",
+                "neighbor2-address",
+                "neighbor2-ip-version",
+                "neighbor2-hardware-address",
+                "neighbor2-state",
+                "neighbor2-last-seen-ms",
+                "neighbor2-expires-ms",
+                "neighbor2-attempts",
+            ],
+            _ => return Err(Status::INVALID_ARGUMENT),
+        };
+        insert_text(&mut output, fields[0], entry.interface.as_str())?;
+        insert_text(&mut output, fields[1], entry.address.as_str())?;
+        insert_text(&mut output, fields[2], entry.ip_version.as_str())?;
+        if let Some(hardware_address) = entry.hardware_address {
+            insert_text(&mut output, fields[3], hardware_address.as_str())?;
+        }
+        insert_text(&mut output, fields[4], entry.state.as_str())?;
+        insert(
+            &mut output,
+            fields[5],
+            OutputValue::Unsigned(entry.last_seen_ms),
+        )?;
+        if let Some(expires_at_ms) = entry.expires_at_ms {
+            insert(
+                &mut output,
+                fields[6],
+                OutputValue::Unsigned(expires_at_ms),
+            )?;
+        }
+        insert(
+            &mut output,
+            fields[7],
+            OutputValue::Unsigned(entry.attempts as u64),
+        )?;
+        used = used.saturating_add(needed);
+    }
+    if let Some(next) = omitted.or(view.next_entry) {
+        insert(
+            &mut output,
+            "next-neighbor",
+            OutputValue::Unsigned(next),
+        )?;
+    }
+    Ok(output)
+}
+
+fn clear_neighbors_output(cleared: u64) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "clear-neighbors")?;
+    insert(
+        &mut output,
+        "cleared-count",
+        OutputValue::Unsigned(cleared),
     )?;
     Ok(output)
 }

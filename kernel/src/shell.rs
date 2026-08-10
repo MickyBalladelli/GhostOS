@@ -2259,6 +2259,7 @@ struct KernelNetwork {
     devices: [Option<synos_legacy_pc_drivers::EthernetRuntime>;
         syn_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1],
     diagnostic_capability: crate::CapabilityHandle,
+    neighbors: syn_shell::network::NeighborView,
 }
 
 impl KernelNetwork {
@@ -2302,6 +2303,7 @@ impl KernelNetwork {
             },
             devices,
             diagnostic_capability,
+            neighbors: syn_shell::network::NeighborView::EMPTY,
         };
         network.refresh();
         network
@@ -2498,6 +2500,16 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
     fn show_routes(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
         self.refresh();
         Ok(self.view)
+    }
+
+    fn show_neighbors(&mut self) -> Result<syn_shell::network::NeighborView, Status> {
+        Ok(self.neighbors)
+    }
+
+    fn clear_neighbors(&mut self) -> Result<u64, Status> {
+        let cleared = self.neighbors.entry_count;
+        self.neighbors = syn_shell::network::NeighborView::EMPTY;
+        Ok(cleared)
     }
 
     fn set_hostname(
@@ -2727,7 +2739,7 @@ impl KernelExecutor {
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
             route if (syn_shell::network::SHOW_NETWORK_ROUTE
-                ..=syn_shell::network::PING_ROUTE)
+                ..=syn_shell::network::CLEAR_NEIGHBORS_ROUTE)
                 .contains(&route) =>
             {
                 if route == syn_shell::network::PING_ROUTE {

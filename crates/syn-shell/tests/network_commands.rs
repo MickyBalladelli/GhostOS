@@ -2,11 +2,12 @@ use syn_shell::{
     network::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
-        NetworkRouteView, NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
+        NeighborEntryView, NeighborIpVersion, NeighborState, NeighborView, NetworkRouteView,
+        NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
         PingHandle, PingReply, PingResult, PingSummary, PingTarget, ResolvedPingRequest, RouteUpdate,
         SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
-        SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS,
-        MAX_NETWORK_OUTPUT_ROWS,
+        SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, SHOW_NEIGHBORS_ROUTE,
+        CLEAR_NEIGHBORS_ROUTE, MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
     },
     interpreter::CommandExecutor,
     parser::CommandRegistry,
@@ -100,6 +101,8 @@ fn network_commands_use_single_noun_names() {
         ("SHOW INTERFACE", SHOW_INTERFACES_ROUTE),
         ("SHOW INTERFACE eth0", SHOW_INTERFACES_ROUTE),
         ("SHOW ROUTES", SHOW_ROUTES_ROUTE),
+        ("SHOW NEIGHBORS", SHOW_NEIGHBORS_ROUTE),
+        ("CLEAR NEIGHBORS /CONFIRM", CLEAR_NEIGHBORS_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
             "SET INTERFACE eth0 /ADDRESS=10.0.0.2 /GATEWAY=10.0.0.1 /MTU=1500 /ENABLE",
@@ -472,6 +475,10 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
     assert!(ping.qualifiers.contains("/SOURCE"));
     assert!(ping.qualifiers.contains("/IPV4"));
     assert!(ping.qualifiers.contains("/IPV6"));
+    let neighbors = command_help("SHOW-NEIGHBORS").unwrap();
+    assert!(neighbors.description.contains("ARP"));
+    let clear_neighbors = command_help("CLEAR-NEIGHBORS").unwrap();
+    assert!(clear_neighbors.qualifiers.contains("/CONFIRM"));
 }
 
 #[test]
@@ -708,6 +715,7 @@ fn two_seeded_interfaces_fit_output_budget() {
         ping_completion: None,
         ping_pending: false,
         ping_cancelled: false,
+        neighbors: NeighborView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let interfaces = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -775,6 +783,7 @@ fn four_full_interfaces_paginate_within_output_budget() {
         ping_completion: None,
         ping_pending: false,
         ping_cancelled: false,
+        neighbors: NeighborView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let output = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -793,6 +802,66 @@ fn show_interfaces_supports_bounded_pagination_marker() {
     assert!(has_unsigned(&interfaces, "next-interface", 4));
 }
 
+#[test]
+fn neighbors_show_both_ip_versions_and_clear_requires_confirmation() {
+    let mut source = FakeNetwork::seeded();
+    source.neighbors = NeighborView {
+        generation: 7,
+        entry_count: 2,
+        entries: [
+            Some(NeighborEntryView {
+                interface: text("eth0"),
+                address: text("10.0.0.1"),
+                ip_version: NeighborIpVersion::Ipv4,
+                hardware_address: Some(text("02:00:00:00:00:01")),
+                state: NeighborState::Reachable,
+                last_seen_ms: 100,
+                expires_at_ms: Some(60_100),
+                attempts: 0,
+            }),
+            Some(NeighborEntryView {
+                interface: text("eth0"),
+                address: text("2001:db8::1"),
+                ip_version: NeighborIpVersion::Ipv6,
+                hardware_address: None,
+                state: NeighborState::Pending,
+                last_seen_ms: 200,
+                expires_at_ms: Some(1_200),
+                attempts: 1,
+            }),
+        ],
+        next_entry: None,
+    };
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
+
+    let output = execute(&mut executor, "SHOW NEIGHBORS").unwrap();
+    assert!(has_text(&output, "operation", "show-neighbors"));
+    assert!(has_unsigned(&output, "entry-count", 2));
+    assert!(has_text(&output, "neighbor1-address", "10.0.0.1"));
+    assert!(has_text(&output, "neighbor1-ip-version", "ipv4"));
+    assert!(has_text(&output, "neighbor1-state", "reachable"));
+    assert!(has_text(&output, "neighbor2-address", "2001:db8::1"));
+    assert!(has_text(&output, "neighbor2-ip-version", "ipv6"));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::List)
+        .unwrap()
+        .as_str()
+        .contains("Neighbor cache"));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::Json)
+        .unwrap()
+        .as_str()
+        .contains("\"neighbor2-address\":\"2001:db8::1\""));
+
+    assert!(matches!(
+        execute(&mut executor, "CLEAR NEIGHBORS"),
+        Err(Status::INVALID_ARGUMENT)
+    ));
+    let cleared = execute(&mut executor, "CLEAR NEIGHBORS /CONFIRM").unwrap();
+    assert!(has_text(&cleared, "operation", "clear-neighbors"));
+    assert!(has_unsigned(&cleared, "cleared-count", 2));
+    let empty = execute(&mut executor, "SHOW NEIGHBORS").unwrap();
+    assert!(has_unsigned(&empty, "entry-count", 0));
+}
+
 
 struct FakeNetwork {
     allowed: bool,
@@ -802,6 +871,7 @@ struct FakeNetwork {
     ping_completion: Option<synos_system_model::command::StructuredOutput>,
     ping_pending: bool,
     ping_cancelled: bool,
+    neighbors: NeighborView,
 }
 
 impl FakeNetwork {
@@ -814,6 +884,7 @@ impl FakeNetwork {
             ping_completion: None,
             ping_pending: false,
             ping_cancelled: false,
+            neighbors: NeighborView::EMPTY,
         }
     }
 
@@ -858,6 +929,7 @@ impl FakeNetwork {
             ping_completion: None,
             ping_pending: false,
             ping_cancelled: false,
+            neighbors: NeighborView::EMPTY,
         }
     }
 
@@ -907,6 +979,16 @@ impl NetworkSource for FakeNetwork {
 
     fn show_routes(&mut self) -> Result<NetworkView, Status> {
         Ok(self.view)
+    }
+
+    fn show_neighbors(&mut self) -> Result<NeighborView, Status> {
+        Ok(self.neighbors)
+    }
+
+    fn clear_neighbors(&mut self) -> Result<u64, Status> {
+        let cleared = self.neighbors.entry_count;
+        self.neighbors = NeighborView::EMPTY;
+        Ok(cleared)
     }
 
     fn set_hostname(&mut self, hostname: &str) -> Result<NetworkView, Status> {

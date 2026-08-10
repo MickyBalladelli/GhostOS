@@ -68,6 +68,9 @@ fn render_list(
     if is_ping_output(output) {
         return render_ping(output)
     }
+    if is_neighbors_output(output) {
+        return render_neighbors(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -190,6 +193,68 @@ fn is_ping_output(output: &StructuredOutput) -> bool {
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "ping"
     )
+}
+
+fn is_neighbors_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-neighbors"
+    )
+}
+
+fn render_neighbors(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("Neighbor cache")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    render_interface_field(&mut rendered, output, "entry-count", "Entries")?;
+    const FIELDS: [[&str; 8]; 2] = [
+        [
+            "neighbor1-interface",
+            "neighbor1-address",
+            "neighbor1-ip-version",
+            "neighbor1-hardware-address",
+            "neighbor1-state",
+            "neighbor1-last-seen-ms",
+            "neighbor1-expires-ms",
+            "neighbor1-attempts",
+        ],
+        [
+            "neighbor2-interface",
+            "neighbor2-address",
+            "neighbor2-ip-version",
+            "neighbor2-hardware-address",
+            "neighbor2-state",
+            "neighbor2-last-seen-ms",
+            "neighbor2-expires-ms",
+            "neighbor2-attempts",
+        ],
+    ];
+    for (index, fields) in FIELDS.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Neighbor {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        render_interface_field(&mut rendered, output, fields[0], "  Interface")?;
+        render_interface_field(&mut rendered, output, fields[1], "  Address")?;
+        render_interface_field(&mut rendered, output, fields[2], "  IP version")?;
+        render_ping_metric(&mut rendered, output, fields[3], "  Hardware address")?;
+        render_interface_field(&mut rendered, output, fields[4], "  State")?;
+        render_interface_field(&mut rendered, output, fields[5], "  Last seen (ms)")?;
+        render_ping_metric(&mut rendered, output, fields[6], "  Expires (ms)")?;
+        render_interface_field(&mut rendered, output, fields[7], "  Attempts")?;
+    }
+    if let Some(next) = find_value(output, "next-neighbor") {
+        render_labeled_value(&mut rendered, "Next neighbor", next)?;
+    }
+    Ok(rendered)
 }
 
 fn render_ping(
