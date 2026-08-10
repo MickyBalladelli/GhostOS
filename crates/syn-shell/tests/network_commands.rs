@@ -5,10 +5,12 @@ use syn_shell::{
         DnsMode, DnsQueryStatus, DnsServerSource, DnsServerView, DnsUpdate, DnsView,
         NeighborEntryView, NeighborIpVersion, NeighborState, NeighborView, NetworkRouteView,
         NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
-        PingHandle, PingReply, PingResult, PingSummary, PingTarget, ResolvedPingRequest, RouteUpdate,
+        PingHandle, PingReply, PingResult, PingSummary, PingTarget, ResolveAnswer,
+        ResolveRequest, ResolveResult, ResolveView, ResolvedPingRequest, RouteUpdate,
         SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
         SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, SHOW_NEIGHBORS_ROUTE,
-        CLEAR_NEIGHBORS_ROUTE, SHOW_DNS_ROUTE, SET_DNS_ROUTE, MAX_NETWORK_LINK_EVENTS,
+        CLEAR_NEIGHBORS_ROUTE, SHOW_DNS_ROUTE, SET_DNS_ROUTE, RESOLVE_ROUTE,
+        MAX_NETWORK_LINK_EVENTS,
         MAX_NETWORK_OUTPUT_ROWS,
     },
     interpreter::CommandExecutor,
@@ -107,6 +109,7 @@ fn network_commands_use_single_noun_names() {
         ("CLEAR NEIGHBORS /CONFIRM", CLEAR_NEIGHBORS_ROUTE),
         ("SHOW DNS", SHOW_DNS_ROUTE),
         ("SET DNS /STATIC /SERVERS=1.1.1.1,8.8.8.8", SET_DNS_ROUTE),
+        ("RESOLVE host.example /TIMEOUT=2000 /IPV4", RESOLVE_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
             "SET INTERFACE eth0 /ADDRESS=10.0.0.2 /GATEWAY=10.0.0.1 /MTU=1500 /ENABLE",
@@ -490,6 +493,10 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
     assert!(set_dns.qualifiers.contains("/SEARCH"));
     assert!(set_dns.qualifiers.contains("/DHCP"));
     assert!(set_dns.qualifiers.contains("/STATIC"));
+    let resolve = command_help("RESOLVE").unwrap();
+    assert!(resolve.qualifiers.contains("/TIMEOUT"));
+    assert!(resolve.qualifiers.contains("/IPV4"));
+    assert!(resolve.qualifiers.contains("/IPV6"));
 }
 
 #[test]
@@ -923,6 +930,47 @@ fn dns_tracks_ordered_static_servers_dhcp_ownership_and_query_status() {
     assert!(has_unsigned(&dhcp, "server-count", 0));
 }
 
+#[test]
+fn resolve_returns_bounded_dual_stack_answers_and_failure_output() {
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
+    let output = execute(&mut executor, "RESOLVE host.example /TIMEOUT=2000").unwrap();
+    assert!(has_text(&output, "operation", "resolve"));
+    assert!(has_text(&output, "result", "success"));
+    assert!(has_text(&output, "resolver", "dns0"));
+    assert!(has_unsigned(&output, "timeout-ms", 2_000));
+    assert!(has_unsigned(&output, "answer-count", 2));
+    assert!(has_text(&output, "answer1-ip-version", "ipv4"));
+    assert!(has_text(&output, "answer2-ip-version", "ipv6"));
+    assert!(has_unsigned(&output, "answer1-ttl-ms", 60_000));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::List)
+        .unwrap()
+        .as_str()
+        .contains("RESOLVE host.example"));
+
+    let ipv4 = execute(&mut executor, "RESOLVE host.example /IPV4").unwrap();
+    assert!(has_unsigned(&ipv4, "answer-count", 1));
+    assert!(has_text(&ipv4, "answer1-ip-version", "ipv4"));
+    assert!(lacks_field(&ipv4, "answer2-address"));
+
+    let failure = execute(&mut executor, "RESOLVE missing.example /TIMEOUT=100").unwrap();
+    assert!(has_text(&failure, "result", "dns-failure"));
+    assert!(has_unsigned(&failure, "answer-count", 0));
+    assert!(has_unsigned(&failure, "timeout-ms", 100));
+}
+
+#[test]
+fn resolve_rejects_invalid_timeout_and_ip_selection() {
+    let registry = registry();
+    for input in [
+        "RESOLVE host.example /TIMEOUT=0",
+        "RESOLVE host.example /TIMEOUT=30001",
+        "RESOLVE host.example /IPV4 /IPV6",
+    ] {
+        let call = registry.parse(input).unwrap().stage(0).unwrap();
+        assert!(syn_shell::network::resolve_request(&call).is_err(), "{input}");
+    }
+}
+
 
 struct FakeNetwork {
     allowed: bool,
@@ -1085,6 +1133,37 @@ impl NetworkSource for FakeNetwork {
             query_timeout_ms: syn_shell::network::MAX_PING_DNS_TIMEOUT_MS,
         };
         Ok(self.dns)
+    }
+
+    fn resolve_hostname(&mut self, request: ResolveRequest<'_>) -> Result<ResolveView, Status> {
+        if request.hostname != "host.example" {
+            return Err(Status::NOT_FOUND)
+        }
+        let ipv4 = ResolveAnswer {
+            address: text("198.51.100.4"),
+            ip_version: PingIpVersion::Ipv4,
+            ttl_ms: 60_000,
+        };
+        let ipv6 = ResolveAnswer {
+            address: text("2001:db8::4"),
+            ip_version: PingIpVersion::Ipv6,
+            ttl_ms: 120_000,
+        };
+        let answers = match request.ip_version {
+            Some(PingIpVersion::Ipv4) => [Some(ipv4), None, None, None],
+            Some(PingIpVersion::Ipv6) => [Some(ipv6), None, None, None],
+            None => [Some(ipv4), Some(ipv6), None, None],
+        };
+        let answer_count = answers.iter().filter(|answer| answer.is_some()).count() as u8;
+        Ok(ResolveView {
+            hostname: text(request.hostname),
+            resolver: Some(text("dns0")),
+            result: ResolveResult::Success,
+            timeout_ms: request.timeout_ms,
+            elapsed_ms: 12,
+            answers,
+            answer_count,
+        })
     }
 
     fn set_hostname(&mut self, hostname: &str) -> Result<NetworkView, Status> {

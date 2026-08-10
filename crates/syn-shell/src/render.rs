@@ -68,6 +68,9 @@ fn render_list(
     if is_ping_output(output) {
         return render_ping(output)
     }
+    if is_resolve_output(output) {
+        return render_resolve(output)
+    }
     if is_neighbors_output(output) {
         return render_neighbors(output)
     }
@@ -210,6 +213,51 @@ fn is_dns_output(output: &StructuredOutput) -> bool {
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "show-dns"
     )
+}
+
+fn is_resolve_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "resolve"
+    )
+}
+
+fn render_resolve(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("RESOLVE ")?;
+    if let Some(hostname) = find_value(output, "hostname") {
+        write_value(&mut rendered, hostname, false)?;
+    }
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    render_interface_field(&mut rendered, output, "result", "Result")?;
+    render_interface_field(&mut rendered, output, "resolver", "Resolver")?;
+    render_interface_field(&mut rendered, output, "answer-count", "Answers")?;
+    render_interface_field(&mut rendered, output, "timeout-ms", "Timeout (ms)")?;
+    render_interface_field(&mut rendered, output, "elapsed-ms", "Elapsed (ms)")?;
+    const ANSWERS: [[&str; 3]; 4] = [
+        ["answer1-address", "answer1-ip-version", "answer1-ttl-ms"],
+        ["answer2-address", "answer2-ip-version", "answer2-ttl-ms"],
+        ["answer3-address", "answer3-ip-version", "answer3-ttl-ms"],
+        ["answer4-address", "answer4-ip-version", "answer4-ttl-ms"],
+    ];
+    for (index, fields) in ANSWERS.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Answer {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        render_interface_field(&mut rendered, output, fields[0], "  Address")?;
+        render_interface_field(&mut rendered, output, fields[1], "  IP version")?;
+        render_interface_field(&mut rendered, output, fields[2], "  TTL (ms)")?;
+    }
+    Ok(rendered)
 }
 
 fn render_dns(

@@ -23,12 +23,16 @@ pub const SHOW_NEIGHBORS_ROUTE: u16 = 67;
 pub const CLEAR_NEIGHBORS_ROUTE: u16 = 68;
 pub const SHOW_DNS_ROUTE: u16 = 69;
 pub const SET_DNS_ROUTE: u16 = 70;
+pub const RESOLVE_ROUTE: u16 = 71;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
 pub const MAX_NEIGHBOR_OUTPUT_ROWS: usize = 2;
 pub const MAX_DNS_SERVERS: usize = 3;
 pub const MAX_DNS_SEARCH_DOMAINS: usize = 3;
+pub const MAX_RESOLVE_ANSWERS: usize = 4;
+pub const DEFAULT_RESOLVE_TIMEOUT_MS: u32 = 5_000;
+pub const MAX_RESOLVE_TIMEOUT_MS: u32 = 30_000;
 pub const MAX_PING_REPLY_OUTPUT: usize = 3;
 pub const DEFAULT_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
 pub const MAX_PING_COUNT: u32 = MAX_PING_REPLY_OUTPUT as u32;
@@ -126,6 +130,13 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         description: "Set static resolver overrides or restore DHCP-owned DNS configuration.",
         aliases: "",
         qualifiers: "/SERVERS /SEARCH /DHCP /STATIC",
+    },
+    NetworkCommandHelp {
+        name: "RESOLVE",
+        synopsis: "RESOLVE hostname",
+        description: "Resolve a hostname with bounded timeout and IPv4 or IPv6 selection.",
+        aliases: "",
+        qualifiers: "/TIMEOUT /IPV4 /IPV6",
     },
 ];
 
@@ -377,6 +388,76 @@ pub struct DnsUpdate {
     pub server_count: u8,
     pub search_domains: [Option<NetworkText>; MAX_DNS_SEARCH_DOMAINS],
     pub search_count: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolveResult {
+    Success,
+    Timeout,
+    DnsFailure,
+    PermissionDenied,
+    Cancelled,
+}
+
+impl ResolveResult {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Timeout => "timeout",
+            Self::DnsFailure => "dns-failure",
+            Self::PermissionDenied => "permission-denied",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn status(self) -> Status {
+        match self {
+            Self::Success => Status::NORMAL,
+            Self::Timeout => ping_status(106),
+            Self::DnsFailure => ping_status(107),
+            Self::PermissionDenied => Status::ACCESS_DENIED,
+            Self::Cancelled => Status::CANCELLED,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolveRequest<'a> {
+    pub hostname: &'a str,
+    pub timeout_ms: u32,
+    pub ip_version: Option<PingIpVersion>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolveAnswer {
+    pub address: NetworkText,
+    pub ip_version: PingIpVersion,
+    pub ttl_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolveView {
+    pub hostname: NetworkText,
+    pub resolver: Option<NetworkText>,
+    pub result: ResolveResult,
+    pub timeout_ms: u32,
+    pub elapsed_ms: u32,
+    pub answers: [Option<ResolveAnswer>; MAX_RESOLVE_ANSWERS],
+    pub answer_count: u8,
+}
+
+impl ResolveView {
+    pub fn failure(request: ResolveRequest<'_>, result: ResolveResult) -> Result<Self, Status> {
+        Ok(Self {
+            hostname: NetworkText::new(request.hostname).map_err(|_| Status::NO_SPACE)?,
+            resolver: None,
+            result,
+            timeout_ms: request.timeout_ms,
+            elapsed_ms: 0,
+            answers: [None; MAX_RESOLVE_ANSWERS],
+            answer_count: 0,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -740,6 +821,10 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
+    fn resolve_hostname(&mut self, _request: ResolveRequest<'_>) -> Result<ResolveView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -873,6 +958,18 @@ fn ping_result_from_status(status: Status) -> PingResult {
     }
 }
 
+fn resolve_result_from_status(status: Status) -> ResolveResult {
+    if status == Status::ACCESS_DENIED {
+        ResolveResult::PermissionDenied
+    } else if status == Status::CANCELLED {
+        ResolveResult::Cancelled
+    } else if status == ResolveResult::Timeout.status() {
+        ResolveResult::Timeout
+    } else {
+        ResolveResult::DnsFailure
+    }
+}
+
 pub fn register_network_commands<const CAPACITY: usize>(
     registry: &mut CommandRegistry<CAPACITY>,
 ) -> Result<(), Error> {
@@ -914,6 +1011,15 @@ pub fn register_network_commands<const CAPACITY: usize>(
         CommandSpec::new("SET-DNS", &[servers, search, dhcp, static_mode])
             .map_err(|_| Error::InvalidValue)?,
         route(SET_DNS_ROUTE),
+    )?;
+    let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
+    let timeout = qualifier("TIMEOUT", ArgumentKind::Integer)?;
+    let ipv4 = qualifier("IPV4", ArgumentKind::Boolean)?;
+    let ipv6 = qualifier("IPV6", ArgumentKind::Boolean)?;
+    registry.register(
+        CommandSpec::new("RESOLVE", &[hostname, timeout, ipv4, ipv6])
+            .map_err(|_| Error::InvalidValue)?,
+        route(RESOLVE_ROUTE),
     )?;
 
     let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
@@ -1049,6 +1155,14 @@ pub fn dispatch_network_command<Source: NetworkSource>(
             let update = dns_update_request(&command)?;
             source.authorize_mutation()?;
             source.set_dns(update).and_then(dns_output)
+        }
+        RESOLVE_ROUTE => {
+            let request = resolve_request(&command)?;
+            match source.resolve_hostname(request) {
+                Ok(view) => resolve_output(view),
+                Err(status) => ResolveView::failure(request, resolve_result_from_status(status))
+                    .and_then(resolve_output),
+            }
         }
         SET_HOSTNAME_ROUTE => {
             let hostname = command
@@ -1352,6 +1466,31 @@ pub fn dns_update_request(command: &CommandCall) -> Result<DnsUpdate, Status> {
         server_count: servers.1,
         search_domains: search_domains.0,
         search_count: search_domains.1,
+    })
+}
+
+pub fn resolve_request<'a>(command: &'a CommandCall) -> Result<ResolveRequest<'a>, Status> {
+    let hostname = command
+        .get_text("HOSTNAME")
+        .filter(|value| !value.is_empty())
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    let timeout_ms = optional_u32(command, "TIMEOUT")?.unwrap_or(DEFAULT_RESOLVE_TIMEOUT_MS);
+    if !(1..=MAX_RESOLVE_TIMEOUT_MS).contains(&timeout_ms) {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let ipv4 = boolean(command.get("IPV4"))?;
+    let ipv6 = boolean(command.get("IPV6"))?;
+    if ipv4 && ipv6 {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    Ok(ResolveRequest {
+        hostname,
+        timeout_ms,
+        ip_version: match (ipv4, ipv6) {
+            (true, false) => Some(PingIpVersion::Ipv4),
+            (false, true) => Some(PingIpVersion::Ipv6),
+            _ => None,
+        },
     })
 }
 
@@ -1830,6 +1969,59 @@ pub fn dns_output(view: DnsView) -> Result<StructuredOutput, Status> {
             _ => return Err(Status::INVALID_ARGUMENT),
         };
         insert_text(&mut output, field, domain.as_str())?;
+    }
+    Ok(output)
+}
+
+pub fn resolve_output(view: ResolveView) -> Result<StructuredOutput, Status> {
+    let actual_count = view.answers.iter().filter(|answer| answer.is_some()).count();
+    if actual_count != view.answer_count as usize
+        || actual_count > MAX_RESOLVE_ANSWERS
+        || (!matches!(view.result, ResolveResult::Success) && actual_count != 0)
+    {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let mut output = StructuredOutput::new(view.result.status());
+    insert_text(&mut output, "operation", "resolve")?;
+    insert_text(&mut output, "hostname", view.hostname.as_str())?;
+    insert_text(&mut output, "result", view.result.as_str())?;
+    insert(
+        &mut output,
+        "result-status",
+        OutputValue::Status(view.result.status()),
+    )?;
+    if let Some(resolver) = view.resolver {
+        insert_text(&mut output, "resolver", resolver.as_str())?;
+    }
+    insert(
+        &mut output,
+        "timeout-ms",
+        OutputValue::Unsigned(view.timeout_ms as u64),
+    )?;
+    insert(
+        &mut output,
+        "elapsed-ms",
+        OutputValue::Unsigned(view.elapsed_ms as u64),
+    )?;
+    insert(
+        &mut output,
+        "answer-count",
+        OutputValue::Unsigned(view.answer_count as u64),
+    )?;
+    for (index, answer) in view.answers.iter().flatten().enumerate() {
+        let fields = match index {
+            0 => ["answer1-address", "answer1-ip-version", "answer1-ttl-ms"],
+            1 => ["answer2-address", "answer2-ip-version", "answer2-ttl-ms"],
+            2 => ["answer3-address", "answer3-ip-version", "answer3-ttl-ms"],
+            3 => ["answer4-address", "answer4-ip-version", "answer4-ttl-ms"],
+            _ => return Err(Status::INVALID_ARGUMENT),
+        };
+        insert_text(&mut output, fields[0], answer.address.as_str())?;
+        insert_text(&mut output, fields[1], match answer.ip_version {
+            PingIpVersion::Ipv4 => "ipv4",
+            PingIpVersion::Ipv6 => "ipv6",
+        })?;
+        insert(&mut output, fields[2], OutputValue::Unsigned(answer.ttl_ms))?;
     }
     Ok(output)
 }
