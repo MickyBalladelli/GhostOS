@@ -47,7 +47,10 @@ pub use scheduler::{
     NetworkServiceActivity, NetworkServiceScheduler, DEFAULT_SOCKET_INGRESS_BUDGET,
     DEFAULT_SOCKET_REQUEST_BUDGET,
 };
-pub use stack::{NetworkPoller, PollActivity, SmolTcpStack, TcpBuffers, TcpHandle};
+pub use stack::{
+    InterfaceConfig, InterfaceConfigError, InterfaceRoute, NetworkPoller, PollActivity,
+    SmolTcpStack, TcpBuffers, TcpHandle, MAX_INTERFACE_ROUTES,
+};
 pub use transport::{
     DhcpIngress, EthernetDhcpTransport, DHCP_BROADCAST_IPV4, DHCP_BROADCAST_MAC,
     DHCP_MIN_ETHERNET_FRAME, DHCP_UNSPECIFIED_IPV4,

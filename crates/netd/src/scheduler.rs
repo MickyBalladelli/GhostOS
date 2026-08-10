@@ -98,6 +98,60 @@ impl NetworkServiceScheduler {
             service_error,
         }
     }
+
+    /// Poll using the smoltcp backend as the DHCP runtime too. Successful
+    /// lease and static restoration callbacks therefore update the same
+    /// interface that handles socket traffic.
+    pub fn poll_with_backend_runtime<
+        C,
+        T,
+        B,
+        M,
+        const SOCKET_CAPACITY: usize,
+        const RING_CAPACITY: usize,
+    >(
+        &mut self,
+        clock: &C,
+        dhcp: &mut DhcpClient,
+        transport: &mut T,
+        daemon: &mut NetworkDaemon<B, SOCKET_CAPACITY>,
+        channel: &ClientChannel<'_, RING_CAPACITY>,
+        memory: &mut M,
+    ) -> NetworkServiceActivity
+    where
+        C: MonotonicClock,
+        T: DhcpTransport,
+        B: SocketBackend + NetworkPoller + DhcpLeaseRuntime,
+        M: SharedMemory,
+    {
+        let now_ms = clock.now_us() / 1_000;
+        let stack = {
+            let backend = daemon.backend_mut();
+            backend.poll_network(
+                core::cmp::min(now_ms, i64::MAX as u64) as i64,
+                self.stack_ingress_budget,
+            )
+        };
+        let dhcp_error = {
+            let backend = daemon.backend_mut();
+            dhcp.poll(now_ms, transport, backend).err()
+        };
+        let (socket_requests, service_error) = match daemon.process_budget(
+            channel,
+            memory,
+            self.socket_request_budget,
+        ) {
+            Ok(processed) => (processed, None),
+            Err(error) => (0, Some(error)),
+        };
+        NetworkServiceActivity {
+            now_ms,
+            stack,
+            dhcp_error,
+            socket_requests,
+            service_error,
+        }
+    }
 }
 
 impl Default for NetworkServiceScheduler {

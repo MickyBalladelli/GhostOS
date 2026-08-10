@@ -375,7 +375,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 ### IP, ARP, and ICMP foundations
 
-- [ ] Connect the configured interface address, subnet, gateway, and routes to
+- [x] Connect the configured interface address, subnet, gateway, and routes to
       the smoltcp interface after every successful static or DHCP update.
 - [ ] Enable bounded ARP/neighbor discovery and expose pending, reachable,
       stale, failed, and permanent neighbor states.
