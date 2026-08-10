@@ -1,5 +1,6 @@
 use synos_status::Status;
 use synos_audit::ObsolescenceReport;
+use synos_observability::HealthReport;
 
 use crate::{
     ActivityReport, CpuReport, InspectCapability, InspectionAuthority,
@@ -41,6 +42,9 @@ pub trait InspectionProvider {
     fn sample_obsolete(&mut self, _report: &mut ObsolescenceReport) -> Result<(), Status> {
         Err(Status::NOT_FOUND)
     }
+    fn sample_health(&mut self, _report: &mut HealthReport) -> Result<(), Status> {
+        Err(Status::NOT_FOUND)
+    }
 }
 
 /// Publish/consume handoff useful when hardware and kernel collectors run in
@@ -51,6 +55,7 @@ pub struct TelemetryStore {
     cpu: CpuReport,
     activity: ActivityReport,
     obsolete: ObsolescenceReport,
+    health: HealthReport,
 }
 
 impl TelemetryStore {
@@ -61,6 +66,7 @@ impl TelemetryStore {
             cpu: CpuReport::new(),
             activity: ActivityReport::new(),
             obsolete: ObsolescenceReport::new(),
+            health: HealthReport::new(),
         }
     }
 
@@ -82,6 +88,11 @@ impl TelemetryStore {
 
     pub fn publish_obsolete(&mut self, report: ObsolescenceReport) {
         self.obsolete = report
+    }
+
+    pub fn publish_health(&mut self, report: HealthReport) {
+        report.emit_audit();
+        self.health = report
     }
 }
 
@@ -114,6 +125,11 @@ impl InspectionProvider for TelemetryStore {
 
     fn sample_obsolete(&mut self, report: &mut ObsolescenceReport) -> Result<(), Status> {
         *report = self.obsolete;
+        Ok(())
+    }
+
+    fn sample_health(&mut self, report: &mut HealthReport) -> Result<(), Status> {
+        *report = self.health;
         Ok(())
     }
 }
@@ -258,6 +274,23 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
                 local.push(package).map_err(|_| InspectError::InvalidSample)?;
             }
             report = local;
+        }
+        Ok(report)
+    }
+
+    pub fn health(
+        &mut self,
+        capability: InspectCapability,
+        view: View,
+        now_us: u64,
+    ) -> Result<HealthReport, InspectError> {
+        self.authorize(capability, InspectionRights::HEALTH, view, now_us)?;
+        let mut report = HealthReport::new();
+        self.provider
+            .sample_health(&mut report)
+            .map_err(InspectError::Source)?;
+        if view == View::Local {
+            report.retain_node(capability.home_node().raw())
         }
         Ok(report)
     }

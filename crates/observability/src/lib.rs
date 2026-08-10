@@ -13,6 +13,7 @@ pub const GLOBAL_AUDIT_CAPACITY: usize = 256;
 pub const MAX_METRIC_SAMPLES: usize = 256;
 pub const MAX_ALERTS: usize = 128;
 pub const MAX_TELEMETRY_BATCH: usize = 32;
+pub const MAX_OPERATIONAL_HEALTH: usize = 64;
 pub const DEFAULT_RECOVERY_AUDIT_CAPACITY: usize = 256;
 pub const AUDIT_EXPORT_HEADER_BYTES: usize = 64;
 pub const SEALED_AUDIT_RECORD_BYTES: usize = 200;
@@ -43,6 +44,12 @@ pub mod field {
     pub const TRACE: u16 = 17;
     pub const CAPABILITY_DOMAIN: u16 = 18;
     pub const CAPABILITY_STAGE: u16 = 19;
+    pub const HEALTH: u16 = 20;
+    pub const QUEUE_DEPTH: u16 = 21;
+    pub const QUEUE_CAPACITY: u16 = 22;
+    pub const DROPPED_PACKETS: u16 = 23;
+    pub const RETRIES: u16 = 24;
+    pub const DEGRADED_MODE: u16 = 25;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,6 +149,246 @@ impl TelemetryDimensions {
             .with_field(EventField::unsigned(field::WORKLOAD, self.workload))
             .with_field(EventField::unsigned(field::OPERATION, self.operation as u64))
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum HealthTransport {
+    Http = 1,
+    Grpc = 2,
+    Sdk = 3,
+    RemoteTerminal = 4,
+    Mesh = 5,
+    Cluster = 6,
+    Dhcp = 7,
+    Packet = 8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum HealthState {
+    Healthy = 1,
+    Degraded = 2,
+    Failed = 3,
+}
+
+impl HealthState {
+    pub const fn status(self) -> Status {
+        match self {
+            Self::Healthy => Status::NORMAL,
+            Self::Degraded => Status::CLUSTER_DEGRADED,
+            Self::Failed => Status::NODE_UNSAFE,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OperationalHealth {
+    pub sampled_at_us: u64,
+    pub node: u32,
+    pub transport: HealthTransport,
+    pub state: HealthState,
+    pub queue_depth: u32,
+    pub queue_capacity: u32,
+    pub dropped_packets: u64,
+    pub retries: u64,
+    pub degraded_mode: bool,
+}
+
+impl OperationalHealth {
+    pub const fn new(
+        sampled_at_us: u64,
+        node: u32,
+        transport: HealthTransport,
+        state: HealthState,
+        queue_depth: u32,
+        queue_capacity: u32,
+        dropped_packets: u64,
+        retries: u64,
+        degraded_mode: bool,
+    ) -> Option<Self> {
+        if sampled_at_us == 0 || node == 0 || queue_depth > queue_capacity {
+            None
+        } else {
+            Some(Self {
+                sampled_at_us,
+                node,
+                transport,
+                state,
+                queue_depth,
+                queue_capacity,
+                dropped_packets,
+                retries,
+                degraded_mode,
+            })
+        }
+    }
+
+    pub const fn is_degraded(self) -> bool {
+        self.degraded_mode || !matches!(self.state, HealthState::Healthy)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HealthError {
+    Capacity,
+    Duplicate,
+    Invalid,
+}
+
+#[derive(Clone, Copy)]
+pub struct HealthReport<const CAPACITY: usize = MAX_OPERATIONAL_HEALTH> {
+    sampled_at_us: u64,
+    samples: [Option<OperationalHealth>; CAPACITY],
+}
+
+impl<const CAPACITY: usize> HealthReport<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            sampled_at_us: 0,
+            samples: [None; CAPACITY],
+        }
+    }
+
+    pub const fn sampled_at_us(&self) -> u64 {
+        self.sampled_at_us
+    }
+
+    pub fn set_sampled_at_us(&mut self, sampled_at_us: u64) {
+        self.sampled_at_us = sampled_at_us
+    }
+
+    pub fn samples(&self) -> impl Iterator<Item = OperationalHealth> + '_ {
+        self.samples.iter().flatten().copied()
+    }
+
+    pub fn push(&mut self, sample: OperationalHealth) -> Result<(), HealthError> {
+        if sample.sampled_at_us == 0
+            || sample.node == 0
+            || sample.queue_depth > sample.queue_capacity
+        {
+            return Err(HealthError::Invalid)
+        }
+        if self
+            .samples()
+            .any(|entry| entry.node == sample.node && entry.transport == sample.transport)
+        {
+            return Err(HealthError::Duplicate)
+        }
+        let slot = self
+            .samples
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(HealthError::Capacity)?;
+        *slot = Some(sample);
+        self.sampled_at_us = self.sampled_at_us.max(sample.sampled_at_us);
+        Ok(())
+    }
+
+    pub fn healthy_count(&self) -> usize {
+        self.samples()
+            .filter(|sample| matches!(sample.state, HealthState::Healthy) && !sample.degraded_mode)
+            .count()
+    }
+
+    pub fn degraded_count(&self) -> usize {
+        self.samples()
+            .filter(|sample| sample.is_degraded() && !matches!(sample.state, HealthState::Failed))
+            .count()
+    }
+
+    pub fn failed_count(&self) -> usize {
+        self.samples()
+            .filter(|sample| matches!(sample.state, HealthState::Failed))
+            .count()
+    }
+
+    pub fn queue_depth(&self) -> u64 {
+        self.samples()
+            .map(|sample| sample.queue_depth as u64)
+            .sum()
+    }
+
+    pub fn queue_capacity(&self) -> u64 {
+        self.samples()
+            .map(|sample| sample.queue_capacity as u64)
+            .sum()
+    }
+
+    pub fn dropped_packets(&self) -> u64 {
+        self.samples()
+            .map(|sample| sample.dropped_packets)
+            .sum()
+    }
+
+    pub fn retries(&self) -> u64 {
+        self.samples().map(|sample| sample.retries).sum()
+    }
+
+    pub fn degraded_mode(&self) -> bool {
+        self.samples().any(OperationalHealth::is_degraded)
+    }
+
+    pub fn status(&self) -> Status {
+        if self.failed_count() != 0 {
+            Status::NODE_UNSAFE
+        } else if self.degraded_mode() {
+            Status::CLUSTER_DEGRADED
+        } else {
+            Status::NORMAL
+        }
+    }
+
+    pub fn retain_node(&mut self, node: u32) {
+        for entry in &mut self.samples {
+            if entry.is_some_and(|sample| sample.node != node) {
+                *entry = None
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::new()
+    }
+
+    /// Emit two bounded audit records so queue and retry counters remain exact.
+    pub fn emit_audit(&self) {
+        for sample in self.samples() {
+            emit_health_audit(sample)
+        }
+    }
+}
+
+impl<const CAPACITY: usize> Default for HealthReport<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn emit_health_audit(sample: OperationalHealth) {
+    let level = match sample.state {
+        HealthState::Healthy => Level::Info,
+        HealthState::Degraded => Level::Warn,
+        HealthState::Failed => Level::Error,
+    };
+    emit_audit(
+        TraceEvent::new(level, EventKind::Audit)
+            .at(sample.sampled_at_us)
+            .on_node(sample.node)
+            .with_field(EventField::unsigned(field::TRANSPORT, sample.transport as u64))
+            .with_field(EventField::unsigned(field::HEALTH, sample.state as u64))
+            .with_field(EventField::unsigned(field::QUEUE_DEPTH, sample.queue_depth as u64))
+            .with_field(EventField::unsigned(field::QUEUE_CAPACITY, sample.queue_capacity as u64)),
+    );
+    emit_audit(
+        TraceEvent::new(level, EventKind::Audit)
+            .at(sample.sampled_at_us)
+            .on_node(sample.node)
+            .with_field(EventField::unsigned(field::TRANSPORT, sample.transport as u64))
+            .with_field(EventField::unsigned(field::DROPPED_PACKETS, sample.dropped_packets))
+            .with_field(EventField::unsigned(field::RETRIES, sample.retries))
+            .with_field(EventField::boolean(field::DEGRADED_MODE, sample.degraded_mode)),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]

@@ -259,6 +259,13 @@ evidence.
       -p synos-storaged --tests` passes; test execution remains pending.
 - [ ] Expose structured health, queue depth, dropped packets, retries, and
       degraded-mode state through the inspection and audit surfaces.
+      Progress: added bounded `OperationalHealth`/`HealthReport` samples,
+      `InspectionRights::HEALTH`, local/cluster filtering, `SHOW-HEALTH`
+      structured output, and two-record audit emission for queue, drop, retry,
+      and degraded-mode values. Details and regression locations are in
+      `docs/operational-health.md`. `cargo check -p synos-observability
+      -p synos-inspect -p syn-shell --tests` passes; test execution remains
+      pending.
 
 ## P2: Improve developer and operator experience
 

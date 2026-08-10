@@ -18,6 +18,7 @@ pub const SHOW_CPU_ROUTE: u16 = 5;
 pub const SHOW_USERS_ROUTE: u16 = 6;
 pub const SHOW_OBSOLETE_ROUTE: u16 = 7;
 pub const UPTIME_ROUTE: u16 = 8;
+pub const SHOW_HEALTH_ROUTE: u16 = 9;
 pub const DEFAULT_DIAGNOSTIC_QUEUE: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +96,20 @@ pub struct UptimeSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HealthSnapshot {
+    pub sampled_at_us: u64,
+    pub healthy_transports: u64,
+    pub degraded_transports: u64,
+    pub failed_transports: u64,
+    pub queue_depth: u64,
+    pub queue_capacity: u64,
+    pub dropped_packets: u64,
+    pub retries: u64,
+    pub degraded_mode: bool,
+    pub status: Status,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessState {
     Ready,
     Running,
@@ -140,6 +155,10 @@ pub trait DiagnosticSource {
     fn cpu(&mut self, cluster: bool) -> Result<CpuSnapshot, Status>;
     fn users(&mut self, cluster: bool) -> Result<UsersSnapshot, Status>;
     fn obsolete(&mut self, cluster: bool) -> Result<ObsoleteSnapshot, Status> {
+        let _ = cluster;
+        Err(Status::NOT_FOUND)
+    }
+    fn health(&mut self, cluster: bool) -> Result<HealthSnapshot, Status> {
         let _ = cluster;
         Err(Status::NOT_FOUND)
     }
@@ -197,6 +216,12 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-OBSOLETE", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
         RouteId::from_valid_raw(SHOW_OBSOLETE_ROUTE),
+    )?;
+
+    registry.register(
+        CommandSpec::new("SHOW-HEALTH", &[cluster])
+            .map_err(|_| Error::InvalidValue)?,
+        RouteId::from_valid_raw(SHOW_HEALTH_ROUTE),
     )?;
 
     registry.register(
@@ -335,6 +360,10 @@ impl<Source: DiagnosticSource, const CAPACITY: usize>
             SHOW_OBSOLETE_ROUTE => {
                 let cluster = boolean(command.get("CLUSTER"))?;
                 obsolete_output(self.source.obsolete(cluster)?)
+            }
+            SHOW_HEALTH_ROUTE => {
+                let cluster = boolean(command.get("CLUSTER"))?;
+                health_output(self.source.health(cluster)?)
             }
             UPTIME_ROUTE => uptime_output(self.source.uptime()?),
             MONITOR_ROUTE => {
@@ -566,6 +595,44 @@ fn obsolete_output(snapshot: ObsoleteSnapshot) -> Result<StructuredOutput, Statu
         OutputValue::Unsigned(snapshot.out_of_date),
     )?;
     insert(&mut output, "nodes", OutputValue::Unsigned(snapshot.nodes))?;
+    Ok(output)
+}
+
+fn health_output(snapshot: HealthSnapshot) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(snapshot.status);
+    insert(&mut output, "sampled-at-us", OutputValue::Unsigned(snapshot.sampled_at_us))?;
+    insert(
+        &mut output,
+        "healthy-transports",
+        OutputValue::Unsigned(snapshot.healthy_transports),
+    )?;
+    insert(
+        &mut output,
+        "degraded-transports",
+        OutputValue::Unsigned(snapshot.degraded_transports),
+    )?;
+    insert(
+        &mut output,
+        "failed-transports",
+        OutputValue::Unsigned(snapshot.failed_transports),
+    )?;
+    insert(&mut output, "queue-depth", OutputValue::Unsigned(snapshot.queue_depth))?;
+    insert(
+        &mut output,
+        "queue-capacity",
+        OutputValue::Unsigned(snapshot.queue_capacity),
+    )?;
+    insert(
+        &mut output,
+        "dropped-packets",
+        OutputValue::Unsigned(snapshot.dropped_packets),
+    )?;
+    insert(&mut output, "retries", OutputValue::Unsigned(snapshot.retries))?;
+    insert(
+        &mut output,
+        "degraded-mode",
+        OutputValue::Boolean(snapshot.degraded_mode),
+    )?;
     Ok(output)
 }
 

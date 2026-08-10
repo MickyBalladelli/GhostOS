@@ -12,5 +12,6 @@ path = "src/lib.rs"
 syn-shell = { path = "../syn-shell" }
 synos-audit = { package = "synos-auditd", path = "../synos-audit" }
 synos-fabric = { path = "../fabric" }
+synos-observability = { path = "../observability" }
 synos-status = { path = "../status" }
 synos-synfs = { path = "../synfs" }

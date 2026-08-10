@@ -28,6 +28,10 @@ pub use memory::{
     MAX_CXL_LEASES, MAX_DSM_ALLOCATIONS, MAX_MEMORY_NODES,
 };
 pub use synos_audit::ObsolescenceReport;
+pub use synos_observability::{
+    HealthError, HealthReport, HealthState, HealthTransport, OperationalHealth,
+    MAX_OPERATIONAL_HEALTH,
+};
 pub use service::{
     InspectError, InspectionProvider, InspectionService, TelemetryStore, View,
 };

@@ -1,7 +1,7 @@
 use syn_shell::{
     Text,
     diagnostics::{
-        ClusterSnapshot, CpuSnapshot, DiagnosticSource, DiskSnapshot, MemorySnapshot,
+        ClusterSnapshot, CpuSnapshot, DiagnosticSource, DiskSnapshot, HealthSnapshot, MemorySnapshot,
         MonitorSnapshot, ObsoleteSnapshot, ProcessSnapshot,
         ProcessState as ShellProcessState, UptimeSnapshot, UsersSnapshot,
     },
@@ -230,6 +230,25 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
         }
         snapshot.nodes = report.packages().map(|package| package.node).collect::<NodeSet>().len();
         Ok(snapshot)
+    }
+
+    fn health(&mut self, cluster: bool) -> Result<HealthSnapshot, Status> {
+        let report = self
+            .service
+            .health(self.capability, Self::view(cluster), self.now_us)
+            .map_err(|error| error.status())?;
+        Ok(HealthSnapshot {
+            sampled_at_us: report.sampled_at_us(),
+            healthy_transports: report.healthy_count() as u64,
+            degraded_transports: report.degraded_count() as u64,
+            failed_transports: report.failed_count() as u64,
+            queue_depth: report.queue_depth(),
+            queue_capacity: report.queue_capacity(),
+            dropped_packets: report.dropped_packets(),
+            retries: report.retries(),
+            degraded_mode: report.degraded_mode(),
+            status: report.status(),
+        })
     }
 
     fn cluster(&mut self) -> Result<ClusterSnapshot, Status> {

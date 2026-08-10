@@ -650,6 +650,7 @@ dependencies = [
  "syn-shell",
  "synos-auditd",
  "synos-fabric",
+ "synos-observability",
  "synos-status",
  "synos-synfs",
 ]

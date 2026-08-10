@@ -1,7 +1,8 @@
 use synos_observability::{
     AuditQuery, CodecError, CorrelationId, EventField, EventKind, FieldKind, JOURNAL_RECORD_SIZE,
     Alert, AlertLevel, AlertRegistry, AuditJournal, AuditJournalError, AuditKey, Level,
-    MetricError, MetricKind, MetricRegistry, MetricSample, QueryError, TelemetryDimensions,
+    HealthError, HealthReport, HealthState, HealthTransport, MetricError, MetricKind,
+    MetricRegistry, MetricSample, OperationalHealth, QueryError, TelemetryDimensions,
     TraceEvent, TraceRing, analyze_audit, decode_record, encode_record, field,
     parse_audit_command,
 };
@@ -111,4 +112,64 @@ fn durable_audit_and_observability_buffers_have_explicit_full_behavior() {
     alerts.push(alert).unwrap();
     assert_eq!(alerts.push(alert), Err(MetricError::Capacity));
     assert_eq!(alerts.dropped(), 1);
+}
+
+#[test]
+fn operational_health_is_bounded_and_aggregates_transport_failures() {
+    let healthy = OperationalHealth::new(
+        10,
+        1,
+        HealthTransport::Http,
+        HealthState::Healthy,
+        2,
+        8,
+        3,
+        4,
+        false,
+    )
+    .unwrap();
+    let degraded = OperationalHealth::new(
+        11,
+        1,
+        HealthTransport::Grpc,
+        HealthState::Degraded,
+        5,
+        8,
+        7,
+        9,
+        true,
+    )
+    .unwrap();
+    let failed = OperationalHealth::new(
+        12,
+        2,
+        HealthTransport::Mesh,
+        HealthState::Failed,
+        1,
+        4,
+        11,
+        13,
+        false,
+    )
+    .unwrap();
+
+    let mut report = HealthReport::<2>::new();
+    report.push(healthy).unwrap();
+    report.push(degraded).unwrap();
+    assert_eq!(report.push(failed), Err(HealthError::Capacity));
+    assert_eq!(report.push(degraded), Err(HealthError::Duplicate));
+    assert_eq!(report.sampled_at_us(), 11);
+    assert_eq!(report.healthy_count(), 1);
+    assert_eq!(report.degraded_count(), 1);
+    assert_eq!(report.failed_count(), 0);
+    assert_eq!(report.queue_depth(), 7);
+    assert_eq!(report.queue_capacity(), 16);
+    assert_eq!(report.dropped_packets(), 10);
+    assert_eq!(report.retries(), 13);
+    assert!(report.degraded_mode());
+    assert_eq!(report.status(), Status::CLUSTER_DEGRADED);
+    assert_eq!(
+        OperationalHealth::new(0, 1, HealthTransport::Packet, HealthState::Healthy, 0, 1, 0, 0, false),
+        None
+    );
 }
