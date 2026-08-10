@@ -354,7 +354,7 @@ SynOS VMs communicate and obtain distinct leases.
       and shell output; do not infer a mask from an IPv4 address string.
 - [x] Preserve the previous static or last-known-good lease until a new lease
       is acknowledged and the interface health check succeeds.
-- [ ] Implement INIT, SELECTING, REQUESTING, BOUND, RENEWING, REBINDING, and
+- [x] Implement INIT, SELECTING, REQUESTING, BOUND, RENEWING, REBINDING, and
       INIT-REBOOT transitions against real packets and real timer deadlines.
 - [ ] Handle no-offer, NAK, malformed offer, conflicting offer, server change,
       duplicate ACK, lease expiry, release, restart recovery, and link flaps.

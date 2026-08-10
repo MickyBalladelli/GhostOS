@@ -766,6 +766,11 @@ impl DhcpClient {
         {
             return Err(DhcpError::ConflictingOffer);
         }
+        if self.state == DhcpClientState::InitReboot
+            && self.lease.is_some_and(|current| current.address != lease.address)
+        {
+            return Err(DhcpError::ConflictingOffer);
+        }
         let application = DhcpLeaseApplication {
             lease,
             interface: DhcpInterfaceState {
@@ -876,7 +881,12 @@ impl DhcpClient {
         init_reboot: bool,
     ) -> Result<(), DhcpError> {
         if self.attempt >= MAX_DISCOVER_ATTEMPTS {
-            self.next_action_ms = None;
+            // A failed REQUESTING or INIT-REBOOT exchange must restart with
+            // discovery instead of leaving the client permanently idle.
+            self.selected = None;
+            self.state = DhcpClientState::Init;
+            self.attempt = 0;
+            self.next_action_ms = Some(now_ms);
             return Err(DhcpError::ServerUnavailable);
         }
         let (yiaddr, server_id) = if init_reboot {
