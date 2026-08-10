@@ -416,7 +416,7 @@ SynOS VMs communicate and obtain distinct leases.
       bounded timeout/error output.
 - [x] Add `SHOW SOCKETS` for protocol, local endpoint, remote endpoint, owner,
       capability, state, queue sizes, and lifetime; redact unauthorized owners.
-- [ ] Add `SHOW NETWORK-STATS` for interface, DHCP, ARP, ICMP, UDP, TCP, and
+- [x] Add `SHOW NETWORK-STATS` for interface, DHCP, ARP, ICMP, UDP, TCP, and
       firewall counters with reset-safe generation numbers.
 - [ ] Add `TRACEROUTE destination` only after bounded TTL expiry, ICMP time
       exceeded handling, route selection, and rate limits are implemented.

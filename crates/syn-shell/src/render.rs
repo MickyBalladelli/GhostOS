@@ -80,6 +80,9 @@ fn render_list(
     if is_sockets_output(output) {
         return render_sockets(output)
     }
+    if is_network_stats_output(output) {
+        return render_network_stats(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -222,6 +225,13 @@ fn is_sockets_output(output: &StructuredOutput) -> bool {
     matches!(
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "show-sockets"
+    )
+}
+
+fn is_network_stats_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-network-stats"
     )
 }
 
@@ -432,6 +442,84 @@ fn render_sockets(
     }
     if let Some(next) = find_value(output, "next-socket") {
         render_labeled_value(&mut rendered, "Next socket", next)?;
+    }
+    Ok(rendered)
+}
+
+fn render_network_stats(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("Network statistics")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    render_interface_field(&mut rendered, output, "generation", "Generation")?;
+    render_interface_field(&mut rendered, output, "reset-generation", "Reset generation")?;
+    render_interface_field(&mut rendered, output, "interface-count", "Interfaces")?;
+    const INTERFACES: [[&str; 7]; 2] = [
+        [
+            "interface1-name",
+            "interface1-rx-packets",
+            "interface1-rx-bytes",
+            "interface1-tx-packets",
+            "interface1-tx-bytes",
+            "interface1-drops",
+            "interface1-errors",
+        ],
+        [
+            "interface2-name",
+            "interface2-rx-packets",
+            "interface2-rx-bytes",
+            "interface2-tx-packets",
+            "interface2-tx-bytes",
+            "interface2-drops",
+            "interface2-errors",
+        ],
+    ];
+    for (index, fields) in INTERFACES.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Interface {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        render_interface_field(&mut rendered, output, fields[0], "  Name")?;
+        render_interface_field(&mut rendered, output, fields[1], "  RX packets")?;
+        render_interface_field(&mut rendered, output, fields[2], "  RX bytes")?;
+        render_interface_field(&mut rendered, output, fields[3], "  TX packets")?;
+        render_interface_field(&mut rendered, output, fields[4], "  TX bytes")?;
+        render_interface_field(&mut rendered, output, fields[5], "  Drops")?;
+        render_interface_field(&mut rendered, output, fields[6], "  Errors")?;
+    }
+    const GROUPS: [(&str, &str); 19] = [
+        ("dhcp-discovers", "DHCP discovers"),
+        ("dhcp-offers", "DHCP offers"),
+        ("dhcp-retries", "DHCP retries"),
+        ("dhcp-failures", "DHCP failures"),
+        ("arp-requests", "ARP requests"),
+        ("arp-replies", "ARP replies"),
+        ("arp-failures", "ARP failures"),
+        ("icmp-received", "ICMP received"),
+        ("icmp-transmitted", "ICMP transmitted"),
+        ("icmp-loss", "ICMP loss"),
+        ("udp-received", "UDP received"),
+        ("udp-transmitted", "UDP transmitted"),
+        ("udp-dropped", "UDP dropped"),
+        ("tcp-received", "TCP received"),
+        ("tcp-transmitted", "TCP transmitted"),
+        ("tcp-dropped", "TCP dropped"),
+        ("firewall-allowed", "Firewall allowed"),
+        ("firewall-dropped", "Firewall dropped"),
+        ("firewall-rejected", "Firewall rejected"),
+    ];
+    for (field, label) in GROUPS {
+        render_interface_field(&mut rendered, output, field, label)?;
+    }
+    if let Some(next) = find_value(output, "next-interface") {
+        render_labeled_value(&mut rendered, "Next interface", next)?;
     }
     Ok(rendered)
 }

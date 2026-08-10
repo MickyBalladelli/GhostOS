@@ -8,10 +8,14 @@ use syn_shell::{
         PingHandle, PingReply, PingResult, PingSummary, PingTarget, ResolveAnswer,
         ResolveRequest, ResolveResult, ResolveView, ResolvedPingRequest, RouteUpdate,
         SocketEntryView, SocketProtocol, SocketState, SocketView,
+        NetworkStatsArpView, NetworkStatsDhcpView, NetworkStatsFirewallView,
+        NetworkStatsIcmpView, NetworkStatsInterfaceView, NetworkStatsTransportView,
+        NetworkStatsView,
         SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
         SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, SHOW_NEIGHBORS_ROUTE,
         CLEAR_NEIGHBORS_ROUTE, SHOW_DNS_ROUTE, SET_DNS_ROUTE, RESOLVE_ROUTE,
         SHOW_SOCKETS_ROUTE,
+        SHOW_NETWORK_STATS_ROUTE,
         MAX_NETWORK_LINK_EVENTS,
         MAX_NETWORK_OUTPUT_ROWS,
     },
@@ -113,6 +117,7 @@ fn network_commands_use_single_noun_names() {
         ("SET DNS /STATIC /SERVERS=1.1.1.1,8.8.8.8", SET_DNS_ROUTE),
         ("RESOLVE host.example /TIMEOUT=2000 /IPV4", RESOLVE_ROUTE),
         ("SHOW SOCKETS", SHOW_SOCKETS_ROUTE),
+        ("SHOW NETWORK-STATS", SHOW_NETWORK_STATS_ROUTE),
         ("SET HOSTNAME synos", SET_HOSTNAME_ROUTE),
         (
             "SET INTERFACE eth0 /ADDRESS=10.0.0.2 /GATEWAY=10.0.0.1 /MTU=1500 /ENABLE",
@@ -502,6 +507,8 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
     assert!(resolve.qualifiers.contains("/IPV6"));
     let sockets = command_help("SOCKETS").unwrap();
     assert!(sockets.description.contains("ownership"));
+    let stats = command_help("NETWORK-STATS").unwrap();
+    assert!(stats.description.contains("counters"));
 }
 
 #[test]
@@ -742,6 +749,7 @@ fn two_seeded_interfaces_fit_output_budget() {
         neighbors: NeighborView::EMPTY,
         dns: DnsView::EMPTY,
         sockets: SocketView::EMPTY,
+        stats: NetworkStatsView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let interfaces = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -812,6 +820,7 @@ fn four_full_interfaces_paginate_within_output_budget() {
         neighbors: NeighborView::EMPTY,
         dns: DnsView::EMPTY,
         sockets: SocketView::EMPTY,
+        stats: NetworkStatsView::EMPTY,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let output = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -993,6 +1002,90 @@ fn sockets_show_endpoints_state_queues_lifetime_and_redact_owner() {
 }
 
 #[test]
+fn network_stats_show_counter_groups_and_reset_generation() {
+    let mut source = FakeNetwork::seeded();
+    source.stats = NetworkStatsView {
+        generation: 12,
+        reset_generation: 4,
+        interface_count: 2,
+        interfaces: [
+            Some(NetworkStatsInterfaceView {
+                name: text("eth0"),
+                rx_packets: 10,
+                rx_bytes: 1_000,
+                tx_packets: 8,
+                tx_bytes: 800,
+                drops: 2,
+                errors: 1,
+            }),
+            Some(NetworkStatsInterfaceView {
+                name: text("eth1"),
+                rx_packets: 20,
+                rx_bytes: 2_000,
+                tx_packets: 18,
+                tx_bytes: 1_800,
+                drops: 3,
+                errors: 2,
+            }),
+        ],
+        dhcp: NetworkStatsDhcpView {
+            discovers: 3,
+            offers: 2,
+            retries: 1,
+            failures: 1,
+        },
+        arp: NetworkStatsArpView {
+            requests: 7,
+            replies: 6,
+            failures: 1,
+        },
+        icmp: NetworkStatsIcmpView {
+            received: 5,
+            transmitted: 6,
+            loss: 1,
+        },
+        udp: NetworkStatsTransportView {
+            received: 11,
+            transmitted: 12,
+            dropped: 1,
+        },
+        tcp: NetworkStatsTransportView {
+            received: 13,
+            transmitted: 14,
+            dropped: 2,
+        },
+        firewall: NetworkStatsFirewallView {
+            allowed: 20,
+            dropped: 4,
+            rejected: 1,
+        },
+        next_interface: None,
+    };
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
+    let output = execute(&mut executor, "SHOW NETWORK-STATS").unwrap();
+    assert!(has_text(&output, "operation", "show-network-stats"));
+    assert!(has_unsigned(&output, "generation", 12));
+    assert!(has_unsigned(&output, "reset-generation", 4));
+    assert!(has_text(&output, "interface1-name", "eth0"));
+    assert!(lacks_field(&output, "interface2-name"));
+    assert!(has_unsigned(&output, "next-interface", 1));
+    assert!(has_unsigned(&output, "dhcp-retries", 1));
+    assert!(has_unsigned(&output, "arp-failures", 1));
+    assert!(has_unsigned(&output, "icmp-loss", 1));
+    assert!(has_unsigned(&output, "udp-dropped", 1));
+    assert!(has_unsigned(&output, "tcp-dropped", 2));
+    assert!(has_unsigned(&output, "firewall-rejected", 1));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::List)
+        .unwrap()
+        .as_str()
+        .contains("Network statistics"));
+    assert!(syn_shell::render::render(&output, syn_shell::render::OutputFormat::Json)
+        .unwrap()
+        .as_str()
+        .contains("reset-generation"));
+}
+
+#[test]
 fn resolve_returns_bounded_dual_stack_answers_and_failure_output() {
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
     let output = execute(&mut executor, "RESOLVE host.example /TIMEOUT=2000").unwrap();
@@ -1045,6 +1138,7 @@ struct FakeNetwork {
     neighbors: NeighborView,
     dns: DnsView,
     sockets: SocketView,
+    stats: NetworkStatsView,
 }
 
 impl FakeNetwork {
@@ -1060,6 +1154,7 @@ impl FakeNetwork {
             neighbors: NeighborView::EMPTY,
             dns: DnsView::EMPTY,
             sockets: SocketView::EMPTY,
+            stats: NetworkStatsView::EMPTY,
         }
     }
 
@@ -1107,6 +1202,7 @@ impl FakeNetwork {
             neighbors: NeighborView::EMPTY,
             dns: DnsView::EMPTY,
             sockets: SocketView::EMPTY,
+            stats: NetworkStatsView::EMPTY,
         }
     }
 
@@ -1174,6 +1270,10 @@ impl NetworkSource for FakeNetwork {
 
     fn show_sockets(&mut self) -> Result<SocketView, Status> {
         Ok(self.sockets)
+    }
+
+    fn show_network_stats(&mut self) -> Result<NetworkStatsView, Status> {
+        Ok(self.stats)
     }
 
     fn set_dns(&mut self, update: DnsUpdate) -> Result<DnsView, Status> {

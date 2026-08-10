@@ -25,11 +25,13 @@ pub const SHOW_DNS_ROUTE: u16 = 69;
 pub const SET_DNS_ROUTE: u16 = 70;
 pub const RESOLVE_ROUTE: u16 = 71;
 pub const SHOW_SOCKETS_ROUTE: u16 = 72;
+pub const SHOW_NETWORK_STATS_ROUTE: u16 = 73;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
 pub const MAX_NEIGHBOR_OUTPUT_ROWS: usize = 2;
 pub const MAX_SOCKET_OUTPUT_ROWS: usize = 2;
+pub const MAX_NETWORK_STATS_INTERFACES: usize = 2;
 pub const MAX_DNS_SERVERS: usize = 3;
 pub const MAX_DNS_SEARCH_DOMAINS: usize = 3;
 pub const MAX_RESOLVE_ANSWERS: usize = 4;
@@ -145,6 +147,13 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         synopsis: "SHOW SOCKETS",
         description: "Show bounded socket endpoints, ownership, state, queues, and lifetime.",
         aliases: "SOCKETS",
+        qualifiers: "",
+    },
+    NetworkCommandHelp {
+        name: "SHOW-NETWORK-STATS",
+        synopsis: "SHOW NETWORK-STATS",
+        description: "Show bounded interface, protocol, DHCP, and firewall counters with reset generations.",
+        aliases: "NETWORK-STATS",
         qualifiers: "",
     },
 ];
@@ -523,6 +532,109 @@ impl SocketView {
         socket_count: 0,
         sockets: [None; MAX_SOCKET_OUTPUT_ROWS],
         next_socket: None,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkStatsInterfaceView {
+    pub name: NetworkText,
+    pub rx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_packets: u64,
+    pub tx_bytes: u64,
+    pub drops: u64,
+    pub errors: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkStatsDhcpView {
+    pub discovers: u64,
+    pub offers: u64,
+    pub retries: u64,
+    pub failures: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkStatsArpView {
+    pub requests: u64,
+    pub replies: u64,
+    pub failures: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkStatsIcmpView {
+    pub received: u64,
+    pub transmitted: u64,
+    pub loss: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkStatsTransportView {
+    pub received: u64,
+    pub transmitted: u64,
+    pub dropped: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkStatsFirewallView {
+    pub allowed: u64,
+    pub dropped: u64,
+    pub rejected: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkStatsView {
+    pub generation: u64,
+    pub reset_generation: u64,
+    pub interface_count: u64,
+    pub interfaces: [Option<NetworkStatsInterfaceView>; MAX_NETWORK_STATS_INTERFACES],
+    pub dhcp: NetworkStatsDhcpView,
+    pub arp: NetworkStatsArpView,
+    pub icmp: NetworkStatsIcmpView,
+    pub udp: NetworkStatsTransportView,
+    pub tcp: NetworkStatsTransportView,
+    pub firewall: NetworkStatsFirewallView,
+    pub next_interface: Option<u64>,
+}
+
+impl NetworkStatsView {
+    pub const EMPTY: Self = Self {
+        generation: 0,
+        reset_generation: 0,
+        interface_count: 0,
+        interfaces: [None; MAX_NETWORK_STATS_INTERFACES],
+        dhcp: NetworkStatsDhcpView {
+            discovers: 0,
+            offers: 0,
+            retries: 0,
+            failures: 0,
+        },
+        arp: NetworkStatsArpView {
+            requests: 0,
+            replies: 0,
+            failures: 0,
+        },
+        icmp: NetworkStatsIcmpView {
+            received: 0,
+            transmitted: 0,
+            loss: 0,
+        },
+        udp: NetworkStatsTransportView {
+            received: 0,
+            transmitted: 0,
+            dropped: 0,
+        },
+        tcp: NetworkStatsTransportView {
+            received: 0,
+            transmitted: 0,
+            dropped: 0,
+        },
+        firewall: NetworkStatsFirewallView {
+            allowed: 0,
+            dropped: 0,
+            rejected: 0,
+        },
+        next_interface: None,
     };
 }
 
@@ -911,6 +1023,12 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
+    /// Return a bounded counter snapshot. `reset_generation` changes whenever
+    /// counters are reset, so readers never combine values from two epochs.
+    fn show_network_stats(&mut self) -> Result<NetworkStatsView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn set_hostname(&mut self, _hostname: &str) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -1111,6 +1229,11 @@ pub fn register_network_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-SOCKETS", &[]).map_err(|_| Error::InvalidValue)?,
         route(SHOW_SOCKETS_ROUTE),
     )?;
+    registry.register(
+        CommandSpec::new("SHOW-NETWORK-STATS", &[])
+            .map_err(|_| Error::InvalidValue)?,
+        route(SHOW_NETWORK_STATS_ROUTE),
+    )?;
 
     let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
     registry.register(
@@ -1255,6 +1378,9 @@ pub fn dispatch_network_command<Source: NetworkSource>(
             }
         }
         SHOW_SOCKETS_ROUTE => source.show_sockets().and_then(sockets_output),
+        SHOW_NETWORK_STATS_ROUTE => source
+            .show_network_stats()
+            .and_then(network_stats_output),
         SET_HOSTNAME_ROUTE => {
             let hostname = command
                 .get_text("HOSTNAME")
@@ -2216,6 +2342,208 @@ pub fn sockets_output(view: SocketView) -> Result<StructuredOutput, Status> {
         insert(
             &mut output,
             "next-socket",
+            OutputValue::Unsigned(next),
+        )?;
+    }
+    Ok(output)
+}
+
+pub fn network_stats_output(view: NetworkStatsView) -> Result<StructuredOutput, Status> {
+    let actual_count = view
+        .interfaces
+        .iter()
+        .filter(|interface| interface.is_some())
+        .count();
+    if actual_count > MAX_NETWORK_STATS_INTERFACES || actual_count as u64 > view.interface_count {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "show-network-stats")?;
+    insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
+    insert(
+        &mut output,
+        "reset-generation",
+        OutputValue::Unsigned(view.reset_generation),
+    )?;
+    insert(
+        &mut output,
+        "interface-count",
+        OutputValue::Unsigned(view.interface_count),
+    )?;
+    let mut used = output.fields().count();
+    let mut omitted = None;
+    for (index, interface) in view.interfaces.iter().flatten().enumerate() {
+        let needed = 7;
+        let fixed_counter_fields = 19;
+        let remaining = view
+            .interfaces
+            .iter()
+            .flatten()
+            .skip(index + 1)
+            .count()
+            .saturating_add(usize::from(view.next_interface.is_some()));
+        if used
+            .saturating_add(needed)
+            .saturating_add(fixed_counter_fields)
+            .saturating_add(usize::from(remaining > 0))
+            > MAX_OUTPUT_FIELDS
+        {
+            omitted = Some(index as u64);
+            break
+        }
+        let fields = match index {
+            0 => [
+                "interface1-name",
+                "interface1-rx-packets",
+                "interface1-rx-bytes",
+                "interface1-tx-packets",
+                "interface1-tx-bytes",
+                "interface1-drops",
+                "interface1-errors",
+            ],
+            1 => [
+                "interface2-name",
+                "interface2-rx-packets",
+                "interface2-rx-bytes",
+                "interface2-tx-packets",
+                "interface2-tx-bytes",
+                "interface2-drops",
+                "interface2-errors",
+            ],
+            _ => return Err(Status::INVALID_ARGUMENT),
+        };
+        insert_text(&mut output, fields[0], interface.name.as_str())?;
+        insert(
+            &mut output,
+            fields[1],
+            OutputValue::Unsigned(interface.rx_packets),
+        )?;
+        insert(
+            &mut output,
+            fields[2],
+            OutputValue::Unsigned(interface.rx_bytes),
+        )?;
+        insert(
+            &mut output,
+            fields[3],
+            OutputValue::Unsigned(interface.tx_packets),
+        )?;
+        insert(
+            &mut output,
+            fields[4],
+            OutputValue::Unsigned(interface.tx_bytes),
+        )?;
+        insert(
+            &mut output,
+            fields[5],
+            OutputValue::Unsigned(interface.drops),
+        )?;
+        insert(
+            &mut output,
+            fields[6],
+            OutputValue::Unsigned(interface.errors),
+        )?;
+        used = used.saturating_add(needed);
+    }
+    insert(
+        &mut output,
+        "dhcp-discovers",
+        OutputValue::Unsigned(view.dhcp.discovers),
+    )?;
+    insert(
+        &mut output,
+        "dhcp-offers",
+        OutputValue::Unsigned(view.dhcp.offers),
+    )?;
+    insert(
+        &mut output,
+        "dhcp-retries",
+        OutputValue::Unsigned(view.dhcp.retries),
+    )?;
+    insert(
+        &mut output,
+        "dhcp-failures",
+        OutputValue::Unsigned(view.dhcp.failures),
+    )?;
+    insert(
+        &mut output,
+        "arp-requests",
+        OutputValue::Unsigned(view.arp.requests),
+    )?;
+    insert(
+        &mut output,
+        "arp-replies",
+        OutputValue::Unsigned(view.arp.replies),
+    )?;
+    insert(
+        &mut output,
+        "arp-failures",
+        OutputValue::Unsigned(view.arp.failures),
+    )?;
+    insert(
+        &mut output,
+        "icmp-received",
+        OutputValue::Unsigned(view.icmp.received),
+    )?;
+    insert(
+        &mut output,
+        "icmp-transmitted",
+        OutputValue::Unsigned(view.icmp.transmitted),
+    )?;
+    insert(
+        &mut output,
+        "icmp-loss",
+        OutputValue::Unsigned(view.icmp.loss),
+    )?;
+    insert(
+        &mut output,
+        "udp-received",
+        OutputValue::Unsigned(view.udp.received),
+    )?;
+    insert(
+        &mut output,
+        "udp-transmitted",
+        OutputValue::Unsigned(view.udp.transmitted),
+    )?;
+    insert(
+        &mut output,
+        "udp-dropped",
+        OutputValue::Unsigned(view.udp.dropped),
+    )?;
+    insert(
+        &mut output,
+        "tcp-received",
+        OutputValue::Unsigned(view.tcp.received),
+    )?;
+    insert(
+        &mut output,
+        "tcp-transmitted",
+        OutputValue::Unsigned(view.tcp.transmitted),
+    )?;
+    insert(
+        &mut output,
+        "tcp-dropped",
+        OutputValue::Unsigned(view.tcp.dropped),
+    )?;
+    insert(
+        &mut output,
+        "firewall-allowed",
+        OutputValue::Unsigned(view.firewall.allowed),
+    )?;
+    insert(
+        &mut output,
+        "firewall-dropped",
+        OutputValue::Unsigned(view.firewall.dropped),
+    )?;
+    insert(
+        &mut output,
+        "firewall-rejected",
+        OutputValue::Unsigned(view.firewall.rejected),
+    )?;
+    if let Some(next) = omitted.or(view.next_interface) {
+        insert(
+            &mut output,
+            "next-interface",
             OutputValue::Unsigned(next),
         )?;
     }

@@ -1210,7 +1210,8 @@ fn command_category(route: u16) -> &'static str {
         syn_shell::firewall::SHOW_FIREWALL_ROUTE..=syn_shell::firewall::SET_FIREWALL_ROUTE => {
             "FIREWALL"
         }
-        syn_shell::network::SHOW_NETWORK_ROUTE..=syn_shell::network::SHOW_SOCKETS_ROUTE => "NETWORK",
+        syn_shell::network::SHOW_NETWORK_ROUTE
+            ..=syn_shell::network::SHOW_NETWORK_STATS_ROUTE => "NETWORK",
         _ => "SHELL",
     }
 }
@@ -2262,6 +2263,7 @@ struct KernelNetwork {
     neighbors: syn_shell::network::NeighborView,
     dns: syn_shell::network::DnsView,
     sockets: syn_shell::network::SocketView,
+    stats: syn_shell::network::NetworkStatsView,
 }
 
 impl KernelNetwork {
@@ -2308,6 +2310,11 @@ impl KernelNetwork {
             neighbors: syn_shell::network::NeighborView::EMPTY,
             dns: syn_shell::network::DnsView::EMPTY,
             sockets: syn_shell::network::SocketView::EMPTY,
+            stats: syn_shell::network::NetworkStatsView {
+                generation: 1,
+                reset_generation: 1,
+                ..syn_shell::network::NetworkStatsView::EMPTY
+            },
         };
         network.refresh();
         network
@@ -2522,6 +2529,34 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 
     fn show_sockets(&mut self) -> Result<syn_shell::network::SocketView, Status> {
         Ok(self.sockets)
+    }
+
+    fn show_network_stats(
+        &mut self,
+    ) -> Result<syn_shell::network::NetworkStatsView, Status> {
+        self.refresh();
+        self.stats.generation = self.view.generation;
+        self.stats.interface_count = self.view.interface_count;
+        self.stats.interfaces = [None; syn_shell::network::MAX_NETWORK_STATS_INTERFACES];
+        for (index, interface) in self
+            .view
+            .interfaces
+            .iter()
+            .flatten()
+            .take(syn_shell::network::MAX_NETWORK_STATS_INTERFACES)
+            .enumerate()
+        {
+            self.stats.interfaces[index] = Some(syn_shell::network::NetworkStatsInterfaceView {
+                name: interface.name,
+                rx_packets: 0,
+                rx_bytes: 0,
+                tx_packets: 0,
+                tx_bytes: 0,
+                drops: 0,
+                errors: 0,
+            });
+        }
+        Ok(self.stats)
     }
 
     fn set_dns(
@@ -2782,7 +2817,7 @@ impl KernelExecutor {
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
             route if (syn_shell::network::SHOW_NETWORK_ROUTE
-                ..=syn_shell::network::SHOW_SOCKETS_ROUTE)
+                ..=syn_shell::network::SHOW_NETWORK_STATS_ROUTE)
                 .contains(&route) =>
             {
                 if route == syn_shell::network::PING_ROUTE {
