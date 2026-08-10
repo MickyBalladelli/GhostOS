@@ -10,12 +10,12 @@ result_states = ["passed", "failed", "skipped"]
 
 [[tier]]
 name = "fast-unit"
-command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test cpu_differential --test snapshot_terminal_network_10_5 --test terminal_cleanup --test negative_matrix"
+command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test cpu_differential --test snapshot_terminal_network_10_5 --test terminal_cleanup --test negative_matrix --test network_integration"
 status = "deterministic"
 
 [[tier]]
 name = "vm-integration"
-command = "cargo test -p synos-vm --test matrix_59_11 --test firmware_boot_synos_10_4"
+command = "cargo test -p synos-vm --test matrix_59_11 --test firmware_boot_synos_10_4 --test network_integration"
 status = "deterministic"
 
 [[tier]]
@@ -360,6 +360,11 @@ tests = ["vm.network.loopback-routing-isolation-faults"]
 [[test]]
 id = "vm.snapshot.serialization-restore-chain-failures"
 file = "tests/snapshot_terminal_network_10_5.rs"
+tiers = ["fast-unit", "vm-integration"]
+
+[[test]]
+id = "vm.network.two-vm-dhcp-peer-traffic"
+file = "tests/network_integration.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]

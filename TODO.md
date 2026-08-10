@@ -431,8 +431,10 @@ SynOS VMs communicate and obtain distinct leases.
 
 ### End-to-end proof
 
-- [ ] Add two-VM integration coverage for link-up, DHCP lease acquisition,
+- [x] Add two-VM integration coverage for link-up, DHCP lease acquisition,
       distinct addresses, peer ping, peer TCP connection, and lease renewal.
+      Coverage: `vm.network.two-vm-dhcp-peer-traffic` exercises the shared
+      deterministic Ethernet segment with two VMs and valid protocol frames.
 - [ ] Add negative integration coverage for disabled NIC, carrier loss, absent
       DHCP server, DHCP NAK, duplicate address, full lease pool, packet loss,
       queue saturation, and backend disconnect.
