@@ -393,7 +393,7 @@ SynOS VMs communicate and obtain distinct leases.
       `/INTERFACE`, `/SOURCE`, and optional `/IPV4` or `/IPV6` selection.
 - [x] Resolve a literal IPv4 address first; add bounded DNS resolution for host
       names without making command execution block indefinitely.
-- [ ] Execute each echo request asynchronously with cancellation, per-packet
+- [x] Execute each echo request asynchronously with cancellation, per-packet
       timeout, total deadline, sequence tracking, and a hard packet/count limit.
 - [ ] Return stable results for success, timeout, unreachable, no route, link
       down, DNS failure, permission denial, malformed reply, and cancellation.

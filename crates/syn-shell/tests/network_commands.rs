@@ -3,9 +3,9 @@ use syn_shell::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
         NetworkRouteView, NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
-        PingTarget, ResolvedPingRequest, RouteUpdate, SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE,
-        SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE,
-        MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
+        PingHandle, PingTarget, ResolvedPingRequest, RouteUpdate, SET_HOSTNAME_ROUTE,
+        SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE,
+        SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
     },
     interpreter::CommandExecutor,
     parser::CommandRegistry,
@@ -237,6 +237,24 @@ fn ping_dispatches_a_bounded_request_to_the_network_source() {
     assert!(has_unsigned(&output, "size", 16));
     assert!(has_text(&output, "ip-version", "ipv4"));
     assert_eq!(executor.source().command_log[0], PING_ROUTE);
+}
+
+#[test]
+fn ping_stays_pending_and_can_be_cancelled() {
+    let mut source = FakeNetwork::seeded();
+    source.ping_pending = true;
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
+    let call = registry()
+        .parse("PING 198.51.100.4 /COUNT=3 /TIMEOUT=200")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    let token = executor.submit(call, None).unwrap();
+    assert!(executor.poll(token).is_none());
+    assert!(executor.source().ping_completion.is_some());
+    executor.cancel(token).unwrap();
+    assert!(executor.source().ping_completion.is_none());
+    assert!(executor.source().ping_cancelled);
 }
 
 #[test]
@@ -557,6 +575,9 @@ fn two_seeded_interfaces_fit_output_budget() {
             next_interface: None,
             next_route: None,
         },
+        ping_completion: None,
+        ping_pending: false,
+        ping_cancelled: false,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let interfaces = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -621,6 +642,9 @@ fn four_full_interfaces_paginate_within_output_budget() {
             next_interface: None,
             next_route: None,
         },
+        ping_completion: None,
+        ping_pending: false,
+        ping_cancelled: false,
     };
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(source);
     let output = execute(&mut executor, "SHOW INTERFACES").expect("show interfaces");
@@ -645,6 +669,9 @@ struct FakeNetwork {
     command_log: [u16; 8],
     command_count: usize,
     view: NetworkView,
+    ping_completion: Option<synos_system_model::command::StructuredOutput>,
+    ping_pending: bool,
+    ping_cancelled: bool,
 }
 
 impl FakeNetwork {
@@ -654,6 +681,9 @@ impl FakeNetwork {
             command_log: [0; 8],
             command_count: 0,
             view: NetworkView::EMPTY,
+            ping_completion: None,
+            ping_pending: false,
+            ping_cancelled: false,
         }
     }
 
@@ -695,6 +725,9 @@ impl FakeNetwork {
                 next_interface: None,
                 next_route: None,
             },
+            ping_completion: None,
+            ping_pending: false,
+            ping_cancelled: false,
         }
     }
 
@@ -837,6 +870,36 @@ impl NetworkSource for FakeNetwork {
             address: text("198.51.100.4"),
             ip_version,
         })
+    }
+
+    fn start_ping(
+        &mut self,
+        request: ResolvedPingRequest<'_>,
+        schedule: syn_shell::network::PingSchedule,
+    ) -> Result<PingHandle, Status> {
+        assert_eq!(schedule.count, request.request.count);
+        assert_eq!(schedule.packet_timeout_ms, request.request.timeout_ms);
+        assert_eq!(schedule.first_sequence, 1);
+        self.capture_command(PING_ROUTE);
+        self.ping_completion = Some(syn_shell::network::ping_request_output(request)?);
+        PingHandle::new(1).ok_or(Status::INVALID_ARGUMENT)
+    }
+
+    fn poll_ping(
+        &mut self,
+        _handle: PingHandle,
+    ) -> Option<Result<synos_system_model::command::StructuredOutput, Status>> {
+        if self.ping_pending {
+            self.ping_pending = false;
+            return None
+        }
+        self.ping_completion.take().map(Ok)
+    }
+
+    fn cancel_ping(&mut self, _handle: PingHandle) -> Result<(), Status> {
+        self.ping_completion = None;
+        self.ping_cancelled = true;
+        Ok(())
     }
 
     fn ping(

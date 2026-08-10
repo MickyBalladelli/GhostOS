@@ -28,6 +28,8 @@ pub const MAX_PING_TIMEOUT_MS: u32 = 60_000;
 pub const DEFAULT_PING_SIZE: u32 = 32;
 pub const MAX_PING_SIZE: u32 = 256;
 pub const MAX_PING_DNS_TIMEOUT_MS: u32 = 5_000;
+pub const MAX_PING_TOTAL_TIMEOUT_MS: u32 = 120_000;
+pub const PING_FIRST_SEQUENCE: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkCommandHelp {
@@ -251,6 +253,28 @@ impl PingRequest<'_> {
             self.timeout_ms
         }
     }
+
+    pub const fn schedule(self) -> PingSchedule {
+        let total_timeout_ms = self.timeout_ms.saturating_mul(self.count);
+        PingSchedule {
+            count: self.count,
+            packet_timeout_ms: self.timeout_ms,
+            total_timeout_ms: if total_timeout_ms > MAX_PING_TOTAL_TIMEOUT_MS {
+                MAX_PING_TOTAL_TIMEOUT_MS
+            } else {
+                total_timeout_ms
+            },
+            first_sequence: PING_FIRST_SEQUENCE,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PingSchedule {
+    pub count: u32,
+    pub packet_timeout_ms: u32,
+    pub total_timeout_ms: u32,
+    pub first_sequence: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -263,6 +287,20 @@ pub struct PingTarget {
 pub struct ResolvedPingRequest<'a> {
     pub request: PingRequest<'a>,
     pub target: PingTarget,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct PingHandle(u64);
+
+impl PingHandle {
+    pub const fn new(raw: u64) -> Option<Self> {
+        if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
 }
 
 /// Source of truth for network settings.
@@ -319,6 +357,29 @@ pub trait NetworkSource {
             ),
             Err(status) => Err(status),
         }
+    }
+
+    /// Start a bounded ping session. The provider must send no more than
+    /// `schedule.count` packets, start at `schedule.first_sequence`, enforce
+    /// both deadlines, and keep the session non-blocking after this call.
+    fn start_ping(
+        &mut self,
+        _request: ResolvedPingRequest<'_>,
+        _schedule: PingSchedule,
+    ) -> Result<PingHandle, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    /// Poll a ping session. `None` means still running; `Some` completes it.
+    fn poll_ping(
+        &mut self,
+        _handle: PingHandle,
+    ) -> Option<Result<StructuredOutput, Status>> {
+        None
+    }
+
+    fn cancel_ping(&mut self, _handle: PingHandle) -> Result<(), Status> {
+        Err(Status::NOT_FOUND)
     }
 
     fn ping(&mut self, _request: ResolvedPingRequest<'_>) -> Result<StructuredOutput, Status> {
@@ -417,7 +478,12 @@ pub fn register_network_commands<const CAPACITY: usize>(
 
 pub struct NetworkExecutor<Source, const CAPACITY: usize = 16> {
     source: Source,
-    completions: [Option<Result<StructuredOutput, Status>>; CAPACITY],
+    completions: [Option<NetworkCompletion>; CAPACITY],
+}
+
+enum NetworkCompletion {
+    Ready(Result<StructuredOutput, Status>),
+    Ping(PingHandle),
 }
 
 impl<Source, const CAPACITY: usize> NetworkExecutor<Source, CAPACITY> {
@@ -507,24 +573,55 @@ impl<Source: NetworkSource, const CAPACITY: usize> CommandExecutor
             .iter()
             .position(Option::is_none)
             .ok_or(Error::Capacity)?;
-        let completion = dispatch_network_command(&mut self.source, command);
+        let completion = if command.route.raw() == PING_ROUTE {
+            let request = ping_request(&command).map_err(Error::CommandFailed)?;
+            let target = self
+                .source
+                .resolve_ping_target(request)
+                .map_err(Error::CommandFailed)?;
+            let handle = self
+                .source
+                .start_ping(
+                    ResolvedPingRequest { request, target },
+                    request.schedule(),
+                )
+                .map_err(Error::CommandFailed)?;
+            NetworkCompletion::Ping(handle)
+        } else {
+            NetworkCompletion::Ready(dispatch_network_command(&mut self.source, command))
+        };
         self.completions[slot] = Some(completion);
         ExecutionToken::new((slot + 1) as u64).ok_or(Error::InvalidHandle)
     }
 
     fn poll(&mut self, token: ExecutionToken) -> Option<Result<StructuredOutput, Status>> {
-        self.completions
-            .get_mut(token.raw().checked_sub(1)? as usize)?
-            .take()
+        let slot = self
+            .completions
+            .get_mut(token.raw().checked_sub(1)? as usize)?;
+        match slot.take()? {
+            NetworkCompletion::Ready(result) => Some(result),
+            NetworkCompletion::Ping(handle) => match self.source.poll_ping(handle) {
+                Some(result) => Some(result),
+                None => {
+                    *slot = Some(NetworkCompletion::Ping(handle));
+                    None
+                }
+            },
+        }
     }
 
     fn cancel(&mut self, token: ExecutionToken) -> Result<(), Error> {
-        let completion = self
+        let slot = self
             .completions
             .get_mut(token.raw().checked_sub(1).ok_or(Error::InvalidHandle)? as usize)
             .ok_or(Error::InvalidHandle)?;
-        *completion = None;
-        Ok(())
+        match slot.take() {
+            Some(NetworkCompletion::Ready(_)) | None => Ok(()),
+            Some(NetworkCompletion::Ping(handle)) => self
+                .source
+                .cancel_ping(handle)
+                .map_err(Error::CommandFailed),
+        }
     }
 }
 
