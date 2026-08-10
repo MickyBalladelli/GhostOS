@@ -95,7 +95,10 @@ fn evidence_key_rotation_revocation_replay_downgrade_and_root_recovery_are_fence
         manager.admit(new_quote, 6),
         Err(Error::Attestation(ShieldError::Unauthorized))
     );
-    assert_eq!(manager.revoke(node), Err(Error::NotFound));
+    assert_eq!(
+        manager.revoke(node),
+        Err(Error::Attestation(ShieldError::NotFound))
+    );
 
     let old_pair = MlKemKeypair::from_seed([86; 32]);
     let new_pair = MlKemKeypair::from_seed([87; 32]);
