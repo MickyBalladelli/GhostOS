@@ -420,8 +420,12 @@ SynOS VMs communicate and obtain distinct leases.
       firewall counters with reset-safe generation numbers.
 - [x] Add `TRACEROUTE destination` only after bounded TTL expiry, ICMP time
       exceeded handling, route selection, and rate limits are implemented.
-- [ ] Add `SHOW PACKETS` or a capability-gated bounded packet capture for
+- [x] Add `SHOW PACKETS` or a capability-gated bounded packet capture for
       diagnostics, with filters, truncation, redaction, and automatic expiry.
+      Evidence: `SHOW PACKETS` is capability-gated by `NetworkDiagnostic`,
+      accepts interface, direction, protocol, and record-limit filters, and
+      returns fixed-size metadata with explicit truncation, payload-redaction,
+      dropped-record, and expiry fields.
 - [ ] Add command aliases and help entries consistently for singular/plural
       network nouns, structured output, JSON output, and continuation limits.
 

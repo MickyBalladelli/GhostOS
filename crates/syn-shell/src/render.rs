@@ -86,6 +86,9 @@ fn render_list(
     if is_traceroute_output(output) {
         return render_traceroute(output)
     }
+    if is_packet_capture_output(output) {
+        return render_packet_capture(output)
+    }
     if is_metadata_output(output) {
         return render_metadata(output)
     }
@@ -242,6 +245,13 @@ fn is_traceroute_output(output: &StructuredOutput) -> bool {
     matches!(
         find_value(output, "operation"),
         Some(OutputValue::Text(value)) if value.as_str() == "traceroute"
+    )
+}
+
+fn is_packet_capture_output(output: &StructuredOutput) -> bool {
+    matches!(
+        find_value(output, "operation"),
+        Some(OutputValue::Text(value)) if value.as_str() == "show-packets"
     )
 }
 
@@ -576,6 +586,67 @@ fn render_traceroute(
     }
     if let Some(next) = find_value(output, "next-hop") {
         render_labeled_value(&mut rendered, "Next hop", next)?;
+    }
+    Ok(rendered)
+}
+
+fn render_packet_capture(
+    output: &StructuredOutput,
+) -> Result<Text<MAX_RENDERED_OUTPUT_BYTES>, Error> {
+    let mut rendered = Text::empty();
+    render_error_status(output, &mut rendered)?;
+    rendered.push_str(ANSI_BOLD)?;
+    rendered.push_str("SHOW PACKETS")?;
+    rendered.push_str(ANSI_RESET)?;
+    rendered.push_str("\n")?;
+    for (field, label) in [
+        ("record-count", "Records"),
+        ("dropped-count", "Dropped"),
+        ("expired-count", "Expired"),
+        ("capture-expires-at-ms", "Capture expires (ms)"),
+    ] {
+        render_interface_field(&mut rendered, output, field, label)?;
+    }
+    const PACKETS: [[&str; 12]; 2] = [
+        [
+            "packet1-sequence", "packet1-timestamp-ms", "packet1-interface",
+            "packet1-direction", "packet1-protocol", "packet1-source",
+            "packet1-destination", "packet1-length", "packet1-original-length",
+            "packet1-truncated", "packet1-payload", "packet1-payload-redacted",
+        ],
+        [
+            "packet2-sequence", "packet2-timestamp-ms", "packet2-interface",
+            "packet2-direction", "packet2-protocol", "packet2-source",
+            "packet2-destination", "packet2-length", "packet2-original-length",
+            "packet2-truncated", "packet2-payload", "packet2-payload-redacted",
+        ],
+    ];
+    for (index, fields) in PACKETS.iter().enumerate() {
+        if find_value(output, fields[0]).is_none() {
+            continue
+        }
+        rendered.push_str(ANSI_BOLD)?;
+        write!(&mut rendered, "Packet {}", index + 1).map_err(|_| Error::Capacity)?;
+        rendered.push_str(ANSI_RESET)?;
+        rendered.push_str("\n")?;
+        for (field, label) in fields.iter().skip(1).zip([
+            "  Timestamp (ms)",
+            "  Interface",
+            "  Direction",
+            "  Protocol",
+            "  Source",
+            "  Destination",
+            "  Length",
+            "  Original length",
+            "  Truncated",
+            "  Payload",
+            "  Payload redacted",
+        ]) {
+            render_interface_field(&mut rendered, output, field, label)?;
+        }
+    }
+    if let Some(next) = find_value(output, "next-record") {
+        render_labeled_value(&mut rendered, "Next record", next)?;
     }
     Ok(rendered)
 }

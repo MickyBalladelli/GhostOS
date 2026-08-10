@@ -1211,7 +1211,7 @@ fn command_category(route: u16) -> &'static str {
             "FIREWALL"
         }
         syn_shell::network::SHOW_NETWORK_ROUTE
-            ..=syn_shell::network::TRACEROUTE_ROUTE => "NETWORK",
+            ..=syn_shell::network::SHOW_PACKETS_ROUTE => "NETWORK",
         _ => "SHELL",
     }
 }
@@ -2264,12 +2264,15 @@ struct KernelNetwork {
     dns: syn_shell::network::DnsView,
     sockets: syn_shell::network::SocketView,
     stats: syn_shell::network::NetworkStatsView,
+    packet_capture: syn_shell::network::PacketCaptureBuffer,
+    now_ms: u64,
 }
 
 impl KernelNetwork {
     fn new(
         boot_info: &'static BootInfo,
         diagnostic_capability: crate::CapabilityHandle,
+        scheduler_clock: u64,
     ) -> Self {
         use syn_shell::network::{
             InterfaceAddressMode, MAX_NETWORK_OUTPUT_ROWS, NetworkInterfaceView, NetworkText,
@@ -2310,6 +2313,8 @@ impl KernelNetwork {
             neighbors: syn_shell::network::NeighborView::EMPTY,
             dns: syn_shell::network::DnsView::EMPTY,
             sockets: syn_shell::network::SocketView::EMPTY,
+            packet_capture: syn_shell::network::PacketCaptureBuffer::new(),
+            now_ms: scheduler_clock / 1_000,
             stats: syn_shell::network::NetworkStatsView {
                 generation: 1,
                 reset_generation: 1,
@@ -2322,6 +2327,11 @@ impl KernelNetwork {
 
     fn bump(&mut self) {
         self.view.generation = self.view.generation.saturating_add(1);
+    }
+
+    fn set_now_ms(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
+        self.packet_capture.expire(now_ms);
     }
 
     fn interface_mut(
@@ -2496,6 +2506,20 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
         _request: syn_shell::network::ResolvedPingRequest<'_>,
     ) -> Result<u64, Status> {
         Ok(self.diagnostic_capability.raw())
+    }
+
+    fn authorize_packet_capture(
+        &mut self,
+        _request: syn_shell::network::PacketCaptureRequest<'_>,
+    ) -> Result<u64, Status> {
+        Ok(self.diagnostic_capability.raw())
+    }
+
+    fn show_packets(
+        &mut self,
+        request: syn_shell::network::PacketCaptureRequest<'_>,
+    ) -> Result<syn_shell::network::PacketCaptureView, Status> {
+        Ok(self.packet_capture.view(self.now_ms, request))
     }
 
     fn show_network(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
@@ -2793,7 +2817,7 @@ impl KernelExecutor {
             control_authority,
             dlm,
             filesystem: FilesystemExecutor::new(filesystem),
-            network: KernelNetwork::new(boot_info, network_diagnostic),
+            network: KernelNetwork::new(boot_info, network_diagnostic, scheduler_clock),
             firewall_policy_version: 1,
             firewall_rule_count: 0,
         }
@@ -2817,10 +2841,13 @@ impl KernelExecutor {
             syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
             syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
             route if (syn_shell::network::SHOW_NETWORK_ROUTE
-                ..=syn_shell::network::TRACEROUTE_ROUTE)
+                ..=syn_shell::network::SHOW_PACKETS_ROUTE)
                 .contains(&route) =>
             {
-                if route == syn_shell::network::PING_ROUTE {
+                self.network.set_now_ms(self.scheduler.clock() / 1_000);
+                if route == syn_shell::network::PING_ROUTE
+                    || route == syn_shell::network::SHOW_PACKETS_ROUTE
+                {
                     self.capabilities
                         .authorize(
                             AddressSpaceId::KERNEL,

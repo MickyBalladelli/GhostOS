@@ -27,6 +27,7 @@ pub const RESOLVE_ROUTE: u16 = 71;
 pub const SHOW_SOCKETS_ROUTE: u16 = 72;
 pub const SHOW_NETWORK_STATS_ROUTE: u16 = 73;
 pub const TRACEROUTE_ROUTE: u16 = 74;
+pub const SHOW_PACKETS_ROUTE: u16 = 75;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
@@ -53,6 +54,12 @@ pub const MAX_PING_SIZE: u32 = 256;
 pub const MAX_PING_DNS_TIMEOUT_MS: u32 = 5_000;
 pub const MAX_PING_TOTAL_TIMEOUT_MS: u32 = 120_000;
 pub const PING_FIRST_SEQUENCE: u32 = 1;
+pub const MAX_PACKET_CAPTURE_RECORDS: usize = 32;
+pub const MAX_PACKET_OUTPUT_ROWS: usize = 2;
+pub const MAX_PACKET_PAYLOAD_BYTES: usize = 32;
+pub const DEFAULT_PACKET_MAX_RECORDS: u32 = MAX_PACKET_OUTPUT_ROWS as u32;
+pub const MAX_PACKET_MAX_RECORDS: u32 = MAX_PACKET_CAPTURE_RECORDS as u32;
+pub const PACKET_CAPTURE_EXPIRY_MS: u64 = 30_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkCommandHelp {
@@ -169,6 +176,13 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         aliases: "",
         qualifiers: "",
     },
+    NetworkCommandHelp {
+        name: "SHOW-PACKETS",
+        synopsis: "SHOW PACKETS",
+        description: "Show a capability-gated, bounded packet capture with filter and expiry metadata.",
+        aliases: "PACKETS",
+        qualifiers: "/INTERFACE /DIRECTION /PROTOCOL /MAX",
+    },
 ];
 
 pub fn command_help(name: &str) -> Option<&'static NetworkCommandHelp> {
@@ -187,6 +201,214 @@ pub fn command_help(name: &str) -> Option<&'static NetworkCommandHelp> {
 }
 
 pub type NetworkText = Text<MAX_TOKEN_BYTES>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PacketDirection {
+    Ingress,
+    Egress,
+}
+
+impl PacketDirection {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ingress => "ingress",
+            Self::Egress => "egress",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PacketCaptureRequest<'a> {
+    pub interface: Option<&'a str>,
+    pub direction: Option<PacketDirection>,
+    pub protocol: Option<&'a str>,
+    pub max_records: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PacketCaptureRecordView {
+    pub sequence: u64,
+    pub timestamp_ms: u64,
+    pub interface: NetworkText,
+    pub direction: PacketDirection,
+    pub protocol: NetworkText,
+    pub source: NetworkText,
+    pub destination: NetworkText,
+    pub source_port: Option<u16>,
+    pub destination_port: Option<u16>,
+    pub length: u32,
+    pub original_length: u32,
+    pub truncated: bool,
+    pub expires_at_ms: u64,
+    pub payload: NetworkText,
+    pub payload_redacted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PacketCaptureView {
+    pub generation: u64,
+    pub record_count: u64,
+    pub dropped_count: u64,
+    pub expired_count: u64,
+    pub capture_expires_at_ms: u64,
+    pub records: [Option<PacketCaptureRecordView>; MAX_PACKET_OUTPUT_ROWS],
+    pub next_record: Option<u64>,
+}
+
+impl PacketCaptureView {
+    pub const EMPTY: Self = Self {
+        generation: 0,
+        record_count: 0,
+        dropped_count: 0,
+        expired_count: 0,
+        capture_expires_at_ms: 0,
+        records: [None; MAX_PACKET_OUTPUT_ROWS],
+        next_record: None,
+    };
+}
+
+pub struct PacketCaptureBuffer<const CAPACITY: usize = MAX_PACKET_CAPTURE_RECORDS> {
+    records: [Option<PacketCaptureRecordView>; CAPACITY],
+    length: usize,
+    next_sequence: u64,
+    generation: u64,
+    dropped_count: u64,
+    expired_count: u64,
+    capture_expires_at_ms: u64,
+}
+
+impl<const CAPACITY: usize> PacketCaptureBuffer<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            records: [None; CAPACITY],
+            length: 0,
+            next_sequence: 0,
+            generation: 0,
+            dropped_count: 0,
+            expired_count: 0,
+            capture_expires_at_ms: 0,
+        }
+    }
+
+    pub fn record(
+        &mut self,
+        now_ms: u64,
+        interface: &str,
+        direction: PacketDirection,
+        protocol: &str,
+        source: &str,
+        destination: &str,
+        source_port: Option<u16>,
+        destination_port: Option<u16>,
+        payload: &[u8],
+    ) -> Result<(), Status> {
+        self.expire(now_ms);
+        if CAPACITY == 0 || self.length == CAPACITY {
+            self.dropped_count = self.dropped_count.saturating_add(1);
+            return Ok(())
+        }
+        let mut preview = NetworkText::empty();
+        preview.push_str("<redacted>").map_err(|_| Status::NO_SPACE)?;
+        let record = PacketCaptureRecordView {
+            sequence: self.next_sequence,
+            timestamp_ms: now_ms,
+            interface: NetworkText::new(interface).map_err(|_| Status::NO_SPACE)?,
+            direction,
+            protocol: NetworkText::new(protocol).map_err(|_| Status::NO_SPACE)?,
+            source: NetworkText::new(source).map_err(|_| Status::NO_SPACE)?,
+            destination: NetworkText::new(destination).map_err(|_| Status::NO_SPACE)?,
+            source_port,
+            destination_port,
+            length: payload.len().min(MAX_PACKET_PAYLOAD_BYTES) as u32,
+            original_length: payload.len().min(u32::MAX as usize) as u32,
+            truncated: payload.len() > MAX_PACKET_PAYLOAD_BYTES,
+            expires_at_ms: now_ms.saturating_add(PACKET_CAPTURE_EXPIRY_MS),
+            payload: preview,
+            payload_redacted: true,
+        };
+        self.records[self.length] = Some(record);
+        self.length += 1;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.generation = self.generation.saturating_add(1);
+        self.capture_expires_at_ms = self.records[..self.length]
+            .iter()
+            .flatten()
+            .map(|record| record.expires_at_ms)
+            .min()
+            .unwrap_or(0);
+        Ok(())
+    }
+
+    pub fn expire(&mut self, now_ms: u64) {
+        if self.length == 0 {
+            return
+        }
+        let mut retained = 0usize;
+        let mut expired = 0u64;
+        for index in 0..self.length {
+            let Some(record) = self.records[index] else { continue };
+            if now_ms >= record.expires_at_ms {
+                expired = expired.saturating_add(1);
+                continue
+            }
+            self.records[retained] = Some(record);
+            retained += 1;
+        }
+        self.records[retained..self.length].fill(None);
+        self.length = retained;
+        self.expired_count = self.expired_count.saturating_add(expired);
+        self.capture_expires_at_ms = self.records[..self.length]
+            .iter()
+            .flatten()
+            .map(|record| record.expires_at_ms)
+            .min()
+            .unwrap_or(0);
+        if expired != 0 {
+            self.generation = self.generation.saturating_add(1);
+        }
+    }
+
+    pub fn view(&mut self, now_ms: u64, request: PacketCaptureRequest<'_>) -> PacketCaptureView {
+        self.expire(now_ms);
+        let mut view = PacketCaptureView {
+            generation: self.generation,
+            record_count: 0,
+            dropped_count: self.dropped_count,
+            expired_count: self.expired_count,
+            capture_expires_at_ms: self.capture_expires_at_ms,
+            records: [None; MAX_PACKET_OUTPUT_ROWS],
+            next_record: None,
+        };
+        let limit = request.max_records.min(MAX_PACKET_MAX_RECORDS) as usize;
+        let mut matched = 0usize;
+        for record in self.records[..self.length].iter().flatten() {
+            if request.interface.is_some_and(|value| {
+                !record.interface.as_str().eq_ignore_ascii_case(value)
+            }) || request.direction.is_some_and(|value| record.direction != value)
+                || request.protocol.is_some_and(|value| {
+                    !record.protocol.as_str().eq_ignore_ascii_case(value)
+                })
+            {
+                continue
+            }
+            view.record_count = view.record_count.saturating_add(1);
+            if matched < limit && matched < MAX_PACKET_OUTPUT_ROWS {
+                view.records[matched] = Some(*record);
+                matched += 1;
+            }
+        }
+        if view.record_count > matched as u64 {
+            view.next_record = Some(matched as u64);
+        }
+        view
+    }
+}
+
+impl<const CAPACITY: usize> Default for PacketCaptureBuffer<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -1127,6 +1349,23 @@ pub trait NetworkSource {
         Err(Status::ACCESS_DENIED)
     }
 
+    /// Prove the caller has the diagnostic capability before exposing packet
+    /// metadata. Providers must expire old records before returning a view and
+    /// must redact payloads and unauthorized endpoint identity.
+    fn authorize_packet_capture(
+        &mut self,
+        _request: PacketCaptureRequest<'_>,
+    ) -> Result<u64, Status> {
+        Err(Status::ACCESS_DENIED)
+    }
+
+    fn show_packets(
+        &mut self,
+        _request: PacketCaptureRequest<'_>,
+    ) -> Result<PacketCaptureView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
     fn show_network(&mut self) -> Result<NetworkView, Status> {
         Err(Status::NOT_FOUND)
     }
@@ -1346,6 +1585,22 @@ fn traceroute_result_from_status(status: Status) -> TracerouteResult {
     }
 }
 
+fn record_packet_capture_request(
+    capability: u64,
+    request: PacketCaptureRequest<'_>,
+) {
+    audit_event!(
+        Level::Info,
+        EventField::unsigned(field::OPERATION, SHOW_PACKETS_ROUTE as u64),
+        EventField::unsigned(field::CAPABILITY, capability),
+        EventField::unsigned(field::LENGTH, request.max_records as u64),
+        EventField::identifier(
+            field::TRANSPORT,
+            request.protocol.map_or(0, audit_identity),
+        ),
+    );
+}
+
 pub fn register_network_commands<const CAPACITY: usize>(
     registry: &mut CommandRegistry<CAPACITY>,
 ) -> Result<(), Error> {
@@ -1411,6 +1666,16 @@ pub fn register_network_commands<const CAPACITY: usize>(
         CommandSpec::new("TRACEROUTE", &[destination])
             .map_err(|_| Error::InvalidValue)?,
         route(TRACEROUTE_ROUTE),
+    )?;
+
+    let interface = qualifier("INTERFACE", ArgumentKind::Text)?;
+    let direction = qualifier("DIRECTION", ArgumentKind::Text)?;
+    let protocol = qualifier("PROTOCOL", ArgumentKind::Text)?;
+    let max = qualifier("MAX", ArgumentKind::Integer)?;
+    registry.register(
+        CommandSpec::new("SHOW-PACKETS", &[interface, direction, protocol, max])
+            .map_err(|_| Error::InvalidValue)?,
+        route(SHOW_PACKETS_ROUTE),
     )?;
 
     let hostname = positional("HOSTNAME", ArgumentKind::Text, true)?;
@@ -1566,6 +1831,12 @@ pub fn dispatch_network_command<Source: NetworkSource>(
                 Err(status) => TracerouteView::failure(request, traceroute_result_from_status(status))
                     .and_then(traceroute_output),
             }
+        }
+        SHOW_PACKETS_ROUTE => {
+            let request = packet_capture_request(&command)?;
+            let capability = source.authorize_packet_capture(request)?;
+            record_packet_capture_request(capability, request);
+            source.show_packets(request).and_then(packet_capture_output)
         }
         SET_HOSTNAME_ROUTE => {
             let hostname = command
@@ -1905,6 +2176,32 @@ pub fn traceroute_request<'a>(
         .filter(|value| !value.is_empty())
         .ok_or(Status::INVALID_ARGUMENT)?;
     Ok(TracerouteRequest::defaults(destination))
+}
+
+pub fn packet_capture_request<'a>(
+    command: &'a CommandCall,
+) -> Result<PacketCaptureRequest<'a>, Status> {
+    let interface = optional_text(command, "INTERFACE")?;
+    let protocol = optional_text(command, "PROTOCOL")?;
+    if interface.is_some_and(str::is_empty) || protocol.is_some_and(str::is_empty) {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let direction = match optional_text(command, "DIRECTION")? {
+        None => None,
+        Some(value) if value.eq_ignore_ascii_case("ingress") => Some(PacketDirection::Ingress),
+        Some(value) if value.eq_ignore_ascii_case("egress") => Some(PacketDirection::Egress),
+        Some(_) => return Err(Status::INVALID_ARGUMENT),
+    };
+    let max_records = optional_u32(command, "MAX")?.unwrap_or(DEFAULT_PACKET_MAX_RECORDS);
+    if !(1..=MAX_PACKET_MAX_RECORDS).contains(&max_records) {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    Ok(PacketCaptureRequest {
+        interface,
+        direction,
+        protocol,
+        max_records,
+    })
 }
 
 fn parse_dns_list<const CAPACITY: usize>(
@@ -2858,6 +3155,112 @@ pub fn traceroute_output(view: TracerouteView) -> Result<StructuredOutput, Statu
     }
     if let Some(next) = view.next_hop {
         insert(&mut output, "next-hop", OutputValue::Unsigned(next))?;
+    }
+    Ok(output)
+}
+
+pub fn packet_capture_output(
+    view: PacketCaptureView,
+) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "show-packets")?;
+    insert(&mut output, "generation", OutputValue::Unsigned(view.generation))?;
+    insert(&mut output, "record-count", OutputValue::Unsigned(view.record_count))?;
+    insert(&mut output, "dropped-count", OutputValue::Unsigned(view.dropped_count))?;
+    insert(&mut output, "expired-count", OutputValue::Unsigned(view.expired_count))?;
+    insert(
+        &mut output,
+        "capture-expires-at-ms",
+        OutputValue::Unsigned(view.capture_expires_at_ms),
+    )?;
+    for (index, record) in view.records.iter().flatten().enumerate() {
+        insert_indexed(
+            &mut output,
+            "packet",
+            index,
+            "sequence",
+            OutputValue::Unsigned(record.sequence),
+        )?;
+        insert_indexed(
+            &mut output,
+            "packet",
+            index,
+            "timestamp-ms",
+            OutputValue::Unsigned(record.timestamp_ms),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "packet",
+            index,
+            "interface",
+            record.interface.as_str(),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "packet",
+            index,
+            "direction",
+            record.direction.as_str(),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "packet",
+            index,
+            "protocol",
+            record.protocol.as_str(),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "packet",
+            index,
+            "source",
+            record.source.as_str(),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "packet",
+            index,
+            "destination",
+            record.destination.as_str(),
+        )?;
+        insert_indexed(
+            &mut output,
+            "packet",
+            index,
+            "length",
+            OutputValue::Unsigned(record.length as u64),
+        )?;
+        insert_indexed(
+            &mut output,
+            "packet",
+            index,
+            "original-length",
+            OutputValue::Unsigned(record.original_length as u64),
+        )?;
+        insert_indexed(
+            &mut output,
+            "packet",
+            index,
+            "truncated",
+            OutputValue::Boolean(record.truncated),
+        )?;
+        insert_indexed_text(
+            &mut output,
+            "packet",
+            index,
+            "payload",
+            record.payload.as_str(),
+        )?;
+        insert_indexed(
+            &mut output,
+            "packet",
+            index,
+            "payload-redacted",
+            OutputValue::Boolean(record.payload_redacted),
+        )?;
+    }
+    if let Some(next) = view.next_record {
+        insert(&mut output, "next-record", OutputValue::Unsigned(next))?;
     }
     Ok(output)
 }
