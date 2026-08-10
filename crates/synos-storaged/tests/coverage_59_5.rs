@@ -8,12 +8,180 @@ use synos_storaged::{
     StorageRights, AdmissionEndpoint, ClusterBootstrapError, ClusterBootstrapState, Endpoint,
     ClusterCreateRequest,
     MembershipChangeKind, MembershipReason, MembershipState, NvmeCommand, NvmeQueue,
-    SecurityPolicy, MAX_PENDING_IO,
+    SecurityPolicy, ActionRequest, ClusterHealth, ClusterSample, FailureController, FailureKind,
+    NodeHealthSample, OperatorAction, RecoveryHooks, RecoveryState, MAX_PENDING_IO,
 };
 use synos_auth::CapabilityKey;
 use synos_fabric::NodeId;
 use synos_synfs::SynFs;
 use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
+use synos_status::Status;
+use synos_time_sync::ManualClock;
+
+struct RecoveryProbe {
+    events: Vec<&'static str>,
+}
+
+impl RecoveryProbe {
+    fn new() -> Self {
+        Self { events: Vec::new() }
+    }
+
+    fn record(&mut self, event: &'static str) -> Result<(), Status> {
+        self.events.push(event);
+        Ok(())
+    }
+}
+
+impl RecoveryHooks for RecoveryProbe {
+    fn retry(&mut self, _node: NodeId) -> Result<(), Status> { self.record("retry") }
+    fn drain(&mut self, _node: NodeId) -> Result<(), Status> { self.record("drain") }
+    fn fence(&mut self, _node: NodeId) -> Result<(), Status> { self.record("fence") }
+    fn unfence(&mut self, _node: NodeId) -> Result<(), Status> { self.record("unfence") }
+    fn release_shared_memory(&mut self, _node: NodeId) -> Result<(), Status> { self.record("memory") }
+    fn release_storage(&mut self, _node: NodeId) -> Result<(), Status> { self.record("storage") }
+    fn release_jobs(&mut self, _node: NodeId) -> Result<(), Status> { self.record("jobs") }
+    fn revoke_capabilities(&mut self, _node: NodeId) -> Result<(), Status> { self.record("capabilities") }
+    fn release_dlm_leases(&mut self, _node: NodeId) -> Result<(), Status> { self.record("leases") }
+    fn reconcile_membership(&mut self, _node: NodeId) -> Result<(), Status> { self.record("membership") }
+    fn reconcile_synfs_cow(&mut self, _node: NodeId) -> Result<(), Status> { self.record("synfs") }
+    fn reconcile_logs(&mut self, _node: NodeId) -> Result<(), Status> { self.record("logs") }
+    fn reconcile_reservations(&mut self, _node: NodeId) -> Result<(), Status> { self.record("reservations") }
+    fn reconcile_workloads(&mut self, _node: NodeId) -> Result<(), Status> { self.record("workloads") }
+    fn rollback(&mut self) -> Result<(), Status> { self.record("rollback") }
+    fn abandon(&mut self, _node: NodeId) -> Result<(), Status> { self.record("abandon") }
+}
+
+fn failure_sample(node: NodeId, reachable: bool, heartbeat_age_us: u64, clock_offset_us: i64) -> NodeHealthSample {
+    NodeHealthSample {
+        node,
+        reachable,
+        heartbeat_age_us,
+        heartbeat_timeout_us: 100,
+        clock_offset_us,
+        maximum_clock_skew_us: 50,
+        protocol_version: 1,
+        minimum_protocol_version: 1,
+        maximum_protocol_version: 1,
+        generation: 7,
+        membership_epoch: 3,
+    }
+}
+
+fn partition_sample() -> ClusterSample {
+    ClusterSample {
+        generation: 7,
+        membership_epoch: 3,
+        voting_members: 3,
+        available_votes: 1,
+        required_votes: 2,
+        partitioned: true,
+        sampled_at_us: 0,
+    }
+}
+
+#[test]
+fn partition_fences_before_storage_and_memory_release() {
+    let node = NodeId::new(2).unwrap();
+    let mut controller = FailureController::<2, 16>::new();
+    let report = controller.observe(partition_sample(), &[failure_sample(node, false, 100, 0)]);
+    assert_eq!(report.health, ClusterHealth::Partitioned);
+    assert_eq!(controller.state(node), Some(RecoveryState::Failed));
+    assert!(controller.events().any(|event| event.kind == FailureKind::Partition));
+    assert!(controller.events().any(|event| event.kind == FailureKind::NodeFailure));
+
+    let mut probe = RecoveryProbe::new();
+    assert_eq!(
+        controller.apply(
+            ActionRequest {
+                action: OperatorAction::Recover,
+                node: Some(node),
+                confirm: false,
+                force: false,
+            },
+            &mut probe,
+        ),
+        Err(synos_storaged::FailureError::ReconciliationRequired)
+    );
+    assert!(probe.events.is_empty());
+    controller
+        .apply(
+            ActionRequest {
+                action: OperatorAction::Fence,
+                node: Some(node),
+                confirm: true,
+                force: true,
+            },
+            &mut probe,
+        )
+        .unwrap();
+    assert_eq!(probe.events, ["fence"]);
+
+    let receipt = controller
+        .apply(
+            ActionRequest {
+                action: OperatorAction::Recover,
+                node: Some(node),
+                confirm: false,
+                force: false,
+            },
+            &mut probe,
+        )
+        .unwrap();
+    assert_eq!(receipt.state, RecoveryState::Reconciled);
+    assert!(receipt.fenced_before_release);
+    assert_eq!(probe.events[0], "fence");
+    assert_eq!(&probe.events[1..3], ["memory", "storage"]);
+}
+
+#[test]
+fn clock_skew_is_detected_at_local_sample_time_before_recovery() {
+    let node = NodeId::new(2).unwrap();
+    let clock = ManualClock::new(5_000);
+    let mut controller = FailureController::<2, 16>::new();
+    let mut sample = failure_sample(node, true, 1, 51);
+    sample.maximum_clock_skew_us = 50;
+    let report = controller.observe_with_clock(
+        ClusterSample {
+            partitioned: false,
+            available_votes: 2,
+            required_votes: 2,
+            sampled_at_us: 1,
+            ..partition_sample()
+        },
+        &[sample],
+        &clock,
+    );
+    assert_eq!(report.sampled_at_us, 5_000);
+    assert_eq!(controller.state(node), Some(RecoveryState::Failed));
+    assert!(controller.events().any(|event| event.kind == FailureKind::ClockSkew));
+
+    let mut probe = RecoveryProbe::new();
+    controller
+        .apply(
+            ActionRequest {
+                action: OperatorAction::Fence,
+                node: Some(node),
+                confirm: true,
+                force: true,
+            },
+            &mut probe,
+        )
+        .unwrap();
+    controller
+        .apply(
+            ActionRequest {
+                action: OperatorAction::Recover,
+                node: Some(node),
+                confirm: false,
+                force: false,
+            },
+            &mut probe,
+        )
+        .unwrap();
+    assert_eq!(probe.events.first(), Some(&"fence"));
+    assert!(probe.events.iter().position(|event| *event == "storage").unwrap() > 0);
+}
 
 #[test]
 fn storage_paths_capabilities_and_io_boundaries_are_enforced() {

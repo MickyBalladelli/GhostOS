@@ -249,8 +249,14 @@ evidence.
       -p synos-protocol -p synos-http -p synos-client-sdk -p synos-webterm
       -p synos-mesh -p synos-fabric --tests` passes; test execution remains
       pending.
-- [ ] Add partition and clock-skew tests that prove fencing happens before
+- [x] Add partition and clock-skew tests that prove fencing happens before
       mutable storage or memory ownership is recovered.
+      Progress: added deterministic fabric and storage regressions for
+      partition isolation, future peer timestamps, local monotonic clock skew,
+      memory lease release, coherent-page ownership, and storage release-hook
+      ordering. Evidence and ordering contract are in
+      `docs/partition-fencing.md`. `cargo check -p synos-fabric
+      -p synos-storaged --tests` passes; test execution remains pending.
 - [ ] Expose structured health, queue depth, dropped packets, retries, and
       degraded-mode state through the inspection and audit surfaces.
 

@@ -5,6 +5,12 @@ use synos_fabric::{
     dsm::{CoherenceAction, CoherenceDirectory, DlmLeaseMode, DsmHeader, DsmPacket, MessageKind, PageAssembler, SoftwareDlmLease, SYNOS_DSM_ETHERTYPE},
     PageFault,
 };
+use synos_fabric::cluster::{NodeFailure, NodeIsolation, recover_failed_node};
+use synos_fabric::memory::{
+    GlobalAddressSpace, LeaseOwner, LeaseRights, LeaseTable, MemoryKind, MemoryPool, PoolId,
+    Transport,
+};
+use synos_time_sync::ManualClock;
 
 fn node(raw: u32) -> NodeId {
     NodeId::new(raw).unwrap()
@@ -118,6 +124,145 @@ fn heartbeat_wire_ordering_and_failure_detection() {
     let failure = monitor.detect(301).unwrap();
     assert_eq!(failure.node, node(2));
     assert_eq!(monitor.state(node(2)), Some(NodeState::Failed));
+}
+
+struct Isolation {
+    isolated: bool,
+}
+
+impl NodeIsolation for Isolation {
+    fn is_node_isolated(&self, _node: NodeId) -> bool {
+        self.isolated
+    }
+}
+
+fn recovered_memory_fixture() -> (
+    GlobalAddressSpace<2, 2>,
+    LeaseTable<2>,
+    CoherenceDirectory<2>,
+    PoolId,
+    NodeId,
+) {
+    let owner = node(2);
+    let mirror = node(1);
+    let pool = PoolId::new(1).unwrap();
+    let mut space = GlobalAddressSpace::new();
+    space
+        .add_pool(MemoryPool {
+            id: pool,
+            node: owner,
+            mirror: Some(mirror),
+            kind: MemoryKind::Ram,
+            transport: Transport::Layer2,
+            global: AddressRange::new(PAGE_SIZE, PAGE_SIZE).unwrap(),
+            backing_start: PAGE_SIZE,
+            latency_ns: 1,
+        })
+        .unwrap();
+    let mut leases = LeaseTable::new();
+    let _ = leases
+        .allocate(
+            &space,
+            LeaseOwner::Node(owner),
+            pool,
+            PAGE_SIZE,
+            PAGE_SIZE,
+            LeaseRights::READ_WRITE,
+            0,
+            1_000,
+        )
+        .unwrap();
+    let mut coherence = CoherenceDirectory::new();
+    coherence
+        .grant_lease(
+            PAGE_SIZE,
+            SoftwareDlmLease {
+                owner,
+                mode: DlmLeaseMode::Exclusive,
+                epoch: 1,
+                expires_at_us: 1_000,
+            },
+        )
+        .unwrap();
+    coherence.page_arrived(PAGE_SIZE, owner, true).unwrap();
+    (space, leases, coherence, pool, owner)
+}
+
+#[test]
+fn partition_recovery_does_not_release_memory_before_fencing() {
+    let (mut space, mut leases, mut coherence, _pool, owner) = recovered_memory_fixture();
+    let failure = NodeFailure {
+        node: owner,
+        detected_at_us: 100,
+        silence_us: 100,
+    };
+    assert_eq!(
+        recover_failed_node(
+            failure,
+            &Isolation { isolated: false },
+            &mut space,
+            &mut leases,
+            &mut coherence,
+        ),
+        Err(synos_fabric::Error::NodeNotFenced)
+    );
+    assert!(!space.is_node_failed(owner));
+    assert_eq!(leases.active_for_pool(PoolId::new(1).unwrap()), 1);
+    assert_eq!(coherence.pages().next().unwrap().owner, Some(owner));
+
+    let summary = recover_failed_node(
+        failure,
+        &Isolation { isolated: true },
+        &mut space,
+        &mut leases,
+        &mut coherence,
+    )
+    .unwrap();
+    assert_eq!(summary.leases_released, 1);
+    assert_eq!(summary.coherence_pages_recovered, 1);
+    assert!(space.is_node_failed(owner));
+    assert_eq!(space.resolve(PAGE_SIZE).unwrap().node, node(1));
+    assert!(space.resolve(PAGE_SIZE).unwrap().failed_over);
+    assert_eq!(leases.active_for_pool(PoolId::new(1).unwrap()), 0);
+    assert_eq!(coherence.pages().next().unwrap().owner, None);
+    assert_eq!(coherence.pages().next().unwrap().lease, None);
+}
+
+#[test]
+fn future_peer_timestamp_cannot_extend_partition_recovery_deadline() {
+    let clock = ManualClock::new(1_000);
+    let mut monitor = HeartbeatMonitor::<1>::new_with_clock(node(1), 100, 2, &clock).unwrap();
+    monitor.add_node_with_clock(node(2), &clock).unwrap();
+    monitor
+        .observe(
+            Heartbeat {
+                node: node(2),
+                sequence: 1,
+                sent_at_us: u64::MAX,
+            },
+            clock.now_us(),
+        )
+        .unwrap();
+    clock.advance_us(199);
+    assert_eq!(monitor.detect_with_clock(&clock), None);
+    clock.advance_us(1);
+    let failure = monitor.detect_with_clock(&clock).unwrap();
+    assert_eq!(failure.detected_at_us, 1_200);
+    assert_eq!(failure.silence_us, 200);
+
+    let (mut space, mut leases, mut coherence, _pool, owner) = recovered_memory_fixture();
+    assert_eq!(
+        recover_failed_node(
+            failure,
+            &Isolation { isolated: false },
+            &mut space,
+            &mut leases,
+            &mut coherence,
+        ),
+        Err(synos_fabric::Error::NodeNotFenced)
+    );
+    assert!(!space.is_node_failed(owner));
+    assert_eq!(leases.active_for_pool(PoolId::new(1).unwrap()), 1);
 }
 
 #[test]
