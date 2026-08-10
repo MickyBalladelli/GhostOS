@@ -15,9 +15,16 @@ pub const SHOW_ROUTES_ROUTE: u16 = 62;
 pub const SET_HOSTNAME_ROUTE: u16 = 63;
 pub const SET_INTERFACE_ROUTE: u16 = 64;
 pub const SET_ROUTE_ROUTE: u16 = 65;
+pub const PING_ROUTE: u16 = 66;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
 pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
+pub const DEFAULT_PING_COUNT: u32 = 4;
+pub const MAX_PING_COUNT: u32 = 64;
+pub const DEFAULT_PING_TIMEOUT_MS: u32 = 1_000;
+pub const MAX_PING_TIMEOUT_MS: u32 = 60_000;
+pub const DEFAULT_PING_SIZE: u32 = 32;
+pub const MAX_PING_SIZE: u32 = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkCommandHelp {
@@ -70,6 +77,13 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
         description: "Add or replace a route through the versioned network configuration.",
         aliases: "ROUTE",
         qualifiers: "/GATEWAY /INTERFACE /METRIC",
+    },
+    NetworkCommandHelp {
+        name: "PING",
+        synopsis: "PING destination",
+        description: "Send bounded ICMP echo requests through the network provider.",
+        aliases: "",
+        qualifiers: "/COUNT /TIMEOUT /SIZE /INTERFACE /SOURCE /IPV4 /IPV6",
     },
 ];
 
@@ -209,6 +223,23 @@ pub struct RouteUpdate<'a> {
     pub metric: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PingIpVersion {
+    Ipv4,
+    Ipv6,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PingRequest<'a> {
+    pub destination: &'a str,
+    pub count: u32,
+    pub timeout_ms: u32,
+    pub size: u32,
+    pub interface: Option<&'a str>,
+    pub source: Option<&'a str>,
+    pub ip_version: Option<PingIpVersion>,
+}
+
 /// Source of truth for network settings.
 ///
 /// A system provider should validate the caller's network-administration
@@ -239,6 +270,10 @@ pub trait NetworkSource {
     }
 
     fn set_route(&mut self, _update: RouteUpdate<'_>) -> Result<NetworkView, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn ping(&mut self, _request: PingRequest<'_>) -> Result<StructuredOutput, Status> {
         Err(Status::NOT_FOUND)
     }
 }
@@ -303,6 +338,32 @@ pub fn register_network_commands<const CAPACITY: usize>(
         CommandSpec::new("SET-ROUTE", &[destination, gateway, interface, metric])
             .map_err(|_| Error::InvalidValue)?,
         route(SET_ROUTE_ROUTE),
+    )?;
+
+    let ping_destination = positional("DESTINATION", ArgumentKind::Text, true)?;
+    let count = qualifier("COUNT", ArgumentKind::Integer)?;
+    let timeout = qualifier("TIMEOUT", ArgumentKind::Integer)?;
+    let size = qualifier("SIZE", ArgumentKind::Integer)?;
+    let interface = qualifier("INTERFACE", ArgumentKind::Text)?;
+    let source = qualifier("SOURCE", ArgumentKind::Text)?;
+    let ipv4 = qualifier("IPV4", ArgumentKind::Boolean)?;
+    let ipv6 = qualifier("IPV6", ArgumentKind::Boolean)?;
+    registry.register(
+        CommandSpec::new(
+            "PING",
+            &[
+                ping_destination,
+                count,
+                timeout,
+                size,
+                interface,
+                source,
+                ipv4,
+                ipv6,
+            ],
+        )
+        .map_err(|_| Error::InvalidValue)?,
+        route(PING_ROUTE),
     )
 }
 
@@ -376,6 +437,7 @@ pub fn dispatch_network_command<Source: NetworkSource>(
                 .set_route(update)
                 .and_then(|view| network_operation_output(view, "set-route"))
         }
+        PING_ROUTE => source.ping(ping_request(&command)?),
         _ => Err(Status::NOT_FOUND),
     }
 }
@@ -489,6 +551,83 @@ pub fn route_update_request<'a>(command: &'a CommandCall) -> Result<RouteUpdate<
         interface,
         metric,
     })
+}
+
+pub fn ping_request<'a>(command: &'a CommandCall) -> Result<PingRequest<'a>, Status> {
+    let destination = command
+        .get_text("DESTINATION")
+        .filter(|value| !value.is_empty())
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    let count = optional_u32(command, "COUNT")?.unwrap_or(DEFAULT_PING_COUNT);
+    let timeout_ms = optional_u32(command, "TIMEOUT")?.unwrap_or(DEFAULT_PING_TIMEOUT_MS);
+    let size = optional_u32(command, "SIZE")?.unwrap_or(DEFAULT_PING_SIZE);
+    if !(1..=MAX_PING_COUNT).contains(&count)
+        || !(1..=MAX_PING_TIMEOUT_MS).contains(&timeout_ms)
+        || size > MAX_PING_SIZE
+    {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let interface = optional_text(command, "INTERFACE")?;
+    let source = optional_text(command, "SOURCE")?;
+    let ipv4 = boolean(command.get("IPV4"))?;
+    let ipv6 = boolean(command.get("IPV6"))?;
+    if ipv4 && ipv6 {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let ip_version = match (ipv4, ipv6) {
+        (true, false) => Some(PingIpVersion::Ipv4),
+        (false, true) => Some(PingIpVersion::Ipv6),
+        _ => None,
+    };
+    Ok(PingRequest {
+        destination,
+        count,
+        timeout_ms,
+        size,
+        interface,
+        source,
+        ip_version,
+    })
+}
+
+pub fn ping_request_output(
+    request: PingRequest<'_>,
+) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert_text(&mut output, "operation", "ping")?;
+    insert_text(&mut output, "destination", request.destination)?;
+    insert(
+        &mut output,
+        "count",
+        OutputValue::Unsigned(request.count as u64),
+    )?;
+    insert(
+        &mut output,
+        "timeout-ms",
+        OutputValue::Unsigned(request.timeout_ms as u64),
+    )?;
+    insert(
+        &mut output,
+        "size",
+        OutputValue::Unsigned(request.size as u64),
+    )?;
+    if let Some(interface) = request.interface {
+        insert_text(&mut output, "interface", interface)?;
+    }
+    if let Some(source) = request.source {
+        insert_text(&mut output, "source", source)?;
+    }
+    if let Some(version) = request.ip_version {
+        insert_text(
+            &mut output,
+            "ip-version",
+            match version {
+                PingIpVersion::Ipv4 => "ipv4",
+                PingIpVersion::Ipv6 => "ipv6",
+            },
+        )?;
+    }
+    Ok(output)
 }
 
 fn optional_text<'a>(command: &'a CommandCall, name: &str) -> Result<Option<&'a str>, Status> {

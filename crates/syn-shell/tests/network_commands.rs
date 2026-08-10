@@ -2,9 +2,10 @@ use syn_shell::{
     network::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
-        NetworkRouteView, NetworkSource, NetworkText, NetworkView, RouteUpdate, SET_HOSTNAME_ROUTE,
-        SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE,
-        SHOW_ROUTES_ROUTE, MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
+        NetworkRouteView, NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
+        RouteUpdate, SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
+        SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS,
+        MAX_NETWORK_OUTPUT_ROWS,
     },
     interpreter::CommandExecutor,
     parser::CommandRegistry,
@@ -110,12 +111,94 @@ fn network_commands_use_single_noun_names() {
             "SET ROUTE 0.0.0.0/0 /GATEWAY=10.0.0.1 /INTERFACE=eth0 /METRIC=100",
             SET_ROUTE_ROUTE,
         ),
+        (
+            "PING 198.51.100.4 /COUNT=3 /TIMEOUT=2500 /SIZE=64 /INTERFACE=eth0 /SOURCE=10.0.0.2 /IPV4",
+            PING_ROUTE,
+        ),
     ] {
         assert_eq!(
             registry.parse(input).unwrap().stage(0).unwrap().route.raw(),
             route
         );
     }
+}
+
+#[test]
+fn ping_request_applies_defaults_and_qualifiers() {
+    let registry = registry();
+    let defaults = registry
+        .parse("PING 198.51.100.4")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    assert_eq!(
+        syn_shell::network::ping_request(&defaults).unwrap(),
+        PingRequest {
+            destination: "198.51.100.4",
+            count: 4,
+            timeout_ms: 1_000,
+            size: 32,
+            interface: None,
+            source: None,
+            ip_version: None,
+        }
+    );
+
+    let qualified = registry
+        .parse(
+            "PING host.example /COUNT=3 /TIMEOUT=2500 /SIZE=64 /INTERFACE=eth0 /SOURCE=10.0.0.2 /IPV4",
+        )
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    assert_eq!(
+        syn_shell::network::ping_request(&qualified).unwrap(),
+        PingRequest {
+            destination: "host.example",
+            count: 3,
+            timeout_ms: 2_500,
+            size: 64,
+            interface: Some("eth0"),
+            source: Some("10.0.0.2"),
+            ip_version: Some(PingIpVersion::Ipv4),
+        }
+    );
+}
+
+#[test]
+fn ping_request_rejects_conflicting_or_unbounded_qualifiers() {
+    let registry = registry();
+    for input in [
+        "PING 198.51.100.4 /IPV4 /IPV6",
+        "PING 198.51.100.4 /COUNT=0",
+        "PING 198.51.100.4 /COUNT=65",
+        "PING 198.51.100.4 /TIMEOUT=0",
+        "PING 198.51.100.4 /TIMEOUT=60001",
+        "PING 198.51.100.4 /SIZE=257",
+        "PING 198.51.100.4 /INTERFACE=",
+    ] {
+        let parsed = registry.parse(input);
+        if let Ok(program) = parsed {
+            assert!(syn_shell::network::ping_request(&program.stage(0).unwrap()).is_err(), "{input}");
+        }
+    }
+}
+
+#[test]
+fn ping_dispatches_a_bounded_request_to_the_network_source() {
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
+    let output = execute(
+        &mut executor,
+        "PING 198.51.100.4 /COUNT=2 /TIMEOUT=500 /SIZE=16 /IPV6",
+    )
+    .unwrap();
+    assert!(has_text(&output, "operation", "ping"));
+    assert!(has_text(&output, "destination", "198.51.100.4"));
+    assert!(has_unsigned(&output, "count", 2));
+    assert!(has_unsigned(&output, "timeout-ms", 500));
+    assert!(has_unsigned(&output, "size", 16));
+    assert!(has_text(&output, "ip-version", "ipv6"));
+    assert_eq!(executor.source().command_log[0], PING_ROUTE);
 }
 
 #[test]
@@ -208,6 +291,10 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
         .unwrap()
         .description
         .contains("DHCP"));
+    let ping = command_help("PING").unwrap();
+    assert!(ping.qualifiers.contains("/COUNT"));
+    assert!(ping.qualifiers.contains("/IPV4"));
+    assert!(ping.qualifiers.contains("/IPV6"));
 }
 
 #[test]
@@ -697,5 +784,13 @@ impl NetworkSource for FakeNetwork {
         }
         self.bump();
         Ok(self.view)
+    }
+
+    fn ping(
+        &mut self,
+        request: PingRequest<'_>,
+    ) -> Result<synos_system_model::command::StructuredOutput, Status> {
+        self.capture_command(PING_ROUTE);
+        syn_shell::network::ping_request_output(request)
     }
 }

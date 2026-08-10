@@ -389,7 +389,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 ### `PING` command
 
-- [ ] Add `PING destination` with qualifiers for `/COUNT`, `/TIMEOUT`, `/SIZE`,
+- [x] Add `PING destination` with qualifiers for `/COUNT`, `/TIMEOUT`, `/SIZE`,
       `/INTERFACE`, `/SOURCE`, and optional `/IPV4` or `/IPV6` selection.
 - [ ] Resolve a literal IPv4 address first; add bounded DNS resolution for host
       names without making command execution block indefinitely.
