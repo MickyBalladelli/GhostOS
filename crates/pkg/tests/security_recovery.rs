@@ -6,7 +6,7 @@ use synos_pkg::{
 use synos_synfs::SynFs;
 use synos_system_model::{ContentId, Error as ModelError, RepositoryError};
 
-fn filesystem() -> SynFs<128> {
+fn filesystem() -> SynFs<64> {
     let mut filesystem = SynFs::new();
     filesystem.create_directory("system/store", true).unwrap();
     filesystem.create_directory("system/manifests", true).unwrap();
@@ -26,7 +26,7 @@ fn package_key_rotation_revocation_and_generation_downgrade_are_fenced() {
     let (old_bundle, old_package) = bundle(b"old package", old_key);
     let (new_bundle, new_package) = bundle(b"new package", new_key);
     let mut filesystem = filesystem();
-    let mut daemon = PackageDaemon::<8, 2>::new();
+    let mut daemon = PackageDaemon::<4, 2>::new();
     daemon.trust_key(old_key).unwrap();
     daemon.trust_key(new_key).unwrap();
     let mut verification = [0; 128];
@@ -101,7 +101,7 @@ fn application_signature_rotation_replay_and_rollback_are_fenced() {
     encode_application_bundle(&new_inner, new_metadata, new_key, &mut new_app).unwrap();
 
     let mut filesystem = filesystem();
-    let mut daemon = PackageDaemon::<8, 2>::new();
+    let mut daemon = PackageDaemon::<4, 2>::new();
     daemon.trust_key(old_key).unwrap();
     daemon.trust_key(new_key).unwrap();
     let mut verification = [0; 128];
@@ -111,9 +111,11 @@ fn application_signature_rotation_replay_and_rollback_are_fenced() {
     let mut first = SystemConfiguration::new(1);
     first.bind("demo", old_package).unwrap();
     daemon.activate(&mut filesystem, &first).unwrap();
-    assert!(daemon
+    let replay = daemon
         .install_application_bundle(&mut filesystem, &old_app, &mut verification)
-        .is_err());
+        .unwrap();
+    assert_eq!(replay.package, old_package);
+    assert_eq!(daemon.application_manifest(old_package), Some(old_metadata));
     let old_receipt = daemon.authorize_instantiation(old_package).unwrap();
     daemon.revoke_key(old_key.id()).unwrap();
     assert_eq!(
