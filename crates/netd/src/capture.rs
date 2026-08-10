@@ -23,6 +23,20 @@ pub enum CaptureKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u16)]
+pub enum DhcpLifecycleEvent {
+    Discover = 1,
+    Offer = 2,
+    Request = 3,
+    Ack = 5,
+    Nak = 6,
+    Release = 7,
+    Renew = 8,
+    Rebind = 9,
+    Rollback = 10,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CaptureRecord {
     pub sequence: u64,
     pub timestamp_ms: u64,

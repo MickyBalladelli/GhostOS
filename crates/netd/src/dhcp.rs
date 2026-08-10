@@ -4,7 +4,9 @@
 //! and lease options, and applies accepted leases through a runtime bridge so
 //! previous static configuration can be restored on failure or expiry.
 
-use crate::capture::{CaptureDirection, PacketCapture, MAX_CAPTURE_RECORDS};
+use crate::capture::{
+    CaptureDirection, CaptureKind, DhcpLifecycleEvent, PacketCapture, MAX_CAPTURE_RECORDS,
+};
 use crate::firewall::{
     CapabilityRight, Direction, FirewallRule, Ipv4Cidr, PortRange, Protocol, RateLimit, RuleAction,
 };
@@ -412,6 +414,50 @@ impl<T, const CAPACITY: usize> CapturingDhcpTransport<T, CAPACITY> {
     pub fn set_timestamp(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
     }
+
+    pub fn record_ingress(
+        &mut self,
+        source_mac: [u8; 6],
+        destination_mac: [u8; 6],
+        source_ip: [u8; 4],
+        destination_ip: [u8; 4],
+        payload: &[u8],
+    ) {
+        self.capture.record_packet(
+            self.now_ms,
+            CaptureDirection::Ingress,
+            source_mac,
+            destination_mac,
+            source_ip,
+            destination_ip,
+            DHCP_SERVER_PORT,
+            DHCP_CLIENT_PORT,
+            payload,
+        );
+        if let Some(event) =
+            dhcp_lifecycle_event(payload, false, source_ip, destination_ip)
+        {
+            self.record_dhcp_event(event);
+        }
+    }
+
+    pub fn record_dhcp_event(&mut self, event: DhcpLifecycleEvent) {
+        self.capture
+            .record_event(self.now_ms, CaptureKind::DhcpLifecycle, event as u16);
+    }
+
+    pub fn record_rollback(&mut self) {
+        self.capture.record_event(
+            self.now_ms,
+            CaptureKind::Rollback,
+            DhcpLifecycleEvent::Rollback as u16,
+        );
+    }
+
+    pub fn record_link(&mut self, link_up: bool) {
+        self.capture
+            .record_event(self.now_ms, CaptureKind::Link, u16::from(link_up));
+    }
 }
 
 impl<T: DhcpTransport, const CAPACITY: usize> DhcpTransport
@@ -442,7 +488,39 @@ impl<T: DhcpTransport, const CAPACITY: usize> DhcpTransport
             dst_port,
             payload,
         );
+        if let Some(event) = dhcp_lifecycle_event(payload, true, src_ip, dst_ip) {
+            self.record_dhcp_event(event);
+        }
         Ok(())
+    }
+}
+
+fn dhcp_lifecycle_event(
+    payload: &[u8],
+    egress: bool,
+    source_ip: [u8; 4],
+    destination_ip: [u8; 4],
+) -> Option<DhcpLifecycleEvent> {
+    let message = if egress {
+        DhcpMessage::decode_request(payload).ok()?
+    } else {
+        DhcpMessage::decode(payload).ok()?
+    };
+    match message.message_type {
+        DhcpMessageType::Discover => Some(DhcpLifecycleEvent::Discover),
+        DhcpMessageType::Offer => Some(DhcpLifecycleEvent::Offer),
+        DhcpMessageType::Request if egress && source_ip != [0; 4] => {
+            if destination_ip == [255, 255, 255, 255] {
+                Some(DhcpLifecycleEvent::Rebind)
+            } else {
+                Some(DhcpLifecycleEvent::Renew)
+            }
+        }
+        DhcpMessageType::Request => Some(DhcpLifecycleEvent::Request),
+        DhcpMessageType::Ack => Some(DhcpLifecycleEvent::Ack),
+        DhcpMessageType::Nak => Some(DhcpLifecycleEvent::Nak),
+        DhcpMessageType::Release => Some(DhcpLifecycleEvent::Release),
+        _ => None,
     }
 }
 

@@ -370,7 +370,7 @@ SynOS VMs communicate and obtain distinct leases.
 - [x] Add `SHOW DHCP` or an equivalent detailed view for transaction ID, MAC,
       attempt, timers, server, offered address, failure reason, and last packet
       time; keep secrets and raw payloads out of normal output.
-- [ ] Add packet capture and audit evidence for discover, offer, request, ACK,
+- [x] Add packet capture and audit evidence for discover, offer, request, ACK,
       NAK, renew, rebind, release, rollback, and link-down transitions.
 
 ### IP, ARP, and ICMP foundations

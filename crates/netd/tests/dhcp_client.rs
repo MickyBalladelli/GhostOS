@@ -1,6 +1,7 @@
 use synos_netd::{
     dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, CaptureDirection,
-    CaptureKind, CapabilityRight, CapturingDhcpTransport, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+    CaptureKind, CapabilityRight, CapturingDhcpTransport, DhcpLifecycleEvent, DHCP_CLIENT_PORT,
+    DHCP_SERVER_PORT,
     DhcpClient, DhcpClientState, DhcpError, DhcpLease,
     DhcpLeaseRuntime, DhcpServerFixture, DhcpTransport, Direction, Firewall, FirewallDecision,
     FirewallPolicy, PacketContext, Protocol, MAX_DHCP_PACKET, StaticSnapshot, BACKOFF_MS,
@@ -252,42 +253,33 @@ fn dhcp_capture_records_dora_and_link_recovery_evidence() {
     client.start(0).unwrap();
     transport.set_timestamp(0);
     client.poll(0, &mut transport, &mut runtime).unwrap();
-    transport.capture.record_event(0, CaptureKind::DhcpLifecycle, 1);
     let offer = server.respond(transport.transport.last()).unwrap();
-    transport.capture.record_packet(
-        1,
-        CaptureDirection::Ingress,
+    transport.set_timestamp(1);
+    transport.record_ingress(
         [0; 6],
         MAC,
         server.server_id,
         [255, 255, 255, 255],
-        DHCP_SERVER_PORT,
-        DHCP_CLIENT_PORT,
         &offer,
     );
-    transport.capture.record_event(1, CaptureKind::DhcpLifecycle, 2);
     client.handle_packet(&offer, 1, &mut runtime).unwrap();
 
     transport.set_timestamp(1);
     client.poll(1, &mut transport, &mut runtime).unwrap();
-    transport.capture.record_event(1, CaptureKind::DhcpLifecycle, 3);
     let ack = server.respond(transport.transport.last()).unwrap();
-    transport.capture.record_packet(
-        2,
-        CaptureDirection::Ingress,
+    transport.set_timestamp(2);
+    transport.record_ingress(
         [0; 6],
         MAC,
         server.server_id,
         [255, 255, 255, 255],
-        DHCP_SERVER_PORT,
-        DHCP_CLIENT_PORT,
         &ack,
     );
-    transport.capture.record_event(2, CaptureKind::DhcpLifecycle, 5);
     client.handle_packet(&ack, 2, &mut runtime).unwrap();
 
     client.set_link(false, 3);
-    transport.capture.record_event(3, CaptureKind::Link, 0);
+    transport.set_timestamp(3);
+    transport.record_link(false);
     assert_eq!(transport.capture.records().iter().filter(|record| {
         record.kind == CaptureKind::Packet && record.direction == Some(CaptureDirection::Egress)
     }).count(), 2);
@@ -300,24 +292,148 @@ fn dhcp_capture_records_dora_and_link_recovery_evidence() {
     }));
 
     client.set_link(true, 4);
-    transport.capture.record_event(4, CaptureKind::Link, 1);
     transport.set_timestamp(4);
+    transport.record_link(true);
     client.poll(4, &mut transport, &mut runtime).unwrap();
     let reboot_ack = server.respond(transport.transport.last()).unwrap();
-    transport.capture.record_packet(
-        5,
-        CaptureDirection::Ingress,
+    transport.set_timestamp(5);
+    transport.record_ingress(
         [0; 6],
         MAC,
         server.server_id,
         [255, 255, 255, 255],
-        DHCP_SERVER_PORT,
-        DHCP_CLIENT_PORT,
         &reboot_ack,
     );
     client.handle_packet(&reboot_ack, 5, &mut runtime).unwrap();
     assert_eq!(client.state(), DhcpClientState::Bound);
-    assert_eq!(transport.capture.records().last().unwrap().kind, CaptureKind::Packet);
+    assert_eq!(
+        transport.capture.records().last().unwrap().kind,
+        CaptureKind::DhcpLifecycle
+    );
+}
+
+#[test]
+fn dhcp_capture_records_renew_rebind_nak_release_and_rollback() {
+    let server = fixture();
+    let mut client = authorized_client();
+    let mut transport: CapturingDhcpTransport<CaptureTransport, 32> =
+        CapturingDhcpTransport::new(CaptureTransport::new());
+    let mut runtime = RecordingRuntime::new();
+
+    client.start(0).unwrap();
+    transport.set_timestamp(0);
+    client.poll(0, &mut transport, &mut runtime).unwrap();
+    let offer = server.respond(transport.transport.last()).unwrap();
+    transport.set_timestamp(1);
+    transport.record_ingress(
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        &offer,
+    );
+    client.handle_packet(&offer, 1, &mut runtime).unwrap();
+    transport.set_timestamp(1);
+    client.poll(1, &mut transport, &mut runtime).unwrap();
+    let ack = server.respond(transport.transport.last()).unwrap();
+    transport.set_timestamp(2);
+    transport.record_ingress(
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        &ack,
+    );
+    client.handle_packet(&ack, 2, &mut runtime).unwrap();
+
+    transport.set_timestamp(50_002);
+    client.poll(50_002, &mut transport, &mut runtime).unwrap();
+    let renew_ack = server.respond(transport.transport.last()).unwrap();
+    transport.set_timestamp(50_003);
+    transport.record_ingress(
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        &renew_ack,
+    );
+    client
+        .handle_packet(&renew_ack, 50_003, &mut runtime)
+        .unwrap();
+
+    transport.set_timestamp(100_003);
+    client.poll(100_003, &mut transport, &mut runtime).unwrap();
+    transport.set_timestamp(137_503);
+    client.poll(137_503, &mut transport, &mut runtime).unwrap();
+    client
+        .release(138_000, &mut transport, &mut runtime)
+        .unwrap();
+
+    let mut nak_client = authorized_client();
+    let mut nak_transport: CapturingDhcpTransport<CaptureTransport, 32> =
+        CapturingDhcpTransport::new(CaptureTransport::new());
+    let mut nak_runtime = RecordingRuntime::new();
+    nak_client.start(200_000).unwrap();
+    nak_transport.set_timestamp(200_000);
+    nak_client
+        .poll(200_000, &mut nak_transport, &mut nak_runtime)
+        .unwrap();
+    let nak_offer = server.respond(nak_transport.transport.last()).unwrap();
+    nak_transport.set_timestamp(200_001);
+    nak_transport.record_ingress(
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        &nak_offer,
+    );
+    nak_client
+        .handle_packet(&nak_offer, 200_001, &mut nak_runtime)
+        .unwrap();
+    nak_transport.set_timestamp(200_001);
+    nak_client
+        .poll(200_001, &mut nak_transport, &mut nak_runtime)
+        .unwrap();
+    let nak = server.nak(nak_transport.transport.last()).unwrap();
+    nak_transport.set_timestamp(200_002);
+    nak_transport.record_ingress(
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        &nak,
+    );
+    nak_client
+        .handle_packet(&nak, 200_002, &mut nak_runtime)
+        .unwrap();
+    nak_transport.set_timestamp(200_002);
+    nak_transport.record_rollback();
+
+    let lifecycle_codes: [u16; 9] = [
+        DhcpLifecycleEvent::Discover as u16,
+        DhcpLifecycleEvent::Offer as u16,
+        DhcpLifecycleEvent::Request as u16,
+        DhcpLifecycleEvent::Ack as u16,
+        DhcpLifecycleEvent::Renew as u16,
+        DhcpLifecycleEvent::Rebind as u16,
+        DhcpLifecycleEvent::Release as u16,
+        DhcpLifecycleEvent::Nak as u16,
+        DhcpLifecycleEvent::Rollback as u16,
+    ];
+    for code in lifecycle_codes {
+        let expected_kind = if code == DhcpLifecycleEvent::Rollback as u16 {
+            CaptureKind::Rollback
+        } else {
+            CaptureKind::DhcpLifecycle
+        };
+        let found = transport
+            .capture
+            .records()
+            .iter()
+            .chain(nak_transport.capture.records().iter())
+            .any(|record| record.kind == expected_kind && record.code == code);
+        assert!(found, "missing DHCP evidence code {code}");
+    }
 }
 
 #[test]
