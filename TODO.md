@@ -391,7 +391,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 - [x] Add `PING destination` with qualifiers for `/COUNT`, `/TIMEOUT`, `/SIZE`,
       `/INTERFACE`, `/SOURCE`, and optional `/IPV4` or `/IPV6` selection.
-- [ ] Resolve a literal IPv4 address first; add bounded DNS resolution for host
+- [x] Resolve a literal IPv4 address first; add bounded DNS resolution for host
       names without making command execution block indefinitely.
 - [ ] Execute each echo request asynchronously with cancellation, per-packet
       timeout, total deadline, sequence tracking, and a hard packet/count limit.

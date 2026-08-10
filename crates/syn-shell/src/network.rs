@@ -1,3 +1,5 @@
+use core::fmt::Write;
+
 use synos_status::Status;
 use synos_system_model::command::{
     ArgumentKind, ArgumentSpec, CommandSpec, OutputValue, StructuredOutput, MAX_OUTPUT_FIELDS,
@@ -25,6 +27,7 @@ pub const DEFAULT_PING_TIMEOUT_MS: u32 = 1_000;
 pub const MAX_PING_TIMEOUT_MS: u32 = 60_000;
 pub const DEFAULT_PING_SIZE: u32 = 32;
 pub const MAX_PING_SIZE: u32 = 256;
+pub const MAX_PING_DNS_TIMEOUT_MS: u32 = 5_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkCommandHelp {
@@ -240,6 +243,28 @@ pub struct PingRequest<'a> {
     pub ip_version: Option<PingIpVersion>,
 }
 
+impl PingRequest<'_> {
+    pub const fn dns_timeout_ms(self) -> u32 {
+        if self.timeout_ms > MAX_PING_DNS_TIMEOUT_MS {
+            MAX_PING_DNS_TIMEOUT_MS
+        } else {
+            self.timeout_ms
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PingTarget {
+    pub address: NetworkText,
+    pub ip_version: PingIpVersion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolvedPingRequest<'a> {
+    pub request: PingRequest<'a>,
+    pub target: PingTarget,
+}
+
 /// Source of truth for network settings.
 ///
 /// A system provider should validate the caller's network-administration
@@ -273,7 +298,30 @@ pub trait NetworkSource {
         Err(Status::NOT_FOUND)
     }
 
-    fn ping(&mut self, _request: PingRequest<'_>) -> Result<StructuredOutput, Status> {
+    /// Resolve a hostname within `timeout_ms`. Providers must use a monotonic
+    /// deadline and return a stable error when DNS cannot finish in bounds.
+    fn resolve_ping_hostname(
+        &mut self,
+        _hostname: &str,
+        _ip_version: PingIpVersion,
+        _timeout_ms: u32,
+    ) -> Result<PingTarget, Status> {
+        Err(Status::NOT_FOUND)
+    }
+
+    fn resolve_ping_target(&mut self, request: PingRequest<'_>) -> Result<PingTarget, Status> {
+        match resolve_literal_ipv4_target(request) {
+            Ok(target) => Ok(target),
+            Err(Status::NOT_FOUND) => self.resolve_ping_hostname(
+                request.destination,
+                request.ip_version.unwrap_or(PingIpVersion::Ipv4),
+                request.dns_timeout_ms(),
+            ),
+            Err(status) => Err(status),
+        }
+    }
+
+    fn ping(&mut self, _request: ResolvedPingRequest<'_>) -> Result<StructuredOutput, Status> {
         Err(Status::NOT_FOUND)
     }
 }
@@ -437,7 +485,11 @@ pub fn dispatch_network_command<Source: NetworkSource>(
                 .set_route(update)
                 .and_then(|view| network_operation_output(view, "set-route"))
         }
-        PING_ROUTE => source.ping(ping_request(&command)?),
+        PING_ROUTE => {
+            let request = ping_request(&command)?;
+            let target = source.resolve_ping_target(request)?;
+            source.ping(ResolvedPingRequest { request, target })
+        }
         _ => Err(Status::NOT_FOUND),
     }
 }
@@ -590,44 +642,106 @@ pub fn ping_request<'a>(command: &'a CommandCall) -> Result<PingRequest<'a>, Sta
     })
 }
 
-pub fn ping_request_output(
+pub fn resolve_literal_ipv4_target(
     request: PingRequest<'_>,
+) -> Result<PingTarget, Status> {
+    if !looks_like_ipv4_literal(request.destination) {
+        return Err(Status::NOT_FOUND)
+    }
+    let address = parse_ipv4_literal(request.destination).ok_or(Status::INVALID_ARGUMENT)?;
+    if request.ip_version == Some(PingIpVersion::Ipv6) {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let mut text = NetworkText::empty();
+    write!(
+        &mut text,
+        "{}.{}.{}.{}",
+        address[0], address[1], address[2], address[3]
+    )
+    .map_err(|_| Status::NO_SPACE)?;
+    Ok(PingTarget {
+        address: text,
+        ip_version: PingIpVersion::Ipv4,
+    })
+}
+
+pub fn ping_request_output(
+    request: ResolvedPingRequest<'_>,
 ) -> Result<StructuredOutput, Status> {
     let mut output = StructuredOutput::new(Status::NORMAL);
     insert_text(&mut output, "operation", "ping")?;
-    insert_text(&mut output, "destination", request.destination)?;
+    insert_text(&mut output, "destination", request.request.destination)?;
+    insert_text(&mut output, "address", request.target.address.as_str())?;
     insert(
         &mut output,
         "count",
-        OutputValue::Unsigned(request.count as u64),
+        OutputValue::Unsigned(request.request.count as u64),
     )?;
     insert(
         &mut output,
         "timeout-ms",
-        OutputValue::Unsigned(request.timeout_ms as u64),
+        OutputValue::Unsigned(request.request.timeout_ms as u64),
     )?;
     insert(
         &mut output,
         "size",
-        OutputValue::Unsigned(request.size as u64),
+        OutputValue::Unsigned(request.request.size as u64),
     )?;
-    if let Some(interface) = request.interface {
+    if let Some(interface) = request.request.interface {
         insert_text(&mut output, "interface", interface)?;
     }
-    if let Some(source) = request.source {
+    if let Some(source) = request.request.source {
         insert_text(&mut output, "source", source)?;
     }
-    if let Some(version) = request.ip_version {
-        insert_text(
-            &mut output,
-            "ip-version",
-            match version {
-                PingIpVersion::Ipv4 => "ipv4",
-                PingIpVersion::Ipv6 => "ipv6",
-            },
-        )?;
-    }
+    insert_text(
+        &mut output,
+        "ip-version",
+        match request.target.ip_version {
+            PingIpVersion::Ipv4 => "ipv4",
+            PingIpVersion::Ipv6 => "ipv6",
+        },
+    )?;
     Ok(output)
+}
+
+fn looks_like_ipv4_literal(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit() || byte == b'.')
+}
+
+fn parse_ipv4_literal(value: &str) -> Option<[u8; 4]> {
+    let mut address = [0; 4];
+    let mut octet = 0usize;
+    let mut current = 0u16;
+    let mut digits = 0usize;
+    for byte in value.bytes() {
+        if byte.is_ascii_digit() {
+            if digits == 3 {
+                return None
+            }
+            current = current
+                .checked_mul(10)?
+                .checked_add((byte - b'0') as u16)?;
+            if current > u8::MAX as u16 {
+                return None
+            }
+            digits += 1;
+        } else if byte == b'.' {
+            if digits == 0 || octet == 3 {
+                return None
+            }
+            address[octet] = current as u8;
+            octet += 1;
+            current = 0;
+            digits = 0;
+        } else {
+            return None
+        }
+    }
+    if octet != 3 || digits == 0 {
+        return None
+    }
+    address[3] = current as u8;
+    Some(address)
 }
 
 fn optional_text<'a>(command: &'a CommandCall, name: &str) -> Result<Option<&'a str>, Status> {

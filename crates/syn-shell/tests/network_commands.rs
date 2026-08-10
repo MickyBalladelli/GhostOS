@@ -3,9 +3,9 @@ use syn_shell::{
         command_help, interface_update_request, register_network_commands, route_update_request,
         DhcpLeaseView, InterfaceAddressMode, InterfaceUpdate, NetworkExecutor, NetworkInterfaceView,
         NetworkRouteView, NetworkSource, NetworkText, NetworkView, PingIpVersion, PingRequest,
-        RouteUpdate, SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE,
-        SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE, MAX_NETWORK_LINK_EVENTS,
-        MAX_NETWORK_OUTPUT_ROWS,
+        PingTarget, ResolvedPingRequest, RouteUpdate, SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE,
+        SET_ROUTE_ROUTE, SHOW_INTERFACES_ROUTE, SHOW_NETWORK_ROUTE, SHOW_ROUTES_ROUTE, PING_ROUTE,
+        MAX_NETWORK_LINK_EVENTS, MAX_NETWORK_OUTPUT_ROWS,
     },
     interpreter::CommandExecutor,
     parser::CommandRegistry,
@@ -166,6 +166,43 @@ fn ping_request_applies_defaults_and_qualifiers() {
 }
 
 #[test]
+fn ping_resolves_literal_ipv4_before_dns() {
+    let registry = registry();
+    let literal = registry
+        .parse("PING 198.51.100.4 /TIMEOUT=60000")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    let request = syn_shell::network::ping_request(&literal).unwrap();
+    let target = syn_shell::network::resolve_literal_ipv4_target(request).unwrap();
+    assert_eq!(target.address.as_str(), "198.51.100.4");
+    assert_eq!(target.ip_version, PingIpVersion::Ipv4);
+    assert_eq!(request.dns_timeout_ms(), 5_000);
+
+    let hostname = registry
+        .parse("PING host.example")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    let request = syn_shell::network::ping_request(&hostname).unwrap();
+    assert_eq!(
+        syn_shell::network::resolve_literal_ipv4_target(request),
+        Err(Status::NOT_FOUND)
+    );
+
+    let malformed = registry
+        .parse("PING 999.1.1.1")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    let request = syn_shell::network::ping_request(&malformed).unwrap();
+    assert_eq!(
+        syn_shell::network::resolve_literal_ipv4_target(request),
+        Err(Status::INVALID_ARGUMENT)
+    );
+}
+
+#[test]
 fn ping_request_rejects_conflicting_or_unbounded_qualifiers() {
     let registry = registry();
     for input in [
@@ -189,15 +226,16 @@ fn ping_dispatches_a_bounded_request_to_the_network_source() {
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
     let output = execute(
         &mut executor,
-        "PING 198.51.100.4 /COUNT=2 /TIMEOUT=500 /SIZE=16 /IPV6",
+        "PING host.example /COUNT=2 /TIMEOUT=500 /SIZE=16 /IPV4",
     )
     .unwrap();
     assert!(has_text(&output, "operation", "ping"));
-    assert!(has_text(&output, "destination", "198.51.100.4"));
+    assert!(has_text(&output, "destination", "host.example"));
+    assert!(has_text(&output, "address", "198.51.100.4"));
     assert!(has_unsigned(&output, "count", 2));
     assert!(has_unsigned(&output, "timeout-ms", 500));
     assert!(has_unsigned(&output, "size", 16));
-    assert!(has_text(&output, "ip-version", "ipv6"));
+    assert!(has_text(&output, "ip-version", "ipv4"));
     assert_eq!(executor.source().command_log[0], PING_ROUTE);
 }
 
@@ -786,9 +824,24 @@ impl NetworkSource for FakeNetwork {
         Ok(self.view)
     }
 
+    fn resolve_ping_hostname(
+        &mut self,
+        hostname: &str,
+        ip_version: PingIpVersion,
+        _timeout_ms: u32,
+    ) -> Result<PingTarget, Status> {
+        if hostname != "host.example" {
+            return Err(Status::NOT_FOUND)
+        }
+        Ok(PingTarget {
+            address: text("198.51.100.4"),
+            ip_version,
+        })
+    }
+
     fn ping(
         &mut self,
-        request: PingRequest<'_>,
+        request: ResolvedPingRequest<'_>,
     ) -> Result<synos_system_model::command::StructuredOutput, Status> {
         self.capture_command(PING_ROUTE);
         syn_shell::network::ping_request_output(request)
