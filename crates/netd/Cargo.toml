@@ -15,4 +15,5 @@ smoltcp = { version = "0.13.1", default-features = false, features = [
     "socket-tcp",
 ] }
 synos-ipc = { path = "../ipc" }
+synos-observability = { path = "../observability" }
 synos-status = { path = "../status" }

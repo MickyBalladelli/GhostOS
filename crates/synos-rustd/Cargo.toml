@@ -7,6 +7,7 @@ description = "Bounded compiler-service protocol for SynOS"
 
 [dependencies]
 synos-init = { path = "../init" }
+synos-observability = { path = "../observability" }
 synos-pkg = { path = "../pkg" }
 synos-synfs = { path = "../synfs" }
 synos-status = { path = "../status" }

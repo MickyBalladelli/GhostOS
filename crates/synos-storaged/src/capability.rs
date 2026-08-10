@@ -1,6 +1,7 @@
 use crate::service::StoragePath;
 use synos_auth::{CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights};
 use synos_fabric::NodeId;
+use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
 use synos_kernel::Rights;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +62,10 @@ impl StorageCapability {
         self.expires_at
     }
 
+    pub const fn trace_id(self) -> u64 {
+        self.token.nonce
+    }
+
     pub fn scope(self) -> StoragePath {
         self.scope
     }
@@ -87,12 +92,21 @@ impl StorageCapability {
                 expires_at_us: expires_at,
             })
             .map_err(map_token_error)?;
-        Ok(Self {
+        let capability = Self {
             token,
             rights,
             scope,
             expires_at,
-        })
+        };
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Storage,
+            CapabilityTraceStage::Created,
+            capability.trace_id(),
+            1,
+        ) {
+            trace.emit(Level::Info)
+        }
+        Ok(capability)
     }
 
     pub(crate) fn issue(
@@ -119,12 +133,21 @@ impl StorageCapability {
             u64::from(mount) << 32 | u64::from(generation),
         )
         .map_err(map_token_error)?;
-        Ok(Self {
+        let capability = Self {
             token,
             rights,
             scope,
             expires_at,
-        })
+        };
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Storage,
+            CapabilityTraceStage::Created,
+            capability.trace_id(),
+            1,
+        ) {
+            trace.emit(Level::Info)
+        }
+        Ok(capability)
     }
 
     pub(crate) fn verify(
@@ -154,7 +177,16 @@ impl StorageCapability {
                 now,
                 generation as u64,
             )
-            .map_err(map_token_error)
+            .map_err(map_token_error)?;
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Storage,
+            CapabilityTraceStage::DaemonAuthorized,
+            self.trace_id(),
+            required.bits(),
+        ) {
+            trace.emit(Level::Trace)
+        }
+        Ok(())
     }
 }
 

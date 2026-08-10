@@ -1,4 +1,5 @@
 use synos_ipc::{Ring, RingError, SharedBuffer};
+use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::memory::{MemoryError, SharedMemory};
@@ -210,7 +211,16 @@ impl<H: Copy, const CAPACITY: usize> SocketTable<H, CAPACITY> {
         slot.owner = owner;
         slot.rights = rights;
         slot.handle = Some(handle);
-        Ok(SocketCapability::from_parts(index, slot.generation))
+        let capability = SocketCapability::from_parts(index, slot.generation);
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Network,
+            CapabilityTraceStage::Created,
+            capability.raw(),
+            SocketOperation::OpenTcp.raw(),
+        ) {
+            trace.emit(Level::Info)
+        }
+        Ok(capability)
     }
 
     fn authorize(
@@ -228,6 +238,14 @@ impl<H: Copy, const CAPACITY: usize> SocketTable<H, CAPACITY> {
         }
         if slot.owner != owner || !slot.rights.contains(required) {
             return Err(ServiceError::AccessDenied)
+        }
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Network,
+            CapabilityTraceStage::DaemonAuthorized,
+            capability.raw(),
+            required.bits(),
+        ) {
+            trace.emit(Level::Trace)
         }
         slot.handle.ok_or(ServiceError::InvalidCapability)
     }
@@ -251,6 +269,14 @@ impl<H: Copy, const CAPACITY: usize> SocketTable<H, CAPACITY> {
         slot.occupied = false;
         slot.owner = 0;
         slot.rights = SocketRights::NONE;
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Network,
+            CapabilityTraceStage::Revoked,
+            capability.raw(),
+            SocketOperation::Close.raw(),
+        ) {
+            trace.emit(Level::Info)
+        }
         Ok(handle)
     }
 }
@@ -349,6 +375,16 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         memory: &mut M,
         request: SocketRequest,
     ) -> Result<OperationResult, ServiceError> {
+        if let Some(capability) = request.capability {
+            if let Some(trace) = CapabilityTrace::new(
+                CapabilityDomain::Network,
+                CapabilityTraceStage::KernelIpc,
+                capability.raw(),
+                request.operation.raw(),
+            ) {
+                trace.emit(Level::Trace)
+            }
+        }
         match request.operation {
             SocketOperation::OpenTcp => {
                 let rights_bits = u16::try_from(request.argument0)

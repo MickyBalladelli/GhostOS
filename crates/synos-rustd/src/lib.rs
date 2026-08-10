@@ -47,6 +47,7 @@ pub use toolchain::{
     MAX_TOOLCHAIN_STEPS,
 };
 
+use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
 use synos_status::{IntoStatus, Status};
 use synos_synfs::{DirectoryEntry, Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
@@ -59,6 +60,17 @@ pub const MAX_CACHE_ENTRIES: usize = 32;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 512;
 pub const MAX_LOG_RECORDS: usize = 128;
 pub const MAX_AUDIT_RECORDS: usize = 128;
+
+fn trace_compiler_capability(stage: CapabilityTraceStage, capability: u64, operation: u16, level: Level) {
+    if let Some(trace) = CapabilityTrace::new(
+        CapabilityDomain::Compiler,
+        stage,
+        capability,
+        operation,
+    ) {
+        trace.emit(level)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -546,6 +558,12 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             .position(Option::is_none)
             .unwrap_or((input.id.raw() as usize) % MAX_AUDIT_RECORDS);
         self.audits[index] = Some(record);
+        trace_compiler_capability(
+            CapabilityTraceStage::AuditRecorded,
+            input.id.raw(),
+            1,
+            Level::Info,
+        );
     }
 
     fn finish_audit(&mut self, id: JobId, result: BuildResult, status: Status) {
@@ -653,6 +671,14 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         }
         let id = JobId(self.next_id);
         self.next_id = self.next_id.checked_add(1).ok_or(Error::Capacity)?;
+        trace_compiler_capability(CapabilityTraceStage::Created, id.raw(), 1, Level::Info);
+        trace_compiler_capability(CapabilityTraceStage::KernelIpc, id.raw(), 1, Level::Trace);
+        trace_compiler_capability(
+            CapabilityTraceStage::DaemonAuthorized,
+            id.raw(),
+            1,
+            Level::Trace,
+        );
         let isolation = build_isolation(id, request, source_identity)?;
         let slot = self
             .jobs
@@ -862,6 +888,12 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         };
         if queued || fenced {
             self.finish_failed_audit(id, Status::CANCELLED);
+            trace_compiler_capability(
+                CapabilityTraceStage::Revoked,
+                id.raw(),
+                3,
+                Level::Info,
+            );
         }
         if queued {
             self.emit_log(id, CompilerLogLevel::Info, CompilerEventKind::Cancelled, "queued build cancelled");

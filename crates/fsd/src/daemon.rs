@@ -2,6 +2,7 @@ use core::fmt;
 
 use host_filesystems::{FileSystemKind, Partition};
 use synos_ipc::{Envelope, SharedBuffer};
+use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
 use synos_path_pattern::{Pattern, PatternError};
 use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
@@ -546,11 +547,21 @@ impl<
         slot.occupied = true;
         slot.process = Some(process);
         slot.rights = rights;
-        Ok(token(index, slot.generation))
+        let capability = token(index, slot.generation);
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Filesystem,
+            CapabilityTraceStage::Created,
+            capability.raw(),
+            Operation::Open.raw(),
+        ) {
+            trace.emit(Level::Info)
+        }
+        Ok(capability)
     }
 
     pub fn unregister_process(&mut self, process: ProcessId) -> Result<(), DaemonError> {
         let index = self.process_index(process, None)?;
+        let capability = token(index, self.processes[index].generation);
         for file in &mut self.open_files {
             if file.occupied && file.owner == process {
                 file.occupied = false
@@ -565,6 +576,14 @@ impl<
         }
         self.processes[index].occupied = false;
         self.processes[index].process = None;
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Filesystem,
+            CapabilityTraceStage::Revoked,
+            capability.raw(),
+            Operation::Close.raw(),
+        ) {
+            trace.emit(Level::Info)
+        }
         Ok(())
     }
 
@@ -1284,6 +1303,16 @@ impl<
                 .status(),
             );
         }
+        if let Some(capability) = request.capability {
+            if let Some(trace) = CapabilityTrace::new(
+                CapabilityDomain::Filesystem,
+                CapabilityTraceStage::KernelIpc,
+                capability.raw(),
+                request.operation.raw(),
+            ) {
+                trace.emit(Level::Trace)
+            }
+        }
         match self.execute(request, buffer) {
             Ok(response) => response,
             Err(error) => Response::error(error.status()),
@@ -1766,6 +1795,14 @@ impl<
         let index = self.process_index(process, Some(capability))?;
         if !self.processes[index].rights.contains_file(required) {
             return Err(DaemonError::AccessDenied);
+        }
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Filesystem,
+            CapabilityTraceStage::DaemonAuthorized,
+            capability.raw(),
+            required.bits(),
+        ) {
+            trace.emit(Level::Trace)
         }
         Ok(true)
     }

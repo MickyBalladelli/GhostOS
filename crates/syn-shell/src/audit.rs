@@ -1,4 +1,8 @@
-use synos_observability::{AuditQuery, TraceEvent};
+use core::fmt::Write;
+
+use synos_observability::{
+    AuditQuery, CapabilityTrace, CapabilityTraceStage, Level, TraceEvent,
+};
 use synos_status::Status;
 use synos_system_model::command::{ArgumentKind, ArgumentSpec, CommandSpec};
 
@@ -40,7 +44,42 @@ pub fn execute_audit(
     if command.route.raw() != ANALYZE_AUDIT_ROUTE {
         return Err(Status::NOT_FOUND);
     }
-    source.analyze(query_from_call(command)?, visitor)
+    source.analyze(query_from_call(command)?, &mut |event| {
+        mark_shell_output(event);
+        visitor(event)
+    })
+}
+
+pub fn mark_shell_output(event: TraceEvent) {
+    let Some(trace) = CapabilityTrace::from_event(event) else {
+        return
+    };
+    if let Some(shell_trace) = CapabilityTrace::new(
+        trace.domain,
+        CapabilityTraceStage::ShellOutput,
+        trace.capability,
+        trace.operation,
+    ) {
+        shell_trace.emit(Level::Info)
+    }
+}
+
+pub fn render_capability_trace(
+    event: TraceEvent,
+) -> Result<crate::Text<{ crate::render::MAX_RENDERED_OUTPUT_BYTES }>, Error> {
+    let trace = CapabilityTrace::from_event(event).ok_or(Error::InvalidValue)?;
+    mark_shell_output(event);
+    let mut output = crate::Text::empty();
+    write!(
+        &mut output,
+        "CAPABILITY domain={} stage={} capability={} operation={}\n",
+        trace.domain.name(),
+        trace.stage.name(),
+        trace.capability,
+        trace.operation,
+    )
+    .map_err(|_| Error::Capacity)?;
+    Ok(output)
 }
 
 pub fn query_from_call(command: CommandCall) -> Result<AuditQuery, Status> {

@@ -35,6 +35,83 @@ pub mod field {
     pub const TRANSPORT: u16 = 15;
     pub const WORKLOAD: u16 = 16;
     pub const TRACE: u16 = 17;
+    pub const CAPABILITY_DOMAIN: u16 = 18;
+    pub const CAPABILITY_STAGE: u16 = 19;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum CapabilityDomain {
+    Kernel = 1,
+    Filesystem = 2,
+    Network = 3,
+    Process = 4,
+    Storage = 5,
+    Cluster = 6,
+    Compiler = 7,
+}
+
+impl CapabilityDomain {
+    pub const fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Kernel),
+            2 => Some(Self::Filesystem),
+            3 => Some(Self::Network),
+            4 => Some(Self::Process),
+            5 => Some(Self::Storage),
+            6 => Some(Self::Cluster),
+            7 => Some(Self::Compiler),
+            _ => None,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Kernel => "kernel",
+            Self::Filesystem => "filesystem",
+            Self::Network => "network",
+            Self::Process => "process",
+            Self::Storage => "storage",
+            Self::Cluster => "cluster",
+            Self::Compiler => "compiler",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum CapabilityTraceStage {
+    Created = 1,
+    KernelIpc = 2,
+    DaemonAuthorized = 3,
+    ShellOutput = 4,
+    AuditRecorded = 5,
+    Revoked = 6,
+}
+
+impl CapabilityTraceStage {
+    pub const fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Created),
+            2 => Some(Self::KernelIpc),
+            3 => Some(Self::DaemonAuthorized),
+            4 => Some(Self::ShellOutput),
+            5 => Some(Self::AuditRecorded),
+            6 => Some(Self::Revoked),
+            _ => None,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::KernelIpc => "kernel-ipc",
+            Self::DaemonAuthorized => "daemon-authorized",
+            Self::ShellOutput => "shell-output",
+            Self::AuditRecorded => "audit-recorded",
+            Self::Revoked => "revoked",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
@@ -284,6 +361,71 @@ impl TraceEvent {
 
     pub fn field(&self, key: u16) -> Option<EventField> {
         self.fields().find(|entry| entry.key == key)
+    }
+}
+
+/// Common, bounded vocabulary for following one capability across trust
+/// boundaries. The capability value is opaque; only the handle/token value is
+/// carried so audit records never contain resource names or payload bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityTrace {
+    pub domain: CapabilityDomain,
+    pub stage: CapabilityTraceStage,
+    pub capability: u64,
+    pub operation: u16,
+}
+
+impl CapabilityTrace {
+    pub const fn new(
+        domain: CapabilityDomain,
+        stage: CapabilityTraceStage,
+        capability: u64,
+        operation: u16,
+    ) -> Option<Self> {
+        if capability == 0 {
+            None
+        } else {
+            Some(Self {
+                domain,
+                stage,
+                capability,
+                operation,
+            })
+        }
+    }
+
+    pub fn from_event(event: TraceEvent) -> Option<Self> {
+        if event.kind != EventKind::Audit {
+            return None;
+        }
+        Some(Self {
+            domain: CapabilityDomain::from_raw(
+                event.field(field::CAPABILITY_DOMAIN)?.as_u64() as u8,
+            )?,
+            stage: CapabilityTraceStage::from_raw(
+                event.field(field::CAPABILITY_STAGE)?.as_u64() as u8,
+            )?,
+            capability: event.field(field::CAPABILITY)?.as_u64(),
+            operation: event.field(field::OPERATION)?.as_u64() as u16,
+        })
+    }
+
+    pub fn event(self, level: Level) -> TraceEvent {
+        TraceEvent::new(level, EventKind::Audit)
+            .with_field(EventField::unsigned(field::CAPABILITY, self.capability))
+            .with_field(EventField::unsigned(
+                field::CAPABILITY_DOMAIN,
+                self.domain as u64,
+            ))
+            .with_field(EventField::unsigned(
+                field::CAPABILITY_STAGE,
+                self.stage as u64,
+            ))
+            .with_field(EventField::unsigned(field::OPERATION, self.operation as u64))
+    }
+
+    pub fn emit(self, level: Level) {
+        emit_audit(self.event(level))
     }
 }
 

@@ -1,7 +1,10 @@
 use synos_auth::CapabilityKey;
 use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_fabric::NodeId;
-use synos_observability::{CorrelationId, next_correlation_id};
+use synos_observability::{
+    CapabilityDomain, CapabilityTrace, CapabilityTraceStage, CorrelationId, Level,
+    next_correlation_id,
+};
 use synos_status::{IntoStatus, Status};
 
 use crate::{ClusterId, NodeAttestation, NodeCapabilities};
@@ -776,7 +779,7 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
             .keyring
             .key(self.keyring.current_epoch())
             .ok_or(SecurityError::KeyNotFound)?;
-        ClusterCapability::issue(
+        let capability = ClusterCapability::issue(
             key.key,
             subject,
             subject,
@@ -787,7 +790,16 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
             expires_at_us,
             key.epoch,
             nonce,
-        )
+        )?;
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Cluster,
+            CapabilityTraceStage::Created,
+            capability.nonce(),
+            ClusterOperation::Create as u16,
+        ) {
+            trace.emit(Level::Info)
+        }
+        Ok(capability)
     }
 
     pub fn delegate(
@@ -856,6 +868,14 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
             capability.key_epoch,
         );
         audit?;
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Cluster,
+            CapabilityTraceStage::DaemonAuthorized,
+            capability.nonce(),
+            operation as u16,
+        ) {
+            trace.emit(Level::Trace)
+        }
         result
     }
 
@@ -952,6 +972,14 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         now_us: u64,
     ) -> Result<SecureChannel, SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Observe, Some(remote), now_us)?;
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Cluster,
+            CapabilityTraceStage::KernelIpc,
+            capability.nonce(),
+            ClusterOperation::Observe as u16,
+        ) {
+            trace.emit(Level::Trace)
+        }
         if self.policy.require_encryption || self.keyring.key(epoch).is_some() {
             let key = self.keyring.key(epoch).ok_or(SecurityError::KeyNotFound)?;
             SecureChannel::new(key.key, actor, remote, initiator, epoch)
@@ -1049,12 +1077,23 @@ impl<const ROOTS: usize, const KEYS: usize, const AUDIT: usize, const REVOKED: u
         injector: &mut I,
     ) -> Result<(), SecurityError> {
         self.authorize(capability, actor, ClusterOperation::Modify, None, now_us)?;
-        self.revoke_with_interruption(
+        let result = self.revoke_with_interruption(
             RevocationKind::Capability,
             u64_bytes(nonce),
             now_us,
             injector,
-        )
+        );
+        if result.is_ok() {
+            if let Some(trace) = CapabilityTrace::new(
+                CapabilityDomain::Cluster,
+                CapabilityTraceStage::Revoked,
+                nonce,
+                ClusterOperation::Modify as u16,
+            ) {
+                trace.emit(Level::Info)
+            }
+        }
+        result
     }
 
     fn verify_admission(

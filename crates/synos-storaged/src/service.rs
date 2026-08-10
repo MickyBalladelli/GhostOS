@@ -3,6 +3,7 @@ use crate::{
     cache::CacheMode,
     protocol::{Endpoint, EndpointError, Protocol, ProtocolFeatures},
 };
+use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
 
 pub const MAX_MOUNTS: usize = 32;
 pub const MAX_PENDING_IO: usize = 64;
@@ -184,15 +185,20 @@ pub struct MountInfo {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u16)]
 pub enum IoOperation {
-    Read,
-    Write,
-    Flush,
-    List,
-    Stream,
+    Read = 1,
+    Write = 2,
+    Flush = 3,
+    List = 4,
+    Stream = 5,
 }
 
 impl IoOperation {
+    pub const fn raw(self) -> u16 {
+        self as u16
+    }
+
     fn rights(self) -> StorageRights {
         match self {
             Self::Read | Self::List => StorageRights::READ,
@@ -341,6 +347,14 @@ impl StorageDaemon {
             .ok_or(MountError::NotFound)?;
         *slot = None;
         self.catalog_version = self.catalog_version.saturating_add(1);
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Storage,
+            CapabilityTraceStage::Revoked,
+            admin.trace_id(),
+            2,
+        ) {
+            trace.emit(Level::Info)
+        }
         Ok(())
     }
 
@@ -413,6 +427,14 @@ impl StorageDaemon {
                 self.secret,
             )
             .map_err(StorageError::Capability)?;
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Storage,
+            CapabilityTraceStage::KernelIpc,
+            capability.trace_id(),
+            operation.raw(),
+        ) {
+            trace.emit(Level::Trace)
+        }
         let slot = self
             .pending
             .iter_mut()

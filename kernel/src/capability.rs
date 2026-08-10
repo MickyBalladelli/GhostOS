@@ -2,7 +2,10 @@ use crate::dlm::ResourceId;
 use crate::ipc::{ChannelId, SharedRegionId};
 use crate::quota::{CapabilityQuota, QuotaDecision, QuotaPolicy, QuotaResource, QuotaUsage};
 use crate::task::AddressSpaceId;
-use synos_observability::{EventField, Level, audit_event, field};
+use synos_observability::{
+    CapabilityDomain, CapabilityTrace, CapabilityTraceStage, EventField, Level, audit_event,
+    field,
+};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_CAPABILITIES: usize = 256;
@@ -516,6 +519,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::CALLER, caller.raw() as u64),
             EventField::unsigned(field::LENGTH, revoked as u64),
         );
+        self.trace_revocation(authority, 2);
         Ok(revoked)
     }
 
@@ -546,6 +550,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::CALLER, caller.raw() as u64),
             EventField::unsigned(field::LENGTH, revoked as u64),
         );
+        self.trace_revocation(authority, 2);
         Ok(revoked)
     }
 
@@ -583,6 +588,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::CALLER, caller.raw() as u64),
             EventField::unsigned(field::LENGTH, (revoked + 1) as u64),
         );
+        self.trace_revocation(handle, 2);
         Ok(revoked + 1)
     }
 
@@ -669,6 +675,14 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::OWNER, owner.raw() as u64),
             EventField::unsigned(field::RIGHTS, rights.bits() as u64),
         );
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Kernel,
+            CapabilityTraceStage::Created,
+            handle.raw(),
+            1,
+        ) {
+            trace.emit(Level::Info)
+        }
         Ok(handle)
     }
 
@@ -709,6 +723,14 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::CALLER, caller.raw() as u64),
             EventField::status(Status::NORMAL),
         );
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Kernel,
+            CapabilityTraceStage::KernelIpc,
+            handle.raw(),
+            3,
+        ) {
+            trace.emit(Level::Trace)
+        }
         Ok(info)
     }
 
@@ -816,7 +838,19 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::CALLER, caller.raw() as u64),
             EventField::unsigned(field::LENGTH, revoked as u64),
         );
+        self.trace_revocation(authority, 2);
         Ok(revoked)
+    }
+
+    fn trace_revocation(&self, handle: CapabilityHandle, operation: u16) {
+        if let Some(trace) = CapabilityTrace::new(
+            CapabilityDomain::Kernel,
+            CapabilityTraceStage::Revoked,
+            handle.raw(),
+            operation,
+        ) {
+            trace.emit(Level::Info)
+        }
     }
 }
 

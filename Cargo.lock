@@ -573,6 +573,7 @@ version = "0.1.0"
 dependencies = [
  "synos-host-filesystems",
  "synos-ipc",
+ "synos-observability",
  "synos-path-pattern",
  "synos-status",
  "synos-synfs",
@@ -715,6 +716,7 @@ version = "0.1.0"
 dependencies = [
  "smoltcp",
  "synos-ipc",
+ "synos-observability",
  "synos-status",
 ]
 
@@ -821,6 +823,7 @@ name = "synos-rustd"
 version = "0.1.0"
 dependencies = [
  "synos-init",
+ "synos-observability",
  "synos-pkg",
  "synos-status",
  "synos-synfs",

@@ -126,9 +126,16 @@ evidence.
 
 ## P1: Strengthen capability and supply-chain security
 
-- [ ] Trace one capability from creation to kernel IPC, daemon authorization,
+- [x] Trace one capability from creation to kernel IPC, daemon authorization,
       shell output, audit record, and revocation. Repeat for filesystem,
       network, process, storage, cluster, and compiler operations.
+      Progress: added the bounded `CapabilityTrace` vocabulary and audit
+      records for all six domains. Kernel capability mint/auth/revoke, kernel
+      IPC, SynFS, netd, process control, storage, cluster security, compiler
+      jobs, and shell audit rendering now emit the shared stages. Added the
+      direct `capability_trace_round_trips_every_operation_domain_and_stage`
+      regression test. `cargo check` passed for all affected crates and
+      `cargo check -p synos-observability --tests` passed on 2026-08-10.
 - [ ] Add confused-deputy tests where a service receives a valid capability
       for the wrong object, namespace, generation, tenant, or operation.
 - [ ] Add key rotation, revocation, replay, rollback, downgrade, and trust-root
