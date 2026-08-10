@@ -26,6 +26,7 @@ This catalog is a navigation aid. Read the crate’s `Cargo.toml`, `README`, and
 | `synos-host-filesystems` | Read-only Ext4, FAT32, and NTFS discovery |
 | `synos-rms` | Sequential/indexed records, DLM record locking, embedded key/value database |
 | `synos-backup` | Checkpointed, checksummed SynFS backup worker |
+| `synos-durability` | Shared bounded durability and recovery primitives |
 | `synos-pkg` | Content-addressed packages, dependency resolution, signatures, rollback inputs |
 | `synos-system-model` | Sealed roots, logical names, ACLs, package activation metadata |
 | `synos-kvd` | Native bounded key-value cache |
@@ -49,6 +50,7 @@ This catalog is a navigation aid. Read the crate’s `Cargo.toml`, `README`, and
 | --- | --- |
 | `synos-netd` | Heap-free TCP/IP service, socket capabilities, packet slots |
 | `synos-http` | HTTP/1, router, response encoding, gRPC framing and server primitives |
+| `synos-protocol` | Shared transport guards, replay windows, and traffic classes |
 | `synos-client-sdk` | Portable capability and frontend RPC client model |
 | `synos-webterm` | Remote terminal protocol and session model |
 | `synos-remote-display` | Remote console/display transport |
@@ -100,5 +102,6 @@ This catalog is a navigation aid. Read the crate’s `Cargo.toml`, `README`, and
 | Package | What it owns |
 | --- | --- |
 | `synos-vm` | x86_64 VM, firmware, devices, disks, snapshots, terminal, cluster fixtures |
+| `synos-hello-world` | Minimal cross-target example application |
 | `synos-test-support` | Deterministic fixtures, fake devices, fault injection, cleanup, golden data |
 | `synos-fuzz` | LibFuzzer targets for parser, filesystem, HTTP, script, VM decoder/device/image paths |

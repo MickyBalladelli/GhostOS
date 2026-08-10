@@ -16,7 +16,7 @@ from datetime import datetime
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INVENTORY_PATH = ROOT / "docs" / "test-inventory.toml"
 POLICY_PATH = ROOT / "docs" / "test-coverage.toml"
-TODO_PATH = ROOT / "TODO.md"
+TODO_PATH = ROOT / "todo" / "TODO-first.md"
 
 
 def error(errors: list[str], message: str) -> None:

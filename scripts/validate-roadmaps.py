@@ -154,11 +154,18 @@ def validate_links(path: Path, errors: list[str]) -> None:
 
 
 def validate_root_inventory(errors: list[str]) -> None:
-    todo_path = ROOT / "TODO.md"
     try:
         inventory = tomllib.loads(INVENTORY_PATH.read_text())
     except (OSError, tomllib.TOMLDecodeError) as exc:
         errors.append(f"cannot load {INVENTORY_PATH.relative_to(ROOT)}: {exc}")
+        return
+    source = inventory.get("source")
+    if not isinstance(source, str) or not source.strip():
+        errors.append("docs/test-inventory.toml: source must name the roadmap file")
+        return
+    todo_path = ROOT / source
+    if not todo_path.is_file():
+        errors.append(f"docs/test-inventory.toml: source file is missing: {source}")
         return
 
     root_features = {
@@ -192,9 +199,9 @@ def validate_root_inventory(errors: list[str]) -> None:
             errors.append(f"docs/test-inventory.toml: feature {feature_id} has no todo_heading")
 
     for feature_id in sorted(root_features.keys() - inventory_by_id.keys()):
-        errors.append(f"TODO.md: feature heading {feature_id} is missing from the inventory")
+        errors.append(f"{source}: feature heading {feature_id} is missing from the inventory")
     for feature_id in sorted(inventory_by_id.keys() - root_features.keys()):
-        errors.append(f"docs/test-inventory.toml: feature {feature_id} has no TODO.md heading")
+        errors.append(f"docs/test-inventory.toml: feature {feature_id} has no {source} heading")
 
 
 def known_evidence_ids(inventory: dict[str, object], errors: list[str]) -> set[str]:

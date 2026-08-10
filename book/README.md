@@ -81,11 +81,20 @@ If you want to understand a failing test, start with Chapter 17 and then jump to
 The code is the final authority. The main companion documents are:
 
 - [`README.md`](../README.md) — project introduction and major contracts.
-- [`TODO.md`](../TODO.md) — the numbered feature and test-completion plan.
+- [`todo/TODO-first.md`](../todo/TODO-first.md) — the numbered feature and
+  test-completion plan.
+- [`TODO.md`](../TODO.md) — the current hardening and developer-experience
+  roadmap.
 - [`docs/testing.md`](../docs/testing.md) — test tiers, evidence, and validation rules.
+- [`docs/inventory-diagrams.md`](../docs/inventory-diagrams.md) — generated
+  source maps for crates, services, protocols, capabilities, formats, and
+  tests.
+- [`docs/compatibility-matrix.md`](../docs/compatibility-matrix.md) —
+  format, protocol, target, and SDK compatibility.
 - [`docs/persistence-compatibility.md`](../docs/persistence-compatibility.md) — durable formats, backup, migration, downgrade, and recovery evidence.
 - [`docs/system-configuration.md`](../docs/system-configuration.md) — system configuration model.
 - [`virtual_machine/README.md`](../virtual_machine/README.md) — VM usage.
-- [`virtual_machine/TODO.md`](../virtual_machine/TODO.md) — VM-specific roadmap and quality gates.
+- [`todo/TODO-VM-first.md`](../todo/TODO-VM-first.md) — VM-specific roadmap
+  and quality gates.
 
 Some examples in this book are teaching examples. They show the shape of an API or workflow and may omit imports, error plumbing, or platform setup. Commands are intended to be copied from the repository root unless the text says otherwise.

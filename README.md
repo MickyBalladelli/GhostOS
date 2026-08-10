@@ -105,6 +105,17 @@ The bare-metal kernel and UEFI entry binaries are not test harnesses. Their
 reusable logic is tested through the kernel library with host-safe hardware
 stubs.
 
+## Documentation
+
+The [system book](book/README.md) gives the repository map and design guide.
+The [source inventory diagrams](docs/inventory-diagrams.md), [compatibility
+matrix](docs/compatibility-matrix.md), and [test contract](docs/testing.md)
+are checked against source metadata and roadmap files by:
+
+```sh
+python3 scripts/validate-documentation.py
+```
+
 ## Microkernel core
 
 The Ring 0 crate contains only boot, memory, interrupt, IPC, and scheduling

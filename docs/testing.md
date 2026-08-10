@@ -1,7 +1,7 @@
 # SynOS testing contract
 
 This document defines the minimum test evidence for every feature in
-`TODO.md`. The machine-readable feature map is
+`todo/TODO-first.md`. The machine-readable feature map is
 [`test-inventory.toml`](test-inventory.toml), and the enforceable 59.13
 definition is [`test-coverage.toml`](test-coverage.toml).
 
@@ -19,6 +19,15 @@ checked with:
 ```sh
 python3 scripts/validate-roadmaps.py
 ```
+
+Run the complete documentation check with:
+
+```sh
+python3 scripts/validate-documentation.py
+```
+
+It checks Markdown links, the book table of contents, the crate catalog,
+generated source maps, roadmap mappings, and the test inventory together.
 
 The same check discovers every `TODO*.md` roadmap and compares it with the
 `roadmap_validation.paths` and `[[roadmap]]` evidence mappings in

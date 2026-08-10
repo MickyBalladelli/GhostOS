@@ -4,12 +4,15 @@
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
 root = Path(__file__).resolve().parent.parent
-todo = (root / "TODO.md").read_text()
-inventory = (root / "docs/test-inventory.toml").read_text()
+inventory_path = root / "docs/test-inventory.toml"
+inventory_data = tomllib.loads(inventory_path.read_text())
+todo = (root / str(inventory_data["source"])).read_text()
+inventory = inventory_path.read_text()
 
 todo_ids = sorted(
     {

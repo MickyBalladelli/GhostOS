@@ -289,8 +289,8 @@ evidence.
 - [x] Publish a compatibility table for on-disk formats, wire protocols,
       snapshots, package schemas, target triples, and client SDK versions.
       See [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md).
-- [ ] Keep README, book, source maps, and test inventory synchronized through
-      documentation checks.
+- [x] Keep README, book, source maps, and test inventory synchronized through
+      [`scripts/validate-documentation.py`](scripts/validate-documentation.py).
 
 ## Completion gate
 

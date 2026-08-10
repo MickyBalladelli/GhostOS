@@ -2,8 +2,8 @@
 
 This is the TODO for a compiler that runs as a SynOS process.
 It is separate from the host-side driver in
-[`tools/synos-compiler`](tools/synos-compiler) and from the build gate in
-[`docs/native-compiler.md`](docs/native-compiler.md).
+[`tools/synos-compiler`](../tools/synos-compiler) and from the build gate in
+[`docs/native-compiler.md`](../docs/native-compiler.md).
 
 ## Definition of done
 
@@ -127,7 +127,7 @@ The native process contract is implemented in `crates/app`:
   discovery, temporary directories, and environment handling.
 
 The runtime PAL and ABI contract is implemented in `crates/runtime` and
-documented in [`docs/native-runtime.md`](docs/native-runtime.md). It uses
+documented in [`docs/native-runtime.md`](../docs/native-runtime.md). It uses
 capability-mapped buffers for variable data, fixed SynFS roots for in-guest
 toolchains and build state, abort-only panic semantics, static native images,
 and explicit TLS/backtrace hooks. The target specifications keep the same
@@ -285,11 +285,11 @@ without the host build matrix.
 
 ## Existing pieces to connect
 
-- [`crates/runtime`](crates/runtime) — native runtime ABI and `std` PAL.
-- [`crates/app`](crates/app) — application manifests and capability policy.
-- [`crates/pkg`](crates/pkg) — signed package bundles and instantiation
+- [`crates/runtime`](../crates/runtime) — native runtime ABI and `std` PAL.
+- [`crates/app`](../crates/app) — application manifests and capability policy.
+- [`crates/pkg`](../crates/pkg) — signed package bundles and instantiation
   receipts.
-- [`kernel/src/runtime.rs`](kernel/src/runtime.rs) — kernel runtime and
+- [`kernel/src/runtime.rs`](../kernel/src/runtime.rs) — kernel runtime and
   filesystem dispatch.
-- [`tools/synos-compiler`](tools/synos-compiler) — host-side bootstrap
+- [`tools/synos-compiler`](../tools/synos-compiler) — host-side bootstrap
   compiler driver.

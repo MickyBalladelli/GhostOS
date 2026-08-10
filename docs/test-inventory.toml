@@ -1,10 +1,11 @@
-# Machine-readable coverage map for the numbered feature sections in TODO.md.
+# Machine-readable coverage map for the numbered feature sections in
+# todo/TODO-first.md.
 # The IDs are stable names for required evidence, not claims that every test
 # already exists. `planned` entries are coverage debt until an artifact is
 # produced with the result states documented in docs/testing.md.
 
 schema = 1
-source = "TODO.md"
+source = "todo/TODO-first.md"
 source_scope = "numbered feature sections 1 through 58"
 evidence_root = "build/test-evidence/{run-id}/{tier}/{test-id}"
 test_id_format = "{tier}.{feature-id}.{behavior}"
@@ -13,12 +14,12 @@ definition_of_done = "docs/test-coverage.toml"
 
 [roadmap_validation]
 paths = [
-  "TODO-compiler.md",
-  "TODO-improvements.md",
-  "TODO-network.md",
+  "todo/TODO-compiler.md",
+  "todo/TODO-first.md",
+  "todo/TODO-network.md",
   "TODO.md",
-  "virtual_machine/TODO-improvements.md",
-  "virtual_machine/TODO.md",
+  "todo/TODO-VM-improvements.md",
+  "todo/TODO-VM-first.md",
 ]
 mapping_scope = "Every roadmap file must name the evidence IDs that cover its stated scope. feature.<id> aliases that feature's tier mappings."
 
@@ -658,13 +659,13 @@ fuzz = ["fuzz.58.admin-commands"]
 performance = ["performance.58.cluster-operations"]
 
 [[roadmap]]
-path = "TODO-compiler.md"
+path = "todo/TODO-compiler.md"
 scope = "Rust compiler, runtime, toolchain, and compiler-service roadmap"
 evidence_ids = ["feature.12"]
 
 [[roadmap]]
-path = "TODO-improvements.md"
-scope = "Cross-project safety, recovery, security, determinism, and roadmap-quality improvements"
+path = "todo/TODO-first.md"
+scope = "Root feature sections 1 through 58, test contract 59.13, and terminal section 60.0"
 evidence_ids = [
   "feature.01", "feature.02", "feature.03", "feature.04", "feature.05",
   "feature.06", "feature.07", "feature.08", "feature.09", "feature.10",
@@ -681,13 +682,13 @@ evidence_ids = [
 ]
 
 [[roadmap]]
-path = "TODO-network.md"
+path = "todo/TODO-network.md"
 scope = "Network settings, DHCP, persistence, authorization, and rollback roadmap"
 evidence_ids = ["feature.14"]
 
 [[roadmap]]
 path = "TODO.md"
-scope = "Root feature sections 1 through 58, test contract 59.13, and terminal section 60.0"
+scope = "Current hardening, developer experience, and completion-gate roadmap"
 evidence_ids = [
   "feature.01", "feature.02", "feature.03", "feature.04", "feature.05",
   "feature.06", "feature.07", "feature.08", "feature.09", "feature.10",
@@ -704,7 +705,7 @@ evidence_ids = [
 ]
 
 [[roadmap]]
-path = "virtual_machine/TODO-improvements.md"
+path = "todo/TODO-VM-improvements.md"
 scope = "VM correctness, migration, terminal, acceleration, security, and evidence improvements"
 evidence_ids = [
   "vm.59.13.pci", "vm.59.13.apic-pic", "vm.59.13.pit-hpet",
@@ -715,7 +716,7 @@ evidence_ids = [
 ]
 
 [[roadmap]]
-path = "virtual_machine/TODO.md"
+path = "todo/TODO-VM-first.md"
 scope = "VM architecture, devices, firmware, boot, integration, performance, and management roadmap"
 evidence_ids = [
   "vm.59.13.pci", "vm.59.13.apic-pic", "vm.59.13.pit-hpet",

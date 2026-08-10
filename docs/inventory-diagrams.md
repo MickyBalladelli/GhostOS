@@ -13,7 +13,7 @@ It has no hand-maintained inventory list. Run `python3 scripts/generate-inventor
 | Protocols | 20 | protocol modules, protocol/schema version constants, and traffic enums |
 | Capabilities | 28 | capability/rights enums, structs, and associated constants |
 | Storage formats | 35 | SYN* magic literals and nearby format/version constants |
-| Test files | 133 | Rust tests/ files and source files with #[test] functions |
+| Test files | 135 | Rust tests/ files and source files with #[test] functions |
 
 ## Crates
 
@@ -653,10 +653,11 @@ graph LR
     test_crate__synos_wasm_script["synos-wasm-script"]
     test_crate__synos_webterm["synos-webterm"]
     test_test__syn_script__crates_syn_script_tests_coverage_59_6_rs["crates/syn-script/tests/coverage_59_6.rs (4 tests)"]
+    test_test__syn_shell__crates_syn_shell_src_diagnostics_rs["crates/syn-shell/src/diagnostics.rs (1 tests)"]
     test_test__syn_shell__crates_syn_shell_src_file_editor_rs["crates/syn-shell/src/file_editor.rs (8 tests)"]
     test_test__syn_shell__crates_syn_shell_src_filesystem_rs["crates/syn-shell/src/filesystem.rs (9 tests)"]
     test_test__syn_shell__crates_syn_shell_src_interpreter_rs["crates/syn-shell/src/interpreter.rs (1 tests)"]
-    test_test__syn_shell__crates_syn_shell_src_parser_rs["crates/syn-shell/src/parser.rs (5 tests)"]
+    test_test__syn_shell__crates_syn_shell_src_parser_rs["crates/syn-shell/src/parser.rs (6 tests)"]
     test_test__syn_shell__crates_syn_shell_tests_cluster_validation_rs["crates/syn-shell/tests/cluster_validation.rs (3 tests)"]
     test_test__syn_shell__crates_syn_shell_tests_coverage_59_5_rs["crates/syn-shell/tests/coverage_59_5.rs (1 tests)"]
     test_test__syn_shell__crates_syn_shell_tests_coverage_59_6_rs["crates/syn-shell/tests/coverage_59_6.rs (4 tests)"]
@@ -704,7 +705,7 @@ graph LR
     test_test__synos_netd__crates_netd_tests_coverage_59_7_rs["crates/netd/tests/coverage_59_7.rs (5 tests)"]
     test_test__synos_netd__crates_netd_tests_dhcp_client_rs["crates/netd/tests/dhcp_client.rs (14 tests)"]
     test_test__synos_observability__crates_observability_tests_capability_trace_rs["crates/observability/tests/capability_trace.rs (1 tests)"]
-    test_test__synos_observability__crates_observability_tests_coverage_59_9_rs["crates/observability/tests/coverage_59_9.rs (5 tests)"]
+    test_test__synos_observability__crates_observability_tests_coverage_59_9_rs["crates/observability/tests/coverage_59_9.rs (6 tests)"]
     test_test__synos_path_pattern__crates_path_pattern_src_lib_rs["crates/path-pattern/src/lib.rs (7 tests)"]
     test_test__synos_pkg__crates_pkg_tests_coverage_59_10_rs["crates/pkg/tests/coverage_59_10.rs (2 tests)"]
     test_test__synos_pkg__crates_pkg_tests_coverage_59_5_rs["crates/pkg/tests/coverage_59_5.rs (2 tests)"]
@@ -737,7 +738,7 @@ graph LR
     test_test__synos_top__crates_synos_top_tests_coverage_59_9_rs["crates/synos-top/tests/coverage_59_9.rs (2 tests)"]
     test_test__synos_update__crates_synos_update_tests_coverage_59_10_rs["crates/synos-update/tests/coverage_59_10.rs (2 tests)"]
     test_test__synos_vm__virtual_machine_src_clock_rs["virtual_machine/src/clock.rs (1 tests)"]
-    test_test__synos_vm__virtual_machine_src_control_rs["virtual_machine/src/control.rs (5 tests)"]
+    test_test__synos_vm__virtual_machine_src_control_rs["virtual_machine/src/control.rs (7 tests)"]
     test_test__synos_vm__virtual_machine_src_cpu_decoder_rs["virtual_machine/src/cpu/decoder.rs (17 tests)"]
     test_test__synos_vm__virtual_machine_src_cpu_executor_rs["virtual_machine/src/cpu/executor.rs (10 tests)"]
     test_test__synos_vm__virtual_machine_src_devices_apic_rs["virtual_machine/src/devices/apic.rs (16 tests)"]
@@ -760,9 +761,10 @@ graph LR
     test_test__synos_vm__virtual_machine_src_firmware_uefi_rs["virtual_machine/src/firmware/uefi.rs (6 tests)"]
     test_test__synos_vm__virtual_machine_src_main_rs["virtual_machine/src/main.rs (11 tests)"]
     test_test__synos_vm__virtual_machine_src_memory_mod_rs["virtual_machine/src/memory/mod.rs (7 tests)"]
+    test_test__synos_vm__virtual_machine_src_migration_rs["virtual_machine/src/migration.rs (1 tests)"]
     test_test__synos_vm__virtual_machine_src_net_backend_rs["virtual_machine/src/net/backend.rs (2 tests)"]
     test_test__synos_vm__virtual_machine_src_net_mac_rs["virtual_machine/src/net/mac.rs (2 tests)"]
-    test_test__synos_vm__virtual_machine_src_snapshot_rs["virtual_machine/src/snapshot.rs (6 tests)"]
+    test_test__synos_vm__virtual_machine_src_snapshot_rs["virtual_machine/src/snapshot.rs (7 tests)"]
     test_test__synos_vm__virtual_machine_tests_cluster_rs["virtual_machine/tests/cluster.rs (9 tests)"]
     test_test__synos_vm__virtual_machine_tests_cpu_differential_rs["virtual_machine/tests/cpu_differential.rs (7 tests)"]
     test_test__synos_vm__virtual_machine_tests_cpu_memory_execution_rs["virtual_machine/tests/cpu_memory_execution.rs (6 tests)"]
@@ -786,6 +788,7 @@ graph LR
     test_test__synos_webterm__crates_synos_webterm_src_terminal_rs["crates/synos-webterm/src/terminal.rs (3 tests)"]
     test_test__synos_webterm__crates_synos_webterm_tests_coverage_59_7_rs["crates/synos-webterm/tests/coverage_59_7.rs (4 tests)"]
     test_crate__syn_script --> test_test__syn_script__crates_syn_script_tests_coverage_59_6_rs
+    test_crate__syn_shell --> test_test__syn_shell__crates_syn_shell_src_diagnostics_rs
     test_crate__syn_shell --> test_test__syn_shell__crates_syn_shell_src_file_editor_rs
     test_crate__syn_shell --> test_test__syn_shell__crates_syn_shell_src_filesystem_rs
     test_crate__syn_shell --> test_test__syn_shell__crates_syn_shell_src_interpreter_rs
@@ -893,6 +896,7 @@ graph LR
     test_crate__synos_vm --> test_test__synos_vm__virtual_machine_src_firmware_uefi_rs
     test_crate__synos_vm --> test_test__synos_vm__virtual_machine_src_main_rs
     test_crate__synos_vm --> test_test__synos_vm__virtual_machine_src_memory_mod_rs
+    test_crate__synos_vm --> test_test__synos_vm__virtual_machine_src_migration_rs
     test_crate__synos_vm --> test_test__synos_vm__virtual_machine_src_net_backend_rs
     test_crate__synos_vm --> test_test__synos_vm__virtual_machine_src_net_mac_rs
     test_crate__synos_vm --> test_test__synos_vm__virtual_machine_src_snapshot_rs
@@ -1008,16 +1012,16 @@ graph LR
 | CLUSTER_METADATA_MAGIC | SYNCLID1 | 1 | synos-storaged | [`crates/synos-storaged/src/cluster.rs:4`](../crates/synos-storaged/src/cluster.rs#L4) |
 | SYNCORE1 | SYNCORE1 | 1 | synos-debug | [`crates/synos-debug/src/coredump.rs:19`](../crates/synos-debug/src/coredump.rs#L19) |
 | SYNCRYPT | SYNCRYPT |  | synos-storaged | [`crates/synos-storaged/src/security.rs:1368`](../crates/synos-storaged/src/security.rs#L1368) |
-| PERSISTENCE_MAGIC | SYNFS001 | 1 | synos-kernel | [`kernel/src/shell.rs:1508`](../kernel/src/shell.rs#L1508) |
+| PERSISTENCE_MAGIC | SYNFS001 | 1 | synos-kernel | [`kernel/src/shell.rs:1518`](../kernel/src/shell.rs#L1518) |
 | TYPE_MAP_MAGIC | SYNFSMAP | 1, 3 | synos-synfs | [`crates/synfs/src/volume.rs:6`](../crates/synfs/src/volume.rs#L6) |
 | SUPERBLOCK_MAGIC | SYNFSVOL | 1, 3 | synos-synfs | [`crates/synfs/src/volume.rs:5`](../crates/synfs/src/volume.rs#L5) |
 | STATE_MAGIC | SYNKVD01 |  | synos-kvd | [`crates/synos-kvd/src/lib.rs:22`](../crates/synos-kvd/src/lib.rs#L22) |
 | MANIFEST_MAGIC | SYNMANIF | 1 | synos-vm | [`virtual_machine/src/devices/storage/system_disk.rs:25`](../virtual_machine/src/devices/storage/system_disk.rs#L25) |
 | MEMBERSHIP_MAGIC | SYNMEMB1 | 1 | synos-storaged | [`crates/synos-storaged/src/membership.rs:9`](../crates/synos-storaged/src/membership.rs#L9) |
 | MOUNTS_STATE_MAGIC | SYNMNT01 |  | synos-storaged | [`crates/synos-storaged/src/state.rs:5`](../crates/synos-storaged/src/state.rs#L5) |
-| SYNOMIG1 | SYNOMIG1 |  | synos-vm | [`virtual_machine/src/main.rs:1148`](../virtual_machine/src/main.rs#L1148) |
-| SYNOMIG2 | SYNOMIG2 |  | synos-vm | [`virtual_machine/src/main.rs:1148`](../virtual_machine/src/main.rs#L1148) |
-| MIGRATION_MAGIC | SYNOMIG3 |  | synos-vm | [`virtual_machine/src/main.rs:962`](../virtual_machine/src/main.rs#L962) |
+| SYNOMIG1 | SYNOMIG1 |  | synos-vm | [`virtual_machine/src/main.rs:1168`](../virtual_machine/src/main.rs#L1168) |
+| SYNOMIG2 | SYNOMIG2 |  | synos-vm | [`virtual_machine/src/main.rs:1168`](../virtual_machine/src/main.rs#L1168) |
+| MIGRATION_MAGIC | SYNOMIG3 |  | synos-vm | [`virtual_machine/src/main.rs:982`](../virtual_machine/src/main.rs#L982) |
 | MAGIC | SYNOPS01 | 1 | synos-vm | [`virtual_machine/src/devices/storage/persistence.rs:15`](../virtual_machine/src/devices/storage/persistence.rs#L15) |
 | HEADER_MAGIC | SYNOSDSK | 1 | synos-vm | [`virtual_machine/src/devices/storage/system_disk.rs:26`](../virtual_machine/src/devices/storage/system_disk.rs#L26) |
 | AUTH_MAGIC | SYNOSIG1 | 1, 2 | synos-vm | [`virtual_machine/src/snapshot.rs:14`](../virtual_machine/src/snapshot.rs#L14) |
@@ -1038,10 +1042,11 @@ graph LR
 | Package | Test file | Tests |
 | --- | --- | --- |
 | syn-script | [`crates/syn-script/tests/coverage_59_6.rs:1`](../crates/syn-script/tests/coverage_59_6.rs#L1) | 4 |
+| syn-shell | [`crates/syn-shell/src/diagnostics.rs:1`](../crates/syn-shell/src/diagnostics.rs#L1) | 1 |
 | syn-shell | [`crates/syn-shell/src/file_editor.rs:1`](../crates/syn-shell/src/file_editor.rs#L1) | 8 |
 | syn-shell | [`crates/syn-shell/src/filesystem.rs:1`](../crates/syn-shell/src/filesystem.rs#L1) | 9 |
 | syn-shell | [`crates/syn-shell/src/interpreter.rs:1`](../crates/syn-shell/src/interpreter.rs#L1) | 1 |
-| syn-shell | [`crates/syn-shell/src/parser.rs:1`](../crates/syn-shell/src/parser.rs#L1) | 5 |
+| syn-shell | [`crates/syn-shell/src/parser.rs:1`](../crates/syn-shell/src/parser.rs#L1) | 6 |
 | syn-shell | [`crates/syn-shell/tests/cluster_validation.rs:1`](../crates/syn-shell/tests/cluster_validation.rs#L1) | 3 |
 | syn-shell | [`crates/syn-shell/tests/coverage_59_5.rs:1`](../crates/syn-shell/tests/coverage_59_5.rs#L1) | 1 |
 | syn-shell | [`crates/syn-shell/tests/coverage_59_6.rs:1`](../crates/syn-shell/tests/coverage_59_6.rs#L1) | 4 |
@@ -1089,7 +1094,7 @@ graph LR
 | synos-netd | [`crates/netd/tests/coverage_59_7.rs:1`](../crates/netd/tests/coverage_59_7.rs#L1) | 5 |
 | synos-netd | [`crates/netd/tests/dhcp_client.rs:1`](../crates/netd/tests/dhcp_client.rs#L1) | 14 |
 | synos-observability | [`crates/observability/tests/capability_trace.rs:1`](../crates/observability/tests/capability_trace.rs#L1) | 1 |
-| synos-observability | [`crates/observability/tests/coverage_59_9.rs:1`](../crates/observability/tests/coverage_59_9.rs#L1) | 5 |
+| synos-observability | [`crates/observability/tests/coverage_59_9.rs:1`](../crates/observability/tests/coverage_59_9.rs#L1) | 6 |
 | synos-path-pattern | [`crates/path-pattern/src/lib.rs:1`](../crates/path-pattern/src/lib.rs#L1) | 7 |
 | synos-pkg | [`crates/pkg/tests/coverage_59_10.rs:1`](../crates/pkg/tests/coverage_59_10.rs#L1) | 2 |
 | synos-pkg | [`crates/pkg/tests/coverage_59_5.rs:1`](../crates/pkg/tests/coverage_59_5.rs#L1) | 2 |
@@ -1122,7 +1127,7 @@ graph LR
 | synos-top | [`crates/synos-top/tests/coverage_59_9.rs:1`](../crates/synos-top/tests/coverage_59_9.rs#L1) | 2 |
 | synos-update | [`crates/synos-update/tests/coverage_59_10.rs:1`](../crates/synos-update/tests/coverage_59_10.rs#L1) | 2 |
 | synos-vm | [`virtual_machine/src/clock.rs:1`](../virtual_machine/src/clock.rs#L1) | 1 |
-| synos-vm | [`virtual_machine/src/control.rs:1`](../virtual_machine/src/control.rs#L1) | 5 |
+| synos-vm | [`virtual_machine/src/control.rs:1`](../virtual_machine/src/control.rs#L1) | 7 |
 | synos-vm | [`virtual_machine/src/cpu/decoder.rs:1`](../virtual_machine/src/cpu/decoder.rs#L1) | 17 |
 | synos-vm | [`virtual_machine/src/cpu/executor.rs:1`](../virtual_machine/src/cpu/executor.rs#L1) | 10 |
 | synos-vm | [`virtual_machine/src/devices/apic.rs:1`](../virtual_machine/src/devices/apic.rs#L1) | 16 |
@@ -1145,9 +1150,10 @@ graph LR
 | synos-vm | [`virtual_machine/src/firmware/uefi.rs:1`](../virtual_machine/src/firmware/uefi.rs#L1) | 6 |
 | synos-vm | [`virtual_machine/src/main.rs:1`](../virtual_machine/src/main.rs#L1) | 11 |
 | synos-vm | [`virtual_machine/src/memory/mod.rs:1`](../virtual_machine/src/memory/mod.rs#L1) | 7 |
+| synos-vm | [`virtual_machine/src/migration.rs:1`](../virtual_machine/src/migration.rs#L1) | 1 |
 | synos-vm | [`virtual_machine/src/net/backend.rs:1`](../virtual_machine/src/net/backend.rs#L1) | 2 |
 | synos-vm | [`virtual_machine/src/net/mac.rs:1`](../virtual_machine/src/net/mac.rs#L1) | 2 |
-| synos-vm | [`virtual_machine/src/snapshot.rs:1`](../virtual_machine/src/snapshot.rs#L1) | 6 |
+| synos-vm | [`virtual_machine/src/snapshot.rs:1`](../virtual_machine/src/snapshot.rs#L1) | 7 |
 | synos-vm | [`virtual_machine/tests/cluster.rs:1`](../virtual_machine/tests/cluster.rs#L1) | 9 |
 | synos-vm | [`virtual_machine/tests/cpu_differential.rs:1`](../virtual_machine/tests/cpu_differential.rs#L1) | 7 |
 | synos-vm | [`virtual_machine/tests/cpu_memory_execution.rs:1`](../virtual_machine/tests/cpu_memory_execution.rs#L1) | 6 |

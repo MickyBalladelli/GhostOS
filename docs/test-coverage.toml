@@ -5,7 +5,7 @@
 # per-test evidence artifact with the required execution metadata.
 
 schema = 1
-source = "TODO.md"
+source = "todo/TODO-first.md"
 section = "59.13"
 
 [policy]
@@ -79,6 +79,21 @@ replacement_integration = "integration.57.config-activation"
 [[crate]]
 name = "cargo-synos"
 reason = "The Cargo subcommand is a thin host CLI wrapper tested through toolchain integration."
+replacement_integration = "integration.12.toolchain-runtime"
+
+[[crate]]
+name = "synos-compiler"
+reason = "The compiler driver is exercised through the toolchain integration boundary."
+replacement_integration = "integration.12.toolchain-runtime"
+
+[[crate]]
+name = "synos-durability"
+reason = "Durability primitives are exercised by the backup and restore integration boundary."
+replacement_integration = "integration.18.backup-restore"
+
+[[crate]]
+name = "synos-hello-world"
+reason = "The example package is a cross-target build fixture, not a host test target."
 replacement_integration = "integration.12.toolchain-runtime"
 
 # Every guest-visible device family has one stable matrix identity. The

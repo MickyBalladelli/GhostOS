@@ -146,10 +146,7 @@ python3 "$root_dir/scripts/validate-test-status.py" \
     --output "$evidence_dir/test-status.json"
 python3 "$root_dir/scripts/test_validate_panic_policy.py"
 python3 "$root_dir/scripts/validate-panic-policy.py"
-run_optional docs "$root_dir/scripts/validate-test-inventory.py"
-python3 "$root_dir/scripts/generate-inventory-diagrams.py" --check
-python3 "$root_dir/scripts/validate-roadmaps.py"
-python3 "$root_dir/scripts/validate-review-baseline.py"
+run_optional docs "$root_dir/scripts/validate-documentation.py"
 qemu_image=${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}
 qemu_uefi_image=${SYNOS_QEMU_UEFI_IMAGE:-$qemu_image}
 run_optional_with_vm_evidence qemu qemu "bios,uefi" 2 "$qemu_image" "$qemu_uefi_image" env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored
