@@ -1337,6 +1337,14 @@ impl InstructionDecoder {
                 ins.operands = vec![rm, Operand::Register(reg)];
                 return Ok(());
             }
+            0xA4 => {
+                ins.mnemonic = "SHLD";
+                let (reg, rm) =
+                    self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, false)?;
+                let count = Self::rd(mmu, pos)? as u64;
+                ins.operands = vec![rm, Operand::Register(reg), Operand::Immediate(count)];
+                return Ok(());
+            }
             0xBA => {
                 // Group 8: BT/BTS/BTR/BTC r/m, imm8. Only BT is required today
                 // (used by kernel 1 GiB page probing under size-optimized builds).
@@ -1595,6 +1603,17 @@ mod tests {
         let i = dec(&[0x0F, 0x05]).unwrap();
         assert_eq!(i.mnemonic, "SYSCALL");
         assert_eq!(i.next_ip, 0x1002);
+    }
+
+    #[test]
+    fn shld_register_immediate() {
+        let i = dec(&[0x41, 0x0F, 0xA4, 0xC8, 0x18]).unwrap();
+        assert_eq!(i.mnemonic, "SHLD");
+        assert_eq!(i.next_ip, 0x1005);
+        match &i.operands[..] {
+            [Operand::Register(8), Operand::Register(1), Operand::Immediate(0x18)] => {}
+            _ => panic!("bad operands"),
+        }
     }
 
     #[test]

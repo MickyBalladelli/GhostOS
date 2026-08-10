@@ -510,6 +510,7 @@ impl InstructionExecutor {
             "SHL" | "SHR" | "SAR" | "ROL" | "ROR" | "RCL" | "RCR" => {
                 self.execute_shift(instruction, state, mmu)?
             }
+            "SHLD" => self.execute_double_shift(instruction, state, mmu)?,
             "MOVSB" | "MOVSW" | "MOVSD" | "MOVSQ" | "CMPSB" | "CMPSW" | "CMPSD" | "CMPSQ"
             | "STOSB" | "STOSW" | "STOSD" | "STOSQ" | "LODSB" | "LODSW" | "LODSD" | "LODSQ"
             | "SCASB" | "SCASW" | "SCASD" | "SCASQ" | "INSB" | "INSW" | "INSD" | "INSQ"
@@ -1455,6 +1456,54 @@ impl InstructionExecutor {
         Ok(())
     }
 
+    fn execute_double_shift(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+        mmu: &mut Mmu,
+    ) -> Result<(), CpuError> {
+        let dst = operand_at(ins, 0)?.clone();
+        let src = operand_at(ins, 1)?.clone();
+        let destination = read_operand(ins, state, mmu, &dst)?;
+        let source = read_operand(ins, state, mmu, &src)?;
+        let count_raw = match ins.operands.get(2) {
+            Some(Operand::Immediate(count)) => *count,
+            Some(Operand::Register(1)) => state.rcx & 0xFF,
+            _ => return Err(CpuError::InvalidOpcode),
+        };
+        let mask = operand_mask(ins.opsize);
+        let bits = bit_count(ins.opsize);
+        let count_mask = if bits == 64 { 0x3F } else { 0x1F };
+        let count = count_raw & count_mask;
+        if count == 0 {
+            state.rip = ins.next_ip;
+            return Ok(())
+        }
+
+        let shift = count as u32;
+        let destination = destination & mask;
+        let source = source & mask;
+        let result = ((destination << shift) | (source >> (bits - count))) & mask;
+        let carry = (destination >> (bits - count)) & 1 != 0;
+        let overflow = if count == 1 {
+            (result & sign_bit(ins.opsize) != 0) != carry
+        } else {
+            state.rflags & OF != 0
+        };
+        write_flags(
+            state,
+            carry,
+            parity(result),
+            false,
+            result == 0,
+            result & sign_bit(ins.opsize) != 0,
+            overflow,
+        );
+        write_operand(ins, state, mmu, &dst, result)?;
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
     // ------------------------------------------------------------------
     // String instructions (with optional REP)
     // ------------------------------------------------------------------
@@ -2195,6 +2244,16 @@ mod tests {
         assert_eq!(cpu.state.rcx, 0);
         assert_eq!(cpu.state.rsi, 0x2004);
         assert_eq!(cpu.state.rdi, 0x3004);
+    }
+
+    #[test]
+    fn shld_register_immediate() {
+        let (mut cpu, mut mmu) = cpu_with(&[0x41, 0x0F, 0xA4, 0xC8, 0x01]);
+        cpu.state.r8 = 1;
+        cpu.state.rcx = 0x8000_0000;
+        single_run(&mut cpu, &mut mmu).unwrap();
+        assert_eq!(cpu.state.r8, 3);
+        assert_eq!(cpu.state.rip, 0x1005);
     }
 
     #[test]
