@@ -1,6 +1,7 @@
 use synos_netd::{
-    dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, CapabilityRight,
-    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DhcpClient, DhcpClientState, DhcpError, DhcpLease,
+    dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, CaptureDirection,
+    CaptureKind, CapabilityRight, CapturingDhcpTransport, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+    DhcpClient, DhcpClientState, DhcpError, DhcpLease,
     DhcpLeaseRuntime, DhcpServerFixture, DhcpTransport, Direction, Firewall, FirewallDecision,
     FirewallPolicy, PacketContext, Protocol, MAX_DHCP_PACKET, StaticSnapshot, BACKOFF_MS,
     MAX_DISCOVER_ATTEMPTS,
@@ -170,6 +171,72 @@ fn dora_assigns_lease_atomically_and_exposes_state() {
     assert_eq!(lease.dns_count, 1);
     assert_eq!(runtime.applied, Some(lease));
     assert_eq!(client.view().state, DhcpClientState::Bound);
+}
+
+#[test]
+fn dhcp_capture_records_dora_and_link_recovery_evidence() {
+    let mut client = authorized_client();
+    let mut transport: CapturingDhcpTransport<CaptureTransport, 16> =
+        CapturingDhcpTransport::new(CaptureTransport::new());
+    let mut runtime = RecordingRuntime::new();
+    let server = fixture();
+
+    client.start(0).unwrap();
+    transport.set_timestamp(0);
+    client.poll(0, &mut transport, &mut runtime).unwrap();
+    transport.capture.record_event(0, CaptureKind::DhcpLifecycle, 1);
+    let offer = server.respond(transport.transport.last()).unwrap();
+    transport.capture.record_packet(
+        1,
+        CaptureDirection::Ingress,
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        DHCP_SERVER_PORT,
+        DHCP_CLIENT_PORT,
+        &offer,
+    );
+    transport.capture.record_event(1, CaptureKind::DhcpLifecycle, 2);
+    client.handle_packet(&offer, 1, &mut runtime).unwrap();
+
+    transport.set_timestamp(1);
+    client.poll(1, &mut transport, &mut runtime).unwrap();
+    transport.capture.record_event(1, CaptureKind::DhcpLifecycle, 3);
+    let ack = server.respond(transport.transport.last()).unwrap();
+    transport.capture.record_packet(
+        2,
+        CaptureDirection::Ingress,
+        [0; 6],
+        MAC,
+        server.server_id,
+        [255, 255, 255, 255],
+        DHCP_SERVER_PORT,
+        DHCP_CLIENT_PORT,
+        &ack,
+    );
+    transport.capture.record_event(2, CaptureKind::DhcpLifecycle, 5);
+    client.handle_packet(&ack, 2, &mut runtime).unwrap();
+
+    client.set_link(false, 3);
+    transport.capture.record_event(3, CaptureKind::Link, 0);
+    assert_eq!(transport.capture.records().iter().filter(|record| {
+        record.kind == CaptureKind::Packet && record.direction == Some(CaptureDirection::Egress)
+    }).count(), 2);
+    assert_eq!(transport.capture.records().iter().filter(|record| {
+        record.kind == CaptureKind::Packet && record.direction == Some(CaptureDirection::Ingress)
+    }).count(), 2);
+    assert_eq!(transport.capture.records().last().unwrap().kind, CaptureKind::Link);
+    assert!(transport.capture.records().windows(2).all(|records| {
+        records[0].sequence < records[1].sequence
+    }));
+
+    client.set_link(true, 4);
+    transport.capture.record_event(4, CaptureKind::Link, 1);
+    transport.set_timestamp(4);
+    client.poll(4, &mut transport, &mut runtime).unwrap();
+    assert_eq!(client.state(), DhcpClientState::Bound);
+    assert_eq!(transport.capture.records().last().unwrap().kind, CaptureKind::Packet);
 }
 
 #[test]

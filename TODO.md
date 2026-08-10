@@ -228,8 +228,12 @@ evidence.
 
 ## P1: Harden networking and federation
 
-- [ ] Add packet-capture evidence for network command changes, DHCP lease
+- [x] Add packet-capture evidence for network command changes, DHCP lease
       lifecycle, firewall decisions, rollback, and link-down recovery.
+      Evidence: bounded `synos-netd::PacketCapture` records packet metadata and
+      bytes, firewall decisions, DHCP DORA/link events, while shell network
+      command and declarative rollback tests preserve ordered control-plane
+      evidence.
 - [ ] Add DHCP conflict detection, lease persistence, renewal race, server
       identity, route replacement, and stale-configuration tests.
 - [ ] Define and test protocol version negotiation, replay windows, message

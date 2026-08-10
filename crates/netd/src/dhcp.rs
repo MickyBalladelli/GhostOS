@@ -4,6 +4,7 @@
 //! and lease options, and applies accepted leases through a runtime bridge so
 //! previous static configuration can be restored on failure or expiry.
 
+use crate::capture::{CaptureDirection, PacketCapture, MAX_CAPTURE_RECORDS};
 use crate::firewall::{
     CapabilityRight, Direction, FirewallRule, Ipv4Cidr, PortRange, Protocol, RateLimit, RuleAction,
 };
@@ -171,6 +172,60 @@ pub trait DhcpTransport {
         dst_port: u16,
         payload: &[u8],
     ) -> Result<(), DhcpError>;
+}
+
+/// DHCP transport decorator that retains the exact bounded UDP packets sent
+/// by the client. The caller records replies after validating their arrival.
+pub struct CapturingDhcpTransport<T, const CAPACITY: usize = MAX_CAPTURE_RECORDS> {
+    pub transport: T,
+    pub capture: PacketCapture<CAPACITY>,
+    pub now_ms: u64,
+}
+
+impl<T, const CAPACITY: usize> CapturingDhcpTransport<T, CAPACITY> {
+    pub fn new(transport: T) -> Self {
+        Self {
+            transport,
+            capture: PacketCapture::new(),
+            now_ms: 0,
+        }
+    }
+
+    pub fn set_timestamp(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
+    }
+}
+
+impl<T: DhcpTransport, const CAPACITY: usize> DhcpTransport
+    for CapturingDhcpTransport<T, CAPACITY>
+{
+    fn send_udp(
+        &mut self,
+        interface: &str,
+        src_mac: [u8; 6],
+        src_ip: [u8; 4],
+        dst_ip: [u8; 4],
+        dst_mac: [u8; 6],
+        src_port: u16,
+        dst_port: u16,
+        payload: &[u8],
+    ) -> Result<(), DhcpError> {
+        self.transport.send_udp(
+            interface, src_mac, src_ip, dst_ip, dst_mac, src_port, dst_port, payload,
+        )?;
+        self.capture.record_packet(
+            self.now_ms,
+            CaptureDirection::Egress,
+            src_mac,
+            dst_mac,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            payload,
+        );
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

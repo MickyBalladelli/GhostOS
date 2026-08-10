@@ -1,7 +1,8 @@
 use synos_netd::{
-    CapabilityKey, CapabilityRight, Direction, Firewall, FirewallDecision, FirewallError,
+    CaptureDirection, CaptureKind, CapabilityKey, CapabilityRight, Direction, Firewall,
+    FirewallDecision, FirewallError,
     FirewallPolicy, FirewallRule, Ipv4Cidr, NetworkCapability, PacketContext, PacketError,
-    PacketQueue, PacketView, PortRange, Protocol, RateLimit, RuleAction, SocketOperation,
+    PacketCapture, PacketQueue, PacketView, PortRange, Protocol, RateLimit, RuleAction, SocketOperation,
     SocketRequest, SocketRights,
 };
 
@@ -79,6 +80,54 @@ fn firewall_parses_udp_and_rejects_bad_frames() {
     assert_eq!(firewall.inspect(&frame, context), FirewallDecision::Allow);
     assert_eq!(firewall.inspect(&frame, PacketContext { now_ms: 11, ..context }), FirewallDecision::RateLimited);
     assert_eq!(firewall.inspect(&frame[..30], context), FirewallDecision::Invalid);
+}
+
+#[test]
+fn packet_capture_preserves_frame_decision_order_and_bounds() {
+    let frame = udp_frame(b"evidence");
+    let mut policy = FirewallPolicy::<2>::new();
+    policy.default_action = RuleAction::Allow;
+    let mut firewall = Firewall::<2, 2, 2>::new(policy);
+    let context = PacketContext {
+        principal: 7,
+        direction: Direction::Ingress,
+        now_ms: 42,
+        leased_workload: false,
+        capability: None,
+        signature: None,
+        signer: None,
+    };
+    let mut capture = PacketCapture::<4>::new();
+
+    assert_eq!(
+        firewall.inspect_with_capture(&frame, context, &mut capture),
+        FirewallDecision::Allow
+    );
+    assert_eq!(capture.len(), 2);
+    assert_eq!(capture.records()[0].kind, CaptureKind::Packet);
+    assert_eq!(capture.records()[0].direction, Some(CaptureDirection::Ingress));
+    assert_eq!(capture.records()[0].bytes(), &frame);
+    assert_eq!(capture.records()[1].kind, CaptureKind::FirewallDecision);
+    assert_eq!(capture.records()[1].code, 0);
+
+    capture.record_packet(
+        43,
+        CaptureDirection::Egress,
+        [0; 6],
+        [0; 6],
+        [0; 4],
+        [0; 4],
+        0,
+        0,
+        &[1; synos_netd::MAX_CAPTURE_BYTES + 1],
+    );
+    assert!(capture.records()[2].truncated);
+    assert_eq!(capture.records()[2].original_length, synos_netd::MAX_CAPTURE_BYTES + 1);
+    capture.record_event(44, CaptureKind::Link, 0);
+    capture.record_event(45, CaptureKind::Rollback, 0);
+    assert_eq!(capture.len(), 4);
+    capture.record_event(46, CaptureKind::NetworkCommand, 64);
+    assert_eq!(capture.dropped(), 1);
 }
 
 #[test]

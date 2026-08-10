@@ -1,3 +1,5 @@
+use crate::capture::{CaptureDirection, CaptureKind, PacketCapture};
+
 pub const POLICY_PATH: &str = "SYS$SYSTEM:FIREWALL.POLICY;1";
 pub const MAX_FIREWALL_RULES: usize = 32;
 pub const MAX_CONNECTIONS: usize = 64;
@@ -645,6 +647,50 @@ impl<const RULES: usize, const CONNECTIONS: usize, const BUCKETS: usize>
         })
     }
 
+    /// Inspect a frame and retain both the bounded packet bytes and the
+    /// resulting policy decision in deterministic evidence order.
+    pub fn inspect_with_capture<const CAPACITY: usize>(
+        &mut self,
+        frame: &[u8],
+        context: PacketContext<'_>,
+        capture: &mut PacketCapture<CAPACITY>,
+    ) -> FirewallDecision {
+        let decision = self.inspect(frame, context);
+        let packet = PacketView::parse(frame);
+        let (source_ip, destination_ip, source_port, destination_port) = packet
+            .map(|packet| {
+                (
+                    packet.source,
+                    packet.destination,
+                    packet.source_port,
+                    packet.destination_port,
+                )
+            })
+            .unwrap_or(([0; 4], [0; 4], 0, 0));
+        let source_mac = frame.get(6..12).and_then(|bytes| bytes.try_into().ok()).unwrap_or([0; 6]);
+        let destination_mac = frame.get(..6).and_then(|bytes| bytes.try_into().ok()).unwrap_or([0; 6]);
+        capture.record_packet(
+            context.now_ms,
+            match context.direction {
+                Direction::Ingress => CaptureDirection::Ingress,
+                Direction::Egress => CaptureDirection::Egress,
+            },
+            source_mac,
+            destination_mac,
+            source_ip,
+            destination_ip,
+            source_port,
+            destination_port,
+            frame,
+        );
+        capture.record_event(
+            context.now_ms,
+            CaptureKind::FirewallDecision,
+            firewall_decision_code(decision),
+        );
+        decision
+    }
+
     pub fn authorize_endpoint(
         &self,
         principal: u64,
@@ -753,6 +799,18 @@ impl<const RULES: usize, const CONNECTIONS: usize, const BUCKETS: usize>
             current.packets += 1;
             true
         }
+    }
+}
+
+fn firewall_decision_code(decision: FirewallDecision) -> u16 {
+    match decision {
+        FirewallDecision::Allow => 0,
+        FirewallDecision::Drop => 1,
+        FirewallDecision::Reject => 2,
+        FirewallDecision::RateLimited => 3,
+        FirewallDecision::Invalid => 4,
+        FirewallDecision::AccessDenied => 5,
+        FirewallDecision::SignatureRequired => 6,
     }
 }
 

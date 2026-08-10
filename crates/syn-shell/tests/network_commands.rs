@@ -268,6 +268,26 @@ fn show_and_set_commands_emit_structured_network_output() {
 }
 
 #[test]
+fn network_command_capture_preserves_mutation_order_and_generation() {
+    let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
+    execute(&mut executor, "SET HOSTNAME node-1").unwrap();
+    execute(&mut executor, "SET INTERFACE eth0 /DISABLE").unwrap();
+    execute(
+        &mut executor,
+        "SET ROUTE 10.0.0.0/24 /GATEWAY=10.0.0.1 /INTERFACE=eth0",
+    )
+    .unwrap();
+
+    let source = executor.source();
+    assert_eq!(source.command_count, 3);
+    assert_eq!(
+        &source.command_log[..source.command_count],
+        &[SET_HOSTNAME_ROUTE, SET_INTERFACE_ROUTE, SET_ROUTE_ROUTE]
+    );
+    assert_eq!(source.view.generation, 4);
+}
+
+#[test]
 fn show_interface_selects_one_named_interface() {
     let mut executor: NetworkExecutor<_, 8> = NetworkExecutor::new(FakeNetwork::seeded());
     let interface = execute(&mut executor, "SHOW INTERFACE eth0").unwrap();
@@ -372,6 +392,8 @@ fn two_seeded_interfaces_fit_output_budget() {
     });
     let source = FakeNetwork {
         allowed: true,
+        command_log: [0; 8],
+        command_count: 0,
         view: NetworkView {
             generation: 1,
             hostname: Some(text("synos")),
@@ -419,6 +441,8 @@ fn four_full_interfaces_paginate_within_output_budget() {
     }
     let source = FakeNetwork {
         allowed: true,
+        command_log: [0; 8],
+        command_count: 0,
         view: NetworkView {
             generation: 1,
             hostname: Some(text("synos")),
@@ -450,6 +474,8 @@ fn show_interfaces_supports_bounded_pagination_marker() {
 
 struct FakeNetwork {
     allowed: bool,
+    command_log: [u16; 8],
+    command_count: usize,
     view: NetworkView,
 }
 
@@ -457,6 +483,8 @@ impl FakeNetwork {
     fn denied() -> Self {
         Self {
             allowed: false,
+            command_log: [0; 8],
+            command_count: 0,
             view: NetworkView::EMPTY,
         }
     }
@@ -482,6 +510,8 @@ impl FakeNetwork {
         });
         Self {
             allowed: true,
+            command_log: [0; 8],
+            command_count: 0,
             view: NetworkView {
                 generation: 1,
                 hostname: Some(text("synos")),
@@ -501,6 +531,13 @@ impl FakeNetwork {
 
     fn interface_mut(&mut self) -> &mut NetworkInterfaceView {
         self.view.interfaces[0].as_mut().expect("seeded interface")
+    }
+
+    fn capture_command(&mut self, route: u16) {
+        if let Some(slot) = self.command_log.get_mut(self.command_count) {
+            *slot = route;
+            self.command_count += 1;
+        }
     }
 }
 
@@ -526,12 +563,14 @@ impl NetworkSource for FakeNetwork {
     }
 
     fn set_hostname(&mut self, hostname: &str) -> Result<NetworkView, Status> {
+        self.capture_command(SET_HOSTNAME_ROUTE);
         self.view.hostname = Some(text(hostname));
         self.bump();
         Ok(self.view)
     }
 
     fn set_interface(&mut self, update: InterfaceUpdate<'_>) -> Result<NetworkView, Status> {
+        self.capture_command(SET_INTERFACE_ROUTE);
         let interface = self.interface_mut();
         if let Some(mode) = update.mode {
             interface.mode = mode;
@@ -570,6 +609,7 @@ impl NetworkSource for FakeNetwork {
     }
 
     fn set_route(&mut self, update: RouteUpdate<'_>) -> Result<NetworkView, Status> {
+        self.capture_command(SET_ROUTE_ROUTE);
         if let Some(existing) = self
             .view
             .routes
