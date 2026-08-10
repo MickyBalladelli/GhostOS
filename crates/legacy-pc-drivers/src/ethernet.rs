@@ -211,11 +211,32 @@ impl IntelE1000 {
         self.write(Self::CTRL, control)
     }
 
+    pub fn queue_snapshot(&self, receive: bool) -> EthernetQueueSnapshot {
+        let (length, head, tail, enabled) = if receive {
+            (
+                self.read(Self::RDLEN),
+                self.read(Self::RDH),
+                self.read(Self::RDT),
+                self.read(Self::RCTL) & 1 != 0,
+            )
+        } else {
+            (
+                self.read(Self::TDLEN),
+                self.read(Self::TDH),
+                self.read(Self::TDT),
+                self.read(Self::TCTL) & 1 != 0,
+            )
+        };
+        EthernetQueueSnapshot {
+            ready: enabled && length != 0,
+            head: Some(head),
+            tail: Some(tail),
+            capacity: length / size_of::<IntelRxDescriptor>() as u32,
+        }
+    }
+
     pub fn queues_ready(&self) -> bool {
-        self.read(Self::RDLEN) != 0
-            && self.read(Self::TDLEN) != 0
-            && self.read(Self::RCTL) & 1 != 0
-            && self.read(Self::TCTL) & 1 != 0
+        self.queue_snapshot(true).ready && self.queue_snapshot(false).ready
     }
 
     pub fn configure_rings(
@@ -275,7 +296,16 @@ pub struct EthernetSnapshot {
     pub mac: [u8; 6],
     pub link_up: bool,
     pub admin_up: bool,
-    pub queues_ready: bool,
+    pub rx_queue: EthernetQueueSnapshot,
+    pub tx_queue: EthernetQueueSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EthernetQueueSnapshot {
+    pub ready: bool,
+    pub head: Option<u32>,
+    pub tail: Option<u32>,
+    pub capacity: u32,
 }
 
 pub struct EthernetRuntime {
@@ -345,19 +375,46 @@ impl EthernetRuntime {
                 mac: self.mac,
                 link_up: e1000.link_up(),
                 admin_up: e1000.admin_up(),
-                queues_ready: e1000.queues_ready(),
+                rx_queue: e1000.queue_snapshot(true),
+                tx_queue: e1000.queue_snapshot(false),
             }
         }
 
-        let status = self
+        let status = self.virtio_port.map_or(0, |port| unsafe { in_u8(port + 0x12) });
+        let link = self
             .virtio_port
-            .map(|port| unsafe { in_u8(port + 0x12) })
-            .unwrap_or(0);
+            .map(|port| unsafe { in_u8(port + 0x1a) & 1 != 0 })
+            .unwrap_or(false);
+        let (rx_queue, tx_queue) = self
+            .virtio_port
+            .map(|port| {
+                let rx = Self::virtio_queue_snapshot(port, 0, status & 4 != 0);
+                let tx = Self::virtio_queue_snapshot(port, 1, status & 4 != 0);
+                (rx, tx)
+            })
+            .unwrap_or((EthernetQueueSnapshot::EMPTY, EthernetQueueSnapshot::EMPTY));
         EthernetSnapshot {
             mac: self.mac,
-            link_up: status & 4 != 0,
+            link_up: link,
             admin_up: self.virtio_admin_up,
-            queues_ready: self.virtio_port.is_some() && status & 4 != 0,
+            rx_queue,
+            tx_queue,
+        }
+    }
+
+    fn virtio_queue_snapshot(
+        port: u16,
+        queue: u16,
+        driver_ready: bool,
+    ) -> EthernetQueueSnapshot {
+        unsafe { out_u16(port + 0x0e, queue) };
+        let page = unsafe { in_u32(port + 0x08) };
+        let capacity = unsafe { in_u16(port + 0x0c) } as u32;
+        EthernetQueueSnapshot {
+            ready: driver_ready && page != 0,
+            head: None,
+            tail: None,
+            capacity,
         }
     }
 
@@ -367,6 +424,15 @@ impl EthernetRuntime {
             e1000.set_admin_up(enabled)
         }
     }
+}
+
+impl EthernetQueueSnapshot {
+    pub const EMPTY: Self = Self {
+        ready: false,
+        head: None,
+        tail: None,
+        capacity: 0,
+    };
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -383,10 +449,63 @@ unsafe fn in_u8(port: u16) -> u8 {
     value
 }
 
+#[cfg(target_arch = "x86_64")]
+unsafe fn in_u16(port: u16) -> u16 {
+    let value;
+    unsafe {
+        core::arch::asm!(
+            "in ax, dx",
+            in("dx") port,
+            out("ax") value,
+            options(nomem, nostack, preserves_flags),
+        )
+    }
+    value
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn in_u32(port: u16) -> u32 {
+    let value;
+    unsafe {
+        core::arch::asm!(
+            "in eax, dx",
+            in("dx") port,
+            out("eax") value,
+            options(nomem, nostack, preserves_flags),
+        )
+    }
+    value
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn out_u16(port: u16, value: u16) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags),
+        )
+    }
+}
+
 #[cfg(not(target_arch = "x86_64"))]
 unsafe fn in_u8(_port: u16) -> u8 {
     0
 }
+
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn in_u16(_port: u16) -> u16 {
+    0
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn in_u32(_port: u16) -> u32 {
+    0
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn out_u16(_port: u16, _value: u16) {}
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]

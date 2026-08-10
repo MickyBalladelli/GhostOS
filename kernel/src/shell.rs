@@ -2256,7 +2256,8 @@ impl FilesystemSource for KernelFilesystem {
 
 struct KernelNetwork {
     view: syn_shell::network::NetworkView,
-    device: Option<synos_legacy_pc_drivers::EthernetRuntime>,
+    devices: [Option<synos_legacy_pc_drivers::EthernetRuntime>;
+        syn_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1],
 }
 
 impl KernelNetwork {
@@ -2271,14 +2272,17 @@ impl KernelNetwork {
         interfaces[0] = Some(NetworkInterfaceView {
             name: text("lo"),
             address: text("127.0.0.1"),
+            mac: None,
             gateway: None,
             mtu: 65_535,
             enabled: true,
             link_up: true,
+            rx_queue: None,
+            tx_queue: None,
             mode: InterfaceAddressMode::Static,
             dhcp: None,
         });
-        let device = discover_runtime_network(boot_info);
+        let devices = discover_runtime_network(boot_info);
         let mut network = Self {
             view: NetworkView {
                 generation: 1,
@@ -2287,10 +2291,11 @@ impl KernelNetwork {
                 route_count: 0,
                 interfaces,
                 routes: [None; MAX_NETWORK_OUTPUT_ROWS],
+                link_events: [None; syn_shell::network::MAX_NETWORK_LINK_EVENTS],
                 next_interface: None,
                 next_route: None,
             },
-            device,
+            devices,
         };
         network.refresh();
         network
@@ -2316,38 +2321,100 @@ impl KernelNetwork {
         syn_shell::network::NetworkText::new(value).map_err(|_| Status::INVALID_ARGUMENT)
     }
 
-    fn refresh(&mut self) {
-        let snapshot = self.device.as_mut().map(|device| device.snapshot());
-        let changed = match snapshot {
-            Some(snapshot) => {
-                let name = Self::network_text("eth0");
-                let address = Self::network_text("0.0.0.0");
-                let current = self.view.interfaces[1];
-                let Some(name) = name.ok() else {
-                    return
-                };
-                let Some(address) = address.ok() else {
-                    return
-                };
-                let next = syn_shell::network::NetworkInterfaceView {
-                    name,
-                    address,
-                    gateway: current.and_then(|interface| interface.gateway),
-                    mtu: current.map_or(1500, |interface| interface.mtu),
-                    enabled: snapshot.admin_up,
-                    link_up: snapshot.link_up,
-                    mode: current.map_or(
-                        syn_shell::network::InterfaceAddressMode::Static,
-                        |interface| interface.mode,
-                    ),
-                    dhcp: current.and_then(|interface| interface.dhcp),
-                };
-                let changed = current != Some(next);
-                self.view.interfaces[1] = Some(next);
-                changed
+    fn mac_text(mac: [u8; 6]) -> syn_shell::network::NetworkText {
+        let mut text = syn_shell::network::NetworkText::empty();
+        for (index, byte) in mac.iter().copied().enumerate() {
+            if index != 0 {
+                let _ = text.push_char(':');
             }
-            None => self.view.interfaces[1].take().is_some(),
+            let digits = b"0123456789abcdef";
+            let _ = text.push_char(digits[(byte >> 4) as usize] as char);
+            let _ = text.push_char(digits[(byte & 0x0f) as usize] as char);
+        }
+        text
+    }
+
+    fn queue_view(
+        queue: synos_legacy_pc_drivers::EthernetQueueSnapshot,
+    ) -> syn_shell::network::NetworkQueueView {
+        syn_shell::network::NetworkQueueView {
+            ready: queue.ready,
+            head: queue.head,
+            tail: queue.tail,
+            capacity: queue.capacity,
+        }
+    }
+
+    fn interface_name(index: usize) -> syn_shell::network::NetworkText {
+        let mut name = syn_shell::network::NetworkText::empty();
+        let _ = name.push_str("eth");
+        let _ = name.push_char(b'0'.saturating_add(index as u8) as char);
+        name
+    }
+
+    fn record_link_event(&mut self, index: usize, link_up: bool) {
+        use syn_shell::network::{NetworkLinkEvent, MAX_NETWORK_LINK_EVENTS};
+
+        let event = NetworkLinkEvent {
+            generation: self.view.generation.saturating_add(1),
+            interface: Self::interface_name(index),
+            link_up,
         };
+        if let Some(slot) = self.view.link_events.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(event);
+            return
+        }
+        let mut index = 1;
+        while index < MAX_NETWORK_LINK_EVENTS {
+            self.view.link_events[index - 1] = self.view.link_events[index];
+            index += 1;
+        }
+        self.view.link_events[MAX_NETWORK_LINK_EVENTS - 1] = Some(event);
+    }
+
+    fn refresh(&mut self) {
+        let mut changed = false;
+        for device_index in 0..self.devices.len() {
+            let interface_index = device_index + 1;
+            let snapshot = self.devices[device_index]
+                .as_mut()
+                .map(|device| device.snapshot());
+            let Some(snapshot) = snapshot else {
+                if self.view.interfaces[interface_index].take().is_some() {
+                    changed = true;
+                }
+                continue
+            };
+            let name = Self::interface_name(device_index);
+            let address = Self::network_text("0.0.0.0");
+            let Some(address) = address.ok() else {
+                continue
+            };
+            let current = self.view.interfaces[interface_index];
+            let next = syn_shell::network::NetworkInterfaceView {
+                name,
+                address,
+                mac: Some(Self::mac_text(snapshot.mac)),
+                gateway: current.and_then(|interface| interface.gateway),
+                mtu: current.map_or(1500, |interface| interface.mtu),
+                enabled: snapshot.admin_up,
+                link_up: snapshot.link_up,
+                rx_queue: Some(Self::queue_view(snapshot.rx_queue)),
+                tx_queue: Some(Self::queue_view(snapshot.tx_queue)),
+                mode: current.map_or(
+                    syn_shell::network::InterfaceAddressMode::Static,
+                    |interface| interface.mode,
+                ),
+                dhcp: current.and_then(|interface| interface.dhcp),
+            };
+            if current.is_some_and(|interface| interface.link_up != next.link_up) {
+                self.record_link_event(device_index, next.link_up);
+            }
+            if current != Some(next) {
+                changed = true;
+            }
+            self.view.interfaces[interface_index] = Some(next);
+        }
         let count = self.view.interfaces.iter().flatten().count() as u64;
         if self.view.interface_count != count {
             self.view.interface_count = count;
@@ -2358,51 +2425,45 @@ impl KernelNetwork {
     }
 }
 
+#[allow(unused_mut)]
 fn discover_runtime_network(
     boot_info: &'static BootInfo,
-) -> Option<synos_legacy_pc_drivers::EthernetRuntime> {
+) -> [Option<synos_legacy_pc_drivers::EthernetRuntime>;
+    syn_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1] {
+    let mut devices = core::array::from_fn(|_| None);
     #[cfg(target_arch = "x86_64")]
     {
         let mut config = synos_legacy_pc_drivers::pci::PortConfig;
-        let mut preferred = None;
-        let mut fallback = None;
         synos_legacy_pc_drivers::pci::enumerate(&mut config, |device| {
             let Some(candidate) = synos_legacy_pc_drivers::EthernetAdapter::from_pci(&device)
             else {
                 return
             };
-            let is_preferred = matches!(
+            if !matches!(
                 candidate.kind,
                 synos_legacy_pc_drivers::EthernetKind::IntelE1000
-            );
-            if is_preferred {
-                preferred = Some(candidate)
-            } else if fallback.is_none() {
-                fallback = Some(candidate)
-            }
-        });
-        if let Some(adapter) = preferred {
-            if let Ok(device) = synos_legacy_pc_drivers::EthernetRuntime::open(
-                adapter,
-                boot_info.physical_address_offset,
+                    | synos_legacy_pc_drivers::EthernetKind::VirtioNet
             ) {
-                return Some(device)
+                return
             }
-        }
-        fallback.and_then(|adapter| {
-            synos_legacy_pc_drivers::EthernetRuntime::open(
-                adapter,
+            let Some(runtime) = synos_legacy_pc_drivers::EthernetRuntime::open(
+                candidate,
                 boot_info.physical_address_offset,
             )
-            .ok()
-        })
+            .ok() else {
+                return
+            };
+            if let Some(slot) = devices.iter_mut().find(|slot| slot.is_none()) {
+                *slot = Some(runtime)
+            }
+        });
     }
 
     #[cfg(not(target_arch = "x86_64"))]
     {
         let _ = boot_info;
-        None
     }
+    devices
 }
 
 impl syn_shell::network::NetworkSource for KernelNetwork {
@@ -2443,15 +2504,19 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 
         self.refresh();
         if let Some(enabled) = update.enabled {
-            let interface = self
+            let interface_index = self
                 .view
                 .interfaces
                 .iter()
                 .flatten()
-                .find(|interface| interface.name.as_str().eq_ignore_ascii_case(update.name))
+                .position(|interface| interface.name.as_str().eq_ignore_ascii_case(update.name))
                 .ok_or(Status::NOT_FOUND)?;
-            if interface.name.as_str() != "lo" {
-                let device = self.device.as_mut().ok_or(Status::NOT_FOUND)?;
+            if interface_index != 0 {
+                let device = self
+                    .devices
+                    .get_mut(interface_index - 1)
+                    .and_then(Option::as_mut)
+                    .ok_or(Status::NOT_FOUND)?;
                 device.set_admin_up(enabled);
             }
         }

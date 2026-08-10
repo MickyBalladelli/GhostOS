@@ -22,6 +22,7 @@ const REG_QUEUE_NOTIFY: u16 = 0x10;
 const REG_STATUS: u16 = 0x12;
 const REG_ISR_STATUS: u16 = 0x13;
 const REG_CONFIG: u16 = 0x14;
+const REG_CONFIG_STATUS: u16 = 0x1a;
 
 const DEVICE_FEATURES: u32 = (1 << 5) | (1 << 16); // VIRTIO_NET_F_MAC | STATUS
 
@@ -147,6 +148,10 @@ impl VirtioNet {
                 let index = (off - REG_CONFIG) as usize;
                 self.mac.to_bytes()[index] as u64
             }
+            REG_CONFIG_STATUS => self
+                .backend
+                .as_ref()
+                .is_some_and(|backend| backend.link_up()) as u64,
             _ => 0,
         }
     }

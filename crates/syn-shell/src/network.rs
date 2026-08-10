@@ -17,6 +17,7 @@ pub const SET_INTERFACE_ROUTE: u16 = 64;
 pub const SET_ROUTE_ROUTE: u16 = 65;
 
 pub const MAX_NETWORK_OUTPUT_ROWS: usize = 4;
+pub const MAX_NETWORK_LINK_EVENTS: usize = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkCommandHelp {
@@ -115,13 +116,31 @@ pub struct DhcpLeaseView {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkQueueView {
+    pub ready: bool,
+    pub head: Option<u32>,
+    pub tail: Option<u32>,
+    pub capacity: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkLinkEvent {
+    pub generation: u64,
+    pub interface: NetworkText,
+    pub link_up: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NetworkInterfaceView {
     pub name: NetworkText,
     pub address: NetworkText,
+    pub mac: Option<NetworkText>,
     pub gateway: Option<NetworkText>,
     pub mtu: u32,
     pub enabled: bool,
     pub link_up: bool,
+    pub rx_queue: Option<NetworkQueueView>,
+    pub tx_queue: Option<NetworkQueueView>,
     pub mode: InterfaceAddressMode,
     pub dhcp: Option<DhcpLeaseView>,
 }
@@ -142,6 +161,7 @@ pub struct NetworkView {
     pub route_count: u64,
     pub interfaces: [Option<NetworkInterfaceView>; MAX_NETWORK_OUTPUT_ROWS],
     pub routes: [Option<NetworkRouteView>; MAX_NETWORK_OUTPUT_ROWS],
+    pub link_events: [Option<NetworkLinkEvent>; MAX_NETWORK_LINK_EVENTS],
     pub next_interface: Option<u64>,
     pub next_route: Option<u64>,
 }
@@ -154,6 +174,7 @@ impl NetworkView {
         route_count: 0,
         interfaces: [None; MAX_NETWORK_OUTPUT_ROWS],
         routes: [None; MAX_NETWORK_OUTPUT_ROWS],
+        link_events: [None; MAX_NETWORK_LINK_EVENTS],
         next_interface: None,
         next_route: None,
     };
@@ -546,12 +567,21 @@ fn emit_interface_details(
     interface: &NetworkInterfaceView,
 ) -> Result<(), Status> {
     insert_text(output, "address", interface.address.as_str())?;
+    if let Some(mac) = interface.mac {
+        insert_text(output, "mac", mac.as_str())?;
+    }
     if let Some(gateway) = interface.gateway {
         insert_text(output, "gateway", gateway.as_str())?;
     }
     insert(output, "mtu", OutputValue::Unsigned(interface.mtu as u64))?;
     insert(output, "enabled", OutputValue::Boolean(interface.enabled))?;
     insert(output, "link-up", OutputValue::Boolean(interface.link_up))?;
+    if let Some(queue) = interface.rx_queue {
+        insert_queue_details(output, "rx-queue", queue)?;
+    }
+    if let Some(queue) = interface.tx_queue {
+        insert_queue_details(output, "tx-queue", queue)?;
+    }
     insert_text(output, "mode", interface.mode.as_str())?;
     if let Some(dhcp) = interface.dhcp {
         insert_text(output, "dhcp-state", dhcp.state.as_str())?;
@@ -598,6 +628,32 @@ pub fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> 
     if let Some(next) = omitted.or(view.next_interface) {
         insert(&mut output, "next-interface", OutputValue::Unsigned(next))?;
     }
+    for (index, event) in view.link_events.iter().flatten().enumerate() {
+        if output.fields().count().saturating_add(3) > MAX_OUTPUT_FIELDS {
+            break
+        }
+        insert_indexed_text(
+            &mut output,
+            "link-event",
+            index,
+            "interface",
+            event.interface.as_str(),
+        )?;
+        insert_indexed(
+            &mut output,
+            "link-event",
+            index,
+            "generation",
+            OutputValue::Unsigned(event.generation),
+        )?;
+        insert_indexed(
+            &mut output,
+            "link-event",
+            index,
+            "up",
+            OutputValue::Boolean(event.link_up),
+        )?;
+    }
     Ok(output)
 }
 
@@ -643,6 +699,15 @@ pub fn show_interface_output(
 
 fn interface_field_count(interface: &NetworkInterfaceView) -> usize {
     let mut count = 6; // name address mtu enabled link-up mode
+    if interface.mac.is_some() {
+        count += 1;
+    }
+    if interface.rx_queue.is_some() {
+        count += queue_field_count(interface.rx_queue.unwrap());
+    }
+    if interface.tx_queue.is_some() {
+        count += queue_field_count(interface.tx_queue.unwrap());
+    }
     if interface.gateway.is_some() {
         count += 1;
     }
@@ -680,6 +745,9 @@ fn emit_interface(
     if let Some(gateway) = interface.gateway {
         insert_indexed_text(output, "interface", index, "gateway", gateway.as_str())?;
     }
+    if let Some(mac) = interface.mac {
+        insert_indexed_text(output, "interface", index, "mac", mac.as_str())?;
+    }
     insert_indexed(
         output,
         "interface",
@@ -701,6 +769,12 @@ fn emit_interface(
         "link-up",
         OutputValue::Boolean(interface.link_up),
     )?;
+    if let Some(queue) = interface.rx_queue {
+        insert_indexed_queue(output, index, "rx-queue", queue)?;
+    }
+    if let Some(queue) = interface.tx_queue {
+        insert_indexed_queue(output, index, "tx-queue", queue)?;
+    }
     insert_indexed_text(output, "interface", index, "mode", interface.mode.as_str())?;
     if let Some(dhcp) = interface.dhcp {
         insert_indexed_text(output, "interface", index, "dhcp-state", dhcp.state.as_str())?;
@@ -724,6 +798,91 @@ fn emit_interface(
         }
     }
     Ok(())
+}
+
+fn insert_queue_details(
+    output: &mut StructuredOutput,
+    prefix: &str,
+    queue: NetworkQueueView,
+) -> Result<(), Status> {
+    insert(output, queue_name(prefix, "ready"), OutputValue::Boolean(queue.ready))?;
+    if let Some(head) = queue.head {
+        insert(
+            output,
+            queue_name(prefix, "head"),
+            OutputValue::Unsigned(head as u64),
+        )?;
+    }
+    if let Some(tail) = queue.tail {
+        insert(
+            output,
+            queue_name(prefix, "tail"),
+            OutputValue::Unsigned(tail as u64),
+        )?;
+    }
+    insert(
+        output,
+        queue_name(prefix, "capacity"),
+        OutputValue::Unsigned(queue.capacity as u64),
+    )
+}
+
+fn insert_indexed_queue(
+    output: &mut StructuredOutput,
+    index: usize,
+    prefix: &str,
+    queue: NetworkQueueView,
+) -> Result<(), Status> {
+    insert_indexed(
+        output,
+        "interface",
+        index,
+        queue_name(prefix, "ready"),
+        OutputValue::Boolean(queue.ready),
+    )?;
+    if let Some(head) = queue.head {
+        insert_indexed(
+            output,
+            "interface",
+            index,
+            queue_name(prefix, "head"),
+            OutputValue::Unsigned(head as u64),
+        )?;
+    }
+    if let Some(tail) = queue.tail {
+        insert_indexed(
+            output,
+            "interface",
+            index,
+            queue_name(prefix, "tail"),
+            OutputValue::Unsigned(tail as u64),
+        )?;
+    }
+    insert_indexed(
+        output,
+        "interface",
+        index,
+        queue_name(prefix, "capacity"),
+        OutputValue::Unsigned(queue.capacity as u64),
+    )
+}
+
+fn queue_field_count(queue: NetworkQueueView) -> usize {
+    2 + usize::from(queue.head.is_some()) + usize::from(queue.tail.is_some())
+}
+
+fn queue_name(prefix: &str, suffix: &str) -> &'static str {
+    match (prefix, suffix) {
+        ("rx-queue", "ready") => "rx-queue-ready",
+        ("rx-queue", "head") => "rx-queue-head",
+        ("rx-queue", "tail") => "rx-queue-tail",
+        ("rx-queue", "capacity") => "rx-queue-capacity",
+        ("tx-queue", "ready") => "tx-queue-ready",
+        ("tx-queue", "head") => "tx-queue-head",
+        ("tx-queue", "tail") => "tx-queue-tail",
+        ("tx-queue", "capacity") => "tx-queue-capacity",
+        _ => "queue-unknown",
+    }
 }
 
 fn routes_output(view: NetworkView) -> Result<StructuredOutput, Status> {

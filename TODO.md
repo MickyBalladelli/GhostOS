@@ -313,7 +313,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 - [x] Replace the seeded `KernelNetwork` interface view with a runtime network
       provider backed by the actual e1000 or virtio-net device.
-- [ ] Expose each NIC MAC address, carrier state, administrative enabled state,
+- [x] Expose each NIC MAC address, carrier state, administrative enabled state,
       RX/TX queue state, and link-change events to the kernel network service.
 - [ ] Make `SET INTERFACE ... /ENABLE` and `/DISABLE` control administrative
       state while preserving the separate physical `link up` state.
