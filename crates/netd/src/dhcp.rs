@@ -237,6 +237,16 @@ pub trait DhcpLeaseRuntime {
     fn apply_lease(&mut self, interface: &str, lease: &DhcpLease) -> Result<(), DhcpError>;
     fn restore_static(&mut self, interface: &str, snapshot: &StaticSnapshot) -> Result<(), DhcpError>;
 
+    /// Check a candidate lease while the currently published configuration is
+    /// still active. This must not publish the candidate.
+    fn health_check_lease(
+        &mut self,
+        _interface: &str,
+        _application: &DhcpLeaseApplication,
+    ) -> Result<(), DhcpError> {
+        Ok(())
+    }
+
     fn apply_lease_atomically(
         &mut self,
         interface: &str,
@@ -595,11 +605,11 @@ impl DhcpClient {
         };
         match result {
             Err(DhcpError::ServerUnavailable) => {
-                // Never leave a half-applied DHCP attempt in place; restore static.
-                let _ = self.clear_lease(runtime);
+                // Keep the last-known-good lease during a transient outage.
+                let _ = self.restore_fallback(runtime);
             }
             Err(DhcpError::Network(error)) => {
-                let _ = self.clear_lease(runtime);
+                let _ = self.restore_fallback(runtime);
                 self.report_network_error(error);
             }
             _ => {}
@@ -764,6 +774,7 @@ impl DhcpClient {
                 configured: true,
             },
         };
+        runtime.health_check_lease(self.interface_name(), &application)?;
         runtime.apply_lease_atomically(self.interface_name(), &application)?;
         self.lease = Some(lease);
         self.bound_at_ms = Some(now_ms);
@@ -786,7 +797,9 @@ impl DhcpClient {
                 | DhcpClientState::Renewing
                 | DhcpClientState::Rebinding
         ) {
-            self.clear_lease(runtime)?;
+            if self.lease.is_none() {
+                self.clear_lease(runtime)?;
+            }
             self.selected = None;
             self.state = DhcpClientState::Init;
             self.attempt = 0;
@@ -813,6 +826,15 @@ impl DhcpClient {
         self.lease = None;
         self.bound_at_ms = None;
         self.server_mac = None;
+        Ok(())
+    }
+
+    fn restore_fallback<R: DhcpLeaseRuntime>(&mut self, runtime: &mut R) -> Result<(), DhcpError> {
+        if self.lease.is_none() {
+            if let Some(snapshot) = self.preserved {
+                runtime.restore_static(self.interface_name(), &snapshot)?;
+            }
+        }
         Ok(())
     }
 

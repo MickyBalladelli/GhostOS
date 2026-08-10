@@ -352,7 +352,7 @@ SynOS VMs communicate and obtain distinct leases.
       routes, DNS servers, lease timers, server identity, and interface state.
 - [x] Add subnet-mask/prefix representation to the declarative interface model
       and shell output; do not infer a mask from an IPv4 address string.
-- [ ] Preserve the previous static or last-known-good lease until a new lease
+- [x] Preserve the previous static or last-known-good lease until a new lease
       is acknowledged and the interface health check succeeds.
 - [ ] Implement INIT, SELECTING, REQUESTING, BOUND, RENEWING, REBINDING, and
       INIT-REBOOT transitions against real packets and real timer deadlines.
