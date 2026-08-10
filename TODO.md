@@ -334,12 +334,13 @@ SynOS VMs communicate and obtain distinct leases.
       configurable pool, gateway, DNS, lease duration, and per-MAC reservations.
 - [x] Ensure two VMs on one fixture receive different addresses and can send
       Ethernet, ARP, IPv4, ICMP, UDP, and TCP traffic to each other.
-- [ ] Report missing NIC, carrier-down, queue-full, and backend-unavailable
+- [x] Report missing NIC, carrier-down, queue-full, and backend-unavailable
       conditions as stable network errors instead of leaving DHCP at `init`.
       Progress: `NetError` now has stable public codes for those conditions,
       and e1000/virtio polling records the first backend, carrier, admin-state,
-      and queue failure for retrieval with `take_network_error()`. DHCP
-      scheduler propagation remains pending.
+      and queue failure for retrieval with `take_network_error()`. DHCP now
+      exposes matching stable codes, enters `error`, stops scheduling, and
+      restarts after the NIC returns to an enabled/carrier-up state.
 
 ### DHCP client integration
 

@@ -212,6 +212,7 @@ pub struct Vm {
     nvme: Rc<RefCell<Nvme>>,
     e1000: Rc<RefCell<E1000>>,
     virtio_net: Rc<RefCell<VirtioNet>>,
+    last_network_error: Option<NetError>,
     dhcp_network: Option<Rc<RefCell<DeterministicVmNetwork>>>,
     virtio_blk: Rc<RefCell<VirtioBlk>>,
     virtio_console: Rc<RefCell<VirtioConsole>>,
@@ -606,6 +607,7 @@ impl Vm {
             nvme,
             e1000,
             virtio_net,
+            last_network_error: None,
             dhcp_network,
             virtio_blk,
             virtio_console,
@@ -1173,8 +1175,16 @@ impl Vm {
             self.nvme.borrow_mut().poll_dma(&mut self.mmu);
         }
         self.e1000.borrow_mut().poll(&mut self.mmu);
+        let e1000_error = self.e1000.borrow_mut().take_network_error();
+        if let Some(error) = e1000_error {
+            self.record_network_error(error);
+        }
         if self.virtio_net.borrow().has_pending() {
             self.virtio_net.borrow_mut().poll(&mut self.mmu);
+        }
+        let virtio_error = self.virtio_net.borrow_mut().take_network_error();
+        if let Some(error) = virtio_error {
+            self.record_network_error(error);
         }
         if let Some(network) = &self.dhcp_network {
             network
@@ -1644,12 +1654,30 @@ impl Vm {
         [self.e1000.borrow().mac(), self.virtio_net.borrow().mac()]
     }
 
+    pub fn take_network_error(&mut self) -> Option<NetError> {
+        self.last_network_error.take()
+    }
+
+    fn record_network_error(&mut self, error: NetError) {
+        if self.last_network_error.is_none() {
+            self.last_network_error = Some(error);
+        }
+    }
+
     pub fn transmit_network_frame(&mut self, packet: &[u8]) -> Result<(), NetError> {
-        self.e1000.borrow_mut().transmit_frame(packet)
+        let result = self.e1000.borrow_mut().transmit_frame(packet);
+        if let Err(error) = result {
+            self.record_network_error(error);
+        }
+        result
     }
 
     pub fn receive_network_frame(&mut self) -> Result<Option<Vec<u8>>, NetError> {
-        self.e1000.borrow_mut().receive_frame()
+        let result = self.e1000.borrow_mut().receive_frame();
+        if let Err(error) = result {
+            self.record_network_error(error);
+        }
+        result
     }
 
     /// Capture a checkpoint of guest execution and memory state.

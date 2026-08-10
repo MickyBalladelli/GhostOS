@@ -17,7 +17,8 @@ pub use dhcp::{
     dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, BACKOFF_MS,
     DHCP_CLIENT_PORT, DHCP_MAGIC_COOKIE, DHCP_SERVER_PORT, MAX_DHCP_DNS_SERVERS, MAX_DHCP_PACKET,
     MAX_DHCP_ROUTES, MAX_DISCOVER_ATTEMPTS, MAX_INTERFACE_NAME, DhcpClient, DhcpClientState,
-    CapturingDhcpTransport, DhcpClientView, DhcpError, DhcpLease, DhcpLeaseRuntime, DhcpMessageType, DhcpOffer,
+    CapturingDhcpTransport, DhcpClientView, DhcpError, DhcpLease, DhcpLeaseRuntime, DhcpMessageType,
+    DhcpNetworkError, DhcpOffer,
     DhcpServerFixture, DhcpTransport, StaticSnapshot,
 };
 pub use firewall::{

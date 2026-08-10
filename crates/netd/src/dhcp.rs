@@ -35,6 +35,27 @@ pub const BACKOFF_MS: [u64; 5] = [4_000, 8_000, 16_000, 32_000, 64_000];
 pub const MAX_DISCOVER_ATTEMPTS: u8 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DhcpNetworkError {
+    MissingNic,
+    LinkDown,
+    QueueFull,
+    AdminDown,
+    BackendUnavailable,
+}
+
+impl DhcpNetworkError {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::MissingNic => "NET_MISSING_NIC",
+            Self::LinkDown => "NET_LINK_DOWN",
+            Self::QueueFull => "NET_QUEUE_FULL",
+            Self::AdminDown => "NET_ADMIN_DOWN",
+            Self::BackendUnavailable => "NET_BACKEND_UNAVAILABLE",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DhcpError {
     AccessDenied,
     Capacity,
@@ -46,6 +67,25 @@ pub enum DhcpError {
     ConflictingOffer,
     ServerUnavailable,
     Runtime,
+    Network(DhcpNetworkError),
+}
+
+impl DhcpError {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::AccessDenied => "DHCP_ACCESS_DENIED",
+            Self::Capacity => "DHCP_CAPACITY",
+            Self::InvalidPacket => "DHCP_INVALID_PACKET",
+            Self::InvalidLease => "DHCP_INVALID_LEASE",
+            Self::InvalidState => "DHCP_INVALID_STATE",
+            Self::InvalidInterface => "DHCP_INVALID_INTERFACE",
+            Self::NoOffer => "DHCP_NO_OFFER",
+            Self::ConflictingOffer => "DHCP_CONFLICTING_OFFER",
+            Self::ServerUnavailable => "DHCP_SERVER_UNAVAILABLE",
+            Self::Runtime => "DHCP_RUNTIME",
+            Self::Network(error) => error.code(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,6 +127,7 @@ pub enum DhcpClientState {
     Renewing = 4,
     Rebinding = 5,
     InitReboot = 6,
+    Error = 7,
 }
 
 impl DhcpClientState {
@@ -99,6 +140,7 @@ impl DhcpClientState {
             Self::Renewing => "renewing",
             Self::Rebinding => "rebinding",
             Self::InitReboot => "init-reboot",
+            Self::Error => "error",
         }
     }
 }
@@ -241,6 +283,7 @@ pub struct DhcpClientView {
     pub bound_at_ms: Option<u64>,
     pub next_action_ms: Option<u64>,
     pub preserved: Option<StaticSnapshot>,
+    pub network_error: Option<DhcpNetworkError>,
 }
 
 impl DhcpClientView {
@@ -269,6 +312,7 @@ pub struct DhcpClient {
     lease: Option<DhcpLease>,
     bound_at_ms: Option<u64>,
     preserved: Option<StaticSnapshot>,
+    last_network_error: Option<DhcpNetworkError>,
     txid_seed: u32,
 }
 
@@ -294,6 +338,7 @@ impl DhcpClient {
             lease: None,
             bound_at_ms: None,
             preserved: None,
+            last_network_error: None,
             txid_seed: xid_seed,
         })
     }
@@ -340,7 +385,28 @@ impl DhcpClient {
             bound_at_ms: self.bound_at_ms,
             next_action_ms: self.next_action_ms,
             preserved: self.preserved,
+            network_error: self.last_network_error,
         }
+    }
+
+    pub const fn network_error(&self) -> Option<DhcpNetworkError> {
+        self.last_network_error
+    }
+
+    pub fn take_network_error(&mut self) -> Option<DhcpNetworkError> {
+        self.last_network_error.take()
+    }
+
+    /// Stop the DHCP scheduler and publish the first network failure. The
+    /// caller may clear the failure by changing the NIC state or calling
+    /// `start` after the backend is healthy again.
+    pub fn report_network_error(&mut self, error: DhcpNetworkError) {
+        if self.last_network_error.is_none() {
+            self.last_network_error = Some(error);
+        }
+        self.selected = None;
+        self.next_action_ms = None;
+        self.state = DhcpClientState::Error;
     }
 
     pub fn preserve_static(&mut self, snapshot: StaticSnapshot) {
@@ -357,13 +423,14 @@ impl DhcpClient {
     pub fn set_enabled(&mut self, enabled: bool, now_ms: u64) {
         self.enabled = enabled;
         if !enabled {
-            self.next_action_ms = None;
+            self.report_network_error(DhcpNetworkError::AdminDown);
             return
         }
         if !self.link_up {
             self.next_action_ms = None;
             return
         }
+        self.last_network_error = None;
         self.state = if self.lease.is_some() {
             DhcpClientState::InitReboot
         } else {
@@ -381,9 +448,14 @@ impl DhcpClient {
     pub fn set_link(&mut self, up: bool, now_ms: u64) {
         self.link_up = up;
         if !up || !self.enabled {
-            self.next_action_ms = None;
+            self.report_network_error(if up {
+                DhcpNetworkError::AdminDown
+            } else {
+                DhcpNetworkError::LinkDown
+            });
             return;
         }
+        self.last_network_error = None;
         match self.state {
             DhcpClientState::Bound | DhcpClientState::Renewing | DhcpClientState::Rebinding
                 if self.lease.is_some() =>
@@ -410,6 +482,7 @@ impl DhcpClient {
         if !self.enabled || !self.link_up {
             return Err(DhcpError::InvalidState);
         }
+        self.last_network_error = None;
         self.state = if self.lease.is_some() {
             DhcpClientState::InitReboot
         } else {
@@ -465,11 +538,18 @@ impl DhcpClient {
             DhcpClientState::InitReboot => self.send_request(now_ms, transport, true),
             DhcpClientState::Renewing => self.send_renew(now_ms, transport),
             DhcpClientState::Rebinding => self.send_rebind(now_ms, transport),
-            DhcpClientState::Bound => Ok(()),
+            DhcpClientState::Bound | DhcpClientState::Error => Ok(()),
         };
-        if result == Err(DhcpError::ServerUnavailable) {
-            // Never leave a half-applied DHCP attempt in place; restore static.
-            let _ = self.clear_lease(runtime);
+        match result {
+            Err(DhcpError::ServerUnavailable) => {
+                // Never leave a half-applied DHCP attempt in place; restore static.
+                let _ = self.clear_lease(runtime);
+            }
+            Err(DhcpError::Network(error)) => {
+                let _ = self.clear_lease(runtime);
+                self.report_network_error(error);
+            }
+            _ => {}
         }
         result
     }
@@ -497,12 +577,16 @@ impl DhcpClient {
         if message.xid != self.xid || message.chaddr != self.mac {
             return Err(DhcpError::InvalidPacket);
         }
-        match message.message_type {
+        let result = match message.message_type {
             DhcpMessageType::Offer => self.handle_offer(message, now_ms),
             DhcpMessageType::Ack => self.handle_ack(message, now_ms, runtime),
             DhcpMessageType::Nak => self.handle_nak(now_ms, runtime),
             _ => Err(DhcpError::InvalidPacket),
+        };
+        if let Err(DhcpError::Network(error)) = result {
+            self.report_network_error(error);
         }
+        result
     }
 
     pub fn handle_packet_with_clock<C: MonotonicClock, R: DhcpLeaseRuntime>(
