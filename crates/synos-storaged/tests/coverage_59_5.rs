@@ -268,7 +268,7 @@ fn admission_states_and_security_authorization_reject_stale_or_unsafe_actions() 
         authority.authorize(&read_only, NodeId::new(6).unwrap(), ClusterOperation::Fence, None, 2),
         Err(synos_storaged::SecurityError::AccessDenied)
     );
-    assert_eq!(authority.audit.records().count(), 2);
+    assert_eq!(authority.audit.records().count(), 3);
 
     authority
         .rotate_key(&admin, node, CapabilityKey::new([6; 32]), [6; 16], 3)
