@@ -153,6 +153,15 @@ fn versions_directories_links_snapshots_and_retention_are_consistent() {
 
 #[test]
 fn long_run_retention_is_bounded_across_restart_and_releases_checkpoint_blocks() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(long_run_retention_is_bounded_across_restart_and_releases_checkpoint_blocks_body)
+        .expect("spawn large-stack SynFS retention test")
+        .join()
+        .expect("large-stack SynFS retention test panicked");
+}
+
+fn long_run_retention_is_bounded_across_restart_and_releases_checkpoint_blocks_body() {
     const CYCLES: usize = 48;
     const CHECKPOINT_INTERVAL: usize = 8;
     const CHECKPOINT_HOLD: usize = 3;
