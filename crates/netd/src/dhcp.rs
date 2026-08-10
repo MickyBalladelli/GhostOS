@@ -347,6 +347,34 @@ pub trait DhcpLeaseRuntime {
     ) -> Result<(), DhcpError> {
         self.apply_lease(interface, &application.lease)
     }
+
+    /// Reconcile DHCP-owned address, routes, and DNS from the old lease to
+    /// the candidate lease. Implementations must leave non-DHCP routes and
+    /// DNS entries untouched, including entries with the same value as a
+    /// DHCP entry.
+    fn reconcile_dhcp_lease(
+        &mut self,
+        interface: &str,
+        _previous: Option<&DhcpLease>,
+        application: &DhcpLeaseApplication,
+    ) -> Result<(), DhcpError> {
+        self.apply_lease_atomically(interface, application)
+    }
+
+    /// Remove only state owned by the lease. The preserved snapshot is the
+    /// previous static interface state, not permission to delete unrelated
+    /// routes or DNS entries.
+    fn remove_dhcp_state(
+        &mut self,
+        interface: &str,
+        _lease: &DhcpLease,
+        preserved: Option<&StaticSnapshot>,
+    ) -> Result<(), DhcpError> {
+        if let Some(snapshot) = preserved {
+            self.restore_static(interface, snapshot)?;
+        }
+        Ok(())
+    }
 }
 
 /// Bound UDP/Ethernet transport used by the DHCP client.
@@ -955,7 +983,8 @@ impl DhcpClient {
             },
         };
         runtime.health_check_lease(self.interface_name(), &application)?;
-        runtime.apply_lease_atomically(self.interface_name(), &application)?;
+        let previous = self.lease;
+        runtime.reconcile_dhcp_lease(self.interface_name(), previous.as_ref(), &application)?;
         self.lease = Some(lease);
         self.bound_at_ms = Some(now_ms);
         self.selected = None;
@@ -1004,8 +1033,12 @@ impl DhcpClient {
     }
 
     fn clear_lease<R: DhcpLeaseRuntime>(&mut self, runtime: &mut R) -> Result<(), DhcpError> {
-        if let Some(snapshot) = self.preserved {
-            runtime.restore_static(self.interface_name(), &snapshot)?;
+        if let Some(lease) = self.lease {
+            runtime.remove_dhcp_state(
+                self.interface_name(),
+                &lease,
+                self.preserved.as_ref(),
+            )?;
         }
         self.lease = None;
         self.bound_at_ms = None;

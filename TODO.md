@@ -365,7 +365,7 @@ SynOS VMs communicate and obtain distinct leases.
 - [x] Validate every accepted option and reject invalid subnet masks, gateways
       outside the subnet, broadcast addresses, duplicate routes, bad DNS data,
       timer ordering, oversized option lists, and conflicting server IDs.
-- [ ] Reconcile DHCP routes and DNS settings when a lease changes, then remove
+- [x] Reconcile DHCP routes and DNS settings when a lease changes, then remove
       only DHCP-owned state on release or expiry.
 - [ ] Add `SHOW DHCP` or an equivalent detailed view for transaction ID, MAC,
       attempt, timers, server, offered address, failure reason, and last packet

@@ -61,6 +61,9 @@ impl DhcpTransport for CaptureTransport {
 struct RecordingRuntime {
     applied: Option<DhcpLease>,
     restored: Option<StaticSnapshot>,
+    reconciled: usize,
+    previous_lease: Option<DhcpLease>,
+    removed: Option<DhcpLease>,
     events: u8,
 }
 
@@ -69,6 +72,9 @@ impl RecordingRuntime {
         Self {
             applied: None,
             restored: None,
+            reconciled: 0,
+            previous_lease: None,
+            removed: None,
             events: 0,
         }
     }
@@ -90,6 +96,30 @@ impl DhcpLeaseRuntime for RecordingRuntime {
         }
         self.restored = Some(*snapshot);
         self.events = self.events.saturating_add(1);
+        Ok(())
+    }
+
+    fn reconcile_dhcp_lease(
+        &mut self,
+        interface: &str,
+        previous: Option<&DhcpLease>,
+        application: &synos_netd::DhcpLeaseApplication,
+    ) -> Result<(), DhcpError> {
+        self.reconciled += 1;
+        self.previous_lease = previous.copied();
+        self.apply_lease(interface, &application.lease)
+    }
+
+    fn remove_dhcp_state(
+        &mut self,
+        interface: &str,
+        lease: &DhcpLease,
+        preserved: Option<&StaticSnapshot>,
+    ) -> Result<(), DhcpError> {
+        self.removed = Some(*lease);
+        if let Some(snapshot) = preserved {
+            self.restore_static(interface, snapshot)?;
+        }
         Ok(())
     }
 }
@@ -197,6 +227,8 @@ fn dora_assigns_lease_atomically_and_exposes_state() {
     assert_eq!(lease.gateway, Some([10, 0, 0, 1]));
     assert_eq!(lease.dns_count, 1);
     assert_eq!(runtime.applied, Some(lease));
+    assert_eq!(runtime.reconciled, 1);
+    assert_eq!(runtime.previous_lease, None);
     assert_eq!(client.view().state, DhcpClientState::Bound);
 }
 
@@ -338,6 +370,7 @@ fn renew_rebind_expiry_and_release_restore_static() {
     let mut runtime = RecordingRuntime::new();
     let server = fixture();
     bind_lease(&mut client, &mut transport, &mut runtime, &server, 0);
+    let previous = client.lease().unwrap();
 
     // Successful renew at T1.
     client.poll(50_000, &mut transport, &mut runtime).unwrap();
@@ -347,6 +380,8 @@ fn renew_rebind_expiry_and_release_restore_static() {
         .handle_packet(&renew_ack, 50_000, &mut runtime)
         .unwrap();
     assert_eq!(client.state(), DhcpClientState::Bound);
+    assert_eq!(runtime.reconciled, 2);
+    assert_eq!(runtime.previous_lease, Some(previous));
 
     // Unanswered renew progresses to rebind, then expiry restores static.
     let mut client = authorized_client();
@@ -357,6 +392,7 @@ fn renew_rebind_expiry_and_release_restore_static() {
     assert_eq!(client.state(), DhcpClientState::Renewing);
     client.poll(87_000, &mut transport, &mut runtime).unwrap();
     assert_eq!(client.state(), DhcpClientState::Rebinding);
+    let expired_lease = client.lease().unwrap();
     client.poll(100_000, &mut transport, &mut runtime).unwrap();
     assert_eq!(client.state(), DhcpClientState::Init);
     assert!(client.lease().is_none());
@@ -368,6 +404,7 @@ fn renew_rebind_expiry_and_release_restore_static() {
             subnet_mask: Some([255, 255, 255, 0]),
         })
     );
+    assert_eq!(runtime.removed, Some(expired_lease));
 
     // Explicit release restores static.
     let mut client = authorized_client();
@@ -379,6 +416,7 @@ fn renew_rebind_expiry_and_release_restore_static() {
         .unwrap();
     assert_eq!(client.state(), DhcpClientState::Init);
     assert!(runtime.restored.is_some());
+    assert!(runtime.removed.is_some());
 }
 
 #[test]
