@@ -6,7 +6,7 @@ use synos_pkg::{
 use synos_synfs::SynFs;
 use synos_system_model::{ContentId, Error as ModelError, RepositoryError};
 
-fn filesystem() -> SynFs<256> {
+fn filesystem() -> SynFs<128> {
     let mut filesystem = SynFs::new();
     filesystem.create_directory("system/store", true).unwrap();
     filesystem.create_directory("system/manifests", true).unwrap();
