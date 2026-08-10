@@ -2,7 +2,7 @@ use super::{
     Daemon, DaemonError, Flags, Operation, ProcessId, ProcessRights, Request,
     MAX_IPC_BUFFER_BYTES,
 };
-use alloc::vec;
+use alloc::{boxed::Box, vec};
 use synos_synfs::{FileType, SynFs};
 use synos_status::Status;
 
@@ -16,6 +16,25 @@ fn daemon_with_capacity<const BLOCKS: usize>(
 ) -> (Daemon<BLOCKS, 4, 8, 4, 8, 4096>, ProcessId, super::Capability) {
     let mut daemon = Daemon::<BLOCKS, 4, 8, 4, 8, 4096>::new(SynFs::new())
         .expect("create filesystem daemon");
+    let process = ProcessId::new(7).expect("valid process id");
+    let rights = ProcessRights::from_bits(
+        ProcessRights::READ.bits()
+            | ProcessRights::WRITE.bits()
+            | ProcessRights::DELETE.bits()
+            | ProcessRights::ADMIN.bits(),
+    );
+    let authority = daemon
+        .register_process(process, rights)
+        .expect("register process");
+    (daemon, process, authority)
+}
+
+fn boxed_daemon_with_capacity<const BLOCKS: usize>(
+) -> (Box<Daemon<BLOCKS, 4, 8, 4, 8, 4096>>, ProcessId, super::Capability) {
+    let mut daemon = Box::new(
+        Daemon::<BLOCKS, 4, 8, 4, 8, 4096>::new(SynFs::new())
+            .expect("create filesystem daemon"),
+    );
     let process = ProcessId::new(7).expect("valid process id");
     let rights = ProcessRights::from_bits(
         ProcessRights::READ.bits()
@@ -356,7 +375,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
 
 #[test]
 fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
-    let (mut daemon, process, mut authority) = daemon();
+    let (mut daemon, process, mut authority) = boxed_daemon_with_capacity::<64>();
     let mut stale_file = None;
 
     for cycle in 0..32 {
