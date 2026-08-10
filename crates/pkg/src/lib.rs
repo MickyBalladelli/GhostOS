@@ -655,6 +655,24 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         Ok(key_id)
     }
 
+    /// Remove a signing key and invalidate every receipt issued from it.
+    /// Immutable package bytes remain available for forensic recovery, but
+    /// they cannot cross the instantiation gate after revocation.
+    pub fn revoke_key(&mut self, key_id: [u8; KEY_ID_BYTES]) -> Result<(), PackageError> {
+        let slot = self
+            .trusted_keys
+            .iter_mut()
+            .find(|entry| entry.is_some_and(|key| key.id() == key_id))
+            .ok_or(PackageError::UnknownSigningKey)?;
+        *slot = None;
+        for entry in &mut self.verified {
+            if entry.is_some_and(|verified| verified.signing_key == key_id) {
+                *entry = None;
+            }
+        }
+        Ok(())
+    }
+
     pub fn install_bundle<const BLOCKS: usize>(
         &mut self,
         fs: &mut SynFs<BLOCKS>,

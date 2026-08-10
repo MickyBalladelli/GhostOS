@@ -166,6 +166,31 @@ impl<const ENCLAVES: usize, const RANGES: usize, const CAPABILITIES: usize>
         Ok(())
     }
 
+    pub fn rotate_attestation_key(
+        &mut self,
+        node: NodeId,
+        key: AttestationKey,
+    ) -> Result<(), Error> {
+        self.admission.rotate_key(node, key)?;
+        if let Some(binding) = self.binding_mut(node) {
+            binding.admitted = false
+        }
+        self.capabilities.revoke_all();
+        Ok(())
+    }
+
+    pub fn revoke(&mut self, node: NodeId) -> Result<(), Error> {
+        self.admission.revoke(node)?;
+        let binding = self
+            .bindings
+            .iter_mut()
+            .find(|entry| entry.is_some_and(|binding| binding.node == node))
+            .ok_or(Error::NotFound)?;
+        *binding = None;
+        self.capabilities.revoke_all();
+        Ok(())
+    }
+
     pub fn admit(&mut self, quote: AttestationQuote, now_us: u64) -> Result<(), Error> {
         self.admission.admit(quote, now_us)?;
         let binding = self.binding_mut(quote.node).ok_or(Error::NotFound)?;

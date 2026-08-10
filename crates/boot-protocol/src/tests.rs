@@ -12,6 +12,12 @@ fn region(start: u64, length: u64) -> MemoryRegion {
     }
 }
 
+fn valid_boot_info() -> BootInfo {
+    let mut info = BootInfo::empty(BootMethod::Uefi);
+    assert!(info.push_region(region(0x1000, 0x2000)));
+    info
+}
+
 #[test]
 fn empty_boot_info_has_valid_contract() {
     let info = BootInfo::empty(BootMethod::Uefi);
@@ -130,4 +136,30 @@ fn property_region_capacity_is_stable_for_generated_counts() {
         info.regions().len() == count.min(MAX_MEMORY_REGIONS) && info.is_valid()
     })
     .expect("generated region counts preserve capacity invariants");
+}
+
+#[test]
+fn boot_recovery_rejects_replay_rollback_downgrade_and_untrusted_roots() {
+    let current = valid_boot_info();
+    assert!(current.is_valid());
+
+    let mut replayed = valid_boot_info();
+    replayed.memory_regions[1] = replayed.memory_regions[0];
+    replayed.memory_region_count = 2;
+    assert!(!replayed.is_valid());
+
+    let mut rollback = valid_boot_info();
+    rollback.version = BOOT_INFO_VERSION.saturating_sub(1);
+    assert!(!rollback.is_valid());
+
+    let mut downgrade = valid_boot_info();
+    downgrade.version = BOOT_INFO_VERSION + 1;
+    assert!(!downgrade.is_valid());
+
+    let mut untrusted = valid_boot_info();
+    untrusted.magic ^= 1;
+    assert!(!untrusted.is_valid());
+
+    let recovered = BootInfo::empty(BootMethod::Bios);
+    assert!(recovered.is_valid());
 }

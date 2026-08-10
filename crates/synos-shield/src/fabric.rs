@@ -116,6 +116,16 @@ impl<const PEERS: usize> FrameVerifier<PEERS> {
         Ok(())
     }
 
+    pub fn revoke_peer(&mut self, node: NodeId) -> Result<(), Error> {
+        let peer = self
+            .peers
+            .iter_mut()
+            .find(|entry| entry.is_some_and(|peer| peer.node == node))
+            .ok_or(Error::Unauthorized)?;
+        *peer = None;
+        Ok(())
+    }
+
     pub fn verify(
         &mut self,
         frame: &SignedFrame,

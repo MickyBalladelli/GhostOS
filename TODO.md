@@ -141,9 +141,14 @@ evidence.
       Added focused regressions for logical namespaces, stale kernel
       generations, borrowed-resource object and tenant binding, federation
       epochs, and operation rights.
-- [ ] Add key rotation, revocation, replay, rollback, downgrade, and trust-root
+- [x] Add key rotation, revocation, replay, rollback, downgrade, and trust-root
       recovery tests for boot, packages, applications, compiler toolchains,
       cluster membership, and confidential-computing evidence.
+      Progress: added the direct recovery matrix in
+      [`docs/security-recovery-matrix.md`](docs/security-recovery-matrix.md),
+      package trust-key revocation, attestation-key rotation and revocation,
+      enclave capability invalidation, and cluster peer revocation. The named
+      test targets compile with the recorded command in the matrix.
 - [ ] Record a signed provenance chain from source snapshot through toolchain,
       dependencies, compiler result, package, activation, and running process.
 - [ ] Make audit records tamper-evident, bounded, exportable, and usable during

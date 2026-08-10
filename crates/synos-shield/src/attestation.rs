@@ -137,6 +137,29 @@ impl<const NODES: usize> AdmissionController<NODES> {
         Ok(())
     }
 
+    pub fn rotate_key(&mut self, node: NodeId, key: AttestationKey) -> Result<(), Error> {
+        let entry = self
+            .nodes
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.node == node)
+            .ok_or(Error::NotFound)?;
+        entry.key = key;
+        entry.challenge = None;
+        entry.admitted = false;
+        Ok(())
+    }
+
+    pub fn revoke(&mut self, node: NodeId) -> Result<(), Error> {
+        let entry = self
+            .nodes
+            .iter_mut()
+            .find(|entry| entry.is_some_and(|entry| entry.node == node))
+            .ok_or(Error::NotFound)?;
+        *entry = None;
+        Ok(())
+    }
+
     pub fn issue_challenge(
         &mut self,
         node: NodeId,
