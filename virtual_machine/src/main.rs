@@ -100,9 +100,9 @@ impl MigrateCommand {
 
 enum DiskCommand {
     List(DiskOptions),
-    Inspect(PathBuf),
-    Validate(PathBuf),
-    Repair(PathBuf),
+    Inspect { path: PathBuf, json: bool },
+    Validate { path: PathBuf, json: bool },
+    Repair { path: PathBuf, json: bool },
     Provision {
         path: PathBuf,
         kernel: PathBuf,
@@ -113,9 +113,10 @@ enum DiskCommand {
         boot_args: String,
         machine_identity: String,
         network_identity: String,
+        json: bool,
     },
-    Lock { path: PathBuf, verbose: bool },
-    RecoverLock { path: PathBuf, verbose: bool },
+    Lock { path: PathBuf, verbose: bool, json: bool },
+    RecoverLock { path: PathBuf, verbose: bool, json: bool },
 }
 
 struct DiskOptions {
@@ -127,6 +128,7 @@ struct DiskOptions {
     read_only: bool,
     persistence: DiskPersistence,
     create_if_missing: bool,
+    json: bool,
 }
 
 impl Default for DiskOptions {
@@ -140,6 +142,7 @@ impl Default for DiskOptions {
             read_only: false,
             persistence: DiskPersistence::Persistent,
             create_if_missing: false,
+            json: false,
         }
     }
 }
@@ -504,9 +507,18 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
         .ok_or_else(|| "disk needs a command: list, inspect, validate, repair, provision, lock, or recover-lock".to_string())?;
     match subcommand {
         "list" => Ok(ParseResult::Disk(DiskCommand::List(parse_disk_options(&values[1..])?))),
-        "inspect" => Ok(ParseResult::Disk(DiskCommand::Inspect(command_path(values, "inspect")?))),
-        "validate" => Ok(ParseResult::Disk(DiskCommand::Validate(command_path(values, "validate")?))),
-        "repair" => Ok(ParseResult::Disk(DiskCommand::Repair(command_path(values, "repair")?))),
+        "inspect" => {
+            let (path, json) = command_path(values, "inspect")?;
+            Ok(ParseResult::Disk(DiskCommand::Inspect { path, json }))
+        }
+        "validate" => {
+            let (path, json) = command_path(values, "validate")?;
+            Ok(ParseResult::Disk(DiskCommand::Validate { path, json }))
+        }
+        "repair" => {
+            let (path, json) = command_path(values, "repair")?;
+            Ok(ParseResult::Disk(DiskCommand::Repair { path, json }))
+        }
         "lock" => parse_lock_command(values),
         "recover-lock" => parse_recover_lock_command(values),
         "provision" => parse_provision_command(&values[1..]),
@@ -518,36 +530,40 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
 fn parse_lock_command(values: &[String]) -> Result<ParseResult, String> {
     let mut path = None;
     let mut verbose = false;
+    let mut json = false;
     for value in &values[1..] {
         match value.as_str() {
             "-v" | "--v" | "-verbose" | "--verbose" => verbose = true,
+            "--json" => json = true,
             _ if path.is_none() => path = Some(PathBuf::from(value)),
             _ => return Err("disk lock needs exactly one PATH".to_string()),
         }
     }
     let path = path.ok_or_else(|| "disk lock needs exactly one PATH".to_string())?;
-    Ok(ParseResult::Disk(DiskCommand::Lock { path, verbose }))
+    Ok(ParseResult::Disk(DiskCommand::Lock { path, verbose, json }))
 }
 
 fn parse_recover_lock_command(values: &[String]) -> Result<ParseResult, String> {
     let mut path = None;
     let mut verbose = false;
+    let mut json = false;
     for value in &values[1..] {
         match value.as_str() {
             "-v" | "--v" | "-verbose" | "--verbose" => verbose = true,
+            "--json" => json = true,
             _ if path.is_none() => path = Some(PathBuf::from(value)),
             _ => return Err("disk recover-lock needs exactly one PATH".to_string()),
         }
     }
     let path = path.ok_or_else(|| "disk recover-lock needs exactly one PATH".to_string())?;
-    Ok(ParseResult::Disk(DiskCommand::RecoverLock { path, verbose }))
+    Ok(ParseResult::Disk(DiskCommand::RecoverLock { path, verbose, json }))
 }
 
-fn command_path(values: &[String], command: &str) -> Result<PathBuf, String> {
-    if values.len() != 2 {
+fn command_path(values: &[String], command: &str) -> Result<(PathBuf, bool), String> {
+    if values.len() < 2 || values.len() > 3 || (values.len() == 3 && values[2] != "--json") {
         return Err(format!("disk {command} needs exactly one PATH"));
     }
-    Ok(PathBuf::from(&values[1]))
+    Ok((PathBuf::from(&values[1]), values.len() == 3))
 }
 
 fn parse_disk_options(values: &[String]) -> Result<DiskOptions, String> {
@@ -577,6 +593,7 @@ fn parse_disk_options(values: &[String]) -> Result<DiskOptions, String> {
             "--copy-on-write" => options.persistence = DiskPersistence::CopyOnWrite,
             "--disposable" => options.persistence = DiskPersistence::Disposable,
             "--create-if-missing" => options.create_if_missing = true,
+            "--json" => options.json = true,
             "--help" | "-h" => return Ok(options),
             value => return Err(format!("unknown disk list option `{value}`")),
         }
@@ -595,6 +612,7 @@ fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
     let mut boot_args = String::new();
     let mut machine_identity = String::new();
     let mut network_identity = String::new();
+    let mut json = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--kernel" => kernel = Some(PathBuf::from(next_ref(&mut args, "--kernel")?)),
@@ -609,6 +627,7 @@ fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
             "--boot-args" | "--append" => boot_args = next_ref(&mut args, "--boot-args")?.to_string(),
             "--machine-id" => machine_identity = next_ref(&mut args, "--machine-id")?.to_string(),
             "--network-id" => network_identity = next_ref(&mut args, "--network-id")?.to_string(),
+            "--json" => json = true,
             value => return Err(format!("unknown disk provision option `{value}`")),
         }
     }
@@ -623,6 +642,7 @@ fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
         boot_args,
         machine_identity,
         network_identity,
+        json,
     }))
 }
 
@@ -772,7 +792,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
     let list_disks = matches!(&cli.command, Command::ListDisks);
     cli.config.disks = prepare_disk_specs(&cli.disk_options)?;
     if list_disks {
-        return print_disk_inventory(&cli.config.disks);
+        return print_disk_inventory(&cli.config.disks, false);
     }
 
     let snapshot_key = cli
@@ -2165,24 +2185,36 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             if specs.is_empty() {
                 return Err("disk list needs --disk PATH or --system-disk PATH".to_string());
             }
-            print_disk_inventory(&specs)
+            print_disk_inventory(&specs, options.json)
         }
-        DiskCommand::Inspect(path) => inspect_disk(&path),
-        DiskCommand::Validate(path) => {
+        DiskCommand::Inspect { path, json } => inspect_disk(&path, json),
+        DiskCommand::Validate { path, json } => {
             let manifest = SystemDiskProvisioner::validate(&path)
                 .map_err(|error| format!("disk validation failed for {}: {error}", path.display()))?;
-            println!(
-                "valid system disk: path={} format={} capacity={} generation={} kernel={} bytes initrd={} bytes",
-                canonical_display(&path)?,
-                format_name(manifest.format),
-                format_bytes(manifest.disk_size),
-                manifest.generation,
-                manifest.layout.kernel_size,
-                manifest.layout.initrd_size,
-            );
+            if json {
+                println!(
+                    "{{\"status\":\"valid\",\"path\":{},\"format\":{},\"capacity-bytes\":{},\"generation\":{},\"kernel-bytes\":{},\"initrd-bytes\":{}}}",
+                    control::json_string(&canonical_display(&path)?),
+                    control::json_string(format_name(manifest.format)),
+                    manifest.disk_size,
+                    manifest.generation,
+                    manifest.layout.kernel_size,
+                    manifest.layout.initrd_size,
+                );
+            } else {
+                println!(
+                    "valid system disk: path={} format={} capacity={} generation={} kernel={} bytes initrd={} bytes",
+                    canonical_display(&path)?,
+                    format_name(manifest.format),
+                    format_bytes(manifest.disk_size),
+                    manifest.generation,
+                    manifest.layout.kernel_size,
+                    manifest.layout.initrd_size,
+                );
+            }
             Ok(())
         }
-        DiskCommand::Repair(path) => repair_disk(&path),
+        DiskCommand::Repair { path, json } => repair_disk(&path, json),
         DiskCommand::Provision {
             path,
             kernel,
@@ -2193,6 +2225,7 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             boot_args,
             machine_identity,
             network_identity,
+            json,
         } => {
             let mut install = SystemDiskInstall::new(kernel)
                 .with_boot_args(boot_args)
@@ -2216,19 +2249,36 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
                 SystemDiskProvisioner::provision(&path, &install)
                     .map_err(|error| format!("disk provisioning failed: {error}"))?
             };
-            println!(
-                "provisioned system disk: path={} format={} capacity={} generation={}",
-                canonical_display(&path)?,
-                format_name(manifest.format),
-                format_bytes(manifest.disk_size),
-                manifest.generation,
-            );
+            if json {
+                println!(
+                    "{{\"status\":\"provisioned\",\"path\":{},\"format\":{},\"capacity-bytes\":{},\"generation\":{}}}",
+                    control::json_string(&canonical_display(&path)?),
+                    control::json_string(format_name(manifest.format)),
+                    manifest.disk_size,
+                    manifest.generation,
+                );
+            } else {
+                println!(
+                    "provisioned system disk: path={} format={} capacity={} generation={}",
+                    canonical_display(&path)?,
+                    format_name(manifest.format),
+                    format_bytes(manifest.disk_size),
+                    manifest.generation,
+                );
+            }
             Ok(())
         }
-        DiskCommand::Lock { path, verbose } => print_lock_status(&path, verbose),
-        DiskCommand::RecoverLock { path, verbose } => {
+        DiskCommand::Lock { path, verbose, json } => print_lock_status(&path, verbose, json),
+        DiskCommand::RecoverLock { path, verbose, json } => {
             let info = DiskImage::recover_stale_lock(&path)
                 .map_err(|error| format!("cannot recover lock for {}: {error}", path.display()))?;
+            if json {
+                println!(
+                    "{{\"status\":\"recovered\",\"path\":{}}}",
+                    control::json_string(&info.path.display().to_string()),
+                );
+                return Ok(())
+            }
             println!("recovered stale disk lock {}", info.path.display());
             if verbose {
                 println!();
@@ -2257,8 +2307,11 @@ fn vm_error_message(error: &synos_vm::VmError, verbose: bool) -> String {
     }
 }
 
-fn print_disk_inventory(specs: &[DiskSpec]) -> Result<(), String> {
-    for spec in specs {
+fn print_disk_inventory(specs: &[DiskSpec], json: bool) -> Result<(), String> {
+    if json {
+        print!("[");
+    }
+    for (index, spec) in specs.iter().enumerate() {
         let info = DiskManager::inspect(spec);
         match info {
             Ok(info) => {
@@ -2275,35 +2328,57 @@ fn print_disk_inventory(specs: &[DiskSpec]) -> Result<(), String> {
                 let lock_state = lock
                     .map(|lock| format!("locked(stale={})", lock.stale))
                     .unwrap_or_else(|| "unlocked".to_string());
-                println!(
-                    "id={} role={} controller={} format={} capacity={} persistence={} read-only={} health={} guest-id={} path={} lock={}",
-                    info.id,
-                    role_name(info.role),
-                    controller_name(info.controller),
-                    format_name(info.format),
-                    format_bytes(info.capacity),
-                    persistence_name(info.persistence),
-                    info.read_only,
-                    health,
-                    info.guest_id,
-                    info.image_path.display(),
-                    lock_state,
+                if json {
+                    if index != 0 { print!(","); }
+                    print!(
+                        "{{\"id\":{},\"role\":{},\"controller\":{},\"format\":{},\"capacity-bytes\":{},\"persistence\":{},\"read-only\":{},\"health\":{},\"guest-id\":{},\"path\":{},\"lock\":{}}}",
+                        info.id,
+                        control::json_string(role_name(info.role)),
+                        control::json_string(controller_name(info.controller)),
+                        control::json_string(format_name(info.format)),
+                        info.capacity,
+                        control::json_string(persistence_name(info.persistence)),
+                        info.read_only,
+                        control::json_string(&health),
+                        info.guest_id,
+                        control::json_string(&info.image_path.display().to_string()),
+                        control::json_string(&lock_state),
+                    );
+                } else {
+                    println!(
+                        "id={} role={} controller={} format={} capacity={} persistence={} read-only={} health={} guest-id={} path={} lock={}",
+                        info.id, role_name(info.role), controller_name(info.controller),
+                        format_name(info.format), format_bytes(info.capacity),
+                        persistence_name(info.persistence), info.read_only, health,
+                        info.guest_id, info.image_path.display(), lock_state,
+                    );
+                }
+            }
+            Err(error) if json => {
+                if index != 0 { print!(","); }
+                print!(
+                    "{{\"id\":{},\"role\":{},\"path\":{},\"health\":\"invalid\",\"error\":{}}}",
+                    spec.id, control::json_string(role_name(spec.role)),
+                    control::json_string(&spec.image_path.display().to_string()),
+                    control::json_string(&error.to_string()),
                 );
             }
-            Err(error) => println!(
-                "id={} role={} path={} health=invalid ({error})",
-                spec.id,
-                role_name(spec.role),
-                spec.image_path.display(),
-            ),
+            Err(error) => println!("id={} role={} path={} health=invalid ({error})",
+                spec.id, role_name(spec.role), spec.image_path.display()),
         }
     }
+    if json { println!("]"); }
     Ok(())
 }
 
-fn inspect_disk(path: &PathBuf) -> Result<(), String> {
+fn inspect_disk(path: &PathBuf, json: bool) -> Result<(), String> {
     let report = DiskImage::inspect_report(path);
-    print_inspection_report(&report);
+    if json {
+        print_inspection_json(&report);
+        println!();
+    } else {
+        print_inspection_report(&report);
+    }
     if report.is_healthy() {
         Ok(())
     } else {
@@ -2311,7 +2386,7 @@ fn inspect_disk(path: &PathBuf) -> Result<(), String> {
     }
 }
 
-fn repair_disk(path: &PathBuf) -> Result<(), String> {
+fn repair_disk(path: &PathBuf, json: bool) -> Result<(), String> {
     let result = DiskImage::repair(path)
         .map(|report| (report.path, report.actions))
         .or_else(|_| {
@@ -2320,15 +2395,28 @@ fn repair_disk(path: &PathBuf) -> Result<(), String> {
 
     match result {
         Ok((path, actions)) => {
-            if actions.is_empty() {
-                println!("repair: no changes needed path={}", path.display());
-            } else {
-                for action in actions {
-                    println!("repair: path={} action={action}", path.display());
+            if !json {
+                if actions.is_empty() {
+                    println!("repair: no changes needed path={}", path.display());
+                } else {
+                    for action in &actions {
+                        println!("repair: path={} action={action}", path.display());
+                    }
                 }
             }
             let report = DiskImage::inspect_report(path);
-            print_inspection_report(&report);
+            if json {
+                print!("{{\"status\":\"repaired\",\"actions\":[");
+                for (index, action) in actions.iter().enumerate() {
+                    if index != 0 { print!(","); }
+                    print!("{}", control::json_string(action));
+                }
+                print!("],\"report\":");
+                print_inspection_json(&report);
+                println!("}}");
+            } else {
+                print_inspection_report(&report);
+            }
             if report.is_healthy() {
                 Ok(())
             } else {
@@ -2384,11 +2472,56 @@ fn print_inspection_report(report: &synos_vm::DiskInspectionReport) {
     }
 }
 
-fn print_lock_status(path: &PathBuf, verbose: bool) -> Result<(), String> {
+fn print_inspection_json(report: &synos_vm::DiskInspectionReport) {
+    let format = report.format.map(format_name).unwrap_or("unknown");
+    let capacity = report.capacity.map_or_else(|| "null".to_string(), |value| value.to_string());
+    let file_size = report.file_size.map_or_else(|| "null".to_string(), |value| value.to_string());
+    let lock = report.lock.as_ref().map_or_else(|| "null".to_string(), |value| format!(
+        "{{\"stale\":{},\"path\":{}}}",
+        value.stale,
+        control::json_string(&value.path.display().to_string()),
+    ));
+    print!(
+        "{{\"path\":{},\"format\":{},\"capacity-bytes\":{},\"file-size-bytes\":{},\"status\":{},\"lock\":{},\"findings\":[",
+        control::json_string(&report.path.display().to_string()),
+        control::json_string(format),
+        capacity,
+        file_size,
+        control::json_string(if report.is_healthy() { "healthy" } else { "error" }),
+        lock,
+    );
+    for (index, finding) in report.findings.iter().enumerate() {
+        if index != 0 { print!(","); }
+        print!(
+            "{{\"code\":{},\"severity\":{},\"repairable\":{},\"message\":{}}}",
+            control::json_string(&finding.code),
+            control::json_string(finding_severity_name(finding.severity)),
+            finding.repairable,
+            control::json_string(&finding.message),
+        );
+    }
+    print!("]}}");
+}
+
+fn print_lock_status(path: &PathBuf, verbose: bool, json: bool) -> Result<(), String> {
     match DiskImage::inspect_lock(path)
         .map_err(|error| format!("cannot inspect lock for {}: {error}", path.display()))?
     {
         Some(info) => {
+            if json {
+                println!(
+                    "{{\"state\":{},\"lock\":{},\"image\":{},\"owner\":{},\"pid\":{},\"started\":{},\"host\":{},\"format\":{}}}",
+                    control::json_string(if info.stale { "stale" } else { "active" }),
+                    control::json_string(&info.path.display().to_string()),
+                    control::json_string(&info.image_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "unknown".into())),
+                    control::json_string(info.owner_identity.as_deref().unwrap_or("unknown")),
+                    info.pid.map_or_else(|| "null".into(), |pid| pid.to_string()),
+                    control::json_string(info.start_time.as_deref().unwrap_or("unknown")),
+                    control::json_string(info.host_identity.as_deref().unwrap_or("unknown")),
+                    control::json_string(info.format.map(format_name).unwrap_or("unknown")),
+                );
+                return Ok(())
+            }
             if !verbose {
                 if info.stale {
                     println!("disk lock: stale");
@@ -2452,6 +2585,13 @@ fn print_lock_status(path: &PathBuf, verbose: bool) -> Result<(), String> {
             }
         }
         None => {
+            if json {
+                println!(
+                    "{{\"state\":\"absent\",\"lock\":{}}}",
+                    control::json_string(&DiskImage::lock_path(path).display().to_string()),
+                );
+                return Ok(())
+            }
             println!("disk lock");
             println!("  state: absent");
             println!("  lock: {}", DiskImage::lock_path(path).display());
@@ -2588,14 +2728,18 @@ State and management:
 
 Commands:
       --integration          Run SynOS integration checks
-  synos-vm disk list          List disk health and guest identities
-  synos-vm disk inspect PATH  Inspect an image without modifying it
-  synos-vm disk validate PATH Validate an installed system disk
-  synos-vm disk repair PATH   Repair supported redundant image metadata
+  synos-vm disk list [--json] List disk health and guest identities
+  synos-vm disk inspect PATH [--json]
+                              Inspect an image without modifying it
+  synos-vm disk validate PATH [--json]
+                              Validate an installed system disk
+  synos-vm disk repair PATH [--json]
+                              Repair supported redundant image metadata
   synos-vm disk provision PATH --kernel PATH [OPTIONS]
                               Create/install a system disk without booting
-  synos-vm disk lock PATH     Diagnose an ownership lock
-  synos-vm disk recover-lock PATH
+  synos-vm disk lock PATH [--json]
+                              Diagnose an ownership lock
+  synos-vm disk recover-lock PATH [--json]
                               Recover a lock only when its owner is stale
   synos-vm migrate send SNAPSHOT ADDRESS [SECURITY OPTIONS]
                               Send an authenticated checkpoint

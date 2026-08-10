@@ -73,6 +73,10 @@ impl CommandCall {
                 _ => None,
             })
     }
+
+    pub fn json(&self) -> bool {
+        matches!(self.get("JSON"), Some(Value::Boolean(true)))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -567,6 +571,11 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 _ => return Err(Error::InvalidValue),
             };
             (spec, raw)
+        } else if name.eq_ignore_ascii_case("JSON") {
+            let spec = ArgumentSpec::new("JSON", ArgumentKind::Boolean, false, false)
+                .map_err(|_| Error::InvalidValue)?;
+            let raw = explicit.unwrap_or("true");
+            (spec, raw)
         } else if let Some(positive) = name.strip_prefix("NO") {
             let spec = command
                 .arguments()
@@ -680,7 +689,8 @@ fn is_known_qualifier(command: &CommandSpec, qualifier: &str) -> bool {
     let (name, _) = qualifier
         .split_once('=')
         .map_or((qualifier, None), |(name, value)| (name, Some(value)));
-    command
+    name.eq_ignore_ascii_case("JSON")
+        || command
         .arguments()
         .any(|spec| spec.name.as_str().eq_ignore_ascii_case(name))
         || name.strip_prefix("NO").is_some_and(|positive| {
@@ -730,6 +740,19 @@ mod tests {
         assert_eq!(call.route.raw(), LINK_ROUTE);
         assert_eq!(text(call.get("SOURCE")).as_str(), "/data/source;1");
         assert_eq!(text(call.get("TARGET")).as_str(), "/data/alias");
+    }
+
+    #[test]
+    fn accepts_json_as_a_common_output_qualifier() {
+        let registry = registry();
+        let call = registry
+            .parse("PWD /JSON")
+            .expect("parse JSON output qualifier")
+            .stage(0)
+            .expect("PWD command");
+
+        assert!(call.json());
+        assert_eq!(call.get("JSON"), Some(Value::Boolean(true)));
     }
 
     #[test]

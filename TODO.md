@@ -278,8 +278,10 @@ evidence.
   optional QEMU tools, target availability, and expected image versions.
       Use python3 scripts/bootstrap.py; QEMU and unbuilt images are optional
       by default, while built images must match their Git revision sidecars.
-- [ ] Make structured JSON output available for diagnostics, disk, network,
-      cluster, compiler, package, and recovery commands.
+- [x] Make structured JSON output available for diagnostics, disk, network,
+      cluster, compiler, package, and recovery commands. Shell commands accept
+      `/JSON`; `cargo synos` compiler/package commands and `synos-vm disk`
+      inspection/recovery commands accept `--json`.
 - [ ] Add redaction tests for logs, snapshots, migration streams, diagnostics,
       and audit exports.
 - [ ] Publish a compatibility table for on-disk formats, wire protocols,

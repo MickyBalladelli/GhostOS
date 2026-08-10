@@ -301,7 +301,7 @@ fn execute_line(
     if program.stage_count() == 1
         && program
             .stage_ref(0)
-            .is_some_and(is_full_directory_command)
+            .is_some_and(|command| !command.json() && is_full_directory_command(command))
     {
         if let Some(command) = program.stage(0) {
             if let Err(status) = executor.print_directory(command, keyboard, usb_keyboard) {
@@ -318,7 +318,7 @@ fn execute_line(
     if program.stage_count() == 1
         && program
             .stage_ref(0)
-            .is_some_and(is_full_type_command)
+            .is_some_and(|command| !command.json() && is_full_type_command(command))
     {
         if let Some(command) = program.stage(0) {
             if let Err(status) = executor.print_type(command, keyboard, usb_keyboard) {
@@ -335,7 +335,7 @@ fn execute_line(
     if program.stage_count() == 1
         && program
             .stage_ref(0)
-            .is_some_and(is_full_edit_command)
+            .is_some_and(|command| !command.json() && is_full_edit_command(command))
     {
         if let Some(command) = program.stage(0) {
             if let Err(status) = executor.edit_file(command, keyboard, usb_keyboard, acpi) {
@@ -349,6 +349,9 @@ fn execute_line(
         return;
     }
 
+    let json_output = program
+        .stage_ref(0)
+        .is_some_and(CommandCall::json);
     let (
         human_help_output,
         human_system_output,
@@ -371,7 +374,7 @@ fn execute_line(
             (false, false, false, false, false, false)
         };
 
-    if human_help_output {
+    if human_help_output && !json_output {
         if let Some(command) = program.stage_ref(0) {
             if let Some(target) = command.get_text("COMMAND") {
                 executor.print_command_help(&registry, target);
@@ -381,15 +384,15 @@ fn execute_line(
         }
         return
     }
-    if human_system_output {
+    if human_system_output && !json_output {
         executor.print_system();
         return
     }
-    if human_memory_output {
+    if human_memory_output && !json_output {
         executor.print_memory();
         return
     }
-    if human_cpu_output {
+    if human_cpu_output && !json_output {
         executor.print_top_cpu();
         return
     }
@@ -410,8 +413,15 @@ fn execute_line(
         match interpreter.poll(executor) {
             Ok(InterpreterEvent::Pending) => crate::arch::halt(),
             Ok(InterpreterEvent::Complete(output)) => {
-                if !human_memory_output && !human_dsm_output && !human_monitor_output {
-                    match render(&output, OutputFormat::List) {
+                if (!human_memory_output && !human_dsm_output && !human_monitor_output)
+                    || json_output
+                {
+                    let format = if json_output {
+                        OutputFormat::Json
+                    } else {
+                        OutputFormat::List
+                    };
+                    match render(&output, format) {
                         Ok(text) => crate::print!("{}", text.as_str()),
                         Err(error) => crate::println!("shell output error: {error:?}"),
                     }
@@ -2506,11 +2516,11 @@ impl KernelExecutor {
             SHOW_SYSTEM_ROUTE => self.show_system(),
             REBOOT_ROUTE => self.request_reboot(),
             SHUTDOWN_ROUTE => self.request_shutdown(),
-            MONITOR_ROUTE => self.monitor_view(),
-            SHOW_PROCESSES_ROUTE => self.show_processes(),
-            TOP_CPU_ROUTE => self.top_cpu(),
-            SHOW_MEMORY_ROUTE => self.show_memory(),
-            SHOW_DSM_ROUTE => self.show_dsm(),
+            MONITOR_ROUTE => self.monitor_view(command.json()),
+            SHOW_PROCESSES_ROUTE => self.show_processes(command.json()),
+            TOP_CPU_ROUTE => self.top_cpu(command.json()),
+            SHOW_MEMORY_ROUTE => self.show_memory(command.json()),
+            SHOW_DSM_ROUTE => self.show_dsm(command.json()),
             UPTIME_ROUTE => self.uptime(),
             STOP_JOB_ROUTE => self.stop_job(command),
             SET_PROCESS_ROUTE => self.set_process(command),
@@ -2851,6 +2861,7 @@ impl KernelExecutor {
         crate::println!();
         crate::println!("Use HELP <CATEGORY> for related commands.");
         crate::println!("Use HELP <COMMAND> for syntax and parameters.");
+        crate::println!("Add /JSON to any command for structured JSON output.");
         crate::println!("EDIT keys: Ctrl-S save, Ctrl-Z save and exit, Ctrl-X discard and exit.");
         crate::println!("  Insert text normally; Enter adds a line; Shift-arrows select text.");
         crate::println!("  Shift-Home/End extend selection; Backspace/Delete remove selected text.");
@@ -3102,24 +3113,26 @@ impl KernelExecutor {
         core::mem::take(&mut self.shutdown_requested)
     }
 
-    fn monitor_view(&mut self) -> Result<StructuredOutput, Status> {
+    fn monitor_view(&mut self, json: bool) -> Result<StructuredOutput, Status> {
         self.monitor.update();
         let view = self.monitor.current_view();
         let output = match view {
-            MonitorView::Processes => self.show_processes(),
-            MonitorView::TopCpu => self.top_cpu(),
-            MonitorView::Dsm => self.show_dsm(),
-            MonitorView::Memory => self.show_memory(),
+            MonitorView::Processes => self.show_processes(json),
+            MonitorView::TopCpu => self.top_cpu(json),
+            MonitorView::Dsm => self.show_dsm(json),
+            MonitorView::Memory => self.show_memory(json),
         };
         self.monitor.switch_view();
         output
     }
 
-    fn show_processes(&self) -> Result<StructuredOutput, Status> {
+    fn show_processes(&self, json: bool) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "processes")?;
         let processes = MonitorState::get_processes(self.scheduler);
-        crate::println!("\x1b[1;97;46mTHREAD       STATE      SWITCHES SPACE     POLICY\x1b[0m");
+        if !json {
+            crate::println!("\x1b[1;97;46mTHREAD       STATE      SWITCHES SPACE     POLICY\x1b[0m");
+        }
         let mut idx: u64 = 0;
         for proc in processes.iter() {
             if let Some(p) = proc {
@@ -3134,24 +3147,31 @@ impl KernelExecutor {
                     crate::task::SchedulingPolicy::Cooperative => "COOP",
                     crate::task::SchedulingPolicy::Realtime { priority: _, .. } => "RT",
                 };
-                crate::println!("{} {:<10} {:<8} {:<8} {:<10}",
-                    p.thread_id.raw(),
-                    state_str,
-                    p.switches,
-                    p.address_space.raw(),
-                    policy_str
-                );
+                if !json {
+                    crate::println!("{} {:<10} {:<8} {:<8} {:<10}",
+                        p.thread_id.raw(),
+                        state_str,
+                        p.switches,
+                        p.address_space.raw(),
+                        policy_str
+                    );
+                }
                 idx += 1;
             }
         }
-        crate::println!("Total: {} processes", idx);
+        if !json {
+            crate::println!("Total: {} processes", idx);
+        }
+        insert(&mut output, "process-count", OutputValue::Unsigned(idx))?;
         Ok(output)
     }
 
-    fn top_cpu(&mut self) -> Result<StructuredOutput, Status> {
+    fn top_cpu(&mut self, json: bool) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "cpu")?;
-        self.print_top_cpu();
+        if !json {
+            self.print_top_cpu();
+        }
         Ok(output)
     }
 
@@ -3201,7 +3221,7 @@ impl KernelExecutor {
         crate::println!("CPU% is scheduler activity share since the last sample.");
     }
 
-    fn show_memory(&self) -> Result<StructuredOutput, Status> {
+    fn show_memory(&self, json: bool) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "memory")?;
         insert(
@@ -3224,7 +3244,9 @@ impl KernelExecutor {
             "memory-regions",
             OutputValue::Unsigned(self.memory_region_count as u64),
         )?;
-        self.print_memory();
+        if !json {
+            self.print_memory();
+        }
         Ok(output)
     }
 
@@ -3258,7 +3280,7 @@ impl KernelExecutor {
         }
     }
 
-    fn show_dsm(&self) -> Result<StructuredOutput, Status> {
+    fn show_dsm(&self, json: bool) -> Result<StructuredOutput, Status> {
         let locks = MonitorState::get_lock_contentions(self.dlm);
 
         let mut active_locks = 0u64;
@@ -3278,27 +3300,35 @@ impl KernelExecutor {
         insert(&mut output, "granted-locks", OutputValue::Unsigned(granted_locks))?;
         insert(&mut output, "queued-locks", OutputValue::Unsigned(queued_locks))?;
 
-        crate::println!("\x1b[1;97;43mSTAT                 VALUE\x1b[0m");
-        crate::println!("Active locks         {} / {}", active_locks, MAX_LOCKS);
-        crate::println!("Granted              {}", granted_locks);
-        crate::println!("Queued               {}", queued_locks);
+        if !json {
+            crate::println!("\x1b[1;97;43mSTAT                 VALUE\x1b[0m");
+            crate::println!("Active locks         {} / {}", active_locks, MAX_LOCKS);
+            crate::println!("Granted              {}", granted_locks);
+            crate::println!("Queued               {}", queued_locks);
+        }
 
         if active_locks == 0 {
-            crate::println!("No active DSM locks.");
+            if !json {
+                crate::println!("No active DSM locks.");
+            }
             return Ok(output)
         }
 
-        crate::println!();
-        crate::println!("\x1b[1;97;43mRESOURCE   STATE    QUEUED  OWNER NODE\x1b[0m");
+        if !json {
+            crate::println!();
+            crate::println!("\x1b[1;97;43mRESOURCE   STATE    QUEUED  OWNER NODE\x1b[0m");
+        }
         for lock in locks.iter() {
             let Some(resource_id) = lock.resource_id else { continue };
             let state = if lock.granted != 0 { "GRANTED" } else { "WAITING" };
-            crate::println!("{:<10} {:<8} {:<7} {}",
-                resource_id.raw(),
-                state,
-                lock.queued,
-                lock.owner_node
-            );
+            if !json {
+                crate::println!("{:<10} {:<8} {:<7} {}",
+                    resource_id.raw(),
+                    state,
+                    lock.queued,
+                    lock.owner_node
+                );
+            }
         }
         Ok(output)
     }

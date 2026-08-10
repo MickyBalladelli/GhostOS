@@ -18,17 +18,17 @@ cargo synos check [--target x86_64|aarch64] [--release] [cargo options]
 cargo synos test [--target x86_64|aarch64] [--release] [cargo options]
 cargo synos doc [--target x86_64|aarch64] [--release] [cargo options]
 cargo synos bundle --artifact PATH --key PATH --output PATH
-    [--entry-offset BYTES] [--dependency SHA256]...
+    [--entry-offset BYTES] [--dependency SHA256]... [--json]
 cargo synos package --bin NAME --key PATH --output PATH
     [--manifest-path PATH] [--package NAME] [--target x86_64|aarch64]
     [--release] [--locked] [--offline] [--target-dir PATH]
     [--app-manifest PATH] [--debug-symbols PATH] [--stripped-output PATH]
-    [--entry-offset BYTES] [--dependency SHA256]...
+    [--entry-offset BYTES] [--dependency SHA256]... [--json]
 cargo synos compile --manifest-path PATH --bin NAME
     [--target x86_64|aarch64] [--release] [--locked] [--offline]
-    [--target-dir PATH]
-cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH]
-cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH]
+    [--target-dir PATH] [--json]
+cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH] [--json]
+cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH] [--json]
 cargo synos acceptance [--target x86_64|aarch64] [--release]
     [--clean-root PATH] [--skip-build|--boot-only] [--json]
 cargo synos toolchain package --key PATH --output PATH
@@ -199,7 +199,11 @@ fn compile(arguments: &[String]) -> Result<(), String> {
             offline: options.offline,
         })
         .map_err(|error| error.to_string())?;
-    println!("compiled {}", output.artifact.display());
+    if options.json {
+        println!("{{\"command\":\"compile\",\"artifact\":{}}}", json_string(&output.artifact.display().to_string()));
+    } else {
+        println!("compiled {}", output.artifact.display());
+    }
     Ok(())
 }
 
@@ -232,7 +236,11 @@ fn compile_all(arguments: &[String]) -> Result<(), String> {
             options.target_directory.as_deref(),
         )
         .map_err(|error| error.to_string())?;
-    println!("compiled SynOS workspace for {:?}", options.target);
+    if options.json {
+        println!("{{\"command\":\"compile-all\",\"target\":{}}}", json_string(&format!("{:?}", options.target)));
+    } else {
+        println!("compiled SynOS workspace for {:?}", options.target);
+    }
     Ok(())
 }
 
@@ -245,16 +253,12 @@ fn reproduce(arguments: &[String]) -> Result<(), String> {
     let output = compiler
         .reproduce_workspace(options.target, options.release, &clean_root)
         .map_err(|error| error.to_string())?;
-    println!(
-        "reproduced {:?}: {} artifacts, digest {:?}",
-        output.target, output.artifact_count, output.digest
-    );
-    println!(
-        "clean workspace: {}; targets: {} and {}",
-        output.workspace.display(),
-        output.first_target.display(),
-        output.second_target.display()
-    );
+    if options.json {
+        println!("{{\"command\":\"reproduce\",\"target\":{},\"artifacts\":{},\"digest\":{},\"workspace\":{},\"first-target\":{},\"second-target\":{}}}", json_string(&format!("{:?}", output.target)), output.artifact_count, json_string(&format!("{:?}", output.digest)), json_string(&output.workspace.display().to_string()), json_string(&output.first_target.display().to_string()), json_string(&output.second_target.display().to_string()));
+    } else {
+        println!("reproduced {:?}: {} artifacts, digest {:?}", output.target, output.artifact_count, output.digest);
+        println!("clean workspace: {}; targets: {} and {}", output.workspace.display(), output.first_target.display(), output.second_target.display());
+    }
     Ok(())
 }
 
@@ -349,14 +353,11 @@ fn package(arguments: &[String]) -> Result<(), String> {
                 options.stripped_output.as_deref(),
             )
             .map_err(|error| error.to_string())?;
-        println!(
-            "created {} application {:?} (build {:?}, provenance {:?} at {})",
-            output.bundle.display(),
-            output.info.package,
-            output.build_record,
-            output.provenance_id,
-            output.provenance.display()
-        );
+        if options.json {
+            println!("{{\"command\":\"package\",\"kind\":\"application\",\"output\":{},\"package\":{},\"provenance\":{}}}", json_string(&output.bundle.display().to_string()), json_string(&format!("{:?}", output.info.package)), json_string(&format!("{:?}", output.provenance_id)));
+        } else {
+            println!("created {} application {:?} (build {:?}, provenance {:?} at {})", output.bundle.display(), output.info.package, output.build_record, output.provenance_id, output.provenance.display());
+        }
     } else {
         let output = compiler
             .compile_and_bundle(
@@ -367,14 +368,11 @@ fn package(arguments: &[String]) -> Result<(), String> {
                 &options.dependencies,
             )
             .map_err(|error| error.to_string())?;
-        println!(
-            "created {} package {:?} ({} bytes, provenance {:?} at {})",
-            output.bundle.display(),
-            output.info.package,
-            output.info.payload_length,
-            output.provenance_id,
-            output.provenance.display()
-        );
+        if options.json {
+            println!("{{\"command\":\"package\",\"kind\":\"package\",\"output\":{},\"package\":{},\"payload-bytes\":{},\"provenance\":{}}}", json_string(&output.bundle.display().to_string()), json_string(&format!("{:?}", output.info.package)), output.info.payload_length, json_string(&format!("{:?}", output.provenance_id)));
+        } else {
+            println!("created {} package {:?} ({} bytes, provenance {:?} at {})", output.bundle.display(), output.info.package, output.info.payload_length, output.provenance_id, output.provenance.display());
+        }
     }
     Ok(())
 }
@@ -396,12 +394,11 @@ fn create_bundle(options: &BundleOptions) -> Result<(), String> {
     .map_err(|error| format!("could not encode bundle: {error:?}"))?;
     fs::write(&options.output, encoded)
         .map_err(|error| format!("could not write {}: {error}", options.output.display()))?;
-    println!(
-        "created {} package {:?} ({} bytes)",
-        options.output.display(),
-        info.package,
-        info.payload_length
-    );
+    if options.json {
+        println!("{{\"command\":\"bundle\",\"output\":{},\"package\":{},\"payload-bytes\":{}}}", json_string(&options.output.display().to_string()), json_string(&format!("{:?}", info.package)), info.payload_length);
+    } else {
+        println!("created {} package {:?} ({} bytes)", options.output.display(), info.package, info.payload_length);
+    }
     Ok(())
 }
 
@@ -472,12 +469,30 @@ fn hex_digit(byte: u8) -> Result<u8, String> {
     }
 }
 
+fn json_string(value: &str) -> String {
+    let mut output = String::from("\"");
+    for byte in value.bytes() {
+        match byte {
+            b'"' => output.push_str("\\\""),
+            b'\\' => output.push_str("\\\\"),
+            b'\n' => output.push_str("\\n"),
+            b'\r' => output.push_str("\\r"),
+            b'\t' => output.push_str("\\t"),
+            0..=0x1f => output.push_str(&format!("\\u{:04x}", byte)),
+            _ => output.push(byte as char),
+        }
+    }
+    output.push('"');
+    output
+}
+
 struct BundleOptions {
     artifact: PathBuf,
     key: PathBuf,
     output: PathBuf,
     entry_offset: u64,
     dependencies: Vec<ContentId>,
+    json: bool,
 }
 
 struct CargoOperationOptions {
@@ -559,6 +574,7 @@ struct CompileOptions {
     target_directory: Option<PathBuf>,
     locked: bool,
     offline: bool,
+    json: bool,
 }
 
 impl CompileOptions {
@@ -570,6 +586,7 @@ impl CompileOptions {
         let mut target_directory = None;
         let mut locked = false;
         let mut offline = false;
+        let mut json = false;
         let mut index = 0;
         while index < arguments.len() {
             match arguments[index].as_str() {
@@ -593,6 +610,10 @@ impl CompileOptions {
                     offline = true;
                     index += 1;
                 }
+                "--json" => {
+                    json = true;
+                    index += 1;
+                }
                 "--target-dir" => {
                     target_directory = Some(PathBuf::from(required_value(arguments, &mut index)?))
                 }
@@ -607,6 +628,7 @@ impl CompileOptions {
             target_directory,
             locked,
             offline,
+            json,
         })
     }
 }
@@ -623,12 +645,14 @@ struct WorkspaceOptions {
     target: Target,
     release: bool,
     target_directory: Option<PathBuf>,
+    json: bool,
 }
 
 struct ReproduceOptions {
     target: Target,
     release: bool,
     clean_root: Option<PathBuf>,
+    json: bool,
 }
 
 struct ToolchainPackageOptions {
@@ -658,6 +682,7 @@ impl WorkspaceOptions {
         let mut target = Target::X86_64;
         let mut release = false;
         let mut target_directory = None;
+        let mut json = false;
         let mut index = 0;
         while index < arguments.len() {
             match arguments[index].as_str() {
@@ -672,6 +697,10 @@ impl WorkspaceOptions {
                 "--target-dir" => {
                     target_directory = Some(PathBuf::from(required_value(arguments, &mut index)?))
                 }
+                "--json" => {
+                    json = true;
+                    index += 1;
+                }
                 other => return Err(format!("unknown compile-all option `{other}`")),
             }
         }
@@ -679,6 +708,7 @@ impl WorkspaceOptions {
             target,
             release,
             target_directory,
+            json,
         })
     }
 }
@@ -688,6 +718,7 @@ impl ReproduceOptions {
         let mut target = Target::X86_64;
         let mut release = false;
         let mut clean_root = None;
+        let mut json = false;
         let mut index = 0;
         while index < arguments.len() {
             match arguments[index].as_str() {
@@ -702,6 +733,10 @@ impl ReproduceOptions {
                 "--clean-root" => {
                     clean_root = Some(PathBuf::from(required_value(arguments, &mut index)?))
                 }
+                "--json" => {
+                    json = true;
+                    index += 1;
+                }
                 other => return Err(format!("unknown reproduce option `{other}`")),
             }
         }
@@ -709,6 +744,7 @@ impl ReproduceOptions {
             target,
             release,
             clean_root,
+            json,
         })
     }
 }
@@ -857,8 +893,14 @@ impl BundleOptions {
         let mut output = None;
         let mut entry_offset = 0;
         let mut dependencies = Vec::new();
+        let mut json = false;
         let mut index = 0;
         while index < arguments.len() {
+            if arguments[index] == "--json" {
+                json = true;
+                index += 1;
+                continue;
+            }
             let value = arguments
                 .get(index + 1)
                 .ok_or_else(|| format!("{} needs a value", arguments[index]))?;
@@ -882,6 +924,7 @@ impl BundleOptions {
             output: output.ok_or_else(|| "--output is required".to_string())?,
             entry_offset,
             dependencies,
+            json,
         })
     }
 }
@@ -902,6 +945,7 @@ struct PackageOptions {
     app_manifest: Option<PathBuf>,
     debug_symbols: Option<PathBuf>,
     stripped_output: Option<PathBuf>,
+    json: bool,
 }
 
 impl PackageOptions {
@@ -921,6 +965,7 @@ impl PackageOptions {
         let mut app_manifest = None;
         let mut debug_symbols = None;
         let mut stripped_output = None;
+        let mut json = false;
         let mut index = 0;
         while index < arguments.len() {
             if arguments[index] == "--release" {
@@ -935,6 +980,11 @@ impl PackageOptions {
             }
             if arguments[index] == "--offline" {
                 offline = true;
+                index += 1;
+                continue;
+            }
+            if arguments[index] == "--json" {
+                json = true;
                 index += 1;
                 continue;
             }
@@ -978,6 +1028,7 @@ impl PackageOptions {
             app_manifest,
             debug_symbols,
             stripped_output,
+            json,
         })
     }
 }
