@@ -117,8 +117,12 @@ evidence.
       and reopens checkpoints, verifies no orphaned blocks, and checks daemon
       handle cleanup. `cargo check -p synos-synfs --tests` and `cargo check
       -p synos-fsd --tests` pass.
-- [ ] Document backup compatibility, format migration, downgrade behavior,
-      and recovery evidence for every persistent format.
+- [x] Document backup compatibility, format migration, downgrade behavior,
+      and recovery evidence for every persistent format. The inventory is in
+      [`docs/persistence-compatibility.md`](docs/persistence-compatibility.md)
+      and records exact current versions, rejected downgrade paths, backup
+      boundaries, and named recovery evidence for SynFS, VM, package, cluster,
+      service, replay, and diagnostic artifacts.
 
 ## P1: Strengthen capability and supply-chain security
 

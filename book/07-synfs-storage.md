@@ -56,6 +56,11 @@ Draining blocks new allocations. Detach refuses to proceed while a pool still ow
 
 The backup worker pins a SynFS checkpoint and streams live file versions into a checksummed `SYNBACK1` archive through bounded cooperative polls. It releases the pinned root only after the caller commits the finished backup.
 
+The full compatibility and recovery matrix is in
+[`docs/persistence-compatibility.md`](../docs/persistence-compatibility.md).
+`SYNBACK1` is currently a streaming writer format; it is not a mountable
+volume and the repository does not yet provide its restore decoder.
+
 ```text
 checkpoint -> stream -> checksum -> caller commits -> release checkpoint
                          |
@@ -92,4 +97,3 @@ SNAPSHOT /DATA/notes/today
 ```
 
 The shell command names are the human layer. Under them are generations, blocks, locks, and checksums that make the note recoverable.
-
