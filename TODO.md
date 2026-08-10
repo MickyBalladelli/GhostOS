@@ -149,8 +149,11 @@ evidence.
       package trust-key revocation, attestation-key rotation and revocation,
       enclave capability invalidation, and cluster peer revocation. The named
       test targets compile with the recorded command in the matrix.
-- [ ] Record a signed provenance chain from source snapshot through toolchain,
+- [x] Record a signed provenance chain from source snapshot through toolchain,
       dependencies, compiler result, package, activation, and running process.
+      Progress: added fixed-size HMAC-signed chain records, compiler sidecar
+      export, package-daemon activation verification, and process-launch
+      fencing when provenance recording fails.
 - [ ] Make audit records tamper-evident, bounded, exportable, and usable during
       recovery when the normal log service is unavailable.
 

@@ -8,7 +8,8 @@ use std::process::{Command, ExitStatus};
 use synos_app::{parse_image, AppManifest, AppTarget, ImageArchitecture};
 use synos_pkg::{
     application_bundle_size, bundle_size, encode_application_bundle, encode_bundle,
-    ApplicationBundleInfo, ApplicationPackageManifest, BundleInfo, PackageError, SigningKey,
+    ApplicationBundleInfo, ApplicationPackageManifest, BundleInfo, PackageError, ProvenanceChain,
+    ProvenanceStage, SigningKey, PROVENANCE_CHAIN_BYTES,
 };
 use synos_synfs::{DirectoryEntry, Error as SynFsError, FileType, SynFs};
 use synos_system_model::ContentId;
@@ -110,6 +111,8 @@ pub struct BundleOutput {
     pub bundle: PathBuf,
     pub artifact: PathBuf,
     pub info: BundleInfo,
+    pub provenance: PathBuf,
+    pub provenance_id: ContentId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -148,6 +151,8 @@ pub struct ApplicationBundleOutput {
     pub stripped_artifact: Option<PathBuf>,
     pub info: ApplicationBundleInfo,
     pub build_record: ContentId,
+    pub provenance: PathBuf,
+    pub provenance_id: ContentId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -392,6 +397,12 @@ impl Compiler {
         entry_offset: u64,
         dependencies: &[ContentId],
     ) -> Result<BundleOutput, CompileError> {
+        let source = source_snapshot_id(
+            request
+                .manifest_path
+                .parent()
+                .ok_or_else(|| CompileError::InvalidSourceRoot(request.manifest_path.clone()))?,
+        )?;
         let compiled = self.compile(request)?;
         let payload = fs::read(&compiled.artifact).map_err(|error| {
             CompileError::PackageWrite {
@@ -409,10 +420,28 @@ impl Compiler {
             &mut encoded,
         )?;
         write_atomic(output, &encoded)?;
+        let dependencies_id = dependency_identity(
+            dependencies,
+            &request.manifest_path,
+        );
+        let mut provenance = ProvenanceChain::new(source, key)?;
+        provenance.append(ProvenanceStage::Toolchain, self.toolchain_identity(), key)?;
+        provenance.append(ProvenanceStage::Dependencies, dependencies_id, key)?;
+        provenance.append(
+            ProvenanceStage::CompilerResult,
+            ContentId::hash(&payload),
+            key,
+        )?;
+        provenance.append(ProvenanceStage::Package, info.package, key)?;
+        let provenance_id = provenance.content_id();
+        let provenance_path = output.with_extension("provenance");
+        write_provenance(&provenance_path, &provenance)?;
         Ok(BundleOutput {
             bundle: output.to_path_buf(),
             artifact: compiled.artifact,
             info,
+            provenance: provenance_path,
+            provenance_id,
         })
     }
 
@@ -442,6 +471,12 @@ impl Compiler {
                 requested: request.target,
             });
         }
+        let source_id = source_snapshot_id(
+            request
+                .manifest_path
+                .parent()
+                .ok_or_else(|| CompileError::InvalidSourceRoot(request.manifest_path.clone()))?,
+        )?;
         let compiled = self.compile(request)?;
         let payload = fs::read(&compiled.artifact).map_err(|error| CompileError::PackageWrite {
             path: compiled.artifact.clone(),
@@ -460,7 +495,9 @@ impl Compiler {
             ));
         }
         let artifact_id = ContentId::hash(&payload);
-        let source_id = ContentId::hash(profile_source.as_bytes());
+        let dependencies = profile.dependencies().map(|dependency| dependency.package).collect::<Vec<_>>();
+        let dependencies_id = dependency_identity(&dependencies, &request.manifest_path);
+        let toolchain_id = self.toolchain_identity();
         let build = BuildRecord {
             source: source_id,
             artifact: artifact_id,
@@ -501,7 +538,6 @@ impl Compiler {
             debug_id,
             build_record,
         )?;
-        let dependencies = profile.dependencies().map(|dependency| dependency.package).collect::<Vec<_>>();
         let inner_size = bundle_size(payload.len(), dependencies.len())?;
         let mut inner = vec![0; inner_size];
         encode_bundle(&payload, entry_offset, &dependencies, key, &mut inner)?;
@@ -509,6 +545,14 @@ impl Compiler {
         let mut encoded = vec![0; required];
         let info = encode_application_bundle(&inner, metadata, key, &mut encoded)?;
         write_atomic(output, &encoded)?;
+        let mut provenance = ProvenanceChain::new(source_id, key)?;
+        provenance.append(ProvenanceStage::Toolchain, toolchain_id, key)?;
+        provenance.append(ProvenanceStage::Dependencies, dependencies_id, key)?;
+        provenance.append(ProvenanceStage::CompilerResult, build_record, key)?;
+        provenance.append(ProvenanceStage::Package, info.package, key)?;
+        let provenance_id = provenance.content_id();
+        let provenance_path = output.with_extension("provenance");
+        write_provenance(&provenance_path, &provenance)?;
         let record_path = output.with_extension("build-record");
         write_atomic(&record_path, &build.encode())?;
         Ok(ApplicationBundleOutput {
@@ -518,7 +562,34 @@ impl Compiler {
             stripped_artifact: stripped_path,
             info,
             build_record,
+            provenance: provenance_path,
+            provenance_id,
         })
+    }
+
+    fn toolchain_identity(&self) -> ContentId {
+        let mut material = Vec::new();
+        let mut tools = vec![
+            self.rustc.clone().unwrap_or_else(|| PathBuf::from("rustc")),
+            self.rustdoc.clone().unwrap_or_else(|| PathBuf::from("rustdoc")),
+            PathBuf::from(&self.cargo),
+        ];
+        if let Some(linker) = &self.linker {
+            tools.push(linker.clone());
+        }
+        for path in tools {
+            material.extend_from_slice(path.to_string_lossy().as_bytes());
+            material.push(0);
+            if let Ok(bytes) = fs::read(&path) {
+                material.extend_from_slice(ContentId::hash(&bytes).as_bytes());
+            } else if let Ok(output) = Command::new(&path).arg("--version").output() {
+                material.extend_from_slice(ContentId::hash(&output.stdout).as_bytes());
+            }
+        }
+        if material.is_empty() {
+            material.extend_from_slice(b"synos-toolchain-unknown");
+        }
+        ContentId::hash(&material)
     }
 
     fn strip_image(&self, input: &Path, output: &Path) -> Result<(), CompileError> {
@@ -949,6 +1020,96 @@ fn digest_artifacts(artifacts: &[ArtifactDigest]) -> ContentId {
         material.extend_from_slice(artifact.digest.as_bytes());
     }
     ContentId::hash(&material)
+}
+
+fn dependency_identity(dependencies: &[ContentId], manifest_path: &Path) -> ContentId {
+    let mut material = Vec::with_capacity(dependencies.len() * 32);
+    for dependency in dependencies {
+        material.extend_from_slice(dependency.as_bytes());
+    }
+    let lockfile = manifest_path
+        .parent()
+        .map(|path| path.join("Cargo.lock"))
+        .and_then(|path| fs::read(path).ok())
+        .map(|bytes| ContentId::hash(&bytes))
+        .unwrap_or_else(|| ContentId::from_bytes([0; 32]));
+    material.extend_from_slice(lockfile.as_bytes());
+    ContentId::hash(&material)
+}
+
+fn source_snapshot_id(root: &Path) -> Result<ContentId, CompileError> {
+    let mut files = Vec::new();
+    collect_source_files(root, &mut files)?;
+    files.sort();
+    let mut material = Vec::new();
+    for path in files {
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| CompileError::InvalidSourceRoot(root.to_path_buf()))?;
+        let relative = relative.to_string_lossy();
+        let bytes = fs::read(&path).map_err(|error| CompileError::WorkspaceCopy {
+            path: path.clone(),
+            error: error.to_string(),
+        })?;
+        material.extend_from_slice(&(relative.len() as u64).to_be_bytes());
+        material.extend_from_slice(relative.as_bytes());
+        material.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+        material.extend_from_slice(ContentId::hash(&bytes).as_bytes());
+    }
+    Ok(ContentId::hash(&material))
+}
+
+fn collect_source_files(
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), CompileError> {
+    let entries = fs::read_dir(directory).map_err(|error| CompileError::WorkspaceCopy {
+        path: directory.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| CompileError::WorkspaceCopy {
+            path: directory.to_path_buf(),
+            error: error.to_string(),
+        })?;
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == ".git" || name == "target" || name == "build" {
+            continue;
+        }
+        if path
+            .extension()
+            .is_some_and(|extension| {
+                extension == "provenance" || extension == "build-record" || extension == "tmp"
+            })
+        {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .map_err(|error| CompileError::WorkspaceCopy {
+                path: path.clone(),
+                error: error.to_string(),
+            })?;
+        if file_type.is_symlink() {
+            return Err(CompileError::WorkspaceCopy {
+                path,
+                error: "symbolic links are not allowed in a source snapshot".into(),
+            })
+        }
+        if file_type.is_dir() {
+            collect_source_files(&path, files)?;
+        } else if file_type.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn write_provenance(path: &Path, chain: &ProvenanceChain) -> Result<(), CompileError> {
+    let mut encoded = [0; PROVENANCE_CHAIN_BYTES];
+    chain.encode(&mut encoded)?;
+    write_atomic(path, &encoded)
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CompileError> {

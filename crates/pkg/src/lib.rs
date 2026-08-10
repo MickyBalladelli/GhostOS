@@ -20,6 +20,11 @@ pub const APPLICATION_BUNDLE_MAGIC: &[u8; 8] = b"SYNAPP01";
 pub const APPLICATION_BUNDLE_VERSION: u16 = 1;
 pub const APPLICATION_BUNDLE_HEADER_BYTES: usize = 144;
 pub const APPLICATION_METADATA_BYTES: usize = 160;
+pub const PROVENANCE_LINKS: usize = 7;
+pub const PROVENANCE_LINK_BYTES: usize = 113;
+pub const PROVENANCE_HEADER_BYTES: usize = 12;
+pub const PROVENANCE_CHAIN_BYTES: usize =
+    PROVENANCE_HEADER_BYTES + PROVENANCE_LINKS * PROVENANCE_LINK_BYTES;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PackageError {
@@ -37,6 +42,7 @@ pub enum PackageError {
     TooManyDependencies,
     TrustStoreFull,
     UnknownSigningKey,
+    Provenance(ProvenanceError),
 }
 
 impl IntoStatus for PackageError {
@@ -49,6 +55,7 @@ impl IntoStatus for PackageError {
                 Status::ACCESS_DENIED
             }
             Self::CorruptBundle | Self::BundleTooSmall => Status::CORRUPT,
+            Self::Provenance(error) => error.status(),
             Self::InvalidConfiguration | Self::DuplicateBinding | Self::DuplicateKey => {
                 Status::INVALID_ARGUMENT
             }
@@ -68,6 +75,265 @@ impl From<ModelError> for PackageError {
 impl From<RepositoryError> for PackageError {
     fn from(error: RepositoryError) -> Self {
         Self::Repository(error)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProvenanceError {
+    Capacity,
+    Corrupt,
+    InvalidSignature,
+    InvalidStage,
+    MissingStage,
+}
+
+impl ProvenanceError {
+    const fn status(self) -> Status {
+        match self {
+            Self::Capacity => Status::NO_SPACE,
+            Self::Corrupt | Self::InvalidSignature => Status::CORRUPT,
+            Self::InvalidStage | Self::MissingStage => Status::INVALID_ARGUMENT,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ProvenanceStage {
+    SourceSnapshot = 1,
+    Toolchain = 2,
+    Dependencies = 3,
+    CompilerResult = 4,
+    Package = 5,
+    Activation = 6,
+    RunningProcess = 7,
+}
+
+impl ProvenanceStage {
+    const fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::SourceSnapshot,
+            1 => Self::Toolchain,
+            2 => Self::Dependencies,
+            3 => Self::CompilerResult,
+            4 => Self::Package,
+            5 => Self::Activation,
+            _ => Self::RunningProcess,
+        }
+    }
+
+    const fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            1 => Some(Self::SourceSnapshot),
+            2 => Some(Self::Toolchain),
+            3 => Some(Self::Dependencies),
+            4 => Some(Self::CompilerResult),
+            5 => Some(Self::Package),
+            6 => Some(Self::Activation),
+            7 => Some(Self::RunningProcess),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProvenanceLink {
+    pub stage: ProvenanceStage,
+    pub subject: ContentId,
+    pub previous: ContentId,
+    pub signing_key: [u8; KEY_ID_BYTES],
+    pub signature: [u8; SIGNATURE_BYTES],
+}
+
+impl ProvenanceLink {
+    fn material(self) -> [u8; 81] {
+        let mut material = [0; 81];
+        material[0] = self.stage as u8;
+        material[1..33].copy_from_slice(self.subject.as_bytes());
+        material[33..65].copy_from_slice(self.previous.as_bytes());
+        material[65..81].copy_from_slice(&self.signing_key);
+        material
+    }
+
+    pub fn content_id(self) -> ContentId {
+        let mut bytes = [0; PROVENANCE_LINK_BYTES];
+        self.encode(&mut bytes);
+        ContentId::hash(&bytes)
+    }
+
+    fn encode(self, destination: &mut [u8]) {
+        destination[0] = self.stage as u8;
+        destination[1..33].copy_from_slice(self.subject.as_bytes());
+        destination[33..65].copy_from_slice(self.previous.as_bytes());
+        destination[65..81].copy_from_slice(&self.signing_key);
+        destination[81..113].copy_from_slice(&self.signature);
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, ProvenanceError> {
+        if bytes.len() != PROVENANCE_LINK_BYTES {
+            return Err(ProvenanceError::Corrupt)
+        }
+        let stage = ProvenanceStage::from_raw(bytes[0]).ok_or(ProvenanceError::Corrupt)?;
+        let mut subject = [0; 32];
+        subject.copy_from_slice(&bytes[1..33]);
+        let mut previous = [0; 32];
+        previous.copy_from_slice(&bytes[33..65]);
+        let mut signing_key = [0; KEY_ID_BYTES];
+        signing_key.copy_from_slice(&bytes[65..81]);
+        let mut signature = [0; SIGNATURE_BYTES];
+        signature.copy_from_slice(&bytes[81..113]);
+        Ok(Self {
+            stage,
+            subject: ContentId::from_bytes(subject),
+            previous: ContentId::from_bytes(previous),
+            signing_key,
+            signature,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProvenanceChain {
+    links: [Option<ProvenanceLink>; PROVENANCE_LINKS],
+    length: u8,
+}
+
+impl ProvenanceChain {
+    pub fn new(source: ContentId, key: SigningKey) -> Result<Self, PackageError> {
+        let mut chain = Self {
+            links: [None; PROVENANCE_LINKS],
+            length: 0,
+        };
+        chain.append(ProvenanceStage::SourceSnapshot, source, key)?;
+        Ok(chain)
+    }
+
+    pub fn append(
+        &mut self,
+        stage: ProvenanceStage,
+        subject: ContentId,
+        key: SigningKey,
+    ) -> Result<(), PackageError> {
+        let index = self.length as usize;
+        if index >= PROVENANCE_LINKS {
+            return Err(PackageError::Provenance(ProvenanceError::Capacity))
+        }
+        if subject.is_zero() || stage != ProvenanceStage::from_index(index) {
+            return Err(PackageError::Provenance(ProvenanceError::InvalidStage))
+        }
+        let signing_key = key.id();
+        if index != 0 && self.links[0].is_some_and(|link| link.signing_key != signing_key) {
+            return Err(PackageError::Provenance(ProvenanceError::InvalidSignature))
+        }
+        let previous = self
+            .links
+            .iter()
+            .flatten()
+            .last()
+            .map(|link| link.content_id())
+            .unwrap_or_else(|| ContentId::from_bytes([0; 32]));
+        let unsigned = ProvenanceLink {
+            stage,
+            subject,
+            previous,
+            signing_key,
+            signature: [0; SIGNATURE_BYTES],
+        };
+        let mut link = unsigned;
+        link.signature = key.sign(&unsigned.material());
+        self.links[index] = Some(link);
+        self.length += 1;
+        Ok(())
+    }
+
+    pub fn verify(&self, key: SigningKey) -> Result<(), PackageError> {
+        let signing_key = key.id();
+        let mut previous = ContentId::from_bytes([0; 32]);
+        for (index, link) in self.links.iter().take(self.length as usize).flatten().enumerate() {
+            if link.stage != ProvenanceStage::from_index(index)
+                || link.signing_key != signing_key
+                || link.previous != previous
+                || link.subject.is_zero()
+                || !constant_time_equal(&key.sign(&link.material()), &link.signature)
+            {
+                return Err(PackageError::Provenance(ProvenanceError::InvalidSignature))
+            }
+            previous = link.content_id();
+        }
+        if self.length == 0 {
+            return Err(PackageError::Provenance(ProvenanceError::Corrupt))
+        }
+        Ok(())
+    }
+
+    pub const fn len(&self) -> usize {
+        self.length as usize
+    }
+
+    pub fn links(&self) -> impl Iterator<Item = ProvenanceLink> + '_ {
+        self.links.iter().take(self.length as usize).flatten().copied()
+    }
+
+    pub fn subject(&self, stage: ProvenanceStage) -> Option<ContentId> {
+        self.links()
+            .find(|link| link.stage == stage)
+            .map(|link| link.subject)
+    }
+
+    pub fn signing_key(&self) -> Option<[u8; KEY_ID_BYTES]> {
+        self.links[0].map(|link| link.signing_key)
+    }
+
+    pub fn content_id(self) -> ContentId {
+        let mut encoded = [0; PROVENANCE_CHAIN_BYTES];
+        self.encode(&mut encoded).expect("fixed provenance buffer");
+        ContentId::hash(&encoded)
+    }
+
+    pub fn encode(&self, destination: &mut [u8]) -> Result<(), PackageError> {
+        if destination.len() < PROVENANCE_CHAIN_BYTES {
+            return Err(PackageError::BufferTooSmall {
+                required: PROVENANCE_CHAIN_BYTES,
+            })
+        }
+        destination[..PROVENANCE_CHAIN_BYTES].fill(0);
+        destination[..8].copy_from_slice(b"SYNPROV1");
+        destination[8..10].copy_from_slice(&1_u16.to_be_bytes());
+        destination[10] = self.length;
+        for (index, link) in self.links().enumerate() {
+            let offset = PROVENANCE_HEADER_BYTES + index * PROVENANCE_LINK_BYTES;
+            link.encode(&mut destination[offset..offset + PROVENANCE_LINK_BYTES]);
+        }
+        Ok(())
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, PackageError> {
+        if bytes.len() != PROVENANCE_CHAIN_BYTES
+            || &bytes[..8] != b"SYNPROV1"
+            || u16::from_be_bytes([bytes[8], bytes[9]]) != 1
+            || bytes[10] as usize > PROVENANCE_LINKS
+            || bytes[11] != 0
+        {
+            return Err(PackageError::Provenance(ProvenanceError::Corrupt))
+        }
+        let length = bytes[10] as usize;
+        let mut links = [None; PROVENANCE_LINKS];
+        for (index, slot) in links.iter_mut().take(length).enumerate() {
+            let offset = PROVENANCE_HEADER_BYTES + index * PROVENANCE_LINK_BYTES;
+            *slot = Some(ProvenanceLink::decode(
+                &bytes[offset..offset + PROVENANCE_LINK_BYTES],
+            ).map_err(PackageError::Provenance)?);
+        }
+        if bytes[PROVENANCE_HEADER_BYTES + length * PROVENANCE_LINK_BYTES..]
+            .iter()
+            .any(|byte| *byte != 0)
+        {
+            return Err(PackageError::Provenance(ProvenanceError::Corrupt))
+        }
+        Ok(Self {
+            links,
+            length: length as u8,
+        })
     }
 }
 
@@ -586,6 +852,23 @@ impl SystemConfiguration {
         self.revision
     }
 
+    pub fn content_id(&self) -> ContentId {
+        let mut material = [0; DEFAULT_ROOT_BINDINGS * (2 + 64 + 32) + 8];
+        let mut cursor = 0;
+        material[..8].copy_from_slice(&self.revision.to_be_bytes());
+        cursor += 8;
+        for binding in self.bindings() {
+            let name = binding.name.as_str().as_bytes();
+            material[cursor..cursor + 2].copy_from_slice(&(name.len() as u16).to_be_bytes());
+            cursor += 2;
+            material[cursor..cursor + name.len()].copy_from_slice(name);
+            cursor += name.len();
+            material[cursor..cursor + 32].copy_from_slice(binding.package.as_bytes());
+            cursor += 32;
+        }
+        ContentId::hash(&material[..cursor])
+    }
+
     pub fn bindings(&self) -> impl Iterator<Item = ConfigurationBinding> + '_ {
         self.bindings.iter().flatten().copied()
     }
@@ -761,6 +1044,94 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
                 RepositoryError::Interrupted => PackageError::Interrupted,
                 other => PackageError::Repository(other),
             })?)
+    }
+
+    /// Add the root activation to a verified build chain, then activate it.
+    /// The chain is copied first, so an interrupted activation does not leave
+    /// a provenance record for a root that never became active.
+    pub fn activate_with_provenance<
+        const BLOCKS: usize,
+        I: InterruptionInjector,
+    >(
+        &mut self,
+        fs: &mut SynFs<BLOCKS>,
+        configuration: &SystemConfiguration,
+        chain: &mut ProvenanceChain,
+        injector: &mut I,
+    ) -> Result<Option<RootManifest<DEFAULT_ROOT_BINDINGS>>, PackageError> {
+        let mut next = *chain;
+        self.append_provenance(&mut next, ProvenanceStage::Activation, configuration.content_id())?;
+        let root = self.activate_with_interruption(fs, configuration, injector)?;
+        *chain = next;
+        Ok(root)
+    }
+
+    /// Append a trusted activation or running-process event to a chain.
+    /// Only the signing key that verified the package may extend it.
+    pub fn append_provenance(
+        &self,
+        chain: &mut ProvenanceChain,
+        stage: ProvenanceStage,
+        subject: ContentId,
+    ) -> Result<(), PackageError> {
+        if chain.subject(ProvenanceStage::Package)
+            .is_none_or(|package| !self.is_instantiation_authorized(package))
+        {
+            return Err(PackageError::InstantiationDenied)
+        }
+        let signing_key = chain
+            .signing_key()
+            .ok_or(PackageError::Provenance(ProvenanceError::MissingStage))?;
+        let key = self
+            .trusted_keys
+            .iter()
+            .flatten()
+            .find(|key| key.id() == signing_key)
+            .copied()
+            .ok_or(PackageError::UnknownSigningKey)?;
+        let mut next = *chain;
+        next.append(stage, subject, key)?;
+        next.verify(key)?;
+        *chain = next;
+        Ok(())
+    }
+
+    pub fn verify_provenance(&self, chain: &ProvenanceChain) -> Result<(), PackageError> {
+        let signing_key = chain
+            .signing_key()
+            .ok_or(PackageError::Provenance(ProvenanceError::MissingStage))?;
+        let key = self
+            .trusted_keys
+            .iter()
+            .flatten()
+            .find(|key| key.id() == signing_key)
+            .copied()
+            .ok_or(PackageError::UnknownSigningKey)?;
+        chain.verify(key)?;
+        if chain.subject(ProvenanceStage::Package)
+            .is_none_or(|package| !self.is_instantiation_authorized(package))
+        {
+            return Err(PackageError::InstantiationDenied)
+        }
+        Ok(())
+    }
+
+    pub fn record_running_process_provenance(
+        &self,
+        chain: &mut ProvenanceChain,
+        process: u64,
+        generation: u32,
+    ) -> Result<(), PackageError> {
+        let mut material = [0; 44];
+        material[..32].copy_from_slice(
+            chain
+                .subject(ProvenanceStage::Package)
+                .ok_or(PackageError::Provenance(ProvenanceError::MissingStage))?
+                .as_bytes(),
+        );
+        material[32..40].copy_from_slice(&process.to_be_bytes());
+        material[40..44].copy_from_slice(&generation.to_be_bytes());
+        self.append_provenance(chain, ProvenanceStage::RunningProcess, ContentId::hash(&material))
     }
 
     pub const fn active_configuration(&self) -> Option<&RootManifest<DEFAULT_ROOT_BINDINGS>> {

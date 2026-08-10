@@ -350,10 +350,12 @@ fn package(arguments: &[String]) -> Result<(), String> {
             )
             .map_err(|error| error.to_string())?;
         println!(
-            "created {} application {:?} (build {:?})",
+            "created {} application {:?} (build {:?}, provenance {:?} at {})",
             output.bundle.display(),
             output.info.package,
-            output.build_record
+            output.build_record,
+            output.provenance_id,
+            output.provenance.display()
         );
     } else {
         let output = compiler
@@ -366,10 +368,12 @@ fn package(arguments: &[String]) -> Result<(), String> {
             )
             .map_err(|error| error.to_string())?;
         println!(
-            "created {} package {:?} ({} bytes)",
+            "created {} package {:?} ({} bytes, provenance {:?} at {})",
             output.bundle.display(),
             output.info.package,
-            output.info.payload_length
+            output.info.payload_length,
+            output.provenance_id,
+            output.provenance.display()
         );
     }
     Ok(())

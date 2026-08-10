@@ -1,5 +1,7 @@
 use synos_init::{CrashReason, ExitReason, ProcessId};
-use synos_pkg::{InstantiationReceipt, PackageDaemon, PackageError};
+use synos_pkg::{
+    InstantiationReceipt, PackageDaemon, PackageError, ProvenanceChain,
+};
 use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
 
@@ -474,6 +476,49 @@ impl<const CAPACITY: usize> ApplicationSupervisor<CAPACITY> {
             policy,
         )?;
         Ok(self.start(application, runtime)?)
+    }
+
+    /// Launch a verified package and bind the resulting process generation to
+    /// the signed provenance chain. A process without a recorded chain is
+    /// fenced before the caller sees success.
+    pub fn launch_package_with_provenance<
+        const RULES: usize,
+        const PACKAGES: usize,
+        const KEYS: usize,
+        R: ApplicationRuntime,
+    >(
+        &mut self,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        application: ApplicationId,
+        manifest: AppManifest,
+        receipt: InstantiationReceipt,
+        policy: &CapabilityPolicy<RULES>,
+        chain: &mut ProvenanceChain,
+        runtime: &mut R,
+    ) -> Result<ApplicationEvent, PackageLaunchError> {
+        let event = self.launch_package(
+            packages,
+            application,
+            manifest,
+            receipt,
+            policy,
+            runtime,
+        )?;
+        let ApplicationEvent::Started {
+            process,
+            generation,
+            ..
+        } = event
+        else {
+            return Ok(event)
+        };
+        if let Err(error) = packages.record_running_process_provenance(chain, process.raw(), generation) {
+            runtime
+                .fence_process(process)
+                .map_err(|_| PackageLaunchError::Supervisor(SupervisorError::FenceFailed))?;
+            return Err(PackageLaunchError::Package(error))
+        }
+        Ok(event)
     }
 
     pub fn start<R: ApplicationRuntime>(
