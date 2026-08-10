@@ -9,7 +9,13 @@ use synos_status::Status;
 type TestDaemon = Daemon<16, 4, 8, 4, 8, 4096>;
 
 fn daemon() -> (TestDaemon, ProcessId, super::Capability) {
-    let mut daemon = TestDaemon::new(SynFs::new()).expect("create filesystem daemon");
+    daemon_with_capacity::<16>()
+}
+
+fn daemon_with_capacity<const BLOCKS: usize>(
+) -> (Daemon<BLOCKS, 4, 8, 4, 8, 4096>, ProcessId, super::Capability) {
+    let mut daemon = Daemon::<BLOCKS, 4, 8, 4, 8, 4096>::new(SynFs::new())
+        .expect("create filesystem daemon");
     let process = ProcessId::new(7).expect("valid process id");
     let rights = ProcessRights::from_bits(
         ProcessRights::READ.bits()
@@ -350,7 +356,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
 
 #[test]
 fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
-    let (mut daemon, process, mut authority) = daemon();
+    let (mut daemon, process, mut authority) = daemon_with_capacity::<128>();
     let mut stale_file = None;
 
     for cycle in 0..32 {
