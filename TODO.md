@@ -282,8 +282,10 @@ evidence.
       cluster, compiler, package, and recovery commands. Shell commands accept
       `/JSON`; `cargo synos` compiler/package commands and `synos-vm disk`
       inspection/recovery commands accept `--json`.
-- [ ] Add redaction tests for logs, snapshots, migration streams, diagnostics,
-      and audit exports.
+- [x] Add redaction tests for logs, snapshots, migration streams, diagnostics,
+      and audit exports. Coverage checks fixed-format logs and audit exports
+      do not carry free-form payloads or authentication keys; VM monitor,
+      snapshot, migration, and shell diagnostic tests cover redacted output.
 - [ ] Publish a compatibility table for on-disk formats, wire protocols,
       snapshots, package schemas, target triples, and client SDK versions.
 - [ ] Keep README, book, source maps, and test inventory synchronized through

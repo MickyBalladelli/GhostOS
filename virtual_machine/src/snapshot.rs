@@ -1740,6 +1740,25 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_snapshot_debug_and_wire_contain_only_key_identifier() {
+        let key_bytes = [0x42; SNAPSHOT_AUTH_KEY_BYTES];
+        let key = SnapshotAuthKey::new(key_bytes);
+        let debug = format!("{key:?}");
+        let secret_hex = "4242424242424242424242424242424242424242424242424242424242424242";
+        assert!(!debug.contains(secret_hex));
+
+        let vm = Vm::with_config(crate::VmConfig {
+            memory_size: 4 * 1024 * 1024,
+            ..crate::VmConfig::default()
+        });
+        let bytes = VmSnapshot::capture(&vm)
+            .to_authenticated_bytes(key)
+            .expect("authenticate snapshot");
+        assert_eq!(&bytes[16..32], &key.key_id());
+        assert_ne!(&bytes[16..32], &key_bytes[..16]);
+    }
+
+    #[test]
     fn snapshot_restore_clears_translated_blocks_before_resume() {
         let mut vm = Vm::with_config(crate::VmConfig {
             memory_size: 4 * 1024 * 1024,

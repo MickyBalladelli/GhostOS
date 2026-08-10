@@ -743,4 +743,35 @@ mod tests {
             .expect("bounded response is UTF-8")
             .contains("response-too-large"));
     }
+
+    #[test]
+    fn diagnostics_snapshots_and_migration_responses_redact_sensitive_state() {
+        let mut vm = Vm::with_config(crate::VmConfig::default());
+        vm.cpu_mut().set_rip(0xfeed_cafe);
+
+        let status = info_response(&vm, MonitorTopic::Status, false);
+        assert!(status.contains("guest_data_redacted"));
+        assert!(!status.contains("feedcafe"));
+        assert!(!status.contains("\"rip\""));
+
+        let disks = info_response(&vm, MonitorTopic::Disks, false);
+        assert!(!disks.contains("host_path"));
+        assert!(!disks.contains("guest_id"));
+
+        let snapshots = info_response(&vm, MonitorTopic::Snapshots, false);
+        let migration = info_response(&vm, MonitorTopic::Migration, false);
+        assert!(snapshots.contains("authentication_required"));
+        assert!(migration.contains("authenticated"));
+        assert!(!snapshots.contains("secret"));
+        assert!(!migration.contains("secret"));
+    }
+
+    #[test]
+    fn authorized_diagnostics_can_disclose_only_explicit_fields() {
+        let mut vm = Vm::with_config(crate::VmConfig::default());
+        vm.cpu_mut().set_rip(0xfeed_cafe);
+        let status = info_response(&vm, MonitorTopic::Status, true);
+
+        assert!(status.contains("\"rip\":4276996862"));
+    }
 }

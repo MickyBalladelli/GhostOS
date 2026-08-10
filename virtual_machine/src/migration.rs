@@ -155,3 +155,29 @@ pub fn decode_migration_checkpoint(
         received_tag,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejected_migration_stream_does_not_echo_payload_or_authentication_data() {
+        let secret = b"migration-stream-secret";
+        let mut frame = vec![0; FRAME_HEADER_BYTES + secret.len() + FRAME_TAG_BYTES];
+        frame[40..48].copy_from_slice(&(secret.len() as u64).to_le_bytes());
+        frame[FRAME_HEADER_BYTES..FRAME_HEADER_BYTES + secret.len()]
+            .copy_from_slice(secret);
+
+        let error = decode_migration_checkpoint(
+            &frame,
+            SnapshotAuthKey::new([0x42; 32]),
+            SnapshotSchema::local(),
+            &[0x11; MIGRATION_NONCE_BYTES],
+            &[0x22; MIGRATION_NONCE_BYTES],
+        )
+        .expect_err("unauthenticated migration stream must fail");
+
+        assert!(matches!(error, MigrationFrameError::Authentication));
+        assert!(!error.to_string().contains("migration-stream-secret"));
+    }
+}

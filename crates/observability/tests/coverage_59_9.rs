@@ -115,6 +115,36 @@ fn durable_audit_and_observability_buffers_have_explicit_full_behavior() {
 }
 
 #[test]
+fn logs_and_audit_exports_do_not_carry_free_form_payloads_or_keys() {
+    let secret = b"operator-secret-log-payload";
+    let event = TraceEvent::new(Level::Info, EventKind::Audit)
+        .at(7)
+        .with_field(EventField::unsigned(field::OBJECT, 0x4455));
+    let mut record = [0; JOURNAL_RECORD_SIZE];
+    encode_record(event, &mut record).unwrap();
+    assert!(!record.windows(secret.len()).any(|window| window == secret));
+    assert!(event.fields().all(|field| {
+        matches!(
+            field.kind,
+            FieldKind::Unsigned
+                | FieldKind::Signed
+                | FieldKind::Boolean
+                | FieldKind::Identifier
+                | FieldKind::Status
+        )
+    }));
+
+    let key_bytes = [0x5a; 32];
+    let key = AuditKey::from_bytes(key_bytes);
+    let mut journal = AuditJournal::<1>::new(key).unwrap();
+    journal.append(event).unwrap();
+    let mut export = vec![0; AuditJournal::<1>::encoded_len()];
+    journal.export(&mut export).unwrap();
+    assert_eq!(&export[32..64], &key.id());
+    assert!(!export.windows(key_bytes.len()).any(|window| window == key_bytes));
+}
+
+#[test]
 fn operational_health_is_bounded_and_aggregates_transport_failures() {
     let healthy = OperationalHealth::new(
         10,

@@ -705,3 +705,34 @@ fn insert(
         .insert(name, value)
         .map_err(|_| Status::INVALID_ARGUMENT)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::{OutputFormat, render};
+
+    #[test]
+    fn diagnostic_json_contains_aggregates_not_host_or_payload_data() {
+        let output = disk_output(DiskSnapshot {
+            capacity_bytes: 100,
+            allocated_bytes: 50,
+            synfs_used_bytes: 25,
+            cow_overhead_bytes: 5,
+            retained_versions: 2,
+            checkpoints: 1,
+            nvme_devices: 1,
+            cxl_devices: 0,
+            degraded_devices: 0,
+            failed_devices: 0,
+        })
+        .expect("diagnostic output");
+        let rendered = render(&output, OutputFormat::Json).expect("diagnostic JSON");
+        let json = rendered.as_str();
+
+        assert!(json.contains("capacity-bytes"));
+        assert!(!json.contains("host"));
+        assert!(!json.contains("path"));
+        assert!(!json.contains("payload"));
+        assert!(!json.contains("secret"));
+    }
+}
