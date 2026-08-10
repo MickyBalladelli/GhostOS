@@ -199,7 +199,8 @@ pub mod interrupts {
         if (32..48).contains(&vector) {
             unsafe {
                 if vector == 32 {
-                    let scheduler = &mut *core::ptr::addr_of_mut!(crate::SCHEDULER);
+                    let scheduler =
+                        (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
                     let _ = scheduler.tick(PIT_TICK_US);
                 }
                 if vector >= 40 {

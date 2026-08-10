@@ -54,6 +54,7 @@ mod usb_keyboard;
 mod usb_keyboard;
 
 use core::panic::PanicInfo;
+use core::mem::MaybeUninit;
 use synos_boot_protocol::BootInfo;
 use synos_observability::{EventField, EventKind, field, info};
 use synos_status::Status;
@@ -90,7 +91,9 @@ pub use task::{
     ThreadState,
 };
 
-static mut SCHEDULER: Scheduler = Scheduler::new();
+// Scheduler state starts in BSS so the BIOS image carries no large prebuilt
+// table. kernel_entry initializes it before interrupts or shell code use it.
+static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
 static DLM: DistributedLockManager = DistributedLockManager::new();
 static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
 
@@ -123,6 +126,12 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         *frame = address;
     }
 
+    let scheduler = unsafe {
+        let slot = &mut *core::ptr::addr_of_mut!(SCHEDULER);
+        slot.write(Scheduler::new());
+        slot.assume_init_mut()
+    };
+
     arch::initialize(&page_tables, boot_info.physical_address_offset);
     let acpi = power::discover(boot_info);
     if let Some(platform) = acpi {
@@ -140,7 +149,6 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         ),
     );
 
-    let scheduler = unsafe { &mut *core::ptr::addr_of_mut!(SCHEDULER) };
     let scheduler_clock = scheduler.clock();
     println!(
         "paging, interrupts, capabilities, IPC, and scheduler ready ({} capability slots, {} thread slots, clock={})",
