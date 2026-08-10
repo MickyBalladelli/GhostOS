@@ -29,7 +29,7 @@ use syn_shell::{
 use synos_status::Status;
 use synos_system_model::command::OutputValue;
 
-fn registry() -> CommandRegistry<8> {
+fn registry() -> CommandRegistry<16> {
     let mut registry = CommandRegistry::new();
     register_network_commands(&mut registry).expect("register network commands");
     registry

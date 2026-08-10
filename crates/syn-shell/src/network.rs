@@ -137,7 +137,7 @@ const NETWORK_COMMAND_HELP: &[NetworkCommandHelp] = &[
     NetworkCommandHelp {
         name: "SHOW-DNS",
         synopsis: "SHOW DNS",
-        description: "Show ordered DHCP or static DNS servers, search domains, and bounded query status.",
+        description: "Show ordered DHCP or static DNS resolver servers, search domains, and bounded query status.",
         aliases: "DNS",
         qualifiers: "/STRUCTURED /JSON",
     },
