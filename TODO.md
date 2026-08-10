@@ -182,8 +182,11 @@ evidence.
       queue contract matrix in `docs/backpressure.md`, plus saturation tests
       for agent ingestion, shell jobs, and remote NVMe alongside the existing
       IPC, I/O, filesystem, network, observability, and replay coverage.
-- [ ] Add bounded soak runs for boot, shell, filesystem, network, compiler,
-      cluster, and VM workflows with leak and resource-drift reports.
+- [x] Add bounded soak runs for boot, shell, filesystem, network, compiler,
+      cluster, and VM workflows with leak and resource-drift reports. Added
+      `scripts/soak.sh` with bounded per-workflow repetitions, timeouts, and
+      machine-readable leak and resource-drift reports; full validation runs
+      all seven workflows and the VM inventory can select only its VM run.
 
 ## P1: Finish the native compiler proof
 

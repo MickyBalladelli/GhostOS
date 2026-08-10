@@ -159,7 +159,7 @@ run_optional cluster env SYNOS_RUN_QEMU_TESTS=1 "$root_dir/scripts/qemu-cluster-
 run_optional_with_vm_evidence fuzz fuzz "not-applicable" 1 "" "" "$root_dir/scripts/fuzz-smoke.sh"
 run_optional coverage "$root_dir/scripts/coverage.sh"
 run_optional mutation "$root_dir/scripts/mutation.sh"
-run_optional_with_vm_evidence soak soak "not-applicable" 1 "" "" env SYNOS_VM_SOAK_REPORT="$evidence_dir/soak/report.json" "$root_dir/scripts/vm-soak.sh"
+run_optional_with_vm_evidence soak soak "not-applicable" 1 "" "" env SYNOS_SOAK_REPORT="$evidence_dir/soak/report.json" "$root_dir/scripts/soak.sh"
 run_optional reproducibility "$root_dir/scripts/check-reproducible-image.sh"
 run_optional dashboard "$root_dir/scripts/test-dashboard.py" "$evidence_dir"
 run_optional coverage-contract python3 "$root_dir/scripts/validate-test-coverage.py" "$evidence_dir"

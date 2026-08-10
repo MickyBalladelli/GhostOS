@@ -45,7 +45,7 @@ status = "opt-in"
 
 [[tier]]
 name = "soak"
-command = "SYNOS_VM_SOAK_RUNS=3 ./scripts/vm-soak.sh"
+command = "SYNOS_SOAK_RUNS=3 ./scripts/soak.sh --scenario vm"
 status = "opt-in"
 
 [[tier]]

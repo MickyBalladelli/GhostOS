@@ -160,12 +160,20 @@ def validate_commands(errors: list[str]) -> None:
         fail(errors, "docs/testing.md does not name the deterministic VM runner")
     if "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh" not in (ROOT / "docs/testing.md").read_text():
         fail(errors, "docs/testing.md does not name the full-validation runner")
-    for script in ("scripts/test-all.sh", "scripts/full-validation.sh", "scripts/vm-soak.sh"):
+    if "SYNOS_SOAK_RUNS=3 ./scripts/soak.sh" not in (ROOT / "docs/testing.md").read_text():
+        fail(errors, "docs/testing.md does not name the workflow soak runner")
+    for script in (
+        "scripts/test-all.sh",
+        "scripts/full-validation.sh",
+        "scripts/vm-soak.sh",
+        "scripts/soak.sh",
+    ):
         path = check_file(errors, script)
         if path and "set -Eeuo pipefail" not in path.read_text():
             fail(errors, f"{script} is not strict-mode")
     for script in (
         "scripts/vm-soak.py",
+        "scripts/soak.py",
         "scripts/record-vm-evidence.py",
         "scripts/validate-vm-evidence.py",
     ):
