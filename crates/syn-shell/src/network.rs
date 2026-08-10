@@ -1625,7 +1625,7 @@ fn traceroute_result_from_status(status: Status) -> TracerouteResult {
         TracerouteResult::Timeout
     } else if status == TracerouteResult::MalformedReply.status() {
         TracerouteResult::MalformedReply
-    } else if status == TracerouteResult::NoRoute.status() {
+    } else if status == Status::NOT_FOUND || status == TracerouteResult::NoRoute.status() {
         TracerouteResult::NoRoute
     } else {
         TracerouteResult::Unreachable

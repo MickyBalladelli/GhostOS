@@ -249,6 +249,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                     value if value.eq_ignore_ascii_case("SHOW")
                         || value.eq_ignore_ascii_case("TOP")
                         || value.eq_ignore_ascii_case("SET")
+                        || value.eq_ignore_ascii_case("CLEAR")
                 ) {
                     if let Some(noun) = words[2].as_ref() {
                         command_name.push_char('-')?;
@@ -260,13 +261,16 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             || first.as_str().eq_ignore_ascii_case("SHO")
             || first.as_str().eq_ignore_ascii_case("TOP")
             || first.as_str().eq_ignore_ascii_case("SET")
+            || first.as_str().eq_ignore_ascii_case("CLEAR")
         {
-            // Incomplete "SHOW"/"SET"/"TOP" input is valid during completion; use the
+            // Incomplete "SHOW"/"SET"/"CLEAR"/"TOP" input is valid during completion; use the
             // verb prefix alone so suggestions can still be produced.
             let prefix = if first.as_str().eq_ignore_ascii_case("TOP") {
                 "TOP-"
             } else if first.as_str().eq_ignore_ascii_case("SET") {
                 "SET-"
+            } else if first.as_str().eq_ignore_ascii_case("CLEAR") {
+                "CLEAR-"
             } else {
                 "SHOW-"
             };
@@ -393,6 +397,7 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             || verb.as_str().eq_ignore_ascii_case("SHO")
             || verb.as_str().eq_ignore_ascii_case("TOP")
             || verb.as_str().eq_ignore_ascii_case("SET")
+            || verb.as_str().eq_ignore_ascii_case("CLEAR")
         {
             if word_count < 2 {
                 return Err(Error::MissingArgument);
@@ -409,6 +414,8 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
                 "TOP-"
             } else if verb.as_str().eq_ignore_ascii_case("SET") {
                 "SET-"
+            } else if verb.as_str().eq_ignore_ascii_case("CLEAR") {
+                "CLEAR-"
             } else {
                 "SHOW-"
             };

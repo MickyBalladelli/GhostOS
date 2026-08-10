@@ -132,6 +132,7 @@ fn is_directory_output(output: &StructuredOutput) -> bool {
     output
         .fields()
         .any(|field| field.name.as_str() == "entry-count")
+        && find_value(output, "operation").is_none()
 }
 
 fn is_default_directory_output(output: &StructuredOutput) -> bool {
