@@ -311,7 +311,7 @@ SynOS VMs communicate and obtain distinct leases.
 
 ### VM link and packet plumbing
 
-- [ ] Replace the seeded `KernelNetwork` interface view with a runtime network
+- [x] Replace the seeded `KernelNetwork` interface view with a runtime network
       provider backed by the actual e1000 or virtio-net device.
 - [ ] Expose each NIC MAC address, carrier state, administrative enabled state,
       RX/TX queue state, and link-change events to the kernel network service.

@@ -11,7 +11,7 @@ pub mod ethernet;
 pub mod pci;
 pub mod storage;
 
-pub use ethernet::{EthernetAdapter, EthernetKind};
+pub use ethernet::{EthernetAdapter, EthernetKind, EthernetRuntime, EthernetSnapshot};
 pub use pci::{
     Bar, ConfigAccess, ExtendedConfigAccess, PCIE_AER_EXTENDED_CAPABILITY, PciAddress, PciDevice,
     PcieAerStatus, clear_pcie_aer, read_pcie_aer,

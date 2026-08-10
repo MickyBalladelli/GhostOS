@@ -4,11 +4,13 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 use crate::pci::{Bar, PciDevice};
 
 const INTEL_VENDOR: u16 = 0x8086;
+const VIRTIO_VENDOR: u16 = 0x1af4;
 const REALTEK_VENDOR: u16 = 0x10ec;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EthernetKind {
     IntelE1000,
+    VirtioNet,
     RealtekRtl8169,
 }
 
@@ -38,16 +40,24 @@ impl EthernetAdapter {
                 | 0x1539
                 | 0x157b,
             ) => EthernetKind::IntelE1000,
+            (VIRTIO_VENDOR, 0x1000) => EthernetKind::VirtioNet,
             (REALTEK_VENDOR, 0x8161 | 0x8168 | 0x8169) => {
                 EthernetKind::RealtekRtl8169
             }
             _ => return None,
         };
-        let registers = device
-            .bars
-            .iter()
-            .copied()
-            .find(|bar| bar.memory_address().is_some())?;
+        let registers = match kind {
+            EthernetKind::VirtioNet => device
+                .bars
+                .iter()
+                .copied()
+                .find(|bar| bar.io_port().is_some())?,
+            _ => device
+                .bars
+                .iter()
+                .copied()
+                .find(|bar| bar.memory_address().is_some())?,
+        };
         Some(Self {
             kind,
             registers,
@@ -61,6 +71,7 @@ pub enum EthernetError {
     InvalidRegisterBase,
     InvalidRing,
     TimedOut,
+    UnsupportedDevice,
 }
 
 impl IntoStatus for EthernetError {
@@ -69,6 +80,7 @@ impl IntoStatus for EthernetError {
             Self::InvalidRegisterBase => 1,
             Self::InvalidRing => 2,
             Self::TimedOut => 3,
+            Self::UnsupportedDevice => 4,
         };
         Status::new(Severity::Error, facility::DRIVER, code, 0)
             .unwrap_or(Status::INVALID_ARGUMENT)
@@ -104,6 +116,7 @@ pub struct IntelE1000 {
 
 impl IntelE1000 {
     const CTRL: usize = 0x0000;
+    const STATUS: usize = 0x0008;
     const EERD: usize = 0x0014;
     const ICR: usize = 0x00c0;
     const IMS: usize = 0x00d0;
@@ -119,6 +132,8 @@ impl IntelE1000 {
     const TDLEN: usize = 0x3808;
     const TDH: usize = 0x3810;
     const TDT: usize = 0x3818;
+    const RAL: usize = 0x5400;
+    const RAH: usize = 0x5404;
 
     /// # Safety
     /// `registers` must be an exclusive writable mapping of an Intel E1000
@@ -144,6 +159,19 @@ impl IntelE1000 {
     }
 
     pub fn read_mac(&mut self, spin_limit: usize) -> Result<[u8; 6], EthernetError> {
+        let low = self.read(Self::RAL);
+        let high = self.read(Self::RAH);
+        if high & (1 << 31) != 0 {
+            return Ok([
+                low as u8,
+                (low >> 8) as u8,
+                (low >> 16) as u8,
+                (low >> 24) as u8,
+                high as u8,
+                (high >> 8) as u8,
+            ])
+        }
+
         let mut mac = [0; 6];
         for word in 0..3 {
             self.write(Self::EERD, 1 | (word as u32) << 8);
@@ -163,6 +191,31 @@ impl IntelE1000 {
             mac[word * 2 + 1] = (value >> 8) as u8;
         }
         Ok(mac)
+    }
+
+    pub fn link_up(&self) -> bool {
+        self.read(Self::STATUS) & (1 << 1) != 0
+    }
+
+    pub fn admin_up(&self) -> bool {
+        self.read(Self::CTRL) & (1 << 6) != 0
+    }
+
+    pub fn set_admin_up(&mut self, enabled: bool) {
+        let mut control = self.read(Self::CTRL);
+        if enabled {
+            control |= 1 << 6;
+        } else {
+            control &= !(1 << 6);
+        }
+        self.write(Self::CTRL, control)
+    }
+
+    pub fn queues_ready(&self) -> bool {
+        self.read(Self::RDLEN) != 0
+            && self.read(Self::TDLEN) != 0
+            && self.read(Self::RCTL) & 1 != 0
+            && self.read(Self::TCTL) & 1 != 0
     }
 
     pub fn configure_rings(
@@ -215,6 +268,124 @@ impl IntelE1000 {
             write_volatile(self.registers.as_ptr().add(offset).cast(), value)
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EthernetSnapshot {
+    pub mac: [u8; 6],
+    pub link_up: bool,
+    pub admin_up: bool,
+    pub queues_ready: bool,
+}
+
+pub struct EthernetRuntime {
+    kind: EthernetKind,
+    e1000: Option<IntelE1000>,
+    virtio_port: Option<u16>,
+    mac: [u8; 6],
+    virtio_admin_up: bool,
+}
+
+impl EthernetRuntime {
+    /// Opens a supported PCI NIC without allocating memory or taking
+    /// ownership of its DMA rings. `physical_address_offset` is the boot-time
+    /// mapping offset used for MMIO BARs.
+    pub fn open(
+        adapter: EthernetAdapter,
+        physical_address_offset: u64,
+    ) -> Result<Self, EthernetError> {
+        match adapter.kind {
+            EthernetKind::IntelE1000 => {
+                let physical = adapter
+                    .registers
+                    .memory_address()
+                    .ok_or(EthernetError::InvalidRegisterBase)?;
+                let virtual_address = physical
+                    .checked_add(physical_address_offset)
+                    .ok_or(EthernetError::InvalidRegisterBase)?;
+                let mut e1000 = unsafe { IntelE1000::new(virtual_address as usize)? };
+                let mac = e1000.read_mac(100_000)?;
+                e1000.set_admin_up(true);
+                Ok(Self {
+                    kind: adapter.kind,
+                    e1000: Some(e1000),
+                    virtio_port: None,
+                    mac,
+                    virtio_admin_up: true,
+                })
+            }
+            EthernetKind::VirtioNet => {
+                let port = adapter
+                    .registers
+                    .io_port()
+                    .ok_or(EthernetError::InvalidRegisterBase)? as u16;
+                let mut mac = [0; 6];
+                for (index, byte) in mac.iter_mut().enumerate() {
+                    *byte = unsafe { in_u8(port + 0x14 + index as u16) };
+                }
+                Ok(Self {
+                    kind: adapter.kind,
+                    e1000: None,
+                    virtio_port: Some(port),
+                    mac,
+                    virtio_admin_up: true,
+                })
+            }
+            EthernetKind::RealtekRtl8169 => Err(EthernetError::UnsupportedDevice),
+        }
+    }
+
+    pub fn kind(&self) -> EthernetKind {
+        self.kind
+    }
+
+    pub fn snapshot(&mut self) -> EthernetSnapshot {
+        if let Some(e1000) = &mut self.e1000 {
+            return EthernetSnapshot {
+                mac: self.mac,
+                link_up: e1000.link_up(),
+                admin_up: e1000.admin_up(),
+                queues_ready: e1000.queues_ready(),
+            }
+        }
+
+        let status = self
+            .virtio_port
+            .map(|port| unsafe { in_u8(port + 0x12) })
+            .unwrap_or(0);
+        EthernetSnapshot {
+            mac: self.mac,
+            link_up: status & 4 != 0,
+            admin_up: self.virtio_admin_up,
+            queues_ready: self.virtio_port.is_some() && status & 4 != 0,
+        }
+    }
+
+    pub fn set_admin_up(&mut self, enabled: bool) {
+        self.virtio_admin_up = enabled;
+        if let Some(e1000) = &mut self.e1000 {
+            e1000.set_admin_up(enabled)
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn in_u8(port: u16) -> u8 {
+    let value;
+    unsafe {
+        core::arch::asm!(
+            "in al, dx",
+            in("dx") port,
+            out("al") value,
+            options(nomem, nostack, preserves_flags),
+        )
+    }
+    value
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn in_u8(_port: u16) -> u8 {
+    0
 }
 
 #[repr(C, align(16))]

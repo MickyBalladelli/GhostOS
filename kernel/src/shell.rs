@@ -2256,10 +2256,11 @@ impl FilesystemSource for KernelFilesystem {
 
 struct KernelNetwork {
     view: syn_shell::network::NetworkView,
+    device: Option<synos_legacy_pc_drivers::EthernetRuntime>,
 }
 
 impl KernelNetwork {
-    fn seeded() -> Self {
+    fn new(boot_info: &'static BootInfo) -> Self {
         use syn_shell::network::{
             InterfaceAddressMode, MAX_NETWORK_OUTPUT_ROWS, NetworkInterfaceView, NetworkText,
             NetworkView,
@@ -2277,28 +2278,22 @@ impl KernelNetwork {
             mode: InterfaceAddressMode::Static,
             dhcp: None,
         });
-        interfaces[1] = Some(NetworkInterfaceView {
-            name: text("eth0"),
-            address: text("0.0.0.0"),
-            gateway: None,
-            mtu: 1500,
-            enabled: true,
-            link_up: false,
-            mode: InterfaceAddressMode::Static,
-            dhcp: None,
-        });
-        Self {
+        let device = discover_runtime_network(boot_info);
+        let mut network = Self {
             view: NetworkView {
                 generation: 1,
                 hostname: Some(text("synos")),
-                interface_count: 2,
+                interface_count: 1,
                 route_count: 0,
                 interfaces,
                 routes: [None; MAX_NETWORK_OUTPUT_ROWS],
                 next_interface: None,
                 next_route: None,
             },
-        }
+            device,
+        };
+        network.refresh();
+        network
     }
 
     fn bump(&mut self) {
@@ -2320,6 +2315,94 @@ impl KernelNetwork {
     fn network_text(value: &str) -> Result<syn_shell::network::NetworkText, Status> {
         syn_shell::network::NetworkText::new(value).map_err(|_| Status::INVALID_ARGUMENT)
     }
+
+    fn refresh(&mut self) {
+        let snapshot = self.device.as_mut().map(|device| device.snapshot());
+        let changed = match snapshot {
+            Some(snapshot) => {
+                let name = Self::network_text("eth0");
+                let address = Self::network_text("0.0.0.0");
+                let current = self.view.interfaces[1];
+                let Some(name) = name.ok() else {
+                    return
+                };
+                let Some(address) = address.ok() else {
+                    return
+                };
+                let next = syn_shell::network::NetworkInterfaceView {
+                    name,
+                    address,
+                    gateway: current.and_then(|interface| interface.gateway),
+                    mtu: current.map_or(1500, |interface| interface.mtu),
+                    enabled: snapshot.admin_up,
+                    link_up: snapshot.link_up,
+                    mode: current.map_or(
+                        syn_shell::network::InterfaceAddressMode::Static,
+                        |interface| interface.mode,
+                    ),
+                    dhcp: current.and_then(|interface| interface.dhcp),
+                };
+                let changed = current != Some(next);
+                self.view.interfaces[1] = Some(next);
+                changed
+            }
+            None => self.view.interfaces[1].take().is_some(),
+        };
+        let count = self.view.interfaces.iter().flatten().count() as u64;
+        if self.view.interface_count != count {
+            self.view.interface_count = count;
+        }
+        if changed {
+            self.bump()
+        }
+    }
+}
+
+fn discover_runtime_network(
+    boot_info: &'static BootInfo,
+) -> Option<synos_legacy_pc_drivers::EthernetRuntime> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut config = synos_legacy_pc_drivers::pci::PortConfig;
+        let mut preferred = None;
+        let mut fallback = None;
+        synos_legacy_pc_drivers::pci::enumerate(&mut config, |device| {
+            let Some(candidate) = synos_legacy_pc_drivers::EthernetAdapter::from_pci(&device)
+            else {
+                return
+            };
+            let is_preferred = matches!(
+                candidate.kind,
+                synos_legacy_pc_drivers::EthernetKind::IntelE1000
+            );
+            if is_preferred {
+                preferred = Some(candidate)
+            } else if fallback.is_none() {
+                fallback = Some(candidate)
+            }
+        });
+        if let Some(adapter) = preferred {
+            if let Ok(device) = synos_legacy_pc_drivers::EthernetRuntime::open(
+                adapter,
+                boot_info.physical_address_offset,
+            ) {
+                return Some(device)
+            }
+        }
+        fallback.and_then(|adapter| {
+            synos_legacy_pc_drivers::EthernetRuntime::open(
+                adapter,
+                boot_info.physical_address_offset,
+            )
+            .ok()
+        })
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = boot_info;
+        None
+    }
 }
 
 impl syn_shell::network::NetworkSource for KernelNetwork {
@@ -2328,14 +2411,17 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
     }
 
     fn show_network(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+        self.refresh();
         Ok(self.view)
     }
 
     fn show_interfaces(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+        self.refresh();
         Ok(self.view)
     }
 
     fn show_routes(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+        self.refresh();
         Ok(self.view)
     }
 
@@ -2343,6 +2429,7 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
         &mut self,
         hostname: &str,
     ) -> Result<syn_shell::network::NetworkView, Status> {
+        self.refresh();
         self.view.hostname = Some(Self::network_text(hostname)?);
         self.bump();
         Ok(self.view)
@@ -2354,6 +2441,20 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
     ) -> Result<syn_shell::network::NetworkView, Status> {
         use syn_shell::network::{DhcpLeaseView, InterfaceAddressMode};
 
+        self.refresh();
+        if let Some(enabled) = update.enabled {
+            let interface = self
+                .view
+                .interfaces
+                .iter()
+                .flatten()
+                .find(|interface| interface.name.as_str().eq_ignore_ascii_case(update.name))
+                .ok_or(Status::NOT_FOUND)?;
+            if interface.name.as_str() != "lo" {
+                let device = self.device.as_mut().ok_or(Status::NOT_FOUND)?;
+                device.set_admin_up(enabled);
+            }
+        }
         let interface = self.interface_mut(update.name)?;
         if let Some(mode) = update.mode {
             interface.mode = mode;
@@ -2389,6 +2490,7 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
             interface.enabled = enabled;
         }
         self.bump();
+        self.refresh();
         Ok(self.view)
     }
 
@@ -2398,6 +2500,7 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
     ) -> Result<syn_shell::network::NetworkView, Status> {
         use syn_shell::network::NetworkRouteView;
 
+        self.refresh();
         self.interface_mut(update.interface)?;
         if let Some(existing) = self
             .view
@@ -2504,7 +2607,7 @@ impl KernelExecutor {
             control_authority,
             dlm,
             filesystem: FilesystemExecutor::new(filesystem),
-            network: KernelNetwork::seeded(),
+            network: KernelNetwork::new(boot_info),
             firewall_policy_version: 1,
             firewall_rule_count: 0,
         }
