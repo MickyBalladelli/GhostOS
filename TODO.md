@@ -257,7 +257,7 @@ evidence.
       ordering. Evidence and ordering contract are in
       `docs/partition-fencing.md`. `cargo check -p synos-fabric
       -p synos-storaged --tests` passes; test execution remains pending.
-- [ ] Expose structured health, queue depth, dropped packets, retries, and
+- [x] Expose structured health, queue depth, dropped packets, retries, and
       degraded-mode state through the inspection and audit surfaces.
       Progress: added bounded `OperationalHealth`/`HealthReport` samples,
       `InspectionRights::HEALTH`, local/cluster filtering, `SHOW-HEALTH`
