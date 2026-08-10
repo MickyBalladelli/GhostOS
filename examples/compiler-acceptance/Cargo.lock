@@ -1,0 +1,12 @@
+version = 4
+
+[[package]]
+name = "acceptance-proc-macro"
+version = "0.1.0"
+
+[[package]]
+name = "acceptance-service"
+version = "0.1.0"
+dependencies = [
+ "acceptance-proc-macro",
+]

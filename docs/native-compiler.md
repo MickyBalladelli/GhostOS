@@ -134,9 +134,13 @@ It also stages the locked hello-world project in SynFS, builds its release
 image, launches it through the application supervisor, commits the source,
 signed package, provenance, build audit, and output to the installed system
 volume, reboots from that disk, and verifies the recovered bytes and content
-IDs. The artifact is the acceptance boundary for the native `std` PAL and
-process image; it does not treat a host Cargo run as an in-guest execution
-result.
+IDs. The same booted artifact stages `examples/compiler-acceptance` in SynFS,
+builds its build-script and proc-macro crates, and runs the signed toolchain
+plan with separate guest process/workspace/scratch identities. Each tool
+record carries explicit filesystem, network, device, secret, and
+process-control grants. The artifact is the acceptance boundary for the
+native `std` PAL and process image; it does not treat a host Cargo run as an
+in-guest execution result.
 
 The compiler service boundary now includes the operational Ring 3 path:
 signed local-registry pins are resolved by content ID, source reads require a

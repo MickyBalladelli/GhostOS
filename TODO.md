@@ -203,8 +203,12 @@ evidence.
       hello-world source from SynFS, launches its verified process image,
       commits source/package/provenance/audit bytes to the system volume,
       reboots the VM, and verifies the recovered generation and identities.
-- [ ] Exercise build scripts and proc macros as isolated guest processes with
+- [x] Exercise build scripts and proc macros as isolated guest processes with
       explicit filesystem, network, device, secret, and process-control grants.
+      The booted acceptance stages the real fixture in SynFS, builds it with
+      the real build script and proc-macro crates, then executes the signed
+      five-step toolchain plan with separate process, workspace, and scratch
+      identities for both guest tools.
 - [ ] Prove stage-2 reproducibility across fresh SynFS roots, stable paths,
       locale, time, entropy, parallelism, and host platforms.
 - [ ] Test compiler cancellation at every tool boundary and prove no partial

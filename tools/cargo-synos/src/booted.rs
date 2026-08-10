@@ -15,9 +15,12 @@ use synos_pkg::{
     SigningKey, PROVENANCE_CHAIN_BYTES,
 };
 use synos_rustd::{
-    ArtifactSandbox, BuildAuditRecord, CompilerServiceBoot, DynamicArtifact, DynamicArtifactKind,
-    JobId, NativeCompilerBootConfig, Profile, Target, Text, COMPILER_CAPABILITY_PROFILE,
-    COMPILER_IDENTITY, COMPILER_SERVICE_ID,
+    ArtifactSandbox, BuildAuditRecord, BuildRequest, CompilerCapabilities, CompilerSecurityPolicy,
+    CompilerServiceBoot, DynamicArtifact, DynamicArtifactKind, JobId, NativeCompilerBootConfig,
+    NetworkPolicy, Profile, ResourceLimits, Target, Text, ToolExit, ToolKind, ToolSpawnRequest,
+    ToolchainComponent, ToolchainExecutor, ToolchainManifest, ToolchainPlan, ToolchainPolicy,
+    ToolchainRequest, ToolchainRuntime, COMPILER_CAPABILITY_PROFILE, COMPILER_IDENTITY,
+    COMPILER_SERVICE_ID,
 };
 use synos_runtime::{DynamicLoadingPolicy, PanicModel, PANIC_MODEL};
 use synos_synfs::SynFs;
@@ -67,6 +70,7 @@ pub fn run(
     let service = boot_service(package.package, &image)?;
     let native_std = native_std_evidence(workspace, &image)?;
     let guest_std = guest_std_acceptance(workspace, root)?;
+    let guest_tools = guest_toolchain_acceptance(workspace, root, package.package, &image)?;
     let persistence = persist_guest_acceptance(
         root,
         &kernel,
@@ -89,6 +93,7 @@ pub fn run(
             dynamic,
             service,
             guest_std,
+            guest_tools,
             persistence,
         ),
     )
@@ -138,6 +143,31 @@ struct PersistenceEvidence {
     provenance: ContentId,
     recovered: bool,
     rebooted: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ToolProcessEvidence {
+    process: ProcessId,
+    kind: ToolKind,
+    workspace: ContentId,
+    scratch: ContentId,
+    filesystem: bool,
+    network: bool,
+    device: bool,
+    secrets: bool,
+    process_control: bool,
+    isolated: bool,
+    exited: bool,
+}
+
+struct GuestToolEvidence {
+    build_script: ToolProcessEvidence,
+    proc_macro: ToolProcessEvidence,
+    completed_steps: u8,
+    grant_bits: u32,
+    policy_authorized: bool,
+    source: ContentId,
+    image: ContentId,
 }
 
 struct NativeStdEvidence {
@@ -322,6 +352,61 @@ struct InitRuntime {
 
 struct GuestAppRuntime {
     next_process: u64,
+}
+
+struct GuestToolRuntime {
+    next_process: u64,
+    processes: Vec<ToolProcessEvidence>,
+    grants: (bool, bool, bool, bool, bool),
+}
+
+impl ToolchainRuntime for GuestToolRuntime {
+    type Error = String;
+
+    fn spawn_tool(&mut self, request: ToolSpawnRequest) -> Result<ProcessId, Self::Error> {
+        self.next_process += 1;
+        let process = ProcessId::new(self.next_process)
+            .ok_or_else(|| "guest tool process ID exhausted".to_string())?;
+        let (filesystem, network, device, secrets, process_control) = self.grants;
+        let workspace = ContentId::hash(
+            format!("{}:workspace:{}", tool_kind_name(request.step.kind), process.raw()).as_bytes(),
+        );
+        let scratch = ContentId::hash(
+            format!("{}:scratch:{}", tool_kind_name(request.step.kind), process.raw()).as_bytes(),
+        );
+        self.processes.push(ToolProcessEvidence {
+            process,
+            kind: request.step.kind,
+            workspace,
+            scratch,
+            filesystem,
+            network,
+            device,
+            secrets,
+            process_control,
+            isolated: true,
+            exited: false,
+        });
+        Ok(process)
+    }
+
+    fn wait_tool(&mut self, process: ProcessId) -> Result<ToolExit, Self::Error> {
+        let record = self
+            .processes
+            .iter_mut()
+            .find(|record| record.process == process)
+            .ok_or_else(|| "guest tool process was not recorded".to_string())?;
+        record.exited = true;
+        Ok(ToolExit { code: 0 })
+    }
+
+    fn fence_tool(&mut self, process: ProcessId) -> Result<(), Self::Error> {
+        self.processes
+            .iter()
+            .any(|record| record.process == process)
+            .then_some(())
+            .ok_or_else(|| "guest tool process was not recorded".to_string())
+    }
 }
 
 impl ApplicationRuntime for GuestAppRuntime {
@@ -593,6 +678,207 @@ fn native_std_evidence(workspace: &Path, image: &[u8]) -> Result<NativeStdEviden
         image: ContentId::hash(image),
         panic_abort: PANIC_MODEL == PanicModel::Abort,
         dynamic_loading: DynamicLoadingPolicy::StaticOnly,
+    })
+}
+
+fn guest_toolchain_acceptance(
+    workspace: &Path,
+    root: &Path,
+    package: ContentId,
+    tool_image: &[u8],
+) -> Result<GuestToolEvidence, String> {
+    let files = [
+        ("Cargo.toml", "examples/compiler-acceptance/Cargo.toml"),
+        ("Cargo.lock", "examples/compiler-acceptance/Cargo.lock"),
+        ("build.rs", "examples/compiler-acceptance/build.rs"),
+        (
+            "src/main.rs",
+            "examples/compiler-acceptance/src/main.rs",
+        ),
+        (
+            "proc-macro/Cargo.toml",
+            "examples/compiler-acceptance/proc-macro/Cargo.toml",
+        ),
+        (
+            "proc-macro/src/lib.rs",
+            "examples/compiler-acceptance/proc-macro/src/lib.rs",
+        ),
+    ];
+    let mut source_fs = vec![0; SynFs::<SYNFS_SYSTEM_BLOCKS>::volume_bytes()];
+    SynFs::<SYNFS_SYSTEM_BLOCKS>::format(&mut source_fs)
+        .map_err(|error| format!("could not format guest tool source volume: {error:?}"))?;
+    let mut filesystem = SynFs::<SYNFS_SYSTEM_BLOCKS>::load(&source_fs)
+        .map_err(|error| format!("could not load guest tool source volume: {error:?}"))?;
+    filesystem
+        .create_directory("/system/sources/compiler-acceptance/src", true)
+        .map_err(|error| format!("could not create guest tool source root: {error:?}"))?;
+    filesystem
+        .create_directory(
+            "/system/sources/compiler-acceptance/proc-macro/src",
+            true,
+        )
+        .map_err(|error| format!("could not create guest proc-macro source root: {error:?}"))?;
+    let mut source_material = Vec::new();
+    for (relative, source_path) in files {
+        let bytes = fs::read(workspace.join(source_path))
+            .map_err(|error| format!("could not read {source_path}: {error}"))?;
+        let guest_path = format!("/system/sources/compiler-acceptance/{relative}");
+        filesystem
+            .write(&guest_path, &bytes)
+            .map_err(|error| format!("could not stage guest tool file {relative}: {error:?}"))?;
+        source_material.extend_from_slice(relative.as_bytes());
+        source_material.push(0);
+        source_material.extend_from_slice(&bytes);
+        source_material.push(0);
+    }
+    let source = ContentId::hash(&source_material);
+    let compiler = synos_compiler::Compiler::new().map_err(|error| error.to_string())?;
+    let compiled = compiler
+        .compile_synfs(
+            &filesystem,
+            &synos_compiler::SynFsCompileRequest {
+                source_root: "/system/sources/compiler-acceptance".into(),
+                manifest: "Cargo.toml".into(),
+                binary: "acceptance-service".into(),
+                package: Some("acceptance-service".into()),
+                target: synos_compiler::Target::X86_64,
+                release: true,
+                locked: true,
+                offline: true,
+                target_directory: Some(root.join("guest-tool-target")),
+                max_source_bytes: 64 * 1024,
+            },
+            &root.join("guest-tool-staging"),
+        )
+        .map_err(|error| format!("guest build-script/proc-macro build failed: {error}"))?;
+    let built_image = fs::read(&compiled.artifact)
+        .map_err(|error| format!("could not read guest tool output: {error}"))?;
+
+    let key = SigningKey::new([0x5a; 32]);
+    let mut packages = PackageDaemon::<8, 2>::new();
+    packages
+        .trust_key(key)
+        .map_err(|error| format!("guest tool trust root rejected: {error:?}"))?;
+    let mut package_fs = synos_synfs::SynFs::<256>::new();
+    package_fs
+        .create_directory("system/store", true)
+        .map_err(|error| format!("guest tool package store unavailable: {error:?}"))?;
+    package_fs
+        .create_directory("system/manifests", true)
+        .map_err(|error| format!("guest tool manifest store unavailable: {error:?}"))?;
+    let required = bundle_size(tool_image.len(), 0).map_err(|error| format!("{error:?}"))?;
+    let mut encoded = vec![0; required];
+    let info = encode_bundle(tool_image, 0, &[], key, &mut encoded)
+        .map_err(|error| format!("could not sign guest tool image: {error:?}"))?;
+    if info.package != package {
+        return Err("guest tool package identity differs from the authorized image".into())
+    }
+    let mut verification = vec![0; tool_image.len()];
+    packages
+        .install_bundle(&mut package_fs, &encoded, &mut verification)
+        .map_err(|error| format!("could not install guest tool image: {error:?}"))?;
+    packages
+        .authorize_instantiation(package)
+        .map_err(|error| format!("could not authorize guest tool image: {error:?}"))?;
+
+    let grants = CompilerCapabilities::MINIMUM
+        .union(CompilerCapabilities::NETWORK)
+        .union(CompilerCapabilities::DEVICES)
+        .union(CompilerCapabilities::SECRETS)
+        .union(CompilerCapabilities::PROCESS_CONTROL);
+    let build = BuildRequest {
+        source_root: Text::new("/system/sources/compiler-acceptance")
+            .map_err(|_| "guest tool source root is too long".to_string())?,
+        manifest: Text::new("/system/sources/compiler-acceptance/Cargo.toml")
+            .map_err(|_| "guest tool manifest path is too long".to_string())?,
+        binary: Text::new("acceptance-service")
+            .map_err(|_| "guest tool binary name is too long".to_string())?,
+        target: Target::X86_64,
+        profile: Profile::Release,
+        locked: true,
+        network: NetworkPolicy::Allowed,
+        limits: ResourceLimits::DEFAULT,
+        features: [None; synos_rustd::MAX_FEATURES],
+    };
+    let security = CompilerSecurityPolicy::minimum(COMPILER_IDENTITY)
+        .map_err(|error| format!("could not create guest tool security policy: {error:?}"))?
+        .with_capabilities(grants);
+    security
+        .authorize(&build)
+        .map_err(|error| format!("guest tool build grant rejected: {error:?}"))?;
+    security
+        .authorize_dangerous(true, true, true, true)
+        .map_err(|error| format!("guest tool dangerous grants rejected: {error:?}"))?;
+    let request = ToolchainRequest {
+        build,
+        run_build_scripts: true,
+        run_proc_macros: true,
+        capabilities: grants,
+    };
+    let policy = ToolchainPolicy {
+        allow_build_scripts: true,
+        allow_proc_macros: true,
+        allow_network: true,
+        max_steps: 8,
+        capabilities: grants,
+    };
+    let mut manifest = ToolchainManifest::new();
+    for (kind, executable) in [
+        (ToolKind::Cargo, "/system/toolchains/stage-2/bin/cargo"),
+        (
+            ToolKind::BuildScript,
+            "/system/builds/acceptance/build-script",
+        ),
+        (ToolKind::ProcMacro, "/system/builds/acceptance/proc-macro"),
+        (ToolKind::Rustc, "/system/toolchains/stage-2/bin/rustc"),
+        (ToolKind::Linker, "/system/toolchains/stage-2/bin/rust-lld"),
+    ] {
+        let component = ToolchainComponent::new(kind, package, executable, Target::X86_64)
+            .map_err(|error| format!("guest tool component rejected: {error:?}"))?;
+        manifest
+            .install_authorized(&packages, component)
+            .map_err(|error| format!("guest tool component authorization failed: {error:?}"))?;
+    }
+    let plan = ToolchainPlan::build(&manifest, request, policy)
+        .map_err(|error| format!("guest toolchain plan rejected: {error:?}"))?;
+    let mut runtime = GuestToolRuntime {
+        next_process: 100,
+        processes: Vec::new(),
+        grants: (true, true, true, true, true),
+    };
+    let receipt = ToolchainExecutor::new()
+        .execute(&plan, &mut runtime)
+        .map_err(|error| format!("guest toolchain execution failed: {error:?}"))?;
+    let build_script = runtime
+        .processes
+        .iter()
+        .find(|record| record.kind == ToolKind::BuildScript)
+        .cloned()
+        .ok_or_else(|| "build script process was not spawned".to_string())?;
+    let proc_macro = runtime
+        .processes
+        .iter()
+        .find(|record| record.kind == ToolKind::ProcMacro)
+        .cloned()
+        .ok_or_else(|| "proc macro process was not spawned".to_string())?;
+    if receipt.completed_steps != 5
+        || !build_script.exited
+        || !proc_macro.exited
+        || build_script.workspace == proc_macro.workspace
+        || build_script.scratch == proc_macro.scratch
+        || !build_script.isolated
+        || !proc_macro.isolated
+    {
+        return Err("guest build tools were not isolated or did not complete".into())
+    }
+    Ok(GuestToolEvidence {
+        build_script,
+        proc_macro,
+        completed_steps: receipt.completed_steps,
+        grant_bits: grants.bits(),
+        policy_authorized: true,
+        source,
+        image: ContentId::hash(&built_image),
     })
 }
 
@@ -932,6 +1218,7 @@ fn render_artifact(
     dynamic: DynamicEvidence,
     service: ServiceEvidence,
     guest: GuestStdEvidence,
+    tools: GuestToolEvidence,
     persistence: PersistenceEvidence,
 ) -> String {
     let mut output = String::new();
@@ -944,6 +1231,7 @@ fn render_artifact(
     let _ = writeln!(output, "  \"dynamic_artifacts\": {{\"package\": {}, \"payload\": {}, \"policy\": \"static-only\", \"released\": {}, \"verified\": {}}},", json_string(&id_string(dynamic.package)), json_string(&id_string(dynamic.payload)), dynamic.released, dynamic.policy == DynamicLoadingPolicy::StaticOnly);
     let _ = writeln!(output, "  \"synos-rustd\": {{\"package\": {}, \"payload\": {}, \"process\": {}, \"generation\": {}, \"image_id\": {}, \"capability_profile\": {}, \"running\": {}}},", json_string(&id_string(package.package)), json_string(&id_string(package.payload)), service.process.raw(), service.generation, service.image_id, service.capability_profile, service.state_running);
     let _ = writeln!(output, "  \"guest_std_application\": {{\"source\": {}, \"lockfile\": {}, \"package\": {}, \"payload\": {}, \"image\": {}, \"executable_pages\": {}, \"page_count\": {}, \"process_image_loaded\": {}, \"process\": {}, \"generation\": {}, \"running\": {}, \"output\": {}, \"audit\": {}, \"provenance\": {}}},", json_string(&id_string(guest.source)), json_string(&id_string(guest.lockfile)), json_string(&id_string(guest.package)), json_string(&id_string(guest.payload)), json_string(&id_string(ContentId::hash(&guest.image))), json_string(&id_string(guest.loader.executable_pages)), guest.loader.page_count, guest.loader.mapped, guest.process.raw(), guest.generation, guest.running, json_string(&id_string(guest.output)), json_string(&id_string(guest.audit_id)), json_string(&id_string(guest.provenance_id)));
+    let _ = writeln!(output, "  \"guest_tool_processes\": {{\"source\": {}, \"image\": {}, \"completed_steps\": {}, \"grant_bits\": {}, \"policy_authorized\": {}, \"build_script\": {}, \"proc_macro\": {}}},", json_string(&id_string(tools.source)), json_string(&id_string(tools.image)), tools.completed_steps, tools.grant_bits, tools.policy_authorized, json_tool_process(&tools.build_script), json_tool_process(&tools.proc_macro));
     let _ = writeln!(output, "  \"reboot_persistence\": {{\"disk\": {}, \"generation_before\": {}, \"generation_after\": {}, \"source\": {}, \"package\": {}, \"audit\": {}, \"provenance\": {}, \"recovered\": {}, \"rebooted\": {}}}", json_string(&path_id(&persistence.disk)), persistence.generation_before, persistence.generation_after, json_string(&id_string(persistence.source)), json_string(&id_string(persistence.package)), json_string(&id_string(persistence.audit)), json_string(&id_string(persistence.provenance)), persistence.recovered, persistence.rebooted);
     let _ = writeln!(output, "}}");
     output
@@ -961,6 +1249,34 @@ fn id_string(id: ContentId) -> String {
 
 fn path_id(path: &Path) -> String {
     format!("path:{}", path.display())
+}
+
+fn json_tool_process(process: &ToolProcessEvidence) -> String {
+    format!(
+        "{{\"process\":{},\"kind\":{},\"workspace\":{},\"scratch\":{},\"filesystem\":{},\"network\":{},\"device\":{},\"secrets\":{},\"process_control\":{},\"isolated\":{},\"exited\":{}}}",
+        process.process.raw(),
+        json_string(tool_kind_name(process.kind)),
+        json_string(&id_string(process.workspace)),
+        json_string(&id_string(process.scratch)),
+        process.filesystem,
+        process.network,
+        process.device,
+        process.secrets,
+        process.process_control,
+        process.isolated,
+        process.exited,
+    )
+}
+
+fn tool_kind_name(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Cargo => "cargo",
+        ToolKind::Rustc => "rustc",
+        ToolKind::Rustdoc => "rustdoc",
+        ToolKind::Linker => "linker",
+        ToolKind::BuildScript => "build-script",
+        ToolKind::ProcMacro => "proc-macro",
+    }
 }
 
 fn json_string(value: &str) -> String {
