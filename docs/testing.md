@@ -164,6 +164,16 @@ python3 scripts/generate-vm-inventory.py
 
 Local validation runs the same command with `--check` and rejects stale or unnamed entries.
 
+The cross-project crate, service, protocol, capability, storage-format, and
+test diagrams are generated from Cargo metadata and Rust source declarations:
+
+```sh
+python3 scripts/generate-inventory-diagrams.py
+```
+
+Use `--check` in validation or review to reject stale
+[`inventory-diagrams.md`](inventory-diagrams.md) output.
+
 VM inventory IDs are backed by executed records at
 `build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. Every record
 contains the exact command, Git revision, host OS/release/architecture,

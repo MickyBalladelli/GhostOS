@@ -2,44 +2,44 @@
 # Run the checker after changing workspace membership or roadmap structure.
 schema = 1
 workspace_manifest = "Cargo.toml"
-roadmap_paths = ["TODO-compiler.md", "TODO-improvements.md", "TODO-network.md", "TODO.md", "virtual_machine/TODO-improvements.md", "virtual_machine/TODO.md"]
+roadmap_paths = ["TODO.md", "todo/TODO-VM-first.md", "todo/TODO-VM-improvements.md", "todo/TODO-compiler.md", "todo/TODO-first.md", "todo/TODO-network.md"]
 
 [workspace]
-digest = "ed42eadc57e77ced9a603fd6f74ef0ab904591246b9203ba89fbb3064effd07f"
-member_count = 61
-
-[[roadmap]]
-path = "TODO-compiler.md"
-heading_digest = "52a6cdb6a2acb7cf90e5f68b3a25be8597507757d32c56db4ed35cb96d3b4bf7"
-heading_count = 12
-checkbox_count = 75
-
-[[roadmap]]
-path = "TODO-improvements.md"
-heading_digest = "d75403b2f6384112463a59c8765d7a1576fadc8912714ce2c44600cf7e0ecf37"
-heading_count = 11
-checkbox_count = 51
-
-[[roadmap]]
-path = "TODO-network.md"
-heading_digest = "6668c0701dcd5c8ce13a5c54c49d5502e37c4c9b43a3207a64363e47aaacb562"
-heading_count = 3
-checkbox_count = 25
+digest = "fb8c6bea2905118c3dd40b4a2d033a7baca4ef7755d6a35b1d827e78ecf1b48d"
+member_count = 63
 
 [[roadmap]]
 path = "TODO.md"
-heading_digest = "c6dd6dcecb79466d813e93f189d823a9de040deaa043945e53a20cffbff69320"
-heading_count = 76
-checkbox_count = 307
+heading_digest = "bf3a30f575741ff1548229555545d81ca25885d5f1ca9869089dae72238cb59b"
+heading_count = 18
+checkbox_count = 100
 
 [[roadmap]]
-path = "virtual_machine/TODO-improvements.md"
+path = "todo/TODO-VM-first.md"
+heading_digest = "575de1d1729422fd0f9c8908e9ae4383404920b520e9dec2458e55fb24133737"
+heading_count = 26
+checkbox_count = 85
+
+[[roadmap]]
+path = "todo/TODO-VM-improvements.md"
 heading_digest = "4d9f824520f9b0ee373f38c164f696c5457767c5ae513fcd5c164d47daccf0be"
 heading_count = 11
 checkbox_count = 53
 
 [[roadmap]]
-path = "virtual_machine/TODO.md"
-heading_digest = "575de1d1729422fd0f9c8908e9ae4383404920b520e9dec2458e55fb24133737"
-heading_count = 26
-checkbox_count = 85
+path = "todo/TODO-compiler.md"
+heading_digest = "52a6cdb6a2acb7cf90e5f68b3a25be8597507757d32c56db4ed35cb96d3b4bf7"
+heading_count = 12
+checkbox_count = 75
+
+[[roadmap]]
+path = "todo/TODO-first.md"
+heading_digest = "c6dd6dcecb79466d813e93f189d823a9de040deaa043945e53a20cffbff69320"
+heading_count = 76
+checkbox_count = 307
+
+[[roadmap]]
+path = "todo/TODO-network.md"
+heading_digest = "6668c0701dcd5c8ce13a5c54c49d5502e37c4c9b43a3207a64363e47aaacb562"
+heading_count = 3
+checkbox_count = 25

@@ -269,9 +269,11 @@ evidence.
 
 ## P2: Improve developer and operator experience
 
-- [ ] Generate crate, service, protocol, capability, storage-format, and test
+- [x] Generate crate, service, protocol, capability, storage-format, and test
       inventory diagrams from source metadata instead of maintaining duplicate
-      lists by hand.
+      lists by hand. `scripts/generate-inventory-diagrams.py` reads Cargo
+      metadata, Rust declarations, format magics, and test sources to produce
+      [`docs/inventory-diagrams.md`](docs/inventory-diagrams.md).
 - [ ] Add one reproducible developer bootstrap command that checks toolchains,
       optional QEMU tools, target availability, and expected image versions.
 - [ ] Make structured JSON output available for diagnostics, disk, network,

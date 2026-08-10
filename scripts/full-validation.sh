@@ -145,6 +145,7 @@ python3 "$root_dir/scripts/validate-test-status.py" \
 python3 "$root_dir/scripts/test_validate_panic_policy.py"
 python3 "$root_dir/scripts/validate-panic-policy.py"
 run_optional docs "$root_dir/scripts/validate-test-inventory.py"
+python3 "$root_dir/scripts/generate-inventory-diagrams.py" --check
 python3 "$root_dir/scripts/validate-roadmaps.py"
 python3 "$root_dir/scripts/validate-review-baseline.py"
 qemu_image=${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}
