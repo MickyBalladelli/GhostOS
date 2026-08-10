@@ -139,3 +139,6 @@ panic = "abort"
 panic = "abort"
 lto = true
 codegen-units = 1
+
+[profile.release.package.synos-kernel]
+opt-level = "z"
