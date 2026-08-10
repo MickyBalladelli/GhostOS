@@ -229,6 +229,12 @@ fn ping_results_have_stable_names_and_statuses() {
         assert!(has_text(&output, "result", result.as_str()));
         assert_eq!(output.status(), result.status());
     }
+
+    let timeout = syn_shell::network::ping_result_output(request, PingResult::Timeout).unwrap();
+    assert!(has_unsigned(&timeout, "transmitted", 3));
+    assert!(has_unsigned(&timeout, "received", 0));
+    assert!(has_unsigned(&timeout, "loss-percent", 100));
+    assert!(lacks_field(&timeout, "rtt-average-ms"));
 }
 
 #[test]
@@ -314,12 +320,21 @@ fn ping_request_rejects_conflicting_or_unbounded_qualifiers() {
         "PING 198.51.100.4 /TIMEOUT=0",
         "PING 198.51.100.4 /TIMEOUT=60001",
         "PING 198.51.100.4 /SIZE=257",
-        "PING 198.51.100.4 /INTERFACE=",
     ] {
-        let parsed = registry.parse(input);
-        if let Ok(program) = parsed {
-            assert!(syn_shell::network::ping_request(&program.stage(0).unwrap()).is_err(), "{input}");
-        }
+        let program = registry.parse(input).expect("PING syntax should parse");
+        assert!(
+            syn_shell::network::ping_request(&program.stage(0).unwrap()).is_err(),
+            "{input}"
+        );
+    }
+    for input in [
+        "PING 198.51.100.4 /COUNT=abc",
+        "PING 198.51.100.4 /TIMEOUT=abc",
+        "PING 198.51.100.4 /SIZE=abc",
+        "PING 198.51.100.4 /INTERFACE=",
+        "PING 198.51.100.4 /UNKNOWN",
+    ] {
+        assert!(registry.parse(input).is_err(), "{input}");
     }
 }
 
@@ -451,6 +466,10 @@ fn network_help_covers_aliases_and_dhcp_qualifiers() {
         .contains("DHCP"));
     let ping = command_help("PING").unwrap();
     assert!(ping.qualifiers.contains("/COUNT"));
+    assert!(ping.qualifiers.contains("/TIMEOUT"));
+    assert!(ping.qualifiers.contains("/SIZE"));
+    assert!(ping.qualifiers.contains("/INTERFACE"));
+    assert!(ping.qualifiers.contains("/SOURCE"));
     assert!(ping.qualifiers.contains("/IPV4"));
     assert!(ping.qualifiers.contains("/IPV6"));
 }
@@ -463,13 +482,21 @@ fn mutations_require_network_administration_capability() {
         "SET INTERFACE eth0 /DHCP",
         "SET INTERFACE eth0 /ADDRESS=10.0.0.3",
         "SET ROUTE 0.0.0.0/0 /GATEWAY=10.0.0.1 /INTERFACE=eth0",
-        "PING 198.51.100.4",
     ] {
         assert!(matches!(
             execute(&mut executor, input),
             Err(Status::ACCESS_DENIED)
         ));
     }
+    let ping = registry()
+        .parse("PING 198.51.100.4")
+        .unwrap()
+        .stage(0)
+        .unwrap();
+    assert!(matches!(
+        syn_shell::network::dispatch_network_command(executor.source_mut(), ping),
+        Err(Status::ACCESS_DENIED)
+    ));
 }
 
 #[test]

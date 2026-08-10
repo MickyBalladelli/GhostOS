@@ -403,7 +403,7 @@ SynOS VMs communicate and obtain distinct leases.
       payload size, RTT, error, and final summary.
 - [x] Require the network diagnostic capability and record the target,
       interface, source, count, timeout, and result in the audit stream.
-- [ ] Add shell parser, help, authorization, output, timeout, cancellation,
+- [x] Add shell parser, help, authorization, output, timeout, cancellation,
       and malformed-qualifier coverage for `PING`.
 
 ### Additional useful network commands

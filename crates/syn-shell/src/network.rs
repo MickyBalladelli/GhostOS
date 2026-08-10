@@ -1489,7 +1489,37 @@ pub fn interfaces_output(view: NetworkView) -> Result<StructuredOutput, Status> 
             .saturating_add(usize::from(view.next_interface.is_some()));
         let reserve = usize::from(remaining > 0);
         if used.saturating_add(needed).saturating_add(reserve) > MAX_OUTPUT_FIELDS {
-            omitted = Some(index as u64);
+            let mut identity_fields = 0;
+            if used.saturating_add(1).saturating_add(reserve) <= MAX_OUTPUT_FIELDS {
+                insert_indexed_text(
+                    &mut output,
+                    "interface",
+                    index,
+                    "name",
+                    interface.name.as_str(),
+                )?;
+                identity_fields += 1;
+            }
+            if used
+                .saturating_add(identity_fields)
+                .saturating_add(1)
+                .saturating_add(reserve)
+                <= MAX_OUTPUT_FIELDS
+            {
+                insert_indexed_text(
+                    &mut output,
+                    "interface",
+                    index,
+                    "address",
+                    interface.address.as_str(),
+                )?;
+                identity_fields += 1;
+            }
+            if identity_fields != 0 {
+                omitted = Some(index.saturating_add(1) as u64);
+            } else {
+                omitted = Some(index as u64);
+            }
             break;
         }
         emit_interface(&mut output, index, interface)?;
