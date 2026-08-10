@@ -85,7 +85,10 @@ fn evidence_key_rotation_revocation_replay_downgrade_and_root_recovery_are_fence
         Err(Error::Attestation(ShieldError::SignatureMismatch))
     );
     manager.admit(new_quote, 5).unwrap();
-    assert_eq!(manager.admit(new_quote, 5), Err(Error::Unauthorized));
+    assert_eq!(
+        manager.admit(new_quote, 5),
+        Err(Error::Attestation(ShieldError::Unauthorized))
+    );
 
     manager.revoke(node).unwrap();
     assert_eq!(manager.admit(new_quote, 6), Err(Error::Unauthorized));
