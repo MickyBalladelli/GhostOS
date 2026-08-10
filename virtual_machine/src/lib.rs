@@ -19,8 +19,10 @@ pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
 pub use net::{
     DhcpConfigError, DhcpLeaseInfo, DhcpReservation, DhcpServerConfig, DeterministicDhcpServer,
+    DeterministicVmNetwork,
     DeterministicPort, DeterministicSegment, HostNetworkBackend, LoopbackHub, LoopbackPort,
-    MacAddress, NetBackend, NetQueueState, NetworkBackendConfig, PacketQueue, DHCP_SERVER_MAC,
+    MacAddress, NetBackend, NetError, NetQueueState, NetworkBackendConfig, PacketQueue,
+    DHCP_SERVER_MAC,
 };
 pub use devices::{
     Ahci, ApicTrigger, Device, DiskController, DiskFindingSeverity, DiskFormat, DiskImage,
@@ -210,7 +212,7 @@ pub struct Vm {
     nvme: Rc<RefCell<Nvme>>,
     e1000: Rc<RefCell<E1000>>,
     virtio_net: Rc<RefCell<VirtioNet>>,
-    dhcp_server: Option<DeterministicDhcpServer>,
+    dhcp_network: Option<Rc<RefCell<DeterministicVmNetwork>>>,
     virtio_blk: Rc<RefCell<VirtioBlk>>,
     virtio_console: Rc<RefCell<VirtioConsole>>,
     virtio_rng: Rc<RefCell<VirtioRng>>,
@@ -412,12 +414,14 @@ impl Vm {
 
         // Networking: deterministic segment by default, or a real host
         // transport selected by VmConfig.
-        let e1000_mac = MacAddress::synos_default(0x56);
-        let virtio_mac = MacAddress::synos_default(0x57);
-        let (e1000_backend, virtio_backend, dhcp_server) = create_network_backends(
-            &config.network,
+        let (
             e1000_mac,
             virtio_mac,
+            e1000_backend,
+            virtio_backend,
+            dhcp_network,
+        ) = create_network_backends(
+            &config.network,
             config.dhcp_server.as_ref(),
         )?;
         let e1000 =
@@ -602,7 +606,7 @@ impl Vm {
             nvme,
             e1000,
             virtio_net,
-            dhcp_server,
+            dhcp_network,
             virtio_blk,
             virtio_console,
             virtio_rng,
@@ -1172,8 +1176,9 @@ impl Vm {
         if self.virtio_net.borrow().has_pending() {
             self.virtio_net.borrow_mut().poll(&mut self.mmu);
         }
-        if let Some(server) = &mut self.dhcp_server {
-            server
+        if let Some(network) = &self.dhcp_network {
+            network
+                .borrow_mut()
                 .poll(self.clock.now_ns() / 1_000_000)
                 .map_err(|error| VmError::Network(error.to_string()))?;
         }
@@ -1631,12 +1636,20 @@ impl Vm {
         &self.config
     }
 
-    pub fn dhcp_server(&self) -> Option<&DeterministicDhcpServer> {
-        self.dhcp_server.as_ref()
+    pub fn dhcp_network(&self) -> Option<Rc<RefCell<DeterministicVmNetwork>>> {
+        self.dhcp_network.clone()
     }
 
-    pub fn dhcp_server_mut(&mut self) -> Option<&mut DeterministicDhcpServer> {
-        self.dhcp_server.as_mut()
+    pub fn network_mac_addresses(&self) -> [MacAddress; 2] {
+        [self.e1000.borrow().mac(), self.virtio_net.borrow().mac()]
+    }
+
+    pub fn transmit_network_frame(&mut self, packet: &[u8]) -> Result<(), NetError> {
+        self.e1000.borrow_mut().transmit_frame(packet)
+    }
+
+    pub fn receive_network_frame(&mut self) -> Result<Option<Vec<u8>>, NetError> {
+        self.e1000.borrow_mut().receive_frame()
     }
 
     /// Capture a checkpoint of guest execution and memory state.
@@ -1747,42 +1760,73 @@ fn disk_error_to_vm(error: StorageError) -> VmError {
 
 fn create_network_backends(
     config: &NetworkBackendConfig,
-    e1000_mac: MacAddress,
-    virtio_mac: MacAddress,
     dhcp_config: Option<&DhcpServerConfig>,
 ) -> Result<(
+    MacAddress,
+    MacAddress,
     Box<dyn NetBackend>,
     Box<dyn NetBackend>,
-    Option<DeterministicDhcpServer>,
+    Option<Rc<RefCell<DeterministicVmNetwork>>>,
 ), VmError> {
     match config {
         NetworkBackendConfig::Deterministic => {
-            let segment = DeterministicSegment::new(3);
-            let e1000 = DeterministicSegment::connect(segment.clone(), e1000_mac)
+            let network = DeterministicVmNetwork::new(dhcp_config.cloned())
                 .map_err(|error| VmError::Network(error.to_string()))?;
-            let virtio = DeterministicSegment::connect(segment.clone(), virtio_mac)
+            let (e1000_mac, e1000, virtio_mac, virtio) = network
+                .borrow_mut()
+                .attach_vm()
                 .map_err(|error| VmError::Network(error.to_string()))?;
-            let dhcp_server = dhcp_config
-                .cloned()
-                .map(|config| DeterministicDhcpServer::new(segment, config))
-                .transpose()
+            Ok((
+                e1000_mac,
+                virtio_mac,
+                Box::new(e1000),
+                Box::new(virtio),
+                Some(network),
+            ))
+        }
+        NetworkBackendConfig::DeterministicShared { network } => {
+            let (e1000_mac, e1000, virtio_mac, virtio) = network
+                .borrow_mut()
+                .attach_vm()
                 .map_err(|error| VmError::Network(error.to_string()))?;
-            Ok((Box::new(e1000), Box::new(virtio), dhcp_server))
+            Ok((
+                e1000_mac,
+                virtio_mac,
+                Box::new(e1000),
+                Box::new(virtio),
+                Some(network.clone()),
+            ))
         }
         NetworkBackendConfig::UserNat { bind, peer } => {
+            let e1000_mac = MacAddress::synos_default(0x56);
+            let virtio_mac = MacAddress::synos_default(0x57);
             let e1000 = HostNetworkBackend::user_nat(*bind, *peer, e1000_mac)
                 .map_err(|error| VmError::Network(format!("cannot open user-mode network: {error}")))?;
             let virtio_bind = SocketAddr::new(bind.ip(), 0);
             let virtio = HostNetworkBackend::user_nat(virtio_bind, *peer, virtio_mac)
                 .map_err(|error| VmError::Network(format!("cannot open user-mode network: {error}")))?;
-            Ok((Box::new(e1000), Box::new(virtio), None))
+            Ok((
+                e1000_mac,
+                virtio_mac,
+                Box::new(e1000),
+                Box::new(virtio),
+                None,
+            ))
         }
         NetworkBackendConfig::Bridged { interface } => {
+            let e1000_mac = MacAddress::synos_default(0x56);
+            let virtio_mac = MacAddress::synos_default(0x57);
             let e1000 = HostNetworkBackend::bridged(interface, e1000_mac)
                 .map_err(|error| VmError::Network(format!("cannot open bridged network: {error}")))?;
             let virtio = HostNetworkBackend::bridged(interface, virtio_mac)
                 .map_err(|error| VmError::Network(format!("cannot open bridged network: {error}")))?;
-            Ok((Box::new(e1000), Box::new(virtio), None))
+            Ok((
+                e1000_mac,
+                virtio_mac,
+                Box::new(e1000),
+                Box::new(virtio),
+                None,
+            ))
         }
     }
 }

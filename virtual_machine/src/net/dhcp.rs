@@ -179,6 +179,77 @@ pub struct DeterministicDhcpServer {
     leases: Vec<Lease>,
 }
 
+/// Shared bounded Ethernet fixture for multiple VMs.
+///
+/// The segment is EtherType agnostic. Ethernet frames carrying ARP, IPv4,
+/// ICMP, UDP, or TCP therefore use the same deterministic delivery path.
+pub struct DeterministicVmNetwork {
+    segment: Rc<RefCell<DeterministicSegment>>,
+    dhcp_server: Option<DeterministicDhcpServer>,
+    attached_vms: u8,
+}
+
+impl DeterministicVmNetwork {
+    pub fn new(
+        dhcp_config: Option<DhcpServerConfig>,
+    ) -> Result<Rc<RefCell<Self>>, DhcpConfigError> {
+        let segment = DeterministicSegment::new(64);
+        let dhcp_server = dhcp_config
+            .map(|config| DeterministicDhcpServer::new(segment.clone(), config))
+            .transpose()?;
+        Ok(Rc::new(RefCell::new(Self {
+            segment,
+            dhcp_server,
+            attached_vms: 0,
+        })))
+    }
+
+    pub fn segment(&self) -> Rc<RefCell<DeterministicSegment>> {
+        self.segment.clone()
+    }
+
+    pub fn attach_vm(
+        &mut self,
+    ) -> Result<
+        (
+            MacAddress,
+            DeterministicPort,
+            MacAddress,
+            DeterministicPort,
+        ),
+        NetError,
+    > {
+        let slot = self.attached_vms as usize;
+        let base = 0x56usize
+            .checked_add(slot.saturating_mul(2))
+            .ok_or(NetError::BackendUnavailable)?;
+        let e1000_mac = MacAddress::synos_default(
+            u8::try_from(base).map_err(|_| NetError::BackendUnavailable)?,
+        );
+        let virtio_mac = MacAddress::synos_default(
+            u8::try_from(base + 1).map_err(|_| NetError::BackendUnavailable)?,
+        );
+        let e1000 = DeterministicSegment::connect(self.segment.clone(), e1000_mac)?;
+        let virtio = DeterministicSegment::connect(self.segment.clone(), virtio_mac)?;
+        self.attached_vms = self.attached_vms.saturating_add(1);
+        Ok((e1000_mac, e1000, virtio_mac, virtio))
+    }
+
+    pub fn poll(&mut self, now_ms: u64) -> Result<usize, NetError> {
+        self.dhcp_server
+            .as_mut()
+            .map_or(Ok(0), |server| server.poll(now_ms))
+    }
+
+    pub fn dhcp_server(&self) -> Option<&DeterministicDhcpServer> {
+        self.dhcp_server.as_ref()
+    }
+
+    pub fn dhcp_server_mut(&mut self) -> Option<&mut DeterministicDhcpServer> {
+        self.dhcp_server.as_mut()
+    }
+}
+
 impl DeterministicDhcpServer {
     pub fn new(
         segment: Rc<RefCell<DeterministicSegment>>,
@@ -546,4 +617,140 @@ fn ipv4_number(address: [u8; 4]) -> u32 {
 
 fn ipv4_bytes(address: u32) -> [u8; 4] {
     address.to_be_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dhcp_packet(
+        mac: MacAddress,
+        xid: u32,
+        message_type: u8,
+        requested_ip: Option<[u8; 4]>,
+        server_id: Option<[u8; 4]>,
+    ) -> Vec<u8> {
+        let mut payload = [0u8; 576];
+        payload[0] = 1;
+        payload[1] = 1;
+        payload[2] = 6;
+        payload[4..8].copy_from_slice(&xid.to_be_bytes());
+        payload[10..12].copy_from_slice(&0x8000u16.to_be_bytes());
+        payload[28..34].copy_from_slice(&mac.to_bytes());
+        payload[236..240].copy_from_slice(&DHCP_MAGIC_COOKIE.to_be_bytes());
+        let mut cursor = 240;
+        cursor = write_option(
+            &mut payload,
+            cursor,
+            DHCP_OPTION_MESSAGE_TYPE,
+            &[message_type],
+        );
+        if let Some(address) = requested_ip {
+            cursor = write_option(&mut payload, cursor, DHCP_OPTION_REQUESTED_IP, &address);
+        }
+        if let Some(server) = server_id {
+            cursor = write_option(&mut payload, cursor, DHCP_OPTION_SERVER_ID, &server);
+        }
+        payload[cursor] = DHCP_OPTION_END;
+        let payload_len = cursor + 1;
+        let ip_len = 20 + 8 + payload_len;
+        let mut frame = vec![0u8; ETHERNET_HEADER_LEN + ip_len];
+        frame[..6].fill(0xFF);
+        frame[6..12].copy_from_slice(&mac.to_bytes());
+        frame[12..14].copy_from_slice(&[0x08, 0x00]);
+        let ip = ETHERNET_HEADER_LEN;
+        frame[ip] = 0x45;
+        frame[ip + 2..ip + 4].copy_from_slice(&(ip_len as u16).to_be_bytes());
+        frame[ip + 8] = 64;
+        frame[ip + 9] = 17;
+        frame[ip + 16..ip + 20].copy_from_slice(&[255, 255, 255, 255]);
+        let udp = ip + 20;
+        frame[udp..udp + 2].copy_from_slice(&DHCP_CLIENT_PORT.to_be_bytes());
+        frame[udp + 2..udp + 4].copy_from_slice(&DHCP_SERVER_PORT.to_be_bytes());
+        frame[udp + 4..udp + 6].copy_from_slice(&((8 + payload_len) as u16).to_be_bytes());
+        frame[udp + 8..udp + 8 + payload_len].copy_from_slice(&payload[..payload_len]);
+        pad_frame(&frame)
+    }
+
+    fn offer_for(port: &mut DeterministicPort, mac: MacAddress) -> Vec<u8> {
+        for _ in 0..8 {
+            let packet = port.receive().unwrap().expect("DHCP offer");
+            let chaddr = &packet[14 + 20 + 8 + 28..14 + 20 + 8 + 34];
+            if chaddr == mac.to_bytes() {
+                return packet;
+            }
+        }
+        panic!("DHCP offer for MAC not found")
+    }
+
+    #[test]
+    fn shared_fixture_allocates_distinct_leases_and_carries_protocol_frames() {
+        let network = DeterministicVmNetwork::new(Some(DhcpServerConfig::default())).unwrap();
+        let (first_mac, mut first, second_mac, mut second) = network.borrow_mut().attach_vm().unwrap();
+
+        first
+            .transmit(&dhcp_packet(first_mac, 1, DHCP_DISCOVER, None, None))
+            .unwrap();
+        second
+            .transmit(&dhcp_packet(second_mac, 2, DHCP_DISCOVER, None, None))
+            .unwrap();
+        network.borrow_mut().poll(0).unwrap();
+
+        let first_offer = offer_for(&mut first, first_mac);
+        let second_offer = offer_for(&mut second, second_mac);
+        let first_ip = [
+            first_offer[14 + 20 + 8 + 16],
+            first_offer[14 + 20 + 8 + 17],
+            first_offer[14 + 20 + 8 + 18],
+            first_offer[14 + 20 + 8 + 19],
+        ];
+        let second_ip = [
+            second_offer[14 + 20 + 8 + 16],
+            second_offer[14 + 20 + 8 + 17],
+            second_offer[14 + 20 + 8 + 18],
+            second_offer[14 + 20 + 8 + 19],
+        ];
+        assert_ne!(first_ip, second_ip);
+
+        first
+            .transmit(&dhcp_packet(
+                first_mac,
+                1,
+                DHCP_REQUEST,
+                Some(first_ip),
+                Some([10, 5, 0, 1]),
+            ))
+            .unwrap();
+        second
+            .transmit(&dhcp_packet(
+                second_mac,
+                2,
+                DHCP_REQUEST,
+                Some(second_ip),
+                Some([10, 5, 0, 1]),
+            ))
+            .unwrap();
+        network.borrow_mut().poll(1).unwrap();
+        assert_eq!(network.borrow().dhcp_server().unwrap().lease_for(first_mac).unwrap().address, first_ip);
+        assert_eq!(network.borrow().dhcp_server().unwrap().lease_for(second_mac).unwrap().address, second_ip);
+
+        while first.receive().unwrap().is_some() {}
+        while second.receive().unwrap().is_some() {}
+        for (ether_type, protocol) in [
+            (0x0806u16, 0u8), // ARP
+            (0x0800, 1),      // IPv4 ICMP
+            (0x0800, 17),     // IPv4 UDP
+            (0x0800, 6),      // IPv4 TCP
+        ] {
+            let mut frame = vec![0u8; 60];
+            frame[..6].copy_from_slice(&second_mac.to_bytes());
+            frame[6..12].copy_from_slice(&first_mac.to_bytes());
+            frame[12..14].copy_from_slice(&ether_type.to_be_bytes());
+            if ether_type == 0x0800 {
+                frame[14 + 9] = protocol;
+            }
+            first.transmit(&frame).unwrap();
+            assert_eq!(second.receive().unwrap().unwrap()[12..14], frame[12..14]);
+        }
+    }
 }

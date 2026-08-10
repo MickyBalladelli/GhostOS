@@ -332,7 +332,7 @@ SynOS VMs communicate and obtain distinct leases.
       for isolated unit tests.
 - [x] Add a bounded DHCP server to the deterministic VM network fixture, with a
       configurable pool, gateway, DNS, lease duration, and per-MAC reservations.
-- [ ] Ensure two VMs on one fixture receive different addresses and can send
+- [x] Ensure two VMs on one fixture receive different addresses and can send
       Ethernet, ARP, IPv4, ICMP, UDP, and TCP traffic to each other.
 - [ ] Report missing NIC, carrier-down, queue-full, and backend-unavailable
       conditions as stable network errors instead of leaving DHCP at `init`.

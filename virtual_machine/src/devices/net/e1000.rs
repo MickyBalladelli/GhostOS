@@ -149,6 +149,20 @@ impl E1000 {
         self.last_network_error.take()
     }
 
+    pub fn transmit_frame(&mut self, packet: &[u8]) -> Result<(), NetError> {
+        self.backend
+            .as_mut()
+            .ok_or(NetError::BackendUnavailable)?
+            .transmit(packet)
+    }
+
+    pub fn receive_frame(&mut self) -> Result<Option<Vec<u8>>, NetError> {
+        self.backend
+            .as_mut()
+            .ok_or(NetError::BackendUnavailable)?
+            .receive()
+    }
+
     fn link_up(&self) -> bool {
         self.backend.as_ref().map(|b| b.link_up()).unwrap_or(true)
     }

@@ -15,6 +15,7 @@ pub use backend::{
 };
 pub use dhcp::{
     DhcpConfigError, DhcpLeaseInfo, DhcpReservation, DhcpServerConfig,
+    DeterministicVmNetwork,
     DeterministicDhcpServer, DHCP_CLIENT_PORT as VM_DHCP_CLIENT_PORT,
     DHCP_SERVER_MAC, DHCP_SERVER_PORT as VM_DHCP_SERVER_PORT,
 };

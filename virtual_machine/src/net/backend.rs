@@ -3,6 +3,7 @@
 
 use crate::net::mac::{mac_matches, MacAddress};
 use crate::net::packet::{pad_frame, NetError, ETHERNET_FRAME_MAX, ETHERNET_HEADER_LEN};
+use crate::net::dhcp::DeterministicVmNetwork;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
@@ -15,10 +16,15 @@ const HOST_FRAME_MAGIC: [u8; 4] = *b"SNET";
 ///
 /// Loopback is intentionally not a VM configuration option. It remains
 /// available through [`LoopbackHub`] for isolated backend tests only.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub enum NetworkBackendConfig {
     /// Bounded, reproducible Ethernet segment for deterministic VM tests.
     Deterministic,
+    /// Shared deterministic VM fixture. The fixture owns the DHCP server and
+    /// allocates distinct MAC pairs as VMs attach.
+    DeterministicShared {
+        network: Rc<RefCell<DeterministicVmNetwork>>,
+    },
     /// User-mode networking transport. A host-side gateway receives the
     /// Ethernet frames over UDP and performs the NAT/user-mode service.
     UserNat { bind: SocketAddr, peer: SocketAddr },

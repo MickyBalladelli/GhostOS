@@ -4,8 +4,12 @@
 //! transport with reproducible faults, and exposes CXL address-space actions
 //! without requiring cluster hardware.
 
-use crate::{Vm, VmConfig, VmError};
+use crate::{
+    DhcpServerConfig, DeterministicVmNetwork, NetworkBackendConfig, Vm, VmConfig, VmError,
+};
 use std::collections::VecDeque;
+use std::cell::RefCell;
+use std::rc::Rc;
 use synos_fabric::memory::{GlobalAddressSpace, MemoryKind, MemoryPool, PoolId, Transport};
 use synos_fabric::{AddressRange, Error as FabricError, NodeId as FabricNodeId, PAGE_SIZE};
 
@@ -720,6 +724,7 @@ impl From<FabricError> for ClusterError {
 pub struct VmCluster {
     nodes: Vec<ClusterNode>,
     network: ClusterNetwork,
+    vm_network: Rc<RefCell<DeterministicVmNetwork>>,
     cxl: CxlFabricFixture,
     shared_memory: SharedMemoryFixture,
     epoch: u64,
@@ -730,9 +735,12 @@ pub struct VmCluster {
 
 impl VmCluster {
     pub fn new(network: ClusterNetworkConfig) -> Result<Self, ClusterError> {
+        let vm_network = DeterministicVmNetwork::new(Some(DhcpServerConfig::default()))
+            .map_err(|error| ClusterError::Vm(VmError::Network(error.to_string())))?;
         Ok(Self {
             nodes: Vec::new(),
             network: ClusterNetwork::new(network)?,
+            vm_network,
             cxl: CxlFabricFixture::new(),
             shared_memory: SharedMemoryFixture::default(),
             epoch: 1,
@@ -745,6 +753,13 @@ impl VmCluster {
     pub fn add_node(&mut self, id: ClusterNodeId, config: VmConfig) -> Result<(), ClusterError> {
         if self.nodes.iter().any(|node| node.id == id) {
             return Err(ClusterError::DuplicateNode(id));
+        }
+        let mut config = config;
+        if matches!(config.network, NetworkBackendConfig::Deterministic) {
+            config.network = NetworkBackendConfig::DeterministicShared {
+                network: self.vm_network.clone(),
+            };
+            config.dhcp_server = None;
         }
         self.nodes.push(ClusterNode {
             id,
@@ -775,6 +790,10 @@ impl VmCluster {
 
     pub fn network_mut(&mut self) -> &mut ClusterNetwork {
         &mut self.network
+    }
+
+    pub fn vm_network(&self) -> Rc<RefCell<DeterministicVmNetwork>> {
+        self.vm_network.clone()
     }
 
     pub fn cxl(&self) -> &CxlFabricFixture {
