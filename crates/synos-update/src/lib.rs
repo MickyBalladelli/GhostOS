@@ -4,6 +4,7 @@
 mod hotswap;
 mod patch;
 mod rollout;
+mod drain;
 
 pub use hotswap::{
     HotSwapCoordinator, HotSwapError, HotSwapReceipt, HotSwapRequest, HotSwapRuntime,
@@ -20,6 +21,11 @@ pub use rollout::{
     PlanError, RollbackReport, RolloutAuditEvent, RolloutCoordinator, RolloutError, RolloutPhase,
     RolloutPlan, RolloutReceipt, RolloutRuntime, RolloutState, RolloutStrategy, RolloutTarget,
     ARTIFACT_COUNT, DEFAULT_HEALTH_DEADLINE_MS, DEFAULT_ROLLOUT_UNITS,
+};
+pub use drain::{
+    DrainAuditEvent, DrainCoordinator, DrainError, DrainObservation, DrainPhase, DrainPlan,
+    DrainProgress, DrainReceipt, DrainResource, DrainRuntime, DrainState, DrainTarget,
+    ForcedCleanup, DEFAULT_DRAIN_TIMEOUT_MS, DEFAULT_FORCE_TIMEOUT_MS, DRAIN_RESOURCE_COUNT,
 };
 pub use synos_ipc::InheritableDescriptor;
 

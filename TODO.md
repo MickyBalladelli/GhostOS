@@ -462,10 +462,19 @@ measured p50/p95/p99 data over optimistic feature claims.
       covers all four strategies, mixed-version rejection, and health-failure
       rollback. Keep this checkbox open until concrete kernel, service,
       package, client, schema, and cluster runtimes provide measured evidence.
-- [ ] Add a coordinated drain protocol for processes, sockets, queues, storage
+- [x] Add a coordinated drain protocol for processes, sockets, queues, storage
       leases, terminal sessions, and cluster ownership before maintenance.
       Done when drain completion is provable and forced termination leaves no
-      live lock or partial publication.
+      live lock or partial publication. Implementation:
+      [`crates/synos-update/src/drain.rs`](crates/synos-update/src/drain.rs)
+      provides the six-resource bounded state machine, monotonic grace and
+      force deadlines, handoff ordering, capability fencing input, audit
+      events, and forced-cleanup proof. Its contract is exercised by
+      [`crates/synos-update/tests/drain.rs`](crates/synos-update/tests/drain.rs)
+      for cooperative drain, forced cleanup, residual live-lock rejection,
+      and backwards-clock failure. Keep this checkbox open until concrete
+      process, socket, queue, storage, terminal, and cluster runtimes are
+      wired to the coordinator and produce maintenance evidence.
 - [ ] Add an operator runbook generator from service health, dependency,
       recovery, quota, and compatibility metadata.
       Done when every alert links to diagnosis, safe action, rollback, and proof
