@@ -1240,13 +1240,39 @@ fn redraw<const HISTORY: usize>(
     editor: &LineEditor<HISTORY>,
     rendered: &mut ShellLineRender,
 ) {
+    let previous = rendered.line.as_str();
     let current = editor.line();
-    crate::print!("\r\x1b[2K");
-    prompt();
-    crate::print!("{}", current);
-    let tail = current.len().saturating_sub(editor.cursor());
-    if tail != 0 {
-        crate::print!("\x1b[{}D", tail);
+    let previous_cursor = rendered.cursor;
+    let cursor = editor.cursor();
+
+    if previous == current {
+        if cursor < previous_cursor {
+            crate::print!("\x1b[{}D", previous_cursor - cursor);
+        } else if cursor > previous_cursor {
+            crate::print!("\x1b[{}C", cursor - previous_cursor);
+        }
+    } else {
+        let mut prefix = previous
+            .bytes()
+            .zip(current.bytes())
+            .take_while(|(left, right)| left == right)
+            .count()
+            .min(previous_cursor);
+        while prefix != 0 && (!previous.is_char_boundary(prefix) || !current.is_char_boundary(prefix)) {
+            prefix -= 1;
+        }
+
+        if previous_cursor > prefix {
+            crate::print!("\x1b[{}D", previous_cursor - prefix);
+        }
+        crate::print!("{}", &current[prefix..]);
+        if previous.len() > current.len() {
+            crate::print!("\x1b[K");
+        }
+        let tail = current.len().saturating_sub(cursor);
+        if tail != 0 {
+            crate::print!("\x1b[{}D", tail);
+        }
     }
 
     rendered.line.clear();
