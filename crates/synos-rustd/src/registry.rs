@@ -50,6 +50,38 @@ pub struct DependencyResolution {
     pub length: u16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DependencyWave {
+    pub entries: [Option<ResolvedDependency>; MAX_REGISTRY_DEPENDENCIES],
+    pub length: u8,
+}
+
+impl DependencyWave {
+    pub fn iter(&self) -> impl Iterator<Item = ResolvedDependency> + '_ {
+        self.entries.iter().flatten().copied()
+    }
+
+    pub const fn len(&self) -> usize {
+        self.length as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DependencySchedule {
+    pub waves: [Option<DependencyWave>; MAX_REGISTRY_DEPENDENCIES],
+    pub length: u8,
+}
+
+impl DependencySchedule {
+    pub fn iter(&self) -> impl Iterator<Item = DependencyWave> + '_ {
+        self.waves.iter().flatten().copied()
+    }
+
+    pub const fn len(&self) -> usize {
+        self.length as usize
+    }
+}
+
 impl DependencyResolution {
     pub fn iter(&self) -> impl Iterator<Item = ResolvedDependency> + '_ {
         self.entries.iter().flatten().copied()
@@ -57,6 +89,67 @@ impl DependencyResolution {
 
     pub const fn len(&self) -> usize {
         self.length as usize
+    }
+
+    /// Group independent packages into deterministic waves. A wave is safe to
+    /// run in parallel; later waves wait only for packages in this lockfile.
+    pub fn schedule(
+        &self,
+        registry: &SignedLocalRegistry,
+    ) -> Result<DependencySchedule, RegistryError> {
+        let mut completed = [false; MAX_REGISTRY_DEPENDENCIES];
+        let mut completed_count = 0;
+        let mut waves = [None; MAX_REGISTRY_DEPENDENCIES];
+        let mut wave_count = 0;
+        while completed_count < self.len() {
+            let mut wave = DependencyWave {
+                entries: [None; MAX_REGISTRY_DEPENDENCIES],
+                length: 0,
+            };
+            for index in 0..self.len() {
+                if completed[index] {
+                    continue
+                }
+                let dependency = self.entries[index].ok_or(RegistryError::InvalidDependency)?;
+                let entry = registry
+                    .entries()
+                    .find(|entry| entry.package == dependency.pin.package)
+                    .ok_or(RegistryError::PackageNotFound)?;
+                let blocked = entry.dependencies.iter().flatten().any(|package| {
+                    self.entries
+                        .iter()
+                        .take(self.len())
+                        .enumerate()
+                        .any(|(candidate, resolved)| {
+                            resolved.is_some_and(|resolved| {
+                                resolved.pin.package == *package && !completed[candidate]
+                            })
+                        })
+                });
+                if blocked {
+                    continue
+                }
+                wave.entries[wave.length as usize] = Some(dependency);
+                wave.length += 1;
+            }
+            if wave.length == 0 {
+                return Err(RegistryError::DependencyCycle)
+            }
+            for dependency in wave.iter() {
+                if let Some(index) = self.entries.iter().position(|entry| {
+                    entry.is_some_and(|entry| entry.pin.package == dependency.pin.package)
+                }) {
+                    completed[index] = true;
+                    completed_count += 1;
+                }
+            }
+            waves[wave_count] = Some(wave);
+            wave_count += 1;
+        }
+        Ok(DependencySchedule {
+            waves,
+            length: wave_count as u8,
+        })
     }
 }
 
@@ -71,6 +164,7 @@ pub enum RegistryError {
     LockfileRequired,
     LockfileMismatch,
     InvalidDependency,
+    DependencyCycle,
 }
 
 impl From<Error> for RegistryError {

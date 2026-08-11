@@ -8,6 +8,7 @@ mod security;
 mod self_host;
 mod source;
 mod toolchain;
+mod workflow;
 
 pub use boot::{
     COMPILER_CAPABILITY_PROFILE, COMPILER_SERVICE_ID, COMPILER_SERVICE_NAME, CompilerBootError,
@@ -27,7 +28,8 @@ pub use self_host::{
     ToolchainStage, ToolchainStageError, ToolchainStageResult,
 };
 pub use registry::{
-    DependencyPin, DependencyResolution, RegistryEntry, RegistryError, ResolvedDependency,
+    DependencyPin, DependencyResolution, DependencySchedule, DependencyWave, RegistryEntry,
+    RegistryError, ResolvedDependency,
     SignedLocalRegistry, Version, lockfile_digest, MAX_PACKAGE_NAME_BYTES,
     MAX_REGISTRY_DEPENDENCIES, MAX_REGISTRY_ENTRIES,
 };
@@ -45,6 +47,10 @@ pub use toolchain::{
     ToolchainPlan, ToolchainPolicy, ToolchainReceipt, ToolchainRequest, ToolchainRuntime,
     ToolchainStep, MAX_DYNAMIC_ARTIFACTS, MAX_TOOLCHAIN_ASSETS, MAX_TOOLCHAIN_COMPONENTS,
     MAX_TOOLCHAIN_STEPS,
+};
+pub use workflow::{
+    RemoteCache, RemoteCacheEntry, RemoteCacheError, SharedArtifact, SharedArtifactError,
+    SharedImmutableArtifacts, MAX_SHARED_ARTIFACTS,
 };
 
 use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
@@ -116,7 +122,8 @@ impl IntoStatus for Error {
                 | RegistryError::LockfileMismatch
                 | RegistryError::InvalidRegistry
                 | RegistryError::Duplicate
-                | RegistryError::InvalidDependency => Status::INVALID_ARGUMENT,
+                | RegistryError::InvalidDependency
+                | RegistryError::DependencyCycle => Status::INVALID_ARGUMENT,
             },
             Self::SourceFilesystem(error) => error.status(),
         }
@@ -344,6 +351,8 @@ pub struct CompilerServiceSnapshot {
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub active_artifacts: u64,
+    pub shared_artifact_entries: u64,
+    pub remote_cache_rejections: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -352,6 +361,7 @@ struct Job {
     started_at_us: u64,
     isolation: BuildIsolation,
     control: JobControl,
+    dependency_waves: u8,
 }
 
 struct JobAuditInput {
@@ -463,11 +473,13 @@ pub struct CompilerService<const JOB_CAPACITY: usize = MAX_JOBS, const CACHE_CAP
     cache: [Option<CacheEntry>; CACHE_CAPACITY],
     content_cache: [Option<ContentCacheEntry>; CACHE_CAPACITY],
     artifacts: ArtifactSandbox,
+    shared_artifacts: SharedImmutableArtifacts,
     logs: [Option<CompilerLogRecord>; MAX_LOG_RECORDS],
     next_log_sequence: u32,
     toolchain_identity: ContentId,
     cache_hits: u64,
     cache_misses: u64,
+    remote_cache_rejections: u64,
     security: CompilerSecurityPolicy,
     audits: [Option<BuildAuditRecord>; MAX_AUDIT_RECORDS],
 }
@@ -483,11 +495,13 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             cache: [None; CACHE_CAPACITY],
             content_cache: [None; CACHE_CAPACITY],
             artifacts: ArtifactSandbox::new(),
+            shared_artifacts: SharedImmutableArtifacts::new(),
             logs: [None; MAX_LOG_RECORDS],
             next_log_sequence: 1,
             toolchain_identity: ContentId::from_bytes([0; 32]),
             cache_hits: 0,
             cache_misses: 0,
+            remote_cache_rejections: 0,
             security: CompilerSecurityPolicy::minimum(COMPILER_IDENTITY)
                 .expect("valid compiler security policy"),
             audits: [None; MAX_AUDIT_RECORDS],
@@ -656,6 +670,18 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         self.artifacts.active()
     }
 
+    pub fn shared_artifacts(&self) -> impl Iterator<Item = SharedArtifact> + '_ {
+        self.shared_artifacts.entries()
+    }
+
+    pub fn acquire_shared_artifact(&mut self, result: BuildResult) -> Result<(), Error> {
+        self.shared_artifacts.acquire(result).map_err(Error::from)
+    }
+
+    pub fn release_shared_artifact(&mut self, result: BuildResult) -> Result<(), Error> {
+        self.shared_artifacts.release(result).map_err(Error::from)
+    }
+
     pub fn submit(&mut self, request: BuildRequest) -> Result<JobId, Error> {
         self.submit_with_source_identity(request, ContentId::from_bytes([0; 32]))
     }
@@ -697,6 +723,7 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             started_at_us: 0,
             isolation,
             control: JobControl::Running,
+            dependency_waves: 0,
         });
         self.record_audit(JobAuditInput::new(id, request, source_identity, self.toolchain_identity));
         self.emit_log(id, CompilerLogLevel::Info, CompilerEventKind::Queued, "build queued");
@@ -767,6 +794,7 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         let resolution = registry
             .resolve_locked(lockfile, pins, dependency_count)
             .map_err(Error::Registry)?;
+        let schedule = resolution.schedule(registry).map_err(Error::Registry)?;
         for dependency in resolution.iter() {
             packages
                 .authorize_instantiation(dependency.pin.package)
@@ -781,7 +809,22 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
         )?;
         let id = self.submit_with_source_identity(request, snapshot.identity)?;
         self.set_lockfile(id, lockfile)?;
+        self.jobs
+            .iter_mut()
+            .flatten()
+            .find(|job| job.status.id == id)
+            .ok_or(Error::JobNotFound)?
+            .dependency_waves = schedule.len() as u8;
         Ok(id)
+    }
+
+    pub fn dependency_waves(&self, id: JobId) -> Result<u8, Error> {
+        self.jobs
+            .iter()
+            .flatten()
+            .find(|job| job.status.id == id)
+            .map(|job| job.dependency_waves)
+            .ok_or(Error::JobNotFound)
     }
 
     fn set_lockfile(&mut self, id: JobId, lockfile: ContentId) -> Result<(), Error> {
@@ -952,14 +995,24 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
     }
 
     pub fn complete(&mut self, id: JobId, result: BuildResult) -> Result<(), Error> {
+        self.shared_artifacts
+            .can_publish(result)
+            .map_err(Error::from)?;
+        let current = self
+            .jobs
+            .iter()
+            .flatten()
+            .find(|job| job.status.id == id)
+            .ok_or(Error::JobNotFound)?;
+        if current.status.state != JobState::Running
+            || current.control != JobControl::Running
+            || result.target != current.status.request.target
+        {
+            return Err(Error::InvalidTransition)
+        }
+        self.shared_artifacts.publish(result).map_err(Error::from)?;
         {
             let job = self.job_mut(id)?;
-            if job.status.state != JobState::Running {
-                return Err(Error::InvalidTransition);
-            }
-            if result.target != job.status.request.target || job.control != JobControl::Running {
-                return Err(Error::InvalidTransition);
-            }
             job.status.state = JobState::Completed;
             job.status.result = Some(result);
             job.isolation.cleanup_pending = true;
@@ -1020,6 +1073,8 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             cache_hits: self.cache_hits,
             cache_misses: self.cache_misses,
             active_artifacts: self.artifacts.active().count() as u64,
+            shared_artifact_entries: self.shared_artifacts.len() as u64,
+            remote_cache_rejections: self.remote_cache_rejections,
         };
         for job in self.jobs.iter().flatten() {
             match job.status.state {
@@ -1145,11 +1200,19 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
     }
 
     pub fn cache_lookup_key(&mut self, key: CacheKey) -> Option<BuildResult> {
-        let result = self.content_cache
+        let index = self
+            .content_cache
             .iter()
-            .flatten()
-            .find(|entry| entry.key == key)
-            .map(|entry| entry.result);
+            .position(|entry| entry.is_some_and(|entry| entry.key == key));
+        let result = index
+            .and_then(|index| self.content_cache[index])
+            .map(|entry| entry.result)
+            .filter(|result| self.shared_artifacts.contains(*result));
+        if result.is_none() {
+            if let Some(index) = index {
+                self.content_cache[index] = None;
+            }
+        }
         if result.is_some() {
             self.cache_hits = self.cache_hits.saturating_add(1)
         } else {
@@ -1165,6 +1228,7 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             || entry.result.package.is_zero()
             || entry.result.payload.is_zero()
             || entry.key.target != entry.result.target
+            || !self.shared_artifacts.contains(entry.result)
         {
             return Err(Error::InvalidRequest);
         }
@@ -1195,15 +1259,58 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             let job = self.job_mut(id)?;
             (job.status.request, job.isolation)
         };
+        let key = self.cache_key(isolation.source, isolation.lockfile, request);
+        if !isolation.source.is_zero()
+            && !isolation.lockfile.is_zero()
+            && !self.toolchain_identity.is_zero()
+            && !self.cache_has_key_or_capacity(key)
+        {
+            return Err(Error::Capacity)
+        }
         self.complete(id, result)?;
         if !isolation.source.is_zero()
             && !isolation.lockfile.is_zero()
             && !self.toolchain_identity.is_zero()
         {
-            let key = self.cache_key(isolation.source, isolation.lockfile, request);
             self.cache_insert_key(ContentCacheEntry { key, result })?;
         }
         Ok(())
+    }
+
+    pub fn lookup_remote_cache<R: RemoteCache>(
+        &mut self,
+        key: CacheKey,
+        network: NetworkPolicy,
+        remote: &mut R,
+    ) -> Result<Option<BuildResult>, RemoteCacheError<R::Error>> {
+        if network == NetworkPolicy::Denied {
+            self.cache_misses = self.cache_misses.saturating_add(1);
+            return Ok(None)
+        }
+        let Some(entry) = remote.lookup(key).map_err(RemoteCacheError::Backend)? else {
+            self.cache_misses = self.cache_misses.saturating_add(1);
+            return Ok(None)
+        };
+        let result = match entry.validate(key) {
+            Ok(result) => result,
+            Err(error) => {
+                self.cache_misses = self.cache_misses.saturating_add(1);
+                self.remote_cache_rejections = self.remote_cache_rejections.saturating_add(1);
+                return Err(error)
+            }
+        };
+        if !self.shared_artifacts.can_publish(result).is_ok()
+            || !self.cache_has_key_or_capacity(key)
+        {
+            return Err(RemoteCacheError::Capacity)
+        }
+        self.shared_artifacts
+            .publish(result)
+            .map_err(|_| RemoteCacheError::Capacity)?;
+        self.cache_insert_key(ContentCacheEntry { key, result })
+            .map_err(|_| RemoteCacheError::Capacity)?;
+        self.cache_hits = self.cache_hits.saturating_add(1);
+        Ok(Some(result))
     }
 
     pub fn read_log(
@@ -1343,6 +1450,14 @@ impl<const JOB_CAPACITY: usize, const CACHE_CAPACITY: usize>
             .flatten()
             .find(|job| job.status.id == id)
             .ok_or(Error::JobNotFound)
+    }
+
+    fn cache_has_key_or_capacity(&self, key: CacheKey) -> bool {
+        self.content_cache
+            .iter()
+            .flatten()
+            .any(|entry| entry.key == key)
+            || self.content_cache.iter().any(Option::is_none)
     }
 }
 

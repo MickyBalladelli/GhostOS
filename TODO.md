@@ -277,10 +277,18 @@ measured p50/p95/p99 data over optimistic feature claims.
       inspection publication. VM translation hits, misses, stale invalidations,
       and evictions feed the registry through
       [`virtual_machine/src/execution.rs`](virtual_machine/src/execution.rs).
-- [ ] Optimize compiler and package workflows with shared immutable artifacts,
+- [x] Optimize compiler and package workflows with shared immutable artifacts,
       remote cache validation, parallel dependency scheduling, and cancellation
       that never publishes partial results.
       Done when clean, warm, offline, and cancelled builds have measured bounds.
+      Implementation: [`crates/synos-rustd/src/workflow.rs`](crates/synos-rustd/src/workflow.rs)
+      provides bounded shared artifacts and proof-checked remote cache entries;
+      [`crates/synos-rustd/src/registry.rs`](crates/synos-rustd/src/registry.rs)
+      schedules locked dependencies in deterministic parallel waves; completion
+      validates cancellation, artifact identity, and cache capacity before any
+      publication. [`scripts/benchmark-compiler-workflows.py`](scripts/benchmark-compiler-workflows.py)
+      records clean, warm, offline, and cancelled p50/p95/max bounds in
+      [`docs/compiler-workflows.md`](docs/compiler-workflows.md).
 - [ ] Add a performance budget to every public control-plane command and RPC.
       Done when queue wait, service time, retries, bytes, and tail latency are
       returned in structured diagnostics without leaking tenant data.
