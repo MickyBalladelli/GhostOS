@@ -1,0 +1,9 @@
+[package]
+name = "synos-admission"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Bounded control-plane admission and load shedding"
+
+[lib]
+path = "src/lib.rs"

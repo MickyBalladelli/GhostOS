@@ -8,5 +8,6 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+synos-admission = { path = "../admission" }
 synos-status = { path = "../status" }
 synos-synfs = { path = "../synfs" }

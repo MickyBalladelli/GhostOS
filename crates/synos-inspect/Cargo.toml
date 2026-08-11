@@ -9,6 +9,7 @@ description = "Capability-scoped system inspection and diagnostics for SynOS"
 path = "src/lib.rs"
 
 [dependencies]
+synos-admission = { path = "../admission" }
 syn-shell = { path = "../syn-shell" }
 synos-audit = { package = "synos-auditd", path = "../synos-audit" }
 synos-fabric = { path = "../fabric" }

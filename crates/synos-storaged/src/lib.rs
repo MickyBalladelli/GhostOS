@@ -55,7 +55,8 @@ pub use failure::{
     RecoveryState, MAX_FAILURE_EVENTS, MAX_RECOVERY_NODES,
 };
 pub use membership::{
-    propagate_membership_epoch, ConsensusCommit, ConsensusProposal, ElectionResult, MemberHealth,
+    propagate_membership_epoch, propagate_membership_epoch_with_admission, ConsensusCommit,
+    ConsensusProposal, ElectionResult, MemberHealth,
     MemberRole, MemberSpec, MembershipAdvertisement, MembershipEpochConsumer, MembershipError,
     MembershipLabel, MembershipOperation, MembershipRegistry, MembershipSnapshot, QuorumView,
     RegistryMember, MAX_CONSENSUS_LOG, MAX_MEMBERSHIP_LABEL_BYTES, MAX_MEMBERSHIP_REGISTRY,

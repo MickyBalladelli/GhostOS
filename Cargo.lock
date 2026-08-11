@@ -415,6 +415,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-admission"
+version = "0.1.0"
+
+[[package]]
 name = "synos-agent-bridge"
 version = "0.1.0"
 dependencies = [
@@ -481,6 +485,7 @@ dependencies = [
 name = "synos-backup"
 version = "0.1.0"
 dependencies = [
+ "synos-admission",
  "synos-status",
  "synos-synfs",
 ]
@@ -664,6 +669,7 @@ name = "synos-inspect"
 version = "0.1.0"
 dependencies = [
  "syn-shell",
+ "synos-admission",
  "synos-auditd",
  "synos-fabric",
  "synos-observability",
@@ -781,6 +787,7 @@ dependencies = [
 name = "synos-pkg"
 version = "0.1.0"
 dependencies = [
+ "synos-admission",
  "synos-durability",
  "synos-policy",
  "synos-status",
@@ -914,6 +921,7 @@ dependencies = [
 name = "synos-storaged"
 version = "0.1.0"
 dependencies = [
+ "synos-admission",
  "synos-auth",
  "synos-durability",
  "synos-fabric",

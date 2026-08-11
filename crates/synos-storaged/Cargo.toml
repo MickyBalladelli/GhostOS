@@ -9,6 +9,7 @@ description = "Capability-gated enterprise remote storage service models"
 path = "src/lib.rs"
 
 [dependencies]
+synos-admission = { path = "../admission" }
 synos-durability = { path = "../durability" }
 synos-auth = { path = "../auth" }
 synos-fabric = { path = "../fabric" }

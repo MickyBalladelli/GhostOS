@@ -1,4 +1,7 @@
 use synos_status::Status;
+use synos_admission::{
+    AdmissionAction, AdmissionController, AdmissionOutcome, AdmissionPriority, WorkClass,
+};
 use synos_audit::ObsolescenceReport;
 use synos_observability::{CachePolicyRegistry, HealthReport, MAX_CACHE_POLICIES};
 
@@ -9,6 +12,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InspectError {
+    Admission(AdmissionOutcome),
     AccessDenied,
     Capacity,
     InvalidSample,
@@ -19,6 +23,11 @@ pub enum InspectError {
 impl InspectError {
     pub const fn status(self) -> Status {
         match self {
+            Self::Admission(outcome) => match outcome.action {
+                AdmissionAction::Dropped => Status::NO_SPACE,
+                AdmissionAction::Delayed | AdmissionAction::Retried => Status::BUSY,
+                AdmissionAction::Admitted => Status::INTERNAL,
+            },
             Self::AccessDenied => Status::ACCESS_DENIED,
             Self::Capacity => Status::NO_SPACE,
             Self::InvalidSample => Status::INVALID_ARGUMENT,
@@ -157,13 +166,23 @@ impl InspectionProvider for TelemetryStore {
 pub struct InspectionService<Provider> {
     authority: InspectionAuthority,
     provider: Provider,
+    admission: AdmissionController,
 }
 
 impl<Provider> InspectionService<Provider> {
-    pub const fn new(authority: InspectionAuthority, provider: Provider) -> Self {
+    pub fn new(authority: InspectionAuthority, provider: Provider) -> Self {
+        Self::new_with_admission(authority, provider, AdmissionController::default())
+    }
+
+    pub fn new_with_admission(
+        authority: InspectionAuthority,
+        provider: Provider,
+        admission: AdmissionController,
+    ) -> Self {
         Self {
             authority,
             provider,
+            admission,
         }
     }
 
@@ -186,6 +205,14 @@ impl<Provider> InspectionService<Provider> {
     pub fn into_provider(self) -> Provider {
         self.provider
     }
+
+    pub const fn admission(&self) -> &AdmissionController {
+        &self.admission
+    }
+
+    pub fn admission_mut(&mut self) -> &mut AdmissionController {
+        &mut self.admission
+    }
 }
 
 impl<Provider: InspectionProvider> InspectionService<Provider> {
@@ -196,14 +223,18 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         now_us: u64,
     ) -> Result<MemoryReport, InspectError> {
         self.authorize(capability, InspectionRights::MEMORY, view, now_us)?;
+        let lease = self.admit_view(view)?;
         let mut report = MemoryReport::new();
-        self.provider
+        let result = self.provider
             .sample_memory(&mut report)
-            .map_err(InspectError::Source)?;
-        if view == View::Local {
-            report.retain_node(capability.home_node())
-        }
-        Ok(report)
+            .map_err(InspectError::Source)
+            .and_then(|()| {
+                if view == View::Local {
+                    report.retain_node(capability.home_node())
+                }
+                Ok(report)
+            });
+        self.finish_view(lease, result)
     }
 
     pub fn storage(
@@ -213,14 +244,18 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         now_us: u64,
     ) -> Result<StorageReport, InspectError> {
         self.authorize(capability, InspectionRights::STORAGE, view, now_us)?;
+        let lease = self.admit_view(view)?;
         let mut report = StorageReport::new();
-        self.provider
+        let result = self.provider
             .sample_storage(&mut report)
-            .map_err(InspectError::Source)?;
-        if view == View::Local {
-            report.retain_node(capability.home_node())
-        }
-        Ok(report)
+            .map_err(InspectError::Source)
+            .and_then(|()| {
+                if view == View::Local {
+                    report.retain_node(capability.home_node())
+                }
+                Ok(report)
+            });
+        self.finish_view(lease, result)
     }
 
     pub fn cpu(
@@ -230,14 +265,18 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         now_us: u64,
     ) -> Result<CpuReport, InspectError> {
         self.authorize(capability, InspectionRights::CPU, view, now_us)?;
+        let lease = self.admit_view(view)?;
         let mut report = CpuReport::new();
-        self.provider
+        let result = self.provider
             .sample_cpu(&mut report)
-            .map_err(InspectError::Source)?;
-        if view == View::Local {
-            report.retain_node(capability.home_node())
-        }
-        Ok(report)
+            .map_err(InspectError::Source)
+            .and_then(|()| {
+                if view == View::Local {
+                    report.retain_node(capability.home_node())
+                }
+                Ok(report)
+            });
+        self.finish_view(lease, result)
     }
 
     pub fn activity(
@@ -247,14 +286,18 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         now_us: u64,
     ) -> Result<ActivityReport, InspectError> {
         self.authorize(capability, InspectionRights::ACTIVITY, view, now_us)?;
+        let lease = self.admit_view(view)?;
         let mut report = ActivityReport::new();
-        self.provider
+        let result = self.provider
             .sample_activity(&mut report)
-            .map_err(InspectError::Source)?;
-        if view == View::Local {
-            report.retain_principal(capability.subject())
-        }
-        Ok(report)
+            .map_err(InspectError::Source)
+            .and_then(|()| {
+                if view == View::Local {
+                    report.retain_principal(capability.subject())
+                }
+                Ok(report)
+            });
+        self.finish_view(lease, result)
     }
 
     pub fn process(
@@ -282,20 +325,24 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         now_us: u64,
     ) -> Result<ObsolescenceReport, InspectError> {
         self.authorize(capability, InspectionRights::OBSOLESCENCE, view, now_us)?;
+        let lease = self.admit_view(view)?;
         let mut report = ObsolescenceReport::new();
-        self.provider
+        let result = self.provider
             .sample_obsolete(&mut report)
-            .map_err(InspectError::Source)?;
-        if view == View::Local {
-            let node = capability.home_node();
-            let mut local = ObsolescenceReport::new();
-            local.set_sampled_at_us(report.sampled_at_us());
-            for package in report.packages().filter(|package| package.node == node) {
-                local.push(package).map_err(|_| InspectError::InvalidSample)?;
-            }
-            report = local;
-        }
-        Ok(report)
+            .map_err(InspectError::Source)
+            .and_then(|()| {
+                if view == View::Local {
+                    let node = capability.home_node();
+                    let mut local = ObsolescenceReport::new();
+                    local.set_sampled_at_us(report.sampled_at_us());
+                    for package in report.packages().filter(|package| package.node == node) {
+                        local.push(package).map_err(|_| InspectError::InvalidSample)?;
+                    }
+                    report = local;
+                }
+                Ok(report)
+            });
+        self.finish_view(lease, result)
     }
 
     pub fn health(
@@ -305,14 +352,18 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         now_us: u64,
     ) -> Result<HealthReport, InspectError> {
         self.authorize(capability, InspectionRights::HEALTH, view, now_us)?;
+        let lease = self.admit_view(view)?;
         let mut report = HealthReport::new();
-        self.provider
+        let result = self.provider
             .sample_health(&mut report)
-            .map_err(InspectError::Source)?;
-        if view == View::Local {
-            report.retain_node(capability.home_node().raw())
-        }
-        Ok(report)
+            .map_err(InspectError::Source)
+            .and_then(|()| {
+                if view == View::Local {
+                    report.retain_node(capability.home_node().raw())
+                }
+                Ok(report)
+            });
+        self.finish_view(lease, result)
     }
 
     pub fn cache(
@@ -322,11 +373,13 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         now_us: u64,
     ) -> Result<CachePolicyRegistry<MAX_CACHE_POLICIES>, InspectError> {
         self.authorize(capability, InspectionRights::CACHE, view, now_us)?;
+        let lease = self.admit_view(view)?;
         let mut report = CachePolicyRegistry::new();
-        self.provider
+        let result = self.provider
             .sample_cache(&mut report)
-            .map_err(InspectError::Source)?;
-        Ok(report)
+            .map_err(InspectError::Source)
+            .map(|()| report);
+        self.finish_view(lease, result)
     }
 
     fn authorize(
@@ -347,5 +400,30 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
             return Err(InspectError::AccessDenied)
         }
         Ok(())
+    }
+
+    fn admit_view(&mut self, view: View) -> Result<Option<synos_admission::AdmissionLease>, InspectError> {
+        if view == View::Local {
+            return Ok(None)
+        }
+        let outcome = self
+            .admission
+            .admit(WorkClass::RemoteDiagnostics, AdmissionPriority::Optional);
+        if outcome.admitted() {
+            Ok(outcome.lease())
+        } else {
+            Err(InspectError::Admission(outcome))
+        }
+    }
+
+    fn finish_view<T>(
+        &mut self,
+        lease: Option<synos_admission::AdmissionLease>,
+        result: Result<T, InspectError>,
+    ) -> Result<T, InspectError> {
+        if let Some(lease) = lease {
+            let _ = self.admission.finish(lease);
+        }
+        result
     }
 }

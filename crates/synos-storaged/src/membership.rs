@@ -1,4 +1,5 @@
 use crate::{AdmissionEndpoint, ClusterId, QuorumPolicy};
+use synos_admission::{AdmissionController, AdmissionOutcome, AdmissionPriority, WorkClass};
 use synos_fabric::NodeId;
 use synos_policy::{
     ClusterMembershipChange, ObjectId, PolicyChange, PolicySnapshot, SimulationError,
@@ -17,6 +18,7 @@ pub const MEMBERSHIP_RECORD_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MembershipError {
+    Admission(AdmissionOutcome),
     InvalidConfiguration,
     InvalidLabel,
     InvalidState,
@@ -43,6 +45,12 @@ pub enum MembershipError {
 impl IntoStatus for MembershipError {
     fn status(self) -> Status {
         match self {
+            Self::Admission(outcome) => match outcome.action {
+                synos_admission::AdmissionAction::Dropped => Status::NO_SPACE,
+                synos_admission::AdmissionAction::Delayed
+                | synos_admission::AdmissionAction::Retried => Status::BUSY,
+                synos_admission::AdmissionAction::Admitted => Status::INTERNAL,
+            },
             Self::Capacity | Self::BufferTooSmall { .. } => Status::NO_SPACE,
             Self::UnknownNode | Self::ProposalNotFound => Status::NOT_FOUND,
             Self::DuplicateIdentity
@@ -320,6 +328,20 @@ impl<const MEMBERS: usize> MembershipRegistry<MEMBERS> {
         }
     }
 
+    pub fn snapshot_with_admission<const CAPACITY: usize>(
+        &self,
+        admission: &mut AdmissionController<CAPACITY>,
+        priority: AdmissionPriority,
+    ) -> Result<MembershipSnapshot, MembershipError> {
+        let outcome = admission.admit(WorkClass::Snapshot, priority);
+        let Some(lease) = outcome.lease() else {
+            return Err(MembershipError::Admission(outcome))
+        };
+        let snapshot = self.snapshot();
+        let _ = admission.finish(lease);
+        Ok(snapshot)
+    }
+
     /// Preview a membership transition without proposing, acknowledging, or
     /// committing a consensus operation.
     pub fn simulate_membership_policy<
@@ -418,6 +440,22 @@ impl<const MEMBERS: usize> MembershipRegistry<MEMBERS> {
         self.ensure_write_ready(self.leader)?;
         self.validate_add(spec)?;
         self.propose_membership_change(self.leader.ok_or(MembershipError::NoLeader)?, MembershipOperation::Add(spec))
+    }
+
+    pub fn register_member_with_admission<const CAPACITY: usize>(
+        &mut self,
+        spec: MemberSpec,
+        now_us: u64,
+        admission: &mut AdmissionController<CAPACITY>,
+        priority: AdmissionPriority,
+    ) -> Result<ConsensusProposal, MembershipError> {
+        let outcome = admission.admit(WorkClass::MembershipChange, priority);
+        let Some(lease) = outcome.lease() else {
+            return Err(MembershipError::Admission(outcome))
+        };
+        let result = self.register_member(spec, now_us);
+        let _ = admission.finish(lease);
+        result
     }
 
     pub fn observe_advertisement(
@@ -591,6 +629,22 @@ impl<const MEMBERS: usize> MembershipRegistry<MEMBERS> {
             self.commit_pending()?;
         }
         Ok(proposal)
+    }
+
+    pub fn propose_membership_change_with_admission<const CAPACITY: usize>(
+        &mut self,
+        leader: NodeId,
+        operation: MembershipOperation,
+        admission: &mut AdmissionController<CAPACITY>,
+        priority: AdmissionPriority,
+    ) -> Result<ConsensusProposal, MembershipError> {
+        let outcome = admission.admit(WorkClass::MembershipChange, priority);
+        let Some(lease) = outcome.lease() else {
+            return Err(MembershipError::Admission(outcome))
+        };
+        let result = self.propose_membership_change(leader, operation);
+        let _ = admission.finish(lease);
+        result
     }
 
     pub fn acknowledge_proposal(
@@ -938,6 +992,21 @@ pub fn propagate_membership_epoch(
         consumer.apply_membership_epoch(epoch)?;
     }
     Ok(())
+}
+
+pub fn propagate_membership_epoch_with_admission<const CAPACITY: usize>(
+    epoch: u64,
+    consumers: &mut [&mut dyn MembershipEpochConsumer],
+    admission: &mut AdmissionController<CAPACITY>,
+    priority: AdmissionPriority,
+) -> Result<(), MembershipError> {
+    let outcome = admission.admit(WorkClass::ControlPlaneFanout, priority);
+    let Some(lease) = outcome.lease() else {
+        return Err(MembershipError::Admission(outcome))
+    };
+    let result = propagate_membership_epoch(epoch, consumers);
+    let _ = admission.finish(lease);
+    result
 }
 
 fn decode_node(raw: u32) -> Option<NodeId> {

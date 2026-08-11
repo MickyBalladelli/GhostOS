@@ -1,6 +1,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use synos_admission::{AdmissionController, AdmissionOutcome, AdmissionPriority, WorkClass};
+
 mod crypto;
 mod recovery;
 
@@ -36,6 +38,7 @@ pub trait BackupSink {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackupError {
+    Admission(AdmissionOutcome),
     File(FileError),
     InvalidBudget,
     NotComplete,
@@ -51,6 +54,12 @@ impl From<FileError> for BackupError {
 impl IntoStatus for BackupError {
     fn status(self) -> Status {
         match self {
+            Self::Admission(outcome) => match outcome.action {
+                synos_admission::AdmissionAction::Dropped => Status::NO_SPACE,
+                synos_admission::AdmissionAction::Delayed
+                | synos_admission::AdmissionAction::Retried => Status::BUSY,
+                synos_admission::AdmissionAction::Admitted => Status::INTERNAL,
+            },
             Self::File(error) => error.status(),
             Self::InvalidBudget => Status::INVALID_ARGUMENT,
             Self::NotComplete => Status::BUSY,
@@ -101,6 +110,28 @@ pub struct BackupJob {
 }
 
 impl BackupJob {
+    /// Start a backup only after it owns a bounded admission lease. The lease
+    /// stays with the caller until the job reaches `Complete` or is abandoned;
+    /// call `AdmissionController::finish` exactly once in either case.
+    pub fn start_with_admission<const CAPACITY: usize, const MAX_BLOCKS: usize>(
+        filesystem: &mut SynFs<MAX_BLOCKS>,
+        capability: RmsMapHandle,
+        admission: &mut AdmissionController<CAPACITY>,
+        priority: AdmissionPriority,
+    ) -> Result<(Self, synos_admission::AdmissionLease), BackupError> {
+        let outcome = admission.admit(WorkClass::Backup, priority);
+        let Some(lease) = outcome.lease() else {
+            return Err(BackupError::Admission(outcome))
+        };
+        match Self::start(filesystem, capability) {
+            Ok(job) => Ok((job, lease)),
+            Err(error) => {
+                let _ = admission.finish(lease);
+                Err(error)
+            }
+        }
+    }
+
     pub fn start<const MAX_BLOCKS: usize>(
         filesystem: &mut SynFs<MAX_BLOCKS>,
         capability: RmsMapHandle,

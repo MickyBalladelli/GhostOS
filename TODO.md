@@ -337,11 +337,20 @@ measured p50/p95/p99 data over optimistic feature claims.
       evidence: [`crates/synos-storaged/src/sharding.rs`](crates/synos-storaged/src/sharding.rs),
       [`crates/synos-storaged/tests/sharding.rs`](crates/synos-storaged/tests/sharding.rs),
       and [`docs/sharding-recovery.md`](docs/sharding-recovery.md).
-- [ ] Add admission control and load shedding for control-plane fanout,
+- [x] Add admission control and load shedding for control-plane fanout,
       membership changes, snapshots, backups, package distribution, and remote
       diagnostics.
       Done when critical recovery traffic wins over optional work and operators
       see exactly what was delayed, dropped, or retried.
+      Implementation: [`crates/admission/src/lib.rs`](crates/admission/src/lib.rs)
+      provides fixed-capacity active slots, a bounded wait queue, a reserved
+      recovery budget, per-work-class limits, retry accounting, and redacted
+      delayed/dropped/retried outcomes. Membership fanout and changes use the
+      gate in [`crates/synos-storaged/src/membership.rs`](crates/synos-storaged/src/membership.rs);
+      package install and backup start expose admitted entry points; remote
+      cluster diagnostics are gated by [`crates/synos-inspect/src/service.rs`](crates/synos-inspect/src/service.rs).
+      Regression coverage is in the admission crate for recovery precedence,
+      queue shedding, and separate drop/retry counters.
 - [ ] Add tenant-aware scheduling, storage placement, network shaping, and
       capability-scoped quotas with hierarchical accounting.
       Done when one tenant cannot consume shared tail latency or recovery budget.

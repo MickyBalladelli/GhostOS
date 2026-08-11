@@ -8,6 +8,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+synos-admission = { path = "../admission" }
 synos-durability = { path = "../durability" }
 synos-policy = { path = "../policy" }
 synos-status = { path = "../status" }

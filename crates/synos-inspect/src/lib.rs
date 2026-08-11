@@ -33,6 +33,11 @@ pub use synos_observability::{
     CachePolicyReport, HealthError, HealthReport, HealthState, HealthTransport,
     OperationalHealth, CACHE_RATE_SCALE, MAX_CACHE_POLICIES, MAX_OPERATIONAL_HEALTH,
 };
+pub use synos_admission::{
+    AdmissionAction, AdmissionController, AdmissionError, AdmissionLease, AdmissionOutcome,
+    AdmissionPolicy, AdmissionPriority, AdmissionReason, AdmissionReport, AdmissionStats,
+    WorkClass,
+};
 pub use service::{
     InspectError, InspectionProvider, InspectionService, TelemetryStore, View,
 };

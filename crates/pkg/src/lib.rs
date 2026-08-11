@@ -1,6 +1,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use synos_admission::{AdmissionController, AdmissionOutcome, AdmissionPriority, WorkClass};
 use synos_status::{IntoStatus, Status};
 use synos_durability::{InterruptionInjector, NoInterruption};
 use synos_synfs::{
@@ -34,6 +35,7 @@ pub const PROVENANCE_CHAIN_BYTES: usize =
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PackageError {
+    Admission(AdmissionOutcome),
     BundleTooSmall,
     BufferTooSmall { required: usize },
     CorruptBundle,
@@ -54,6 +56,12 @@ pub enum PackageError {
 impl IntoStatus for PackageError {
     fn status(self) -> Status {
         match self {
+            Self::Admission(outcome) => match outcome.action {
+                synos_admission::AdmissionAction::Dropped => Status::NO_SPACE,
+                synos_admission::AdmissionAction::Delayed
+                | synos_admission::AdmissionAction::Retried => Status::BUSY,
+                synos_admission::AdmissionAction::Admitted => Status::INTERNAL,
+            },
             Self::BufferTooSmall { .. } | Self::TooManyDependencies | Self::TrustStoreFull => {
                 Status::NO_SPACE
             }
@@ -1007,6 +1015,25 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         }
         self.record_verified(installed, bundle.info.signing_key)?;
         Ok(installed)
+    }
+
+    /// Install a package only while holding a bounded distribution lease.
+    /// Callers may use `Recovery` priority for a package needed by recovery.
+    pub fn install_bundle_with_admission<const BLOCKS: usize, const CAPACITY: usize>(
+        &mut self,
+        fs: &mut SynFs<BLOCKS>,
+        encoded: &[u8],
+        verification_buffer: &mut [u8],
+        admission: &mut AdmissionController<CAPACITY>,
+        priority: AdmissionPriority,
+    ) -> Result<ContentId, PackageError> {
+        let outcome = admission.admit(WorkClass::PackageDistribution, priority);
+        let Some(lease) = outcome.lease() else {
+            return Err(PackageError::Admission(outcome))
+        };
+        let result = self.install_bundle(fs, encoded, verification_buffer);
+        let _ = admission.finish(lease);
+        result
     }
 
     pub fn install_application_bundle<const BLOCKS: usize>(
