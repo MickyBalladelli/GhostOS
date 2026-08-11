@@ -9,7 +9,7 @@ fn structured_output_json_is_a_stable_schema_with_escaped_values() {
     output.insert("count", OutputValue::Unsigned(3)).unwrap();
     output.insert("enabled", OutputValue::Boolean(true)).unwrap();
     let rendered = render(&output, OutputFormat::Json).unwrap();
-    assert_eq!(rendered.as_str(), format!("{{\"status\":{},\"message\":\"normal\",\"fields\":{{\"operation\":\"audit\\nready\",\"count\":3,\"enabled\":true}}}}", Status::NORMAL.raw()));
+    assert_eq!(rendered.as_str(), format!("{{\"status\":{},\"message\":\"normal\",\"action\":\"Inspect the audit record before repeating the operation.\",\"impact\":\"The operation failed; inspect the audit record for exact scope.\",\"retry_safety\":\"Do not retry automatically.\",\"fields\":{{\"operation\":\"audit\\nready\",\"count\":3,\"enabled\":true}}}}", Status::NORMAL.raw()));
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn list_output_keeps_error_status_and_known_metadata_labels() {
     let rendered = render(&output, OutputFormat::List).unwrap();
     assert_eq!(
         strip_ansi(rendered.as_str()),
-        format!("ERROR: status={} (invalid argument)\nOperation: read\nPath: SYS$LOG:BOOT\nType: FILE\nSize: 12\nVersion: 4\n", Status::INVALID_ARGUMENT.raw())
+        format!("ERROR: status={} (invalid argument)\n  ACTION: Fix the request, then submit it again.\n  IMPACT: Nothing was changed.\n  RETRY: Do not retry automatically.\nOperation: read\nPath: SYS$LOG:BOOT\nType: FILE\nSize: 12\nVersion: 4\n", Status::INVALID_ARGUMENT.raw())
     );
 }
 

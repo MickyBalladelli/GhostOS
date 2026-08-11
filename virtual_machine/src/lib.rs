@@ -16,6 +16,7 @@ pub mod replay;
 pub mod migration;
 
 pub const GUEST_ABI_SCHEMA_VERSION: u16 = synos_abi::ABI_SCHEMA_VERSION;
+const INTERACTIVE_STEP_BUDGET: usize = 16_384;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -1002,7 +1003,7 @@ impl Vm {
                 return Ok(TerminalExit::GuestShutdown)
             }
 
-            self.step_cpu(256)?;
+            self.step_cpu(INTERACTIVE_STEP_BUDGET)?;
             self.flush_serial_output();
             self.return_if_guest_panicked()?;
 
