@@ -21,6 +21,7 @@ libc = "0.2"
 synos-app = { path = "../crates/app" }
 synos-ipc = { path = "../crates/ipc" }
 synos-netd = { path = "../crates/netd" }
+synos-init = { path = "../crates/init" }
 synos-pkg = { path = "../crates/pkg" }
 synos-runtime = { path = "../crates/runtime" }
 synos-status = { path = "../crates/status" }

@@ -152,7 +152,7 @@ evidence described in `platforms/README.md`.
 | hardware-accelerated | `SYNOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
 | performance | `cargo test -p synos-vm --test test_environments storage_io_performance_and_integrity` | required | throughput output and test metadata |
-| soak | `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, logs, and resource-drift snapshots |
+| soak | `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle ownership report, logs, and resource-drift snapshots |
 
 The root workspace includes both `synos-test-support` and `synos-vm` in
 `default-members`. Therefore `cargo test` runs every deterministic SynOS and VM

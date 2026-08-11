@@ -51,6 +51,10 @@ SCENARIOS: dict[str, dict[str, object]] = {
         "description": "VM translation cache and terminal teardown workflow",
         "command": ["cargo", "test", "-p", "synos-vm", "--test", "soak_leaks", "--", "--nocapture"],
     },
+    "lifecycle": {
+        "description": "reboot, suspend/resume, memory-hotplug, and service-restart ownership campaign",
+        "command": ["cargo", "test", "-p", "synos-vm", "--test", "lifecycle_soak", "--", "--nocapture"],
+    },
 }
 
 
@@ -305,9 +309,15 @@ def run_once(
     status = 1
     error = None
     timed_out = False
+    lifecycle_report = None
     try:
         with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
-            child = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=stdout, stderr=stderr)
+            run_environment = environment
+            if name == "lifecycle":
+                run_environment = environment.copy()
+                lifecycle_report = report_dir / f"run-{run_number}.lifecycle.json"
+                run_environment["SYNOS_LIFECYCLE_REPORT"] = str(lifecycle_report)
+            child = subprocess.Popen(command, cwd=ROOT, env=run_environment, stdout=stdout, stderr=stderr)
             while child.poll() is None:
                 current_rss = rss_bytes(child.pid)
                 if current_rss is not None:
@@ -381,6 +391,7 @@ def run_once(
         "findings": findings,
         "stdout": str(stdout_path),
         "stderr": str(stderr_path),
+        **({"lifecycle_report": str(lifecycle_report)} if lifecycle_report is not None else {}),
     }
 
 

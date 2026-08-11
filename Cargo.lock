@@ -977,6 +977,7 @@ dependencies = [
  "synos-app",
  "synos-boot-protocol",
  "synos-fabric",
+ "synos-init",
  "synos-ipc",
  "synos-kernel",
  "synos-netd",

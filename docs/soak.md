@@ -6,7 +6,11 @@ Run all bounded workflow soaks with:
 SYNOS_SOAK_RUNS=3 ./scripts/soak.sh
 ```
 
-The runner covers boot, shell, filesystem, network, compiler, cluster, and VM.
+The runner covers boot, shell, filesystem, network, compiler, cluster, VM, and
+the lifecycle campaign. The lifecycle campaign repeats reboot, snapshot-based
+suspend/resume, memory hotplug, and init-service restart paths. It accounts for
+pages, handles, IRQ routes, timers, capabilities, and worker tasks, and fails
+if any ownership remains after a cycle.
 Each command has a per-run timeout. It writes one JSON report to
 `build/soak/report.json` and keeps stdout and stderr beside the scenario that
 produced them.
@@ -24,7 +28,14 @@ Run one workflow when debugging:
 SYNOS_SOAK_RUNS=3 ./scripts/soak.sh --scenario filesystem
 ```
 
+Run only the lifecycle campaign, with a longer cycle count:
+
+```sh
+SYNOS_SOAK_RUNS=3 SYNOS_LIFECYCLE_CYCLES=512 ./scripts/soak.sh --scenario lifecycle
+```
+
 Use `SYNOS_SOAK_<WORKFLOW>_COMMAND` to replace a command, for example
 `SYNOS_SOAK_VM_COMMAND`. The report remains machine-readable and includes the
 resolved command, run count, timeout, tolerance, result state, findings, and
-resource deltas.
+resource deltas. Lifecycle runs also retain one detailed ownership report per
+run at `build/soak/lifecycle/run-<n>.lifecycle.json`.

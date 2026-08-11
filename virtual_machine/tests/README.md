@@ -30,9 +30,12 @@ the boot-image SHA-256 digest where applicable.
 - `qemu_matrix_59_11.rs` and `test_environments.rs`: opt-in QEMU and storage
   integrity checks.
 - `soak_leaks.rs`: repeated translation-cache and terminal teardown checks;
+  `lifecycle_soak.rs` repeats reboot, suspend/resume, memory hotplug, and
+  service restart while checking pages, handles, IRQ routes, timers,
+  capabilities, and worker tasks;
   `scripts/vm-soak.py` adds focused VM host snapshots, while
   `scripts/soak.py` runs the bounded VM workflow alongside boot, shell,
-  filesystem, network, compiler, and cluster workflows.
+  filesystem, network, compiler, cluster, and lifecycle workflows.
 - `benches/bounded.rs`: bounded decode, translation, memory, interrupt,
   storage, network, and terminal performance data in JSON Lines format.
 - `snapshot_terminal_network_10_5.rs`: deterministic snapshot, terminal,

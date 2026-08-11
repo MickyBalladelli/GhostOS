@@ -45,7 +45,7 @@ status = "opt-in"
 
 [[tier]]
 name = "soak"
-command = "SYNOS_SOAK_RUNS=3 ./scripts/soak.sh --scenario vm"
+command = "SYNOS_SOAK_RUNS=3 ./scripts/soak.sh"
 status = "opt-in"
 
 [[tier]]
@@ -486,6 +486,11 @@ tiers = ["qemu"]
 [[test]]
 id = "vm.soak.resource-leak-probe"
 file = "tests/soak_leaks.rs"
+tiers = ["soak"]
+
+[[test]]
+id = "vm.soak.lifecycle-ownership-campaign"
+file = "tests/lifecycle_soak.rs"
 tiers = ["soak"]
 
 [[test]]

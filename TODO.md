@@ -83,11 +83,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       interrupt, control, timer, and deferred work, plus one reserved bulk
       service slot every four ticks. The saturation regression proves high-
       priority progress, bounded queues, and throttled-but-nonzero bulk work.
-- [ ] Add long-duration reboot, suspend/resume, hotplug, and service-restart
+- [x] Add long-duration reboot, suspend/resume, hotplug, and service-restart
       campaigns with leak detection for pages, handles, IRQ routes, timers,
       capabilities, and worker tasks.
       Done when repeated cycles show zero unreclaimed ownership and produce a
       retained machine-readable report.
+      Implementation: [`virtual_machine/tests/lifecycle_soak.rs`](virtual_machine/tests/lifecycle_soak.rs)
+      runs 64 bounded cycles by default; `scripts/soak.py` retains one detailed
+      ownership report per lifecycle run under `build/soak/lifecycle/`.
 
 ## P0: Durable storage and data integrity
 
