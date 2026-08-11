@@ -13,6 +13,7 @@ pub use patch_workflow::{
 };
 
 use synos_fabric::NodeId;
+use synos_observability::{BatchController, ProducerPolicy};
 use synos_pkg::PackageDaemon;
 use synos_status::{IntoStatus, Status};
 use synos_system_model::{ContentId, LogicalName};
@@ -403,6 +404,8 @@ pub struct AuditReport {
     pub packages_scanned: usize,
     pub findings_added: usize,
     pub complete: bool,
+    pub batches: usize,
+    pub interrupts_moderated: usize,
 }
 
 /// Cooperative background scanner. One `poll` checks at most `package_budget`
@@ -410,6 +413,7 @@ pub struct AuditReport {
 pub struct AuditDaemon<const FINDINGS: usize = DEFAULT_FINDING_CAPACITY> {
     findings: [Option<AuditFinding>; FINDINGS],
     cursor: usize,
+    controller: BatchController,
 }
 
 impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
@@ -417,6 +421,7 @@ impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
         Self {
             findings: [None; FINDINGS],
             cursor: 0,
+            controller: BatchController::new(ProducerPolicy::AUDIT),
         }
     }
 
@@ -447,8 +452,9 @@ impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
             self.findings.fill(None)
         }
 
+        let decision = self.controller.plan(package_budget, 1, 0, false);
         let mut report = AuditReport::default();
-        while report.packages_scanned < package_budget {
+        while report.packages_scanned < decision.count {
             let Some(manifest) = packages.manifests().nth(self.cursor).copied() else {
                 self.cursor = 0;
                 report.complete = true;
@@ -473,6 +479,10 @@ impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
                 )?;
             }
             report.findings_added += self.findings().count() - before;
+        }
+        if report.packages_scanned != 0 {
+            report.batches = 1;
+            report.interrupts_moderated = usize::from(decision.interrupt);
         }
         Ok(report)
     }

@@ -1,4 +1,5 @@
 use synos_time_sync::MonotonicClock;
+use synos_observability::{BatchController, BatchDecision, ProducerPolicy};
 
 use crate::memory::SharedMemory;
 use crate::service::{ClientChannel, NetworkDaemon, ServiceError, SocketBackend};
@@ -16,6 +17,7 @@ pub struct NetworkServiceActivity {
     pub dhcp_error: Option<DhcpError>,
     pub socket_requests: usize,
     pub service_error: Option<ServiceError>,
+    pub batch: BatchDecision,
 }
 
 /// Bounded coordinator for the Ring 3 network service.
@@ -26,6 +28,7 @@ pub struct NetworkServiceActivity {
 pub struct NetworkServiceScheduler {
     socket_request_budget: usize,
     stack_ingress_budget: usize,
+    controller: BatchController,
 }
 
 impl NetworkServiceScheduler {
@@ -33,6 +36,7 @@ impl NetworkServiceScheduler {
         Self {
             socket_request_budget,
             stack_ingress_budget: DEFAULT_SOCKET_INGRESS_BUDGET,
+            controller: BatchController::new(ProducerPolicy::NETWORK),
         }
     }
 
@@ -43,6 +47,7 @@ impl NetworkServiceScheduler {
         Self {
             socket_request_budget,
             stack_ingress_budget,
+            controller: BatchController::new(ProducerPolicy::NETWORK),
         }
     }
 
@@ -76,9 +81,15 @@ impl NetworkServiceScheduler {
         M: SharedMemory,
     {
         let now_ms = clock.now_us() / 1_000;
+        let batch = self.controller.plan(
+            self.stack_ingress_budget,
+            1,
+            0,
+            self.socket_request_budget != 0,
+        );
         let stack = daemon.backend_mut().poll_network(
             core::cmp::min(now_ms, i64::MAX as u64) as i64,
-            self.stack_ingress_budget,
+            batch.count,
         );
         let dhcp_error = dhcp.poll(now_ms, transport, runtime).err();
         let dhcp_retries = dhcp.retry_count();
@@ -100,6 +111,7 @@ impl NetworkServiceScheduler {
             dhcp_error,
             socket_requests,
             service_error,
+            batch,
         }
     }
 
@@ -129,11 +141,17 @@ impl NetworkServiceScheduler {
         M: SharedMemory,
     {
         let now_ms = clock.now_us() / 1_000;
+        let batch = self.controller.plan(
+            self.stack_ingress_budget,
+            1,
+            0,
+            self.socket_request_budget != 0,
+        );
         let stack = {
             let backend = daemon.backend_mut();
             backend.poll_network(
                 core::cmp::min(now_ms, i64::MAX as u64) as i64,
-                self.stack_ingress_budget,
+                batch.count,
             )
         };
         let dhcp_error = {
@@ -159,6 +177,7 @@ impl NetworkServiceScheduler {
             dhcp_error,
             socket_requests,
             service_error,
+            batch,
         }
     }
 }

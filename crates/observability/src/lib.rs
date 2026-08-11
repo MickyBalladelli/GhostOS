@@ -7,6 +7,7 @@ use synos_status::Status;
 pub use synos_system_model::ContentId;
 
 pub mod profiling;
+pub mod throughput;
 
 pub use profiling::{
     drain_profile, record_profile_sample, redacted_host_id, validate_profile_export,
@@ -15,6 +16,7 @@ pub use profiling::{
     MAX_PROFILE_FRAMES, MAX_PROFILE_STACKS, PROFILE_HEADER_BYTES, PROFILE_MAGIC,
     PROFILE_STACK_RECORD_BYTES, PROFILE_VERSION, SYSTEM_PROFILE,
 };
+pub use throughput::{BatchController, BatchDecision, ProducerPolicy};
 
 pub const MAX_EVENT_FIELDS: usize = 4;
 pub const JOURNAL_RECORD_SIZE: usize = 128;

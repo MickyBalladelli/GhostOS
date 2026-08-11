@@ -55,6 +55,8 @@ fn daemon_filters_operator_delivery_and_reports_rotation() {
         versions_rotated: 3,
         trace_records_dropped: 0,
         audit_records_dropped: 0,
+        batches: 2,
+        interrupts_moderated: 0,
     });
     assert_eq!(delivered, vec![(7, 2)]);
     assert_eq!(writer.records.len(), 3);

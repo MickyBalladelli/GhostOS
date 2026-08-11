@@ -458,6 +458,7 @@ version = "0.1.0"
 dependencies = [
  "syn-script",
  "synos-fabric",
+ "synos-observability",
  "synos-pkg",
  "synos-status",
  "synos-synfs",

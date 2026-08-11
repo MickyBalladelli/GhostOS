@@ -4,8 +4,9 @@
 use synos_observability::{
     AuditJournal, AuditKey, AuditQuery, EventKind, JOURNAL_RECORD_SIZE, Level,
     SECURITY_AUDIT, SYSTEM_TRACE, TraceEvent, TraceRing, decode_record, encode_record,
-    DEFAULT_RECOVERY_AUDIT_CAPACITY,
+    DEFAULT_RECOVERY_AUDIT_CAPACITY, MAX_TELEMETRY_BATCH,
 };
+use synos_observability::{BatchController, ProducerPolicy};
 use synos_synfs::{
     CapacityObservation, CapacityResource, Error as SynFsError, SynFs, SynfsPurged,
 };
@@ -34,6 +35,13 @@ pub enum JournalStream {
 
 pub trait JournalWriter {
     fn append(&mut self, stream: JournalStream, event: TraceEvent) -> Result<(), LogError>;
+
+    fn append_batch(&mut self, stream: JournalStream, events: &[TraceEvent]) -> Result<(), LogError> {
+        for event in events {
+            self.append(stream, *event)?
+        }
+        Ok(())
+    }
 
     fn rotate(&mut self, work_budget: usize) -> Result<usize, LogError>;
 }
@@ -330,6 +338,8 @@ pub struct PollReport {
     pub versions_rotated: usize,
     pub trace_records_dropped: u64,
     pub audit_records_dropped: u64,
+    pub batches: usize,
+    pub interrupts_moderated: usize,
 }
 
 /// Ring-3 daemon state machine. The ring references represent read-only pages
@@ -337,6 +347,7 @@ pub struct PollReport {
 pub struct LogDaemon {
     last_trace_dropped: u64,
     last_audit_dropped: u64,
+    controller: BatchController,
 }
 
 impl LogDaemon {
@@ -344,6 +355,7 @@ impl LogDaemon {
         Self {
             last_trace_dropped: 0,
             last_audit_dropped: 0,
+            controller: BatchController::new(ProducerPolicy::LOGGING),
         }
     }
 
@@ -360,21 +372,85 @@ impl LogDaemon {
         opcom: &Opcom<SUBSCRIBERS>,
         record_budget: usize,
         rotation_budget: usize,
+        deliver: impl FnMut(TerminalId, TraceEvent),
+    ) -> Result<PollReport, LogError> {
+        self.poll_with_policy(
+            trace,
+            audit,
+            writer,
+            opcom,
+            record_budget,
+            rotation_budget,
+            0,
+            false,
+            deliver,
+        )
+    }
+
+    pub fn poll_with_policy<
+        const TRACE_CAPACITY: usize,
+        const AUDIT_CAPACITY: usize,
+        const SUBSCRIBERS: usize,
+        Writer: JournalWriter,
+    >(
+        &mut self,
+        trace: &TraceRing<TRACE_CAPACITY>,
+        audit: &TraceRing<AUDIT_CAPACITY>,
+        writer: &mut Writer,
+        opcom: &Opcom<SUBSCRIBERS>,
+        record_budget: usize,
+        rotation_budget: usize,
+        now_us: u64,
+        interactive_pending: bool,
         mut deliver: impl FnMut(TerminalId, TraceEvent),
     ) -> Result<PollReport, LogError> {
         let mut report = PollReport::default();
-        while report.system_records < record_budget {
+        let trace_decision = self.controller.plan(
+            trace.pending().min(record_budget),
+            JOURNAL_RECORD_SIZE,
+            now_us,
+            interactive_pending,
+        );
+        let mut trace_batch = [TraceEvent::new(Level::Info, EventKind::Kernel); MAX_TELEMETRY_BATCH];
+        let mut trace_count = 0;
+        while trace_count < trace_decision.count {
             let Some(event) = trace.try_pop() else { break };
-            writer.append(JournalStream::System, event)?;
-            report.system_records += 1;
-            if event.level >= Level::Error || event.kind == EventKind::Operator {
-                report.operator_deliveries += opcom.broadcast(event, &mut deliver)
+            trace_batch[trace_count] = event;
+            trace_count += 1;
+        }
+        if trace_count != 0 {
+            writer.append_batch(JournalStream::System, &trace_batch[..trace_count])?;
+            report.batches += 1;
+            report.system_records = trace_count;
+            for event in &trace_batch[..trace_count] {
+                if event.level >= Level::Error || event.kind == EventKind::Operator {
+                    report.operator_deliveries += opcom.broadcast(*event, &mut deliver)
+                }
             }
         }
-        while report.audit_records < record_budget {
+        if trace_decision.interrupt {
+            report.interrupts_moderated += 1
+        }
+        let audit_decision = self.controller.plan(
+            audit.pending().min(record_budget.saturating_sub(report.system_records)),
+            JOURNAL_RECORD_SIZE,
+            now_us,
+            interactive_pending,
+        );
+        let mut audit_batch = [TraceEvent::new(Level::Info, EventKind::Audit); MAX_TELEMETRY_BATCH];
+        let mut audit_count = 0;
+        while audit_count < audit_decision.count {
             let Some(event) = audit.try_pop() else { break };
-            writer.append(JournalStream::SecurityAudit, event)?;
-            report.audit_records += 1
+            audit_batch[audit_count] = event;
+            audit_count += 1;
+        }
+        if audit_count != 0 {
+            writer.append_batch(JournalStream::SecurityAudit, &audit_batch[..audit_count])?;
+            report.batches += 1;
+            report.audit_records = audit_count
+        }
+        if audit_decision.interrupt {
+            report.interrupts_moderated += 1
         }
         report.versions_rotated = writer.rotate(rotation_budget)?;
         let trace_dropped = trace.dropped();

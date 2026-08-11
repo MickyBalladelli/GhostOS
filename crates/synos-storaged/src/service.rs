@@ -3,13 +3,17 @@ use crate::{
     cache::CacheMode,
     protocol::{Endpoint, EndpointError, Protocol, ProtocolFeatures},
 };
-use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
+use synos_observability::{
+    BatchController, CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level,
+    ProducerPolicy,
+};
 use synos_ipc::{BufferCapability, BufferError, BufferLease, BufferOwner, BufferRights, SharedBuffer};
 
 pub const MAX_MOUNTS: usize = 32;
 pub const MAX_PENDING_IO: usize = 64;
 pub const MAX_STORAGE_PATH_BYTES: usize = 256;
 pub const ADMIN_MOUNT_ID: u32 = 1;
+pub const MAX_STORAGE_BATCH: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoragePathError {
@@ -229,6 +233,14 @@ pub struct Completion {
     pub status: Result<(), StorageError>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StorageBatchReport {
+    pub requests: usize,
+    pub bytes: usize,
+    pub interrupt: bool,
+    pub fairness_yield: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MountError {
     Capacity,
@@ -263,6 +275,7 @@ pub struct StorageDaemon {
     next_request: u64,
     pending: [Option<IoRequest>; MAX_PENDING_IO],
     completions: [Option<Completion>; MAX_PENDING_IO],
+    controller: BatchController,
 }
 
 impl StorageDaemon {
@@ -275,6 +288,7 @@ impl StorageDaemon {
             next_request: 1,
             pending: [None; MAX_PENDING_IO],
             completions: [None; MAX_PENDING_IO],
+            controller: BatchController::new(ProducerPolicy::STORAGE),
         }
     }
 
@@ -518,6 +532,42 @@ impl StorageDaemon {
                 ..completion
             })
         }
+    }
+
+    /// Take one bounded batch for a storage adapter. Taking ownership prevents
+    /// a request from being dispatched twice. The adapter must later report
+    /// each request through its normal completion path.
+    pub fn take_io_batch(
+        &mut self,
+        output: &mut [Option<IoRequest>],
+        _now_us: u64,
+        interactive_pending: bool,
+    ) -> StorageBatchReport {
+        output.fill(None);
+        let pending = self.pending.iter().flatten().count();
+        let decision = self.controller.plan(pending, 1, 0, interactive_pending);
+        let max_bytes = self.controller.policy().max_bytes;
+        let limit = decision.count.min(output.len()).min(MAX_STORAGE_BATCH);
+        let mut report = StorageBatchReport {
+            interrupt: decision.interrupt,
+            fairness_yield: decision.fairness_yield,
+            ..StorageBatchReport::default()
+        };
+        for slot in &mut self.pending {
+            if report.requests >= limit {
+                break
+            }
+            let Some(request) = *slot else { continue };
+            let next_bytes = report.bytes.saturating_add(request.length);
+            if next_bytes > max_bytes && report.requests != 0 {
+                break
+            }
+            *slot = None;
+            output[report.requests] = Some(request);
+            report.requests += 1;
+            report.bytes = next_bytes;
+        }
+        report
     }
 
     pub fn poll_completion(&mut self) -> Option<Completion> {

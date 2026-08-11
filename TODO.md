@@ -257,10 +257,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       row uploads, HTTP/gRPC frames, and client RPC transports expose guarded
       paths. The guarded paths borrow shared bytes directly or perform one
       bounded copy and reuse the reference encoders/checksums.
-- [ ] Add batching, coalescing, and interrupt moderation policies for storage,
+- [x] Add batching, coalescing, and interrupt moderation policies for storage,
       network, logging, and audit producers.
       Done when batching improves throughput without exceeding interactive
       latency, memory, or fairness budgets.
+      Implementation: [`crates/observability/src/throughput.rs`](crates/observability/src/throughput.rs)
+      provides fixed batch, memory, delay, interrupt, and fairness budgets.
+      Storage adapters take bounded request batches, netd applies the policy to
+      ingress work, logd writes journal records through bounded batch calls, and
+      audit scans use bounded package batches. Each path reports moderation or
+      fairness decisions and keeps the existing fixed-capacity queues.
 - [ ] Add adaptive cache policies for SynFS metadata, package artifacts,
       compiler outputs, DNS, cluster membership, and VM translation blocks.
       Done when hit rate, eviction cost, memory ceiling, and stale-data risk are

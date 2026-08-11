@@ -78,7 +78,8 @@ pub use security::{
 };
 pub use service::{
     Completion, IoOperation, IoRequest, MountError, MountId, MountInfo, MountOptions,
-    MountState, StorageDaemon, StorageError, StoragePath, MAX_MOUNTS, MAX_PENDING_IO,
+    MountState, StorageBatchReport, StorageDaemon, StorageError, StoragePath, MAX_MOUNTS,
+    MAX_PENDING_IO, MAX_STORAGE_BATCH,
 };
 pub use state::{MountCatalog, MountStateError, MOUNTS_STATE_FILE, MOUNTS_STATE_MAGIC};
 pub use tiering::{
