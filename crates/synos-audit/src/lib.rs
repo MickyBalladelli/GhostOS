@@ -13,7 +13,7 @@ pub use patch_workflow::{
 };
 
 use synos_fabric::NodeId;
-use synos_observability::{BatchController, ProducerPolicy};
+use synos_observability::{BatchController, ProducerPolicy, ScalePath, ScalePolicy};
 use synos_pkg::PackageDaemon;
 use synos_status::{IntoStatus, Status};
 use synos_system_model::{ContentId, LogicalName};
@@ -90,6 +90,7 @@ pub enum AuditError {
     FindingCapacity,
     InvalidAdvisoryId,
     InvalidBudget,
+    CoreIsolated,
     DuplicateObsolete,
     InvalidObsolete,
     ObsoleteCapacity,
@@ -102,6 +103,7 @@ impl IntoStatus for AuditError {
             Self::DuplicateAdvisory | Self::InvalidAdvisoryId | Self::InvalidBudget => {
                 Status::INVALID_ARGUMENT
             }
+            Self::CoreIsolated => Status::BUSY,
             Self::DuplicateObsolete | Self::InvalidObsolete => Status::INVALID_ARGUMENT,
             Self::ObsoleteCapacity => Status::NO_SPACE,
         }
@@ -414,6 +416,7 @@ pub struct AuditDaemon<const FINDINGS: usize = DEFAULT_FINDING_CAPACITY> {
     findings: [Option<AuditFinding>; FINDINGS],
     cursor: usize,
     controller: BatchController,
+    scale_policy: ScalePolicy,
 }
 
 impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
@@ -422,7 +425,37 @@ impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
             findings: [None; FINDINGS],
             cursor: 0,
             controller: BatchController::new(ProducerPolicy::AUDIT),
+            scale_policy: ScalePolicy::for_cpu_count(1).expect("one CPU scale tier"),
         }
+    }
+
+    pub const fn scale_policy(&self) -> ScalePolicy {
+        self.scale_policy
+    }
+
+    pub fn set_scale_policy(&mut self, policy: ScalePolicy) {
+        self.scale_policy = policy
+    }
+
+    pub const fn accepts_on(&self, cpu: usize) -> bool {
+        self.scale_policy.accepts(ScalePath::Audit, cpu)
+    }
+
+    pub fn poll_on_cpu<
+        const PACKAGES: usize,
+        const KEYS: usize,
+        Database: AdvisoryDatabase,
+    >(
+        &mut self,
+        cpu: usize,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        database: &Database,
+        package_budget: usize,
+    ) -> Result<AuditReport, AuditError> {
+        if !self.accepts_on(cpu) {
+            return Err(AuditError::CoreIsolated)
+        }
+        self.poll(packages, database, package_budget)
     }
 
     pub const fn cursor(&self) -> usize {

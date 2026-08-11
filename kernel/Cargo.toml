@@ -16,6 +16,10 @@ harness = false
 name = "hot_allocator"
 harness = false
 
+[[bench]]
+name = "scalability"
+harness = false
+
 [[bin]]
 name = "synos-kernel"
 path = "src/main.rs"

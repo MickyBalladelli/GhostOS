@@ -9,6 +9,7 @@ pub use synos_system_model::ContentId;
 pub mod profiling;
 pub mod throughput;
 pub mod cache;
+pub mod scaling;
 
 pub use cache::{
     CacheEvent, CacheKind, CachePolicy, CachePolicyError, CachePolicyRegistry,
@@ -23,6 +24,9 @@ pub use profiling::{
     PROFILE_STACK_RECORD_BYTES, PROFILE_VERSION, SYSTEM_PROFILE,
 };
 pub use throughput::{BatchController, BatchDecision, ProducerPolicy};
+pub use scaling::{
+    AffinitySet, ScalePath, ScalePolicy, SCALE_CPU_TIERS,
+};
 
 pub const MAX_EVENT_FIELDS: usize = 4;
 pub const JOURNAL_RECORD_SIZE: usize = 128;

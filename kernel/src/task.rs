@@ -1,7 +1,7 @@
 use crate::persona::ExecutionPersona;
 
 pub const MAX_THREADS: usize = 64;
-pub const MAX_CPUS: usize = 64;
+pub const MAX_CPUS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -23,42 +23,60 @@ impl CpuId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct CpuMask(u64);
+pub struct CpuMask([u64; 2]);
 
 impl CpuMask {
-    pub const EMPTY: Self = Self(0);
-    pub const CPU0: Self = Self(1);
+    pub const EMPTY: Self = Self([0; 2]);
+    pub const CPU0: Self = Self([1, 0]);
 
     pub const fn from_raw(raw: u64) -> Self {
-        Self(raw)
+        Self([raw, 0])
+    }
+
+    pub const fn from_words(low: u64, high: u64) -> Self {
+        Self([low, high])
     }
 
     pub const fn all() -> Self {
-        Self(u64::MAX)
+        Self([u64::MAX; 2])
     }
 
     pub const fn raw(self) -> u64 {
+        self.0[0]
+    }
+
+    pub const fn raw_words(self) -> [u64; 2] {
         self.0
     }
 
     pub const fn is_empty(self) -> bool {
-        self.0 == 0
+        self.0[0] == 0 && self.0[1] == 0
     }
 
     pub const fn contains(self, cpu: CpuId) -> bool {
-        self.0 & (1u64 << cpu.raw()) != 0
+        let raw = cpu.raw() as usize;
+        self.0[raw / 64] & (1u64 << (raw % 64)) != 0
     }
 
     pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
+        Self([self.0[0] | other.0[0], self.0[1] | other.0[1]])
     }
 
     pub const fn difference(self, other: Self) -> Self {
-        Self(self.0 & !other.0)
+        Self([self.0[0] & !other.0[0], self.0[1] & !other.0[1]])
     }
 
     pub const fn intersects(self, other: Self) -> bool {
-        self.0 & other.0 != 0
+        self.0[0] & other.0[0] != 0 || self.0[1] & other.0[1] != 0
+    }
+
+    pub const fn from_cpu(cpu: CpuId) -> Self {
+        let raw = cpu.raw() as usize;
+        if raw < 64 {
+            Self([1u64 << raw, 0])
+        } else {
+            Self([0, 1u64 << (raw - 64)])
+        }
     }
 }
 

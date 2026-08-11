@@ -40,3 +40,7 @@ min_throughput_per_second = 1_000
 [benchmark.terminal]
 max_latency_ns = 5_000_000_000
 min_throughput_per_second = 1_000
+
+[benchmark.kernel-scale]
+max_latency_ns = 100_000
+min_throughput_per_second = 1_000

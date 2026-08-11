@@ -707,7 +707,7 @@ fn parse_cpu_mask(value: &str) -> Result<CpuMask, Status> {
     for part in value.split(',') {
         let raw = part.trim().parse::<u8>().map_err(|_| Status::INVALID_ARGUMENT)?;
         let cpu = CpuId::new(raw).ok_or(Status::INVALID_ARGUMENT)?;
-        let bit = CpuMask::from_raw(1u64 << cpu.raw());
+        let bit = CpuMask::from_cpu(cpu);
         if mask.intersects(bit) {
             return Err(Status::INVALID_ARGUMENT)
         }

@@ -304,10 +304,14 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P1: Horizontal and vertical scalability
 
-- [ ] Scale scheduler, IPC, timers, logging, and audit paths across 1, 2, 8,
+- [x] Scale scheduler, IPC, timers, logging, and audit paths across 1, 2, 8,
       32, and 128 logical CPUs with explicit affinity and isolation policies.
       Done when throughput scales, tail latency stays within budget, and shared
-      locks or queues have measured saturation points.
+      locks or queues have measured saturation points. Implementation and
+      repeatable evidence harness: [`docs/scalability.md`](docs/scalability.md),
+      [`crates/observability/src/scaling.rs`](crates/observability/src/scaling.rs),
+      [`kernel/src/task.rs`](kernel/src/task.rs), and
+      [`kernel/benches/scalability.rs`](kernel/benches/scalability.rs).
 - [ ] Add NUMA-aware placement for processes, memory, queues, storage workers,
       and network interrupts.
       Done when remote-memory traffic and placement decisions are observable and

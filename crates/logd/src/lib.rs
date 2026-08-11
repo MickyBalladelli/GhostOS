@@ -4,7 +4,7 @@
 use synos_observability::{
     AuditJournal, AuditKey, AuditQuery, EventKind, JOURNAL_RECORD_SIZE, Level,
     SECURITY_AUDIT, SYSTEM_TRACE, TraceEvent, TraceRing, decode_record, encode_record,
-    DEFAULT_RECOVERY_AUDIT_CAPACITY, MAX_TELEMETRY_BATCH,
+    DEFAULT_RECOVERY_AUDIT_CAPACITY, MAX_TELEMETRY_BATCH, ScalePath, ScalePolicy,
 };
 use synos_observability::{BatchController, ProducerPolicy};
 use synos_synfs::{
@@ -23,6 +23,7 @@ pub enum LogError {
     Journal,
     Recovery,
     RecoveryUnavailable,
+    CoreIsolated,
     SubscriberCapacity,
     UnknownSubscriber,
 }
@@ -348,6 +349,7 @@ pub struct LogDaemon {
     last_trace_dropped: u64,
     last_audit_dropped: u64,
     controller: BatchController,
+    scale_policy: ScalePolicy,
 }
 
 impl LogDaemon {
@@ -356,7 +358,54 @@ impl LogDaemon {
             last_trace_dropped: 0,
             last_audit_dropped: 0,
             controller: BatchController::new(ProducerPolicy::LOGGING),
+            scale_policy: ScalePolicy::for_cpu_count(1).expect("one CPU scale tier"),
         }
+    }
+
+    pub const fn scale_policy(&self) -> ScalePolicy {
+        self.scale_policy
+    }
+
+    pub fn set_scale_policy(&mut self, policy: ScalePolicy) {
+        self.scale_policy = policy
+    }
+
+    pub const fn accepts_on(&self, cpu: usize) -> bool {
+        self.scale_policy.accepts(ScalePath::Logging, cpu)
+    }
+
+    pub fn poll_on_cpu<
+        const TRACE_CAPACITY: usize,
+        const AUDIT_CAPACITY: usize,
+        const SUBSCRIBERS: usize,
+        Writer: JournalWriter,
+    >(
+        &mut self,
+        cpu: usize,
+        trace: &TraceRing<TRACE_CAPACITY>,
+        audit: &TraceRing<AUDIT_CAPACITY>,
+        writer: &mut Writer,
+        opcom: &Opcom<SUBSCRIBERS>,
+        record_budget: usize,
+        rotation_budget: usize,
+        now_us: u64,
+        interactive_pending: bool,
+        deliver: impl FnMut(TerminalId, TraceEvent),
+    ) -> Result<PollReport, LogError> {
+        if !self.accepts_on(cpu) {
+            return Err(LogError::CoreIsolated)
+        }
+        self.poll_with_policy(
+            trace,
+            audit,
+            writer,
+            opcom,
+            record_budget,
+            rotation_budget,
+            now_us,
+            interactive_pending,
+            deliver,
+        )
     }
 
     pub fn poll<

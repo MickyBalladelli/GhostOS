@@ -7,7 +7,7 @@ use crate::task::{
 use crate::partition::{CorePartition, CorePartitionError};
 use synos_observability::{
     CapabilityDomain, CapabilityTraceStage, Level, ProfileDomain, ProfileSample,
-    emit_capability_trace, record_profile_sample,
+    ScalePolicy, emit_capability_trace, record_profile_sample,
 };
 use synos_status::{IntoStatus, Severity, Status, facility};
 
@@ -203,6 +203,42 @@ impl Scheduler {
 
     pub const fn partition(&self) -> CorePartition {
         self.partition
+    }
+
+    pub const fn scale_policy(cpu_count: usize) -> Option<ScalePolicy> {
+        ScalePolicy::for_cpu_count(cpu_count)
+    }
+
+    /// Apply one of the qualified CPU layouts to scheduler-owned paths.
+    /// Housekeeping CPUs run scheduler, IPC, and timer work; isolated CPUs
+    /// remain available only to explicitly pinned workloads.
+    pub fn configure_scale_policy<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        policy: ScalePolicy,
+    ) -> Result<(), SchedulerError> {
+        self.authorize_system_control(capabilities, caller, authority)?;
+        let online = policy.online().words();
+        self.partition
+            .set_online(CpuMask::from_words(online[0], online[1]))
+            .map_err(map_partition_error)?;
+        let isolated = policy.isolated().words();
+        let isolated = CpuMask::from_words(isolated[0], isolated[1]);
+        if !isolated.is_empty() {
+            self.partition.isolate(isolated).map_err(map_partition_error)?
+        }
+        for raw in 0..crate::task::MAX_CPUS as u8 {
+            if let Some(cpu) = CpuId::new(raw) {
+                crate::arch::interrupts::set_core_isolated(
+                    cpu.raw(),
+                    self.partition.is_isolated(cpu),
+                )
+            }
+        }
+        self.debug_check();
+        Ok(())
     }
 
     pub fn set_online_cores<const MAX_CAPABILITIES: usize>(

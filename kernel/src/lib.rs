@@ -103,6 +103,7 @@ pub use persona::{
     ExecutionPersona, IdentityId, PersonaError, RightIdentifier, MAX_PERSONA_RIGHTS,
 };
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
+pub use synos_observability::{AffinitySet, ScalePath, ScalePolicy, SCALE_CPU_TIERS};
 pub use task::{
     AddressSpaceId, Context, CpuId, CpuMask, ExecutionMode, SchedulingPolicy, Thread, ThreadId,
     ThreadState,
