@@ -15,7 +15,10 @@ smoltcp = { version = "0.13.1", default-features = false, features = [
     "socket-tcp",
     "auto-icmp-echo-reply",
 ] }
+synos-auth = { path = "../auth" }
+synos-fabric = { path = "../fabric" }
 synos-ipc = { path = "../ipc" }
+synos-kernel = { path = "../../kernel" }
 synos-observability = { path = "../observability" }
 synos-status = { path = "../status" }
 synos-time-sync = { path = "../time-sync" }

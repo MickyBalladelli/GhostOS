@@ -1,4 +1,7 @@
 use crate::capture::{CaptureDirection, CaptureKind, PacketCapture};
+use synos_auth::{CapabilityKey as LeaseKey, CapabilityLease, LeaseContext, LeaseError};
+use synos_fabric::NodeId;
+use synos_kernel::Rights;
 
 pub const POLICY_PATH: &str = "SYS$SYSTEM:FIREWALL.POLICY;1";
 pub const MAX_FIREWALL_RULES: usize = 32;
@@ -625,6 +628,8 @@ pub struct CapabilityKey([u8; 32]);
 
 impl CapabilityKey {
     pub const fn new(bytes: [u8; 32]) -> Self { Self(bytes) }
+
+    pub const fn bytes(self) -> [u8; 32] { self.0 }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -647,6 +652,7 @@ pub struct NetworkCapability {
     pub destination: Ipv4Cidr,
     pub expires_at_ms: u64,
     pub nonce: u64,
+    lease: CapabilityLease,
     tag: PacketSignature,
 }
 
@@ -663,6 +669,23 @@ impl NetworkCapability {
         if principal == 0 || rights == 0 || expires_at_ms == 0 || nonce == 0 {
             return Err(FirewallError::InvalidCapability)
         }
+        let lease = CapabilityLease::issue(
+            LeaseKey::new(key.bytes()),
+            NodeId::LOCAL,
+            NodeId::new(u32::try_from(principal).map_err(|_| FirewallError::InvalidCapability)?)
+                .ok_or(FirewallError::InvalidCapability)?,
+            NodeId::LOCAL,
+            scope_object(local_ports, destination),
+            principal,
+            1,
+            NETWORK_PURPOSE,
+            Rights::CONTROL,
+            0,
+            expires_at_ms,
+            1,
+            nonce,
+        )
+        .map_err(|_| FirewallError::InvalidCapability)?;
         let mut token = Self {
             principal,
             rights,
@@ -670,6 +693,7 @@ impl NetworkCapability {
             destination,
             expires_at_ms,
             nonce,
+            lease,
             tag: PacketSignature([0; 32]),
         };
         token.tag = mac(key, &token.bytes());
@@ -698,6 +722,24 @@ impl NetworkCapability {
                 FirewallError::InvalidCapability
             })
         }
+        let subject = NodeId::new(u32::try_from(principal).map_err(|_| FirewallError::InvalidCapability)?)
+            .ok_or(FirewallError::InvalidCapability)?;
+        self.lease
+            .authorize(
+                LeaseKey::new(key.bytes()),
+                LeaseContext {
+                    subject,
+                    audience: NodeId::LOCAL,
+                    object: scope_object(self.local_ports, self.destination),
+                    tenant: principal,
+                    generation: 1,
+                    purpose: NETWORK_PURPOSE,
+                    required: Rights::CONTROL,
+                    now_us: now_ms,
+                },
+                1,
+            )
+            .map_err(map_lease_error)?;
         Ok(())
     }
 
@@ -712,6 +754,42 @@ impl NetworkCapability {
         bytes[24..32].copy_from_slice(&self.expires_at_ms.to_le_bytes());
         bytes[32..40].copy_from_slice(&self.nonce.to_le_bytes());
         bytes
+    }
+}
+
+const NETWORK_PURPOSE: u64 = 1;
+
+fn scope_object(local_ports: PortRange, destination: Ipv4Cidr) -> u64 {
+    let mut object = u64::from_be_bytes([
+        destination.address[0],
+        destination.address[1],
+        destination.address[2],
+        destination.address[3],
+        destination.prefix,
+        0,
+        0,
+        0,
+    ]);
+    object = object.wrapping_mul(257).wrapping_add(u64::from(local_ports.first));
+    object = object.wrapping_mul(257).wrapping_add(u64::from(local_ports.last));
+    object.max(1)
+}
+
+fn map_lease_error(error: LeaseError) -> FirewallError {
+    match error {
+        LeaseError::Expired | LeaseError::NotYetValid => FirewallError::ExpiredCapability,
+        LeaseError::Invalid
+        | LeaseError::InvalidSignature
+        | LeaseError::SubjectMismatch
+        | LeaseError::AudienceMismatch
+        | LeaseError::ObjectMismatch
+        | LeaseError::TenantMismatch
+        | LeaseError::GenerationMismatch
+        | LeaseError::PurposeMismatch
+        | LeaseError::RightsDenied
+        | LeaseError::Revoked
+        | LeaseError::Replay
+        | LeaseError::ReplayCapacity => FirewallError::InvalidCapability,
     }
 }
 

@@ -5,6 +5,7 @@ pub mod identity;
 pub mod federation;
 pub mod federation_control;
 pub mod lending;
+pub mod lease;
 pub mod logical;
 pub mod remote;
 pub mod token;
@@ -27,6 +28,7 @@ pub use federation_control::{
 pub use lending::{
     LendingError, LendingKind, LendingRights, ResourceLender, RevocationAction,
 };
+pub use lease::{CapabilityLease, LeaseContext, LeaseError, LeaseReplayGuard};
 pub use logical::{CapabilityLogicalNames, LogicalNamespace};
 pub use remote::{
     DEFAULT_REMOTE_SCOPE_CAPACITY, MAX_REMOTE_CHALLENGE_LIFETIME_US,

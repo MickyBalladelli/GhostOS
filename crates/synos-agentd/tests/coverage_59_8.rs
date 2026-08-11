@@ -60,6 +60,50 @@ fn semantic_bus_rejects_bad_inputs_and_revoked_capabilities() {
 }
 
 #[test]
+fn semantic_bus_lease_binds_channel_and_revocation_epoch() {
+    let owner = NodeId::new(2).unwrap();
+    let mut bus = ContextBus::<2, 2, 2, 8>::new(
+        NodeId::LOCAL,
+        CapabilityKey::new([6; 32]),
+        synos_agentd::CONTEXT_RESOURCE,
+    )
+    .unwrap();
+    let token = bus
+        .issue_capability(
+            owner,
+            Rights::READ.union(Rights::MAP),
+            TransportRights::LAYER2,
+            0,
+            100,
+        )
+        .unwrap();
+    let lease = bus
+        .issue_lease(owner, 7, 3, 11, Rights::READ.union(Rights::MAP), 0, 100)
+        .unwrap();
+    let channel = bus
+        .open_channel_with_lease(
+            token,
+            lease,
+            owner,
+            TransportRights::LAYER2,
+            7,
+            3,
+            11,
+            10,
+        )
+        .unwrap();
+    let mut output = [None; 1];
+    assert!(bus
+        .query_channel(&channel, &[1.0; 2], 1, 10, &mut output)
+        .is_ok());
+    bus.revoke_all();
+    assert_eq!(
+        bus.query_channel(&channel, &[1.0; 2], 1, 10, &mut output),
+        Err(AgentError::AccessDenied)
+    );
+}
+
+#[test]
 fn semantic_ingest_queue_coalesces_duplicates_and_fails_fast_when_full() {
     let owner = NodeId::new(2).unwrap();
     let mut bus = ContextBus::<2, 2, 2, 8>::new(

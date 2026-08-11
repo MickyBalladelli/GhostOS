@@ -7,7 +7,8 @@ use syn_script::{
 };
 use syn_shell::parser::{CommandRegistration, CommandRegistry};
 use synos_auth::{
-    CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights,
+    CapabilityCaveat, CapabilityKey, CapabilityLease, CryptographicCapability, LeaseContext,
+    LeaseError, TokenError, TransportRights,
 };
 use synos_fabric::NodeId;
 use synos_kernel::Rights;
@@ -16,6 +17,8 @@ use synos_synfs::SynFs;
 use synos_system_model::command::StructuredOutput;
 
 pub const DEFAULT_AGENT_GRANT_CAPACITY: usize = 64;
+const AGENT_TENANT: u64 = 1;
+const AGENT_PURPOSE: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunMode {
@@ -56,6 +59,7 @@ impl AgentTaskScope {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AgentGrant {
     token: CryptographicCapability,
+    lease: CapabilityLease,
     subject: NodeId,
     resource: u64,
     rights: Rights,
@@ -148,8 +152,25 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
             expires_at_us,
         })
         .map_err(Error::Token)?;
+        let lease = CapabilityLease::issue(
+            self.key,
+            self.issuer,
+            subject,
+            self.issuer,
+            scope.resource,
+            AGENT_TENANT,
+            1,
+            AGENT_PURPOSE,
+            scope.rights,
+            now_us,
+            expires_at_us,
+            self.revocation_epoch,
+            token.nonce,
+        )
+        .map_err(map_lease_error)?;
         self.grants[grant_slot] = Some(AgentGrant {
             token,
+            lease,
             subject,
             resource: scope.resource,
             rights: scope.rights,
@@ -200,6 +221,23 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
                 self.revocation_epoch,
             )
             .map_err(Error::Token)?;
+        grant
+            .lease
+            .authorize(
+                self.key,
+                LeaseContext {
+                    subject,
+                    audience: self.issuer,
+                    object: token.resource,
+                    tenant: AGENT_TENANT,
+                    generation: 1,
+                    purpose: AGENT_PURPOSE,
+                    required,
+                    now_us,
+                },
+                self.revocation_epoch,
+            )
+            .map_err(map_lease_error)?;
         self.grants[slot] = None;
         Ok(())
     }
@@ -219,6 +257,25 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
             .flatten()
             .filter(|grant| grant.expires_at_us > now_us)
             .count()
+    }
+}
+
+fn map_lease_error(error: LeaseError) -> Error {
+    match error {
+        LeaseError::Invalid => Error::Token(TokenError::Invalid),
+        LeaseError::InvalidSignature => Error::Token(TokenError::InvalidSignature),
+        LeaseError::Expired
+        | LeaseError::NotYetValid
+        | LeaseError::Revoked
+        | LeaseError::Replay
+        | LeaseError::ReplayCapacity
+        | LeaseError::SubjectMismatch
+        | LeaseError::AudienceMismatch
+        | LeaseError::ObjectMismatch
+        | LeaseError::TenantMismatch
+        | LeaseError::GenerationMismatch
+        | LeaseError::PurposeMismatch
+        | LeaseError::RightsDenied => Error::AccessDenied,
     }
 }
 

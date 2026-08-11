@@ -1,5 +1,8 @@
 use crate::service::StoragePath;
-use synos_auth::{CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights};
+use synos_auth::{
+    CapabilityCaveat, CapabilityKey, CapabilityLease, CryptographicCapability, LeaseContext,
+    LeaseError, TokenError, TransportRights,
+};
 use synos_fabric::NodeId;
 use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
 use synos_kernel::Rights;
@@ -13,6 +16,9 @@ pub enum CapabilityError {
     WrongScope,
     RightsDenied,
 }
+
+const STORAGE_TENANT: u64 = 1;
+const STORAGE_PURPOSE: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StorageRights(u16);
@@ -44,6 +50,7 @@ impl StorageRights {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StorageCapability {
     token: CryptographicCapability,
+    lease: CapabilityLease,
     rights: StorageRights,
     scope: StoragePath,
     expires_at: u64,
@@ -94,6 +101,7 @@ impl StorageCapability {
             .map_err(map_token_error)?;
         let capability = Self {
             token,
+            lease: self.lease,
             rights,
             scope,
             expires_at,
@@ -133,8 +141,25 @@ impl StorageCapability {
             u64::from(mount) << 32 | u64::from(generation),
         )
         .map_err(map_token_error)?;
+        let lease = CapabilityLease::issue(
+            key(secret),
+            node(),
+            node(),
+            node(),
+            mount as u64,
+            STORAGE_TENANT,
+            generation as u64,
+            STORAGE_PURPOSE,
+            kernel_rights(rights),
+            0,
+            expires_at,
+            generation as u64,
+            u64::from(mount) << 32 | u64::from(generation),
+        )
+        .map_err(map_lease_error)?;
         let capability = Self {
             token,
+            lease,
             rights,
             scope,
             expires_at,
@@ -178,6 +203,22 @@ impl StorageCapability {
                 generation as u64,
             )
             .map_err(map_token_error)?;
+        self.lease
+            .authorize(
+                key(secret),
+                LeaseContext {
+                    subject: node(),
+                    audience: node(),
+                    object: mount as u64,
+                    tenant: STORAGE_TENANT,
+                    generation: generation as u64,
+                    purpose: STORAGE_PURPOSE,
+                    required: kernel_rights(required),
+                    now_us: now,
+                },
+                generation as u64,
+            )
+            .map_err(map_lease_error)?;
         if let Some(trace) = CapabilityTrace::new(
             CapabilityDomain::Storage,
             CapabilityTraceStage::DaemonAuthorized,
@@ -229,5 +270,22 @@ fn map_token_error(error: TokenError) -> CapabilityError {
         TokenError::AccessDenied => CapabilityError::RightsDenied,
         TokenError::InvalidSignature | TokenError::Invalid => CapabilityError::Invalid,
         TokenError::RightsEscalation | TokenError::CaveatCapacity => CapabilityError::RightsDenied,
+    }
+}
+
+fn map_lease_error(error: LeaseError) -> CapabilityError {
+    match error {
+        LeaseError::Expired | LeaseError::NotYetValid => CapabilityError::Expired,
+        LeaseError::Revoked | LeaseError::GenerationMismatch => CapabilityError::Revoked,
+        LeaseError::ObjectMismatch => CapabilityError::WrongMount,
+        LeaseError::TenantMismatch
+        | LeaseError::PurposeMismatch
+        | LeaseError::RightsDenied
+        | LeaseError::SubjectMismatch
+        | LeaseError::AudienceMismatch => CapabilityError::RightsDenied,
+        LeaseError::Invalid
+        | LeaseError::InvalidSignature
+        | LeaseError::Replay
+        | LeaseError::ReplayCapacity => CapabilityError::Invalid,
     }
 }

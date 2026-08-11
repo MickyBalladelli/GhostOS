@@ -159,10 +159,13 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P0: Security, identity, and supply-chain trust
 
-- [ ] Add capability leases with audience, object, tenant, generation, purpose,
+- [x] Add capability leases with audience, object, tenant, generation, purpose,
       expiry, and revocation epoch bound into one authorization decision.
       Done when confused-deputy, replay, copied-token, and stale-generation
-      tests cover every privileged daemon.
+      tests cover every privileged daemon. Implemented by the signed lease gate
+      in [`crates/auth/src/lease.rs`](crates/auth/src/lease.rs), with storage,
+      network, agent-daemon, and agent-bridge enforcement plus regression
+      coverage.
 - [ ] Build a revocation propagation monitor for kernel, IPC, storage, network,
       package, cluster, and client caches.
       Done when maximum revocation latency is measured and stale authorization

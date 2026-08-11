@@ -1,7 +1,10 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use synos_auth::{CapabilityKey, CryptographicCapability, TokenError, TransportRights};
+use synos_auth::{
+    CapabilityKey, CapabilityLease, CryptographicCapability, LeaseContext, LeaseError, TokenError,
+    TransportRights,
+};
 use synos_fabric::NodeId;
 use synos_kernel::Rights;
 use synos_observability::{JOURNAL_RECORD_SIZE, TraceEvent, encode_record};
@@ -37,6 +40,26 @@ impl From<TokenError> for AgentError {
             TokenError::CaveatCapacity | TokenError::Invalid | TokenError::RightsEscalation => {
                 Self::InvalidToken
             }
+        }
+    }
+}
+
+impl From<LeaseError> for AgentError {
+    fn from(error: LeaseError) -> Self {
+        match error {
+            LeaseError::Invalid | LeaseError::InvalidSignature => Self::InvalidToken,
+            LeaseError::Expired
+            | LeaseError::NotYetValid
+            | LeaseError::Revoked
+            | LeaseError::Replay
+            | LeaseError::ReplayCapacity
+            | LeaseError::SubjectMismatch
+            | LeaseError::AudienceMismatch
+            | LeaseError::ObjectMismatch
+            | LeaseError::TenantMismatch
+            | LeaseError::GenerationMismatch
+            | LeaseError::PurposeMismatch
+            | LeaseError::RightsDenied => Self::AccessDenied,
         }
     }
 }
@@ -395,6 +418,38 @@ impl<const DIMENSION: usize, const CONTEXTS: usize, const QUEUE: usize, const CO
         .map_err(AgentError::from)
     }
 
+    pub fn issue_lease(
+        &mut self,
+        subject: NodeId,
+        tenant: u64,
+        generation: u64,
+        purpose: u64,
+        rights: Rights,
+        now_us: u64,
+        lifetime_us: u64,
+    ) -> Result<CapabilityLease, AgentError> {
+        let expires_at_us = now_us
+            .checked_add(lifetime_us)
+            .ok_or(AgentError::InvalidInput)?;
+        self.next_nonce = self.next_nonce.wrapping_add(1).max(1);
+        CapabilityLease::issue(
+            self.key,
+            self.issuer,
+            subject,
+            self.issuer,
+            self.resource,
+            tenant,
+            generation,
+            purpose,
+            rights,
+            now_us,
+            expires_at_us,
+            self.revocation_epoch,
+            self.next_nonce,
+        )
+        .map_err(AgentError::from)
+    }
+
     pub fn revoke_all(&mut self) {
         self.revocation_epoch = self.revocation_epoch.wrapping_add(1).max(1);
     }
@@ -411,6 +466,43 @@ impl<const DIMENSION: usize, const CONTEXTS: usize, const QUEUE: usize, const CO
             token,
             subject,
             transport,
+            lease: None,
+        })
+    }
+
+    pub fn open_channel_with_lease(
+        &self,
+        token: CryptographicCapability,
+        lease: CapabilityLease,
+        subject: NodeId,
+        transport: TransportRights,
+        tenant: u64,
+        generation: u64,
+        purpose: u64,
+        now_us: u64,
+    ) -> Result<ContextChannel, AgentError> {
+        self.authorize(&token, subject, READ_RIGHTS, transport, now_us)?;
+        lease
+            .authorize(
+                self.key,
+                LeaseContext {
+                    subject,
+                    audience: self.issuer,
+                    object: self.resource,
+                    tenant,
+                    generation,
+                    purpose,
+                    required: READ_RIGHTS,
+                    now_us,
+                },
+                self.revocation_epoch,
+            )
+            .map_err(AgentError::from)?;
+        Ok(ContextChannel {
+            token,
+            subject,
+            transport,
+            lease: Some((lease, tenant, generation, purpose)),
         })
     }
 
@@ -724,6 +816,7 @@ impl<const DIMENSION: usize, const CONTEXTS: usize, const QUEUE: usize, const CO
         now_us: u64,
         output: &mut [Option<ContextHit>; RESULTS],
     ) -> Result<usize, AgentError> {
+        self.authorize_channel(channel, READ_RIGHTS, now_us)?;
         self.query(
             &channel.token,
             channel.subject,
@@ -741,6 +834,7 @@ impl<const DIMENSION: usize, const CONTEXTS: usize, const QUEUE: usize, const CO
         handle: ContextHandle,
         now_us: u64,
     ) -> Result<ContextView<'a>, AgentError> {
+        self.authorize_channel(channel, MAP_RIGHTS, now_us)?;
         self.resolve(
             &channel.token,
             channel.subject,
@@ -748,6 +842,33 @@ impl<const DIMENSION: usize, const CONTEXTS: usize, const QUEUE: usize, const CO
             handle,
             now_us,
         )
+    }
+
+    fn authorize_channel(
+        &self,
+        channel: &ContextChannel,
+        required: Rights,
+        now_us: u64,
+    ) -> Result<(), AgentError> {
+        let Some((lease, tenant, generation, purpose)) = channel.lease else {
+            return Ok(())
+        };
+        lease
+            .authorize(
+                self.key,
+                LeaseContext {
+                    subject: channel.subject,
+                    audience: self.issuer,
+                    object: self.resource,
+                    tenant,
+                    generation,
+                    purpose,
+                    required,
+                    now_us,
+                },
+                self.revocation_epoch,
+            )
+            .map_err(AgentError::from)
     }
 
     fn authorize(
@@ -779,6 +900,7 @@ pub struct ContextChannel {
     token: CryptographicCapability,
     subject: NodeId,
     transport: TransportRights,
+    lease: Option<(CapabilityLease, u64, u64, u64)>,
 }
 
 impl ContextChannel {

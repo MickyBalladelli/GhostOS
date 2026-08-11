@@ -739,7 +739,10 @@ name = "synos-netd"
 version = "0.1.0"
 dependencies = [
  "smoltcp",
+ "synos-auth",
+ "synos-fabric",
  "synos-ipc",
+ "synos-kernel",
  "synos-observability",
  "synos-status",
  "synos-time-sync",

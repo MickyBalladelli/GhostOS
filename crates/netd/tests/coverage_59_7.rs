@@ -151,6 +151,10 @@ fn firewall_policy_and_capability_expiry_are_wire_safe() {
         capability.verify(&key, 42, CapabilityRight::Connect, [192, 168, 1, 8], 443, 100),
         Err(FirewallError::ExpiredCapability)
     );
+    assert_eq!(
+        capability.verify(&key, 42, CapabilityRight::Connect, [192, 168, 2, 8], 443, 99),
+        Err(FirewallError::InvalidCapability)
+    );
 
     let mut policy = FirewallPolicy::<2>::new();
     policy.add_rule(FirewallRule::allow()).unwrap();
