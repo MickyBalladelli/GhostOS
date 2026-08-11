@@ -450,7 +450,7 @@ fn block_fingerprint(block: &Block) -> u64 {
         Block::Data(data) => {
             let length = usize::from(data.len).min(super::DATA_BYTES);
             let mut material = [0; super::DATA_BYTES + 24];
-            material[..8].copy_from_slice(&data.next.0.to_le_bytes());
+            material[..8].copy_from_slice(&u64::from(data.next.0).to_le_bytes());
             material[8..10].copy_from_slice(&data.len.to_le_bytes());
             material[10..18].copy_from_slice(&data.checksum.to_le_bytes());
             material[24..24 + length].copy_from_slice(&data.bytes[..length]);
@@ -474,7 +474,8 @@ fn tree_fingerprint_bytes(tree: &TreeBlock) -> [u8; super::BLOCK_SIZE] {
                 cursor += 8;
                 bytes[cursor..cursor + 8].copy_from_slice(&record.size.to_le_bytes());
                 cursor += 8;
-                bytes[cursor..cursor + 8].copy_from_slice(&record.data.0.to_le_bytes());
+                bytes[cursor..cursor + 8]
+                    .copy_from_slice(&u64::from(record.data.0).to_le_bytes());
                 cursor += 8;
                 bytes[cursor..cursor + 8].copy_from_slice(&record.checksum.to_le_bytes());
                 cursor += 8;
@@ -500,7 +501,7 @@ fn tree_fingerprint_bytes(tree: &TreeBlock) -> [u8; super::BLOCK_SIZE] {
             bytes[1] = branch.len;
             let mut cursor = 2;
             for child in &branch.children {
-                bytes[cursor..cursor + 8].copy_from_slice(&child.0.to_le_bytes());
+                bytes[cursor..cursor + 8].copy_from_slice(&u64::from(child.0).to_le_bytes());
                 cursor += 8;
             }
             for key in &branch.keys {
