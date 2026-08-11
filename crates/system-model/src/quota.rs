@@ -1,6 +1,6 @@
 use synos_status::{IntoStatus, Status};
 
-pub const QUOTA_RESOURCE_COUNT: usize = 7;
+pub const QUOTA_RESOURCE_COUNT: usize = 8;
 
 /// Resource dimensions shared by admission, services, and observability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,6 +13,7 @@ pub enum QuotaResource {
     Network = 4,
     Log = 5,
     Audit = 6,
+    ControlPlane = 7,
 }
 
 impl QuotaResource {
@@ -29,6 +30,7 @@ impl QuotaResource {
             Self::Network => "network",
             Self::Log => "log",
             Self::Audit => "audit",
+            Self::ControlPlane => "control-plane",
         }
     }
 }

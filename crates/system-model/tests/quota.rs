@@ -14,14 +14,16 @@ fn one_policy_names_and_limits_all_resource_dimensions() {
         QuotaResource::Network,
         QuotaResource::Log,
         QuotaResource::Audit,
+        QuotaResource::ControlPlane,
     ];
-    let limits = [10, 20, 30, 40, 50, 60, 70];
+    let limits = [10, 20, 30, 40, 50, 60, 70, 80];
     let policy = QuotaPolicy::new(limits);
 
     assert_eq!(resources.len(), QUOTA_RESOURCE_COUNT);
     assert_eq!(policy.limits(), limits);
     assert_eq!(QuotaResource::Memory.name(), "memory");
     assert_eq!(QuotaResource::Audit.name(), "audit");
+    assert_eq!(QuotaResource::ControlPlane.name(), "control-plane");
     for (resource, limit) in resources.into_iter().zip(limits) {
         assert_eq!(policy.limit(resource), limit);
     }
@@ -29,7 +31,16 @@ fn one_policy_names_and_limits_all_resource_dimensions() {
 
 #[test]
 fn ledger_exposes_consumption_and_structured_rejection_reason() {
-    let policy = QuotaPolicy::new([10, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX]);
+    let policy = QuotaPolicy::new([
+        10,
+        u64::MAX,
+        u64::MAX,
+        u64::MAX,
+        u64::MAX,
+        u64::MAX,
+        u64::MAX,
+        u64::MAX,
+    ]);
     let mut ledger = QuotaLedger::new(policy);
 
     ledger.reserve(QuotaResource::Memory, 7).unwrap();
@@ -54,7 +65,7 @@ fn ledger_exposes_consumption_and_structured_rejection_reason() {
 
 #[test]
 fn batch_reservation_and_release_are_atomic() {
-    let policy = QuotaPolicy::new([10, 20, 30, 40, 50, 60, 70]);
+    let policy = QuotaPolicy::new([10, 20, 30, 40, 50, 60, 70, 80]);
     let mut ledger = QuotaLedger::new(policy);
     let charges = [
         QuotaCharge::new(QuotaResource::Memory, 4),

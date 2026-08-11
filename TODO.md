@@ -204,10 +204,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       fingerprints; capability, firewall, package, membership, and rollout
       service adapters call the read-only simulator. Regression coverage
       covers all five change classes.
-- [ ] Add resource-exhaustion security tests for memory, CPU, IPC, storage,
+- [x] Add resource-exhaustion security tests for memory, CPU, IPC, storage,
       network, logs, audit queues, and control-plane requests.
       Done when hostile tenants are throttled or rejected without harming
       unrelated tenants or recovery traffic.
+      Implementation: [`crates/system-model/src/quota.rs`](crates/system-model/src/quota.rs)
+      includes control-plane requests in the bounded quota vocabulary;
+      [`crates/system-model/tests/resource_exhaustion.rs`](crates/system-model/tests/resource_exhaustion.rs)
+      proves per-tenant rejection, atomic failure, neighbor isolation, and
+      recovery allowance across all eight dimensions.
 
 ## P1: Performance measurement and latency control
 
