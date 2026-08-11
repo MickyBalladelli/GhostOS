@@ -121,9 +121,9 @@ impl fmt::Display for InvariantFailure {
 /// Release builds keep the call sites but do not turn a diagnostic into a
 /// production panic path.
 #[inline]
-pub fn debug_assert_valid(result: Result<(), InvariantFailure>) {
+pub fn debug_assert_valid(_result: Result<(), InvariantFailure>) {
     #[cfg(debug_assertions)]
-    if let Err(failure) = result {
+    if let Err(failure) = _result {
         panic!("{failure}")
     }
 }
