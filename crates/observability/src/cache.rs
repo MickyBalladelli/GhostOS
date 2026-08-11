@@ -148,6 +148,11 @@ struct CachePolicyState {
     evictions: u64,
     stale_rejections: u64,
     eviction_cost_us: u64,
+    sample_accesses: u64,
+    sample_hits: u64,
+    sample_evictions: u64,
+    sample_stale_rejections: u64,
+    sample_eviction_cost_us: u64,
 }
 
 impl CachePolicyState {
@@ -163,6 +168,11 @@ impl CachePolicyState {
             evictions: 0,
             stale_rejections: 0,
             eviction_cost_us: 0,
+            sample_accesses: 0,
+            sample_hits: 0,
+            sample_evictions: 0,
+            sample_stale_rejections: 0,
+            sample_eviction_cost_us: 0,
         }
     }
 
@@ -271,18 +281,25 @@ impl<const CAPACITY: usize> CachePolicyRegistry<CAPACITY> {
             CacheEvent::Hit => {
                 state.accesses = state.accesses.saturating_add(1);
                 state.hits = state.hits.saturating_add(1);
+                state.sample_accesses = state.sample_accesses.saturating_add(1);
+                state.sample_hits = state.sample_hits.saturating_add(1);
             }
             CacheEvent::Miss => {
                 state.accesses = state.accesses.saturating_add(1);
                 state.misses = state.misses.saturating_add(1);
+                state.sample_accesses = state.sample_accesses.saturating_add(1);
             }
             CacheEvent::Eviction { bytes, cost_us } => {
                 state.current_bytes = state.current_bytes.saturating_sub(bytes);
                 state.evictions = state.evictions.saturating_add(1);
                 state.eviction_cost_us = state.eviction_cost_us.saturating_add(cost_us);
+                state.sample_evictions = state.sample_evictions.saturating_add(1);
+                state.sample_eviction_cost_us =
+                    state.sample_eviction_cost_us.saturating_add(cost_us);
             }
             CacheEvent::StaleRejected => {
                 state.stale_rejections = state.stale_rejections.saturating_add(1);
+                state.sample_stale_rejections = state.sample_stale_rejections.saturating_add(1);
             }
         }
         Ok(())
@@ -297,16 +314,26 @@ impl<const CAPACITY: usize> CachePolicyRegistry<CAPACITY> {
     ) -> Result<CachePolicy, CachePolicyError> {
         let index = self.ensure(kind, workload)?;
         let state = self.states[index].as_mut().expect("cache index is occupied");
-        let report = state.report();
         let pressure = state.current_bytes >= state.policy.memory_ceiling_bytes
-            || report.average_eviction_cost_us > state.policy.eviction_cost_budget_us;
-        if report.stale_risk_per_mille > state.policy.max_stale_risk_per_mille || pressure {
+            || average(state.sample_eviction_cost_us, state.sample_evictions)
+                > state.policy.eviction_cost_budget_us;
+        if rate(state.sample_stale_rejections, state.sample_accesses)
+            > state.policy.max_stale_risk_per_mille
+            || pressure
+        {
             state.policy.ttl_us = (state.policy.ttl_us.saturating_mul(3) / 4)
                 .max(state.policy.min_ttl_us);
-        } else if report.hit_rate_per_mille < state.policy.target_hit_rate_per_mille {
+        } else if rate(state.sample_hits, state.sample_accesses)
+            < state.policy.target_hit_rate_per_mille
+        {
             state.policy.ttl_us = (state.policy.ttl_us.saturating_mul(9) / 8)
                 .min(state.policy.max_ttl_us);
         }
+        state.sample_accesses = 0;
+        state.sample_hits = 0;
+        state.sample_evictions = 0;
+        state.sample_stale_rejections = 0;
+        state.sample_eviction_cost_us = 0;
         Ok(state.policy)
     }
 
