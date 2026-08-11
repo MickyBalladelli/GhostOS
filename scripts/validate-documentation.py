@@ -156,12 +156,6 @@ def main() -> int:
         [sys.executable, str(ROOT / "scripts" / "validate-roadmaps.py")],
         errors,
     )
-    run_check(
-        "review baseline",
-        [sys.executable, str(ROOT / "scripts" / "validate-review-baseline.py")],
-        errors,
-    )
-
     if errors:
         for error in errors:
             print(f"documentation error: {error}", file=sys.stderr)

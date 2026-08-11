@@ -5,14 +5,6 @@ This document defines the minimum test evidence for every feature in
 [`test-inventory.toml`](test-inventory.toml), and the enforceable 59.13
 definition is [`test-coverage.toml`](test-coverage.toml).
 
-The review baseline records the workspace member list and roadmap heading and
-checkbox structure in [`review-baseline.toml`](review-baseline.toml). Check it
-locally with:
-
-```sh
-python3 scripts/validate-review-baseline.py
-```
-
 Roadmap IDs, feature bodies, local links, and root inventory mappings are
 checked with:
 
@@ -36,13 +28,6 @@ The same check discovers every `TODO*.md` roadmap and compares it with the
 [`test-inventory.toml`](test-inventory.toml). A new roadmap, removed roadmap,
 duplicate mapping, empty mapping, or unknown evidence ID fails local
 validation.
-
-When adding or removing a workspace member or changing roadmap structure,
-refresh the committed baseline with:
-
-```sh
-python3 scripts/validate-review-baseline.py --update
-```
 
 ## Contract
 

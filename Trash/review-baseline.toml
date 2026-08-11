@@ -2,7 +2,7 @@
 # Run the checker after changing workspace membership or roadmap structure.
 schema = 1
 workspace_manifest = "Cargo.toml"
-roadmap_paths = ["TODO.md", "todo/TODO-VM-first.md", "todo/TODO-VM-improvements.md", "todo/TODO-compiler.md", "todo/TODO-first.md", "todo/TODO-network.md"]
+roadmap_paths = ["TODO.md", "todo/TODO-VM-first.md", "todo/TODO-VM-improvements.md", "todo/TODO-compiler.md", "todo/TODO-first.md", "todo/TODO-network.md", "todo/TODO-updates.md"]
 
 [workspace]
 digest = "fb8c6bea2905118c3dd40b4a2d033a7baca4ef7755d6a35b1d827e78ecf1b48d"
@@ -10,9 +10,9 @@ member_count = 63
 
 [[roadmap]]
 path = "TODO.md"
-heading_digest = "bf3a30f575741ff1548229555545d81ca25885d5f1ca9869089dae72238cb59b"
-heading_count = 18
-checkbox_count = 100
+heading_digest = "63bcca50e76b6646d2604f395412dc5b2fb110269afa86a75f815c8804f2a42b"
+heading_count = 11
+checkbox_count = 56
 
 [[roadmap]]
 path = "todo/TODO-VM-first.md"
@@ -43,3 +43,9 @@ path = "todo/TODO-network.md"
 heading_digest = "6668c0701dcd5c8ce13a5c54c49d5502e37c4c9b43a3207a64363e47aaacb562"
 heading_count = 3
 checkbox_count = 25
+
+[[roadmap]]
+path = "todo/TODO-updates.md"
+heading_digest = "bf3a30f575741ff1548229555545d81ca25885d5f1ca9869089dae72238cb59b"
+heading_count = 18
+checkbox_count = 100

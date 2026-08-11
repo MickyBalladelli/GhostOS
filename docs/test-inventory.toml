@@ -17,6 +17,7 @@ paths = [
   "todo/TODO-compiler.md",
   "todo/TODO-first.md",
   "todo/TODO-network.md",
+  "todo/TODO-updates.md",
   "TODO.md",
   "todo/TODO-VM-improvements.md",
   "todo/TODO-VM-first.md",
@@ -720,6 +721,11 @@ evidence_ids = [
   "fault.14.snapshot-network-portability",
   "fuzz.14.network-protocols",
 ]
+
+[[roadmap]]
+path = "todo/TODO-updates.md"
+scope = "Archived hardening, proof, and guest-networking roadmap"
+evidence_ids = ["feature.01"]
 
 [[roadmap]]
 path = "todo/TODO-VM-improvements.md"
