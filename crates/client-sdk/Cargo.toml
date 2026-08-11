@@ -14,4 +14,5 @@ synos-protocol = { path = "../protocol" }
 synos-auth = { path = "../auth" }
 synos-fabric = { path = "../fabric" }
 synos-kernel = { path = "../../kernel" }
+synos-observability = { path = "../observability" }
 synos-status = { path = "../status" }

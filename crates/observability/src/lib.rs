@@ -4,7 +4,17 @@
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use synos_status::Status;
-use synos_system_model::ContentId;
+pub use synos_system_model::ContentId;
+
+pub mod profiling;
+
+pub use profiling::{
+    drain_profile, record_profile_sample, redacted_host_id, validate_profile_export,
+    ProfileAggregator, ProfileDomain, ProfileError, ProfileFrame, ProfileMetadata, ProfileRing,
+    ProfileSample, ProfileStack, ProfileRetention, RetainedProfile, GLOBAL_PROFILE_CAPACITY,
+    MAX_PROFILE_FRAMES, MAX_PROFILE_STACKS, PROFILE_HEADER_BYTES, PROFILE_MAGIC,
+    PROFILE_STACK_RECORD_BYTES, PROFILE_VERSION, SYSTEM_PROFILE,
+};
 
 pub const MAX_EVENT_FIELDS: usize = 4;
 pub const JOURNAL_RECORD_SIZE: usize = 128;

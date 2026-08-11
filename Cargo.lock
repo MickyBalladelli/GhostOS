@@ -445,6 +445,7 @@ name = "synos-app"
 version = "0.1.0"
 dependencies = [
  "synos-init",
+ "synos-observability",
  "synos-pkg",
  "synos-status",
  "synos-system-model",
@@ -509,6 +510,7 @@ dependencies = [
  "synos-auth",
  "synos-fabric",
  "synos-kernel",
+ "synos-observability",
  "synos-protocol",
  "synos-status",
 ]
@@ -518,6 +520,7 @@ name = "synos-compiler"
 version = "0.1.0"
 dependencies = [
  "synos-app",
+ "synos-observability",
  "synos-pkg",
  "synos-synfs",
  "synos-system-model",
@@ -993,6 +996,7 @@ dependencies = [
  "synos-ipc",
  "synos-kernel",
  "synos-netd",
+ "synos-observability",
  "synos-pkg",
  "synos-runtime",
  "synos-status",

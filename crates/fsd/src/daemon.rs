@@ -2,7 +2,10 @@ use core::fmt;
 
 use host_filesystems::{FileSystemKind, Partition};
 use synos_ipc::{Envelope, SharedBuffer};
-use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
+use synos_observability::{
+    CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level, ProfileDomain, ProfileSample,
+    record_profile_sample,
+};
 use synos_path_pattern::{Pattern, PatternError};
 use synos_status::{facility, IntoStatus, Severity, Status};
 use synos_synfs::{
@@ -1296,6 +1299,12 @@ impl<
     }
 
     pub fn dispatch(&mut self, request: Request, buffer: Option<&mut [u8]>) -> Response {
+        record_profile_sample(ProfileSample::single(
+            ProfileDomain::SynFs,
+            request.operation.raw() as u64,
+            0,
+            0x4001,
+        ));
         if buffer
             .as_ref()
             .is_some_and(|buffer| buffer.len() > MAX_IPC_BUFFER_BYTES)

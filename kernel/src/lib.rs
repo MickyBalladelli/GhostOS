@@ -61,7 +61,9 @@ use core::panic::PanicInfo;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use synos_boot_protocol::BootInfo;
-use synos_observability::{EventField, EventKind, field, info};
+use synos_observability::{
+    EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
+};
 use synos_status::Status;
 
 pub use allocator::{
@@ -162,6 +164,12 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
             boot_info.memory_region_count as u64,
         ),
     );
+    record_profile_sample(ProfileSample::single(
+        ProfileDomain::Boot,
+        boot_info.memory_region_count as u64,
+        0,
+        0x1001,
+    ));
 
     let scheduler_clock = scheduler.clock();
     println!(

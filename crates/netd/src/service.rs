@@ -1,5 +1,8 @@
 use synos_ipc::{Ring, RingError, SharedBuffer};
-use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
+use synos_observability::{
+    CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level, ProfileDomain, ProfileSample,
+    record_profile_sample,
+};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::memory::{MemoryError, SharedMemory};
@@ -397,6 +400,12 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         memory: &mut M,
         request: SocketRequest,
     ) -> Result<OperationResult, ServiceError> {
+        record_profile_sample(ProfileSample::single(
+            ProfileDomain::Networking,
+            request.operation.raw() as u64,
+            0,
+            0x5001,
+        ));
         if let Some(capability) = request.capability {
             if let Some(trace) = CapabilityTrace::new(
                 CapabilityDomain::Network,

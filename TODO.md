@@ -224,10 +224,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`scripts/benchmark.py`](scripts/benchmark.py),
       [`benchmarks/budgets.toml`](benchmarks/budgets.toml), and the bounded VM
       benchmark allocation counters provide the repeatable report and gate.
-- [ ] Add continuous profiling for boot, IPC, scheduler, SynFS, networking,
+- [x] Add continuous profiling for boot, IPC, scheduler, SynFS, networking,
       package activation, compiler builds, VM execution, and client RPC.
       Done when profiles are symbolized, redacted, retained by revision, and
-      comparable across hosts.
+      comparable across hosts. Implementation: bounded symbol-ID sampling in
+      [`crates/observability/src/profiling.rs`](crates/observability/src/profiling.rs),
+      subsystem hooks, versioned checked archives, and
+      [`scripts/profile.py`](scripts/profile.py) for symbolization, revision-keyed
+      retention, redaction validation, and cross-host comparison. See
+      [`docs/profiling.md`](docs/profiling.md).
 - [ ] Reduce kernel and daemon lock contention with ownership reports,
       lock-duration histograms, sharded state, and wait-free or per-CPU paths
       where correctness permits.

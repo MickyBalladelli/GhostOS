@@ -1,4 +1,5 @@
 use synos_init::{CrashReason, ExitReason, ProcessId};
+use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
 use synos_pkg::{
     InstantiationReceipt, PackageDaemon, PackageError, ProvenanceChain,
 };
@@ -432,6 +433,12 @@ impl<const CAPACITY: usize> ApplicationSupervisor<CAPACITY> {
         policy: &CapabilityPolicy<RULES>,
         runtime: &mut R,
     ) -> Result<ApplicationEvent, PackageLaunchError> {
+        record_profile_sample(ProfileSample::single(
+            ProfileDomain::PackageActivation,
+            0,
+            0,
+            0x6001,
+        ));
         packages.validate_instantiation(receipt)?;
         let package = packages
             .manifest(receipt.package())

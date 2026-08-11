@@ -6,7 +6,8 @@ use crate::task::{AddressSpaceId, CpuId, ThreadId};
 use synos_ipc::{Envelope, Ring, RingError};
 use synos_observability::{
     CapabilityDomain, CapabilityTraceStage, CorrelationId, EventField, EventKind,
-    emit_capability_trace, field, next_correlation_id, trace,
+    ProfileDomain, ProfileSample, emit_capability_trace, field, next_correlation_id,
+    record_profile_sample, trace,
 };
 use synos_status::{IntoStatus, Severity, Status, facility};
 
@@ -162,6 +163,12 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         }
         match self.enqueue(message) {
             Ok(()) => {
+                record_profile_sample(ProfileSample::single(
+                    ProfileDomain::Ipc,
+                    now_us,
+                    0,
+                    0x2001,
+                ));
                 emit_capability_trace(
                     synos_observability::Level::Trace,
                     CapabilityDomain::Kernel,

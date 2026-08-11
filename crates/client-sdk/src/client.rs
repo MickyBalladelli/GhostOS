@@ -2,6 +2,7 @@ use core::convert::Infallible;
 
 use synos_auth::CryptographicCapability;
 use synos_fabric::NodeId;
+use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
 use synos_status::PublicError;
 
 use crate::{
@@ -352,6 +353,12 @@ impl<T: RpcTransport> Client<T> {
     ) -> Result<([u8; MAX_FRAME_BYTES], usize, FrameHeader), ClientError<T::Error>> {
         let request_id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1).max(1);
+        record_profile_sample(ProfileSample::single(
+            ProfileDomain::ClientRpc,
+            request_id,
+            0,
+            0x9001 + method as u64,
+        ));
         let header = FrameHeader {
             method,
             flags: if self.authority.is_some() {

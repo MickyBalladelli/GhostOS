@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 use synos_app::{parse_image, AppManifest, AppTarget, ImageArchitecture};
+use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
 use synos_pkg::{
     application_bundle_size, bundle_size, encode_application_bundle, encode_bundle,
     ApplicationBundleInfo, ApplicationPackageManifest, BundleInfo, PackageError, ProvenanceChain,
@@ -754,6 +755,12 @@ impl Compiler {
         release: bool,
         arguments: &[String],
     ) -> Result<ExitStatus, CompileError> {
+        record_profile_sample(ProfileSample::single(
+            ProfileDomain::CompilerBuild,
+            0,
+            0,
+            0x7001,
+        ));
         if !manifest_path.is_file() {
             return Err(CompileError::InvalidManifest(manifest_path.to_path_buf()))
         }

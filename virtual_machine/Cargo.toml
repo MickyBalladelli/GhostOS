@@ -12,6 +12,7 @@ synos-abi = { path = "../crates/abi" }
 synos-boot-protocol = { path = "../crates/boot-protocol" }
 synos-fabric = { path = "../crates/fabric" }
 synos-kernel = { path = "../kernel" }
+synos-observability = { path = "../crates/observability" }
 synos-synfs = { path = "../crates/synfs" }
 
 [target.'cfg(unix)'.dependencies]

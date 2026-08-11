@@ -11,6 +11,7 @@ use crate::cpu::{Cpu, CpuError, CpuMode, PrivilegeLevel};
 use crate::devices::{InterruptController, PortBus};
 use crate::firmware::bios::BiosContext;
 use crate::memory::Mmu;
+use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
@@ -405,6 +406,14 @@ impl ExecutionEngine {
     }
 
     fn notify_profile_hook(&mut self) {
+        if self.config.enable_profiling {
+            record_profile_sample(ProfileSample::single(
+                ProfileDomain::VmExecution,
+                self.stats.instructions,
+                0,
+                0x8001,
+            ));
+        }
         if let Some(hook) = self.profile_hook.as_mut() {
             hook(&self.stats);
         }

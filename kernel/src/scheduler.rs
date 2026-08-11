@@ -6,7 +6,8 @@ use crate::task::{
 };
 use crate::partition::{CorePartition, CorePartitionError};
 use synos_observability::{
-    CapabilityDomain, CapabilityTraceStage, Level, emit_capability_trace,
+    CapabilityDomain, CapabilityTraceStage, Level, ProfileDomain, ProfileSample,
+    emit_capability_trace, record_profile_sample,
 };
 use synos_status::{IntoStatus, Severity, Status, facility};
 
@@ -435,6 +436,12 @@ impl Scheduler {
         let thread = &mut self.threads[next.slot()];
         thread.state = ThreadState::Running;
         thread.switches = thread.switches.saturating_add(1);
+        record_profile_sample(ProfileSample::single(
+            ProfileDomain::Scheduler,
+            self.clock,
+            cpu.raw() as u32,
+            0x3001,
+        ));
         self.debug_check();
         Some(ContextSwitch { previous, next })
     }
