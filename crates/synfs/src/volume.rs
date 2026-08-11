@@ -530,7 +530,11 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                     } else {
                         Some(branch.keys[index - 1])
                     };
-                    let child_upper = branch.keys.get(index).copied().or(upper);
+                    let child_upper = if index < length {
+                        Some(branch.keys[index])
+                    } else {
+                        upper
+                    };
                     self.validate_tree(
                         branch.children[index],
                         tree_seen,
