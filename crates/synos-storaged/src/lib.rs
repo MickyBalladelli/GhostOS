@@ -13,6 +13,7 @@ mod remote;
 mod security;
 mod service;
 mod state;
+mod tiering;
 
 pub use bootstrap::{
     AdmissionPolicy, AttestationEvidence, BOOTSTRAP_ENCODED_BYTES, BOOTSTRAP_SIGNATURE_BYTES,
@@ -80,6 +81,12 @@ pub use service::{
     MountState, StorageDaemon, StorageError, StoragePath, MAX_MOUNTS, MAX_PENDING_IO,
 };
 pub use state::{MountCatalog, MountStateError, MOUNTS_STATE_FILE, MOUNTS_STATE_MAGIC};
+pub use tiering::{
+    CostPolicy, DurabilityClass, DurabilityPolicy, HeatPolicy, TierBackend, TierMoveKind,
+    TierMovePlan, TierMoveReceipt, TierMoveRecord, TierMoveState, TierObject, TieringError,
+    TieringManager, TieringPolicy, StorageTier, MAX_TIER_MOVES, MAX_TIER_OBJECTS,
+    TIERING_FORMAT_VERSION, TIERING_HEADER_BYTES, TIERING_MAGIC, TIERING_STATE_FILE,
+};
 
 /// Logical storage namespace used by remote mounts.
 pub const STORAGE_LOGICAL: &str = "SYS$STORAGE:";

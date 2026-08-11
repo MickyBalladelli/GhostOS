@@ -130,10 +130,13 @@ measured p50/p95/p99 data over optimistic feature claims.
       resumable uploads, bounded retention and legal holds, and transactional
       verified restore reports with RPO, RTO, transfer, bootability, and skip
       reasons.
-- [ ] Add storage tiering between local NVMe, slower disks, remote storage, and
+- [x] Add storage tiering between local NVMe, slower disks, remote storage, and
       disposable cache using explicit heat, cost, and durability policies.
       Done when promotion and demotion are crash-safe and never weaken the
-      declared durability class.
+      declared durability class. Implementation:
+      [`crates/synos-storaged/src/tiering.rs`](crates/synos-storaged/src/tiering.rs)
+      provides bounded heat/cost/durability policy evaluation, copy-first
+      journaled moves, durable destination fences, and restart reconciliation.
 - [ ] Add online format migration with shadow validation, resumable progress,
       rollback, downgrade refusal, and background I/O limits.
       Done when a power loss at every migration checkpoint leaves either the old
