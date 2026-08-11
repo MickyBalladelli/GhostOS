@@ -141,10 +141,9 @@ impl PendingWork {
             .max(now.saturating_sub(self.oldest_tick));
         self.count -= 1;
         self.serviced += 1;
+        // Pending work can share the oldest arrival tick; never hide its age.
         if self.count == 0 {
             self.oldest_tick = 0;
-        } else {
-            self.oldest_tick = self.oldest_tick.saturating_add(1);
         }
         true
     }
