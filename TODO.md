@@ -386,11 +386,34 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P1: Resilience, upgrades, and operations
 
-- [ ] Build a fault-injection matrix for power loss, disk full, device reset,
+- [x] Build a fault-injection matrix for power loss, disk full, device reset,
       packet loss, partition, clock jump, process hang, corrupt input, and
       dependency outage across every critical workflow.
       Done when each failure has a bounded recovery time and explicit degraded
-      behavior.
+      behavior. The matrix covers `BOOT` (boot and readiness), `STORE` (write,
+      commit, rename, and migration), `BACKUP` (backup and restore), `PKG`
+      (package activation and rollback), `RPC` (DHCP, HTTP, gRPC, and terminal),
+      `CLUSTER` (membership, quorum, leases, and failover), `AI` (inference,
+      checkpoints, and agent snapshots), and `DEVICE` (reset, hotplug, and
+      drain). RTO is measured from fault detection to a stable response; a
+      cell passes only when the observed RTO is at or below its bound.
+
+      | Fault | BOOT | STORE | BACKUP | PKG | RPC | CLUSTER | AI | DEVICE |
+      | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+      | Power loss | ≤60s: boot last valid image | ≤30s: discard partial generation; keep prior | ≤90s: resume from checkpoint; source unchanged | ≤60s: keep old activation | ≤30s: reconnect; no duplicate effect | ≤120s: fence stale leases; quorum reads | ≤90s: resume last committed checkpoint | ≤60s: re-enumerate; mark missing offline |
+      | Disk full | ≤30s: reserve recovery space; admin shell | ≤5s: reject writes; preserve reads and old generations | ≤15s: pause before commit; retry after space | ≤15s: refuse activation; old package stays | ≤5s: reject uploads; reads continue | ≤30s: block membership writes; quorum reads | ≤15s: stop new checkpoints/jobs; resume old checkpoint | ≤30s: reject new state; inspect device |
+      | Device reset | ≤60s: bounded retry; safe mode if needed | ≤30s: fence device; use prior generation and degraded pool | ≤60s: fail stream safely; resume by chunk | ≤30s: retain staged bytes; no activation | ≤15s: reconnect transport; idempotent retry | ≤120s: suspect node; fence ownership | ≤60s: use mirror; resume checkpoint | ≤30s: reinitialize; keep device offline on failure |
+      | Packet loss | ≤30s: local readiness does not wait on network | ≤30s: publish only after durable ack; serve old generation | ≤60s: retry bounded chunks; keep checkpoint | ≤60s: retry manifest; old version remains | ≤15s: retry idempotent request once; then timeout | ≤120s: require quorum; never split-brain | ≤60s: wait for dual journal ack; resume last commit | ≤30s: bounded control retry; mark link degraded |
+      | Partition | ≤30s: boot local services; show dependency degraded | ≤30s: local durable writes; reject cluster-backed writes | ≤60s: keep local snapshot; pause remote upload | ≤60s: use cached signed artifacts; no cluster activation | ≤15s: serve local routes; return unavailable remotely | ≤120s: minority read-only; fence and rejoin | ≤60s: continue only with local mirror; stop without quorum | ≤30s: isolate remote device; local devices continue |
+      | Clock jump | ≤30s: use monotonic time; delay network readiness | ≤10s: monotonic deadlines; commit semantics unchanged | ≤30s: monotonic schedule; pause expiry decisions | ≤30s: fail closed when wall time is untrusted | ≤15s: monotonic timeout; auth expiry fails closed | ≤120s: bounded monotonic leases; stop unsafe renewal | ≤60s: monotonic checkpoints; lose unsafe lease safely | ≤30s: monotonic debounce; no unsafe detach |
+      | Process hang | ≤30s: watchdog restart; readiness stays gated | ≤30s: fence daemon; serve last valid root | ≤60s: stop worker; checkpoint remains usable | ≤60s: abort activation; old package stays live | ≤15s: restart handler; request ID prevents replay | ≤120s: mark node suspect; fence leases | ≤60s: restart from checkpoint or snapshot | ≤30s: restart driver; device stays offline if hung |
+      | Corrupt input | ≤30s: reject image/config; enter recovery path | ≤5s: reject before publish; old generation survives | ≤30s: quarantine bad chunk; source stays intact | ≤30s: reject digest/signature; old activation stays | ≤5s: stable invalid-input error; connection survives | ≤15s: reject frame; peer state unchanged | ≤15s: reject tensor/tool/snapshot; no mutation | ≤15s: reject descriptor; reset endpoint |
+      | Dependency outage | ≤60s: start independent services; expose degraded state | ≤30s: read-only on missing dependency; retain old root | ≤60s: retain checkpoint; stage locally | ≤60s: use cached artifacts; defer activation | ≤15s: return unavailable; unrelated routes continue | ≤120s: apply quorum rules; no unsafe writes | ≤60s: use local model/checkpoint; stop without journal | ≤30s: isolate failed dependency; unaffected devices run |
+
+      Each injection records the fault point, detection time, observed RTO,
+      status/degraded mode, data and audit continuity, and duplicate-side-effect
+      checks. Recovery budgets are hard cutoffs: retry, queue, and failover
+      work stops at the bound and returns an explicit status.
 - [ ] Add rolling, canary, blue/green, and emergency update strategies for
       kernel, services, packages, clients, schemas, and cluster protocols.
       Done when mixed-version operation is tested and rollback preserves data,
