@@ -470,6 +470,7 @@ dependencies = [
  "synos-fabric",
  "synos-kernel",
  "synos-observability",
+ "synos-policy",
  "synos-status",
  "synos-system-model",
 ]
@@ -744,6 +745,7 @@ dependencies = [
  "synos-ipc",
  "synos-kernel",
  "synos-observability",
+ "synos-policy",
  "synos-status",
  "synos-time-sync",
 ]
@@ -768,6 +770,7 @@ name = "synos-pkg"
 version = "0.1.0"
 dependencies = [
  "synos-durability",
+ "synos-policy",
  "synos-status",
  "synos-synfs",
  "synos-system-model",
@@ -780,6 +783,10 @@ version = "0.1.0"
 dependencies = [
  "synos-status",
 ]
+
+[[package]]
+name = "synos-policy"
+version = "0.1.0"
 
 [[package]]
 name = "synos-posix-compat"
@@ -900,6 +907,7 @@ dependencies = [
  "synos-mesh",
  "synos-netd",
  "synos-observability",
+ "synos-policy",
  "synos-status",
  "synos-synfs",
  "synos-system-model",
@@ -965,6 +973,7 @@ dependencies = [
  "synos-init",
  "synos-ipc",
  "synos-pkg",
+ "synos-policy",
  "synos-status",
  "synos-synfs",
  "synos-system-model",

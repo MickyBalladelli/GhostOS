@@ -48,3 +48,17 @@ pub use revocation_monitor::{
 pub use token::{
     CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights,
 };
+
+pub use synos_policy::{
+    AffectedObject, AffectedPrincipal, Binding as PolicyBinding, CapabilityChange,
+    ChangeKind as PolicyChangeKind, ObjectId as PolicyObjectId, ObjectKind as PolicyObjectKind,
+    ObjectRecord as PolicyObjectRecord, PolicyChange, PolicySnapshot, PrincipalId as PolicyPrincipalId,
+    SimulationError as PolicySimulationError, SimulationReport,
+};
+
+pub fn simulate_capability_change<const PRINCIPALS: usize, const OBJECTS: usize, const BINDINGS: usize>(
+    snapshot: &PolicySnapshot<PRINCIPALS, OBJECTS, BINDINGS>,
+    change: CapabilityChange,
+) -> Result<SimulationReport, synos_policy::SimulationError> {
+    snapshot.simulate(PolicyChange::Capability(change))
+}

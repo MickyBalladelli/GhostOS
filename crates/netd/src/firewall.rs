@@ -2,6 +2,7 @@ use crate::capture::{CaptureDirection, CaptureKind, PacketCapture};
 use synos_auth::{CapabilityKey as LeaseKey, CapabilityLease, LeaseContext, LeaseError};
 use synos_fabric::NodeId;
 use synos_kernel::Rights;
+use synos_policy::{FirewallChange, ObjectId, PolicyChange, PolicySnapshot, SimulationError, SimulationReport};
 
 pub const POLICY_PATH: &str = "SYS$SYSTEM:FIREWALL.POLICY;1";
 pub const MAX_FIREWALL_RULES: usize = 32;
@@ -358,6 +359,23 @@ impl<const RULES: usize> FirewallPolicy<RULES> {
         *slot = Some(rule);
         self.version = self.version.saturating_add(1);
         Ok(())
+    }
+
+    /// Preview a rule publication against an operator-provided policy snapshot.
+    /// The firewall policy and snapshot are both borrowed immutably.
+    pub fn simulate_rule_change<const PRINCIPALS: usize, const OBJECTS: usize, const BINDINGS: usize>(
+        &self,
+        snapshot: &PolicySnapshot<PRINCIPALS, OBJECTS, BINDINGS>,
+        rule: ObjectId,
+        applies_to: ObjectId,
+        after_revision: u64,
+    ) -> Result<SimulationReport, SimulationError> {
+        snapshot.simulate(PolicyChange::Firewall(FirewallChange {
+            rule,
+            applies_to,
+            before_revision: self.version,
+            after_revision,
+        }))
     }
 
     pub fn encode(&self, output: &mut [u8]) -> Result<usize, FirewallError> {

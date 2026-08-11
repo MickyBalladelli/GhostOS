@@ -10,6 +10,10 @@ use synos_system_model::{
     ContentId, DEFAULT_PACKAGE_CAPACITY, DEFAULT_ROOT_BINDINGS, Error as ModelError, LogicalName,
     MAX_DEPENDENCIES, PackageManifest, RepositoryError, RootBuilder, RootManifest, SynFsRepository,
 };
+use synos_policy::{
+    ObjectId, PackageActivationChange, PolicyChange, PolicySnapshot, SimulationError,
+    SimulationReport,
+};
 
 const BUNDLE_MAGIC: &[u8; 8] = b"SYNBNDL1";
 const BUNDLE_VERSION: u16 = 1;
@@ -919,6 +923,29 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
             verified: [None; PACKAGES],
             applications: [None; PACKAGES],
         }
+    }
+
+    /// Preview root activation and its dependent package objects without
+    /// creating a checkpoint, changing the active root, or touching SynFS.
+    pub fn simulate_activation_policy<
+        const PRINCIPALS: usize,
+        const OBJECTS: usize,
+        const BINDINGS: usize,
+    >(
+        &self,
+        snapshot: &PolicySnapshot<PRINCIPALS, OBJECTS, BINDINGS>,
+        package: ObjectId,
+        configuration: &SystemConfiguration,
+    ) -> Result<SimulationReport, SimulationError> {
+        let before_revision = self
+            .active_configuration()
+            .map_or(0, RootManifest::revision);
+        snapshot.simulate(PolicyChange::PackageActivation(PackageActivationChange {
+            package,
+            before_revision,
+            after_revision: configuration.revision(),
+            activate: true,
+        }))
     }
 
     pub fn trust_key(&mut self, key: SigningKey) -> Result<[u8; KEY_ID_BYTES], PackageError> {

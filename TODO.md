@@ -195,10 +195,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       records; [`scripts/package-vm-release.py`](scripts/package-vm-release.py)
       requires complete verified coverage before packaging and carries the
       attestations in the release archive.
-- [ ] Add policy simulation for capability changes, firewall changes, package
+- [x] Add policy simulation for capability changes, firewall changes, package
       activation, cluster membership, and update rollout.
       Done when operators can preview affected principals and objects without
       mutating live state.
+      Implementation: [`crates/policy/src/lib.rs`](crates/policy/src/lib.rs)
+      provides bounded, stale-snapshot-checked previews with before/after
+      fingerprints; capability, firewall, package, membership, and rollout
+      service adapters call the read-only simulator. Regression coverage
+      covers all five change classes.
 - [ ] Add resource-exhaustion security tests for memory, CPU, IPC, storage,
       network, logs, audit queues, and control-plane requests.
       Done when hostile tenants are throttled or rejected without harming

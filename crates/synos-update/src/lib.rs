@@ -20,6 +20,10 @@ use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInter
 use synos_status::{IntoStatus, Status};
 use synos_synfs::{CheckpointInfo, Error as SynFsError, SynFs};
 use synos_system_model::RootManifest;
+use synos_policy::{
+    ObjectId, PolicyChange, PolicySnapshot, SimulationError, SimulationReport,
+    UpdateRolloutChange,
+};
 
 pub const DEFAULT_UPDATE_HISTORY: usize = 8;
 
@@ -143,6 +147,31 @@ impl<const HISTORY: usize> UpdateManager<HISTORY> {
         Self {
             entries: [None; HISTORY],
         }
+    }
+
+    /// Preview the objects and principals touched by a rollout. This method
+    /// does not create a checkpoint or call package activation.
+    pub fn simulate_rollout_policy<
+        const PACKAGES: usize,
+        const KEYS: usize,
+        const PRINCIPALS: usize,
+        const OBJECTS: usize,
+        const BINDINGS: usize,
+    >(
+        &self,
+        snapshot: &PolicySnapshot<PRINCIPALS, OBJECTS, BINDINGS>,
+        packages: &PackageDaemon<PACKAGES, KEYS>,
+        update: ObjectId,
+        plan: UpdatePlan,
+    ) -> Result<SimulationReport, SimulationError> {
+        let from_revision = packages
+            .active_configuration()
+            .map_or(0, RootManifest::revision);
+        snapshot.simulate(PolicyChange::UpdateRollout(UpdateRolloutChange {
+            update,
+            from_revision,
+            to_revision: plan.revision(),
+        }))
     }
 
     pub const fn len(&self) -> usize {

@@ -1,5 +1,9 @@
 use crate::{AdmissionEndpoint, ClusterId, QuorumPolicy};
 use synos_fabric::NodeId;
+use synos_policy::{
+    ClusterMembershipChange, ObjectId, PolicyChange, PolicySnapshot, SimulationError,
+    SimulationReport,
+};
 use synos_status::{IntoStatus, Status};
 
 pub const MAX_MEMBERSHIP_REGISTRY: usize = 64;
@@ -314,6 +318,29 @@ impl<const MEMBERS: usize> MembershipRegistry<MEMBERS> {
             quorum: self.quorum(),
             commit_index: self.commit_index,
         }
+    }
+
+    /// Preview a membership transition without proposing, acknowledging, or
+    /// committing a consensus operation.
+    pub fn simulate_membership_policy<
+        const PRINCIPALS: usize,
+        const OBJECTS: usize,
+        const BINDINGS: usize,
+    >(
+        &self,
+        policy: &PolicySnapshot<PRINCIPALS, OBJECTS, BINDINGS>,
+        cluster: ObjectId,
+        member: NodeId,
+        after_active: bool,
+    ) -> Result<SimulationReport, SimulationError> {
+        let before_active = self.member(member).is_some();
+        let member = ObjectId::from_u64(member.raw() as u64);
+        policy.simulate(PolicyChange::ClusterMembership(ClusterMembershipChange {
+            cluster,
+            member,
+            before_active,
+            after_active,
+        }))
     }
 
     pub fn member(&self, node: NodeId) -> Option<RegistryMember> {
