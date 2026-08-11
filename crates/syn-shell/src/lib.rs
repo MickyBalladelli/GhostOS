@@ -14,6 +14,7 @@ pub mod interpreter;
 pub mod jobs;
 pub mod network;
 pub mod parser;
+pub mod performance;
 pub mod render;
 pub mod rust;
 pub mod storage;

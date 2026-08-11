@@ -29,6 +29,61 @@ public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
+public struct SynOSPerformanceDiagnostics: Equatable, Sendable {
+    public let queueWaitMicroseconds: UInt64
+    public let serviceTimeMicroseconds: UInt64
+    public let retries: UInt32
+    public let requestBytes: UInt32
+    public let responseBytes: UInt32
+    public let tailLatencyMicroseconds: UInt64
+    public let budgetExceeded: Bool
+
+    public static let empty = SynOSPerformanceDiagnostics(
+        queueWaitMicroseconds: 0,
+        serviceTimeMicroseconds: 0,
+        retries: 0,
+        requestBytes: 0,
+        responseBytes: 0,
+        tailLatencyMicroseconds: 0,
+        budgetExceeded: false
+    )
+
+    private init(
+        queueWaitMicroseconds: UInt64,
+        serviceTimeMicroseconds: UInt64,
+        retries: UInt32,
+        requestBytes: UInt32,
+        responseBytes: UInt32,
+        tailLatencyMicroseconds: UInt64,
+        budgetExceeded: Bool
+    ) {
+        self.queueWaitMicroseconds = queueWaitMicroseconds
+        self.serviceTimeMicroseconds = serviceTimeMicroseconds
+        self.retries = retries
+        self.requestBytes = requestBytes
+        self.responseBytes = responseBytes
+        self.tailLatencyMicroseconds = tailLatencyMicroseconds
+        self.budgetExceeded = budgetExceeded
+    }
+
+    fileprivate init(data: Data) throws {
+        var reader = ByteReader(data)
+        guard data.count == 80, try reader.readUInt16() == 1 else {
+            throw SynOSClientError.invalidFrame
+        }
+        let flags = try reader.readUInt16()
+        self.init(
+            queueWaitMicroseconds: try reader.readUInt64(),
+            serviceTimeMicroseconds: try reader.readUInt64(),
+            retries: try reader.readUInt32(),
+            requestBytes: try reader.readUInt32(),
+            responseBytes: try reader.readUInt32(),
+            tailLatencyMicroseconds: try reader.readUInt64(),
+            budgetExceeded: flags & 1 != 0
+        )
+    }
+}
+
 public actor SynOSClient {
     private typealias Method = SynOSRPCMethod
 
@@ -39,6 +94,7 @@ public actor SynOSClient {
     private let transport: any SynOSTransport
     private var authority: SynOSCapability?
     private var nextRequestID: UInt64 = 1
+    public private(set) var lastDiagnostics = SynOSPerformanceDiagnostics.empty
 
     public init(
         transport: any SynOSTransport,
@@ -423,9 +479,17 @@ public actor SynOSClient {
         guard payloadBytes == reader.remaining else {
             throw SynOSClientError.invalidFrame
         }
+        let payload = try reader.readData(count: payloadBytes)
         guard status == 0 else {
+            if payload.count == 80 {
+                lastDiagnostics = try SynOSPerformanceDiagnostics(data: payload)
+            }
             throw SynOSClientError.remoteStatus(status)
         }
-        return try reader.readData(count: payloadBytes)
+        guard payload.count >= 80 else {
+            throw SynOSClientError.invalidFrame
+        }
+        lastDiagnostics = try SynOSPerformanceDiagnostics(data: Data(payload.suffix(80)))
+        return Data(payload.dropLast(80))
     }
 }

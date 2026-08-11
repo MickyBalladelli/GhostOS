@@ -13,6 +13,10 @@ pub use synos_protocol::{
     VersionRange,
 };
 pub use synos_abi::{ABI_REVISION, ABI_SCHEMA_VERSION};
+pub use synos_system_model::performance::{
+    PerformanceBudget, PerformanceDiagnostics, TailLatencyWindow,
+    PERFORMANCE_DIAGNOSTICS_VERSION,
+};
 
 mod client;
 mod cluster;
@@ -31,7 +35,7 @@ pub use cluster::{
     MAX_CLUSTER_AUDIT_EVENTS, MAX_CLUSTER_CHANGES, MAX_CLUSTER_INVITATIONS,
     MAX_CLUSTER_MEMBERS, MAX_CLUSTER_NAME_BYTES,
 };
-pub use gateway::{FrontendGateway, GatewayService};
+pub use gateway::{FrontendGateway, GatewayService, NoopPerformanceClock, PerformanceClock};
 pub use model::{
     CapabilityDelegation, ClusterNode, ClusterState, JobReceipt, JobSpec, MAX_CLUSTER_NODES,
     MAX_JOB_COMMAND_BYTES, MAX_TOPOLOGY_LINKS, NodeHealth, TopologyLink, TopologyReachability,
@@ -39,6 +43,7 @@ pub use model::{
 };
 pub use wire::{
     decode_frame_checked, FRAME_HEADER_BYTES, FrameHeader, MAX_FRAME_BYTES, Method,
+    PERFORMANCE_DIAGNOSTICS_BYTES,
     PROTOCOL_VERSION, ProtocolError, RpcStatus,
 };
 

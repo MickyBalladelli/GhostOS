@@ -1,11 +1,15 @@
 pub const PROTOCOL_VERSION: u8 = synos_abi::RPC_PROTOCOL_VERSION;
 pub const FRAME_HEADER_BYTES: usize = synos_abi::RPC_FRAME_HEADER_BYTES;
 pub const MAX_FRAME_BYTES: usize = synos_abi::RPC_MAX_FRAME_BYTES;
+pub const PERFORMANCE_DIAGNOSTICS_BYTES: usize = 80;
 
 pub(crate) const FLAG_CAPABILITY: u16 = synos_abi::RPC_CAPABILITY_FLAG;
 
 pub use synos_abi::{RpcMethod as Method, RpcStatus};
 use synos_ipc::{BufferError, BufferLease};
+use synos_system_model::performance::{
+    PerformanceBudget, PerformanceDiagnostics, PERFORMANCE_DIAGNOSTICS_VERSION,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrameHeader {
@@ -158,4 +162,56 @@ pub(crate) fn read_array<const N: usize>(
         .get(offset..offset.saturating_add(N))
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or(ProtocolError::InvalidFrame)
+}
+
+pub(crate) fn encode_performance_diagnostics(
+    diagnostics: PerformanceDiagnostics,
+    output: &mut [u8],
+) -> Result<(), ProtocolError> {
+    let output = output
+        .get_mut(..PERFORMANCE_DIAGNOSTICS_BYTES)
+        .ok_or(ProtocolError::BufferTooSmall)?;
+    output.fill(0);
+    write_u16(output, 0, PERFORMANCE_DIAGNOSTICS_VERSION)?;
+    write_u16(output, 2, diagnostics.budget_exceeded as u16)?;
+    write_u64(output, 4, diagnostics.queue_wait_us)?;
+    write_u64(output, 12, diagnostics.service_time_us)?;
+    write_u32(output, 20, diagnostics.retries)?;
+    write_u32(output, 24, diagnostics.request_bytes)?;
+    write_u32(output, 28, diagnostics.response_bytes)?;
+    write_u64(output, 32, diagnostics.tail_latency_us)?;
+    write_u64(output, 40, diagnostics.budget.queue_wait_us)?;
+    write_u64(output, 48, diagnostics.budget.service_time_us)?;
+    write_u64(output, 56, diagnostics.budget.tail_latency_us)?;
+    write_u32(output, 64, diagnostics.budget.max_retries)?;
+    write_u32(output, 68, diagnostics.budget.max_request_bytes)?;
+    write_u32(output, 72, diagnostics.budget.max_response_bytes)?;
+    Ok(())
+}
+
+pub(crate) fn decode_performance_diagnostics(
+    input: &[u8],
+) -> Result<PerformanceDiagnostics, ProtocolError> {
+    if input.len() != PERFORMANCE_DIAGNOSTICS_BYTES
+        || read_u16(input, 0)? != PERFORMANCE_DIAGNOSTICS_VERSION
+    {
+        return Err(ProtocolError::InvalidFrame)
+    }
+    let budget = PerformanceBudget {
+        queue_wait_us: read_u64(input, 40)?,
+        service_time_us: read_u64(input, 48)?,
+        tail_latency_us: read_u64(input, 56)?,
+        max_retries: read_u32(input, 64)?,
+        max_request_bytes: read_u32(input, 68)?,
+        max_response_bytes: read_u32(input, 72)?,
+    };
+    Ok(PerformanceDiagnostics::new(
+        read_u64(input, 4)?,
+        read_u64(input, 12)?,
+        read_u32(input, 20)?,
+        read_u32(input, 24)?,
+        read_u32(input, 28)?,
+        read_u64(input, 32)?,
+        budget,
+    ))
 }

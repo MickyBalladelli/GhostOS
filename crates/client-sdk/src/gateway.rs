@@ -1,4 +1,7 @@
 use synos_auth::CryptographicCapability;
+use synos_system_model::performance::{
+    PerformanceBudget, PerformanceDiagnostics, TailLatencyWindow,
+};
 
 use crate::{
     AuditEventList, CapabilityDelegation, ChangeBatch, ClusterCreateRequest, ClusterHealthSnapshot,
@@ -14,10 +17,40 @@ use crate::{
         encode_topology_state, decode_cluster_create, decode_cluster_join, decode_cluster_leave,
         decode_cluster_remove,
     },
-    wire::{FLAG_CAPABILITY, FRAME_HEADER_BYTES, read_array},
+    wire::{
+        FLAG_CAPABILITY, FRAME_HEADER_BYTES, PERFORMANCE_DIAGNOSTICS_BYTES,
+        encode_performance_diagnostics, read_array,
+    },
 };
 
+pub const MAX_RPC_METHODS: usize = 18;
+
+pub trait PerformanceClock {
+    fn now_us(&self) -> u64;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoopPerformanceClock;
+
+impl PerformanceClock for NoopPerformanceClock {
+    fn now_us(&self) -> u64 {
+        0
+    }
+}
+
 pub trait GatewayService {
+    fn performance_budget(&self, method: Method) -> PerformanceBudget {
+        PerformanceBudget::for_route(method as u16)
+    }
+
+    fn performance_queue_wait_us(&self, _method: Method, _request_id: u64) -> u64 {
+        0
+    }
+
+    fn performance_retries(&self, _method: Method, _request_id: u64) -> u32 {
+        0
+    }
+
     fn cluster_state(
         &mut self,
         authority: Option<CryptographicCapability>,
@@ -148,13 +181,15 @@ pub trait GatewayService {
     }
 }
 
-pub struct FrontendGateway<S> {
+pub struct FrontendGateway<S, C = NoopPerformanceClock> {
     service: S,
+    clock: C,
+    tail_windows: [TailLatencyWindow<32>; MAX_RPC_METHODS],
 }
 
 impl<S> FrontendGateway<S> {
     pub const fn new(service: S) -> Self {
-        Self { service }
+        Self::with_noop_clock(service)
     }
 
     pub fn service(&self) -> &S {
@@ -170,7 +205,31 @@ impl<S> FrontendGateway<S> {
     }
 }
 
-impl<S: GatewayService> FrontendGateway<S> {
+impl<S> FrontendGateway<S, NoopPerformanceClock> {
+    pub const fn with_noop_clock(service: S) -> Self {
+        Self {
+            service,
+            clock: NoopPerformanceClock,
+            tail_windows: [const { TailLatencyWindow::new() }; MAX_RPC_METHODS],
+        }
+    }
+}
+
+impl<S, C: PerformanceClock> FrontendGateway<S, C> {
+    pub const fn with_clock(service: S, clock: C) -> Self {
+        Self {
+            service,
+            clock,
+            tail_windows: [const { TailLatencyWindow::new() }; MAX_RPC_METHODS],
+        }
+    }
+
+    pub fn clock(&self) -> &C {
+        &self.clock
+    }
+}
+
+impl<S: GatewayService, C: PerformanceClock> FrontendGateway<S, C> {
     pub fn handle(&mut self, request: &[u8], response: &mut [u8]) -> Result<usize, ProtocolError> {
         if response.len() < FRAME_HEADER_BYTES {
             return Err(ProtocolError::BufferTooSmall);
@@ -189,6 +248,11 @@ impl<S: GatewayService> FrontendGateway<S> {
         }
         let payload = &request[FRAME_HEADER_BYTES..];
         let (authority, body) = decode_authority(request_header.flags, payload)?;
+        let request_started_us = self.clock.now_us();
+        let queue_wait_us = self
+            .service
+            .performance_queue_wait_us(request_header.method, request_header.request_id);
+        let service_started_us = self.clock.now_us();
         let outcome = match request_header.method {
             Method::ClusterState => {
                 if !body.is_empty() {
@@ -245,15 +309,43 @@ impl<S: GatewayService> FrontendGateway<S> {
             Ok(payload_bytes) => (RpcStatus::Ok, payload_bytes),
             Err(status) => (status, 0),
         };
+        let service_time_us = self.clock.now_us().saturating_sub(service_started_us);
+        let total_latency_us = self.clock.now_us().saturating_sub(request_started_us);
+        let method_index = (request_header.method as usize)
+            .saturating_sub(1)
+            .min(MAX_RPC_METHODS - 1);
+        self.tail_windows[method_index].record(total_latency_us);
+        let budget = self.service.performance_budget(request_header.method);
+        let response_length = FRAME_HEADER_BYTES
+            .checked_add(payload_bytes)
+            .and_then(|length| length.checked_add(PERFORMANCE_DIAGNOSTICS_BYTES))
+            .ok_or(ProtocolError::BufferTooSmall)?;
+        if response.len() < response_length {
+            return Err(ProtocolError::BufferTooSmall)
+        }
+        let diagnostics = PerformanceDiagnostics::new(
+            queue_wait_us,
+            service_time_us,
+            self.service
+                .performance_retries(request_header.method, request_header.request_id),
+            request.len() as u32,
+            response_length as u32,
+            self.tail_windows[method_index].p99(),
+            budget,
+        );
         FrameHeader {
             method: request_header.method,
             flags: 0,
             request_id: request_header.request_id,
-            payload_bytes: payload_bytes as u32,
+            payload_bytes: (payload_bytes + PERFORMANCE_DIAGNOSTICS_BYTES) as u32,
             status,
         }
         .encode(response)?;
-        Ok(FRAME_HEADER_BYTES + payload_bytes)
+        encode_performance_diagnostics(
+            diagnostics,
+            &mut response[FRAME_HEADER_BYTES + payload_bytes..response_length],
+        )?;
+        Ok(response_length)
     }
 }
 

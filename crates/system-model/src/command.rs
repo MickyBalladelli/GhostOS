@@ -1,4 +1,5 @@
 use crate::{Error as ModelError, LogicalName};
+use crate::performance::PerformanceDiagnostics;
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_COMMAND_ARGUMENTS: usize = 16;
@@ -325,6 +326,34 @@ impl StructuredOutput {
             .ok_or(CommandError::TooManyArguments)?;
         *slot = Some(OutputField { name, value });
         Ok(())
+    }
+
+    pub fn insert_performance_diagnostics(
+        &mut self,
+        diagnostics: PerformanceDiagnostics,
+    ) -> Result<(), CommandError> {
+        self.insert("PERF-QUEUE-WAIT-US", OutputValue::Unsigned(diagnostics.queue_wait_us))?;
+        self.insert("PERF-SERVICE-TIME-US", OutputValue::Unsigned(diagnostics.service_time_us))?;
+        self.insert("PERF-RETRIES", OutputValue::Unsigned(diagnostics.retries as u64))?;
+        self.insert("PERF-REQUEST-BYTES", OutputValue::Unsigned(diagnostics.request_bytes as u64))?;
+        self.insert("PERF-RESPONSE-BYTES", OutputValue::Unsigned(diagnostics.response_bytes as u64))?;
+        self.insert("PERF-TAIL-LATENCY-US", OutputValue::Unsigned(diagnostics.tail_latency_us))?;
+        self.insert("PERF-BUDGET-EXCEEDED", OutputValue::Boolean(diagnostics.budget_exceeded))?;
+        Ok(())
+    }
+
+    pub fn encoded_bytes(&self) -> u32 {
+        self.fields()
+            .map(|field| {
+                field.name.as_str().len() as u32
+                    + match field.value {
+                        OutputValue::Boolean(_) => 1,
+                        OutputValue::Integer(_) | OutputValue::Unsigned(_) => 8,
+                        OutputValue::Status(_) => 4,
+                        OutputValue::Text(value) => value.as_str().len(),
+                    } as u32
+            })
+            .sum()
     }
 }
 

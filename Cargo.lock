@@ -515,6 +515,7 @@ dependencies = [
  "synos-observability",
  "synos-protocol",
  "synos-status",
+ "synos-system-model",
 ]
 
 [[package]]

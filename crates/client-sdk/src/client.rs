@@ -5,6 +5,7 @@ use synos_fabric::NodeId;
 use synos_ipc::{BufferError, BufferLease, BufferOwner, BufferRights};
 use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
 use synos_status::PublicError;
+use synos_system_model::performance::PerformanceDiagnostics;
 
 use crate::{
     AuditEventList, CapabilityDelegation, ChangeBatch, ClusterCreateRequest, ClusterHealthSnapshot,
@@ -17,6 +18,7 @@ use crate::{
     wire::{
         FLAG_CAPABILITY, FRAME_HEADER_BYTES, MAX_FRAME_BYTES, Method, read_array, read_u16,
         read_u32, read_u64, write, write_u16, write_u32, write_u64,
+        decode_performance_diagnostics, PERFORMANCE_DIAGNOSTICS_BYTES,
     },
 };
 
@@ -139,6 +141,7 @@ pub struct Client<T> {
     transport: T,
     authority: Option<CryptographicCapability>,
     next_request_id: u64,
+    last_diagnostics: PerformanceDiagnostics,
 }
 
 impl<T> Client<T> {
@@ -147,6 +150,7 @@ impl<T> Client<T> {
             transport,
             authority: None,
             next_request_id: 1,
+            last_diagnostics: PerformanceDiagnostics::empty(),
         }
     }
 
@@ -155,6 +159,7 @@ impl<T> Client<T> {
             transport,
             authority: Some(authority),
             next_request_id: 1,
+            last_diagnostics: PerformanceDiagnostics::empty(),
         }
     }
 
@@ -164,6 +169,12 @@ impl<T> Client<T> {
 
     pub fn authority(&self) -> Option<CryptographicCapability> {
         self.authority
+    }
+
+    /// Diagnostics contain timing, retry, and byte counters only. They never
+    /// contain command arguments, tenant identifiers, or response payloads.
+    pub const fn last_diagnostics(&self) -> PerformanceDiagnostics {
+        self.last_diagnostics
     }
 
     pub fn transport(&self) -> &T {
@@ -440,14 +451,36 @@ impl<T: RpcTransport> Client<T> {
         {
             return Err(ClientError::Protocol(ProtocolError::MismatchedResponse));
         }
+        let response_payload_bytes = response_header.payload_bytes as usize;
         if response_header.status != RpcStatus::Ok {
+            if response_payload_bytes >= PERFORMANCE_DIAGNOSTICS_BYTES {
+                let start = FRAME_HEADER_BYTES + response_payload_bytes
+                    - PERFORMANCE_DIAGNOSTICS_BYTES;
+                self.last_diagnostics = decode_performance_diagnostics(
+                    &response[start..FRAME_HEADER_BYTES + response_payload_bytes],
+                )
+                .map_err(ClientError::Protocol)?;
+            } else {
+                self.last_diagnostics = PerformanceDiagnostics::empty();
+            }
             return Err(ClientError::Remote(RemoteError::new(
                 response_header.status,
                 method,
                 request_id,
             )));
         }
-        Ok((response, response_bytes, response_header))
+        if response_payload_bytes < PERFORMANCE_DIAGNOSTICS_BYTES {
+            return Err(ClientError::Protocol(ProtocolError::InvalidFrame))
+        }
+        let result_payload_bytes = response_payload_bytes - PERFORMANCE_DIAGNOSTICS_BYTES;
+        let diagnostics_start = FRAME_HEADER_BYTES + result_payload_bytes;
+        self.last_diagnostics = decode_performance_diagnostics(
+            &response[diagnostics_start..FRAME_HEADER_BYTES + response_payload_bytes],
+        )
+        .map_err(ClientError::Protocol)?;
+        let mut result_header = response_header;
+        result_header.payload_bytes = result_payload_bytes as u32;
+        Ok((response, FRAME_HEADER_BYTES + result_payload_bytes, result_header))
     }
 }
 

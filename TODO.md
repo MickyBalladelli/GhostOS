@@ -289,9 +289,18 @@ measured p50/p95/p99 data over optimistic feature claims.
       publication. [`scripts/benchmark-compiler-workflows.py`](scripts/benchmark-compiler-workflows.py)
       records clean, warm, offline, and cancelled p50/p95/max bounds in
       [`docs/compiler-workflows.md`](docs/compiler-workflows.md).
-- [ ] Add a performance budget to every public control-plane command and RPC.
+- [x] Add a performance budget to every public control-plane command and RPC.
       Done when queue wait, service time, retries, bytes, and tail latency are
       returned in structured diagnostics without leaking tenant data.
+      Implementation: [`crates/system-model/src/performance.rs`](crates/system-model/src/performance.rs)
+      defines bounded redacted budgets and rolling p99 diagnostics;
+      [`crates/client-sdk/src/gateway.rs`](crates/client-sdk/src/gateway.rs)
+      appends diagnostics to every frontend RPC response and
+      [`crates/client-sdk/src/client.rs`](crates/client-sdk/src/client.rs)
+      exposes them through `last_diagnostics()`; shell commands use
+      [`crates/syn-shell/src/performance.rs`](crates/syn-shell/src/performance.rs)
+      and structured output fields. Validation:
+      `cargo check -p synos-client-sdk -p syn-shell`.
 
 ## P1: Horizontal and vertical scalability
 

@@ -17,3 +17,4 @@ synos-fabric = { path = "../fabric" }
 synos-kernel = { path = "../../kernel" }
 synos-observability = { path = "../observability" }
 synos-status = { path = "../status" }
+synos-system-model = { path = "../system-model" }
