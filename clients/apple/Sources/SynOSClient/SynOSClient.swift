@@ -1,5 +1,92 @@
 import Foundation
 
+public struct SynOSOperatorFailure: Error, Equatable, LocalizedError, Decodable, Sendable {
+    public let code: UInt32
+    public let operation: UInt16
+    public let message: String
+    public let action: String
+    public let impact: String
+    public let retrySafety: String
+    public let retryAfterMicroseconds: UInt64?
+    public let auditCorrelation: String
+    public let auditNode: UInt32
+
+    public var errorDescription: String? {
+        message
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case operation
+        case message
+        case action
+        case impact
+        case retrySafety = "retry_safety"
+        case retryAfterMicroseconds = "retry_after_us"
+        case audit
+    }
+
+    private enum AuditCodingKeys: String, CodingKey {
+        case correlation
+        case node
+    }
+
+    public init(
+        code: UInt32,
+        operation: UInt16,
+        message: String,
+        action: String,
+        impact: String,
+        retrySafety: String,
+        retryAfterMicroseconds: UInt64?,
+        auditCorrelation: String,
+        auditNode: UInt32
+    ) {
+        self.code = code
+        self.operation = operation
+        self.message = message
+        self.action = action
+        self.impact = impact
+        self.retrySafety = retrySafety
+        self.retryAfterMicroseconds = retryAfterMicroseconds
+        self.auditCorrelation = auditCorrelation
+        self.auditNode = auditNode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let audit = try container.nestedContainer(keyedBy: AuditCodingKeys.self, forKey: .audit)
+        self.init(
+            code: try container.decode(UInt32.self, forKey: .code),
+            operation: try container.decode(UInt16.self, forKey: .operation),
+            message: try container.decode(String.self, forKey: .message),
+            action: try container.decode(String.self, forKey: .action),
+            impact: try container.decode(String.self, forKey: .impact),
+            retrySafety: try container.decode(String.self, forKey: .retrySafety),
+            retryAfterMicroseconds: try container.decodeIfPresent(UInt64.self, forKey: .retryAfterMicroseconds),
+            auditCorrelation: try audit.decode(String.self, forKey: .correlation),
+            auditNode: try audit.decode(UInt32.self, forKey: .node)
+        )
+    }
+
+    public static func rpcStatus(_ status: UInt16, requestID: UInt64) -> Self {
+        let retryable = status == 5 || status == 6
+        return Self(
+            code: UInt32(status),
+            operation: 5,
+            message: "Gateway rejected the request with status \(status).",
+            action: "Inspect the request and audit record before repeating it.",
+            impact: "The requested operation did not complete.",
+            retrySafety: retryable
+                ? "Retry after the gateway says capacity is available."
+                : "Do not retry automatically until the failure is understood.",
+            retryAfterMicroseconds: retryable ? 1_000_000 : nil,
+            auditCorrelation: String(requestID),
+            auditNode: 0
+        )
+    }
+}
+
 public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
     case invalidCapability
     case abiMismatch
@@ -7,6 +94,7 @@ public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
     case invalidInput
     case mismatchedResponse
     case remoteStatus(UInt16)
+    case operatorFailure(SynOSOperatorFailure)
     case transportRejected
     case incompatibleApiVersion(code: String, offered: UInt16, minimum: UInt16, maximum: UInt16)
 
@@ -24,11 +112,20 @@ public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
             "Gateway response does not match the request."
         case let .remoteStatus(status):
             "Gateway rejected the request with status \(status)."
+        case let .operatorFailure(failure):
+            failure.errorDescription
         case .transportRejected:
             "Gateway transport rejected the request."
         case let .incompatibleApiVersion(code, offered, minimum, maximum):
             "\(code): SynOS API version \(offered) is outside supported range \(minimum)..=\(maximum)."
         }
+    }
+
+    public var operatorFailure: SynOSOperatorFailure? {
+        if case let .operatorFailure(failure) = self {
+            return failure
+        }
+        return nil
     }
 }
 
@@ -490,7 +587,9 @@ public actor SynOSClient {
             if payload.count == 80 {
                 lastDiagnostics = try SynOSPerformanceDiagnostics(data: payload)
             }
-            throw SynOSClientError.remoteStatus(status)
+            throw SynOSClientError.operatorFailure(
+                SynOSOperatorFailure.rpcStatus(status, requestID: requestID)
+            )
         }
         guard payload.count >= 80 else {
             throw SynOSClientError.invalidFrame

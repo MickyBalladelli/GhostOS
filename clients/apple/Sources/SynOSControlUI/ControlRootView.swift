@@ -31,13 +31,17 @@ public struct ControlRootView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let error = store.errorMessage {
+            if let failure = store.operatorFailure {
+                OperatorNoticeView(failure: failure)
+                    .padding()
+            } else if let error = store.errorMessage {
                 Text(error)
                     .font(.caption)
                     .padding(10)
                     .background(.red.opacity(0.9), in: Capsule())
                     .foregroundStyle(.white)
                     .padding()
+                    .accessibilityLabel("Operation failed: \(error)")
             }
         }
     }

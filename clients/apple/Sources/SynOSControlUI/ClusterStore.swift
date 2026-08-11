@@ -14,6 +14,7 @@ public final class ClusterStore: ObservableObject {
     @Published public private(set) var lastJob: JobReceipt?
     @Published public private(set) var delegatedCapability: SynOSCapability?
     @Published public private(set) var errorMessage: String?
+    @Published public private(set) var operatorFailure: SynOSOperatorFailure?
     @Published public private(set) var isLoading = false
 
     private let client: SynOSClient
@@ -73,11 +74,15 @@ public final class ClusterStore: ObservableObject {
     private func perform(_ operation: () async throws -> Void) async {
         isLoading = true
         errorMessage = nil
+        operatorFailure = nil
         defer { isLoading = false }
         do {
             try await operation()
         } catch {
-            errorMessage = error.localizedDescription
+            operatorFailure = (error as? SynOSClientError)?.operatorFailure
+            if operatorFailure == nil {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

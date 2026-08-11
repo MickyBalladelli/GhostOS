@@ -182,6 +182,48 @@ impl Status {
         }
     }
 
+    pub const fn operator_action(self) -> &'static str {
+        match self {
+            Self::INVALID_ARGUMENT | Self::INVALID_PATH | Self::INVALID_PATTERN => {
+                "Fix the request, then submit it again."
+            }
+            Self::ACCESS_DENIED => "Use an authorized identity or ask an administrator.",
+            Self::NOT_FOUND => "Check the resource name and current cluster state.",
+            Self::NO_SPACE => "Free capacity or wait for recovery capacity, then retry.",
+            Self::CORRUPT => "Stop using the affected data and follow the recovery runbook.",
+            Self::BUSY | Self::PENDING => "Wait for the current operation to finish, then retry.",
+            Self::CANCELLED => "Review the incomplete work before starting it again.",
+            Self::CONFLICT | Self::STALE_STATE => "Refresh state and repeat the operation once.",
+            Self::CONFIRMATION_REQUIRED => "Review the requested change and confirm it explicitly.",
+            Self::RECONCILIATION_REQUIRED => "Reconcile the reported state before changing it.",
+            Self::ROLLBACK_UNAVAILABLE | Self::RECOVERY_STATE_INVALID => {
+                "Stop the rollout and follow the recovery runbook."
+            }
+            _ => "Inspect the audit record before repeating the operation.",
+        }
+    }
+
+    pub const fn operator_impact(self) -> &'static str {
+        match self {
+            Self::INVALID_ARGUMENT | Self::INVALID_PATH | Self::INVALID_PATTERN => {
+                "Nothing was changed."
+            }
+            Self::ACCESS_DENIED => "Nothing was changed because authorization failed.",
+            Self::NOT_FOUND => "The requested resource was not found; no change was made.",
+            Self::NO_SPACE => "The operation did not complete because capacity is exhausted.",
+            Self::CORRUPT => "Affected data may be unsafe until recovery completes.",
+            Self::BUSY | Self::PENDING => "The operation is not complete yet.",
+            Self::CANCELLED => "The operation stopped before all work completed.",
+            Self::CONFLICT | Self::STALE_STATE => "The requested change was not committed.",
+            Self::CONFIRMATION_REQUIRED => "The change is waiting for explicit approval.",
+            Self::RECONCILIATION_REQUIRED => "Live state may differ from the requested state.",
+            Self::ROLLBACK_UNAVAILABLE | Self::RECOVERY_STATE_INVALID => {
+                "The requested recovery state is not safe to activate."
+            }
+            _ => "The operation failed; inspect the audit record for exact scope.",
+        }
+    }
+
     pub const fn retry_hint(self) -> RetryHint {
         match self {
             Self::BUSY | Self::NO_SPACE | Self::INTERNAL => RetryHint::AfterUs(1_000_000),
@@ -218,6 +260,22 @@ pub enum RetryHint {
 impl RetryHint {
     pub const fn is_retryable(self) -> bool {
         !matches!(self, Self::Never)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Immediate => "immediate",
+            Self::AfterUs(_) => "after_us",
+        }
+    }
+
+    pub const fn safety(self) -> &'static str {
+        match self {
+            Self::Never => "Do not retry automatically.",
+            Self::Immediate => "Safe to retry now.",
+            Self::AfterUs(_) => "Retry only after the stated delay.",
+        }
     }
 }
 

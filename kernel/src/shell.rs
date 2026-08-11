@@ -18,6 +18,7 @@ use synos_boot_protocol::BootInfo;
 use synos_boot_protocol::{BootMethod, MemoryKind};
 use synos_power::AcpiPlatform;
 use synos_status::{IntoStatus, Status};
+use synos_observability::{audit_event, field, next_correlation_id, EventField, Level};
 use synos_system_model::command::{
     ArgumentKind, ArgumentSpec, CommandSpec, OutputText, OutputValue, StructuredOutput,
 };
@@ -190,7 +191,7 @@ pub fn run(
                     &mut line_render,
                 ) {
                     crate::println!();
-                    crate::println!("shell completion error: {error:?}");
+                    print_operator_error("shell completion error", error.status());
                     line_render.reset();
                     prompt();
                     redraw(&editor, &mut line_render)
@@ -220,7 +221,7 @@ pub fn run(
             Ok(EditorAction::None) => {}
             Err(error) => {
                 crate::println!();
-                crate::println!("\x1b[91mshell input error:\x1b[0m {error:?}");
+                print_operator_error("shell input error", error.status());
                 editor.clear();
                 line_render.reset();
                 prompt()
@@ -280,7 +281,7 @@ fn execute_line(
     let program = match registry.parse(line) {
         Ok(program) => program,
         Err(Error::AmbiguousCommand) => {
-            crate::println!("shell error: ambiguous command");
+            print_operator_error("shell error", Error::AmbiguousCommand.status());
             if let Ok(suggestions) = registry.suggestions(line) {
                 for command in suggestions.commands() {
                     print_command_suggestion(command.as_str());
@@ -289,12 +290,12 @@ fn execute_line(
             return;
         }
         Err(error) => {
-            crate::println!("shell error: {error:?}");
+            print_operator_error("shell error", error.status());
             return;
         }
     };
     if program.background {
-        crate::println!("shell error: background jobs not ready");
+        print_operator_error("shell error", Status::BUSY);
         return;
     }
 
@@ -305,11 +306,7 @@ fn execute_line(
     {
         if let Some(command) = program.stage(0) {
             if let Err(status) = executor.print_directory(command, keyboard, usb_keyboard) {
-                crate::println!(
-                    "command failed: {} (status={:#x})",
-                    status_reason(status),
-                    status.raw()
-                )
+                print_operator_error(status_reason(status), status)
             }
         }
         return;
@@ -322,11 +319,7 @@ fn execute_line(
     {
         if let Some(command) = program.stage(0) {
             if let Err(status) = executor.print_type(command, keyboard, usb_keyboard) {
-                crate::println!(
-                    "command failed: {} (status={:#x})",
-                    status_reason(status),
-                    status.raw()
-                )
+                print_operator_error(status_reason(status), status)
             }
         }
         return;
@@ -339,11 +332,7 @@ fn execute_line(
     {
         if let Some(command) = program.stage(0) {
             if let Err(status) = executor.edit_file(command, keyboard, usb_keyboard, acpi) {
-                crate::println!(
-                    "command failed: {} (status={:#x})",
-                    status_reason(status),
-                    status.raw()
-                )
+                print_operator_error(status_reason(status), status)
             }
         }
         return;
@@ -400,11 +389,11 @@ fn execute_line(
     match interpreter.start_program(program, executor) {
         Ok(InterpreterEvent::Started) => {}
         Ok(_) => {
-            crate::println!("shell error: command did not start");
+            print_operator_error("shell error: command did not start", Status::INTERNAL);
             return;
         }
         Err(error) => {
-            crate::println!("shell error: {error:?}");
+            print_operator_error("shell error", error.status());
             return;
         }
     }
@@ -423,16 +412,12 @@ fn execute_line(
                     };
                     match render(&output, format) {
                         Ok(text) => crate::print!("{}", text.as_str()),
-                        Err(error) => crate::println!("shell output error: {error:?}"),
+                        Err(error) => print_operator_error("shell output error", error.status()),
                     }
                 }
             }
             Ok(InterpreterEvent::Failed(status)) => {
-                crate::println!(
-                    "command failed: {} (status={:#x})",
-                    status_reason(status),
-                    status.raw()
-                )
+                print_operator_error(status_reason(status), status)
             }
             Ok(InterpreterEvent::Cancelled) => crate::println!("command cancelled"),
             Ok(InterpreterEvent::Submitted(job)) => {
@@ -440,7 +425,7 @@ fn execute_line(
             }
             Ok(InterpreterEvent::Started) => {}
             Err(error) => {
-                crate::println!("shell error: {error:?}");
+                print_operator_error("shell error", error.status());
                 break;
             }
         }
@@ -3801,6 +3786,25 @@ fn status_reason(status: Status) -> &'static str {
     } else {
         status.message()
     }
+}
+
+fn print_operator_error(prefix: &str, status: Status) {
+    let correlation = next_correlation_id(1);
+    audit_event!(
+        Level::Error,
+        EventField::identifier(field::OPERATION, correlation.raw()),
+        EventField::unsigned(field::STATUS, status.raw() as u64),
+    );
+    crate::println!(
+        "{}: {} (status={:#x})",
+        prefix,
+        status.message(),
+        status.raw()
+    );
+    crate::println!("  ACTION: {}", status.operator_action());
+    crate::println!("  IMPACT: {}", status.operator_impact());
+    crate::println!("  RETRY: {}", status.retry_hint().safety());
+    crate::println!("  AUDIT: {:032x}", correlation.raw());
 }
 
 fn insert(output: &mut StructuredOutput, name: &str, value: OutputValue) -> Result<(), Status> {

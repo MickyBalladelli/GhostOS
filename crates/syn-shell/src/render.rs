@@ -117,9 +117,12 @@ fn render_error_status(
         rendered.push_str(ANSI_ERROR)?;
         write!(
             rendered,
-            "ERROR: status={} ({})",
+            "ERROR: status={} ({})\n  ACTION: {}\n  IMPACT: {}\n  RETRY: {}",
             output.status().raw(),
-            output.status().message()
+            output.status().message(),
+            output.status().operator_action(),
+            output.status().operator_impact(),
+            output.status().retry_hint().safety()
         )
             .map_err(|_| Error::Capacity)?;
         rendered.push_str(ANSI_RESET)?;
@@ -1567,9 +1570,12 @@ fn render_json(
     let mut rendered = Text::empty();
     write!(
         &mut rendered,
-        "{{\"status\":{},\"message\":\"{}\",\"fields\":{{",
+        "{{\"status\":{},\"message\":\"{}\",\"action\":\"{}\",\"impact\":\"{}\",\"retry_safety\":\"{}\",\"fields\":{{",
         output.status().raw(),
-        output.status().message()
+        output.status().message(),
+        output.status().operator_action(),
+        output.status().operator_impact(),
+        output.status().retry_hint().safety()
     )
     .map_err(|_| Error::Capacity)?;
     for (index, field) in output.fields().enumerate() {

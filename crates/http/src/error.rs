@@ -30,30 +30,28 @@ pub fn encode_error_body(
     writer.decimal(error.code.raw() as u128)?;
     writer.push(b",\"operation\":")?;
     writer.decimal(error.operation as u128)?;
-    writer.push(b",\"retry\":\"")?;
+    writer.push(b",\"message\":\"")?;
+    writer.push(error.code.message().as_bytes())?;
+    writer.push(b"\",\"action\":\"")?;
+    writer.push(error.code.operator_action().as_bytes())?;
+    writer.push(b"\",\"impact\":\"")?;
+    writer.push(error.code.operator_impact().as_bytes())?;
+    writer.push(b"\",\"retry\":\"")?;
+    writer.push(error.retry.label().as_bytes())?;
+    writer.push(b"\",\"retry_safety\":\"")?;
+    writer.push(error.retry.safety().as_bytes())?;
     match error.retry {
-        RetryHint::Never => writer.push(b"never")?,
-        RetryHint::Immediate => writer.push(b"immediate")?,
+        RetryHint::Never | RetryHint::Immediate => {}
         RetryHint::AfterUs(delay) => {
-            writer.push(b"after_us\",\"retry_after_us\":")?;
+            writer.push(b"\",\"retry_after_us\":")?;
             writer.decimal(delay as u128)?;
-            writer.push(b",\"audit\":{\"correlation\":\"")?;
-            writer.hex(error.audit.correlation)?;
-            writer.push(b"\",\"node\":")?;
-            writer.decimal(error.audit.node as u128)?;
-            writer.push(b"},\"message\":\"")?;
-            writer.push(error.code.message().as_bytes())?;
-            writer.push(b"\"}")?;
-            return Ok(writer.len());
         }
     }
-    writer.push(b"\",\"audit\":{\"correlation\":\"")?;
+    writer.push(b",\"audit\":{\"correlation\":\"")?;
     writer.hex(error.audit.correlation)?;
     writer.push(b"\",\"node\":")?;
     writer.decimal(error.audit.node as u128)?;
-    writer.push(b"},\"message\":\"")?;
-    writer.push(error.code.message().as_bytes())?;
-    writer.push(b"\"}")?;
+    writer.push(b"}}")?;
     Ok(writer.len())
 }
 

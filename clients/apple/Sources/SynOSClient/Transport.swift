@@ -22,6 +22,12 @@ public struct HTTPTransport: SynOSTransport {
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse,
               (200..<300).contains(httpResponse.statusCode) else {
+            if let failure = try? JSONDecoder().decode(
+                SynOSOperatorFailure.self,
+                from: data
+            ) {
+                throw SynOSClientError.operatorFailure(failure)
+            }
             throw SynOSClientError.transportRejected
         }
         return data

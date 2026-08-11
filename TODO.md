@@ -532,10 +532,13 @@ measured p50/p95/p99 data over optimistic feature claims.
       seeds live under [`fuzz/corpus`](fuzz/corpus); failures are retained with
       SHA-256 metadata under [`fuzz/regressions`](fuzz/regressions) and replayed
       by [`scripts/replay-fuzz.sh`](scripts/replay-fuzz.sh).
-- [ ] Add accessibility and usability checks for shell errors, terminal output,
+- [x] Add accessibility and usability checks for shell errors, terminal output,
       diagnostics, JSON schemas, client UI, and recovery messages.
       Done when operators can identify action, impact, retry safety, and audit
       identity without reading internal logs.
+      Implementation: status guidance is rendered by the shell and JSON error
+      schema; the Apple client presents action, impact, retry safety, and audit
+      identity in an accessible operator notice.
 
 ## P2: Hardware efficiency and platform reach
 
