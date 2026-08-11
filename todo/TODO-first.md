@@ -1183,6 +1183,8 @@ full hardware terminal emulator.
 - [x] **Transport-independent integration**
   - [x] Keep terminal parsing independent from SSH, serial, and browser
         transport so the same byte stream drives every client.
-- [ ] **Conformance corpus and compatibility policy**
-  - [ ] Add deterministic VT100/VT420/DECterm transcript fixtures for every
+- [x] **Conformance corpus and compatibility policy**
+  - [x] Add deterministic VT100/VT420/DECterm transcript fixtures for every
         supported sequence and document behavior for unsupported sequences.
+        Evidence: [`docs/terminal-conformance.md`](../docs/terminal-conformance.md)
+        and [`crates/synos-webterm/tests/terminal_conformance.rs`](../crates/synos-webterm/tests/terminal_conformance.rs).

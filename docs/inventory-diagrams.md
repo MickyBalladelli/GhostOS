@@ -13,7 +13,7 @@ It has no hand-maintained inventory list. Run `python3 scripts/generate-inventor
 | Protocols | 20 | protocol modules, protocol/schema version constants, and traffic enums |
 | Capabilities | 28 | capability/rights enums, structs, and associated constants |
 | Storage formats | 35 | SYN* magic literals and nearby format/version constants |
-| Test files | 135 | Rust tests/ files and source files with #[test] functions |
+| Test files | 136 | Rust tests/ files and source files with #[test] functions |
 
 ## Crates
 
@@ -787,6 +787,7 @@ graph LR
     test_test__synos_webterm__crates_synos_webterm_src_ssh_rs["crates/synos-webterm/src/ssh.rs (2 tests)"]
     test_test__synos_webterm__crates_synos_webterm_src_terminal_rs["crates/synos-webterm/src/terminal.rs (3 tests)"]
     test_test__synos_webterm__crates_synos_webterm_tests_coverage_59_7_rs["crates/synos-webterm/tests/coverage_59_7.rs (4 tests)"]
+    test_test__synos_webterm__crates_synos_webterm_tests_terminal_conformance_rs["crates/synos-webterm/tests/terminal_conformance.rs (6 tests)"]
     test_crate__syn_script --> test_test__syn_script__crates_syn_script_tests_coverage_59_6_rs
     test_crate__syn_shell --> test_test__syn_shell__crates_syn_shell_src_diagnostics_rs
     test_crate__syn_shell --> test_test__syn_shell__crates_syn_shell_src_file_editor_rs
@@ -922,6 +923,7 @@ graph LR
     test_crate__synos_webterm --> test_test__synos_webterm__crates_synos_webterm_src_ssh_rs
     test_crate__synos_webterm --> test_test__synos_webterm__crates_synos_webterm_src_terminal_rs
     test_crate__synos_webterm --> test_test__synos_webterm__crates_synos_webterm_tests_coverage_59_7_rs
+    test_crate__synos_webterm --> test_test__synos_webterm__crates_synos_webterm_tests_terminal_conformance_rs
 ```
 
 ## Source index
@@ -1176,4 +1178,4 @@ graph LR
 | synos-webterm | [`crates/synos-webterm/src/ssh.rs:1`](../crates/synos-webterm/src/ssh.rs#L1) | 2 |
 | synos-webterm | [`crates/synos-webterm/src/terminal.rs:1`](../crates/synos-webterm/src/terminal.rs#L1) | 3 |
 | synos-webterm | [`crates/synos-webterm/tests/coverage_59_7.rs:1`](../crates/synos-webterm/tests/coverage_59_7.rs#L1) | 4 |
-
+| synos-webterm | [`crates/synos-webterm/tests/terminal_conformance.rs:1`](../crates/synos-webterm/tests/terminal_conformance.rs#L1) | 6 |
