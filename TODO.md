@@ -485,10 +485,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       typed diagnosis, safe-action, rollback, and recovery-proof links;
       [`crates/synos-inspect/tests/runbook.rs`](crates/synos-inspect/tests/runbook.rs)
       covers complete generation and incomplete-link rejection.
-- [ ] Add SLOs for boot, interactive shell, IPC, storage commit, DHCP, RPC,
+- [x] Add SLOs for boot, interactive shell, IPC, storage commit, DHCP, RPC,
       package activation, snapshot restore, and cluster convergence.
       Done when the system reports error budget consumption and refuses release
       claims without fresh evidence.
+      Implementation: [`crates/observability/src/slo.rs`](crates/observability/src/slo.rs)
+      defines bounded objectives and error-budget consumption for all nine
+      paths; [`scripts/release-slo-gate.py`](scripts/release-slo-gate.py)
+      requires complete, passed, revision-matched evidence within the freshness
+      window before a release claim can pass.
 
 ## P2: Developer and user-facing quality
 

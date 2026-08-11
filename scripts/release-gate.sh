@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-evidence_dir=${1:?usage: release-gate.sh EVIDENCE_DIRECTORY}
+evidence_dir=${1:?usage: release-gate.sh EVIDENCE_DIRECTORY [SLO_REPORT]}
+slo_report=${2:-${SYNOS_SLO_REPORT:-}}
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 if [[ ! -d "$evidence_dir" ]]; then
@@ -12,6 +13,16 @@ fi
 python3 "$root_dir/scripts/evidence-manifest.py" \
     --evidence-dir "$evidence_dir" \
     --check
+
+if [[ -z "$slo_report" ]]; then
+    echo "release gate: fresh SLO report is required; pass SLO_REPORT or set SYNOS_SLO_REPORT" >&2
+    exit 1
+fi
+
+python3 "$root_dir/scripts/release-slo-gate.py" \
+    --evidence-dir "$evidence_dir" \
+    --report "$slo_report" \
+    --max-age-seconds "${SYNOS_SLO_MAX_AGE_SECONDS:-86400}"
 
 python3 - "$evidence_dir" <<'PY'
 import json

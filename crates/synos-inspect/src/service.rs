@@ -3,7 +3,9 @@ use synos_admission::{
     AdmissionAction, AdmissionController, AdmissionOutcome, AdmissionPriority, WorkClass,
 };
 use synos_audit::ObsolescenceReport;
-use synos_observability::{CachePolicyRegistry, HealthReport, MAX_CACHE_POLICIES};
+use synos_observability::{
+    CachePolicyRegistry, HealthReport, SloReport, MAX_CACHE_POLICIES,
+};
 
 use crate::{
     ActivityReport, CpuReport, InspectCapability, InspectionAuthority,
@@ -54,6 +56,9 @@ pub trait InspectionProvider {
     fn sample_health(&mut self, _report: &mut HealthReport) -> Result<(), Status> {
         Err(Status::NOT_FOUND)
     }
+    fn sample_slo(&mut self, _report: &mut SloReport) -> Result<(), Status> {
+        Err(Status::NOT_FOUND)
+    }
     fn sample_cache(
         &mut self,
         _report: &mut CachePolicyRegistry<MAX_CACHE_POLICIES>,
@@ -71,6 +76,7 @@ pub struct TelemetryStore {
     activity: ActivityReport,
     obsolete: ObsolescenceReport,
     health: HealthReport,
+    slo: SloReport,
     cache: CachePolicyRegistry<MAX_CACHE_POLICIES>,
 }
 
@@ -83,6 +89,7 @@ impl TelemetryStore {
             activity: ActivityReport::new(),
             obsolete: ObsolescenceReport::new(),
             health: HealthReport::new(),
+            slo: SloReport::new(0),
             cache: CachePolicyRegistry::new(),
         }
     }
@@ -110,6 +117,10 @@ impl TelemetryStore {
     pub fn publish_health(&mut self, report: HealthReport) {
         report.emit_audit();
         self.health = report
+    }
+
+    pub fn publish_slo(&mut self, report: SloReport) {
+        self.slo = report
     }
 
     pub fn publish_cache(&mut self, report: CachePolicyRegistry<MAX_CACHE_POLICIES>) {
@@ -151,6 +162,11 @@ impl InspectionProvider for TelemetryStore {
 
     fn sample_health(&mut self, report: &mut HealthReport) -> Result<(), Status> {
         *report = self.health;
+        Ok(())
+    }
+
+    fn sample_slo(&mut self, report: &mut SloReport) -> Result<(), Status> {
+        *report = self.slo;
         Ok(())
     }
 
@@ -377,6 +393,23 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         let mut report = CachePolicyRegistry::new();
         let result = self.provider
             .sample_cache(&mut report)
+            .map_err(InspectError::Source)
+            .map(|()| report);
+        self.finish_view(lease, result)
+    }
+
+    pub fn slo(
+        &mut self,
+        capability: InspectCapability,
+        view: View,
+        now_us: u64,
+    ) -> Result<SloReport, InspectError> {
+        self.authorize(capability, InspectionRights::SLO, view, now_us)?;
+        let lease = self.admit_view(view)?;
+        let mut report = SloReport::default();
+        let result = self
+            .provider
+            .sample_slo(&mut report)
             .map_err(InspectError::Source)
             .map(|()| report);
         self.finish_view(lease, result)

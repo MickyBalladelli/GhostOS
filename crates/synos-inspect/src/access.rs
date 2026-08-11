@@ -16,7 +16,7 @@ impl PrincipalId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct InspectionRights(u8);
+pub struct InspectionRights(u16);
 
 impl InspectionRights {
     pub const NONE: Self = Self(0);
@@ -28,6 +28,7 @@ impl InspectionRights {
     pub const OBSOLESCENCE: Self = Self(1 << 5);
     pub const HEALTH: Self = Self(1 << 6);
     pub const CACHE: Self = Self(1 << 7);
+    pub const SLO: Self = Self(1 << 8);
     pub const LOCAL_DIAGNOSTICS: Self = Self(
         Self::MEMORY.0
             | Self::STORAGE.0
@@ -35,11 +36,12 @@ impl InspectionRights {
             | Self::ACTIVITY.0
             | Self::OBSOLESCENCE.0
             | Self::HEALTH.0
-            | Self::CACHE.0,
+            | Self::CACHE.0
+            | Self::SLO.0,
     );
     pub const ALL: Self = Self(Self::LOCAL_DIAGNOSTICS.0 | Self::AUDIT_WORLD.0);
 
-    pub const fn from_bits(bits: u8) -> Option<Self> {
+    pub const fn from_bits(bits: u16) -> Option<Self> {
         if bits & !Self::ALL.0 == 0 {
             Some(Self(bits))
         } else {
@@ -47,7 +49,7 @@ impl InspectionRights {
         }
     }
 
-    pub const fn bits(self) -> u8 {
+    pub const fn bits(self) -> u16 {
         self.0
     }
 

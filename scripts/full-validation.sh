@@ -178,5 +178,5 @@ python3 "$root_dir/scripts/evidence-manifest.py" \
 python3 "$root_dir/scripts/evidence-manifest.py" \
     --evidence-dir "$evidence_dir" \
     --check
-"$root_dir/scripts/release-gate.sh" "$evidence_dir"
+"$root_dir/scripts/release-gate.sh" "$evidence_dir" "${SYNOS_SLO_REPORT:-}"
 echo "full validation passed; evidence: $evidence_dir"

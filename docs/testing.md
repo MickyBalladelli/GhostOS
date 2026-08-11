@@ -232,6 +232,27 @@ digest. The manifest records every evidence file's size and SHA-256 digest,
 the current Git revision, and every result state. The gate verifies those
 digests and rejects malformed or unexplained result records.
 
+Release claims also require a fresh SLO report. The report is the JSON export
+of the capability-scoped `SloReport` and has schema `1`, kind
+`synos-slo-report`, the current Git `revision`, `generated_at`, and nine `slos`
+entries named `boot`, `interactive-shell`, `ipc`, `storage-commit`, `dhcp`,
+`rpc`, `package-activation`, `snapshot-restore`, and `cluster-convergence`.
+Each entry records `observed_at`, `total_events`, `bad_events`,
+`allowed_bad_events`, `remaining_bad_events`, `consumed_per_million`,
+`target_per_million`, `state`, and evidence paths relative to the evidence
+directory. Every cited evidence record must be passed, revision-matched, and
+younger than 24 hours. The gate prints each error-budget consumption and
+rejects missing, stale, failed, or exhausted SLOs:
+
+```sh
+SYNOS_SLO_REPORT=build/slo-report.json \
+  ./scripts/release-gate.sh build/test-evidence/<run-id>
+```
+
+The JSON report must be supplied by the system's SLO exporter before the
+evidence manifest is written. A release gate without `SYNOS_SLO_REPORT` or a
+second report argument always fails.
+
 Local validation runs formatting, host, VM, no-std, documentation, inventory,
 QEMU, fuzz, coverage, mutation, cross-target, and reproducibility checks when
 the required tools exist. The platform probe records accelerator and QEMU

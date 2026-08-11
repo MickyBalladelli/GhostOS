@@ -32,7 +32,10 @@ pub use synos_audit::ObsolescenceReport;
 pub use synos_observability::{
     CacheEvent, CacheKind, CachePolicy, CachePolicyError, CachePolicyRegistry,
     CachePolicyReport, HealthError, HealthReport, HealthState, HealthTransport,
-    OperationalHealth, CACHE_RATE_SCALE, MAX_CACHE_POLICIES, MAX_OPERATIONAL_HEALTH,
+    OperationalHealth, SloDefinition, SloError, SloKind, SloMeasurement, SloObservation,
+    SloReport, SloReportStatus, BUDGET_SCALE, CACHE_RATE_SCALE, DEFAULT_MAX_AGE_US,
+    DEFAULT_OBJECTIVE_PER_MILLION, DEFAULT_WINDOW_US, MAX_CACHE_POLICIES,
+    MAX_OPERATIONAL_HEALTH, SLO_COUNT,
 };
 pub use synos_admission::{
     AdmissionAction, AdmissionController, AdmissionError, AdmissionLease, AdmissionOutcome,

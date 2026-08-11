@@ -12,6 +12,7 @@ pub use synos_service_scale::{
 };
 
 pub mod profiling;
+pub mod slo;
 pub mod throughput;
 pub mod cache;
 pub mod scaling;
@@ -40,6 +41,11 @@ pub use profiling::{
 pub use throughput::{BatchController, BatchDecision, ProducerPolicy};
 pub use scaling::{
     AffinitySet, ScalePath, ScalePolicy, SCALE_CPU_TIERS,
+};
+pub use slo::{
+    SloDefinition, SloError, SloKind, SloMeasurement, SloObservation, SloReport,
+    SloReportStatus, BUDGET_SCALE, DEFAULT_MAX_AGE_US, DEFAULT_OBJECTIVE_PER_MILLION,
+    DEFAULT_WINDOW_US, SLO_COUNT,
 };
 
 pub const MAX_EVENT_FIELDS: usize = 4;
