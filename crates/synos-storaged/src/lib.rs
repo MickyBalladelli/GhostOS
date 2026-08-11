@@ -1,6 +1,11 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub use synos_service_scale::{
+    EffectReceipt, HandoffReceipt, HandoffToken, InstanceId, InstanceState, JoinReceipt, RequestId,
+    RouteDecision, ServiceKind, SessionId, SessionState, ScaleError, ScaleSnapshot, StorageScale,
+};
+
 pub use synos_numa::{NumaCounters, NumaDecision, NumaReport, NumaTopology, NumaTopologyError, PlacementKind, PlacementLocality};
 
 mod bootstrap;

@@ -641,6 +641,7 @@ dependencies = [
  "synos-ipc",
  "synos-netd",
  "synos-protocol",
+ "synos-service-scale",
  "synos-status",
  "synos-test-support",
 ]
@@ -772,6 +773,7 @@ version = "0.1.0"
 name = "synos-observability"
 version = "0.1.0"
 dependencies = [
+ "synos-service-scale",
  "synos-status",
  "synos-system-model",
 ]
@@ -790,6 +792,7 @@ dependencies = [
  "synos-admission",
  "synos-durability",
  "synos-policy",
+ "synos-service-scale",
  "synos-status",
  "synos-synfs",
  "synos-system-model",
@@ -891,12 +894,17 @@ dependencies = [
  "synos-observability",
  "synos-pkg",
  "synos-runtime",
+ "synos-service-scale",
  "synos-status",
  "synos-synfs",
  "synos-system-model",
  "synos-time-sync",
  "synos-update",
 ]
+
+[[package]]
+name = "synos-service-scale"
+version = "0.1.0"
 
 [[package]]
 name = "synos-shield"
@@ -932,6 +940,7 @@ dependencies = [
  "synos-numa",
  "synos-observability",
  "synos-policy",
+ "synos-service-scale",
  "synos-status",
  "synos-synfs",
  "synos-system-model",
@@ -1042,6 +1051,7 @@ dependencies = [
  "syn-shell",
  "synos-ipc",
  "synos-protocol",
+ "synos-service-scale",
  "synos-status",
 ]
 

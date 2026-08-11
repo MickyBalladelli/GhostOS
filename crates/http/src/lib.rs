@@ -8,6 +8,10 @@
 //! owner-bound `SocketCapability`.
 
 pub use synos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
+pub use synos_service_scale::{
+    EffectReceipt, HandoffReceipt, HandoffToken, HttpScale, InstanceId, InstanceState, JoinReceipt,
+    RequestId, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError, ScaleSnapshot,
+};
 
 mod grpc;
 mod http;

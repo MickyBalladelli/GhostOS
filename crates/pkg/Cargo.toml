@@ -14,6 +14,7 @@ synos-policy = { path = "../policy" }
 synos-status = { path = "../status" }
 synos-synfs = { path = "../synfs" }
 synos-system-model = { path = "../system-model" }
+synos-service-scale = { path = "../service-scale" }
 
 [dev-dependencies]
 synos-test-support = { path = "../test-support" }

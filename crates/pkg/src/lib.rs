@@ -15,6 +15,10 @@ use synos_policy::{
     ObjectId, PackageActivationChange, PolicyChange, PolicySnapshot, SimulationError,
     SimulationReport,
 };
+pub use synos_service_scale::{
+    EffectReceipt, HandoffReceipt, HandoffToken, InstanceId, InstanceState, JoinReceipt, PackageScale,
+    RequestId, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError, ScaleSnapshot,
+};
 
 const BUNDLE_MAGIC: &[u8; 8] = b"SYNBNDL1";
 const BUNDLE_VERSION: u16 = 1;

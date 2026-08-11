@@ -364,10 +364,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       delegated capability quotas through every ancestor. Regression coverage
       covers shared parent recovery capacity, egress isolation, and delegated
       capability accounting.
-- [ ] Add horizontal service scaling for HTTP, remote terminal, package,
+- [x] Add horizontal service scaling for HTTP, remote terminal, package,
       compiler, storage, and observability services with session handoff.
       Done when instances can join, drain, restart, and rebalance without lost
-      requests or duplicated side effects.
+      requests or duplicated side effects. Implemented by the bounded,
+      generation-fenced controller in [`crates/service-scale`](crates/service-scale)
+      and typed adapters re-exported by the six service crates. Session
+      snapshots move only after in-flight work reaches zero; stable request
+      IDs and effect receipts make retries and post-restart replays return the
+      original result without repeating a side effect. Regression coverage is
+      in the controller unit model.
 - [ ] Add cardinality limits and aggregation for metrics, traces, audit labels,
       packet captures, and per-tenant diagnostics.
       Done when observability remains usable at cluster scale without becoming a

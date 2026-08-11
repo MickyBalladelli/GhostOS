@@ -19,6 +19,7 @@ synos-status = { path = "../status" }
 synos-system-model = { path = "../system-model" }
 synos-time-sync = { path = "../time-sync" }
 synos-update = { path = "../synos-update" }
+synos-service-scale = { path = "../service-scale" }
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("synos"))'] }

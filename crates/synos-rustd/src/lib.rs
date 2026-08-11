@@ -1,6 +1,12 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub use synos_service_scale::{
+    CompilerScale, EffectReceipt, HandoffReceipt, HandoffToken, InstanceId, InstanceState,
+    JoinReceipt, RequestId, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError,
+    ScaleSnapshot,
+};
+
 mod boot;
 mod design;
 mod registry;

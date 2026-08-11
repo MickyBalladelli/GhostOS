@@ -9,6 +9,11 @@
 //! daemon can use SynOS networking, crypto, and `syn-authd` capabilities.
 
 pub use synos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
+pub use synos_service_scale::{
+    EffectReceipt, HandoffReceipt, HandoffToken, InstanceId, InstanceState, JoinReceipt, RequestId,
+    RemoteTerminalScale, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError,
+    ScaleSnapshot,
+};
 
 pub fn validate_remote_terminal_message(
     guard: &mut ProtocolGuard,

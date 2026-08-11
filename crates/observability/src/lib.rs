@@ -5,6 +5,11 @@ use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use synos_status::Status;
 pub use synos_system_model::ContentId;
+pub use synos_service_scale::{
+    EffectReceipt, HandoffReceipt, HandoffToken, InstanceId, InstanceState, JoinReceipt, RequestId,
+    ObservabilityScale, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError,
+    ScaleSnapshot,
+};
 
 pub mod profiling;
 pub mod throughput;
