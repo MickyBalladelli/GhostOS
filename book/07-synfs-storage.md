@@ -59,10 +59,15 @@ Draining blocks new allocations. Detach refuses to proceed while a pool still ow
 
 The backup worker pins a SynFS checkpoint and streams live file versions into a checksummed `SYNBACK1` archive through bounded cooperative polls. It releases the pinned root only after the caller commits the finished backup.
 
+Recovery backups use the same pinned-root boundary with keyed, encrypted,
+content-addressed chunks, resumable object uploads, catalog retention and
+legal holds, and a transactional restore verifier. Restore reports include RPO,
+RTO, bytes transferred, bootability, and every skipped object with its reason.
+
 The full compatibility and recovery matrix is in
 [`docs/persistence-compatibility.md`](../docs/persistence-compatibility.md).
-`SYNBACK1` is currently a streaming writer format; it is not a mountable
-volume and the repository does not yet provide its restore decoder.
+`SYNBACK1` remains a streaming writer format; recovery manifests and encrypted
+objects are the restore input for the new recovery API.
 
 ```text
 checkpoint -> stream -> checksum -> caller commits -> release checkpoint

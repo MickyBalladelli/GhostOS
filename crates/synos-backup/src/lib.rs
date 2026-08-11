@@ -1,6 +1,20 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+mod crypto;
+mod recovery;
+
+pub use crypto::{
+    CryptoError, Digest, EncryptionKey, CHUNK_BYTES, DIGEST_BYTES, ENCRYPTED_CHUNK_OVERHEAD,
+    MAX_ENCRYPTED_CHUNK_BYTES, NONCE_BYTES, TAG_BYTES,
+};
+pub use recovery::{
+    BackupCatalog, BackupCatalogView, BackupId, BackupManifest, BackupProgress as RecoveryProgress,
+    BackupUploadState, BootVerifier, ChunkRef, EncryptedBackupJob, ManifestFile, ObjectReader,
+    RecoveryBackupReport, RecoveryError, RequiredBootPaths, ResumableObjectUploader,
+    RestoreReport, RetentionPolicy, SkipReason, SkippedObject, MAX_RESTORE_FILE_BYTES,
+};
+
 use synos_status::{IntoStatus, Status};
 use synos_synfs::{
     CheckpointId, CheckpointInfo, Error as FileError, FileVersion, MAX_PATH_BYTES,

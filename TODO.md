@@ -121,10 +121,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       generations, duplicate ownership, corrupt blocks, and unreachable blocks;
       [`kernel/src/capability.rs`](kernel/src/capability.rs) rejects orphaned
       capability derivation links.
-- [ ] Implement incremental, deduplicated, encrypted backups with resumable
+- [x] Implement incremental, deduplicated, encrypted backups with resumable
       upload, retention limits, legal hold, and verified restore.
       Done when restore drills recover a bootable system and report RPO, RTO,
       bytes transferred, and any skipped object with a reason.
+      Implementation: [`crates/synos-backup/src/recovery.rs`](crates/synos-backup/src/recovery.rs)
+      provides keyed content-addressed chunks, authenticated encryption,
+      resumable uploads, bounded retention and legal holds, and transactional
+      verified restore reports with RPO, RTO, transfer, bootability, and skip
+      reasons.
 - [ ] Add storage tiering between local NVMe, slower disks, remote storage, and
       disposable cache using explicit heat, cost, and durability policies.
       Done when promotion and demotion are crash-safe and never weaken the
