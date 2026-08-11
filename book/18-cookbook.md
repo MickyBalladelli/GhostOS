@@ -2,6 +2,10 @@
 
 These recipes are short paths through the system. They are meant to help a new developer remember the project.
 
+The executable public-API versions live in [`examples/cookbook`](../examples/cookbook/).
+Build them with `python3 scripts/validate-cookbook.py`. The generated crate index is
+in [`docs/api.md`](../docs/api.md).
+
 ## Recipe 1: boot the kernel
 
 ```sh
@@ -138,4 +142,3 @@ inspect state
 ```
 
 Do not begin by rerunning a flaky command. First find the recorded evidence.
-

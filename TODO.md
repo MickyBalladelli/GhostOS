@@ -503,11 +503,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       documented with examples. Implemented by [`crates/api-compat`](crates/api-compat),
       boundary version constants, Swift compatibility errors, and the migration
       guide in [`docs/api-versioning.md`](docs/api-versioning.md).
-- [ ] Add generated API documentation and executable cookbook examples for
+- [x] Add generated API documentation and executable cookbook examples for
       boot, storage, networking, capabilities, clusters, compiler jobs, and
       recovery.
       Done when examples build in CI-equivalent local validation and use only
-      public interfaces.
+      public interfaces. Implemented by the generated workspace API index in
+      [`docs/api.md`](docs/api.md), the seven public-interface binaries in
+      [`examples/cookbook`](examples/cookbook/), and the locked local validator
+      [`scripts/validate-cookbook.py`](scripts/validate-cookbook.py).
 - [ ] Add deterministic replay bundles that include input events, clock values,
       random seeds, device completions, scheduler decisions, and configuration
       digests while excluding secrets.

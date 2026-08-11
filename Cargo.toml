@@ -67,6 +67,7 @@ members = [
     "tools/cargo-synos",
     "tools/synos-compiler",
     "examples/hello-world",
+    "examples/cookbook",
     "kernel",
     "boot/uefi",
     "virtual_machine",

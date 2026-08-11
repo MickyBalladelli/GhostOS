@@ -562,6 +562,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-cookbook"
+version = "0.1.0"
+dependencies = [
+ "synos-auth",
+ "synos-backup",
+ "synos-boot-protocol",
+ "synos-durability",
+ "synos-fabric",
+ "synos-kernel",
+ "synos-netd",
+ "synos-rustd",
+ "synos-synfs",
+ "synos-system-model",
+]
+
+[[package]]
 name = "synos-debug"
 version = "0.1.0"
 dependencies = [

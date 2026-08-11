@@ -1,0 +1,17 @@
+[package]
+name = "synos-cookbook"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+synos-auth = { path = "../../crates/auth" }
+synos-boot-protocol = { path = "../../crates/boot-protocol" }
+synos-durability = { path = "../../crates/durability" }
+synos-fabric = { path = "../../crates/fabric" }
+synos-kernel = { path = "../../kernel" }
+synos-netd = { path = "../../crates/netd" }
+synos-rustd = { path = "../../crates/synos-rustd" }
+synos-backup = { path = "../../crates/synos-backup" }
+synos-synfs = { path = "../../crates/synfs" }
+synos-system-model = { path = "../../crates/system-model" }
