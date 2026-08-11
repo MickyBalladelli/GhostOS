@@ -447,7 +447,21 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         if self.entries[slot].info.owner != caller {
             return Err(CapabilityError::AccessDenied)
         }
-        Ok(self.quotas[slot].consume(resource, now_us, amount))
+        let mut chain = [NO_DESCRIPTOR; CAPACITY];
+        let length = self.quota_chain(slot, &mut chain);
+        let mut charged = 0;
+        for index in chain[..length].iter().copied() {
+            match self.quotas[index].consume(resource, now_us, amount) {
+                QuotaDecision::Allowed => charged += 1,
+                decision => {
+                    for rollback in chain[..charged].iter().copied() {
+                        self.quotas[rollback].refund(resource, amount)
+                    }
+                    return Ok(decision)
+                }
+            }
+        }
+        Ok(QuotaDecision::Allowed)
     }
 
     pub fn refund_quota(
@@ -461,7 +475,11 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         if self.entries[slot].info.owner != caller {
             return Err(CapabilityError::AccessDenied)
         }
-        self.quotas[slot].refund(resource, amount);
+        let mut chain = [NO_DESCRIPTOR; CAPACITY];
+        let length = self.quota_chain(slot, &mut chain);
+        for index in chain[..length].iter().copied() {
+            self.quotas[index].refund(resource, amount)
+        }
         Ok(())
     }
 
@@ -475,8 +493,27 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
         if self.entries[slot].info.owner != caller {
             return Err(CapabilityError::AccessDenied)
         }
-        self.quotas[slot].release_memory(amount);
+        let mut chain = [NO_DESCRIPTOR; CAPACITY];
+        let length = self.quota_chain(slot, &mut chain);
+        for index in chain[..length].iter().copied() {
+            self.quotas[index].release_memory(amount)
+        }
         Ok(())
+    }
+
+    fn quota_chain(&self, slot: usize, chain: &mut [usize; CAPACITY]) -> usize {
+        let mut length = 0;
+        let mut current = slot;
+        while length < CAPACITY {
+            chain[length] = current;
+            length += 1;
+            let parent = self.entries[current].parent_slot;
+            if parent == NO_DESCRIPTOR {
+                break
+            }
+            current = parent;
+        }
+        length
     }
 
     pub fn links(

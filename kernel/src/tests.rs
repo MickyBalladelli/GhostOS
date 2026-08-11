@@ -610,6 +610,43 @@ fn page_fault_dispatch_is_quota_limited_and_status_mapped() {
 }
 
 #[test]
+fn delegated_capabilities_consume_parent_quota_atomically() {
+    let owner = address_space(1);
+    let first = address_space(2);
+    let second = address_space(3);
+    let mut capabilities = CapabilitySpace::<4>::new();
+    let root = capabilities
+        .mint_root(
+            owner,
+            CapabilityObject::SystemControl,
+            Rights::READ.union(Rights::CONTROL).union(Rights::DELEGATE),
+        )
+        .unwrap();
+    let policy = crate::QuotaPolicy::new(
+        crate::BucketConfig::new(1, 1).unwrap(),
+        crate::BucketConfig::new(8, 8).unwrap(),
+        crate::BucketConfig::new(8, 8).unwrap(),
+        4096,
+    )
+    .unwrap();
+    capabilities.configure_quota(owner, root, policy).unwrap();
+    let first_cap = capabilities.delegate(owner, root, first, Rights::READ).unwrap();
+    let second_cap = capabilities.delegate(owner, root, second, Rights::READ).unwrap();
+    assert_eq!(
+        capabilities.consume_quota(first, first_cap, crate::QuotaResource::IpcMessages, 0, 1),
+        Ok(crate::QuotaDecision::Allowed)
+    );
+    assert!(matches!(
+        capabilities.consume_quota(second, second_cap, crate::QuotaResource::IpcMessages, 0, 1),
+        Ok(crate::QuotaDecision::Throttled { .. })
+    ));
+    assert_eq!(
+        capabilities.quota_usage(second, second_cap).unwrap().memory_in_use,
+        0
+    );
+}
+
+#[test]
 fn invariants_catalogue_and_model_state_are_redacted() {
     use crate::invariants::{CATALOGUE, InvariantId};
 

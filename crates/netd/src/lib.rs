@@ -44,8 +44,9 @@ pub use protocol::{
     SocketRequest, SocketResponse, socket_response,
 };
 pub use service::{
-    ClientChannel, DefaultFirewall, NetworkDaemon, ServiceError, SocketBackend, SocketCapability,
-    SocketRights, SocketState,
+    ClientChannel, DefaultFirewall, NetworkDaemon, NetworkRatePolicy, NetworkShapeDecision,
+    NetworkShaper, ServiceError, SocketBackend, SocketCapability, SocketRights, SocketState,
+    DEFAULT_NETWORK_TENANT_CAPACITY,
 };
 pub use scheduler::{
     NetworkServiceActivity, NetworkServiceScheduler, DEFAULT_SOCKET_INGRESS_BUDGET,

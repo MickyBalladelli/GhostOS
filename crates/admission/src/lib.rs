@@ -13,6 +13,7 @@ pub const WORK_CLASS_COUNT: usize = 6;
 pub const DEFAULT_ACTIVE_CAPACITY: usize = 16;
 pub const DEFAULT_QUEUE_CAPACITY: u16 = 32;
 pub const DEFAULT_RECOVERY_RESERVE: u16 = 4;
+pub const MAX_TENANT_POLICIES: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -74,6 +75,31 @@ pub enum AdmissionReason {
     RecoveryReserve = 2,
     ClassLimit = 3,
     QueueFull = 4,
+    TenantLimit = 5,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TenantAdmissionPolicy {
+    pub tenant: u64,
+    pub parent: Option<u64>,
+    pub active_limit: u16,
+    pub recovery_reserve: u16,
+}
+
+impl TenantAdmissionPolicy {
+    pub const fn new(
+        tenant: u64,
+        parent: Option<u64>,
+        active_limit: u16,
+        recovery_reserve: u16,
+    ) -> Self {
+        Self {
+            tenant,
+            parent,
+            active_limit,
+            recovery_reserve,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,6 +183,7 @@ pub struct AdmissionLease {
     sequence: u64,
     class: WorkClass,
     priority: AdmissionPriority,
+    tenant: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,6 +217,14 @@ pub struct AdmissionController<const CAPACITY: usize = DEFAULT_ACTIVE_CAPACITY> 
     recovery_active: u16,
     queued: u16,
     next_sequence: u64,
+    tenants: [Option<TenantState>; MAX_TENANT_POLICIES],
+}
+
+#[derive(Clone, Copy)]
+struct TenantState {
+    policy: TenantAdmissionPolicy,
+    active: u16,
+    recovery_active: u16,
 }
 
 impl<const CAPACITY: usize> AdmissionController<CAPACITY> {
@@ -211,6 +246,7 @@ impl<const CAPACITY: usize> AdmissionController<CAPACITY> {
             recovery_active: 0,
             queued: 0,
             next_sequence: 1,
+            tenants: [None; MAX_TENANT_POLICIES],
         })
     }
 
@@ -229,13 +265,80 @@ impl<const CAPACITY: usize> AdmissionController<CAPACITY> {
         }
     }
 
+    /// Configure one tenant's active and recovery budgets. Parent usage is
+    /// charged together with child usage, forming a bounded hierarchy.
+    pub fn configure_tenant(&mut self, policy: TenantAdmissionPolicy) -> Result<(), AdmissionError> {
+        if policy.tenant == 0
+            || policy.active_limit == 0
+            || policy.recovery_reserve > policy.active_limit
+            || policy.active_limit as usize > CAPACITY
+            || policy.parent == Some(policy.tenant)
+        {
+            return Err(AdmissionError::InvalidPolicy)
+        }
+        if let Some(parent) = policy.parent {
+            if self.tenant_state(parent).is_none() {
+                return Err(AdmissionError::InvalidPolicy)
+            }
+            let mut current = Some(parent);
+            for _ in 0..MAX_TENANT_POLICIES {
+                if current == Some(policy.tenant) {
+                    return Err(AdmissionError::InvalidPolicy)
+                }
+                current = current.and_then(|tenant| {
+                    self.tenant_state(tenant)
+                        .and_then(|state| state.policy.parent)
+                });
+                if current.is_none() {
+                    break
+                }
+            }
+        }
+        if let Some(state) = self
+            .tenants
+            .iter_mut()
+            .flatten()
+            .find(|state| state.policy.tenant == policy.tenant)
+        {
+            if state.active > policy.active_limit
+                || state.recovery_active > policy.active_limit
+            {
+                return Err(AdmissionError::InvalidPolicy)
+            }
+            state.policy = policy;
+            return Ok(())
+        }
+        let slot = self
+            .tenants
+            .iter_mut()
+            .find(|slot| slot.is_none())
+            .ok_or(AdmissionError::InvalidPolicy)?;
+        *slot = Some(TenantState {
+            policy,
+            active: 0,
+            recovery_active: 0,
+        });
+        Ok(())
+    }
+
     /// Admit one operation or record the exact bounded shedding decision.
     pub fn admit(
         &mut self,
         class: WorkClass,
         priority: AdmissionPriority,
     ) -> AdmissionOutcome {
-        let reason = self.block_reason(class, priority);
+        self.admit_for(0, class, priority)
+    }
+
+    /// Admit work for a tenant. A tenant with a configured parent consumes
+    /// active and recovery slots at every ancestor before receiving a lease.
+    pub fn admit_for(
+        &mut self,
+        tenant: u64,
+        class: WorkClass,
+        priority: AdmissionPriority,
+    ) -> AdmissionOutcome {
+        let reason = self.block_reason_for(tenant, class, priority);
         if reason == AdmissionReason::None {
             if self.queued != 0 {
                 self.queued -= 1;
@@ -251,6 +354,7 @@ impl<const CAPACITY: usize> AdmissionController<CAPACITY> {
                 sequence,
                 class,
                 priority,
+                tenant,
             };
             self.leases[slot] = Some(lease);
             self.active = self.active.saturating_add(1);
@@ -259,6 +363,7 @@ impl<const CAPACITY: usize> AdmissionController<CAPACITY> {
             if priority.is_recovery() {
                 self.recovery_active = self.recovery_active.saturating_add(1);
             }
+            self.adjust_tenant_usage(tenant, priority, 1);
             self.stats[class.index()].admitted = self.stats[class.index()].admitted.saturating_add(1);
             return self.outcome(
                 sequence,
@@ -317,12 +422,40 @@ impl<const CAPACITY: usize> AdmissionController<CAPACITY> {
         if lease.priority.is_recovery() {
             self.recovery_active = self.recovery_active.saturating_sub(1);
         }
+        self.adjust_tenant_usage(lease.tenant, lease.priority, -1);
         self.stats[lease.class.index()].completed =
             self.stats[lease.class.index()].completed.saturating_add(1);
         Ok(())
     }
 
-    fn block_reason(&self, class: WorkClass, priority: AdmissionPriority) -> AdmissionReason {
+    fn block_reason_for(
+        &self,
+        tenant: u64,
+        class: WorkClass,
+        priority: AdmissionPriority,
+    ) -> AdmissionReason {
+        if tenant != 0 {
+            let mut current = Some(tenant);
+            let mut found = false;
+            for _ in 0..MAX_TENANT_POLICIES {
+                let Some(id) = current else { break };
+                let Some(state) = self.tenant_state(id) else {
+                    return AdmissionReason::TenantLimit
+                };
+                found = true;
+                if state.active >= state.policy.active_limit
+                    || (!priority.is_recovery()
+                        && state.active.saturating_add(state.policy.recovery_reserve)
+                            >= state.policy.active_limit)
+                {
+                    return AdmissionReason::TenantLimit
+                }
+                current = state.policy.parent;
+            }
+            if !found {
+                return AdmissionReason::TenantLimit
+            }
+        }
         if !priority.is_recovery() && self.active_by_class[class.index()] >= self.policy.class_limit(class) {
             return AdmissionReason::ClassLimit
         }
@@ -336,6 +469,41 @@ impl<const CAPACITY: usize> AdmissionController<CAPACITY> {
             return AdmissionReason::RecoveryReserve
         }
         AdmissionReason::None
+    }
+
+    fn tenant_state(&self, tenant: u64) -> Option<&TenantState> {
+        self.tenants
+            .iter()
+            .flatten()
+            .find(|state| state.policy.tenant == tenant)
+    }
+
+    fn adjust_tenant_usage(&mut self, tenant: u64, priority: AdmissionPriority, delta: i8) {
+        if tenant == 0 {
+            return
+        }
+        let mut current = Some(tenant);
+        for _ in 0..MAX_TENANT_POLICIES {
+            let Some(id) = current else { break };
+            let Some(index) = self
+                .tenants
+                .iter()
+                .position(|state| state.is_some_and(|state| state.policy.tenant == id))
+            else { break };
+            let state = self.tenants[index].as_mut().expect("tenant state");
+            if delta > 0 {
+                state.active = state.active.saturating_add(delta as u16);
+                if priority.is_recovery() {
+                    state.recovery_active = state.recovery_active.saturating_add(1);
+                }
+            } else {
+                state.active = state.active.saturating_sub(1);
+                if priority.is_recovery() {
+                    state.recovery_active = state.recovery_active.saturating_sub(1);
+                }
+            }
+            current = state.policy.parent;
+        }
     }
 
     fn outcome(
@@ -433,5 +601,33 @@ mod tests {
         assert_eq!(controller.report().class(WorkClass::RemoteDiagnostics).dropped, 1);
         assert_eq!(controller.report().class(WorkClass::MembershipChange).retried, 1);
         controller.finish(lease).unwrap();
+    }
+
+    #[test]
+    fn tenant_children_share_parent_recovery_reserve() {
+        let policy = AdmissionPolicy::new(4, 2, 0, [4; WORK_CLASS_COUNT]);
+        let mut controller = AdmissionController::<4>::new(policy).unwrap();
+        controller
+            .configure_tenant(TenantAdmissionPolicy::new(100, None, 2, 1))
+            .unwrap();
+        controller
+            .configure_tenant(TenantAdmissionPolicy::new(1, Some(100), 2, 0))
+            .unwrap();
+        controller
+            .configure_tenant(TenantAdmissionPolicy::new(2, Some(100), 2, 0))
+            .unwrap();
+
+        assert!(controller
+            .admit_for(1, WorkClass::Backup, AdmissionPriority::Normal)
+            .admitted());
+        assert_eq!(
+            controller
+                .admit_for(2, WorkClass::Backup, AdmissionPriority::Normal)
+                .reason,
+            AdmissionReason::TenantLimit
+        );
+        assert!(controller
+            .admit_for(2, WorkClass::Snapshot, AdmissionPriority::Recovery)
+            .admitted());
     }
 }

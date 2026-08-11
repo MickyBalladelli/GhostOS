@@ -334,8 +334,10 @@ struct WorkloadSlot {
 #[derive(Clone, Copy)]
 struct TenantSlot {
     quota: TenantQuota,
+    parent: Option<u64>,
     used: ResourceVector,
     workloads: u32,
+    dispatches: u64,
 }
 
 pub struct ResourceScheduler<
@@ -348,6 +350,7 @@ pub struct ResourceScheduler<
     tenants: [Option<TenantSlot>; TENANTS],
     next_workload: u64,
     generation: u64,
+    last_scheduled_tenant: u64,
 }
 
 impl<const NODES: usize, const WORKLOADS: usize, const TENANTS: usize>
@@ -360,6 +363,7 @@ impl<const NODES: usize, const WORKLOADS: usize, const TENANTS: usize>
             tenants: [None; TENANTS],
             next_workload: 0,
             generation: 0,
+            last_scheduled_tenant: 0,
         }
     }
 
@@ -391,9 +395,46 @@ impl<const NODES: usize, const WORKLOADS: usize, const TENANTS: usize>
             .ok_or(ResourceError::Placement(PlacementFailure::WorkloadCapacity))?;
         *slot = Some(TenantSlot {
             quota,
+            parent: None,
             used: ResourceVector::default(),
             workloads: 0,
+            dispatches: 0,
         });
+        self.bump_generation();
+        Ok(())
+    }
+
+    /// Bind a tenant below a parent accounting scope. Every reservation then
+    /// consumes both scopes, so a child cannot bypass a shared parent budget.
+    pub fn set_tenant_parent(
+        &mut self,
+        tenant: u64,
+        parent: Option<u64>,
+    ) -> Result<(), ResourceError> {
+        self.tenant_slot(tenant)?;
+        if let Some(parent) = parent {
+            if parent == tenant {
+                return Err(ResourceError::InvalidRequest)
+            }
+            self.tenant_slot(parent)?;
+            let mut current = Some(parent);
+            for _ in 0..TENANTS {
+                if current == Some(tenant) {
+                    return Err(ResourceError::InvalidRequest)
+                }
+                current = current.and_then(|id| {
+                    self.tenants
+                        .iter()
+                        .flatten()
+                        .find(|entry| entry.quota.tenant == id)
+                        .and_then(|entry| entry.parent)
+                });
+                if current.is_none() {
+                    break
+                }
+            }
+        }
+        self.tenant_slot_mut(tenant)?.parent = parent;
         self.bump_generation();
         Ok(())
     }
@@ -456,14 +497,7 @@ impl<const NODES: usize, const WORKLOADS: usize, const TENANTS: usize>
 
     pub fn admit(&mut self, spec: WorkloadSpec) -> Result<WorkloadAdmission, ResourceError> {
         self.validate_spec(spec)?;
-        let tenant = self.tenant_slot(spec.placement.tenant)?;
-        if !tenant.quota.capacity.fits(
-            tenant
-                .used
-                .checked_add(spec.resources)
-                .ok_or(ResourceError::Overflow)?,
-        ) || tenant.workloads >= tenant.quota.max_workloads
-        {
+        if !self.tenant_fits(spec.placement.tenant, spec.resources)? {
             return Err(ResourceError::Placement(PlacementFailure::Quota))
         }
         let slot = self
@@ -528,6 +562,11 @@ impl<const NODES: usize, const WORKLOADS: usize, const TENANTS: usize>
                 node: Some(node),
                 ..record
             });
+            let tenant_entry = self
+                .tenant_slot_mut(record.spec.placement.tenant)
+                .expect("queued workload tenant");
+            tenant_entry.dispatches = tenant_entry.dispatches.saturating_add(1);
+            self.last_scheduled_tenant = record.spec.placement.tenant;
             scheduled += 1;
             self.bump_generation();
         }
@@ -777,22 +816,63 @@ impl<const NODES: usize, const WORKLOADS: usize, const TENANTS: usize>
                 let record = entry.record?;
                 (record.state == WorkloadState::Queued).then_some((index, record.spec.placement.priority, record.id.raw()))
             })
-            .max_by_key(|entry| (entry.1, core::cmp::Reverse(entry.2)))
+            .max_by_key(|entry| {
+                let tenant = self.workloads[entry.0]
+                    .record
+                    .expect("queued workload")
+                    .spec
+                    .placement
+                    .tenant;
+                let dispatches = self
+                    .tenant_slot(tenant)
+                    .map(|entry| entry.dispatches)
+                    .unwrap_or(u64::MAX);
+                (
+                    entry.1,
+                    core::cmp::Reverse(dispatches),
+                    tenant != self.last_scheduled_tenant,
+                    core::cmp::Reverse(entry.2),
+                )
+            })
             .map(|entry| entry.0)
     }
 
     fn charge_tenant(&mut self, tenant: u64, resources: ResourceVector) -> Result<(), ResourceError> {
-        let entry = self.tenant_slot_mut(tenant)?;
-        entry.used = entry.used.checked_add(resources).ok_or(ResourceError::Overflow)?;
-        entry.workloads = entry.workloads.checked_add(1).ok_or(ResourceError::Overflow)?;
+        let mut current = Some(tenant);
+        for _ in 0..TENANTS {
+            let Some(id) = current else { break };
+            let entry = self.tenant_slot_mut(id)?;
+            entry.used = entry.used.checked_add(resources).ok_or(ResourceError::Overflow)?;
+            entry.workloads = entry.workloads.checked_add(1).ok_or(ResourceError::Overflow)?;
+            current = entry.parent;
+        }
         Ok(())
     }
 
     fn release_tenant(&mut self, tenant: u64, resources: ResourceVector) -> Result<(), ResourceError> {
-        let entry = self.tenant_slot_mut(tenant)?;
-        entry.used = entry.used.checked_sub(resources).expect("tenant usage invariant");
-        entry.workloads = entry.workloads.saturating_sub(1);
+        let mut current = Some(tenant);
+        for _ in 0..TENANTS {
+            let Some(id) = current else { break };
+            let entry = self.tenant_slot_mut(id)?;
+            entry.used = entry.used.checked_sub(resources).expect("tenant usage invariant");
+            entry.workloads = entry.workloads.saturating_sub(1);
+            current = entry.parent;
+        }
         Ok(())
+    }
+
+    fn tenant_fits(&self, tenant: u64, resources: ResourceVector) -> Result<bool, ResourceError> {
+        let mut current = Some(tenant);
+        for _ in 0..TENANTS {
+            let Some(id) = current else { break };
+            let entry = self.tenant_slot(id)?;
+            let next = entry.used.checked_add(resources).ok_or(ResourceError::Overflow)?;
+            if !entry.quota.capacity.fits(next) || entry.workloads >= entry.quota.max_workloads {
+                return Ok(false)
+            }
+            current = entry.parent;
+        }
+        Ok(true)
     }
 
     fn release(&mut self, workload: WorkloadId) -> Result<(), ResourceError> {

@@ -351,9 +351,19 @@ measured p50/p95/p99 data over optimistic feature claims.
       cluster diagnostics are gated by [`crates/synos-inspect/src/service.rs`](crates/synos-inspect/src/service.rs).
       Regression coverage is in the admission crate for recovery precedence,
       queue shedding, and separate drop/retry counters.
-- [ ] Add tenant-aware scheduling, storage placement, network shaping, and
+- [x] Add tenant-aware scheduling, storage placement, network shaping, and
       capability-scoped quotas with hierarchical accounting.
       Done when one tenant cannot consume shared tail latency or recovery budget.
+      Implementation: [`crates/balancerd/src/resources.rs`](crates/balancerd/src/resources.rs)
+      charges workload resources through bounded tenant parent chains, applies
+      tenant-bound storage placement, and rotates queued work fairly;
+      [`crates/netd/src/service.rs`](crates/netd/src/service.rs) adds fixed-size
+      per-tenant egress token buckets; [`crates/admission/src/lib.rs`](crates/admission/src/lib.rs)
+      reserves active and recovery capacity through tenant hierarchies; and
+      [`kernel/src/capability.rs`](kernel/src/capability.rs) atomically charges
+      delegated capability quotas through every ancestor. Regression coverage
+      covers shared parent recovery capacity, egress isolation, and delegated
+      capability accounting.
 - [ ] Add horizontal service scaling for HTTP, remote terminal, package,
       compiler, storage, and observability services with session handoff.
       Done when instances can join, drain, restart, and rebalance without lost

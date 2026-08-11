@@ -9,6 +9,133 @@ use crate::memory::{MemoryError, SharedMemory};
 use crate::protocol::{ProtocolError, SocketOperation, SocketRequest, socket_response};
 use crate::{CapabilityRight, Firewall, FirewallError};
 
+pub const DEFAULT_NETWORK_TENANT_CAPACITY: usize = 32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkRatePolicy {
+    pub tenant: u64,
+    pub burst_bytes: u64,
+    pub bytes_per_second: u64,
+}
+
+impl NetworkRatePolicy {
+    pub const fn new(tenant: u64, burst_bytes: u64, bytes_per_second: u64) -> Self {
+        Self {
+            tenant,
+            burst_bytes,
+            bytes_per_second,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkShapeDecision {
+    Allowed,
+    Throttled { retry_after_ms: u64 },
+}
+
+#[derive(Clone, Copy)]
+struct NetworkTenantBucket {
+    policy: NetworkRatePolicy,
+    tokens: u64,
+    last_ms: u64,
+}
+
+/// Fixed-size per-tenant egress shaping. Empty entries remain unrestricted for
+/// compatibility with existing socket clients; configured tenants share no
+/// token bucket with their neighbors.
+pub struct NetworkShaper<const TENANTS: usize = DEFAULT_NETWORK_TENANT_CAPACITY> {
+    buckets: [Option<NetworkTenantBucket>; TENANTS],
+}
+
+impl<const TENANTS: usize> NetworkShaper<TENANTS> {
+    pub const fn new() -> Self {
+        Self { buckets: [None; TENANTS] }
+    }
+
+    pub fn configure(&mut self, policy: NetworkRatePolicy) -> Result<(), ServiceError> {
+        if policy.tenant == 0 || policy.burst_bytes == 0 || policy.bytes_per_second == 0 {
+            return Err(ServiceError::InvalidOperation)
+        }
+        if let Some(bucket) = self
+            .buckets
+            .iter_mut()
+            .flatten()
+            .find(|bucket| bucket.policy.tenant == policy.tenant)
+        {
+            bucket.policy = policy;
+            bucket.tokens = policy.burst_bytes;
+            bucket.last_ms = 0;
+            return Ok(())
+        }
+        let slot = self
+            .buckets
+            .iter_mut()
+            .find(|slot| slot.is_none())
+            .ok_or(ServiceError::NoSocketSpace)?;
+        *slot = Some(NetworkTenantBucket {
+            policy,
+            tokens: policy.burst_bytes,
+            last_ms: 0,
+        });
+        Ok(())
+    }
+
+    pub fn admit(
+        &mut self,
+        tenant: u64,
+        now_ms: u64,
+        bytes: u64,
+    ) -> NetworkShapeDecision {
+        let Some(bucket) = self
+            .buckets
+            .iter_mut()
+            .flatten()
+            .find(|bucket| bucket.policy.tenant == tenant)
+        else {
+            return NetworkShapeDecision::Allowed
+        };
+        let elapsed = now_ms.saturating_sub(bucket.last_ms);
+        let refill = (elapsed as u128)
+            .saturating_mul(bucket.policy.bytes_per_second as u128)
+            .checked_div(1_000)
+            .unwrap_or(u128::MAX)
+            .min(u64::MAX as u128) as u64;
+        bucket.tokens = bucket
+            .tokens
+            .saturating_add(refill)
+            .min(bucket.policy.burst_bytes);
+        bucket.last_ms = now_ms;
+        if bytes <= bucket.tokens {
+            bucket.tokens -= bytes;
+            return NetworkShapeDecision::Allowed
+        }
+        let deficit = bytes.saturating_sub(bucket.tokens);
+        let retry_after_ms = deficit
+            .saturating_mul(1_000)
+            .saturating_add(bucket.policy.bytes_per_second - 1)
+            / bucket.policy.bytes_per_second;
+        NetworkShapeDecision::Throttled { retry_after_ms }
+    }
+
+    pub fn refund(&mut self, tenant: u64, bytes: u64) {
+        if let Some(bucket) = self
+            .buckets
+            .iter_mut()
+            .flatten()
+            .find(|bucket| bucket.policy.tenant == tenant)
+        {
+            bucket.tokens = bucket.tokens.saturating_add(bytes).min(bucket.policy.burst_bytes)
+        }
+    }
+}
+
+impl<const TENANTS: usize> Default for NetworkShaper<TENANTS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub type DefaultFirewall = Firewall;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -296,6 +423,7 @@ pub struct NetworkDaemon<B: SocketBackend, const SOCKET_CAPACITY: usize> {
     backend: B,
     sockets: SocketTable<B::Handle, SOCKET_CAPACITY>,
     firewall: DefaultFirewall,
+    shaper: NetworkShaper,
 }
 
 impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAPACITY> {
@@ -307,6 +435,7 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
             backend,
             sockets: SocketTable::new(),
             firewall: DefaultFirewall::new(policy),
+            shaper: NetworkShaper::new(),
         }
     }
 
@@ -315,6 +444,7 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
             backend,
             sockets: SocketTable::new(),
             firewall,
+            shaper: NetworkShaper::new(),
         }
     }
 
@@ -334,6 +464,14 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         &mut self.firewall
     }
 
+    pub fn network_shaper(&self) -> &NetworkShaper {
+        &self.shaper
+    }
+
+    pub fn network_shaper_mut(&mut self) -> &mut NetworkShaper {
+        &mut self.shaper
+    }
+
     /// Processes at most `budget` requests. The caller regains control after
     /// the budget or the first backend error, so network work cannot monopolize
     /// the service thread or starve other scheduler tasks.
@@ -343,9 +481,19 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         memory: &mut M,
         budget: usize,
     ) -> Result<usize, ServiceError> {
+        self.process_budget_at(channel, memory, budget, 0)
+    }
+
+    pub fn process_budget_at<M: SharedMemory, const RING_CAPACITY: usize>(
+        &mut self,
+        channel: &ClientChannel<'_, RING_CAPACITY>,
+        memory: &mut M,
+        budget: usize,
+        now_ms: u64,
+    ) -> Result<usize, ServiceError> {
         let mut processed = 0;
         for _ in 0..budget {
-            match self.process_one(channel, memory)? {
+            match self.process_one_at(channel, memory, now_ms)? {
                 true => processed += 1,
                 false => break,
             }
@@ -359,6 +507,15 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         channel: &ClientChannel<'_, RING_CAPACITY>,
         memory: &mut M,
     ) -> Result<bool, ServiceError> {
+        self.process_one_at(channel, memory, 0)
+    }
+
+    pub fn process_one_at<M: SharedMemory, const RING_CAPACITY: usize>(
+        &mut self,
+        channel: &ClientChannel<'_, RING_CAPACITY>,
+        memory: &mut M,
+        now_ms: u64,
+    ) -> Result<bool, ServiceError> {
         if channel.completions.pending() >= RING_CAPACITY {
             return Err(ServiceError::CompletionFull)
         }
@@ -371,7 +528,7 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         let buffer = envelope.buffer;
         let outcome = SocketRequest::decode(envelope)
             .map_err(ServiceError::from)
-            .and_then(|request| self.execute(channel, memory, request));
+            .and_then(|request| self.execute(channel, memory, request, now_ms));
         let (status, capability, value, response_buffer) = match outcome {
             Ok(result) => (
                 Status::NORMAL,
@@ -399,6 +556,7 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
         channel: &ClientChannel<'_, RING_CAPACITY>,
         memory: &mut M,
         request: SocketRequest,
+        now_ms: u64,
     ) -> Result<OperationResult, ServiceError> {
         record_profile_sample(ProfileSample::single(
             ProfileDomain::Networking,
@@ -471,8 +629,29 @@ impl<B: SocketBackend, const SOCKET_CAPACITY: usize> NetworkDaemon<B, SOCKET_CAP
                 let (capability, handle) =
                     self.authorize(channel, request, SocketRights::SEND)?;
                 let descriptor = readable_buffer(request.buffer)?;
-                let written = memory
-                    .read(descriptor, |bytes| self.backend.send(handle, bytes))??;
+                match self.shaper.admit(
+                    channel.principal,
+                    now_ms,
+                    descriptor.length as u64,
+                ) {
+                    NetworkShapeDecision::Allowed => {}
+                    NetworkShapeDecision::Throttled { .. } => return Err(ServiceError::WouldBlock),
+                }
+                let written = match memory.read(descriptor, |bytes| self.backend.send(handle, bytes)) {
+                    Ok(Ok(written)) => written,
+                    Ok(Err(error)) => {
+                        self.shaper.refund(channel.principal, descriptor.length as u64);
+                        return Err(error)
+                    }
+                    Err(error) => {
+                        self.shaper.refund(channel.principal, descriptor.length as u64);
+                        return Err(error.into())
+                    }
+                };
+                self.shaper.refund(
+                    channel.principal,
+                    (descriptor.length as usize).saturating_sub(written) as u64,
+                );
                 Ok(OperationResult::transfer(capability, written, descriptor))
             }
             SocketOperation::Receive => {
@@ -567,5 +746,22 @@ fn writable_buffer(buffer: Option<SharedBuffer>) -> Result<SharedBuffer, Service
         Err(ServiceError::InvalidBuffer)
     } else {
         Ok(buffer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_tenant_cannot_burst_past_its_egress_bucket() {
+        let mut shaper = NetworkShaper::<1>::new();
+        shaper.configure(NetworkRatePolicy::new(7, 10, 10)).unwrap();
+        assert_eq!(shaper.admit(7, 0, 10), NetworkShapeDecision::Allowed);
+        assert!(matches!(
+            shaper.admit(7, 0, 1),
+            NetworkShapeDecision::Throttled { .. }
+        ));
+        assert_eq!(shaper.admit(7, 1_000, 10), NetworkShapeDecision::Allowed);
     }
 }

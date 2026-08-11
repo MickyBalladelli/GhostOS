@@ -136,10 +136,11 @@ impl NetworkServiceScheduler {
         daemon.backend_mut().set_dhcp_retries(dhcp_retries);
         let mut stack = stack;
         stack.stats.dhcp_retries = dhcp_retries;
-        let (socket_requests, service_error) = match daemon.process_budget(
+        let (socket_requests, service_error) = match daemon.process_budget_at(
             channel,
             memory,
             self.socket_request_budget,
+            now_ms,
         ) {
             Ok(processed) => (processed, None),
             Err(error) => (0, Some(error)),
@@ -215,10 +216,11 @@ impl NetworkServiceScheduler {
         daemon.backend_mut().set_dhcp_retries(dhcp_retries);
         let mut stack = stack;
         stack.stats.dhcp_retries = dhcp_retries;
-        let (socket_requests, service_error) = match daemon.process_budget(
+        let (socket_requests, service_error) = match daemon.process_budget_at(
             channel,
             memory,
             self.socket_request_budget,
+            now_ms,
         ) {
             Ok(processed) => (processed, None),
             Err(error) => (0, Some(error)),
