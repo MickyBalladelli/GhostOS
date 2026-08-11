@@ -175,10 +175,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       and refresh/reconnect/authorization rejection for stale entries.
       Regression coverage is in
       [`crates/auth/tests/revocation_monitor.rs`](crates/auth/tests/revocation_monitor.rs).
-- [ ] Add hardware-backed or isolated key-provider interfaces with rotation,
+- [x] Add hardware-backed or isolated key-provider interfaces with rotation,
       quorum approval, recovery ceremony, and offline emergency revocation.
       Done when private keys never enter logs, snapshots, crash capsules, or
-      ordinary process memory dumps.
+      ordinary process memory dumps. Implementation:
+      [`crates/synos-shield/src/key_provider.rs`](crates/synos-shield/src/key_provider.rs)
+      provides a fixed-capacity authority over opaque provider handles. Key
+      generation, signing, approval verification, rotation, recovery, and
+      emergency revocation stay behind the hardware or isolated-provider
+      boundary; inventory snapshots contain metadata only. Regression coverage
+      is in [`crates/synos-shield/tests/key_provider.rs`](crates/synos-shield/tests/key_provider.rs).
 - [ ] Produce signed SBOM, dependency provenance, compiler identity, source
       digest, configuration digest, and reproducible-build attestations for
       every release artifact.
