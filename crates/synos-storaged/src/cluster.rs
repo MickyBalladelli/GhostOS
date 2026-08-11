@@ -305,6 +305,32 @@ impl ClusterMetadataCatalog {
         self.writer_epoch
     }
 
+    pub fn capacity_observation<const BLOCKS: usize>(
+        &self,
+        filesystem: &synos_synfs::SynFs<BLOCKS>,
+        sampled_at_us: u64,
+        growth_bytes_per_hour: u64,
+    ) -> Result<synos_synfs::CapacityObservation, ClusterMetadataError> {
+        let fragmentation = filesystem
+            .fragmentation_report()
+            .map_err(|_| ClusterMetadataError::Persistence)?;
+        let block_bytes = synos_synfs::BLOCK_SIZE as u64;
+        let fragmented_bytes = (fragmentation.fragmented_blocks as u64).saturating_mul(block_bytes);
+        Ok(synos_synfs::CapacityObservation {
+            resource: synos_synfs::CapacityResource::ClusterMetadata,
+            sampled_at_us,
+            capacity_bytes: (filesystem.capacity() as u64).saturating_mul(block_bytes),
+            allocated_bytes: (Self::encoded_len() as u64).max(fragmented_bytes),
+            reclaimable_bytes: 0,
+            fragmented_bytes,
+            largest_free_extent_bytes: (fragmentation.largest_free_run as u64).saturating_mul(block_bytes),
+            allocation_unit_bytes: block_bytes,
+            gc_pending_bytes: 0,
+            gc_work_limit_bytes: (BLOCKS as u64).saturating_mul(block_bytes),
+            growth_bytes_per_hour,
+        })
+    }
+
     pub fn cluster(&self, id: ClusterId) -> Option<ClusterMetadata> {
         self.clusters
             .iter()

@@ -145,10 +145,17 @@ measured p50/p95/p99 data over optimistic feature claims.
       journals progress in the inactive bank, validates the shadow generation
       before publication, bounds copy steps, and supports device rollback;
       regression coverage is in [`crates/synfs/tests/migration.rs`](crates/synfs/tests/migration.rs).
-- [ ] Add capacity forecasting and fragmentation reports for SynFS, package
+- [x] Add capacity forecasting and fragmentation reports for SynFS, package
       cache, journals, snapshots, logs, and cluster metadata.
       Done when operators receive an actionable threshold before allocation
       failure and garbage collection remains bounded under pressure.
+      Implementation: [`crates/synfs/src/capacity.rs`](crates/synfs/src/capacity.rs)
+      provides fixed-capacity forecasts, warning/failure horizons, free-run
+      fragmentation, reclaimable-block accounting, and bounded GC work limits.
+      [`crates/synos-inspect/src/storage.rs`](crates/synos-inspect/src/storage.rs)
+      carries categorized capacity samples to `SHOW-CAPACITY`; package, journal,
+      and cluster metadata producers expose observations for the same report.
+      Regression coverage is in [`crates/synfs/tests/capacity.rs`](crates/synfs/tests/capacity.rs).
 
 ## P0: Security, identity, and supply-chain trust
 

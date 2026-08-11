@@ -3,7 +3,9 @@
 
 use synos_status::{IntoStatus, Status};
 use synos_durability::{InterruptionInjector, NoInterruption};
-use synos_synfs::SynFs;
+use synos_synfs::{
+    CapacityObservation, CapacityResource, SynFs,
+};
 use synos_system_model::{
     ContentId, DEFAULT_PACKAGE_CAPACITY, DEFAULT_ROOT_BINDINGS, Error as ModelError, LogicalName,
     MAX_DEPENDENCIES, PackageManifest, RepositoryError, RootBuilder, RootManifest, SynFsRepository,
@@ -1201,6 +1203,38 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
 
     pub fn manifests(&self) -> impl Iterator<Item = &PackageManifest> + '_ {
         self.repository.packages().iter()
+    }
+
+    pub fn capacity_observation<const BLOCKS: usize>(
+        &self,
+        filesystem: &SynFs<BLOCKS>,
+        sampled_at_us: u64,
+        growth_bytes_per_hour: u64,
+    ) -> Result<CapacityObservation, PackageError> {
+        let mut allocated_bytes = 0u64;
+        for manifest in self.manifests() {
+            allocated_bytes = allocated_bytes
+                .saturating_add(manifest.byte_length)
+                .saturating_add(313);
+        }
+        let fragmentation = filesystem
+            .fragmentation_report()
+            .map_err(|error| PackageError::Repository(RepositoryError::SynFs(error)))?;
+        let block_bytes = synos_synfs::BLOCK_SIZE as u64;
+        let fragmented_bytes = (fragmentation.fragmented_blocks as u64).saturating_mul(block_bytes);
+        Ok(CapacityObservation {
+            resource: CapacityResource::PackageCache,
+            sampled_at_us,
+            capacity_bytes: (filesystem.capacity() as u64).saturating_mul(block_bytes),
+            allocated_bytes: allocated_bytes.max(fragmented_bytes),
+            reclaimable_bytes: 0,
+            fragmented_bytes,
+            largest_free_extent_bytes: (fragmentation.largest_free_run as u64).saturating_mul(block_bytes),
+            allocation_unit_bytes: block_bytes,
+            gc_pending_bytes: 0,
+            gc_work_limit_bytes: (BLOCKS as u64).saturating_mul(block_bytes),
+            growth_bytes_per_hour,
+        })
     }
 
     pub fn application_manifest(&self, package: ContentId) -> Option<ApplicationPackageManifest> {

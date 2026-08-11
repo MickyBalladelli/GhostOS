@@ -1,8 +1,9 @@
 use syn_shell::{
     Text,
     diagnostics::{
-        ClusterSnapshot, CpuSnapshot, DiagnosticSource, DiskSnapshot, HealthSnapshot, MemorySnapshot,
-        MonitorSnapshot, ObsoleteSnapshot, ProcessSnapshot,
+        CapacityEntrySnapshot, CapacitySnapshot, ClusterSnapshot, CpuSnapshot, DiagnosticSource,
+        DiskSnapshot, HealthSnapshot, MemorySnapshot, MonitorSnapshot, ObsoleteSnapshot,
+        ProcessSnapshot,
         ProcessState as ShellProcessState, UptimeSnapshot, UsersSnapshot,
     },
 };
@@ -147,6 +148,58 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
             snapshot.checkpoints = snapshot
                 .checkpoints
                 .saturating_add(volume.checkpoints as u64)
+        }
+        Ok(snapshot)
+    }
+
+    fn capacity(&mut self, cluster: bool) -> Result<CapacitySnapshot, Status> {
+        let report = self
+            .service
+            .storage(self.capability, Self::view(cluster), self.now_us)
+            .map_err(|error| error.status())?;
+        let mut snapshot = CapacitySnapshot {
+            sampled_at_us: report.sampled_at_us(),
+            entries: [None; syn_shell::diagnostics::MAX_CAPACITY_ROWS],
+            gc_bounded: true,
+            gc_pending_bytes: 0,
+        };
+        for sample in report.capacity() {
+            let index = sample.observation.resource as usize - 1;
+            let Some(entry) = snapshot.entries.get_mut(index) else {
+                continue
+            };
+            snapshot.gc_bounded &= sample.forecast.gc_bounded;
+            snapshot.gc_pending_bytes = snapshot
+                .gc_pending_bytes
+                .saturating_add(sample.forecast.gc_pending_bytes);
+            if let Some(existing) = entry.as_mut() {
+                existing.forecast_free_bytes = existing
+                    .forecast_free_bytes
+                    .saturating_add(sample.forecast.forecast_free_bytes);
+                existing.warning_free_bytes = existing
+                    .warning_free_bytes
+                    .saturating_add(sample.forecast.warning_free_bytes);
+                existing.hours_to_failure = existing
+                    .hours_to_failure
+                    .min(sample.forecast.hours_to_failure);
+                existing.fragmentation_percent = existing
+                    .fragmentation_percent
+                    .max(sample.forecast.fragmented_bytes.saturating_mul(100).checked_div(sample.forecast.capacity_bytes).unwrap_or(0));
+            } else {
+                *entry = Some(CapacityEntrySnapshot {
+                    resource: Text::new(sample.observation.resource.name())
+                        .map_err(|_| Status::INVALID_ARGUMENT)?,
+                    forecast_free_bytes: sample.forecast.forecast_free_bytes,
+                    warning_free_bytes: sample.forecast.warning_free_bytes,
+                    hours_to_failure: sample.forecast.hours_to_failure,
+                    fragmentation_percent: sample
+                        .forecast
+                        .fragmented_bytes
+                        .saturating_mul(100)
+                        .checked_div(sample.forecast.capacity_bytes)
+                        .unwrap_or(0),
+                })
+            }
         }
         Ok(snapshot)
     }

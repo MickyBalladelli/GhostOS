@@ -6,7 +6,9 @@ use synos_observability::{
     SECURITY_AUDIT, SYSTEM_TRACE, TraceEvent, TraceRing, decode_record, encode_record,
     DEFAULT_RECOVERY_AUDIT_CAPACITY,
 };
-use synos_synfs::{Error as SynFsError, SynFs, SynfsPurged};
+use synos_synfs::{
+    CapacityObservation, CapacityResource, Error as SynFsError, SynFs, SynfsPurged,
+};
 
 pub const SYSTEM_JOURNAL: &str = "SYS$LOG:SYSTEM.JOURNAL";
 pub const SECURITY_JOURNAL: &str = "SYS$LOG:SECURITY.AUDIT";
@@ -86,6 +88,39 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
         &self,
     ) -> Option<&AuditJournal<DEFAULT_RECOVERY_AUDIT_CAPACITY>> {
         self.recovery.as_ref()
+    }
+
+    pub fn capacity_observation(
+        &self,
+        resource: CapacityResource,
+        sampled_at_us: u64,
+        growth_bytes_per_hour: u64,
+    ) -> Result<CapacityObservation, LogError> {
+        let mut allocated_bytes = 0u64;
+        for path in [SYSTEM_JOURNAL, SECURITY_JOURNAL, RECOVERY_AUDIT_JOURNAL] {
+            if let Ok(diagnostics) = self.filesystem.path_diagnostics(path) {
+                allocated_bytes = allocated_bytes.saturating_add(diagnostics.retained_bytes)
+            }
+        }
+        let fragmentation = self
+            .filesystem
+            .fragmentation_report()
+            .map_err(|_| LogError::Journal)?;
+        let block_bytes = synos_synfs::BLOCK_SIZE as u64;
+        let fragmented_bytes = (fragmentation.fragmented_blocks as u64).saturating_mul(block_bytes);
+        Ok(CapacityObservation {
+            resource,
+            sampled_at_us,
+            capacity_bytes: (self.filesystem.capacity() as u64).saturating_mul(block_bytes),
+            allocated_bytes: allocated_bytes.max(fragmented_bytes),
+            reclaimable_bytes: fragmented_bytes,
+            fragmented_bytes,
+            largest_free_extent_bytes: (fragmentation.largest_free_run as u64).saturating_mul(block_bytes),
+            allocation_unit_bytes: block_bytes,
+            gc_pending_bytes: (fragmentation.reclaimable_blocks as u64).saturating_mul(block_bytes),
+            gc_work_limit_bytes: (self.filesystem.capacity() as u64).saturating_mul(block_bytes),
+            growth_bytes_per_hour,
+        })
     }
 
     pub fn export_recovery_audit(&self, output: &mut [u8]) -> Result<usize, LogError> {

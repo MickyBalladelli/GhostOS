@@ -1,13 +1,15 @@
 use synos_fabric::NodeId;
 use synos_synfs::{
-    BLOCK_SIZE, DeviceHealth as SynFsDeviceHealth, PoolLayout, StorageClass, StoragePoolAdmin,
-    SynFs,
+    CapacityForecast, CapacityObservation, CapacityResource, DEFAULT_FORECAST_HORIZON_US,
+    BLOCK_SIZE,
+    DeviceHealth as SynFsDeviceHealth, PoolLayout, StorageClass, StoragePoolAdmin, SynFs,
 };
 
 use crate::{InspectError, Name};
 
 pub const MAX_STORAGE_DEVICES: usize = 32;
 pub const MAX_SYNFS_VOLUMES: usize = 16;
+pub const MAX_CAPACITY_SAMPLES: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageKind {
@@ -49,11 +51,21 @@ pub struct SynFsVolumeSample {
     pub checkpoints: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapacitySample {
+    pub id: u64,
+    pub node: NodeId,
+    pub name: Name<32>,
+    pub observation: CapacityObservation,
+    pub forecast: CapacityForecast,
+}
+
 #[derive(Clone, Copy)]
 pub struct StorageReport {
     sampled_at_us: u64,
     devices: [Option<StorageDeviceSample>; MAX_STORAGE_DEVICES],
     volumes: [Option<SynFsVolumeSample>; MAX_SYNFS_VOLUMES],
+    capacity: [Option<CapacitySample>; MAX_CAPACITY_SAMPLES],
 }
 
 impl StorageReport {
@@ -62,6 +74,7 @@ impl StorageReport {
             sampled_at_us: 0,
             devices: [None; MAX_STORAGE_DEVICES],
             volumes: [None; MAX_SYNFS_VOLUMES],
+            capacity: [None; MAX_CAPACITY_SAMPLES],
         }
     }
 
@@ -79,6 +92,10 @@ impl StorageReport {
 
     pub fn volumes(&self) -> impl Iterator<Item = SynFsVolumeSample> + '_ {
         self.volumes.iter().flatten().copied()
+    }
+
+    pub fn capacity(&self) -> impl Iterator<Item = CapacitySample> + '_ {
+        self.capacity.iter().flatten().copied()
     }
 
     pub fn push_device(&mut self, sample: StorageDeviceSample) -> Result<(), InspectError> {
@@ -104,6 +121,36 @@ impl StorageReport {
         insert(&mut self.volumes, sample)
     }
 
+    pub fn push_capacity(
+        &mut self,
+        id: u64,
+        node: NodeId,
+        name: &str,
+        observation: CapacityObservation,
+    ) -> Result<(), InspectError> {
+        if id == 0
+            || observation.capacity_bytes == 0
+            || observation.allocated_bytes > observation.capacity_bytes
+            || observation.reclaimable_bytes > observation.allocated_bytes
+            || observation.fragmented_bytes > observation.allocated_bytes
+            || observation.largest_free_extent_bytes > observation.capacity_bytes
+            || self.capacity().any(|entry| entry.id == id)
+        {
+            return Err(InspectError::InvalidSample);
+        }
+        let forecast = observation.forecast(DEFAULT_FORECAST_HORIZON_US);
+        insert(
+            &mut self.capacity,
+            CapacitySample {
+                id,
+                node,
+                name: Name::new(name)?,
+                observation,
+                forecast,
+            },
+        )
+    }
+
     pub fn push_synfs<const BLOCKS: usize>(
         &mut self,
         id: u64,
@@ -125,7 +172,23 @@ impl StorageReport {
                 .saturating_mul(BLOCK_SIZE as u64),
             retained_versions: diagnostics.retained_versions,
             checkpoints: diagnostics.checkpoints as u32,
-        })
+        })?;
+        self.push_synfs_capacity(id, node, name, CapacityResource::SynFs, filesystem, 0)
+    }
+
+    pub fn push_synfs_capacity<const BLOCKS: usize>(
+        &mut self,
+        id: u64,
+        node: NodeId,
+        name: &str,
+        resource: CapacityResource,
+        filesystem: &SynFs<BLOCKS>,
+        growth_bytes_per_hour: u64,
+    ) -> Result<(), InspectError> {
+        let observation = filesystem
+            .capacity_observation(resource, self.sampled_at_us, growth_bytes_per_hour)
+            .map_err(|_| InspectError::InvalidSample)?;
+        self.push_capacity(id, node, name, observation)
     }
 
     pub fn append_pool_admin<const DEVICES: usize, const POOLS: usize>(
@@ -184,6 +247,11 @@ impl StorageReport {
             }
         }
         for entry in &mut self.volumes {
+            if entry.is_some_and(|sample| sample.node != node) {
+                *entry = None
+            }
+        }
+        for entry in &mut self.capacity {
             if entry.is_some_and(|sample| sample.node != node) {
                 *entry = None
             }

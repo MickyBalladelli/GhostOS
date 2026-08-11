@@ -37,7 +37,7 @@ pub use service::{
 };
 pub use shell::ShellInspectionSource;
 pub use storage::{
-    DeviceHealth, StorageDeviceSample, StorageKind, StorageReport,
-    SynFsVolumeSample, MAX_STORAGE_DEVICES, MAX_SYNFS_VOLUMES,
+    CapacitySample, DeviceHealth, StorageDeviceSample, StorageKind, StorageReport,
+    SynFsVolumeSample, MAX_CAPACITY_SAMPLES, MAX_STORAGE_DEVICES, MAX_SYNFS_VOLUMES,
 };
 pub use text::Name;

@@ -9,6 +9,7 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 pub use synos_path_pattern::{MAX_PATTERN_BYTES, Pattern, PatternError};
 
 mod block;
+mod capacity;
 mod migration;
 mod pool;
 mod rms;
@@ -19,6 +20,10 @@ pub use block::{
     BlockCompletion, BlockDevice, BlockIoError, BlockIoQueue, BlockIoResult, BlockOperation,
     BlockRequest, BlockRequestToken, BlockStore, DEFAULT_BLOCK_IO_QUEUE, MAX_BLOCK_IO_BYTES,
     StoragePoolIo,
+};
+pub use capacity::{
+    CapacityForecast, CapacityObservation, CapacityResource, FragmentationReport,
+    SynFsPathDiagnostics, DEFAULT_ALLOCATION_RESERVE_BYTES, DEFAULT_FORECAST_HORIZON_US,
 };
 pub use migration::{
     BackgroundIoLimit, FormatMigration, FormatMigrationPhase, FormatMigrationProgress,

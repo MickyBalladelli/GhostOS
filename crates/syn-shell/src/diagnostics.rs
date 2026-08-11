@@ -19,7 +19,9 @@ pub const SHOW_USERS_ROUTE: u16 = 6;
 pub const SHOW_OBSOLETE_ROUTE: u16 = 7;
 pub const UPTIME_ROUTE: u16 = 8;
 pub const SHOW_HEALTH_ROUTE: u16 = 9;
+pub const SHOW_CAPACITY_ROUTE: u16 = 10;
 pub const DEFAULT_DIAGNOSTIC_QUEUE: usize = 16;
+pub const MAX_CAPACITY_ROWS: usize = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemorySnapshot {
@@ -55,6 +57,23 @@ pub struct DiskSnapshot {
     pub cxl_devices: u64,
     pub degraded_devices: u64,
     pub failed_devices: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapacityEntrySnapshot {
+    pub resource: Text<32>,
+    pub forecast_free_bytes: u64,
+    pub warning_free_bytes: u64,
+    pub hours_to_failure: u64,
+    pub fragmentation_percent: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapacitySnapshot {
+    pub sampled_at_us: u64,
+    pub entries: [Option<CapacityEntrySnapshot>; MAX_CAPACITY_ROWS],
+    pub gc_bounded: bool,
+    pub gc_pending_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -152,6 +171,10 @@ pub struct MonitorSnapshot {
 pub trait DiagnosticSource {
     fn memory(&mut self, cluster: bool) -> Result<MemorySnapshot, Status>;
     fn disk(&mut self, cluster: bool) -> Result<DiskSnapshot, Status>;
+    fn capacity(&mut self, cluster: bool) -> Result<CapacitySnapshot, Status> {
+        let _ = cluster;
+        Err(Status::NOT_FOUND)
+    }
     fn cpu(&mut self, cluster: bool) -> Result<CpuSnapshot, Status>;
     fn users(&mut self, cluster: bool) -> Result<UsersSnapshot, Status>;
     fn obsolete(&mut self, cluster: bool) -> Result<ObsoleteSnapshot, Status> {
@@ -198,6 +221,12 @@ pub fn register_builtin_commands<const CAPACITY: usize>(
         CommandSpec::new("SHOW-DISK", &[cluster])
             .map_err(|_| Error::InvalidValue)?,
         RouteId::from_valid_raw(SHOW_DISK_ROUTE),
+    )?;
+
+    registry.register(
+        CommandSpec::new("SHOW-CAPACITY", &[cluster])
+            .map_err(|_| Error::InvalidValue)?,
+        RouteId::from_valid_raw(SHOW_CAPACITY_ROUTE),
     )?;
 
     registry.register(
@@ -348,6 +377,10 @@ impl<Source: DiagnosticSource, const CAPACITY: usize>
             SHOW_DISK_ROUTE => {
                 let cluster = boolean(command.get("CLUSTER"))?;
                 disk_output(self.source.disk(cluster)?)
+            }
+            SHOW_CAPACITY_ROUTE => {
+                let cluster = boolean(command.get("CLUSTER"))?;
+                capacity_output(self.source.capacity(cluster)?)
             }
             SHOW_CPU_ROUTE => {
                 let cluster = boolean(command.get("CLUSTER"))?;
@@ -512,6 +545,60 @@ fn disk_output(snapshot: DiskSnapshot) -> Result<StructuredOutput, Status> {
         OutputValue::Unsigned(snapshot.failed_devices),
     )?;
     Ok(output)
+}
+
+fn capacity_output(snapshot: CapacitySnapshot) -> Result<StructuredOutput, Status> {
+    let mut output = StructuredOutput::new(Status::NORMAL);
+    insert(
+        &mut output,
+        "gc-bounded",
+        OutputValue::Boolean(snapshot.gc_bounded),
+    )?;
+    insert(
+        &mut output,
+        "gc-pending-bytes",
+        OutputValue::Unsigned(snapshot.gc_pending_bytes),
+    )?;
+    for (index, entry) in snapshot.entries.iter().flatten().enumerate() {
+        let ordinal = index.saturating_add(1);
+        let resource_name = indexed_name("resource", ordinal);
+        let forecast_name = indexed_name("forecast-free-bytes", ordinal);
+        let warning_name = indexed_name("warning-free-bytes", ordinal);
+        let failure_name = indexed_name("hours-to-failure", ordinal);
+        let fragmentation_name = indexed_name("fragmentation-percent", ordinal);
+        insert(
+            &mut output,
+            resource_name.as_str(),
+            OutputValue::Text(OutputText::new(entry.resource.as_str()).map_err(|_| Status::INVALID_ARGUMENT)?),
+        )?;
+        insert(
+            &mut output,
+            forecast_name.as_str(),
+            OutputValue::Unsigned(entry.forecast_free_bytes),
+        )?;
+        insert(
+            &mut output,
+            warning_name.as_str(),
+            OutputValue::Unsigned(entry.warning_free_bytes),
+        )?;
+        insert(
+            &mut output,
+            failure_name.as_str(),
+            OutputValue::Unsigned(entry.hours_to_failure),
+        )?;
+        insert(
+            &mut output,
+            fragmentation_name.as_str(),
+            OutputValue::Unsigned(entry.fragmentation_percent),
+        )?;
+    }
+    Ok(output)
+}
+
+fn indexed_name(prefix: &str, index: usize) -> Text<64> {
+    let mut name = Text::empty();
+    let _ = core::fmt::Write::write_fmt(&mut name, format_args!("{prefix}-{index}"));
+    name
 }
 
 fn cpu_output(snapshot: CpuSnapshot) -> Result<StructuredOutput, Status> {
