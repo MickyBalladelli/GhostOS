@@ -54,7 +54,7 @@ fn public_http_error_contains_contract_fields_without_request_data() {
         RetryHint::Never,
         AuditContext::new(0xfeed, 2),
     );
-    let mut body = [0; 256];
+    let mut body = [0; 512];
     let length = encode_error_body(error, &mut body).unwrap();
     let body = core::str::from_utf8(&body[..length]).unwrap();
 
