@@ -515,9 +515,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       random seeds, device completions, scheduler decisions, and configuration
       digests while excluding secrets.
       Done when a failure can be replayed on another supported host.
-- [ ] Add compatibility and differential tests against independent filesystem,
+- [x] Add compatibility and differential tests against independent filesystem,
       network, terminal, firmware, and serialization references.
       Done when divergences produce minimized inputs and a documented decision.
+      Implementation: [`virtual_machine/tests/differential_compatibility.rs`](virtual_machine/tests/differential_compatibility.rs)
+      compares the five real paths with independent bounded references;
+      [`crates/test-support/src/differential.rs`](crates/test-support/src/differential.rs)
+      minimizes reproducing inputs, and the reference decisions are recorded in
+      [`docs/differential-compatibility.md`](docs/differential-compatibility.md).
 - [ ] Add fuzzing with retained corpus and triage metadata for every untrusted
       parser, including manifests, ABI frames, packets, snapshots, CLI input,
       terminal bytes, and migration streams.

@@ -7,6 +7,9 @@
 //! callers one stable decision before decoding: accept, accept with a
 //! deprecation warning, or reject with a machine-readable compatibility code.
 
+#[cfg(test)]
+extern crate alloc;
+
 use core::fmt;
 
 pub const COMPATIBILITY_ERROR_TOO_OLD: &str = "SYNOS-COMPAT-001";
@@ -318,6 +321,7 @@ pub const LEGACY_SNAPSHOT_V1: ApiVersion = ApiVersion::V1;
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
     use super::*;
 
     #[test]
