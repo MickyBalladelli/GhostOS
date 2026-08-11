@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "lock_contention"
 harness = false
 
+[[bench]]
+name = "hot_allocator"
+harness = false
+
 [[bin]]
 name = "synos-kernel"
 path = "src/main.rs"

@@ -241,10 +241,12 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`docs/lock-contention.md`](docs/lock-contention.md),
       [`kernel/src/contention.rs`](kernel/src/contention.rs), and
       [`kernel/benches/lock_contention.rs`](kernel/benches/lock_contention.rs).
-- [ ] Add per-CPU and NUMA-aware allocators for hot IPC, packet, timer, and
+- [x] Add per-CPU and NUMA-aware allocators for hot IPC, packet, timer, and
       scheduler objects with bounded cross-node fallback.
       Done when locality, fragmentation, tail latency, and reclamation behavior
-      are measured under mixed workloads.
+      are measured under mixed workloads. See
+      [`kernel/src/hot_allocator.rs`](kernel/src/hot_allocator.rs) and
+      [`docs/hot-allocators.md`](docs/hot-allocators.md).
 - [ ] Add zero-copy or one-copy data paths for IPC buffers, network packets,
       storage reads/writes, WebGPU uploads, and client RPC frames.
       Done when ownership transitions are explicit, buffers are capability

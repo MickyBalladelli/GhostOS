@@ -3,6 +3,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod allocator;
+pub mod hot_allocator;
 #[allow(unsafe_code)]
 mod arch;
 pub mod capability;
@@ -69,6 +70,10 @@ use synos_status::Status;
 
 pub use allocator::{
     AllocationError, EarlyFrameAllocator, QuotaAllocationError, FRAME_SIZE,
+};
+pub use hot_allocator::{
+    HotAllocation, HotAllocationError, HotAllocationPlacement, HotAllocatorConfigError,
+    HotAllocatorReport, HotAllocatorStats, HotObjectAllocator, HotObjectKind, HotReclaimError,
 };
 pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
