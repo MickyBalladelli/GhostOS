@@ -329,11 +329,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`docs/cluster-scale.md`](docs/cluster-scale.md) and the deterministic
       campaign in
       [`virtual_machine/tests/cluster.rs`](virtual_machine/tests/cluster.rs).
-- [ ] Shard cluster metadata, capability indexes, package catalogs, audit
+- [x] Shard cluster metadata, capability indexes, package catalogs, audit
       streams, and placement decisions without changing their consistency
       contracts.
       Done when shard movement, split-brain prevention, rebalancing, and node
-      loss are tested with stable recovery evidence.
+      loss are tested with stable recovery evidence. Implementation and replay
+      evidence: [`crates/synos-storaged/src/sharding.rs`](crates/synos-storaged/src/sharding.rs),
+      [`crates/synos-storaged/tests/sharding.rs`](crates/synos-storaged/tests/sharding.rs),
+      and [`docs/sharding-recovery.md`](docs/sharding-recovery.md).
 - [ ] Add admission control and load shedding for control-plane fanout,
       membership changes, snapshots, backups, package distribution, and remote
       diagnostics.

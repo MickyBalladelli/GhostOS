@@ -13,6 +13,7 @@ mod membership;
 mod protocol;
 mod remote;
 mod security;
+mod sharding;
 mod service;
 mod state;
 mod tiering;
@@ -77,6 +78,10 @@ pub use security::{
     TrustRoot, TrustRootStore, DEFAULT_SECURITY_AUDIT_CAPACITY, MAX_CLUSTER_CAVEATS,
     MAX_CLUSTER_KEYS, MAX_REVOKED_ENTRIES, MAX_SECURE_PAYLOAD, MAX_TRUST_ROOTS,
     SECURE_FRAME_HEADER_BYTES, SECURE_FRAME_TAG_BYTES, SECURE_FRAME_WIRE_BYTES,
+};
+pub use sharding::{
+    ClusterShardCoordinator, ConsistencyContract, RecoveryEvidence, ShardError, ShardId,
+    ShardNamespace, ShardRecord, ShardRoute, ShardState, ShardWriteReceipt, MAX_SHARD_REPLICAS,
 };
 pub use service::{
     Completion, IoOperation, IoRequest, MountError, MountId, MountInfo, MountOptions,
