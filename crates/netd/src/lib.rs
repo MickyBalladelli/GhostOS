@@ -17,8 +17,8 @@ mod transport;
 
 pub use memory::{MappedRegion, MemoryError, SharedMemory};
 pub use capture::{
-    CaptureDirection, CaptureKind, CaptureRecord, DhcpLifecycleEvent, PacketCapture,
-    MAX_CAPTURE_BYTES, MAX_CAPTURE_RECORDS,
+    CaptureDirection, CaptureFlowAggregate, CaptureKind, CaptureRecord, DhcpLifecycleEvent,
+    PacketCapture, MAX_CAPTURE_BYTES, MAX_CAPTURE_FLOWS, MAX_CAPTURE_RECORDS,
 };
 pub use dhcp::{
     dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, BACKOFF_MS,

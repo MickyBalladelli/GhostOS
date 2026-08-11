@@ -374,10 +374,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       IDs and effect receipts make retries and post-restart replays return the
       original result without repeating a side effect. Regression coverage is
       in the controller unit model.
-- [ ] Add cardinality limits and aggregation for metrics, traces, audit labels,
+- [x] Add cardinality limits and aggregation for metrics, traces, audit labels,
       packet captures, and per-tenant diagnostics.
       Done when observability remains usable at cluster scale without becoming a
       denial-of-service vector.
+      Implementation: fixed-capacity cardinality tables and overflow rollups
+      live in [`crates/observability/src/cardinality.rs`](crates/observability/src/cardinality.rs);
+      metric series, trace labels, audit labels, tenant diagnostics, and
+      firewall packet flows use them. Packet capture keeps bounded `other` flow
+      totals and all overflow counts remain inspectable.
 
 ## P1: Resilience, upgrades, and operations
 

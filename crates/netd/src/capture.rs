@@ -4,6 +4,7 @@ use crate::dhcp::MAX_DHCP_PACKET;
 
 pub const MAX_CAPTURE_RECORDS: usize = 32;
 pub const MAX_CAPTURE_BYTES: usize = MAX_DHCP_PACKET;
+pub const MAX_CAPTURE_FLOWS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureDirection {
@@ -55,6 +56,18 @@ pub struct CaptureRecord {
     pub payload: [u8; MAX_CAPTURE_BYTES],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CaptureFlowAggregate {
+    pub tenant: u64,
+    pub direction: CaptureDirection,
+    pub source_ip: [u8; 4],
+    pub destination_ip: [u8; 4],
+    pub source_port: u16,
+    pub destination_port: u16,
+    pub packets: u64,
+    pub bytes: u64,
+}
+
 impl CaptureRecord {
     const EMPTY: Self = Self {
         sequence: 0,
@@ -83,18 +96,33 @@ impl CaptureRecord {
 /// dropped-record count makes truncation visible instead of silently losing it.
 pub struct PacketCapture<const CAPACITY: usize = MAX_CAPTURE_RECORDS> {
     records: [CaptureRecord; CAPACITY],
+    flows: [Option<CaptureFlowAggregate>; MAX_CAPTURE_FLOWS],
     length: usize,
     next_sequence: u64,
     dropped: u64,
+    flow_cardinality_dropped: u64,
+    other_flow: CaptureFlowAggregate,
 }
 
 impl<const CAPACITY: usize> PacketCapture<CAPACITY> {
     pub const fn new() -> Self {
         Self {
             records: [CaptureRecord::EMPTY; CAPACITY],
+            flows: [None; MAX_CAPTURE_FLOWS],
             length: 0,
             next_sequence: 0,
             dropped: 0,
+            flow_cardinality_dropped: 0,
+            other_flow: CaptureFlowAggregate {
+                tenant: 0,
+                direction: CaptureDirection::Ingress,
+                source_ip: [0; 4],
+                destination_ip: [0; 4],
+                source_port: 0,
+                destination_port: 0,
+                packets: 0,
+                bytes: 0,
+            },
         }
     }
 
@@ -110,8 +138,20 @@ impl<const CAPACITY: usize> PacketCapture<CAPACITY> {
         self.dropped
     }
 
+    pub const fn flow_cardinality_dropped(&self) -> u64 {
+        self.flow_cardinality_dropped
+    }
+
     pub fn records(&self) -> &[CaptureRecord] {
         &self.records[..self.length]
+    }
+
+    pub fn flow_aggregates(&self) -> impl Iterator<Item = CaptureFlowAggregate> + '_ {
+        self.flows.iter().flatten().copied()
+    }
+
+    pub const fn other_flow(&self) -> CaptureFlowAggregate {
+        self.other_flow
     }
 
     pub fn record_packet(
@@ -126,7 +166,34 @@ impl<const CAPACITY: usize> PacketCapture<CAPACITY> {
         destination_port: u16,
         payload: &[u8],
     ) {
-        self.record(CaptureRecord {
+        self.record_packet_for_tenant(
+            1,
+            timestamp_ms,
+            direction,
+            source_mac,
+            destination_mac,
+            source_ip,
+            destination_ip,
+            source_port,
+            destination_port,
+            payload,
+        )
+    }
+
+    pub fn record_packet_for_tenant(
+        &mut self,
+        tenant: u64,
+        timestamp_ms: u64,
+        direction: CaptureDirection,
+        source_mac: [u8; 6],
+        destination_mac: [u8; 6],
+        source_ip: [u8; 4],
+        destination_ip: [u8; 4],
+        source_port: u16,
+        destination_port: u16,
+        payload: &[u8],
+    ) {
+        let record = CaptureRecord {
             timestamp_ms,
             kind: CaptureKind::Packet,
             direction: Some(direction),
@@ -137,11 +204,12 @@ impl<const CAPACITY: usize> PacketCapture<CAPACITY> {
             source_port,
             destination_port,
             ..CaptureRecord::EMPTY
-        }, payload)
+        };
+        self.record(tenant.max(1), record, payload)
     }
 
     pub fn record_event(&mut self, timestamp_ms: u64, kind: CaptureKind, code: u16) {
-        self.record(CaptureRecord {
+        self.record(1, CaptureRecord {
             timestamp_ms,
             kind,
             code,
@@ -149,7 +217,19 @@ impl<const CAPACITY: usize> PacketCapture<CAPACITY> {
         }, &[])
     }
 
-    fn record(&mut self, mut record: CaptureRecord, payload: &[u8]) {
+    fn record(&mut self, tenant: u64, mut record: CaptureRecord, payload: &[u8]) {
+        if let (CaptureKind::Packet, Some(direction)) = (record.kind, record.direction) {
+            self.aggregate_flow(CaptureFlowAggregate {
+                tenant,
+                direction,
+                source_ip: record.source_ip,
+                destination_ip: record.destination_ip,
+                source_port: record.source_port,
+                destination_port: record.destination_port,
+                packets: 1,
+                bytes: payload.len() as u64,
+            });
+        }
         if self.length == CAPACITY {
             self.dropped = self.dropped.saturating_add(1);
             return
@@ -162,6 +242,28 @@ impl<const CAPACITY: usize> PacketCapture<CAPACITY> {
         self.next_sequence = self.next_sequence.saturating_add(1);
         self.records[self.length] = record;
         self.length += 1;
+    }
+
+    fn aggregate_flow(&mut self, sample: CaptureFlowAggregate) {
+        if let Some(existing) = self.flows.iter_mut().flatten().find(|entry| {
+            entry.tenant == sample.tenant
+                && entry.direction == sample.direction
+                && entry.source_ip == sample.source_ip
+                && entry.destination_ip == sample.destination_ip
+                && entry.source_port == sample.source_port
+                && entry.destination_port == sample.destination_port
+        }) {
+            existing.packets = existing.packets.saturating_add(sample.packets);
+            existing.bytes = existing.bytes.saturating_add(sample.bytes);
+            return
+        }
+        if let Some(slot) = self.flows.iter_mut().find(|entry| entry.is_none()) {
+            *slot = Some(sample);
+        } else {
+            self.flow_cardinality_dropped = self.flow_cardinality_dropped.saturating_add(1);
+            self.other_flow.packets = self.other_flow.packets.saturating_add(sample.packets);
+            self.other_flow.bytes = self.other_flow.bytes.saturating_add(sample.bytes);
+        }
     }
 }
 

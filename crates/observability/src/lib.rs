@@ -15,6 +15,15 @@ pub mod profiling;
 pub mod throughput;
 pub mod cache;
 pub mod scaling;
+pub mod cardinality;
+
+pub use cardinality::{
+    AuditLabelAggregate, AuditLabelAggregator, AtomicCardinality, CardinalityDecision,
+    CardinalityEntry, CardinalitySnapshot, CardinalityTable, MAX_AUDIT_LABEL_CARDINALITY,
+    MAX_METRIC_AGGREGATES, MAX_METRIC_CARDINALITY, MAX_TENANT_DIAGNOSTICS,
+    MAX_TRACE_LABEL_CARDINALITY, TenantDiagnostic, TenantDiagnosticError,
+    TenantDiagnosticKind, TenantDiagnosticOutcome, TenantDiagnostics,
+};
 
 pub use cache::{
     CacheEvent, CacheKind, CachePolicy, CachePolicyError, CachePolicyRegistry,
@@ -177,6 +186,17 @@ pub struct TelemetryDimensions {
 impl TelemetryDimensions {
     pub const fn new(cluster: u128, node: u32, transport: u8, workload: u64, operation: u16) -> Self {
         Self { cluster, node, transport, workload, operation }
+    }
+
+    /// Stable low-cardinality bucket for values that exceed a series limit.
+    pub const fn other() -> Self {
+        Self {
+            cluster: 0,
+            node: 1,
+            transport: 0,
+            workload: 0,
+            operation: 0,
+        }
     }
 
     pub fn apply(self, event: TraceEvent) -> TraceEvent {
@@ -865,6 +885,7 @@ pub struct TraceRing<const CAPACITY: usize> {
     write_position: AtomicU64,
     read_position: AtomicU64,
     dropped: AtomicU64,
+    labels: cardinality::AtomicCardinality<MAX_TRACE_LABEL_CARDINALITY>,
     slots: [TraceSlot; CAPACITY],
 }
 
@@ -875,11 +896,13 @@ impl<const CAPACITY: usize> TraceRing<CAPACITY> {
             write_position: AtomicU64::new(0),
             read_position: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
+            labels: cardinality::AtomicCardinality::new(),
             slots: [const { TraceSlot::new() }; CAPACITY],
         }
     }
 
     pub fn push(&self, event: TraceEvent) {
+        self.labels.observe_event(event);
         let ticket = self.write_position.fetch_add(1, Ordering::AcqRel);
         let minimum = ticket.saturating_add(1).saturating_sub(CAPACITY as u64);
         let mut read = self.read_position.load(Ordering::Acquire);
@@ -951,6 +974,19 @@ impl<const CAPACITY: usize> TraceRing<CAPACITY> {
 
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Acquire)
+    }
+
+    /// Cardinality is measured independently from ring occupancy. A full
+    /// ring drops records; a full label table folds new label values here.
+    pub fn label_cardinality(&self) -> CardinalitySnapshot {
+        self.labels.snapshot()
+    }
+
+    pub fn export_label_aggregates(
+        &self,
+        destination: &mut [Option<CardinalityEntry>],
+    ) -> usize {
+        self.labels.export(destination)
     }
 
     /// Copy the newest records without consuming the ring. This is used by
@@ -1192,6 +1228,7 @@ impl AuditJournalError {
 pub struct AuditJournal<const CAPACITY: usize = DEFAULT_RECOVERY_AUDIT_CAPACITY> {
     key: AuditKey,
     records: [Option<SealedAuditRecord>; CAPACITY],
+    labels: AuditLabelAggregator<MAX_AUDIT_LABEL_CARDINALITY>,
     next_sequence: u64,
     dropped: u64,
 }
@@ -1208,6 +1245,7 @@ impl<const CAPACITY: usize> AuditJournal<CAPACITY> {
         Ok(Self {
             key,
             records: [None; CAPACITY],
+            labels: AuditLabelAggregator::new(),
             next_sequence: 1,
             dropped: 0,
         })
@@ -1229,10 +1267,19 @@ impl<const CAPACITY: usize> AuditJournal<CAPACITY> {
         self.records().map(|record| record.event)
     }
 
+    pub fn label_aggregates(&self) -> impl Iterator<Item = AuditLabelAggregate> + '_ {
+        self.labels.aggregates()
+    }
+
+    pub const fn label_cardinality(&self) -> CardinalitySnapshot {
+        self.labels.snapshot()
+    }
+
     pub fn append(&mut self, event: TraceEvent) -> Result<u64, AuditJournalError> {
         if event.kind != EventKind::Audit || event.timestamp == 0 {
             return Err(AuditJournalError::InvalidEvent)
         }
+        self.labels.observe(event);
         let previous = self
             .records
             .iter()
@@ -1345,6 +1392,7 @@ impl<const CAPACITY: usize> AuditJournal<CAPACITY> {
                 previous,
                 tag,
             });
+            journal.labels.observe(event);
         }
         if input[AUDIT_EXPORT_HEADER_BYTES + count * SEALED_AUDIT_RECORD_BYTES..]
             .iter()
@@ -1554,23 +1602,47 @@ pub enum MetricError {
     Invalid,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MetricRecordOutcome {
+    NewSeries,
+    UpdatedSeries,
+    Aggregated,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MetricAggregate {
+    pub name: u16,
+    pub kind: MetricKind,
+    pub dimensions: TelemetryDimensions,
+    pub observations: u64,
+    pub value: u64,
+}
+
 /// Bounded metric series store. Counters are accumulated; gauges and histogram
 /// observations replace the last value for the same dimensions.
 pub struct MetricRegistry<const CAPACITY: usize = MAX_METRIC_SAMPLES> {
     samples: [Option<MetricSample>; CAPACITY],
+    aggregates: [Option<MetricAggregate>; MAX_METRIC_AGGREGATES],
+    cardinality: CardinalityTable<MAX_METRIC_CARDINALITY>,
     dropped: u64,
 }
 
 impl<const CAPACITY: usize> MetricRegistry<CAPACITY> {
     pub const fn new() -> Self {
         assert!(CAPACITY >= 1);
-        Self { samples: [None; CAPACITY], dropped: 0 }
+        Self {
+            samples: [None; CAPACITY],
+            aggregates: [None; MAX_METRIC_AGGREGATES],
+            cardinality: CardinalityTable::new(),
+            dropped: 0,
+        }
     }
 
     pub fn record(&mut self, sample: MetricSample) -> Result<(), MetricError> {
         if sample.name == 0 || sample.timestamp == 0 || sample.dimensions.node == 0 {
             return Err(MetricError::Invalid);
         }
+        self.cardinality.observe(sample.name as u64, metric_series_value(sample));
         if let Some(existing) = self.samples.iter_mut().flatten().find(|entry| entry.same_series(sample)) {
             if sample.kind == MetricKind::Counter {
                 existing.value = existing.value.saturating_add(sample.value);
@@ -1590,12 +1662,84 @@ impl<const CAPACITY: usize> MetricRegistry<CAPACITY> {
         }
     }
 
+    /// Record a sample without letting a new series make ingestion fail.
+    /// Once the exact series budget is full, samples are folded into a stable
+    /// `other` dimension and the fold count remains inspectable.
+    pub fn record_bounded(
+        &mut self,
+        sample: MetricSample,
+    ) -> Result<MetricRecordOutcome, MetricError> {
+        if sample.name == 0 || sample.timestamp == 0 || sample.dimensions.node == 0 {
+            return Err(MetricError::Invalid)
+        }
+        let cardinality = self
+            .cardinality
+            .observe(sample.name as u64, metric_series_value(sample));
+        if let Some(existing) = self
+            .samples
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.same_series(sample))
+        {
+            if sample.kind == MetricKind::Counter {
+                existing.value = existing.value.saturating_add(sample.value);
+            } else {
+                *existing = sample;
+            }
+            existing.timestamp = sample.timestamp;
+            return Ok(MetricRecordOutcome::UpdatedSeries)
+        }
+        if cardinality == CardinalityDecision::Aggregated {
+            return Ok(self.aggregate_metric(sample))
+        }
+        if let Some(slot) = self.samples.iter_mut().find(|entry| entry.is_none()) {
+            *slot = Some(sample);
+            return Ok(MetricRecordOutcome::NewSeries)
+        }
+
+        Ok(self.aggregate_metric(sample))
+    }
+
+    fn aggregate_metric(&mut self, sample: MetricSample) -> MetricRecordOutcome {
+        let dimensions = TelemetryDimensions::other();
+        if let Some(existing) = self
+            .aggregates
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.name == sample.name && entry.kind == sample.kind)
+        {
+            existing.observations = existing.observations.saturating_add(1);
+            existing.value = aggregate_metric_value(existing.kind, existing.value, sample.value);
+            return MetricRecordOutcome::Aggregated
+        }
+        if let Some(slot) = self.aggregates.iter_mut().find(|entry| entry.is_none()) {
+            *slot = Some(MetricAggregate {
+                name: sample.name,
+                kind: sample.kind,
+                dimensions,
+                observations: 1,
+                value: sample.value,
+            });
+            return MetricRecordOutcome::Aggregated
+        }
+        self.dropped = self.dropped.saturating_add(1);
+        MetricRecordOutcome::Aggregated
+    }
+
     pub fn samples(&self) -> impl Iterator<Item = MetricSample> + '_ {
         self.samples.iter().flatten().copied()
     }
 
     pub const fn dropped(&self) -> u64 {
         self.dropped
+    }
+
+    pub fn aggregates(&self) -> impl Iterator<Item = MetricAggregate> + '_ {
+        self.aggregates.iter().flatten().copied()
+    }
+
+    pub const fn cardinality(&self) -> CardinalitySnapshot {
+        self.cardinality.snapshot()
     }
 
     pub fn export(&self, destination: &mut [Option<MetricSample>]) -> usize {
@@ -1609,6 +1753,21 @@ impl<const CAPACITY: usize> MetricRegistry<CAPACITY> {
             }
         }
         count
+    }
+}
+
+fn metric_series_value(sample: MetricSample) -> u128 {
+    sample.dimensions.cluster
+        ^ ((sample.dimensions.node as u128) << 32)
+        ^ ((sample.dimensions.transport as u128) << 64)
+        ^ ((sample.dimensions.workload as u128) << 72)
+        ^ ((sample.dimensions.operation as u128) << 16)
+}
+
+fn aggregate_metric_value(kind: MetricKind, current: u64, value: u64) -> u64 {
+    match kind {
+        MetricKind::Counter | MetricKind::Histogram => current.saturating_add(value),
+        MetricKind::Gauge => value,
     }
 }
 

@@ -3,6 +3,7 @@ use synos_observability::{
     Alert, AlertLevel, AlertRegistry, AuditJournal, AuditJournalError, AuditKey, Level,
     HealthError, HealthReport, HealthState, HealthTransport, MetricError, MetricKind,
     MetricRegistry, MetricSample, OperationalHealth, QueryError, TelemetryDimensions,
+    MetricRecordOutcome, TenantDiagnosticKind, TenantDiagnosticOutcome, TenantDiagnostics,
     TraceEvent, TraceRing, analyze_audit, decode_record, encode_record, field,
     parse_audit_command,
 };
@@ -202,4 +203,36 @@ fn operational_health_is_bounded_and_aggregates_transport_failures() {
         OperationalHealth::new(0, 1, HealthTransport::Packet, HealthState::Healthy, 0, 1, 0, 0, false),
         None
     );
+}
+
+#[test]
+fn cardinality_overflow_is_folded_and_visible() {
+    let dimensions = TelemetryDimensions::new(1, 1, 0, 1, 1);
+    let mut metrics = MetricRegistry::<1>::new();
+    assert_eq!(
+        metrics.record_bounded(MetricSample::new(1, MetricKind::Counter, 1, 2, dimensions)),
+        Ok(MetricRecordOutcome::NewSeries)
+    );
+    assert_eq!(
+        metrics.record_bounded(MetricSample::new(2, MetricKind::Counter, 2, 3, dimensions)),
+        Ok(MetricRecordOutcome::Aggregated)
+    );
+    assert_eq!(metrics.aggregates().next().unwrap().value, 3);
+
+    let mut labels = synos_observability::AuditLabelAggregator::<1>::new();
+    labels.observe(audit(1, 1, 1, Status::NORMAL));
+    labels.observe(audit(2, 1, 2, Status::NORMAL));
+    assert_eq!(labels.snapshot().overflow, 5);
+
+    let mut tenants = TenantDiagnostics::<1>::new();
+    assert_eq!(
+        tenants.record(1, TenantDiagnosticKind::Trace, 2),
+        Ok(TenantDiagnosticOutcome::Exact)
+    );
+    assert_eq!(
+        tenants.record(2, TenantDiagnosticKind::Trace, 4),
+        Ok(TenantDiagnosticOutcome::Aggregated)
+    );
+    assert_eq!(tenants.other().trace_events, 4);
+    assert_eq!(tenants.other().aggregated, 1);
 }

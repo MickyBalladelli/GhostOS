@@ -954,7 +954,8 @@ impl<const RULES: usize, const CONNECTIONS: usize, const BUCKETS: usize>
             .unwrap_or(([0; 4], [0; 4], 0, 0));
         let source_mac = frame.get(6..12).and_then(|bytes| bytes.try_into().ok()).unwrap_or([0; 6]);
         let destination_mac = frame.get(..6).and_then(|bytes| bytes.try_into().ok()).unwrap_or([0; 6]);
-        capture.record_packet(
+        capture.record_packet_for_tenant(
+            context.principal,
             context.now_ms,
             match context.direction {
                 Direction::Ingress => CaptureDirection::Ingress,
