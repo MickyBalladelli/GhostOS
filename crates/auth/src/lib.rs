@@ -8,6 +8,7 @@ pub mod lending;
 pub mod lease;
 pub mod logical;
 pub mod remote;
+pub mod revocation_monitor;
 pub mod token;
 
 pub use identity::{
@@ -38,6 +39,11 @@ pub use remote::{
     RemoteAuthenticationChallenge, RemoteCapabilityScope, RemoteSecurityGateway,
     RemoteTokenError, RemoteTokenIssuer, WebAuthnAssertion, WebAuthnPolicy,
     WebAuthnVerification, WebAuthnVerificationRequest, WebAuthnVerifier, remote_safe_rights,
+};
+pub use revocation_monitor::{
+    CacheReport, PropagationObservation, PropagationReport, RevocationCache, RevocationKey,
+    RevocationMonitor, RevocationMonitorError, RevocationNotice,
+    DEFAULT_REVOCATION_EVENT_CAPACITY, REVOCATION_CACHE_COUNT,
 };
 pub use token::{
     CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights,

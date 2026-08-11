@@ -166,10 +166,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       in [`crates/auth/src/lease.rs`](crates/auth/src/lease.rs), with storage,
       network, agent-daemon, and agent-bridge enforcement plus regression
       coverage.
-- [ ] Build a revocation propagation monitor for kernel, IPC, storage, network,
+- [x] Build a revocation propagation monitor for kernel, IPC, storage, network,
       package, cluster, and client caches.
       Done when maximum revocation latency is measured and stale authorization
       cannot survive cache refresh or reconnect.
+      Implementation: [`crates/auth/src/revocation_monitor.rs`](crates/auth/src/revocation_monitor.rs)
+      provides a bounded seven-cache epoch fence, propagation latency report,
+      and refresh/reconnect/authorization rejection for stale entries.
+      Regression coverage is in
+      [`crates/auth/tests/revocation_monitor.rs`](crates/auth/tests/revocation_monitor.rs).
 - [ ] Add hardware-backed or isolated key-provider interfaces with rotation,
       quorum approval, recovery ceremony, and offline emergency revocation.
       Done when private keys never enter logs, snapshots, crash capsules, or
