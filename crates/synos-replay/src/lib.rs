@@ -13,6 +13,15 @@ use synos_init::{CrashReason, ProcessId};
 use synos_status::{IntoStatus, Status};
 use synos_synfs::{Error as FileError, FileType, SynFs};
 
+mod bundle;
+
+pub use bundle::{
+    public_input_digest, ReplayBundle, ReplayBundleEvent, ReplayBundleEventKind,
+    ReplayBundleReader, ReplaySensitivity, REPLAY_BUNDLE_CONFIG_DIGEST_BYTES,
+    REPLAY_BUNDLE_EVENT_BYTES, REPLAY_BUNDLE_FORMAT_VERSION, REPLAY_BUNDLE_HEADER_BYTES,
+    REPLAY_BUNDLE_MAX_EVENTS, REPLAY_BUNDLE_MAX_PAYLOAD_BYTES,
+};
+
 pub const REPLAY_FORMAT_VERSION: u16 = 1;
 pub const EVENT_BYTES: usize = 56;
 pub const MAX_REPLAY_PATH_BYTES: usize = 192;
@@ -29,6 +38,9 @@ pub enum ReplayError {
     Corrupt,
     NoEvent,
     UnexpectedEvent,
+    InputMismatch,
+    SecretExcluded,
+    UnsupportedVersion,
     InvalidPath,
     Storage(FileError),
 }
@@ -44,8 +56,8 @@ impl IntoStatus for ReplayError {
         match self {
             Self::Inactive | Self::NoEvent => Status::PENDING,
             Self::BufferTooSmall { .. } | Self::Capacity => Status::NO_SPACE,
-            Self::Corrupt | Self::UnexpectedEvent => Status::CORRUPT,
-            Self::InvalidPath => Status::INVALID_ARGUMENT,
+            Self::Corrupt | Self::UnexpectedEvent | Self::InputMismatch | Self::UnsupportedVersion => Status::CORRUPT,
+            Self::SecretExcluded | Self::InvalidPath => Status::INVALID_ARGUMENT,
             Self::Storage(error) => error.status(),
         }
     }

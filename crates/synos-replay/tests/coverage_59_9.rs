@@ -1,7 +1,8 @@
 use synos_init::{CrashReason, ProcessId};
 use synos_replay::{
-    EVENT_BYTES, FlightRecorderRequest, ReplayError, ReplayEvent, ReplayEventKind, ReplayLog,
-    ReplayMode, ReplayRing, TimeTravel,
+    EVENT_BYTES, FlightRecorderRequest, ReplayBundle, ReplayBundleEventKind, ReplayError,
+    ReplayEvent, ReplayEventKind, ReplayLog, ReplayMode, ReplayRing, ReplaySensitivity,
+    TimeTravel, REPLAY_BUNDLE_EVENT_BYTES, REPLAY_BUNDLE_HEADER_BYTES,
 };
 use synos_synfs::{RmsMapHandle, SynFs};
 
@@ -69,4 +70,55 @@ fn crash_flight_recorder_preserves_bounded_evidence() {
     assert_eq!(ReplayEvent::decode(&event).unwrap().timestamp_us, 11);
     assert_eq!(RmsMapHandle::from_capability(1), None);
     assert_eq!(log.mode(), ReplayMode::Recording);
+}
+
+#[test]
+fn replay_bundle_round_trips_all_deterministic_inputs_without_secrets() {
+    let mut bundle = ReplayBundle::new([7; 32], 0x1234, 900);
+    bundle.record_input(1, 10, b"public input", ReplaySensitivity::Public).unwrap();
+    bundle.record_clock(2, 901).unwrap();
+    bundle.record_random_seed(3, 11, 0x55).unwrap();
+    bundle
+        .record_device_completion(4, 12, 0x99, b"completion", ReplaySensitivity::Public)
+        .unwrap();
+    bundle.record_scheduler_decision(5, 0, 0b101, 42).unwrap();
+    assert_eq!(
+        bundle.record_input(6, 10, b"secret", ReplaySensitivity::Secret),
+        Err(ReplayError::SecretExcluded)
+    );
+
+    let mut encoded = [0; REPLAY_BUNDLE_HEADER_BYTES + 5 * REPLAY_BUNDLE_EVENT_BYTES];
+    let encoded_len = bundle.encode(&mut encoded).unwrap();
+    let decoded = ReplayBundle::decode(&encoded[..encoded_len]).unwrap();
+    assert_eq!(decoded.config_digest(), &[7; 32]);
+    assert_eq!(decoded.random_seed(), 0x1234);
+    assert_eq!(decoded.initial_clock_ns(), 900);
+
+    let mut replay = decoded.replay();
+    assert_eq!(replay.next_input(10).unwrap().payload(), b"public input");
+    assert_eq!(replay.clock().unwrap(), 901);
+    assert_eq!(replay.random_seed(11).unwrap(), 0x55);
+    assert_eq!(
+        replay.device_completion(12).unwrap().payload(),
+        b"completion"
+    );
+    assert_eq!(replay.scheduler_decision(0).unwrap(), (0b101, 42));
+    assert_eq!(replay.pending(), 0);
+    assert_eq!(decoded.events()[0].kind, ReplayBundleEventKind::Input);
+}
+
+#[test]
+fn replay_bundle_rejects_divergent_public_input_and_corrupt_padding() {
+    let mut bundle = ReplayBundle::new([0; 32], 1, 2);
+    bundle
+        .record_input(1, 1, b"expected", ReplaySensitivity::Public)
+        .unwrap();
+    let mut encoded = [0; REPLAY_BUNDLE_HEADER_BYTES + REPLAY_BUNDLE_EVENT_BYTES];
+    bundle.encode(&mut encoded).unwrap();
+    let decoded = ReplayBundle::decode(&encoded).unwrap();
+    let mut replay = decoded.replay();
+    assert_eq!(replay.input(1, b"different"), Err(ReplayError::InputMismatch));
+
+    encoded[REPLAY_BUNDLE_HEADER_BYTES + REPLAY_BUNDLE_EVENT_BYTES - 1] = 1;
+    assert_eq!(ReplayBundle::decode(&encoded), Err(ReplayError::Corrupt));
 }

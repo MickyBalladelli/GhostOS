@@ -511,7 +511,7 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`docs/api.md`](docs/api.md), the seven public-interface binaries in
       [`examples/cookbook`](examples/cookbook/), and the locked local validator
       [`scripts/validate-cookbook.py`](scripts/validate-cookbook.py).
-- [ ] Add deterministic replay bundles that include input events, clock values,
+- [x] Add deterministic replay bundles that include input events, clock values,
       random seeds, device completions, scheduler decisions, and configuration
       digests while excluding secrets.
       Done when a failure can be replayed on another supported host.
