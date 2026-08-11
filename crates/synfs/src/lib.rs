@@ -9,6 +9,7 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 pub use synos_path_pattern::{MAX_PATTERN_BYTES, Pattern, PatternError};
 
 mod block;
+mod migration;
 mod pool;
 mod rms;
 mod scrub;
@@ -18,6 +19,10 @@ pub use block::{
     BlockCompletion, BlockDevice, BlockIoError, BlockIoQueue, BlockIoResult, BlockOperation,
     BlockRequest, BlockRequestToken, BlockStore, DEFAULT_BLOCK_IO_QUEUE, MAX_BLOCK_IO_BYTES,
     StoragePoolIo,
+};
+pub use migration::{
+    BackgroundIoLimit, FormatMigration, FormatMigrationPhase, FormatMigrationProgress,
+    MAX_MIGRATION_BLOCKS_PER_STEP,
 };
 pub use pool::{
     BlockPlacement, DeviceHealth, MAX_POOL_MEMBERS, MAX_POOL_NAME_BYTES, PoolHealth, PoolLayout,
@@ -65,6 +70,13 @@ pub enum Error {
     Interrupted,
     RepairUnauthorized,
     StaleRepairPlan,
+    DowngradeRefused,
+    MigrationAlreadyCurrent,
+    MigrationInProgress,
+    MigrationIncomplete,
+    MigrationConflict,
+    UnsupportedMigration,
+    InvalidMigrationLimit,
 }
 
 impl IntoStatus for Error {
@@ -92,6 +104,13 @@ impl IntoStatus for Error {
             Self::QuotaExceeded => Status::NO_SPACE,
             Self::RepairUnauthorized => Status::ACCESS_DENIED,
             Self::StaleRepairPlan => Status::BUSY,
+            Self::DowngradeRefused | Self::UnsupportedMigration | Self::InvalidMigrationLimit => {
+                Status::INVALID_ARGUMENT
+            }
+            Self::MigrationAlreadyCurrent => Status::ALREADY_EXISTS,
+            Self::MigrationInProgress | Self::MigrationIncomplete | Self::MigrationConflict => {
+                Status::BUSY
+            }
         }
     }
 }
@@ -737,6 +756,7 @@ pub struct SynFs<const MAX_BLOCKS: usize> {
     volume_bank: usize,
     volume_sequence: u64,
     next_object_id: u64,
+    format_version: u16,
 }
 
 /// An atomic group of SynFS B+tree changes.
@@ -912,11 +932,16 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             volume_bank: 1,
             volume_sequence: 0,
             next_object_id: 1,
+            format_version: volume::VOLUME_FORMAT_VERSION,
         }
     }
 
     pub const fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub const fn format_version(&self) -> u16 {
+        self.format_version
     }
 
     /// Merge a cluster monotonic counter before starting a CoW update.

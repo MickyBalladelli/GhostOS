@@ -137,10 +137,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`crates/synos-storaged/src/tiering.rs`](crates/synos-storaged/src/tiering.rs)
       provides bounded heat/cost/durability policy evaluation, copy-first
       journaled moves, durable destination fences, and restart reconciliation.
-- [ ] Add online format migration with shadow validation, resumable progress,
+- [x] Add online format migration with shadow validation, resumable progress,
       rollback, downgrade refusal, and background I/O limits.
       Done when a power loss at every migration checkpoint leaves either the old
       or new format usable, never a hybrid.
+      Implementation: [`crates/synfs/src/migration.rs`](crates/synfs/src/migration.rs)
+      journals progress in the inactive bank, validates the shadow generation
+      before publication, bounds copy steps, and supports device rollback;
+      regression coverage is in [`crates/synfs/tests/migration.rs`](crates/synfs/tests/migration.rs).
 - [ ] Add capacity forecasting and fragmentation reports for SynFS, package
       cache, journals, snapshots, logs, and cluster metadata.
       Done when operators receive an actionable threshold before allocation

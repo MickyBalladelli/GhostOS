@@ -13,7 +13,8 @@ const TYPE_MAP_TREE: u8 = 1;
 const TYPE_MAP_BRANCH: u8 = 2;
 const TYPE_MAP_DATA: u8 = 3;
 
-pub const VOLUME_FORMAT_VERSION: u16 = 3;
+pub const VOLUME_FORMAT_VERSION: u16 = 4;
+pub(crate) const PREVIOUS_VOLUME_FORMAT_VERSION: u16 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VolumeGeometry {
@@ -30,15 +31,16 @@ pub struct VolumeCommit {
 }
 
 #[derive(Clone, Copy)]
-struct Superblock {
-    sequence: u64,
-    generation: u64,
-    root: BlockId,
-    next_checkpoint: u64,
-    checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
-    type_map_checksum: u64,
-    limits: VolumeLimits,
-    next_object_id: u64,
+pub(crate) struct Superblock {
+    pub(crate) format_version: u16,
+    pub(crate) sequence: u64,
+    pub(crate) generation: u64,
+    pub(crate) root: BlockId,
+    pub(crate) next_checkpoint: u64,
+    pub(crate) checkpoints: [Option<Checkpoint>; MAX_CHECKPOINTS],
+    pub(crate) type_map_checksum: u64,
+    pub(crate) limits: VolumeLimits,
+    pub(crate) next_object_id: u64,
 }
 
 struct Encoder<'a> {
@@ -149,6 +151,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         require_image_size::<MAX_BLOCKS>(image)?;
         image.fill(0);
         let empty = Superblock {
+            format_version: VOLUME_FORMAT_VERSION,
             sequence: 1,
             generation: 0,
             root: BlockId::NONE,
@@ -264,6 +267,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             }
         }
         let superblock = Superblock {
+            format_version: self.format_version,
             sequence: next_sequence,
             generation: self.generation,
             root: self.root,
@@ -338,6 +342,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 .map_err(|_| Error::Io)?;
         }
         let superblock = Superblock {
+            format_version: self.format_version,
             sequence: next_sequence,
             generation: self.generation,
             root: self.root,
@@ -647,7 +652,7 @@ fn block_index<const MAX_BLOCKS: usize>(id: BlockId) -> Result<usize, Error> {
         .ok_or(Error::Corrupt)
 }
 
-fn generation_offset<const MAX_BLOCKS: usize>(bank: usize) -> usize {
+pub(crate) fn generation_offset<const MAX_BLOCKS: usize>(bank: usize) -> usize {
     bank * (MAX_BLOCKS + 2) * BLOCK_SIZE
 }
 
@@ -743,7 +748,7 @@ fn read_type_map<const MAX_BLOCKS: usize>(
     Ok(map)
 }
 
-fn write_superblock<const MAX_BLOCKS: usize>(
+pub(crate) fn write_superblock<const MAX_BLOCKS: usize>(
     image: &mut [u8],
     bank: usize,
     superblock: Superblock,
@@ -764,7 +769,7 @@ fn encode_superblock<const MAX_BLOCKS: usize>(
     }
     block.fill(0);
     block[..8].copy_from_slice(SUPERBLOCK_MAGIC);
-    put_u16(block, 8, VOLUME_FORMAT_VERSION);
+    put_u16(block, 8, superblock.format_version);
     put_u16(block, 10, SUPERBLOCK_HEADER_BYTES);
     put_u32(block, 12, BLOCK_SIZE as u32);
     put_u64(block, 16, MAX_BLOCKS as u64);
@@ -796,7 +801,7 @@ fn encode_superblock<const MAX_BLOCKS: usize>(
     Ok(())
 }
 
-fn read_superblock<const MAX_BLOCKS: usize>(
+pub(crate) fn read_superblock<const MAX_BLOCKS: usize>(
     image: &[u8],
     bank: usize,
 ) -> Result<Option<Superblock>, Error> {
@@ -805,7 +810,7 @@ fn read_superblock<const MAX_BLOCKS: usize>(
     if &block[..SUPERBLOCK_MAGIC.len()] != SUPERBLOCK_MAGIC {
         return Ok(None);
     }
-    if u16_at(block, 8) != VOLUME_FORMAT_VERSION
+    if !supported_volume_format(u16_at(block, 8))
         || u16_at(block, 10) != SUPERBLOCK_HEADER_BYTES
         || u32_at(block, 12) != BLOCK_SIZE as u32
         || u64_at(block, 16) != MAX_BLOCKS as u64
@@ -859,6 +864,7 @@ fn read_superblock<const MAX_BLOCKS: usize>(
         return Ok(None);
     }
     Ok(Some(Superblock {
+        format_version: u16_at(block, 8),
         sequence: u64_at(block, 24),
         generation: u64_at(block, 32),
         root,
@@ -874,7 +880,11 @@ fn read_superblock<const MAX_BLOCKS: usize>(
     }))
 }
 
-fn load_bank<const MAX_BLOCKS: usize>(
+pub(crate) const fn supported_volume_format(version: u16) -> bool {
+    version == PREVIOUS_VOLUME_FORMAT_VERSION || version == VOLUME_FORMAT_VERSION
+}
+
+pub(crate) fn load_bank<const MAX_BLOCKS: usize>(
     image: &[u8],
     bank: usize,
     superblock: Superblock,
@@ -890,6 +900,7 @@ fn load_bank<const MAX_BLOCKS: usize>(
         volume_bank: bank,
         volume_sequence: superblock.sequence,
         next_object_id: superblock.next_object_id,
+        format_version: superblock.format_version,
     };
     for index in 0..MAX_BLOCKS {
         let block = block_slice::<MAX_BLOCKS>(image, bank, index)?;
