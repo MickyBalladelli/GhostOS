@@ -15,6 +15,7 @@ use std::process::Child;
 pub mod property;
 pub mod crash;
 pub mod fault_matrix;
+pub mod differential;
 
 pub const BLOCK_SIZE: usize = 512;
 pub const DEFAULT_SEED: u64 = 0x5359_4e4f_535f_5445;
