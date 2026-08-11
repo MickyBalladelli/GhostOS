@@ -97,7 +97,9 @@ pub use terminal::{
     TerminalOperation, TerminalResize, TerminalSession, TerminalSessionDiagnostics,
     TerminalTranscript, TerminalTranscriptEvent,
 };
-pub use input::{ascii_to_scancodes, serial_resize_sequence, GuestInputMode};
+pub use input::{
+    ascii_to_scancodes, serial_resize_sequence, strip_terminal_resize_responses, GuestInputMode,
+};
 pub use clock::{HostMonotonicClock, ManualMonotonicClock, MonotonicClock, SharedMonotonicClock};
 pub use replay::{
     shared_replay, ReplayDmaWrite, ReplayError, ReplayEvent, ReplayEventKind, ReplayHostInput,
@@ -1276,15 +1278,20 @@ impl Vm {
                 self.enqueue_serial_input(&serial_resize_sequence(resize));
             }
         }
-        if !input.bytes.is_empty() {
+        let bytes = if input_mode == GuestInputMode::Ps2 {
+            strip_terminal_resize_responses(&input.bytes)
+        } else {
+            input.bytes
+        };
+        if !bytes.is_empty() {
             self.replay
                 .borrow_mut()
-                .host_input(channel, None, None, &input.bytes)
+                .host_input(channel, None, None, &bytes)
                 .map_err(VmError::Replay)?;
             match input_mode {
-                GuestInputMode::Serial => self.enqueue_serial_input(&input.bytes),
+                GuestInputMode::Serial => self.enqueue_serial_input(&bytes),
                 GuestInputMode::Ps2 => {
-                    for byte in input.bytes {
+                    for byte in bytes {
                         for scancode in ascii_to_scancodes(byte) {
                             self.enqueue_keyboard_scancode(scancode)
                         }

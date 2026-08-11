@@ -16,6 +16,51 @@ pub fn serial_resize_sequence(resize: TerminalResize) -> Vec<u8> {
     format!("\x1b[8;{};{}t", resize.rows, resize.columns).into_bytes()
 }
 
+/// Remove the terminal's response to a size query before PS/2 conversion.
+/// The response is a control sequence, not a key press.
+pub fn strip_terminal_resize_responses(bytes: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if let Some(end) = terminal_resize_response_end(bytes, index) {
+            index = end;
+        } else {
+            result.push(bytes[index]);
+            index += 1;
+        }
+    }
+    result
+}
+
+fn terminal_resize_response_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    if bytes.get(index) != Some(&0x1b) || bytes.get(index + 1) != Some(&b'[') {
+        return None
+    }
+    index += 2;
+    if bytes.get(index) != Some(&b'8') || bytes.get(index + 1) != Some(&b';') {
+        return None
+    }
+    index += 2;
+    index = skip_digits(bytes, index)?;
+    if bytes.get(index) != Some(&b';') {
+        return None
+    }
+    index = skip_digits(bytes, index + 1)?;
+    if bytes.get(index) != Some(&b't') {
+        return None
+    }
+    Some(index + 1)
+}
+
+fn skip_digits(bytes: &[u8], mut index: usize) -> Option<usize> {
+    let start = index;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    (index != start).then_some(index)
+}
+
 /// Convert one ASCII byte to PS/2 set-1 make/break bytes.
 pub fn ascii_to_scancodes(byte: u8) -> Vec<u8> {
     let (byte, control) = if (1..=26).contains(&byte)
