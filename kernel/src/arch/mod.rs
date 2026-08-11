@@ -44,6 +44,5 @@ pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_off
     unsafe {
         paging::install_root(tables, physical_offset);
         interrupts::init();
-        interrupts::enable();
     }
 }
