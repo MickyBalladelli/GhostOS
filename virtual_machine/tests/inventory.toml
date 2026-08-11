@@ -180,7 +180,12 @@ tiers = ["cli"]
 
 [[source]]
 path = "src/lib.rs"
-tests = ["vm.foundation.deterministic-fixtures", "vm.foundation.cleanup-golden"]
+tests = [
+    "vm.foundation.deterministic-fixtures",
+    "vm.foundation.cleanup-golden",
+    "vm.network.negative-fault-matrix",
+    "vm.network.snapshot-portability",
+]
 
 [[source]]
 path = "src/cpu/mod.rs"
@@ -236,11 +241,11 @@ tests = ["vm.foundation.fault-device"]
 
 [[source]]
 path = "src/devices/net/e1000.rs"
-tests = ["vm.foundation.fault-device"]
+tests = ["vm.foundation.fault-device", "vm.network.negative-fault-matrix"]
 
 [[source]]
 path = "src/devices/net/virtio.rs"
-tests = ["vm.foundation.fault-device"]
+tests = ["vm.foundation.fault-device", "vm.network.negative-fault-matrix"]
 
 [[source]]
 path = "src/devices/storage/ahci.rs"
@@ -351,11 +356,27 @@ tests = [
 
 [[source]]
 path = "src/net/mod.rs"
-tests = ["vm.network.loopback-routing-isolation-faults", "vm.foundation.deterministic-fixtures"]
+tests = [
+    "vm.network.loopback-routing-isolation-faults",
+    "vm.foundation.deterministic-fixtures",
+    "vm.network.negative-fault-matrix",
+    "vm.network.snapshot-portability",
+]
 
 [[source]]
 path = "src/net/backend.rs"
-tests = ["vm.network.loopback-routing-isolation-faults"]
+tests = [
+    "vm.network.loopback-routing-isolation-faults",
+    "vm.network.negative-fault-matrix",
+]
+
+[[source]]
+path = "src/net/dhcp.rs"
+tests = [
+    "vm.network.two-vm-dhcp-peer-traffic",
+    "vm.network.negative-fault-matrix",
+    "vm.network.snapshot-portability",
+]
 
 [[test]]
 id = "vm.snapshot.serialization-restore-chain-failures"
