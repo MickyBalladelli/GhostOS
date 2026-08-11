@@ -186,14 +186,14 @@ pub struct DeterministicDhcpServer {
 pub struct DeterministicVmNetwork {
     segment: Rc<RefCell<DeterministicSegment>>,
     dhcp_server: Option<DeterministicDhcpServer>,
-    attached_vms: u8,
+    attached_vms: usize,
 }
 
 impl DeterministicVmNetwork {
     pub fn new(
         dhcp_config: Option<DhcpServerConfig>,
     ) -> Result<Rc<RefCell<Self>>, DhcpConfigError> {
-        let segment = DeterministicSegment::new(64);
+        let segment = DeterministicSegment::new(2_048);
         let dhcp_server = dhcp_config
             .map(|config| DeterministicDhcpServer::new(segment.clone(), config))
             .transpose()?;
@@ -219,16 +219,14 @@ impl DeterministicVmNetwork {
         ),
         NetError,
     > {
-        let slot = self.attached_vms as usize;
-        let base = 0x56usize
-            .checked_add(slot.saturating_mul(2))
-            .ok_or(NetError::BackendUnavailable)?;
-        let e1000_mac = MacAddress::synos_default(
-            u8::try_from(base).map_err(|_| NetError::BackendUnavailable)?,
-        );
-        let virtio_mac = MacAddress::synos_default(
-            u8::try_from(base + 1).map_err(|_| NetError::BackendUnavailable)?,
-        );
+        let slot = self.attached_vms;
+        let base = u16::try_from(
+            slot.checked_mul(2)
+                .ok_or(NetError::BackendUnavailable)?,
+        )
+        .map_err(|_| NetError::BackendUnavailable)?;
+        let e1000_mac = cluster_mac(base);
+        let virtio_mac = cluster_mac(base.saturating_add(1));
         let e1000 = DeterministicSegment::connect(self.segment.clone(), e1000_mac)?;
         let virtio = DeterministicSegment::connect(self.segment.clone(), virtio_mac)?;
         self.attached_vms = self.attached_vms.saturating_add(1);
@@ -248,6 +246,10 @@ impl DeterministicVmNetwork {
     pub fn dhcp_server_mut(&mut self) -> Option<&mut DeterministicDhcpServer> {
         self.dhcp_server.as_mut()
     }
+}
+
+fn cluster_mac(slot: u16) -> MacAddress {
+    MacAddress::new([0x52, 0x54, 0x00, 0x56, (slot >> 8) as u8, slot as u8])
 }
 
 impl DeterministicDhcpServer {

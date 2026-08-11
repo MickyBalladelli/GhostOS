@@ -324,6 +324,75 @@ fn cluster_membership_heartbeats_epochs_quorum_and_rejoin_are_deterministic() {
 }
 
 #[test]
+fn cluster_scale_campaign_is_bounded_at_10_100_and_1000_nodes() {
+    for node_count in [10usize, 100, 1_000] {
+        let mut cluster = VmCluster::new(ClusterNetworkConfig::default()).expect("cluster");
+        let config = VmConfig {
+            memory_size: PAGE_SIZE as usize,
+            max_memory_size: PAGE_SIZE as usize,
+            ..VmConfig::default()
+        };
+        for raw in 1..=node_count {
+            cluster
+                .add_node(node(raw as u32), config.clone())
+                .expect("add scale-test node");
+        }
+
+        assert_eq!(cluster.discover_nodes().len(), node_count);
+        for raw in 2..=node_count {
+            let source = node(raw as u32);
+            let heartbeat = cluster.heartbeat(source).expect("heartbeat");
+            cluster
+                .observe_heartbeat(node(1), heartbeat)
+                .expect("observe heartbeat");
+            cluster
+                .send(packet(raw as u32, 1, b"heartbeat"))
+                .expect("send heartbeat");
+        }
+        cluster.advance(1);
+        assert_eq!(
+            cluster
+                .receive(node(1))
+                .expect("receive heartbeats")
+                .len(),
+            node_count - 1
+        );
+
+        let evidence = cluster.scale_evidence();
+        assert_eq!(evidence.nodes, node_count);
+        assert_eq!(evidence.discovered_nodes, node_count);
+        assert_eq!(evidence.heartbeat_messages, node_count - 1);
+        assert_eq!(evidence.control_plane_traffic_bytes, 32 * node_count - 28);
+        assert!(evidence.control_plane_memory_bytes <= 68 * node_count);
+        assert_eq!(evidence.convergence_ticks, 1);
+
+        let failed = node(node_count as u32);
+        let traffic_before_failure = cluster.network().trace().len();
+        cluster
+            .inject_fault(ClusterFault::FailNode(failed))
+            .expect("fence failed node");
+        assert_eq!(cluster.status().running, node_count - 1);
+        assert!(cluster.heartbeat(failed).is_err());
+        assert_eq!(cluster.network().trace().len(), traffic_before_failure);
+
+        cluster
+            .inject_fault(ClusterFault::RecoverNode(failed))
+            .expect("recover failed node");
+        let heartbeat = cluster.heartbeat(failed).expect("recovery heartbeat");
+        cluster
+            .observe_heartbeat(node(1), heartbeat)
+            .expect("observe recovery heartbeat");
+        cluster
+            .send(packet(node_count as u32, 1, b"recovery"))
+            .expect("send recovery heartbeat");
+        cluster.advance(1);
+        assert_eq!(cluster.receive(node(1)).expect("receive recovery").len(), 1);
+        assert_eq!(cluster.status().running, node_count);
+        assert_eq!(cluster.network().trace().len() - traffic_before_failure, 1);
+    }
+}
+
+#[test]
 fn two_and_three_node_synos_boot_has_serial_evidence() {
     let kernel_path = std::env::temp_dir().join(format!(
         "synos-vm-cluster-kernel-{}-{}.bin",

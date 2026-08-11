@@ -322,10 +322,13 @@ measured p50/p95/p99 data over optimistic feature claims.
       network interrupt polling expose the decisions through reports and trace
       fields. UMA is the default when firmware supplies no topology; regression
       coverage is in [`crates/numa/src/lib.rs`](crates/numa/src/lib.rs).
-- [ ] Define a cluster scale target and test membership, heartbeats, fencing,
+- [x] Define a cluster scale target and test membership, heartbeats, fencing,
       discovery, and recovery at 10, 100, and 1,000 nodes.
       Done when control-plane traffic, convergence time, memory, and failure
-      amplification remain bounded at each tier.
+      amplification remain bounded at each tier. See
+      [`docs/cluster-scale.md`](docs/cluster-scale.md) and the deterministic
+      campaign in
+      [`virtual_machine/tests/cluster.rs`](virtual_machine/tests/cluster.rs).
 - [ ] Shard cluster metadata, capability indexes, package catalogs, audit
       streams, and placement decisions without changing their consistency
       contracts.

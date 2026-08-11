@@ -7,13 +7,14 @@
 use crate::{
     DhcpServerConfig, DeterministicVmNetwork, NetworkBackendConfig, Vm, VmConfig, VmError,
 };
+use core::mem::size_of;
 use std::collections::VecDeque;
 use std::cell::RefCell;
 use std::rc::Rc;
 use synos_fabric::memory::{GlobalAddressSpace, MemoryKind, MemoryPool, PoolId, Transport};
 use synos_fabric::{AddressRange, Error as FabricError, NodeId as FabricNodeId, PAGE_SIZE};
 
-const MAX_CLUSTER_NODES: usize = 64;
+const MAX_CLUSTER_NODES: usize = 1_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ClusterNodeId(u32);
@@ -649,12 +650,26 @@ pub struct ClusterHeartbeat {
     pub tick: u64,
 }
 
+impl ClusterHeartbeat {
+    pub const WIRE_BYTES: usize = 28;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClusterStatus {
     pub epoch: u64,
     pub members: usize,
     pub running: usize,
     pub quorum: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterScaleEvidence {
+    pub nodes: usize,
+    pub discovered_nodes: usize,
+    pub heartbeat_messages: usize,
+    pub control_plane_traffic_bytes: usize,
+    pub control_plane_memory_bytes: usize,
+    pub convergence_ticks: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -905,6 +920,36 @@ impl VmCluster {
             pending_packets: self.network.pending_packets(),
             cxl_devices: self.cxl.pools().count(),
             shared_memory: self.shared_memory.discover(),
+        }
+    }
+
+    pub fn scale_evidence(&self) -> ClusterScaleEvidence {
+        let nodes = self.nodes.len();
+        let discovered_nodes = self.discover_nodes().len();
+        let heartbeat_messages = self.network.trace().len();
+        let control_plane_traffic_bytes = discovered_nodes
+            .saturating_mul(size_of::<ClusterNodeId>())
+            .saturating_add(heartbeat_messages.saturating_mul(ClusterHeartbeat::WIRE_BYTES));
+        let control_plane_memory_bytes = nodes
+            .saturating_mul(size_of::<ClusterNodeId>())
+            .saturating_add(
+                self.heartbeat_sequences
+                    .len()
+                    .saturating_mul(size_of::<(ClusterNodeId, u64)>()),
+            )
+            .saturating_add(
+                self.observed_heartbeats
+                    .len()
+                    .saturating_mul(size_of::<(ClusterNodeId, ClusterNodeId, u64)>()),
+            )
+            .saturating_add(self.fault_records.len().saturating_mul(size_of::<ClusterFaultRecord>()));
+        ClusterScaleEvidence {
+            nodes,
+            discovered_nodes,
+            heartbeat_messages,
+            control_plane_traffic_bytes,
+            control_plane_memory_bytes,
+            convergence_ticks: self.network.tick(),
         }
     }
 
