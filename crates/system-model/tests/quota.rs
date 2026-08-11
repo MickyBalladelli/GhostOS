@@ -72,7 +72,7 @@ fn batch_reservation_and_release_are_atomic() {
         QuotaCharge::new(QuotaResource::Ipc, 8),
     ];
     ledger.reserve_all(&charges).unwrap();
-    assert_eq!(ledger.usage().consumption(), [4, 0, 8, 0, 0, 0, 0]);
+    assert_eq!(ledger.usage().consumption(), [4, 0, 8, 0, 0, 0, 0, 0]);
 
     let rejected = [
         QuotaCharge::new(QuotaResource::Storage, 20),
@@ -87,7 +87,7 @@ fn batch_reservation_and_release_are_atomic() {
             limit: 50,
         })
     ));
-    assert_eq!(ledger.usage().consumption(), [4, 0, 8, 0, 0, 0, 0]);
+    assert_eq!(ledger.usage().consumption(), [4, 0, 8, 0, 0, 0, 0, 0]);
 
     ledger.release_all(&charges).unwrap();
     assert_eq!(ledger.usage().consumption(), [0; QUOTA_RESOURCE_COUNT]);

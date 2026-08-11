@@ -416,11 +416,13 @@ mod tests {
         )
         .unwrap();
 
-        let reports = registry.reports().collect::<[CachePolicyReport; 2]>();
-        assert_eq!(reports[0].workload, 1);
-        assert_eq!(reports[0].hit_rate_per_mille, 500);
-        assert_eq!(reports[0].current_bytes, 384);
-        assert_eq!(reports[1].workload, 2);
+        let mut reports = registry.reports();
+        let first = reports.next().expect("first workload report");
+        let second = reports.next().expect("second workload report");
+        assert_eq!(first.workload, 1);
+        assert_eq!(first.hit_rate_per_mille, 500);
+        assert_eq!(first.current_bytes, 384);
+        assert_eq!(second.workload, 2);
     }
 
     #[test]
