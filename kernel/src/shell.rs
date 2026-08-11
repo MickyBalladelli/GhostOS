@@ -161,10 +161,6 @@ pub fn run(
     request_terminal_size();
     prompt();
 
-    unsafe {
-        crate::arch::interrupts::enable();
-    }
-
     loop {
         let byte = wait_for_byte(&mut keyboard, &mut usb_keyboard, acpi.as_ref());
         if ignore_line_feed && byte == b'\n' {

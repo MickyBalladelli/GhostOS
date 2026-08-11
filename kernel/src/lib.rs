@@ -190,6 +190,9 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         task::MAX_THREADS,
         scheduler_clock
     );
+    unsafe {
+        arch::interrupts::enable();
+    }
     shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
 }
 
