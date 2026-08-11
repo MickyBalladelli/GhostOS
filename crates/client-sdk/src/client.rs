@@ -2,6 +2,7 @@ use core::convert::Infallible;
 
 use synos_auth::CryptographicCapability;
 use synos_fabric::NodeId;
+use synos_ipc::{BufferError, BufferLease, BufferOwner, BufferRights};
 use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
 use synos_status::PublicError;
 
@@ -51,6 +52,56 @@ pub trait RpcTransport {
     type Error;
 
     fn round_trip(&mut self, request: &[u8], response: &mut [u8]) -> Result<usize, Self::Error>;
+
+    fn round_trip_loaned(
+        &mut self,
+        request: &mut BufferLease<'_>,
+        response: &mut BufferLease<'_>,
+    ) -> Result<usize, LoanedRpcError<Self::Error>> {
+        if request.owner() != BufferOwner::RpcClient
+            || response.owner() != BufferOwner::RpcClient
+        {
+            return Err(LoanedRpcError::Buffer(BufferError::OwnerMismatch));
+        }
+        if !request
+            .capability()
+            .rights()
+            .contains(BufferRights::READ.union(BufferRights::TRANSFER))
+            || !response
+                .capability()
+                .rights()
+                .contains(BufferRights::WRITE.union(BufferRights::TRANSFER))
+        {
+            return Err(LoanedRpcError::Buffer(BufferError::CapabilityDenied));
+        }
+        request
+            .transfer_to(BufferOwner::RpcTransport)
+            .map_err(LoanedRpcError::Buffer)?;
+        response
+            .transfer_to(BufferOwner::RpcTransport)
+            .map_err(LoanedRpcError::Buffer)?;
+        let result = response
+            .as_mut_slice()
+            .map_err(LoanedRpcError::Buffer)
+            .and_then(|response_bytes| {
+                let request_bytes = request.as_slice().map_err(LoanedRpcError::Buffer)?;
+                self.round_trip(request_bytes, response_bytes)
+                    .map_err(LoanedRpcError::Transport)
+            });
+        request
+            .transfer_to(BufferOwner::RpcClient)
+            .map_err(LoanedRpcError::Buffer)?;
+        response
+            .transfer_to(BufferOwner::RpcClient)
+            .map_err(LoanedRpcError::Buffer)?;
+        result
+    }
+}
+
+#[derive(Debug)]
+pub enum LoanedRpcError<E> {
+    Buffer(BufferError),
+    Transport(E),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

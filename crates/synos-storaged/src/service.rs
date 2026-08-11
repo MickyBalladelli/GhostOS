@@ -4,6 +4,7 @@ use crate::{
     protocol::{Endpoint, EndpointError, Protocol, ProtocolFeatures},
 };
 use synos_observability::{CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level};
+use synos_ipc::{BufferCapability, BufferError, BufferLease, BufferOwner, BufferRights, SharedBuffer};
 
 pub const MAX_MOUNTS: usize = 32;
 pub const MAX_PENDING_IO: usize = 64;
@@ -216,6 +217,8 @@ pub struct IoRequest {
     pub path: StoragePath,
     pub length: usize,
     pub mount: MountId,
+    pub buffer: Option<SharedBuffer>,
+    pub buffer_capability: Option<BufferCapability>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -249,6 +252,7 @@ pub enum StorageError {
     Capability(CapabilityError),
     Mount(MountError),
     StreamFailed(u16),
+    Buffer(BufferError),
 }
 
 pub struct StorageDaemon {
@@ -449,8 +453,49 @@ impl StorageDaemon {
             path,
             length,
             mount: mount.id,
+            buffer: None,
+            buffer_capability: None,
         };
         *slot = Some(request);
+        Ok(request)
+    }
+
+    pub fn submit_io_buffer(
+        &mut self,
+        capability: StorageCapability,
+        operation: IoOperation,
+        path: StoragePath,
+        buffer: &BufferLease<'_>,
+        now: u64,
+    ) -> Result<IoRequest, StorageError> {
+        if buffer.owner() != BufferOwner::Storage {
+            return Err(StorageError::Buffer(BufferError::OwnerMismatch));
+        }
+        let required = match operation {
+            IoOperation::Read => BufferRights::WRITE,
+            IoOperation::Write | IoOperation::Stream => BufferRights::READ,
+            IoOperation::Flush | IoOperation::List => BufferRights::READ,
+        };
+        buffer
+            .capability()
+            .authorize(buffer.descriptor(), required)
+            .map_err(StorageError::Buffer)?;
+        let mut request = self.submit_io(
+            capability,
+            operation,
+            path,
+            buffer.descriptor().length as usize,
+            now,
+        )?;
+        request.buffer = Some(buffer.descriptor());
+        request.buffer_capability = Some(buffer.capability());
+        if let Some(slot) = self
+            .pending
+            .iter_mut()
+            .find(|entry| entry.is_some_and(|entry| entry.id == request.id))
+        {
+            *slot = Some(request);
+        }
         Ok(request)
     }
 

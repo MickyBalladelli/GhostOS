@@ -1,5 +1,6 @@
 use crate::service::StoragePath;
 use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
+use synos_ipc::{BufferError, BufferLease, BufferOwner};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheMode {
@@ -16,6 +17,7 @@ pub enum CacheError {
     ReadOnly,
     Remote(u16),
     Interrupted,
+    Capability(BufferError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,6 +130,39 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
     pub fn flush(&mut self, backend: &mut impl RemoteFileBackend) -> Result<usize, CacheError> {
         let mut no_interruption = NoInterruption;
         self.flush_with_interruption(backend, &mut no_interruption)
+    }
+
+    /// Read directly into a capability-guarded storage buffer. Disabled and
+    /// read-through modes keep the backend on the caller's buffer; CoW mode
+    /// makes only its required cache copy.
+    pub fn read_loaned(
+        &mut self,
+        backend: &mut impl RemoteFileBackend,
+        path: StoragePath,
+        destination: &mut BufferLease<'_>,
+    ) -> Result<usize, CacheError> {
+        if destination.owner() != BufferOwner::Storage {
+            return Err(CacheError::Capability(BufferError::OwnerMismatch));
+        }
+        let bytes = destination
+            .as_mut_slice()
+            .map_err(CacheError::Capability)?;
+        self.read(backend, path, bytes)
+    }
+
+    /// Write directly from a capability-guarded storage buffer. The remote
+    /// backend borrows the same bytes and never receives an intermediate frame.
+    pub fn write_loaned(
+        &mut self,
+        backend: &mut impl RemoteFileBackend,
+        path: StoragePath,
+        contents: &BufferLease<'_>,
+    ) -> Result<(), CacheError> {
+        if contents.owner() != BufferOwner::Storage {
+            return Err(CacheError::Capability(BufferError::OwnerMismatch));
+        }
+        let bytes = contents.as_slice().map_err(CacheError::Capability)?;
+        self.write(backend, path, bytes)
     }
 
     pub fn flush_with_interruption<I: InterruptionInjector>(

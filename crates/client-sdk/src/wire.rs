@@ -5,6 +5,7 @@ pub const MAX_FRAME_BYTES: usize = synos_abi::RPC_MAX_FRAME_BYTES;
 pub(crate) const FLAG_CAPABILITY: u16 = synos_abi::RPC_CAPABILITY_FLAG;
 
 pub use synos_abi::{RpcMethod as Method, RpcStatus};
+use synos_ipc::{BufferError, BufferLease};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrameHeader {
@@ -37,6 +38,28 @@ impl FrameHeader {
             payload_bytes: header.payload_bytes,
             status: header.status,
         })
+    }
+
+    pub fn encode_guarded(
+        self,
+        output: &mut BufferLease<'_>,
+    ) -> Result<(), ProtocolError> {
+        let bytes = output
+            .as_mut_slice()
+            .map_err(buffer_error)?;
+        self.encode(bytes)
+    }
+
+    pub fn decode_guarded(input: &BufferLease<'_>) -> Result<Self, ProtocolError> {
+        Self::decode(input.as_slice().map_err(buffer_error)?)
+    }
+}
+
+pub(crate) fn buffer_error(error: BufferError) -> ProtocolError {
+    match error {
+        BufferError::CapabilityDenied
+        | BufferError::InvalidDescriptor
+        | BufferError::OwnerMismatch => ProtocolError::InvalidFrame,
     }
 }
 

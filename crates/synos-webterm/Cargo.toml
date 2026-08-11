@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 synos-protocol = { path = "../protocol" }
 syn-shell = { path = "../syn-shell" }
+synos-ipc = { path = "../ipc" }
 
 [dev-dependencies]
 synos-status = { path = "../status" }

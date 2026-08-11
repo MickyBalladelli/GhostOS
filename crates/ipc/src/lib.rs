@@ -6,6 +6,10 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
 
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
+mod buffer;
+
+pub use buffer::{BufferCapability, BufferError, BufferLease, BufferOwner, BufferRights};
+
 pub const PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -277,6 +281,20 @@ impl<const CAPACITY: usize> Ring<CAPACITY> {
         }
     }
 
+    pub fn try_send_buffer(
+        &self,
+        schema: u64,
+        correlation: u128,
+        lease: BufferLease<'_>,
+    ) -> Result<(), GuardedRingError> {
+        let lease = lease
+            .transfer(BufferOwner::IpcConsumer)
+            .map_err(GuardedRingError::Buffer)?;
+        let envelope = guarded_envelope(schema, correlation, &lease)
+            .map_err(GuardedRingError::Buffer)?;
+        self.try_send(envelope).map_err(GuardedRingError::Ring)
+    }
+
     pub fn try_receive(&self) -> Result<Envelope, RingError> {
         let mut position = self.dequeue_position.load(Ordering::Relaxed);
         loop {
@@ -314,6 +332,12 @@ impl<const CAPACITY: usize> Ring<CAPACITY> {
             .wrapping_sub(self.dequeue_position.load(Ordering::Acquire))
             .min(CAPACITY)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardedRingError {
+    Ring(RingError),
+    Buffer(BufferError),
 }
 
 impl<const CAPACITY: usize> Default for Ring<CAPACITY> {
@@ -451,6 +475,23 @@ impl<'a> SharedView<'a> {
         }
         Ok(value)
     }
+
+    pub fn resolve_guarded<T>(
+        &self,
+        envelope: Envelope,
+        expected_schema: u64,
+        capability: BufferCapability,
+    ) -> Result<&'a T, ArchiveError>
+    where
+        T: FromBytes + IntoBytes + Immutable + KnownLayout,
+    {
+        let descriptor = validate_guarded(envelope, expected_schema, capability)?;
+        let value: &T = self.resolve(descriptor)?;
+        if checksum(value.as_bytes()) != envelope.words[1] {
+            return Err(ArchiveError::InvalidDescriptor);
+        }
+        Ok(value)
+    }
 }
 
 pub fn structured_envelope(
@@ -471,6 +512,41 @@ pub fn structured_envelope(
             0,
         ],
     }
+}
+
+pub fn guarded_envelope(
+    schema: u64,
+    correlation: u128,
+    lease: &BufferLease<'_>,
+) -> Result<Envelope, BufferError> {
+    let capability = lease.capability();
+    let descriptor = lease.descriptor();
+    Ok(Envelope {
+        correlation,
+        label: schema,
+        buffer: Some(descriptor),
+        words: [
+            PROTOCOL_VERSION as u64,
+            checksum(lease.as_slice()?),
+            capability.token(),
+            capability.wire_word(),
+        ],
+    })
+}
+
+pub fn validate_guarded(
+    envelope: Envelope,
+    expected_schema: u64,
+    capability: BufferCapability,
+) -> Result<SharedBuffer, ArchiveError> {
+    let descriptor = validate_structured(envelope, expected_schema)?;
+    if envelope.words[2] != capability.token()
+        || envelope.words[3] != capability.wire_word()
+        || capability.authorize(descriptor, BufferRights::READ).is_err()
+    {
+        return Err(ArchiveError::InvalidDescriptor);
+    }
+    Ok(descriptor)
 }
 
 pub fn validate_structured(

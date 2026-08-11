@@ -509,6 +509,7 @@ dependencies = [
  "synos-abi",
  "synos-auth",
  "synos-fabric",
+ "synos-ipc",
  "synos-kernel",
  "synos-observability",
  "synos-protocol",
@@ -906,6 +907,7 @@ dependencies = [
  "synos-auth",
  "synos-durability",
  "synos-fabric",
+ "synos-ipc",
  "synos-kernel",
  "synos-mesh",
  "synos-netd",
@@ -1019,6 +1021,7 @@ name = "synos-webterm"
 version = "0.1.0"
 dependencies = [
  "syn-shell",
+ "synos-ipc",
  "synos-protocol",
  "synos-status",
 ]

@@ -1,11 +1,15 @@
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
+use synos_ipc::{
+    BufferCapability, BufferError, BufferLease, BufferOwner, BufferRights, SharedBuffer,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PacketError {
     Empty,
     Full,
     FrameTooLarge,
+    Capability(BufferError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,7 +71,22 @@ impl<const CAPACITY: usize, const MTU: usize> PacketQueue<CAPACITY, MTU> {
         let slot = &mut self.slots[index];
         slot.state = SlotState::Loaned;
         slot.length = 0;
-        Ok(PacketWriter { slot })
+        Ok(PacketWriter { slot, index })
+    }
+
+    pub fn reserve_guarded(
+        &mut self,
+        capability: BufferCapability,
+    ) -> Result<PacketWriter<'_, MTU>, PacketError> {
+        let writer = self.reserve()?;
+        if capability
+            .rights()
+            .contains(BufferRights::WRITE.union(BufferRights::TRANSFER))
+        {
+            Ok(writer)
+        } else {
+            Err(PacketError::Capability(BufferError::CapabilityDenied))
+        }
     }
 
     pub fn dequeue(&mut self) -> Result<PacketReader<'_, MTU>, PacketError> {
@@ -81,7 +100,7 @@ impl<const CAPACITY: usize, const MTU: usize> PacketQueue<CAPACITY, MTU> {
         self.receive_cursor = (index + 1) % CAPACITY;
         let slot = &mut self.slots[index];
         slot.state = SlotState::Loaned;
-        Ok(PacketReader { slot })
+        Ok(PacketReader { slot, index })
     }
 
     /// Dequeues only frames accepted by the Ring 3 firewall callback. Rejected
@@ -114,7 +133,7 @@ impl<const CAPACITY: usize, const MTU: usize> PacketQueue<CAPACITY, MTU> {
             self.receive_cursor = (index + 1) % CAPACITY;
             let slot = &mut self.slots[index];
             slot.state = SlotState::Loaned;
-            return Ok(PacketReader { slot })
+            return Ok(PacketReader { slot, index })
         }
         Err(PacketError::Empty)
     }
@@ -146,6 +165,7 @@ impl<const CAPACITY: usize, const MTU: usize> Default for PacketQueue<CAPACITY, 
 
 pub struct PacketWriter<'a, const MTU: usize> {
     slot: &'a mut PacketSlot<MTU>,
+    index: usize,
 }
 
 impl<const MTU: usize> PacketWriter<'_, MTU> {
@@ -155,6 +175,30 @@ impl<const MTU: usize> PacketWriter<'_, MTU> {
 
     pub fn capacity(&self) -> usize {
         MTU
+    }
+
+    pub fn buffer_guarded(
+        &mut self,
+        capability: BufferCapability,
+    ) -> Result<BufferLease<'_>, PacketError> {
+        let offset = self
+            .index
+            .checked_mul(MTU)
+            .and_then(|offset| u32::try_from(offset).ok())
+            .ok_or(PacketError::Capability(BufferError::InvalidDescriptor))?;
+        let descriptor = SharedBuffer {
+            region: capability.region(),
+            offset,
+            length: MTU as u32,
+            writable: true,
+        };
+        BufferLease::new(
+            descriptor,
+            capability,
+            BufferOwner::Network,
+            &mut self.slot.bytes,
+        )
+        .map_err(PacketError::Capability)
     }
 
     pub fn commit(self, length: usize) -> Result<(), PacketError> {
@@ -178,11 +222,36 @@ impl<const MTU: usize> Drop for PacketWriter<'_, MTU> {
 
 pub struct PacketReader<'a, const MTU: usize> {
     slot: &'a mut PacketSlot<MTU>,
+    index: usize,
 }
 
 impl<const MTU: usize> PacketReader<'_, MTU> {
     pub fn frame(&self) -> &[u8] {
         &self.slot.bytes[..self.slot.length]
+    }
+
+    pub fn frame_guarded(
+        &mut self,
+        capability: BufferCapability,
+    ) -> Result<BufferLease<'_>, PacketError> {
+        let offset = self
+            .index
+            .checked_mul(MTU)
+            .and_then(|offset| u32::try_from(offset).ok())
+            .ok_or(PacketError::Capability(BufferError::InvalidDescriptor))?;
+        let descriptor = SharedBuffer {
+            region: capability.region(),
+            offset,
+            length: self.slot.length as u32,
+            writable: false,
+        };
+        BufferLease::new(
+            descriptor,
+            capability,
+            BufferOwner::Network,
+            &mut self.slot.bytes[..self.slot.length],
+        )
+        .map_err(PacketError::Capability)
     }
 }
 

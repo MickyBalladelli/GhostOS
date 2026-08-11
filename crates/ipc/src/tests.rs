@@ -70,3 +70,33 @@ fn descriptor_inheritance_rejects_duplicates_and_capacity_overflow() {
         Err(DescriptorInheritanceError::Capacity)
     );
 }
+
+#[test]
+fn guarded_buffers_bind_capability_and_owner_to_the_wire_descriptor() {
+    let region = SharedRegionId::new(6).expect("valid region");
+    let descriptor = SharedBuffer {
+        region,
+        offset: 0,
+        length: 4,
+        writable: true,
+    };
+    let capability = BufferCapability::new(region, 3, BufferRights::ALL, 0x44)
+        .expect("valid buffer capability");
+    let read_only = BufferCapability::new(region, 3, BufferRights::READ, 0x45)
+        .expect("valid read capability");
+    let mut bytes = [1, 2, 3, 4];
+    assert!(matches!(
+        BufferLease::new(descriptor, read_only, BufferOwner::IpcProducer, &mut bytes),
+        Err(BufferError::CapabilityDenied)
+    ));
+    let lease = BufferLease::new(descriptor, capability, BufferOwner::IpcProducer, &mut bytes)
+        .expect("capability grants the initial owner");
+    let lease = lease
+        .transfer(BufferOwner::IpcConsumer)
+        .expect("transfer is explicit");
+    let envelope = guarded_envelope(0x99, 7, &lease).expect("read capability");
+    assert_eq!(
+        validate_guarded(envelope, 0x99, capability),
+        Ok(descriptor)
+    );
+}

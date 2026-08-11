@@ -19,7 +19,8 @@ mod error;
 
 pub use grpc::{
     GrpcError, GrpcHandler, GrpcRequest, GrpcRouter, GrpcStatus, decode_grpc_frame,
-    decode_grpc_frame_checked, encode_grpc_frame,
+    decode_grpc_frame_checked, decode_grpc_frame_guarded, encode_grpc_frame,
+    encode_grpc_frame_guarded,
 };
 pub use error::{
     encode_error_body, encode_error_http_response, error_response, parse_error, route_error,
@@ -33,7 +34,7 @@ pub use http::{
 pub use netd::{NetdClient, NetdError};
 pub use rpc::{
     RpcHttpError, SYNOS_RPC_CONTENT_TYPE, decode_rpc_request, is_rpc_content_type,
-    rpc_error_response, rpc_response,
+    rpc_error_response, rpc_response, rpc_response_loaned,
 };
 pub use router::{Handler, RequestContext, Route, RouteError, Router, WebRights};
 pub use server::{HttpServer, SERVER_SOCKET_RIGHTS, ServerError, ServerEvent, ServerState};

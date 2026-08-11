@@ -21,6 +21,7 @@ synos-synfs = { path = "../synfs" }
 synos-mesh = { path = "../synos-mesh" }
 synos-system-model = { path = "../system-model" }
 synos-time-sync = { path = "../time-sync" }
+synos-ipc = { path = "../ipc" }
 
 [dev-dependencies]
 synos-test-support = { path = "../test-support" }

@@ -20,7 +20,7 @@ mod gateway;
 mod model;
 mod wire;
 
-pub use client::{Client, ClientError, RemoteError, RpcTransport};
+pub use client::{Client, ClientError, LoanedRpcError, RemoteError, RpcTransport};
 pub use cluster::{
     AuditEventList, BoundedText, ChangeBatch, ChangeEvent, ChangeLog, ChangeLogError,
     ClusterAuditEvent, ClusterCreateRequest,

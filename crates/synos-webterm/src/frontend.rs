@@ -1,4 +1,5 @@
 use crate::{Cell, Terminal};
+use synos_ipc::{BufferError, BufferLease, BufferOwner};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
@@ -19,6 +20,7 @@ pub struct UploadRange {
 pub enum UploadError {
     BufferTooSmall,
     InvalidRow,
+    Capability(BufferError),
 }
 
 /// WebAssembly-friendly adapter for a WebGPU instance buffer.
@@ -49,6 +51,46 @@ impl WebGpuFrontend {
             cell_count: COLUMNS as u32,
         }))
     }
+
+    /// Encode dirty cells directly into a capability-guarded GPU upload
+    /// buffer. This performs one CPU-to-upload-buffer copy and no staging
+    /// allocation; the reference `GpuCell` output remains byte-identical.
+    pub fn encode_row_guarded<const COLUMNS: usize, const ROWS: usize>(
+        terminal: &mut Terminal<COLUMNS, ROWS>,
+        row: usize,
+        output: &mut BufferLease<'_>,
+    ) -> Result<Option<UploadRange>, UploadError> {
+        if output.owner() != BufferOwner::WebGpu {
+            return Err(UploadError::Capability(BufferError::OwnerMismatch));
+        }
+        if row >= ROWS {
+            return Err(UploadError::InvalidRow);
+        }
+        if !terminal.row_is_dirty(row) {
+            return Ok(None);
+        }
+        let bytes = output
+            .as_mut_slice()
+            .map_err(UploadError::Capability)?;
+        let required = COLUMNS
+            .checked_mul(core::mem::size_of::<GpuCell>())
+            .ok_or(UploadError::BufferTooSmall)?;
+        if bytes.len() < required {
+            return Err(UploadError::BufferTooSmall);
+        }
+        let cells = terminal.row(row).ok_or(UploadError::InvalidRow)?;
+        for (cell, destination) in cells
+            .iter()
+            .zip(bytes[..required].chunks_exact_mut(core::mem::size_of::<GpuCell>()))
+        {
+            encode_cell_bytes(*cell, destination);
+        }
+        terminal.mark_row_clean(row);
+        Ok(Some(UploadRange {
+            first_cell: (row * COLUMNS) as u32,
+            cell_count: COLUMNS as u32,
+        }))
+    }
 }
 
 fn encode_cell(cell: Cell) -> GpuCell {
@@ -58,6 +100,14 @@ fn encode_cell(cell: Cell) -> GpuCell {
         background: cell.background as u32,
         attributes: cell.attributes.bits() as u32,
     }
+}
+
+fn encode_cell_bytes(cell: Cell, output: &mut [u8]) {
+    let encoded = encode_cell(cell);
+    output[0..4].copy_from_slice(&encoded.glyph.to_ne_bytes());
+    output[4..8].copy_from_slice(&encoded.foreground.to_ne_bytes());
+    output[8..12].copy_from_slice(&encoded.background.to_ne_bytes());
+    output[12..16].copy_from_slice(&encoded.attributes.to_ne_bytes());
 }
 
 #[cfg(test)]

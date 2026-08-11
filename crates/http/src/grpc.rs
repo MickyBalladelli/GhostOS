@@ -1,5 +1,6 @@
 use crate::{DEFAULT_RESPONSE_HEADERS, Method, RequestContext, Response, StatusCode, WebRights};
 use synos_status::{AuditContext, PublicError, Status};
+use synos_ipc::{BufferError, BufferLease, BufferOwner};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -93,6 +94,7 @@ pub enum GrpcError {
     MethodNotAllowed,
     NotFound,
     Protocol(synos_protocol::ProtocolError),
+    Buffer(BufferError),
 }
 
 impl GrpcError {
@@ -108,6 +110,7 @@ impl GrpcError {
             Self::Duplicate => Status::ALREADY_EXISTS,
             Self::NotFound => Status::NOT_FOUND,
             Self::Protocol(_) => Status::INVALID_ARGUMENT,
+            Self::Buffer(_) => Status::ACCESS_DENIED,
         };
         status.public_error(synos_status::operation::GRPC, audit)
     }
@@ -241,6 +244,15 @@ pub fn decode_grpc_frame(bytes: &[u8]) -> Result<(bool, &[u8], usize), GrpcError
     Ok((bytes[0] == 1, message, consumed))
 }
 
+pub fn decode_grpc_frame_guarded<'a>(
+    bytes: &'a BufferLease<'a>,
+) -> Result<(bool, &'a [u8], usize), GrpcError> {
+    if !matches!(bytes.owner(), BufferOwner::RpcTransport | BufferOwner::RpcClient) {
+        return Err(GrpcError::Buffer(BufferError::OwnerMismatch));
+    }
+    decode_grpc_frame(bytes.as_slice().map_err(GrpcError::Buffer)?)
+}
+
 pub fn decode_grpc_frame_checked<'a>(
     guard: &mut synos_protocol::ProtocolGuard,
     sequence: u64,
@@ -276,6 +288,20 @@ pub fn encode_grpc_frame(
     destination[1..5].copy_from_slice(&length.to_be_bytes());
     destination[5..].copy_from_slice(message);
     Ok(required)
+}
+
+pub fn encode_grpc_frame_guarded(
+    compressed: bool,
+    message: &[u8],
+    destination: &mut BufferLease<'_>,
+) -> Result<usize, GrpcError> {
+    if destination.owner() != BufferOwner::RpcTransport {
+        return Err(GrpcError::Buffer(BufferError::OwnerMismatch));
+    }
+    let output = destination
+        .as_mut_slice()
+        .map_err(GrpcError::Buffer)?;
+    encode_grpc_frame(compressed, message, output)
 }
 
 fn valid_grpc_path(path: &str) -> bool {

@@ -1,10 +1,13 @@
-use synos_ipc::{SharedBuffer, SharedRegionId};
+use synos_ipc::{
+    BufferCapability, BufferError, BufferLease, BufferOwner, SharedBuffer, SharedRegionId,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryError {
     InvalidRegion,
     InvalidRange,
     ReadOnly,
+    Capability(BufferError),
 }
 
 /// Resolves IPC descriptors only for the duration of a callback.
@@ -47,6 +50,17 @@ impl<'a> MappedRegion<'a> {
             return Err(MemoryError::InvalidRange)
         }
         Ok(start..end)
+    }
+
+    pub fn lease(
+        &mut self,
+        descriptor: SharedBuffer,
+        capability: BufferCapability,
+        owner: BufferOwner,
+    ) -> Result<BufferLease<'_>, MemoryError> {
+        let range = self.range(descriptor)?;
+        BufferLease::new(descriptor, capability, owner, &mut self.bytes[range])
+            .map_err(MemoryError::Capability)
     }
 }
 

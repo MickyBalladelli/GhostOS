@@ -247,10 +247,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       are measured under mixed workloads. See
       [`kernel/src/hot_allocator.rs`](kernel/src/hot_allocator.rs) and
       [`docs/hot-allocators.md`](docs/hot-allocators.md).
-- [ ] Add zero-copy or one-copy data paths for IPC buffers, network packets,
+- [x] Add zero-copy or one-copy data paths for IPC buffers, network packets,
       storage reads/writes, WebGPU uploads, and client RPC frames.
       Done when ownership transitions are explicit, buffers are capability
       guarded, and reference-path output is byte-for-byte identical.
+      Implementation: [`crates/ipc/src/buffer.rs`](crates/ipc/src/buffer.rs)
+      provides capability-bound leases and explicit owner transfers. IPC rings,
+      netd mappings and packet queues, storage I/O and cache adapters, WebGPU
+      row uploads, HTTP/gRPC frames, and client RPC transports expose guarded
+      paths. The guarded paths borrow shared bytes directly or perform one
+      bounded copy and reuse the reference encoders/checksums.
 - [ ] Add batching, coalescing, and interrupt moderation policies for storage,
       network, logging, and audit producers.
       Done when batching improves throughput without exceeding interactive

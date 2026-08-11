@@ -75,7 +75,7 @@ impl<'a, const CAPACITY: usize, const MTU: usize>
         {
             Ok(reader) => reader,
             Err(PacketError::Empty) => return Ok(false),
-            Err(PacketError::Full | PacketError::FrameTooLarge) => {
+            Err(PacketError::Full | PacketError::FrameTooLarge | PacketError::Capability(_)) => {
                 return Err(DhcpError::Network(crate::DhcpNetworkError::BackendUnavailable))
             }
         };

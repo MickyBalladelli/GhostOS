@@ -1,6 +1,7 @@
 use synos_status::{AuditContext, PublicError, RetryHint, Status, operation};
 
 use crate::{DEFAULT_RESPONSE_HEADERS, Method, Request, Response, StatusCode};
+use synos_ipc::{BufferError, BufferLease, BufferOwner};
 
 pub const SYNOS_RPC_CONTENT_TYPE: &str = "application/vnd.synos.rpc";
 
@@ -11,6 +12,7 @@ pub enum RpcHttpError {
     EmptyBody,
     BufferTooSmall { required: usize },
     Encode(crate::EncodeError),
+    Buffer(BufferError),
 }
 
 pub fn rpc_error_response<'a>(
@@ -26,6 +28,7 @@ pub fn rpc_error_response<'a>(
             (Status::NO_SPACE, RetryHint::AfterUs(1_000_000))
         }
         RpcHttpError::Encode(_) => (Status::INTERNAL, RetryHint::AfterUs(1_000_000)),
+        RpcHttpError::Buffer(_) => (Status::ACCESS_DENIED, RetryHint::Never),
     };
     crate::error_response(
         PublicError::new(code, operation::HTTP_RPC, retry, audit),
@@ -70,6 +73,25 @@ pub fn rpc_response<'a>(
     }
     destination[..frame.len()].copy_from_slice(frame);
     Response::new(StatusCode::OK, &destination[..frame.len()])
+        .with_header("content-type", SYNOS_RPC_CONTENT_TYPE)
+        .map_err(RpcHttpError::Encode)
+}
+
+/// Return an RPC frame already owned by the transport buffer. No body copy is
+/// made; the capability lease keeps the bytes valid for the response lifetime.
+pub fn rpc_response_loaned<'a>(
+    destination: &'a BufferLease<'a>,
+) -> Result<Response<'a, DEFAULT_RESPONSE_HEADERS>, RpcHttpError> {
+    if destination.owner() != BufferOwner::RpcTransport {
+        return Err(RpcHttpError::Buffer(BufferError::OwnerMismatch));
+    }
+    let frame = destination
+        .as_slice()
+        .map_err(RpcHttpError::Buffer)?;
+    if frame.is_empty() {
+        return Err(RpcHttpError::EmptyBody);
+    }
+    Response::new(StatusCode::OK, frame)
         .with_header("content-type", SYNOS_RPC_CONTENT_TYPE)
         .map_err(RpcHttpError::Encode)
 }
