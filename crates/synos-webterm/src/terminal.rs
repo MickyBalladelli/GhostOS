@@ -343,7 +343,11 @@ impl<const COLUMNS: usize, const ROWS: usize> Terminal<COLUMNS, ROWS> {
                     self.wrap_pending = false;
                     self.line_feed()
                 }
-                0x0b | 0x0c => self.line_feed(),
+                0x0b | 0x0c => {
+                    self.cursor.column = 0;
+                    self.wrap_pending = false;
+                    self.line_feed()
+                }
                 b'\r' => {
                     self.cursor.column = 0;
                     self.wrap_pending = false
