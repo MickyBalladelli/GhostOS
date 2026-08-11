@@ -57,10 +57,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       provides a bounded dependency graph, transitive readiness gate, reverse
       shutdown, reboot trace, and existing restart-budget enforcement;
       regression models live in [`crates/init/tests/model.rs`](crates/init/tests/model.rs).
-- [ ] Add fault domains for scheduler, memory manager, IPC broker, storage
+- [x] Add fault domains for scheduler, memory manager, IPC broker, storage
       daemon, network daemon, and package supervisor failures.
       Done when a fault is contained to its domain, surviving services remain
       inspectable, and recovery cannot reuse stale capabilities or generations.
+      Implementation: [`crates/init/src/fault_domains.rs`](crates/init/src/fault_domains.rs)
+      provides bounded per-domain state, capability epochs, recovery leases, and
+      inspectable status snapshots; [`crates/init/src/lib.rs`](crates/init/src/lib.rs)
+      fences bound services and rejects stale service generations. Regression
+      coverage is in [`crates/init/tests/fault_domains.rs`](crates/init/tests/fault_domains.rs).
 - [ ] Create a kernel crash capsule containing register state, fault address,
       capability context, scheduler state, recent audit IDs, and build identity.
       Done when capsule creation is bounded, redacted, crash-safe, and useful

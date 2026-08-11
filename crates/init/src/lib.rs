@@ -1,8 +1,15 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+mod fault_domains;
+
 use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
 use synos_status::{IntoStatus, Severity, Status, facility};
+
+pub use fault_domains::{
+    CapabilityFence, FaultCause, FaultDomain, FaultDomainError, FaultDomainRegistry,
+    FaultDomainStatus, FaultReport, FaultState, RecoveryLease, FAULT_DOMAIN_COUNT,
+};
 
 pub const DEFAULT_SERVICE_CAPACITY: usize = 32;
 pub const MAX_SERVICE_NAME_BYTES: usize = 48;
@@ -126,6 +133,7 @@ pub struct SpawnRequest {
     pub image_id: u128,
     pub capability_profile: u64,
     pub generation: u32,
+    pub fault_fence: Option<CapabilityFence>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,6 +169,7 @@ pub struct ServiceStatus {
     pub restart_count: u16,
     pub restart_at_us: u64,
     pub last_exit: Option<ExitReason>,
+    pub fault_domain: Option<FaultDomain>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -247,6 +256,8 @@ pub enum SupervisorError {
     AlreadyRegistered,
     Capacity,
     FenceFailed,
+    FaultDomainError(FaultDomainError),
+    GenerationExhausted,
     InvalidPolicy,
     InvalidService,
     NotFound,
@@ -256,6 +267,7 @@ pub enum SupervisorError {
     MissingDependency,
     DependencyCycle,
     DependencyNotReady,
+    DomainFaulted,
     NotReady,
     ServiceFailed,
     TraceFull,
@@ -269,13 +281,19 @@ impl IntoStatus for SupervisorError {
             }
             Self::Capacity => Status::NO_SPACE,
             Self::NotFound | Self::StaleExit | Self::MissingDependency => Status::NOT_FOUND,
-            Self::DependencyCycle | Self::DependencyNotReady | Self::NotReady | Self::ServiceFailed => {
+            Self::DependencyCycle
+            | Self::DependencyNotReady
+            | Self::DomainFaulted
+            | Self::NotReady
+            | Self::ServiceFailed => {
                 Status::BUSY
             }
             Self::FenceFailed | Self::SpawnFailed => {
                 Status::new(Severity::Error, facility::DRIVER, 1, 0)
                     .unwrap_or(Status::INVALID_ARGUMENT)
             }
+            Self::FaultDomainError(error) => error.status(),
+            Self::GenerationExhausted => Status::NO_SPACE,
             Self::Interrupted | Self::TraceFull => Status::BUSY,
         }
     }
@@ -306,6 +324,7 @@ struct ServiceSlot {
     window_started_us: u64,
     restart_at_us: u64,
     last_exit: Option<ExitReason>,
+    fault_domain: Option<FaultDomain>,
 }
 
 impl ServiceSlot {
@@ -332,6 +351,7 @@ impl ServiceSlot {
         window_started_us: 0,
         restart_at_us: 0,
         last_exit: None,
+        fault_domain: None,
     };
 }
 
@@ -341,17 +361,70 @@ impl ServiceSlot {
 /// capabilities, and generation.
 pub struct Supervisor<const CAPACITY: usize = DEFAULT_SERVICE_CAPACITY> {
     services: [ServiceSlot; CAPACITY],
+    fault_domains: FaultDomainRegistry<CAPACITY>,
 }
 
 impl<const CAPACITY: usize> Supervisor<CAPACITY> {
     pub const fn new() -> Self {
         Self {
             services: [ServiceSlot::EMPTY; CAPACITY],
+            fault_domains: FaultDomainRegistry::new(),
         }
     }
 
     pub fn register(&mut self, spec: ServiceSpec) -> Result<(), SupervisorError> {
         self.register_with_dependencies(spec, &[])
+    }
+
+    /// Attach a service to one independent fault domain. A domain fault fences
+    /// capabilities for every attached service without hiding other domains.
+    pub fn bind_fault_domain(
+        &mut self,
+        id: ServiceId,
+        domain: FaultDomain,
+    ) -> Result<(), SupervisorError> {
+        let index = self.slot_index(id)?;
+        if self.services[index].fault_domain.is_some() {
+            return Err(SupervisorError::AlreadyRegistered);
+        }
+        self.fault_domains
+            .attach(domain, u64::from(id.raw()))
+            .map_err(SupervisorError::FaultDomainError)?;
+        self.services[index].fault_domain = Some(domain);
+        Ok(())
+    }
+
+    pub fn fault_domains(&self) -> &FaultDomainRegistry<CAPACITY> {
+        &self.fault_domains
+    }
+
+    pub fn fault_domain_statuses(&self) -> impl Iterator<Item = FaultDomainStatus> + '_ {
+        self.fault_domains.statuses()
+    }
+
+    pub fn report_domain_fault(
+        &mut self,
+        domain: FaultDomain,
+        cause: FaultCause,
+    ) -> Result<FaultReport, SupervisorError> {
+        self.fault_domains
+            .report_fault(domain, cause)
+            .map_err(SupervisorError::FaultDomainError)
+    }
+
+    /// Complete an explicitly fenced domain recovery and publish fresh
+    /// capability and generation values for replacement services.
+    pub fn recover_domain(
+        &mut self,
+        domain: FaultDomain,
+    ) -> Result<CapabilityFence, SupervisorError> {
+        let lease = self
+            .fault_domains
+            .begin_recovery(domain)
+            .map_err(SupervisorError::FaultDomainError)?;
+        self.fault_domains
+            .complete_recovery(lease)
+            .map_err(SupervisorError::FaultDomainError)
     }
 
     pub fn register_with_dependencies(
@@ -463,10 +536,21 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         if self.services[index].state == ServiceState::Running {
             return Err(SupervisorError::AlreadyRegistered);
         }
+        if self.services[index]
+            .fault_domain
+            .is_some_and(|domain| !self.fault_domains.accepts_work(domain))
+        {
+            return Err(SupervisorError::DomainFaulted);
+        }
         if !self.dependencies_ready(index) {
             return Err(SupervisorError::DependencyNotReady);
         }
-        spawn(&mut self.services[index], runtime, injector)
+        let fault_fence = self.services[index]
+            .fault_domain
+            .map(|domain| self.fault_domains.issue_capability(domain))
+            .transpose()
+            .map_err(SupervisorError::FaultDomainError)?;
+        spawn(&mut self.services[index], runtime, injector, fault_fence)
     }
 
     pub fn report_exit<R: SupervisorRuntime>(
@@ -481,6 +565,7 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
             .iter()
             .position(|slot| slot.occupied && slot.process == Some(process))
             .ok_or(SupervisorError::StaleExit)?;
+        let fault_domain = self.services[index].fault_domain;
         let slot = &mut self.services[index];
 
         runtime
@@ -496,6 +581,12 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
                 service: slot.spec.id,
             });
         };
+
+        if let Some(domain) = fault_domain {
+            self.fault_domains
+                .report_fault(domain, fault_cause(crash))
+                .map_err(SupervisorError::FaultDomainError)?;
+        }
 
         if slot.spec.restart.max_restarts == 0 {
             slot.state = ServiceState::Failed;
@@ -559,7 +650,12 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         }) else {
             return Ok(None);
         };
-        spawn(&mut self.services[index], runtime, injector).map(Some)
+        let fault_fence = self.services[index]
+            .fault_domain
+            .map(|domain| self.fault_domains.issue_capability(domain))
+            .transpose()
+            .map_err(SupervisorError::FaultDomainError)?;
+        spawn(&mut self.services[index], runtime, injector, fault_fence).map(Some)
     }
 
     pub fn boot<R: SupervisorRuntime>(
@@ -624,6 +720,7 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
             restart_count: slot.restart_count,
             restart_at_us: slot.restart_at_us,
             last_exit: slot.last_exit,
+            fault_domain: slot.fault_domain,
         })
     }
 
@@ -642,6 +739,7 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
                     restart_count: slot.restart_count,
                     restart_at_us: slot.restart_at_us,
                     last_exit: slot.last_exit,
+                    fault_domain: slot.fault_domain,
                 }
             })
     }
@@ -718,7 +816,13 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
 
     fn readiness_at(&self, index: usize, visiting: &mut [u8; CAPACITY]) -> ServiceReadiness {
         let slot = &self.services[index];
-        if !slot.occupied || slot.state != ServiceState::Running || !slot.ready {
+        if !slot.occupied
+            || slot.state != ServiceState::Running
+            || !slot.ready
+            || slot
+                .fault_domain
+                .is_some_and(|domain| !self.fault_domains.accepts_work(domain))
+        {
             return ServiceReadiness::Waiting;
         }
         if visiting[index] != 0 {
@@ -762,7 +866,17 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
             if !self.dependencies_ready(index) {
                 return Err(SupervisorError::DependencyNotReady);
             }
-            let event = spawn(&mut self.services[index], runtime, &mut NoInterruption)?;
+            let fault_fence = self.services[index]
+                .fault_domain
+                .map(|domain| self.fault_domains.issue_capability(domain))
+                .transpose()
+                .map_err(SupervisorError::FaultDomainError)?;
+            let event = spawn(
+                &mut self.services[index],
+                runtime,
+                &mut NoInterruption,
+                fault_fence,
+            )?;
             if let SupervisorEvent::Started {
                 service,
                 generation,
@@ -826,14 +940,19 @@ fn spawn<R: SupervisorRuntime>(
     slot: &mut ServiceSlot,
     runtime: &mut R,
     injector: &mut impl InterruptionInjector,
+    fault_fence: Option<CapabilityFence>,
 ) -> Result<SupervisorEvent, SupervisorError> {
-    let generation = slot.generation.wrapping_add(1).max(1);
+    let generation = slot
+        .generation
+        .checked_add(1)
+        .ok_or(SupervisorError::GenerationExhausted)?;
     let process = runtime
         .spawn(SpawnRequest {
             service: slot.spec.id,
             image_id: slot.spec.image_id,
             capability_profile: slot.spec.capability_profile,
             generation,
+            fault_fence,
         })
         .map_err(|_| SupervisorError::SpawnFailed)?;
     slot.generation = generation;
@@ -848,4 +967,14 @@ fn spawn<R: SupervisorRuntime>(
         process,
         generation,
     })
+}
+
+const fn fault_cause(reason: CrashReason) -> FaultCause {
+    match reason {
+        CrashReason::Panic => FaultCause::Panic,
+        CrashReason::ProtectionFault => FaultCause::ProtectionFault,
+        CrashReason::IllegalInstruction => FaultCause::ProtocolViolation,
+        CrashReason::Watchdog => FaultCause::Watchdog,
+        CrashReason::UnexpectedExit => FaultCause::Panic,
+    }
 }
