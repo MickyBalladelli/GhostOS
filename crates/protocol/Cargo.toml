@@ -9,4 +9,5 @@ description = "Shared bounded protocol compatibility and transport policy"
 path = "src/lib.rs"
 
 [dependencies]
+synos-api-compat = { path = "../api-compat" }
 synos-abi = { path = "../abi" }

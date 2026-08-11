@@ -2,6 +2,7 @@
 import Foundation
 
 enum SynOSABI {
+    static let apiVersion: UInt16 = 1
     static let schemaVersion: UInt16 = 1
     static let revision: UInt16 = 1
     static let protocolVersion: UInt8 = 1

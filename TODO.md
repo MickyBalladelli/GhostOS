@@ -497,10 +497,12 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P2: Developer and user-facing quality
 
-- [ ] Version every public Rust, Swift, wire, shell, package, snapshot, and
+- [x] Version every public Rust, Swift, wire, shell, package, snapshot, and
       configuration API with compatibility tests and deprecation warnings.
       Done when old clients receive stable errors and supported migrations are
-      documented with examples.
+      documented with examples. Implemented by [`crates/api-compat`](crates/api-compat),
+      boundary version constants, Swift compatibility errors, and the migration
+      guide in [`docs/api-versioning.md`](docs/api-versioning.md).
 - [ ] Add generated API documentation and executable cookbook examples for
       boot, storage, networking, capabilities, clusters, compiler jobs, and
       recovery.

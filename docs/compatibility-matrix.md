@@ -1,5 +1,8 @@
 # SynOS compatibility matrix
 
+The shared public-API registry and migration procedure are in
+[`api-versioning.md`](api-versioning.md).
+
 This table is the operator-facing map of the compatibility contracts currently
 implemented by SynOS. The reader and decoder in source remain authoritative;
 this page does not promise compatibility beyond the versions listed here.

@@ -250,6 +250,7 @@ def generate_swift(schema: dict) -> str:
 import Foundation
 
 enum SynOSABI {{
+    static let apiVersion: UInt16 = {abi["schema_version"]}
     static let schemaVersion: UInt16 = {abi["schema_version"]}
     static let revision: UInt16 = {abi["revision"]}
     static let protocolVersion: UInt8 = {abi["rpc_protocol_version"]}

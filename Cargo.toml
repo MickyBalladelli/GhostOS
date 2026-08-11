@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/api-compat",
     "crates/abi",
     "crates/boot-protocol",
     "crates/host-filesystems",
@@ -71,6 +72,7 @@ members = [
     "virtual_machine",
 ]
 default-members = [
+    "crates/api-compat",
     "crates/abi",
     "crates/boot-protocol",
     "crates/host-filesystems",

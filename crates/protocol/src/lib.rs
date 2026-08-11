@@ -9,6 +9,7 @@
 //! replay, flow control, and reconnects.
 
 pub const CURRENT_PROTOCOL_VERSION: u16 = synos_abi::ABI_SCHEMA_VERSION;
+pub const WIRE_API_VERSION: synos_api_compat::ApiVersion = synos_api_compat::WIRE_API.current;
 pub const REPLAY_WINDOW_BITS: u8 = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

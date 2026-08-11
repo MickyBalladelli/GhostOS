@@ -8,6 +8,7 @@ public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
     case mismatchedResponse
     case remoteStatus(UInt16)
     case transportRejected
+    case incompatibleApiVersion(code: String, offered: UInt16, minimum: UInt16, maximum: UInt16)
 
     public var errorDescription: String? {
         switch self {
@@ -25,6 +26,8 @@ public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
             "Gateway rejected the request with status \(status)."
         case .transportRejected:
             "Gateway transport rejected the request."
+        case let .incompatibleApiVersion(code, offered, minimum, maximum):
+            "\(code): SynOS API version \(offered) is outside supported range \(minimum)..=\(maximum)."
         }
     }
 }
@@ -85,6 +88,7 @@ public struct SynOSPerformanceDiagnostics: Equatable, Sendable {
 }
 
 public actor SynOSClient {
+    public static let apiVersion = SynOSABI.apiVersion
     private typealias Method = SynOSRPCMethod
 
     private static let headerBytes = SynOSABI.frameHeaderBytes
@@ -465,7 +469,9 @@ public actor SynOSClient {
         guard try reader.readData(count: 4) == SynOSABI.magic else {
             throw SynOSClientError.invalidFrame
         }
-        guard try reader.readByte() == Self.protocolVersion else {
+        let responseVersion = UInt16(try reader.readByte())
+        guard responseVersion == UInt16(Self.protocolVersion) else {
+            try SynOSCompatibility.validate(responseVersion)
             throw SynOSClientError.abiMismatch
         }
         guard try reader.readByte() == method.rawValue,

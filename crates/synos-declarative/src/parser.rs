@@ -11,6 +11,7 @@ use crate::{
 };
 
 pub const SYSTEM_SCHEMA_VERSION: u16 = 1;
+pub const CONFIGURATION_API_VERSION: synos_api_compat::ApiVersion = synos_api_compat::CONFIGURATION_API.current;
 pub const MAX_SERVICES: usize = 24;
 pub const MAX_CAPABILITY_POLICIES: usize = 64;
 pub const MAX_NETWORK_INTERFACES: usize = 32;

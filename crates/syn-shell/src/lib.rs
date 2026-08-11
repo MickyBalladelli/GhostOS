@@ -21,6 +21,7 @@ pub mod storage;
 
 pub const MAX_LINE_BYTES: usize = 512;
 pub const MAX_TOKEN_BYTES: usize = 128;
+pub const SHELL_API_VERSION: synos_api_compat::ApiVersion = synos_api_compat::SHELL_API.current;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {

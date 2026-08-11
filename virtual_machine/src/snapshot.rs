@@ -20,6 +20,7 @@ pub const SNAPSHOT_AUTH_KEY_BYTES: usize = 32;
 pub const SNAPSHOT_AUTH_TAG_BYTES: usize = AUTH_TAG_BYTES;
 pub const SNAPSHOT_FORMAT_VERSION: u32 = 2;
 pub const SNAPSHOT_MIN_FORMAT_VERSION: u32 = 1;
+pub const SNAPSHOT_API_VERSION: synos_api_compat::ApiVersion = synos_api_compat::SNAPSHOT_API.current;
 pub const MAX_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub const MAX_SNAPSHOT_MEMORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const MAX_ITEMS: usize = 16 * 1024 * 1024;

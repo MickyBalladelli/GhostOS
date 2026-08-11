@@ -9,6 +9,7 @@ description = "Declarative SynOS infrastructure configuration and atomic activat
 path = "src/lib.rs"
 
 [dependencies]
+synos-api-compat = { path = "../api-compat" }
 synos-durability = { path = "../durability" }
 synos-fabric = { path = "../fabric" }
 synos-status = { path = "../status" }

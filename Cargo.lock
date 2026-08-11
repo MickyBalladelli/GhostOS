@@ -390,6 +390,7 @@ dependencies = [
 name = "syn-shell"
 version = "0.1.0"
 dependencies = [
+ "synos-api-compat",
  "synos-observability",
  "synos-path-pattern",
  "synos-status",
@@ -443,6 +444,10 @@ dependencies = [
  "synos-status",
  "synos-synfs",
 ]
+
+[[package]]
+name = "synos-api-compat"
+version = "0.1.0"
 
 [[package]]
 name = "synos-app"
@@ -570,6 +575,7 @@ dependencies = [
 name = "synos-declarative"
 version = "0.1.0"
 dependencies = [
+ "synos-api-compat",
  "synos-durability",
  "synos-fabric",
  "synos-status",
@@ -793,6 +799,7 @@ name = "synos-pkg"
 version = "0.1.0"
 dependencies = [
  "synos-admission",
+ "synos-api-compat",
  "synos-durability",
  "synos-policy",
  "synos-service-scale",
@@ -842,6 +849,7 @@ name = "synos-protocol"
 version = "0.1.0"
 dependencies = [
  "synos-abi",
+ "synos-api-compat",
 ]
 
 [[package]]
@@ -1022,6 +1030,7 @@ dependencies = [
  "bitflags 2.13.1",
  "libc",
  "synos-abi",
+ "synos-api-compat",
  "synos-app",
  "synos-boot-protocol",
  "synos-fabric",

@@ -29,6 +29,7 @@ pub const SIGNATURE_BYTES: usize = 32;
 pub const DEFAULT_TRUSTED_KEYS: usize = 8;
 pub const APPLICATION_BUNDLE_MAGIC: &[u8; 8] = b"SYNAPP01";
 pub const APPLICATION_BUNDLE_VERSION: u16 = 1;
+pub const PACKAGE_API_VERSION: synos_api_compat::ApiVersion = synos_api_compat::PACKAGE_API.current;
 pub const APPLICATION_BUNDLE_HEADER_BYTES: usize = 144;
 pub const APPLICATION_METADATA_BYTES: usize = 160;
 pub const PROVENANCE_LINKS: usize = 7;
