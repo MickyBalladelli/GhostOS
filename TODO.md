@@ -66,10 +66,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       inspectable status snapshots; [`crates/init/src/lib.rs`](crates/init/src/lib.rs)
       fences bound services and rejects stale service generations. Regression
       coverage is in [`crates/init/tests/fault_domains.rs`](crates/init/tests/fault_domains.rs).
-- [ ] Create a kernel crash capsule containing register state, fault address,
+- [x] Create a kernel crash capsule containing register state, fault address,
       capability context, scheduler state, recent audit IDs, and build identity.
       Done when capsule creation is bounded, redacted, crash-safe, and useful
       without requiring the normal log service.
+      Implementation: [`kernel/src/crash.rs`](kernel/src/crash.rs) writes a bounded
+      versioned capsule directly through the persistence port, with architecture
+      register capture, redacted capability records, scheduler counters, recent
+      audit correlation IDs, and build identity; crash encoding and redaction
+      regression tests are included.
 - [ ] Prove interrupt, timer, and deferred-work progress under CPU saturation.
       Done when high-priority control traffic meets a declared latency budget
       while bulk work is throttled instead of starving the system.

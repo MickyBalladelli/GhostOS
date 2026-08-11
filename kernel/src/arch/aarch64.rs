@@ -78,6 +78,7 @@ pub mod interrupts {
 
     #[unsafe(no_mangle)]
     extern "C" fn synos_aarch64_exception() -> ! {
+        crate::capture_exception(super::capture_registers(0), 0, synos_status::Status::CORRUPT, 0);
         crate::println!("AArch64 exception");
         crate::halt()
     }
@@ -94,6 +95,26 @@ synos_aarch64_vectors:
 .endr
 "#
     );
+}
+
+pub(crate) fn capture_registers(fault_address: u64) -> crate::crash::RegisterState {
+    let (x0, x1, x2, x3, sp, ip, flags);
+    unsafe {
+        asm!("mov {}, x0", out(reg) x0, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, x1", out(reg) x1, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, x2", out(reg) x2, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, x3", out(reg) x3, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+        asm!("adr {}, .", out(reg) ip, options(nomem, nostack, preserves_flags));
+        asm!("mrs {}, spsr_el1", out(reg) flags, options(nomem, nostack, preserves_flags));
+    }
+    crate::crash::RegisterState {
+        general: [x0, x1, x2, x3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        instruction_pointer: ip,
+        stack_pointer: sp,
+        flags,
+        fault_address,
+    }
 }
 
 #[inline(always)]

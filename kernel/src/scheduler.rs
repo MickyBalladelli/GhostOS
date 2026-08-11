@@ -509,6 +509,38 @@ impl Scheduler {
         self.clock
     }
 
+    pub(crate) fn crash_snapshot(&self) -> crate::crash::SchedulerState {
+        let mut state_counts = [0u16; 5];
+        for thread in self.threads {
+            let index = match thread.state {
+                ThreadState::Vacant => 0,
+                ThreadState::Ready => 1,
+                ThreadState::Running => 2,
+                ThreadState::Blocked => 3,
+                ThreadState::Sleeping => 4,
+            };
+            state_counts[index] = state_counts[index].saturating_add(1)
+        }
+        let (current_thread, current_instruction_pointer, current_stack_pointer) = self
+            .current
+            .and_then(|id| self.threads.get(id.slot()).map(|thread| (id, thread)))
+            .map_or((0, 0, 0), |(id, thread)| {
+                (
+                    id.raw(),
+                    thread.context.instruction_pointer as u64,
+                    thread.context.stack_pointer as u64,
+                )
+            });
+        crate::crash::SchedulerState {
+            clock: self.clock,
+            current_thread,
+            current_cpu: self.current_cpu.raw(),
+            state_counts,
+            current_instruction_pointer,
+            current_stack_pointer,
+        }
+    }
+
     /// Validate scheduler ownership, generations, runnable states, and waiters.
     pub fn check_invariants(&self) -> Result<(), crate::invariants::InvariantFailure> {
         let mut running = None;

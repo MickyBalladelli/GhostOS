@@ -920,6 +920,33 @@ impl<const CAPACITY: usize> TraceRing<CAPACITY> {
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Acquire)
     }
+
+    /// Copy the newest records without consuming the ring. This is used by
+    /// crash capture, which must not depend on the log service draining it.
+    pub fn copy_recent(&self, destination: &mut [Option<TraceEvent>]) -> usize {
+        if destination.is_empty() {
+            return 0
+        }
+        let end = self.write_position.load(Ordering::Acquire);
+        let start = end.saturating_sub(destination.len().min(CAPACITY) as u64);
+        let mut count = 0;
+        for position in start..end {
+            if count == destination.len() {
+                break
+            }
+            let slot = &self.slots[position as usize % CAPACITY];
+            if slot.published.load(Ordering::Acquire) != position {
+                continue
+            }
+            let event = slot.event.read();
+            if slot.published.load(Ordering::Acquire) != position {
+                continue
+            }
+            destination[count] = Some(event);
+            count += 1
+        }
+        count
+    }
 }
 
 impl<const CAPACITY: usize> Default for TraceRing<CAPACITY> {

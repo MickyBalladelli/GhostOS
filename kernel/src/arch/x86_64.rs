@@ -195,8 +195,22 @@ pub mod interrupts {
             if crate::page_fault::dispatch(fault) {
                 return
             }
+            crate::capture_exception(
+                super::capture_registers(fault_address),
+                fault_address,
+                synos_status::Status::CORRUPT,
+                vector as u16,
+            );
         }
         if vector < 32 {
+            if vector != 14 {
+                crate::capture_exception(
+                    super::capture_registers(0),
+                    0,
+                    synos_status::Status::CORRUPT,
+                    vector as u16,
+                );
+            }
             println!("cpu exception vector={vector} error={error_code:#x}");
             if vector != 3 {
                 crate::halt()
@@ -349,5 +363,36 @@ synos_isr_table:
 pub fn halt() {
     unsafe {
         asm!("hlt", options(nomem, nostack));
+    }
+}
+
+pub(crate) fn capture_registers(fault_address: u64) -> crate::crash::RegisterState {
+    let (rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15, rip, rsp, flags);
+    unsafe {
+        asm!("mov {}, rax", out(reg) rax, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, rbx", out(reg) rbx, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, rcx", out(reg) rcx, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, rdx", out(reg) rdx, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, rsi", out(reg) rsi, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, rdi", out(reg) rdi, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, rbp", out(reg) rbp, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r8", out(reg) r8, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r9", out(reg) r9, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r10", out(reg) r10, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r11", out(reg) r11, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r12", out(reg) r12, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r13", out(reg) r13, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r14", out(reg) r14, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, r15", out(reg) r15, options(nomem, nostack, preserves_flags));
+        asm!("lea {}, [rip]", out(reg) rip, options(nomem, nostack, preserves_flags));
+        asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags));
+        asm!("pushfq; pop {}", out(reg) flags, options(nomem, preserves_flags));
+    }
+    crate::crash::RegisterState {
+        general: [rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15, 0],
+        instruction_pointer: rip,
+        stack_pointer: rsp,
+        flags,
+        fault_address,
     }
 }

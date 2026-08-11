@@ -2797,6 +2797,7 @@ impl KernelExecutor {
             .expect("network diagnostic capability");
         let filesystem = KernelFilesystem::new();
         crate::println!("root filesystem mounted");
+        crate::crash::publish_capability_context(&capabilities);
 
         Self {
             boot_method: boot_info.method,
@@ -2824,6 +2825,7 @@ impl KernelExecutor {
     }
 
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        crate::crash::publish_capability_context(&self.capabilities);
         match command.route.raw() {
             HELP_ROUTE => self.help(),
             SHOW_SYSTEM_ROUTE => self.show_system(),

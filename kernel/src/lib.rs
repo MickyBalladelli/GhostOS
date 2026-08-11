@@ -8,6 +8,7 @@ mod arch;
 pub mod capability;
 #[allow(unsafe_code)]
 mod console;
+pub mod crash;
 pub mod dlm;
 pub mod ipc;
 pub mod invariants;
@@ -57,6 +58,7 @@ mod usb_keyboard;
 
 use core::panic::PanicInfo;
 use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicBool, Ordering};
 use synos_boot_protocol::BootInfo;
 use synos_observability::{EventField, EventKind, field, info};
 use synos_status::Status;
@@ -99,6 +101,7 @@ pub use invariants::{
 // Scheduler state starts in BSS so the BIOS image carries no large prebuilt
 // table. kernel_entry initializes it before interrupts or shell code use it.
 static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
+static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
 static DLM: DistributedLockManager = DistributedLockManager::new();
 static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
 
@@ -140,6 +143,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         slot.write(Scheduler::new());
         slot.assume_init_mut()
     };
+    SCHEDULER_READY.store(true, Ordering::Release);
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
     let acpi = power::discover(boot_info);
@@ -182,13 +186,45 @@ pub fn validate_boot_info(boot_info: &BootInfo) -> Result<(), Status> {
 
 /// The only deliberate non-returning failure boundary in kernel code.
 pub fn fatal_kernel_halt(status: Status) -> ! {
+    crash::capture_and_persist(
+        crash::RegisterState::empty(),
+        0,
+        status,
+        1,
+        crash_scheduler(),
+    );
     println!("KERNEL HALT: status={} ({})", status.raw(), status.message());
     halt()
 }
 
 pub fn panic_report(info: &PanicInfo<'_>) -> ! {
-    println!("KERNEL PANIC: {info}");
+    let _ = info;
     fatal_kernel_halt(Status::CORRUPT)
+}
+
+pub(crate) fn capture_exception(
+    registers: crash::RegisterState,
+    fault_address: u64,
+    status: Status,
+    reason: u16,
+) {
+    crash::capture_and_persist(
+        registers,
+        fault_address,
+        status,
+        reason,
+        crash_scheduler(),
+    )
+}
+
+#[allow(unsafe_code)]
+fn crash_scheduler() -> Option<&'static Scheduler> {
+    if !SCHEDULER_READY.load(Ordering::Acquire) {
+        return None
+    }
+    unsafe {
+        Some((&*core::ptr::addr_of!(SCHEDULER)).assume_init_ref())
+    }
 }
 
 #[macro_export]

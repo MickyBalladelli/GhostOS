@@ -66,8 +66,29 @@ pub mod interrupts {
     }
 
     extern "C" fn trap_entry() {
+        crate::capture_exception(super::capture_registers(0), 0, synos_status::Status::CORRUPT, 0);
         crate::println!("RISC-V supervisor trap");
         crate::halt()
+    }
+}
+
+pub(crate) fn capture_registers(fault_address: u64) -> crate::crash::RegisterState {
+    let (x1, x2, x3, x4, sp, ip, flags);
+    unsafe {
+        asm!("mv {}, x1", out(reg) x1, options(nomem, nostack, preserves_flags));
+        asm!("mv {}, x2", out(reg) x2, options(nomem, nostack, preserves_flags));
+        asm!("mv {}, x3", out(reg) x3, options(nomem, nostack, preserves_flags));
+        asm!("mv {}, x4", out(reg) x4, options(nomem, nostack, preserves_flags));
+        asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+        asm!("auipc {}, 0", out(reg) ip, options(nomem, nostack, preserves_flags));
+        asm!("csrr {}, sstatus", out(reg) flags, options(nomem, nostack, preserves_flags));
+    }
+    crate::crash::RegisterState {
+        general: [x1, x2, x3, x4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        instruction_pointer: ip,
+        stack_pointer: sp,
+        flags,
+        fault_address,
     }
 }
 

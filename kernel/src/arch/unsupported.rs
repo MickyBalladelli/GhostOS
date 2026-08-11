@@ -14,3 +14,7 @@ pub mod interrupts {
 pub fn halt() {
     core::hint::spin_loop()
 }
+
+pub(crate) fn capture_registers(fault_address: u64) -> crate::crash::RegisterState {
+    crate::crash::RegisterState::empty().with_fault_address(fault_address)
+}
