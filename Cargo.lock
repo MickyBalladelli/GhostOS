@@ -673,9 +673,12 @@ dependencies = [
  "synos-admission",
  "synos-auditd",
  "synos-fabric",
+ "synos-heal",
  "synos-observability",
  "synos-status",
  "synos-synfs",
+ "synos-system-model",
+ "synos-update",
 ]
 
 [[package]]

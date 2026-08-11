@@ -475,10 +475,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       and backwards-clock failure. Keep this checkbox open until concrete
       process, socket, queue, storage, terminal, and cluster runtimes are
       wired to the coordinator and produce maintenance evidence.
-- [ ] Add an operator runbook generator from service health, dependency,
+- [x] Add an operator runbook generator from service health, dependency,
       recovery, quota, and compatibility metadata.
       Done when every alert links to diagnosis, safe action, rollback, and proof
       of recovery.
+      Implementation: [`crates/synos-inspect/src/runbook.rs`](crates/synos-inspect/src/runbook.rs)
+      provides fixed-capacity alert-code registration, validation of all five
+      metadata sources, and atomic bulk generation. Every generated record has
+      typed diagnosis, safe-action, rollback, and recovery-proof links;
+      [`crates/synos-inspect/tests/runbook.rs`](crates/synos-inspect/tests/runbook.rs)
+      covers complete generation and incomplete-link rejection.
 - [ ] Add SLOs for boot, interactive shell, IPC, storage commit, DHCP, RPC,
       package activation, snapshot restore, and cluster convergence.
       Done when the system reports error budget consumption and refuses release

@@ -12,6 +12,7 @@ mod service;
 mod shell;
 mod storage;
 mod text;
+mod runbook;
 
 pub use access::{
     CAP_AUDIT_WORLD, InspectCapability, InspectionAuthority, InspectionRights,
@@ -47,3 +48,8 @@ pub use storage::{
     SynFsVolumeSample, MAX_CAPACITY_SAMPLES, MAX_STORAGE_DEVICES, MAX_SYNFS_VOLUMES,
 };
 pub use text::Name;
+pub use runbook::{
+    CompatibilityMetadata, DependencyMetadata, RecoveryMetadata, Runbook, RunbookError,
+    RunbookGenerator, RunbookLink, RunbookMetadata, RunbookSource, QuotaMetadata,
+    ServiceHealthMetadata, DEFAULT_RUNBOOK_CAPACITY,
+};
