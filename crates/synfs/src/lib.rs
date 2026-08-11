@@ -11,6 +11,7 @@ pub use synos_path_pattern::{MAX_PATTERN_BYTES, Pattern, PatternError};
 mod block;
 mod pool;
 mod rms;
+mod scrub;
 mod volume;
 
 pub use block::{
@@ -27,6 +28,10 @@ pub use rms::{
     IndexDefinition, MappedRecordFile, MappedRecordInfo, RecordDescriptor, RecordFileInfo,
     RecordFormat, RecordImageBuilder, RecordIter, RecordOrganization, RecordRead, RecordSelector,
     RmsError, RmsMapHandle,
+};
+pub use scrub::{
+    RepairAuthorization, RepairEvidence, RepairPreview, RepairReceipt, ScrubFinding,
+    ScrubIssue, ScrubPlan, ScrubReport, ScrubScope,
 };
 pub use volume::{VOLUME_FORMAT_VERSION, VolumeCommit, VolumeGeometry};
 
@@ -58,6 +63,8 @@ pub enum Error {
     VersionOverflow,
     Io,
     Interrupted,
+    RepairUnauthorized,
+    StaleRepairPlan,
 }
 
 impl IntoStatus for Error {
@@ -83,6 +90,8 @@ impl IntoStatus for Error {
                 .unwrap_or(Status::INVALID_ARGUMENT),
             Self::Interrupted => Status::BUSY,
             Self::QuotaExceeded => Status::NO_SPACE,
+            Self::RepairUnauthorized => Status::ACCESS_DENIED,
+            Self::StaleRepairPlan => Status::BUSY,
         }
     }
 }

@@ -101,10 +101,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`docs/durability.md`](docs/durability.md),
       [`crates/durability/src/lib.rs`](crates/durability/src/lib.rs), and
       [`crates/durability/tests/contract.rs`](crates/durability/tests/contract.rs).
-- [ ] Add online filesystem scrub and repair-preview operations for SynFS,
+- [x] Add online filesystem scrub and repair-preview operations for SynFS,
       package stores, journals, snapshots, and system metadata.
       Done when inspection is read-only by default, repairs require explicit
       authorization, and every changed block has before/after evidence.
+      Implementation: [`crates/synfs/src/scrub.rs`](crates/synfs/src/scrub.rs)
+      provides bounded, online read-only plans for every scope, generation
+      fencing, explicit nonzero operator authorization, and per-block before /
+      after fingerprints. Regression coverage is in
+      [`crates/synfs/tests/scrub.rs`](crates/synfs/tests/scrub.rs).
 - [ ] Add checksummed metadata and scrubbing for silent corruption, stale
       generations, torn records, duplicate blocks, and orphaned capabilities.
       Done when corruption is detected before publication and recovery chooses a
