@@ -1,0 +1,42 @@
+# Declared policy for scripts/benchmark.py.
+schema = 1
+
+[defaults]
+warmups = 2
+samples = 9
+confidence = 0.95
+max_relative_mad = 0.15
+max_latency_ci_width = 0.25
+max_relative_latency_regression = 0.15
+min_relative_throughput = 0.85
+max_relative_allocation_regression = 0.25
+
+# Absolute ceilings keep a first run useful. Relative budgets need a baseline
+# produced on the same hardware signature.
+[benchmark.decode]
+max_latency_ns = 5_000_000_000
+min_throughput_per_second = 1_000
+
+[benchmark.translation]
+max_latency_ns = 5_000_000_000
+min_throughput_per_second = 1_000
+
+[benchmark.memory]
+max_latency_ns = 10_000_000_000
+min_throughput_per_second = 100_000
+
+[benchmark.interrupt]
+max_latency_ns = 5_000_000_000
+min_throughput_per_second = 1_000
+
+[benchmark.storage]
+max_latency_ns = 5_000_000_000
+min_throughput_per_second = 1_000
+
+[benchmark.network]
+max_latency_ns = 10_000_000_000
+min_throughput_per_second = 1_000
+
+[benchmark.terminal]
+max_latency_ns = 5_000_000_000
+min_throughput_per_second = 1_000

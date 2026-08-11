@@ -2,15 +2,43 @@
 
 ## Bounded benchmark suite
 
-Run all VM microbenchmarks from the repository root:
+Run the repeatable VM harness from the repository root:
 
 ```bash
-SYNOS_BENCH_REVISION=$(git rev-parse HEAD) \
-  cargo bench -p synos-vm --bench bounded
+python3 scripts/benchmark.py \
+  --output build/benchmarks/latest/report.json \
+  -- cargo bench -p synos-vm --bench bounded
 ```
 
-The harness has fixed work limits and emits one JSON Lines metadata record,
-followed by one result record for each workload:
+The harness runs two warmups and nine measured samples by default. It records
+fixed hardware metadata and a host signature, then emits p50/p95/p99 latency,
+throughput, confidence intervals, allocation counts/bytes, and optional CPU
+cycle and energy readings. A noisy workload is `inconclusive`; it is never
+silently treated as a pass.
+
+Use a report from the same hardware signature to enforce regression budgets:
+
+```bash
+python3 scripts/benchmark.py \
+  --baseline build/benchmarks/baseline.json \
+  --output build/benchmarks/latest/report.json \
+  -- cargo bench -p synos-vm --bench bounded
+```
+
+Create a baseline only from a passing run:
+
+```bash
+python3 scripts/benchmark.py \
+  --write-baseline build/benchmarks/baseline.json \
+  -- cargo bench -p synos-vm --bench bounded
+```
+
+Budgets live in [`benchmarks/budgets.toml`](../../benchmarks/budgets.toml).
+Relative budgets fail on latency, throughput, or allocations. Absolute
+ceilings apply even before a baseline exists.
+
+The underlying bounded benchmark emits one JSON Lines metadata record, followed
+by one result record for each workload. It has fixed work limits:
 
 | Workload | Fixed work |
 | --- | --- |

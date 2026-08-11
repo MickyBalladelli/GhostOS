@@ -63,6 +63,8 @@ run_tier() {
     write_metadata "$tier" "$command" "$output_dir" "$started_at" "$ended_at"
     if [[ $status -eq 0 ]]; then
         printf '{"schema":1,"state":"passed","tier":"%s","reason":"command completed successfully"}\n' "$tier" > "$output_dir/result.json"
+    elif [[ $status -eq 2 ]]; then
+        printf '{"schema":1,"state":"inconclusive","tier":"%s","exit_code":2,"reason":"benchmark harness marked the run inconclusive; inspect benchmark-report.json"}\n' "$tier" > "$output_dir/result.json"
     else
         printf '{"schema":1,"state":"failed","tier":"%s","exit_code":%d,"reason":"command exited with status %d"}\n' "$tier" "$status" "$status" > "$output_dir/result.json"
     fi
@@ -89,7 +91,13 @@ run_tier workspace cargo test --workspace --all-targets
 run_tier vm cargo test -p synos-vm --all-targets
 run_tier vm-quality python3 "$root_dir/scripts/validate-vm-quality.py"
 benchmark_revision=$(git rev-parse HEAD 2>/dev/null || printf unknown)
-run_tier performance env SYNOS_BENCH_REVISION="$benchmark_revision" cargo bench -p synos-vm --bench bounded
+benchmark_command=(python3 "$root_dir/scripts/benchmark.py" \
+    --output "$evidence_dir/performance/benchmark-report.json")
+if [[ -n "${SYNOS_BENCH_BASELINE:-}" ]]; then
+    benchmark_command+=(--baseline "$SYNOS_BENCH_BASELINE")
+fi
+benchmark_command+=(-- cargo bench -p synos-vm --bench bounded)
+run_tier performance env SYNOS_BENCH_REVISION="$benchmark_revision" "${benchmark_command[@]}"
 run_tier recovery cargo test --workspace --all-targets
 
 python3 "$root_dir/scripts/validate-vm-evidence.py" "$evidence_dir" \

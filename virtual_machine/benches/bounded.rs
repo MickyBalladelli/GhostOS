@@ -1,8 +1,10 @@
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::RefCell;
 use std::fs::{self, OpenOptions};
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use synos_vm::devices::{ApicTrigger, InterruptController, LocalApic, PortBus};
@@ -26,12 +28,139 @@ const NETWORK_FRAME_BYTES: usize = 128;
 const TERMINAL_INPUT_BYTES: usize = 4096;
 const TERMINAL_PASSES: u64 = 10_000;
 
+#[derive(Clone, Copy, Default)]
+struct AllocationMetrics {
+    allocation_count: u64,
+    allocated_bytes: u64,
+    deallocation_count: u64,
+    deallocated_bytes: u64,
+    live_bytes: u64,
+    peak_live_bytes: u64,
+}
+
+struct CountingAllocator {
+    allocation_count: AtomicU64,
+    allocated_bytes: AtomicU64,
+    deallocation_count: AtomicU64,
+    deallocated_bytes: AtomicU64,
+    live_bytes: AtomicU64,
+    peak_live_bytes: AtomicU64,
+}
+
+impl CountingAllocator {
+    const fn new() -> Self {
+        Self {
+            allocation_count: AtomicU64::new(0),
+            allocated_bytes: AtomicU64::new(0),
+            deallocation_count: AtomicU64::new(0),
+            deallocated_bytes: AtomicU64::new(0),
+            live_bytes: AtomicU64::new(0),
+            peak_live_bytes: AtomicU64::new(0),
+        }
+    }
+
+    fn begin_measurement(&self) {
+        self.allocation_count.store(0, Ordering::Relaxed);
+        self.allocated_bytes.store(0, Ordering::Relaxed);
+        self.deallocation_count.store(0, Ordering::Relaxed);
+        self.deallocated_bytes.store(0, Ordering::Relaxed);
+        self.peak_live_bytes
+            .store(self.live_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
+
+    fn record_allocation(&self, bytes: usize) {
+        self.allocation_count.fetch_add(1, Ordering::Relaxed);
+        self.allocated_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        let live = self.live_bytes.fetch_add(bytes as u64, Ordering::Relaxed) + bytes as u64;
+        self.record_peak(live);
+    }
+
+    fn record_deallocation(&self, bytes: usize) {
+        self.deallocation_count.fetch_add(1, Ordering::Relaxed);
+        self.deallocated_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.live_bytes.fetch_sub(bytes as u64, Ordering::Relaxed);
+    }
+
+    fn record_peak(&self, live: u64) {
+        let mut current = self.peak_live_bytes.load(Ordering::Relaxed);
+        while live > current {
+            match self.peak_live_bytes.compare_exchange_weak(
+                current,
+                live,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(previous) => current = previous,
+            }
+        }
+    }
+
+    fn finish_measurement(&self) -> AllocationMetrics {
+        AllocationMetrics {
+            allocation_count: self.allocation_count.load(Ordering::Relaxed),
+            allocated_bytes: self.allocated_bytes.load(Ordering::Relaxed),
+            deallocation_count: self.deallocation_count.load(Ordering::Relaxed),
+            deallocated_bytes: self.deallocated_bytes.load(Ordering::Relaxed),
+            live_bytes: self.live_bytes.load(Ordering::Relaxed),
+            peak_live_bytes: self.peak_live_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let pointer = unsafe { System.alloc(layout) };
+        if !pointer.is_null() {
+            self.record_allocation(layout.size());
+        }
+        pointer
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let pointer = unsafe { System.alloc_zeroed(layout) };
+        if !pointer.is_null() {
+            self.record_allocation(layout.size());
+        }
+        pointer
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(pointer, layout) };
+        self.record_deallocation(layout.size());
+    }
+
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_pointer = unsafe { System.realloc(pointer, layout, new_size) };
+        if !new_pointer.is_null() {
+            self.allocation_count.fetch_add(1, Ordering::Relaxed);
+            self.allocated_bytes.fetch_add(new_size as u64, Ordering::Relaxed);
+            self.deallocation_count.fetch_add(1, Ordering::Relaxed);
+            self.deallocated_bytes
+                .fetch_add(layout.size() as u64, Ordering::Relaxed);
+            if new_size >= layout.size() {
+                let delta = (new_size - layout.size()) as u64;
+                let live = self.live_bytes.fetch_add(delta, Ordering::Relaxed) + delta;
+                self.record_peak(live);
+            } else {
+                self.live_bytes
+                    .fetch_sub((layout.size() - new_size) as u64, Ordering::Relaxed);
+            }
+        }
+        new_pointer
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator::new();
+
 struct BenchmarkResult {
     name: &'static str,
     unit: &'static str,
     work_units: u64,
     elapsed: Duration,
     checksum: u64,
+    allocations: AllocationMetrics,
 }
 
 impl BenchmarkResult {
@@ -41,13 +170,19 @@ impl BenchmarkResult {
             .saturating_mul(1_000_000_000)
             / elapsed_ns;
         println!(
-            "{{\"schema\":{SCHEMA_VERSION},\"record\":\"result\",\"benchmark\":\"{}\",\"bounded\":true,\"unit\":\"{}\",\"work_units\":{},\"elapsed_ns\":{},\"rate_per_second\":{},\"checksum\":{}}}",
+            "{{\"schema\":{SCHEMA_VERSION},\"record\":\"result\",\"benchmark\":\"{}\",\"bounded\":true,\"unit\":\"{}\",\"work_units\":{},\"elapsed_ns\":{},\"rate_per_second\":{},\"checksum\":{},\"allocation_count\":{},\"allocated_bytes\":{},\"deallocation_count\":{},\"deallocated_bytes\":{},\"live_bytes\":{},\"peak_live_bytes\":{}}}",
             self.name,
             self.unit,
             self.work_units,
             elapsed_ns,
             rate,
             self.checksum,
+            self.allocations.allocation_count,
+            self.allocations.allocated_bytes,
+            self.allocations.deallocation_count,
+            self.allocations.deallocated_bytes,
+            self.allocations.live_bytes,
+            self.allocations.peak_live_bytes,
         )
     }
 }
@@ -151,6 +286,7 @@ fn benchmark_decode() -> Result<BenchmarkResult, String> {
     let cpu = Cpu::new();
     let mut checksum = 0u64;
 
+    ALLOCATOR.begin_measurement();
     let started = Instant::now();
     for _ in 0..DECODE_OPERATIONS {
         let decoded = cpu
@@ -171,6 +307,7 @@ fn benchmark_decode() -> Result<BenchmarkResult, String> {
         work_units: DECODE_OPERATIONS,
         elapsed,
         checksum,
+        allocations: ALLOCATOR.finish_measurement(),
     })
 }
 
@@ -193,6 +330,7 @@ fn benchmark_translation() -> Result<BenchmarkResult, String> {
     let mut retired = 0u64;
     let mut checksum = 0u64;
 
+    ALLOCATOR.begin_measurement();
     let started = Instant::now();
     for _ in 0..TRANSLATION_BLOCKS {
         engine.clear_cache();
@@ -225,6 +363,7 @@ fn benchmark_translation() -> Result<BenchmarkResult, String> {
         work_units: retired,
         elapsed,
         checksum,
+        allocations: ALLOCATOR.finish_measurement(),
     })
 }
 
@@ -237,6 +376,7 @@ fn benchmark_memory() -> Result<BenchmarkResult, String> {
     let pages = MEMORY_SIZE / PAGE_SIZE;
     let mut checksum = 0u64;
 
+    ALLOCATOR.begin_measurement();
     let started = Instant::now();
     for _ in 0..MEMORY_PASSES {
         for page_index in 0..pages {
@@ -266,6 +406,7 @@ fn benchmark_memory() -> Result<BenchmarkResult, String> {
         work_units,
         elapsed,
         checksum,
+        allocations: ALLOCATOR.finish_measurement(),
     })
 }
 
@@ -273,6 +414,7 @@ fn benchmark_interrupts() -> Result<BenchmarkResult, String> {
     let mut apic = LocalApic::new(0);
     let mut checksum = 0u64;
 
+    ALLOCATOR.begin_measurement();
     let started = Instant::now();
     for index in 0..INTERRUPT_OPERATIONS {
         let vector = 0x40 + (index & 0x0F) as u8;
@@ -293,6 +435,7 @@ fn benchmark_interrupts() -> Result<BenchmarkResult, String> {
         work_units: INTERRUPT_OPERATIONS,
         elapsed,
         checksum,
+        allocations: ALLOCATOR.finish_measurement(),
     })
 }
 
@@ -302,6 +445,7 @@ fn benchmark_storage() -> Result<BenchmarkResult, String> {
         .map_err(|error| format!("open benchmark disk: {error}"))?;
     let mut checksum = 0u64;
 
+    ALLOCATOR.begin_measurement();
     let started = Instant::now();
     for lba in 0..STORAGE_SECTORS {
         let mut sector = [0u8; 512];
@@ -330,6 +474,7 @@ fn benchmark_storage() -> Result<BenchmarkResult, String> {
         work_units: STORAGE_SECTORS * 512 * 2,
         elapsed,
         checksum,
+        allocations: ALLOCATOR.finish_measurement(),
     })
 }
 
@@ -345,6 +490,7 @@ fn benchmark_network() -> Result<BenchmarkResult, String> {
     frame[12..14].copy_from_slice(&0x88B5u16.to_be_bytes());
     let mut checksum = 0u64;
 
+    ALLOCATOR.begin_measurement();
     let started = Instant::now();
     for _ in 0..NETWORK_PACKETS {
         left
@@ -367,6 +513,7 @@ fn benchmark_network() -> Result<BenchmarkResult, String> {
         work_units: NETWORK_PACKETS,
         elapsed,
         checksum,
+        allocations: ALLOCATOR.finish_measurement(),
     })
 }
 
@@ -381,6 +528,7 @@ fn benchmark_terminal() -> Result<BenchmarkResult, String> {
     }
     let mut checksum = 0u64;
 
+    ALLOCATOR.begin_measurement();
     let started = Instant::now();
     for _ in 0..TERMINAL_PASSES {
         let translated = translate_input_bytes(black_box(&input));
@@ -398,5 +546,6 @@ fn benchmark_terminal() -> Result<BenchmarkResult, String> {
         work_units: TERMINAL_INPUT_BYTES as u64 * TERMINAL_PASSES,
         elapsed,
         checksum,
+        allocations: ALLOCATOR.finish_measurement(),
     })
 }

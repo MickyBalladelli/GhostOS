@@ -50,8 +50,9 @@ The entry names one test in each applicable tier:
 - `fuzz`: untrusted bytes, parser inputs, or state-machine sequences. Use
   `not_applicable` only when the feature has no untrusted input.
 - `performance`: a bounded benchmark or regression guard. It must record the
-  machine, revision, input size, and elapsed time; it must not use a flaky
-  wall-clock assertion.
+  machine, revision, input size, warmups, samples, confidence intervals,
+  p50/p95/p99 latency, throughput, allocations, and available cycle/energy
+  counters. Noise must be reported as `inconclusive`, not hidden.
 
 These names are plans only. The inventory keeps five separate statuses:
 `planned`, `running`, `passed`, `failed`, and `blocked`. A test becomes
@@ -151,7 +152,7 @@ evidence described in `platforms/README.md`.
 | cluster | `scripts/qemu-cluster-validation.sh` | opt-in | node serial logs, command logs, QMP input, failover log |
 | hardware-accelerated | `SYNOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
-| performance | `cargo test -p synos-vm --test test_environments storage_io_performance_and_integrity` | required | throughput output and test metadata |
+| performance | `python3 scripts/benchmark.py --baseline <same-host-report> -- cargo bench -p synos-vm --bench bounded` | required | benchmark report, hardware signature, budgets, and regression state |
 | soak | `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle ownership report, logs, and resource-drift snapshots |
 
 The root workspace includes both `synos-test-support` and `synos-vm` in
@@ -339,6 +340,7 @@ corresponding compatibility decision.
 | `SYNOS_CLUSTER_BUS` | `230.0.0.1:1234` | QEMU multicast cluster bus. |
 | `SYNOS_FULL_VALIDATION` | unset | Enable opt-in QEMU, fuzz, coverage, mutation, and release tiers. |
 | `SYNOS_EVIDENCE_DIR` | `build/test-evidence/<run-id>` | Evidence output directory for the unified runners. |
+| `SYNOS_BENCH_BASELINE` | unset | Same-host benchmark report used for relative regression budgets. |
 | `SYNOS_FUZZ_RUNS` | `1000` | Bounded fuzz smoke iterations per target. |
 | `SYNOS_VM_SOAK_RUNS` | `3` | Number of bounded VM soak repetitions. |
 | `SYNOS_VM_SOAK_INNER_RUNS` | `32` | In-process VM lifecycle repetitions per soak run. |

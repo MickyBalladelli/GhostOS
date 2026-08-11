@@ -216,11 +216,14 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P1: Performance measurement and latency control
 
-- [ ] Create a repeatable benchmark harness with fixed hardware metadata,
+- [x] Create a repeatable benchmark harness with fixed hardware metadata,
       warmup rules, confidence intervals, p50/p95/p99 latency, throughput,
       allocations, CPU cycles, and energy where available.
       Done when regressions fail against declared budgets and noisy runs are
-      marked inconclusive instead of hidden.
+      marked inconclusive instead of hidden. Implementation:
+      [`scripts/benchmark.py`](scripts/benchmark.py),
+      [`benchmarks/budgets.toml`](benchmarks/budgets.toml), and the bounded VM
+      benchmark allocation counters provide the repeatable report and gate.
 - [ ] Add continuous profiling for boot, IPC, scheduler, SynFS, networking,
       package activation, compiler builds, VM execution, and client RPC.
       Done when profiles are symbolized, redacted, retained by revision, and

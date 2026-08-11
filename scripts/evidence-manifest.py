@@ -63,7 +63,7 @@ def result_records(evidence_dir: pathlib.Path) -> tuple[list[dict[str, object]],
             errors.append(f"{path.relative_to(evidence_dir)}: result is not an object")
             continue
         state = value.get("result_state", value.get("state"))
-        if state not in {"passed", "failed", "skipped"}:
+        if state not in {"passed", "failed", "skipped", "inconclusive"}:
             errors.append(f"{path.relative_to(evidence_dir)}: invalid state {state!r}")
             continue
         reason = value.get("reason")
@@ -99,18 +99,20 @@ def manifest_value(evidence_dir: pathlib.Path) -> dict[str, object]:
     ]
     skipped = [record for record in records if record["state"] == "skipped"]
     failed = [record for record in records if record["state"] == "failed"]
+    inconclusive = [record for record in records if record["state"] == "inconclusive"]
     return {
         "schema": 1,
         "kind": "synos-full-validation-evidence",
         "revision": git_revision(),
         "evidence_directory": evidence_dir.name,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "state": "failed" if failed else "passed",
+        "state": "failed" if failed else "inconclusive" if inconclusive else "passed",
         "file_count": len(files),
         "files": files,
         "results": records,
         "skipped_count": len(skipped),
         "failed_count": len(failed),
+        "inconclusive_count": len(inconclusive),
     }
 
 
@@ -182,6 +184,10 @@ def verify_manifest(evidence_dir: pathlib.Path) -> None:
         raise ValueError("evidence manifest failed count is stale")
     if manifest.get("skipped_count") != sum(record["state"] == "skipped" for record in records):
         raise ValueError("evidence manifest skipped count is stale")
+    if manifest.get("inconclusive_count") != sum(
+        record["state"] == "inconclusive" for record in records
+    ):
+        raise ValueError("evidence manifest inconclusive count is stale")
     print(f"evidence manifest verified: {len(actual_files)} files")
 
 
