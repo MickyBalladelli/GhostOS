@@ -92,6 +92,7 @@ python3 scripts/package-vm-release.py \
   --artifact build/bios/synos-bios.img \
   --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
   --evidence-dir build/test-evidence/<run-id> \
+  --attestation-dir build/release/attestations \
   --firmware bios --firmware uefi
 ```
 
@@ -100,6 +101,41 @@ coverage, default device topology, every executed evidence record, and known
 host limitations. It also carries the exact changelog and its digest. Failed
 evidence prevents packaging; skipped evidence stays in the manifest with its
 prerequisite reason.
+
+Create the attestation directory before packaging. The release signer keeps
+the private key outside the repository and provides a separately produced copy
+of every artifact for the reproducibility comparison:
+
+```sh
+python3 scripts/release-attestations.py --write \
+  --output-dir build/release/attestations \
+  --signing-key /secure/release-key.pem \
+  --artifact synos-vm=target/release/synos-vm \
+  --artifact synos-bios=build/bios/synos-bios.img \
+  --artifact synos-loader=target/x86_64-unknown-uefi/release/synos-loader.efi \
+  --reproducible-artifact synos-vm=/independent-build/synos-vm \
+  --reproducible-artifact synos-bios=/independent-build/synos-bios.img \
+  --reproducible-artifact synos-loader=/independent-build/synos-loader.efi
+```
+
+The generator emits a CycloneDX SBOM, Cargo.lock dependency provenance,
+compiler/toolchain identity, tracked-source and release-configuration digests,
+and a byte-for-byte reproducibility result inside each signed statement.
+Packaging runs the verifier with the public key and rejects missing coverage,
+changed artifact bytes, invalid signatures, or an unverified reproducibility
+comparison. Verify an attestation directory independently with:
+
+```sh
+python3 scripts/release-attestations.py --check \
+  --attestation-dir build/release/attestations \
+  --artifact synos-vm=target/release/synos-vm \
+  --artifact synos-bios=build/bios/synos-bios.img \
+  --artifact synos-loader=target/x86_64-unknown-uefi/release/synos-loader.efi
+```
+
+If the `.tar.gz` archive itself is published as an artifact, run the same
+generator once more over that archive and its independently reproduced copy;
+publish that second attestation directory beside the archive.
 
 For a release diff, run the changelog validator once per changed VM source
 path, for example:

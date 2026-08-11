@@ -2,7 +2,7 @@
 """Package VM release files with provenance and compatibility metadata.
 
 The archive is deliberately boring: files are copied unchanged and a signed
-release process may sign the resulting ``release-manifest.json`` afterwards.
+release process signs the release inputs before this command runs.
 The manifest itself records every file digest, firmware mode, default device
 topology, executed evidence, and known host limitations.
 """
@@ -182,6 +182,7 @@ def write_archive(
     changelog: pathlib.Path,
     evidence_root: pathlib.Path,
     evidence_files: Iterable[pathlib.Path],
+    attestation_files: Iterable[pathlib.Path],
     timestamp: int,
 ) -> None:
     output = output.expanduser().resolve()
@@ -210,6 +211,8 @@ def write_archive(
                     for path in evidence_files:
                         relative = path.relative_to(evidence_root).as_posix()
                         add_file(archive, path, f"evidence/{relative}", timestamp)
+                    for path in attestation_files:
+                        add_file(archive, path, f"attestations/{path.name}", timestamp)
         os.replace(temporary, output)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -221,6 +224,12 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=pathlib.Path, help="output .tar.gz archive")
     parser.add_argument("--artifact", action="append", required=True, help="artifact PATH or NAME=PATH")
     parser.add_argument("--evidence-dir", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--attestation-dir",
+        required=True,
+        type=pathlib.Path,
+        help="directory produced by scripts/release-attestations.py",
+    )
     parser.add_argument("--firmware", action="append", required=True, choices=("bios", "uefi"))
     parser.add_argument("--host-limitation", action="append", default=[], help="append a known host limitation")
     args = parser.parse_args()
@@ -235,6 +244,28 @@ def main() -> int:
             raise ValueError("output archive must not replace an input artifact")
         evidence_root = args.evidence_dir.expanduser().resolve()
         records, evidence_files = evidence_records(evidence_root)
+        attestation_root = args.attestation_dir.expanduser().resolve()
+        if not attestation_root.is_dir():
+            raise ValueError(f"attestation directory does not exist: {attestation_root}")
+        attestation_files = sorted(
+            path for path in attestation_root.iterdir() if path.is_file() and not path.is_symlink()
+        )
+        if not attestation_files:
+            raise ValueError(f"attestation directory is empty: {attestation_root}")
+        attestation_command = [
+            sys.executable,
+            str(ROOT / "scripts/release-attestations.py"),
+            "--check",
+            "--attestation-dir",
+            str(attestation_root),
+        ]
+        for name, path in artifacts:
+            attestation_command.extend(["--artifact", f"{name}={path}"])
+        subprocess.run(
+            attestation_command,
+            check=True,
+            cwd=ROOT,
+        )
         subprocess.run(
             [sys.executable, str(ROOT / "scripts/validate-changelog.py")],
             check=True,
@@ -254,6 +285,17 @@ def main() -> int:
             "changelog": {"path": "CHANGELOG.md", "sha256": sha256(CHANGELOG)},
             "device_topology": DEFAULT_TOPOLOGY,
             "test_evidence": records,
+            "attestations": {
+                "directory": "attestations",
+                "files": [
+                    {
+                        "path": path.name,
+                        "size": path.stat().st_size,
+                        "sha256": sha256(path),
+                    }
+                    for path in attestation_files
+                ],
+            },
             "known_host_limitations": sorted(set(KNOWN_HOST_LIMITATIONS + args.host_limitation)),
         }
         if any(record["state"] == "failed" for record in records):
@@ -267,6 +309,7 @@ def main() -> int:
             CHANGELOG,
             evidence_root,
             evidence_files,
+            attestation_files,
             timestamp,
         )
     except (OSError, ValueError, subprocess.SubprocessError) as error:

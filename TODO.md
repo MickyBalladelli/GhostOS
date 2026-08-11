@@ -185,11 +185,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       emergency revocation stay behind the hardware or isolated-provider
       boundary; inventory snapshots contain metadata only. Regression coverage
       is in [`crates/synos-shield/tests/key_provider.rs`](crates/synos-shield/tests/key_provider.rs).
-- [ ] Produce signed SBOM, dependency provenance, compiler identity, source
+- [x] Produce signed SBOM, dependency provenance, compiler identity, source
       digest, configuration digest, and reproducible-build attestations for
       every release artifact.
       Done when a running process can be traced back to an independently verified
       source and toolchain record.
+      Implementation: [`scripts/release-attestations.py`](scripts/release-attestations.py)
+      creates and verifies a signed per-artifact statement containing all six
+      records; [`scripts/package-vm-release.py`](scripts/package-vm-release.py)
+      requires complete verified coverage before packaging and carries the
+      attestations in the release archive.
 - [ ] Add policy simulation for capability changes, firewall changes, package
       activation, cluster membership, and update rollout.
       Done when operators can preview affected principals and objects without
