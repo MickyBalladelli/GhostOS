@@ -386,7 +386,7 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P1: Resilience, upgrades, and operations
 
-- [x] Build a fault-injection matrix for power loss, disk full, device reset,
+- [ ] Build a fault-injection matrix for power loss, disk full, device reset,
       packet loss, partition, clock jump, process hang, corrupt input, and
       dependency outage across every critical workflow.
       Done when each failure has a bounded recovery time and explicit degraded
@@ -414,10 +414,46 @@ measured p50/p95/p99 data over optimistic feature claims.
       status/degraded mode, data and audit continuity, and duplicate-side-effect
       checks. Recovery budgets are hard cutoffs: retry, queue, and failover
       work stops at the bound and returns an explicit status.
+      Implementation: [`crates/test-support/src/fault_matrix.rs`](crates/test-support/src/fault_matrix.rs)
+      defines all 72 typed fault/workflow cells, RTO budgets, deterministic
+      injection checkpoints, degraded actions, and evidence validation for data,
+      capability, stale-generation, audit, and duplicate-side-effect safety.
+      [`crates/test-support/tests/fault_matrix.rs`](crates/test-support/tests/fault_matrix.rs)
+      covers matrix completeness, one-shot injection, bounded evidence, and
+      rejected unsafe observations. Keep this checkbox open until each real
+      workflow adapter records measured fault evidence.
 - [ ] Add rolling, canary, blue/green, and emergency update strategies for
       kernel, services, packages, clients, schemas, and cluster protocols.
       Done when mixed-version operation is tested and rollback preserves data,
-      capabilities, and audit continuity.
+      capabilities, and audit continuity. Every release is one signed bundle
+      with artifact digests, compatibility ranges, migration ID, rollback
+      target, capability epoch, and audit sequence. Existing staged activation,
+      service hot-swap, kernel patch generations, protocol negotiation, and
+      immutable package roots are the implementation boundaries.
+
+      | Strategy | Kernel | Services | Packages | Clients | Schemas | Cluster protocols |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | Rolling | Stage a signed inactive slot; reboot one node; health-check before the next; retain the prior slot | Spawn replacement with inherited descriptors; switch only after ready; drain and fence the old process | Stage immutable digest; activate one node; keep the previous root | Negotiate old/new wire versions; hand off sessions by request ID | Expand first, dual-read/write, then contract after old readers leave | Update one member at a time; preserve quorum; fence stale epochs |
+      | Canary | Use one non-critical node; gate on boot, invariant, and workload health; abort before quorum impact | Route one instance or tenant; compare errors, latency, and resource use; stop on threshold breach | Activate one low-risk tenant or node; verify signatures, data, and rollback receipt | Opt-in a small client cohort; retain the old endpoint and status mapping | Shadow-parse new fields; publish no incompatible field until all can read it | Use one follower/learner; require protocol intersection and no lease loss |
+      | Blue/green | Boot a green slot or node pool beside blue; cut traffic only after health; keep blue bootable | Run green beside blue; mirror safe reads; switch routing atomically; drain blue | Build a green root from content IDs; switch the active pointer; preserve blue objects | Point a bounded cohort at green; move the rest only after compatibility and audit checks | Prepare green readers/writers against the same versioned contract; cut over once | Prepare a green control plane; perform one quorum-approved epoch cutover; keep blue read-only |
+      | Emergency | Apply only an authenticated bounded patch, or boot the last known-good image; never leave a partial redirect | Freeze rollout; drain if safe, otherwise fence and restart; restore the last healthy generation | Stop activation and return to the last signed root; do not mutate package bytes | Force the minimum safe protocol; disable the broken feature; keep reconnect and retry semantics | Refuse destructive migration; restore the last checkpoint or use the older reader | Freeze mutations; fence incompatible members; restore the last quorum-safe protocol and rejoin with a new epoch |
+
+      Mixed-version gates are: (1) signature, provenance, digest, and rollback
+      target verified before staging; (2) every version pair has an explicit
+      read/write, read/convert, or reject result from
+      [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md); (3) no
+      incompatible pair accepts a mutation; (4) data roots remain immutable
+      until health passes; (5) capability object IDs survive while generation
+      epochs fence stale grants; and (6) audit records remain append-only with
+      the same request and release IDs across cutover and rollback.
+
+      The acceptance run injects failure before stage, during mixed-version
+      service, at cutover, after cutover, and during rollback for every artifact
+      and strategy. It records both-version behavior, data/root checksums,
+      capability validity and stale-generation rejection, audit continuity,
+      duplicate-side-effect checks, and the exact rollback receipt. Rollback
+      changes only the executable/configuration pointer; it never deletes data,
+      rewrites history, or silently downgrades a schema.
 - [ ] Add a coordinated drain protocol for processes, sockets, queues, storage
       leases, terminal sessions, and cluster ownership before maintenance.
       Done when drain completion is provable and forced termination leaves no
