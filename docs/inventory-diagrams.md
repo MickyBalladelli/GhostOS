@@ -13,7 +13,7 @@ It has no hand-maintained inventory list. Run `python3 scripts/generate-inventor
 | Protocols | 20 | protocol modules, protocol/schema version constants, and traffic enums |
 | Capabilities | 28 | capability/rights enums, structs, and associated constants |
 | Storage formats | 35 | SYN* magic literals and nearby format/version constants |
-| Test files | 136 | Rust tests/ files and source files with #[test] functions |
+| Test files | 137 | Rust tests/ files and source files with #[test] functions |
 
 ## Crates
 
@@ -693,6 +693,7 @@ graph LR
     test_test__synos_init__crates_init_tests_model_rs["crates/init/tests/model.rs (3 tests)"]
     test_test__synos_inspect__crates_synos_inspect_tests_health_rs["crates/synos-inspect/tests/health.rs (1 tests)"]
     test_test__synos_ipc__crates_ipc_src_tests_rs["crates/ipc/src/tests.rs (3 tests)"]
+    test_test__synos_kernel__kernel_src_litmus_rs["kernel/src/litmus.rs (7 tests)"]
     test_test__synos_kernel__kernel_src_page_fault_rs["kernel/src/page_fault.rs (1 tests)"]
     test_test__synos_kernel__kernel_src_partition_rs["kernel/src/partition.rs (2 tests)"]
     test_test__synos_kernel__kernel_src_power_rs["kernel/src/power.rs (2 tests)"]
@@ -829,6 +830,7 @@ graph LR
     test_crate__synos_init --> test_test__synos_init__crates_init_tests_model_rs
     test_crate__synos_inspect --> test_test__synos_inspect__crates_synos_inspect_tests_health_rs
     test_crate__synos_ipc --> test_test__synos_ipc__crates_ipc_src_tests_rs
+    test_crate__synos_kernel --> test_test__synos_kernel__kernel_src_litmus_rs
     test_crate__synos_kernel --> test_test__synos_kernel__kernel_src_page_fault_rs
     test_crate__synos_kernel --> test_test__synos_kernel__kernel_src_partition_rs
     test_crate__synos_kernel --> test_test__synos_kernel__kernel_src_power_rs
@@ -1084,6 +1086,7 @@ graph LR
 | synos-init | [`crates/init/tests/model.rs:1`](../crates/init/tests/model.rs#L1) | 3 |
 | synos-inspect | [`crates/synos-inspect/tests/health.rs:1`](../crates/synos-inspect/tests/health.rs#L1) | 1 |
 | synos-ipc | [`crates/ipc/src/tests.rs:1`](../crates/ipc/src/tests.rs#L1) | 3 |
+| synos-kernel | [`kernel/src/litmus.rs:1`](../kernel/src/litmus.rs#L1) | 7 |
 | synos-kernel | [`kernel/src/page_fault.rs:1`](../kernel/src/page_fault.rs#L1) | 1 |
 | synos-kernel | [`kernel/src/partition.rs:1`](../kernel/src/partition.rs#L1) | 2 |
 | synos-kernel | [`kernel/src/power.rs:1`](../kernel/src/power.rs#L1) | 2 |

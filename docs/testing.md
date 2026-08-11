@@ -31,6 +31,13 @@ validation.
 
 ## Contract
 
+The kernel litmus suite is deterministic and allocation-free. Run
+`synos_kernel::litmus::run_suite(seed)` with the same seed to reproduce the
+same actor interleaving. Fault replays return the first violated contract and
+remove schedule steps until `minimal_failing_schedule` no longer shrinks.
+The six cases cover IPC ordering, capability revocation, memory visibility,
+interrupt races, scheduler preemption, and wakeup-after-HLT.
+
 Every feature change adds or updates its inventory entry in the same change.
 The entry names one test in each applicable tier:
 

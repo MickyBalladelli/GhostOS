@@ -11,6 +11,7 @@ mod console;
 pub mod dlm;
 pub mod ipc;
 pub mod invariants;
+pub mod litmus;
 pub mod micro_silo;
 pub mod quota;
 #[cfg(all(

@@ -37,7 +37,7 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`kernel/src/invariants.rs`](kernel/src/invariants.rs), kernel debug
       hooks, model coverage, and recovery coverage are in place; keep this
       checkbox open until the required evidence run is recorded.
-- [ ] Add a deterministic kernel litmus suite for IPC ordering, capability
+- [x] Add a deterministic kernel litmus suite for IPC ordering, capability
       revocation, memory visibility, interrupt races, scheduler preemption, and
       wakeup-after-HLT behavior.
       Done when the same seed reproduces the same interleaving and the suite
