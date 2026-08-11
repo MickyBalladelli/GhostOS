@@ -10,6 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 synos-fsd = { path = "../crates/fsd" }
+synos-app = { path = "../crates/app" }
+synos-abi = { path = "../crates/abi" }
 synos-host-filesystems = { path = "../crates/host-filesystems" }
 synos-synfs = { path = "../crates/synfs" }
 synos-http = { path = "../crates/http" }
@@ -105,6 +107,27 @@ bench = false
 [[bin]]
 name = "network"
 path = "fuzz_targets/network.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "abi-frame"
+path = "fuzz_targets/abi_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cli"
+path = "fuzz_targets/cli.rs"
 test = false
 doc = false
 bench = false

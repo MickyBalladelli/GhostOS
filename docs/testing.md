@@ -272,12 +272,16 @@ See [`soak.md`](soak.md) for workflow selection, limits, overrides, and report
 fields. The VM-only runner remains available for its focused inner-loop
 translation-cache check.
 
-VM fuzz targets cover the decoder, device configuration/I/O boundaries,
-disk-image parsers, snapshot decoding, terminal input/replay, and authenticated
-migration frames. They run in the full-validation fuzz tier. Mutation testing
-includes `synos-vm`; coverage emits workspace and per-crate reports. Full
-validation records separate `passed`, `failed`, and `skipped` results for QEMU,
-cluster, hardware-accelerated, performance, fuzz, and soak tiers.
+The fuzz inventory covers filesystem paths and images, HTTP/gRPC, scripts,
+packets and DHCP records, application manifests, ABI frames, CLI input, the VM
+decoder and devices, disk images, snapshots, terminal input/replay, and
+authenticated migration frames. Every target has an assigned owner, a checked-
+in seed corpus, and retained failure metadata with a deterministic replay
+command in [`fuzz/triage.toml`](../fuzz/triage.toml). They run in the
+full-validation fuzz tier. Mutation testing includes `synos-vm`; coverage emits
+workspace and per-crate reports. Full validation records separate `passed`,
+`failed`, and `skipped` results for QEMU, cluster, hardware-accelerated,
+performance, fuzz, and soak tiers.
 
 ### Cluster lifecycle validation
 

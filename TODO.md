@@ -523,11 +523,15 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`crates/test-support/src/differential.rs`](crates/test-support/src/differential.rs)
       minimizes reproducing inputs, and the reference decisions are recorded in
       [`docs/differential-compatibility.md`](docs/differential-compatibility.md).
-- [ ] Add fuzzing with retained corpus and triage metadata for every untrusted
+- [x] Add fuzzing with retained corpus and triage metadata for every untrusted
       parser, including manifests, ABI frames, packets, snapshots, CLI input,
       terminal bytes, and migration streams.
       Done when crashes, hangs, excessive allocation, and timeout cases are
-      reproducible and assigned.
+      reproducible and assigned. Implementation: the complete target inventory
+      and ownership map is in [`fuzz/triage.toml`](fuzz/triage.toml); checked-in
+      seeds live under [`fuzz/corpus`](fuzz/corpus); failures are retained with
+      SHA-256 metadata under [`fuzz/regressions`](fuzz/regressions) and replayed
+      by [`scripts/replay-fuzz.sh`](scripts/replay-fuzz.sh).
 - [ ] Add accessibility and usability checks for shell errors, terminal output,
       diagnostics, JSON schemas, client UI, and recovery messages.
       Done when operators can identify action, impact, retry safety, and audit

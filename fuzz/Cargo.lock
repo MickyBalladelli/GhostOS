@@ -190,8 +190,37 @@ dependencies = [
 name = "syn-shell"
 version = "0.1.0"
 dependencies = [
+ "synos-api-compat",
  "synos-observability",
  "synos-path-pattern",
+ "synos-status",
+ "synos-system-model",
+ "synos-time-sync",
+]
+
+[[package]]
+name = "synos-abi"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-status",
+]
+
+[[package]]
+name = "synos-admission"
+version = "0.1.0"
+
+[[package]]
+name = "synos-api-compat"
+version = "0.1.0"
+
+[[package]]
+name = "synos-app"
+version = "0.1.0"
+dependencies = [
+ "synos-init",
+ "synos-observability",
+ "synos-pkg",
  "synos-status",
  "synos-system-model",
  "synos-time-sync",
@@ -204,6 +233,7 @@ dependencies = [
  "synos-fabric",
  "synos-kernel",
  "synos-observability",
+ "synos-policy",
  "synos-status",
  "synos-system-model",
 ]
@@ -245,6 +275,8 @@ dependencies = [
  "libfuzzer-sys",
  "syn-script",
  "syn-shell",
+ "synos-abi",
+ "synos-app",
  "synos-fsd",
  "synos-host-filesystems",
  "synos-http",
@@ -267,6 +299,15 @@ dependencies = [
  "synos-ipc",
  "synos-netd",
  "synos-protocol",
+ "synos-service-scale",
+ "synos-status",
+]
+
+[[package]]
+name = "synos-init"
+version = "0.1.0"
+dependencies = [
+ "synos-durability",
  "synos-status",
 ]
 
@@ -282,11 +323,13 @@ name = "synos-kernel"
 version = "0.1.0"
 dependencies = [
  "syn-shell",
+ "synos-abi",
  "synos-boot-protocol",
  "synos-fabric",
  "synos-fsd",
  "synos-ipc",
  "synos-legacy-pc-drivers",
+ "synos-numa",
  "synos-observability",
  "synos-power",
  "synos-runtime",
@@ -306,22 +349,50 @@ name = "synos-netd"
 version = "0.1.0"
 dependencies = [
  "smoltcp",
+ "synos-auth",
+ "synos-fabric",
  "synos-ipc",
+ "synos-kernel",
+ "synos-numa",
  "synos-observability",
+ "synos-policy",
  "synos-status",
  "synos-time-sync",
 ]
 
 [[package]]
+name = "synos-numa"
+version = "0.1.0"
+
+[[package]]
 name = "synos-observability"
 version = "0.1.0"
 dependencies = [
+ "synos-service-scale",
  "synos-status",
  "synos-system-model",
 ]
 
 [[package]]
 name = "synos-path-pattern"
+version = "0.1.0"
+
+[[package]]
+name = "synos-pkg"
+version = "0.1.0"
+dependencies = [
+ "synos-admission",
+ "synos-api-compat",
+ "synos-durability",
+ "synos-policy",
+ "synos-service-scale",
+ "synos-status",
+ "synos-synfs",
+ "synos-system-model",
+]
+
+[[package]]
+name = "synos-policy"
 version = "0.1.0"
 
 [[package]]
@@ -337,15 +408,24 @@ dependencies = [
 [[package]]
 name = "synos-protocol"
 version = "0.1.0"
+dependencies = [
+ "synos-abi",
+ "synos-api-compat",
+]
 
 [[package]]
 name = "synos-runtime"
 version = "0.1.0"
 dependencies = [
+ "synos-abi",
  "synos-ipc",
  "synos-path-pattern",
  "synos-status",
 ]
+
+[[package]]
+name = "synos-service-scale"
+version = "0.1.0"
 
 [[package]]
 name = "synos-status"
@@ -382,9 +462,12 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "libc",
+ "synos-abi",
+ "synos-api-compat",
  "synos-boot-protocol",
  "synos-fabric",
  "synos-kernel",
+ "synos-observability",
  "synos-synfs",
  "thiserror",
 ]

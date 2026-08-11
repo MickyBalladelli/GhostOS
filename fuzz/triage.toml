@@ -1,0 +1,99 @@
+schema = 1
+default_owner = "developer-experience"
+failure_classes = ["crash", "hang", "oom", "leak", "timeout", "excessive-allocation"]
+
+[[target]]
+name = "path"
+boundary = "filesystem paths"
+owner = "storage"
+test_id = "fuzz.47.path"
+
+[[target]]
+name = "volume"
+boundary = "SynFS volume images"
+owner = "storage"
+test_id = "fuzz.47.volume"
+
+[[target]]
+name = "operations"
+boundary = "SynFS operation sequences"
+owner = "storage"
+test_id = "fuzz.47.operations"
+
+[[target]]
+name = "mount"
+boundary = "partition and host filesystem images"
+owner = "storage"
+test_id = "fuzz.47.mount"
+
+[[target]]
+name = "http"
+boundary = "HTTP and gRPC frames"
+owner = "networking"
+test_id = "fuzz.47.http"
+
+[[target]]
+name = "script"
+boundary = "script source"
+owner = "runtime"
+test_id = "fuzz.47.script"
+
+[[target]]
+name = "network"
+boundary = "network packets and DHCP records"
+owner = "networking"
+test_id = "fuzz.47.network"
+
+[[target]]
+name = "manifest"
+boundary = "application manifests"
+owner = "application-runtime"
+test_id = "fuzz.47.manifest"
+
+[[target]]
+name = "abi-frame"
+boundary = "ABI RPC frames"
+owner = "protocol"
+test_id = "fuzz.47.abi-frame"
+
+[[target]]
+name = "cli"
+boundary = "native CLI input"
+owner = "developer-experience"
+test_id = "fuzz.47.cli"
+
+[[target]]
+name = "vm-decoder"
+boundary = "VM instruction bytes"
+owner = "virtual-machine"
+test_id = "fuzz.47.vm-decoder"
+
+[[target]]
+name = "vm-devices"
+boundary = "VM device configuration and I/O"
+owner = "virtual-machine"
+test_id = "fuzz.47.vm-devices"
+
+[[target]]
+name = "vm-images"
+boundary = "VM disk images"
+owner = "virtual-machine"
+test_id = "fuzz.47.vm-images"
+
+[[target]]
+name = "vm-snapshot"
+boundary = "authenticated VM snapshots"
+owner = "virtual-machine"
+test_id = "fuzz.47.vm-snapshot"
+
+[[target]]
+name = "vm-terminal"
+boundary = "terminal bytes and replay traces"
+owner = "virtual-machine"
+test_id = "fuzz.47.vm-terminal"
+
+[[target]]
+name = "vm-migration"
+boundary = "authenticated migration streams"
+owner = "virtual-machine"
+test_id = "fuzz.47.vm-migration"

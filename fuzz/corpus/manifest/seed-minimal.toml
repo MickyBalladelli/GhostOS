@@ -1,0 +1,13 @@
+schema = 1
+
+[application]
+name = "seed"
+image = "00000000000000000000000000000000"
+kind = "service"
+target = "x86_64-unknown-synos"
+entry_offset = 0
+
+[resources]
+memory_bytes = 16777216
+heap_bytes = 65536
+cpu_time_us = 0

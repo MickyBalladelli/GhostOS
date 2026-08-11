@@ -51,6 +51,10 @@ the released text immutable.
 - Added the VM public contract, compatibility matrices, and release artifact
   manifest process. Impact: documentation and packaging only. Compatibility:
   guest, snapshot, and disk behavior unchanged. Evidence: documentation review.
+- Added assigned fuzz targets, retained seed corpora, and deterministic failure
+  replay metadata for untrusted parser boundaries. Impact: tooling and
+  documentation only. Compatibility: guest, snapshot, and disk behavior
+  unchanged. Evidence: fuzz inventory validation.
 
 ## Release format
 
