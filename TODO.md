@@ -75,9 +75,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       register capture, redacted capability records, scheduler counters, recent
       audit correlation IDs, and build identity; crash encoding and redaction
       regression tests are included.
-- [ ] Prove interrupt, timer, and deferred-work progress under CPU saturation.
+- [x] Prove interrupt, timer, and deferred-work progress under CPU saturation.
       Done when high-priority control traffic meets a declared latency budget
       while bulk work is throttled instead of starving the system.
+      Implementation: [`kernel/src/saturation.rs`](kernel/src/saturation.rs)
+      provides a fixed-capacity deterministic proof with one-tick budgets for
+      interrupt, control, timer, and deferred work, plus one reserved bulk
+      service slot every four ticks. The saturation regression proves high-
+      priority progress, bounded queues, and throttled-but-nonzero bulk work.
 - [ ] Add long-duration reboot, suspend/resume, hotplug, and service-restart
       campaigns with leak detection for pages, handles, IRQ routes, timers,
       capabilities, and worker tasks.

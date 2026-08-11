@@ -38,6 +38,7 @@ mod persistence;
 pub mod partition;
 pub mod scheduler;
 pub mod runtime;
+pub mod saturation;
 #[allow(unsafe_code)]
 mod shell;
 pub mod task;
