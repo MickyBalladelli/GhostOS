@@ -78,5 +78,5 @@ if [ "${#PERSISTENCE_ARGS[@]}" -gt 0 ]; then
   VM_COMMAND+=("${PERSISTENCE_ARGS[@]}")
 fi
 
-VM_COMMAND+=(--firmware bios --interactive "$@")
+VM_COMMAND+=(--firmware bios --interactive --input ps2 "$@")
 exec "${VM_COMMAND[@]}"
