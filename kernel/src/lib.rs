@@ -203,6 +203,20 @@ pub fn panic_report(info: &PanicInfo<'_>) -> ! {
     fatal_kernel_halt(Status::CORRUPT)
 }
 
+#[cfg(any(
+    all(
+        target_arch = "aarch64",
+        any(target_os = "none", target_os = "uefi")
+    ),
+    all(
+        target_arch = "riscv64",
+        any(target_os = "none", target_os = "uefi")
+    ),
+    all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    )
+))]
 pub(crate) fn capture_exception(
     registers: crash::RegisterState,
     fault_address: u64,
