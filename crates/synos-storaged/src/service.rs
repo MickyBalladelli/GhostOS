@@ -189,6 +189,7 @@ pub struct MountInfo {
 pub enum IoOperation {
     Read = 1,
     Write = 2,
+    /// The transport adapter must complete this only after its remote fence.
     Flush = 3,
     List = 4,
     Stream = 5,

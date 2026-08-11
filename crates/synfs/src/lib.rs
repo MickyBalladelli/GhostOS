@@ -864,6 +864,10 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
         }
     }
 
+    /// Publish all staged CoW changes with one root swap.
+    ///
+    /// Commit gives atomic in-memory visibility, not power-loss durability;
+    /// the volume owner must call `SynFs::sync` afterward.
     pub fn commit(mut self) -> Result<TransactionCommit, Error> {
         if self.failed {
             return Err(Error::TransactionAborted);

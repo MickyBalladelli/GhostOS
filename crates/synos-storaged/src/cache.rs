@@ -40,6 +40,8 @@ impl<const BYTES: usize> CacheEntry<BYTES> {
 pub trait RemoteFileBackend {
     fn read(&mut self, path: StoragePath, destination: &mut [u8]) -> Result<usize, u16>;
     fn write(&mut self, path: StoragePath, contents: &[u8]) -> Result<(), u16>;
+    /// Complete only after earlier writes are durable at the remote service.
+    fn flush(&mut self) -> Result<(), u16>;
 }
 
 /// Bounded read-through / CoW cache for remote mounts.
@@ -50,6 +52,7 @@ pub trait RemoteFileBackend {
 pub struct CowCache<const ENTRIES: usize = 32, const BYTES: usize = { 64 * 1024 }> {
     mode: CacheMode,
     entries: [CacheEntry<BYTES>; ENTRIES],
+    pending_flush: bool,
 }
 
 impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
@@ -57,6 +60,7 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
         Self {
             mode,
             entries: [CacheEntry::EMPTY; ENTRIES],
+            pending_flush: false,
         }
     }
 
@@ -97,19 +101,26 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
         contents: &[u8],
     ) -> Result<(), CacheError> {
         if self.mode == CacheMode::Disabled {
-            return backend.write(path, contents).map_err(CacheError::Remote)
+            backend.write(path, contents).map_err(CacheError::Remote)?;
+            self.pending_flush = true;
+            return Ok(())
         }
         if contents.len() > BYTES {
             return Err(CacheError::Capacity)
         }
         let mode = self.mode;
-        let entry = self.allocate(path)?;
-        entry.bytes[..contents.len()].copy_from_slice(contents);
-        entry.len = contents.len();
-        entry.dirty = mode == CacheMode::CopyOnWrite;
+        {
+            let entry = self.allocate(path)?;
+            entry.bytes[..contents.len()].copy_from_slice(contents);
+            entry.len = contents.len();
+            entry.dirty = mode == CacheMode::CopyOnWrite;
+            if mode == CacheMode::ReadThrough {
+                backend.write(path, contents).map_err(CacheError::Remote)?;
+                entry.dirty = false;
+            }
+        }
         if mode == CacheMode::ReadThrough {
-            backend.write(path, contents).map_err(CacheError::Remote)?;
-            entry.dirty = false;
+            self.pending_flush = true;
         }
         Ok(())
     }
@@ -124,7 +135,7 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
         backend: &mut impl RemoteFileBackend,
         injector: &mut I,
     ) -> Result<usize, CacheError> {
-        let mut flushed = 0;
+        let mut dirty = 0;
         for entry in &mut self.entries {
             if !entry.occupied || !entry.dirty {
                 continue
@@ -132,13 +143,27 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
             backend
                 .write(entry.path, &entry.bytes[..entry.len])
                 .map_err(CacheError::Remote)?;
-            entry.dirty = false;
-            flushed += 1;
+            dirty += 1;
+        }
+        if dirty != 0 || self.pending_flush {
+            backend.flush().map_err(CacheError::Remote)?;
         }
         if injector.checkpoint(CrashDomain::Storage, CrashBoundary::Flush) {
             return Err(CacheError::Interrupted)
         }
-        Ok(flushed)
+        for entry in &mut self.entries {
+            if entry.occupied && entry.dirty {
+                entry.dirty = false;
+            }
+        }
+        self.pending_flush = false;
+        Ok(dirty)
+    }
+
+    /// Flush dirty cache entries and return only after the remote durability
+    /// fence has completed.
+    pub fn sync(&mut self, backend: &mut impl RemoteFileBackend) -> Result<usize, CacheError> {
+        self.flush(backend)
     }
 
     pub fn invalidate(&mut self, path: StoragePath) -> bool {

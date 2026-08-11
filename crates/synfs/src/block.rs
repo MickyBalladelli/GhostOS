@@ -142,6 +142,7 @@ impl IntoStatus for BlockIoError {
 pub trait BlockDevice {
     fn read_block(&mut self, block: u64, output: &mut [u8]) -> Result<(), ()>;
     fn write_block(&mut self, block: u64, input: &[u8]) -> Result<(), ()>;
+    /// Complete only after all earlier writes survive a power loss.
     fn flush(&mut self) -> Result<(), ()>;
     fn discard_block(&mut self, block: u64) -> Result<(), ()>;
 }
@@ -725,6 +726,7 @@ where
 pub trait BlockStore {
     fn read_block(&mut self, block: u64, output: &mut [u8]) -> Result<(), BlockIoError>;
     fn write_block(&mut self, block: u64, input: &[u8]) -> Result<(), BlockIoError>;
+    /// Complete only after earlier writes are durable across power loss.
     fn flush(&mut self) -> Result<(), BlockIoError>;
     fn discard_block(&mut self, block: u64) -> Result<(), BlockIoError>;
 

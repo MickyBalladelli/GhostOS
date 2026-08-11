@@ -46,6 +46,9 @@ SynFS core
 
 Tests should exercise both direct SynFS behavior and at least one public boundary.
 
+The write, commit, rename, flush, sync, cache, block-device, and power-loss
+rules are defined in [`docs/durability.md`](../docs/durability.md).
+
 ## Storage pools
 
 `StoragePoolAdmin` combines NVMe namespaces, CXL persistent memory, and network block targets into pools. Pools can be striped or separated by failure domain. Lifecycle states include registration, online use, draining, failure, degraded operation, and safe detach.

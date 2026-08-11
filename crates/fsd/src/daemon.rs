@@ -772,6 +772,8 @@ impl<
             .bytes_read)
     }
 
+    /// Publish a write in the daemon's SynFS view. This does not promise
+    /// power-loss durability; the mount owner must complete `SynFs::sync`.
     pub fn write(
         &mut self,
         process: ProcessId,
@@ -1152,6 +1154,8 @@ impl<
         ))
     }
 
+    /// Atomically publish a rename in SynFS memory. The rename is durable only
+    /// after the generation reaches the block-device sync barrier.
     pub fn rename(
         &mut self,
         process: ProcessId,

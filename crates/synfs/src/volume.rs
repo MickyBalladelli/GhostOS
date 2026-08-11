@@ -230,6 +230,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Self::recover(image)
     }
 
+    /// Serialize the next generation into a caller-owned image. The image is
+    /// only published in memory; use `sync` or `flush_to_device` for a
+    /// power-loss durability guarantee.
     pub fn flush(&mut self, image: &mut [u8]) -> Result<VolumeCommit, Error> {
         let mut no_interruption = NoInterruption;
         self.flush_with_interruption(image, &mut no_interruption)
@@ -292,6 +295,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     ) -> Result<VolumeCommit, Error> {
         let mut no_interruption = NoInterruption;
         self.flush_to_device_with_interruption(device, &mut no_interruption)
+    }
+
+    /// End-to-end sync for the persistent volume.
+    ///
+    /// This publishes the current CoW root, writes all data and type-map
+    /// blocks before the superblock commit record, and waits for the block
+    /// store's durability fence before returning.
+    pub fn sync<D: BlockStore>(&mut self, device: &mut D) -> Result<VolumeCommit, Error> {
+        self.flush_to_device(device)
     }
 
     pub fn flush_to_device_with_interruption<D: BlockStore, I: InterruptionInjector>(

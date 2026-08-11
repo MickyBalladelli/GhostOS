@@ -94,10 +94,13 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P0: Durable storage and data integrity
 
-- [ ] Define one end-to-end durability contract from application write through
+- [x] Define one end-to-end durability contract from application write through
       SynFS, storage daemon, block device, cache, flush, and power-loss recovery.
       Done when each layer states what `flush`, `sync`, `rename`, and `commit`
-      guarantee and tests prove the ordering.
+      guarantee and tests prove the ordering. See
+      [`docs/durability.md`](docs/durability.md),
+      [`crates/durability/src/lib.rs`](crates/durability/src/lib.rs), and
+      [`crates/durability/tests/contract.rs`](crates/durability/tests/contract.rs).
 - [ ] Add online filesystem scrub and repair-preview operations for SynFS,
       package stores, journals, snapshots, and system metadata.
       Done when inspection is read-only by default, repairs require explicit

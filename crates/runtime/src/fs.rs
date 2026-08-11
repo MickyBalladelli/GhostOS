@@ -121,6 +121,8 @@ impl<S: SystemCall> Runtime<S> {
         usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)
     }
 
+    /// Write bytes into the published SynFS view. This is volatile until the
+    /// filesystem owner completes the documented sync barrier.
     pub fn write_at(&self, file: File, offset: u64, input: SharedBuffer) -> Result<usize, Error> {
         let mut request = Request::new(Operation::SynFsWrite)
             .with_capability(file.capability)
