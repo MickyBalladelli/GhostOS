@@ -454,6 +454,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       duplicate-side-effect checks, and the exact rollback receipt. Rollback
       changes only the executable/configuration pointer; it never deletes data,
       rewrites history, or silently downgrades a schema.
+      Implementation: [`crates/synos-update/src/rollout.rs`](crates/synos-update/src/rollout.rs)
+      provides the signed release bundle, six-artifact compatibility gate,
+      rolling/canary/blue-green/emergency state machines, health gates, audit
+      events, capability-epoch fencing input, and rollback integrity checks.
+      [`crates/synos-update/tests/rollout.rs`](crates/synos-update/tests/rollout.rs)
+      covers all four strategies, mixed-version rejection, and health-failure
+      rollback. Keep this checkbox open until concrete kernel, service,
+      package, client, schema, and cluster runtimes provide measured evidence.
 - [ ] Add a coordinated drain protocol for processes, sockets, queues, storage
       leases, terminal sessions, and cluster ownership before maintenance.
       Done when drain completion is provable and forced termination leaves no

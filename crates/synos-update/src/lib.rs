@@ -3,6 +3,7 @@
 
 mod hotswap;
 mod patch;
+mod rollout;
 
 pub use hotswap::{
     HotSwapCoordinator, HotSwapError, HotSwapReceipt, HotSwapRequest, HotSwapRuntime,
@@ -12,6 +13,13 @@ pub use patch::{
     DEFAULT_KERNEL_PATCH_CAPACITY, KernelPatchCoordinator, KernelPatchError,
     KernelPatchRecord, KernelPatchReceipt, KernelPatchRequest, KernelPatchRuntime,
     MicrokernelPatchCoordinator, MAX_KERNEL_PATCH_BATCH,
+};
+pub use rollout::{
+    ArtifactKind, ArtifactSpec, CompatibilityContract, CompatibilityError, CompatibilityMode,
+    CompatibilityReport, BundleError, HealthReport, ReleaseBundle, ReleaseVerifier,
+    PlanError, RollbackReport, RolloutAuditEvent, RolloutCoordinator, RolloutError, RolloutPhase,
+    RolloutPlan, RolloutReceipt, RolloutRuntime, RolloutState, RolloutStrategy, RolloutTarget,
+    ARTIFACT_COUNT, DEFAULT_HEALTH_DEADLINE_MS, DEFAULT_ROLLOUT_UNITS,
 };
 pub use synos_ipc::InheritableDescriptor;
 
