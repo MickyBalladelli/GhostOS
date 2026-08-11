@@ -49,10 +49,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       Implementation: [abi/synos-abi.toml](abi/synos-abi.toml) generates the
       Rust and Swift bindings; kernel and gateway validate the generated version
       before dispatch or service mutation.
-- [ ] Build a service dependency graph with cycle detection, startup barriers,
+- [x] Build a service dependency graph with cycle detection, startup barriers,
       readiness state, shutdown ordering, and bounded restart budgets.
       Done when boot and reboot produce an ordered trace and no service accepts
       work before its declared dependencies are ready.
+      Implementation: [`crates/init/src/lib.rs`](crates/init/src/lib.rs)
+      provides a bounded dependency graph, transitive readiness gate, reverse
+      shutdown, reboot trace, and existing restart-budget enforcement;
+      regression models live in [`crates/init/tests/model.rs`](crates/init/tests/model.rs).
 - [ ] Add fault domains for scheduler, memory manager, IPC broker, storage
       daemon, network daemon, and package supervisor failures.
       Done when a fault is contained to its domain, surviving services remain

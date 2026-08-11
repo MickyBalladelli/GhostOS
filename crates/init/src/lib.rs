@@ -6,6 +6,8 @@ use synos_status::{IntoStatus, Severity, Status, facility};
 
 pub const DEFAULT_SERVICE_CAPACITY: usize = 32;
 pub const MAX_SERVICE_NAME_BYTES: usize = 48;
+pub const MAX_SERVICE_DEPENDENCIES: usize = DEFAULT_SERVICE_CAPACITY;
+pub const LIFECYCLE_TRACE_CAPACITY: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -153,11 +155,70 @@ pub enum ServiceState {
 pub struct ServiceStatus {
     pub spec: ServiceSpec,
     pub state: ServiceState,
+    pub readiness: ServiceReadiness,
     pub process: Option<ProcessId>,
     pub generation: u32,
     pub restart_count: u16,
     pub restart_at_us: u64,
     pub last_exit: Option<ExitReason>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServiceReadiness {
+    Waiting,
+    Ready,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LifecycleEvent {
+    BootStarted,
+    ServiceStarted { service: ServiceId, generation: u32 },
+    ServiceReady { service: ServiceId },
+    BootCompleted,
+    ShutdownStarted,
+    ServiceStopped { service: ServiceId },
+    ShutdownCompleted,
+    RebootStarted,
+    RebootCompleted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LifecycleTrace {
+    events: [Option<LifecycleEvent>; LIFECYCLE_TRACE_CAPACITY],
+    len: usize,
+}
+
+impl LifecycleTrace {
+    pub const fn new() -> Self {
+        Self {
+            events: [None; LIFECYCLE_TRACE_CAPACITY],
+            len: 0,
+        }
+    }
+
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn events(&self) -> impl Iterator<Item = LifecycleEvent> + '_ {
+        self.events[..self.len].iter().flatten().copied()
+    }
+
+    fn push(&mut self, event: LifecycleEvent) -> Result<(), SupervisorError> {
+        let slot = self
+            .events
+            .get_mut(self.len)
+            .ok_or(SupervisorError::TraceFull)?;
+        *slot = Some(event);
+        self.len += 1;
+        Ok(())
+    }
+}
+
+impl Default for LifecycleTrace {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -192,6 +253,12 @@ pub enum SupervisorError {
     SpawnFailed,
     StaleExit,
     Interrupted,
+    MissingDependency,
+    DependencyCycle,
+    DependencyNotReady,
+    NotReady,
+    ServiceFailed,
+    TraceFull,
 }
 
 impl IntoStatus for SupervisorError {
@@ -201,12 +268,15 @@ impl IntoStatus for SupervisorError {
                 Status::INVALID_ARGUMENT
             }
             Self::Capacity => Status::NO_SPACE,
-            Self::NotFound | Self::StaleExit => Status::NOT_FOUND,
+            Self::NotFound | Self::StaleExit | Self::MissingDependency => Status::NOT_FOUND,
+            Self::DependencyCycle | Self::DependencyNotReady | Self::NotReady | Self::ServiceFailed => {
+                Status::BUSY
+            }
             Self::FenceFailed | Self::SpawnFailed => {
                 Status::new(Severity::Error, facility::DRIVER, 1, 0)
                     .unwrap_or(Status::INVALID_ARGUMENT)
             }
-            Self::Interrupted => Status::BUSY,
+            Self::Interrupted | Self::TraceFull => Status::BUSY,
         }
     }
 }
@@ -226,7 +296,10 @@ pub trait SupervisorRuntime {
 struct ServiceSlot {
     occupied: bool,
     spec: ServiceSpec,
+    dependencies: [Option<ServiceId>; MAX_SERVICE_DEPENDENCIES],
+    dependency_count: usize,
     state: ServiceState,
+    ready: bool,
     process: Option<ProcessId>,
     generation: u32,
     restart_count: u16,
@@ -249,7 +322,10 @@ impl ServiceSlot {
             capability_profile: 0,
             restart: RestartPolicy::NEVER,
         },
+        dependencies: [None; MAX_SERVICE_DEPENDENCIES],
+        dependency_count: 0,
         state: ServiceState::Stopped,
+        ready: false,
         process: None,
         generation: 0,
         restart_count: 0,
@@ -275,6 +351,14 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
     }
 
     pub fn register(&mut self, spec: ServiceSpec) -> Result<(), SupervisorError> {
+        self.register_with_dependencies(spec, &[])
+    }
+
+    pub fn register_with_dependencies(
+        &mut self,
+        spec: ServiceSpec,
+        dependencies: &[ServiceId],
+    ) -> Result<(), SupervisorError> {
         if spec.id.raw() == 0
             || spec.image_id == 0
             || spec.name.len == 0
@@ -296,6 +380,23 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
             );
         }
         validate_policy(spec.restart)?;
+        if dependencies.len() > MAX_SERVICE_DEPENDENCIES {
+            return Err(SupervisorError::Capacity);
+        }
+        for (index, dependency) in dependencies.iter().enumerate() {
+            if *dependency == spec.id
+                || dependencies[..index].contains(dependency)
+                || self.slot_index(*dependency).is_err()
+            {
+                return Err(if *dependency == spec.id {
+                    SupervisorError::DependencyCycle
+                } else if self.slot_index(*dependency).is_err() {
+                    SupervisorError::MissingDependency
+                } else {
+                    SupervisorError::InvalidService
+                });
+            }
+        }
         let slot = self
             .services
             .iter_mut()
@@ -304,8 +405,42 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         *slot = ServiceSlot {
             occupied: true,
             spec,
+            dependency_count: dependencies.len(),
             ..ServiceSlot::EMPTY
         };
+        for (index, dependency) in dependencies.iter().copied().enumerate() {
+            slot.dependencies[index] = Some(dependency);
+        }
+        Ok(())
+    }
+
+    pub fn add_dependency(
+        &mut self,
+        service: ServiceId,
+        dependency: ServiceId,
+    ) -> Result<(), SupervisorError> {
+        let service_index = self.slot_index(service)?;
+        if self.slot_index(dependency).is_err() {
+            return Err(SupervisorError::MissingDependency);
+        }
+        let slot = &mut self.services[service_index];
+        if slot.dependencies[..slot.dependency_count].contains(&Some(dependency)) {
+            return Err(SupervisorError::AlreadyRegistered);
+        }
+        if dependency == service {
+            return Err(SupervisorError::DependencyCycle);
+        }
+        if slot.dependency_count == MAX_SERVICE_DEPENDENCIES {
+            return Err(SupervisorError::Capacity);
+        }
+        slot.dependencies[slot.dependency_count] = Some(dependency);
+        slot.dependency_count += 1;
+        if self.topological_order().is_err() {
+            let slot = &mut self.services[service_index];
+            slot.dependency_count -= 1;
+            slot.dependencies[slot.dependency_count] = None;
+            return Err(SupervisorError::DependencyCycle);
+        }
         Ok(())
     }
 
@@ -324,11 +459,14 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         runtime: &mut R,
         injector: &mut I,
     ) -> Result<SupervisorEvent, SupervisorError> {
-        let slot = self.slot_mut(id)?;
-        if slot.state == ServiceState::Running {
+        let index = self.slot_index(id)?;
+        if self.services[index].state == ServiceState::Running {
             return Err(SupervisorError::AlreadyRegistered);
         }
-        spawn(slot, runtime, injector)
+        if !self.dependencies_ready(index) {
+            return Err(SupervisorError::DependencyNotReady);
+        }
+        spawn(&mut self.services[index], runtime, injector)
     }
 
     pub fn report_exit<R: SupervisorRuntime>(
@@ -338,16 +476,18 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         now_us: u64,
         runtime: &mut R,
     ) -> Result<SupervisorEvent, SupervisorError> {
-        let slot = self
+        let index = self
             .services
-            .iter_mut()
-            .find(|slot| slot.occupied && slot.process == Some(process))
+            .iter()
+            .position(|slot| slot.occupied && slot.process == Some(process))
             .ok_or(SupervisorError::StaleExit)?;
+        let slot = &mut self.services[index];
 
         runtime
             .fence_process(process)
             .map_err(|_| SupervisorError::FenceFailed)?;
         slot.process = None;
+        slot.ready = false;
         slot.last_exit = Some(reason);
 
         let ExitReason::Crash(crash) = reason else {
@@ -410,23 +550,75 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
         runtime: &mut R,
         injector: &mut I,
     ) -> Result<Option<SupervisorEvent>, SupervisorError> {
-        let Some(slot) = self.services.iter_mut().find(|slot| {
-            slot.occupied && slot.state == ServiceState::Backoff && now_us >= slot.restart_at_us
+        let Some(index) = (0..CAPACITY).find(|index| {
+            let slot = &self.services[*index];
+            slot.occupied
+                && slot.state == ServiceState::Backoff
+                && now_us >= slot.restart_at_us
+                && self.dependencies_ready(*index)
         }) else {
             return Ok(None);
         };
-        spawn(slot, runtime, injector).map(Some)
+        spawn(&mut self.services[index], runtime, injector).map(Some)
+    }
+
+    pub fn boot<R: SupervisorRuntime>(
+        &mut self,
+        runtime: &mut R,
+    ) -> Result<LifecycleTrace, SupervisorError> {
+        let mut trace = LifecycleTrace::new();
+        trace.push(LifecycleEvent::BootStarted)?;
+        self.boot_into(runtime, &mut trace)?;
+        trace.push(LifecycleEvent::BootCompleted)?;
+        Ok(trace)
+    }
+
+    pub fn shutdown<R: SupervisorRuntime>(
+        &mut self,
+        runtime: &mut R,
+    ) -> Result<LifecycleTrace, SupervisorError> {
+        let mut trace = LifecycleTrace::new();
+        trace.push(LifecycleEvent::ShutdownStarted)?;
+        self.shutdown_into(runtime, &mut trace)?;
+        trace.push(LifecycleEvent::ShutdownCompleted)?;
+        Ok(trace)
+    }
+
+    pub fn reboot<R: SupervisorRuntime>(
+        &mut self,
+        runtime: &mut R,
+    ) -> Result<LifecycleTrace, SupervisorError> {
+        let mut trace = LifecycleTrace::new();
+        trace.push(LifecycleEvent::RebootStarted)?;
+        trace.push(LifecycleEvent::ShutdownStarted)?;
+        self.shutdown_into(runtime, &mut trace)?;
+        trace.push(LifecycleEvent::BootStarted)?;
+        self.boot_into(runtime, &mut trace)?;
+        trace.push(LifecycleEvent::BootCompleted)?;
+        trace.push(LifecycleEvent::RebootCompleted)?;
+        Ok(trace)
+    }
+
+    pub fn readiness(&self, id: ServiceId) -> Result<ServiceReadiness, SupervisorError> {
+        let index = self.slot_index(id)?;
+        Ok(self.readiness_at(index, &mut [0; CAPACITY]))
+    }
+
+    pub fn accepts_work(&self, id: ServiceId) -> Result<(), SupervisorError> {
+        if self.readiness(id)? == ServiceReadiness::Ready {
+            Ok(())
+        } else {
+            Err(SupervisorError::NotReady)
+        }
     }
 
     pub fn status(&self, id: ServiceId) -> Result<ServiceStatus, SupervisorError> {
-        let slot = self
-            .services
-            .iter()
-            .find(|slot| slot.occupied && slot.spec.id == id)
-            .ok_or(SupervisorError::NotFound)?;
+        let index = self.slot_index(id)?;
+        let slot = &self.services[index];
         Ok(ServiceStatus {
             spec: slot.spec,
             state: slot.state,
+            readiness: self.readiness_at(index, &mut [0; CAPACITY]),
             process: slot.process,
             generation: slot.generation,
             restart_count: slot.restart_count,
@@ -438,23 +630,176 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
     pub fn services(&self) -> impl Iterator<Item = ServiceStatus> + '_ {
         self.services
             .iter()
-            .filter(|slot| slot.occupied)
-            .map(|slot| ServiceStatus {
-                spec: slot.spec,
-                state: slot.state,
-                process: slot.process,
-                generation: slot.generation,
-                restart_count: slot.restart_count,
-                restart_at_us: slot.restart_at_us,
-                last_exit: slot.last_exit,
+            .enumerate()
+            .filter(|(_, slot)| slot.occupied)
+            .map(|(index, slot)| {
+                ServiceStatus {
+                    spec: slot.spec,
+                    state: slot.state,
+                    readiness: self.readiness_at(index, &mut [0; CAPACITY]),
+                    process: slot.process,
+                    generation: slot.generation,
+                    restart_count: slot.restart_count,
+                    restart_at_us: slot.restart_at_us,
+                    last_exit: slot.last_exit,
+                }
             })
     }
 
-    fn slot_mut(&mut self, id: ServiceId) -> Result<&mut ServiceSlot, SupervisorError> {
+    fn slot_index(&self, id: ServiceId) -> Result<usize, SupervisorError> {
         self.services
-            .iter_mut()
-            .find(|slot| slot.occupied && slot.spec.id == id)
+            .iter()
+            .position(|slot| slot.occupied && slot.spec.id == id)
             .ok_or(SupervisorError::NotFound)
+    }
+
+    fn topological_order(&self) -> Result<([usize; CAPACITY], usize), SupervisorError> {
+        let mut remaining = [false; CAPACITY];
+        let mut count = 0;
+        for (index, slot) in self.services.iter().enumerate() {
+            if slot.occupied {
+                remaining[index] = true;
+                count += 1;
+            }
+        }
+
+        let mut order = [0; CAPACITY];
+        let mut length = 0;
+        while length < count {
+            let mut candidate: Option<usize> = None;
+            for index in 0..CAPACITY {
+                if !remaining[index] || !self.dependencies_satisfied_by_order(index, &remaining) {
+                    continue;
+                }
+                if candidate.is_none_or(|current| {
+                    self.services[index].spec.id.raw() < self.services[current].spec.id.raw()
+                }) {
+                    candidate = Some(index);
+                }
+            }
+            let Some(index) = candidate else {
+                return Err(SupervisorError::DependencyCycle);
+            };
+            remaining[index] = false;
+            order[length] = index;
+            length += 1;
+        }
+        Ok((order, length))
+    }
+
+    fn dependencies_satisfied_by_order(
+        &self,
+        index: usize,
+        remaining: &[bool; CAPACITY],
+    ) -> bool {
+        self.services[index].dependencies[..self.services[index].dependency_count]
+            .iter()
+            .flatten()
+            .all(|dependency| {
+                self.slot_index(*dependency)
+                    .ok()
+                    .is_none_or(|dependency_index| !remaining[dependency_index])
+            })
+    }
+
+    fn dependencies_ready(&self, index: usize) -> bool {
+        self.services[index].dependencies[..self.services[index].dependency_count]
+            .iter()
+            .flatten()
+            .all(|dependency| {
+                self.slot_index(*dependency)
+                    .ok()
+                    .is_some_and(|dependency_index| {
+                        self.readiness_at(dependency_index, &mut [0; CAPACITY])
+                            == ServiceReadiness::Ready
+                    })
+            })
+    }
+
+    fn readiness_at(&self, index: usize, visiting: &mut [u8; CAPACITY]) -> ServiceReadiness {
+        let slot = &self.services[index];
+        if !slot.occupied || slot.state != ServiceState::Running || !slot.ready {
+            return ServiceReadiness::Waiting;
+        }
+        if visiting[index] != 0 {
+            return ServiceReadiness::Waiting;
+        }
+        visiting[index] = 1;
+        let ready = slot.dependencies[..slot.dependency_count]
+            .iter()
+            .flatten()
+            .all(|dependency| {
+                self.slot_index(*dependency)
+                    .ok()
+                    .is_some_and(|dependency_index| {
+                        self.readiness_at(dependency_index, visiting) == ServiceReadiness::Ready
+                    })
+            });
+        visiting[index] = 0;
+        if ready {
+            ServiceReadiness::Ready
+        } else {
+            ServiceReadiness::Waiting
+        }
+    }
+
+    fn boot_into<R: SupervisorRuntime>(
+        &mut self,
+        runtime: &mut R,
+        trace: &mut LifecycleTrace,
+    ) -> Result<(), SupervisorError> {
+        let (order, length) = self.topological_order()?;
+        for index in order[..length].iter().copied() {
+            if self.services[index].state == ServiceState::Running {
+                if self.readiness_at(index, &mut [0; CAPACITY]) != ServiceReadiness::Ready {
+                    return Err(SupervisorError::DependencyNotReady);
+                }
+                continue;
+            }
+            if self.services[index].state != ServiceState::Stopped {
+                return Err(SupervisorError::ServiceFailed);
+            }
+            if !self.dependencies_ready(index) {
+                return Err(SupervisorError::DependencyNotReady);
+            }
+            let event = spawn(&mut self.services[index], runtime, &mut NoInterruption)?;
+            if let SupervisorEvent::Started {
+                service,
+                generation,
+                ..
+            } = event
+            {
+                trace.push(LifecycleEvent::ServiceStarted { service, generation })?;
+                trace.push(LifecycleEvent::ServiceReady { service })?;
+            }
+        }
+        Ok(())
+    }
+
+    fn shutdown_into<R: SupervisorRuntime>(
+        &mut self,
+        runtime: &mut R,
+        trace: &mut LifecycleTrace,
+    ) -> Result<(), SupervisorError> {
+        let (order, length) = self.topological_order()?;
+        for index in order[..length].iter().rev().copied() {
+            let process = self.services[index].process;
+            if let Some(process) = process {
+                runtime
+                    .fence_process(process)
+                    .map_err(|_| SupervisorError::FenceFailed)?;
+            }
+            let service = self.services[index].spec.id;
+            let slot = &mut self.services[index];
+            slot.process = None;
+            slot.ready = false;
+            slot.state = ServiceState::Stopped;
+            slot.restart_count = 0;
+            slot.window_started_us = 0;
+            slot.restart_at_us = 0;
+            trace.push(LifecycleEvent::ServiceStopped { service })?;
+        }
+        Ok(())
     }
 }
 
@@ -497,6 +842,7 @@ fn spawn<R: SupervisorRuntime>(
     }
     slot.process = Some(process);
     slot.state = ServiceState::Running;
+    slot.ready = true;
     Ok(SupervisorEvent::Started {
         service: slot.spec.id,
         process,
