@@ -610,6 +610,56 @@ fn page_fault_dispatch_is_quota_limited_and_status_mapped() {
 }
 
 #[test]
+fn invariants_catalogue_and_model_state_are_redacted() {
+    use crate::invariants::{CATALOGUE, InvariantId};
+
+    assert_eq!(CATALOGUE.len(), 6);
+    assert_eq!(CATALOGUE[0].id, InvariantId::AddressSpaceOwnership.as_str());
+    assert!(CATALOGUE.iter().all(|entry| entry.redaction == "identifier-only"));
+
+    let owner = address_space(11);
+    let mut capabilities = CapabilitySpace::<2>::new();
+    let endpoint = capabilities
+        .mint_root(
+            owner,
+            CapabilityObject::IpcChannel(crate::ipc::ChannelId::new(11).unwrap()),
+            Rights::SEND.union(Rights::RECEIVE),
+        )
+        .expect("channel capability");
+    assert!(capabilities.check_invariants().is_ok());
+
+    let channel = Channel::<2>::new(crate::ipc::ChannelId::new(11).unwrap());
+    assert!(channel
+        .check_invariants(&capabilities, owner, endpoint, Rights::SEND)
+        .is_ok());
+
+    let scheduler = crate::Scheduler::new();
+    assert!(scheduler.check_invariants().is_ok());
+    assert!(crate::invariants::check_address_space(owner).is_ok());
+    assert!(crate::invariants::check_interrupt_delivery(
+        32,
+        crate::CpuId::new(0).unwrap(),
+        false,
+        true,
+    )
+    .is_ok());
+    assert!(crate::invariants::check_page_table_transition(
+        &[0x1000, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000],
+        0,
+    )
+    .is_ok());
+
+    let failure = crate::invariants::check_page_table_transition(
+        &[0x1000, 0x1000, 0x3000, 0x4000, 0x5000, 0x6000],
+        0,
+    )
+    .expect_err("duplicate table frame");
+    assert_eq!(failure.invariant, InvariantId::PageTableTransition);
+    assert_eq!(failure.code, 1006);
+    assert_eq!(failure.identifier(), "page_table.transition");
+}
+
+#[test]
 fn runtime_rejects_unknown_operations_reserved_bits_and_bad_buffers() {
     let caller = address_space(9);
     let process = FsdProcessId::new(9).expect("valid process");

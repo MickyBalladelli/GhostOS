@@ -136,6 +136,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                 Rights::SEND,
             )
             .map_err(|_| IpcError::AccessDenied)?;
+        self.debug_check_ownership(capabilities, caller, endpoint, Rights::SEND);
 
         if let Some(buffer) = message.buffer {
             let handle = buffer_authority.ok_or(IpcError::AccessDenied)?;
@@ -308,6 +309,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                 Rights::SEND,
             )
             .map_err(|_| IpcError::AccessDenied)?;
+        self.debug_check_ownership(capabilities, caller, endpoint, Rights::SEND);
         if let Some(buffer) = message.buffer {
             let handle = buffer_authority.ok_or(IpcError::AccessDenied)?;
             capabilities
@@ -436,6 +438,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
             EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
             EventField::identifier(field::OPERATION, message.correlation.raw()),
         );
+        crate::invariants::debug_assert_valid(self.check_queue_invariants());
         Ok(())
     }
 
@@ -463,6 +466,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                 Rights::RECEIVE,
             )
             .map_err(|_| IpcError::AccessDenied)?;
+        self.debug_check_ownership(capabilities, caller, endpoint, Rights::RECEIVE);
 
         let decision = capabilities
             .consume_quota(
@@ -525,17 +529,69 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
     }
 
     fn dequeue(&self) -> Result<Message, IpcError> {
-        self.ring
+        let result = self
+            .ring
             .try_receive()
             .map(Message::from)
             .map_err(|error| match error {
                 RingError::Empty => IpcError::Empty,
                 RingError::Full => unreachable!(),
-            })
+            });
+        crate::invariants::debug_assert_valid(self.check_queue_invariants());
+        result
     }
 
     pub fn pending(&self) -> usize {
         self.ring.pending()
+    }
+
+    /// Check queue bounds and the capability owner without exposing queue data.
+    pub fn check_invariants<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        required: Rights,
+    ) -> Result<(), crate::invariants::InvariantFailure> {
+        self.check_queue_invariants()?;
+        if capabilities
+                .authorize(
+                    caller,
+                    endpoint,
+                    CapabilityObject::IpcChannel(self.id),
+                    required,
+                )
+                .is_err()
+        {
+            return Err(crate::invariants::InvariantFailure::new(
+                crate::invariants::InvariantId::IpcOwnership,
+            ))
+        }
+        Ok(())
+    }
+
+    fn check_queue_invariants(&self) -> Result<(), crate::invariants::InvariantFailure> {
+        if self.id.raw() == 0 || self.pending() > CAPACITY {
+            return Err(crate::invariants::InvariantFailure::new(
+                crate::invariants::InvariantId::IpcOwnership,
+            ))
+        }
+        Ok(())
+    }
+
+    fn debug_check_ownership<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+        required: Rights,
+    ) {
+        crate::invariants::debug_assert_valid(self.check_invariants(
+            capabilities,
+            caller,
+            endpoint,
+            required,
+        ))
     }
 }
 
@@ -565,6 +621,12 @@ impl<const CAPACITY: usize, const MAX_CAPABILITIES: usize>
         {
             return Err(IpcError::AccessDenied);
         }
+        self.channel.debug_check_ownership(
+            self.capabilities,
+            self.caller,
+            self.endpoint,
+            Rights::SEND,
+        );
         let decision = self
             .capabilities
             .consume_quota(
@@ -654,6 +716,12 @@ impl<const CAPACITY: usize, const MAX_CAPABILITIES: usize>
     }
 
     pub fn try_receive_at(&self, now_us: u64) -> Result<Message, IpcError> {
+        self.channel.debug_check_ownership(
+            self.capabilities,
+            self.caller,
+            self.endpoint,
+            Rights::RECEIVE,
+        );
         let decision = self
             .capabilities
             .consume_quota(

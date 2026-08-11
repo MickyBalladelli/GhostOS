@@ -129,6 +129,7 @@ impl Scheduler {
             inherited_priority: 0,
             inherited_deadline: u64::MAX,
         };
+        self.debug_check();
         Ok(id)
     }
 
@@ -154,6 +155,7 @@ impl Scheduler {
             authority.raw(),
             id.raw() as u16,
         );
+        self.debug_check();
         Ok(())
     }
 
@@ -190,6 +192,7 @@ impl Scheduler {
             priority,
             deadline,
         };
+        self.debug_check();
         Ok(())
     }
 
@@ -211,7 +214,9 @@ impl Scheduler {
         self.authorize_system_control(capabilities, caller, authority)?;
         self.partition
             .set_online(online)
-            .map_err(map_partition_error)
+            .map_err(map_partition_error)?;
+        self.debug_check();
+        Ok(())
     }
 
     pub fn isolate_cores<const MAX_CAPABILITIES: usize>(
@@ -228,6 +233,7 @@ impl Scheduler {
                 crate::arch::interrupts::set_core_isolated(cpu.raw(), self.partition.is_isolated(cpu));
             }
         }
+        self.debug_check();
         Ok(())
     }
 
@@ -248,6 +254,7 @@ impl Scheduler {
                 );
             }
         }
+        self.debug_check();
         Ok(())
     }
 
@@ -265,6 +272,7 @@ impl Scheduler {
         }
         let slot = self.slot(id)?;
         self.threads[slot].affinity = affinity;
+        self.debug_check();
         Ok(())
     }
 
@@ -300,6 +308,7 @@ impl Scheduler {
             waiter,
         });
         self.recompute_inheritance();
+        self.debug_check();
         Ok(())
     }
 
@@ -309,7 +318,8 @@ impl Scheduler {
                 *entry = None
             }
         }
-        self.recompute_inheritance()
+        self.recompute_inheritance();
+        self.debug_check()
     }
 
     fn clear_ipc_waits(&mut self, thread: ThreadId) {
@@ -350,6 +360,7 @@ impl Scheduler {
             )
             .map_err(|_| SchedulerError::AccessDenied)?;
         self.threads[slot].persona = persona;
+        self.debug_check();
         Ok(())
     }
 
@@ -363,7 +374,9 @@ impl Scheduler {
         self.threads[slot]
             .persona
             .disable(right)
-            .map_err(map_persona_error)
+            .map_err(map_persona_error)?;
+        self.debug_check();
+        Ok(())
     }
 
     pub fn enable_right(
@@ -376,7 +389,9 @@ impl Scheduler {
         self.threads[slot]
             .persona
             .enable(right)
-            .map_err(map_persona_error)
+            .map_err(map_persona_error)?;
+        self.debug_check();
+        Ok(())
     }
 
     pub fn drop_right(
@@ -389,7 +404,9 @@ impl Scheduler {
         self.threads[slot]
             .persona
             .drop_right(right)
-            .map_err(map_persona_error)
+            .map_err(map_persona_error)?;
+        self.debug_check();
+        Ok(())
     }
 
     pub fn dispatch(&mut self) -> Option<ContextSwitch> {
@@ -398,23 +415,27 @@ impl Scheduler {
 
     pub fn dispatch_on(&mut self, cpu: CpuId) -> Option<ContextSwitch> {
         if !self.partition.accepts_kernel_work(cpu) {
+            self.debug_check();
             return None
         }
         self.current_cpu = cpu;
         if let Some(current) = self.current {
             if self.thread(current).ok()?.state == ThreadState::Running {
+                self.debug_check();
                 return None;
             }
         }
 
         let previous = self.current.take();
         let Some(next) = self.pick_next(self.partition.housekeeping()) else {
+            self.debug_check();
             return None;
         };
         self.current = Some(next);
         let thread = &mut self.threads[next.slot()];
         thread.state = ThreadState::Running;
         thread.switches = thread.switches.saturating_add(1);
+        self.debug_check();
         Some(ContextSwitch { previous, next })
     }
 
@@ -451,6 +472,7 @@ impl Scheduler {
             }
             _ => {}
         }
+        self.debug_check();
         Ok(())
     }
 
@@ -479,11 +501,77 @@ impl Scheduler {
                 return self.dispatch();
             }
         }
+        self.debug_check();
         None
     }
 
     pub const fn clock(&self) -> u64 {
         self.clock
+    }
+
+    /// Validate scheduler ownership, generations, runnable states, and waiters.
+    pub fn check_invariants(&self) -> Result<(), crate::invariants::InvariantFailure> {
+        let mut running = None;
+        for (slot, thread) in self.threads.iter().enumerate() {
+            if thread.state == ThreadState::Vacant {
+                if thread.id.raw() != 0 || !thread.affinity.is_empty() {
+                    return Err(crate::invariants::InvariantFailure::new(
+                        crate::invariants::InvariantId::SchedulerState,
+                    ))
+                }
+                continue
+            }
+            if thread.id.slot() != slot
+                || thread.id.generation() == 0
+                || self.generations[slot] != thread.id.generation()
+                || thread.context.instruction_pointer == 0
+                || thread.context.stack_pointer == 0
+                || thread.affinity.is_empty()
+                || (thread.mode == ExecutionMode::Kernel)
+                    != (thread.address_space == AddressSpaceId::KERNEL)
+            {
+                return Err(crate::invariants::InvariantFailure::new(
+                    crate::invariants::InvariantId::SchedulerState,
+                ))
+            }
+            crate::invariants::check_address_space(thread.address_space)?;
+            if thread.state == ThreadState::Running {
+                if running.replace(thread.id).is_some() {
+                    return Err(crate::invariants::InvariantFailure::new(
+                        crate::invariants::InvariantId::SchedulerState,
+                    ))
+                }
+            }
+        }
+        if self.current != running {
+            return Err(crate::invariants::InvariantFailure::new(
+                crate::invariants::InvariantId::SchedulerState,
+            ))
+        }
+        if self.partition.online().is_empty()
+            || !self.partition.isolated().difference(self.partition.online()).is_empty()
+            || self.partition.housekeeping().is_empty()
+        {
+            return Err(crate::invariants::InvariantFailure::new(
+                crate::invariants::InvariantId::SchedulerState,
+            ))
+        }
+        for waiter in self.ipc_waiters.iter().flatten() {
+            if waiter.endpoint == 0
+                || waiter.owner == waiter.waiter
+                || self.slot(waiter.owner).is_err()
+                || self.slot(waiter.waiter).is_err()
+            {
+                return Err(crate::invariants::InvariantFailure::new(
+                    crate::invariants::InvariantId::SchedulerState,
+                ))
+            }
+        }
+        Ok(())
+    }
+
+    fn debug_check(&self) {
+        crate::invariants::debug_assert_valid(self.check_invariants())
     }
 
     fn slot(&self, id: ThreadId) -> Result<usize, SchedulerError> {

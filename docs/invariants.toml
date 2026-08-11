@@ -1,0 +1,63 @@
+# Stable machine-readable catalogue for kernel safety checks.
+# Failure records contain only `id` and `code`; they never contain handles,
+# addresses, payload bytes, tenant names, or capability contents.
+
+schema = 1
+version = "1.0"
+failure_shape = ["invariant_id", "failure_code"]
+redaction = "identifier-only"
+debug_hook = "synos_kernel::invariants::debug_assert_valid"
+
+[[invariant]]
+id = "address_space.ownership"
+domain = "address_spaces"
+statement = "A capability owner and every address-space object name a valid address space."
+failure_code = 1001
+check = "synos_kernel::invariants::check_address_space"
+model_tests = ["kernel::tests::invariants_catalogue_and_model_state_are_redacted"]
+recovery_tests = ["kernel/tests/invariant_recovery.rs::invariant_recovery_rebuilds_only_valid_state"]
+
+[[invariant]]
+id = "capability.derivation"
+domain = "capabilities"
+statement = "Live capability generations, rights, backing ranges, and derivation links are consistent."
+failure_code = 1002
+check = "synos_kernel::CapabilitySpace::check_invariants"
+model_tests = ["kernel::tests::invariants_catalogue_and_model_state_are_redacted"]
+recovery_tests = ["kernel/tests/invariant_recovery.rs::invariant_recovery_rebuilds_only_valid_state"]
+
+[[invariant]]
+id = "ipc.ownership"
+domain = "ipc"
+statement = "Only an owner of a channel capability with the required right may use its bounded queue."
+failure_code = 1003
+check = "synos_kernel::Channel::check_invariants"
+model_tests = ["kernel::tests::invariants_catalogue_and_model_state_are_redacted"]
+recovery_tests = ["kernel/tests/invariant_recovery.rs::invariant_recovery_rebuilds_only_valid_state"]
+
+[[invariant]]
+id = "scheduler.state"
+domain = "scheduler"
+statement = "Live threads have valid generations and contexts, and only one live thread runs at once."
+failure_code = 1004
+check = "synos_kernel::Scheduler::check_invariants"
+model_tests = ["kernel::tests::invariants_catalogue_and_model_state_are_redacted"]
+recovery_tests = ["kernel/tests/invariant_recovery.rs::invariant_recovery_rebuilds_only_valid_state"]
+
+[[invariant]]
+id = "interrupt.delivery"
+domain = "interrupts"
+statement = "Interrupt vectors are bounded and isolated CPUs do not deliver kernel work."
+failure_code = 1005
+check = "synos_kernel::invariants::check_interrupt_delivery"
+model_tests = ["kernel::tests::invariants_catalogue_and_model_state_are_redacted"]
+recovery_tests = ["kernel/tests/invariant_recovery.rs::invariant_recovery_rebuilds_only_valid_state"]
+
+[[invariant]]
+id = "page_table.transition"
+domain = "page_tables"
+statement = "A page-table root transition uses distinct aligned frames and checked aliases."
+failure_code = 1006
+check = "synos_kernel::invariants::check_page_table_transition"
+model_tests = ["kernel::tests::invariants_catalogue_and_model_state_are_redacted"]
+recovery_tests = ["kernel/tests/invariant_recovery.rs::invariant_recovery_rebuilds_only_valid_state"]

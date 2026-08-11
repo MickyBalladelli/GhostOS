@@ -28,11 +28,15 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P0: Kernel correctness and fault containment
 
-- [ ] Publish a machine-readable invariant catalogue for address spaces,
+- [x] Publish a machine-readable invariant catalogue for address spaces,
       capabilities, IPC ownership, scheduler state, interrupt delivery, and
       page-table transitions.
       Done when invariant checks run in debug builds, model tests, and recovery
       tests, and failures identify the violated invariant without exposing data.
+      Implementation: [`docs/invariants.toml`](docs/invariants.toml),
+      [`kernel/src/invariants.rs`](kernel/src/invariants.rs), kernel debug
+      hooks, model coverage, and recovery coverage are in place; keep this
+      checkbox open until the required evidence run is recorded.
 - [ ] Add a deterministic kernel litmus suite for IPC ordering, capability
       revocation, memory visibility, interrupt races, scheduler preemption, and
       wakeup-after-HLT behavior.

@@ -172,7 +172,14 @@ pub mod interrupts {
         // The bootstrap CPU remains a housekeeping CPU today. This gate is
         // also the architectural hook used by AP interrupt routing once SMP
         // startup supplies each core's local ID.
-        if core_isolated(0) {
+        let isolated = core_isolated(0);
+        crate::invariants::debug_assert_valid(crate::invariants::check_interrupt_delivery(
+            vector,
+            crate::task::CpuId::new(0).expect("bootstrap CPU is valid"),
+            isolated,
+            !isolated,
+        ));
+        if isolated {
             return
         }
         if vector == 14 {

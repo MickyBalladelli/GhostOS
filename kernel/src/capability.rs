@@ -341,6 +341,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::CALLER, caller.raw() as u64),
             EventField::unsigned(field::RIGHTS, remaining.bits() as u64),
         );
+        self.debug_check();
         Ok(remaining)
     }
 
@@ -521,6 +522,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::LENGTH, revoked as u64),
         );
         self.trace_revocation(authority, 2);
+        self.debug_check();
         Ok(revoked)
     }
 
@@ -552,6 +554,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::LENGTH, revoked as u64),
         );
         self.trace_revocation(authority, 2);
+        self.debug_check();
         Ok(revoked)
     }
 
@@ -590,6 +593,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::LENGTH, (revoked + 1) as u64),
         );
         self.trace_revocation(handle, 2);
+        self.debug_check();
         Ok(revoked + 1)
     }
 
@@ -617,6 +621,101 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
 
     pub const fn capacity(&self) -> usize {
         CAPACITY
+    }
+
+    /// Validate the capability derivation tree without returning private
+    /// descriptors or any tenant data.
+    pub fn check_invariants(&self) -> Result<(), crate::invariants::InvariantFailure> {
+        for (slot, entry) in self.entries.iter().enumerate() {
+            if !entry.occupied {
+                continue
+            }
+            if entry.generation == 0 || entry.info.rights.is_empty() {
+                return Err(crate::invariants::InvariantFailure::new(
+                    crate::invariants::InvariantId::CapabilityDerivation,
+                ))
+            }
+            crate::invariants::check_address_space(entry.info.owner)?;
+            if let CapabilityObject::AddressSpace(address_space) = entry.info.object {
+                crate::invariants::check_address_space(address_space)?;
+            }
+            match (entry.info.parent, entry.parent_slot) {
+                (None, NO_DESCRIPTOR) => {}
+                (Some(parent), parent_slot) => {
+                    let Ok(parent_index) = self.valid_slot(parent) else {
+                        return Err(crate::invariants::InvariantFailure::new(
+                            crate::invariants::InvariantId::CapabilityDerivation,
+                        ))
+                    };
+                    if parent_slot != parent_index
+                        || !self.entries[parent_index].info.rights.contains(entry.info.rights)
+                        || entry
+                            .info
+                            .backing
+                            .is_some_and(|backing| {
+                                !self.entries[parent_index]
+                                    .info
+                                    .backing
+                                    .is_some_and(|parent_backing| parent_backing.contains(backing))
+                            })
+                    {
+                        return Err(crate::invariants::InvariantFailure::new(
+                            crate::invariants::InvariantId::CapabilityDerivation,
+                        ))
+                    }
+                }
+                _ => {
+                    return Err(crate::invariants::InvariantFailure::new(
+                        crate::invariants::InvariantId::CapabilityDerivation,
+                    ))
+                }
+            }
+
+            if entry.first_child != NO_DESCRIPTOR {
+                let Some(child) = self.entries.get(entry.first_child) else {
+                    return Err(crate::invariants::InvariantFailure::new(
+                        crate::invariants::InvariantId::CapabilityDerivation,
+                    ))
+                };
+                if !child.occupied || child.parent_slot != slot {
+                    return Err(crate::invariants::InvariantFailure::new(
+                        crate::invariants::InvariantId::CapabilityDerivation,
+                    ))
+                }
+            }
+        }
+
+        for (slot, entry) in self.entries.iter().enumerate() {
+            if !entry.occupied || entry.info.parent.is_none() {
+                continue
+            }
+            let parent_slot = entry.parent_slot;
+            let mut child = self.entries[parent_slot].first_child;
+            let mut found = false;
+            for _ in 0..CAPACITY {
+                if child == slot {
+                    found = true;
+                    break
+                }
+                if child == NO_DESCRIPTOR {
+                    break
+                }
+                let Some(next) = self.entries.get(child) else {
+                    break
+                };
+                child = next.next_sibling;
+            }
+            if !found {
+                return Err(crate::invariants::InvariantFailure::new(
+                    crate::invariants::InvariantId::CapabilityDerivation,
+                ))
+            }
+        }
+        Ok(())
+    }
+
+    fn debug_check(&self) {
+        crate::invariants::debug_assert_valid(self.check_invariants())
     }
 
     fn insert(
@@ -683,6 +782,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             handle.raw(),
             1,
         );
+        self.debug_check();
         Ok(handle)
     }
 
@@ -838,6 +938,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             EventField::unsigned(field::LENGTH, revoked as u64),
         );
         self.trace_revocation(authority, 2);
+        self.debug_check();
         Ok(revoked)
     }
 

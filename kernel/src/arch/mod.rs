@@ -36,6 +36,10 @@ mod current;
 pub use current::{halt, interrupts, paging};
 
 pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_offset: u64) {
+    crate::invariants::debug_assert_valid(crate::invariants::check_page_table_transition(
+        tables,
+        physical_offset,
+    ));
     // Safety: kernel_entry supplies distinct frames owned by the boot allocator.
     unsafe {
         paging::install_root(tables, physical_offset);

@@ -10,6 +10,7 @@ pub mod capability;
 mod console;
 pub mod dlm;
 pub mod ipc;
+pub mod invariants;
 pub mod micro_silo;
 pub mod quota;
 #[cfg(all(
@@ -90,6 +91,9 @@ pub use task::{
     AddressSpaceId, Context, CpuId, CpuMask, ExecutionMode, SchedulingPolicy, Thread, ThreadId,
     ThreadState,
 };
+pub use invariants::{
+    CATALOGUE as INVARIANT_CATALOGUE, InvariantDefinition, InvariantFailure, InvariantId,
+};
 
 // Scheduler state starts in BSS so the BIOS image carries no large prebuilt
 // table. kernel_entry initializes it before interrupts or shell code use it.
@@ -125,6 +129,10 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         };
         *frame = address;
     }
+    invariants::debug_assert_valid(invariants::check_page_table_transition(
+        &page_tables,
+        boot_info.physical_address_offset,
+    ));
 
     let scheduler = unsafe {
         let slot = &mut *core::ptr::addr_of_mut!(SCHEDULER);
