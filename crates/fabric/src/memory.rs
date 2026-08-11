@@ -9,6 +9,7 @@ use synos_time_sync::MonotonicClock;
 pub const DEFAULT_POOL_CAPACITY: usize = 64;
 pub const DEFAULT_LEASE_CAPACITY: usize = 256;
 pub const DEFAULT_PAGE_TRACKING_CAPACITY: usize = 1024;
+const NODE_FAILURE_WORDS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryKind {
@@ -127,7 +128,7 @@ pub struct GlobalAddressSpace<
     pools: [Option<MemoryPool>; POOLS],
     draining: [bool; POOLS],
     overrides: [Option<PageOverride>; OVERRIDES],
-    failed_nodes: u64,
+    failed_nodes: [u64; NODE_FAILURE_WORDS],
 }
 
 impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERRIDES> {
@@ -136,7 +137,7 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
             pools: [None; POOLS],
             draining: [false; POOLS],
             overrides: [None; OVERRIDES],
-            failed_nodes: 0,
+            failed_nodes: [0; NODE_FAILURE_WORDS],
         }
     }
 
@@ -344,19 +345,19 @@ impl<const POOLS: usize, const OVERRIDES: usize> GlobalAddressSpace<POOLS, OVERR
     }
 
     pub fn mark_node_failed(&mut self, node: NodeId) -> Result<(), Error> {
-        let bit = node_bit(node).ok_or(Error::Capacity)?;
-        self.failed_nodes |= bit;
+        let (word, bit) = node_bit(node).ok_or(Error::Capacity)?;
+        self.failed_nodes[word] |= bit;
         Ok(())
     }
 
     pub fn mark_node_alive(&mut self, node: NodeId) -> Result<(), Error> {
-        let bit = node_bit(node).ok_or(Error::Capacity)?;
-        self.failed_nodes &= !bit;
+        let (word, bit) = node_bit(node).ok_or(Error::Capacity)?;
+        self.failed_nodes[word] &= !bit;
         Ok(())
     }
 
     pub fn is_node_failed(&self, node: NodeId) -> bool {
-        node_bit(node).is_some_and(|bit| self.failed_nodes & bit != 0)
+        node_bit(node).is_some_and(|(word, bit)| self.failed_nodes[word] & bit != 0)
     }
 
     pub fn redirect_page(
@@ -496,9 +497,14 @@ impl<const POOLS: usize, const OVERRIDES: usize> Default
     }
 }
 
-const fn node_bit(node: NodeId) -> Option<u64> {
+const fn node_bit(node: NodeId) -> Option<(usize, u64)> {
     let raw = node.raw();
-    if raw > 64 { None } else { Some(1 << (raw - 1)) }
+    if raw == 0 || raw as usize > NODE_FAILURE_WORDS * 64 {
+        None
+    } else {
+        let index = raw as usize - 1;
+        Some((index / 64, 1 << (index % 64)))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
