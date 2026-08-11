@@ -1,0 +1,9 @@
+[package]
+name = "synos-numa"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Bounded NUMA topology, placement, and locality accounting"
+
+[lib]
+path = "src/lib.rs"

@@ -312,10 +312,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`crates/observability/src/scaling.rs`](crates/observability/src/scaling.rs),
       [`kernel/src/task.rs`](kernel/src/task.rs), and
       [`kernel/benches/scalability.rs`](kernel/benches/scalability.rs).
-- [ ] Add NUMA-aware placement for processes, memory, queues, storage workers,
+- [x] Add NUMA-aware placement for processes, memory, queues, storage workers,
       and network interrupts.
       Done when remote-memory traffic and placement decisions are observable and
-      the system has a safe fallback on UMA hosts.
+      the system has a safe fallback on UMA hosts. Implementation:
+      [`crates/numa`](crates/numa) provides bounded topology discovery, local /
+      remote / UMA decisions, and remote-byte counters. Kernel process homes,
+      hot-object memory reports, platform I/O queues, storage worker batches, and
+      network interrupt polling expose the decisions through reports and trace
+      fields. UMA is the default when firmware supplies no topology; regression
+      coverage is in [`crates/numa/src/lib.rs`](crates/numa/src/lib.rs).
 - [ ] Define a cluster scale target and test membership, heartbeats, fencing,
       discovery, and recovery at 10, 100, and 1,000 nodes.
       Done when control-plane traffic, convergence time, memory, and failure

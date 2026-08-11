@@ -2,6 +2,11 @@
 #![forbid(unsafe_code)]
 
 use synos_status::{IntoStatus, Severity, Status, facility};
+pub use synos_numa::{
+    NumaCounters, NumaDecision, NumaPlacement, NumaReport, NumaTopology, NumaTopologyError,
+    PlacementKind, PlacementLocality,
+};
+use synos_observability::{field, EventField, EventKind};
 
 pub const DEFAULT_QUEUE_CAPACITY: usize = 64;
 pub const MAX_MEDIA_PLANES: usize = 4;
@@ -106,6 +111,8 @@ pub struct AsyncQueue<Request: Copy, Response: Copy, const CAPACITY: usize = DEF
     submit_cursor: usize,
     dispatch_cursor: usize,
     completion_cursor: usize,
+    numa: NumaPlacement,
+    placement: NumaDecision,
 }
 
 impl<Request: Copy, Response: Copy, const CAPACITY: usize> AsyncQueue<Request, Response, CAPACITY> {
@@ -115,7 +122,39 @@ impl<Request: Copy, Response: Copy, const CAPACITY: usize> AsyncQueue<Request, R
             submit_cursor: 0,
             dispatch_cursor: 0,
             completion_cursor: 0,
+            numa: NumaPlacement::uma(),
+            placement: NumaDecision::uma(PlacementKind::Queue),
         }
+    }
+
+    /// Bind queue ownership to the closest CPU/node and retain the decision
+    /// for inspection. The UMA result is explicit when topology is absent.
+    pub fn configure_numa(
+        &mut self,
+        topology: NumaTopology,
+        preferred_cpu: Option<u16>,
+        preferred_node: Option<u8>,
+    ) -> NumaDecision {
+        self.numa.set_topology(topology);
+        self.placement = self
+            .numa
+            .place(PlacementKind::Queue, preferred_cpu, preferred_node);
+        synos_observability::info!(
+            EventKind::Kernel,
+            EventField::unsigned(field::NUMA_KIND, PlacementKind::Queue as u64),
+            EventField::unsigned(field::NUMA_REQUESTED_NODE, self.placement.requested_node as u64),
+            EventField::unsigned(field::NUMA_SELECTED_NODE, self.placement.selected_node as u64),
+            EventField::unsigned(field::NUMA_LOCALITY, self.placement.locality as u64),
+        );
+        self.placement
+    }
+
+    pub const fn placement(&self) -> NumaDecision {
+        self.placement
+    }
+
+    pub const fn numa_report(&self) -> NumaReport {
+        self.numa.report()
     }
 
     pub fn submit(&mut self, request: Request) -> Result<RequestToken, Error> {
@@ -461,6 +500,19 @@ impl<const CAPACITY: usize> IoQueue<CAPACITY> {
     pub fn pending(&self) -> usize {
         self.queue.pending()
     }
+
+    pub fn configure_numa(
+        &mut self,
+        topology: NumaTopology,
+        preferred_cpu: Option<u16>,
+        preferred_node: Option<u8>,
+    ) -> NumaDecision {
+        self.queue.configure_numa(topology, preferred_cpu, preferred_node)
+    }
+
+    pub const fn numa_report(&self) -> NumaReport {
+        self.queue.numa_report()
+    }
 }
 
 impl<const CAPACITY: usize> Default for IoQueue<CAPACITY> {
@@ -502,6 +554,19 @@ impl<const CAPACITY: usize> MediaQueue<CAPACITY> {
 
     pub fn pending(&self) -> usize {
         self.queue.pending()
+    }
+
+    pub fn configure_numa(
+        &mut self,
+        topology: NumaTopology,
+        preferred_cpu: Option<u16>,
+        preferred_node: Option<u8>,
+    ) -> NumaDecision {
+        self.queue.configure_numa(topology, preferred_cpu, preferred_node)
+    }
+
+    pub const fn numa_report(&self) -> NumaReport {
+        self.queue.numa_report()
     }
 }
 

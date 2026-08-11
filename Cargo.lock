@@ -689,6 +689,7 @@ dependencies = [
  "synos-fsd",
  "synos-ipc",
  "synos-legacy-pc-drivers",
+ "synos-numa",
  "synos-observability",
  "synos-power",
  "synos-runtime",
@@ -750,11 +751,16 @@ dependencies = [
  "synos-fabric",
  "synos-ipc",
  "synos-kernel",
+ "synos-numa",
  "synos-observability",
  "synos-policy",
  "synos-status",
  "synos-time-sync",
 ]
+
+[[package]]
+name = "synos-numa"
+version = "0.1.0"
 
 [[package]]
 name = "synos-observability"
@@ -787,6 +793,8 @@ dependencies = [
 name = "synos-platform-io"
 version = "0.1.0"
 dependencies = [
+ "synos-numa",
+ "synos-observability",
  "synos-status",
 ]
 
@@ -913,6 +921,7 @@ dependencies = [
  "synos-kernel",
  "synos-mesh",
  "synos-netd",
+ "synos-numa",
  "synos-observability",
  "synos-policy",
  "synos-status",

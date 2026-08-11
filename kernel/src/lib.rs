@@ -75,6 +75,7 @@ pub use hot_allocator::{
     HotAllocation, HotAllocationError, HotAllocationPlacement, HotAllocatorConfigError,
     HotAllocatorReport, HotAllocatorStats, HotObjectAllocator, HotObjectKind, HotReclaimError,
 };
+pub use synos_numa::{NumaCounters, NumaDecision, NumaPlacement, NumaReport, NumaTopology, NumaTopologyError, PlacementKind, PlacementLocality};
 pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
     CapabilityRevocationHook, CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,

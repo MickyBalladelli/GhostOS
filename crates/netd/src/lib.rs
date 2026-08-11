@@ -1,6 +1,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub use synos_numa::{NumaCounters, NumaDecision, NumaReport, NumaTopology, NumaTopologyError, PlacementKind, PlacementLocality};
+
 mod dhcp;
 mod capture;
 mod memory;

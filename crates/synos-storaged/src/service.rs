@@ -4,9 +4,10 @@ use crate::{
     protocol::{Endpoint, EndpointError, Protocol, ProtocolFeatures},
 };
 use synos_observability::{
-    BatchController, CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level,
-    ProducerPolicy,
+    field, BatchController, CapabilityDomain, CapabilityTrace, CapabilityTraceStage, EventField,
+    EventKind, Level, ProducerPolicy,
 };
+use synos_numa::{NumaDecision, NumaPlacement, NumaReport, NumaTopology, PlacementKind};
 use synos_ipc::{BufferCapability, BufferError, BufferLease, BufferOwner, BufferRights, SharedBuffer};
 
 pub const MAX_MOUNTS: usize = 32;
@@ -239,6 +240,7 @@ pub struct StorageBatchReport {
     pub bytes: usize,
     pub interrupt: bool,
     pub fairness_yield: bool,
+    pub worker_placement: NumaDecision,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -276,6 +278,9 @@ pub struct StorageDaemon {
     pending: [Option<IoRequest>; MAX_PENDING_IO],
     completions: [Option<Completion>; MAX_PENDING_IO],
     controller: BatchController,
+    numa: NumaPlacement,
+    worker_cpu: Option<u16>,
+    worker_node: Option<u8>,
 }
 
 impl StorageDaemon {
@@ -289,7 +294,36 @@ impl StorageDaemon {
             pending: [None; MAX_PENDING_IO],
             completions: [None; MAX_PENDING_IO],
             controller: BatchController::new(ProducerPolicy::STORAGE),
+            numa: NumaPlacement::uma(),
+            worker_cpu: None,
+            worker_node: None,
         }
+    }
+
+    pub fn configure_numa(
+        &mut self,
+        topology: NumaTopology,
+        preferred_cpu: Option<u16>,
+        preferred_node: Option<u8>,
+    ) -> NumaDecision {
+        self.numa.set_topology(topology);
+        self.worker_cpu = preferred_cpu;
+        self.worker_node = preferred_node;
+        let placement = self
+            .numa
+            .place(PlacementKind::StorageWorker, preferred_cpu, preferred_node);
+        synos_observability::info!(
+            EventKind::Kernel,
+            EventField::unsigned(field::NUMA_KIND, PlacementKind::StorageWorker as u64),
+            EventField::unsigned(field::NUMA_REQUESTED_NODE, placement.requested_node as u64),
+            EventField::unsigned(field::NUMA_SELECTED_NODE, placement.selected_node as u64),
+            EventField::unsigned(field::NUMA_LOCALITY, placement.locality as u64),
+        );
+        placement
+    }
+
+    pub const fn numa_report(&self) -> NumaReport {
+        self.numa.report()
     }
 
     pub fn bootstrap_capability(
@@ -548,9 +582,22 @@ impl StorageDaemon {
         let decision = self.controller.plan(pending, 1, 0, interactive_pending);
         let max_bytes = self.controller.policy().max_bytes;
         let limit = decision.count.min(output.len()).min(MAX_STORAGE_BATCH);
+        let worker_placement = self.numa.place(
+            PlacementKind::StorageWorker,
+            self.worker_cpu,
+            self.worker_node,
+        );
+        synos_observability::info!(
+            EventKind::Kernel,
+            EventField::unsigned(field::NUMA_KIND, PlacementKind::StorageWorker as u64),
+            EventField::unsigned(field::NUMA_REQUESTED_NODE, worker_placement.requested_node as u64),
+            EventField::unsigned(field::NUMA_SELECTED_NODE, worker_placement.selected_node as u64),
+            EventField::unsigned(field::NUMA_LOCALITY, worker_placement.locality as u64),
+        );
         let mut report = StorageBatchReport {
             interrupt: decision.interrupt,
             fairness_yield: decision.fairness_yield,
+            worker_placement,
             ..StorageBatchReport::default()
         };
         for slot in &mut self.pending {

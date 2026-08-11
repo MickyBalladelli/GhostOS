@@ -6,9 +6,10 @@ use crate::task::{
 };
 use crate::partition::{CorePartition, CorePartitionError};
 use synos_observability::{
-    CapabilityDomain, CapabilityTraceStage, Level, ProfileDomain, ProfileSample,
-    ScalePolicy, emit_capability_trace, record_profile_sample,
+    field, CapabilityDomain, CapabilityTraceStage, EventField, EventKind, Level, ProfileDomain,
+    ProfileSample, ScalePolicy, emit_capability_trace, info, record_profile_sample,
 };
+use synos_numa::{NumaPlacement, NumaReport, NumaTopology, PlacementKind};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,6 +59,7 @@ pub struct Scheduler {
     partition: CorePartition,
     current_cpu: CpuId,
     ipc_waiters: [Option<IpcWait>; MAX_THREADS],
+    numa: NumaPlacement,
 }
 
 #[derive(Clone, Copy)]
@@ -78,6 +80,7 @@ impl Scheduler {
             partition: CorePartition::new(),
             current_cpu: CpuId::new(0).expect("CPU 0 is valid"),
             ipc_waiters: [None; MAX_THREADS],
+            numa: NumaPlacement::uma(),
         }
     }
 
@@ -116,6 +119,11 @@ impl Scheduler {
         let generation = self.generations[slot].wrapping_add(1).max(1);
         self.generations[slot] = generation;
         let id = ThreadId::from_parts(slot, generation);
+        let placement = self.numa.place(
+            PlacementKind::Process,
+            Some(self.current_cpu.raw() as u16),
+            None,
+        );
         self.threads[slot] = Thread {
             id,
             address_space,
@@ -125,13 +133,40 @@ impl Scheduler {
             persona: ExecutionPersona::anonymous(),
             context: Context::new(entry, stack_top),
             affinity: CpuMask::all(),
+            numa_node: placement.selected_node,
             wake_at: 0,
             switches: 0,
             inherited_priority: 0,
             inherited_deadline: u64::MAX,
         };
         self.debug_check();
+        info!(
+            EventKind::Kernel,
+            EventField::unsigned(field::NUMA_KIND, PlacementKind::Process as u64),
+            EventField::unsigned(field::NUMA_REQUESTED_NODE, placement.requested_node as u64),
+            EventField::unsigned(field::NUMA_SELECTED_NODE, placement.selected_node as u64),
+            EventField::unsigned(field::NUMA_LOCALITY, placement.locality as u64),
+        );
         Ok(id)
+    }
+
+    /// Configure the hardware topology. UMA is the default and remains a
+    /// valid fallback when firmware does not describe NUMA nodes.
+    pub fn configure_numa<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        topology: NumaTopology,
+    ) -> Result<(), SchedulerError> {
+        self.authorize_system_control(capabilities, caller, authority)?;
+        self.numa.set_topology(topology);
+        self.debug_check();
+        Ok(())
+    }
+
+    pub const fn numa_report(&self) -> NumaReport {
+        self.numa.report()
     }
 
     /// Stop a task after proving control over the exact task or its address

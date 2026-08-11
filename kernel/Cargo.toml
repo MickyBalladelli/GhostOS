@@ -34,6 +34,7 @@ synos-fsd = { path = "../crates/fsd" }
 synos-legacy-pc-drivers = { path = "../crates/legacy-pc-drivers" }
 synos-ipc = { path = "../crates/ipc" }
 synos-observability = { path = "../crates/observability" }
+synos-numa = { path = "../crates/numa" }
 synos-power = { path = "../crates/power" }
 syn-shell = { path = "../crates/syn-shell" }
 synos-status = { path = "../crates/status" }

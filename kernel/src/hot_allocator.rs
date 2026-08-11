@@ -5,6 +5,8 @@
 //! CPUs on the same node, and finally a configured number of remote nodes.
 //! This makes the remote-memory cost explicit and measurable.
 
+use synos_observability::{field, EventField, EventKind};
+
 const BITMAP_WORDS: usize = 4;
 const MAX_POOL_SLOTS: usize = BITMAP_WORDS * u64::BITS as usize;
 const PROBE_BUCKETS: usize = 8;
@@ -103,6 +105,7 @@ pub struct HotAllocatorStats {
     pub local_cpu_allocations: u64,
     pub local_node_allocations: u64,
     pub remote_node_allocations: u64,
+    pub remote_memory_bytes: u64,
     pub total_probe_steps: u64,
     pub max_probe_steps: u16,
     pub probe_buckets: [u64; PROBE_BUCKETS],
@@ -119,6 +122,7 @@ impl HotAllocatorStats {
             local_cpu_allocations: 0,
             local_node_allocations: 0,
             remote_node_allocations: 0,
+            remote_memory_bytes: 0,
             total_probe_steps: 0,
             max_probe_steps: 0,
             probe_buckets: [0; PROBE_BUCKETS],
@@ -416,6 +420,23 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
             stats.remote_reclaims = stats.remote_reclaims.saturating_add(1);
         }
         Ok(())
+    }
+
+    /// Account bytes touched through a remote-node allocation. Object pools
+    /// do not know the payload size, so callers report the exact transfer or
+    /// object size at the ownership boundary.
+    pub fn record_remote_memory(&mut self, kind: HotObjectKind, bytes: u64) {
+        if bytes == 0 {
+            return
+        }
+        self.stats[kind.index()].remote_memory_bytes = self.stats[kind.index()]
+            .remote_memory_bytes
+            .saturating_add(bytes);
+        synos_observability::trace!(
+            EventKind::RemoteMemory,
+            EventField::unsigned(field::NUMA_KIND, 2),
+            EventField::unsigned(field::REMOTE_MEMORY_BYTES, bytes),
+        );
     }
 
     pub fn report(&self, kind: HotObjectKind) -> HotAllocatorReport {

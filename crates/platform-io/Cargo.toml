@@ -9,3 +9,5 @@ path = "src/lib.rs"
 
 [dependencies]
 synos-status = { path = "../status" }
+synos-numa = { path = "../numa" }
+synos-observability = { path = "../observability" }

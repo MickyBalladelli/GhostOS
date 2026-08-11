@@ -14,6 +14,7 @@ synos-auth = { path = "../auth" }
 synos-fabric = { path = "../fabric" }
 synos-netd = { path = "../netd" }
 synos-observability = { path = "../observability" }
+synos-numa = { path = "../numa" }
 synos-policy = { path = "../policy" }
 synos-kernel = { path = "../../kernel" }
 synos-status = { path = "../status" }

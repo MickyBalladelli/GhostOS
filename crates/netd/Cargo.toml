@@ -20,6 +20,7 @@ synos-fabric = { path = "../fabric" }
 synos-ipc = { path = "../ipc" }
 synos-kernel = { path = "../../kernel" }
 synos-observability = { path = "../observability" }
+synos-numa = { path = "../numa" }
 synos-policy = { path = "../policy" }
 synos-status = { path = "../status" }
 synos-time-sync = { path = "../time-sync" }

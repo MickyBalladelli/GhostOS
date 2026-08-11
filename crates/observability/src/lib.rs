@@ -78,6 +78,11 @@ pub mod field {
     pub const PING_COUNT: u16 = 29;
     pub const PING_TIMEOUT: u16 = 30;
     pub const PING_RESULT: u16 = 31;
+    pub const NUMA_KIND: u16 = 32;
+    pub const NUMA_REQUESTED_NODE: u16 = 33;
+    pub const NUMA_SELECTED_NODE: u16 = 34;
+    pub const NUMA_LOCALITY: u16 = 35;
+    pub const REMOTE_MEMORY_BYTES: u16 = 36;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

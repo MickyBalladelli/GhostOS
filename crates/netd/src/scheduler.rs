@@ -1,5 +1,6 @@
 use synos_time_sync::MonotonicClock;
-use synos_observability::{BatchController, BatchDecision, ProducerPolicy};
+use synos_observability::{field, BatchController, BatchDecision, EventField, EventKind, ProducerPolicy};
+use synos_numa::{NumaDecision, NumaPlacement, NumaReport, NumaTopology, PlacementKind};
 
 use crate::memory::SharedMemory;
 use crate::service::{ClientChannel, NetworkDaemon, ServiceError, SocketBackend};
@@ -18,6 +19,7 @@ pub struct NetworkServiceActivity {
     pub socket_requests: usize,
     pub service_error: Option<ServiceError>,
     pub batch: BatchDecision,
+    pub interrupt_placement: NumaDecision,
 }
 
 /// Bounded coordinator for the Ring 3 network service.
@@ -29,6 +31,9 @@ pub struct NetworkServiceScheduler {
     socket_request_budget: usize,
     stack_ingress_budget: usize,
     controller: BatchController,
+    numa: NumaPlacement,
+    interrupt_cpu: Option<u16>,
+    interrupt_node: Option<u8>,
 }
 
 impl NetworkServiceScheduler {
@@ -37,6 +42,9 @@ impl NetworkServiceScheduler {
             socket_request_budget,
             stack_ingress_budget: DEFAULT_SOCKET_INGRESS_BUDGET,
             controller: BatchController::new(ProducerPolicy::NETWORK),
+            numa: NumaPlacement::uma(),
+            interrupt_cpu: None,
+            interrupt_node: None,
         }
     }
 
@@ -48,6 +56,9 @@ impl NetworkServiceScheduler {
             socket_request_budget,
             stack_ingress_budget,
             controller: BatchController::new(ProducerPolicy::NETWORK),
+            numa: NumaPlacement::uma(),
+            interrupt_cpu: None,
+            interrupt_node: None,
         }
     }
 
@@ -61,6 +72,23 @@ impl NetworkServiceScheduler {
 
     pub const fn stack_ingress_budget(&self) -> usize {
         self.stack_ingress_budget
+    }
+
+    pub fn configure_numa(
+        &mut self,
+        topology: NumaTopology,
+        preferred_cpu: Option<u16>,
+        preferred_node: Option<u8>,
+    ) -> NumaDecision {
+        self.numa.set_topology(topology);
+        self.interrupt_cpu = preferred_cpu;
+        self.interrupt_node = preferred_node;
+        self.numa
+            .place(PlacementKind::NetworkInterrupt, preferred_cpu, preferred_node)
+    }
+
+    pub const fn numa_report(&self) -> NumaReport {
+        self.numa.report()
     }
 
     pub fn poll<C, T, R, B, M, const SOCKET_CAPACITY: usize, const RING_CAPACITY: usize>(
@@ -87,6 +115,18 @@ impl NetworkServiceScheduler {
             0,
             self.socket_request_budget != 0,
         );
+        let interrupt_placement = self.numa.place(
+            PlacementKind::NetworkInterrupt,
+            self.interrupt_cpu,
+            self.interrupt_node,
+        );
+        synos_observability::info!(
+            EventKind::Kernel,
+            EventField::unsigned(field::NUMA_KIND, PlacementKind::NetworkInterrupt as u64),
+            EventField::unsigned(field::NUMA_REQUESTED_NODE, interrupt_placement.requested_node as u64),
+            EventField::unsigned(field::NUMA_SELECTED_NODE, interrupt_placement.selected_node as u64),
+            EventField::unsigned(field::NUMA_LOCALITY, interrupt_placement.locality as u64),
+        );
         let stack = daemon.backend_mut().poll_network(
             core::cmp::min(now_ms, i64::MAX as u64) as i64,
             batch.count,
@@ -112,6 +152,7 @@ impl NetworkServiceScheduler {
             socket_requests,
             service_error,
             batch,
+            interrupt_placement,
         }
     }
 
@@ -147,6 +188,18 @@ impl NetworkServiceScheduler {
             0,
             self.socket_request_budget != 0,
         );
+        let interrupt_placement = self.numa.place(
+            PlacementKind::NetworkInterrupt,
+            self.interrupt_cpu,
+            self.interrupt_node,
+        );
+        synos_observability::info!(
+            EventKind::Kernel,
+            EventField::unsigned(field::NUMA_KIND, PlacementKind::NetworkInterrupt as u64),
+            EventField::unsigned(field::NUMA_REQUESTED_NODE, interrupt_placement.requested_node as u64),
+            EventField::unsigned(field::NUMA_SELECTED_NODE, interrupt_placement.selected_node as u64),
+            EventField::unsigned(field::NUMA_LOCALITY, interrupt_placement.locality as u64),
+        );
         let stack = {
             let backend = daemon.backend_mut();
             backend.poll_network(
@@ -178,6 +231,7 @@ impl NetworkServiceScheduler {
             socket_requests,
             service_error,
             batch,
+            interrupt_placement,
         }
     }
 }
