@@ -26,6 +26,10 @@ pub enum ScrubScope {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScrubIssue {
     CorruptBlock,
+    DuplicateBlock,
+    StaleGeneration,
+    TornRecord,
+    OrphanedCapability,
     UnreachableBlock,
     InvalidCheckpoint,
 }
@@ -120,12 +124,23 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     ) -> Result<ScrubPlan<CAPACITY>, Error> {
         let mut findings = [None; CAPACITY];
         let mut reachable = [false; MAX_BLOCKS];
+        let mut duplicate = [false; MAX_BLOCKS];
         let mut inspected_blocks = 0;
         let mut valid_blocks = 0;
         let mut issue_count = 0;
         let mut repairable_count = 0;
 
-        self.mark_reachable_for_scrub(self.root, &mut reachable);
+        let mut root_reachable = [false; MAX_BLOCKS];
+        let mut root_data_owners = [None; MAX_BLOCKS];
+        self.mark_reachable_for_scrub(
+            self.root,
+            &mut root_reachable,
+            &mut duplicate,
+            &mut root_data_owners,
+        );
+        for (destination, source) in reachable.iter_mut().zip(root_reachable) {
+            *destination |= source;
+        }
         for checkpoint in self.checkpoints.iter().flatten() {
             if checkpoint.info.id.raw() == 0 || checkpoint.info.generation > self.generation {
                 Self::push_finding(
@@ -141,7 +156,17 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                     },
                 )?;
             }
-            self.mark_reachable_for_scrub(checkpoint.root, &mut reachable);
+            let mut checkpoint_reachable = [false; MAX_BLOCKS];
+            let mut checkpoint_data_owners = [None; MAX_BLOCKS];
+            self.mark_reachable_for_scrub(
+                checkpoint.root,
+                &mut checkpoint_reachable,
+                &mut duplicate,
+                &mut checkpoint_data_owners,
+            );
+            for (destination, source) in reachable.iter_mut().zip(checkpoint_reachable) {
+                *destination |= source;
+            }
         }
 
         for (index, slot) in self.arena.slots.iter().enumerate() {
@@ -151,7 +176,13 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             inspected_blocks += 1;
             let id = BlockId(index as u32 + 1);
             let fingerprint = block_fingerprint(block);
-            if self.validate_scrub_block(id).is_err() {
+            let corrupt = self.validate_scrub_block(id).is_err();
+            if corrupt {
+                let issue = if self.has_stale_generation(id) {
+                    ScrubIssue::StaleGeneration
+                } else {
+                    ScrubIssue::CorruptBlock
+                };
                 Self::push_finding(
                     &mut findings,
                     &mut issue_count,
@@ -159,12 +190,26 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                     ScrubFinding {
                         scope,
                         block: id.0,
-                        issue: ScrubIssue::CorruptBlock,
+                        issue,
                         before_fingerprint: fingerprint,
                         repairable: false,
                     },
                 )?;
-            } else if !reachable[index] {
+            }
+            if duplicate[index] {
+                Self::push_finding(
+                    &mut findings,
+                    &mut issue_count,
+                    &mut repairable_count,
+                    ScrubFinding {
+                        scope,
+                        block: id.0,
+                        issue: ScrubIssue::DuplicateBlock,
+                        before_fingerprint: fingerprint,
+                        repairable: false,
+                    },
+                )?;
+            } else if !corrupt && !reachable[index] {
                 Self::push_finding(
                     &mut findings,
                     &mut issue_count,
@@ -177,7 +222,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         repairable: true,
                     },
                 )?;
-            } else {
+            } else if !corrupt {
                 valid_blocks += 1;
             }
         }
@@ -281,7 +326,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         match self.arena.get(id)? {
             Block::Data(data) => {
                 let length = usize::from(data.len);
-                if length > super::DATA_BYTES || checksum(&data.bytes[..length]) != data.checksum {
+                if length == 0
+                    || length > super::DATA_BYTES
+                    || checksum(&data.bytes[..length]) != data.checksum
+                {
                     return Err(Error::Corrupt)
                 }
                 if data.next.is_some() {
@@ -351,6 +399,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Ok(())
     }
 
+    fn has_stale_generation(&self, id: BlockId) -> bool {
+        match self.arena.get(id) {
+            Ok(Block::Tree(TreeBlock::Leaf(leaf))) => leaf.records[..usize::from(leaf.len).min(super::MAX_KEYS)]
+                .iter()
+                .any(|record| record.created_at > self.generation),
+            _ => false,
+        }
+    }
+
     fn validate_scrub_data(
         &self,
         first: BlockId,
@@ -371,7 +428,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 return Err(Error::Corrupt)
             };
             let length = usize::from(data.len);
-            if length > super::DATA_BYTES || checksum(&data.bytes[..length]) != data.checksum {
+            if length == 0
+                || length > super::DATA_BYTES
+                || checksum(&data.bytes[..length]) != data.checksum
+            {
                 return Err(Error::Corrupt)
             }
             for byte in &data.bytes[..length] {
@@ -387,11 +447,17 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Ok(())
     }
 
-    fn mark_reachable_for_scrub(&self, root: BlockId, marked: &mut [bool; MAX_BLOCKS]) {
+    fn mark_reachable_for_scrub(
+        &self,
+        root: BlockId,
+        marked: &mut [bool; MAX_BLOCKS],
+        duplicate: &mut [bool; MAX_BLOCKS],
+        data_owners: &mut [Option<u64>; MAX_BLOCKS],
+    ) {
         if !root.is_some() {
             return
         }
-        let mut pending = [BlockId::NONE; MAX_BLOCKS];
+        let mut pending = [(BlockId::NONE, None); MAX_BLOCKS];
         let mut pending_len = 0;
         let Some(index) = root.0.checked_sub(1).map(|value| value as usize) else {
             return
@@ -400,26 +466,50 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             return
         }
         marked[index] = true;
-        pending[pending_len] = root;
+        pending[pending_len] = (root, None);
         pending_len += 1;
         while pending_len != 0 {
             pending_len -= 1;
-            let id = pending[pending_len];
+            let (id, owner) = pending[pending_len];
             let Ok(block) = self.arena.get(id) else {
                 continue
             };
             match block {
-                Block::Data(data) => self.mark_scrub_id(data.next, marked, &mut pending, &mut pending_len),
+                Block::Data(data) => self.mark_scrub_id(
+                    data.next,
+                    marked,
+                    duplicate,
+                    data_owners,
+                    owner,
+                    &mut pending,
+                    &mut pending_len,
+                ),
                 Block::Tree(TreeBlock::Leaf(leaf)) => {
                     for record in &leaf.records[..usize::from(leaf.len).min(super::MAX_KEYS)] {
                         if !record.deleted {
-                            self.mark_scrub_id(record.data, marked, &mut pending, &mut pending_len)
+                            self.mark_scrub_id(
+                                record.data,
+                                marked,
+                                duplicate,
+                                data_owners,
+                                Some(record.object_id),
+                                &mut pending,
+                                &mut pending_len,
+                            )
                         }
                     }
                 }
                 Block::Tree(TreeBlock::Branch(branch)) => {
                     for child in &branch.children[..=usize::from(branch.len).min(super::MAX_KEYS)] {
-                        self.mark_scrub_id(*child, marked, &mut pending, &mut pending_len)
+                        self.mark_scrub_id(
+                            *child,
+                            marked,
+                            duplicate,
+                            data_owners,
+                            None,
+                            &mut pending,
+                            &mut pending_len,
+                        )
                     }
                 }
             }
@@ -430,17 +520,30 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         &self,
         id: BlockId,
         marked: &mut [bool; MAX_BLOCKS],
-        pending: &mut [BlockId; MAX_BLOCKS],
+        duplicate: &mut [bool; MAX_BLOCKS],
+        data_owners: &mut [Option<u64>; MAX_BLOCKS],
+        owner: Option<u64>,
+        pending: &mut [(BlockId, Option<u64>); MAX_BLOCKS],
         pending_len: &mut usize,
     ) {
         let Some(index) = id.0.checked_sub(1).map(|value| value as usize) else {
             return
         };
-        if index >= MAX_BLOCKS || marked[index] || *pending_len >= MAX_BLOCKS {
+        if index >= MAX_BLOCKS {
+            return
+        }
+        if marked[index] {
+            if owner.is_none() || data_owners[index].is_some_and(|existing| Some(existing) != owner) {
+                duplicate[index] = true;
+            }
+            return
+        }
+        if *pending_len >= MAX_BLOCKS {
             return
         }
         marked[index] = true;
-        pending[*pending_len] = id;
+        data_owners[index] = owner;
+        pending[*pending_len] = (id, owner);
         *pending_len += 1;
     }
 }

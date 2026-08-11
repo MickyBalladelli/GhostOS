@@ -701,8 +701,15 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
                     break
                 }
                 let Some(next) = self.entries.get(child) else {
-                    break
+                    return Err(crate::invariants::InvariantFailure::new(
+                        crate::invariants::InvariantId::CapabilityDerivation,
+                    ))
                 };
+                if !next.occupied || next.parent_slot != parent_slot {
+                    return Err(crate::invariants::InvariantFailure::new(
+                        crate::invariants::InvariantId::CapabilityDerivation,
+                    ))
+                }
                 child = next.next_sibling;
             }
             if !found {

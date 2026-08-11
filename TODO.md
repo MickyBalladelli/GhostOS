@@ -110,10 +110,17 @@ measured p50/p95/p99 data over optimistic feature claims.
       fencing, explicit nonzero operator authorization, and per-block before /
       after fingerprints. Regression coverage is in
       [`crates/synfs/tests/scrub.rs`](crates/synfs/tests/scrub.rs).
-- [ ] Add checksummed metadata and scrubbing for silent corruption, stale
+- [x] Add checksummed metadata and scrubbing for silent corruption, stale
       generations, torn records, duplicate blocks, and orphaned capabilities.
       Done when corruption is detected before publication and recovery chooses a
       complete generation without guessing.
+      Implementation: [`crates/synfs/src/volume.rs`](crates/synfs/src/volume.rs)
+      validates complete metadata graphs before publication, rejects ambiguous
+      committed banks, and recovers only a complete checksummed generation.
+      [`crates/synfs/src/scrub.rs`](crates/synfs/src/scrub.rs) reports stale
+      generations, duplicate ownership, corrupt blocks, and unreachable blocks;
+      [`kernel/src/capability.rs`](kernel/src/capability.rs) rejects orphaned
+      capability derivation links.
 - [ ] Implement incremental, deduplicated, encrypted backups with resumable
       upload, retention limits, legal hold, and verified restore.
       Done when restore drills recover a bootable system and report RPO, RTO,

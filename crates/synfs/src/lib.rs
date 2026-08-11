@@ -692,7 +692,7 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
                 return Err(Error::Corrupt);
             };
             let length = block.len as usize;
-            if length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
+            if length == 0 || length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
                 return Err(Error::Corrupt);
             }
             visitor(MappedFilePage {
@@ -1849,6 +1849,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             let length = block.len as usize;
             if length > DATA_BYTES
                 || offset + length > required
+                || length == 0
                 || checksum(&block.bytes[..length]) != block.checksum
             {
                 return Err(Error::Corrupt);
@@ -2330,7 +2331,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 return Err(Error::Corrupt);
             };
             let length = block.len as usize;
-            if length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
+            if length == 0 || length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
                 return Err(Error::Corrupt);
             }
             let block_end = block_start.saturating_add(length as u64);

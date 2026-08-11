@@ -387,14 +387,32 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn check_consistency(&self) -> Result<(), Error> {
-        let mut seen = [false; MAX_BLOCKS];
-        self.validate_root(self.root, &mut seen)?;
-        for checkpoint in self.checkpoints.iter().flatten() {
-            if checkpoint.info.id.raw() == 0 || checkpoint.info.generation > self.generation {
+        if self.next_checkpoint == 0
+            || self.next_object_id == 0
+            || self.limits.max_blocks > MAX_BLOCKS
+            || (self.root.is_some() && self.generation == 0)
+        {
+            return Err(Error::Corrupt);
+        }
+        let mut tree_seen = [false; MAX_BLOCKS];
+        let mut data_owners = [None; MAX_BLOCKS];
+        self.validate_root(self.root, &mut tree_seen, &mut data_owners)?;
+        for (index, checkpoint) in self.checkpoints.iter().flatten().enumerate() {
+            if checkpoint.info.id.raw() == 0
+                || checkpoint.info.id.raw() >= self.next_checkpoint
+                || checkpoint.info.generation > self.generation
+                || self
+                    .checkpoints
+                    .iter()
+                    .flatten()
+                    .take(index)
+                    .any(|previous| previous.info.id == checkpoint.info.id)
+            {
                 return Err(Error::Corrupt);
             }
-            let mut seen = [false; MAX_BLOCKS];
-            self.validate_root(checkpoint.root, &mut seen)?;
+            let mut tree_seen = [false; MAX_BLOCKS];
+            let mut data_owners = [None; MAX_BLOCKS];
+            self.validate_root(checkpoint.root, &mut tree_seen, &mut data_owners)?;
         }
         Ok(())
     }
@@ -403,19 +421,31 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.check_consistency()
     }
 
-    fn validate_root(&self, root: BlockId, seen: &mut [bool; MAX_BLOCKS]) -> Result<(), Error> {
+    fn validate_root(
+        &self,
+        root: BlockId,
+        tree_seen: &mut [bool; MAX_BLOCKS],
+        data_owners: &mut [Option<u64>; MAX_BLOCKS],
+    ) -> Result<(), Error> {
         if !root.is_some() {
             return Ok(());
         }
-        self.validate_tree(root, seen)
+        self.validate_tree(root, tree_seen, data_owners, None, None)
     }
 
-    fn validate_tree(&self, id: BlockId, seen: &mut [bool; MAX_BLOCKS]) -> Result<(), Error> {
+    fn validate_tree(
+        &self,
+        id: BlockId,
+        tree_seen: &mut [bool; MAX_BLOCKS],
+        data_owners: &mut [Option<u64>; MAX_BLOCKS],
+        lower: Option<FileKey>,
+        upper: Option<FileKey>,
+    ) -> Result<(), Error> {
         let index = block_index::<MAX_BLOCKS>(id)?;
-        if seen[index] {
+        if tree_seen[index] {
             return Err(Error::Corrupt);
         }
-        seen[index] = true;
+        tree_seen[index] = true;
         let Block::Tree(tree) = self.arena.get(id)? else {
             return Err(Error::Corrupt);
         };
@@ -435,6 +465,8 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         || record.key.file.len == 0
                         || usize::from(record.key.file.len) > MAX_PATH_BYTES
                         || record.created_at > self.generation
+                        || lower.is_some_and(|bound| record.key < bound)
+                        || upper.is_some_and(|bound| record.key >= bound)
                     {
                         return Err(Error::Corrupt);
                     }
@@ -448,12 +480,24 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         }
                         match record.file_type {
                             FileType::Directory => {
-                                if record.size != 0 || record.data.is_some() {
+                                if record.object_id != 0
+                                    || record.size != 0
+                                    || record.data.is_some()
+                                {
                                     return Err(Error::Corrupt);
                                 }
                             }
                             FileType::Regular | FileType::Symlink => {
-                                self.validate_data(record.data, record.size, record.checksum)?;
+                                if record.object_id == 0 {
+                                    return Err(Error::Corrupt);
+                                }
+                                self.validate_data(
+                                    record.data,
+                                    record.size,
+                                    record.checksum,
+                                    record.object_id,
+                                    data_owners,
+                                )?;
                             }
                         }
                     }
@@ -469,8 +513,26 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         return Err(Error::Corrupt);
                     }
                 }
-                for child in &branch.children[..=length] {
-                    self.validate_tree(*child, seen)?;
+                if branch.keys[..length]
+                    .iter()
+                    .any(|key| lower.is_some_and(|bound| *key < bound) || upper.is_some_and(|bound| *key >= bound))
+                {
+                    return Err(Error::Corrupt);
+                }
+                for index in 0..=length {
+                    let child_lower = if index == 0 {
+                        lower
+                    } else {
+                        Some(branch.keys[index - 1])
+                    };
+                    let child_upper = branch.keys.get(index).copied().or(upper);
+                    self.validate_tree(
+                        branch.children[index],
+                        tree_seen,
+                        data_owners,
+                        child_lower,
+                        child_upper,
+                    )?;
                 }
             }
         }
@@ -482,22 +544,28 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         first: BlockId,
         size: u64,
         expected_checksum: u64,
+        object_id: u64,
+        data_owners: &mut [Option<u64>; MAX_BLOCKS],
     ) -> Result<(), Error> {
         let mut id = first;
         let mut total = 0u64;
         let mut data_checksum = 0xcbf29ce484222325_u64;
-        let mut seen = [false; MAX_BLOCKS];
+        let mut chain_seen = [false; MAX_BLOCKS];
         while id.is_some() {
             let index = block_index::<MAX_BLOCKS>(id)?;
-            if seen[index] {
+            if chain_seen[index] {
                 return Err(Error::Corrupt);
             }
-            seen[index] = true;
+            chain_seen[index] = true;
+            if data_owners[index].is_some_and(|owner| owner != object_id) {
+                return Err(Error::Corrupt);
+            }
+            data_owners[index] = Some(object_id);
             let Block::Data(data) = self.arena.get(id)? else {
                 return Err(Error::Corrupt);
             };
             let length = usize::from(data.len);
-            if length > DATA_BYTES || checksum(&data.bytes[..length]) != data.checksum {
+            if length == 0 || length > DATA_BYTES || checksum(&data.bytes[..length]) != data.checksum {
                 return Err(Error::Corrupt);
             }
             for byte in &data.bytes[..length] {
@@ -525,6 +593,21 @@ fn load_committed_generation<const MAX_BLOCKS: usize>(
         read_superblock::<MAX_BLOCKS>(image, 0)?.map(|superblock| (0, superblock)),
         read_superblock::<MAX_BLOCKS>(image, 1)?.map(|superblock| (1, superblock)),
     ];
+    let highest_sequence = candidates
+        .iter()
+        .flatten()
+        .map(|(_, superblock)| superblock.sequence)
+        .max()
+        .ok_or(Error::Corrupt)?;
+    if candidates
+        .iter()
+        .flatten()
+        .filter(|(_, superblock)| superblock.sequence == highest_sequence)
+        .count()
+        > 1
+    {
+        return Err(Error::Corrupt);
+    }
     let mut attempted = [false; 2];
 
     for _ in 0..candidates.len() {
@@ -651,6 +734,10 @@ fn read_type_map<const MAX_BLOCKS: usize>(
     if &bytes[..TYPE_MAP_MAGIC.len()] != TYPE_MAP_MAGIC || checksum(bytes) != expected_checksum {
         return Err(Error::Corrupt);
     }
+    let used_bytes = 8 + MAX_BLOCKS.div_ceil(4);
+    if bytes[used_bytes..].iter().any(|byte| *byte != 0) {
+        return Err(Error::Corrupt);
+    }
     let mut map = [0; BLOCK_SIZE];
     map.copy_from_slice(bytes);
     Ok(map)
@@ -728,7 +815,12 @@ fn read_superblock<const MAX_BLOCKS: usize>(
         return Ok(None);
     }
     let checkpoint_count = u32_at(block, 56) as usize;
-    if u64_at(block, 24) == 0 || checkpoint_count > MAX_CHECKPOINTS || u64_at(block, 48) == 0 {
+    if u64_at(block, 24) == 0
+        || checkpoint_count > MAX_CHECKPOINTS
+        || u64_at(block, 48) == 0
+        || u64_at(block, 72) == 0
+        || u64_at(block, 480) > MAX_BLOCKS as u64
+    {
         return Ok(None);
     }
     let root = BlockId(u32_at(block, 40));
@@ -741,7 +833,11 @@ fn read_superblock<const MAX_BLOCKS: usize>(
         let id = u64_at(block, offset);
         let generation = u64_at(block, offset + 8);
         let root = BlockId(u32_at(block, offset + 16));
-        if id == 0 || root.0 as usize > MAX_BLOCKS {
+        if id == 0
+            || id >= u64_at(block, 48)
+            || root.0 as usize > MAX_BLOCKS
+            || generation > u64_at(block, 32)
+        {
             return Ok(None);
         }
         *slot = Some(Checkpoint {
@@ -752,6 +848,15 @@ fn read_superblock<const MAX_BLOCKS: usize>(
             root,
         });
         offset += 24;
+    }
+    if checkpoints.iter().flatten().enumerate().any(|(index, checkpoint)| {
+        checkpoints
+            .iter()
+            .flatten()
+            .take(index)
+            .any(|previous| previous.info.id == checkpoint.info.id)
+    }) {
+        return Ok(None);
     }
     Ok(Some(Superblock {
         sequence: u64_at(block, 24),
@@ -765,7 +870,7 @@ fn read_superblock<const MAX_BLOCKS: usize>(
             max_files: u64_at(block, 472),
             max_blocks: usize::try_from(u64_at(block, 480)).map_err(|_| Error::Corrupt)?,
         },
-        next_object_id: u64_at(block, 72).max(1),
+        next_object_id: u64_at(block, 72),
     }))
 }
 
@@ -789,7 +894,12 @@ fn load_bank<const MAX_BLOCKS: usize>(
     for index in 0..MAX_BLOCKS {
         let block = block_slice::<MAX_BLOCKS>(image, bank, index)?;
         let decoded = match map_kind(&map, index) {
-            TYPE_MAP_EMPTY => None,
+            TYPE_MAP_EMPTY => {
+                if block.iter().any(|byte| *byte != 0) {
+                    return Err(Error::Corrupt);
+                }
+                None
+            }
             TYPE_MAP_TREE | TYPE_MAP_BRANCH => Some(decode_tree::<MAX_BLOCKS>(block)?),
             TYPE_MAP_DATA => Some(decode_data(block)?),
             _ => return Err(Error::Corrupt),
