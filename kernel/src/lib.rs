@@ -200,6 +200,7 @@ pub fn fatal_kernel_halt(status: Status) -> ! {
 
 pub fn panic_report(info: &PanicInfo<'_>) -> ! {
     let _ = info;
+    println!("KERNEL PANIC");
     fatal_kernel_halt(Status::CORRUPT)
 }
 
