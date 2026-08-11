@@ -267,10 +267,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       ingress work, logd writes journal records through bounded batch calls, and
       audit scans use bounded package batches. Each path reports moderation or
       fairness decisions and keeps the existing fixed-capacity queues.
-- [ ] Add adaptive cache policies for SynFS metadata, package artifacts,
+- [x] Add adaptive cache policies for SynFS metadata, package artifacts,
       compiler outputs, DNS, cluster membership, and VM translation blocks.
       Done when hit rate, eviction cost, memory ceiling, and stale-data risk are
       visible and tunable per workload.
+      Implementation: [`crates/observability/src/cache.rs`](crates/observability/src/cache.rs)
+      provides bounded per-workload policies for all six cache classes, adaptive
+      TTL tuning, admission ceilings, hit/miss/eviction/stale-risk reports, and
+      inspection publication. VM translation hits, misses, stale invalidations,
+      and evictions feed the registry through
+      [`virtual_machine/src/execution.rs`](virtual_machine/src/execution.rs).
 - [ ] Optimize compiler and package workflows with shared immutable artifacts,
       remote cache validation, parallel dependency scheduling, and cancellation
       that never publishes partial results.

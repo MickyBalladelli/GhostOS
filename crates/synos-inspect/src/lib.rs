@@ -29,8 +29,9 @@ pub use memory::{
 };
 pub use synos_audit::ObsolescenceReport;
 pub use synos_observability::{
-    HealthError, HealthReport, HealthState, HealthTransport, OperationalHealth,
-    MAX_OPERATIONAL_HEALTH,
+    CacheEvent, CacheKind, CachePolicy, CachePolicyError, CachePolicyRegistry,
+    CachePolicyReport, HealthError, HealthReport, HealthState, HealthTransport,
+    OperationalHealth, CACHE_RATE_SCALE, MAX_CACHE_POLICIES, MAX_OPERATIONAL_HEALTH,
 };
 pub use service::{
     InspectError, InspectionProvider, InspectionService, TelemetryStore, View,

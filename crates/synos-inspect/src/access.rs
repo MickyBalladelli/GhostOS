@@ -27,13 +27,15 @@ impl InspectionRights {
     pub const AUDIT_WORLD: Self = Self(1 << 4);
     pub const OBSOLESCENCE: Self = Self(1 << 5);
     pub const HEALTH: Self = Self(1 << 6);
+    pub const CACHE: Self = Self(1 << 7);
     pub const LOCAL_DIAGNOSTICS: Self = Self(
         Self::MEMORY.0
             | Self::STORAGE.0
             | Self::CPU.0
             | Self::ACTIVITY.0
             | Self::OBSOLESCENCE.0
-            | Self::HEALTH.0,
+            | Self::HEALTH.0
+            | Self::CACHE.0,
     );
     pub const ALL: Self = Self(Self::LOCAL_DIAGNOSTICS.0 | Self::AUDIT_WORLD.0);
 

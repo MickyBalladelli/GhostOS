@@ -1,6 +1,6 @@
 use synos_status::Status;
 use synos_audit::ObsolescenceReport;
-use synos_observability::HealthReport;
+use synos_observability::{CachePolicyRegistry, HealthReport, MAX_CACHE_POLICIES};
 
 use crate::{
     ActivityReport, CpuReport, InspectCapability, InspectionAuthority,
@@ -45,6 +45,12 @@ pub trait InspectionProvider {
     fn sample_health(&mut self, _report: &mut HealthReport) -> Result<(), Status> {
         Err(Status::NOT_FOUND)
     }
+    fn sample_cache(
+        &mut self,
+        _report: &mut CachePolicyRegistry<MAX_CACHE_POLICIES>,
+    ) -> Result<(), Status> {
+        Err(Status::NOT_FOUND)
+    }
 }
 
 /// Publish/consume handoff useful when hardware and kernel collectors run in
@@ -56,6 +62,7 @@ pub struct TelemetryStore {
     activity: ActivityReport,
     obsolete: ObsolescenceReport,
     health: HealthReport,
+    cache: CachePolicyRegistry<MAX_CACHE_POLICIES>,
 }
 
 impl TelemetryStore {
@@ -67,6 +74,7 @@ impl TelemetryStore {
             activity: ActivityReport::new(),
             obsolete: ObsolescenceReport::new(),
             health: HealthReport::new(),
+            cache: CachePolicyRegistry::new(),
         }
     }
 
@@ -93,6 +101,10 @@ impl TelemetryStore {
     pub fn publish_health(&mut self, report: HealthReport) {
         report.emit_audit();
         self.health = report
+    }
+
+    pub fn publish_cache(&mut self, report: CachePolicyRegistry<MAX_CACHE_POLICIES>) {
+        self.cache = report
     }
 }
 
@@ -130,6 +142,14 @@ impl InspectionProvider for TelemetryStore {
 
     fn sample_health(&mut self, report: &mut HealthReport) -> Result<(), Status> {
         *report = self.health;
+        Ok(())
+    }
+
+    fn sample_cache(
+        &mut self,
+        report: &mut CachePolicyRegistry<MAX_CACHE_POLICIES>,
+    ) -> Result<(), Status> {
+        *report = self.cache;
         Ok(())
     }
 }
@@ -292,6 +312,20 @@ impl<Provider: InspectionProvider> InspectionService<Provider> {
         if view == View::Local {
             report.retain_node(capability.home_node().raw())
         }
+        Ok(report)
+    }
+
+    pub fn cache(
+        &mut self,
+        capability: InspectCapability,
+        view: View,
+        now_us: u64,
+    ) -> Result<CachePolicyRegistry<MAX_CACHE_POLICIES>, InspectError> {
+        self.authorize(capability, InspectionRights::CACHE, view, now_us)?;
+        let mut report = CachePolicyRegistry::new();
+        self.provider
+            .sample_cache(&mut report)
+            .map_err(InspectError::Source)?;
         Ok(report)
     }
 

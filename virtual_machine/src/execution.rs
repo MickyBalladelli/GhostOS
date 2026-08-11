@@ -11,13 +11,17 @@ use crate::cpu::{Cpu, CpuError, CpuMode, PrivilegeLevel};
 use crate::devices::{InterruptController, PortBus};
 use crate::firmware::bios::BiosContext;
 use crate::memory::Mmu;
-use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
+use synos_observability::{
+    record_profile_sample, CacheEvent, CacheKind, CachePolicyReport, CachePolicyRegistry,
+    ProfileDomain, ProfileSample,
+};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 const DEFAULT_BLOCK_SIZE: usize = 32;
 const DEFAULT_HOT_THRESHOLD: u64 = 1_024;
 const DEFAULT_CACHE_CAPACITY: usize = 4_096;
+const CACHE_WORKLOAD: u64 = 1;
 
 /// Controls translation cache and hot-block behavior.
 #[derive(Clone, Debug)]
@@ -85,6 +89,10 @@ struct TranslationBlock {
 }
 
 impl TranslationBlock {
+    fn cache_bytes(&self) -> u64 {
+        (self.source_bytes.len() as u64).saturating_add((self.instructions.len() * 16) as u64)
+    }
+
     fn source_is_valid(&self, mmu: &Mmu) -> bool {
         mmu.bytes_equal(self.source_start, self.source_bytes.as_ref())
     }
@@ -110,6 +118,7 @@ pub struct ExecutionEngine {
     profiles: HashMap<u64, BlockProfile>,
     instruction_counts: HashMap<u64, u64>,
     stats: ExecutionStats,
+    cache_policy: CachePolicyRegistry<1>,
     observed_code_version: u64,
     observed_translation_version: u64,
     profile_hook: Option<Box<dyn FnMut(&ExecutionStats)>>,
@@ -121,6 +130,14 @@ impl ExecutionEngine {
     }
 
     pub fn with_config(config: ExecutionEngineConfig) -> Self {
+        let mut cache_policy = CachePolicyRegistry::new();
+        cache_policy
+            .configure(
+                CacheKind::VmTranslationBlocks,
+                CACHE_WORKLOAD,
+                CacheKind::VmTranslationBlocks.default_policy(),
+            )
+            .expect("built-in VM cache policy is valid");
         Self {
             config,
             cache: HashMap::new(),
@@ -128,6 +145,7 @@ impl ExecutionEngine {
             profiles: HashMap::new(),
             instruction_counts: HashMap::new(),
             stats: ExecutionStats::default(),
+            cache_policy,
             observed_code_version: 0,
             observed_translation_version: 0,
             profile_hook: None,
@@ -144,6 +162,17 @@ impl ExecutionEngine {
 
     pub fn stats(&self) -> &ExecutionStats {
         &self.stats
+    }
+
+    pub fn cache_policy_mut(&mut self) -> &mut CachePolicyRegistry<1> {
+        &mut self.cache_policy
+    }
+
+    pub fn cache_report(&self) -> CachePolicyReport {
+        self.cache_policy
+            .reports()
+            .next()
+            .expect("VM translation cache policy is configured")
     }
 
     pub fn cache_len(&self) -> usize {
@@ -184,6 +213,9 @@ impl ExecutionEngine {
     pub fn clear_cache(&mut self) {
         self.cache.clear();
         self.cache_order.clear();
+        let _ = self
+            .cache_policy
+            .clear_bytes(CacheKind::VmTranslationBlocks, CACHE_WORKLOAD);
     }
 
     /// Execute up to `max_instructions`, returning the number actually run.
@@ -298,6 +330,11 @@ impl ExecutionEngine {
         if cached_block_is_valid {
             if let Some(block) = self.cache.get_mut(&key) {
                 self.stats.cache_hits += 1;
+                let _ = self.cache_policy.observe(
+                    CacheKind::VmTranslationBlocks,
+                    CACHE_WORKLOAD,
+                    CacheEvent::Hit,
+                );
                 block.hot_executions = block.hot_executions.saturating_add(1);
                 if self.config.enable_profiling {
                     let profile = self.profiles.entry(key.rip).or_default();
@@ -316,14 +353,36 @@ impl ExecutionEngine {
                     }
                     self.stats.compiled_blocks += 1;
                 }
-                return Ok(block.clone());
+                let block = block.clone();
+                self.retune_cache_if_due();
+                return Ok(block);
             }
         } else {
-            self.cache.remove(&key);
+            if let Some(block) = self.cache.remove(&key) {
+                let _ = self.cache_policy.observe(
+                    CacheKind::VmTranslationBlocks,
+                    CACHE_WORKLOAD,
+                    CacheEvent::StaleRejected,
+                );
+                let _ = self.cache_policy.observe(
+                    CacheKind::VmTranslationBlocks,
+                    CACHE_WORKLOAD,
+                    CacheEvent::Eviction {
+                        bytes: block.cache_bytes(),
+                        cost_us: 0,
+                    },
+                );
+            }
             self.cache_order.retain(|cached_key| *cached_key != key);
         }
 
         self.stats.cache_misses += 1;
+        let _ = self.cache_policy.observe(
+            CacheKind::VmTranslationBlocks,
+            CACHE_WORKLOAD,
+            CacheEvent::Miss,
+        );
+        self.retune_cache_if_due();
         let (instructions, source_bytes) = self.translate_block(key.rip, cpu, mmu)?;
         let loop_block = is_loop_block(key.rip, &instructions);
         let block = TranslationBlock {
@@ -382,11 +441,30 @@ impl ExecutionEngine {
         let capacity = self.config.cache_capacity.max(1);
         if self.cache.len() >= capacity && !self.cache.contains_key(&key) {
             while let Some(old_key) = self.cache_order.pop_front() {
-                if self.cache.remove(&old_key).is_some() {
+                if let Some(old_block) = self.cache.remove(&old_key) {
                     self.stats.cache_evictions += 1;
+                    let _ = self.cache_policy.observe(
+                        CacheKind::VmTranslationBlocks,
+                        CACHE_WORKLOAD,
+                        CacheEvent::Eviction {
+                            bytes: old_block.cache_bytes(),
+                            cost_us: 0,
+                        },
+                    );
                     break
                 }
             }
+        }
+        if !self
+            .cache_policy
+            .admit(
+                CacheKind::VmTranslationBlocks,
+                CACHE_WORKLOAD,
+                block.cache_bytes(),
+            )
+            .unwrap_or(false)
+        {
+            return
         }
         self.cache.insert(key, block);
         self.cache_order.push_back(key);
@@ -402,6 +480,15 @@ impl ExecutionEngine {
             });
             profile.instructions += 1;
             profile.compiled |= compiled;
+        }
+    }
+
+    fn retune_cache_if_due(&mut self) {
+        let samples = self.stats.cache_hits.saturating_add(self.stats.cache_misses);
+        if samples != 0 && samples % 64 == 0 {
+            let _ = self
+                .cache_policy
+                .retune(CacheKind::VmTranslationBlocks, CACHE_WORKLOAD);
         }
     }
 

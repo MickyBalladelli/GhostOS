@@ -8,6 +8,12 @@ pub use synos_system_model::ContentId;
 
 pub mod profiling;
 pub mod throughput;
+pub mod cache;
+
+pub use cache::{
+    CacheEvent, CacheKind, CachePolicy, CachePolicyError, CachePolicyRegistry,
+    CachePolicyReport, CACHE_RATE_SCALE, MAX_CACHE_POLICIES,
+};
 
 pub use profiling::{
     drain_profile, record_profile_sample, redacted_host_id, validate_profile_export,
