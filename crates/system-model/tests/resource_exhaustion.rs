@@ -50,8 +50,11 @@ fn hostile_tenant_exhaustion_isolated_from_neighbors_and_recovery() {
 #[test]
 fn hostile_multi_resource_reservation_fails_atomically() {
     let mut hostile = QuotaLedger::new(bounded_policy());
-    let mut charges = RESOURCES.map(|resource| QuotaCharge::new(resource, 1));
-    charges[RESOURCES.len() - 1] = QuotaCharge::new(QuotaResource::ControlPlane, 2);
+    let mut charges = [QuotaCharge::new(QuotaResource::Memory, 1); RESOURCES.len() + 1];
+    for (charge, resource) in charges[..RESOURCES.len()].iter_mut().zip(RESOURCES) {
+        *charge = QuotaCharge::new(resource, 1);
+    }
+    charges[RESOURCES.len()] = QuotaCharge::new(QuotaResource::ControlPlane, 2);
 
     assert!(matches!(
         hostile.reserve_all(&charges),
