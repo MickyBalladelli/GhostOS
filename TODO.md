@@ -233,11 +233,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       [`scripts/profile.py`](scripts/profile.py) for symbolization, revision-keyed
       retention, redaction validation, and cross-host comparison. See
       [`docs/profiling.md`](docs/profiling.md).
-- [ ] Reduce kernel and daemon lock contention with ownership reports,
+- [x] Reduce kernel and daemon lock contention with ownership reports,
       lock-duration histograms, sharded state, and wait-free or per-CPU paths
       where correctness permits.
       Done when contention improvements are proven under both one-core and
-      many-core workloads with no fairness regression.
+      many-core workloads with no fairness regression. See
+      [`docs/lock-contention.md`](docs/lock-contention.md),
+      [`kernel/src/contention.rs`](kernel/src/contention.rs), and
+      [`kernel/benches/lock_contention.rs`](kernel/benches/lock_contention.rs).
 - [ ] Add per-CPU and NUMA-aware allocators for hot IPC, packet, timer, and
       scheduler objects with bounded cross-node fallback.
       Done when locality, fragmentation, tail latency, and reclamation behavior

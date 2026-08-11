@@ -8,6 +8,10 @@ license.workspace = true
 crate-type = ["rlib"]
 path = "src/lib.rs"
 
+[[bench]]
+name = "lock_contention"
+harness = false
+
 [[bin]]
 name = "synos-kernel"
 path = "src/main.rs"

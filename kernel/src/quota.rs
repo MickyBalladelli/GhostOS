@@ -1,4 +1,6 @@
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
+
+use crate::contention::{LockShardReport, ShardedTicketLock};
 
 const MICROS_PER_SECOND: u64 = 1_000_000;
 
@@ -86,6 +88,16 @@ pub enum QuotaResource {
     MemoryBytes,
 }
 
+impl QuotaResource {
+    pub const fn index(self) -> usize {
+        match self {
+            Self::IpcMessages => 0,
+            Self::PageFaults => 1,
+            Self::MemoryBytes => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QuotaDecision {
     Allowed,
@@ -97,6 +109,11 @@ pub enum QuotaDecision {
 pub struct QuotaUsage {
     pub memory_in_use: u64,
     pub max_memory_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QuotaContentionReport {
+    pub resources: [LockShardReport; 3],
 }
 
 struct BucketState {
@@ -137,12 +154,15 @@ struct BucketValues {
     remainder: u64,
 }
 
-/// A fixed-size, lock-protected quota state suitable for kernel capability
-/// descriptors. The lock only protects a few integer operations and never
-/// allocates or sleeps.
+/// A fixed-size quota state suitable for kernel capability descriptors.
+///
+/// Each resource has its own fair ticket lock. IPC pressure therefore cannot
+/// stall page-fault or memory accounting, while the read-only usage path stays
+/// wait-free through an atomic counter.
 pub struct CapabilityQuota {
     policy: QuotaPolicy,
-    locked: AtomicBool,
+    locks: ShardedTicketLock<3>,
+    clock: AtomicU64,
     ipc: BucketState,
     page_fault: BucketState,
     memory: BucketState,
@@ -168,7 +188,8 @@ impl CapabilityQuota {
         };
         Self {
             policy,
-            locked: AtomicBool::new(false),
+            locks: ShardedTicketLock::new(),
+            clock: AtomicU64::new(0),
             ipc: BucketState::new(policy.ipc.capacity),
             page_fault: BucketState::new(policy.page_fault.capacity),
             memory: BucketState::new(policy.memory.capacity),
@@ -209,7 +230,8 @@ impl CapabilityQuota {
         if amount == 0 {
             return QuotaDecision::Allowed
         }
-        self.lock();
+        self.clock.fetch_max(now_us, Ordering::Relaxed);
+        let guard = self.locks.lock(resource.index(), now_us);
         let decision = match resource {
             QuotaResource::IpcMessages => {
                 acquire(self.policy.ipc, &self.ipc, now_us, amount)
@@ -233,7 +255,7 @@ impl CapabilityQuota {
                 }
             }
         };
-        self.unlock();
+        guard.unlock(self.clock.load(Ordering::Relaxed));
         decision
     }
 
@@ -241,7 +263,7 @@ impl CapabilityQuota {
         if amount == 0 {
             return
         }
-        self.lock();
+        let guard = self.locks.lock(resource.index(), self.clock.load(Ordering::Relaxed));
         match resource {
             QuotaResource::IpcMessages => {
                 let mut values = self.ipc.load();
@@ -271,38 +293,33 @@ impl CapabilityQuota {
                     .store(in_use.saturating_sub(amount), Ordering::Relaxed);
             }
         }
-        self.unlock()
+        guard.unlock(self.clock.load(Ordering::Relaxed))
     }
 
     pub fn release_memory(&self, amount: u64) {
         if amount == 0 {
             return
         }
-        self.lock();
+        let guard = self
+            .locks
+            .lock(QuotaResource::MemoryBytes.index(), self.clock.load(Ordering::Relaxed));
         let in_use = self.memory_in_use.load(Ordering::Relaxed);
         self.memory_in_use
             .store(in_use.saturating_sub(amount), Ordering::Relaxed);
-        self.unlock()
+        guard.unlock(self.clock.load(Ordering::Relaxed))
     }
 
     pub fn usage(&self) -> QuotaUsage {
-        self.lock();
-        let usage = QuotaUsage {
+        QuotaUsage {
             memory_in_use: self.memory_in_use.load(Ordering::Relaxed),
             max_memory_bytes: self.policy.max_memory_bytes,
-        };
-        self.unlock();
-        usage
-    }
-
-    fn lock(&self) {
-        while self.locked.swap(true, Ordering::Acquire) {
-            core::hint::spin_loop()
         }
     }
 
-    fn unlock(&self) {
-        self.locked.store(false, Ordering::Release)
+    pub fn contention_report(&self) -> QuotaContentionReport {
+        QuotaContentionReport {
+            resources: self.locks.reports(),
+        }
     }
 }
 

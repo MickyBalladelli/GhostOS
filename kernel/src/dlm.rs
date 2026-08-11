@@ -1,6 +1,7 @@
 use crate::capability::{
     CapabilityError, CapabilityHandle, CapabilityObject, CapabilitySpace, Rights,
 };
+use crate::contention::{duration_bucket, LOCK_DURATION_BUCKETS};
 use crate::task::AddressSpaceId;
 use synos_status::{IntoStatus, Severity, Status, facility};
 
@@ -498,6 +499,33 @@ pub struct LockEntry {
     pub node_epoch: u64,
     pub federation_cluster: Option<FederationClusterId>,
     pub federation_epoch: u64,
+    pub requested_at_us: u64,
+    pub granted_at_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LockOwnership {
+    pub resource: ResourceId,
+    pub owner: LockOwner,
+    pub mode: LockMode,
+    pub granted: bool,
+    pub requested_at_us: u64,
+    pub granted_at_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DlmContentionReport {
+    pub active_locks: usize,
+    pub active_owners: [Option<LockOwnership>; 8],
+    pub acquisitions: u64,
+    pub queued_acquisitions: u64,
+    pub promotions: u64,
+    pub releases: u64,
+    pub expirations: u64,
+    pub wait_duration_histogram: [u64; LOCK_DURATION_BUCKETS],
+    pub hold_duration_histogram: [u64; LOCK_DURATION_BUCKETS],
+    pub max_wait_duration: u64,
+    pub max_hold_duration: u64,
 }
 
 impl LockEntry {
@@ -523,6 +551,8 @@ impl LockEntry {
         node_epoch: 0,
         federation_cluster: None,
         federation_epoch: 0,
+        requested_at_us: 0,
+        granted_at_us: 0,
     };
 }
 
@@ -533,6 +563,16 @@ impl LockEntry {
 pub struct DistributedLockManager<const CAPACITY: usize = DEFAULT_LOCK_CAPACITY> {
     locks: [LockEntry; CAPACITY],
     sequence: u64,
+    observed_at_us: u64,
+    acquisitions: u64,
+    queued_acquisitions: u64,
+    promotions: u64,
+    releases: u64,
+    expirations: u64,
+    wait_duration_histogram: [u64; LOCK_DURATION_BUCKETS],
+    hold_duration_histogram: [u64; LOCK_DURATION_BUCKETS],
+    max_wait_duration: u64,
+    max_hold_duration: u64,
 }
 
 impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
@@ -540,6 +580,16 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         Self {
             locks: [LockEntry::VACANT; CAPACITY],
             sequence: 0,
+            observed_at_us: 0,
+            acquisitions: 0,
+            queued_acquisitions: 0,
+            promotions: 0,
+            releases: 0,
+            expirations: 0,
+            wait_duration_histogram: [0; LOCK_DURATION_BUCKETS],
+            hold_duration_histogram: [0; LOCK_DURATION_BUCKETS],
+            max_wait_duration: 0,
+            max_hold_duration: 0,
         }
     }
 
@@ -597,6 +647,7 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         let expires_at_us = now_us
             .checked_add(lease_duration_us)
             .ok_or(LockError::InvalidRange)?;
+        self.observed_at_us = self.observed_at_us.max(now_us);
         self.expire(now_us);
         self.acquire_inner(
             capabilities,
@@ -653,6 +704,10 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         let generation = self.locks[slot].generation.wrapping_add(1).max(1);
         self.sequence = self.sequence.wrapping_add(1);
         let handle = LockHandle::from_parts(slot, generation);
+        self.acquisitions = self.acquisitions.saturating_add(1);
+        if !compatible {
+            self.queued_acquisitions = self.queued_acquisitions.saturating_add(1)
+        }
         self.locks[slot] = LockEntry {
             occupied: true,
             generation,
@@ -669,6 +724,8 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
             node_epoch: 0,
             federation_cluster: None,
             federation_epoch: 0,
+            requested_at_us: self.observed_at_us,
+            granted_at_us: if compatible { self.observed_at_us } else { 0 },
         };
         Ok(if compatible {
             LockGrant::Granted(handle)
@@ -737,8 +794,23 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
     }
 
     pub fn release(&mut self, owner: LockOwner, handle: LockHandle) -> Result<usize, LockError> {
+        self.release_at(owner, handle, self.observed_at_us)
+    }
+
+    pub fn release_at(
+        &mut self,
+        owner: LockOwner,
+        handle: LockHandle,
+        now_us: u64,
+    ) -> Result<usize, LockError> {
+        self.observed_at_us = self.observed_at_us.max(now_us);
         let slot = self.owned_slot(handle, owner)?;
-        let resource = self.locks[slot].resource;
+        let entry = self.locks[slot];
+        let resource = entry.resource;
+        self.releases = self.releases.saturating_add(1);
+        if entry.granted {
+            self.record_hold_duration(entry.granted_at_us, self.observed_at_us)
+        }
         self.locks[slot].occupied = false;
         Ok(self.promote(resource))
     }
@@ -754,6 +826,7 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         if duration_us == 0 {
             return Err(LockError::InvalidRange);
         }
+        self.observed_at_us = self.observed_at_us.max(now_us);
         let slot = self.owned_slot(handle, owner)?;
         if self.locks[slot].federation_cluster.is_some() || self.locks[slot].node_epoch != 0 {
             return Err(LockError::InvalidEpoch);
@@ -817,6 +890,7 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         if duration_us == 0 {
             return Err(LockError::InvalidRange);
         }
+        self.observed_at_us = self.observed_at_us.max(now_us);
         fences.validate(owner.node, node_epoch)?;
         let slot = self.owned_slot(handle, owner)?;
         if self.locks[slot].node_epoch != node_epoch
@@ -855,6 +929,7 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
         if duration_us == 0 {
             return Err(LockError::InvalidRange);
         }
+        self.observed_at_us = self.observed_at_us.max(now_us);
         let slot = self.owned_slot(handle, owner)?;
         let entry = self.locks[slot];
         let cluster = entry.federation_cluster.ok_or(LockError::InvalidEpoch)?;
@@ -938,12 +1013,17 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
     /// Purge every stale lock after the cluster epoch has advanced.
     pub fn fence_cluster(&mut self, cluster: FederationClusterId, current_epoch: u64) -> usize {
         let mut fenced = 0;
-        for entry in &mut self.locks {
+        for index in 0..CAPACITY {
+            let entry = self.locks[index];
             if entry.occupied
                 && entry.federation_cluster == Some(cluster)
                 && entry.federation_epoch != current_epoch
             {
-                entry.occupied = false;
+                self.releases = self.releases.saturating_add(1);
+                if entry.granted {
+                    self.record_hold_duration(entry.granted_at_us, self.observed_at_us)
+                }
+                self.locks[index].occupied = false;
                 fenced += 1
             }
         }
@@ -954,13 +1034,20 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
     }
 
     pub fn expire(&mut self, now_us: u64) -> usize {
+        self.observed_at_us = self.observed_at_us.max(now_us);
         let mut expired = 0;
-        for entry in &mut self.locks {
+        for index in 0..CAPACITY {
+            let entry = self.locks[index];
             if entry.occupied && entry.expires_at_us <= now_us {
-                entry.occupied = false;
+                self.releases = self.releases.saturating_add(1);
+                if entry.granted {
+                    self.record_hold_duration(entry.granted_at_us, now_us)
+                }
+                self.locks[index].occupied = false;
                 expired += 1
             }
         }
+        self.expirations = self.expirations.saturating_add(expired as u64);
         if expired != 0 {
             self.promote_all()
         }
@@ -977,9 +1064,14 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
             return Err(LockError::NodeNotIsolated);
         }
         let mut removed = 0;
-        for entry in &mut self.locks {
+        for index in 0..CAPACITY {
+            let entry = self.locks[index];
             if entry.occupied && entry.owner.node == node {
-                entry.occupied = false;
+                self.releases = self.releases.saturating_add(1);
+                if entry.granted {
+                    self.record_hold_duration(entry.granted_at_us, self.observed_at_us)
+                }
+                self.locks[index].occupied = false;
                 removed += 1
             }
         }
@@ -1014,6 +1106,43 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
 
     pub fn lock_mut(&mut self, index: usize) -> Option<&mut LockEntry> {
         self.locks.get_mut(index)
+    }
+
+    pub fn contention_report(&self, now_us: u64) -> DlmContentionReport {
+        let mut active_owners = [None; 8];
+        let mut active_locks = 0;
+        for entry in self.locks.iter().filter(|entry| entry.occupied) {
+            active_locks += 1;
+            if let Some(slot) = active_owners.iter_mut().find(|slot| slot.is_none()) {
+                *slot = Some(LockOwnership {
+                    resource: entry.resource,
+                    owner: entry.owner,
+                    mode: entry.mode,
+                    granted: entry.granted,
+                    requested_at_us: entry.requested_at_us,
+                    granted_at_us: entry.granted_at_us,
+                });
+            }
+        }
+        let observed_at_us = self.observed_at_us.max(now_us);
+        let mut report = DlmContentionReport {
+            active_locks,
+            active_owners,
+            acquisitions: self.acquisitions,
+            queued_acquisitions: self.queued_acquisitions,
+            promotions: self.promotions,
+            releases: self.releases,
+            expirations: self.expirations,
+            wait_duration_histogram: self.wait_duration_histogram,
+            hold_duration_histogram: self.hold_duration_histogram,
+            max_wait_duration: self.max_wait_duration,
+            max_hold_duration: self.max_hold_duration,
+        };
+        for entry in self.locks.iter().filter(|entry| entry.occupied && entry.granted) {
+            let duration = observed_at_us.saturating_sub(entry.granted_at_us);
+            report.max_hold_duration = report.max_hold_duration.max(duration);
+        }
+        report
     }
 
     fn can_grant(
@@ -1063,7 +1192,11 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
                 .min_by_key(|(_, entry)| entry.sequence)
                 .map(|(slot, _)| slot);
             let Some(slot) = next else { break };
+            let requested_at_us = self.locks[slot].requested_at_us;
+            self.record_wait_duration(requested_at_us, self.observed_at_us);
             self.locks[slot].granted = true;
+            self.locks[slot].granted_at_us = self.observed_at_us;
+            self.promotions = self.promotions.saturating_add(1);
             promoted += 1
         }
         promoted
@@ -1076,6 +1209,18 @@ impl<const CAPACITY: usize> DistributedLockManager<CAPACITY> {
                 self.promote(resource);
             }
         }
+    }
+
+    fn record_wait_duration(&mut self, requested_at_us: u64, granted_at_us: u64) {
+        let duration = granted_at_us.saturating_sub(requested_at_us);
+        self.wait_duration_histogram[duration_bucket(duration)] += 1;
+        self.max_wait_duration = self.max_wait_duration.max(duration);
+    }
+
+    fn record_hold_duration(&mut self, granted_at_us: u64, released_at_us: u64) {
+        let duration = released_at_us.saturating_sub(granted_at_us);
+        self.hold_duration_histogram[duration_bucket(duration)] += 1;
+        self.max_hold_duration = self.max_hold_duration.max(duration);
     }
 
     fn owned_slot(&self, handle: LockHandle, owner: LockOwner) -> Result<usize, LockError> {

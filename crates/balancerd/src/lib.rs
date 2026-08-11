@@ -440,7 +440,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
         self.actors
             .stop(transport, old_actor)
             .map_err(BalancerError::Actor)?;
-        dlm.release(old_lease.owner, old_lease.handle)
+        dlm.release_at(old_lease.owner, old_lease.handle, now_us)
             .map_err(BalancerError::Lease)?;
         self.decrement_node(old_lease.owner.node);
 
@@ -480,7 +480,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
         let new_actor_id = match ActorId::new(target.offer.node, self.next_actor_id()) {
             Some(actor) => actor,
             None => {
-                let _ = dlm.release(new_lease.owner, new_lease.handle);
+                let _ = dlm.release_at(new_lease.owner, new_lease.handle, now_us);
                 return self.migration_failure(
                     slot,
                     thread,
@@ -508,7 +508,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
         ) {
             Ok(actor) => actor,
             Err(error) => {
-                let _ = dlm.release(new_lease.owner, new_lease.handle);
+                let _ = dlm.release_at(new_lease.owner, new_lease.handle, now_us);
                 return self.migration_failure(
                     slot,
                     thread,
@@ -656,7 +656,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
         ) {
             Ok(actor) => actor,
             Err(error) => {
-                let _ = dlm.release(new_lease.owner, new_lease.handle);
+                let _ = dlm.release_at(new_lease.owner, new_lease.handle, now_us);
                 return Err(BalancerError::Actor(error))
             }
         };
@@ -859,7 +859,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
                 generation: request.generation,
             },
         ) else {
-            let _ = dlm.release(lease.owner, lease.handle);
+            let _ = dlm.release_at(lease.owner, lease.handle, now_us);
             return None
         };
         Some((actor, lease))

@@ -8,6 +8,7 @@ mod arch;
 pub mod capability;
 #[allow(unsafe_code)]
 mod console;
+pub mod contention;
 pub mod crash;
 pub mod dlm;
 pub mod ipc;
@@ -73,11 +74,14 @@ pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
     CapabilityRevocationHook, CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,
 };
+pub use contention::{
+    duration_bucket, LockGuard, LockShardReport, ShardedTicketLock, LOCK_DURATION_BUCKETS,
+};
 pub use dlm::{
-    DistributedLockManager, FederationClusterId, FederationFenceTable, LockError, LockGrant,
-    LockHandle, LockMode, LockOwner, LockRange, NodeFenceState, NodeFenceTable, NodeFenceToken,
-    NodeId, ResourceId, ResourceKind, ResourceName, DEFAULT_FEDERATION_CAPACITY,
-    DEFAULT_NODE_FENCE_CAPACITY,
+    DistributedLockManager, DlmContentionReport, FederationClusterId, FederationFenceTable,
+    LockError, LockGrant, LockHandle, LockMode, LockOwner, LockOwnership, LockRange,
+    NodeFenceState, NodeFenceTable, NodeFenceToken, NodeId, ResourceId, ResourceKind,
+    ResourceName, DEFAULT_FEDERATION_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY,
 };
 pub use micro_silo::{
     BlindMicroSilo, ConfidentialCpu, HardwareIsolation, MemoryProtection, SiloError,
@@ -87,7 +91,8 @@ pub use page_fault::{
     PageFault, PageFaultDispatchError, PageFaultHandler, PageFaultHandlerError,
 };
 pub use quota::{
-    BucketConfig, CapabilityQuota, QuotaDecision, QuotaPolicy, QuotaResource, QuotaUsage,
+    BucketConfig, CapabilityQuota, QuotaContentionReport, QuotaDecision, QuotaPolicy,
+    QuotaResource, QuotaUsage,
 };
 pub use persona::{
     ExecutionPersona, IdentityId, PersonaError, RightIdentifier, MAX_PERSONA_RIGHTS,

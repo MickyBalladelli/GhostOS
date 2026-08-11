@@ -3610,6 +3610,7 @@ impl KernelExecutor {
 
     fn show_dsm(&self, json: bool) -> Result<StructuredOutput, Status> {
         let locks = MonitorState::get_lock_contentions(self.dlm);
+        let report = self.dlm.contention_report(self.scheduler.clock());
 
         let mut active_locks = 0u64;
         let mut granted_locks = 0u64;
@@ -3624,9 +3625,33 @@ impl KernelExecutor {
 
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "dsm")?;
-        insert(&mut output, "active-locks", OutputValue::Unsigned(active_locks))?;
+        insert(
+            &mut output,
+            "active-locks",
+            OutputValue::Unsigned(report.active_locks as u64),
+        )?;
         insert(&mut output, "granted-locks", OutputValue::Unsigned(granted_locks))?;
         insert(&mut output, "queued-locks", OutputValue::Unsigned(queued_locks))?;
+        insert(
+            &mut output,
+            "queued-acquisitions",
+            OutputValue::Unsigned(report.queued_acquisitions),
+        )?;
+        insert(
+            &mut output,
+            "lock-promotions",
+            OutputValue::Unsigned(report.promotions),
+        )?;
+        insert(
+            &mut output,
+            "max-wait-us",
+            OutputValue::Unsigned(report.max_wait_duration),
+        )?;
+        insert(
+            &mut output,
+            "max-hold-us",
+            OutputValue::Unsigned(report.max_hold_duration),
+        )?;
 
         if !json {
             crate::println!("\x1b[1;97;43mSTAT                 VALUE\x1b[0m");
