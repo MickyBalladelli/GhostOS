@@ -978,7 +978,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn set_limits(&mut self, limits: VolumeLimits) -> Result<(), Error> {
-        if limits.max_blocks > MAX_BLOCKS {
+        if limits.max_blocks != usize::MAX && limits.max_blocks > MAX_BLOCKS {
             return Err(Error::QuotaExceeded);
         }
         let diagnostics = self.diagnostics()?;

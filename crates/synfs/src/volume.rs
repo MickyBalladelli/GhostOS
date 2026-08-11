@@ -394,7 +394,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     pub fn check_consistency(&self) -> Result<(), Error> {
         if self.next_checkpoint == 0
             || self.next_object_id == 0
-            || self.limits.max_blocks > MAX_BLOCKS
+            || (self.limits.max_blocks != usize::MAX && self.limits.max_blocks > MAX_BLOCKS)
             || (self.root.is_some() && self.generation == 0)
         {
             return Err(Error::Corrupt);
@@ -824,7 +824,8 @@ pub(crate) fn read_superblock<const MAX_BLOCKS: usize>(
         || checkpoint_count > MAX_CHECKPOINTS
         || u64_at(block, 48) == 0
         || u64_at(block, 72) == 0
-        || u64_at(block, 480) > MAX_BLOCKS as u64
+        || (u64_at(block, 480) != usize::MAX as u64
+            && u64_at(block, 480) > MAX_BLOCKS as u64)
     {
         return Ok(None);
     }
