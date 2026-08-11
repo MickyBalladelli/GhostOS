@@ -12,6 +12,7 @@ pub use synos_protocol::{
     ProtocolError as TransportProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass,
     VersionRange,
 };
+pub use synos_abi::{ABI_REVISION, ABI_SCHEMA_VERSION};
 
 mod client;
 mod cluster;

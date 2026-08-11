@@ -1,0 +1,261 @@
+[abi]
+schema_version = 1
+revision = 1
+rpc_protocol_version = 1
+rpc_magic = "SYRP"
+rpc_frame_header_bytes = 24
+rpc_max_frame_bytes = 4096
+rpc_capability_flag = 1
+
+[[operations]]
+name = "Yield"
+value = 1
+[[operations]]
+name = "ClockNow"
+value = 2
+[[operations]]
+name = "Wait"
+value = 3
+[[operations]]
+name = "Wake"
+value = 4
+[[operations]]
+name = "ThreadSpawn"
+value = 5
+[[operations]]
+name = "ThreadJoin"
+value = 6
+[[operations]]
+name = "ThreadExit"
+value = 7
+[[operations]]
+name = "MemoryMap"
+value = 8
+[[operations]]
+name = "MemoryUnmap"
+value = 9
+[[operations]]
+name = "IpcMap"
+value = 10
+[[operations]]
+name = "IpcNotify"
+value = 11
+[[operations]]
+name = "SynFsOpen"
+value = 12
+[[operations]]
+name = "SynFsClose"
+value = 13
+[[operations]]
+name = "SynFsRead"
+value = 14
+[[operations]]
+name = "SynFsWrite"
+value = 15
+[[operations]]
+name = "SynFsMetadata"
+value = 16
+[[operations]]
+name = "SynFsMkdir"
+value = 17
+[[operations]]
+name = "SynFsRmdir"
+value = 18
+[[operations]]
+name = "SynFsLink"
+value = 19
+[[operations]]
+name = "SynFsList"
+value = 20
+[[operations]]
+name = "SynFsLinks"
+value = 21
+[[operations]]
+name = "SynFsDelete"
+value = 22
+[[operations]]
+name = "RandomGet"
+value = 23
+[[operations]]
+name = "TerminalRead"
+value = 24
+[[operations]]
+name = "TerminalWrite"
+value = 25
+[[operations]]
+name = "ProcessSpawn"
+value = 26
+[[operations]]
+name = "ProcessExec"
+value = 27
+[[operations]]
+name = "ProcessWait"
+value = 28
+[[operations]]
+name = "ProcessCancel"
+value = 29
+[[operations]]
+name = "ProcessExit"
+value = 30
+[[operations]]
+name = "ProcessStatus"
+value = 31
+[[operations]]
+name = "MemoryProtect"
+value = 32
+[[operations]]
+name = "CapabilityQuery"
+value = 33
+[[operations]]
+name = "PipeCreate"
+value = 34
+[[operations]]
+name = "PipeRead"
+value = 35
+[[operations]]
+name = "PipeWrite"
+value = 36
+[[operations]]
+name = "PipeClose"
+value = 37
+[[operations]]
+name = "ThreadTlsGet"
+value = 38
+[[operations]]
+name = "ThreadTlsSet"
+value = 39
+[[operations]]
+name = "ArgumentsRead"
+value = 40
+[[operations]]
+name = "EnvironmentRead"
+value = 41
+
+[[methods]]
+name = "ClusterState"
+swift_name = "clusterState"
+value = 1
+[[methods]]
+name = "SubmitJob"
+swift_name = "submitJob"
+value = 2
+[[methods]]
+name = "DelegateCapability"
+swift_name = "delegateCapability"
+value = 3
+[[methods]]
+name = "TopologyState"
+swift_name = "topologyState"
+value = 4
+[[methods]]
+name = "ClusterSummary"
+swift_name = "clusterSummary"
+value = 5
+[[methods]]
+name = "ClusterMembers"
+swift_name = "clusterMembers"
+value = 6
+[[methods]]
+name = "ClusterInvitations"
+swift_name = "clusterInvitations"
+value = 7
+[[methods]]
+name = "ClusterJoinPlan"
+swift_name = "clusterJoinPlan"
+value = 8
+[[methods]]
+name = "ClusterLeavePlan"
+swift_name = "clusterLeavePlan"
+value = 9
+[[methods]]
+name = "ClusterHealth"
+swift_name = "clusterHealth"
+value = 10
+[[methods]]
+name = "ClusterResources"
+swift_name = "clusterResources"
+value = 11
+[[methods]]
+name = "ClusterAudit"
+swift_name = "clusterAudit"
+value = 12
+[[methods]]
+name = "ClusterCreate"
+swift_name = "clusterCreate"
+value = 13
+[[methods]]
+name = "ClusterJoin"
+swift_name = "clusterJoin"
+value = 14
+[[methods]]
+name = "ClusterLeave"
+swift_name = "clusterLeave"
+value = 15
+[[methods]]
+name = "ClusterRemove"
+swift_name = "clusterRemove"
+value = 16
+[[methods]]
+name = "Subscribe"
+swift_name = "subscribe"
+value = 17
+[[methods]]
+name = "Poll"
+swift_name = "poll"
+value = 18
+
+[[statuses]]
+name = "Ok"
+swift_name = "ok"
+value = 0
+public_status = "NORMAL"
+[[statuses]]
+name = "InvalidRequest"
+swift_name = "invalidRequest"
+value = 1
+public_status = "INVALID_ARGUMENT"
+[[statuses]]
+name = "Unauthenticated"
+swift_name = "unauthenticated"
+value = 2
+public_status = "ACCESS_DENIED"
+[[statuses]]
+name = "AccessDenied"
+swift_name = "accessDenied"
+value = 3
+public_status = "ACCESS_DENIED"
+[[statuses]]
+name = "NotFound"
+swift_name = "notFound"
+value = 4
+public_status = "NOT_FOUND"
+[[statuses]]
+name = "Busy"
+swift_name = "busy"
+value = 5
+public_status = "BUSY"
+[[statuses]]
+name = "Capacity"
+swift_name = "capacity"
+value = 6
+public_status = "NO_SPACE"
+[[statuses]]
+name = "Internal"
+swift_name = "internalError"
+value = 7
+public_status = "INTERNAL"
+[[statuses]]
+name = "ProtocolMismatch"
+swift_name = "protocolMismatch"
+value = 8
+public_status = "PROTOCOL_MISMATCH"
+[[statuses]]
+name = "InvalidFrame"
+swift_name = "invalidFrame"
+value = 9
+public_status = "INVALID_ARGUMENT"
+[[statuses]]
+name = "SchemaMismatch"
+swift_name = "schemaMismatch"
+value = 10
+public_status = "PROTOCOL_MISMATCH"

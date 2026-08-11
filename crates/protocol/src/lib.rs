@@ -8,7 +8,7 @@
 //! this crate gives each one the same bounded rules for compatibility,
 //! replay, flow control, and reconnects.
 
-pub const CURRENT_PROTOCOL_VERSION: u16 = 1;
+pub const CURRENT_PROTOCOL_VERSION: u16 = synos_abi::ABI_SCHEMA_VERSION;
 pub const REPLAY_WINDOW_BITS: u8 = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

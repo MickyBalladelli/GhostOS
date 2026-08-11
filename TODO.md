@@ -42,10 +42,13 @@ measured p50/p95/p99 data over optimistic feature claims.
       wakeup-after-HLT behavior.
       Done when the same seed reproduces the same interleaving and the suite
       reports the minimal failing schedule.
-- [ ] Replace hand-maintained ABI assumptions with generated, versioned ABI
+- [x] Replace hand-maintained ABI assumptions with generated, versioned ABI
       descriptions shared by kernel, runtime, VM, Rust SDK, and Swift client.
       Done when incompatible frames fail with stable status codes before any
       mutable state changes.
+      Implementation: [abi/synos-abi.toml](abi/synos-abi.toml) generates the
+      Rust and Swift bindings; kernel and gateway validate the generated version
+      before dispatch or service mutation.
 - [ ] Build a service dependency graph with cycle detection, startup barriers,
       readiness state, shutdown ordering, and bounded restart budgets.
       Done when boot and reboot produce an ordered trace and no service accepts

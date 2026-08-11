@@ -23,6 +23,7 @@ pub struct FilesystemIdentity {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeDispatchError {
+    AbiMismatch,
     InvalidRequest,
     InvalidCapability,
     InvalidBuffer,
@@ -33,6 +34,7 @@ pub enum RuntimeDispatchError {
 impl RuntimeDispatchError {
     const fn status(self) -> Status {
         match self {
+            Self::AbiMismatch => Status::PROTOCOL_MISMATCH,
             Self::InvalidRequest | Self::InvalidBuffer => Status::INVALID_ARGUMENT,
             Self::InvalidCapability | Self::ProcessNotRegistered => Status::ACCESS_DENIED,
             Self::TransportFailure => Status::BUSY,
@@ -401,6 +403,13 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         request: Request,
         operations: &mut O,
     ) -> Response {
+        if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+            return Response {
+                status: RuntimeDispatchError::AbiMismatch.status().raw(),
+                flags: 0,
+                values: [0; 4],
+            }
+        }
         let Some(operation) = Operation::from_raw(request.operation) else {
             return self.dispatch(caller, request);
         };
@@ -438,6 +447,9 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         caller: AddressSpaceId,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
+        if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+            return Err(RuntimeDispatchError::AbiMismatch)
+        }
         let operation = Operation::from_raw(request.operation)
             .ok_or(RuntimeDispatchError::InvalidRequest)?;
         if request.reserved != 0 {

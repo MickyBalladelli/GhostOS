@@ -175,7 +175,13 @@ impl<S: GatewayService> FrontendGateway<S> {
         if response.len() < FRAME_HEADER_BYTES {
             return Err(ProtocolError::BufferTooSmall);
         }
-        let request_header = FrameHeader::decode(request)?;
+        let request_header = match FrameHeader::decode(request) {
+            Ok(header) => header,
+            Err(ProtocolError::AbiMismatch) => {
+                return encode_rejection(response, request, RpcStatus::ProtocolMismatch)
+            }
+            Err(error) => return Err(error),
+        };
         if request.len() != FRAME_HEADER_BYTES + request_header.payload_bytes as usize
             || request_header.status != RpcStatus::Ok
         {
@@ -249,6 +255,31 @@ impl<S: GatewayService> FrontendGateway<S> {
         .encode(response)?;
         Ok(FRAME_HEADER_BYTES + payload_bytes)
     }
+}
+
+fn encode_rejection(
+    response: &mut [u8],
+    request: &[u8],
+    status: RpcStatus,
+) -> Result<usize, ProtocolError> {
+    let method = request
+        .get(5)
+        .and_then(|raw| Method::from_wire(*raw).ok())
+        .unwrap_or(Method::ClusterState);
+    let request_id = request
+        .get(8..16)
+        .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
+        .map(u64::from_be_bytes)
+        .unwrap_or(0);
+    FrameHeader {
+        method,
+        flags: 0,
+        request_id,
+        payload_bytes: 0,
+        status,
+    }
+    .encode(response)?;
+    Ok(FRAME_HEADER_BYTES)
 }
 
 fn empty_request(body: &[u8]) -> Result<(), RpcStatus> {

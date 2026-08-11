@@ -15,6 +15,7 @@ test = false
 bench = false
 
 [dependencies]
+synos-abi = { path = "../crates/abi" }
 synos-boot-protocol = { path = "../crates/boot-protocol" }
 synos-fabric = { path = "../crates/fabric" }
 synos-fsd = { path = "../crates/fsd" }

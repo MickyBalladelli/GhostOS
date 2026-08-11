@@ -2,6 +2,7 @@ import Foundation
 
 public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
     case invalidCapability
+    case abiMismatch
     case invalidFrame
     case invalidInput
     case mismatchedResponse
@@ -12,6 +13,8 @@ public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
         switch self {
         case .invalidCapability:
             "Capability token is not a SynOS v1 token."
+        case .abiMismatch:
+            "Gateway uses an incompatible SynOS ABI."
         case .invalidFrame:
             "Gateway returned an invalid RPC frame."
         case .invalidInput:
@@ -27,24 +30,11 @@ public enum SynOSClientError: Error, Equatable, LocalizedError, Sendable {
 }
 
 public actor SynOSClient {
-    private enum Method: UInt8 {
-        case clusterState = 1
-        case submitJob = 2
-        case delegateCapability = 3
-        case topologyState = 4
-        case clusterSummary = 5
-        case clusterMembers = 6
-        case clusterInvitations = 7
-        case clusterJoinPlan = 8
-        case clusterLeavePlan = 9
-        case clusterHealth = 10
-        case clusterResources = 11
-        case clusterAudit = 12
-    }
+    private typealias Method = SynOSRPCMethod
 
-    private static let headerBytes = 24
-    private static let protocolVersion: UInt8 = 1
-    private static let capabilityFlag: UInt16 = 1
+    private static let headerBytes = SynOSABI.frameHeaderBytes
+    private static let protocolVersion = SynOSABI.protocolVersion
+    private static let capabilityFlag = SynOSABI.capabilityFlag
 
     private let transport: any SynOSTransport
     private var authority: SynOSCapability?
@@ -390,7 +380,7 @@ public actor SynOSClient {
         }
         payload.append(body)
         var request = ByteWriter()
-        request.append(Data([0x53, 0x59, 0x52, 0x50]))
+        request.append(SynOSABI.magic)
         request.append(Self.protocolVersion)
         request.append(method.rawValue)
         request.append(authority == nil ? 0 : Self.capabilityFlag)
@@ -416,9 +406,13 @@ public actor SynOSClient {
             throw SynOSClientError.invalidFrame
         }
         var reader = ByteReader(response)
-        guard try reader.readData(count: 4) == Data([0x53, 0x59, 0x52, 0x50]),
-              try reader.readByte() == Self.protocolVersion,
-              try reader.readByte() == method.rawValue,
+        guard try reader.readData(count: 4) == SynOSABI.magic else {
+            throw SynOSClientError.invalidFrame
+        }
+        guard try reader.readByte() == Self.protocolVersion else {
+            throw SynOSClientError.abiMismatch
+        }
+        guard try reader.readByte() == method.rawValue,
               try reader.readUInt16() == 0,
               try reader.readUInt64() == requestID else {
             throw SynOSClientError.mismatchedResponse

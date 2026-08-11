@@ -398,6 +398,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "synos-abi"
+version = "0.1.0"
+dependencies = [
+ "synos-ipc",
+ "synos-status",
+]
+
+[[package]]
 name = "synos-actors"
 version = "0.1.0"
 dependencies = [
@@ -496,6 +504,7 @@ dependencies = [
 name = "synos-client-sdk"
 version = "0.1.0"
 dependencies = [
+ "synos-abi",
  "synos-auth",
  "synos-fabric",
  "synos-kernel",
@@ -667,6 +676,7 @@ name = "synos-kernel"
 version = "0.1.0"
 dependencies = [
  "syn-shell",
+ "synos-abi",
  "synos-boot-protocol",
  "synos-fabric",
  "synos-fsd",
@@ -793,6 +803,9 @@ dependencies = [
 [[package]]
 name = "synos-protocol"
 version = "0.1.0"
+dependencies = [
+ "synos-abi",
+]
 
 [[package]]
 name = "synos-ras"
@@ -833,6 +846,7 @@ dependencies = [
 name = "synos-runtime"
 version = "0.1.0"
 dependencies = [
+ "synos-abi",
  "synos-ipc",
  "synos-path-pattern",
  "synos-status",
@@ -959,6 +973,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "libc",
+ "synos-abi",
  "synos-app",
  "synos-boot-protocol",
  "synos-fabric",

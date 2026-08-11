@@ -69,7 +69,10 @@ impl RemoteError {
     pub const fn new(status: RpcStatus, operation: Method, request_id: u64) -> Self {
         Self {
             status,
-            error: status.public_error(operation, request_id),
+            error: status.public_status().public_error(
+                operation as u16,
+                synos_status::AuditContext::new(request_id as u128, 0),
+            ),
         }
     }
 }

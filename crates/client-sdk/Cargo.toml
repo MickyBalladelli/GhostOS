@@ -9,6 +9,7 @@ description = "Portable SynOS capability and frontend RPC client SDK"
 path = "src/lib.rs"
 
 [dependencies]
+synos-abi = { path = "../abi" }
 synos-protocol = { path = "../protocol" }
 synos-auth = { path = "../auth" }
 synos-fabric = { path = "../fabric" }

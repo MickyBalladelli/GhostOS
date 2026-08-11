@@ -15,6 +15,8 @@ pub mod clock;
 pub mod replay;
 pub mod migration;
 
+pub const GUEST_ABI_SCHEMA_VERSION: u16 = synos_abi::ABI_SCHEMA_VERSION;
+
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
 pub use net::{

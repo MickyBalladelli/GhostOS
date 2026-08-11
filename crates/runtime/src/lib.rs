@@ -10,7 +10,10 @@ mod thread;
 
 use synos_status::Status;
 
-pub use abi::{Capability, GateFn, NativeGate, Operation, Request, Response, SystemCall};
+pub use abi::{
+    ABI_REVISION, ABI_SCHEMA_VERSION, Capability, GateFn, NativeGate, Operation, Request, Response,
+    SystemCall,
+};
 pub use synos_path_pattern::{Pattern, PatternError};
 pub use fs::{
     DirectoryPage, DirectoryRemovalMetadata, File, LinkMetadata, Metadata, OpenOptions,
