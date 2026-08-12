@@ -231,11 +231,15 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         scheduler_clock
     );
 
-    let filesystem_process = boot_services::start()
+    let boot_services = boot_services::start()
         .unwrap_or_else(|error| fatal_kernel_halt(error.status()));
     println!(
         "filesystem service registered and started (process={})",
-        filesystem_process.raw()
+        boot_services.filesystem_process.raw()
+    );
+    println!(
+        "storage service registered and started (process={})",
+        boot_services.storage_process.raw()
     );
 
     // Early hardware setup is complete. Start the first user-space process.
