@@ -1,6 +1,6 @@
 [abi]
 schema_version = 1
-revision = 1
+revision = 2
 rpc_protocol_version = 1
 rpc_magic = "SYRP"
 rpc_frame_header_bytes = 24
@@ -139,6 +139,9 @@ value = 43
 [[operations]]
 name = "SystemInfo"
 value = 44
+[[operations]]
+name = "ShellPoll"
+value = 45
 
 [[methods]]
 name = "ClusterState"

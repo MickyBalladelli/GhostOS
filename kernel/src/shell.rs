@@ -1,4 +1,5 @@
 use core::{fmt, mem::MaybeUninit};
+use core::sync::atomic::{AtomicBool, Ordering};
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
@@ -42,6 +43,7 @@ const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
 const SYNOS_ISOLATE_ROUTE: u16 = 12;
 const UPTIME_ROUTE: u16 = 13;
+const SHOW_SERVICES_ROUTE: u16 = 14;
 const COMMAND_CAPACITY: usize = 96;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
@@ -52,6 +54,9 @@ const EDITOR_RENDER_BYTES: usize = 16 * 1024;
 static mut SHELL_REGISTRY: MaybeUninit<CommandRegistry<COMMAND_CAPACITY>> = MaybeUninit::uninit();
 static mut SHELL_INTERPRETER: MaybeUninit<Interpreter> = MaybeUninit::uninit();
 static mut SHELL_EXECUTOR: MaybeUninit<KernelExecutor> = MaybeUninit::uninit();
+static mut SHELL_SESSION: MaybeUninit<ShellSession> = MaybeUninit::uninit();
+static SHELL_READY: AtomicBool = AtomicBool::new(false);
+static SHELL_PRESENTED: AtomicBool = AtomicBool::new(false);
 const HELP_CATEGORIES: [&str; 10] = [
     "SHELL",
     "SYSTEM",
@@ -114,6 +119,30 @@ enum EditExit {
     Cancelled,
 }
 
+struct ShellSession {
+    editor: LineEditor<HISTORY_CAPACITY>,
+    keyboard: crate::keyboard::Keyboard,
+    usb_keyboard: Option<crate::usb_keyboard::UsbKeyboard>,
+    input: VtInput,
+    ignore_line_feed: bool,
+    line_render: ShellLineRender,
+    acpi: Option<AcpiPlatform>,
+}
+
+impl ShellSession {
+    fn new(acpi: Option<AcpiPlatform>) -> Self {
+        Self {
+            editor: LineEditor::new(),
+            keyboard: crate::keyboard::Keyboard::new(),
+            usb_keyboard: crate::usb_keyboard::UsbKeyboard::new(),
+            input: VtInput::new(),
+            ignore_line_feed: false,
+            line_render: ShellLineRender::new(),
+            acpi,
+        }
+    }
+}
+
 pub fn run(
     boot_info: &'static BootInfo,
     scheduler: &'static mut Scheduler,
@@ -122,13 +151,42 @@ pub fn run(
     scheduler_clock: u64,
     acpi: Option<AcpiPlatform>,
 ) -> ! {
-    // Safety: shell::run is entered once from kernel_entry and never re-entered.
+    unsafe {
+        initialize(
+            boot_info,
+            scheduler as *mut Scheduler,
+            dlm,
+            node_fences,
+            scheduler_clock,
+            acpi,
+        )
+    };
+    present();
+    loop {
+        if poll_input().unwrap_or(0) == 0 {
+            crate::arch::halt()
+        }
+    }
+}
+
+/// The scheduler must remain valid for the lifetime of the shell session.
+pub(crate) unsafe fn initialize(
+    boot_info: &'static BootInfo,
+    scheduler: *mut Scheduler,
+    dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
+    node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
+    scheduler_clock: u64,
+    acpi: Option<AcpiPlatform>,
+) {
+    if SHELL_READY.load(Ordering::Acquire) {
+        return
+    }
     let registry = unsafe {
         let slot = &mut *core::ptr::addr_of_mut!(SHELL_REGISTRY);
         slot.write(CommandRegistry::new());
         slot.assume_init_mut()
     };
-    let interpreter = unsafe {
+    let _interpreter = unsafe {
         let slot = &mut *core::ptr::addr_of_mut!(SHELL_INTERPRETER);
         slot.write(Interpreter::new());
         slot.assume_init_mut()
@@ -150,6 +208,7 @@ pub fn run(
     register(registry, "SHOW-MEMORY", SHOW_MEMORY_ROUTE);
     register(registry, "SHOW-DSM", SHOW_DSM_ROUTE);
     register(registry, "UPTIME", UPTIME_ROUTE);
+    register(registry, "SHOW-SERVICES", SHOW_SERVICES_ROUTE);
     register_control_commands(registry);
     syn_shell::cluster::register_cluster_commands_without_help(registry)
         .expect("kernel cluster command registry has capacity");
@@ -160,9 +219,7 @@ pub fn run(
     syn_shell::network::register_network_commands(registry)
         .expect("kernel network command registry has capacity");
 
-    let mut editor = LineEditor::<HISTORY_CAPACITY>::new();
-    // Safety: executor is initialized once before the shell loop and not shared.
-    let executor = unsafe {
+    unsafe {
         let slot = &mut *core::ptr::addr_of_mut!(SHELL_EXECUTOR);
         slot.write(KernelExecutor::new(
             boot_info,
@@ -172,83 +229,117 @@ pub fn run(
             scheduler_clock,
             acpi.is_some(),
         ));
-        slot.assume_init_mut()
-    };
-    let mut keyboard = crate::keyboard::Keyboard::new();
-    let mut usb_keyboard = crate::usb_keyboard::UsbKeyboard::new();
-    let mut input = VtInput::new();
-    let mut ignore_line_feed = false;
-    let mut line_render = ShellLineRender::new();
+        let session = &mut *core::ptr::addr_of_mut!(SHELL_SESSION);
+        session.write(ShellSession::new(acpi));
+    }
+    SHELL_READY.store(true, Ordering::Release)
+}
 
+pub(crate) fn present() {
+    if !SHELL_READY.load(Ordering::Acquire)
+        || SHELL_PRESENTED.swap(true, Ordering::AcqRel)
+    {
+        return
+    }
     banner();
     request_terminal_size();
-    prompt();
+    prompt()
+}
 
-    loop {
-        let byte = wait_for_byte(&mut keyboard, &mut usb_keyboard, acpi.as_ref());
-        if ignore_line_feed && byte == b'\n' {
-            ignore_line_feed = false;
-            continue;
-        }
-        ignore_line_feed = false;
-
-        let key = match byte {
-            b'\r' => {
-                ignore_line_feed = true;
-                Some(Key::Enter)
-            }
-            _ => input.advance(byte),
+pub(crate) fn poll_input() -> Result<u64, Status> {
+    if !SHELL_READY.load(Ordering::Acquire) {
+        return Err(Status::BUSY)
+    }
+    let registry = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_REGISTRY)).assume_init_mut() };
+    let interpreter = unsafe {
+        (&mut *core::ptr::addr_of_mut!(SHELL_INTERPRETER)).assume_init_mut()
+    };
+    let executor = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_EXECUTOR)).assume_init_mut() };
+    let session = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_SESSION)).assume_init_mut() };
+    let mut processed = 0;
+    while processed < 64 {
+        let Some(byte) = read_available_byte(&mut session.keyboard, &mut session.usb_keyboard)
+        else {
+            break
         };
-        if let Some((columns, rows)) = input.take_resize() {
-            crate::console::set_remote_terminal_size(columns, rows)
-        }
-        let Some(key) = key else { continue };
+        process_input_byte(byte, registry, interpreter, executor, session);
+        processed += 1
+    }
+    if processed == 0 && session.acpi.as_ref().is_some_and(crate::power::power_button_pressed) {
+        crate::power::shutdown(session.acpi.as_ref())
+    }
+    Ok(processed)
+}
 
-        match editor.handle(key) {
-            Ok(EditorAction::Redraw) => redraw(&editor, &mut line_render),
-            Ok(EditorAction::Complete) => {
-                if let Err(error) = complete_line(
-                    &mut editor,
+fn process_input_byte(
+    byte: u8,
+    registry: &CommandRegistry<COMMAND_CAPACITY>,
+    interpreter: &mut Interpreter,
+    executor: &mut KernelExecutor,
+    session: &mut ShellSession,
+) {
+    if session.ignore_line_feed && byte == b'\n' {
+        session.ignore_line_feed = false;
+        return
+    }
+    session.ignore_line_feed = false;
+
+    let key = match byte {
+        b'\r' => {
+            session.ignore_line_feed = true;
+            Some(Key::Enter)
+        }
+        _ => session.input.advance(byte),
+    };
+    if let Some((columns, rows)) = session.input.take_resize() {
+        crate::console::set_remote_terminal_size(columns, rows)
+    }
+    let Some(key) = key else { return };
+
+    match session.editor.handle(key) {
+        Ok(EditorAction::Redraw) => redraw(&session.editor, &mut session.line_render),
+        Ok(EditorAction::Complete) => {
+            if let Err(error) = complete_line(
+                &mut session.editor,
+                registry,
+                executor,
+                &mut session.line_render,
+            ) {
+                crate::println!();
+                print_operator_error("shell completion error", error.status());
+                session.line_render.reset();
+                prompt();
+                redraw(&session.editor, &mut session.line_render)
+            }
+        }
+        Ok(EditorAction::Submit(line)) => {
+            session.line_render.reset();
+            crate::println!();
+            if !line.as_str().trim().is_empty() {
+                execute_line(
+                    line.as_str(),
                     registry,
+                    interpreter,
                     executor,
-                    &mut line_render,
-                ) {
-                    crate::println!();
-                    print_operator_error("shell completion error", error.status());
-                    line_render.reset();
-                    prompt();
-                    redraw(&editor, &mut line_render)
-                }
+                    &mut session.keyboard,
+                    &mut session.usb_keyboard,
+                    session.acpi.as_ref(),
+                )
             }
-            Ok(EditorAction::Submit(line)) => {
-                line_render.reset();
-                crate::println!();
-                if !line.as_str().trim().is_empty() {
-                    execute_line(
-                        line.as_str(),
-                        registry,
-                        interpreter,
-                        executor,
-                        &mut keyboard,
-                        &mut usb_keyboard,
-                        acpi.as_ref(),
-                    )
-                }
-                prompt()
-            }
-            Ok(EditorAction::Cancel) => {
-                line_render.reset();
-                crate::println!("\x1b[91m^C\x1b[0m");
-                prompt()
-            }
-            Ok(EditorAction::None) => {}
-            Err(error) => {
-                crate::println!();
-                print_operator_error("shell input error", error.status());
-                editor.clear();
-                line_render.reset();
-                prompt()
-            }
+            prompt()
+        }
+        Ok(EditorAction::Cancel) => {
+            session.line_render.reset();
+            crate::println!("\x1b[91m^C\x1b[0m");
+            prompt()
+        }
+        Ok(EditorAction::None) => {}
+        Err(error) => {
+            crate::println!();
+            print_operator_error("shell input error", error.status());
+            session.editor.clear();
+            session.line_render.reset();
+            prompt()
         }
     }
 }
@@ -1204,7 +1295,9 @@ fn help_category(value: &str) -> Option<&'static str> {
 fn command_category(route: u16) -> &'static str {
     match route {
         HELP_ROUTE => "SHELL",
-        SHOW_SYSTEM_ROUTE | REBOOT_ROUTE | SHUTDOWN_ROUTE | UPTIME_ROUTE => "SYSTEM",
+        SHOW_SYSTEM_ROUTE | SHOW_SERVICES_ROUTE | REBOOT_ROUTE | SHUTDOWN_ROUTE | UPTIME_ROUTE => {
+            "SYSTEM"
+        }
         SHOW_PROCESSES_ROUTE | TOP_CPU_ROUTE | STOP_JOB_ROUTE | SET_PROCESS_ROUTE => "PROCESS",
         SHOW_MEMORY_ROUTE | SHOW_DSM_ROUTE => "MEMORY",
         MONITOR_ROUTE => "MONITOR",
@@ -2841,7 +2934,7 @@ struct KernelExecutor {
     reboot_requested: bool,
     shutdown_requested: bool,
     monitor: MonitorState,
-    scheduler: &'static mut Scheduler,
+    scheduler: *mut Scheduler,
     capabilities: CapabilitySpace,
     control_authority: crate::CapabilityHandle,
     dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
@@ -2854,7 +2947,7 @@ struct KernelExecutor {
 impl KernelExecutor {
     fn new(
         boot_info: &'static BootInfo,
-        scheduler: &'static mut Scheduler,
+        scheduler: *mut Scheduler,
         dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
         _node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
         scheduler_clock: u64,
@@ -2914,6 +3007,10 @@ impl KernelExecutor {
         }
     }
 
+    fn scheduler(&self) -> &Scheduler {
+        unsafe { &*self.scheduler }
+    }
+
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         crate::crash::publish_capability_context(&self.capabilities);
         match command.route.raw() {
@@ -2927,6 +3024,7 @@ impl KernelExecutor {
             SHOW_MEMORY_ROUTE => self.show_memory(command.json()),
             SHOW_DSM_ROUTE => self.show_dsm(command.json()),
             UPTIME_ROUTE => self.uptime(),
+            SHOW_SERVICES_ROUTE => self.show_services(command.json()),
             STOP_JOB_ROUTE => self.stop_job(command),
             SET_PROCESS_ROUTE => self.set_process(command),
             SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
@@ -2936,7 +3034,7 @@ impl KernelExecutor {
                 ..=syn_shell::network::SHOW_PACKETS_ROUTE)
                 .contains(&route) =>
             {
-                self.network.set_now_ms(self.scheduler.clock() / 1_000);
+                self.network.set_now_ms(self.scheduler().clock() / 1_000);
                 if route == syn_shell::network::PING_ROUTE
                     || route == syn_shell::network::SHOW_PACKETS_ROUTE
                 {
@@ -3419,6 +3517,41 @@ impl KernelExecutor {
         Ok(output)
     }
 
+    fn show_services(&self, json: bool) -> Result<StructuredOutput, Status> {
+        let ready = crate::service_ready_mask();
+        let services = [
+            "synos-init",
+            "synos-fsd",
+            "synos-storaged",
+            "synos-netd",
+            "synos-logd",
+            "synos-auditd",
+            "synos-authd",
+            "synos-pkgd",
+            "synos-shell",
+        ];
+        let mut ready_count = 0u64;
+        if !json {
+            crate::println!("\x1b[1;97;44mSERVICE          STATE\x1b[0m")
+        }
+        for (index, service) in services.iter().enumerate() {
+            let is_ready = ready & (1u32 << (index + 1)) != 0;
+            ready_count += is_ready as u64;
+            if !json {
+                crate::println!(
+                    "{:<16} {}",
+                    service,
+                    if is_ready { "READY" } else { "STARTING" },
+                )
+            }
+        }
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert(&mut output, "service-count", OutputValue::Unsigned(services.len() as u64))?;
+        insert(&mut output, "ready-count", OutputValue::Unsigned(ready_count))?;
+        insert(&mut output, "ready-mask", OutputValue::Unsigned(ready as u64))?;
+        Ok(output)
+    }
+
     fn print_system(&self) {
         crate::println!("\x1b[1;97;44mPROPERTY             VALUE\x1b[0m");
         crate::println!("Name                 SynOS");
@@ -3475,8 +3608,8 @@ impl KernelExecutor {
             return Err(Status::INVALID_ARGUMENT)
         }
         let id = thread_id(command.get("ID"))?;
-        self.scheduler
-            .terminate(
+        let scheduler = unsafe { &mut *self.scheduler };
+        scheduler.terminate(
                 &self.capabilities,
                 AddressSpaceId::KERNEL,
                 self.control_authority,
@@ -3492,8 +3625,8 @@ impl KernelExecutor {
     fn set_process(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         let id = thread_id(command.get("ID"))?;
         let priority = priority(command.get("PRIORITY"))?;
-        self.scheduler
-            .set_priority(
+        let scheduler = unsafe { &mut *self.scheduler };
+        scheduler.set_priority(
                 &self.capabilities,
                 AddressSpaceId::KERNEL,
                 self.control_authority,
@@ -3514,8 +3647,8 @@ impl KernelExecutor {
 
     fn isolate_cores(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         let cpus = parse_cpu_mask(command.get_text("CORES").ok_or(Status::INVALID_ARGUMENT)?)?;
-        self.scheduler
-            .isolate_cores(
+        let scheduler = unsafe { &mut *self.scheduler };
+        scheduler.isolate_cores(
                 &self.capabilities,
                 AddressSpaceId::KERNEL,
                 self.control_authority,
@@ -3528,7 +3661,7 @@ impl KernelExecutor {
         insert(
             &mut output,
             "housekeeping",
-            OutputValue::Unsigned(self.scheduler.partition().housekeeping().raw()),
+            OutputValue::Unsigned(scheduler.partition().housekeeping().raw()),
         )?;
         Ok(output)
     }
@@ -3553,7 +3686,7 @@ impl KernelExecutor {
     fn show_processes(&self, json: bool) -> Result<StructuredOutput, Status> {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "view", "processes")?;
-        let processes = MonitorState::get_processes(self.scheduler);
+        let processes = MonitorState::get_processes(self.scheduler());
         if !json {
             crate::println!("\x1b[1;97;46mTHREAD       STATE      SWITCHES SPACE     POLICY\x1b[0m");
         }
@@ -3600,7 +3733,8 @@ impl KernelExecutor {
     }
 
     fn print_top_cpu(&mut self) {
-        let top = MonitorState::get_top_cpu(self.scheduler, &mut self.monitor.cpu_history);
+        let scheduler = unsafe { &*self.scheduler };
+        let top = MonitorState::get_top_cpu(scheduler, &mut self.monitor.cpu_history);
         crate::println!("\x1b[1;97;42mTHREAD     OWNER        SPACE    STATE    POLICY  CPU%  SWITCHES\x1b[0m");
         let mut idx: u64 = 0;
         for cpu in top.iter().flatten() {
@@ -3706,7 +3840,7 @@ impl KernelExecutor {
 
     fn show_dsm(&self, json: bool) -> Result<StructuredOutput, Status> {
         let locks = MonitorState::get_lock_contentions(self.dlm);
-        let report = self.dlm.contention_report(self.scheduler.clock());
+        let report = self.dlm.contention_report(self.scheduler().clock());
 
         let mut active_locks = 0u64;
         let mut granted_locks = 0u64;
@@ -3787,7 +3921,7 @@ impl KernelExecutor {
         const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
         const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
 
-        let uptime_us = self.scheduler.clock();
+        let uptime_us = self.scheduler().clock();
         let total_seconds = uptime_us / 1_000_000;
         let days = total_seconds / SECONDS_PER_DAY;
         let hours = (total_seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR;

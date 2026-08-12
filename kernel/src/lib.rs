@@ -71,12 +71,12 @@ mod usb_keyboard;
 
 use core::panic::PanicInfo;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, AtomicU64};
 use synos_boot_protocol::BootInfo;
 use synos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
@@ -298,6 +298,9 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         scheduler,
         boot_info.physical_address_offset,
         boot_services,
+        boot_info,
+        scheduler_clock,
+        acpi,
     );
 
     #[cfg(not(all(
@@ -376,6 +379,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if ready & bit == 0 {
             SERVICE_READY.store(ready | bit, Ordering::Release);
             println!("{} ready in Ring 3 (address space {})", name, role);
+            if role == 9 {
+                shell::present()
+            }
         }
         return syscall_success([role as u64, 0, 0, 0])
     }
@@ -405,6 +411,18 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             heartbeats,
             role as u64,
         ])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::ShellPoll) {
+        if role != 9 || request.arguments != [0; 6] {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        if SERVICE_READY.load(Ordering::Acquire) & (1u32 << role) == 0 {
+            return syscall_error(Status::BUSY)
+        }
+        return match shell::poll_input() {
+            Ok(processed) => syscall_success([processed, 0, 0, 0]),
+            Err(status) => syscall_error(status),
+        }
     }
     if Operation::from_raw(request.operation) == Some(Operation::ClockNow) {
         if request.arguments != [0; 6] {
@@ -452,6 +470,21 @@ fn scheduler_clock() -> u64 {
     unsafe { (&*core::ptr::addr_of!(SCHEDULER)).assume_init_ref().clock() }
 }
 
+pub(crate) fn service_ready_mask() -> u32 {
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    {
+        return SERVICE_READY.load(Ordering::Acquire)
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    )))]
+    0
+}
+
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -486,7 +519,20 @@ fn boot_synos_init(
     scheduler: &'static mut Scheduler,
     physical_offset: u64,
     services: boot_services::BootServices,
+    boot_info: &'static BootInfo,
+    scheduler_clock: u64,
+    acpi: Option<synos_power::AcpiPlatform>,
 ) -> ! {
+    unsafe {
+        shell::initialize(
+            boot_info,
+            scheduler as *mut Scheduler,
+            &DLM,
+            &NODE_FENCES,
+            scheduler_clock,
+            acpi,
+        )
+    };
     let (init_thread, init_root) = boot_service_process(
         frames,
         scheduler,

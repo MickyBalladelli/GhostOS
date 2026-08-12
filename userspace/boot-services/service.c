@@ -5,7 +5,6 @@ typedef unsigned long long u64;
 
 enum {
     ABI_VERSION = 1,
-    OP_YIELD = 1,
     OP_SERVICE_READY = 42,
     OP_SERVICE_HEARTBEAT = 43,
     SERVICE_STATE = 0x0000008000004000ULL,
@@ -48,6 +47,5 @@ void _start(void)
     for (;;) {
         heartbeat++;
         call(OP_SERVICE_HEARTBEAT, role, heartbeat);
-        call(OP_YIELD, 0, 0);
     }
 }
