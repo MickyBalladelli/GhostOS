@@ -46,6 +46,7 @@ pub mod saturation;
 #[allow(unsafe_code)]
 pub mod syscall;
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 mod shell;
 pub mod task;
 pub mod monitor;
@@ -71,6 +72,10 @@ use synos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
 };
 use synos_status::Status;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 use synos_runtime::{Operation, Request, Response};
 
 pub use allocator::{
@@ -130,7 +135,9 @@ pub use invariants::{
 // table. kernel_entry initializes it before interrupts or shell code use it.
 static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
 static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
+#[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
+#[allow(dead_code)]
 static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
 
 #[allow(unsafe_code)]
@@ -230,6 +237,10 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 fn boot_hello_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     if Operation::from_raw(request.operation) != Some(Operation::Yield) {
         return Response {
