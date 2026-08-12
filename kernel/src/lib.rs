@@ -86,7 +86,8 @@ use synos_status::Status;
 use synos_runtime::{Operation, Request, Response};
 
 pub use allocator::{
-    AllocationError, EarlyFrameAllocator, QuotaAllocationError, FRAME_SIZE,
+    AllocationError, EarlyFrameAllocator, QuotaAllocationError, ReclaimError,
+    MAX_OWNED_FRAME_RANGES, FRAME_SIZE,
 };
 pub use address_space::{
     AddressSpace, AddressSpaceError, AddressSpaceTable, PageTableRoot,
@@ -354,7 +355,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
 ))]
 #[allow(unsafe_code)]
 fn boot_synos_init(
-    frames: &mut EarlyFrameAllocator<'_>,
+    frames: &mut EarlyFrameAllocator,
     scheduler: &'static mut Scheduler,
     physical_offset: u64,
     services: boot_services::BootServices,
@@ -419,7 +420,7 @@ fn boot_synos_init(
 ))]
 #[allow(unsafe_code)]
 fn boot_service_process(
-    frames: &mut EarlyFrameAllocator<'_>,
+    frames: &mut EarlyFrameAllocator,
     scheduler: &mut Scheduler,
     physical_offset: u64,
     address_space: AddressSpaceId,
@@ -427,14 +428,14 @@ fn boot_service_process(
 ) -> (ThreadId, PageTableRoot) {
     let mut tables = [0u64; arch::paging::PROCESS_TABLE_FRAME_COUNT];
     for frame in &mut tables {
-        let Ok(address) = frames.allocate() else {
+        let Ok(address) = frames.allocate_for_owner(address_space) else {
             fatal_kernel_halt(Status::NO_SPACE)
         };
         *frame = address;
     }
     let mut pages = [0u64; 4];
     for page in &mut pages {
-        let Ok(address) = frames.allocate() else {
+        let Ok(address) = frames.allocate_for_owner(address_space) else {
             fatal_kernel_halt(Status::NO_SPACE)
         };
         *page = address;

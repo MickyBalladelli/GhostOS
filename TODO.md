@@ -29,7 +29,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Replace the single identity-mapped address space with per-process page tables.
 - [x] Add user/read/write/execute page permissions.
 - [x] Add kernel/user virtual address layout.
-- [ ] Add physical frame ownership and reclamation.
+- [x] Add physical frame ownership and reclamation.
 - [ ] Add page mapping and unmapping syscalls.
 - [ ] Add TLB invalidation and cross-CPU TLB shootdown.
 - [ ] Add copy-on-write memory.
