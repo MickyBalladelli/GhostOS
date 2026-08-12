@@ -241,6 +241,10 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         "storage service registered and started (process={})",
         boot_services.storage_process.raw()
     );
+    println!(
+        "network service registered and started (process={})",
+        boot_services.network_process.raw()
+    );
 
     // Early hardware setup is complete. Start the first user-space process.
     #[cfg(all(

@@ -17,7 +17,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Make the kernel start `synos-init` after early hardware setup.
 - [x] Register and start the filesystem service.
 - [x] Register and start the storage service.
-- [ ] Register and start the network service.
+- [x] Register and start the network service.
 - [ ] Register and start logging and audit services.
 - [ ] Register and start authentication and package services.
 - [ ] Connect service restart and fault fencing to real kernel processes.
