@@ -6,7 +6,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Wire the application image loader to a real kernel process backend.
 - [x] Create real Ring 3 address spaces.
-- [ ] Add user-mode entry and return paths.
+- [x] Add user-mode entry and return paths.
 - [ ] Add syscall or call-gate entry and dispatch.
 - [ ] Add real register context switching.
 - [ ] Add process exit, wait, cancellation, and crash reporting.

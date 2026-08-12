@@ -56,6 +56,17 @@ pub mod paging {
         }
     }
 
+    /// Switch to a process page-table root before entering Ring 3.
+    ///
+    /// # Safety
+    /// `root` must be a live, fully initialized user page-table root that
+    /// retains the kernel mappings required by interrupt and return paths.
+    pub unsafe fn activate_root(root: u64) {
+        unsafe {
+            asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+        }
+    }
+
     fn supports_one_gib_pages() -> bool {
         if core::arch::x86_64::__cpuid(0x8000_0000).eax < 0x8000_0001 {
             return false
@@ -73,8 +84,50 @@ pub mod interrupts {
     const IDT_ENTRIES: usize = 256;
     const PIT_DIVISOR: u16 = 1_193;
     const PIT_TICK_US: u64 = 1_000;
+    const KERNEL_CODE_SELECTOR: u16 = 0x08;
+    const KERNEL_DATA_SELECTOR: u16 = 0x10;
+    const USER_CODE_SELECTOR: u16 = 0x18 | 3;
+    const USER_DATA_SELECTOR: u16 = 0x20 | 3;
+    const TSS_SELECTOR: u16 = 0x28;
     static mut IDT: [IdtEntry; IDT_ENTRIES] = [IdtEntry::MISSING; IDT_ENTRIES];
+    static mut GDT: [u64; 7] = [0; 7];
+    static mut TSS: TaskStateSegment = TaskStateSegment::new();
     static ISOLATED_CORES: AtomicU64 = AtomicU64::new(0);
+
+    #[repr(C)]
+    struct TaskStateSegment {
+        reserved0: u32,
+        rsp0: u64,
+        rsp1: u64,
+        rsp2: u64,
+        reserved1: u64,
+        ist: [u64; 7],
+        reserved2: u64,
+        reserved3: u16,
+        iomap_base: u16,
+    }
+
+    impl TaskStateSegment {
+        const fn new() -> Self {
+            Self {
+                reserved0: 0,
+                rsp0: 0,
+                rsp1: 0,
+                rsp2: 0,
+                reserved1: 0,
+                ist: [0; 7],
+                reserved2: 0,
+                reserved3: 0,
+                iomap_base: size_of::<Self>() as u16,
+            }
+        }
+    }
+
+    #[repr(C, packed)]
+    struct DescriptorTablePointer {
+        limit: u16,
+        base: u64,
+    }
 
     pub fn set_core_isolated(cpu: u8, isolated: bool) {
         let bit = 1u64 << cpu;
@@ -139,11 +192,10 @@ pub mod interrupts {
     pub unsafe fn init() {
         unsafe {
             asm!("cli", options(nomem, nostack));
-            let code_selector: u16;
-            asm!("mov {0:x}, cs", out(reg) code_selector, options(nomem, nostack, preserves_flags));
+            install_gdt();
 
             for index in 0..IDT_ENTRIES {
-                IDT[index] = IdtEntry::handler(synos_isr_table[index], code_selector);
+                IDT[index] = IdtEntry::handler(synos_isr_table[index], KERNEL_CODE_SELECTOR);
             }
 
             remap_pic();
@@ -156,6 +208,75 @@ pub mod interrupts {
                 base: (&raw const IDT) as u64,
             };
             asm!("lidt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags));
+        }
+    }
+
+    unsafe fn install_gdt() {
+        let rsp0: u64;
+        unsafe {
+            asm!("mov {}, rsp", out(reg) rsp0, options(nomem, nostack, preserves_flags));
+            TSS.rsp0 = rsp0;
+            GDT[0] = 0;
+            GDT[1] = 0x00af9a000000ffff;
+            GDT[2] = 0x00af92000000ffff;
+            GDT[3] = 0x00affa000000ffff;
+            GDT[4] = 0x00aff2000000ffff;
+            let base = (&raw const TSS) as u64;
+            let limit = (size_of::<TaskStateSegment>() - 1) as u64;
+            GDT[5] = (limit & 0xffff)
+                | ((base & 0x00ff_ffff) << 16)
+                | (0x89 << 40)
+                | (((limit >> 16) & 0xf) << 48)
+                | (((base >> 24) & 0xff) << 56);
+            GDT[6] = base >> 32;
+            let pointer = DescriptorTablePointer {
+                limit: (size_of::<[u64; 7]>() - 1) as u16,
+                base: (&raw const GDT) as u64,
+            };
+            asm!("lgdt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags));
+            asm!(
+                "mov ax, {data}",
+                "mov ds, ax",
+                "mov es, ax",
+                "mov ss, ax",
+                "push {code}",
+                "lea rax, [rip + 2f]",
+                "push rax",
+                "lretq",
+                "2:",
+                "mov ax, {tss}",
+                "ltr ax",
+                data = const KERNEL_DATA_SELECTOR,
+                code = const KERNEL_CODE_SELECTOR,
+                tss = const TSS_SELECTOR,
+                out("rax") _,
+                options(preserves_flags),
+            );
+        }
+    }
+
+    /// Enter Ring 3 with an already-mapped process context. Hardware returns
+    /// through the common ISR epilogue's `iretq` frame.
+    pub(crate) fn enter_user(context: &crate::Context, root: crate::PageTableRoot) -> ! {
+        unsafe {
+            super::paging::activate_root(root.frame());
+            let user_code = USER_CODE_SELECTOR as u64;
+            let user_data = USER_DATA_SELECTOR as u64;
+            let flags = 0x202u64;
+            asm!(
+                "push {user_data}",
+                "push {stack}",
+                "push {flags}",
+                "push {user_code}",
+                "push {entry}",
+                "iretq",
+                user_data = in(reg) user_data,
+                stack = in(reg) context.stack_pointer,
+                flags = in(reg) flags,
+                user_code = in(reg) user_code,
+                entry = in(reg) context.instruction_pointer,
+                options(noreturn),
+            )
         }
     }
 
@@ -349,6 +470,10 @@ synos_isr_table:
 .endr
 "#
     );
+}
+
+pub(crate) fn enter_user(context: &crate::Context, root: crate::PageTableRoot) -> ! {
+    interrupts::enter_user(context, root)
 }
 
 #[inline(always)]

@@ -44,6 +44,18 @@ pub mod paging {
             asm!("sfence.vma zero, zero", options(nostack));
         }
     }
+
+    /// Switch SATP to a live user address-space root.
+    ///
+    /// # Safety
+    /// The root must contain the kernel mappings needed by trap return.
+    pub unsafe fn activate_root(root: u64) {
+        unsafe {
+            let satp = SV39 | (root >> 12);
+            asm!("csrw satp, {}", in(reg) satp, options(nostack));
+            asm!("sfence.vma zero, zero", options(nostack));
+        }
+    }
 }
 
 pub mod interrupts {
@@ -82,6 +94,20 @@ pub(crate) fn capture_registers(fault_address: u64) -> crate::crash::RegisterSta
         stack_pointer: sp,
         flags,
         fault_address,
+    }
+}
+
+pub(crate) fn enter_user(context: &crate::Context, root: crate::PageTableRoot) -> ! {
+    unsafe {
+        paging::activate_root(root.frame());
+        let mut status: u64;
+        asm!("csrr {}, sstatus", out(reg) status, options(nomem, nostack));
+        status &= !(1 << 8);
+        status |= 1 << 5;
+        asm!("csrw sepc, {}", in(reg) context.instruction_pointer, options(nostack));
+        asm!("csrw sstatus, {}", in(reg) status, options(nostack));
+        asm!("mv sp, {}", in(reg) context.stack_pointer, options(nostack));
+        asm!("sret", options(noreturn));
     }
 }
 

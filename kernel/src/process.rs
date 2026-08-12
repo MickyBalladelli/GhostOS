@@ -425,6 +425,29 @@ impl<
             .map_err(|_| KernelProcessError::NotFound)
     }
 
+    /// Transfer control to a scheduled user thread. A hardware exception or
+    /// interrupt returns through the architecture's saved user frame.
+    pub fn enter(&self, process: ProcessId) -> Result<(), KernelProcessError> {
+        let index = self.slot_index(process)?;
+        let thread = self.slots[index]
+            .thread
+            .ok_or(KernelProcessError::NotFound)?;
+        let address_space = self.slots[index]
+            .address_space
+            .ok_or(KernelProcessError::NotFound)?;
+        let context = self
+            .scheduler
+            .thread(thread)
+            .map_err(|_| KernelProcessError::Scheduler)?
+            .context;
+        let root = self
+            .address_spaces
+            .get(address_space)
+            .map_err(|_| KernelProcessError::NotFound)?
+            .root();
+        crate::arch::enter_user(&context, root)
+    }
+
     /// Record a user-mode exit and release its thread, mapping, and authority.
     pub fn exit(&mut self, process: ProcessId, status: i32) -> Result<(), KernelProcessError> {
         let reason = if status == 0 {

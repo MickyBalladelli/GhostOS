@@ -50,6 +50,17 @@ pub mod paging {
             asm!("isb", options(nostack));
         }
     }
+
+    /// Switch TTBR0_EL1 to a live user address-space root.
+    ///
+    /// # Safety
+    /// The root must contain the kernel mappings needed by exception return.
+    pub unsafe fn activate_root(root: u64) {
+        unsafe {
+            asm!("msr ttbr0_el1, {}", in(reg) root, options(nostack));
+            asm!("isb", options(nostack));
+        }
+    }
 }
 
 pub mod interrupts {
@@ -108,6 +119,22 @@ pub(crate) fn capture_registers(fault_address: u64) -> crate::crash::RegisterSta
         stack_pointer: sp,
         flags,
         fault_address,
+    }
+}
+
+pub(crate) fn enter_user(context: &crate::Context, root: crate::PageTableRoot) -> ! {
+    unsafe {
+        paging::activate_root(root.frame());
+        asm!(
+            "msr sp_el0, {stack}",
+            "msr elr_el1, {entry}",
+            "msr spsr_el1, xzr",
+            "isb",
+            "eret",
+            stack = in(reg) context.stack_pointer,
+            entry = in(reg) context.instruction_pointer,
+            options(noreturn),
+        )
     }
 }
 
