@@ -3384,6 +3384,9 @@ impl KernelExecutor {
     }
 
     fn request_reboot(&mut self) -> Result<StructuredOutput, Status> {
+        if self.reboot_requested || self.shutdown_requested {
+            return Ok(StructuredOutput::new(Status::NORMAL))
+        }
         self.filesystem.source_mut().persist();
         self.reboot_requested = true;
         let mut output = StructuredOutput::new(Status::NORMAL);
@@ -3396,6 +3399,9 @@ impl KernelExecutor {
     }
 
     fn request_shutdown(&mut self) -> Result<StructuredOutput, Status> {
+        if self.shutdown_requested || self.reboot_requested {
+            return Ok(StructuredOutput::new(Status::NORMAL))
+        }
         self.filesystem.source_mut().persist();
         self.shutdown_requested = true;
         let mut output = StructuredOutput::new(Status::NORMAL);
