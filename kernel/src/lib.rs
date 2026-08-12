@@ -68,7 +68,12 @@ mod usb_keyboard;
 
 use core::panic::PanicInfo;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+use core::sync::atomic::AtomicU32;
 use synos_boot_protocol::BootInfo;
 use synos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
