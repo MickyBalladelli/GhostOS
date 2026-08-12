@@ -5,6 +5,7 @@ typedef unsigned long long u64;
 
 enum {
     ABI_VERSION = 1,
+    OP_CLOCK_NOW = 2,
     OP_SERVICE_READY = 42,
     OP_SERVICE_HEARTBEAT = 43,
     OP_SYNFS_OPEN = 12,
@@ -16,6 +17,7 @@ enum {
     OP_SYNFS_DELETE = 22,
     OP_TERMINAL_READ = 24,
     OP_TERMINAL_WRITE = 25,
+    OP_SLEEP_UNTIL = 47,
     SHELL_ROLE = 9,
     OPEN_READ = 1,
     OPEN_WRITE = 2,
@@ -123,6 +125,14 @@ static int read_byte(u8 *byte)
 {
     struct response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
     return response.status == 0 && response.values[0] == 1;
+}
+
+static void sleep_for(u64 duration_us)
+{
+    struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0, 0, 0);
+    if (clock.status == 0) {
+        call(OP_SLEEP_UNTIL, 0, 0, clock.values[0] + duration_us, 0, 0, 0);
+    }
 }
 
 static u64 next_word(char **cursor, char *word)
@@ -268,6 +278,7 @@ void _start(void)
     write_text("SynOS user shell\n$ ");
     for (;;) {
         if (!read_byte(&byte)) {
+            sleep_for(1000);
             idle_polls++;
             if (idle_polls == 256) {
                 call(OP_SERVICE_HEARTBEAT, 0, 0, SHELL_ROLE, ++heartbeat, 0, 0);

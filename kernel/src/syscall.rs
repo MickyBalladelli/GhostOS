@@ -247,13 +247,13 @@ fn valid_user_range(address: usize, length: usize, alignment: usize) -> bool {
 pub extern "C" fn synos_call_gate_dispatch(
     request: *const Request,
     response: *mut Response,
-) {
+) -> u64 {
     if !valid_user_range(
         response as usize,
         core::mem::size_of::<Response>(),
         core::mem::align_of::<Response>(),
     ) {
-        return
+        return 0
     }
 
     if !valid_user_range(
@@ -262,14 +262,22 @@ pub extern "C" fn synos_call_gate_dispatch(
         core::mem::align_of::<Request>(),
     ) {
         unsafe { response.write(error(Status::INVALID_ARGUMENT)) };
-        return
+        return 0
     }
 
     let Some(caller) = crate::current_address_space() else {
         unsafe { response.write(error(Status::BUSY)) };
-        return
+        return 0
     };
     let request = unsafe { request.read() };
     let result = dispatch(caller, request);
     unsafe { response.write(result) };
+    if result.status == Status::NORMAL.raw()
+        && synos_runtime::Operation::from_raw(request.operation)
+            == Some(synos_runtime::Operation::SleepUntil)
+    {
+        request.arguments[0].saturating_sub(crate::time::monotonic_now_us())
+    } else {
+        0
+    }
 }

@@ -53,8 +53,29 @@ impl<S: SystemCall> Runtime<S> {
     }
 
     pub fn clock_now(&self) -> Result<u64, Error> {
+        self.monotonic_now()
+    }
+
+    pub fn monotonic_now(&self) -> Result<u64, Error> {
         let response = self.execute(Request::new(Operation::ClockNow))?;
         Ok(response.values[0])
+    }
+
+    pub fn realtime_now(&self) -> Result<u64, Error> {
+        let response = self.execute(Request::new(Operation::RealtimeNow))?;
+        Ok(response.values[0])
+    }
+
+    pub fn sleep_until(&self, deadline_us: u64) -> Result<(), Error> {
+        let mut request = Request::new(Operation::SleepUntil);
+        request.arguments[0] = deadline_us;
+        self.execute(request)?;
+        Ok(())
+    }
+
+    pub fn sleep_for(&self, duration_us: u64) -> Result<(), Error> {
+        let deadline = self.clock_now()?.saturating_add(duration_us);
+        self.sleep_until(deadline)
     }
 
     pub fn map(

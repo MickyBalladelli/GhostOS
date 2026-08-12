@@ -851,7 +851,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
         }
         if vector == crate::syscall::CALL_GATE_VECTOR as u64 {
             let frame_ref = unsafe { &mut *frame };
-            crate::syscall::synos_call_gate_dispatch(
+            let sleep_us = crate::syscall::synos_call_gate_dispatch(
                 frame_ref.rdi as *const synos_runtime::Request,
                 frame_ref.rsi as *mut synos_runtime::Response,
             );
@@ -859,7 +859,12 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
             unsafe {
                 let scheduler =
                     (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
-                if let Ok(Some(context_switch)) = scheduler.yield_current() {
+                let switch = if sleep_us == 0 {
+                    scheduler.yield_current()
+                } else {
+                    scheduler.sleep_current(sleep_us)
+                };
+                if let Ok(Some(context_switch)) = switch {
                     if let Some(previous) = context_switch.previous {
                         if let Ok(context) = scheduler.context_mut(previous) {
                             save_context(frame, context);
@@ -957,6 +962,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                 if vector == 32 {
                     let scheduler =
                         (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
+                    crate::time::advance_monotonic(PIT_TICK_US);
                     if let Some(context_switch) = scheduler.tick_on(cpu, PIT_TICK_US) {
                         if let Some(previous) = context_switch.previous {
                             if let Ok(context) = scheduler.context_mut(previous) {

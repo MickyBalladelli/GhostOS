@@ -5,8 +5,12 @@ typedef unsigned long long u64;
 
 enum {
     ABI_VERSION = 1,
+    OP_CLOCK_NOW = 2,
+    OP_RANDOM_GET = 23,
     OP_SERVICE_READY = 42,
     OP_SERVICE_HEARTBEAT = 43,
+    OP_REALTIME_NOW = 46,
+    OP_SLEEP_UNTIL = 47,
     SERVICE_STATE = 0x0000008000004000ULL,
     SERVICE_RESOURCE_STATE = SERVICE_STATE + 8,
     SERVICE_RESOURCE_MAGIC = 0x53594e4f44525653ULL,
@@ -45,7 +49,7 @@ struct service_resource_manifest {
     struct service_resource resources[16];
 };
 
-static void call(u16 operation, u64 first, u64 second)
+static struct response call(u16 operation, u64 first, u64 second)
 {
     struct request request = {0};
     struct response response = {0};
@@ -54,6 +58,7 @@ static void call(u16 operation, u64 first, u64 second)
     request.arguments[0] = first;
     request.arguments[1] = second;
     __asm__ volatile("int $0x80" : : "D"(&request), "S"(&response) : "rax", "memory");
+    return response;
 }
 
 __attribute__((section(".text._start"), noreturn))
@@ -64,6 +69,7 @@ void _start(void)
         (volatile const struct service_resource_manifest *)SERVICE_RESOURCE_STATE;
     u64 role = *state;
     u64 heartbeat = 0;
+    u64 random_probe = 0;
 
     if (resources->magic != SERVICE_RESOURCE_MAGIC
         || resources->version != SERVICE_RESOURCE_VERSION
@@ -72,7 +78,11 @@ void _start(void)
     }
 
     call(OP_SERVICE_READY, role, 0);
+    call(OP_REALTIME_NOW, 0, 0);
+    call(OP_RANDOM_GET, (u64)&random_probe, sizeof(random_probe));
     for (;;) {
+        struct response clock = call(OP_CLOCK_NOW, 0, 0);
+        call(OP_SLEEP_UNTIL, clock.values[0] + 10000, 0);
         heartbeat++;
         if (resources != 0 && resources->count != 0) {
             heartbeat += resources->count;

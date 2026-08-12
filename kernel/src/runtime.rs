@@ -418,6 +418,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         if !matches!(
             operation,
             Operation::ClockNow
+                | Operation::RealtimeNow
                 | Operation::Yield
                 | Operation::SynFsOpen
                 | Operation::SynFsClose
@@ -465,6 +466,16 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                     status: Status::NORMAL.raw(),
                     flags: 0,
                     values: [self.clock, 0, 0, 0],
+                })
+            }
+            Operation::RealtimeNow => {
+                self.require_empty_request(request, false)?;
+                let now_ns = crate::time::realtime_now_ns()
+                    .ok_or(RuntimeDispatchError::TransportFailure)?;
+                Ok(Response {
+                    status: Status::NORMAL.raw(),
+                    flags: 0,
+                    values: [now_ns, 0, 0, 0],
                 })
             }
             Operation::Yield => {

@@ -124,10 +124,10 @@ Build the real operating system core before adding more advanced features.
 
 ### Time and randomness
 
-- [ ] Add a real-time clock.
-- [ ] Add a monotonic clock shared by kernel and services.
-- [ ] Add timers, sleep, and wakeup primitives.
-- [ ] Add a trusted entropy and random-number service.
+- [x] Add a real-time clock.
+- [x] Add a monotonic clock shared by kernel and services.
+- [x] Add timers, sleep, and wakeup primitives.
+- [x] Add a trusted entropy and random-number service.
 
 ### IPC safety
 

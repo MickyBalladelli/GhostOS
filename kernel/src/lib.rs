@@ -65,11 +65,15 @@ pub mod scheduler;
 pub mod runtime;
 pub mod saturation;
 #[allow(unsafe_code)]
+pub mod random;
+#[allow(unsafe_code)]
 pub mod syscall;
 #[allow(unsafe_code)]
 #[allow(dead_code)]
 mod shell;
 pub mod task;
+#[allow(unsafe_code)]
+pub mod time;
 pub mod monitor;
 pub mod tlb;
 #[cfg(all(
@@ -248,6 +252,8 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     SCHEDULER_READY.store(true, Ordering::Release);
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
+    time::initialize();
+    random::initialize();
     let architecture = arch::evidence();
     println!(
         "architecture={} smp={} interrupts={} user-mode={} isolation={}",
@@ -256,6 +262,12 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         architecture.interrupts,
         architecture.user_mode,
         architecture.isolation,
+    );
+    println!(
+        "time rtc={} monotonic={}us entropy={}",
+        time::realtime_ready(),
+        time::monotonic_now_us(),
+        random::ready(),
     );
     let bootstrap_cpu = arch::interrupts::current_cpu();
     let mut cpu_topology = arch::cpu::CpuTopology::<{ task::MAX_CPUS }>::new();
@@ -541,7 +553,40 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if request.arguments != [0; 6] {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        return syscall_success([scheduler_clock(), 0, 0, 0])
+        return syscall_success([time::monotonic_now_us(), 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::RealtimeNow) {
+        if request.arguments != [0; 6] {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let Some(now_ns) = time::realtime_now_ns() else {
+            return syscall_error(Status::BUSY)
+        };
+        return syscall_success([now_ns, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::SleepUntil) {
+        if request.arguments[1..] != [0; 5] {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        return syscall_success([request.arguments[0], 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::RandomGet) {
+        let address = request.arguments[0];
+        let length = request.arguments[1];
+        if request.arguments[2..] != [0; 4]
+            || length == 0
+            || length > random::MAX_REQUEST_BYTES as u64
+            || !arch::paging::service_user_range(address, length, true)
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let bytes = unsafe {
+            core::slice::from_raw_parts_mut(address as *mut u8, length as usize)
+        };
+        if !random::fill(bytes) {
+            return syscall_error(Status::BUSY)
+        }
+        return syscall_success([length, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::Yield) {
         if request.arguments != [0; 6] {
