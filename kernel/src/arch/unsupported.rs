@@ -17,6 +17,16 @@ pub(crate) fn enter_user(_: &crate::Context, _: crate::PageTableRoot) -> ! {
 pub mod interrupts {
     pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
 
+    pub fn current_cpu() -> crate::task::CpuId {
+        crate::task::CpuId::new(0).expect("CPU 0 is valid")
+    }
+
+    pub fn send_ipi(_target: crate::task::CpuId, _vector: u8) -> bool {
+        false
+    }
+
+    pub fn end_of_interrupt() {}
+
     pub fn disable() {}
 
 

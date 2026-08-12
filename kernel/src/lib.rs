@@ -248,6 +248,23 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     SCHEDULER_READY.store(true, Ordering::Release);
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
+    let architecture = arch::evidence();
+    println!(
+        "architecture={} smp={} interrupts={} user-mode={} isolation={}",
+        architecture.name,
+        architecture.smp,
+        architecture.interrupts,
+        architecture.user_mode,
+        architecture.isolation,
+    );
+    let bootstrap_cpu = arch::interrupts::current_cpu();
+    let mut cpu_topology = arch::cpu::CpuTopology::<{ task::MAX_CPUS }>::new();
+    let _ = cpu_topology.add_bootstrap(bootstrap_cpu.raw() as u32);
+    println!(
+        "cpu topology online={} bootstrap={}",
+        cpu_topology.online_count(),
+        bootstrap_cpu.raw(),
+    );
     let pci_inventory = pci::discover();
     println!(
         "PCI discovery complete ({} device{})",

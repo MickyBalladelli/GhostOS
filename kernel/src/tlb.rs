@@ -88,6 +88,16 @@ impl<const CAPACITY: usize> TlbShootdownCoordinator<CAPACITY> {
         self.next_id = self.next_id.wrapping_add(1).max(1);
 
         crate::arch::invalidate_tlb_range(start, length);
+        for raw in 0..crate::task::MAX_CPUS as u8 {
+            if let Some(cpu) = CpuId::new(raw) {
+                if cpu != initiator && targets.contains(cpu) {
+                    let _ = crate::arch::interrupts::send_ipi(
+                        cpu,
+                        crate::arch::TLB_SHOOTDOWN_IPI_VECTOR,
+                    );
+                }
+            }
+        }
         self.requests[slot] = Some(TlbShootdownRequest {
             id,
             address_space,

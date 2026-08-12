@@ -2,7 +2,7 @@ use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rig
 use crate::persona::{ExecutionPersona, PersonaError, RightIdentifier};
 use crate::task::{
     AddressSpaceId, Context, CpuId, CpuMask, ExecutionMode, MAX_THREADS, SchedulingPolicy, Thread,
-    ThreadId, ThreadState,
+    ThreadId, ThreadState, MAX_CPUS,
 };
 use crate::partition::{CorePartition, CorePartitionError};
 use synos_observability::{
@@ -58,6 +58,39 @@ pub struct ContextSwitch {
     pub next_address_space_root: Option<crate::PageTableRoot>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PerCpuSchedulerState {
+    pub cpu: CpuId,
+    pub online: bool,
+    pub current: Option<ThreadId>,
+    pub interrupt_depth: u16,
+    pub reschedule_pending: bool,
+    pub clock: u64,
+}
+
+impl PerCpuSchedulerState {
+    const fn new(cpu: CpuId) -> Self {
+        Self {
+            cpu,
+            online: cpu.raw() == 0,
+            current: None,
+            interrupt_depth: 0,
+            reschedule_pending: false,
+            clock: 0,
+        }
+    }
+}
+
+const fn new_per_cpu_state() -> [PerCpuSchedulerState; MAX_CPUS] {
+    let mut states = [PerCpuSchedulerState::new(CpuId::new(0).expect("CPU 0 is valid")); MAX_CPUS];
+    let mut index = 0;
+    while index < MAX_CPUS {
+        states[index] = PerCpuSchedulerState::new(CpuId::new(index as u8).expect("CPU is valid"));
+        index += 1;
+    }
+    states
+}
+
 pub struct Scheduler {
     threads: [Thread; MAX_THREADS],
     generations: [u16; MAX_THREADS],
@@ -66,6 +99,7 @@ pub struct Scheduler {
     clock: u64,
     partition: CorePartition,
     current_cpu: CpuId,
+    per_cpu: [PerCpuSchedulerState; MAX_CPUS],
     ipc_waiters: [Option<IpcWait>; MAX_THREADS],
     numa: NumaPlacement,
     power: PowerPolicy,
@@ -88,6 +122,7 @@ impl Scheduler {
             clock: 0,
             partition: CorePartition::new(),
             current_cpu: CpuId::new(0).expect("CPU 0 is valid"),
+            per_cpu: new_per_cpu_state(),
             ipc_waiters: [None; MAX_THREADS],
             numa: NumaPlacement::uma(),
             power: PowerPolicy::new(),
@@ -363,6 +398,47 @@ impl Scheduler {
         self.partition
     }
 
+    pub fn per_cpu_state(&self, cpu: CpuId) -> Option<PerCpuSchedulerState> {
+        self.per_cpu.get(cpu.raw() as usize).copied()
+    }
+
+    pub fn enter_interrupt(&mut self, cpu: CpuId) -> Result<(), SchedulerError> {
+        let state = self
+            .per_cpu
+            .get_mut(cpu.raw() as usize)
+            .ok_or(SchedulerError::InvalidCpuMask)?;
+        state.interrupt_depth = state.interrupt_depth.saturating_add(1);
+        Ok(())
+    }
+
+    pub fn exit_interrupt(&mut self, cpu: CpuId) -> Result<(), SchedulerError> {
+        let state = self
+            .per_cpu
+            .get_mut(cpu.raw() as usize)
+            .ok_or(SchedulerError::InvalidCpuMask)?;
+        state.interrupt_depth = state.interrupt_depth.saturating_sub(1);
+        Ok(())
+    }
+
+    pub fn request_reschedule(&mut self, cpu: CpuId) -> Result<(), SchedulerError> {
+        let state = self
+            .per_cpu
+            .get_mut(cpu.raw() as usize)
+            .ok_or(SchedulerError::InvalidCpuMask)?;
+        state.reschedule_pending = true;
+        Ok(())
+    }
+
+    pub fn take_reschedule(&mut self, cpu: CpuId) -> Result<bool, SchedulerError> {
+        let state = self
+            .per_cpu
+            .get_mut(cpu.raw() as usize)
+            .ok_or(SchedulerError::InvalidCpuMask)?;
+        let pending = state.reschedule_pending;
+        state.reschedule_pending = false;
+        Ok(pending)
+    }
+
     pub const fn scale_policy(cpu_count: usize) -> Option<ScalePolicy> {
         ScalePolicy::for_cpu_count(cpu_count)
     }
@@ -387,6 +463,7 @@ impl Scheduler {
         if !isolated.is_empty() {
             self.partition.isolate(isolated).map_err(map_partition_error)?
         }
+        self.sync_per_cpu_online();
         for raw in 0..crate::task::MAX_CPUS as u8 {
             if let Some(cpu) = CpuId::new(raw) {
                 crate::arch::interrupts::set_core_isolated(
@@ -410,6 +487,7 @@ impl Scheduler {
         self.partition
             .set_online(online)
             .map_err(map_partition_error)?;
+        self.sync_per_cpu_online();
         self.debug_check();
         Ok(())
     }
@@ -614,6 +692,10 @@ impl Scheduler {
             return None
         }
         self.current_cpu = cpu;
+        if let Some(state) = self.per_cpu.get_mut(cpu.raw() as usize) {
+            state.online = true;
+            state.reschedule_pending = false;
+        }
         if let Some(current) = self.current {
             if self.thread(current).ok()?.state == ThreadState::Running {
                 self.debug_check();
@@ -622,6 +704,9 @@ impl Scheduler {
         }
 
         let previous = self.current.take();
+        if let Some(state) = self.per_cpu.get_mut(cpu.raw() as usize) {
+            state.current = None;
+        }
         let Some(next) = self.pick_next(self.partition.housekeeping()) else {
             self.idle_state_on(
                 cpu,
@@ -632,6 +717,9 @@ impl Scheduler {
             return None;
         };
         self.current = Some(next);
+        if let Some(state) = self.per_cpu.get_mut(cpu.raw() as usize) {
+            state.current = Some(next);
+        }
         let thread = &mut self.threads[next.slot()];
         thread.state = ThreadState::Running;
         thread.switches = thread.switches.saturating_add(1);
@@ -697,6 +785,9 @@ impl Scheduler {
             return None
         }
         self.clock = self.clock.saturating_add(elapsed);
+        if let Some(state) = self.per_cpu.get_mut(cpu.raw() as usize) {
+            state.clock = state.clock.saturating_add(elapsed);
+        }
         for thread in &mut self.threads {
             if thread.state == ThreadState::Sleeping && thread.wake_at <= self.clock {
                 thread.state = ThreadState::Ready
@@ -816,6 +907,17 @@ impl Scheduler {
 
     fn debug_check(&self) {
         crate::invariants::debug_assert_valid(self.check_invariants())
+    }
+
+    fn sync_per_cpu_online(&mut self) {
+        let online = self.partition.online();
+        for state in &mut self.per_cpu {
+            state.online = online.contains(state.cpu);
+            if !state.online {
+                state.current = None;
+                state.reschedule_pending = false;
+            }
+        }
     }
 
     fn slot(&self, id: ThreadId) -> Result<usize, SchedulerError> {

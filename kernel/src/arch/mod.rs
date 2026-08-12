@@ -47,6 +47,63 @@ pub(crate) fn invalidate_tlb_range(start: u64, length: u64) {
     unsafe { paging::invalidate_range(start, length) }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArchitectureEvidence {
+    pub name: &'static str,
+    pub smp: bool,
+    pub interrupts: bool,
+    pub user_mode: bool,
+    pub isolation: bool,
+}
+
+#[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
+pub const fn evidence() -> ArchitectureEvidence {
+    ArchitectureEvidence {
+        name: "x86_64",
+        smp: true,
+        interrupts: true,
+        user_mode: true,
+        isolation: true,
+    }
+}
+
+#[cfg(all(target_arch = "aarch64", any(target_os = "none", target_os = "uefi")))]
+pub const fn evidence() -> ArchitectureEvidence {
+    ArchitectureEvidence {
+        name: "aarch64",
+        smp: false,
+        interrupts: true,
+        user_mode: true,
+        isolation: true,
+    }
+}
+
+#[cfg(all(target_arch = "riscv64", any(target_os = "none", target_os = "uefi")))]
+pub const fn evidence() -> ArchitectureEvidence {
+    ArchitectureEvidence {
+        name: "riscv64",
+        smp: false,
+        interrupts: true,
+        user_mode: true,
+        isolation: true,
+    }
+}
+
+#[cfg(not(any(
+    all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")),
+    all(target_arch = "aarch64", any(target_os = "none", target_os = "uefi")),
+    all(target_arch = "riscv64", any(target_os = "none", target_os = "uefi")),
+)))]
+pub const fn evidence() -> ArchitectureEvidence {
+    ArchitectureEvidence {
+        name: "unsupported",
+        smp: false,
+        interrupts: false,
+        user_mode: false,
+        isolation: false,
+    }
+}
+
 pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_offset: u64) {
     crate::invariants::debug_assert_valid(crate::invariants::check_page_table_transition(
         tables,
@@ -58,3 +115,7 @@ pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_off
         interrupts::init();
     }
 }
+pub mod cpu;
+
+pub const RESCHEDULE_IPI_VECTOR: u8 = 0xf0;
+pub const TLB_SHOOTDOWN_IPI_VECTOR: u8 = 0xf1;

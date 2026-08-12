@@ -113,8 +113,22 @@ pub mod paging {
 
 pub mod interrupts {
     use core::arch::{asm, global_asm};
+    use core::sync::atomic::{AtomicU64, Ordering};
 
-    pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
+    const MAX_CPU_MASK_BITS: u8 = 64;
+    static ISOLATED_CORES: AtomicU64 = AtomicU64::new(0);
+
+    pub fn set_core_isolated(cpu: u8, isolated: bool) {
+        if cpu >= MAX_CPU_MASK_BITS {
+            return
+        }
+        let bit = 1u64 << cpu;
+        if isolated {
+            ISOLATED_CORES.fetch_or(bit, Ordering::Release);
+        } else {
+            ISOLATED_CORES.fetch_and(!bit, Ordering::Release);
+        }
+    }
 
     pub fn disable() {
         unsafe { asm!("msr daifset, #2", options(nomem, nostack)) }
@@ -133,10 +147,49 @@ pub mod interrupts {
         }
     }
 
+    pub fn current_cpu() -> crate::task::CpuId {
+        let id: u64;
+        unsafe { asm!("mrs {}, mpidr_el1", out(reg) id, options(nomem, nostack)) }
+        crate::task::CpuId::new((id & 0xff) as u8)
+            .unwrap_or(crate::task::CpuId::new(0).expect("CPU 0 is valid"))
+    }
+
+    pub fn send_ipi(_target: crate::task::CpuId, _vector: u8) -> bool {
+        // GIC discovery is platform-specific. The vector entry and CPU
+        // state are ready; the platform driver supplies the distributor write.
+        false
+    }
+
+    pub fn end_of_interrupt() {}
+
+    #[repr(C)]
+    struct ExceptionFrame {
+        registers: [u64; 31],
+        elr: u64,
+        spsr: u64,
+        esr: u64,
+        far: u64,
+    }
+
     #[unsafe(no_mangle)]
-    extern "C" fn synos_aarch64_exception() -> ! {
-        crate::capture_exception(super::capture_registers(0), 0, synos_status::Status::CORRUPT, 0);
-        crate::println!("AArch64 exception");
+    unsafe extern "C" fn synos_aarch64_exception_dispatch(frame: *mut ExceptionFrame) {
+        let frame = unsafe { &mut *frame };
+        let exception_class = (frame.esr >> 26) & 0x3f;
+        if exception_class == 0x15 {
+            crate::syscall::synos_call_gate_dispatch(
+                frame.registers[0] as *const synos_runtime::Request,
+                frame.registers[1] as *mut synos_runtime::Response,
+            );
+            frame.elr = frame.elr.saturating_add(4);
+            return
+        }
+        crate::capture_exception(
+            super::capture_registers(frame.far),
+            frame.far,
+            synos_status::Status::CORRUPT,
+            exception_class as u16,
+        );
+        crate::println!("AArch64 exception class={exception_class:#x}");
         crate::halt()
     }
 
@@ -147,9 +200,61 @@ pub mod interrupts {
 .global synos_aarch64_vectors
 synos_aarch64_vectors:
 .rept 16
-    b synos_aarch64_exception
+    b synos_aarch64_exception_entry
     .space 124
 .endr
+
+.balign 16
+synos_aarch64_exception_entry:
+    sub sp, sp, #288
+    stp x0, x1, [sp, #0]
+    stp x2, x3, [sp, #16]
+    stp x4, x5, [sp, #32]
+    stp x6, x7, [sp, #48]
+    stp x8, x9, [sp, #64]
+    stp x10, x11, [sp, #80]
+    stp x12, x13, [sp, #96]
+    stp x14, x15, [sp, #112]
+    stp x16, x17, [sp, #128]
+    stp x18, x19, [sp, #144]
+    stp x20, x21, [sp, #160]
+    stp x22, x23, [sp, #176]
+    stp x24, x25, [sp, #192]
+    stp x26, x27, [sp, #208]
+    stp x28, x29, [sp, #224]
+    str x30, [sp, #240]
+    mrs x16, elr_el1
+    str x16, [sp, #248]
+    mrs x16, spsr_el1
+    str x16, [sp, #256]
+    mrs x16, esr_el1
+    str x16, [sp, #264]
+    mrs x16, far_el1
+    str x16, [sp, #272]
+    mov x0, sp
+    bl synos_aarch64_exception_dispatch
+    ldr x16, [sp, #248]
+    msr elr_el1, x16
+    ldr x16, [sp, #256]
+    msr spsr_el1, x16
+    ldp x0, x1, [sp, #0]
+    ldp x2, x3, [sp, #16]
+    ldp x4, x5, [sp, #32]
+    ldp x6, x7, [sp, #48]
+    ldp x8, x9, [sp, #64]
+    ldp x10, x11, [sp, #80]
+    ldp x12, x13, [sp, #96]
+    ldp x14, x15, [sp, #112]
+    ldp x16, x17, [sp, #128]
+    ldp x18, x19, [sp, #144]
+    ldp x20, x21, [sp, #160]
+    ldp x22, x23, [sp, #176]
+    ldp x24, x25, [sp, #192]
+    ldp x26, x27, [sp, #208]
+    ldp x28, x29, [sp, #224]
+    ldr x30, [sp, #240]
+    add sp, sp, #288
+    eret
 "#
     );
 }

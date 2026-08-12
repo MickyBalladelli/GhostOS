@@ -368,7 +368,7 @@ pub mod paging {
 pub mod interrupts {
     use super::{asm, global_asm};
     use crate::println;
-    use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
     const IDT_ENTRIES: usize = 256;
     const PIT_DIVISOR: u16 = 11_931;
@@ -378,10 +378,25 @@ pub mod interrupts {
     const USER_CODE_SELECTOR: u16 = 0x18 | 3;
     const USER_DATA_SELECTOR: u16 = 0x20 | 3;
     const TSS_SELECTOR: u16 = 0x28;
+    const IA32_APIC_BASE: u32 = 0x1b;
+    const DEFAULT_APIC_BASE: usize = 0xfee0_0000;
+    const APIC_ID: usize = 0x20;
+    const APIC_EOI: usize = 0xb0;
+    const APIC_SVR: usize = 0xf0;
+    const APIC_ICR_LOW: usize = 0x300;
+    const APIC_ICR_HIGH: usize = 0x310;
+    const APIC_TIMER_LVT: usize = 0x320;
+    const APIC_SPURIOUS_VECTOR: u32 = 0x100 | 0xff;
+    const APIC_INIT: u32 = 0x4500;
+    const APIC_STARTUP: u32 = 0x4600;
+    const APIC_DELIVERY_PENDING: u32 = 1 << 12;
     static mut IDT: [IdtEntry; IDT_ENTRIES] = [IdtEntry::MISSING; IDT_ENTRIES];
     static mut GDT: [u64; 7] = [0; 7];
     static mut TSS: TaskStateSegment = TaskStateSegment::new();
-    static ISOLATED_CORES: AtomicU64 = AtomicU64::new(0);
+    static ISOLATED_CORES: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    static APIC_READY: AtomicBool = AtomicBool::new(false);
+    static APIC_HARDWARE_ID: AtomicU32 = AtomicU32::new(0);
+    static APIC_MMIO_BASE: AtomicUsize = AtomicUsize::new(DEFAULT_APIC_BASE);
 
     #[repr(C, packed)]
     struct TaskStateSegment {
@@ -419,16 +434,22 @@ pub mod interrupts {
     }
 
     pub fn set_core_isolated(cpu: u8, isolated: bool) {
-        let bit = 1u64 << cpu;
+        let word = (cpu / 64) as usize;
+        let bit = 1u64 << (cpu % 64);
+        let Some(mask) = ISOLATED_CORES.get(word) else { return };
         if isolated {
-            ISOLATED_CORES.fetch_or(bit, Ordering::Relaxed);
+            mask.fetch_or(bit, Ordering::Relaxed);
         } else {
-            ISOLATED_CORES.fetch_and(!bit, Ordering::Relaxed);
+            mask.fetch_and(!bit, Ordering::Relaxed);
         }
     }
 
     fn core_isolated(cpu: u8) -> bool {
-        ISOLATED_CORES.load(Ordering::Relaxed) & (1u64 << cpu) != 0
+        let word = (cpu / 64) as usize;
+        let bit = 1u64 << (cpu % 64);
+        ISOLATED_CORES
+            .get(word)
+            .is_some_and(|mask| mask.load(Ordering::Relaxed) & bit != 0)
     }
 
     #[repr(C, packed)]
@@ -520,6 +541,7 @@ pub mod interrupts {
 
             remap_pic();
             configure_pit();
+            init_local_apic();
             outb(0x21, 0xfc);
             outb(0xa1, 0xff);
 
@@ -529,6 +551,121 @@ pub mod interrupts {
             };
             asm!("lidt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags));
         }
+    }
+
+    /// Read the local APIC ID used to route scheduler and TLB IPIs.
+    pub fn current_cpu() -> crate::task::CpuId {
+        let hardware_id = APIC_HARDWARE_ID.load(Ordering::Acquire);
+        crate::task::CpuId::new((hardware_id & 0x7f) as u8)
+            .unwrap_or(crate::task::CpuId::new(0).expect("CPU 0 is valid"))
+    }
+
+    /// Send an edge-triggered IPI through the local APIC. The vector is
+    /// restricted to the architectural interrupt range so callers cannot
+    /// redirect execution into arbitrary memory.
+    pub fn send_ipi(target: crate::task::CpuId, vector: u8) -> bool {
+        if !APIC_READY.load(Ordering::Acquire) || vector < 32 {
+            return false
+        }
+        unsafe {
+            apic_write(APIC_ICR_HIGH, (target.raw() as u32) << 24);
+            apic_write(APIC_ICR_LOW, u32::from(vector));
+            let mut spins = 0;
+            while apic_read(APIC_ICR_LOW) & APIC_DELIVERY_PENDING != 0 && spins < 10_000 {
+                core::hint::spin_loop();
+                spins += 1;
+            }
+            apic_read(APIC_ICR_LOW) & APIC_DELIVERY_PENDING == 0
+        }
+    }
+
+    /// Start an AP using the standard INIT/SIPI sequence. The caller owns the
+    /// trampoline and must keep it below 1 MiB; this function only performs
+    /// bounded APIC delivery and reports how many requests were accepted.
+    pub fn start_application_processors(
+        targets: &[u32],
+        startup_vector: u8,
+    ) -> usize {
+        if !APIC_READY.load(Ordering::Acquire) {
+            return 0
+        }
+        let mut started = 0;
+        for &hardware_id in targets {
+            if hardware_id == APIC_HARDWARE_ID.load(Ordering::Acquire) {
+                continue
+            }
+            unsafe {
+                apic_write(APIC_ICR_HIGH, hardware_id << 24);
+                apic_write(APIC_ICR_LOW, APIC_INIT);
+                if !wait_delivery() {
+                    continue
+                }
+                apic_write(APIC_ICR_LOW, APIC_STARTUP | u32::from(startup_vector));
+                let first_sipi = wait_delivery();
+                apic_write(APIC_ICR_LOW, APIC_STARTUP | u32::from(startup_vector));
+                if first_sipi && wait_delivery() {
+                    started += 1;
+                }
+            }
+        }
+        started
+    }
+
+    pub fn end_of_interrupt() {
+        if APIC_READY.load(Ordering::Acquire) {
+            unsafe { apic_write(APIC_EOI, 0) }
+        }
+    }
+
+    unsafe fn init_local_apic() {
+        let base = unsafe { rdmsr(IA32_APIC_BASE) };
+        if base & (1 << 11) == 0 || base & (1 << 10) != 0 {
+            return
+        }
+        APIC_MMIO_BASE.store((base & 0xffff_f000) as usize, Ordering::Release);
+        let hardware_id = unsafe { apic_read(APIC_ID) >> 24 };
+        APIC_HARDWARE_ID.store(hardware_id, Ordering::Release);
+        unsafe {
+            apic_write(APIC_SVR, APIC_SPURIOUS_VECTOR);
+            apic_write(APIC_TIMER_LVT, 32 | (1 << 16));
+            apic_write(APIC_EOI, 0);
+        }
+        APIC_READY.store(true, Ordering::Release);
+    }
+
+    unsafe fn wait_delivery() -> bool {
+        let mut spins = 0;
+        while unsafe { apic_read(APIC_ICR_LOW) } & APIC_DELIVERY_PENDING != 0 && spins < 10_000 {
+            core::hint::spin_loop();
+            spins += 1;
+        }
+        let status = unsafe { apic_read(APIC_ICR_LOW) };
+        status & APIC_DELIVERY_PENDING == 0
+    }
+
+    unsafe fn apic_read(offset: usize) -> u32 {
+        let base = APIC_MMIO_BASE.load(Ordering::Acquire);
+        unsafe { core::ptr::read_volatile((base + offset) as *const u32) }
+    }
+
+    unsafe fn apic_write(offset: usize, value: u32) {
+        let base = APIC_MMIO_BASE.load(Ordering::Acquire);
+        unsafe { core::ptr::write_volatile((base + offset) as *mut u32, value) }
+    }
+
+    unsafe fn rdmsr(msr: u32) -> u64 {
+        let low: u32;
+        let high: u32;
+        unsafe {
+            asm!(
+                "rdmsr",
+                in("ecx") msr,
+                out("eax") low,
+                out("edx") high,
+                options(nostack),
+            );
+        }
+        (u64::from(high) << 32) | u64::from(low)
     }
 
     pub fn disable() {
@@ -698,17 +835,18 @@ pub mod interrupts {
         error_code: u64,
         frame: *mut InterruptFrame,
     ) -> u64 {
-        // The bootstrap CPU remains a housekeeping CPU today. This gate is
-        // also the architectural hook used by AP interrupt routing once SMP
-        // startup supplies each core's local ID.
-        let isolated = core_isolated(0);
+        let cpu = current_cpu();
+        let isolated = core_isolated(cpu.raw());
         crate::invariants::debug_assert_valid(crate::invariants::check_interrupt_delivery(
             vector,
-            crate::task::CpuId::new(0).expect("bootstrap CPU is valid"),
+            cpu,
             isolated,
             !isolated,
         ));
         if isolated {
+            if vector >= 32 {
+                end_of_interrupt()
+            }
             return 0
         }
         if vector == crate::syscall::CALL_GATE_VECTOR as u64 {
@@ -738,6 +876,22 @@ pub mod interrupts {
                 }
             }
             return return_mode
+        }
+        if vector == crate::arch::RESCHEDULE_IPI_VECTOR as u64 {
+            unsafe {
+                let scheduler =
+                    (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
+                let _ = scheduler.request_reschedule(cpu);
+            }
+            end_of_interrupt();
+            return 0
+        }
+        if vector == 0xf1 {
+            // The coordinator performs the local invalidation before its
+            // acknowledgement is published. This vector is the hardware
+            // delivery point for remote TLB shootdowns.
+            end_of_interrupt();
+            return 0
         }
         if vector == 14 {
             let fault_address: u64;
@@ -803,7 +957,7 @@ pub mod interrupts {
                 if vector == 32 {
                     let scheduler =
                         (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
-                    if let Some(context_switch) = scheduler.tick(PIT_TICK_US) {
+                    if let Some(context_switch) = scheduler.tick_on(cpu, PIT_TICK_US) {
                         if let Some(previous) = context_switch.previous {
                             if let Ok(context) = scheduler.context_mut(previous) {
                                 save_context(frame, context);
@@ -824,6 +978,7 @@ pub mod interrupts {
                 }
                 outb(0x20, 0x20);
             }
+            end_of_interrupt();
             return return_mode
         }
         0

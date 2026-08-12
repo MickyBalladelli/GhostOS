@@ -71,13 +71,13 @@ Build the real operating system core before adding more advanced features.
 
 ## P1: Finish CPU and architecture support
 
-- [ ] Bring up application processors on x86_64.
-- [ ] Add local APIC and inter-processor interrupt routing.
-- [ ] Add per-CPU scheduler and interrupt state.
-- [ ] Add real AArch64 exception, syscall, and user-mode paths.
-- [ ] Add real RISC-V trap, syscall, and user-mode paths.
-- [ ] Replace AArch64 and RISC-V isolation stubs.
-- [ ] Add architecture-specific boot and hardware evidence.
+- [x] Bring up application processors on x86_64.
+- [x] Add local APIC and inter-processor interrupt routing.
+- [x] Add per-CPU scheduler and interrupt state.
+- [x] Add real AArch64 exception, syscall, and user-mode paths.
+- [x] Add real RISC-V trap, syscall, and user-mode paths.
+- [x] Replace AArch64 and RISC-V isolation stubs.
+- [x] Add architecture-specific boot and hardware evidence.
 
 ## P1: Make networking usable
 
