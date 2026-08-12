@@ -206,6 +206,7 @@ fn object_kind(object: CapabilityObject) -> u8 {
         CapabilityObject::IpcChannel(_) => 7,
         CapabilityObject::DistributedResource(_) => 8,
         CapabilityObject::LogicalNamespace { .. } => 9,
+        CapabilityObject::DmaDevice(_) => 10,
     }
 }
 

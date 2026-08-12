@@ -34,7 +34,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add TLB invalidation and cross-CPU TLB shootdown.
 - [x] Add copy-on-write memory.
 - [x] Add guard pages, stack growth, and invalid-access termination.
-- [ ] Add capability-checked DMA and IOMMU protection.
+- [x] Add capability-checked DMA and IOMMU protection.
 - [ ] Prove one process cannot read or write another process.
 
 ## P0: Integrate physical storage and drivers

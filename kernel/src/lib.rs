@@ -15,6 +15,7 @@ mod console;
 pub mod contention;
 pub mod crash;
 pub mod cow;
+pub mod dma;
 pub mod dlm;
 pub mod ipc;
 pub mod invariants;
@@ -104,8 +105,10 @@ pub use hot_allocator::{
 pub use synos_numa::{NumaCounters, NumaDecision, NumaPlacement, NumaReport, NumaTopology, NumaTopologyError, PlacementKind, PlacementLocality};
 pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
-    CapabilityRevocationHook, CapabilitySpace, MAX_CAPABILITIES, PhysicalRange, Rights,
+    CapabilityRevocationHook, CapabilitySpace, DmaDeviceId, MAX_CAPABILITIES, PhysicalRange,
+    Rights,
 };
+pub use dma::{DmaError, DmaManager, DmaMapping, DmaPermissions, Iommu, MAX_DMA_MAPPINGS};
 pub use contention::{
     duration_bucket, LockGuard, LockShardReport, ShardedTicketLock, LOCK_DURATION_BUCKETS,
 };

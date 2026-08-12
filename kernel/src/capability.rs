@@ -44,6 +44,20 @@ impl CapabilityHandle {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
+pub struct DmaDeviceId(u32);
+
+impl DmaDeviceId {
+    pub const fn new(raw: u32) -> Option<Self> {
+        if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
 pub struct Rights(u16);
 
 impl Rights {
@@ -59,7 +73,9 @@ impl Rights {
     pub const REVOKE: Self = Self(1 << 8);
     /// Permit administrative control of a process or task.
     pub const CONTROL: Self = Self(1 << 9);
-    pub const ALL: Self = Self((1 << 10) - 1);
+    pub const DMA_READ: Self = Self(1 << 10);
+    pub const DMA_WRITE: Self = Self(1 << 11);
+    pub const ALL: Self = Self((1 << 12) - 1);
 
     pub const fn from_bits(bits: u16) -> Option<Self> {
         if bits & !Self::ALL.0 == 0 {
@@ -124,6 +140,7 @@ pub enum CapabilityObject {
     Thread(crate::task::ThreadId),
     SystemControl,
     NetworkDiagnostic,
+    DmaDevice(DmaDeviceId),
     IpcChannel(ChannelId),
     DistributedResource(ResourceId),
     LogicalNamespace { scope: u8, id: u64 },
