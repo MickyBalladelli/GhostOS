@@ -1,3 +1,5 @@
+use core::fmt;
+
 use synos_fabric::NodeId;
 use synos_kernel::{
     AddressSpaceId, CapabilityHandle, CapabilityObject, CapabilitySpace, ExecutionPersona,
@@ -76,13 +78,24 @@ impl CredentialId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Credential {
     pub id: CredentialId,
     pub kind: CredentialKind,
     public_material: [u8; MAX_CREDENTIAL_BYTES],
     public_material_length: u8,
     sign_count: u32,
+}
+
+impl fmt::Debug for Credential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Credential")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("sign_count", &self.sign_count)
+            .finish()
+    }
 }
 
 impl Credential {
@@ -119,6 +132,10 @@ impl Credential {
         &self.public_material[..self.public_material_length as usize]
     }
 
+    pub const fn kind(&self) -> CredentialKind {
+        self.kind
+    }
+
     pub const fn sign_count(&self) -> u32 {
         self.sign_count
     }
@@ -141,7 +158,7 @@ pub struct InitialCapability {
     pub rights: Rights,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct UserRecord {
     pub identity: IdentityId,
     pub username: Username,
@@ -150,6 +167,21 @@ pub struct UserRecord {
     credentials: [Option<Credential>; MAX_CREDENTIALS_PER_USER],
     rights: [Option<RightIdentifier>; MAX_USER_RIGHTS],
     initial_capabilities: [Option<InitialCapability>; MAX_INITIAL_CAPABILITIES],
+}
+
+impl fmt::Debug for UserRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UserRecord")
+            .field("identity", &self.identity)
+            .field("username", &self.username)
+            .field("scope", &self.scope)
+            .field("enabled", &self.enabled)
+            .field("credential_count", &self.credentials().count())
+            .field("right_count", &self.rights().count())
+            .field("capability_count", &self.initial_capabilities().count())
+            .finish()
+    }
 }
 
 impl UserRecord {
@@ -167,6 +199,12 @@ impl UserRecord {
 
     pub fn credentials(&self) -> impl Iterator<Item = Credential> + '_ {
         self.credentials.iter().flatten().copied()
+    }
+
+    pub fn credential_kind(&self, id: CredentialId) -> Result<CredentialKind, AuthError> {
+        self.credential(id)
+            .map(|credential| credential.kind())
+            .ok_or(AuthError::CredentialNotFound)
     }
 
     pub fn rights(&self) -> impl Iterator<Item = RightIdentifier> + '_ {
@@ -269,6 +307,7 @@ pub trait AuthorizationStore {
     fn store(&mut self, record: &UserRecord) -> Result<(), AuthError>;
 }
 
+#[derive(Clone, Copy)]
 pub struct AuthorizationDatabase<const CAPACITY: usize = DEFAULT_USER_CAPACITY> {
     records: [Option<UserRecord>; CAPACITY],
 }
@@ -298,6 +337,25 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
             .ok_or(AuthError::Capacity)?;
         *slot = Some(record);
         Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.iter().flatten().count()
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        let mut index = 0;
+        while index < CAPACITY {
+            if self.records[index].is_some() {
+                return false
+            }
+            index += 1
+        }
+        true
+    }
+
+    pub fn records(&self) -> impl Iterator<Item = UserRecord> + '_ {
+        self.records.iter().flatten().copied()
     }
 
     pub fn import<S: AuthorizationStore>(
@@ -372,12 +430,23 @@ impl<const CAPACITY: usize> Default for AuthorizationDatabase<CAPACITY> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct AuthenticationChallenge {
     pub identity: IdentityId,
     pub credential: CredentialId,
     pub nonce: u64,
     pub expires_at_us: u64,
+}
+
+impl fmt::Debug for AuthenticationChallenge {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticationChallenge")
+            .field("identity", &self.identity)
+            .field("credential", &self.credential)
+            .field("expires_at_us", &self.expires_at_us)
+            .finish()
+    }
 }
 
 impl AuthenticationChallenge {
@@ -541,11 +610,22 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Session {
     record: UserRecord,
     pub login_address_space: AddressSpaceId,
     pub expires_at_us: u64,
+}
+
+impl fmt::Debug for Session {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Session")
+            .field("identity", &self.identity())
+            .field("login_address_space", &self.login_address_space)
+            .field("expires_at_us", &self.expires_at_us)
+            .finish()
+    }
 }
 
 impl Session {

@@ -1,5 +1,5 @@
 use core::{fmt, mem::MaybeUninit};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
@@ -57,6 +57,9 @@ static mut SHELL_EXECUTOR: MaybeUninit<KernelExecutor> = MaybeUninit::uninit();
 static mut SHELL_SESSION: MaybeUninit<ShellSession> = MaybeUninit::uninit();
 static SHELL_READY: AtomicBool = AtomicBool::new(false);
 static SHELL_PRESENTED: AtomicBool = AtomicBool::new(false);
+static SHELL_AUTHORIZED: AtomicBool = AtomicBool::new(false);
+static SHELL_SESSION_EXPIRES: AtomicU64 = AtomicU64::new(0);
+static SHELL_SESSION_EPOCH: AtomicU64 = AtomicU64::new(0);
 const HELP_CATEGORIES: [&str; 10] = [
     "SHELL",
     "SYSTEM",
@@ -250,6 +253,9 @@ pub(crate) fn poll_input() -> Result<u64, Status> {
     if !SHELL_READY.load(Ordering::Acquire) {
         return Err(Status::BUSY)
     }
+    if !session_authorized() {
+        return Ok(0)
+    }
     let registry = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_REGISTRY)).assume_init_mut() };
     let interpreter = unsafe {
         (&mut *core::ptr::addr_of_mut!(SHELL_INTERPRETER)).assume_init_mut()
@@ -392,6 +398,10 @@ fn execute_line(
     usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
     acpi: Option<&AcpiPlatform>,
 ) {
+    if !session_authorized_at(executor.scheduler().clock()) {
+        print_operator_error("shell locked", Status::ACCESS_DENIED);
+        return
+    }
     let program = match registry.parse(line) {
         Ok(program) => program,
         Err(Error::AmbiguousCommand) => {
@@ -798,7 +808,43 @@ fn print_edit_result<const CAPACITY: usize>(operation: &str, editor: &FileEditor
 }
 
 fn prompt() {
-    crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
+    if session_authorized() {
+        crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
+    } else {
+        crate::print!("\x1b[1;33mSYNOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ")
+    }
+}
+
+/// Establishes the only kernel-shell authority path. The authentication
+/// service supplies a bounded session expiry and revocation epoch; typing at
+/// the terminal alone can never enable this flag.
+pub(crate) fn authorize_session(
+    identity: u64,
+    expires_at_us: u64,
+    revocation_epoch: u64,
+) -> Result<(), Status> {
+    if identity == 0 || expires_at_us == 0 || revocation_epoch == 0 {
+        return Err(Status::ACCESS_DENIED)
+    }
+    SHELL_SESSION_EXPIRES.store(expires_at_us, Ordering::Release);
+    SHELL_SESSION_EPOCH.store(revocation_epoch, Ordering::Release);
+    SHELL_AUTHORIZED.store(true, Ordering::Release);
+    Ok(())
+}
+
+pub(crate) fn revoke_session(revocation_epoch: u64) {
+    SHELL_SESSION_EPOCH.store(revocation_epoch.max(1), Ordering::Release);
+    SHELL_AUTHORIZED.store(false, Ordering::Release)
+}
+
+fn session_authorized() -> bool {
+    SHELL_AUTHORIZED.load(Ordering::Acquire)
+        && SHELL_SESSION_EXPIRES.load(Ordering::Acquire) > 0
+        && SHELL_SESSION_EPOCH.load(Ordering::Acquire) > 0
+}
+
+fn session_authorized_at(now_us: u64) -> bool {
+    session_authorized() && now_us < SHELL_SESSION_EXPIRES.load(Ordering::Acquire)
 }
 
 fn parse_cpu_mask(value: &str) -> Result<CpuMask, Status> {

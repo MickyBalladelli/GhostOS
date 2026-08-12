@@ -68,13 +68,25 @@ impl WebAuthnPolicy {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct RemoteAuthenticationChallenge {
     pub authentication: AuthenticationChallenge,
     pub device: NodeId,
     pub rp_id_hash: [u8; 32],
     pub origin_hash: [u8; 32],
     pub ceremony_nonce: [u8; 32],
+}
+
+impl core::fmt::Debug for RemoteAuthenticationChallenge {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("RemoteAuthenticationChallenge")
+            .field("authentication", &self.authentication)
+            .field("device", &self.device)
+            .field("rp_id_hash", &self.rp_id_hash)
+            .field("origin_hash", &self.origin_hash)
+            .finish()
+    }
 }
 
 impl RemoteAuthenticationChallenge {

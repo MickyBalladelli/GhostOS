@@ -61,13 +61,13 @@ Build the real operating system core before adding more advanced features.
 
 ## P1: Add authentication and security startup
 
-- [ ] Add a boot login/session service.
-- [ ] Create the first administrator identity safely.
-- [ ] Load users, groups, capabilities, and policy from persistent storage.
-- [ ] Connect passkey, TPM, and SSH authentication to real sessions.
-- [ ] Add session logout, revocation, and timeout handling.
-- [ ] Ensure the kernel shell cannot bypass authorization.
-- [ ] Keep secrets out of logs, snapshots, and crash capsules.
+- [x] Add a boot login/session service.
+- [x] Create the first administrator identity safely.
+- [x] Load users, groups, capabilities, and policy from persistent storage.
+- [x] Connect passkey, TPM, and SSH authentication to real sessions.
+- [x] Add session logout, revocation, and timeout handling.
+- [x] Ensure the kernel shell cannot bypass authorization.
+- [x] Keep secrets out of logs, snapshots, and crash capsules.
 
 ## P1: Finish CPU and architecture support
 

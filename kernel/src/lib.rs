@@ -422,6 +422,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if request.arguments[0] as usize != role || request.arguments[1..] != [0; 5] {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
+        if role == 9 && SERVICE_READY.load(Ordering::Acquire) & (1u32 << 7) == 0 {
+            return syscall_error(Status::BUSY)
+        }
         let bit = 1u32 << role;
         let ready = SERVICE_READY.load(Ordering::Acquire);
         if ready & bit == 0 {

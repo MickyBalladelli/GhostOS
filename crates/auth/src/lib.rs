@@ -9,6 +9,7 @@ pub mod lease;
 pub mod logical;
 pub mod remote;
 pub mod revocation_monitor;
+pub mod startup;
 pub mod token;
 
 pub use identity::{
@@ -44,6 +45,12 @@ pub use revocation_monitor::{
     CacheReport, PropagationObservation, PropagationReport, RevocationCache, RevocationKey,
     RevocationMonitor, RevocationMonitorError, RevocationNotice,
     DEFAULT_REVOCATION_EVENT_CAPACITY, REVOCATION_CACHE_COUNT,
+};
+pub use startup::{
+    BootLoginService, GroupDirectory, GroupId, GroupRecord, SecurityPolicy, SecurityState, SecurityStore,
+    SecurityStoreError, SessionHandle, SessionManager, SessionView, StartupError,
+    MAX_ACTIVE_SESSIONS, MAX_CHALLENGE_LIFETIME_US, MAX_GROUP_MEMBERS, MAX_GROUP_RIGHTS,
+    MAX_GROUPS, MAX_SESSION_LIFETIME_US,
 };
 pub use token::{
     CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights,
