@@ -169,11 +169,11 @@ pub mod interrupts {
             reserved: 0,
         };
 
-        fn handler(address: u64, selector: u16) -> Self {
+        fn handler(address: u64, selector: u16, privilege: u16) -> Self {
             Self {
                 offset_low: address as u16,
                 selector,
-                options: 0x8e00,
+                options: 0x8e00 | (privilege << 13),
                 offset_middle: (address >> 16) as u16,
                 offset_high: (address >> 32) as u32,
                 reserved: 0,
@@ -195,7 +195,12 @@ pub mod interrupts {
             install_gdt();
 
             for index in 0..IDT_ENTRIES {
-                IDT[index] = IdtEntry::handler(synos_isr_table[index], KERNEL_CODE_SELECTOR);
+                let privilege = (index == crate::syscall::CALL_GATE_VECTOR as usize) as u16 * 3;
+                IDT[index] = IdtEntry::handler(
+                    synos_isr_table[index],
+                    KERNEL_CODE_SELECTOR,
+                    privilege,
+                );
             }
 
             remap_pic();
@@ -242,7 +247,7 @@ pub mod interrupts {
                 "push {code}",
                 "lea rax, [rip + 2f]",
                 "push rax",
-                "lretq",
+                "retfq",
                 "2:",
                 "mov ax, {tss}",
                 "ltr ax",
@@ -392,6 +397,7 @@ pub mod interrupts {
 .code64
 .altmacro
 .extern interrupt_dispatch
+.extern synos_call_gate_dispatch
 
 .macro ISR_NOERR vector
 .global synos_isr_\vector
@@ -435,9 +441,17 @@ synos_isr_common:
     push r13
     push r14
     push r15
+    cmp qword ptr [rsp + 120], 128
+    jne 1f
+    mov rdi, [rsp + 72]
+    mov rsi, [rsp + 80]
+    call synos_call_gate_dispatch
+    jmp 2f
+1:
     mov rdi, [rsp + 120]
     mov rsi, [rsp + 128]
     call interrupt_dispatch
+2:
     pop r15
     pop r14
     pop r13

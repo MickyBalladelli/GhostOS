@@ -501,6 +501,7 @@ impl InstructionExecutor {
             }
             "LGDT" => self.execute_lgdt(instruction, state, mmu)?,
             "LIDT" => self.execute_lidt(instruction, state, mmu, intc)?,
+            "LTR" => self.execute_ltr(instruction, state, mmu)?,
             "SGDT" => self.execute_sgdt(instruction, state, mmu)?,
             "SIDT" => self.execute_sidt(instruction, state, mmu)?,
             "SMSW" => self.execute_smsw(instruction, state, mmu)?,
@@ -1252,6 +1253,34 @@ impl InstructionExecutor {
             state.idtr = crate::cpu::DescriptorTableRegister { base, limit };
             intc.set_idt(base, limit);
         }
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
+    fn execute_ltr(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+        mmu: &mut Mmu,
+    ) -> Result<(), CpuError> {
+        if state.privilege != crate::cpu::PrivilegeLevel::Ring0 {
+            return Err(CpuError::GeneralProtectionFault)
+        }
+        let selector = read_operand_sized(ins, state, mmu, operand_at(ins, 0)?, 2)? as u16;
+        let offset = u64::from(selector & !7);
+        if selector == 0 || offset + 7 > u64::from(state.gdtr.limit) {
+            return Err(CpuError::GeneralProtectionFault)
+        }
+        let descriptor = mmu
+            .read_from_addr(state.gdtr.base + offset, 8)
+            .map_err(mem_err)?;
+        let descriptor_type = (descriptor >> 40) & 0x0f;
+        if descriptor & (1 << 47) == 0 || !matches!(descriptor_type, 9 | 11) {
+            return Err(CpuError::GeneralProtectionFault)
+        }
+        // The VM does not yet consume the TSS task register for stack
+        // switching, but it must accept the architectural load so real-mode
+        // kernel bootstrap can continue.
         state.rip = ins.next_ip;
         Ok(())
     }

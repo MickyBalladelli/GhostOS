@@ -44,6 +44,8 @@ pub mod scheduler;
 pub mod runtime;
 pub mod saturation;
 #[allow(unsafe_code)]
+pub mod syscall;
+#[allow(unsafe_code)]
 mod shell;
 pub mod task;
 pub mod monitor;
@@ -129,6 +131,18 @@ static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
 static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
 static DLM: DistributedLockManager = DistributedLockManager::new();
 static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
+
+#[allow(unsafe_code)]
+pub(crate) fn current_address_space() -> Option<AddressSpaceId> {
+    if !SCHEDULER_READY.load(Ordering::Acquire) {
+        return None
+    }
+    unsafe {
+        let scheduler = (&*core::ptr::addr_of!(SCHEDULER)).assume_init_ref();
+        let current = scheduler.current()?;
+        scheduler.thread(current).ok().map(|thread| thread.address_space)
+    }
+}
 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]

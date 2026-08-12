@@ -1138,6 +1138,17 @@ impl InstructionDecoder {
         let addrsize = ins.addrsize;
 
         match op2 {
+            0x00 => {
+                let (digit, rm) =
+                    self.decode_modrm_operands(mmu, pos, rex, 16, addrsize, segment, true)?;
+                if digit != 3 {
+                    return Err(InstructionDecodeError::InvalidOpcode)
+                }
+                ins.mnemonic = "LTR";
+                ins.opsize = 16;
+                ins.operands = vec![rm];
+                return Ok(())
+            }
             0x1F => {
                 // Multi-byte NOP: consume the ModR/M and optional address
                 // bytes, but do not touch the referenced memory.
