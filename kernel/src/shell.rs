@@ -3529,6 +3529,10 @@ impl KernelExecutor {
             "synos-authd",
             "synos-pkgd",
             "synos-shell",
+            "synos-pcid",
+            "synos-ahcid",
+            "synos-nvmed",
+            "synos-ethernetd",
         ];
         let mut ready_count = 0u64;
         if !json {

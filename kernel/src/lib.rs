@@ -166,7 +166,7 @@ static SERVICE_READY: AtomicU32 = AtomicU32::new(0);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-static SERVICE_HEARTBEATS: [AtomicU64; 10] = [const { AtomicU64::new(0) }; 10];
+static SERVICE_HEARTBEATS: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -295,6 +295,22 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     println!(
         "shell service registered and started (process={})",
         boot_services.shell_process.raw()
+    );
+    println!(
+        "PCI driver service registered and started (process={})",
+        boot_services.pci_process.raw()
+    );
+    println!(
+        "AHCI driver service registered and started (process={})",
+        boot_services.ahci_process.raw()
+    );
+    println!(
+        "NVMe driver service registered and started (process={})",
+        boot_services.nvme_process.raw()
+    );
+    println!(
+        "Ethernet driver service registered and started (process={})",
+        boot_services.ethernet_process.raw()
     );
 
     #[cfg(all(
@@ -463,6 +479,10 @@ fn service_name(role: usize) -> Option<&'static str> {
         Some("synos-authd"),
         Some("synos-pkgd"),
         Some("synos-shell"),
+        Some("synos-pcid"),
+        Some("synos-ahcid"),
+        Some("synos-nvmed"),
+        Some("synos-ethernetd"),
     ]
     .get(role)
     .copied()
@@ -557,8 +577,12 @@ fn boot_synos_init(
         services.authentication_process,
         services.package_process,
         services.shell_process,
+        services.pci_process,
+        services.ahci_process,
+        services.nvme_process,
+        services.ethernet_process,
     ];
-    for (address_space_raw, process) in (2u32..=9).zip(service_processes) {
+    for (address_space_raw, process) in (2u32..=13).zip(service_processes) {
         let address_space = AddressSpaceId::new(address_space_raw)
             .expect("boot service address space id");
         let (thread, _) = boot_service_process(
@@ -589,7 +613,7 @@ fn boot_synos_init(
             fatal_kernel_halt(Status::CORRUPT)
         });
     println!(
-        "starting synos-init in Ring 3 (thread={}, services=8)",
+        "starting synos-init in Ring 3 (thread={}, services=12)",
         init_thread.raw()
     );
     arch::enter_user(&context, init_root)

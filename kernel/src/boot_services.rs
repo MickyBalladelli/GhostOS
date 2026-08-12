@@ -43,6 +43,22 @@ const SHELL_SERVICE_ID: u32 = 0x5348_454c;
 const SHELL_PROCESS_ID: u64 = 9;
 const SHELL_IMAGE_ID: u128 = 0x5359_4e4f_5353_4845_4c4c_0000_0000_0001;
 const SHELL_CAPABILITY_PROFILE: u64 = 0x5348_454c_4c5f_524f;
+const PCI_SERVICE_ID: u32 = 0x5043_4944;
+const PCI_PROCESS_ID: u64 = 10;
+const PCI_IMAGE_ID: u128 = 0x5359_4e4f_5043_4944_0000_0000_0000_0001;
+const PCI_CAPABILITY_PROFILE: u64 = 0x5043_4944_5f52_4f4f;
+const AHCI_SERVICE_ID: u32 = 0x4148_4349;
+const AHCI_PROCESS_ID: u64 = 11;
+const AHCI_IMAGE_ID: u128 = 0x5359_4e4f_4148_4349_0000_0000_0000_0001;
+const AHCI_CAPABILITY_PROFILE: u64 = 0x4148_4349_5f52_4f4f;
+const NVME_SERVICE_ID: u32 = 0x4e56_4d45;
+const NVME_PROCESS_ID: u64 = 12;
+const NVME_IMAGE_ID: u128 = 0x5359_4e4f_4e56_4d45_0000_0000_0000_0001;
+const NVME_CAPABILITY_PROFILE: u64 = 0x4e56_4d45_5f52_4f4f;
+const ETHERNET_SERVICE_ID: u32 = 0x4554_4844;
+const ETHERNET_PROCESS_ID: u64 = 13;
+const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
+const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = 64;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -56,6 +72,10 @@ static AUDIT_READY: AtomicBool = AtomicBool::new(false);
 static AUTHENTICATION_READY: AtomicBool = AtomicBool::new(false);
 static PACKAGE_READY: AtomicBool = AtomicBool::new(false);
 static SHELL_READY: AtomicBool = AtomicBool::new(false);
+static PCI_READY: AtomicBool = AtomicBool::new(false);
+static AHCI_READY: AtomicBool = AtomicBool::new(false);
+static NVME_READY: AtomicBool = AtomicBool::new(false);
+static ETHERNET_READY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
 pub struct BootServices {
@@ -67,6 +87,10 @@ pub struct BootServices {
     pub authentication_process: ProcessId,
     pub package_process: ProcessId,
     pub shell_process: ProcessId,
+    pub pci_process: ProcessId,
+    pub ahci_process: ProcessId,
+    pub nvme_process: ProcessId,
+    pub ethernet_process: ProcessId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +119,10 @@ struct BootRuntime {
     authentication_process: ProcessId,
     package_process: ProcessId,
     shell_process: ProcessId,
+    pci_process: ProcessId,
+    ahci_process: ProcessId,
+    nvme_process: ProcessId,
+    ethernet_process: ProcessId,
 }
 
 impl SupervisorRuntime for BootRuntime {
@@ -125,6 +153,18 @@ impl SupervisorRuntime for BootRuntime {
         if request.service == shell_service_id() {
             return Ok(self.shell_process)
         }
+        if request.service == pci_service_id() {
+            return Ok(self.pci_process)
+        }
+        if request.service == ahci_service_id() {
+            return Ok(self.ahci_process)
+        }
+        if request.service == nvme_service_id() {
+            return Ok(self.nvme_process)
+        }
+        if request.service == ethernet_service_id() {
+            return Ok(self.ethernet_process)
+        }
         Err(StartError::Process)
     }
 
@@ -136,7 +176,11 @@ impl SupervisorRuntime for BootRuntime {
             || process == self.audit_process
             || process == self.authentication_process
             || process == self.package_process
-            || process == self.shell_process)
+            || process == self.shell_process
+            || process == self.pci_process
+            || process == self.ahci_process
+            || process == self.nvme_process
+            || process == self.ethernet_process)
             .then_some(())
             .ok_or(StartError::Process)
     }
@@ -151,6 +195,10 @@ pub fn start() -> Result<BootServices, StartError> {
         && AUTHENTICATION_READY.load(Ordering::Acquire)
         && PACKAGE_READY.load(Ordering::Acquire)
         && SHELL_READY.load(Ordering::Acquire)
+        && PCI_READY.load(Ordering::Acquire)
+        && AHCI_READY.load(Ordering::Acquire)
+        && NVME_READY.load(Ordering::Acquire)
+        && ETHERNET_READY.load(Ordering::Acquire)
     {
         return Ok(BootServices {
             filesystem_process: filesystem_process_id().ok_or(StartError::Process)?,
@@ -161,6 +209,10 @@ pub fn start() -> Result<BootServices, StartError> {
             authentication_process: authentication_process_id().ok_or(StartError::Process)?,
             package_process: package_process_id().ok_or(StartError::Process)?,
             shell_process: shell_process_id().ok_or(StartError::Process)?,
+            pci_process: pci_process_id().ok_or(StartError::Process)?,
+            ahci_process: ahci_process_id().ok_or(StartError::Process)?,
+            nvme_process: nvme_process_id().ok_or(StartError::Process)?,
+            ethernet_process: ethernet_process_id().ok_or(StartError::Process)?,
         })
     }
 
@@ -172,6 +224,10 @@ pub fn start() -> Result<BootServices, StartError> {
     let authentication_process = authentication_process_id().ok_or(StartError::Process)?;
     let package_process = package_process_id().ok_or(StartError::Process)?;
     let shell_process = shell_process_id().ok_or(StartError::Process)?;
+    let pci_process = pci_process_id().ok_or(StartError::Process)?;
+    let ahci_process = ahci_process_id().ok_or(StartError::Process)?;
+    let nvme_process = nvme_process_id().ok_or(StartError::Process)?;
+    let ethernet_process = ethernet_process_id().ok_or(StartError::Process)?;
     let mut daemon = Daemon::new(SynFs::<FILESYSTEM_BLOCKS>::new())
         .map_err(|_| StartError::Daemon)?;
     daemon
@@ -195,7 +251,12 @@ pub fn start() -> Result<BootServices, StartError> {
         ServiceName::new("synos-authd").map_err(|_| StartError::Supervisor)?;
     let package_name = ServiceName::new("synos-pkgd").map_err(|_| StartError::Supervisor)?;
     let shell_name = ServiceName::new("synos-shell").map_err(|_| StartError::Supervisor)?;
-    let mut supervisor = Supervisor::<8>::new();
+    let pci_name = ServiceName::new("synos-pcid").map_err(|_| StartError::Supervisor)?;
+    let ahci_name = ServiceName::new("synos-ahcid").map_err(|_| StartError::Supervisor)?;
+    let nvme_name = ServiceName::new("synos-nvmed").map_err(|_| StartError::Supervisor)?;
+    let ethernet_name =
+        ServiceName::new("synos-ethernetd").map_err(|_| StartError::Supervisor)?;
+    let mut supervisor = Supervisor::<12>::new();
     supervisor
         .register(ServiceSpec {
             id: filesystem_service_id(),
@@ -284,6 +345,50 @@ pub fn start() -> Result<BootServices, StartError> {
                 .map_err(|_| StartError::Supervisor)?,
         })
         .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
+            id: pci_service_id(),
+            name: pci_name,
+            kind: ServiceKind::System,
+            image_id: PCI_IMAGE_ID,
+            capability_profile: PCI_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
+            id: ahci_service_id(),
+            name: ahci_name,
+            kind: ServiceKind::StorageDriver,
+            image_id: AHCI_IMAGE_ID,
+            capability_profile: AHCI_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
+            id: nvme_service_id(),
+            name: nvme_name,
+            kind: ServiceKind::StorageDriver,
+            image_id: NVME_IMAGE_ID,
+            capability_profile: NVME_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
+            id: ethernet_service_id(),
+            name: ethernet_name,
+            kind: ServiceKind::NetworkDriver,
+            image_id: ETHERNET_IMAGE_ID,
+            capability_profile: ETHERNET_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
 
     let mut runtime = BootRuntime {
         filesystem_process,
@@ -294,6 +399,10 @@ pub fn start() -> Result<BootServices, StartError> {
         authentication_process,
         package_process,
         shell_process,
+        pci_process,
+        ahci_process,
+        nvme_process,
+        ethernet_process,
     };
     for service in [
         filesystem_service_id(),
@@ -304,6 +413,10 @@ pub fn start() -> Result<BootServices, StartError> {
         authentication_service_id(),
         package_service_id(),
         shell_service_id(),
+        pci_service_id(),
+        ahci_service_id(),
+        nvme_service_id(),
+        ethernet_service_id(),
     ] {
         let event = supervisor
             .start(service, &mut runtime)
@@ -326,6 +439,10 @@ pub fn start() -> Result<BootServices, StartError> {
     AUTHENTICATION_READY.store(true, Ordering::Release);
     PACKAGE_READY.store(true, Ordering::Release);
     SHELL_READY.store(true, Ordering::Release);
+    PCI_READY.store(true, Ordering::Release);
+    AHCI_READY.store(true, Ordering::Release);
+    NVME_READY.store(true, Ordering::Release);
+    ETHERNET_READY.store(true, Ordering::Release);
     Ok(BootServices {
         filesystem_process,
         storage_process,
@@ -335,6 +452,10 @@ pub fn start() -> Result<BootServices, StartError> {
         authentication_process,
         package_process,
         shell_process,
+        pci_process,
+        ahci_process,
+        nvme_process,
+        ethernet_process,
     })
 }
 
@@ -370,6 +491,22 @@ pub const fn shell_service_id() -> ServiceId {
     ServiceId::new(SHELL_SERVICE_ID).unwrap()
 }
 
+pub const fn pci_service_id() -> ServiceId {
+    ServiceId::new(PCI_SERVICE_ID).unwrap()
+}
+
+pub const fn ahci_service_id() -> ServiceId {
+    ServiceId::new(AHCI_SERVICE_ID).unwrap()
+}
+
+pub const fn nvme_service_id() -> ServiceId {
+    ServiceId::new(NVME_SERVICE_ID).unwrap()
+}
+
+pub const fn ethernet_service_id() -> ServiceId {
+    ServiceId::new(ETHERNET_SERVICE_ID).unwrap()
+}
+
 const fn filesystem_process_id() -> Option<ProcessId> {
     ProcessId::new(FILESYSTEM_PROCESS_ID)
 }
@@ -400,4 +537,20 @@ const fn package_process_id() -> Option<ProcessId> {
 
 const fn shell_process_id() -> Option<ProcessId> {
     ProcessId::new(SHELL_PROCESS_ID)
+}
+
+const fn pci_process_id() -> Option<ProcessId> {
+    ProcessId::new(PCI_PROCESS_ID)
+}
+
+const fn ahci_process_id() -> Option<ProcessId> {
+    ProcessId::new(AHCI_PROCESS_ID)
+}
+
+const fn nvme_process_id() -> Option<ProcessId> {
+    ProcessId::new(NVME_PROCESS_ID)
+}
+
+const fn ethernet_process_id() -> Option<ProcessId> {
+    ProcessId::new(ETHERNET_PROCESS_ID)
 }

@@ -40,7 +40,7 @@ Build the real operating system core before adding more advanced features.
 ## P0: Integrate physical storage and drivers
 
 - [x] Discover PCI devices during boot.
-- [ ] Start the PCI, AHCI, NVMe, and Ethernet driver services.
+- [x] Start the PCI, AHCI, NVMe, and Ethernet driver services.
 - [ ] Connect driver DMA and MMIO access to kernel capabilities.
 - [ ] Add real block-device request and completion paths.
 - [ ] Mount SynFS from a physical disk.
