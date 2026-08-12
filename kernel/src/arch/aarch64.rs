@@ -70,12 +70,6 @@ pub mod interrupts {
         }
     }
 
-    pub unsafe fn enable() {
-        unsafe {
-            asm!("msr daifclr, #2", options(nostack));
-        }
-    }
-
     #[unsafe(no_mangle)]
     extern "C" fn synos_aarch64_exception() -> ! {
         crate::capture_exception(super::capture_registers(0), 0, synos_status::Status::CORRUPT, 0);

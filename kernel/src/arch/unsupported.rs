@@ -8,7 +8,6 @@ pub mod interrupts {
 
 
     pub unsafe fn init() {}
-    pub unsafe fn enable() {}
 }
 
 pub fn halt() {

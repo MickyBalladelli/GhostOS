@@ -159,14 +159,6 @@ pub mod interrupts {
         }
     }
 
-    /// # Safety
-    /// The active IDT and interrupt controllers must be initialized first.
-    pub unsafe fn enable() {
-        unsafe {
-            asm!("sti", options(nomem, nostack));
-        }
-    }
-
     #[unsafe(no_mangle)]
     extern "sysv64" fn interrupt_dispatch(vector: u64, error_code: u64) {
         // The bootstrap CPU remains a housekeeping CPU today. This gate is

@@ -58,13 +58,6 @@ pub mod interrupts {
         }
     }
 
-    pub unsafe fn enable() {
-        const SUPERVISOR_INTERRUPT_ENABLE: usize = 1 << 1;
-        unsafe {
-            asm!("csrs sstatus, {}", in(reg) SUPERVISOR_INTERRUPT_ENABLE, options(nostack));
-        }
-    }
-
     extern "C" fn trap_entry() {
         crate::capture_exception(super::capture_registers(0), 0, synos_status::Status::CORRUPT, 0);
         crate::println!("RISC-V supervisor trap");
