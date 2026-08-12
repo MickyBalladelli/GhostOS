@@ -115,11 +115,14 @@ fn exercise_scheduler_and_capabilities() -> Result<(bool, bool), IntegrationErro
     let first_switch = scheduler
         .dispatch()
         .ok_or(IntegrationError::InvalidKernelState)?;
-    scheduler
+    let second_switch = scheduler
         .yield_current()
-        .map_err(IntegrationError::Scheduler)?;
-    let scheduler_ready = first_switch.next == second
-        && scheduler.current() == Some(first)
+        .map_err(IntegrationError::Scheduler)?
+        .ok_or(IntegrationError::InvalidKernelState)?;
+    let scheduler_ready = first_switch.next == first
+        && second_switch.next == second
+        && scheduler.current() == Some(second)
+        && scheduler.thread(first).is_ok()
         && scheduler.thread(second).is_ok();
 
     let backing = PhysicalRange::new(0x20_0000, 0x4000)
