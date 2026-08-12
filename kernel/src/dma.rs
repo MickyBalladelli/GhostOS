@@ -19,6 +19,14 @@ impl DmaPermissions {
         self.0 & required.0 == required.0
     }
 
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
     fn required_rights(self) -> Option<Rights> {
         let mut rights = Rights::NONE;
         if self.contains(Self::DEVICE_READ) {
