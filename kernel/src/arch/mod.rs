@@ -41,6 +41,12 @@ pub(crate) fn disable_interrupts() {
     current::interrupts::disable()
 }
 
+pub(crate) fn invalidate_tlb_range(start: u64, length: u64) {
+    // The caller validates alignment and overflow before reaching the
+    // architecture backend.
+    unsafe { paging::invalidate_range(start, length) }
+}
+
 pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_offset: u64) {
     crate::invariants::debug_assert_valid(crate::invariants::check_page_table_transition(
         tables,

@@ -58,7 +58,55 @@ pub mod paging {
     pub unsafe fn activate_root(root: u64) {
         unsafe {
             asm!("msr ttbr0_el1, {}", in(reg) root, options(nostack));
+            invalidate_all();
             asm!("isb", options(nostack));
+        }
+    }
+
+    /// Invalidate one page in the current TTBR0_EL1 address space.
+    ///
+    /// # Safety
+    /// The caller must have completed the page-table update before calling.
+    pub unsafe fn invalidate_page(address: u64) {
+        let page = address >> 12;
+        unsafe {
+            asm!(
+                "dsb ishst",
+                "tlbi vae1is, {}",
+                "dsb ish",
+                "isb",
+                in(reg) page,
+                options(nostack)
+            );
+        }
+    }
+
+    /// Invalidate every EL1 translation on this logical CPU cluster.
+    ///
+    /// # Safety
+    /// The caller must have completed the page-table update before calling.
+    pub unsafe fn invalidate_all() {
+        unsafe {
+            asm!(
+                "dsb ishst",
+                "tlbi vmalle1is",
+                "dsb ish",
+                "isb",
+                options(nostack)
+            );
+        }
+    }
+
+    /// Invalidate all pages in an aligned range on this logical CPU cluster.
+    ///
+    /// # Safety
+    /// The caller must have completed the page-table update before calling.
+    pub unsafe fn invalidate_range(start: u64, length: u64) {
+        let Some(end) = start.checked_add(length) else { return };
+        let mut address = start;
+        while address < end {
+            unsafe { invalidate_page(address) }
+            address = address.saturating_add(crate::FRAME_SIZE);
         }
     }
 }

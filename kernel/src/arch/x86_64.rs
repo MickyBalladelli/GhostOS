@@ -80,6 +80,44 @@ pub mod paging {
         }
     }
 
+    /// Invalidate one address in the current address space.
+    ///
+    /// # Safety
+    /// Interrupts must be controlled by the caller when the invalidation is
+    /// part of a page-table update.
+    pub unsafe fn invalidate_page(address: u64) {
+        unsafe {
+            asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags));
+        }
+    }
+
+    /// Invalidate every translation cached by the current logical CPU.
+    ///
+    /// # Safety
+    /// The current page-table root must remain live while the instruction
+    /// executes.
+    #[allow(dead_code)]
+    pub unsafe fn invalidate_all() {
+        let root: u64;
+        unsafe {
+            asm!("mov {}, cr3", out(reg) root, options(nostack, preserves_flags));
+            asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+        }
+    }
+
+    /// Invalidate all pages in an aligned range on this logical CPU.
+    ///
+    /// # Safety
+    /// The caller must ensure the range describes the page-table mutation.
+    pub unsafe fn invalidate_range(start: u64, length: u64) {
+        let Some(end) = start.checked_add(length) else { return };
+        let mut address = start;
+        while address < end {
+            unsafe { invalidate_page(address) }
+            address = address.saturating_add(crate::FRAME_SIZE);
+        }
+    }
+
     /// Build a private user address space for a boot service image.
     ///
     /// The root keeps the low physical identity map supervisor-only so kernel

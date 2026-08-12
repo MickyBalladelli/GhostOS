@@ -53,7 +53,38 @@ pub mod paging {
         unsafe {
             let satp = SV39 | (root >> 12);
             asm!("csrw satp, {}", in(reg) satp, options(nostack));
-            asm!("sfence.vma zero, zero", options(nostack));
+            invalidate_all();
+        }
+    }
+
+    /// Invalidate one page in the current address space.
+    ///
+    /// # Safety
+    /// The caller must have completed the page-table update before calling.
+    pub unsafe fn invalidate_page(address: u64) {
+        unsafe {
+            asm!("sfence.vma {}, zero", in(reg) address, options(nostack));
+        }
+    }
+
+    /// Invalidate every translation on this logical CPU.
+    ///
+    /// # Safety
+    /// The caller must have completed the page-table update before calling.
+    pub unsafe fn invalidate_all() {
+        unsafe { asm!("sfence.vma zero, zero", options(nostack)) }
+    }
+
+    /// Invalidate all pages in an aligned range on this logical CPU.
+    ///
+    /// # Safety
+    /// The caller must have completed the page-table update before calling.
+    pub unsafe fn invalidate_range(start: u64, length: u64) {
+        let Some(end) = start.checked_add(length) else { return };
+        let mut address = start;
+        while address < end {
+            unsafe { invalidate_page(address) }
+            address = address.saturating_add(crate::FRAME_SIZE);
         }
     }
 }

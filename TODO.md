@@ -31,7 +31,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add kernel/user virtual address layout.
 - [x] Add physical frame ownership and reclamation.
 - [x] Add page mapping and unmapping syscalls.
-- [ ] Add TLB invalidation and cross-CPU TLB shootdown.
+- [x] Add TLB invalidation and cross-CPU TLB shootdown.
 - [ ] Add copy-on-write memory.
 - [ ] Add guard pages, stack growth, and invalid-access termination.
 - [ ] Add capability-checked DMA and IOMMU protection.

@@ -52,6 +52,7 @@ pub mod syscall;
 mod shell;
 pub mod task;
 pub mod monitor;
+pub mod tlb;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -137,6 +138,7 @@ pub use task::{
     AddressSpaceId, Context, CpuId, CpuMask, ExecutionMode, SchedulingPolicy, Thread, ThreadId,
     ThreadState,
 };
+pub use tlb::{TlbShootdownCoordinator, TlbShootdownError, TlbShootdownId, MAX_TLB_SHOOTDOWNS};
 pub use invariants::{
     CATALOGUE as INVARIANT_CATALOGUE, InvariantDefinition, InvariantFailure, InvariantId,
 };
