@@ -41,6 +41,7 @@ DEFAULT_CONFIGURATION_FILES = (
     "scripts/build-portable-image.sh",
     "scripts/check-reproducible-image.sh",
     "scripts/package-vm-release.py",
+    "scripts/validate-release-claims.py",
     "scripts/release-report.py",
     "scripts/release-gate.sh",
     "scripts/release-slo-gate.py",

@@ -593,8 +593,14 @@ measured p50/p95/p99 data over optimistic feature claims.
       evidence, benchmark summaries, resource budgets, and fault-recovery
       samples; [`scripts/package-vm-release.py`](scripts/package-vm-release.py)
       requires the verified report and carries it in the release archive.
-- [ ] No release claims “scalable,” “durable,” “secure,” or “real-time” without
+- [x] No release claims “scalable,” “durable,” “secure,” or “real-time” without
       a named workload, measured threshold, host configuration, and retained
-      artifact.
+      artifact. Implementation: [`scripts/validate-release-claims.py`](scripts/validate-release-claims.py)
+      validates revision-bound claim records, host/workload/threshold fields,
+      changelog terms, and SHA-256-pinned evidence; [`scripts/package-vm-release.py`](scripts/package-vm-release.py)
+      requires and retains the claims manifest; the release gate enforces it.
+      The schema and operator workflow are documented in
+      [`docs/release-claims.md`](docs/release-claims.md), with direct regression
+      coverage in [`scripts/test_validate_release_claims.py`](scripts/test_validate_release_claims.py).
 - [ ] The full roadmap status is machine-readable and distinguishes planned,
       running, passed, failed, blocked, skipped, and inconclusive evidence.

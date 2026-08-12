@@ -181,6 +181,7 @@ def write_archive(
     artifacts: list[tuple[str, pathlib.Path]],
     changelog: pathlib.Path,
     release_report: pathlib.Path,
+    release_claims: pathlib.Path,
     evidence_root: pathlib.Path,
     evidence_files: Iterable[pathlib.Path],
     attestation_files: Iterable[pathlib.Path],
@@ -208,6 +209,7 @@ def write_archive(
                     archive.addfile(info, io.BytesIO(manifest_bytes))
                     add_file(archive, changelog, "CHANGELOG.md", timestamp)
                     add_file(archive, release_report, "release-report.json", timestamp)
+                    add_file(archive, release_claims, "release-claims.json", timestamp)
                     for name, path in artifacts:
                         add_file(archive, path, f"artifacts/{name}", timestamp)
                     for path in evidence_files:
@@ -231,6 +233,12 @@ def main() -> int:
         required=True,
         type=pathlib.Path,
         help="verified report produced by scripts/release-report.py",
+    )
+    parser.add_argument(
+        "--release-claims",
+        required=True,
+        type=pathlib.Path,
+        help="evidence-backed claims manifest produced for this release",
     )
     parser.add_argument(
         "--attestation-dir",
@@ -264,6 +272,23 @@ def main() -> int:
                 str(evidence_root),
                 "--report",
                 str(release_report),
+            ],
+            check=True,
+            cwd=ROOT,
+        )
+        release_claims = args.release_claims.expanduser().resolve()
+        if not release_claims.is_file():
+            raise ValueError(f"release claims do not exist: {release_claims}")
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/validate-release-claims.py"),
+                "--claims",
+                str(release_claims),
+                "--evidence-dir",
+                str(evidence_root),
+                "--release-notes",
+                str(CHANGELOG),
             ],
             check=True,
             cwd=ROOT,
@@ -308,6 +333,7 @@ def main() -> int:
             "artifacts": [artifact_entry(name, path) for name, path in artifacts],
             "changelog": {"path": "CHANGELOG.md", "sha256": sha256(CHANGELOG)},
             "release_report": {"path": "release-report.json", "sha256": sha256(release_report)},
+            "release_claims": {"path": "release-claims.json", "sha256": sha256(release_claims)},
             "device_topology": DEFAULT_TOPOLOGY,
             "test_evidence": records,
             "attestations": {
@@ -333,6 +359,7 @@ def main() -> int:
             artifacts,
             CHANGELOG,
             release_report,
+            release_claims,
             evidence_root,
             evidence_files,
             attestation_files,

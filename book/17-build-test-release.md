@@ -118,6 +118,7 @@ python3 scripts/package-vm-release.py \
   --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
   --evidence-dir build/test-evidence/<run-id> \
   --release-report build/release/release-report.json \
+  --release-claims build/release/release-claims.json \
   --attestation-dir build/release/attestations \
   --firmware bios --firmware uefi
 ```

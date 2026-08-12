@@ -20,6 +20,8 @@ python3 scripts/package-vm-release.py \
   --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
   --evidence-dir build/test-evidence/<run-id> \
   --release-report build/release/release-report.json \
+  --release-claims build/release/release-claims.json \
+  --attestation-dir build/release/attestations \
   --firmware bios --firmware uefi
 ```
 
@@ -27,6 +29,8 @@ The archive contains `release-manifest.json`, the exact `CHANGELOG.md`,
 `artifacts/`, and `evidence/`.
 The package refuses failed evidence and records skipped evidence with its
 reason.
+It refuses release claim language without a named workload, measured
+threshold, host configuration, and retained evidence artifact.
 See [release artifact details](docs/RELEASE_ARTIFACTS.md) for the manifest
 schema and verification rules.
 

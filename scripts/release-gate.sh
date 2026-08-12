@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-evidence_dir=${1:?usage: release-gate.sh EVIDENCE_DIRECTORY [SLO_REPORT]}
+evidence_dir=${1:?usage: release-gate.sh EVIDENCE_DIRECTORY [SLO_REPORT] [RELEASE_CLAIMS]}
 slo_report=${2:-${SYNOS_SLO_REPORT:-}}
+release_claims=${3:-${SYNOS_RELEASE_CLAIMS:-}}
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 if [[ ! -d "$evidence_dir" ]]; then
@@ -19,10 +20,20 @@ if [[ -z "$slo_report" ]]; then
     exit 1
 fi
 
+if [[ -z "$release_claims" ]]; then
+    echo "release gate: evidence-backed release claims manifest is required; pass RELEASE_CLAIMS or set SYNOS_RELEASE_CLAIMS" >&2
+    exit 1
+fi
+
 python3 "$root_dir/scripts/release-slo-gate.py" \
     --evidence-dir "$evidence_dir" \
     --report "$slo_report" \
     --max-age-seconds "${SYNOS_SLO_MAX_AGE_SECONDS:-86400}"
+
+python3 "$root_dir/scripts/validate-release-claims.py" \
+    --claims "$release_claims" \
+    --evidence-dir "$evidence_dir" \
+    --release-notes "$root_dir/CHANGELOG.md"
 
 python3 - "$evidence_dir" <<'PY'
 import json
