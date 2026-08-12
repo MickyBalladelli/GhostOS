@@ -711,6 +711,29 @@ pub mod interrupts {
             if crate::page_fault::dispatch(fault) {
                 return 0
             }
+            if fault.user {
+                crate::capture_exception(
+                    super::capture_registers(fault_address),
+                    fault_address,
+                    synos_status::Status::CORRUPT,
+                    vector as u16,
+                );
+                unsafe {
+                    let scheduler =
+                        (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
+                    if let Some(context_switch) = scheduler.terminate_current_fault() {
+                        if let Ok(next) = scheduler.thread(context_switch.next) {
+                            return restore_context(
+                                frame,
+                                &next.context,
+                                next.mode,
+                                context_switch.next_address_space_root,
+                            );
+                        }
+                    }
+                }
+                crate::halt()
+            }
             crate::capture_exception(
                 super::capture_registers(fault_address),
                 fault_address,

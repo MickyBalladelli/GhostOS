@@ -347,6 +347,18 @@ impl Scheduler {
         self.current
     }
 
+    /// Remove the faulting current thread without requiring a user-visible
+    /// control capability. The page-fault path uses this for fatal user
+    /// memory violations, then dispatches another runnable thread.
+    pub fn terminate_current_fault(&mut self) -> Option<ContextSwitch> {
+        let current = self.current.take()?;
+        let slot = current.slot();
+        self.clear_ipc_waits(current);
+        self.threads[slot] = Thread::VACANT;
+        self.debug_check();
+        self.dispatch()
+    }
+
     pub const fn partition(&self) -> CorePartition {
         self.partition
     }

@@ -84,6 +84,21 @@ pub enum AddressSpaceError {
     NotCopyOnWrite,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StackGrowthError {
+    NotGuardPage,
+    Collision,
+    Overflow,
+    Capacity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StackGrowth {
+    pub page: u64,
+    pub new_stack_base: u64,
+    pub new_guard_base: Option<u64>,
+}
+
 #[derive(Clone, Copy)]
 struct Region {
     owner: Mapping,
@@ -93,6 +108,8 @@ struct Region {
     backing: Option<PhysicalRange>,
     authority: u64,
     copy_on_write: bool,
+    guard: bool,
+    stack: bool,
 }
 
 impl Region {
@@ -212,6 +229,8 @@ impl AddressSpace {
             backing: None,
             authority: 0,
             copy_on_write: false,
+            guard: false,
+            stack: false,
         })?;
         Ok(())
     }
@@ -251,7 +270,149 @@ impl AddressSpace {
         region.backing = Some(backing);
         region.authority = authority.raw();
         region.copy_on_write = false;
+        region.guard = false;
+        region.stack = false;
         Ok(mapping)
+    }
+
+    /// Record a writable stack and its unmapped guard pages.
+    pub fn record_stack(
+        &mut self,
+        mapping: Mapping,
+        base: u64,
+        size: u64,
+        guard_pages: u8,
+    ) -> Result<(), AddressSpaceError> {
+        if base % PAGE_SIZE != 0
+            || size == 0
+            || size % PAGE_SIZE != 0
+            || !is_user_range(base, size)
+        {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        let guard_size = u64::from(guard_pages)
+            .checked_mul(PAGE_SIZE)
+            .ok_or(AddressSpaceError::MappingOverflow)?;
+        let guard_base = base
+            .checked_sub(guard_size)
+            .ok_or(AddressSpaceError::MappingOverflow)?;
+        if guard_size != 0 && !is_user_range(guard_base, guard_size) {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        if self.overlaps(base, size) || guard_size != 0 && self.overlaps(guard_base, guard_size) {
+            return Err(AddressSpaceError::MappingConflict)
+        }
+        let needed = usize::from(guard_size != 0) + 1;
+        if self.regions.iter().filter(|region| region.is_none()).count() < needed {
+            return Err(AddressSpaceError::Capacity)
+        }
+        if guard_size != 0 {
+            self.insert(Region {
+                owner: mapping,
+                base: guard_base,
+                size: guard_size,
+                permissions: None,
+                backing: None,
+                authority: 0,
+                copy_on_write: false,
+                guard: true,
+                stack: false,
+            })?;
+        }
+        self.insert(Region {
+            owner: mapping,
+            base,
+            size,
+            permissions: Some(SegmentPermissions::READ.union(SegmentPermissions::WRITE)),
+            backing: None,
+            authority: 0,
+            copy_on_write: false,
+            guard: false,
+            stack: true,
+        })
+    }
+
+    pub fn stack_growth_page(&self, address: u64) -> Result<u64, StackGrowthError> {
+        let page = address & !(PAGE_SIZE - 1);
+        let (guard_index, guard) = self
+            .regions
+            .iter()
+            .enumerate()
+            .find_map(|(index, region)| {
+                region.filter(|region| region.guard && region.contains(page, PAGE_SIZE))
+                    .map(|region| (index, region))
+            })
+            .ok_or(StackGrowthError::NotGuardPage)?;
+        let guard_end = guard.end().ok_or(StackGrowthError::Overflow)?;
+        if page != guard_end.saturating_sub(PAGE_SIZE) {
+            return Err(StackGrowthError::NotGuardPage)
+        }
+        let stack_index = self
+            .regions
+            .iter()
+            .position(|region| {
+                region.is_some_and(|region| {
+                    region.stack
+                        && region.owner == guard.owner
+                        && region.base == guard_end
+                })
+            })
+            .ok_or(StackGrowthError::NotGuardPage)?;
+        let stack = self.regions[stack_index].ok_or(StackGrowthError::NotGuardPage)?;
+        let new_base = stack
+            .base
+            .checked_sub(PAGE_SIZE)
+            .ok_or(StackGrowthError::Overflow)?;
+        if !is_user_range(new_base, PAGE_SIZE) {
+            return Err(StackGrowthError::Overflow)
+        }
+        if self.regions.iter().enumerate().any(|(index, region)| {
+            index != guard_index
+                && index != stack_index
+                && region.is_some_and(|region| region.overlaps(new_base, PAGE_SIZE))
+        }) {
+            return Err(StackGrowthError::Collision)
+        }
+        Ok(new_base)
+    }
+
+    /// Commit one page of downward stack growth after the caller maps it.
+    pub fn grow_stack(&mut self, address: u64) -> Result<StackGrowth, StackGrowthError> {
+        let page = self.stack_growth_page(address)?;
+        let guard_index = self
+            .regions
+            .iter()
+            .position(|region| {
+                region.is_some_and(|region| {
+                    region.guard && region.end().is_some_and(|end| end - PAGE_SIZE == page)
+                })
+            })
+            .ok_or(StackGrowthError::NotGuardPage)?;
+        let guard = self.regions[guard_index].ok_or(StackGrowthError::NotGuardPage)?;
+        let stack_index = self
+            .regions
+            .iter()
+            .position(|region| {
+                region.is_some_and(|region| {
+                    region.stack && region.owner == guard.owner && region.base == guard.end().unwrap()
+                })
+            })
+            .ok_or(StackGrowthError::NotGuardPage)?;
+        let stack = self.regions[stack_index].ok_or(StackGrowthError::NotGuardPage)?;
+        self.regions[guard_index] = Some(Region {
+            base: guard.base.checked_sub(PAGE_SIZE).ok_or(StackGrowthError::Overflow)?,
+            ..guard
+        });
+        self.regions[stack_index] = Some(Region {
+            base: page,
+            size: stack.size.checked_add(PAGE_SIZE).ok_or(StackGrowthError::Overflow)?,
+            ..stack
+        });
+        Ok(StackGrowth {
+            page,
+            new_stack_base: page,
+            new_guard_base: self.regions[guard_index].map(|region| region.base),
+        })
     }
 
     /// Make a child address-space record sharing this space's mappings.
@@ -378,6 +539,8 @@ impl AddressSpace {
             )?),
             authority: original.authority,
             copy_on_write: false,
+            guard: false,
+            stack: false,
         };
         let left = (left_size != 0).then_some(Region {
             owner: original.owner,
@@ -389,6 +552,8 @@ impl AddressSpace {
             )?),
             authority: original.authority,
             copy_on_write: true,
+            guard: false,
+            stack: false,
         });
         let right = (right_size != 0).then_some(Region {
             owner: original.owner,
@@ -402,6 +567,8 @@ impl AddressSpace {
             .ok_or(AddressSpaceError::InvalidMapping)?),
             authority: original.authority,
             copy_on_write: true,
+            guard: false,
+            stack: false,
         });
         self.regions[index] = left.or(Some(private));
         if left.is_some() {
@@ -472,6 +639,8 @@ impl AddressSpace {
             backing: None,
             authority: 0,
             copy_on_write: false,
+            guard: false,
+            stack: false,
         })
     }
 
@@ -519,6 +688,8 @@ impl AddressSpace {
             backing: None,
             authority: 0,
             copy_on_write: false,
+            guard: false,
+            stack: false,
         })
     }
 
@@ -543,6 +714,8 @@ impl AddressSpace {
             backing: None,
             authority: 0,
             copy_on_write: false,
+            guard: false,
+            stack: false,
         })
     }
 

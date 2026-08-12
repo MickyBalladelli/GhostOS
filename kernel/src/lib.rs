@@ -95,7 +95,7 @@ pub use address_space::{
     AddressSpace, AddressSpaceError, AddressSpaceTable, PageTableRoot,
     MAX_ADDRESS_SPACE_REGIONS, PAGE_SIZE as ADDRESS_SPACE_PAGE_SIZE, USER_SPACE_END,
     USER_SPACE_START, KERNEL_SPACE_END, KERNEL_SPACE_START, VIRTUAL_ADDRESS_LAYOUT,
-    VirtualAddressLayout, is_user_range,
+    StackGrowth, StackGrowthError, VirtualAddressLayout, is_user_range,
 };
 pub use hot_allocator::{
     HotAllocation, HotAllocationError, HotAllocationPlacement, HotAllocatorConfigError,
@@ -121,7 +121,8 @@ pub use micro_silo::{
 };
 pub use page_fault::{
     CowFaultError, CowFaultResult, PageFault, PageFaultDispatchError, PageFaultHandler,
-    PageFaultHandlerError, resolve_cow_fault,
+    PageFaultHandlerError, StackFaultError, StackPageMapper, resolve_cow_fault,
+    resolve_stack_fault,
 };
 pub use cow::{CowError, CowManager, CowPageCopier, CowPageInfo, CowWriteResult, MAX_COW_PAGES};
 pub use process::{

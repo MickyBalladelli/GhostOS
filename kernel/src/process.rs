@@ -312,7 +312,7 @@ impl<M: ProcessMemory, const CAPACITY: usize> ImageMapper
         self.address_spaces
             .get_mut(self.address_space)
             .map_err(|_| ())?
-            .record_region(mapping, base, request.size, SegmentPermissions::READ.union(SegmentPermissions::WRITE))
+            .record_stack(mapping, base, request.size, request.guard_pages)
             .map_err(|_| ())?;
         Ok(stack)
     }

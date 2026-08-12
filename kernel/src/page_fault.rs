@@ -1,6 +1,8 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::address_space::{AddressSpaceError, AddressSpaceTable};
+use crate::address_space::{
+    AddressSpaceError, AddressSpaceTable, StackGrowth, StackGrowthError,
+};
 use crate::allocator::EarlyFrameAllocator;
 use crate::capability::{CapabilityHandle, CapabilitySpace};
 use crate::cow::{CowError, CowManager, CowPageCopier, CowWriteResult};
@@ -36,6 +38,45 @@ pub enum CowFaultError {
 pub enum CowFaultResult {
     MadeWritable { frame: u64 },
     Copied { old_frame: u64, new_frame: u64 },
+}
+
+pub trait StackPageMapper {
+    fn map_stack_page(&mut self, address_space: AddressSpaceId, page: u64) -> bool;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StackFaultError {
+    InvalidFault,
+    AddressSpace(AddressSpaceError),
+    Growth(StackGrowthError),
+    MappingFailed,
+}
+
+/// Grow a stack only when the fault hits the current guard page. The mapper
+/// must allocate and install the physical page before metadata is committed.
+pub fn resolve_stack_fault<const ADDRESS_SPACE_CAPACITY: usize>(
+    address_spaces: &mut AddressSpaceTable<ADDRESS_SPACE_CAPACITY>,
+    mapper: &mut impl StackPageMapper,
+    address_space: AddressSpaceId,
+    fault: PageFault,
+) -> Result<StackGrowth, StackFaultError> {
+    if !fault.user || fault.present || fault.reserved_bit {
+        return Err(StackFaultError::InvalidFault)
+    }
+    let page = fault.page_address();
+    let candidate = address_spaces
+        .get(address_space)
+        .map_err(StackFaultError::AddressSpace)?
+        .stack_growth_page(page)
+        .map_err(StackFaultError::Growth)?;
+    if !mapper.map_stack_page(address_space, candidate) {
+        return Err(StackFaultError::MappingFailed)
+    }
+    address_spaces
+        .get_mut(address_space)
+        .map_err(StackFaultError::AddressSpace)?
+        .grow_stack(page)
+        .map_err(StackFaultError::Growth)
 }
 
 /// Resolve a present user write fault against a COW mapping. The copier owns
