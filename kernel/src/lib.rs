@@ -452,7 +452,7 @@ fn boot_service_process(
     }
 
     let Some(root) = (unsafe {
-        arch::paging::install_service_root(&tables, &pages, physical_offset)
+        arch::paging::install_service_root(&tables, &pages, physical_offset, shell)
     }) else {
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     };

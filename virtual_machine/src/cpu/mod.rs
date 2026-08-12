@@ -62,7 +62,7 @@ pub struct CpuState {
     pub idtr: DescriptorTableRegister,
     pub mode: CpuMode,
     pub privilege: PrivilegeLevel,
-    /// Per-CPU interrupt stack table (only index 0 used for simplicity).
+    /// Kernel interrupt stack loaded from the active TSS.
     pub ist_stack: u64,
     /// STAR / LSTAR MSRs used by the syscall/sysret instructions.
     pub star: u64,
@@ -487,10 +487,8 @@ impl CpuState {
             .ok_or(CpuError::InterruptNotConfigured)?;
         // Hardware performs IDT lookup in supervisor context even when the
         // interrupted code runs with user page tables.
-        let was_user = self.privilege == PrivilegeLevel::Ring3;
         mmu.set_privilege(false);
         let raw_result = mmu.read_descriptor(entry_addr);
-        mmu.set_privilege(was_user);
         let raw = raw_result.map_err(|_| CpuError::InterruptNotConfigured)?;
         let gate = IdtGate::decode(&raw);
 
@@ -504,10 +502,21 @@ impl CpuState {
         let old_cs = self.cs.selector;
         let old_rip = self.rip;
 
+        let new_privilege = if gate.selector & 3 == 0 {
+            PrivilegeLevel::Ring0
+        } else {
+            PrivilegeLevel::Ring3
+        };
         let mut new_rsp = self.rsp;
 
-        // IST handling.
-        if gate.ist != 0 && self.mode == CpuMode::Long64 && self.ist_stack != 0 {
+        // A privilege transition uses the current TSS rsp0. The bootstrap
+        // kernel has one CPU, so its loaded TSS stack is sufficient here.
+        if new_privilege != self.privilege && new_privilege == PrivilegeLevel::Ring0
+            && self.mode == CpuMode::Long64
+            && self.ist_stack != 0
+        {
+            new_rsp = self.ist_stack;
+        } else if gate.ist != 0 && self.mode == CpuMode::Long64 && self.ist_stack != 0 {
             new_rsp = self.ist_stack;
         }
 
@@ -520,11 +529,6 @@ impl CpuState {
         // DPL controls which callers may enter the gate. The target ring is
         // determined by the selector in the gate, so a DPL 3 syscall gate
         // still enters its Ring 0 handler.
-        let new_privilege = if gate.selector & 3 == 0 {
-            PrivilegeLevel::Ring0
-        } else {
-            PrivilegeLevel::Ring3
-        };
         if new_privilege != self.privilege {
             push64(mmu, &mut new_rsp, old_ss as u64)?;
             push64(mmu, &mut new_rsp, old_rsp)?;

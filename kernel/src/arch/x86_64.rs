@@ -132,6 +132,7 @@ pub mod paging {
         tables: &[u64; PROCESS_TABLE_FRAME_COUNT],
         pages: &[u64; 4],
         physical_offset: u64,
+        shell: bool,
     ) -> Option<crate::PageTableRoot> {
         if tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0)
             || pages.iter().any(|page| *page == 0 || *page % crate::FRAME_SIZE != 0)
@@ -180,7 +181,7 @@ pub mod paging {
             for (index, page) in pages.iter().enumerate() {
                 let permissions = match index {
                     0 => PRESENT | USER,
-                    1 => PRESENT | USER | no_execute,
+                    1 => PRESENT | USER | no_execute | if shell { WRITABLE } else { 0 },
                     _ => PRESENT | WRITABLE | USER | no_execute,
                 };
                 user_pt
@@ -219,7 +220,7 @@ pub mod paging {
         if shell {
             image[20..22].copy_from_slice(&[0xcd, 0x80]);
             image[22..28].copy_from_slice(&[0xc7, 0x07, 0x01, 0x00, 0x00, 0x00]);
-            image[28..30].copy_from_slice(&[0xeb, 0xf4]);
+            image[28..30].copy_from_slice(&[0xeb, 0xf6]);
         } else {
             // Yield repeatedly while a service waits for work.
             image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfc]);
@@ -330,8 +331,8 @@ pub mod interrupts {
     use core::sync::atomic::{AtomicU64, Ordering};
 
     const IDT_ENTRIES: usize = 256;
-    const PIT_DIVISOR: u16 = 1_193;
-    const PIT_TICK_US: u64 = 1_000;
+    const PIT_DIVISOR: u16 = 11_931;
+    const PIT_TICK_US: u64 = 10_000;
     const KERNEL_CODE_SELECTOR: u16 = 0x08;
     const KERNEL_DATA_SELECTOR: u16 = 0x10;
     const USER_CODE_SELECTOR: u16 = 0x18 | 3;
@@ -342,7 +343,7 @@ pub mod interrupts {
     static mut TSS: TaskStateSegment = TaskStateSegment::new();
     static ISOLATED_CORES: AtomicU64 = AtomicU64::new(0);
 
-    #[repr(C)]
+    #[repr(C, packed)]
     struct TaskStateSegment {
         reserved0: u32,
         rsp0: u64,

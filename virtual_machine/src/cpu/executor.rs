@@ -1278,9 +1278,17 @@ impl InstructionExecutor {
         if descriptor & (1 << 47) == 0 || !matches!(descriptor_type, 9 | 11) {
             return Err(CpuError::GeneralProtectionFault)
         }
-        // The VM does not yet consume the TSS task register for stack
-        // switching, but it must accept the architectural load so real-mode
-        // kernel bootstrap can continue.
+        if state.mode == crate::cpu::CpuMode::Long64 {
+            let upper = mmu
+                .read_from_addr(state.gdtr.base + offset + 8, 8)
+                .map_err(mem_err)?;
+            let tss_base = ((descriptor >> 16) & 0x00ff_ffff)
+                | (((descriptor >> 56) & 0xff) << 24)
+                | (upper << 32);
+            state.ist_stack = mmu
+                .read_from_addr(tss_base + 4, 8)
+                .map_err(mem_err)?;
+        }
         state.rip = ins.next_ip;
         Ok(())
     }
