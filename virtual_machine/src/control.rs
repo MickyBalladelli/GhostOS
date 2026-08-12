@@ -483,13 +483,29 @@ fn status_response(vm: &Vm, disclose_sensitive: bool) -> String {
         .map(|limitation| json_string(&limitation.to_string()))
         .collect::<Vec<_>>()
         .join(",");
+    let driver_capabilities = vm
+        .driver_capabilities()
+        .iter()
+        .map(|capability| {
+            format!(
+                "{{\"kind\":{},\"feature\":{},\"available\":{},\"selected\":{},\"fallback\":{},\"semantics\":{}}}",
+                json_string(&capability.kind.to_string()),
+                json_string(capability.feature),
+                capability.available,
+                json_string(capability.selected),
+                json_string(capability.fallback),
+                json_string(capability.semantics),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let guest_data = if disclose_sensitive {
         format!(",\"rip\":{}", vm.cpu().state.rip)
     } else {
         ",\"guest_data_redacted\":true".to_string()
     };
     let data = format!(
-        "{{\"power\":{},\"hardware_acceleration\":{{\"requested\":{},\"host\":{},\"execution\":{},\"fallback\":{},\"supported_features\":[{}],\"limitations\":[{}]}},\"cpus\":{},\"memory_bytes\":{}{guest_data}}}",
+        "{{\"power\":{},\"hardware_acceleration\":{{\"requested\":{},\"host\":{},\"execution\":{},\"fallback\":{},\"supported_features\":[{}],\"limitations\":[{}]}},\"driver_capabilities\":[{}],\"cpus\":{},\"memory_bytes\":{}{guest_data}}}",
         json_string(power),
         json_string(&acceleration.requested.to_string()),
         json_string(&acceleration.active.to_string()),
@@ -497,6 +513,7 @@ fn status_response(vm: &Vm, disclose_sensitive: bool) -> String {
         json_string(&acceleration.fallback_behavior.to_string()),
         features,
         limitations,
+        driver_capabilities,
         vm.config().smp_cores,
         vm.config().memory_size,
     );

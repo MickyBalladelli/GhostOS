@@ -8,6 +8,7 @@ pub mod net;
 pub mod integration;
 pub mod execution;
 pub mod hardware_acceleration;
+pub mod driver_capabilities;
 pub mod snapshot;
 pub mod terminal;
 pub mod input;
@@ -83,6 +84,9 @@ pub use hardware_acceleration::{
     HardwareAcceleration, HardwareAccelerationAttempt, HardwareAccelerationError,
     HardwareAccelerationFallback, HardwareAccelerationFeature, HardwareAccelerationHandle,
     HardwareAccelerationLimitation, HardwareAccelerationSession, HardwareAccelerationStatus,
+};
+pub use driver_capabilities::{
+    DriverCapability, DriverCapabilityKind, DriverCapabilityReport, DRIVER_CAPABILITY_COUNT,
 };
 pub use snapshot::{
     SnapshotChain, SnapshotDiff, SnapshotError, SnapshotFeatures, SnapshotId, SnapshotPage,
@@ -228,6 +232,7 @@ pub struct Vm {
     bios: Bios,
     execution: ExecutionEngine,
     hardware_acceleration: HardwareAccelerationSession,
+    driver_capabilities: DriverCapabilityReport,
     disk_manager: DiskManager,
     booted_system_disk: Option<SystemDiskBootArtifacts>,
     config: VmConfig,
@@ -271,6 +276,11 @@ impl Vm {
         let hardware_acceleration = HardwareAccelerationSession::open(config.hardware_acceleration)
             .map_err(|error| VmError::HardwareAcceleration(error.to_string()))?;
         let mut vm = Self::build_with_config(config, clock)?;
+        vm.driver_capabilities = DriverCapabilityReport::discover(
+            vm.config.firmware,
+            &vm.config.network,
+            &hardware_acceleration.status(),
+        );
         vm.hardware_acceleration = hardware_acceleration;
         vm.attach_configured_disks()?;
         if let Err(error) = vm.configure_persistence() {
@@ -624,6 +634,7 @@ impl Vm {
             execution: ExecutionEngine::new(),
             hardware_acceleration: HardwareAccelerationSession::open(HardwareAcceleration::Software)
                 .expect("software acceleration session cannot fail"),
+            driver_capabilities: DriverCapabilityReport::default(),
             disk_manager: DiskManager::new(),
             booted_system_disk: None,
             config,
@@ -647,6 +658,11 @@ impl Vm {
         } else {
             self.bios.context.uefi = None;
         }
+        self.driver_capabilities = DriverCapabilityReport::discover(
+            self.config.firmware,
+            &self.config.network,
+            &self.hardware_acceleration.status(),
+        );
     }
 
     /// Provide an EFI application image (PE32+) for UEFI boot.
@@ -1406,6 +1422,12 @@ impl Vm {
     /// until a native executor is integrated and equivalence-tested.
     pub fn hardware_acceleration(&self) -> HardwareAccelerationStatus {
         self.hardware_acceleration.status()
+    }
+
+    /// Report discovered driver features, selected fallbacks, and preserved
+    /// guest-visible semantics.
+    pub fn driver_capabilities(&self) -> &DriverCapabilityReport {
+        &self.driver_capabilities
     }
 
     pub fn mmu(&self) -> &Mmu {

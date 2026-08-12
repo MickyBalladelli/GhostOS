@@ -551,7 +551,7 @@ measured p50/p95/p99 data over optimistic feature claims.
       workload-placement policy with performance-per-watt and latency metrics;
       [`kernel/src/scheduler.rs`](kernel/src/scheduler.rs) applies placement
       and idle decisions to scheduler-owned paths.
-- [ ] Add driver capability discovery and graceful degradation for missing
+- [x] Add driver capability discovery and graceful degradation for missing
       acceleration, storage features, NIC offloads, GPUs, firmware services,
       and platform timers.
       Done when the selected fallback is visible and keeps semantics stable.
