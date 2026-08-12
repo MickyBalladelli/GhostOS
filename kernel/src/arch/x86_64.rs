@@ -11,7 +11,14 @@ pub mod paging {
     const ENTRY_COUNT: usize = 512;
     const TWO_MIB: u64 = 2 * 1024 * 1024;
     const ONE_GIB: u64 = 1024 * 1024 * 1024;
-    pub const DEMO_TABLE_FRAME_COUNT: usize = 7;
+    /// Root, kernel paging levels, and the private user mapping levels.
+    pub const PROCESS_TABLE_FRAME_COUNT: usize = 9;
+    const USER_MAPPING_PML4_INDEX: usize = 1;
+    const SERVICE_CODE: u64 = 0x0000_0080_0000_0000;
+    const SERVICE_REQUEST: u64 = SERVICE_CODE + crate::FRAME_SIZE;
+    const SERVICE_RESPONSE: u64 = SERVICE_REQUEST + crate::FRAME_SIZE;
+    const SERVICE_DATA: u64 = SERVICE_RESPONSE + crate::FRAME_SIZE;
+    const SERVICE_STACK_TOP: u64 = SERVICE_DATA + crate::FRAME_SIZE;
 
     /// Creates a fresh four-level root table with low physical memory identity mapped.
     ///
@@ -69,35 +76,36 @@ pub mod paging {
         }
     }
 
-    /// Build a small real user address space for a boot service image.
+    /// Build a private user address space for a boot service image.
     ///
-    /// The image pages are identity-mapped, while every other low-memory page
-    /// remains supervisor-only. This gives the proof process a separate root,
-    /// user permissions, and a user stack without requiring an ELF loader.
+    /// The root keeps the low physical identity map supervisor-only so kernel
+    /// code and interrupt handlers remain reachable. The service image is
+    /// mapped at a separate user virtual address, backed only by this
+    /// process's four frames.
     ///
     /// # Safety
     /// All frames must be distinct, aligned, writable physical frames. The
-    /// four image frames must occupy one 2 MiB physical region.
+    /// four image frames must be distinct writable physical frames.
     pub unsafe fn install_service_root(
-        tables: &[u64; DEMO_TABLE_FRAME_COUNT],
+        tables: &[u64; PROCESS_TABLE_FRAME_COUNT],
         pages: &[u64; 4],
         physical_offset: u64,
     ) -> Option<crate::PageTableRoot> {
-        let region = pages[0] / TWO_MIB;
-        if pages.iter().any(|page| {
-            *page == 0
-                || *page % crate::FRAME_SIZE != 0
-                || *page / TWO_MIB != region
-                || region >= 4 * ENTRY_COUNT as u64
-        }) {
-            return None
-        }
-        if tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0) {
+        if tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0)
+            || pages.iter().any(|page| *page == 0 || *page % crate::FRAME_SIZE != 0)
+            || tables.iter().enumerate().any(|(index, frame)| {
+                tables[..index].contains(frame) || pages.contains(frame)
+            })
+            || pages.iter().enumerate().any(|(index, page)| pages[..index].contains(page))
+        {
             return None
         }
 
         let root = (tables[0] + physical_offset) as *mut u64;
         let pdpt = (tables[1] + physical_offset) as *mut u64;
+        let user_pdpt = (tables[6] + physical_offset) as *mut u64;
+        let user_pd = (tables[7] + physical_offset) as *mut u64;
+        let user_pt = (tables[8] + physical_offset) as *mut u64;
         unsafe {
             for frame in tables {
                 core::ptr::write_bytes(
@@ -106,17 +114,11 @@ pub mod paging {
                     crate::FRAME_SIZE as usize,
                 );
             }
-            core::ptr::write_bytes(
-                (tables[6] + physical_offset) as *mut u8,
-                0,
-                crate::FRAME_SIZE as usize,
-            );
-
-            root.write(tables[1] | PRESENT | WRITABLE | USER);
+            root.write(tables[1] | PRESENT | WRITABLE);
             for directory_group in 0..4 {
                 let directory = (tables[directory_group + 2] + physical_offset) as *mut u64;
                 pdpt.add(directory_group).write(
-                    tables[directory_group + 2] | PRESENT | WRITABLE | USER,
+                    tables[directory_group + 2] | PRESENT | WRITABLE,
                 );
                 for index in 0..ENTRY_COUNT {
                     let address =
@@ -127,21 +129,27 @@ pub mod paging {
                 }
             }
 
-            let directory_group = (region as usize) / ENTRY_COUNT;
-            let directory_index = (region as usize) % ENTRY_COUNT;
-            let directory = (tables[directory_group + 2] + physical_offset) as *mut u64;
-            directory.add(directory_index).write(
+            root.add(USER_MAPPING_PML4_INDEX).write(
                 tables[6] | PRESENT | WRITABLE | USER,
             );
-
-            let page_table = (tables[6] + physical_offset) as *mut u64;
-            for page in pages {
-                let index = ((*page % TWO_MIB) / crate::FRAME_SIZE) as usize;
-                page_table.add(index).write(*page | PRESENT | WRITABLE | USER);
+            user_pdpt.write(tables[7] | PRESENT | WRITABLE | USER);
+            user_pd.write(tables[8] | PRESENT | WRITABLE | USER);
+            for (index, page) in pages.iter().enumerate() {
+                user_pt
+                    .add(index)
+                    .write(*page | PRESENT | WRITABLE | USER);
             }
         }
 
         crate::PageTableRoot::new(tables[0])
+    }
+
+    pub const fn service_virtual_pages() -> [u64; 4] {
+        [SERVICE_CODE, SERVICE_REQUEST, SERVICE_RESPONSE, SERVICE_DATA]
+    }
+
+    pub const fn service_stack_top() -> u64 {
+        SERVICE_STACK_TOP
     }
 
     /// Install the request, response, and machine code for a boot service.
@@ -154,11 +162,12 @@ pub mod paging {
         physical_offset: u64,
         shell: bool,
     ) {
+        let virtual_pages = service_virtual_pages();
         let mut image = [0u8; 32];
         image[0..2].copy_from_slice(&[0x48, 0xbf]);
-        image[2..10].copy_from_slice(&pages[1].to_le_bytes());
+        image[2..10].copy_from_slice(&virtual_pages[1].to_le_bytes());
         image[10..12].copy_from_slice(&[0x48, 0xbe]);
-        image[12..20].copy_from_slice(&pages[2].to_le_bytes());
+        image[12..20].copy_from_slice(&virtual_pages[2].to_le_bytes());
         if shell {
             image[20..22].copy_from_slice(&[0xcd, 0x80]);
             image[22..28].copy_from_slice(&[0xc7, 0x07, 0x01, 0x00, 0x00, 0x00]);
@@ -208,7 +217,7 @@ pub mod paging {
                 synos_runtime::Operation::Yield
             });
             if shell {
-                request.arguments[0] = pages[3];
+                request.arguments[0] = virtual_pages[3];
                 request.arguments[1] = b"SynOS service shell ready\r\nsynos> ".len() as u64;
             }
             ((pages[1] + physical_offset) as *mut synos_runtime::Request).write(request);

@@ -15,8 +15,9 @@ Both x86 boot paths pass a versioned `BootInfo` pointer to the kernel:
   calls the same kernel entry.
 
 The kernel starts serial/VGA output, creates an early frame allocator, installs
-an identity-mapped hardware root page table, loads interrupt handlers, and then
-enables interrupts.
+an identity-mapped supervisor root page table, loads interrupt handlers, and
+then enables interrupts. Each Ring 3 process gets a distinct root with the
+shared supervisor mapping plus private user virtual mappings.
 
 ## Build
 

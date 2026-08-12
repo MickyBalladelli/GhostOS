@@ -426,7 +426,7 @@ fn boot_service_process(
     address_space: AddressSpaceId,
     shell: bool,
 ) -> (ThreadId, PageTableRoot) {
-    let mut tables = [0u64; arch::paging::DEMO_TABLE_FRAME_COUNT];
+    let mut tables = [0u64; arch::paging::PROCESS_TABLE_FRAME_COUNT];
     for frame in &mut tables {
         let Ok(address) = frames.allocate() else {
             fatal_kernel_halt(Status::NO_SPACE)
@@ -447,6 +447,7 @@ fn boot_service_process(
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     };
     unsafe { arch::paging::write_service_image(&pages, physical_offset, shell) };
+    let virtual_pages = arch::paging::service_virtual_pages();
 
     let mut capabilities: CapabilitySpace<MAX_CAPABILITIES> = CapabilitySpace::new();
     let authority = capabilities
@@ -464,8 +465,8 @@ fn boot_service_process(
             address_space,
             root,
             SchedulingPolicy::Cooperative,
-            pages[0] as usize,
-            (pages[3] + FRAME_SIZE) as usize,
+            virtual_pages[0] as usize,
+            arch::paging::service_stack_top() as usize,
         )
         .unwrap_or_else(|_| fatal_kernel_halt(Status::CORRUPT));
     (thread, root)
