@@ -55,64 +55,58 @@ impl Keyboard {
     }
 
     pub fn read_byte(&mut self) -> Option<u8> {
-        if self.pending_count != 0 {
-            return self.take_pending();
-        }
+        loop {
+            if self.pending_count != 0 {
+                return self.take_pending();
+            }
 
-        let status = unsafe { inb(STATUS_PORT) };
-        if status & OUTPUT_FULL == 0 {
-            return None;
-        }
-
-        let scan_code = unsafe { inb(DATA_PORT) };
-        if status & AUXILIARY_DATA != 0 {
-            return None;
-        }
-        if scan_code == 0xe0 {
-            self.extended = true;
-            return None;
-        }
-        if matches!(scan_code, 0xfa | 0xfe) {
-            return None;
-        }
-
-        let released = scan_code & 0x80 != 0;
-        let code = scan_code & 0x7f;
-        if self.extended {
-            self.extended = false;
-            return self.decode_extended(code, released);
-        }
-
-        match code {
-            0x1d => {
-                self.control = !released;
+            let status = unsafe { inb(STATUS_PORT) };
+            if status & OUTPUT_FULL == 0 {
                 return None;
             }
-            0x2a => {
-                self.left_shift = !released;
-                return None;
-            }
-            0x36 => {
-                self.right_shift = !released;
-                return None;
-            }
-            0x3a if !released => {
-                self.caps_lock = !self.caps_lock;
-                return None;
-            }
-            _ => {}
-        }
-        if released {
-            return None;
-        }
 
-        match code {
-            0x01 => Some(3),
-            0x0e => Some(8),
-            0x0f => Some(b'\t'),
-            0x1c => Some(b'\r'),
-            0x39 => Some(b' '),
-            _ => self.decode_character(code),
+            let scan_code = unsafe { inb(DATA_PORT) };
+            if status & AUXILIARY_DATA != 0 {
+                continue;
+            }
+            if scan_code == 0xe0 {
+                self.extended = true;
+                continue;
+            }
+            if matches!(scan_code, 0xfa | 0xfe) {
+                continue;
+            }
+
+            let released = scan_code & 0x80 != 0;
+            let code = scan_code & 0x7f;
+            if self.extended {
+                self.extended = false;
+                if let Some(byte) = self.decode_extended(code, released) {
+                    return Some(byte);
+                }
+                continue;
+            }
+
+            match code {
+                0x1d => self.control = !released,
+                0x2a => self.left_shift = !released,
+                0x36 => self.right_shift = !released,
+                0x3a if !released => self.caps_lock = !self.caps_lock,
+                _ if !released => {
+                    let byte = match code {
+                        0x01 => Some(3),
+                        0x0e => Some(8),
+                        0x0f => Some(b'\t'),
+                        0x1c => Some(b'\r'),
+                        0x39 => Some(b' '),
+                        _ => self.decode_character(code),
+                    };
+                    if byte.is_some() {
+                        return byte;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 

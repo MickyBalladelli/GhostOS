@@ -284,22 +284,11 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         boot_services.shell_process.raw()
     );
 
-    // Early hardware setup is complete. Start the first user-space process.
-    #[cfg(all(
-        target_arch = "x86_64",
-        any(target_os = "none", target_os = "uefi")
-    ))]
-    boot_synos_init(
-        &mut frames,
-        scheduler,
-        boot_info.physical_address_offset,
-        boot_services,
-    );
-
-    #[cfg(not(all(
-        target_arch = "x86_64",
-        any(target_os = "none", target_os = "uefi")
-    )))]
+    // The boot service images currently prove Ring-3 isolation and syscall
+    // entry, but they are not complete service executables. In particular,
+    // the shell image only echoes bytes and cannot submit commands. Keep the
+    // interactive command processor live until the user-space shell can run
+    // the same command engine.
     shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
 }
 

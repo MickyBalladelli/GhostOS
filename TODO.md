@@ -21,8 +21,8 @@ Build the real operating system core before adding more advanced features.
 - [x] Register and start logging and audit services.
 - [x] Register and start authentication and package services.
 - [x] Connect service restart and fault fencing to real kernel processes.
-- [x] Replace empty service entrypoints with working Ring 3 programs.
-- [x] Boot to a service-owned shell instead of a kernel-owned shell.
+- [ ] Replace empty service entrypoints with working Ring 3 programs.
+- [ ] Boot to a service-owned shell instead of a kernel-owned shell.
 
 ## P0: Finish memory isolation
 
