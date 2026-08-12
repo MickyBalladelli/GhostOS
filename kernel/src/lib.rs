@@ -68,7 +68,7 @@ mod usb_keyboard;
 
 use core::panic::PanicInfo;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use synos_boot_protocol::BootInfo;
 use synos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
@@ -142,7 +142,7 @@ static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-static INIT_REPORTED: AtomicBool = AtomicBool::new(false);
+static SERVICE_REPORTS: AtomicU32 = AtomicU32::new(0);
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -260,7 +260,12 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         target_arch = "x86_64",
         any(target_os = "none", target_os = "uefi")
     ))]
-    boot_synos_init(&mut frames, scheduler, boot_info.physical_address_offset);
+    boot_synos_init(
+        &mut frames,
+        scheduler,
+        boot_info.physical_address_offset,
+        boot_services,
+    );
 
     #[cfg(not(all(
         target_arch = "x86_64",
@@ -281,11 +286,17 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             values: [0; 4],
         }
     }
-    if INIT_REPORTED
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-    {
-        println!("synos-init running in Ring 3 (address space {})", caller.raw());
+    let (name, bit) = match caller.raw() {
+        1 => ("synos-init", 1u32 << 1),
+        2 => ("synos-fsd", 1u32 << 2),
+        3 => ("synos-storaged", 1u32 << 3),
+        4 => ("synos-netd", 1u32 << 4),
+        5 => ("synos-logd", 1u32 << 5),
+        6 => ("synos-auditd", 1u32 << 6),
+        _ => ("unknown-service", 0),
+    };
+    if bit != 0 && SERVICE_REPORTS.fetch_or(bit, Ordering::AcqRel) & bit == 0 {
+        println!("{} running in Ring 3 (address space {})", name, caller.raw());
     }
     Response {
         status: Status::NORMAL.raw(),
@@ -303,7 +314,68 @@ fn boot_synos_init(
     frames: &mut EarlyFrameAllocator<'_>,
     scheduler: &'static mut Scheduler,
     physical_offset: u64,
+    services: boot_services::BootServices,
 ) -> ! {
+    let (init_thread, init_root) = boot_service_process(
+        frames,
+        scheduler,
+        physical_offset,
+        AddressSpaceId::new(1).expect("boot address space id"),
+    );
+    let service_processes = [
+        services.filesystem_process,
+        services.storage_process,
+        services.network_process,
+        services.logging_process,
+        services.audit_process,
+    ];
+    for (address_space_raw, process) in (2u32..=6).zip(service_processes) {
+        let address_space = AddressSpaceId::new(address_space_raw)
+            .expect("boot service address space id");
+        let (thread, _) = boot_service_process(
+            frames,
+            scheduler,
+            physical_offset,
+            address_space,
+        );
+        println!(
+            "starting service entrypoint (process={}, thread={}, address space={})",
+            process.raw(),
+            thread.raw(),
+            address_space.raw()
+        );
+    }
+
+    let Some(_) = scheduler.dispatch() else {
+        fatal_kernel_halt(Status::BUSY)
+    };
+    if syscall::install_dispatcher(boot_init_dispatch).is_err() {
+        fatal_kernel_halt(Status::BUSY)
+    }
+    let context = scheduler
+        .thread(init_thread)
+        .map(|thread| thread.context)
+        .unwrap_or_else(|_| {
+            fatal_kernel_halt(Status::CORRUPT)
+        });
+    println!(
+        "starting synos-init in Ring 3 (thread={}, services=5)",
+        init_thread.raw()
+    );
+    arch::enter_user(&context, init_root)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+#[allow(unsafe_code)]
+fn boot_service_process(
+    frames: &mut EarlyFrameAllocator<'_>,
+    scheduler: &mut Scheduler,
+    physical_offset: u64,
+    address_space: AddressSpaceId,
+) -> (ThreadId, PageTableRoot) {
     let mut tables = [0u64; arch::paging::DEMO_TABLE_FRAME_COUNT];
     for frame in &mut tables {
         let Ok(address) = frames.allocate() else {
@@ -320,13 +392,12 @@ fn boot_synos_init(
     }
 
     let Some(root) = (unsafe {
-        arch::paging::install_boot_init_root(&tables, &pages, physical_offset)
+        arch::paging::install_service_root(&tables, &pages, physical_offset)
     }) else {
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     };
-    unsafe { arch::paging::write_boot_init_image(&pages, physical_offset) };
+    unsafe { arch::paging::write_service_image(&pages, physical_offset) };
 
-    let address_space = AddressSpaceId::new(1).expect("boot address space id");
     let mut capabilities: CapabilitySpace<MAX_CAPABILITIES> = CapabilitySpace::new();
     let authority = capabilities
         .mint_root(
@@ -347,20 +418,7 @@ fn boot_synos_init(
             (pages[3] + FRAME_SIZE) as usize,
         )
         .unwrap_or_else(|_| fatal_kernel_halt(Status::CORRUPT));
-    let Some(_) = scheduler.dispatch() else {
-        fatal_kernel_halt(Status::BUSY)
-    };
-    if syscall::install_dispatcher(boot_init_dispatch).is_err() {
-        fatal_kernel_halt(Status::BUSY)
-    }
-    let context = scheduler
-        .thread(thread)
-        .map(|thread| thread.context)
-        .unwrap_or_else(|_| {
-            fatal_kernel_halt(Status::CORRUPT)
-        });
-    println!("starting synos-init in Ring 3 (thread={})", thread.raw());
-    arch::enter_user(&context, root)
+    (thread, root)
 }
 
 pub fn halt() -> ! {

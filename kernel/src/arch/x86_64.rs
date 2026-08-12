@@ -69,7 +69,7 @@ pub mod paging {
         }
     }
 
-    /// Build a small real user address space for the boot `synos-init` image.
+    /// Build a small real user address space for a boot service image.
     ///
     /// The image pages are identity-mapped, while every other low-memory page
     /// remains supervisor-only. This gives the proof process a separate root,
@@ -78,7 +78,7 @@ pub mod paging {
     /// # Safety
     /// All frames must be distinct, aligned, writable physical frames. The
     /// four image frames must occupy one 2 MiB physical region.
-    pub unsafe fn install_boot_init_root(
+    pub unsafe fn install_service_root(
         tables: &[u64; DEMO_TABLE_FRAME_COUNT],
         pages: &[u64; 4],
         physical_offset: u64,
@@ -144,12 +144,12 @@ pub mod paging {
         crate::PageTableRoot::new(tables[0])
     }
 
-    /// Install the request, response, and machine code for the boot init.
+    /// Install the request, response, and machine code for a boot service.
     ///
     /// # Safety
     /// `pages` must be the four writable frames passed to
-    /// [`install_boot_init_root`].
-    pub unsafe fn write_boot_init_image(pages: &[u64; 4], physical_offset: u64) {
+    /// [`install_service_root`].
+    pub unsafe fn write_service_image(pages: &[u64; 4], physical_offset: u64) {
         let mut image = [0u8; 24];
         image[0..2].copy_from_slice(&[0x48, 0xbf]);
         image[2..10].copy_from_slice(&pages[1].to_le_bytes());
@@ -546,6 +546,34 @@ pub mod interrupts {
         if isolated {
             return 0
         }
+        if vector == crate::syscall::CALL_GATE_VECTOR as u64 {
+            let frame_ref = unsafe { &mut *frame };
+            crate::syscall::synos_call_gate_dispatch(
+                frame_ref.rdi as *const synos_runtime::Request,
+                frame_ref.rsi as *mut synos_runtime::Response,
+            );
+            let mut return_mode = 0;
+            unsafe {
+                let scheduler =
+                    (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
+                if let Ok(Some(context_switch)) = scheduler.yield_current() {
+                    if let Some(previous) = context_switch.previous {
+                        if let Ok(context) = scheduler.context_mut(previous) {
+                            save_context(frame, context);
+                        }
+                    }
+                    if let Ok(next) = scheduler.thread(context_switch.next) {
+                        return_mode = restore_context(
+                            frame,
+                            &next.context,
+                            next.mode,
+                            context_switch.next_address_space_root,
+                        );
+                    }
+                }
+            }
+            return return_mode
+        }
         if vector == 14 {
             let fault_address: u64;
             unsafe {
@@ -660,7 +688,6 @@ pub mod interrupts {
 .code64
 .altmacro
 .extern interrupt_dispatch
-.extern synos_call_gate_dispatch
 
 .macro ISR_NOERR vector
 .global synos_isr_\vector
@@ -706,10 +733,11 @@ synos_isr_common:
     push r15
     cmp qword ptr [rsp + 120], 128
     jne 1f
-    mov rdi, [rsp + 72]
-    mov rsi, [rsp + 80]
-    call synos_call_gate_dispatch
-    mov qword ptr [rsp + 112], 0
+    mov rdi, [rsp + 120]
+    mov rsi, [rsp + 128]
+    mov rdx, rsp
+    call interrupt_dispatch
+    mov [rsp + 112], rax
     jmp 2f
 1:
     mov rdi, [rsp + 120]
