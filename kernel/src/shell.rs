@@ -1890,7 +1890,65 @@ fn decode_filesystem(
         object.bytes[..length].copy_from_slice(reader.read(length)?);
         *slot = Some(object);
     }
+    if !valid_filesystem_state(&files, &objects, next_object_id) {
+        return None
+    }
     Some((files, objects, next_object_id))
+}
+
+fn valid_filesystem_state(
+    files: &[Option<KernelFile>; KERNEL_FILE_CAPACITY],
+    objects: &[Option<KernelObject>; KERNEL_FILE_CAPACITY],
+    next_object_id: u64,
+) -> bool {
+    if next_object_id == 0 {
+        return false
+    }
+    let mut highest_object_id = 0;
+    for file in files.iter().flatten() {
+        if file.version == 0 || file.object_id == 0 {
+            return false
+        }
+        let Some(object_slot) = file.object_id.checked_sub(1).and_then(|id| {
+            usize::try_from(id).ok()
+        }) else {
+            return false
+        };
+        if objects.get(object_slot).is_none_or(|slot| slot.is_none()) {
+            return false
+        }
+        highest_object_id = highest_object_id.max(file.object_id);
+    }
+    next_object_id > highest_object_id
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn persisted_files_must_reference_present_objects() {
+        let mut files = [None; KERNEL_FILE_CAPACITY];
+        let mut objects = [None; KERNEL_FILE_CAPACITY];
+        files[0] = Some(KernelFile {
+            path: ShellPath::new("/a.txt").expect("valid test path"),
+            file_type: EntryType::File,
+            version: 1,
+            link_count: 1,
+            object_id: 1,
+            is_link: false,
+            deleted: false,
+        });
+
+        assert!(!valid_filesystem_state(&files, &objects, 2));
+
+        objects[0] = Some(KernelObject {
+            bytes: [0; KERNEL_FILE_BYTES],
+            length: 0,
+        });
+        assert!(valid_filesystem_state(&files, &objects, 2));
+        assert!(!valid_filesystem_state(&files, &objects, 1));
+    }
 }
 
 fn entry_type_code(file_type: EntryType) -> u8 {

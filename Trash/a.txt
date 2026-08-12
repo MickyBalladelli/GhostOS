@@ -1,0 +1,6 @@
+edit a.txt
+corrupt: corrupt (status=0x10034)
+  ACTION: Stop using the affected data and follow the recovery runbook.
+  IMPACT: Affected data may be unsafe until recovery completes.
+  RETRY: Do not retry automatically.
+  AUDIT: 00000001000000010000000000000008
