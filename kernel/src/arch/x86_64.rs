@@ -8,6 +8,9 @@ pub mod paging {
     const WRITABLE: u64 = 1 << 1;
     const USER: u64 = 1 << 2;
     const HUGE_PAGE: u64 = 1 << 7;
+    const NO_EXECUTE: u64 = 1 << 63;
+    const EFER_MSR: u32 = 0xc000_0080;
+    const EFER_NXE: u64 = 1 << 11;
     const ENTRY_COUNT: usize = 512;
     const TWO_MIB: u64 = 2 * 1024 * 1024;
     const ONE_GIB: u64 = 1024 * 1024 * 1024;
@@ -31,6 +34,7 @@ pub mod paging {
         let pdpt = (level_three + physical_offset) as *mut u64;
 
         unsafe {
+            enable_no_execute();
             core::ptr::write_bytes(pml4, 0, ENTRY_COUNT);
             core::ptr::write_bytes(pdpt, 0, ENTRY_COUNT);
             pml4.write(level_three | PRESENT | WRITABLE);
@@ -134,10 +138,16 @@ pub mod paging {
             );
             user_pdpt.write(tables[7] | PRESENT | WRITABLE | USER);
             user_pd.write(tables[8] | PRESENT | WRITABLE | USER);
+            let no_execute = user_no_execute();
             for (index, page) in pages.iter().enumerate() {
+                let permissions = match index {
+                    0 => PRESENT | USER,
+                    1 => PRESENT | USER | no_execute,
+                    _ => PRESENT | WRITABLE | USER | no_execute,
+                };
                 user_pt
                     .add(index)
-                    .write(*page | PRESENT | WRITABLE | USER);
+                    .write(*page | permissions);
             }
         }
 
@@ -232,6 +242,47 @@ pub mod paging {
         }
         let result = core::arch::x86_64::__cpuid(0x8000_0001);
         result.edx & (1 << 26) != 0
+    }
+
+    fn supports_no_execute() -> bool {
+        if core::arch::x86_64::__cpuid(0x8000_0000).eax < 0x8000_0001 {
+            return false
+        }
+        let result = core::arch::x86_64::__cpuid(0x8000_0001);
+        result.edx & (1 << 20) != 0
+    }
+
+    unsafe fn enable_no_execute() {
+        if !supports_no_execute() {
+            return
+        }
+        let low: u32;
+        let high: u32;
+        unsafe {
+            asm!(
+                "rdmsr",
+                in("ecx") EFER_MSR,
+                out("eax") low,
+                out("edx") high,
+                options(nostack),
+            );
+        }
+        let value = (u64::from(high) << 32 | u64::from(low)) | EFER_NXE;
+        let low = value as u32;
+        let high = (value >> 32) as u32;
+        unsafe {
+            asm!(
+                "wrmsr",
+                in("ecx") EFER_MSR,
+                in("eax") low,
+                in("edx") high,
+                options(nostack),
+            );
+        }
+    }
+
+    fn user_no_execute() -> u64 {
+        supports_no_execute().then_some(NO_EXECUTE).unwrap_or(0)
     }
 }
 

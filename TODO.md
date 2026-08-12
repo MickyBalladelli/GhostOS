@@ -27,7 +27,7 @@ Build the real operating system core before adding more advanced features.
 ## P0: Finish memory isolation
 
 - [x] Replace the single identity-mapped address space with per-process page tables.
-- [ ] Add user/read/write/execute page permissions.
+- [x] Add user/read/write/execute page permissions.
 - [ ] Add kernel/user virtual address layout.
 - [ ] Add physical frame ownership and reclamation.
 - [ ] Add page mapping and unmapping syscalls.
