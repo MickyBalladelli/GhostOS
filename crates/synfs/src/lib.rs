@@ -14,6 +14,8 @@ mod migration;
 mod pool;
 mod rms;
 mod scrub;
+mod service_manifest;
+mod system_disk;
 mod volume;
 
 pub use block::{
@@ -42,6 +44,14 @@ pub use rms::{
 pub use scrub::{
     RepairAuthorization, RepairEvidence, RepairPreview, RepairReceipt, ScrubFinding,
     ScrubIssue, ScrubPlan, ScrubReport, ScrubScope,
+};
+pub use service_manifest::{
+    ServiceManifest, ServiceManifestEntry, ServiceManifestError, SERVICE_MANIFEST_PATH,
+    SERVICE_PACKAGE_CAPACITY, SERVICE_PACKAGE_PATH_BYTES,
+};
+pub use system_disk::{
+    MountedSystemVolume, SystemDiskError, SystemDiskManifest, SystemDiskVolume,
+    SYSTEM_DISK_MANIFEST_BYTES, SYSTEM_VOLUME_BLOCKS,
 };
 pub use volume::{VOLUME_FORMAT_VERSION, VolumeCommit, VolumeGeometry};
 

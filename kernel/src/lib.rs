@@ -37,6 +37,17 @@ mod keyboard;
 )))]
 #[path = "keyboard_stub.rs"]
 mod keyboard;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub mod mouse;
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+)))]
+#[path = "mouse_stub.rs"]
+pub mod mouse;
 #[allow(unsafe_code)]
 pub mod page_fault;
 pub mod persona;
@@ -46,6 +57,8 @@ mod power;
 mod persistence;
 #[allow(unsafe_code)]
 mod pci;
+#[allow(unsafe_code)]
+mod physical_storage;
 pub mod partition;
 pub mod process;
 pub mod scheduler;
@@ -271,7 +284,8 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         scheduler_clock
     );
 
-    let boot_services = boot_services::start()
+    let physical_filesystem = physical_storage::mount(&pci_inventory);
+    let boot_services = boot_services::start(physical_filesystem)
         .unwrap_or_else(|error| fatal_kernel_halt(error.status()));
     println!(
         "filesystem service registered and started (process={})",
@@ -703,6 +717,7 @@ fn boot_service_process(
             physical_offset,
             address_space.raw() as u8,
             shell,
+            physical_storage::service_image(role),
         );
         arch::paging::write_service_resources(
             &pages,

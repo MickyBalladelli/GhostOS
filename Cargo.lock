@@ -747,6 +747,7 @@ name = "synos-legacy-pc-drivers"
 version = "0.1.0"
 dependencies = [
  "synos-status",
+ "synos-synfs",
 ]
 
 [[package]]

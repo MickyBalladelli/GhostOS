@@ -269,8 +269,9 @@ pub mod paging {
         physical_offset: u64,
         role: u8,
         shell: bool,
+        external_image: Option<&[u8]>,
     ) {
-        let image = if shell { SHELL_IMAGE } else { SERVICE_IMAGE };
+        let image = external_image.unwrap_or(if shell { SHELL_IMAGE } else { SERVICE_IMAGE });
         assert!(image.len() <= SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize);
 
         unsafe {

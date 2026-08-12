@@ -8,12 +8,15 @@
 //! discover and operate the device.
 
 pub mod ethernet;
+pub mod block;
 pub mod pci;
 pub mod storage;
+pub mod usb;
 
 pub use ethernet::{
     EthernetAdapter, EthernetKind, EthernetQueueSnapshot, EthernetRuntime, EthernetSnapshot,
 };
+pub use block::{AhciBlockDevice, NvmeBlockDevice};
 pub use pci::{
     Bar, ConfigAccess, ExtendedConfigAccess, PCIE_AER_EXTENDED_CAPABILITY, PciAddress, PciDevice,
     PcieAerStatus, clear_pcie_aer, read_pcie_aer,
@@ -21,4 +24,8 @@ pub use pci::{
 pub use storage::{
     MAX_NVME_NAMESPACES, NvmeNamespace, NvmeNamespaceState, NvmeRegistry, StorageController,
     StorageKind,
+};
+pub use usb::{
+    BotCommandBlockWrapper, BotCommandStatusWrapper, HidKeyboardReport, HidMouseReport,
+    ScsiCommand,
 };

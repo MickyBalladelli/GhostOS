@@ -226,6 +226,7 @@ graph LR
     crate_synos_kvd --> crate_synos_status
     crate_synos_kvd --> crate_synos_synfs
     crate_synos_legacy_pc_drivers --> crate_synos_status
+    crate_synos_legacy_pc_drivers --> crate_synos_synfs
     crate_synos_llm --> crate_synos_fabric
     crate_synos_llm --> crate_synos_status
     crate_synos_logd --> crate_synos_observability
@@ -1019,6 +1020,7 @@ graph LR
 | PERSISTENCE_MAGIC | SYNFS001 | 1 | synos-kernel | [`kernel/src/shell.rs:1518`](../kernel/src/shell.rs#L1518) |
 | TYPE_MAP_MAGIC | SYNFSMAP | 1, 3 | synos-synfs | [`crates/synfs/src/volume.rs:6`](../crates/synfs/src/volume.rs#L6) |
 | SUPERBLOCK_MAGIC | SYNFSVOL | 1, 3 | synos-synfs | [`crates/synfs/src/volume.rs:5`](../crates/synfs/src/volume.rs#L5) |
+| MAGIC | SYNSVC01 | 1 | synos-synfs | [`crates/synfs/src/service_manifest.rs:9`](../crates/synfs/src/service_manifest.rs#L9) |
 | STATE_MAGIC | SYNKVD01 |  | synos-kvd | [`crates/synos-kvd/src/lib.rs:22`](../crates/synos-kvd/src/lib.rs#L22) |
 | MANIFEST_MAGIC | SYNMANIF | 1 | synos-vm | [`virtual_machine/src/devices/storage/system_disk.rs:25`](../virtual_machine/src/devices/storage/system_disk.rs#L25) |
 | MEMBERSHIP_MAGIC | SYNMEMB1 | 1 | synos-storaged | [`crates/synos-storaged/src/membership.rs:9`](../crates/synos-storaged/src/membership.rs#L9) |

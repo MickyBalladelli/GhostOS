@@ -59,7 +59,7 @@ const ETHERNET_SERVICE_ID: u32 = 0x4554_4844;
 const ETHERNET_PROCESS_ID: u64 = 13;
 const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
 const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
-const FILESYSTEM_BLOCKS: usize = 64;
+const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
 
@@ -186,7 +186,7 @@ impl SupervisorRuntime for BootRuntime {
     }
 }
 
-pub fn start() -> Result<BootServices, StartError> {
+pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<BootServices, StartError> {
     if FILESYSTEM_READY.load(Ordering::Acquire)
         && STORAGE_READY.load(Ordering::Acquire)
         && NETWORK_READY.load(Ordering::Acquire)
@@ -228,7 +228,9 @@ pub fn start() -> Result<BootServices, StartError> {
     let ahci_process = ahci_process_id().ok_or(StartError::Process)?;
     let nvme_process = nvme_process_id().ok_or(StartError::Process)?;
     let ethernet_process = ethernet_process_id().ok_or(StartError::Process)?;
-    let mut daemon = Daemon::new(SynFs::<FILESYSTEM_BLOCKS>::new())
+    let mut daemon = Daemon::new(
+        physical_filesystem.unwrap_or_else(SynFs::<FILESYSTEM_BLOCKS>::new),
+    )
         .map_err(|_| StartError::Daemon)?;
     daemon
         .register_process(

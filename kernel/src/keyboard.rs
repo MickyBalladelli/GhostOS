@@ -4,7 +4,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 const DATA_PORT: u16 = 0x60;
 const STATUS_PORT: u16 = 0x64;
 const ENABLE_FIRST_PORT: u8 = 0xae;
+const ENABLE_SECOND_PORT: u8 = 0xa8;
+const WRITE_AUXILIARY: u8 = 0xd4;
 const ENABLE_SCANNING: u8 = 0xf4;
+const SET_DEFAULTS: u8 = 0xf6;
 const OUTPUT_FULL: u8 = 1;
 const INPUT_FULL: u8 = 1 << 1;
 const AUXILIARY_DATA: u8 = 1 << 5;
@@ -67,6 +70,7 @@ impl Keyboard {
 
             let scan_code = unsafe { inb(DATA_PORT) };
             if status & AUXILIARY_DATA != 0 {
+                crate::mouse::ingest(scan_code);
                 continue;
             }
             if scan_code == 0xe0 {
@@ -249,6 +253,32 @@ unsafe fn initialize_controller() {
         if wait_for_input_buffer() {
             outb(DATA_PORT, ENABLE_SCANNING)
         }
+        if wait_for_input_buffer() {
+            outb(STATUS_PORT, ENABLE_SECOND_PORT)
+        }
+        let _ = send_auxiliary(SET_DEFAULTS);
+        let _ = send_auxiliary(ENABLE_SCANNING);
+    }
+}
+
+unsafe fn send_auxiliary(command: u8) -> bool {
+    unsafe {
+        if !wait_for_input_buffer() {
+            return false
+        }
+        outb(STATUS_PORT, WRITE_AUXILIARY);
+        if !wait_for_input_buffer() {
+            return false
+        }
+        outb(DATA_PORT, command);
+        for _ in 0..100_000 {
+            let status = inb(STATUS_PORT);
+            if status & OUTPUT_FULL != 0 && status & AUXILIARY_DATA != 0 {
+                return inb(DATA_PORT) == 0xfa
+            }
+            core::hint::spin_loop()
+        }
+        false
     }
 }
 

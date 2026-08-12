@@ -28,7 +28,8 @@ pub use nvme::{
 pub use persistence::SynosPersistencePort;
 pub use system_disk::{
     SystemDiskBootArtifacts, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskLayout,
-    SystemDiskManifest, SystemDiskProvisioner, SystemDiskRepairReport, SystemSetting, SYSTEM_DISK_ALIGNMENT,
+    SystemDiskManifest, SystemDiskProvisioner, SystemDiskRepairReport, SystemServicePackage,
+    SystemSetting, SYSTEM_DISK_ALIGNMENT,
     SYSTEM_DISK_FORMAT_VERSION,
     SYSTEM_DISK_MANIFEST_SIZE, SYSTEM_DISK_MIN_SIZE, SYSTEM_DISK_PAYLOAD_OFFSET,
     SYSTEM_DISK_SETTINGS_SIZE, SYNFS_SYSTEM_BLOCKS, SYNFS_SYSTEM_VOLUME_SIZE,

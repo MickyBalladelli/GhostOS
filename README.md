@@ -117,6 +117,9 @@ are checked against source metadata and roadmap files by:
 python3 scripts/validate-documentation.py
 ```
 
+Bare-metal controller, disk, USB, and input limits are listed in the
+[physical hardware support matrix](docs/hardware-support.md).
+
 ## Microkernel core
 
 The Ring 0 crate contains only boot, memory, interrupt, IPC, and scheduling

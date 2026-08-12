@@ -114,6 +114,7 @@ enum DiskCommand {
         boot_args: String,
         machine_identity: String,
         network_identity: String,
+        service_packages: Vec<(u8, PathBuf)>,
         json: bool,
     },
     Lock { path: PathBuf, verbose: bool, json: bool },
@@ -648,6 +649,7 @@ fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
     let mut boot_args = String::new();
     let mut machine_identity = String::new();
     let mut network_identity = String::new();
+    let mut service_packages = Vec::new();
     let mut json = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -663,6 +665,16 @@ fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
             "--boot-args" | "--append" => boot_args = next_ref(&mut args, "--boot-args")?.to_string(),
             "--machine-id" => machine_identity = next_ref(&mut args, "--machine-id")?.to_string(),
             "--network-id" => network_identity = next_ref(&mut args, "--network-id")?.to_string(),
+            "--service" => {
+                let value = next_ref(&mut args, "--service")?;
+                let (role, path) = value
+                    .split_once('=')
+                    .ok_or_else(|| "--service needs ROLE=PATH".to_string())?;
+                let role = role
+                    .parse::<u8>()
+                    .map_err(|_| "service role must be a number from 1 through 13".to_string())?;
+                service_packages.push((role, PathBuf::from(path)));
+            }
             "--json" => json = true,
             value => return Err(format!("unknown disk provision option `{value}`")),
         }
@@ -678,6 +690,7 @@ fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
         boot_args,
         machine_identity,
         network_identity,
+        service_packages,
         json,
     }))
 }
@@ -2284,6 +2297,7 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             boot_args,
             machine_identity,
             network_identity,
+            service_packages,
             json,
         } => {
             let mut install = SystemDiskInstall::new(kernel)
@@ -2292,6 +2306,9 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
                 .with_network_identity(network_identity);
             if let Some(initrd) = initrd {
                 install = install.with_initrd(initrd);
+            }
+            for (role, package) in service_packages {
+                install = install.with_service_package(role, package);
             }
             let manifest = if let Some(size) = size {
                 SystemDiskProvisioner::provision_with_options(

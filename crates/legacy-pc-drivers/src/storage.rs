@@ -360,6 +360,45 @@ impl AhciCommandTable {
             reserved: [0; 4],
         }
     }
+
+    pub fn prepare_flush(&mut self, header: &mut AhciCommandHeader, table_physical: u64) {
+        self.command_fis.fill(0);
+        self.command_fis[0] = 0x27;
+        self.command_fis[1] = 1 << 7;
+        self.command_fis[2] = 0xea;
+        self.prdt[0] = AhciPrdtEntry {
+            data_base: 0,
+            reserved: 0,
+            byte_count_and_flags: 0,
+        };
+        *header = AhciCommandHeader {
+            flags: 5,
+            prdt_length: 0,
+            transferred_bytes: 0,
+            command_table_base: table_physical,
+            reserved: [0; 4],
+        }
+    }
+
+    pub fn prepare_trim(
+        &mut self,
+        header: &mut AhciCommandHeader,
+        table_physical: u64,
+        ranges_physical: u64,
+    ) {
+        self.command_fis.fill(0);
+        self.command_fis[0] = 0x27;
+        self.command_fis[1] = 1 << 7;
+        self.command_fis[2] = 0x06;
+        self.command_fis[3] = 1;
+        self.command_fis[12] = 1;
+        self.prdt[0] = AhciPrdtEntry {
+            data_base: ranges_physical,
+            reserved: 0,
+            byte_count_and_flags: 511 | (1 << 31),
+        };
+        self.prepare_header(header, table_physical, true)
+    }
 }
 
 impl Default for AhciCommandTable {
@@ -683,6 +722,30 @@ impl NvmeCommand {
             zero_based_block_count,
             data_physical,
         )
+    }
+
+    pub const fn flush(namespace_id: u32) -> Self {
+        Self {
+            opcode_and_flags: 0x00,
+            namespace_id,
+            reserved: [0; 2],
+            metadata: 0,
+            data_pointer_1: 0,
+            data_pointer_2: 0,
+            command_data: [0; 6],
+        }
+    }
+
+    pub const fn discard(namespace_id: u32, range_physical: u64) -> Self {
+        Self {
+            opcode_and_flags: 0x09,
+            namespace_id,
+            reserved: [0; 2],
+            metadata: 0,
+            data_pointer_1: range_physical,
+            data_pointer_2: 0,
+            command_data: [0, 1 << 2, 0, 0, 0, 0],
+        }
     }
 
     const fn io(

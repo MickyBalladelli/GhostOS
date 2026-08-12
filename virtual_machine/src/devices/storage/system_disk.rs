@@ -10,7 +10,7 @@ use std::fs::{self, File};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use synos_synfs::SynFs;
+use synos_synfs::{ServiceManifest, ServiceManifestEntry, SynFs};
 
 pub const SYSTEM_DISK_FORMAT_VERSION: u32 = 1;
 pub const SYSTEM_DISK_ALIGNMENT: u64 = 1024 * 1024;
@@ -114,6 +114,13 @@ pub struct SystemDiskInstall {
     pub network_identity: String,
     pub capabilities: Vec<String>,
     pub settings: Vec<SystemSetting>,
+    pub service_packages: Vec<SystemServicePackage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemServicePackage {
+    pub role: u8,
+    pub path: PathBuf,
 }
 
 impl SystemDiskInstall {
@@ -126,6 +133,7 @@ impl SystemDiskInstall {
             network_identity: String::new(),
             capabilities: Vec::new(),
             settings: default_settings(),
+            service_packages: Vec::new(),
         }
     }
 
@@ -159,6 +167,14 @@ impl SystemDiskInstall {
 
     pub fn with_setting(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.settings.push(SystemSetting::new(key, value));
+        self
+    }
+
+    pub fn with_service_package(mut self, role: u8, path: impl Into<PathBuf>) -> Self {
+        self.service_packages.push(SystemServicePackage {
+            role,
+            path: path.into(),
+        });
         self
     }
 }
@@ -613,6 +629,18 @@ fn validate_install(install: &SystemDiskInstall) -> Result<(), StorageError> {
             ));
         }
     }
+    for (index, package) in install.service_packages.iter().enumerate() {
+        if !(1..=13).contains(&package.role)
+            || install.service_packages[..index]
+                .iter()
+                .any(|existing| existing.role == package.role)
+        {
+            return Err(StorageError::InvalidImage(
+                "service package roles must be unique values from 1 through 13".to_string(),
+            ));
+        }
+        fs::metadata(&package.path)?;
+    }
     Ok(())
 }
 
@@ -689,7 +717,16 @@ fn create_system_volume(
         .rposition(|byte| *byte != 0)
         .map(|index| index + 1)
         .unwrap_or(0);
-    for directory in ["/etc", "/etc/synos", "/var", "/var/log", "/home", "/tmp"] {
+    for directory in [
+        "/etc",
+        "/etc/synos",
+        "/system",
+        "/system/services",
+        "/var",
+        "/var/log",
+        "/home",
+        "/tmp",
+    ] {
         volume.create_directory(directory, true).map_err(|_| {
             StorageError::InvalidImage("cannot create system directories".to_string())
         })?;
@@ -715,6 +752,30 @@ fn create_system_volume(
             SYSTEM_DISK_FORMAT_VERSION.to_string().as_bytes(),
         )
         .map_err(|_| StorageError::InvalidImage("cannot write system version".to_string()))?;
+    let mut service_manifest = ServiceManifest::new();
+    for package in &install.service_packages {
+        let image = fs::read(&package.path)?;
+        let path = format!("/system/services/{}.pkg", package.role);
+        volume
+            .write(&path, &image)
+            .map_err(|_| StorageError::InvalidImage("cannot write service package".to_string()))?;
+        service_manifest
+            .push(
+                ServiceManifestEntry::new(package.role, &path, &image)
+                    .map_err(|_| StorageError::InvalidImage("invalid service package".to_string()))?,
+            )
+            .map_err(|_| StorageError::InvalidImage("invalid service manifest".to_string()))?;
+    }
+    let mut manifest_bytes = [0; 2048];
+    let manifest_length = service_manifest
+        .encode(&mut manifest_bytes)
+        .map_err(|_| StorageError::InvalidImage("cannot encode service manifest".to_string()))?;
+    volume
+        .write(
+            synos_synfs::SERVICE_MANIFEST_PATH,
+            &manifest_bytes[..manifest_length],
+        )
+        .map_err(|_| StorageError::InvalidImage("cannot write service manifest".to_string()))?;
     volume
         .flush(&mut image)
         .map_err(|_| StorageError::InvalidImage("cannot commit SynFS system volume".to_string()))?;
@@ -865,7 +926,9 @@ fn install_matches(
         return Ok(false);
     }
     let settings = encode_settings(install)?;
-    Ok(checksum(&settings) == manifest.settings_checksum)
+    let volume = create_system_volume(install, &settings)?;
+    Ok(checksum(&settings) == manifest.settings_checksum
+        && checksum(&volume) == manifest.system_volume_checksum)
 }
 
 fn read_best_manifest(image: &mut DiskImage) -> Result<SystemDiskManifest, StorageError> {

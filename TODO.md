@@ -42,13 +42,13 @@ Build the real operating system core before adding more advanced features.
 - [x] Discover PCI devices during boot.
 - [x] Start the PCI, AHCI, NVMe, and Ethernet driver services.
 - [x] Connect driver DMA and MMIO access to kernel capabilities.
-- [ ] Add real block-device request and completion paths.
-- [ ] Mount SynFS from a physical disk.
-- [ ] Load the system manifest and service packages from SynFS.
-- [ ] Add persistent filesystem recovery after power loss.
-- [ ] Add USB host and USB storage support.
-- [ ] Add basic real keyboard and mouse device support.
-- [ ] Document unsupported hardware clearly.
+- [x] Add real block-device request and completion paths.
+- [x] Mount SynFS from a physical disk.
+- [x] Load the system manifest and service packages from SynFS.
+- [x] Add persistent filesystem recovery after power loss.
+- [x] Add USB host and USB storage support.
+- [x] Add basic real keyboard and mouse device support.
+- [x] Document unsupported hardware clearly.
 
 ## P0: Make installation and boot persistent
 
