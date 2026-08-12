@@ -1,6 +1,9 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::address_space::{AddressSpaceError, AddressSpaceTable};
+use crate::allocator::EarlyFrameAllocator;
 use crate::capability::{CapabilityHandle, CapabilitySpace};
+use crate::cow::{CowError, CowManager, CowPageCopier, CowWriteResult};
 use crate::quota::{QuotaDecision, QuotaResource};
 use crate::task::AddressSpaceId;
 use synos_status::{IntoStatus, Status};
@@ -20,6 +23,80 @@ pub enum PageFaultHandlerError {
 pub enum PageFaultDispatchError {
     InvalidCapability,
     RateLimited { retry_after_us: u64 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CowFaultError {
+    InvalidFault,
+    AddressSpace(AddressSpaceError),
+    Cow(CowError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CowFaultResult {
+    MadeWritable { frame: u64 },
+    Copied { old_frame: u64, new_frame: u64 },
+}
+
+/// Resolve a present user write fault against a COW mapping. The copier owns
+/// the architecture-specific physical-memory access, while the kernel owns
+/// frame allocation, refcounts, permissions, and rollback on copy failure.
+pub fn resolve_cow_fault<
+    const ADDRESS_SPACE_CAPACITY: usize,
+    const COW_CAPACITY: usize,
+>(
+    address_spaces: &mut AddressSpaceTable<ADDRESS_SPACE_CAPACITY>,
+    cow: &mut CowManager<COW_CAPACITY>,
+    allocator: &mut EarlyFrameAllocator,
+    copier: &mut impl CowPageCopier,
+    address_space: AddressSpaceId,
+    fault: PageFault,
+) -> Result<CowFaultResult, CowFaultError> {
+    if !fault.user
+        || !fault.present
+        || fault.reserved_bit
+        || fault.access != synos_fabric::Access::Write
+    {
+        return Err(CowFaultError::InvalidFault)
+    }
+    let page = fault.page_address();
+    let (_, frame) = address_spaces
+        .get(address_space)
+        .map_err(CowFaultError::AddressSpace)?
+        .cow_mapping(page)
+        .map_err(CowFaultError::AddressSpace)?;
+    address_spaces
+        .get(address_space)
+        .map_err(CowFaultError::AddressSpace)?
+        .can_replace_cow_page(page)
+        .map_err(CowFaultError::AddressSpace)?;
+    match cow
+        .write_fault(address_space, frame, allocator, copier)
+        .map_err(CowFaultError::Cow)?
+    {
+        CowWriteResult::Exclusive { frame } => {
+            address_spaces
+                .get_mut(address_space)
+                .map_err(CowFaultError::AddressSpace)?
+                .replace_cow_page(page, frame)
+                .map_err(CowFaultError::AddressSpace)?;
+            Ok(CowFaultResult::MadeWritable { frame })
+        }
+        CowWriteResult::Copied {
+            old_frame,
+            new_frame,
+        } => {
+            address_spaces
+                .get_mut(address_space)
+                .map_err(CowFaultError::AddressSpace)?
+                .replace_cow_page(page, new_frame)
+                .map_err(CowFaultError::AddressSpace)?;
+            Ok(CowFaultResult::Copied {
+                old_frame,
+                new_frame,
+            })
+        }
+    }
 }
 
 impl IntoStatus for PageFaultDispatchError {

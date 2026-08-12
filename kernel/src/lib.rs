@@ -14,6 +14,7 @@ pub mod capability;
 mod console;
 pub mod contention;
 pub mod crash;
+pub mod cow;
 pub mod dlm;
 pub mod ipc;
 pub mod invariants;
@@ -119,8 +120,10 @@ pub use micro_silo::{
     SiloMemoryRange, SiloObject, SiloOperation, MAX_SILO_MEMORY_RANGES,
 };
 pub use page_fault::{
-    PageFault, PageFaultDispatchError, PageFaultHandler, PageFaultHandlerError,
+    CowFaultError, CowFaultResult, PageFault, PageFaultDispatchError, PageFaultHandler,
+    PageFaultHandlerError, resolve_cow_fault,
 };
+pub use cow::{CowError, CowManager, CowPageCopier, CowPageInfo, CowWriteResult, MAX_COW_PAGES};
 pub use process::{
     KernelProcessBackend, KernelProcessError, KernelSupervisorRuntime, NativeServiceImage,
     ProcessMemory, ServiceImageProvider, DEFAULT_KERNEL_PROCESS_CAPACITY,

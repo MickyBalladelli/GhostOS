@@ -81,6 +81,7 @@ pub enum AddressSpaceError {
     MappingConflict,
     NotFound,
     InvalidContext,
+    NotCopyOnWrite,
 }
 
 #[derive(Clone, Copy)]
@@ -91,6 +92,7 @@ struct Region {
     permissions: Option<SegmentPermissions>,
     backing: Option<PhysicalRange>,
     authority: u64,
+    copy_on_write: bool,
 }
 
 impl Region {
@@ -209,6 +211,7 @@ impl AddressSpace {
             permissions: None,
             backing: None,
             authority: 0,
+            copy_on_write: false,
         })?;
         Ok(())
     }
@@ -247,7 +250,177 @@ impl AddressSpace {
         });
         region.backing = Some(backing);
         region.authority = authority.raw();
+        region.copy_on_write = false;
         Ok(mapping)
+    }
+
+    /// Make a child address-space record sharing this space's mappings.
+    /// Writable regions become read-only COW regions in both records. The
+    /// caller must retain each physical backing in its [`CowManager`].
+    pub fn clone_cow(
+        &mut self,
+        child_id: AddressSpaceId,
+        child_root: PageTableRoot,
+    ) -> Result<Self, AddressSpaceError> {
+        if child_id == AddressSpaceId::KERNEL || child_id == self.id {
+            return Err(AddressSpaceError::InvalidRequest)
+        }
+        let mut child = *self;
+        child.id = child_id;
+        child.root = child_root;
+        for region in self.regions.iter_mut().flatten() {
+            if let Some(permissions) = region.permissions
+                && permissions.writable()
+                && region.backing.is_some()
+            {
+                region.permissions = Some(permissions.without(SegmentPermissions::WRITE));
+                region.copy_on_write = true;
+            }
+        }
+        child.regions = self.regions;
+        Ok(child)
+    }
+
+    pub fn cow_mapping(&self, address: u64) -> Result<(u64, u64), AddressSpaceError> {
+        let page = address & !(PAGE_SIZE - 1);
+        let region = self
+            .regions
+            .iter()
+            .flatten()
+            .find(|region| region.copy_on_write && region.contains(page, PAGE_SIZE))
+            .ok_or(AddressSpaceError::NotCopyOnWrite)?;
+        let backing = region.backing.ok_or(AddressSpaceError::NotCopyOnWrite)?;
+        let offset = page
+            .checked_sub(region.base)
+            .ok_or(AddressSpaceError::InvalidMapping)?;
+        let frame = backing
+            .start
+            .checked_add(offset)
+            .ok_or(AddressSpaceError::InvalidMapping)?;
+        Ok((page, frame))
+    }
+
+    pub fn can_replace_cow_page(&self, address: u64) -> Result<(), AddressSpaceError> {
+        let page = address & !(PAGE_SIZE - 1);
+        let region = self
+            .regions
+            .iter()
+            .flatten()
+            .find(|region| {
+                region.copy_on_write
+                    && region.backing.is_some()
+                    && region.contains(page, PAGE_SIZE)
+            })
+            .ok_or(AddressSpaceError::NotCopyOnWrite)?;
+        let end = region.end().ok_or(AddressSpaceError::MappingOverflow)?;
+        let right_base = page
+            .checked_add(PAGE_SIZE)
+            .ok_or(AddressSpaceError::MappingOverflow)?;
+        let extra = usize::from(page != region.base)
+            + usize::from(end.saturating_sub(right_base) != 0);
+        if self.regions.iter().filter(|slot| slot.is_none()).count() < extra {
+            Err(AddressSpaceError::Capacity)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Replace one COW page with a private writable frame.
+    pub fn replace_cow_page(
+        &mut self,
+        address: u64,
+        new_frame: u64,
+    ) -> Result<PhysicalRange, AddressSpaceError> {
+        if new_frame % PAGE_SIZE != 0 {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        let page = address & !(PAGE_SIZE - 1);
+        let index = self
+            .regions
+            .iter()
+            .position(|region| {
+                region.is_some_and(|region| {
+                    region.copy_on_write
+                        && region.backing.is_some()
+                        && region.contains(page, PAGE_SIZE)
+                })
+            })
+            .ok_or(AddressSpaceError::NotCopyOnWrite)?;
+        let original = self.regions[index].ok_or(AddressSpaceError::NotCopyOnWrite)?;
+        let backing = original.backing.ok_or(AddressSpaceError::NotCopyOnWrite)?;
+        let offset = page
+            .checked_sub(original.base)
+            .ok_or(AddressSpaceError::InvalidMapping)?;
+        let old_frame = backing
+            .start
+            .checked_add(offset)
+            .ok_or(AddressSpaceError::InvalidMapping)?;
+        let end = original.end().ok_or(AddressSpaceError::MappingOverflow)?;
+        let right_base = page
+            .checked_add(PAGE_SIZE)
+            .ok_or(AddressSpaceError::MappingOverflow)?;
+        let left_size = page - original.base;
+        let right_size = end.saturating_sub(right_base);
+        let extra = usize::from(left_size != 0) + usize::from(right_size != 0);
+        let free = self.regions.iter().filter(|region| region.is_none()).count();
+        if free < extra {
+            return Err(AddressSpaceError::Capacity)
+        }
+        let private = Region {
+            owner: original.owner,
+            base: page,
+            size: PAGE_SIZE,
+            permissions: original
+                .permissions
+                .map(|permissions| permissions.union(SegmentPermissions::WRITE)),
+            backing: Some(PhysicalRange::new(new_frame, PAGE_SIZE).ok_or(
+                AddressSpaceError::InvalidMapping,
+            )?),
+            authority: original.authority,
+            copy_on_write: false,
+        };
+        let left = (left_size != 0).then_some(Region {
+            owner: original.owner,
+            base: original.base,
+            size: left_size,
+            permissions: original.permissions,
+            backing: Some(PhysicalRange::new(backing.start, left_size).ok_or(
+                AddressSpaceError::InvalidMapping,
+            )?),
+            authority: original.authority,
+            copy_on_write: true,
+        });
+        let right = (right_size != 0).then_some(Region {
+            owner: original.owner,
+            base: right_base,
+            size: right_size,
+            permissions: original.permissions,
+            backing: Some(PhysicalRange::new(
+                backing.start + offset + PAGE_SIZE,
+                right_size,
+            )
+            .ok_or(AddressSpaceError::InvalidMapping)?),
+            authority: original.authority,
+            copy_on_write: true,
+        });
+        self.regions[index] = left.or(Some(private));
+        if left.is_some() {
+            let slot = self
+                .regions
+                .iter()
+                .position(Option::is_none)
+                .ok_or(AddressSpaceError::Capacity)?;
+            self.regions[slot] = Some(private);
+        }
+        if let Some(right) = right {
+            let slot = self
+                .regions
+                .iter()
+                .position(Option::is_none)
+                .ok_or(AddressSpaceError::Capacity)?;
+            self.regions[slot] = Some(right);
+        }
+        Ok(PhysicalRange::new(old_frame, PAGE_SIZE).ok_or(AddressSpaceError::InvalidMapping)?)
     }
 
     pub fn unmap_backing(
@@ -298,6 +471,7 @@ impl AddressSpace {
             permissions: Some(segment.permissions),
             backing: None,
             authority: 0,
+            copy_on_write: false,
         })
     }
 
@@ -344,6 +518,7 @@ impl AddressSpace {
             permissions: Some(permissions),
             backing: None,
             authority: 0,
+            copy_on_write: false,
         })
     }
 
@@ -367,6 +542,7 @@ impl AddressSpace {
             permissions: Some(permissions),
             backing: None,
             authority: 0,
+            copy_on_write: false,
         })
     }
 

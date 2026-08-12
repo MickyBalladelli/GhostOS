@@ -32,7 +32,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add physical frame ownership and reclamation.
 - [x] Add page mapping and unmapping syscalls.
 - [x] Add TLB invalidation and cross-CPU TLB shootdown.
-- [ ] Add copy-on-write memory.
+- [x] Add copy-on-write memory.
 - [ ] Add guard pages, stack growth, and invalid-access termination.
 - [ ] Add capability-checked DMA and IOMMU protection.
 - [ ] Prove one process cannot read or write another process.
