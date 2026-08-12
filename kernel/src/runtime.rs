@@ -28,6 +28,7 @@ pub enum RuntimeDispatchError {
     InvalidCapability,
     InvalidBuffer,
     ProcessNotRegistered,
+    Capacity,
     TransportFailure,
 }
 
@@ -37,6 +38,7 @@ impl RuntimeDispatchError {
             Self::AbiMismatch => Status::PROTOCOL_MISMATCH,
             Self::InvalidRequest | Self::InvalidBuffer => Status::INVALID_ARGUMENT,
             Self::InvalidCapability | Self::ProcessNotRegistered => Status::ACCESS_DENIED,
+            Self::Capacity => Status::NO_SPACE,
             Self::TransportFailure => Status::BUSY,
         }
     }

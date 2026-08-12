@@ -2,6 +2,7 @@
 
 use synos_app::{Mapping, MappingRequest, ProcessContext, RuntimeSegment, SegmentPermissions};
 
+use crate::capability::{CapabilityHandle, PhysicalRange};
 use crate::task::AddressSpaceId;
 
 pub const PAGE_SIZE: u64 = 4096;
@@ -88,6 +89,8 @@ struct Region {
     base: u64,
     size: u64,
     permissions: Option<SegmentPermissions>,
+    backing: Option<PhysicalRange>,
+    authority: u64,
 }
 
 impl Region {
@@ -204,8 +207,74 @@ impl AddressSpace {
             base: mapping.base,
             size: mapping.size,
             permissions: None,
+            backing: None,
+            authority: 0,
         })?;
         Ok(())
+    }
+
+    pub fn map_backing(
+        &mut self,
+        authority: CapabilityHandle,
+        backing: PhysicalRange,
+        writable: bool,
+    ) -> Result<Mapping, AddressSpaceError> {
+        if backing.start % PAGE_SIZE != 0
+            || backing.length == 0
+            || backing.length % PAGE_SIZE != 0
+        {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        let mapping = self.reserve(MappingRequest {
+            size: backing.length,
+            alignment: PAGE_SIZE,
+            preferred_base: None,
+            fixed: false,
+        })?;
+        let Some(region) = self
+            .regions
+            .iter_mut()
+            .flatten()
+            .find(|region| region.owner == mapping && region.permissions.is_none())
+        else {
+            self.release(mapping);
+            return Err(AddressSpaceError::InvalidMapping)
+        };
+        region.permissions = Some(if writable {
+            SegmentPermissions::READ.union(SegmentPermissions::WRITE)
+        } else {
+            SegmentPermissions::READ
+        });
+        region.backing = Some(backing);
+        region.authority = authority.raw();
+        Ok(mapping)
+    }
+
+    pub fn unmap_backing(
+        &mut self,
+        authority: CapabilityHandle,
+        address: u64,
+        length: u64,
+    ) -> Result<PhysicalRange, AddressSpaceError> {
+        if address % PAGE_SIZE != 0 || length == 0 || length % PAGE_SIZE != 0 {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        let index = self
+            .regions
+            .iter()
+            .position(|region| {
+                region.is_some_and(|region| {
+                    region.base == address
+                        && region.size == length
+                        && region.authority == authority.raw()
+                        && region.backing.is_some()
+                })
+            })
+            .ok_or(AddressSpaceError::NotFound)?;
+        self.regions[index]
+            .take()
+            .and_then(|region| region.backing)
+            .ok_or(AddressSpaceError::InvalidMapping)
     }
 
     pub fn map_segment(
@@ -227,6 +296,8 @@ impl AddressSpace {
             base: segment.address,
             size: segment.memory_size,
             permissions: Some(segment.permissions),
+            backing: None,
+            authority: 0,
         })
     }
 
@@ -271,6 +342,8 @@ impl AddressSpace {
             base: address,
             size: length,
             permissions: Some(permissions),
+            backing: None,
+            authority: 0,
         })
     }
 
@@ -292,6 +365,8 @@ impl AddressSpace {
             base,
             size,
             permissions: Some(permissions),
+            backing: None,
+            authority: 0,
         })
     }
 

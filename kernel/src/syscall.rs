@@ -5,6 +5,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use synos_runtime::{Request, Response};
 use synos_status::Status;
 
+use crate::address_space::{AddressSpaceError, AddressSpaceTable, PAGE_SIZE};
+use crate::capability::{CapabilityHandle, CapabilitySpace, Rights};
+use crate::runtime::{RuntimeDispatchError, RuntimeOperationService};
 use crate::task::AddressSpaceId;
 
 /// x86 user processes enter the kernel through this DPL 3 interrupt gate.
@@ -59,6 +62,166 @@ fn error(status: Status) -> Response {
         status: status.raw(),
         flags: 0,
         values: [0; 4],
+    }
+}
+
+pub struct MemorySyscallService<
+    'a,
+    const ADDRESS_SPACE_CAPACITY: usize = { crate::DEFAULT_KERNEL_PROCESS_CAPACITY },
+    const CAPABILITY_CAPACITY: usize = { crate::MAX_CAPABILITIES },
+> {
+    capabilities: &'a CapabilitySpace<CAPABILITY_CAPACITY>,
+    address_spaces: &'a mut AddressSpaceTable<ADDRESS_SPACE_CAPACITY>,
+}
+
+impl<
+        'a,
+        const ADDRESS_SPACE_CAPACITY: usize,
+        const CAPABILITY_CAPACITY: usize,
+    > MemorySyscallService<'a, ADDRESS_SPACE_CAPACITY, CAPABILITY_CAPACITY>
+{
+    pub fn new(
+        capabilities: &'a CapabilitySpace<CAPABILITY_CAPACITY>,
+        address_spaces: &'a mut AddressSpaceTable<ADDRESS_SPACE_CAPACITY>,
+    ) -> Self {
+        Self {
+            capabilities,
+            address_spaces,
+        }
+    }
+
+    fn map(
+        &mut self,
+        caller: AddressSpaceId,
+        request: Request,
+    ) -> Result<Response, RuntimeDispatchError> {
+        if request.flags != 0
+            || request.reserved != 0
+            || request.arguments[3..] != [0; 3]
+            || request.arguments[2] > 1
+        {
+            return Err(RuntimeDispatchError::InvalidRequest)
+        }
+        let authority = capability(request.capability)?;
+        let writable = request.arguments[2] != 0;
+        let backing = self.backing(caller, authority, writable)?;
+        let offset = request.arguments[0];
+        let length = request.arguments[1];
+        if offset % PAGE_SIZE != 0 || length == 0 || length % PAGE_SIZE != 0 {
+            return Err(RuntimeDispatchError::InvalidRequest)
+        }
+        let physical_start = backing
+            .start
+            .checked_add(offset)
+            .ok_or(RuntimeDispatchError::InvalidRequest)?;
+        let physical = crate::PhysicalRange::new(physical_start, length)
+            .filter(|range| backing.contains(*range))
+            .ok_or(RuntimeDispatchError::InvalidRequest)?;
+        let mapping = self
+            .address_spaces
+            .get_mut(caller)
+            .map_err(|_| RuntimeDispatchError::ProcessNotRegistered)?
+            .map_backing(authority, physical, writable)
+            .map_err(map_error)?;
+        Ok(Response {
+            status: Status::NORMAL.raw(),
+            flags: 0,
+            values: [mapping.base, 0, 0, 0],
+        })
+    }
+
+    fn unmap(
+        &mut self,
+        caller: AddressSpaceId,
+        request: Request,
+    ) -> Result<Response, RuntimeDispatchError> {
+        if request.flags != 0
+            || request.reserved != 0
+            || request.arguments[2..] != [0; 4]
+        {
+            return Err(RuntimeDispatchError::InvalidRequest)
+        }
+        let authority = capability(request.capability)?;
+        let info = self
+            .capabilities
+            .inspect(caller, authority)
+            .map_err(|_| RuntimeDispatchError::InvalidCapability)?;
+        if !info.rights.contains(Rights::MAP) {
+            return Err(RuntimeDispatchError::InvalidCapability)
+        }
+        self.address_spaces
+            .get_mut(caller)
+            .map_err(|_| RuntimeDispatchError::ProcessNotRegistered)?
+            .unmap_backing(authority, request.arguments[0], request.arguments[1])
+            .map_err(map_error)?;
+        Ok(Response {
+            status: Status::NORMAL.raw(),
+            flags: 0,
+            values: [0; 4],
+        })
+    }
+
+    fn backing(
+        &self,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        writable: bool,
+    ) -> Result<crate::PhysicalRange, RuntimeDispatchError> {
+        let info = self
+            .capabilities
+            .inspect(caller, authority)
+            .map_err(|_| RuntimeDispatchError::InvalidCapability)?;
+        let mut required = Rights::MAP.union(Rights::READ);
+        if writable {
+            required = required.union(Rights::WRITE)
+        }
+        if !info.rights.contains(required) {
+            return Err(RuntimeDispatchError::InvalidCapability)
+        }
+        let backing = info.backing.ok_or(RuntimeDispatchError::InvalidCapability)?;
+        if backing.start % PAGE_SIZE != 0
+            || backing.length == 0
+            || backing.length % PAGE_SIZE != 0
+        {
+            return Err(RuntimeDispatchError::InvalidCapability)
+        }
+        Ok(backing)
+    }
+}
+
+impl<
+        'a,
+        const ADDRESS_SPACE_CAPACITY: usize,
+        const CAPABILITY_CAPACITY: usize,
+    > RuntimeOperationService
+    for MemorySyscallService<'a, ADDRESS_SPACE_CAPACITY, CAPABILITY_CAPACITY>
+{
+    fn dispatch(
+        &mut self,
+        caller: AddressSpaceId,
+        operation: synos_runtime::Operation,
+        request: Request,
+    ) -> Result<Response, RuntimeDispatchError> {
+        if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+            return Err(RuntimeDispatchError::AbiMismatch)
+        }
+        match operation {
+            synos_runtime::Operation::MemoryMap => self.map(caller, request),
+            synos_runtime::Operation::MemoryUnmap => self.unmap(caller, request),
+            _ => Err(RuntimeDispatchError::InvalidRequest),
+        }
+    }
+}
+
+fn capability(raw: u64) -> Result<CapabilityHandle, RuntimeDispatchError> {
+    CapabilityHandle::from_raw(raw).ok_or(RuntimeDispatchError::InvalidCapability)
+}
+
+fn map_error(error: AddressSpaceError) -> RuntimeDispatchError {
+    match error {
+        AddressSpaceError::Capacity => RuntimeDispatchError::Capacity,
+        AddressSpaceError::NotFound => RuntimeDispatchError::InvalidRequest,
+        _ => RuntimeDispatchError::InvalidRequest,
     }
 }
 
