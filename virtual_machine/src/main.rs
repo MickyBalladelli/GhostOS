@@ -104,6 +104,7 @@ enum DiskCommand {
     Inspect { path: PathBuf, json: bool },
     Validate { path: PathBuf, json: bool },
     Repair { path: PathBuf, json: bool },
+    Rollback { path: PathBuf, json: bool },
     Provision {
         path: PathBuf,
         kernel: PathBuf,
@@ -115,6 +116,7 @@ enum DiskCommand {
         machine_identity: String,
         network_identity: String,
         service_packages: Vec<(u8, PathBuf)>,
+        upgrade: bool,
         json: bool,
     },
     Lock { path: PathBuf, verbose: bool, json: bool },
@@ -541,7 +543,7 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
     let subcommand = values
         .first()
         .map(String::as_str)
-        .ok_or_else(|| "disk needs a command: list, inspect, validate, repair, provision, lock, or recover-lock".to_string())?;
+        .ok_or_else(|| "disk needs a command: list, inspect, validate, repair, rollback, provision, upgrade, lock, or recover-lock".to_string())?;
     match subcommand {
         "list" => Ok(ParseResult::Disk(DiskCommand::List(parse_disk_options(&values[1..])?))),
         "inspect" => {
@@ -552,13 +554,18 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
             let (path, json) = command_path(values, "validate")?;
             Ok(ParseResult::Disk(DiskCommand::Validate { path, json }))
         }
-        "repair" => {
+        "repair" | "recover" => {
             let (path, json) = command_path(values, "repair")?;
             Ok(ParseResult::Disk(DiskCommand::Repair { path, json }))
         }
+        "rollback" => {
+            let (path, json) = command_path(values, "rollback")?;
+            Ok(ParseResult::Disk(DiskCommand::Rollback { path, json }))
+        }
         "lock" => parse_lock_command(values),
         "recover-lock" => parse_recover_lock_command(values),
-        "provision" => parse_provision_command(&values[1..]),
+        "provision" => parse_provision_command(&values[1..], false),
+        "upgrade" => parse_provision_command(&values[1..], true),
         "help" | "--help" | "-h" => Ok(ParseResult::Help),
         value => Err(format!("unknown disk command `{value}`")),
     }
@@ -638,7 +645,7 @@ fn parse_disk_options(values: &[String]) -> Result<DiskOptions, String> {
     Ok(options)
 }
 
-fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
+fn parse_provision_command(values: &[String], upgrade: bool) -> Result<ParseResult, String> {
     let mut args = values.iter().peekable();
     let path = PathBuf::from(next_ref(&mut args, "disk provision PATH")?);
     let mut kernel = None;
@@ -691,6 +698,7 @@ fn parse_provision_command(values: &[String]) -> Result<ParseResult, String> {
         machine_identity,
         network_identity,
         service_packages,
+        upgrade,
         json,
     }))
 }
@@ -2287,6 +2295,24 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             Ok(())
         }
         DiskCommand::Repair { path, json } => repair_disk(&path, json),
+        DiskCommand::Rollback { path, json } => {
+            let report = SystemDiskProvisioner::rollback(&path)
+                .map_err(|error| format!("disk rollback failed: {error}"))?;
+            if json {
+                println!(
+                    "{{\"status\":\"rolled-back\",\"path\":{},\"generation\":{}}}",
+                    control::json_string(&canonical_display(&path)?),
+                    report.generation,
+                );
+            } else {
+                println!(
+                    "rolled back system disk: path={} generation={}",
+                    canonical_display(&path)?,
+                    report.generation,
+                );
+            }
+            Ok(())
+        }
         DiskCommand::Provision {
             path,
             kernel,
@@ -2298,6 +2324,7 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             machine_identity,
             network_identity,
             service_packages,
+            upgrade,
             json,
         } => {
             let mut install = SystemDiskInstall::new(kernel)
@@ -2310,7 +2337,13 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             for (role, package) in service_packages {
                 install = install.with_service_package(role, package);
             }
-            let manifest = if let Some(size) = size {
+            let manifest = if upgrade {
+                if size.is_some() || replace {
+                    return Err("disk upgrade does not accept --size or --replace".to_string())
+                }
+                SystemDiskProvisioner::upgrade(&path, &install)
+                    .map_err(|error| format!("disk upgrade failed: {error}"))?
+            } else if let Some(size) = size {
                 SystemDiskProvisioner::provision_with_options(
                     &path,
                     SystemDiskCreateOptions::new(size)
@@ -2816,8 +2849,12 @@ Commands:
                               Validate an installed system disk
   synos-vm disk repair PATH [--json]
                               Repair supported redundant image metadata
+  synos-vm disk rollback PATH [--json]
+                              Restore the last safe system-disk image
   synos-vm disk provision PATH --kernel PATH [OPTIONS]
                               Create/install a system disk without booting
+  synos-vm disk upgrade PATH --kernel PATH [OPTIONS]
+                              Atomically install a new image and retain rollback
   synos-vm disk lock PATH [--json]
                               Diagnose an ownership lock
   synos-vm disk recover-lock PATH [--json]

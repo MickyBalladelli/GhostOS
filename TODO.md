@@ -52,12 +52,12 @@ Build the real operating system core before adding more advanced features.
 
 ## P0: Make installation and boot persistent
 
-- [ ] Put the kernel, initrd, system manifest, and service packages on a system disk.
-- [ ] Make the BIOS loader read the installed system image.
-- [ ] Make the UEFI loader read the installed system image.
-- [ ] Add signed boot artifacts and measured boot metadata.
-- [ ] Add install, upgrade, rollback, and recovery commands.
-- [ ] Validate that a machine can reboot and return to the same usable system.
+- [x] Put the kernel, initrd, system manifest, and service packages on a system disk.
+- [x] Make the BIOS loader read the installed system image.
+- [x] Make the UEFI loader read the installed system image.
+- [x] Add signed boot artifacts and measured boot metadata.
+- [x] Add install, upgrade, rollback, and recovery commands.
+- [x] Validate that a machine can reboot and return to the same usable system.
 
 ## P1: Add authentication and security startup
 

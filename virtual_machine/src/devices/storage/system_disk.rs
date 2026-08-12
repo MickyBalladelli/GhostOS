@@ -17,15 +17,20 @@ pub const SYSTEM_DISK_ALIGNMENT: u64 = 1024 * 1024;
 pub const SYSTEM_DISK_MIN_SIZE: u64 = 16 * 1024 * 1024;
 pub const SYSTEM_DISK_MANIFEST_SIZE: u64 = 64 * 1024;
 pub const SYSTEM_DISK_PAYLOAD_OFFSET: u64 = SYSTEM_DISK_ALIGNMENT;
+pub const SYSTEM_DISK_BOOT_RECORD_OFFSET: u64 = 64 * 1024;
+pub const SYSTEM_DISK_BOOT_RECORD_SIZE: u64 = SECTOR_SIZE;
 pub const SYNFS_SYSTEM_BLOCKS: usize = 32;
 pub const SYNFS_SYSTEM_VOLUME_SIZE: u64 = SynFs::<SYNFS_SYSTEM_BLOCKS>::volume_bytes() as u64;
 pub const SYSTEM_DISK_SETTINGS_SIZE: u64 = 64 * 1024;
 
 const HEADER_SIZE: usize = SECTOR_SIZE as usize;
+const HEADER_METADATA_OFFSET: usize = 0x1c0;
 const MANIFEST_MAGIC: &[u8; 8] = b"SYNMANIF";
 const HEADER_MAGIC: &[u8; 8] = b"SYNOSDSK";
 const SETTINGS_MAGIC: &[u8; 8] = b"SYNSET01";
-const MANIFEST_A_OFFSET: u64 = SECTOR_SIZE;
+// Keep the first 64 KiB available for BIOS stage 2. The manifest slots live
+// in the boot metadata area, before the payloads, and are still redundant.
+const MANIFEST_A_OFFSET: u64 = 128 * 1024;
 const MANIFEST_B_OFFSET: u64 = MANIFEST_A_OFFSET + SYSTEM_DISK_MANIFEST_SIZE;
 const PAYLOAD_ALIGNMENT: u64 = SYSTEM_DISK_ALIGNMENT;
 const MAX_MANIFEST_STRING: usize = 16 * 1024;
@@ -69,6 +74,13 @@ pub struct SystemDiskRepairReport {
     pub repaired_manifest_slot: Option<u64>,
     pub generation: u64,
     pub actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemDiskRollbackReport {
+    pub path: PathBuf,
+    pub restored_path: PathBuf,
+    pub generation: u64,
 }
 
 /// Validated boot data loaded from an attached SynOS system disk.
@@ -389,6 +401,8 @@ impl SystemDiskProvisioner {
         };
         write_manifest(&mut image, slot, &manifest)?;
         image.sync()?;
+        write_boot_record(&mut image, &manifest)?;
+        image.sync()?;
         sync_parent_directory(path.as_ref()).map_err(StorageError::Io)?;
         Ok(manifest)
     }
@@ -456,6 +470,62 @@ impl SystemDiskProvisioner {
             actions: vec![format!(
                 "rebuilt system-disk manifest slot at byte offset {target_offset} from slot at byte offset {source_offset}"
             )],
+        })
+    }
+
+    /// Replace an installed image atomically, retaining the previous image as
+    /// a rollback candidate beside it.
+    pub fn upgrade<P: AsRef<Path>>(
+        path: P,
+        install: &SystemDiskInstall,
+    ) -> Result<SystemDiskManifest, StorageError> {
+        let path = path.as_ref();
+        let old = Self::validate(path)?;
+        let temporary = temporary_path(path)?;
+        let options = SystemDiskCreateOptions::new(old.disk_size).with_format(old.format);
+        let result = Self::provision_with_options(&temporary, options, install);
+        let manifest = match result {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                return Err(error)
+            }
+        };
+        let rollback = rollback_path(path);
+        if rollback.exists() {
+            return Err(StorageError::InvalidImage(format!(
+                "rollback image `{}` already exists; recover or remove it first",
+                rollback.display()
+            )))
+        }
+        fs::rename(path, &rollback)?;
+        if let Err(error) = fs::rename(&temporary, path) {
+            let _ = fs::rename(&rollback, path);
+            return Err(StorageError::Io(error))
+        }
+        sync_parent_directory(path).map_err(StorageError::Io)?;
+        Ok(manifest)
+    }
+
+    /// Restore the image retained by [`Self::upgrade`]. The current image is
+    /// retained as the next rollback candidate.
+    pub fn rollback<P: AsRef<Path>>(path: P) -> Result<SystemDiskRollbackReport, StorageError> {
+        let path = path.as_ref();
+        let current = Self::validate(path)?;
+        let rollback = rollback_path(path);
+        let restored = Self::validate(&rollback)?;
+        let temporary = temporary_path(path)?;
+        fs::rename(path, &temporary)?;
+        if let Err(error) = fs::rename(&rollback, path) {
+            let _ = fs::rename(&temporary, path);
+            return Err(StorageError::Io(error))
+        }
+        fs::rename(&temporary, &rollback)?;
+        sync_parent_directory(path).map_err(StorageError::Io)?;
+        Ok(SystemDiskRollbackReport {
+            path: path.to_path_buf(),
+            restored_path: rollback,
+            generation: restored.generation.max(current.generation),
         })
     }
 
@@ -552,6 +622,8 @@ impl SystemDiskProvisioner {
             MANIFEST_B_OFFSET
         };
         write_manifest(&mut image, slot, &manifest)?;
+        image.sync()?;
+        write_boot_record(&mut image, &manifest)?;
         image.sync()?;
         sync_parent_directory(path).map_err(StorageError::Io)?;
         Ok(manifest)
@@ -1041,6 +1113,7 @@ fn validate_manifest(
             "system-disk checksum mismatch".to_string(),
         ));
     }
+    validate_boot_record(image, manifest)?;
     let settings = read_extent(
         image,
         manifest.layout.settings_offset,
@@ -1057,6 +1130,33 @@ fn validate_manifest(
     filesystem
         .check_consistency()
         .map_err(|_| StorageError::InvalidImage("SynFS system volume is inconsistent".to_string()))
+}
+
+fn validate_boot_record(
+    image: &mut DiskImage,
+    manifest: &SystemDiskManifest,
+) -> Result<(), StorageError> {
+    let record = read_extent(
+        image,
+        SYSTEM_DISK_BOOT_RECORD_OFFSET,
+        SYSTEM_DISK_BOOT_RECORD_SIZE,
+    )?;
+    if &record[..8] != b"SYNBOOT1"
+        || get_u32(&record, 8) != SYSTEM_DISK_FORMAT_VERSION
+        || get_u64(&record, 12) != manifest.generation
+        || get_u64(&record, 20) != manifest.layout.kernel_offset
+        || get_u64(&record, 28) != manifest.layout.kernel_size
+        || get_u64(&record, 36) != manifest.layout.initrd_offset
+        || get_u64(&record, 44) != manifest.layout.initrd_size
+        || get_u32(&record, 52) != manifest.kernel_checksum
+        || get_u32(&record, 56) != manifest.initrd_checksum
+        || get_u32(&record, 508) != boot_record_checksum(&record)
+    {
+        return Err(StorageError::InvalidImage(
+            "invalid installed boot record".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn next_generation(image: &mut DiskImage) -> Result<u64, StorageError> {
@@ -1340,11 +1440,15 @@ fn checksum_extent(image: &mut DiskImage, offset: u64, size: u64) -> Result<u32,
 
 fn install_header(path: &Path, size: u64) -> Result<(), StorageError> {
     let mut header = [0u8; HEADER_SIZE];
-    header[0..8].copy_from_slice(HEADER_MAGIC);
-    header[8..12].copy_from_slice(&SYSTEM_DISK_FORMAT_VERSION.to_le_bytes());
-    header[12..20].copy_from_slice(&size.to_le_bytes());
-    header[20..28].copy_from_slice(&MANIFEST_A_OFFSET.to_le_bytes());
-    header[28..36].copy_from_slice(&MANIFEST_B_OFFSET.to_le_bytes());
+    header[HEADER_METADATA_OFFSET..HEADER_METADATA_OFFSET + 8].copy_from_slice(HEADER_MAGIC);
+    header[HEADER_METADATA_OFFSET + 8..HEADER_METADATA_OFFSET + 12]
+        .copy_from_slice(&SYSTEM_DISK_FORMAT_VERSION.to_le_bytes());
+    header[HEADER_METADATA_OFFSET + 12..HEADER_METADATA_OFFSET + 20]
+        .copy_from_slice(&size.to_le_bytes());
+    header[HEADER_METADATA_OFFSET + 20..HEADER_METADATA_OFFSET + 28]
+        .copy_from_slice(&MANIFEST_A_OFFSET.to_le_bytes());
+    header[HEADER_METADATA_OFFSET + 28..HEADER_METADATA_OFFSET + 36]
+        .copy_from_slice(&MANIFEST_B_OFFSET.to_le_bytes());
     let mut image = DiskImage::open_with_access(path, true)?;
     image.write_sector(0, &header)?;
     image.sync()?;
@@ -1352,14 +1456,40 @@ fn install_header(path: &Path, size: u64) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn write_boot_record(
+    image: &mut DiskImage,
+    manifest: &SystemDiskManifest,
+) -> Result<(), StorageError> {
+    let mut record = [0u8; SECTOR_SIZE as usize];
+    record[0..8].copy_from_slice(b"SYNBOOT1");
+    put_u32(&mut record, 8, SYSTEM_DISK_FORMAT_VERSION);
+    put_u64(&mut record, 12, manifest.generation);
+    put_u64(&mut record, 20, manifest.layout.kernel_offset);
+    put_u64(&mut record, 28, manifest.layout.kernel_size);
+    put_u64(&mut record, 36, manifest.layout.initrd_offset);
+    put_u64(&mut record, 44, manifest.layout.initrd_size);
+    put_u32(&mut record, 52, manifest.kernel_checksum);
+    put_u32(&mut record, 56, manifest.initrd_checksum);
+    let checksum_offset = record.len() - 4;
+    put_u32(&mut record, checksum_offset, 0);
+    let boot_checksum = boot_record_checksum(&record);
+    put_u32(&mut record, checksum_offset, boot_checksum);
+    write_extent(
+        image,
+        &SYSTEM_DISK_BOOT_RECORD_OFFSET,
+        SYSTEM_DISK_BOOT_RECORD_SIZE,
+        &record,
+    )
+}
+
 fn validate_header(image: &mut DiskImage) -> Result<(), StorageError> {
     let mut header = [0u8; HEADER_SIZE];
     image.read_sector(0, &mut header)?;
-    if &header[0..8] != HEADER_MAGIC
-        || get_u32(&header, 8) != SYSTEM_DISK_FORMAT_VERSION
-        || get_u64(&header, 12) != image.size()
-        || get_u64(&header, 20) != MANIFEST_A_OFFSET
-        || get_u64(&header, 28) != MANIFEST_B_OFFSET
+    if &header[HEADER_METADATA_OFFSET..HEADER_METADATA_OFFSET + 8] != HEADER_MAGIC
+        || get_u32(&header, HEADER_METADATA_OFFSET + 8) != SYSTEM_DISK_FORMAT_VERSION
+        || get_u64(&header, HEADER_METADATA_OFFSET + 12) != image.size()
+        || get_u64(&header, HEADER_METADATA_OFFSET + 20) != MANIFEST_A_OFFSET
+        || get_u64(&header, HEADER_METADATA_OFFSET + 28) != MANIFEST_B_OFFSET
     {
         return Err(StorageError::InvalidImage(
             "invalid system-disk header".to_string(),
@@ -1438,6 +1568,16 @@ fn temporary_path(path: &Path) -> Result<PathBuf, StorageError> {
     Err(StorageError::InvalidImage(
         "could not allocate a temporary system-disk path".to_string(),
     ))
+}
+
+fn rollback_path(path: &Path) -> PathBuf {
+    path.with_extension("rollback")
+}
+
+fn boot_record_checksum(bytes: &[u8]) -> u32 {
+    bytes[..bytes.len() - 4]
+        .iter()
+        .fold(0u32, |sum, byte| sum.wrapping_add(u32::from(*byte)))
 }
 
 fn file_size(path: &Path) -> Result<u64, StorageError> {

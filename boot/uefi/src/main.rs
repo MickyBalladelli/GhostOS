@@ -15,6 +15,9 @@ pub(crate) type EfiHandle = *mut c_void;
 pub(crate) type EfiStatus = usize;
 pub(crate) const EFI_SUCCESS: EfiStatus = 0;
 const EFI_NOT_READY: EfiStatus = 0x8000_0000_0000_0006;
+const EFI_DEVICE_ERROR: EfiStatus = 0x8000_0000_0000_0007;
+const EFI_OUT_OF_RESOURCES: EfiStatus = 0x8000_0000_0000_0009;
+const EFI_NOT_FOUND: EfiStatus = 0x8000_0000_0000_000e;
 const MEMORY_MAP_CAPACITY: usize = 32 * 1024;
 
 #[panic_handler]
@@ -37,6 +40,11 @@ type GetMemoryMap = unsafe extern "efiapi" fn(
     map_key: *mut usize,
     descriptor_size: *mut usize,
     descriptor_version: *mut u32,
+) -> EfiStatus;
+type AllocatePool = unsafe extern "efiapi" fn(
+    pool_type: u32,
+    size: usize,
+    buffer: *mut *mut c_void,
 ) -> EfiStatus;
 
 type ExitBootServices =
@@ -119,7 +127,7 @@ pub(crate) struct EfiBootServices {
     header: EfiTableHeader,
     before_get_memory_map: [usize; 4],
     get_memory_map: GetMemoryMap,
-    allocate_pool: usize,
+    allocate_pool: AllocatePool,
     pub(crate) free_pool: FreePool,
     create_event: usize,
     set_timer: usize,
@@ -242,6 +250,64 @@ const ACPI_10_TABLE: EfiGuid = EfiGuid {
     data3: 0x11d3,
     data4: [0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d],
 };
+const LOADED_IMAGE_PROTOCOL: EfiGuid = EfiGuid {
+    data1: 0x5b1b_31a1,
+    data2: 0x9562,
+    data3: 0x11d2,
+    data4: [0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b],
+};
+const BLOCK_IO_PROTOCOL: EfiGuid = EfiGuid {
+    data1: 0x964e_5b21,
+    data2: 0x6459,
+    data3: 0x11d2,
+    data4: [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b],
+};
+
+#[repr(C)]
+struct EfiLoadedImage {
+    revision: u32,
+    parent_image_handle: EfiHandle,
+    system_table: *mut c_void,
+    device_handle: EfiHandle,
+    file_path: *mut c_void,
+    reserved: *mut c_void,
+    load_options_size: u32,
+    load_options: *mut c_void,
+    image_base: *mut c_void,
+    image_size: u64,
+    image_code_type: u32,
+    image_data_type: u32,
+    unload: usize,
+}
+
+#[repr(C)]
+struct EfiBlockIo {
+    revision: u64,
+    media: *mut EfiBlockIoMedia,
+    reset: usize,
+    read_blocks: unsafe extern "efiapi" fn(
+        this: *mut EfiBlockIo,
+        media_id: u32,
+        lba: u64,
+        buffer_size: usize,
+        buffer: *mut c_void,
+    ) -> EfiStatus,
+    write_blocks: usize,
+    flush_blocks: usize,
+}
+
+#[repr(C)]
+struct EfiBlockIoMedia {
+    media_id: u32,
+    removable_media: bool,
+    media_present: bool,
+    logical_partition: bool,
+    read_only: bool,
+    write_caching: bool,
+    block_size: u32,
+    io_align: u32,
+    last_block: u64,
+}
 
 static mut MEMORY_MAP: [u8; MEMORY_MAP_CAPACITY] = [0; MEMORY_MAP_CAPACITY];
 static mut BOOT_INFO: BootInfo = BootInfo::empty(BootMethod::Uefi);
@@ -292,6 +358,15 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
             ((*output).clear_screen)(output);
         }
 
+        match measure_installed_system(image, services) {
+            EFI_SUCCESS | EFI_NOT_FOUND => {}
+            status => {
+                write_failure(output, "installed system image validation failed", status);
+                wait_for_key(input);
+                return status
+            }
+        }
+
         let framebuffer = locate_framebuffer(services);
         let rsdp_address = locate_rsdp(system_table);
 
@@ -334,6 +409,159 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
         wait_for_key(input);
         last_status
     }
+}
+
+unsafe fn measure_installed_system(
+    image: EfiHandle,
+    services: *mut EfiBootServices,
+) -> EfiStatus {
+    let mut loaded_interface = core::ptr::null_mut();
+    let status = unsafe {
+        ((*services).handle_protocol)(
+            image,
+            &LOADED_IMAGE_PROTOCOL,
+            &mut loaded_interface,
+        )
+    };
+    if status != EFI_SUCCESS || loaded_interface.is_null() {
+        return EFI_NOT_FOUND
+    }
+
+    let device = unsafe { (*loaded_interface.cast::<EfiLoadedImage>()).device_handle };
+    let mut block_interface = core::ptr::null_mut();
+    let status = unsafe {
+        ((*services).handle_protocol)(device, &BLOCK_IO_PROTOCOL, &mut block_interface)
+    };
+    if status != EFI_SUCCESS || block_interface.is_null() {
+        return EFI_NOT_FOUND
+    }
+
+    let block = block_interface.cast::<EfiBlockIo>();
+    let media = unsafe { (*block).media };
+    if media.is_null() || unsafe { (*media).block_size } != 512 {
+        return EFI_NOT_FOUND
+    }
+
+    let media_id = unsafe { (*media).media_id };
+    let mut record = [0u8; 512];
+    let status = unsafe {
+        ((*block).read_blocks)(
+            block,
+            media_id,
+            128,
+            record.len(),
+            record.as_mut_ptr().cast(),
+        )
+    };
+    if status != EFI_SUCCESS {
+        return EFI_NOT_FOUND
+    }
+    if &record[..8] != b"SYNBOOT1"
+        || get_u32(&record, 8) != 1
+        || get_u32(&record, 508) != boot_record_checksum(&record)
+    {
+        return EFI_NOT_FOUND
+    }
+
+    let kernel_status = unsafe {
+        read_measured_extent(
+            block,
+            media_id,
+            services,
+            get_u64(&record, 20),
+            get_u64(&record, 28),
+            get_u32(&record, 52),
+        )
+    };
+    if kernel_status != EFI_SUCCESS {
+        return kernel_status
+    }
+    unsafe {
+        read_measured_extent(
+            block,
+            media_id,
+            services,
+            get_u64(&record, 36),
+            get_u64(&record, 44),
+            get_u32(&record, 56),
+        )
+    }
+}
+
+unsafe fn read_measured_extent(
+    block: *mut EfiBlockIo,
+    media_id: u32,
+    services: *mut EfiBootServices,
+    offset: u64,
+    size: u64,
+    expected: u32,
+) -> EfiStatus {
+    if size == 0 {
+        return if expected == 0 { EFI_SUCCESS } else { EFI_DEVICE_ERROR }
+    }
+    if offset % 512 != 0 {
+        return EFI_DEVICE_ERROR
+    }
+    let sectors = size.div_ceil(512);
+    let buffer_size = match sectors.checked_mul(512).and_then(|value| usize::try_from(value).ok()) {
+        Some(value) => value,
+        None => return EFI_OUT_OF_RESOURCES,
+    };
+    let mut buffer = core::ptr::null_mut();
+    let status = unsafe { ((*services).allocate_pool)(2, buffer_size, &mut buffer) };
+    if status != EFI_SUCCESS || buffer.is_null() {
+        return status
+    }
+    let status = unsafe {
+        ((*block).read_blocks)(
+            block,
+            media_id,
+            offset / 512,
+            buffer_size,
+            buffer,
+        )
+    };
+    if status != EFI_SUCCESS {
+        unsafe { ((*services).free_pool)(buffer) };
+        return status
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(buffer.cast::<u8>(), size as usize) };
+    let measured = crc32(bytes);
+    unsafe { ((*services).free_pool)(buffer) };
+    if measured == expected { EFI_SUCCESS } else { EFI_DEVICE_ERROR }
+}
+
+fn get_u32(bytes: &[u8], offset: usize) -> u32 {
+    let mut value = [0u8; 4];
+    value.copy_from_slice(&bytes[offset..offset + 4]);
+    u32::from_le_bytes(value)
+}
+
+fn get_u64(bytes: &[u8], offset: usize) -> u64 {
+    let mut value = [0u8; 8];
+    value.copy_from_slice(&bytes[offset..offset + 8]);
+    u64::from_le_bytes(value)
+}
+
+fn boot_record_checksum(bytes: &[u8]) -> u32 {
+    bytes[..bytes.len() - 4]
+        .iter()
+        .fold(0u32, |sum, byte| sum.wrapping_add(u32::from(*byte)))
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
 }
 
 unsafe fn locate_rsdp(system_table: *const EfiSystemTable) -> u64 {

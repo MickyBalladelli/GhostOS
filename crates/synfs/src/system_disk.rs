@@ -5,7 +5,9 @@ use crate::{BLOCK_SIZE, BlockDevice, BlockIoError, BlockStore, SynFs};
 pub const SYSTEM_DISK_MANIFEST_BYTES: usize = 64 * 1024;
 pub const SYSTEM_VOLUME_BLOCKS: usize = 32;
 const LOGICAL_SECTOR_BYTES: u64 = 512;
-const MANIFEST_A_LBA: u64 = 1;
+// The BIOS stage-2 loader occupies the first 16 sectors. Keep the two
+// manifests in the reserved boot area instead of overlapping that loader.
+const MANIFEST_A_LBA: u64 = 256;
 const MANIFEST_B_LBA: u64 = MANIFEST_A_LBA + SYSTEM_DISK_MANIFEST_BYTES as u64 / LOGICAL_SECTOR_BYTES;
 const MANIFEST_MAGIC: &[u8; 8] = b"SYNMANIF";
 const MANIFEST_VERSION: u32 = 1;

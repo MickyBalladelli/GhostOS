@@ -55,9 +55,11 @@ pub use storage::{
     AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID, NVME_BAR0_SIZE, NVME_CLASS,
     NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID, SystemDiskCreateOptions,
     SystemDiskBootArtifacts, SystemDiskInstall, SystemDiskLayout, SystemDiskManifest,
-    SystemDiskProvisioner, SystemDiskRepairReport, SystemServicePackage, SystemSetting,
+    SystemDiskProvisioner, SystemDiskRepairReport, SystemDiskRollbackReport, SystemServicePackage,
+    SystemSetting,
     SYSTEM_DISK_ALIGNMENT, SYSTEM_DISK_FORMAT_VERSION, SYSTEM_DISK_MANIFEST_SIZE,
-    SYSTEM_DISK_MIN_SIZE, SYSTEM_DISK_PAYLOAD_OFFSET, SYSTEM_DISK_SETTINGS_SIZE,
+    SYSTEM_DISK_BOOT_RECORD_OFFSET, SYSTEM_DISK_BOOT_RECORD_SIZE, SYSTEM_DISK_MIN_SIZE,
+    SYSTEM_DISK_PAYLOAD_OFFSET, SYSTEM_DISK_SETTINGS_SIZE,
     SYNFS_SYSTEM_BLOCKS, SYNFS_SYSTEM_VOLUME_SIZE,
 };
 

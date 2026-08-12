@@ -6,6 +6,8 @@
 .set MEMORY_REGIONS, BOOT_INFO + 72
 .set VBE_CONTROLLER, 0x5000
 .set VBE_MODE_INFO, 0x5200
+.set BOOT_RECORD, 0x6000
+.set BOOT_RECORD_LBA, 128
 .set KERNEL_SEGMENT, 0x1000
 .set KERNEL_ADDRESS, 0x100000
 .set MAX_KERNEL_SECTORS, 1148
@@ -161,9 +163,30 @@ vesa_done:
     ret
 
 load_kernel:
-    movw $KERNEL_SEGMENT, destination_segment
+    call read_boot_record
+    jc default_kernel
+
+    movl BOOT_RECORD + 20, %eax
+    movl %eax, disk_lba
+    movl BOOT_RECORD + 24, %eax
+    testl %eax, %eax
+    jnz default_kernel
+    movl BOOT_RECORD + 28, %eax
+    addl $511, %eax
+    shrl $9, %eax
+    testl %eax, %eax
+    jz default_kernel
+    cmpl $MAX_KERNEL_SECTORS, %eax
+    ja default_kernel
+    movw %ax, sectors_remaining
+    jmp kernel_load_start
+
+default_kernel:
     movw $KERNEL_SECTORS, sectors_remaining
     movl $(1 + STAGE2_SECTORS), disk_lba
+
+kernel_load_start:
+    movw $KERNEL_SEGMENT, destination_segment
 
 read_chunk:
     cmpw $0, sectors_remaining
@@ -192,6 +215,57 @@ chunk_size_ready:
     jmp read_chunk
 
 kernel_loaded:
+    ret
+
+read_boot_record:
+    movw $1, disk_count
+    movw $0x0600, disk_segment
+    movw $disk_packet, %si
+    movb $0x42, %ah
+    movb boot_drive, %dl
+    movl $BOOT_RECORD_LBA, disk_lba
+    movl $0, disk_lba + 4
+    int $0x13
+    jc boot_record_invalid
+
+    movw $BOOT_RECORD, %si
+    movw $boot_record_magic, %di
+    movw $8, %cx
+    repe cmpsb
+    jne boot_record_invalid
+    cmpl $1, BOOT_RECORD + 8
+    jne boot_record_invalid
+
+    movl BOOT_RECORD + 508, %eax
+    movl %eax, boot_record_stored_checksum
+    movl $0, BOOT_RECORD + 508
+    call checksum_boot_record
+    cmpl boot_record_stored_checksum, %eax
+    jne boot_record_invalid
+    clc
+    ret
+
+boot_record_invalid:
+    stc
+    ret
+
+checksum_boot_record:
+    pushl %ebx
+    pushl %ecx
+    pushl %edx
+    pushl %esi
+    xorl %eax, %eax
+    movl $BOOT_RECORD, %esi
+    movl $512, %ecx
+checksum_byte:
+    movzbl (%esi), %ebx
+    addl %ebx, %eax
+    incl %esi
+    loop checksum_byte
+    popl %esi
+    popl %edx
+    popl %ecx
+    popl %ebx
     ret
 
 disk_failure:
@@ -300,3 +374,7 @@ mode_list_pointer:
     .long 0
 selected_mode:
     .word 0
+boot_record_stored_checksum:
+    .long 0
+boot_record_magic:
+    .ascii "SYNBOOT1"
