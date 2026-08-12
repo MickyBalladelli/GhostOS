@@ -69,7 +69,7 @@ pub mod paging {
         }
     }
 
-    /// Build a small real user address space for the boot hello-world image.
+    /// Build a small real user address space for the boot `synos-init` image.
     ///
     /// The image pages are identity-mapped, while every other low-memory page
     /// remains supervisor-only. This gives the proof process a separate root,
@@ -78,7 +78,7 @@ pub mod paging {
     /// # Safety
     /// All frames must be distinct, aligned, writable physical frames. The
     /// four image frames must occupy one 2 MiB physical region.
-    pub unsafe fn install_demo_root(
+    pub unsafe fn install_boot_init_root(
         tables: &[u64; DEMO_TABLE_FRAME_COUNT],
         pages: &[u64; 4],
         physical_offset: u64,
@@ -144,18 +144,19 @@ pub mod paging {
         crate::PageTableRoot::new(tables[0])
     }
 
-    /// Install the request, response, and machine code for the boot proof.
+    /// Install the request, response, and machine code for the boot init.
     ///
     /// # Safety
     /// `pages` must be the four writable frames passed to
-    /// [`install_demo_root`].
-    pub unsafe fn write_demo_image(pages: &[u64; 4], physical_offset: u64) {
+    /// [`install_boot_init_root`].
+    pub unsafe fn write_boot_init_image(pages: &[u64; 4], physical_offset: u64) {
         let mut image = [0u8; 24];
         image[0..2].copy_from_slice(&[0x48, 0xbf]);
         image[2..10].copy_from_slice(&pages[1].to_le_bytes());
         image[10..12].copy_from_slice(&[0x48, 0xbe]);
         image[12..20].copy_from_slice(&pages[2].to_le_bytes());
-        image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfe]);
+        // Yield repeatedly while init waits for its first service work.
+        image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfc]);
 
         unsafe {
             core::ptr::write_bytes(

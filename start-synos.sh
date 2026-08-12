@@ -65,9 +65,15 @@ else
   esac
 fi
 
+KERNEL_PATH=./build/bios/kernel.bin
+if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios -type f -newer "$KERNEL_PATH" -print -quit | grep -q .; then
+  echo "Building stale BIOS image..." >&2
+  ./scripts/build-bios-image.sh >/dev/null
+fi
+
 VM_COMMAND=(
   ./target/release/synos-vm \
-  --kernel ./build/bios/kernel.bin \
+  --kernel "$KERNEL_PATH" \
   --disk "$DISK_PATH" \
   --disk-size 64M \
   --disk-format raw \

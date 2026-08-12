@@ -135,6 +135,11 @@ pub use invariants::{
 // table. kernel_entry initializes it before interrupts or shell code use it.
 static mut SCHEDULER: MaybeUninit<Scheduler> = MaybeUninit::uninit();
 static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static INIT_REPORTED: AtomicBool = AtomicBool::new(false);
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -224,11 +229,12 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         scheduler_clock
     );
 
+    // Early hardware setup is complete. Start the first user-space process.
     #[cfg(all(
         target_arch = "x86_64",
         any(target_os = "none", target_os = "uefi")
     ))]
-    boot_hello_world(&mut frames, scheduler, boot_info.physical_address_offset);
+    boot_synos_init(&mut frames, scheduler, boot_info.physical_address_offset);
 
     #[cfg(not(all(
         target_arch = "x86_64",
@@ -241,7 +247,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-fn boot_hello_dispatch(caller: AddressSpaceId, request: Request) -> Response {
+fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     if Operation::from_raw(request.operation) != Some(Operation::Yield) {
         return Response {
             status: Status::INVALID_ARGUMENT.raw(),
@@ -249,7 +255,12 @@ fn boot_hello_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             values: [0; 4],
         }
     }
-    println!("Ring 3 hello-world (address space {})", caller.raw());
+    if INIT_REPORTED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        println!("synos-init running in Ring 3 (address space {})", caller.raw());
+    }
     Response {
         status: Status::NORMAL.raw(),
         flags: 0,
@@ -262,7 +273,7 @@ fn boot_hello_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     any(target_os = "none", target_os = "uefi")
 ))]
 #[allow(unsafe_code)]
-fn boot_hello_world(
+fn boot_synos_init(
     frames: &mut EarlyFrameAllocator<'_>,
     scheduler: &'static mut Scheduler,
     physical_offset: u64,
@@ -283,11 +294,11 @@ fn boot_hello_world(
     }
 
     let Some(root) = (unsafe {
-        arch::paging::install_demo_root(&tables, &pages, physical_offset)
+        arch::paging::install_boot_init_root(&tables, &pages, physical_offset)
     }) else {
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     };
-    unsafe { arch::paging::write_demo_image(&pages, physical_offset) };
+    unsafe { arch::paging::write_boot_init_image(&pages, physical_offset) };
 
     let address_space = AddressSpaceId::new(1).expect("boot address space id");
     let mut capabilities: CapabilitySpace<MAX_CAPABILITIES> = CapabilitySpace::new();
@@ -313,7 +324,7 @@ fn boot_hello_world(
     let Some(_) = scheduler.dispatch() else {
         fatal_kernel_halt(Status::BUSY)
     };
-    if syscall::install_dispatcher(boot_hello_dispatch).is_err() {
+    if syscall::install_dispatcher(boot_init_dispatch).is_err() {
         fatal_kernel_halt(Status::BUSY)
     }
     let context = scheduler
@@ -322,7 +333,7 @@ fn boot_hello_world(
         .unwrap_or_else(|_| {
             fatal_kernel_halt(Status::CORRUPT)
         });
-    println!("starting native Ring 3 hello-world (thread={})", thread.raw());
+    println!("starting synos-init in Ring 3 (thread={})", thread.raw());
     arch::enter_user(&context, root)
 }
 
