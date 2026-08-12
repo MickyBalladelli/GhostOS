@@ -1,4 +1,5 @@
 mod acceptance;
+mod usable_os;
 
 use std::env;
 use std::fs;
@@ -31,6 +32,7 @@ cargo synos compile-all [--target x86_64|aarch64] [--release] [--target-dir PATH
 cargo synos reproduce [--target x86_64|aarch64] [--release] [--clean-root PATH] [--json]
 cargo synos acceptance [--target x86_64|aarch64] [--release]
     [--clean-root PATH] [--skip-build|--boot-only] [--json]
+cargo synos usable-os [--release] [--clean-root PATH] [--json]
 cargo synos toolchain package --key PATH --output PATH
     [--stage 0|1|2] [--target x86_64|aarch64] [--root PATH] [--rust-version TEXT]
 cargo synos toolchain verify --bundle PATH --key PATH
@@ -74,6 +76,7 @@ fn run() -> Result<(), String> {
         "compile-all" => compile_all(&arguments[1..]),
         "reproduce" => reproduce(&arguments[1..]),
         "acceptance" => acceptance::run(&arguments[1..]),
+        "usable-os" => usable_os::run(&arguments[1..]),
         "toolchain" => toolchain(&arguments[1..]),
         "run" => run_program(&arguments[1..]),
         "help" | "-h" | "--help" => {

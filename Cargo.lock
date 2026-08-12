@@ -56,14 +56,19 @@ name = "cargo-synos"
 version = "0.1.0"
 dependencies = [
  "synos-app",
+ "synos-auth",
  "synos-compiler",
+ "synos-fabric",
  "synos-init",
+ "synos-kernel",
+ "synos-netd",
  "synos-pkg",
  "synos-runtime",
  "synos-rustd",
  "synos-status",
  "synos-synfs",
  "synos-system-model",
+ "synos-update",
  "synos-vm",
 ]
 

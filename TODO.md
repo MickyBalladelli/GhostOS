@@ -110,15 +110,15 @@ Build the real operating system core before adding more advanced features.
 
 ## Definition of usable OS
 
-- [ ] Boot from disk on real x86_64 hardware.
-- [ ] Start isolated user-space services.
-- [ ] Log in as an administrator.
-- [ ] Create, read, write, and delete persistent files.
-- [ ] Run two isolated applications at the same time.
-- [ ] Use a network interface.
-- [ ] Restart a failed service without rebooting the machine.
-- [ ] Reboot and recover the same system state.
-- [ ] Recover safely after a failed update.
+- [x] Boot from disk on real x86_64 hardware.
+- [x] Start isolated user-space services.
+- [x] Log in as an administrator.
+- [x] Create, read, write, and delete persistent files.
+- [x] Run two isolated applications at the same time.
+- [x] Use a network interface.
+- [x] Restart a failed service without rebooting the machine.
+- [x] Reboot and recover the same system state.
+- [x] Recover safely after a failed update.
 
 ## Extra system work
 
