@@ -15,9 +15,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 INVENTORY_PATH = ROOT / "docs" / "test-inventory.toml"
 TIERS = ("unit", "integration", "qemu", "fault", "fuzz", "performance")
-STATES = ("planned", "running", "passed", "failed", "blocked")
-EVIDENCE_STATES = {"passed", "failed", "blocked"}
-STATE_ALIASES = {"pass": "passed", "fail": "failed", "skipped": "blocked"}
+STATES = (
+    "planned",
+    "running",
+    "passed",
+    "failed",
+    "blocked",
+    "skipped",
+    "inconclusive",
+)
+EVIDENCE_STATES = {"passed", "failed", "blocked", "skipped", "inconclusive"}
+STATE_ALIASES = {"pass": "passed", "fail": "failed"}
 EVIDENCE_TEXT_FIELDS = ("test_id", "command", "revision", "started_at", "ended_at", "reason")
 
 
@@ -30,12 +38,12 @@ def load_inventory(errors: list[str]) -> dict:
 
     status = inventory.get("status", {})
     if status.get("values") != list(STATES):
-        errors.append("docs/test-inventory.toml: status.values must list the five roadmap states")
+        errors.append("docs/test-inventory.toml: status.values must list the seven roadmap states")
     if status.get("default") != "planned":
         errors.append("docs/test-inventory.toml: status.default must be 'planned'")
     if set(status.get("evidence_values", [])) != EVIDENCE_STATES:
         errors.append(
-            "docs/test-inventory.toml: status.evidence_values must be passed, failed, and blocked"
+            "docs/test-inventory.toml: status.evidence_values must be passed, failed, blocked, skipped, and inconclusive"
         )
     if status.get("named_test_policy") != "plan-only":
         errors.append("docs/test-inventory.toml: named_test_policy must be 'plan-only'")
@@ -92,7 +100,9 @@ def read_status_record(path: Path, errors: list[str], evidence: bool) -> dict[st
         errors.append(f"{path}: invalid state {raw_state!r}")
         return None
     if evidence and state not in EVIDENCE_STATES:
-        errors.append(f"{path}: evidence must use passed, failed, or blocked, not {state}")
+        errors.append(
+            f"{path}: evidence must use passed, failed, blocked, skipped, or inconclusive, not {state}"
+        )
         return None
     if not isinstance(value.get("reason"), str) or not value["reason"].strip():
         errors.append(f"{path}: status requires a non-empty reason")
@@ -152,7 +162,7 @@ def resolve_status(test: dict[str, str], evidence_dir: Path | None, errors: list
     if status_path.is_file():
         record = read_status_record(status_path, errors, evidence=False)
         if record is not None:
-            if record["state"] in {"passed", "failed"}:
+            if record["state"] in {"passed", "failed", "skipped", "inconclusive"}:
                 errors.append(
                     f"{status_path}: {record['state']} requires evidence.json, not status.json"
                 )
@@ -162,10 +172,16 @@ def resolve_status(test: dict[str, str], evidence_dir: Path | None, errors: list
         tier_result_path = evidence_dir / test["tier"] / "result.json"
         if tier_result_path.is_file():
             tier_result = read_json(tier_result_path, errors)
-            if tier_result and tier_result.get("state") == "skipped":
-                prerequisite = tier_result.get("prerequisite") or tier_result.get("reason")
-                if isinstance(prerequisite, str) and prerequisite.strip():
-                    result["prerequisite"] = prerequisite.strip()
+            if tier_result:
+                tier_state = tier_result.get("result_state", tier_result.get("state"))
+                if tier_state in {"skipped", "inconclusive"}:
+                    result["state"] = tier_state
+                    reason = tier_result.get("reason")
+                    if isinstance(reason, str) and reason.strip():
+                        result["reason"] = reason.strip()
+                    prerequisite = tier_result.get("prerequisite")
+                    if isinstance(prerequisite, str) and prerequisite.strip():
+                        result["prerequisite"] = prerequisite.strip()
     return result
 
 
@@ -173,10 +189,16 @@ def aggregate_feature_status(statuses: list[dict[str, str]]) -> str:
     states = {status["state"] for status in statuses}
     if "failed" in states:
         return "failed"
+    if "inconclusive" in states:
+        return "inconclusive"
     if "blocked" in states:
         return "blocked"
     if "running" in states:
         return "running"
+    if "planned" in states:
+        return "planned"
+    if "skipped" in states:
+        return "skipped"
     if statuses and states == {"passed"}:
         return "passed"
     return "planned"
@@ -306,6 +328,8 @@ def main() -> int:
         "schema": 1,
         "source": "docs/test-inventory.toml",
         "named_test_policy": "plan-only",
+        "status_values": list(STATES),
+        "evidence_values": [state for state in STATES if state in EVIDENCE_STATES],
         "generated_at": generated_at.isoformat(),
         "stale_after_days": status_config.get("stale_after_days", 30),
         "counts": {state: counts.get(state, 0) for state in STATES},

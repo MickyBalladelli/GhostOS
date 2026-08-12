@@ -57,11 +57,11 @@ The entry names one test in each applicable tier:
   p50/p95/p99 latency, throughput, allocations, and available cycle/energy
   counters. Noise must be reported as `inconclusive`, not hidden.
 
-These names are plans only. The inventory keeps five separate statuses:
-`planned`, `running`, `passed`, `failed`, and `blocked`. A test becomes
-`passed`, `failed`, or `blocked` only from a per-test `evidence.json`; a
-`status.json` may mark work `running` or `blocked`. A named test without one
-of those records stays `planned`.
+These names are plans only. The inventory keeps seven separate statuses:
+`planned`, `running`, `passed`, `failed`, `blocked`, `skipped`, and
+`inconclusive`. A test becomes `passed`, `failed`, `blocked`, `skipped`, or
+`inconclusive` only from evidence; a `status.json` may mark work `running` or
+`blocked`. A named test without one of those records stays `planned`.
 
 A checked roadmap feature also needs a per-test `evidence.json` containing the
 result state, source revision, command, host, start/end timestamps, and reason.
@@ -74,10 +74,13 @@ Generate the machine-readable status report with:
 python3 scripts/validate-test-status.py --output build/test-status.json
 ```
 
-The command also writes `build/test-status.md`. Each feature row shows its
+The command also writes `build/test-status.md`. The JSON report contains the
+complete status and evidence value lists, one record for every named test, and
+one aggregate record for every roadmap feature. Each feature row shows its
 owner, aggregate state, last evidence timestamp, evidence age, stale flag, and
 skipped prerequisites. Owners default to `unassigned` until the inventory names
-one.
+one. Skipped and inconclusive results remain distinct from blocked and failed
+results; none counts as passed.
 
 A feature that crosses a process, device, boot, persistence, or cluster
 boundary needs the relevant integration and end-to-end evidence. A green
@@ -404,6 +407,11 @@ authorization boundaries relevant to the API. Reference models in the support
 crate cover FIFO queues, capability attenuation/revocation, and lease expiry.
 
 ## Names and evidence
+
+The VM tier result format described below is a narrower execution format and
+keeps its existing `passed`, `failed`, and `skipped` values. The roadmap status
+report expands those records with `planned`, `running`, `blocked`, and
+`inconclusive` when it resolves the full inventory.
 
 Inventory IDs are permanent names. Use lowercase dotted names:
 `<tier>.<feature-id>.<behavior>`. The Rust test function may be longer, but

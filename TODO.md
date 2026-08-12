@@ -602,5 +602,13 @@ measured p50/p95/p99 data over optimistic feature claims.
       The schema and operator workflow are documented in
       [`docs/release-claims.md`](docs/release-claims.md), with direct regression
       coverage in [`scripts/test_validate_release_claims.py`](scripts/test_validate_release_claims.py).
-- [ ] The full roadmap status is machine-readable and distinguishes planned,
+- [x] The full roadmap status is machine-readable and distinguishes planned,
       running, passed, failed, blocked, skipped, and inconclusive evidence.
+      Implementation: [`scripts/validate-test-status.py`](scripts/validate-test-status.py),
+      [`docs/test-inventory.toml`](docs/test-inventory.toml), and
+      [`docs/testing.md`](docs/testing.md) define the seven-state contract;
+      `build/test-status.json` records every named test and roadmap feature.
+      Evidence records preserve `skipped` and `inconclusive` instead of folding
+      them into `blocked`, and aggregate feature state never counts either as
+      `passed`. Direct evidence: `python3 scripts/validate-test-status.py
+      --output build/test-status.json`.

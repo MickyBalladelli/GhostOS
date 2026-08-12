@@ -25,9 +25,9 @@ paths = [
 mapping_scope = "Every roadmap file must name the evidence IDs that cover its stated scope. feature.<id> aliases that feature's tier mappings."
 
 [status]
-values = ["planned", "running", "passed", "failed", "blocked"]
+values = ["planned", "running", "passed", "failed", "blocked", "skipped", "inconclusive"]
 default = "planned"
-evidence_values = ["passed", "failed", "blocked"]
+evidence_values = ["passed", "failed", "blocked", "skipped", "inconclusive"]
 evidence_path = "build/test-evidence/{run-id}/{tier}/{test-id}/evidence.json"
 named_test_policy = "plan-only"
 default_owner = "unassigned"
