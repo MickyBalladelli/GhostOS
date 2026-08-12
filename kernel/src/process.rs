@@ -14,8 +14,8 @@ use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
 
 use crate::{
-    AddressSpaceId, CapabilityHandle, CapabilityObject, CapabilitySpace, Context, ExecutionMode,
-    Rights, Scheduler, SchedulingPolicy, ThreadId,
+    AddressSpaceId, AddressSpaceTable, CapabilityHandle, CapabilityObject, CapabilitySpace,
+    Context, PageTableRoot, Rights, Scheduler, SchedulingPolicy, ThreadId,
 };
 
 pub const DEFAULT_KERNEL_PROCESS_CAPACITY: usize = 64;
@@ -27,6 +27,14 @@ pub const DEFAULT_KERNEL_PROCESS_CAPACITY: usize = 64;
 /// keeps the ELF parser independent from those privileged details.
 pub trait ProcessMemory {
     type Error;
+
+    /// Allocate and initialize a distinct user page-table root. The returned
+    /// root must not alias the kernel root or another live process root.
+    fn create_address_space(
+        &mut self,
+        address_space: AddressSpaceId,
+    ) -> Result<PageTableRoot, Self::Error>;
+    fn destroy_address_space(&mut self, address_space: AddressSpaceId);
 
     fn reserve(
         &mut self,
@@ -92,25 +100,47 @@ pub trait ProcessMemory {
     fn release(&mut self, address_space: AddressSpaceId, mapping: Mapping);
 }
 
-struct KernelImageMapper<'a, M> {
+struct KernelImageMapper<'a, M, const CAPACITY: usize> {
     memory: &'a mut M,
+    address_spaces: &'a mut AddressSpaceTable<CAPACITY>,
     address_space: AddressSpaceId,
 }
 
-impl<'a, M> KernelImageMapper<'a, M> {
-    fn new(memory: &'a mut M, address_space: AddressSpaceId) -> Self {
+impl<'a, M, const CAPACITY: usize> KernelImageMapper<'a, M, CAPACITY> {
+    fn new(
+        memory: &'a mut M,
+        address_spaces: &'a mut AddressSpaceTable<CAPACITY>,
+        address_space: AddressSpaceId,
+    ) -> Self {
         Self {
             memory,
+            address_spaces,
             address_space,
         }
     }
 }
 
-impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
-    type Error = M::Error;
+impl<M: ProcessMemory, const CAPACITY: usize> ImageMapper
+    for KernelImageMapper<'_, M, CAPACITY>
+{
+    type Error = ();
 
     fn reserve(&mut self, request: MappingRequest) -> Result<Mapping, Self::Error> {
-        self.memory.reserve(self.address_space, request)
+        let mapping = self
+            .memory
+            .reserve(self.address_space, request)
+            .map_err(|_| ())?;
+        if self
+            .address_spaces
+            .get_mut(self.address_space)
+            .map_err(|_| ())?
+            .claim(mapping)
+            .is_err()
+        {
+            self.memory.release(self.address_space, mapping);
+            return Err(())
+        }
+        Ok(mapping)
     }
 
     fn map_segment(
@@ -121,6 +151,12 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
     ) -> Result<(), Self::Error> {
         self.memory
             .map_segment(self.address_space, mapping, segment, source)
+            .map_err(|_| ())?;
+        self.address_spaces
+            .get_mut(self.address_space)
+            .map_err(|_| ())?
+            .map_segment(mapping, segment, source.len())
+            .map_err(|_| ())
     }
 
     fn zero_fill(
@@ -129,8 +165,14 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
         address: u64,
         length: u64,
     ) -> Result<(), Self::Error> {
+        self.address_spaces
+            .get(self.address_space)
+            .map_err(|_| ())?
+            .zero_fill(mapping, address, length)
+            .map_err(|_| ())?;
         self.memory
             .zero_fill(self.address_space, mapping, address, length)
+            .map_err(|_| ())
     }
 
     fn apply_relative_relocation(
@@ -140,6 +182,11 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
         addend: i64,
         addend_from_memory: bool,
     ) -> Result<(), Self::Error> {
+        self.address_spaces
+            .get(self.address_space)
+            .map_err(|_| ())?
+            .relocate(mapping, address)
+            .map_err(|_| ())?;
         self.memory.apply_relative_relocation(
             self.address_space,
             mapping,
@@ -147,6 +194,7 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
             addend,
             addend_from_memory,
         )
+        .map_err(|_| ())
     }
 
     fn protect(
@@ -158,6 +206,12 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
     ) -> Result<(), Self::Error> {
         self.memory
             .protect(self.address_space, mapping, address, length, permissions)
+            .map_err(|_| ())?;
+        self.address_spaces
+            .get_mut(self.address_space)
+            .map_err(|_| ())?
+            .protect(mapping, address, length, permissions)
+            .map_err(|_| ())
     }
 
     fn allocate_stack(
@@ -166,12 +220,32 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
         request: StackRequest,
         arguments: ProcessArguments<'_>,
     ) -> Result<u64, Self::Error> {
-        self.memory
+        let stack = self
+            .memory
             .allocate_stack(self.address_space, mapping, request, arguments)
+            .map_err(|_| ())?;
+        let base = stack
+            .checked_sub(request.size)
+            .unwrap_or_default();
+        self.address_spaces
+            .get_mut(self.address_space)
+            .map_err(|_| ())?
+            .record_region(mapping, base, request.size, SegmentPermissions::READ.union(SegmentPermissions::WRITE))
+            .map_err(|_| ())?;
+        Ok(stack)
     }
 
     fn allocate_heap(&mut self, mapping: Mapping, size: u64) -> Result<u64, Self::Error> {
-        self.memory.allocate_heap(self.address_space, mapping, size)
+        let base = self
+            .memory
+            .allocate_heap(self.address_space, mapping, size)
+            .map_err(|_| ())?;
+        self.address_spaces
+            .get_mut(self.address_space)
+            .map_err(|_| ())?
+            .record_region(mapping, base, size, SegmentPermissions::READ.union(SegmentPermissions::WRITE))
+            .map_err(|_| ())?;
+        Ok(base)
     }
 
     fn allocate_tls(
@@ -180,8 +254,16 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
         request: TlsRequest,
         source: &[u8],
     ) -> Result<u64, Self::Error> {
-        self.memory
+        let base = self
+            .memory
             .allocate_tls(self.address_space, mapping, request, source)
+            .map_err(|_| ())?;
+        self.address_spaces
+            .get_mut(self.address_space)
+            .map_err(|_| ())?
+            .record_region(mapping, base, request.memory_size, SegmentPermissions::READ)
+            .map_err(|_| ())?;
+        Ok(base)
     }
 
     fn install_context(
@@ -189,12 +271,21 @@ impl<M: ProcessMemory> ImageMapper for KernelImageMapper<'_, M> {
         mapping: Mapping,
         context: ProcessContext,
     ) -> Result<(), Self::Error> {
+        self.address_spaces
+            .get(self.address_space)
+            .map_err(|_| ())?
+            .install_context(context)
+            .map_err(|_| ())?;
         self.memory
             .install_context(self.address_space, mapping, context)
+            .map_err(|_| ())
     }
 
     fn release(&mut self, mapping: Mapping) {
-        self.memory.release(self.address_space, mapping)
+        self.memory.release(self.address_space, mapping);
+        if let Ok(space) = self.address_spaces.get_mut(self.address_space) {
+            space.release(mapping)
+        }
     }
 }
 
@@ -266,6 +357,7 @@ pub struct KernelProcessBackend<
     memory: M,
     caller: AddressSpaceId,
     generations: [u32; CAPACITY],
+    address_spaces: AddressSpaceTable<CAPACITY>,
     slots: [ProcessSlot; CAPACITY],
 }
 
@@ -303,6 +395,7 @@ impl<
             memory,
             caller,
             generations: [0; CAPACITY],
+            address_spaces: AddressSpaceTable::new(),
             slots: [ProcessSlot::EMPTY; CAPACITY],
         })
     }
@@ -321,6 +414,15 @@ impl<
 
     pub fn scheduler_mut(&mut self) -> &mut Scheduler {
         self.scheduler
+    }
+
+    pub fn address_space(
+        &self,
+        address_space: AddressSpaceId,
+    ) -> Result<&crate::AddressSpace, KernelProcessError> {
+        self.address_spaces
+            .get(address_space)
+            .map_err(|_| KernelProcessError::NotFound)
     }
 
     /// Record a user-mode exit and release its thread, mapping, and authority.
@@ -365,7 +467,11 @@ impl<
         heap_bytes: u64,
         arguments: ProcessArguments<'_>,
     ) -> Result<LoadedImage, KernelProcessError> {
-        let mut mapper = KernelImageMapper::new(&mut self.memory, address_space);
+        let mut mapper = KernelImageMapper::new(
+            &mut self.memory,
+            &mut self.address_spaces,
+            address_space,
+        );
         load_image(
             &mut mapper,
             ImageLoadRequest {
@@ -392,13 +498,18 @@ impl<
     ) -> Result<ThreadId, KernelProcessError> {
         let entry = usize::try_from(context.entry).map_err(|_| KernelProcessError::Scheduler)?;
         let stack = usize::try_from(context.stack_pointer).map_err(|_| KernelProcessError::Scheduler)?;
+        let root = self
+            .address_spaces
+            .get(address_space)
+            .map_err(|_| KernelProcessError::Scheduler)?
+            .root();
         self.scheduler
-            .create(
+            .create_user(
                 self.capabilities,
                 self.caller,
                 authority,
                 address_space,
-                ExecutionMode::User,
+                root,
                 SchedulingPolicy::Cooperative,
                 entry,
                 stack,
@@ -421,6 +532,10 @@ impl<
         if let Some(mapping) = self.slots[index].mapping {
             self.memory.release(address_space, mapping)
         }
+        self.address_spaces
+            .destroy(address_space)
+            .map_err(|_| KernelProcessError::NotFound)?;
+        self.memory.destroy_address_space(address_space);
         self.capabilities
             .delete(self.caller, authority)
             .map_err(|_| KernelProcessError::Capability)?;
@@ -445,6 +560,14 @@ impl<
             .map_err(|_| KernelProcessError::InvalidTransition)?;
         let index = self.free_slot()?;
         let (process, address_space) = self.new_identity(index)?;
+        let root = self
+            .memory
+            .create_address_space(address_space)
+            .map_err(|_| KernelProcessError::Memory)?;
+        if self.address_spaces.create(address_space, root).is_err() {
+            self.memory.destroy_address_space(address_space);
+            return Err(KernelProcessError::Capacity)
+        }
         let process_authority = self
             .capabilities
             .mint_root(
@@ -452,7 +575,11 @@ impl<
                 CapabilityObject::AddressSpace(address_space),
                 Rights::ALL,
             )
-            .map_err(|_| KernelProcessError::Capability)?;
+            .map_err(|_| {
+                let _ = self.address_spaces.destroy(address_space);
+                self.memory.destroy_address_space(address_space);
+                KernelProcessError::Capability
+            })?;
         let loaded = match self.load(
             address_space,
             request.image,
@@ -464,6 +591,8 @@ impl<
             Ok(loaded) => loaded,
             Err(error) => {
                 let _ = self.capabilities.delete(self.caller, process_authority);
+                let _ = self.address_spaces.destroy(address_space);
+                self.memory.destroy_address_space(address_space);
                 return Err(error)
             }
         };
@@ -472,6 +601,8 @@ impl<
             Err(error) => {
                 self.memory.release(address_space, loaded.mapping);
                 let _ = self.capabilities.delete(self.caller, process_authority);
+                let _ = self.address_spaces.destroy(address_space);
+                self.memory.destroy_address_space(address_space);
                 return Err(error)
             }
         };

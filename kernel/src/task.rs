@@ -169,6 +169,7 @@ impl Context {
 pub struct Thread {
     pub id: ThreadId,
     pub address_space: AddressSpaceId,
+    pub address_space_root: Option<crate::PageTableRoot>,
     pub mode: ExecutionMode,
     pub state: ThreadState,
     pub policy: SchedulingPolicy,
@@ -186,6 +187,7 @@ impl Thread {
     pub(crate) const VACANT: Self = Self {
         id: ThreadId(0),
         address_space: AddressSpaceId::KERNEL,
+        address_space_root: None,
         mode: ExecutionMode::Kernel,
         state: ThreadState::Vacant,
         policy: SchedulingPolicy::Cooperative,

@@ -3,6 +3,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod allocator;
+pub mod address_space;
 pub mod hot_allocator;
 #[allow(unsafe_code)]
 mod arch;
@@ -71,6 +72,11 @@ use synos_status::Status;
 
 pub use allocator::{
     AllocationError, EarlyFrameAllocator, QuotaAllocationError, FRAME_SIZE,
+};
+pub use address_space::{
+    AddressSpace, AddressSpaceError, AddressSpaceTable, PageTableRoot,
+    MAX_ADDRESS_SPACE_REGIONS, PAGE_SIZE as ADDRESS_SPACE_PAGE_SIZE, USER_SPACE_END,
+    USER_SPACE_START,
 };
 pub use hot_allocator::{
     HotAllocation, HotAllocationError, HotAllocationPlacement, HotAllocatorConfigError,

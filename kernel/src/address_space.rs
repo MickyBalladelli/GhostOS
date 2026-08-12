@@ -1,0 +1,400 @@
+//! Kernel-owned Ring 3 address-space records.
+
+use synos_app::{Mapping, MappingRequest, ProcessContext, RuntimeSegment, SegmentPermissions};
+
+use crate::task::AddressSpaceId;
+
+pub const PAGE_SIZE: u64 = 4096;
+pub const USER_SPACE_START: u64 = PAGE_SIZE;
+pub const USER_SPACE_END: u64 = 0x0000_7fff_ffff_f000;
+pub const MAX_ADDRESS_SPACE_REGIONS: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PageTableRoot {
+    frame: u64,
+}
+
+impl PageTableRoot {
+    pub const fn new(frame: u64) -> Option<Self> {
+        if frame == 0 || frame % PAGE_SIZE != 0 {
+            None
+        } else {
+            Some(Self { frame })
+        }
+    }
+
+    pub const fn frame(self) -> u64 {
+        self.frame
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AddressSpaceError {
+    Capacity,
+    InvalidRoot,
+    InvalidRequest,
+    InvalidMapping,
+    MappingOverflow,
+    MappingConflict,
+    NotFound,
+    InvalidContext,
+}
+
+#[derive(Clone, Copy)]
+struct Region {
+    owner: Mapping,
+    base: u64,
+    size: u64,
+    permissions: Option<SegmentPermissions>,
+}
+
+impl Region {
+    const fn end(self) -> Option<u64> {
+        self.base.checked_add(self.size)
+    }
+
+    const fn overlaps(self, other_base: u64, other_size: u64) -> bool {
+        let Some(end) = self.end() else {
+            return true;
+        };
+        let Some(other_end) = other_base.checked_add(other_size) else {
+            return true;
+        };
+        self.base < other_end && other_base < end
+    }
+
+    const fn contains(self, address: u64, size: u64) -> bool {
+        let Some(end) = self.end() else {
+            return false;
+        };
+        let Some(requested_end) = address.checked_add(size) else {
+            return false;
+        };
+        address >= self.base && requested_end <= end
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct AddressSpace {
+    id: AddressSpaceId,
+    root: PageTableRoot,
+    regions: [Option<Region>; MAX_ADDRESS_SPACE_REGIONS],
+}
+
+impl AddressSpace {
+    pub fn new(id: AddressSpaceId, root: PageTableRoot) -> Result<Self, AddressSpaceError> {
+        if id == AddressSpaceId::KERNEL {
+            return Err(AddressSpaceError::InvalidRequest)
+        }
+        Ok(Self {
+            id,
+            root,
+            regions: [None; MAX_ADDRESS_SPACE_REGIONS],
+        })
+    }
+
+    pub const fn id(self) -> AddressSpaceId {
+        self.id
+    }
+
+    pub const fn root(self) -> PageTableRoot {
+        self.root
+    }
+
+    pub fn reserve(&mut self, request: MappingRequest) -> Result<Mapping, AddressSpaceError> {
+        if request.size == 0
+            || request.alignment < PAGE_SIZE
+            || !request.alignment.is_power_of_two()
+        {
+            return Err(AddressSpaceError::InvalidRequest)
+        }
+        let base = if request.fixed {
+            let base = request.preferred_base.ok_or(AddressSpaceError::InvalidRequest)?;
+            if base % request.alignment != 0 {
+                return Err(AddressSpaceError::InvalidRequest)
+            }
+            base
+        } else {
+            let mut candidate = request
+                .preferred_base
+                .unwrap_or(USER_SPACE_START)
+                .max(USER_SPACE_START);
+            let mut selected = None;
+            for _ in 0..MAX_ADDRESS_SPACE_REGIONS {
+                candidate = align_up(candidate, request.alignment)?;
+                if candidate
+                    .checked_add(request.size)
+                    .is_some_and(|end| end <= USER_SPACE_END)
+                    && !self.overlaps(candidate, request.size)
+                {
+                    selected = Some(candidate);
+                    break;
+                }
+                candidate = self
+                    .next_after(candidate, request.size)
+                    .ok_or(AddressSpaceError::MappingOverflow)?;
+            }
+            selected.ok_or(AddressSpaceError::Capacity)?
+        };
+        if base < USER_SPACE_START
+            || base
+                .checked_add(request.size)
+                .is_none_or(|end| end > USER_SPACE_END)
+            || self.overlaps(base, request.size)
+        {
+            return Err(if request.fixed {
+                AddressSpaceError::MappingConflict
+            } else {
+                AddressSpaceError::MappingOverflow
+            })
+        }
+        let mapping = Mapping {
+            base,
+            size: request.size,
+        };
+        self.claim(mapping)?;
+        Ok(mapping)
+    }
+
+    pub fn claim(&mut self, mapping: Mapping) -> Result<(), AddressSpaceError> {
+        if mapping.size == 0
+            || mapping.base < USER_SPACE_START
+            || mapping
+                .base
+                .checked_add(mapping.size)
+                .is_none_or(|end| end > USER_SPACE_END)
+            || self.overlaps(mapping.base, mapping.size)
+        {
+            return Err(AddressSpaceError::MappingConflict)
+        }
+        self.insert(Region {
+            owner: mapping,
+            base: mapping.base,
+            size: mapping.size,
+            permissions: None,
+        })?;
+        Ok(())
+    }
+
+    pub fn map_segment(
+        &mut self,
+        mapping: Mapping,
+        segment: RuntimeSegment,
+        source_length: usize,
+    ) -> Result<(), AddressSpaceError> {
+        if segment.memory_size == 0
+            || segment.file_size > segment.memory_size
+            || segment.file_size as usize != source_length
+            || segment.permissions.writable() && segment.permissions.executable()
+            || !self.owns(mapping, segment.address, segment.memory_size)
+        {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        self.insert(Region {
+            owner: mapping,
+            base: segment.address,
+            size: segment.memory_size,
+            permissions: Some(segment.permissions),
+        })
+    }
+
+    pub fn zero_fill(
+        &self,
+        mapping: Mapping,
+        address: u64,
+        length: u64,
+    ) -> Result<(), AddressSpaceError> {
+        if length == 0 || !self.owns(mapping, address, length) {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        Ok(())
+    }
+
+    pub fn relocate(
+        &self,
+        mapping: Mapping,
+        address: u64,
+    ) -> Result<(), AddressSpaceError> {
+        if !self.owns(mapping, address, core::mem::size_of::<u64>() as u64) {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        Ok(())
+    }
+
+    pub fn protect(
+        &mut self,
+        mapping: Mapping,
+        address: u64,
+        length: u64,
+        permissions: SegmentPermissions,
+    ) -> Result<(), AddressSpaceError> {
+        if length == 0
+            || permissions.writable() && permissions.executable()
+            || !self.owns(mapping, address, length)
+        {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        self.insert(Region {
+            owner: mapping,
+            base: address,
+            size: length,
+            permissions: Some(permissions),
+        })
+    }
+
+    pub fn record_region(
+        &mut self,
+        mapping: Mapping,
+        base: u64,
+        size: u64,
+        permissions: SegmentPermissions,
+    ) -> Result<(), AddressSpaceError> {
+        if size == 0
+            || permissions.writable() && permissions.executable()
+            || base < USER_SPACE_START
+            || base
+                .checked_add(size)
+                .is_none_or(|end| end > USER_SPACE_END)
+        {
+            return Err(AddressSpaceError::InvalidMapping)
+        }
+        self.insert(Region {
+            owner: mapping,
+            base,
+            size,
+            permissions: Some(permissions),
+        })
+    }
+
+    pub fn install_context(&self, context: ProcessContext) -> Result<(), AddressSpaceError> {
+        if !self.contains(context.entry, 1)
+            || !self.contains(context.stack_pointer.saturating_sub(1), 1)
+            || !self.contains(context.heap_base, context.heap_size)
+            || context.tls_pointer.is_some_and(|tls| !self.contains(tls, 1))
+        {
+            return Err(AddressSpaceError::InvalidContext)
+        }
+        Ok(())
+    }
+
+    pub fn release(&mut self, mapping: Mapping) {
+        for region in &mut self.regions {
+            if region.is_some_and(|region| region.owner == mapping) {
+                *region = None
+            }
+        }
+    }
+
+    fn contains(&self, address: u64, size: u64) -> bool {
+        self.regions
+            .iter()
+            .flatten()
+            .any(|region| region.permissions.is_some() && region.contains(address, size))
+    }
+
+    fn owns(&self, mapping: Mapping, address: u64, size: u64) -> bool {
+        self.regions
+            .iter()
+            .flatten()
+            .any(|region| region.owner == mapping && region.contains(address, size))
+    }
+
+    fn overlaps(&self, base: u64, size: u64) -> bool {
+        self.regions
+            .iter()
+            .flatten()
+            .any(|region| region.overlaps(base, size))
+    }
+
+    fn next_after(&self, base: u64, size: u64) -> Option<u64> {
+        self.regions
+            .iter()
+            .flatten()
+            .filter(|region| region.overlaps(base, size))
+            .filter_map(|region| region.end())
+            .max()
+    }
+
+    fn insert(&mut self, region: Region) -> Result<(), AddressSpaceError> {
+        let slot = self
+            .regions
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(AddressSpaceError::Capacity)?;
+        *slot = Some(region);
+        Ok(())
+    }
+}
+
+pub struct AddressSpaceTable<const CAPACITY: usize> {
+    spaces: [Option<AddressSpace>; CAPACITY],
+}
+
+impl<const CAPACITY: usize> AddressSpaceTable<CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            spaces: [None; CAPACITY],
+        }
+    }
+
+    pub fn create(
+        &mut self,
+        id: AddressSpaceId,
+        root: PageTableRoot,
+    ) -> Result<(), AddressSpaceError> {
+        if self
+            .spaces
+            .iter()
+            .flatten()
+            .any(|space| space.id() == id || space.root() == root)
+        {
+            return Err(AddressSpaceError::MappingConflict)
+        }
+        let slot = self
+            .spaces
+            .iter_mut()
+            .find(|space| space.is_none())
+            .ok_or(AddressSpaceError::Capacity)?;
+        *slot = Some(AddressSpace::new(id, root)?);
+        Ok(())
+    }
+
+    pub fn get(&self, id: AddressSpaceId) -> Result<&AddressSpace, AddressSpaceError> {
+        self.spaces
+            .iter()
+            .flatten()
+            .find(|space| space.id() == id)
+            .ok_or(AddressSpaceError::NotFound)
+    }
+
+    pub fn get_mut(&mut self, id: AddressSpaceId) -> Result<&mut AddressSpace, AddressSpaceError> {
+        self.spaces
+            .iter_mut()
+            .flatten()
+            .find(|space| space.id() == id)
+            .ok_or(AddressSpaceError::NotFound)
+    }
+
+    pub fn destroy(&mut self, id: AddressSpaceId) -> Result<(), AddressSpaceError> {
+        let space = self
+            .spaces
+            .iter_mut()
+            .find(|space| space.is_some_and(|space| space.id() == id))
+            .ok_or(AddressSpaceError::NotFound)?;
+        *space = None;
+        Ok(())
+    }
+}
+
+impl<const CAPACITY: usize> Default for AddressSpaceTable<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn align_up(value: u64, alignment: u64) -> Result<u64, AddressSpaceError> {
+    value
+        .checked_add(alignment - 1)
+        .map(|value| value & !(alignment - 1))
+        .ok_or(AddressSpaceError::MappingOverflow)
+}

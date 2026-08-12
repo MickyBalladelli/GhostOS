@@ -54,6 +54,8 @@ impl IntoStatus for SchedulerError {
 pub struct ContextSwitch {
     pub previous: Option<ThreadId>,
     pub next: ThreadId,
+    pub previous_address_space_root: Option<crate::PageTableRoot>,
+    pub next_address_space_root: Option<crate::PageTableRoot>,
 }
 
 pub struct Scheduler {
@@ -148,6 +150,7 @@ impl Scheduler {
         self.threads[slot] = Thread {
             id,
             address_space,
+            address_space_root: None,
             mode,
             state: ThreadState::Ready,
             policy,
@@ -173,6 +176,33 @@ impl Scheduler {
             EventField::unsigned(field::NUMA_SELECTED_NODE, placement.selected_node as u64),
             EventField::unsigned(field::NUMA_LOCALITY, placement.locality as u64),
         );
+        Ok(id)
+    }
+
+    /// Create a user thread bound to its own page-table root.
+    pub fn create_user<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        address_space: AddressSpaceId,
+        root: crate::PageTableRoot,
+        policy: SchedulingPolicy,
+        entry: usize,
+        stack_top: usize,
+    ) -> Result<ThreadId, SchedulerError> {
+        let id = self.create(
+            capabilities,
+            caller,
+            authority,
+            address_space,
+            ExecutionMode::User,
+            policy,
+            entry,
+            stack_top,
+        )?;
+        self.threads[id.slot()].address_space_root = Some(root);
+        self.debug_check();
         Ok(id)
     }
 
@@ -600,7 +630,13 @@ impl Scheduler {
             0x3001,
         ));
         self.debug_check();
-        Some(ContextSwitch { previous, next })
+        Some(ContextSwitch {
+            previous,
+            next,
+            previous_address_space_root: previous
+                .and_then(|id| self.thread(id).ok()?.address_space_root),
+            next_address_space_root: self.thread(next).ok()?.address_space_root,
+        })
     }
 
     pub fn yield_current(&mut self) -> Result<Option<ContextSwitch>, SchedulerError> {
