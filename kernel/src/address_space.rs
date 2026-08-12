@@ -5,9 +5,51 @@ use synos_app::{Mapping, MappingRequest, ProcessContext, RuntimeSegment, Segment
 use crate::task::AddressSpaceId;
 
 pub const PAGE_SIZE: u64 = 4096;
-pub const USER_SPACE_START: u64 = PAGE_SIZE;
+/// Low supervisor identity map used during early kernel execution.
+pub const KERNEL_SPACE_START: u64 = 0;
+pub const KERNEL_SPACE_END: u64 = 4 * 1024 * 1024 * 1024;
+/// User mappings begin in their own x86_64 PML4 slot. The low slot stays
+/// supervisor-only, so user code cannot reach the kernel identity map.
+pub const USER_SPACE_START: u64 = 0x0000_0080_0000_0000;
 pub const USER_SPACE_END: u64 = 0x0000_7fff_ffff_f000;
 pub const MAX_ADDRESS_SPACE_REGIONS: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtualAddressLayout {
+    pub kernel_start: u64,
+    pub kernel_end: u64,
+    pub user_start: u64,
+    pub user_end: u64,
+}
+
+impl VirtualAddressLayout {
+    pub const fn contains_user(self, address: u64, size: u64) -> bool {
+        address >= self.user_start
+            && match address.checked_add(size) {
+                Some(end) => end <= self.user_end,
+                None => false,
+            }
+    }
+
+    pub const fn contains_kernel(self, address: u64, size: u64) -> bool {
+        address >= self.kernel_start
+            && match address.checked_add(size) {
+                Some(end) => end <= self.kernel_end,
+                None => false,
+            }
+    }
+}
+
+pub const VIRTUAL_ADDRESS_LAYOUT: VirtualAddressLayout = VirtualAddressLayout {
+    kernel_start: KERNEL_SPACE_START,
+    kernel_end: KERNEL_SPACE_END,
+    user_start: USER_SPACE_START,
+    user_end: USER_SPACE_END,
+};
+
+pub const fn is_user_range(address: u64, size: u64) -> bool {
+    VIRTUAL_ADDRESS_LAYOUT.contains_user(address, size)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PageTableRoot {
@@ -122,9 +164,7 @@ impl AddressSpace {
             let mut selected = None;
             for _ in 0..MAX_ADDRESS_SPACE_REGIONS {
                 candidate = align_up(candidate, request.alignment)?;
-                if candidate
-                    .checked_add(request.size)
-                    .is_some_and(|end| end <= USER_SPACE_END)
+                if is_user_range(candidate, request.size)
                     && !self.overlaps(candidate, request.size)
                 {
                     selected = Some(candidate);
@@ -136,11 +176,7 @@ impl AddressSpace {
             }
             selected.ok_or(AddressSpaceError::Capacity)?
         };
-        if base < USER_SPACE_START
-            || base
-                .checked_add(request.size)
-                .is_none_or(|end| end > USER_SPACE_END)
-            || self.overlaps(base, request.size)
+        if !is_user_range(base, request.size) || self.overlaps(base, request.size)
         {
             return Err(if request.fixed {
                 AddressSpaceError::MappingConflict
@@ -158,11 +194,7 @@ impl AddressSpace {
 
     pub fn claim(&mut self, mapping: Mapping) -> Result<(), AddressSpaceError> {
         if mapping.size == 0
-            || mapping.base < USER_SPACE_START
-            || mapping
-                .base
-                .checked_add(mapping.size)
-                .is_none_or(|end| end > USER_SPACE_END)
+            || !is_user_range(mapping.base, mapping.size)
             || self.overlaps(mapping.base, mapping.size)
         {
             return Err(AddressSpaceError::MappingConflict)
@@ -251,10 +283,7 @@ impl AddressSpace {
     ) -> Result<(), AddressSpaceError> {
         if size == 0
             || permissions.writable() && permissions.executable()
-            || base < USER_SPACE_START
-            || base
-                .checked_add(size)
-                .is_none_or(|end| end > USER_SPACE_END)
+            || !is_user_range(base, size)
         {
             return Err(AddressSpaceError::InvalidMapping)
         }

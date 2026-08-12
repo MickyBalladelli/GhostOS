@@ -91,7 +91,8 @@ pub use allocator::{
 pub use address_space::{
     AddressSpace, AddressSpaceError, AddressSpaceTable, PageTableRoot,
     MAX_ADDRESS_SPACE_REGIONS, PAGE_SIZE as ADDRESS_SPACE_PAGE_SIZE, USER_SPACE_END,
-    USER_SPACE_START,
+    USER_SPACE_START, KERNEL_SPACE_END, KERNEL_SPACE_START, VIRTUAL_ADDRESS_LAYOUT,
+    VirtualAddressLayout, is_user_range,
 };
 pub use hot_allocator::{
     HotAllocation, HotAllocationError, HotAllocationPlacement, HotAllocatorConfigError,
@@ -314,9 +315,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     {
         let address = request.arguments[0] as usize;
         let length = request.arguments[1] as usize;
-        if address == 0
-            || length > 4096
-            || address.checked_add(length).is_none_or(|end| end > USER_SPACE_END as usize)
+        if !is_user_range(address as u64, length as u64) || length > 4096
         {
             return Response {
                 status: Status::INVALID_ARGUMENT.raw(),

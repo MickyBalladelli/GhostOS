@@ -72,8 +72,7 @@ fn valid_user_range(address: usize, length: usize, alignment: usize) -> bool {
     let Ok(length) = u64::try_from(length) else {
         return false
     };
-    address >= crate::USER_SPACE_START
-        && address.checked_add(length).is_some_and(|end| end <= crate::USER_SPACE_END)
+    crate::is_user_range(address, length)
 }
 
 /// Common raw-pointer boundary used by the architecture entry stubs.

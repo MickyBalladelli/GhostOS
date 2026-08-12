@@ -16,8 +16,8 @@ pub mod paging {
     const ONE_GIB: u64 = 1024 * 1024 * 1024;
     /// Root, kernel paging levels, and the private user mapping levels.
     pub const PROCESS_TABLE_FRAME_COUNT: usize = 9;
-    const USER_MAPPING_PML4_INDEX: usize = 1;
-    const SERVICE_CODE: u64 = 0x0000_0080_0000_0000;
+    const USER_MAPPING_PML4_INDEX: usize = (crate::USER_SPACE_START >> 39) as usize;
+    const SERVICE_CODE: u64 = crate::USER_SPACE_START;
     const SERVICE_REQUEST: u64 = SERVICE_CODE + crate::FRAME_SIZE;
     const SERVICE_RESPONSE: u64 = SERVICE_REQUEST + crate::FRAME_SIZE;
     const SERVICE_DATA: u64 = SERVICE_RESPONSE + crate::FRAME_SIZE;
@@ -46,7 +46,7 @@ pub mod paging {
                     );
                 }
             } else {
-                for directory_index in 0..4 {
+                for directory_index in 0..(crate::KERNEL_SPACE_END / ONE_GIB) as usize {
                     let directory_physical = tables[directory_index + 2];
                     let directory =
                         (directory_physical + physical_offset) as *mut u64;
@@ -119,7 +119,7 @@ pub mod paging {
                 );
             }
             root.write(tables[1] | PRESENT | WRITABLE);
-            for directory_group in 0..4 {
+            for directory_group in 0..(crate::KERNEL_SPACE_END / ONE_GIB) as usize {
                 let directory = (tables[directory_group + 2] + physical_offset) as *mut u64;
                 pdpt.add(directory_group).write(
                     tables[directory_group + 2] | PRESENT | WRITABLE,
