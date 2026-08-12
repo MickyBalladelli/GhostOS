@@ -542,10 +542,15 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## P2: Hardware efficiency and platform reach
 
-- [ ] Add power and thermal policy integration for CPU idle states, frequency,
+- [x] Add power and thermal policy integration for CPU idle states, frequency,
       device runtime power, thermal throttling, and cluster workload placement.
       Done when performance-per-watt and thermal recovery are measured without
       violating latency or correctness budgets.
+      Implementation: [`crates/power/src/policy.rs`](crates/power/src/policy.rs)
+      provides bounded idle, frequency, device-runtime, thermal-recovery, and
+      workload-placement policy with performance-per-watt and latency metrics;
+      [`kernel/src/scheduler.rs`](kernel/src/scheduler.rs) applies placement
+      and idle decisions to scheduler-owned paths.
 - [ ] Add driver capability discovery and graceful degradation for missing
       acceleration, storage features, NIC offloads, GPUs, firmware services,
       and platform timers.

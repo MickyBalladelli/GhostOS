@@ -3,6 +3,7 @@
 
 mod acpi;
 mod hotplug;
+mod policy;
 mod thermal;
 
 pub use acpi::{
@@ -19,4 +20,11 @@ pub use hotplug::{
 pub use thermal::{
     ThermalAction, ThermalActuator, ThermalManager, ThermalReading, ThermalSensor,
     ThermalSupervisor, ThermalTripPoints,
+};
+pub use policy::{
+    CpuIdleState, DevicePowerConfig, DevicePowerState, FrequencyDecision, IdleRequest,
+    PlacementDecision, PowerBudget, PowerClusterConfig, PowerMetrics, PowerPolicy,
+    PowerPolicyError, PowerPolicyIo, ProcessorSet, ThermalRecoveryMetrics, WorkloadClass,
+    WorkloadRequest, MAX_FREQUENCY_POINTS, MAX_POWER_CLUSTERS, MAX_POWER_CPUS,
+    MAX_POWER_DEVICES,
 };

@@ -10,6 +10,10 @@ use synos_observability::{
     ProfileSample, ScalePolicy, emit_capability_trace, info, record_profile_sample,
 };
 use synos_numa::{NumaPlacement, NumaReport, NumaTopology, PlacementKind};
+use synos_power::{
+    CpuIdleState, IdleRequest, PowerClusterConfig, PowerMetrics, PowerPolicy, ProcessorSet,
+    ThermalReading, WorkloadClass, WorkloadRequest,
+};
 use synos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,6 +24,7 @@ pub enum SchedulerError {
     InvalidExecutionMode,
     InvalidPriority,
     InvalidCpuMask,
+    InvalidPowerPolicy,
     NoHousekeepingCore,
     IpcWaitTableFull,
     AccessDenied,
@@ -35,6 +40,7 @@ impl IntoStatus for SchedulerError {
             | Self::InvalidExecutionMode
             | Self::InvalidPriority
             | Self::InvalidCpuMask
+            | Self::InvalidPowerPolicy
             | Self::NoHousekeepingCore
             | Self::IpcWaitTableFull => {
                 Status::new(Severity::Error, facility::KERNEL, 3, 0)
@@ -60,6 +66,7 @@ pub struct Scheduler {
     current_cpu: CpuId,
     ipc_waiters: [Option<IpcWait>; MAX_THREADS],
     numa: NumaPlacement,
+    power: PowerPolicy,
 }
 
 #[derive(Clone, Copy)]
@@ -81,6 +88,7 @@ impl Scheduler {
             current_cpu: CpuId::new(0).expect("CPU 0 is valid"),
             ipc_waiters: [None; MAX_THREADS],
             numa: NumaPlacement::uma(),
+            power: PowerPolicy::new(),
         }
     }
 
@@ -124,6 +132,19 @@ impl Scheduler {
             Some(self.current_cpu.raw() as u16),
             None,
         );
+        let power_placement = self.power.place(WorkloadRequest {
+            affinity: ProcessorSet::all(),
+            class: match policy {
+                SchedulingPolicy::Realtime { .. } => WorkloadClass::LatencyCritical,
+                SchedulingPolicy::Cooperative => WorkloadClass::Background,
+            },
+            runnable: 1,
+            latency_budget_us: match policy {
+                SchedulingPolicy::Realtime { deadline, .. } => deadline.saturating_sub(self.clock),
+                SchedulingPolicy::Cooperative => 0,
+            },
+            preferred_cluster: None,
+        }).ok();
         self.threads[slot] = Thread {
             id,
             address_space,
@@ -132,7 +153,12 @@ impl Scheduler {
             policy,
             persona: ExecutionPersona::anonymous(),
             context: Context::new(entry, stack_top),
-            affinity: CpuMask::all(),
+            affinity: power_placement
+                .map(|placement| CpuMask::from_words(
+                    placement.cpus.raw_words()[0],
+                    placement.cpus.raw_words()[1],
+                ))
+                .unwrap_or_else(CpuMask::all),
             numa_node: placement.selected_node,
             wake_at: 0,
             switches: 0,
@@ -167,6 +193,61 @@ impl Scheduler {
 
     pub const fn numa_report(&self) -> NumaReport {
         self.numa.report()
+    }
+
+    pub const fn power_metrics(&self) -> PowerMetrics {
+        self.power.metrics()
+    }
+
+    pub fn configure_power_clusters<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        clusters: &[PowerClusterConfig],
+    ) -> Result<(), SchedulerError> {
+        self.authorize_system_control(capabilities, caller, authority)?;
+        self.power
+            .replace_clusters(clusters)
+            .map_err(|_| SchedulerError::InvalidPowerPolicy)?;
+        self.debug_check();
+        Ok(())
+    }
+
+    pub fn configure_thermal_policy<const MAX_CAPABILITIES: usize>(
+        &mut self,
+        capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        authority: CapabilityHandle,
+        trips: synos_power::ThermalTripPoints,
+        hysteresis_deci_kelvin: u32,
+    ) -> Result<(), SchedulerError> {
+        self.authorize_system_control(capabilities, caller, authority)?;
+        self.power
+            .configure_thermal(trips, hysteresis_deci_kelvin)
+            .map_err(|_| SchedulerError::InvalidPowerPolicy)?;
+        self.debug_check();
+        Ok(())
+    }
+
+    pub fn update_thermal_policy(&mut self, reading: ThermalReading) -> synos_power::ThermalAction {
+        self.power.update_thermal(reading)
+    }
+
+    pub fn idle_state_on(
+        &mut self,
+        cpu: CpuId,
+        next_wake_us: u64,
+        latency_budget_us: u64,
+    ) -> CpuIdleState {
+        self.power.request_idle(
+            cpu.raw() as u16,
+            IdleRequest {
+                now_us: self.clock,
+                next_wake_us,
+                latency_budget_us,
+            },
+        )
     }
 
     /// Stop a task after proving control over the exact task or its address
@@ -500,6 +581,11 @@ impl Scheduler {
 
         let previous = self.current.take();
         let Some(next) = self.pick_next(self.partition.housekeeping()) else {
+            self.idle_state_on(
+                cpu,
+                self.clock.saturating_add(1_000),
+                1_000,
+            );
             self.debug_check();
             return None;
         };
