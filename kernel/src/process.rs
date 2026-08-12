@@ -636,7 +636,7 @@ impl<
         let mut registers = crate::crash::RegisterState::empty();
         registers.instruction_pointer = context.instruction_pointer as u64;
         registers.stack_pointer = context.stack_pointer as u64;
-        for (destination, value) in registers.general.iter_mut().zip(context.callee_saved) {
+        for (destination, value) in registers.general.iter_mut().zip(context.registers) {
             *destination = value as u64;
         }
         let reason_code = match reason {

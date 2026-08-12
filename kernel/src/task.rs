@@ -152,6 +152,13 @@ pub enum SchedulingPolicy {
 pub struct Context {
     pub instruction_pointer: usize,
     pub stack_pointer: usize,
+    pub flags: usize,
+    /// General registers in ABI order: rax, rbx, rcx, rdx, rsi, rdi, rbp,
+    /// r8-r15, then one reserved slot. Other architectures use the same
+    /// stable register slots for their saved machine state.
+    pub registers: [usize; 16],
+    /// Kept as a compact view for crash reporting and architecture code that
+    /// only needs callee-preserved registers.
     pub callee_saved: [usize; 12],
 }
 
@@ -160,6 +167,8 @@ impl Context {
         Self {
             instruction_pointer,
             stack_pointer,
+            flags: 0x202,
+            registers: [0; 16],
             callee_saved: [0; 12],
         }
     }

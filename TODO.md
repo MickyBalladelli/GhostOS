@@ -8,7 +8,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Create real Ring 3 address spaces.
 - [x] Add user-mode entry and return paths.
 - [x] Add syscall or call-gate entry and dispatch.
-- [ ] Add real register context switching.
+- [x] Add real register context switching.
 - [x] Add process exit, wait, cancellation, and crash reporting.
 - [ ] Prove one native Ring 3 hello-world process runs after boot.
 

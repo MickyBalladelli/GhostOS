@@ -159,6 +159,32 @@ pub mod interrupts {
         reserved: u32,
     }
 
+    #[repr(C)]
+    struct InterruptFrame {
+        r15: u64,
+        r14: u64,
+        r13: u64,
+        r12: u64,
+        r11: u64,
+        r10: u64,
+        r9: u64,
+        r8: u64,
+        rbp: u64,
+        rdi: u64,
+        rsi: u64,
+        rdx: u64,
+        rcx: u64,
+        rbx: u64,
+        rax: u64,
+        vector: u64,
+        error_code: u64,
+        rip: u64,
+        cs: u64,
+        rflags: u64,
+        rsp: u64,
+        ss: u64,
+    }
+
     impl IdtEntry {
         const MISSING: Self = Self {
             offset_low: 0,
@@ -286,7 +312,99 @@ pub mod interrupts {
     }
 
     #[unsafe(no_mangle)]
-    extern "sysv64" fn interrupt_dispatch(vector: u64, error_code: u64) {
+    unsafe fn save_context(frame: *const InterruptFrame, context: &mut crate::Context) {
+        let frame = unsafe { &*frame };
+        context.instruction_pointer = frame.rip as usize;
+        context.stack_pointer = if frame.cs & 3 == 3 {
+            frame.rsp as usize
+        } else {
+            frame as *const InterruptFrame as usize + 20 * size_of::<u64>()
+        };
+        context.flags = frame.rflags as usize;
+        context.registers = [
+            frame.rax as usize,
+            frame.rbx as usize,
+            frame.rcx as usize,
+            frame.rdx as usize,
+            frame.rsi as usize,
+            frame.rdi as usize,
+            frame.rbp as usize,
+            frame.r8 as usize,
+            frame.r9 as usize,
+            frame.r10 as usize,
+            frame.r11 as usize,
+            frame.r12 as usize,
+            frame.r13 as usize,
+            frame.r14 as usize,
+            frame.r15 as usize,
+            0,
+        ];
+        context.callee_saved = [
+            frame.rbx as usize,
+            frame.rbp as usize,
+            frame.r12 as usize,
+            frame.r13 as usize,
+            frame.r14 as usize,
+            frame.r15 as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+    }
+
+    unsafe fn restore_context(
+        frame: *mut InterruptFrame,
+        context: &crate::Context,
+        mode: crate::ExecutionMode,
+        root: Option<crate::PageTableRoot>,
+    ) -> u64 {
+        let frame = unsafe { &mut *frame };
+        frame.rax = context.registers[0] as u64;
+        frame.rbx = context.registers[1] as u64;
+        frame.rcx = context.registers[2] as u64;
+        frame.rdx = context.registers[3] as u64;
+        frame.rsi = context.registers[4] as u64;
+        frame.rdi = context.registers[5] as u64;
+        frame.rbp = context.registers[6] as u64;
+        frame.r8 = context.registers[7] as u64;
+        frame.r9 = context.registers[8] as u64;
+        frame.r10 = context.registers[9] as u64;
+        frame.r11 = context.registers[10] as u64;
+        frame.r12 = context.registers[11] as u64;
+        frame.r13 = context.registers[12] as u64;
+        frame.r14 = context.registers[13] as u64;
+        frame.r15 = context.registers[14] as u64;
+        frame.rip = context.instruction_pointer as u64;
+        frame.rflags = context.flags as u64 | 0x202;
+
+        match mode {
+            crate::ExecutionMode::User => {
+                let Some(root) = root else {
+                    return 1
+                };
+                frame.cs = USER_CODE_SELECTOR as u64;
+                frame.rsp = context.stack_pointer as u64;
+                frame.ss = USER_DATA_SELECTOR as u64;
+                unsafe { super::paging::activate_root(root.frame()) };
+                0
+            }
+            crate::ExecutionMode::Kernel => {
+                frame.cs = KERNEL_CODE_SELECTOR as u64;
+                frame.rsp = context.stack_pointer as u64;
+                1
+            }
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    extern "sysv64" fn interrupt_dispatch(
+        vector: u64,
+        error_code: u64,
+        frame: *mut InterruptFrame,
+    ) -> u64 {
         // The bootstrap CPU remains a housekeeping CPU today. This gate is
         // also the architectural hook used by AP interrupt routing once SMP
         // startup supplies each core's local ID.
@@ -298,7 +416,7 @@ pub mod interrupts {
             !isolated,
         ));
         if isolated {
-            return
+            return 0
         }
         if vector == 14 {
             let fault_address: u64;
@@ -311,7 +429,7 @@ pub mod interrupts {
             }
             let fault = synos_fabric::PageFault::from_x86_error(fault_address, error_code);
             if crate::page_fault::dispatch(fault) {
-                return
+                return 0
             }
             crate::capture_exception(
                 super::capture_registers(fault_address),
@@ -336,18 +454,35 @@ pub mod interrupts {
         }
 
         if (32..48).contains(&vector) {
+            let mut return_mode = 0;
             unsafe {
                 if vector == 32 {
                     let scheduler =
                         (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
-                    let _ = scheduler.tick(PIT_TICK_US);
+                    if let Some(context_switch) = scheduler.tick(PIT_TICK_US) {
+                        if let Some(previous) = context_switch.previous {
+                            if let Ok(context) = scheduler.context_mut(previous) {
+                                save_context(frame, context);
+                            }
+                        }
+                        if let Ok(next) = scheduler.thread(context_switch.next) {
+                            return_mode = restore_context(
+                                frame,
+                                &next.context,
+                                next.mode,
+                                context_switch.next_address_space_root,
+                            );
+                        }
+                    }
                 }
                 if vector >= 40 {
                     outb(0xa0, 0x20);
                 }
                 outb(0x20, 0x20);
             }
+            return return_mode
         }
+        0
     }
 
     unsafe fn remap_pic() {
@@ -446,11 +581,14 @@ synos_isr_common:
     mov rdi, [rsp + 72]
     mov rsi, [rsp + 80]
     call synos_call_gate_dispatch
+    mov qword ptr [rsp + 112], 0
     jmp 2f
 1:
     mov rdi, [rsp + 120]
     mov rsi, [rsp + 128]
+    mov rdx, rsp
     call interrupt_dispatch
+    mov [rsp + 112], rax
 2:
     pop r15
     pop r14
@@ -468,6 +606,13 @@ synos_isr_common:
     pop rbx
     pop rax
     add rsp, 16
+    test rax, rax
+    jz 3f
+    mov rcx, [rsp]
+    mov rdx, [rsp + 24]
+    mov rsp, rdx
+    jmp rcx
+3:
     iretq
 
 .section .rodata
