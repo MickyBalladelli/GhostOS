@@ -114,7 +114,8 @@ pub use page_fault::{
     PageFault, PageFaultDispatchError, PageFaultHandler, PageFaultHandlerError,
 };
 pub use process::{
-    KernelProcessBackend, KernelProcessError, ProcessMemory, DEFAULT_KERNEL_PROCESS_CAPACITY,
+    KernelProcessBackend, KernelProcessError, KernelSupervisorRuntime, NativeServiceImage,
+    ProcessMemory, ServiceImageProvider, DEFAULT_KERNEL_PROCESS_CAPACITY,
 };
 pub use quota::{
     BucketConfig, CapabilityQuota, QuotaContentionReport, QuotaDecision, QuotaPolicy,

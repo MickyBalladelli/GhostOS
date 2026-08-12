@@ -9,7 +9,7 @@ use synos_app::{
     RuntimeSegment, SegmentPermissions, StackRequest, TlsRequest, load_image, DEFAULT_GUARD_PAGES,
     DEFAULT_STACK_BYTES, LoaderError,
 };
-use synos_init::{CrashReason, ExitReason, ProcessId};
+use synos_init::{CrashReason, ExitReason, ProcessId, SpawnRequest, SupervisorRuntime};
 use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
 
@@ -19,6 +19,88 @@ use crate::{
 };
 
 pub const DEFAULT_KERNEL_PROCESS_CAPACITY: usize = 64;
+
+/// Verified native image information supplied by the package/service loader.
+#[derive(Clone, Copy)]
+pub struct NativeServiceImage<'a> {
+    pub bytes: &'a [u8],
+    pub architecture: synos_app::ImageArchitecture,
+    pub heap_bytes: u64,
+    pub limits: ProcessLimits,
+}
+
+/// Resolves the image identity carried by a service manifest to verified ELF
+/// bytes. The kernel never loads an image by name or from an untrusted path.
+pub trait ServiceImageProvider {
+    fn image(&self, image_id: u128) -> Option<NativeServiceImage<'_>>;
+}
+
+/// Real kernel process runtime for [`synos_init::Supervisor`].
+///
+/// Service restart calls `spawn` again after the supervisor's backoff. Service
+/// fencing calls the kernel process backend, which stops the thread, releases
+/// its mappings and address space, and deletes its authority capability.
+pub struct KernelSupervisorRuntime<'a, M, I, const CAPACITY: usize = DEFAULT_KERNEL_PROCESS_CAPACITY,
+    const MAX_CAPABILITIES: usize = { crate::MAX_CAPABILITIES }>
+where
+    M: ProcessMemory,
+    I: ServiceImageProvider,
+{
+    backend: &'a mut KernelProcessBackend<'a, M, CAPACITY, MAX_CAPABILITIES>,
+    images: &'a I,
+}
+
+impl<'a, M, I, const CAPACITY: usize, const MAX_CAPABILITIES: usize>
+    KernelSupervisorRuntime<'a, M, I, CAPACITY, MAX_CAPABILITIES>
+where
+    M: ProcessMemory,
+    I: ServiceImageProvider,
+{
+    pub fn new(
+        backend: &'a mut KernelProcessBackend<'a, M, CAPACITY, MAX_CAPABILITIES>,
+        images: &'a I,
+    ) -> Self {
+        Self { backend, images }
+    }
+
+    pub fn backend(&self) -> &KernelProcessBackend<'a, M, CAPACITY, MAX_CAPABILITIES> {
+        self.backend
+    }
+}
+
+impl<M, I, const CAPACITY: usize, const MAX_CAPABILITIES: usize> SupervisorRuntime
+    for KernelSupervisorRuntime<'_, M, I, CAPACITY, MAX_CAPABILITIES>
+where
+    M: ProcessMemory,
+    I: ServiceImageProvider,
+{
+    type Error = KernelProcessError;
+
+    fn spawn(&mut self, request: SpawnRequest) -> Result<ProcessId, Self::Error> {
+        if request.image_id == 0 || request.capability_profile == 0 {
+            return Err(KernelProcessError::InvalidTransition)
+        }
+        let image = self
+            .images
+            .image(request.image_id)
+            .ok_or(KernelProcessError::NotFound)?;
+        self.backend.spawn(NativeSpawnRequest {
+            image: image.bytes,
+            architecture: image.architecture,
+            expected_payload: None,
+            heap_bytes: image.heap_bytes,
+            arguments: ProcessArguments {
+                argv: &[],
+                environment: &[],
+            },
+            limits: image.limits,
+        })
+    }
+
+    fn fence_process(&mut self, process: ProcessId) -> Result<(), Self::Error> {
+        self.backend.fence(process)
+    }
+}
 
 /// Privileged memory operations needed by the application image loader.
 ///
