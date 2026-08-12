@@ -555,11 +555,16 @@ measured p50/p95/p99 data over optimistic feature claims.
       acceleration, storage features, NIC offloads, GPUs, firmware services,
       and platform timers.
       Done when the selected fallback is visible and keeps semantics stable.
-- [ ] Qualify x86_64, aarch64, Linux, macOS, and Windows host paths with a
+- [x] Qualify x86_64, aarch64, Linux, macOS, and Windows host paths with a
       shared portability matrix for firmware, terminal, disks, networking,
       acceleration, and timekeeping.
       Done when unavailable features are explicit skips with reasons and no
       platform silently changes the data model.
+      Implementation: [`docs/host-portability-matrix.toml`](docs/host-portability-matrix.toml)
+      defines all six host combinations, stable guest model fields, and
+      platform-specific skips; [`scripts/check-vm-platform.py`](scripts/check-vm-platform.py)
+      validates the matrix, probes the current host, and emits skip reasons in
+      machine-readable evidence before the VM matrix runs.
 
 ## Release acceptance gate
 

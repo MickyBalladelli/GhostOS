@@ -4,6 +4,9 @@ set -euo pipefail
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root_dir"
 
+python3 scripts/check-vm-platform.py \
+    --output "${SYNOS_PORTABILITY_REPORT:-build/test-evidence/host-portability.json}"
+
 echo "fast VM matrix"
 cargo test -p synos-vm --lib
 cargo test -p synos-vm --bin synos-vm

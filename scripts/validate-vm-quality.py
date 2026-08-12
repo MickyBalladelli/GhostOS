@@ -208,6 +208,7 @@ def validate_local_quality(errors: list[str]) -> None:
         "scripts/full-validation.sh",
         "scripts/validate-vm-quality.py",
         "scripts/check-vm-platform.py",
+        "docs/host-portability-matrix.toml",
     ):
         check_file(errors, script)
     platform_probe = ROOT / "scripts/check-vm-platform.py"

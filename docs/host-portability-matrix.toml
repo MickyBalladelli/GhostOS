@@ -1,0 +1,76 @@
+# Shared host qualification contract for the VM and its host adapters.
+#
+# `data_model` is deliberately global. A host may skip an adapter, but it may
+# not invent a different guest disk, network, terminal, firmware, or clock
+# shape. The qualification script turns every declared skip into evidence.
+schema = 1
+data_model = "synos-vm-guest-model-v1"
+model_fields = [
+  "guest_architecture",
+  "firmware_mode",
+  "disk_format",
+  "network_backend",
+  "terminal_transcript",
+  "monotonic_time_ns",
+]
+domains = ["firmware", "terminal", "disks", "networking", "acceleration", "timekeeping"]
+
+[[platform]]
+architecture = "x86_64"
+os = "linux"
+firmware = { status = "portable", reason = "BIOS and modeled UEFI are guest-owned; external QEMU firmware is probed separately", supported = ["bios-model", "uefi-model", "qemu-bios", "qemu-uefi"] }
+terminal = { status = "portable", reason = "Unix terminal adapter uses /dev/tty and restores termios on exit or signal", supported = ["raw-mode", "size-query"] }
+disks = { status = "portable", reason = "RAW, fixed VHD, and QCOW2 parsers use the same sector model; host paths are only backing paths", supported = ["raw", "vhd", "qcow2", "atomic-create-lock"] }
+networking = { status = "portable", reason = "Deterministic and UDP user-mode networking keep the guest Ethernet model stable", supported = ["deterministic", "user-nat", "bridged-linux"] }
+acceleration = { status = "host-dependent", reason = "KVM is an optional host handle; software execution remains the semantic reference", supported = ["software", "kvm"] }
+timekeeping = { status = "portable", reason = "Instant-backed monotonic nanoseconds drive guest timers on every host", supported = ["monotonic-instant"] }
+
+[[platform]]
+architecture = "aarch64"
+os = "linux"
+firmware = { status = "portable", reason = "BIOS and modeled UEFI are guest-owned; external QEMU firmware is probed separately", supported = ["bios-model", "uefi-model", "qemu-bios", "qemu-uefi"] }
+terminal = { status = "portable", reason = "Unix terminal adapter uses /dev/tty and restores termios on exit or signal", supported = ["raw-mode", "size-query"] }
+disks = { status = "portable", reason = "RAW, fixed VHD, and QCOW2 parsers use the same sector model; host paths are only backing paths", supported = ["raw", "vhd", "qcow2", "atomic-create-lock"] }
+networking = { status = "portable", reason = "Deterministic and UDP user-mode networking keep the guest Ethernet model stable", supported = ["deterministic", "user-nat", "bridged-linux"] }
+acceleration = { status = "host-dependent", reason = "KVM is an optional host handle; software execution remains the semantic reference", supported = ["software", "kvm"] }
+timekeeping = { status = "portable", reason = "Instant-backed monotonic nanoseconds drive guest timers on every host", supported = ["monotonic-instant"] }
+
+[[platform]]
+architecture = "x86_64"
+os = "macos"
+firmware = { status = "portable", reason = "BIOS and modeled UEFI are guest-owned; external QEMU firmware is probed separately", supported = ["bios-model", "uefi-model", "qemu-bios", "qemu-uefi"] }
+terminal = { status = "portable", reason = "Unix terminal adapter uses /dev/tty and restores termios on exit or signal", supported = ["raw-mode", "size-query"] }
+disks = { status = "portable", reason = "RAW, fixed VHD, and QCOW2 parsers use the same sector model; host paths are only backing paths", supported = ["raw", "vhd", "qcow2", "atomic-create-lock"] }
+networking = { status = "partial", reason = "Deterministic and UDP user-mode networking work; bridged Ethernet is unavailable without Linux AF_PACKET", supported = ["deterministic", "user-nat"], skipped = { bridged = "bridged Ethernet requires Linux AF_PACKET support" } }
+acceleration = { status = "host-dependent", reason = "HVF is an optional host handle; software execution remains the semantic reference", supported = ["software", "hvf"] }
+timekeeping = { status = "portable", reason = "Instant-backed monotonic nanoseconds drive guest timers on every host", supported = ["monotonic-instant"] }
+
+[[platform]]
+architecture = "aarch64"
+os = "macos"
+firmware = { status = "portable", reason = "BIOS and modeled UEFI are guest-owned; external QEMU firmware is probed separately", supported = ["bios-model", "uefi-model", "qemu-bios", "qemu-uefi"] }
+terminal = { status = "portable", reason = "Unix terminal adapter uses /dev/tty and restores termios on exit or signal", supported = ["raw-mode", "size-query"] }
+disks = { status = "portable", reason = "RAW, fixed VHD, and QCOW2 parsers use the same sector model; host paths are only backing paths", supported = ["raw", "vhd", "qcow2", "atomic-create-lock"] }
+networking = { status = "partial", reason = "Deterministic and UDP user-mode networking work; bridged Ethernet is unavailable without Linux AF_PACKET", supported = ["deterministic", "user-nat"], skipped = { bridged = "bridged Ethernet requires Linux AF_PACKET support" } }
+acceleration = { status = "host-dependent", reason = "HVF is an optional host handle; software execution remains the semantic reference", supported = ["software", "hvf"] }
+timekeeping = { status = "portable", reason = "Instant-backed monotonic nanoseconds drive guest timers on every host", supported = ["monotonic-instant"] }
+
+[[platform]]
+architecture = "x86_64"
+os = "windows"
+firmware = { status = "portable", reason = "BIOS and modeled UEFI are guest-owned; external QEMU firmware is probed separately", supported = ["bios-model", "uefi-model", "qemu-bios", "qemu-uefi"] }
+terminal = { status = "portable", reason = "Windows console adapter toggles virtual-terminal modes and restores console state", supported = ["raw-mode", "size-query"] }
+disks = { status = "portable", reason = "RAW, fixed VHD, and QCOW2 parsers use the same sector model; host paths are only backing paths", supported = ["raw", "vhd", "qcow2", "atomic-create-lock"] }
+networking = { status = "partial", reason = "Deterministic and UDP user-mode networking work; bridged Ethernet is unavailable without Linux AF_PACKET", supported = ["deterministic", "user-nat"], skipped = { bridged = "bridged Ethernet requires Linux AF_PACKET support" } }
+acceleration = { status = "host-dependent", reason = "WHPX is an optional host handle; software execution remains the semantic reference", supported = ["software", "whpx"] }
+timekeeping = { status = "portable", reason = "Instant-backed monotonic nanoseconds drive guest timers on every host", supported = ["monotonic-instant"] }
+
+[[platform]]
+architecture = "aarch64"
+os = "windows"
+firmware = { status = "portable", reason = "BIOS and modeled UEFI are guest-owned; external QEMU firmware is probed separately", supported = ["bios-model", "uefi-model", "qemu-bios", "qemu-uefi"] }
+terminal = { status = "portable", reason = "Windows console adapter toggles virtual-terminal modes and restores console state", supported = ["raw-mode", "size-query"] }
+disks = { status = "portable", reason = "RAW, fixed VHD, and QCOW2 parsers use the same sector model; host paths are only backing paths", supported = ["raw", "vhd", "qcow2", "atomic-create-lock"] }
+networking = { status = "partial", reason = "Deterministic and UDP user-mode networking work; bridged Ethernet is unavailable without Linux AF_PACKET", supported = ["deterministic", "user-nat"], skipped = { bridged = "bridged Ethernet requires Linux AF_PACKET support" } }
+acceleration = { status = "host-dependent", reason = "WHPX is an optional host handle; software execution remains the semantic reference", supported = ["software", "whpx"] }
+timekeeping = { status = "portable", reason = "Instant-backed monotonic nanoseconds drive guest timers on every host", supported = ["monotonic-instant"] }

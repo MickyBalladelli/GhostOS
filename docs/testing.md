@@ -255,10 +255,11 @@ second report argument always fails.
 
 Local validation runs formatting, host, VM, no-std, documentation, inventory,
 QEMU, fuzz, coverage, mutation, cross-target, and reproducibility checks when
-the required tools exist. The platform probe records accelerator and QEMU
-prerequisite state as `available` or `skipped` with a reason; missing
+the required tools exist. The platform probe reads the shared host portability
+matrix and records accelerator, firmware, terminal, disk, networking, and
+timekeeping state as `available`, `passed`, or `skipped` with a reason. Missing
 `/dev/kvm`, Hypervisor.framework, WHPX, QEMU, images, or UEFI firmware stays an
-explicit skip.
+explicit skip, and every report carries the same guest data-model identity.
 
 Run the platform probe locally with:
 
