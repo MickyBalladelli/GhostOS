@@ -342,6 +342,31 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             values: [length as u64, 0, 0, 0],
         }
     }
+    if Operation::from_raw(request.operation) == Some(Operation::TerminalRead)
+        && caller.raw() == 9
+    {
+        let address = request.arguments[0] as usize;
+        if !is_user_range(address as u64, 1) {
+            return Response {
+                status: Status::INVALID_ARGUMENT.raw(),
+                flags: 0,
+                values: [0; 4],
+            }
+        }
+        if let Some(byte) = keyboard::read_boot_byte().or_else(console::read_byte) {
+            unsafe { (address as *mut u8).write(byte) };
+            return Response {
+                status: Status::NORMAL.raw(),
+                flags: 0,
+                values: [1, 0, 0, 0],
+            }
+        }
+        return Response {
+            status: Status::NORMAL.raw(),
+            flags: 0,
+            values: [0; 4],
+        }
+    }
     if Operation::from_raw(request.operation) != Some(Operation::Yield) {
         return Response {
             status: Status::INVALID_ARGUMENT.raw(),

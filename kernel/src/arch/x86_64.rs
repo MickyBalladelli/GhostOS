@@ -212,16 +212,27 @@ pub mod paging {
         shell: bool,
     ) {
         let virtual_pages = service_virtual_pages();
-        let mut image = [0u8; 40];
+        let mut image = [0u8; 96];
         image[0..2].copy_from_slice(&[0x48, 0xbf]);
         image[2..10].copy_from_slice(&virtual_pages[1].to_le_bytes());
         image[10..12].copy_from_slice(&[0x48, 0xbe]);
         image[12..20].copy_from_slice(&virtual_pages[2].to_le_bytes());
         if shell {
             image[20..22].copy_from_slice(&[0xcd, 0x80]);
-            image[22..28].copy_from_slice(&[0xc7, 0x07, 0x01, 0x00, 0x00, 0x00]);
+            image[22..28].copy_from_slice(&[0xc7, 0x07, 1, 0, 0, 0]);
             image[28..30].copy_from_slice(&[0xcd, 0x80]);
-            image[30..33].copy_from_slice(&[0xf4, 0xeb, 0xfd]);
+            image[30..36].copy_from_slice(&[0xc7, 0x07, 24, 0, 0, 0]);
+            image[36..38].copy_from_slice(&[0x48, 0xb8]);
+            image[38..46].copy_from_slice(&virtual_pages[3].to_le_bytes());
+            image[46..50].copy_from_slice(&[0x48, 0x89, 0x47, 0x10]);
+            image[50..58].copy_from_slice(&[0x48, 0xc7, 0x47, 0x18, 1, 0, 0, 0]);
+            image[58..60].copy_from_slice(&[0xcd, 0x80]);
+            image[60..64].copy_from_slice(&[0x83, 0x7e, 0x08, 0]);
+            image[64..70].copy_from_slice(&[0x0f, 0x84, 0x0a, 0, 0, 0]);
+            image[70..76].copy_from_slice(&[0xc7, 0x07, 25, 0, 0, 0]);
+            image[76..78].copy_from_slice(&[0xcd, 0x80]);
+            image[78..80].copy_from_slice(&[0xeb, 0xce]);
+            image[80..83].copy_from_slice(&[0xf4, 0xeb, 0xcb]);
         } else {
             // Yield repeatedly while a service waits for work.
             image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfc]);

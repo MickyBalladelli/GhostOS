@@ -1,3 +1,6 @@
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicBool, Ordering};
+
 const DATA_PORT: u16 = 0x60;
 const STATUS_PORT: u16 = 0x64;
 const ENABLE_FIRST_PORT: u8 = 0xae;
@@ -17,9 +20,29 @@ pub struct Keyboard {
     pending_count: usize,
 }
 
+static mut BOOT_KEYBOARD: MaybeUninit<Keyboard> = MaybeUninit::uninit();
+static BOOT_KEYBOARD_READY: AtomicBool = AtomicBool::new(false);
+
+pub fn read_boot_byte() -> Option<u8> {
+    unsafe {
+        if !BOOT_KEYBOARD_READY.swap(true, Ordering::AcqRel) {
+            let keyboard = core::ptr::addr_of_mut!(BOOT_KEYBOARD);
+            (*keyboard).write(Keyboard::empty());
+        }
+        let keyboard = core::ptr::addr_of_mut!(BOOT_KEYBOARD);
+        (*keyboard).assume_init_mut().read_byte()
+    }
+}
+
 impl Keyboard {
     pub fn new() -> Self {
-        let keyboard = Self {
+        let keyboard = Self::empty();
+        unsafe { initialize_controller() }
+        keyboard
+    }
+
+    const fn empty() -> Self {
+        Self {
             left_shift: false,
             right_shift: false,
             control: false,
@@ -28,9 +51,7 @@ impl Keyboard {
             pending: [0; 4],
             pending_start: 0,
             pending_count: 0,
-        };
-        unsafe { initialize_controller() }
-        keyboard
+        }
     }
 
     pub fn read_byte(&mut self) -> Option<u8> {
