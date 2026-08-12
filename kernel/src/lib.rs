@@ -262,6 +262,10 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         "package service registered and started (process={})",
         boot_services.package_process.raw()
     );
+    println!(
+        "shell service registered and started (process={})",
+        boot_services.shell_process.raw()
+    );
 
     // Early hardware setup is complete. Start the first user-space process.
     #[cfg(all(
@@ -286,14 +290,8 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+#[allow(unsafe_code)]
 fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
-    if Operation::from_raw(request.operation) != Some(Operation::Yield) {
-        return Response {
-            status: Status::INVALID_ARGUMENT.raw(),
-            flags: 0,
-            values: [0; 4],
-        }
-    }
     let (name, bit) = match caller.raw() {
         1 => ("synos-init", 1u32 << 1),
         2 => ("synos-fsd", 1u32 << 2),
@@ -303,8 +301,39 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         6 => ("synos-auditd", 1u32 << 6),
         7 => ("synos-authd", 1u32 << 7),
         8 => ("synos-pkgd", 1u32 << 8),
+        9 => ("synos-shell", 1u32 << 9),
         _ => ("unknown-service", 0),
     };
+    if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite)
+        && caller.raw() == 9
+    {
+        let address = request.arguments[0] as usize;
+        let length = request.arguments[1] as usize;
+        if address == 0
+            || length > 4096
+            || address.checked_add(length).is_none_or(|end| end > USER_SPACE_END as usize)
+        {
+            return Response {
+                status: Status::INVALID_ARGUMENT.raw(),
+                flags: 0,
+                values: [0; 4],
+            }
+        }
+        let bytes = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
+        console::write_bytes(bytes);
+        return Response {
+            status: Status::NORMAL.raw(),
+            flags: 0,
+            values: [length as u64, 0, 0, 0],
+        }
+    }
+    if Operation::from_raw(request.operation) != Some(Operation::Yield) {
+        return Response {
+            status: Status::INVALID_ARGUMENT.raw(),
+            flags: 0,
+            values: [0; 4],
+        }
+    }
     if bit != 0 && SERVICE_REPORTS.fetch_or(bit, Ordering::AcqRel) & bit == 0 {
         println!("{} running in Ring 3 (address space {})", name, caller.raw());
     }
@@ -331,6 +360,7 @@ fn boot_synos_init(
         scheduler,
         physical_offset,
         AddressSpaceId::new(1).expect("boot address space id"),
+        false,
     );
     let service_processes = [
         services.filesystem_process,
@@ -340,8 +370,9 @@ fn boot_synos_init(
         services.audit_process,
         services.authentication_process,
         services.package_process,
+        services.shell_process,
     ];
-    for (address_space_raw, process) in (2u32..=8).zip(service_processes) {
+    for (address_space_raw, process) in (2u32..=9).zip(service_processes) {
         let address_space = AddressSpaceId::new(address_space_raw)
             .expect("boot service address space id");
         let (thread, _) = boot_service_process(
@@ -349,6 +380,7 @@ fn boot_synos_init(
             scheduler,
             physical_offset,
             address_space,
+            address_space_raw == 9,
         );
         println!(
             "starting service entrypoint (process={}, thread={}, address space={})",
@@ -371,7 +403,7 @@ fn boot_synos_init(
             fatal_kernel_halt(Status::CORRUPT)
         });
     println!(
-        "starting synos-init in Ring 3 (thread={}, services=7)",
+        "starting synos-init in Ring 3 (thread={}, services=8)",
         init_thread.raw()
     );
     arch::enter_user(&context, init_root)
@@ -387,6 +419,7 @@ fn boot_service_process(
     scheduler: &mut Scheduler,
     physical_offset: u64,
     address_space: AddressSpaceId,
+    shell: bool,
 ) -> (ThreadId, PageTableRoot) {
     let mut tables = [0u64; arch::paging::DEMO_TABLE_FRAME_COUNT];
     for frame in &mut tables {
@@ -408,7 +441,7 @@ fn boot_service_process(
     }) else {
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     };
-    unsafe { arch::paging::write_service_image(&pages, physical_offset) };
+    unsafe { arch::paging::write_service_image(&pages, physical_offset, shell) };
 
     let mut capabilities: CapabilitySpace<MAX_CAPABILITIES> = CapabilitySpace::new();
     let authority = capabilities

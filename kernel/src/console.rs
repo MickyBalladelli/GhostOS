@@ -38,6 +38,29 @@ pub fn _print(args: fmt::Arguments<'_>) {
     LOCKED.store(false, Ordering::Release);
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub fn write_bytes(bytes: &[u8]) {
+    while LOCKED
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        core::hint::spin_loop()
+    }
+
+    unsafe {
+        let console = &raw mut CONSOLE;
+        (*console).begin_write();
+        for byte in bytes {
+            (*console).write_byte(*byte);
+        }
+        (*console).end_write()
+    }
+    LOCKED.store(false, Ordering::Release);
+}
+
 pub fn read_byte() -> Option<u8> {
     #[cfg(target_arch = "x86_64")]
     {

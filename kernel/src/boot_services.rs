@@ -39,6 +39,10 @@ const PACKAGE_SERVICE_ID: u32 = 0x504b_4744;
 const PACKAGE_PROCESS_ID: u64 = 8;
 const PACKAGE_IMAGE_ID: u128 = 0x5359_4e4f_5350_4b47_4400_0000_0000_0001;
 const PACKAGE_CAPABILITY_PROFILE: u64 = 0x504b_4744_5f52_4f4f;
+const SHELL_SERVICE_ID: u32 = 0x5348_454c;
+const SHELL_PROCESS_ID: u64 = 9;
+const SHELL_IMAGE_ID: u128 = 0x5359_4e4f_5353_4845_4c4c_0000_0000_0001;
+const SHELL_CAPABILITY_PROFILE: u64 = 0x5348_454c_4c5f_524f;
 const FILESYSTEM_BLOCKS: usize = 64;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -51,6 +55,7 @@ static LOGGING_READY: AtomicBool = AtomicBool::new(false);
 static AUDIT_READY: AtomicBool = AtomicBool::new(false);
 static AUTHENTICATION_READY: AtomicBool = AtomicBool::new(false);
 static PACKAGE_READY: AtomicBool = AtomicBool::new(false);
+static SHELL_READY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
 pub struct BootServices {
@@ -61,6 +66,7 @@ pub struct BootServices {
     pub audit_process: ProcessId,
     pub authentication_process: ProcessId,
     pub package_process: ProcessId,
+    pub shell_process: ProcessId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,6 +94,7 @@ struct BootRuntime {
     audit_process: ProcessId,
     authentication_process: ProcessId,
     package_process: ProcessId,
+    shell_process: ProcessId,
 }
 
 impl SupervisorRuntime for BootRuntime {
@@ -115,6 +122,9 @@ impl SupervisorRuntime for BootRuntime {
         if request.service == package_service_id() {
             return Ok(self.package_process)
         }
+        if request.service == shell_service_id() {
+            return Ok(self.shell_process)
+        }
         Err(StartError::Process)
     }
 
@@ -125,7 +135,8 @@ impl SupervisorRuntime for BootRuntime {
             || process == self.logging_process
             || process == self.audit_process
             || process == self.authentication_process
-            || process == self.package_process)
+            || process == self.package_process
+            || process == self.shell_process)
             .then_some(())
             .ok_or(StartError::Process)
     }
@@ -139,6 +150,7 @@ pub fn start() -> Result<BootServices, StartError> {
         && AUDIT_READY.load(Ordering::Acquire)
         && AUTHENTICATION_READY.load(Ordering::Acquire)
         && PACKAGE_READY.load(Ordering::Acquire)
+        && SHELL_READY.load(Ordering::Acquire)
     {
         return Ok(BootServices {
             filesystem_process: filesystem_process_id().ok_or(StartError::Process)?,
@@ -148,6 +160,7 @@ pub fn start() -> Result<BootServices, StartError> {
             audit_process: audit_process_id().ok_or(StartError::Process)?,
             authentication_process: authentication_process_id().ok_or(StartError::Process)?,
             package_process: package_process_id().ok_or(StartError::Process)?,
+            shell_process: shell_process_id().ok_or(StartError::Process)?,
         })
     }
 
@@ -158,6 +171,7 @@ pub fn start() -> Result<BootServices, StartError> {
     let audit_process = audit_process_id().ok_or(StartError::Process)?;
     let authentication_process = authentication_process_id().ok_or(StartError::Process)?;
     let package_process = package_process_id().ok_or(StartError::Process)?;
+    let shell_process = shell_process_id().ok_or(StartError::Process)?;
     let mut daemon = Daemon::new(SynFs::<FILESYSTEM_BLOCKS>::new())
         .map_err(|_| StartError::Daemon)?;
     daemon
@@ -180,7 +194,8 @@ pub fn start() -> Result<BootServices, StartError> {
     let authentication_name =
         ServiceName::new("synos-authd").map_err(|_| StartError::Supervisor)?;
     let package_name = ServiceName::new("synos-pkgd").map_err(|_| StartError::Supervisor)?;
-    let mut supervisor = Supervisor::<7>::new();
+    let shell_name = ServiceName::new("synos-shell").map_err(|_| StartError::Supervisor)?;
+    let mut supervisor = Supervisor::<8>::new();
     supervisor
         .register(ServiceSpec {
             id: filesystem_service_id(),
@@ -258,6 +273,17 @@ pub fn start() -> Result<BootServices, StartError> {
                 .map_err(|_| StartError::Supervisor)?,
         })
         .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
+            id: shell_service_id(),
+            name: shell_name,
+            kind: ServiceKind::System,
+            image_id: SHELL_IMAGE_ID,
+            capability_profile: SHELL_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
 
     let mut runtime = BootRuntime {
         filesystem_process,
@@ -267,6 +293,7 @@ pub fn start() -> Result<BootServices, StartError> {
         audit_process,
         authentication_process,
         package_process,
+        shell_process,
     };
     for service in [
         filesystem_service_id(),
@@ -276,6 +303,7 @@ pub fn start() -> Result<BootServices, StartError> {
         audit_service_id(),
         authentication_service_id(),
         package_service_id(),
+        shell_service_id(),
     ] {
         let event = supervisor
             .start(service, &mut runtime)
@@ -297,6 +325,7 @@ pub fn start() -> Result<BootServices, StartError> {
     AUDIT_READY.store(true, Ordering::Release);
     AUTHENTICATION_READY.store(true, Ordering::Release);
     PACKAGE_READY.store(true, Ordering::Release);
+    SHELL_READY.store(true, Ordering::Release);
     Ok(BootServices {
         filesystem_process,
         storage_process,
@@ -305,6 +334,7 @@ pub fn start() -> Result<BootServices, StartError> {
         audit_process,
         authentication_process,
         package_process,
+        shell_process,
     })
 }
 
@@ -336,6 +366,10 @@ pub const fn package_service_id() -> ServiceId {
     ServiceId::new(PACKAGE_SERVICE_ID).unwrap()
 }
 
+pub const fn shell_service_id() -> ServiceId {
+    ServiceId::new(SHELL_SERVICE_ID).unwrap()
+}
+
 const fn filesystem_process_id() -> Option<ProcessId> {
     ProcessId::new(FILESYSTEM_PROCESS_ID)
 }
@@ -362,4 +396,8 @@ const fn authentication_process_id() -> Option<ProcessId> {
 
 const fn package_process_id() -> Option<ProcessId> {
     ProcessId::new(PACKAGE_PROCESS_ID)
+}
+
+const fn shell_process_id() -> Option<ProcessId> {
+    ProcessId::new(SHELL_PROCESS_ID)
 }

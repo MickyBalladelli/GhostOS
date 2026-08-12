@@ -149,14 +149,24 @@ pub mod paging {
     /// # Safety
     /// `pages` must be the four writable frames passed to
     /// [`install_service_root`].
-    pub unsafe fn write_service_image(pages: &[u64; 4], physical_offset: u64) {
-        let mut image = [0u8; 24];
+    pub unsafe fn write_service_image(
+        pages: &[u64; 4],
+        physical_offset: u64,
+        shell: bool,
+    ) {
+        let mut image = [0u8; 32];
         image[0..2].copy_from_slice(&[0x48, 0xbf]);
         image[2..10].copy_from_slice(&pages[1].to_le_bytes());
         image[10..12].copy_from_slice(&[0x48, 0xbe]);
         image[12..20].copy_from_slice(&pages[2].to_le_bytes());
-        // Yield repeatedly while init waits for its first service work.
-        image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfc]);
+        if shell {
+            image[20..22].copy_from_slice(&[0xcd, 0x80]);
+            image[22..28].copy_from_slice(&[0xc7, 0x07, 0x01, 0x00, 0x00, 0x00]);
+            image[28..30].copy_from_slice(&[0xeb, 0xf4]);
+        } else {
+            // Yield repeatedly while a service waits for work.
+            image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfc]);
+        }
 
         unsafe {
             core::ptr::write_bytes(
@@ -179,13 +189,29 @@ pub mod paging {
                 0,
                 crate::FRAME_SIZE as usize,
             );
+            if shell {
+                let banner = b"SynOS service shell ready\r\nsynos> ";
+                core::ptr::copy_nonoverlapping(
+                    banner.as_ptr(),
+                    (pages[3] + physical_offset) as *mut u8,
+                    banner.len(),
+                );
+            }
             core::ptr::copy_nonoverlapping(
                 image.as_ptr(),
                 (pages[0] + physical_offset) as *mut u8,
                 image.len(),
             );
-            ((pages[1] + physical_offset) as *mut synos_runtime::Request)
-                .write(synos_runtime::Request::new(synos_runtime::Operation::Yield));
+            let mut request = synos_runtime::Request::new(if shell {
+                synos_runtime::Operation::TerminalWrite
+            } else {
+                synos_runtime::Operation::Yield
+            });
+            if shell {
+                request.arguments[0] = pages[3];
+                request.arguments[1] = b"SynOS service shell ready\r\nsynos> ".len() as u64;
+            }
+            ((pages[1] + physical_offset) as *mut synos_runtime::Request).write(request);
             ((pages[2] + physical_offset) as *mut synos_runtime::Response)
                 .write(synos_runtime::Response::EMPTY);
         }
