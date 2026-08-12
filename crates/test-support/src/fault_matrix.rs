@@ -348,6 +348,17 @@ impl FaultInjectionController {
     }
 }
 
+/// Adapter for one real boot, storage, backup, package, RPC, cluster, AI, or
+/// device workflow. It must inject the selected fault and return evidence
+/// after the workflow reaches a stable normal or degraded state.
+pub trait FaultWorkflowRunner {
+    fn run(
+        &mut self,
+        target: FaultTarget,
+        injection: &mut FaultInjectionController,
+    ) -> RecoveryEvidence;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecoveryEvidence {
     pub target: FaultTarget,
@@ -442,6 +453,7 @@ pub enum MatrixError {
     DuplicateSideEffect,
     DuplicateEvidence,
     Capacity,
+    InjectionNotObserved,
     Incomplete { recorded: usize, expected: usize },
 }
 
@@ -458,6 +470,9 @@ impl fmt::Display for MatrixError {
             Self::DuplicateSideEffect => write!(formatter, "recovery duplicated a side effect"),
             Self::DuplicateEvidence => write!(formatter, "recovery evidence was recorded twice"),
             Self::Capacity => write!(formatter, "fault matrix evidence capacity is too small"),
+            Self::InjectionNotObserved => {
+                write!(formatter, "workflow did not observe its selected fault")
+            }
             Self::Incomplete { recorded, expected } => write!(formatter, "fault matrix has {recorded} of {expected} cells"),
         }
     }
@@ -513,6 +528,19 @@ impl<const CAPACITY: usize> FaultMatrix<CAPACITY> {
         *slot = Some(evidence);
         self.recorded += 1;
         Ok(())
+    }
+
+    pub fn run<R: FaultWorkflowRunner>(&mut self, runner: &mut R) -> Result<(), MatrixError> {
+        for cell in matrix() {
+            let target = FaultTarget::new(cell.fault, cell.workflow);
+            let mut injection = FaultInjectionController::new(target);
+            let evidence = runner.run(target, &mut injection);
+            if !injection.fired() {
+                return Err(MatrixError::InjectionNotObserved)
+            }
+            self.record(evidence)?;
+        }
+        self.complete()
     }
 
     pub fn complete(&self) -> Result<(), MatrixError> {

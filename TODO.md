@@ -91,12 +91,12 @@ Build the real operating system core before adding more advanced features.
 
 ## P1: Make updates and recovery real
 
-- [ ] Build the complete power-loss, disk-full, device-reset, and network-failure matrix.
-- [ ] Add rolling, canary, blue/green, and emergency update strategies.
-- [ ] Add boot-time automatic rollback after failed health checks.
-- [ ] Add a recovery shell that works when normal services fail.
-- [ ] Add backup restore that recreates a bootable system.
-- [ ] Test repeated reboot, suspend, resume, hotplug, and service restart cycles.
+- [x] Build the complete power-loss, disk-full, device-reset, and network-failure matrix.
+- [x] Add rolling, canary, blue/green, and emergency update strategies.
+- [x] Add boot-time automatic rollback after failed health checks.
+- [x] Add a recovery shell that works when normal services fail.
+- [x] Add backup restore that recreates a bootable system.
+- [x] Test repeated reboot, suspend, resume, hotplug, and service restart cycles.
 
 ## P2: Usability and compatibility
 

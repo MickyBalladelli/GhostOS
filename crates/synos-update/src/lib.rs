@@ -5,6 +5,7 @@ mod hotswap;
 mod patch;
 mod rollout;
 mod drain;
+mod resilience;
 
 pub use hotswap::{
     HotSwapCoordinator, HotSwapError, HotSwapReceipt, HotSwapRequest, HotSwapRuntime,
@@ -26,6 +27,12 @@ pub use drain::{
     DrainAuditEvent, DrainCoordinator, DrainError, DrainObservation, DrainPhase, DrainPlan,
     DrainProgress, DrainReceipt, DrainResource, DrainRuntime, DrainState, DrainTarget,
     ForcedCleanup, DEFAULT_DRAIN_TIMEOUT_MS, DEFAULT_FORCE_TIMEOUT_MS, DRAIN_RESOURCE_COUNT,
+};
+pub use resilience::{
+    BootDecision, BootHealthRecord, BootHealthState, BootRollbackController,
+    BootRollbackError, BootRollbackRuntime, RecoveryCommand, RecoveryResult,
+    RecoveryShell, RecoveryShellError, RecoveryShellRuntime, RecoveryStatus,
+    DEFAULT_BOOT_HEALTH_ATTEMPTS,
 };
 pub use synos_ipc::InheritableDescriptor;
 

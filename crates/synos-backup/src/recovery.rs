@@ -543,6 +543,13 @@ impl<const MAX_PATHS: usize> RequiredBootPaths<MAX_PATHS> {
     pub const fn new(paths: [Option<FileName>; MAX_PATHS]) -> Self {
         Self { paths }
     }
+
+    pub fn contains(&self, path: &str) -> bool {
+        self.paths
+            .iter()
+            .flatten()
+            .any(|required| required.as_str() == path)
+    }
 }
 
 impl<const MAX_BLOCKS: usize, const MAX_PATHS: usize> BootVerifier<MAX_BLOCKS>
@@ -591,6 +598,47 @@ pub struct RestoreReport<const MAX_SKIPPED: usize> {
 impl<const MAX_FILES: usize, const MAX_CHUNKS: usize>
     BackupManifest<MAX_FILES, MAX_CHUNKS>
 {
+    /// Restore a volume only when the final boot verifier passes.
+    pub fn restore_bootable<
+        const MAX_BLOCKS: usize,
+        const MAX_FILE_BYTES: usize,
+        const MAX_SKIPPED: usize,
+    >(
+        &self,
+        target: &mut SynFs<MAX_BLOCKS>,
+        reader: &mut impl ObjectReader,
+        key: EncryptionKey,
+        observed_generation: u64,
+        started_tick: u64,
+        completed_tick: u64,
+        verifier: &impl BootVerifier<MAX_BLOCKS>,
+    ) -> Result<RestoreReport<MAX_SKIPPED>, RecoveryError> {
+        let checkpoint = target.create_checkpoint()?;
+        let report = self.restore::<MAX_BLOCKS, MAX_FILE_BYTES, MAX_SKIPPED>(
+            target,
+            reader,
+            key,
+            observed_generation,
+            started_tick,
+            completed_tick,
+            verifier,
+        );
+        let report = match report {
+            Ok(report) => report,
+            Err(error) => {
+                let _ = target.release_checkpoint(checkpoint.id);
+                return Err(error)
+            }
+        };
+        if !report.verified || !report.bootable {
+            target.rollback_to_checkpoint(checkpoint.id)?;
+            target.release_checkpoint(checkpoint.id)?;
+            return Err(RecoveryError::NotBootable)
+        }
+        target.release_checkpoint(checkpoint.id)?;
+        Ok(report)
+    }
+
     pub fn restore<const MAX_BLOCKS: usize, const MAX_FILE_BYTES: usize, const MAX_SKIPPED: usize>(
         &self,
         target: &mut SynFs<MAX_BLOCKS>,
@@ -751,6 +799,7 @@ pub enum RecoveryError {
     ObjectTooLarge,
     SkippedCapacity,
     VerificationFailed,
+    NotBootable,
     UnsupportedConfiguration,
 }
 
@@ -774,6 +823,7 @@ impl IntoStatus for RecoveryError {
             Self::Crypto(_)
             | Self::ObjectCorrupt
             | Self::VerificationFailed
+            | Self::NotBootable
             | Self::ManifestIncomplete => Status::CORRUPT,
             Self::InvalidBudget
             | Self::InvalidResumeOffset
