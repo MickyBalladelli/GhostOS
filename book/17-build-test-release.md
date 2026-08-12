@@ -85,6 +85,31 @@ changed, missing, or unexplained evidence record fails validation.
 
 Package the VM release only after the evidence run passes:
 
+First build the release report. It joins correctness results with the latency
+percentiles, declared resource ceilings, fault-recovery RTO samples, supported
+CPU scale tiers, and known limits. Fault recovery input must be a signed or
+otherwise retained JSON report with `revision`, `samples`, `fault`, `workflow`,
+`observed_rto_ms`, and `rto_budget_ms` fields:
+
+```sh
+python3 scripts/release-report.py --write \
+  --evidence-dir build/test-evidence/<run-id> \
+  --recovery-report build/recovery/fault-recovery-report.json \
+  --output build/release/release-report.json
+```
+
+The command refuses failed or inconclusive correctness evidence, missing
+p50/p95/p99 data, missing resource ceilings, over-budget recovery samples, or
+an empty known-limits section. Verify it independently with:
+
+```sh
+python3 scripts/release-report.py --check \
+  --evidence-dir build/test-evidence/<run-id> \
+  --report build/release/release-report.json
+```
+
+Then package the VM release:
+
 ```sh
 python3 scripts/package-vm-release.py \
   --output build/release/synos-vm.tar.gz \
@@ -92,11 +117,14 @@ python3 scripts/package-vm-release.py \
   --artifact build/bios/synos-bios.img \
   --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
   --evidence-dir build/test-evidence/<run-id> \
+  --release-report build/release/release-report.json \
   --attestation-dir build/release/attestations \
   --firmware bios --firmware uefi
 ```
 
-The archive manifest records SHA-256 digests, source revision, firmware
+The archive contains the verified `release-report.json`. Its manifest records
+the report digest alongside the other release inputs. The report records
+SHA-256 digests, source revision, firmware
 coverage, default device topology, every executed evidence record, and known
 host limitations. It also carries the exact changelog and its digest. Failed
 evidence prevents packaging; skipped evidence stays in the manifest with its

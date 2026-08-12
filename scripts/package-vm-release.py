@@ -180,6 +180,7 @@ def write_archive(
     manifest: dict[str, object],
     artifacts: list[tuple[str, pathlib.Path]],
     changelog: pathlib.Path,
+    release_report: pathlib.Path,
     evidence_root: pathlib.Path,
     evidence_files: Iterable[pathlib.Path],
     attestation_files: Iterable[pathlib.Path],
@@ -206,6 +207,7 @@ def write_archive(
                     info.gname = ""
                     archive.addfile(info, io.BytesIO(manifest_bytes))
                     add_file(archive, changelog, "CHANGELOG.md", timestamp)
+                    add_file(archive, release_report, "release-report.json", timestamp)
                     for name, path in artifacts:
                         add_file(archive, path, f"artifacts/{name}", timestamp)
                     for path in evidence_files:
@@ -224,6 +226,12 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=pathlib.Path, help="output .tar.gz archive")
     parser.add_argument("--artifact", action="append", required=True, help="artifact PATH or NAME=PATH")
     parser.add_argument("--evidence-dir", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--release-report",
+        required=True,
+        type=pathlib.Path,
+        help="verified report produced by scripts/release-report.py",
+    )
     parser.add_argument(
         "--attestation-dir",
         required=True,
@@ -244,6 +252,22 @@ def main() -> int:
             raise ValueError("output archive must not replace an input artifact")
         evidence_root = args.evidence_dir.expanduser().resolve()
         records, evidence_files = evidence_records(evidence_root)
+        release_report = args.release_report.expanduser().resolve()
+        if not release_report.is_file():
+            raise ValueError(f"release report does not exist: {release_report}")
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/release-report.py"),
+                "--check",
+                "--evidence-dir",
+                str(evidence_root),
+                "--report",
+                str(release_report),
+            ],
+            check=True,
+            cwd=ROOT,
+        )
         attestation_root = args.attestation_dir.expanduser().resolve()
         if not attestation_root.is_dir():
             raise ValueError(f"attestation directory does not exist: {attestation_root}")
@@ -283,6 +307,7 @@ def main() -> int:
             "firmware_modes": sorted(set(args.firmware)),
             "artifacts": [artifact_entry(name, path) for name, path in artifacts],
             "changelog": {"path": "CHANGELOG.md", "sha256": sha256(CHANGELOG)},
+            "release_report": {"path": "release-report.json", "sha256": sha256(release_report)},
             "device_topology": DEFAULT_TOPOLOGY,
             "test_evidence": records,
             "attestations": {
@@ -307,6 +332,7 @@ def main() -> int:
             manifest,
             artifacts,
             CHANGELOG,
+            release_report,
             evidence_root,
             evidence_files,
             attestation_files,

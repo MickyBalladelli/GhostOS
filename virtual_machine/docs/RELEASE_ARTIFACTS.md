@@ -6,6 +6,7 @@ reproducible `tar.gz` archive and refuses to package failed evidence:
 ```text
 release archive/
 ├── release-manifest.json
+├── release-report.json
 ├── CHANGELOG.md
 ├── artifacts/
 │   ├── synos-vm
@@ -24,15 +25,24 @@ The archive has manifest schema `1`. `release-manifest.json` contains:
 | `firmware_modes` | Firmware modes covered by this artifact (`bios`, `uefi`) |
 | `artifacts` | Each packaged file's name, size, and SHA-256 digest |
 | `changelog` | The packaged changelog path and SHA-256 digest |
+| `release_report` | The verified release report path and SHA-256 digest |
 | `device_topology` | Default guest device names, transports, addresses, and interrupt vectors |
 | `test_evidence` | Evidence JSON paths, digests, tier, test ID, state, command, firmware, host, and skip reason |
 | `known_host_limitations` | Hardware acceleration, terminal, networking, migration, and optional-test limits |
 
-The package command requires explicit `--artifact`, `--evidence-dir`, and one
-or more `--firmware` values. Artifact paths are stored only by basename in the
+The package command requires explicit `--artifact`, `--evidence-dir`,
+`--release-report`, and one or more `--firmware` values. Artifact paths are
+stored only by basename in the
 manifest; host paths do not leak into the release metadata. Evidence files are
 copied under `evidence/` and their paths are relative to the supplied evidence
 directory.
+
+`release-report.json` uses the `synos-release-report` schema. It contains the
+correctness result inventory, p50/p95/p99 latency summaries, resource
+ceilings, measured fault-recovery RTO samples and percentiles, supported CPU
+scale tiers, known limits, and source digests. Generate and verify it with
+`scripts/release-report.py` before packaging. The report is bounded to 4096
+correctness records, 1024 latency metrics, and 1024 recovery samples.
 
 Skipped evidence is allowed only when its record includes a prerequisite or
 reason. Failed evidence is never releaseable. Consumers must verify the

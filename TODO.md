@@ -586,8 +586,13 @@ measured p50/p95/p99 data over optimistic feature claims.
       in roadmap size. Scalability limit: one bounded metadata record per
       checklist item. Rollback notes: revert the validator and regenerate the
       prior schema-1 metadata before releasing.
-- [ ] Release reports include correctness results, p50/p95/p99 data, resource
+- [x] Release reports include correctness results, p50/p95/p99 data, resource
       ceilings, fault recovery times, supported scale tier, and known limits.
+      Implementation: [`scripts/release-report.py`](scripts/release-report.py)
+      produces and verifies a bounded `synos-release-report` from retained
+      evidence, benchmark summaries, resource budgets, and fault-recovery
+      samples; [`scripts/package-vm-release.py`](scripts/package-vm-release.py)
+      requires the verified report and carries it in the release archive.
 - [ ] No release claims “scalable,” “durable,” “secure,” or “real-time” without
       a named workload, measured threshold, host configuration, and retained
       artifact.
