@@ -16,6 +16,8 @@ pub mod contention;
 pub mod crash;
 pub mod cow;
 pub mod dma;
+#[allow(unsafe_code)]
+mod driver_capabilities;
 pub mod dlm;
 pub mod ipc;
 pub mod invariants;
@@ -161,6 +163,13 @@ static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static mut BOOT_SERVICE_CAPABILITIES:
+    [MaybeUninit<CapabilitySpace<MAX_CAPABILITIES>>; 14] =
+    [const { MaybeUninit::uninit() }; 14];
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static SERVICE_READY: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(
     target_arch = "x86_64",
@@ -226,11 +235,11 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     SCHEDULER_READY.store(true, Ordering::Release);
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
-    let pci_device_count = pci::discover();
+    let pci_inventory = pci::discover();
     println!(
         "PCI discovery complete ({} device{})",
-        pci_device_count,
-        if pci_device_count == 1 { "" } else { "s" }
+        pci_inventory.len(),
+        if pci_inventory.len() == 1 { "" } else { "s" }
     );
     let acpi = power::discover(boot_info);
     if let Some(platform) = acpi {
@@ -325,6 +334,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         boot_info,
         scheduler_clock,
         acpi,
+        &pci_inventory,
     );
 
     #[cfg(not(all(
@@ -550,6 +560,7 @@ fn boot_synos_init(
     boot_info: &'static BootInfo,
     scheduler_clock: u64,
     acpi: Option<synos_power::AcpiPlatform>,
+    pci_inventory: &pci::PciInventory,
 ) -> ! {
     unsafe {
         shell::initialize(
@@ -567,6 +578,8 @@ fn boot_synos_init(
         physical_offset,
         AddressSpaceId::new(1).expect("boot address space id"),
         false,
+        1,
+        pci_inventory,
     );
     let service_processes = [
         services.filesystem_process,
@@ -591,6 +604,8 @@ fn boot_synos_init(
             physical_offset,
             address_space,
             address_space_raw == 9,
+            address_space_raw as u8,
+            pci_inventory,
         );
         println!(
             "starting service entrypoint (process={}, thread={}, address space={})",
@@ -630,6 +645,8 @@ fn boot_service_process(
     physical_offset: u64,
     address_space: AddressSpaceId,
     shell: bool,
+    role: u8,
+    pci_inventory: &pci::PciInventory,
 ) -> (ThreadId, PageTableRoot) {
     let mut tables = [0u64; arch::paging::PROCESS_TABLE_FRAME_COUNT];
     for frame in &mut tables {
@@ -646,8 +663,37 @@ fn boot_service_process(
         *page = address;
     }
 
+    if role as usize >= 14 {
+        fatal_kernel_halt(Status::INVALID_ARGUMENT)
+    }
+    let capabilities = unsafe {
+        let slots = core::ptr::addr_of_mut!(BOOT_SERVICE_CAPABILITIES)
+            as *mut MaybeUninit<CapabilitySpace<MAX_CAPABILITIES>>;
+        (*slots.add(role as usize)).write(CapabilitySpace::new());
+        &mut *slots.add(role as usize).cast::<CapabilitySpace<MAX_CAPABILITIES>>()
+    };
+    let authority = capabilities
+        .mint_root(
+            AddressSpaceId::KERNEL,
+            CapabilityObject::AddressSpace(address_space),
+            Rights::ALL,
+        )
+        .expect("boot address-space capability");
+    let driver_grant = driver_capabilities::grant(
+        capabilities,
+        address_space,
+        role,
+        pci_inventory,
+    )
+    .unwrap_or_else(|error| fatal_kernel_halt(error.status()));
+
     let Some(root) = (unsafe {
-        arch::paging::install_service_root(&tables, &pages, physical_offset)
+        arch::paging::install_service_root(
+            &tables,
+            &pages,
+            physical_offset,
+            driver_grant.mmio_mappings(),
+        )
     }) else {
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     };
@@ -657,20 +703,16 @@ fn boot_service_process(
             physical_offset,
             address_space.raw() as u8,
             shell,
-        )
+        );
+        arch::paging::write_service_resources(
+            &pages,
+            physical_offset,
+            &driver_grant.manifest,
+        );
     };
-
-    let mut capabilities: CapabilitySpace<MAX_CAPABILITIES> = CapabilitySpace::new();
-    let authority = capabilities
-        .mint_root(
-            AddressSpaceId::KERNEL,
-            CapabilityObject::AddressSpace(address_space),
-            Rights::ALL,
-        )
-        .expect("boot address-space capability");
     let thread = scheduler
         .create_user(
-            &capabilities,
+            capabilities,
             AddressSpaceId::KERNEL,
             authority,
             address_space,

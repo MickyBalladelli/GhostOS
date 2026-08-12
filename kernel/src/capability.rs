@@ -135,6 +135,7 @@ impl PhysicalRange {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilityObject {
     UntypedMemory(PhysicalRange),
+    Mmio(PhysicalRange),
     MemoryRegion(SharedRegionId),
     AddressSpace(AddressSpaceId),
     Thread(crate::task::ThreadId),
@@ -257,6 +258,23 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
             rights,
             None,
             Some(memory),
+        )
+    }
+
+    /// Mint a device-owned MMIO window. The backing range is preserved so the
+    /// driver can map only the BAR window granted by the kernel.
+    pub fn mint_mmio(
+        &mut self,
+        owner: AddressSpaceId,
+        physical: PhysicalRange,
+        rights: Rights,
+    ) -> Result<CapabilityHandle, CapabilityError> {
+        self.insert(
+            owner,
+            CapabilityObject::Mmio(physical),
+            rights,
+            None,
+            Some(physical),
         )
     }
 

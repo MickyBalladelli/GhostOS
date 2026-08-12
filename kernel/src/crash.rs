@@ -198,6 +198,7 @@ fn capability_context() -> CapabilityContext {
 fn object_kind(object: CapabilityObject) -> u8 {
     match object {
         CapabilityObject::UntypedMemory(_) => 1,
+        CapabilityObject::Mmio(_) => 11,
         CapabilityObject::MemoryRegion(_) => 2,
         CapabilityObject::AddressSpace(_) => 3,
         CapabilityObject::Thread(_) => 4,

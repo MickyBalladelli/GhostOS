@@ -7,6 +7,8 @@ pub mod paging {
     const PRESENT: u64 = 1;
     const WRITABLE: u64 = 1 << 1;
     const USER: u64 = 1 << 2;
+    const WRITE_THROUGH: u64 = 1 << 3;
+    const CACHE_DISABLE: u64 = 1 << 4;
     const HUGE_PAGE: u64 = 1 << 7;
     const NO_EXECUTE: u64 = 1 << 63;
     const EFER_MSR: u32 = 0xc000_0080;
@@ -133,6 +135,7 @@ pub mod paging {
         tables: &[u64; PROCESS_TABLE_FRAME_COUNT],
         pages: &[u64; SERVICE_PAGE_COUNT],
         physical_offset: u64,
+        mmio_mappings: &[Option<crate::driver_capabilities::MmioMapping>],
     ) -> Option<crate::PageTableRoot> {
         if tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0)
             || pages.iter().any(|page| *page == 0 || *page % crate::FRAME_SIZE != 0)
@@ -187,6 +190,49 @@ pub mod paging {
                 user_pt
                     .add(index)
                     .write(*page | permissions);
+            }
+            for mapping in mmio_mappings.iter().flatten() {
+                if mapping.physical.start % crate::FRAME_SIZE != 0
+                    || mapping.physical.length % crate::FRAME_SIZE != 0
+                    || mapping.physical.length == 0
+                    || mapping.physical.length > crate::driver_capabilities::SERVICE_MMIO_STRIDE
+                    || mapping.virtual_address % crate::FRAME_SIZE != 0
+                    || mapping.virtual_address < crate::driver_capabilities::SERVICE_MMIO_BASE
+                {
+                    return None
+                }
+                let Some(end) = mapping
+                    .virtual_address
+                    .checked_add(mapping.physical.length)
+                else {
+                    return None
+                };
+                if end > crate::USER_SPACE_START + 2 * 1024 * 1024 {
+                    return None
+                }
+                let first_page = ((mapping.virtual_address - crate::USER_SPACE_START)
+                    / crate::FRAME_SIZE) as usize;
+                let page_count = (mapping.physical.length / crate::FRAME_SIZE) as usize;
+                for page_index in 0..page_count {
+                    let Some(physical) = mapping
+                        .physical
+                        .start
+                        .checked_add(page_index as u64 * crate::FRAME_SIZE)
+                    else {
+                        return None
+                    };
+                    user_pt
+                        .add(first_page + page_index)
+                        .write(
+                            physical
+                                | PRESENT
+                                | WRITABLE
+                                | USER
+                                | WRITE_THROUGH
+                                | CACHE_DISABLE
+                                | no_execute,
+                        );
+                }
             }
         }
 
@@ -243,6 +289,28 @@ pub mod paging {
                 );
             }
             ((pages[SERVICE_CODE_PAGE_COUNT] + physical_offset) as *mut u8).write(role);
+        }
+    }
+
+    /// Publish capability handles and already-authorized MMIO virtual ranges
+    /// in the driver service's read/write state page.
+    ///
+    /// # Safety
+    /// `pages` must be the private frames passed to `install_service_root`.
+    pub unsafe fn write_service_resources(
+        pages: &[u64; SERVICE_PAGE_COUNT],
+        physical_offset: u64,
+        manifest: &crate::driver_capabilities::ServiceResourceManifest,
+    ) {
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                manifest as *const _ as *const u8,
+                (pages[SERVICE_CODE_PAGE_COUNT]
+                    + physical_offset
+                    + crate::driver_capabilities::SERVICE_RESOURCE_STATE_OFFSET)
+                    as *mut u8,
+                core::mem::size_of_val(manifest),
+            )
         }
     }
 

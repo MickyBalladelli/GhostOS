@@ -41,7 +41,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Discover PCI devices during boot.
 - [x] Start the PCI, AHCI, NVMe, and Ethernet driver services.
-- [ ] Connect driver DMA and MMIO access to kernel capabilities.
+- [x] Connect driver DMA and MMIO access to kernel capabilities.
 - [ ] Add real block-device request and completion paths.
 - [ ] Mount SynFS from a physical disk.
 - [ ] Load the system manifest and service packages from SynFS.

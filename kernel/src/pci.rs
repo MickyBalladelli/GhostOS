@@ -4,6 +4,33 @@
 ))]
 use synos_legacy_pc_drivers::pci::{enumerate, PortConfig};
 
+use synos_legacy_pc_drivers::PciDevice;
+
+pub(crate) const MAX_PCI_DEVICES: usize = 64;
+
+#[derive(Clone, Copy)]
+pub(crate) struct PciInventory {
+    devices: [Option<PciDevice>; MAX_PCI_DEVICES],
+    count: usize,
+}
+
+impl PciInventory {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            devices: [None; MAX_PCI_DEVICES],
+            count: 0,
+        }
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.count
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = PciDevice> + '_ {
+        self.devices[..self.count].iter().flatten().copied()
+    }
+}
+
 /// Enumerate PCI devices before driver services start.
 ///
 /// The driver crate keeps this scan heap-free. The kernel records the result
@@ -13,11 +40,15 @@ use synos_legacy_pc_drivers::pci::{enumerate, PortConfig};
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-pub(crate) fn discover() -> usize {
+pub(crate) fn discover() -> PciInventory {
     let mut config = PortConfig;
-    let mut count = 0;
+    let mut inventory = PciInventory::empty();
     enumerate(&mut config, |device| {
-        count += 1;
+        if inventory.count == MAX_PCI_DEVICES {
+            return
+        }
+        inventory.devices[inventory.count] = Some(device);
+        inventory.count += 1;
         crate::println!(
             "PCI {:02x}:{:02x}.{} vendor={:04x} device={:04x} class={:02x}:{:02x}.{:02x}",
             device.address.bus,
@@ -30,13 +61,13 @@ pub(crate) fn discover() -> usize {
             device.programming_interface,
         )
     });
-    count
+    inventory
 }
 
 #[cfg(not(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 )))]
-pub(crate) const fn discover() -> usize {
-    0
+pub(crate) const fn discover() -> PciInventory {
+    PciInventory::empty()
 }

@@ -8,6 +8,9 @@ enum {
     OP_SERVICE_READY = 42,
     OP_SERVICE_HEARTBEAT = 43,
     SERVICE_STATE = 0x0000008000004000ULL,
+    SERVICE_RESOURCE_STATE = SERVICE_STATE + 8,
+    SERVICE_RESOURCE_MAGIC = 0x53594e4f44525653ULL,
+    SERVICE_RESOURCE_VERSION = 1,
 };
 
 struct request {
@@ -25,6 +28,23 @@ struct response {
     u64 values[4];
 };
 
+struct service_resource {
+    u32 kind;
+    u32 reserved;
+    u64 capability;
+    u64 dma_capability;
+    u64 physical;
+    u64 virtual_address;
+    u64 length;
+};
+
+struct service_resource_manifest {
+    u64 magic;
+    u32 version;
+    u32 count;
+    struct service_resource resources[16];
+};
+
 static void call(u16 operation, u64 first, u64 second)
 {
     struct request request = {0};
@@ -40,12 +60,23 @@ __attribute__((section(".text._start"), noreturn))
 void _start(void)
 {
     volatile const u8 *state = (volatile const u8 *)SERVICE_STATE;
+    volatile const struct service_resource_manifest *resources =
+        (volatile const struct service_resource_manifest *)SERVICE_RESOURCE_STATE;
     u64 role = *state;
     u64 heartbeat = 0;
+
+    if (resources->magic != SERVICE_RESOURCE_MAGIC
+        || resources->version != SERVICE_RESOURCE_VERSION
+        || resources->count > 16) {
+        resources = (volatile const struct service_resource_manifest *)0;
+    }
 
     call(OP_SERVICE_READY, role, 0);
     for (;;) {
         heartbeat++;
+        if (resources != 0 && resources->count != 0) {
+            heartbeat += resources->count;
+        }
         call(OP_SERVICE_HEARTBEAT, role, heartbeat);
     }
 }
