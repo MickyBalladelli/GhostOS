@@ -42,6 +42,8 @@ pub mod persona;
 mod power;
 #[allow(unsafe_code)]
 mod persistence;
+#[allow(unsafe_code)]
+mod pci;
 pub mod partition;
 pub mod process;
 pub mod scheduler;
@@ -224,6 +226,12 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     SCHEDULER_READY.store(true, Ordering::Release);
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
+    let pci_device_count = pci::discover();
+    println!(
+        "PCI discovery complete ({} device{})",
+        pci_device_count,
+        if pci_device_count == 1 { "" } else { "s" }
+    );
     let acpi = power::discover(boot_info);
     if let Some(platform) = acpi {
         let _ = power::enable(&platform);
