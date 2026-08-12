@@ -1,4 +1,4 @@
-use core::mem::MaybeUninit;
+use core::{fmt, mem::MaybeUninit};
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
@@ -68,6 +68,29 @@ const HELP_CATEGORIES: [&str; 10] = [
 struct ShellLineRender {
     line: Text<MAX_LINE_BYTES>,
     cursor: usize,
+}
+
+struct ShellRedraw<'a> {
+    left: usize,
+    text: &'a str,
+    erase_tail: bool,
+    tail: usize,
+}
+
+impl fmt::Display for ShellRedraw<'_> {
+    fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.left != 0 {
+            write!(output, "\x1b[{}D", self.left)?;
+        }
+        output.write_str(self.text)?;
+        if self.erase_tail {
+            output.write_str("\x1b[K")?;
+        }
+        if self.tail != 0 {
+            write!(output, "\x1b[{}D", self.tail)?;
+        }
+        Ok(())
+    }
 }
 
 impl ShellLineRender {
@@ -1262,17 +1285,15 @@ fn redraw<const HISTORY: usize>(
             prefix -= 1;
         }
 
-        if previous_cursor > prefix {
-            crate::print!("\x1b[{}D", previous_cursor - prefix);
-        }
-        crate::print!("{}", &current[prefix..]);
-        if previous.len() > current.len() {
-            crate::print!("\x1b[K");
-        }
-        let tail = current.len().saturating_sub(cursor);
-        if tail != 0 {
-            crate::print!("\x1b[{}D", tail);
-        }
+        crate::print!(
+            "{}",
+            ShellRedraw {
+                left: previous_cursor - prefix,
+                text: &current[prefix..],
+                erase_tail: previous.len() > current.len(),
+                tail: current.len().saturating_sub(cursor),
+            }
+        );
     }
 
     rendered.line.clear();
