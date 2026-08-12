@@ -21,7 +21,10 @@ python3 scripts/validate-documentation.py
 It checks Markdown links, the book table of contents, the crate catalog,
 generated source maps, roadmap mappings, and the test inventory together.
 Every checkbox in `TODO.md` also has owner, issue, risk, and evidence metadata
-in [`roadmap-metadata.toml`](roadmap-metadata.toml).
+in [`roadmap-metadata.toml`](roadmap-metadata.toml). Checked items additionally
+require code, direct evidence, compatibility impact, performance impact,
+scalability limit, and rollback notes; the roadmap metadata validator rejects
+completed records that omit any of them.
 
 The same check discovers every `TODO*.md` roadmap and compares it with the
 `roadmap_validation.paths` and `[[roadmap]]` evidence mappings in

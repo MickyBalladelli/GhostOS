@@ -41,7 +41,8 @@ measured p50/p95/p99 data over optimistic feature claims.
       revocation, memory visibility, interrupt races, scheduler preemption, and
       wakeup-after-HLT behavior.
       Done when the same seed reproduces the same interleaving and the suite
-      reports the minimal failing schedule.
+      reports the minimal failing schedule. Implementation:
+      [`kernel/src/litmus.rs`](kernel/src/litmus.rs).
 - [x] Replace hand-maintained ABI assumptions with generated, versioned ABI
       descriptions shared by kernel, runtime, VM, Rust SDK, and Swift client.
       Done when incompatible frames fail with stable status codes before any
@@ -515,6 +516,7 @@ measured p50/p95/p99 data over optimistic feature claims.
       random seeds, device completions, scheduler decisions, and configuration
       digests while excluding secrets.
       Done when a failure can be replayed on another supported host.
+      Implementation: [`crates/synos-replay/src/bundle.rs`](crates/synos-replay/src/bundle.rs).
 - [x] Add compatibility and differential tests against independent filesystem,
       network, terminal, firmware, and serialization references.
       Done when divergences produce minimized inputs and a documented decision.
@@ -538,7 +540,9 @@ measured p50/p95/p99 data over optimistic feature claims.
       identity without reading internal logs.
       Implementation: status guidance is rendered by the shell and JSON error
       schema; the Apple client presents action, impact, retry safety, and audit
-      identity in an accessible operator notice.
+      identity in an accessible operator notice. See
+      [`clients/apple/Sources/SynOSControlUI/OperatorNoticeView.swift`](clients/apple/Sources/SynOSControlUI/OperatorNoticeView.swift)
+      and [`kernel/src/shell.rs`](kernel/src/shell.rs).
 
 ## P2: Hardware efficiency and platform reach
 
@@ -555,6 +559,7 @@ measured p50/p95/p99 data over optimistic feature claims.
       acceleration, storage features, NIC offloads, GPUs, firmware services,
       and platform timers.
       Done when the selected fallback is visible and keeps semantics stable.
+      Implementation: [`virtual_machine/src/driver_capabilities.rs`](virtual_machine/src/driver_capabilities.rs).
 - [x] Qualify x86_64, aarch64, Linux, macOS, and Windows host paths with a
       shared portability matrix for firmware, terminal, disks, networking,
       acceleration, and timekeeping.
@@ -568,8 +573,19 @@ measured p50/p95/p99 data over optimistic feature claims.
 
 ## Release acceptance gate
 
-- [ ] Every completed item has code, direct evidence, owner, risk, compatibility
+- [x] Every completed item has code, direct evidence, owner, risk, compatibility
       impact, performance impact, scalability limit, and rollback notes.
+      Implementation: [`scripts/validate-roadmap-metadata.py`](scripts/validate-roadmap-metadata.py)
+      generates schema-2 records in [`docs/roadmap-metadata.toml`](docs/roadmap-metadata.toml)
+      and rejects completed items missing any required field. Direct evidence is
+      keyed by the stable roadmap ID and checked with
+      `python3 scripts/validate-roadmap-metadata.py --check`.
+      Owner: release-engineering. Risk: high. Compatibility impact: metadata
+      schema changes from version 1 to version 2; consumers must reject older
+      records until regenerated. Performance impact: validation-only and linear
+      in roadmap size. Scalability limit: one bounded metadata record per
+      checklist item. Rollback notes: revert the validator and regenerate the
+      prior schema-1 metadata before releasing.
 - [ ] Release reports include correctness results, p50/p95/p99 data, resource
       ceilings, fault recovery times, supported scale tier, and known limits.
 - [ ] No release claims “scalable,” “durable,” “secure,” or “real-time” without
