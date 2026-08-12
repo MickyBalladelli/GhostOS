@@ -3,6 +3,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod allocator;
+#[allow(unsafe_code)]
+mod boot_services;
 pub mod address_space;
 pub mod hot_allocator;
 #[allow(unsafe_code)]
@@ -227,6 +229,13 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         MAX_CAPABILITIES,
         task::MAX_THREADS,
         scheduler_clock
+    );
+
+    let filesystem_process = boot_services::start()
+        .unwrap_or_else(|error| fatal_kernel_halt(error.status()));
+    println!(
+        "filesystem service registered and started (process={})",
+        filesystem_process.raw()
     );
 
     // Early hardware setup is complete. Start the first user-space process.

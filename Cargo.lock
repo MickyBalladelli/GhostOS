@@ -728,6 +728,7 @@ dependencies = [
  "synos-power",
  "synos-runtime",
  "synos-status",
+ "synos-synfs",
  "synos-system-model",
  "synos-test-support",
 ]

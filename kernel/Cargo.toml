@@ -41,6 +41,7 @@ synos-power = { path = "../crates/power" }
 syn-shell = { path = "../crates/syn-shell" }
 synos-status = { path = "../crates/status" }
 synos-runtime = { path = "../crates/runtime" }
+synos-synfs = { path = "../crates/synfs" }
 synos-system-model = { path = "../crates/system-model" }
 
 [dev-dependencies]

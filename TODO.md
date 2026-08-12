@@ -15,7 +15,7 @@ Build the real operating system core before adding more advanced features.
 ## P0: Start system services
 
 - [x] Make the kernel start `synos-init` after early hardware setup.
-- [ ] Register and start the filesystem service.
+- [x] Register and start the filesystem service.
 - [ ] Register and start the storage service.
 - [ ] Register and start the network service.
 - [ ] Register and start logging and audit services.
