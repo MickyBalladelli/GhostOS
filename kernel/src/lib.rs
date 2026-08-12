@@ -385,11 +385,59 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     let Some(name) = service_name(role) else {
         return syscall_error(Status::ACCESS_DENIED)
     };
-    if request.abi_version != synos_runtime::ABI_SCHEMA_VERSION
-        || request.flags != 0
-        || request.reserved != 0
-        || request.capability != 0
-    {
+    if request.abi_version != synos_runtime::ABI_SCHEMA_VERSION || request.reserved != 0 {
+        return syscall_error(Status::INVALID_ARGUMENT)
+    }
+    if role == 9 {
+        if let Some(operation) = Operation::from_raw(request.operation)
+            && matches!(
+                operation,
+                Operation::SynFsOpen
+                    | Operation::SynFsClose
+                    | Operation::SynFsRead
+                    | Operation::SynFsWrite
+                    | Operation::SynFsMkdir
+                    | Operation::SynFsRmdir
+                    | Operation::SynFsList
+                    | Operation::SynFsDelete
+            )
+        {
+            let address = request.arguments[0];
+            let length = request.arguments[1];
+            let writable = request.arguments[2];
+            if operation == Operation::SynFsClose {
+                if request.arguments[..4] != [0; 4] || request.arguments[4..] != [0; 2] {
+                    return syscall_error(Status::INVALID_ARGUMENT)
+                }
+                return boot_services::dispatch_shell_filesystem(
+                    operation,
+                    request.flags,
+                    request.capability,
+                    0,
+                    None,
+                )
+            }
+            if request.arguments[3] != 0
+                || writable > 1
+                || length == 0
+                || length > synos_fsd::MAX_IPC_BUFFER_BYTES as u64
+                || !arch::paging::service_user_range(address, length, writable != 0)
+            {
+                return syscall_error(Status::INVALID_ARGUMENT)
+            }
+            let bytes = unsafe {
+                core::slice::from_raw_parts_mut(address as *mut u8, length as usize)
+            };
+            return boot_services::dispatch_shell_filesystem(
+                operation,
+                request.flags,
+                request.capability,
+                request.arguments[4],
+                Some(bytes),
+            )
+        }
+    }
+    if request.flags != 0 || request.capability != 0 {
         return syscall_error(Status::INVALID_ARGUMENT)
     }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite)
@@ -447,9 +495,6 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if ready & bit == 0 {
             SERVICE_READY.store(ready | bit, Ordering::Release);
             println!("{} ready in Ring 3 (address space {})", name, role);
-            if role == 9 {
-                shell::present()
-            }
         }
         return syscall_success([role as u64, 0, 0, 0])
     }

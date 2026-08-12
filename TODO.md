@@ -100,7 +100,7 @@ Build the real operating system core before adding more advanced features.
 
 ## P2: Usability and compatibility
 
-- [ ] Move normal filesystem commands out of Ring 0.
+- [x] Move normal filesystem commands out of Ring 0.
 - [ ] Add a stable shell session and terminal service.
 - [ ] Expand POSIX compatibility beyond the current small syscall set.
 - [ ] Add process resource limits visible to users and operators.

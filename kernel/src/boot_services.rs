@@ -1,7 +1,7 @@
 //! Services started by the first user-space boot sequence.
 
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use synos_fsd::{Daemon, ProcessRights};
 use synos_init::{
@@ -65,6 +65,7 @@ type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
 
 static mut FILESYSTEM_DAEMON: MaybeUninit<FilesystemDaemon> = MaybeUninit::uninit();
 static FILESYSTEM_READY: AtomicBool = AtomicBool::new(false);
+static SHELL_FILESYSTEM_AUTHORITY: AtomicU64 = AtomicU64::new(0);
 static STORAGE_READY: AtomicBool = AtomicBool::new(false);
 static NETWORK_READY: AtomicBool = AtomicBool::new(false);
 static LOGGING_READY: AtomicBool = AtomicBool::new(false);
@@ -243,6 +244,18 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
             ),
         )
         .map_err(|_| StartError::Daemon)?;
+    let shell_authority = daemon
+        .register_process(
+            synos_fsd::ProcessId::new(shell_process.raw()).ok_or(StartError::Process)?,
+            ProcessRights::from_bits(
+                ProcessRights::READ.bits()
+                    | ProcessRights::WRITE.bits()
+                    | ProcessRights::DELETE.bits()
+                    | ProcessRights::ADMIN.bits(),
+            ),
+        )
+        .map_err(|_| StartError::Daemon)?;
+    SHELL_FILESYSTEM_AUTHORITY.store(shell_authority.raw(), Ordering::Release);
 
     let filesystem_name = ServiceName::new("synos-fsd").map_err(|_| StartError::Supervisor)?;
     let storage_name = ServiceName::new("synos-storaged").map_err(|_| StartError::Supervisor)?;
@@ -459,6 +472,82 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         nvme_process,
         ethernet_process,
     })
+}
+
+/// Dispatch a filesystem request issued by the Ring 3 shell.
+///
+/// The shell owns command parsing and presentation. Ring 0 only validates the
+/// user buffer and forwards this already-shaped request to the filesystem
+/// daemon with the shell's attenuated authority.
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn dispatch_shell_filesystem(
+    operation: synos_runtime::Operation,
+    flags: u16,
+    capability: u64,
+    offset: u64,
+    buffer: Option<&mut [u8]>,
+) -> synos_runtime::Response {
+    let Some(process) = synos_fsd::ProcessId::new(SHELL_PROCESS_ID as u64) else {
+        return synos_runtime::Response {
+            status: Status::ACCESS_DENIED.raw(),
+            flags: 0,
+            values: [0; 4],
+        }
+    };
+    let Some(fs_operation) = (match operation {
+        synos_runtime::Operation::SynFsOpen => Some(synos_fsd::Operation::Open),
+        synos_runtime::Operation::SynFsClose => Some(synos_fsd::Operation::Close),
+        synos_runtime::Operation::SynFsRead => Some(synos_fsd::Operation::Read),
+        synos_runtime::Operation::SynFsWrite => Some(synos_fsd::Operation::Write),
+        synos_runtime::Operation::SynFsMkdir => Some(synos_fsd::Operation::Mkdir),
+        synos_runtime::Operation::SynFsRmdir => Some(synos_fsd::Operation::Rmdir),
+        synos_runtime::Operation::SynFsList => Some(synos_fsd::Operation::List),
+        synos_runtime::Operation::SynFsDelete => Some(synos_fsd::Operation::Delete),
+        _ => None,
+    }) else {
+        return synos_runtime::Response {
+            status: Status::INVALID_ARGUMENT.raw(),
+            flags: 0,
+            values: [0; 4],
+        }
+    };
+    let authority = synos_fsd::Capability::from_raw(
+        SHELL_FILESYSTEM_AUTHORITY.load(Ordering::Acquire),
+    );
+    let Some(authority) = authority else {
+        return synos_runtime::Response {
+            status: Status::BUSY.raw(),
+            flags: 0,
+            values: [0; 4],
+        }
+    };
+    let request_capability = match fs_operation {
+        synos_fsd::Operation::Open
+        | synos_fsd::Operation::Mkdir
+        | synos_fsd::Operation::Rmdir
+        | synos_fsd::Operation::List
+        | synos_fsd::Operation::Delete => authority,
+        _ => match synos_fsd::Capability::from_raw(capability) {
+            Some(capability) => capability,
+            None => authority,
+        },
+    };
+    let request = synos_fsd::Request::new(fs_operation, process)
+        .with_flags(synos_fsd::Flags::from_bits(flags))
+        .with_capability(request_capability)
+        .with_offset(offset);
+    let response = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    }
+    .dispatch(request, buffer);
+    synos_runtime::Response {
+        status: response.status.raw(),
+        flags: 0,
+        values: response.values,
+    }
 }
 
 pub const fn filesystem_service_id() -> ServiceId {

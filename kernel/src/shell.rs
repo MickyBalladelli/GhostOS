@@ -3,13 +3,6 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use syn_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
-    file_editor::{EditorMode, FileEditor, FileEditorAction},
-    filesystem::{
-        DeleteMetadata, DirectoryEntry as ShellDirectoryEntry, DirectoryPage,
-        DirectoryRemovalMetadata, EntryType, FileMetadata, FileOutput, FilesystemExecutor,
-        FilesystemSource, LinkPage,
-        Path as ShellPath, PathCompletionPage,
-    },
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
     parser::{CommandCall, CommandRegistry, RouteId, Value},
     render::{OutputFormat, render},
@@ -28,7 +21,6 @@ use crate::monitor::{MonitorState, MonitorView, MAX_LOCKS};
 use crate::scheduler::Scheduler;
 use crate::task::{AddressSpaceId, CpuId, CpuMask, ThreadId};
 use crate::dlm::{DistributedLockManager, NodeFenceTable, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
-use crate::persistence::PersistentStore;
 
 const HELP_ROUTE: u16 = 1;
 const SHOW_SYSTEM_ROUTE: u16 = 2;
@@ -60,7 +52,7 @@ static SHELL_PRESENTED: AtomicBool = AtomicBool::new(false);
 static SHELL_AUTHORIZED: AtomicBool = AtomicBool::new(false);
 static SHELL_SESSION_EXPIRES: AtomicU64 = AtomicU64::new(0);
 static SHELL_SESSION_EPOCH: AtomicU64 = AtomicU64::new(0);
-const HELP_CATEGORIES: [&str; 10] = [
+const HELP_CATEGORIES: [&str; 9] = [
     "SHELL",
     "SYSTEM",
     "PROCESS",
@@ -68,7 +60,6 @@ const HELP_CATEGORIES: [&str; 10] = [
     "MONITOR",
     "CONTROL",
     "CLUSTER",
-    "FILESYSTEM",
     "FIREWALL",
     "NETWORK",
 ];
@@ -215,8 +206,6 @@ pub(crate) unsafe fn initialize(
     register_control_commands(registry);
     syn_shell::cluster::register_cluster_commands_without_help(registry)
         .expect("kernel cluster command registry has capacity");
-    syn_shell::filesystem::register_filesystem_commands(registry)
-        .expect("kernel filesystem command registry has capacity");
     syn_shell::firewall::register_firewall_commands(registry)
         .expect("kernel firewall command registry has capacity");
     syn_shell::network::register_network_commands(registry)
@@ -308,7 +297,6 @@ fn process_input_byte(
             if let Err(error) = complete_line(
                 &mut session.editor,
                 registry,
-                executor,
                 &mut session.line_render,
             ) {
                 crate::println!();
@@ -327,8 +315,6 @@ fn process_input_byte(
                     registry,
                     interpreter,
                     executor,
-                    &mut session.keyboard,
-                    &mut session.usb_keyboard,
                     session.acpi.as_ref(),
                 )
             }
@@ -394,8 +380,6 @@ fn execute_line(
     registry: &CommandRegistry<COMMAND_CAPACITY>,
     interpreter: &mut Interpreter,
     executor: &mut KernelExecutor,
-    keyboard: &mut crate::keyboard::Keyboard,
-    usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
     acpi: Option<&AcpiPlatform>,
 ) {
     if !session_authorized_at(executor.scheduler().clock()) {
@@ -420,45 +404,6 @@ fn execute_line(
     };
     if program.background {
         print_operator_error("shell error", Status::BUSY);
-        return;
-    }
-
-    if program.stage_count() == 1
-        && program
-            .stage_ref(0)
-            .is_some_and(|command| !command.json() && is_full_directory_command(command))
-    {
-        if let Some(command) = program.stage(0) {
-            if let Err(status) = executor.print_directory(command, keyboard, usb_keyboard) {
-                print_operator_error(status_reason(status), status)
-            }
-        }
-        return;
-    }
-
-    if program.stage_count() == 1
-        && program
-            .stage_ref(0)
-            .is_some_and(|command| !command.json() && is_full_type_command(command))
-    {
-        if let Some(command) = program.stage(0) {
-            if let Err(status) = executor.print_type(command, keyboard, usb_keyboard) {
-                print_operator_error(status_reason(status), status)
-            }
-        }
-        return;
-    }
-
-    if program.stage_count() == 1
-        && program
-            .stage_ref(0)
-            .is_some_and(|command| !command.json() && is_full_edit_command(command))
-    {
-        if let Some(command) = program.stage(0) {
-            if let Err(status) = executor.edit_file(command, keyboard, usb_keyboard, acpi) {
-                print_operator_error(status_reason(status), status)
-            }
-        }
         return;
     }
 
@@ -563,6 +508,7 @@ fn execute_line(
     }
 }
 
+#[cfg(any())]
 fn render_file_editor<const CAPACITY: usize>(
     editor: &mut FileEditor<CAPACITY>,
 ) -> Result<(), Status> {
@@ -578,6 +524,7 @@ fn request_terminal_size() {
     crate::print!("\x1b[18t")
 }
 
+#[cfg(any())]
 fn render_file_editor_cursor<const CAPACITY: usize>(
     editor: &mut FileEditor<CAPACITY>,
 ) -> Result<(), Status> {
@@ -589,6 +536,7 @@ fn render_file_editor_cursor<const CAPACITY: usize>(
     Ok(())
 }
 
+#[cfg(any())]
 fn render_file_editor_line<const CAPACITY: usize>(
     editor: &mut FileEditor<CAPACITY>,
 ) -> Result<(), Status> {
@@ -600,6 +548,7 @@ fn render_file_editor_line<const CAPACITY: usize>(
     Ok(())
 }
 
+#[cfg(any())]
 fn is_cursor_only_edit_key(key: Key) -> bool {
     matches!(
         key,
@@ -614,6 +563,7 @@ fn is_cursor_only_edit_key(key: Key) -> bool {
     )
 }
 
+#[cfg(any())]
 fn is_line_only_edit_key<const CAPACITY: usize>(
     editor: &FileEditor<CAPACITY>,
     key: Key,
@@ -726,8 +676,6 @@ mod input_tests {
         register_control_commands(&mut registry);
         syn_shell::cluster::register_cluster_commands_without_help(&mut registry)
             .expect("cluster");
-        syn_shell::filesystem::register_filesystem_commands(&mut registry)
-            .expect("filesystem");
         syn_shell::firewall::register_firewall_commands(&mut registry)
             .expect("firewall");
         syn_shell::network::register_network_commands(&mut registry)
@@ -793,10 +741,12 @@ fn restore_editor_terminal() {
     crate::print!("\x1b[0m\x1b[?25h\x1b[?1049l");
 }
 
+#[cfg(any())]
 fn editor_name<const CAPACITY: usize>(editor: &FileEditor<CAPACITY>) -> &str {
     editor.name()
 }
 
+#[cfg(any())]
 fn print_edit_result<const CAPACITY: usize>(operation: &str, editor: &FileEditor<CAPACITY>) {
     crate::println!(
         "EDIT operation={} status=SUCCESS path={} size={} version={}",
@@ -865,6 +815,7 @@ fn parse_cpu_mask(value: &str) -> Result<CpuMask, Status> {
     }
 }
 
+#[cfg(any())]
 fn is_full_directory_command(command: &CommandCall) -> bool {
     if command.command.as_str().eq_ignore_ascii_case("LS") {
         return true
@@ -873,15 +824,18 @@ fn is_full_directory_command(command: &CommandCall) -> bool {
         && !matches!(command.get("CREATE"), Some(Value::Boolean(true)))
 }
 
+#[cfg(any())]
 fn is_full_type_command(command: &CommandCall) -> bool {
     command.command.as_str().eq_ignore_ascii_case("TYPE")
 }
 
+#[cfg(any())]
 fn is_full_edit_command(command: &CommandCall) -> bool {
     command.command.as_str().eq_ignore_ascii_case("EDIT")
         || command.command.as_str().eq_ignore_ascii_case("EDT")
 }
 
+#[cfg(any())]
 fn directory_cancelled(
     keyboard: &mut crate::keyboard::Keyboard,
     usb_keyboard: &mut Option<crate::usb_keyboard::UsbKeyboard>,
@@ -899,6 +853,7 @@ fn directory_cancelled(
     matches!(crate::console::read_byte(), Some(3))
 }
 
+#[cfg(any())]
 struct TypeConsoleOutput<'a> {
     keyboard: &'a mut crate::keyboard::Keyboard,
     usb_keyboard: &'a mut Option<crate::usb_keyboard::UsbKeyboard>,
@@ -908,11 +863,13 @@ struct TypeConsoleOutput<'a> {
     cancelled: bool,
 }
 
+#[cfg(any())]
 struct EditBufferOutput<const CAPACITY: usize> {
     bytes: [u8; CAPACITY],
     len: usize,
 }
 
+#[cfg(any())]
 impl<const CAPACITY: usize> EditBufferOutput<CAPACITY> {
     const fn new() -> Self {
         Self {
@@ -922,6 +879,7 @@ impl<const CAPACITY: usize> EditBufferOutput<CAPACITY> {
     }
 }
 
+#[cfg(any())]
 impl<const CAPACITY: usize> FileOutput for EditBufferOutput<CAPACITY> {
     fn write(&mut self, bytes: &[u8]) -> Result<(), Status> {
         let end = self.len.checked_add(bytes.len()).ok_or(Status::NO_SPACE)?;
@@ -934,6 +892,7 @@ impl<const CAPACITY: usize> FileOutput for EditBufferOutput<CAPACITY> {
     }
 }
 
+#[cfg(any())]
 impl<'a> TypeConsoleOutput<'a> {
     fn new(
         keyboard: &'a mut crate::keyboard::Keyboard,
@@ -973,6 +932,7 @@ impl<'a> TypeConsoleOutput<'a> {
     }
 }
 
+#[cfg(any())]
 impl FileOutput for TypeConsoleOutput<'_> {
     fn write(&mut self, bytes: &[u8]) -> Result<(), Status> {
         if directory_cancelled(self.keyboard, self.usb_keyboard) {
@@ -1019,6 +979,7 @@ impl FileOutput for TypeConsoleOutput<'_> {
     }
 }
 
+#[cfg(any())]
 fn entry_type_name(entry_type: EntryType) -> &'static str {
     match entry_type {
         EntryType::File => "FILE",
@@ -1030,13 +991,8 @@ fn entry_type_name(entry_type: EntryType) -> &'static str {
 fn complete_line(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
-    executor: &mut KernelExecutor,
     line_render: &mut ShellLineRender,
 ) -> Result<(), Error> {
-    if complete_file(editor, registry, executor, line_render)? {
-        return Ok(())
-    }
-
     if expand_command(editor, registry, line_render)? {
         return Ok(())
     }
@@ -1056,6 +1012,7 @@ fn complete_line(
     Ok(())
 }
 
+#[cfg(any())]
 fn complete_file(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     registry: &CommandRegistry<COMMAND_CAPACITY>,
@@ -1110,6 +1067,7 @@ fn complete_file(
     )
 }
 
+#[cfg(any())]
 fn complete_file_matches(
     editor: &mut LineEditor<HISTORY_CAPACITY>,
     executor: &mut KernelExecutor,
@@ -1200,6 +1158,7 @@ fn expand_command(
     Ok(true)
 }
 
+#[cfg(any())]
 fn supports_file_completion(command: &str) -> bool {
     matches!(
         command,
@@ -1350,9 +1309,6 @@ fn command_category(route: u16) -> &'static str {
         SYNOS_ISOLATE_ROUTE => "CONTROL",
         syn_shell::cluster::SHOW_CLUSTER_ROUTE..=syn_shell::cluster::ABANDON_NODE_ROUTE => {
             "CLUSTER"
-        }
-        syn_shell::filesystem::DIRECTORY_ROUTE..=syn_shell::filesystem::RMDIR_ROUTE => {
-            "FILESYSTEM"
         }
         syn_shell::firewall::SHOW_FIREWALL_ROUTE..=syn_shell::firewall::SET_FIREWALL_ROUTE => {
             "FIREWALL"
@@ -1681,806 +1637,6 @@ fn wait_for_byte(
             crate::power::shutdown(acpi)
         }
         crate::arch::halt()
-    }
-}
-
-const KERNEL_FILE_CAPACITY: usize = 16;
-const KERNEL_FILE_BYTES: usize = 1024;
-const KERNEL_PERSISTENCE_BYTES: usize = 32 * 1024;
-const PERSISTENCE_MAGIC: &[u8; 8] = b"SYNFS001";
-const PERSISTENCE_VERSION: u32 = 1;
-
-#[derive(Clone, Copy)]
-struct KernelFile {
-    path: ShellPath,
-    file_type: EntryType,
-    version: u32,
-    link_count: u32,
-    object_id: u64,
-    is_link: bool,
-    deleted: bool,
-}
-
-#[derive(Clone, Copy)]
-struct KernelObject {
-    bytes: [u8; KERNEL_FILE_BYTES],
-    length: usize,
-}
-
-struct KernelFilesystem {
-    files: [Option<KernelFile>; KERNEL_FILE_CAPACITY],
-    objects: [Option<KernelObject>; KERNEL_FILE_CAPACITY],
-    next_object_id: u64,
-    persistent: PersistentStore,
-    scratch: [u8; KERNEL_PERSISTENCE_BYTES],
-}
-
-impl KernelFilesystem {
-    fn new() -> Self {
-        let mut filesystem = Self {
-            files: [None; KERNEL_FILE_CAPACITY],
-            objects: [None; KERNEL_FILE_CAPACITY],
-            next_object_id: 1,
-            persistent: PersistentStore::new(),
-            scratch: [0; KERNEL_PERSISTENCE_BYTES],
-        };
-        for path in ["/packages", "/logs", "/data", "/tmp"] {
-            let _ = filesystem.insert(path, EntryType::Directory);
-        }
-        filesystem.load_persistent();
-        filesystem
-    }
-
-    fn load_persistent(&mut self) {
-        let Some(length) = self.persistent.load(&mut self.scratch) else {
-            return
-        };
-        let Some((files, objects, next_object_id)) = decode_filesystem(&self.scratch[..length]) else {
-            return
-        };
-        self.files = files;
-        self.objects = objects;
-        self.next_object_id = next_object_id;
-    }
-
-    fn persist(&mut self) {
-        let Some(length) = encode_filesystem(
-            &self.files,
-            &self.objects,
-            self.next_object_id,
-            &mut self.scratch,
-        ) else {
-            return
-        };
-        self.persistent.save(&self.scratch[..length]);
-    }
-
-    fn find(&self, path: &str) -> Option<KernelFile> {
-        self.files
-            .iter()
-            .flatten()
-            .filter(|file| file.path.as_str() == path && !file.deleted)
-            .max_by_key(|file| file.version)
-            .copied()
-    }
-
-    fn find_version(&self, path: &str, version: u32) -> Option<KernelFile> {
-        self.files
-            .iter()
-            .flatten()
-            .find(|file| file.path.as_str() == path && file.version == version && !file.deleted)
-            .copied()
-    }
-
-    fn insert(&mut self, path: &str, file_type: EntryType) -> Result<KernelFile, Status> {
-        if self.find(path).is_some() {
-            return Err(Status::ALREADY_EXISTS)
-        }
-        self.insert_version(path, file_type, 1)
-    }
-
-    fn insert_version(
-        &mut self,
-        path: &str,
-        file_type: EntryType,
-        version: u32,
-    ) -> Result<KernelFile, Status> {
-        let slot = self
-            .files
-            .iter_mut()
-            .find(|file| file.is_none())
-            .ok_or(Status::NO_SPACE)?;
-        let object_id = self.next_object_id;
-        let object = self
-            .objects
-            .iter_mut()
-            .find(|object| object.is_none())
-            .ok_or(Status::NO_SPACE)?;
-        *object = Some(KernelObject {
-            bytes: [0; KERNEL_FILE_BYTES],
-            length: 0,
-        });
-        let file = KernelFile {
-            path: ShellPath::new(path)?,
-            file_type,
-            version,
-            link_count: 1,
-            object_id,
-            is_link: false,
-            deleted: false,
-        };
-        self.next_object_id = self.next_object_id.saturating_add(1);
-        *slot = Some(file);
-        Ok(file)
-    }
-
-    fn parent(path: &str) -> &str {
-        let path = path.trim_end_matches('/');
-        let Some(separator) = path.rfind('/') else { return "/" };
-        let parent = path[..separator].trim_end_matches('/');
-        if parent.is_empty() { "/" } else { parent }
-    }
-
-    fn ensure_parent_directories(&mut self, path: &str) -> Result<(), Status> {
-        if self.directory_exists(path)? {
-            return Ok(())
-        }
-        let parent = Self::parent(path);
-        if parent != "/" {
-            self.ensure_parent_directories(parent)?;
-        }
-        self.insert(path, EntryType::Directory).map(|_| ())
-    }
-
-    fn metadata(&self, file: KernelFile) -> FileMetadata {
-        let size = self.object(file).map_or(0, |object| object.length);
-        FileMetadata {
-            path: file.path,
-            file_type: file.file_type,
-            size: size as u64,
-            version: file.version,
-            link_count: self.link_count(file.object_id),
-            is_link: file.is_link,
-        }
-    }
-
-    fn object(&self, file: KernelFile) -> Option<KernelObject> {
-        self.objects
-            .get(file.object_id.checked_sub(1)? as usize)
-            .copied()
-            .flatten()
-    }
-
-    fn link_count(&self, object_id: u64) -> u32 {
-        self.files
-            .iter()
-            .flatten()
-            .filter(|file| {
-                file.object_id == object_id
-                    && self
-                        .find(file.path.as_str())
-                        .is_some_and(|latest| latest.version == file.version)
-            })
-            .count() as u32
-    }
-}
-
-struct PersistenceWriter<'a> {
-    bytes: &'a mut [u8],
-    cursor: usize,
-}
-
-impl<'a> PersistenceWriter<'a> {
-    fn new(bytes: &'a mut [u8]) -> Self {
-        Self { bytes, cursor: 0 }
-    }
-
-    fn write(&mut self, bytes: &[u8]) -> Option<()> {
-        let end = self.cursor.checked_add(bytes.len())?;
-        let target = self.bytes.get_mut(self.cursor..end)?;
-        target.copy_from_slice(bytes);
-        self.cursor = end;
-        Some(())
-    }
-
-    fn u8(&mut self, value: u8) -> Option<()> {
-        self.write(&[value])
-    }
-
-    fn u16(&mut self, value: u16) -> Option<()> {
-        self.write(&value.to_le_bytes())
-    }
-
-    fn u32(&mut self, value: u32) -> Option<()> {
-        self.write(&value.to_le_bytes())
-    }
-
-    fn u64(&mut self, value: u64) -> Option<()> {
-        self.write(&value.to_le_bytes())
-    }
-}
-
-struct PersistenceReader<'a> {
-    bytes: &'a [u8],
-    cursor: usize,
-}
-
-impl<'a> PersistenceReader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, cursor: 0 }
-    }
-
-    fn read(&mut self, length: usize) -> Option<&'a [u8]> {
-        let end = self.cursor.checked_add(length)?;
-        let bytes = self.bytes.get(self.cursor..end)?;
-        self.cursor = end;
-        Some(bytes)
-    }
-
-    fn u8(&mut self) -> Option<u8> {
-        self.read(1).map(|bytes| bytes[0])
-    }
-
-    fn u16(&mut self) -> Option<u16> {
-        Some(u16::from_le_bytes(self.read(2)?.try_into().ok()?))
-    }
-
-    fn u32(&mut self) -> Option<u32> {
-        Some(u32::from_le_bytes(self.read(4)?.try_into().ok()?))
-    }
-
-    fn u64(&mut self) -> Option<u64> {
-        Some(u64::from_le_bytes(self.read(8)?.try_into().ok()?))
-    }
-}
-
-fn encode_filesystem(
-    files: &[Option<KernelFile>; KERNEL_FILE_CAPACITY],
-    objects: &[Option<KernelObject>; KERNEL_FILE_CAPACITY],
-    next_object_id: u64,
-    bytes: &mut [u8],
-) -> Option<usize> {
-    let mut writer = PersistenceWriter::new(bytes);
-    writer.write(PERSISTENCE_MAGIC)?;
-    writer.u32(PERSISTENCE_VERSION)?;
-    writer.u64(next_object_id)?;
-    for file in *files {
-        let Some(file) = file else {
-            writer.u8(0)?;
-            continue
-        };
-        writer.u8(1)?;
-        let path = file.path.as_str().as_bytes();
-        writer.u16(u16::try_from(path.len()).ok()?)?;
-        writer.write(path)?;
-        writer.u8(entry_type_code(file.file_type))?;
-        writer.u32(file.version)?;
-        writer.u32(file.link_count)?;
-        writer.u64(file.object_id)?;
-        writer.u8(file.is_link as u8)?;
-        writer.u8(file.deleted as u8)?;
-    }
-    for object in *objects {
-        let Some(object) = object else {
-            writer.u8(0)?;
-            continue
-        };
-        writer.u8(1)?;
-        writer.u16(u16::try_from(object.length).ok()?)?;
-        writer.write(&object.bytes[..object.length])?;
-    }
-    Some(writer.cursor)
-}
-
-fn decode_filesystem(
-    bytes: &[u8],
-) -> Option<(
-    [Option<KernelFile>; KERNEL_FILE_CAPACITY],
-    [Option<KernelObject>; KERNEL_FILE_CAPACITY],
-    u64,
-)> {
-    let mut reader = PersistenceReader::new(bytes);
-    if reader.read(PERSISTENCE_MAGIC.len())? != PERSISTENCE_MAGIC
-        || reader.u32()? != PERSISTENCE_VERSION
-    {
-        return None
-    }
-    let next_object_id = reader.u64()?;
-    if next_object_id == 0 {
-        return None
-    }
-    let mut files = [None; KERNEL_FILE_CAPACITY];
-    for slot in &mut files {
-        if reader.u8()? == 0 {
-            continue
-        }
-        let path_length = reader.u16()? as usize;
-        let path = core::str::from_utf8(reader.read(path_length)?).ok()?;
-        let file_type = decode_entry_type(reader.u8()?)?;
-        let version = reader.u32()?;
-        let link_count = reader.u32()?;
-        let object_id = reader.u64()?;
-        if object_id == 0 || object_id as usize > KERNEL_FILE_CAPACITY {
-            return None
-        }
-        *slot = Some(KernelFile {
-            path: ShellPath::new(path).ok()?,
-            file_type,
-            version,
-            link_count,
-            object_id,
-            is_link: reader.u8()? != 0,
-            deleted: reader.u8()? != 0,
-        });
-    }
-    let mut objects = [None; KERNEL_FILE_CAPACITY];
-    for slot in &mut objects {
-        if reader.u8()? == 0 {
-            continue
-        }
-        let length = reader.u16()? as usize;
-        if length > KERNEL_FILE_BYTES {
-            return None
-        }
-        let mut object = KernelObject {
-            bytes: [0; KERNEL_FILE_BYTES],
-            length,
-        };
-        object.bytes[..length].copy_from_slice(reader.read(length)?);
-        *slot = Some(object);
-    }
-    if !valid_filesystem_state(&files, &objects, next_object_id) {
-        return None
-    }
-    Some((files, objects, next_object_id))
-}
-
-fn valid_filesystem_state(
-    files: &[Option<KernelFile>; KERNEL_FILE_CAPACITY],
-    objects: &[Option<KernelObject>; KERNEL_FILE_CAPACITY],
-    next_object_id: u64,
-) -> bool {
-    if next_object_id == 0 {
-        return false
-    }
-    let mut highest_object_id = 0;
-    for file in files.iter().flatten() {
-        if file.version == 0 || file.object_id == 0 {
-            return false
-        }
-        let Some(object_slot) = file.object_id.checked_sub(1).and_then(|id| {
-            usize::try_from(id).ok()
-        }) else {
-            return false
-        };
-        if objects.get(object_slot).is_none_or(|slot| slot.is_none()) {
-            return false
-        }
-        highest_object_id = highest_object_id.max(file.object_id);
-    }
-    next_object_id > highest_object_id
-}
-
-#[cfg(test)]
-mod persistence_tests {
-    use super::*;
-
-    #[test]
-    fn persisted_files_must_reference_present_objects() {
-        let mut files = [None; KERNEL_FILE_CAPACITY];
-        let mut objects = [None; KERNEL_FILE_CAPACITY];
-        files[0] = Some(KernelFile {
-            path: ShellPath::new("/a.txt").expect("valid test path"),
-            file_type: EntryType::File,
-            version: 1,
-            link_count: 1,
-            object_id: 1,
-            is_link: false,
-            deleted: false,
-        });
-
-        assert!(!valid_filesystem_state(&files, &objects, 2));
-
-        objects[0] = Some(KernelObject {
-            bytes: [0; KERNEL_FILE_BYTES],
-            length: 0,
-        });
-        assert!(valid_filesystem_state(&files, &objects, 2));
-        assert!(!valid_filesystem_state(&files, &objects, 1));
-    }
-}
-
-fn entry_type_code(file_type: EntryType) -> u8 {
-    match file_type {
-        EntryType::File => 1,
-        EntryType::Directory => 2,
-        EntryType::Symlink => 3,
-    }
-}
-
-fn decode_entry_type(code: u8) -> Option<EntryType> {
-    match code {
-        1 => Some(EntryType::File),
-        2 => Some(EntryType::Directory),
-        3 => Some(EntryType::Symlink),
-        _ => None,
-    }
-}
-
-impl FilesystemSource for KernelFilesystem {
-    fn directory_exists(&mut self, path: &str) -> Result<bool, Status> {
-        Ok(path == "/"
-            || self
-                .find(path)
-                .is_some_and(|file| file.file_type == EntryType::Directory))
-    }
-
-    fn version_exists(&mut self, path: &str, version: u32) -> Result<bool, Status> {
-        Ok(self.find_version(path, version).is_some())
-    }
-
-    fn complete(
-        &mut self,
-        directory: &str,
-        prefix: &str,
-        output: &mut PathCompletionPage,
-    ) -> Result<(), Status> {
-        if directory != "/"
-            && self
-                .find(directory)
-                .is_some_and(|file| file.file_type != EntryType::Directory)
-        {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        if !self.directory_exists(directory)? {
-            return Err(Status::NOT_FOUND)
-        }
-        output.clear();
-        for file in self.files.iter().flatten() {
-            if file.deleted || Self::parent(file.path.as_str()) != directory {
-                continue
-            }
-            let name = file.path.as_str().rsplit('/').next().unwrap_or("");
-            if !starts_with_ignore_ascii_case(name, prefix) {
-                continue
-            }
-            output.push(ShellPath::new(name)?)?;
-            if output.len() == syn_shell::filesystem::MAX_PATH_COMPLETION_MATCHES {
-                break
-            }
-        }
-        Ok(())
-    }
-
-    fn list(
-        &mut self,
-        path: &str,
-        continuation: Option<u32>,
-        output: &mut syn_shell::filesystem::DirectoryPage,
-    ) -> Result<(), Status> {
-        if path != "/"
-            && self
-                .find(path)
-                .is_some_and(|file| file.file_type != EntryType::Directory)
-        {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        if !self.directory_exists(path)? {
-            return Err(Status::NOT_FOUND)
-        }
-        output.clear();
-        let start = continuation.unwrap_or(0) as usize;
-        let mut index = 0usize;
-        for slot in self.files.iter() {
-            let Some(file) = slot else {
-                continue
-            };
-            if file.deleted {
-                continue
-            }
-            let current = index;
-            index += 1;
-            if current < start {
-                continue
-            }
-            if Self::parent(file.path.as_str()) != path {
-                continue
-            }
-            if output.len() == syn_shell::filesystem::MAX_DIRECTORY_PAGE_ENTRIES {
-                output.next = Some(current as u32);
-                break
-            }
-            let name = file.path.as_str().rsplit('/').next().unwrap_or("");
-            output.push(ShellDirectoryEntry {
-                name: ShellPath::new(name)?,
-                file_type: file.file_type,
-                size: self.object(*file).map_or(0, |object| object.length) as u64,
-                version: file.version,
-                link_count: self.link_count(file.object_id),
-                is_link: file.is_link,
-            })?;
-        }
-        Ok(())
-    }
-
-    fn create_directory(
-        &mut self,
-        path: &str,
-        recursive: bool,
-    ) -> Result<FileMetadata, Status> {
-        if path == "/" {
-            return Err(Status::INVALID_PATH)
-        }
-        if self.find(path).is_some() {
-            return Err(Status::ALREADY_EXISTS)
-        }
-        if recursive {
-            self.ensure_parent_directories(Self::parent(path))?;
-        } else if !self.directory_exists(Self::parent(path))? {
-            return Err(Status::NOT_FOUND)
-        }
-        self.insert(path, EntryType::Directory)
-            .map(|file| self.metadata(file))
-    }
-
-    fn create_file(&mut self, path: &str) -> Result<FileMetadata, Status> {
-        if path == "/" {
-            return Err(Status::INVALID_PATH)
-        }
-        let parent = Self::parent(path);
-        if self
-            .find(parent)
-            .is_some_and(|file| file.file_type != EntryType::Directory)
-        {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        if !self.directory_exists(parent)? {
-            return Err(Status::NOT_FOUND)
-        }
-        if self.find(path).is_some() {
-            return Err(Status::ALREADY_EXISTS)
-        }
-        self.insert_version(path, EntryType::File, 1)
-            .map(|file| self.metadata(file))
-    }
-
-    fn remove_directory(&mut self, path: &str) -> Result<DirectoryRemovalMetadata, Status> {
-        if path == "/" {
-            return Err(Status::INVALID_PATH)
-        }
-        let selected = self.find(path).ok_or(Status::NOT_FOUND)?;
-        if selected.file_type != EntryType::Directory {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        if self
-            .files
-            .iter()
-            .flatten()
-            .any(|file| !file.deleted && Self::parent(file.path.as_str()) == path)
-        {
-            return Err(Status::DIRECTORY_NOT_EMPTY)
-        }
-        let slot = self
-            .files
-            .iter_mut()
-            .find(|file| {
-                file.is_some_and(|file| {
-                    file.path == selected.path
-                        && file.version == selected.version
-                        && !file.deleted
-                })
-            })
-            .ok_or(Status::CORRUPT)?;
-        slot.as_mut().ok_or(Status::CORRUPT)?.deleted = true;
-        Ok(DirectoryRemovalMetadata {
-            directory: self.metadata(selected),
-            removal_generation: selected.version as u64,
-            storage_reclamation_pending: false,
-        })
-    }
-
-    fn delete(&mut self, path: &str) -> Result<DeleteMetadata, Status> {
-        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
-        if path == "/" {
-            return Err(Status::INVALID_PATH)
-        }
-        let selected = self
-            .files
-            .iter()
-            .flatten()
-            .filter(|file| {
-                file.path.as_str() == path
-                    && !file.deleted
-                    && version.map_or(true, |version| version == 0 || file.version == version)
-            })
-            .max_by_key(|file| file.version)
-            .copied()
-            .ok_or(Status::NOT_FOUND)?;
-        if selected.file_type == EntryType::Directory {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        let shared_before = self.link_count(selected.object_id);
-        let slot = self
-            .files
-            .iter_mut()
-            .find(|file| {
-                file.is_some_and(|file| {
-                    file.path == selected.path
-                        && file.version == selected.version
-                        && !file.deleted
-                })
-            })
-            .ok_or(Status::CORRUPT)?;
-        slot.as_mut().ok_or(Status::CORRUPT)?.deleted = true;
-        let mut deleted = selected;
-        deleted.is_link |= shared_before > 1;
-        deleted.link_count = self.link_count(selected.object_id);
-        Ok(DeleteMetadata {
-            file: self.metadata(deleted),
-            shared_data_reachable: deleted.link_count != 0,
-        })
-    }
-
-    fn link(&mut self, source: &str, target: &str) -> Result<FileMetadata, Status> {
-        let (source_path, version) = syn_shell::filesystem::split_version_selector(source)?;
-        if syn_shell::filesystem::split_version_selector(target)?.1.is_some()
-            || target == "/"
-            || self.find(target).is_some()
-        {
-            return Err(if self.find(target).is_some() {
-                Status::ALREADY_EXISTS
-            } else {
-                Status::INVALID_ARGUMENT
-            })
-        }
-        let source = match version {
-            None | Some(0) => self.find(source_path),
-            Some(version) => self.find_version(source_path, version),
-        }
-        .ok_or(Status::NOT_FOUND)?;
-        if source.file_type != EntryType::File {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        if !self.directory_exists(Self::parent(target))? {
-            return Err(Status::NOT_FOUND)
-        }
-        let slot = self
-            .files
-            .iter_mut()
-            .find(|file| file.is_none())
-            .ok_or(Status::NO_SPACE)?;
-        let mut linked = source;
-        linked.path = ShellPath::new(target)?;
-        linked.version = 1;
-        linked.link_count = 1;
-        linked.is_link = true;
-        *slot = Some(linked);
-        Ok(self.metadata(linked))
-    }
-
-    fn list_links(&mut self, path: &str, output: &mut LinkPage) -> Result<FileMetadata, Status> {
-        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
-        let selected = match version {
-            None | Some(0) => self.find(path),
-            Some(version) => self.find_version(path, version),
-        }
-        .ok_or(Status::NOT_FOUND)?;
-        output.clear();
-        for file in self.files.iter().flatten() {
-            if file.deleted {
-                continue
-            }
-            if file.object_id != selected.object_id
-                || !self
-                    .find(file.path.as_str())
-                    .is_some_and(|latest| latest.version == file.version)
-            {
-                continue
-            }
-            output.push(file.path)?;
-        }
-        Ok(self.metadata(selected))
-    }
-
-    fn type_file(
-        &mut self,
-        path: &str,
-        _binary: bool,
-        output: &mut dyn FileOutput,
-    ) -> Result<FileMetadata, Status> {
-        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
-        if path == "/" {
-            return Err(Status::INVALID_PATH)
-        }
-        let file = match version {
-            None | Some(0) => self.find(path),
-            Some(version) => self.find_version(path, version),
-        }
-        .ok_or(Status::NOT_FOUND)?;
-        if file.file_type != EntryType::File {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        if version.is_some_and(|version| version != 0 && version != file.version) {
-            return Err(Status::NOT_FOUND)
-        }
-        let object = self.object(file).ok_or(Status::CORRUPT)?;
-        for chunk in object.bytes[..object.length].chunks(128) {
-            output.write(chunk)?;
-        }
-        Ok(self.metadata(file))
-    }
-
-    fn save_file(&mut self, path: &str, contents: &[u8]) -> Result<FileMetadata, Status> {
-        let (path, version) = syn_shell::filesystem::split_version_selector(path)?;
-        if path == "/" || contents.len() > KERNEL_FILE_BYTES {
-            return if path == "/" {
-                Err(Status::INVALID_PATH)
-            } else {
-                Err(Status::NO_SPACE)
-            }
-        }
-        let selected = match version {
-            None | Some(0) => self.find(path),
-            Some(version) => self.find_version(path, version),
-        }
-        .ok_or(Status::NOT_FOUND)?;
-        if selected.file_type != EntryType::File {
-            return Err(Status::NOT_DIRECTORY)
-        }
-        if version.is_some_and(|version| version != 0 && version != selected.version) {
-            return Err(Status::NOT_FOUND)
-        }
-        let next_version = self
-            .files
-            .iter()
-            .flatten()
-            .filter(|file| file.path.as_str() == path && !file.deleted)
-            .map(|file| file.version)
-            .max()
-            .ok_or(Status::CORRUPT)?
-            .checked_add(1)
-            .ok_or(Status::CORRUPT)?;
-        let saved = self.insert_version(path, EntryType::File, next_version)?;
-        let object = self
-            .objects
-            .get_mut(saved.object_id.checked_sub(1).ok_or(Status::CORRUPT)? as usize)
-            .and_then(Option::as_mut)
-            .ok_or(Status::CORRUPT)?;
-        object.bytes[..contents.len()].copy_from_slice(contents);
-        object.length = contents.len();
-        Ok(self.metadata(saved))
-    }
-
-    fn save_file_if_version(
-        &mut self,
-        path: &str,
-        expected_version: u32,
-        contents: &[u8],
-    ) -> Result<FileMetadata, Status> {
-        let (source_path, version) = syn_shell::filesystem::split_version_selector(path)?;
-        let selected = match version {
-            None | Some(0) => self.find(source_path),
-            Some(version) => self.find_version(source_path, version),
-        }
-        .ok_or(Status::NOT_FOUND)?;
-        if selected.version != expected_version {
-            return Err(Status::CONFLICT)
-        }
-        if version.is_none() || version == Some(0) {
-            let latest = self.find(source_path).ok_or(Status::NOT_FOUND)?;
-            if latest.version != expected_version {
-                return Err(Status::CONFLICT)
-            }
-        }
-        self.save_file(path, contents)
-    }
-
-    fn save_file_force(
-        &mut self,
-        path: &str,
-        contents: &[u8],
-    ) -> Result<FileMetadata, Status> {
-        self.save_file(path, contents)
     }
 }
 
@@ -2966,6 +2122,7 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
     }
 }
 
+
 struct KernelExecutor {
     boot_method: BootMethod,
     memory_regions: &'static [synos_boot_protocol::MemoryRegion],
@@ -2984,7 +2141,6 @@ struct KernelExecutor {
     capabilities: CapabilitySpace,
     control_authority: crate::CapabilityHandle,
     dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
-    filesystem: FilesystemExecutor<KernelFilesystem>,
     network: KernelNetwork,
     firewall_policy_version: u64,
     firewall_rule_count: u64,
@@ -3024,8 +2180,6 @@ impl KernelExecutor {
                 Rights::CONTROL,
             )
             .expect("network diagnostic capability");
-        let filesystem = KernelFilesystem::new();
-        crate::println!("root filesystem mounted");
         crate::crash::publish_capability_context(&capabilities);
 
         Self {
@@ -3046,7 +2200,6 @@ impl KernelExecutor {
             capabilities,
             control_authority,
             dlm,
-            filesystem: FilesystemExecutor::new(filesystem),
             network: KernelNetwork::new(boot_info, network_diagnostic, scheduler_clock),
             firewall_policy_version: 1,
             firewall_rule_count: 0,
@@ -3101,16 +2254,6 @@ impl KernelExecutor {
                 command,
                 None,
             ),
-            route if (syn_shell::filesystem::DIRECTORY_ROUTE
-                ..=syn_shell::filesystem::RMDIR_ROUTE)
-                .contains(&route) =>
-            {
-                let result = self.filesystem.execute_command(command);
-                if result.is_ok() {
-                    self.filesystem.source_mut().persist();
-                }
-                result
-            }
             _ => Err(Status::NOT_FOUND),
         }
     }
@@ -3137,6 +2280,7 @@ impl KernelExecutor {
         self.show_firewall()
     }
 
+    #[cfg(any())]
     fn print_directory(
         &mut self,
         command: CommandCall,
@@ -3188,6 +2332,7 @@ impl KernelExecutor {
         Ok(())
     }
 
+    #[cfg(any())]
     fn print_type(
         &mut self,
         command: CommandCall,
@@ -3216,6 +2361,7 @@ impl KernelExecutor {
         }
     }
 
+    #[cfg(any())]
     fn edit_file(
         &mut self,
         command: CommandCall,
@@ -3257,6 +2403,7 @@ impl KernelExecutor {
         }
     }
 
+    #[cfg(any())]
     fn run_edit_session(
         &mut self,
         editor: &mut FileEditor<KERNEL_FILE_BYTES>,
@@ -3400,7 +2547,7 @@ impl KernelExecutor {
         insert_text(
             &mut output,
             "commands",
-            "SHELL, SYSTEM, PROCESS, MEMORY, MONITOR, CONTROL, CLUSTER, FILESYSTEM, FIREWALL, NETWORK; use HELP <CATEGORY> for related commands; unique command prefixes accepted",
+            "SHELL, SYSTEM, PROCESS, MEMORY, MONITOR, CONTROL, CLUSTER, FIREWALL, NETWORK; use HELP <CATEGORY> for related commands; unique command prefixes accepted",
         )?;
         Ok(output)
     }
@@ -3628,7 +2775,6 @@ impl KernelExecutor {
         if self.reboot_requested || self.shutdown_requested {
             return Ok(StructuredOutput::new(Status::NORMAL))
         }
-        self.filesystem.source_mut().persist();
         self.reboot_requested = true;
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "action", "rebooting")?;
@@ -3643,7 +2789,6 @@ impl KernelExecutor {
         if self.shutdown_requested || self.reboot_requested {
             return Ok(StructuredOutput::new(Status::NORMAL))
         }
-        self.filesystem.source_mut().persist();
         self.shutdown_requested = true;
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "action", "shutting-down")?;
