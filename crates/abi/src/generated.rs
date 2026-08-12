@@ -53,6 +53,9 @@ pub enum Operation {
     ThreadTlsSet = 39,
     ArgumentsRead = 40,
     EnvironmentRead = 41,
+    ServiceReady = 42,
+    ServiceHeartbeat = 43,
+    SystemInfo = 44,
 }
 
 impl Operation {
@@ -99,6 +102,9 @@ impl Operation {
             39 => Some(Self::ThreadTlsSet),
             40 => Some(Self::ArgumentsRead),
             41 => Some(Self::EnvironmentRead),
+            42 => Some(Self::ServiceReady),
+            43 => Some(Self::ServiceHeartbeat),
+            44 => Some(Self::SystemInfo),
             _ => None,
         }
     }

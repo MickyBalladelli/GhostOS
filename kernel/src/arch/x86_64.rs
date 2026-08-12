@@ -16,12 +16,13 @@ pub mod paging {
     const ONE_GIB: u64 = 1024 * 1024 * 1024;
     /// Root, kernel paging levels, and the private user mapping levels.
     pub const PROCESS_TABLE_FRAME_COUNT: usize = 9;
+    pub const SERVICE_PAGE_COUNT: usize = 7;
+    const SERVICE_CODE_PAGE_COUNT: usize = 4;
     const USER_MAPPING_PML4_INDEX: usize = (crate::USER_SPACE_START >> 39) as usize;
     const SERVICE_CODE: u64 = crate::USER_SPACE_START;
-    const SERVICE_REQUEST: u64 = SERVICE_CODE + crate::FRAME_SIZE;
-    const SERVICE_RESPONSE: u64 = SERVICE_REQUEST + crate::FRAME_SIZE;
-    const SERVICE_DATA: u64 = SERVICE_RESPONSE + crate::FRAME_SIZE;
-    const SERVICE_STACK_TOP: u64 = SERVICE_DATA + crate::FRAME_SIZE;
+    const SERVICE_STACK_TOP: u64 = SERVICE_CODE + SERVICE_PAGE_COUNT as u64 * crate::FRAME_SIZE;
+    const SERVICE_IMAGE: &[u8] = include_bytes!(env!("SYNOS_SERVICE_IMAGE"));
+    const SHELL_IMAGE: &[u8] = include_bytes!(env!("SYNOS_SHELL_IMAGE"));
 
     /// Creates a fresh four-level root table with low physical memory identity mapped.
     ///
@@ -123,16 +124,15 @@ pub mod paging {
     /// The root keeps the low physical identity map supervisor-only so kernel
     /// code and interrupt handlers remain reachable. The service image is
     /// mapped at a separate user virtual address, backed only by this
-    /// process's four frames.
+    /// process's private code, state, and stack frames.
     ///
     /// # Safety
     /// All frames must be distinct, aligned, writable physical frames. The
-    /// four image frames must be distinct writable physical frames.
+    /// image frames must be distinct writable physical frames.
     pub unsafe fn install_service_root(
         tables: &[u64; PROCESS_TABLE_FRAME_COUNT],
-        pages: &[u64; 4],
+        pages: &[u64; SERVICE_PAGE_COUNT],
         physical_offset: u64,
-        shell: bool,
     ) -> Option<crate::PageTableRoot> {
         if tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0)
             || pages.iter().any(|page| *page == 0 || *page % crate::FRAME_SIZE != 0)
@@ -179,10 +179,10 @@ pub mod paging {
             user_pd.write(tables[8] | PRESENT | WRITABLE | USER);
             let no_execute = user_no_execute();
             for (index, page) in pages.iter().enumerate() {
-                let permissions = match index {
-                    0 => PRESENT | USER,
-                    1 => PRESENT | USER | no_execute | if shell { WRITABLE } else { 0 },
-                    _ => PRESENT | WRITABLE | USER | no_execute,
+                let permissions = if index < SERVICE_CODE_PAGE_COUNT {
+                    PRESENT | USER
+                } else {
+                    PRESENT | WRITABLE | USER | no_execute
                 };
                 user_pt
                     .add(index)
@@ -193,97 +193,56 @@ pub mod paging {
         crate::PageTableRoot::new(tables[0])
     }
 
-    pub const fn service_virtual_pages() -> [u64; 4] {
-        [SERVICE_CODE, SERVICE_REQUEST, SERVICE_RESPONSE, SERVICE_DATA]
+    pub const fn service_entry() -> u64 {
+        SERVICE_CODE
     }
 
     pub const fn service_stack_top() -> u64 {
         SERVICE_STACK_TOP
     }
 
-    /// Install the request, response, and machine code for a boot service.
+    pub const fn service_user_range(address: u64, length: u64, writable: bool) -> bool {
+        let Some(end) = address.checked_add(length) else {
+            return false
+        };
+        let start = if writable {
+            SERVICE_CODE + SERVICE_CODE_PAGE_COUNT as u64 * crate::FRAME_SIZE
+        } else {
+            SERVICE_CODE
+        };
+        length != 0 && address >= start && end <= SERVICE_STACK_TOP
+    }
+
+    /// Install a compiled Ring 3 program and its immutable role identifier.
     ///
     /// # Safety
-    /// `pages` must be the four writable frames passed to
+    /// `pages` must be the private frames passed to
     /// [`install_service_root`].
     pub unsafe fn write_service_image(
-        pages: &[u64; 4],
+        pages: &[u64; SERVICE_PAGE_COUNT],
         physical_offset: u64,
+        role: u8,
         shell: bool,
     ) {
-        let virtual_pages = service_virtual_pages();
-        let mut image = [0u8; 96];
-        image[0..2].copy_from_slice(&[0x48, 0xbf]);
-        image[2..10].copy_from_slice(&virtual_pages[1].to_le_bytes());
-        image[10..12].copy_from_slice(&[0x48, 0xbe]);
-        image[12..20].copy_from_slice(&virtual_pages[2].to_le_bytes());
-        if shell {
-            image[20..22].copy_from_slice(&[0xcd, 0x80]);
-            image[22..28].copy_from_slice(&[0xc7, 0x07, 1, 0, 0, 0]);
-            image[28..30].copy_from_slice(&[0xcd, 0x80]);
-            image[30..36].copy_from_slice(&[0xc7, 0x07, 24, 0, 0, 0]);
-            image[36..38].copy_from_slice(&[0x48, 0xb8]);
-            image[38..46].copy_from_slice(&virtual_pages[3].to_le_bytes());
-            image[46..50].copy_from_slice(&[0x48, 0x89, 0x47, 0x10]);
-            image[50..58].copy_from_slice(&[0x48, 0xc7, 0x47, 0x18, 1, 0, 0, 0]);
-            image[58..60].copy_from_slice(&[0xcd, 0x80]);
-            image[60..64].copy_from_slice(&[0x83, 0x7e, 0x08, 0]);
-            image[64..70].copy_from_slice(&[0x0f, 0x84, 0x0a, 0, 0, 0]);
-            image[70..76].copy_from_slice(&[0xc7, 0x07, 25, 0, 0, 0]);
-            image[76..78].copy_from_slice(&[0xcd, 0x80]);
-            image[78..80].copy_from_slice(&[0xeb, 0xce]);
-            image[80..83].copy_from_slice(&[0xf4, 0xeb, 0xcb]);
-        } else {
-            // Yield repeatedly while a service waits for work.
-            image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfc]);
-        }
+        let image = if shell { SHELL_IMAGE } else { SERVICE_IMAGE };
+        assert!(image.len() <= SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize);
 
         unsafe {
-            core::ptr::write_bytes(
-                (pages[0] + physical_offset) as *mut u8,
-                0,
-                crate::FRAME_SIZE as usize,
-            );
-            core::ptr::write_bytes(
-                (pages[1] + physical_offset) as *mut u8,
-                0,
-                crate::FRAME_SIZE as usize,
-            );
-            core::ptr::write_bytes(
-                (pages[2] + physical_offset) as *mut u8,
-                0,
-                crate::FRAME_SIZE as usize,
-            );
-            core::ptr::write_bytes(
-                (pages[3] + physical_offset) as *mut u8,
-                0,
-                crate::FRAME_SIZE as usize,
-            );
-            if shell {
-                let banner = b"SynOS service shell ready\r\nsynos> ";
-                core::ptr::copy_nonoverlapping(
-                    banner.as_ptr(),
-                    (pages[3] + physical_offset) as *mut u8,
-                    banner.len(),
+            for page in pages {
+                core::ptr::write_bytes(
+                    (*page + physical_offset) as *mut u8,
+                    0,
+                    crate::FRAME_SIZE as usize,
                 );
             }
-            core::ptr::copy_nonoverlapping(
-                image.as_ptr(),
-                (pages[0] + physical_offset) as *mut u8,
-                image.len(),
-            );
-            let mut request = synos_runtime::Request::new(if shell {
-                synos_runtime::Operation::TerminalWrite
-            } else {
-                synos_runtime::Operation::Yield
-            });
-            if shell {
-                request.arguments[0] = virtual_pages[3];
-                request.arguments[1] = b"SynOS service shell ready\r\nsynos> ".len() as u64;
+            for (index, chunk) in image.chunks(crate::FRAME_SIZE as usize).enumerate() {
+                core::ptr::copy_nonoverlapping(
+                    chunk.as_ptr(),
+                    (pages[index] + physical_offset) as *mut u8,
+                    chunk.len(),
+                );
             }
-            ((pages[1] + physical_offset) as *mut synos_runtime::Request).write(request);
-            ((pages[2] + physical_offset) as *mut synos_runtime::Response)
-                .write(synos_runtime::Response::EMPTY);
+            ((pages[SERVICE_CODE_PAGE_COUNT] + physical_offset) as *mut u8).write(role);
         }
     }
 

@@ -84,7 +84,7 @@ impl Scheduler {
             threads: [Thread::VACANT; MAX_THREADS],
             generations: [0; MAX_THREADS],
             current: None,
-            cooperative_cursor: 0,
+            cooperative_cursor: MAX_THREADS - 1,
             clock: 0,
             partition: CorePartition::new(),
             current_cpu: CpuId::new(0).expect("CPU 0 is valid"),

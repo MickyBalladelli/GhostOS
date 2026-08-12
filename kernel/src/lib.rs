@@ -71,7 +71,7 @@ mod usb_keyboard;
 
 use core::panic::PanicInfo;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -159,7 +159,12 @@ static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-static SERVICE_REPORTS: AtomicU32 = AtomicU32::new(0);
+static SERVICE_READY: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static SERVICE_HEARTBEATS: [AtomicU64; 10] = [const { AtomicU64::new(0) }; 10];
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -284,11 +289,21 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         boot_services.shell_process.raw()
     );
 
-    // The boot service images currently prove Ring-3 isolation and syscall
-    // entry, but they are not complete service executables. In particular,
-    // the shell image only echoes bytes and cannot submit commands. Keep the
-    // interactive command processor live until the user-space shell can run
-    // the same command engine.
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    boot_synos_init(
+        &mut frames,
+        scheduler,
+        boot_info.physical_address_offset,
+        boot_services,
+    );
+
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    )))]
     shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
 }
 
@@ -298,30 +313,27 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
 ))]
 #[allow(unsafe_code)]
 fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
-    let (name, bit) = match caller.raw() {
-        1 => ("synos-init", 1u32 << 1),
-        2 => ("synos-fsd", 1u32 << 2),
-        3 => ("synos-storaged", 1u32 << 3),
-        4 => ("synos-netd", 1u32 << 4),
-        5 => ("synos-logd", 1u32 << 5),
-        6 => ("synos-auditd", 1u32 << 6),
-        7 => ("synos-authd", 1u32 << 7),
-        8 => ("synos-pkgd", 1u32 << 8),
-        9 => ("synos-shell", 1u32 << 9),
-        _ => ("unknown-service", 0),
+    let role = caller.raw() as usize;
+    let Some(name) = service_name(role) else {
+        return syscall_error(Status::ACCESS_DENIED)
     };
+    if request.abi_version != synos_runtime::ABI_SCHEMA_VERSION
+        || request.flags != 0
+        || request.reserved != 0
+        || request.capability != 0
+    {
+        return syscall_error(Status::INVALID_ARGUMENT)
+    }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite)
         && caller.raw() == 9
     {
         let address = request.arguments[0] as usize;
         let length = request.arguments[1] as usize;
-        if !is_user_range(address as u64, length as u64) || length > 4096
+        if request.arguments[2..] != [0; 4]
+            || !arch::paging::service_user_range(address as u64, length as u64, false)
+            || length > 4096
         {
-            return Response {
-                status: Status::INVALID_ARGUMENT.raw(),
-                flags: 0,
-                values: [0; 4],
-            }
+            return syscall_error(Status::INVALID_ARGUMENT)
         }
         let bytes = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
         console::write_bytes(bytes);
@@ -335,12 +347,11 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         && caller.raw() == 9
     {
         let address = request.arguments[0] as usize;
-        if !is_user_range(address as u64, 1) {
-            return Response {
-                status: Status::INVALID_ARGUMENT.raw(),
-                flags: 0,
-                values: [0; 4],
-            }
+        if request.arguments[1] != 1
+            || request.arguments[2..] != [0; 4]
+            || !arch::paging::service_user_range(address as u64, 1, true)
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
         }
         if let Some(byte) = keyboard::read_boot_byte().or_else(console::read_byte) {
             unsafe { (address as *mut u8).write(byte) };
@@ -356,18 +367,110 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             values: [0; 4],
         }
     }
-    if Operation::from_raw(request.operation) != Some(Operation::Yield) {
-        return Response {
-            status: Status::INVALID_ARGUMENT.raw(),
-            flags: 0,
-            values: [0; 4],
+    if Operation::from_raw(request.operation) == Some(Operation::ServiceReady) {
+        if request.arguments[0] as usize != role || request.arguments[1..] != [0; 5] {
+            return syscall_error(Status::INVALID_ARGUMENT)
         }
+        let bit = 1u32 << role;
+        let ready = SERVICE_READY.load(Ordering::Acquire);
+        if ready & bit == 0 {
+            SERVICE_READY.store(ready | bit, Ordering::Release);
+            println!("{} ready in Ring 3 (address space {})", name, role);
+        }
+        return syscall_success([role as u64, 0, 0, 0])
     }
-    if bit != 0 && SERVICE_REPORTS.fetch_or(bit, Ordering::AcqRel) & bit == 0 {
-        println!("{} running in Ring 3 (address space {})", name, caller.raw());
+    if Operation::from_raw(request.operation) == Some(Operation::ServiceHeartbeat) {
+        if request.arguments[0] as usize != role || request.arguments[1] == 0
+            || request.arguments[2..] != [0; 4]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if SERVICE_READY.load(Ordering::Acquire) & (1u32 << role) == 0 {
+            return syscall_error(Status::BUSY)
+        }
+        SERVICE_HEARTBEATS[role].store(request.arguments[1], Ordering::Release);
+        return syscall_success([request.arguments[1], 0, 0, 0])
     }
+    if Operation::from_raw(request.operation) == Some(Operation::SystemInfo) {
+        if role != 9 || request.arguments != [0; 6] {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let heartbeats = SERVICE_HEARTBEATS
+            .iter()
+            .skip(1)
+            .fold(0u64, |total, value| total.saturating_add(value.load(Ordering::Acquire)));
+        return syscall_success([
+            scheduler_clock(),
+            SERVICE_READY.load(Ordering::Acquire) as u64,
+            heartbeats,
+            role as u64,
+        ])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::ClockNow) {
+        if request.arguments != [0; 6] {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        return syscall_success([scheduler_clock(), 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::Yield) {
+        if request.arguments != [0; 6] {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        return syscall_success([0; 4])
+    }
+    syscall_error(Status::INVALID_ARGUMENT)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn service_name(role: usize) -> Option<&'static str> {
+    [
+        None,
+        Some("synos-init"),
+        Some("synos-fsd"),
+        Some("synos-storaged"),
+        Some("synos-netd"),
+        Some("synos-logd"),
+        Some("synos-auditd"),
+        Some("synos-authd"),
+        Some("synos-pkgd"),
+        Some("synos-shell"),
+    ]
+    .get(role)
+    .copied()
+    .flatten()
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+#[allow(unsafe_code)]
+fn scheduler_clock() -> u64 {
+    unsafe { (&*core::ptr::addr_of!(SCHEDULER)).assume_init_ref().clock() }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn syscall_success(values: [u64; 4]) -> Response {
     Response {
         status: Status::NORMAL.raw(),
+        flags: 0,
+        values,
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn syscall_error(status: Status) -> Response {
+    Response {
+        status: status.raw(),
         flags: 0,
         values: [0; 4],
     }
@@ -457,7 +560,7 @@ fn boot_service_process(
         };
         *frame = address;
     }
-    let mut pages = [0u64; 4];
+    let mut pages = [0u64; arch::paging::SERVICE_PAGE_COUNT];
     for page in &mut pages {
         let Ok(address) = frames.allocate_for_owner(address_space) else {
             fatal_kernel_halt(Status::NO_SPACE)
@@ -466,12 +569,18 @@ fn boot_service_process(
     }
 
     let Some(root) = (unsafe {
-        arch::paging::install_service_root(&tables, &pages, physical_offset, shell)
+        arch::paging::install_service_root(&tables, &pages, physical_offset)
     }) else {
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     };
-    unsafe { arch::paging::write_service_image(&pages, physical_offset, shell) };
-    let virtual_pages = arch::paging::service_virtual_pages();
+    unsafe {
+        arch::paging::write_service_image(
+            &pages,
+            physical_offset,
+            address_space.raw() as u8,
+            shell,
+        )
+    };
 
     let mut capabilities: CapabilitySpace<MAX_CAPABILITIES> = CapabilitySpace::new();
     let authority = capabilities
@@ -489,7 +598,7 @@ fn boot_service_process(
             address_space,
             root,
             SchedulingPolicy::Cooperative,
-            virtual_pages[0] as usize,
+            arch::paging::service_entry() as usize,
             arch::paging::service_stack_top() as usize,
         )
         .unwrap_or_else(|_| fatal_kernel_halt(Status::CORRUPT));
