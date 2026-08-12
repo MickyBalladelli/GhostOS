@@ -19,6 +19,8 @@ syn-script = { path = "../crates/syn-script" }
 synos-vm = { path = "../virtual_machine" }
 synos-netd = { path = "../crates/netd" }
 syn-shell = { path = "../crates/syn-shell" }
+synos-auth = { path = "../crates/auth" }
+synos-kernel = { path = "../kernel" }
 
 [[bin]]
 name = "path"
@@ -121,6 +123,13 @@ bench = false
 [[bin]]
 name = "abi-frame"
 path = "fuzz_targets/abi_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "syscall-boundary"
+path = "fuzz_targets/syscall_boundary.rs"
 test = false
 doc = false
 bench = false

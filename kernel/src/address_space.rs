@@ -157,17 +157,27 @@ impl Region {
 pub struct AddressSpace {
     id: AddressSpaceId,
     root: PageTableRoot,
+    aslr_state: u64,
     regions: [Option<Region>; MAX_ADDRESS_SPACE_REGIONS],
 }
 
 impl AddressSpace {
     pub fn new(id: AddressSpaceId, root: PageTableRoot) -> Result<Self, AddressSpaceError> {
+        Self::new_with_aslr_seed(id, root, 0)
+    }
+
+    pub fn new_with_aslr_seed(
+        id: AddressSpaceId,
+        root: PageTableRoot,
+        aslr_seed: u64,
+    ) -> Result<Self, AddressSpaceError> {
         if id == AddressSpaceId::KERNEL {
             return Err(AddressSpaceError::InvalidRequest)
         }
         Ok(Self {
             id,
             root,
+            aslr_state: aslr_seed,
             regions: [None; MAX_ADDRESS_SPACE_REGIONS],
         })
     }
@@ -224,6 +234,7 @@ impl AddressSpace {
         } else {
             let mut candidate = request
                 .preferred_base
+                .or_else(|| self.randomized_hint(request.size, request.alignment))
                 .unwrap_or(USER_SPACE_START)
                 .max(USER_SPACE_START);
             let mut selected = None;
@@ -255,6 +266,26 @@ impl AddressSpace {
         };
         self.claim(mapping)?;
         Ok(mapping)
+    }
+
+    pub fn randomized_hint(&mut self, size: u64, alignment: u64) -> Option<u64> {
+        if self.aslr_state == 0
+            || size == 0
+            || alignment < PAGE_SIZE
+            || !alignment.is_power_of_two()
+        {
+            return None
+        }
+        let entropy = crate::random::next_u64().unwrap_or_else(|| {
+            self.aslr_state ^= self.aslr_state << 13;
+            self.aslr_state ^= self.aslr_state >> 7;
+            self.aslr_state ^= self.aslr_state << 17;
+            self.aslr_state
+        });
+        let available = USER_SPACE_END.checked_sub(USER_SPACE_START)?.checked_sub(size)?;
+        let slots = available / alignment;
+        let slot = entropy % slots.max(1);
+        USER_SPACE_START.checked_add(slot.checked_mul(alignment)?)
     }
 
     pub fn claim(&mut self, mapping: Mapping) -> Result<(), AddressSpaceError> {
@@ -670,6 +701,12 @@ impl AddressSpace {
             || segment.file_size > segment.memory_size
             || segment.file_size as usize != source_length
             || segment.permissions.writable() && segment.permissions.executable()
+            || self.violates_wx(
+                segment.address,
+                segment.memory_size,
+                segment.permissions,
+                None,
+            )
             || !self.owns(mapping, segment.address, segment.memory_size)
         {
             return Err(AddressSpaceError::InvalidMapping)
@@ -717,11 +754,27 @@ impl AddressSpace {
         length: u64,
         permissions: SegmentPermissions,
     ) -> Result<(), AddressSpaceError> {
+        let existing = self.regions.iter().position(|region| {
+            region.is_some_and(|region| {
+                region.owner == mapping
+                    && region.base == address
+                    && region.size == length
+                    && region.permissions.is_some()
+            })
+        });
         if length == 0
             || permissions.writable() && permissions.executable()
+            || self.violates_wx(address, length, permissions, existing)
             || !self.owns(mapping, address, length)
         {
             return Err(AddressSpaceError::InvalidMapping)
+        }
+        if let Some(index) = existing {
+            let Some(region) = self.regions[index].as_mut() else {
+                return Err(AddressSpaceError::InvalidMapping)
+            };
+            region.permissions = Some(permissions);
+            return Ok(())
         }
         self.insert(Region {
             owner: mapping,
@@ -745,6 +798,7 @@ impl AddressSpace {
     ) -> Result<(), AddressSpaceError> {
         if size == 0
             || permissions.writable() && permissions.executable()
+            || self.violates_wx(base, size, permissions, None)
             || !is_user_range(base, size)
         {
             return Err(AddressSpaceError::InvalidMapping)
@@ -763,8 +817,10 @@ impl AddressSpace {
     }
 
     pub fn install_context(&self, context: ProcessContext) -> Result<(), AddressSpaceError> {
-        if !self.contains(context.entry, 1)
-            || !self.contains(context.stack_pointer.saturating_sub(1), 1)
+        let stack_address = context.stack_pointer.saturating_sub(1);
+        if !self.can_access(context.entry, 1, MemoryAccess::Execute)
+            || !self.can_access(stack_address, 1, MemoryAccess::Write)
+            || self.can_access(stack_address, 1, MemoryAccess::Execute)
             || !self.contains(context.heap_base, context.heap_size)
             || context.tls_pointer.is_some_and(|tls| !self.contains(tls, 1))
         {
@@ -800,6 +856,27 @@ impl AddressSpace {
             .iter()
             .flatten()
             .any(|region| region.overlaps(base, size))
+    }
+
+    fn violates_wx(
+        &self,
+        base: u64,
+        size: u64,
+        permissions: SegmentPermissions,
+        ignored: Option<usize>,
+    ) -> bool {
+        self.regions.iter().enumerate().any(|(index, region)| {
+            if ignored == Some(index) {
+                return false
+            }
+            region.is_some_and(|region| {
+                region.overlaps(base, size)
+                    && region.permissions.is_some_and(|existing| {
+                        permissions.writable() && existing.executable()
+                            || permissions.executable() && existing.writable()
+                    })
+            })
+        })
     }
 
     fn next_after(&self, base: u64, size: u64) -> Option<u64> {
@@ -838,6 +915,15 @@ impl<const CAPACITY: usize> AddressSpaceTable<CAPACITY> {
         id: AddressSpaceId,
         root: PageTableRoot,
     ) -> Result<(), AddressSpaceError> {
+        self.create_with_aslr_seed(id, root, 0)
+    }
+
+    pub fn create_with_aslr_seed(
+        &mut self,
+        id: AddressSpaceId,
+        root: PageTableRoot,
+        aslr_seed: u64,
+    ) -> Result<(), AddressSpaceError> {
         if self
             .spaces
             .iter()
@@ -851,7 +937,7 @@ impl<const CAPACITY: usize> AddressSpaceTable<CAPACITY> {
             .iter_mut()
             .find(|space| space.is_none())
             .ok_or(AddressSpaceError::Capacity)?;
-        *slot = Some(AddressSpace::new(id, root)?);
+        *slot = Some(AddressSpace::new_with_aslr_seed(id, root, aslr_seed)?);
         Ok(())
     }
 

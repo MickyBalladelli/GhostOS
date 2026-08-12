@@ -238,6 +238,12 @@ fn valid_user_range(address: usize, length: usize, alignment: usize) -> bool {
     crate::is_user_range(address, length)
 }
 
+pub fn validate_request_shape(request: &Request) -> bool {
+    request.abi_version == synos_abi::ABI_SCHEMA_VERSION
+        && request.reserved == 0
+        && synos_runtime::Operation::from_raw(request.operation).is_some()
+}
+
 /// Common raw-pointer boundary used by the architecture entry stubs.
 ///
 /// The fixed ABI objects must be aligned and live in the caller's user
@@ -261,17 +267,21 @@ pub extern "C" fn synos_call_gate_dispatch(
         core::mem::size_of::<Request>(),
         core::mem::align_of::<Request>(),
     ) {
-        unsafe { response.write(error(Status::INVALID_ARGUMENT)) };
+        unsafe { crate::arch::write_user(response, error(Status::INVALID_ARGUMENT)) };
         return 0
     }
 
     let Some(caller) = crate::current_address_space() else {
-        unsafe { response.write(error(Status::BUSY)) };
+        unsafe { crate::arch::write_user(response, error(Status::BUSY)) };
         return 0
     };
-    let request = unsafe { request.read() };
+    let request = unsafe { crate::arch::read_user(request) };
+    if !validate_request_shape(&request) {
+        unsafe { crate::arch::write_user(response, error(Status::INVALID_ARGUMENT)) };
+        return 0
+    }
     let result = dispatch(caller, request);
-    unsafe { response.write(result) };
+    unsafe { crate::arch::write_user(response, result) };
     if result.status == Status::NORMAL.raw()
         && synos_runtime::Operation::from_raw(request.operation)
             == Some(synos_runtime::Operation::SleepUntil)

@@ -44,6 +44,11 @@ pub fn fill(output: &mut [u8]) -> bool {
     true
 }
 
+pub fn next_u64() -> Option<u64> {
+    let mut bytes = [0; size_of::<u64>()];
+    fill(&mut bytes).then(|| u64::from_le_bytes(bytes))
+}
+
 fn load_key() -> [u32; 8] {
     let mut key = [0; 8];
     for (index, value) in KEY.iter().enumerate() {

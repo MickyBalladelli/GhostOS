@@ -14,6 +14,10 @@ SECTIONS
         *(.lrodata .lrodata.*)
     }
 
+    .stack_guard 0x0000008000003ff8 : {
+        KEEP(*(.stack_guard))
+    }
+
     /DISCARD/ : {
         *(.comment .note* .eh_frame*)
     }

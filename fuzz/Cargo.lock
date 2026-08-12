@@ -277,9 +277,11 @@ dependencies = [
  "syn-shell",
  "synos-abi",
  "synos-app",
+ "synos-auth",
  "synos-fsd",
  "synos-host-filesystems",
  "synos-http",
+ "synos-kernel",
  "synos-netd",
  "synos-synfs",
  "synos-vm",
@@ -324,9 +326,11 @@ version = "0.1.0"
 dependencies = [
  "syn-shell",
  "synos-abi",
+ "synos-app",
  "synos-boot-protocol",
  "synos-fabric",
  "synos-fsd",
+ "synos-init",
  "synos-ipc",
  "synos-legacy-pc-drivers",
  "synos-numa",
@@ -334,6 +338,7 @@ dependencies = [
  "synos-power",
  "synos-runtime",
  "synos-status",
+ "synos-synfs",
  "synos-system-model",
 ]
 
@@ -342,6 +347,7 @@ name = "synos-legacy-pc-drivers"
 version = "0.1.0"
 dependencies = [
  "synos-status",
+ "synos-synfs",
 ]
 
 [[package]]
@@ -357,6 +363,7 @@ dependencies = [
  "synos-observability",
  "synos-policy",
  "synos-status",
+ "synos-synfs",
  "synos-time-sync",
 ]
 

@@ -3,6 +3,15 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
+u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
+
+__attribute__((noreturn))
+void __stack_chk_fail(void)
+{
+    __asm__ volatile("ud2");
+    for (;;) {}
+}
+
 enum {
     ABI_VERSION = 1,
     OP_CLOCK_NOW = 2,

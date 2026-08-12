@@ -47,6 +47,23 @@ pub(crate) fn invalidate_tlb_range(start: u64, length: u64) {
     unsafe { paging::invalidate_range(start, length) }
 }
 
+pub(crate) fn with_user_access<R>(operation: impl FnOnce() -> R) -> R {
+    #[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
+    {
+        return current::with_user_access(operation)
+    }
+    #[cfg(not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))))]
+    operation()
+}
+
+pub(crate) unsafe fn read_user<T: Copy>(pointer: *const T) -> T {
+    with_user_access(|| unsafe { pointer.read() })
+}
+
+pub(crate) unsafe fn write_user<T>(pointer: *mut T, value: T) {
+    with_user_access(|| unsafe { pointer.write(value) })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArchitectureEvidence {
     pub name: &'static str,
@@ -112,6 +129,8 @@ pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_off
     // Safety: kernel_entry supplies distinct frames owned by the boot allocator.
     unsafe {
         paging::install_root(tables, physical_offset);
+        #[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
+        current::enable_supervisor_protections();
         interrupts::init();
     }
 }

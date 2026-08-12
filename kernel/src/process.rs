@@ -208,6 +208,14 @@ impl<M: ProcessMemory, const CAPACITY: usize> ImageMapper
     type Error = ();
 
     fn reserve(&mut self, request: MappingRequest) -> Result<Mapping, Self::Error> {
+        let mut request = request;
+        if !request.fixed && request.preferred_base.is_none() {
+            request.preferred_base = self
+                .address_spaces
+                .get_mut(self.address_space)
+                .map_err(|_| ())?
+                .randomized_hint(request.size, request.alignment)
+        }
         let mapping = self
             .memory
             .reserve(self.address_space, request)
@@ -758,7 +766,15 @@ impl<
             .memory
             .create_address_space(address_space)
             .map_err(|_| KernelProcessError::Memory)?;
-        if self.address_spaces.create(address_space, root).is_err() {
+        if self
+            .address_spaces
+            .create_with_aslr_seed(
+                address_space,
+                root,
+                crate::random::next_u64().unwrap_or(0),
+            )
+            .is_err()
+        {
             self.memory.destroy_address_space(address_space);
             return Err(KernelProcessError::Capacity)
         }

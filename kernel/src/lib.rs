@@ -437,16 +437,18 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             {
                 return syscall_error(Status::INVALID_ARGUMENT)
             }
-            let bytes = unsafe {
-                core::slice::from_raw_parts_mut(address as *mut u8, length as usize)
-            };
-            return boot_services::dispatch_shell_filesystem(
-                operation,
-                request.flags,
-                request.capability,
-                request.arguments[4],
-                Some(bytes),
-            )
+            return arch::with_user_access(|| {
+                let bytes = unsafe {
+                    core::slice::from_raw_parts_mut(address as *mut u8, length as usize)
+                };
+                boot_services::dispatch_shell_filesystem(
+                    operation,
+                    request.flags,
+                    request.capability,
+                    request.arguments[4],
+                    Some(bytes),
+                )
+            })
         }
     }
     if request.flags != 0 || request.capability != 0 {
@@ -463,8 +465,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        let bytes = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
-        console::write_bytes(bytes);
+        arch::with_user_access(|| {
+            let bytes = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
+            console::write_bytes(bytes)
+        });
         return Response {
             status: Status::NORMAL.raw(),
             flags: 0,
@@ -482,7 +486,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
         if let Some(byte) = keyboard::read_boot_byte().or_else(console::read_byte) {
-            unsafe { (address as *mut u8).write(byte) };
+            unsafe { arch::write_user(address as *mut u8, byte) };
             return Response {
                 status: Status::NORMAL.raw(),
                 flags: 0,
@@ -580,10 +584,13 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        let bytes = unsafe {
-            core::slice::from_raw_parts_mut(address as *mut u8, length as usize)
-        };
-        if !random::fill(bytes) {
+        let filled = arch::with_user_access(|| {
+            let bytes = unsafe {
+                core::slice::from_raw_parts_mut(address as *mut u8, length as usize)
+            };
+            random::fill(bytes)
+        });
+        if !filled {
             return syscall_error(Status::BUSY)
         }
         return syscall_success([length, 0, 0, 0])

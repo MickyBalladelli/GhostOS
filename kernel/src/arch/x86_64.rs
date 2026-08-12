@@ -1,4 +1,42 @@
 use core::arch::{asm, global_asm};
+use core::sync::atomic::{AtomicBool, Ordering};
+
+const CR4_SMEP: u64 = 1 << 20;
+const CR4_SMAP: u64 = 1 << 21;
+static SMAP_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) unsafe fn enable_supervisor_protections() {
+    let maximum_leaf = core::arch::x86_64::__cpuid(0).eax;
+    if maximum_leaf < 7 {
+        return
+    }
+    let features = core::arch::x86_64::__cpuid_count(7, 0).ebx;
+    let mut cr4: u64;
+    unsafe { asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack, preserves_flags)) }
+    if features & (1 << 7) != 0 {
+        cr4 |= CR4_SMEP
+    }
+    if features & (1 << 20) != 0 {
+        cr4 |= CR4_SMAP
+    }
+    unsafe { asm!("mov cr4, {}", in(reg) cr4, options(nomem, nostack, preserves_flags)) }
+    if cr4 & CR4_SMAP != 0 {
+        unsafe { asm!("clac", options(nomem, nostack, preserves_flags)) }
+    }
+    SMAP_ENABLED.store(cr4 & CR4_SMAP != 0, Ordering::Release)
+}
+
+pub(crate) fn with_user_access<R>(operation: impl FnOnce() -> R) -> R {
+    let smap = SMAP_ENABLED.load(Ordering::Acquire);
+    if smap {
+        unsafe { asm!("stac", options(nomem, nostack, preserves_flags)) }
+    }
+    let result = operation();
+    if smap {
+        unsafe { asm!("clac", options(nomem, nostack, preserves_flags)) }
+    }
+    result
+}
 
 pub mod paging {
     use core::arch::asm;
@@ -20,6 +58,7 @@ pub mod paging {
     pub const PROCESS_TABLE_FRAME_COUNT: usize = 9;
     pub const SERVICE_PAGE_COUNT: usize = 7;
     const SERVICE_CODE_PAGE_COUNT: usize = 4;
+    const SERVICE_STACK_GUARD_OFFSET: usize = SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize - 8;
     const USER_MAPPING_PML4_INDEX: usize = (crate::USER_SPACE_START >> 39) as usize;
     const SERVICE_CODE: u64 = crate::USER_SPACE_START;
     const SERVICE_STACK_TOP: u64 = SERVICE_CODE + SERVICE_PAGE_COUNT as u64 * crate::FRAME_SIZE;
@@ -137,7 +176,8 @@ pub mod paging {
         physical_offset: u64,
         mmio_mappings: &[Option<crate::driver_capabilities::MmioMapping>],
     ) -> Option<crate::PageTableRoot> {
-        if tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0)
+        if !supports_no_execute()
+            || tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0)
             || pages.iter().any(|page| *page == 0 || *page % crate::FRAME_SIZE != 0)
             || tables.iter().enumerate().any(|(index, frame)| {
                 tables[..index].contains(frame) || pages.contains(frame)
@@ -271,6 +311,7 @@ pub mod paging {
         shell: bool,
         external_image: Option<&[u8]>,
     ) {
+        let built_in = external_image.is_none();
         let image = external_image.unwrap_or(if shell { SHELL_IMAGE } else { SERVICE_IMAGE });
         assert!(image.len() <= SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize);
 
@@ -288,6 +329,14 @@ pub mod paging {
                     (pages[index] + physical_offset) as *mut u8,
                     chunk.len(),
                 );
+            }
+            if built_in {
+                let guard = crate::random::next_u64()
+                    .filter(|value| *value != 0)
+                    .expect("entropy initialized before Ring 3 service images");
+                let page = SERVICE_STACK_GUARD_OFFSET / crate::FRAME_SIZE as usize;
+                let offset = SERVICE_STACK_GUARD_OFFSET % crate::FRAME_SIZE as usize;
+                ((pages[page] + physical_offset + offset as u64) as *mut u64).write(guard);
             }
             ((pages[SERVICE_CODE_PAGE_COUNT] + physical_offset) as *mut u8).write(role);
         }

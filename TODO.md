@@ -139,13 +139,13 @@ Build the real operating system core before adding more advanced features.
 
 ### Security hardening
 
-- [ ] Add ASLR and KASLR where supported.
-- [ ] Enforce W^X for every process and loaded image.
-- [ ] Add SMEP and SMAP protection on x86_64.
-- [ ] Add stack protection and control-flow hardening.
-- [ ] Add isolated secure key storage.
-- [ ] Fuzz syscall and privilege-boundary inputs.
-- [ ] Test for privilege escalation and confused-deputy bugs.
+- [x] Add ASLR and KASLR where supported.
+- [x] Enforce W^X for every process and loaded image.
+- [x] Add SMEP and SMAP protection on x86_64.
+- [x] Add stack protection and control-flow hardening.
+- [x] Add isolated secure key storage.
+- [x] Fuzz syscall and privilege-boundary inputs.
+- [x] Test for privilege escalation and confused-deputy bugs.
 
 ### Filesystem behavior
 
