@@ -119,3 +119,80 @@ Build the real operating system core before adding more advanced features.
 - [ ] Restart a failed service without rebooting the machine.
 - [ ] Reboot and recover the same system state.
 - [ ] Recover safely after a failed update.
+
+## Extra system work
+
+### Time and randomness
+
+- [ ] Add a real-time clock.
+- [ ] Add a monotonic clock shared by kernel and services.
+- [ ] Add timers, sleep, and wakeup primitives.
+- [ ] Add a trusted entropy and random-number service.
+
+### IPC safety
+
+- [ ] Define endpoint cleanup and ownership rules.
+- [ ] Define shared-buffer lifetime and revocation rules.
+- [ ] Add IPC backpressure and deadlock handling.
+- [ ] Apply IPC quotas and fairness between processes.
+- [ ] Add IPC tracing and stuck-request diagnostics.
+
+### Security hardening
+
+- [ ] Add ASLR and KASLR where supported.
+- [ ] Enforce W^X for every process and loaded image.
+- [ ] Add SMEP and SMAP protection on x86_64.
+- [ ] Add stack protection and control-flow hardening.
+- [ ] Add isolated secure key storage.
+- [ ] Fuzz syscall and privilege-boundary inputs.
+- [ ] Test for privilege escalation and confused-deputy bugs.
+
+### Filesystem behavior
+
+- [ ] Add process file-descriptor tables and open-handle rules.
+- [ ] Define atomic rename and `fsync` guarantees.
+- [ ] Add file and record locking through the filesystem service.
+- [ ] Add symbolic links and permission checks.
+- [ ] Add filesystem quotas visible to users and operators.
+- [ ] Add mapped-file support with capability checks.
+
+### Power management
+
+- [ ] Add CPU idle-state management.
+- [ ] Add suspend and resume on supported hardware.
+- [ ] Add thermal throttling and thermal event reporting.
+- [ ] Add battery and power-source reporting.
+- [ ] Add watchdog-based recovery for hung services and CPUs.
+
+### Observability and debugging
+
+- [ ] Persist system and service logs across reboot.
+- [ ] Export bounded metrics and tracing data.
+- [ ] Add crash-dump storage and a crash viewer.
+- [ ] Add boot-failure diagnostics.
+- [ ] Add a capability-safe remote debugger.
+- [ ] Add service dependency and startup diagnostics.
+
+### Build and release
+
+- [ ] Make release builds reproducible.
+- [ ] Sign release images and boot artifacts.
+- [ ] Generate SBOM and dependency provenance for each release.
+- [ ] Produce complete installer and recovery artifacts.
+- [ ] Validate upgrade compatibility before release.
+
+### Testing gates
+
+- [ ] Add real hardware boot evidence.
+- [ ] Add service-start and service-restart integration tests.
+- [ ] Add process-isolation integration tests.
+- [ ] Add power-loss and disk-corruption tests.
+- [ ] Add long-running soak tests for leaks and stale capabilities.
+- [ ] Keep QEMU, hardware, fuzz, and soak results separate.
+
+### Compatibility
+
+- [ ] Version and document the syscall ABI.
+- [ ] Version and document the user-space package ABI.
+- [ ] Add migration tools for persistent system state.
+- [ ] Add a stable user-space SDK compatibility policy.
