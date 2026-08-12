@@ -18,7 +18,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Register and start the filesystem service.
 - [x] Register and start the storage service.
 - [x] Register and start the network service.
-- [ ] Register and start logging and audit services.
+- [x] Register and start logging and audit services.
 - [ ] Register and start authentication and package services.
 - [ ] Connect service restart and fault fencing to real kernel processes.
 - [ ] Replace empty service entrypoints with working Ring 3 programs.

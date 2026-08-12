@@ -245,6 +245,14 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         "network service registered and started (process={})",
         boot_services.network_process.raw()
     );
+    println!(
+        "logging service registered and started (process={})",
+        boot_services.logging_process.raw()
+    );
+    println!(
+        "audit service registered and started (process={})",
+        boot_services.audit_process.raw()
+    );
 
     // Early hardware setup is complete. Start the first user-space process.
     #[cfg(all(
