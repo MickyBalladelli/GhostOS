@@ -215,12 +215,12 @@ impl InstructionDecoder {
             let idx = (sib >> 3) & 0x07;
             let bas = sib & 0x07;
 
-            if idx != 0b100 {
+            // SIB index=100 means "no index" only without REX.X. With
+            // REX.X set it selects R12. Dropping that case makes expressions
+            // such as `(%r14,%r12)` read from the base address repeatedly.
+            if idx != 0b100 || rex.x {
                 let high = if rex.x { 8 } else { 0 };
                 index = Some(idx + high);
-            }
-            if index == Some(4) || index == Some(12) {
-                index = None;
             }
 
             if bas == 0b101 && mod_ == 0b00 {
@@ -1552,6 +1552,20 @@ mod tests {
                 assert_eq!(m.index, Some(7));
                 assert_eq!(m.scale, 4);
                 assert_eq!(m.displacement, 0x10);
+            }
+            _ => panic!("bad operands"),
+        }
+    }
+
+    #[test]
+    fn sib_rex_x_selects_r12_as_index() {
+        // movzbl (%r14,%r12), %esi
+        let i = dec(&[0x43, 0x0F, 0xB6, 0x34, 0x26]).unwrap();
+        match &i.operands[..] {
+            [Operand::Register(6), Operand::Memory(m)] => {
+                assert_eq!(m.base, Some(14));
+                assert_eq!(m.index, Some(12));
+                assert_eq!(m.scale, 1);
             }
             _ => panic!("bad operands"),
         }
