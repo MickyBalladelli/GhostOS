@@ -14,6 +14,7 @@ mod stack;
 mod scheduler;
 mod stats;
 mod transport;
+mod networking;
 
 pub use memory::{MappedRegion, MemoryError, SharedMemory};
 pub use capture::{
@@ -63,4 +64,11 @@ pub use stack::{
 pub use transport::{
     DhcpIngress, EthernetDhcpTransport, DHCP_BROADCAST_IPV4, DHCP_BROADCAST_MAC,
     DHCP_MIN_ETHERNET_FRAME, DHCP_UNSPECIFIED_IPV4,
+};
+pub use networking::{
+    discover_interfaces, DnsError, DnsResolver, InterfaceDescriptor, InterfaceInventory,
+    InterfaceName, NetworkConfig, NetworkConfigError, NetworkConfigStore, NetworkInterfaceConfig,
+    NetworkMode, NetworkNic, NetworkRecovery, NetworkRecoveryAction, NicError, NicQueueBridge,
+    NtpClient, NtpError, NtpSample, NETWORK_CONFIG_PATH, MAX_NETWORK_INTERFACES,
+    NetworkBootAction, NetworkFirewallStartup,
 };

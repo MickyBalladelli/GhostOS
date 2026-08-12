@@ -22,5 +22,6 @@ synos-kernel = { path = "../../kernel" }
 synos-observability = { path = "../observability" }
 synos-numa = { path = "../numa" }
 synos-policy = { path = "../policy" }
+synos-synfs = { path = "../synfs" }
 synos-status = { path = "../status" }
 synos-time-sync = { path = "../time-sync" }

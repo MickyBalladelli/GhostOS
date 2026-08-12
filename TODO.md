@@ -81,13 +81,13 @@ Build the real operating system core before adding more advanced features.
 
 ## P1: Make networking usable
 
-- [ ] Connect physical NIC drivers to `synos-netd`.
-- [ ] Add interface discovery and naming.
-- [ ] Add DHCP and static network configuration at boot.
-- [ ] Persist network configuration in SynFS.
-- [ ] Add firewall policy activation during service startup.
-- [ ] Add DNS and basic time synchronization services.
-- [ ] Prove network recovery after link loss and service restart.
+- [x] Connect physical NIC drivers to `synos-netd`.
+- [x] Add interface discovery and naming.
+- [x] Add DHCP and static network configuration at boot.
+- [x] Persist network configuration in SynFS.
+- [x] Add firewall policy activation during service startup.
+- [x] Add DNS and basic time synchronization services.
+- [x] Prove network recovery after link loss and service restart.
 
 ## P1: Make updates and recovery real
 

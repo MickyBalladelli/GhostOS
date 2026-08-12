@@ -791,6 +791,7 @@ dependencies = [
  "synos-observability",
  "synos-policy",
  "synos-status",
+ "synos-synfs",
  "synos-time-sync",
 ]
 
