@@ -31,6 +31,14 @@ const AUDIT_SERVICE_ID: u32 = 0x4155_4454;
 const AUDIT_PROCESS_ID: u64 = 6;
 const AUDIT_IMAGE_ID: u128 = 0x5359_4e4f_4155_4454_0000_0000_0000_0001;
 const AUDIT_CAPABILITY_PROFILE: u64 = 0x4155_4454_5f52_4f4f;
+const AUTHENTICATION_SERVICE_ID: u32 = 0x4155_5448;
+const AUTHENTICATION_PROCESS_ID: u64 = 7;
+const AUTHENTICATION_IMAGE_ID: u128 = 0x5359_4e4f_5341_5554_4800_0000_0000_0001;
+const AUTHENTICATION_CAPABILITY_PROFILE: u64 = 0x4155_5448_5f52_4f4f;
+const PACKAGE_SERVICE_ID: u32 = 0x504b_4744;
+const PACKAGE_PROCESS_ID: u64 = 8;
+const PACKAGE_IMAGE_ID: u128 = 0x5359_4e4f_5350_4b47_4400_0000_0000_0001;
+const PACKAGE_CAPABILITY_PROFILE: u64 = 0x504b_4744_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = 64;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -41,6 +49,8 @@ static STORAGE_READY: AtomicBool = AtomicBool::new(false);
 static NETWORK_READY: AtomicBool = AtomicBool::new(false);
 static LOGGING_READY: AtomicBool = AtomicBool::new(false);
 static AUDIT_READY: AtomicBool = AtomicBool::new(false);
+static AUTHENTICATION_READY: AtomicBool = AtomicBool::new(false);
+static PACKAGE_READY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
 pub struct BootServices {
@@ -49,6 +59,8 @@ pub struct BootServices {
     pub network_process: ProcessId,
     pub logging_process: ProcessId,
     pub audit_process: ProcessId,
+    pub authentication_process: ProcessId,
+    pub package_process: ProcessId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,6 +86,8 @@ struct BootRuntime {
     network_process: ProcessId,
     logging_process: ProcessId,
     audit_process: ProcessId,
+    authentication_process: ProcessId,
+    package_process: ProcessId,
 }
 
 impl SupervisorRuntime for BootRuntime {
@@ -95,6 +109,12 @@ impl SupervisorRuntime for BootRuntime {
         if request.service == audit_service_id() {
             return Ok(self.audit_process)
         }
+        if request.service == authentication_service_id() {
+            return Ok(self.authentication_process)
+        }
+        if request.service == package_service_id() {
+            return Ok(self.package_process)
+        }
         Err(StartError::Process)
     }
 
@@ -103,7 +123,9 @@ impl SupervisorRuntime for BootRuntime {
             || process == self.storage_process
             || process == self.network_process
             || process == self.logging_process
-            || process == self.audit_process)
+            || process == self.audit_process
+            || process == self.authentication_process
+            || process == self.package_process)
             .then_some(())
             .ok_or(StartError::Process)
     }
@@ -115,6 +137,8 @@ pub fn start() -> Result<BootServices, StartError> {
         && NETWORK_READY.load(Ordering::Acquire)
         && LOGGING_READY.load(Ordering::Acquire)
         && AUDIT_READY.load(Ordering::Acquire)
+        && AUTHENTICATION_READY.load(Ordering::Acquire)
+        && PACKAGE_READY.load(Ordering::Acquire)
     {
         return Ok(BootServices {
             filesystem_process: filesystem_process_id().ok_or(StartError::Process)?,
@@ -122,6 +146,8 @@ pub fn start() -> Result<BootServices, StartError> {
             network_process: network_process_id().ok_or(StartError::Process)?,
             logging_process: logging_process_id().ok_or(StartError::Process)?,
             audit_process: audit_process_id().ok_or(StartError::Process)?,
+            authentication_process: authentication_process_id().ok_or(StartError::Process)?,
+            package_process: package_process_id().ok_or(StartError::Process)?,
         })
     }
 
@@ -130,6 +156,8 @@ pub fn start() -> Result<BootServices, StartError> {
     let network_process = network_process_id().ok_or(StartError::Process)?;
     let logging_process = logging_process_id().ok_or(StartError::Process)?;
     let audit_process = audit_process_id().ok_or(StartError::Process)?;
+    let authentication_process = authentication_process_id().ok_or(StartError::Process)?;
+    let package_process = package_process_id().ok_or(StartError::Process)?;
     let mut daemon = Daemon::new(SynFs::<FILESYSTEM_BLOCKS>::new())
         .map_err(|_| StartError::Daemon)?;
     daemon
@@ -149,7 +177,10 @@ pub fn start() -> Result<BootServices, StartError> {
     let network_name = ServiceName::new("synos-netd").map_err(|_| StartError::Supervisor)?;
     let logging_name = ServiceName::new("synos-logd").map_err(|_| StartError::Supervisor)?;
     let audit_name = ServiceName::new("synos-auditd").map_err(|_| StartError::Supervisor)?;
-    let mut supervisor = Supervisor::<5>::new();
+    let authentication_name =
+        ServiceName::new("synos-authd").map_err(|_| StartError::Supervisor)?;
+    let package_name = ServiceName::new("synos-pkgd").map_err(|_| StartError::Supervisor)?;
+    let mut supervisor = Supervisor::<7>::new();
     supervisor
         .register(ServiceSpec {
             id: filesystem_service_id(),
@@ -205,6 +236,28 @@ pub fn start() -> Result<BootServices, StartError> {
                 .map_err(|_| StartError::Supervisor)?,
         })
         .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
+            id: authentication_service_id(),
+            name: authentication_name,
+            kind: ServiceKind::System,
+            image_id: AUTHENTICATION_IMAGE_ID,
+            capability_profile: AUTHENTICATION_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
+            id: package_service_id(),
+            name: package_name,
+            kind: ServiceKind::System,
+            image_id: PACKAGE_IMAGE_ID,
+            capability_profile: PACKAGE_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
 
     let mut runtime = BootRuntime {
         filesystem_process,
@@ -212,6 +265,8 @@ pub fn start() -> Result<BootServices, StartError> {
         network_process,
         logging_process,
         audit_process,
+        authentication_process,
+        package_process,
     };
     for service in [
         filesystem_service_id(),
@@ -219,6 +274,8 @@ pub fn start() -> Result<BootServices, StartError> {
         network_service_id(),
         logging_service_id(),
         audit_service_id(),
+        authentication_service_id(),
+        package_service_id(),
     ] {
         let event = supervisor
             .start(service, &mut runtime)
@@ -238,12 +295,16 @@ pub fn start() -> Result<BootServices, StartError> {
     NETWORK_READY.store(true, Ordering::Release);
     LOGGING_READY.store(true, Ordering::Release);
     AUDIT_READY.store(true, Ordering::Release);
+    AUTHENTICATION_READY.store(true, Ordering::Release);
+    PACKAGE_READY.store(true, Ordering::Release);
     Ok(BootServices {
         filesystem_process,
         storage_process,
         network_process,
         logging_process,
         audit_process,
+        authentication_process,
+        package_process,
     })
 }
 
@@ -267,6 +328,14 @@ pub const fn audit_service_id() -> ServiceId {
     ServiceId::new(AUDIT_SERVICE_ID).unwrap()
 }
 
+pub const fn authentication_service_id() -> ServiceId {
+    ServiceId::new(AUTHENTICATION_SERVICE_ID).unwrap()
+}
+
+pub const fn package_service_id() -> ServiceId {
+    ServiceId::new(PACKAGE_SERVICE_ID).unwrap()
+}
+
 const fn filesystem_process_id() -> Option<ProcessId> {
     ProcessId::new(FILESYSTEM_PROCESS_ID)
 }
@@ -285,4 +354,12 @@ const fn logging_process_id() -> Option<ProcessId> {
 
 const fn audit_process_id() -> Option<ProcessId> {
     ProcessId::new(AUDIT_PROCESS_ID)
+}
+
+const fn authentication_process_id() -> Option<ProcessId> {
+    ProcessId::new(AUTHENTICATION_PROCESS_ID)
+}
+
+const fn package_process_id() -> Option<ProcessId> {
+    ProcessId::new(PACKAGE_PROCESS_ID)
 }

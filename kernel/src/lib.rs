@@ -254,6 +254,14 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         "audit service registered and started (process={})",
         boot_services.audit_process.raw()
     );
+    println!(
+        "authentication service registered and started (process={})",
+        boot_services.authentication_process.raw()
+    );
+    println!(
+        "package service registered and started (process={})",
+        boot_services.package_process.raw()
+    );
 
     // Early hardware setup is complete. Start the first user-space process.
     #[cfg(all(
@@ -293,6 +301,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         4 => ("synos-netd", 1u32 << 4),
         5 => ("synos-logd", 1u32 << 5),
         6 => ("synos-auditd", 1u32 << 6),
+        7 => ("synos-authd", 1u32 << 7),
+        8 => ("synos-pkgd", 1u32 << 8),
         _ => ("unknown-service", 0),
     };
     if bit != 0 && SERVICE_REPORTS.fetch_or(bit, Ordering::AcqRel) & bit == 0 {
@@ -328,8 +338,10 @@ fn boot_synos_init(
         services.network_process,
         services.logging_process,
         services.audit_process,
+        services.authentication_process,
+        services.package_process,
     ];
-    for (address_space_raw, process) in (2u32..=6).zip(service_processes) {
+    for (address_space_raw, process) in (2u32..=8).zip(service_processes) {
         let address_space = AddressSpaceId::new(address_space_raw)
             .expect("boot service address space id");
         let (thread, _) = boot_service_process(
@@ -359,7 +371,7 @@ fn boot_synos_init(
             fatal_kernel_halt(Status::CORRUPT)
         });
     println!(
-        "starting synos-init in Ring 3 (thread={}, services=5)",
+        "starting synos-init in Ring 3 (thread={}, services=7)",
         init_thread.raw()
     );
     arch::enter_user(&context, init_root)
