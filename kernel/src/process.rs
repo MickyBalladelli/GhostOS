@@ -5,7 +5,7 @@ use core::convert::TryFrom;
 use synos_app::{
     ImageLoadRequest, ImageMapper, LoadedImage, Mapping, MappingRequest, NativeExecRequest,
     NativeSpawnRequest, ProcessArguments, ProcessBackend, ProcessContext, ProcessExit,
-    ProcessUsage,
+    ProcessLimits, ProcessState, ProcessStatus, ProcessUsage,
     RuntimeSegment, SegmentPermissions, StackRequest, TlsRequest, load_image, DEFAULT_GUARD_PAGES,
     DEFAULT_STACK_BYTES, LoaderError,
 };
@@ -320,9 +320,10 @@ struct ProcessSlot {
     address_space: Option<AddressSpaceId>,
     authority: Option<CapabilityHandle>,
     mapping: Option<Mapping>,
+    limits: ProcessLimits,
     usage: ProcessUsage,
     exit: Option<ProcessExit>,
-    cancel_requested: bool,
+    cancel_requested_at: Option<u64>,
 }
 
 impl ProcessSlot {
@@ -332,12 +333,13 @@ impl ProcessSlot {
         address_space: None,
         authority: None,
         mapping: None,
+        limits: ProcessLimits::DEFAULT,
         usage: ProcessUsage {
             memory_bytes: 0,
             cpu_time_us: 0,
         },
         exit: None,
-        cancel_requested: false,
+        cancel_requested_at: None,
     };
 }
 
@@ -448,6 +450,42 @@ impl<
         crate::arch::enter_user(&context, root)
     }
 
+    /// Return the kernel's lifecycle view of one process.
+    pub fn status(&self, process: ProcessId) -> Result<ProcessStatus, KernelProcessError> {
+        let index = self.slot_index(process)?;
+        let slot = self.slots[index];
+        let state = match (slot.exit, slot.cancel_requested_at) {
+            (Some(_), _) => ProcessState::Exited,
+            (None, Some(requested_at_us)) => ProcessState::Cancelling { requested_at_us },
+            (None, None) => ProcessState::Running,
+        };
+        Ok(ProcessStatus {
+            process,
+            state,
+            limits: slot.limits,
+            usage: slot.usage,
+            exit: slot.exit,
+        })
+    }
+
+    /// Record a faulting user process, persist a bounded crash capsule, then
+    /// remove its runnable thread and address-space resources.
+    pub fn crash(
+        &mut self,
+        process: ProcessId,
+        reason: CrashReason,
+        fault_address: u64,
+    ) -> Result<(), KernelProcessError> {
+        self.finish_with_fault(
+            process,
+            ProcessExit {
+                status: -1,
+                reason: ExitReason::Crash(reason),
+            },
+            fault_address,
+        )
+    }
+
     /// Record a user-mode exit and release its thread, mapping, and authority.
     pub fn exit(&mut self, process: ProcessId, status: i32) -> Result<(), KernelProcessError> {
         let reason = if status == 0 {
@@ -541,7 +579,19 @@ impl<
     }
 
     fn finish(&mut self, process: ProcessId, exit: ProcessExit) -> Result<(), KernelProcessError> {
+        self.finish_with_fault(process, exit, 0)
+    }
+
+    fn finish_with_fault(
+        &mut self,
+        process: ProcessId,
+        exit: ProcessExit,
+        fault_address: u64,
+    ) -> Result<(), KernelProcessError> {
         let index = self.slot_index(process)?;
+        if self.slots[index].exit.is_some() {
+            return Err(KernelProcessError::InvalidTransition)
+        }
         let thread = self.slots[index].thread.ok_or(KernelProcessError::NotFound)?;
         let address_space = self.slots[index]
             .address_space
@@ -549,6 +599,9 @@ impl<
         let authority = self.slots[index]
             .authority
             .ok_or(KernelProcessError::NotFound)?;
+        if let ExitReason::Crash(reason) = exit.reason {
+            self.report_crash(index, reason, fault_address)?;
+        }
         self.scheduler
             .stop(self.capabilities, self.caller, authority, thread)
             .map_err(|_| KernelProcessError::Scheduler)?;
@@ -564,6 +617,42 @@ impl<
             .map_err(|_| KernelProcessError::Capability)?;
         self.slots[index].exit = Some(exit);
         self.slots[index].mapping = None;
+        self.slots[index].cancel_requested_at = None;
+        Ok(())
+    }
+
+    fn report_crash(
+        &self,
+        index: usize,
+        reason: CrashReason,
+        fault_address: u64,
+    ) -> Result<(), KernelProcessError> {
+        let thread = self.slots[index].thread.ok_or(KernelProcessError::NotFound)?;
+        let context = self
+            .scheduler
+            .thread(thread)
+            .map_err(|_| KernelProcessError::Scheduler)?
+            .context;
+        let mut registers = crate::crash::RegisterState::empty();
+        registers.instruction_pointer = context.instruction_pointer as u64;
+        registers.stack_pointer = context.stack_pointer as u64;
+        for (destination, value) in registers.general.iter_mut().zip(context.callee_saved) {
+            *destination = value as u64;
+        }
+        let reason_code = match reason {
+            CrashReason::Panic => 1,
+            CrashReason::ProtectionFault => 2,
+            CrashReason::IllegalInstruction => 3,
+            CrashReason::Watchdog => 4,
+            CrashReason::UnexpectedExit => 5,
+        };
+        crate::crash::capture_and_persist(
+            registers,
+            fault_address,
+            Status::CORRUPT,
+            0x100 | reason_code,
+            Some(self.scheduler),
+        );
         Ok(())
     }
 }
@@ -635,6 +724,7 @@ impl<
             address_space: Some(address_space),
             authority: Some(process_authority),
             mapping: Some(loaded.mapping),
+            limits: request.limits,
             usage: ProcessUsage {
                 memory_bytes: loaded
                     .mapping
@@ -644,7 +734,7 @@ impl<
                 cpu_time_us: 0,
             },
             exit: None,
-            cancel_requested: false,
+            cancel_requested_at: None,
         };
         Ok(process)
     }
@@ -699,7 +789,7 @@ impl<
             .size
             .saturating_add(DEFAULT_STACK_BYTES)
             .saturating_add(request.heap_bytes);
-        self.slots[index].cancel_requested = false;
+        self.slots[index].cancel_requested_at = None;
         Ok(())
     }
 
@@ -718,7 +808,9 @@ impl<
         if self.slots[index].exit.is_some() {
             return Err(KernelProcessError::InvalidTransition)
         }
-        self.slots[index].cancel_requested = true;
+        if self.slots[index].cancel_requested_at.is_none() {
+            self.slots[index].cancel_requested_at = Some(self.scheduler.clock());
+        }
         Ok(())
     }
 
