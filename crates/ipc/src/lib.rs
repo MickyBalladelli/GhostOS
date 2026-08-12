@@ -7,8 +7,12 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 mod buffer;
+mod registry;
 
 pub use buffer::{BufferCapability, BufferError, BufferLease, BufferOwner, BufferRights};
+pub use registry::{
+    BufferLeasePermit, BufferPrincipal, BufferRegistry, BufferRegistryError, BufferRevocation,
+};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
@@ -546,6 +550,20 @@ pub fn validate_guarded(
     {
         return Err(ArchiveError::InvalidDescriptor);
     }
+    Ok(descriptor)
+}
+
+pub fn validate_guarded_live<const CAPACITY: usize>(
+    envelope: Envelope,
+    expected_schema: u64,
+    registry: &BufferRegistry<CAPACITY>,
+    owner: BufferPrincipal,
+    capability: BufferCapability,
+) -> Result<SharedBuffer, ArchiveError> {
+    let descriptor = validate_guarded(envelope, expected_schema, capability)?;
+    registry
+        .authorize(owner, capability, descriptor, BufferRights::READ)
+        .map_err(|_| ArchiveError::InvalidDescriptor)?;
     Ok(descriptor)
 }
 

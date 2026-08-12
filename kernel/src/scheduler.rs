@@ -27,6 +27,7 @@ pub enum SchedulerError {
     InvalidPowerPolicy,
     NoHousekeepingCore,
     IpcWaitTableFull,
+    IpcDeadlock,
     AccessDenied,
 }
 
@@ -42,7 +43,8 @@ impl IntoStatus for SchedulerError {
             | Self::InvalidCpuMask
             | Self::InvalidPowerPolicy
             | Self::NoHousekeepingCore
-            | Self::IpcWaitTableFull => {
+            | Self::IpcWaitTableFull
+            | Self::IpcDeadlock => {
                 Status::new(Severity::Error, facility::KERNEL, 3, 0)
                     .expect("valid scheduler status")
             }
@@ -563,10 +565,13 @@ impl Scheduler {
         waiter: ThreadId,
     ) -> Result<(), SchedulerError> {
         if owner == waiter {
-            return Err(SchedulerError::InvalidThread)
+            return Err(SchedulerError::IpcDeadlock)
         }
         self.slot(owner)?;
         self.slot(waiter)?;
+        if self.ipc_would_deadlock(owner, waiter) {
+            return Err(SchedulerError::IpcDeadlock)
+        }
         let slot = self
             .ipc_waiters
             .iter_mut()
@@ -583,6 +588,26 @@ impl Scheduler {
         self.recompute_inheritance();
         self.debug_check();
         Ok(())
+    }
+
+    fn ipc_would_deadlock(&self, owner: ThreadId, waiter: ThreadId) -> bool {
+        let mut current = owner;
+        for _ in 0..MAX_THREADS {
+            if current == waiter {
+                return true
+            }
+            let Some(next) = self
+                .ipc_waiters
+                .iter()
+                .flatten()
+                .find(|entry| entry.waiter == current)
+                .map(|entry| entry.owner)
+            else {
+                return false
+            };
+            current = next
+        }
+        true
     }
 
     pub fn ipc_complete(&mut self, endpoint: u32, waiter: ThreadId) {
@@ -897,6 +922,11 @@ impl Scheduler {
                 || self.slot(waiter.owner).is_err()
                 || self.slot(waiter.waiter).is_err()
             {
+                return Err(crate::invariants::InvariantFailure::new(
+                    crate::invariants::InvariantId::SchedulerState,
+                ))
+            }
+            if self.ipc_would_deadlock(waiter.owner, waiter.waiter) {
                 return Err(crate::invariants::InvariantFailure::new(
                     crate::invariants::InvariantId::SchedulerState,
                 ))

@@ -1,7 +1,9 @@
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+
 use crate::capability::{CapabilityHandle, CapabilityObject, CapabilitySpace, Rights};
 use crate::partition::CorePartition;
 use crate::quota::{QuotaDecision, QuotaResource};
-use crate::scheduler::Scheduler;
+use crate::scheduler::{Scheduler, SchedulerError};
 use crate::task::{AddressSpaceId, CpuId, ThreadId};
 use synos_ipc::{Envelope, Ring, RingError};
 use synos_observability::{
@@ -63,6 +65,8 @@ impl From<Envelope> for Message {
 pub enum IpcError {
     Full,
     Empty,
+    Closed,
+    Deadlock,
     AccessDenied,
     CoreIsolated,
     RateLimited { retry_after_us: u64 },
@@ -74,10 +78,50 @@ impl IntoStatus for IpcError {
             Self::Full => Status::BUSY,
             Self::Empty => Status::new(Severity::Information, facility::KERNEL, 2, 0)
                 .expect("valid IPC status"),
+            Self::Closed => Status::NOT_FOUND,
+            Self::Deadlock => Status::BUSY,
             Self::AccessDenied => Status::ACCESS_DENIED,
             Self::CoreIsolated | Self::RateLimited { .. } => Status::BUSY,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EndpointCloseReport {
+    pub revoked_capabilities: usize,
+    pub discarded_messages: usize,
+    pub channel_closed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EndpointCleanupReport {
+    pub endpoints: usize,
+    pub revoked_capabilities: usize,
+    pub discarded_messages: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChannelDiagnostics {
+    pub channel: ChannelId,
+    pub closed: bool,
+    pub pending: usize,
+    pub high_watermark: usize,
+    pub enqueued: u64,
+    pub dequeued: u64,
+    pub full_events: u64,
+    pub rate_limited_events: u64,
+    pub last_enqueue_us: u64,
+    pub last_dequeue_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StuckChannelReport {
+    pub channel: ChannelId,
+    pub pending: usize,
+    pub stalled_for_us: u64,
+    pub full_events: u64,
+    pub last_enqueued_correlation: u128,
+    pub last_enqueued_label: u64,
 }
 
 /// A bounded, non-blocking MPMC channel.
@@ -87,6 +131,17 @@ impl IntoStatus for IpcError {
 pub struct Channel<const CAPACITY: usize> {
     id: ChannelId,
     ring: Ring<CAPACITY>,
+    closed: AtomicBool,
+    high_watermark: AtomicUsize,
+    enqueued: AtomicU64,
+    dequeued: AtomicU64,
+    full_events: AtomicU64,
+    rate_limited_events: AtomicU64,
+    last_enqueue_us: AtomicU64,
+    last_dequeue_us: AtomicU64,
+    last_correlation_low: AtomicU64,
+    last_correlation_high: AtomicU64,
+    last_label: AtomicU64,
 }
 
 impl<const CAPACITY: usize> Channel<CAPACITY> {
@@ -95,6 +150,17 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         Self {
             id,
             ring: Ring::new(),
+            closed: AtomicBool::new(false),
+            high_watermark: AtomicUsize::new(0),
+            enqueued: AtomicU64::new(0),
+            dequeued: AtomicU64::new(0),
+            full_events: AtomicU64::new(0),
+            rate_limited_events: AtomicU64::new(0),
+            last_enqueue_us: AtomicU64::new(0),
+            last_dequeue_us: AtomicU64::new(0),
+            last_correlation_low: AtomicU64::new(0),
+            last_correlation_high: AtomicU64::new(0),
+            last_label: AtomicU64::new(0),
         }
     }
 
@@ -156,12 +222,12 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
             )
             .map_err(|_| IpcError::AccessDenied)?;
         if let QuotaDecision::Throttled { retry_after_us } = decision {
-            return Err(IpcError::RateLimited { retry_after_us })
+            return Err(self.rate_limited(retry_after_us))
         }
         if decision == QuotaDecision::Rejected {
-            return Err(IpcError::RateLimited { retry_after_us: u64::MAX })
+            return Err(self.rate_limited(u64::MAX))
         }
-        match self.enqueue(message) {
+        match self.enqueue(message, now_us) {
             Ok(()) => {
                 record_profile_sample(ProfileSample::single(
                     ProfileDomain::Ipc,
@@ -261,8 +327,11 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                 Ok(())
             }
             Err(IpcError::Full) => {
-                let _ = scheduler.ipc_wait(self.id.raw(), owner, waiter);
-                Err(IpcError::Full)
+                match scheduler.ipc_wait(self.id.raw(), owner, waiter) {
+                    Ok(()) => Err(IpcError::Full),
+                    Err(SchedulerError::IpcDeadlock) => Err(IpcError::Deadlock),
+                    Err(_) => Err(IpcError::Full),
+                }
             }
             Err(error) => Err(error),
         }
@@ -340,15 +409,13 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
             let _ = capabilities.delete(receiver, delegated);
             return Err(match decision {
                 QuotaDecision::Throttled { retry_after_us } => {
-                    IpcError::RateLimited { retry_after_us }
+                    self.rate_limited(retry_after_us)
                 }
-                QuotaDecision::Rejected => IpcError::RateLimited {
-                    retry_after_us: u64::MAX,
-                },
+                QuotaDecision::Rejected => self.rate_limited(u64::MAX),
                 QuotaDecision::Allowed => unreachable!(),
             })
         }
-        if let Err(error) = self.enqueue(message) {
+        if let Err(error) = self.enqueue(message, now_us) {
             let _ = capabilities.delete(receiver, delegated);
             let _ = capabilities.refund_quota(
                 caller,
@@ -430,16 +497,35 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         })
     }
 
-    fn enqueue(&self, mut message: Message) -> Result<(), IpcError> {
+    fn enqueue(&self, mut message: Message, now_us: u64) -> Result<(), IpcError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(IpcError::Closed)
+        }
         if message.correlation.is_none() {
             message.correlation = next_correlation_id(1)
         }
-        self.ring
-            .try_send(message.into())
-            .map_err(|error| match error {
-                RingError::Full => IpcError::Full,
+        if let Err(error) = self.ring.try_send(message.into()) {
+            match error {
+                RingError::Full => {
+                    self.full_events.fetch_add(1, Ordering::Relaxed);
+                    trace!(
+                        EventKind::Ipc,
+                        EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
+                        EventField::unsigned(field::OPERATION, 3),
+                    );
+                    return Err(IpcError::Full)
+                }
                 RingError::Empty => unreachable!(),
-            })?;
+            }
+        }
+        self.enqueued.fetch_add(1, Ordering::Relaxed);
+        self.last_enqueue_us.store(now_us, Ordering::Release);
+        self.last_correlation_low
+            .store(message.correlation.raw() as u64, Ordering::Relaxed);
+        self.last_correlation_high
+            .store((message.correlation.raw() >> 64) as u64, Ordering::Relaxed);
+        self.last_label.store(message.label, Ordering::Release);
+        self.high_watermark.fetch_max(self.pending(), Ordering::Relaxed);
         trace!(
             EventKind::Ipc,
             EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
@@ -487,15 +573,13 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         if decision != QuotaDecision::Allowed {
             return Err(match decision {
                 QuotaDecision::Throttled { retry_after_us } => {
-                    IpcError::RateLimited { retry_after_us }
+                    self.rate_limited(retry_after_us)
                 }
-                QuotaDecision::Rejected => IpcError::RateLimited {
-                    retry_after_us: u64::MAX,
-                },
+                QuotaDecision::Rejected => self.rate_limited(u64::MAX),
                 QuotaDecision::Allowed => unreachable!(),
             })
         }
-        match self.dequeue() {
+        match self.dequeue(now_us) {
             Ok(message) => Ok(message),
             Err(error) => {
                 let _ = capabilities.refund_quota(
@@ -535,7 +619,10 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
         self.try_receive_at(capabilities, caller, endpoint, now_us)
     }
 
-    fn dequeue(&self) -> Result<Message, IpcError> {
+    fn dequeue(&self, now_us: u64) -> Result<Message, IpcError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(IpcError::Closed)
+        }
         let result = self
             .ring
             .try_receive()
@@ -544,8 +631,145 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                 RingError::Empty => IpcError::Empty,
                 RingError::Full => unreachable!(),
             });
+        if let Ok(message) = result {
+            self.dequeued.fetch_add(1, Ordering::Relaxed);
+            self.last_dequeue_us.store(now_us, Ordering::Release);
+            trace!(
+                EventKind::Ipc,
+                EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
+                EventField::identifier(field::OPERATION, message.correlation.raw()),
+            )
+        }
         crate::invariants::debug_assert_valid(self.check_queue_invariants());
         result
+    }
+
+    fn rate_limited(&self, retry_after_us: u64) -> IpcError {
+        self.rate_limited_events.fetch_add(1, Ordering::Relaxed);
+        trace!(
+            EventKind::Ipc,
+            EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
+            EventField::unsigned(field::OPERATION, 4),
+            EventField::unsigned(field::LENGTH, retry_after_us),
+        );
+        IpcError::RateLimited { retry_after_us }
+    }
+
+    /// Delete one endpoint capability. Closing a receive endpoint closes the
+    /// whole channel and drains requests that can no longer be delivered.
+    pub fn close_endpoint<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &mut CapabilitySpace<MAX_CAPABILITIES>,
+        caller: AddressSpaceId,
+        endpoint: CapabilityHandle,
+    ) -> Result<EndpointCloseReport, IpcError> {
+        let info = capabilities
+            .inspect(caller, endpoint)
+            .map_err(|_| IpcError::AccessDenied)?;
+        if info.object != CapabilityObject::IpcChannel(self.id)
+            || (!info.rights.contains(Rights::SEND)
+                && !info.rights.contains(Rights::RECEIVE))
+        {
+            return Err(IpcError::AccessDenied)
+        }
+        let closes_channel = info.rights.contains(Rights::RECEIVE);
+        let revoked_capabilities = capabilities
+            .delete(caller, endpoint)
+            .map_err(|_| IpcError::AccessDenied)?;
+        let mut discarded_messages = 0;
+        if closes_channel && !self.closed.swap(true, Ordering::AcqRel) {
+            while self.ring.try_receive().is_ok() {
+                discarded_messages += 1
+            }
+            trace!(
+                EventKind::Ipc,
+                EventField::unsigned(field::CHANNEL, self.id.raw() as u64),
+                EventField::unsigned(field::OPERATION, 5),
+                EventField::unsigned(field::LENGTH, discarded_messages as u64),
+            )
+        }
+        Ok(EndpointCloseReport {
+            revoked_capabilities,
+            discarded_messages,
+            channel_closed: self.closed.load(Ordering::Acquire),
+        })
+    }
+
+    /// Remove every endpoint owned by a terminated address space.
+    pub fn cleanup_owner<const MAX_CAPABILITIES: usize>(
+        &self,
+        capabilities: &mut CapabilitySpace<MAX_CAPABILITIES>,
+        owner: AddressSpaceId,
+    ) -> EndpointCleanupReport {
+        let mut handles = [None; MAX_CAPABILITIES];
+        let mut count = 0;
+        for (handle, info) in capabilities.entries() {
+            if info.owner == owner && info.object == CapabilityObject::IpcChannel(self.id) {
+                handles[count] = Some(handle);
+                count += 1
+            }
+        }
+        let mut report = EndpointCleanupReport {
+            endpoints: 0,
+            revoked_capabilities: 0,
+            discarded_messages: 0,
+        };
+        for handle in handles[..count].iter().flatten().copied() {
+            if let Ok(closed) = self.close_endpoint(capabilities, owner, handle) {
+                report.endpoints += 1;
+                report.revoked_capabilities = report
+                    .revoked_capabilities
+                    .saturating_add(closed.revoked_capabilities);
+                report.discarded_messages = report
+                    .discarded_messages
+                    .saturating_add(closed.discarded_messages)
+            }
+        }
+        report
+    }
+
+    pub fn diagnostics(&self) -> ChannelDiagnostics {
+        ChannelDiagnostics {
+            channel: self.id,
+            closed: self.closed.load(Ordering::Acquire),
+            pending: self.pending(),
+            high_watermark: self.high_watermark.load(Ordering::Relaxed),
+            enqueued: self.enqueued.load(Ordering::Relaxed),
+            dequeued: self.dequeued.load(Ordering::Relaxed),
+            full_events: self.full_events.load(Ordering::Relaxed),
+            rate_limited_events: self.rate_limited_events.load(Ordering::Relaxed),
+            last_enqueue_us: self.last_enqueue_us.load(Ordering::Acquire),
+            last_dequeue_us: self.last_dequeue_us.load(Ordering::Acquire),
+        }
+    }
+
+    pub fn stuck_report(
+        &self,
+        now_us: u64,
+        threshold_us: u64,
+    ) -> Option<StuckChannelReport> {
+        if threshold_us == 0 || self.closed.load(Ordering::Acquire) {
+            return None
+        }
+        let diagnostics = self.diagnostics();
+        if diagnostics.pending == 0 {
+            return None
+        }
+        let last_progress = if diagnostics.last_dequeue_us == 0 {
+            diagnostics.last_enqueue_us
+        } else {
+            diagnostics.last_dequeue_us
+        };
+        let stalled_for_us = now_us.saturating_sub(last_progress);
+        (stalled_for_us >= threshold_us).then_some(StuckChannelReport {
+            channel: self.id,
+            pending: diagnostics.pending,
+            stalled_for_us,
+            full_events: diagnostics.full_events,
+            last_enqueued_correlation: self.last_correlation_low.load(Ordering::Relaxed) as u128
+                | ((self.last_correlation_high.load(Ordering::Relaxed) as u128) << 64),
+            last_enqueued_label: self.last_label.load(Ordering::Acquire),
+        })
     }
 
     pub fn pending(&self) -> usize {
@@ -647,15 +871,13 @@ impl<const CAPACITY: usize, const MAX_CAPABILITIES: usize>
         if decision != QuotaDecision::Allowed {
             return Err(match decision {
                 QuotaDecision::Throttled { retry_after_us } => {
-                    IpcError::RateLimited { retry_after_us }
+                    self.channel.rate_limited(retry_after_us)
                 }
-                QuotaDecision::Rejected => IpcError::RateLimited {
-                    retry_after_us: u64::MAX,
-                },
+                QuotaDecision::Rejected => self.channel.rate_limited(u64::MAX),
                 QuotaDecision::Allowed => unreachable!(),
             })
         }
-        match self.channel.enqueue(message) {
+        match self.channel.enqueue(message, now_us) {
             Ok(()) => Ok(()),
             Err(error) => {
                 let _ = self.capabilities.refund_quota(
@@ -694,8 +916,11 @@ impl<const CAPACITY: usize, const MAX_CAPABILITIES: usize>
                 Ok(())
             }
             Err(IpcError::Full) => {
-                let _ = scheduler.ipc_wait(self.channel.id.raw(), owner, waiter);
-                Err(IpcError::Full)
+                match scheduler.ipc_wait(self.channel.id.raw(), owner, waiter) {
+                    Ok(()) => Err(IpcError::Full),
+                    Err(SchedulerError::IpcDeadlock) => Err(IpcError::Deadlock),
+                    Err(_) => Err(IpcError::Full),
+                }
             }
             Err(error) => Err(error),
         }
@@ -742,15 +967,13 @@ impl<const CAPACITY: usize, const MAX_CAPABILITIES: usize>
         if decision != QuotaDecision::Allowed {
             return Err(match decision {
                 QuotaDecision::Throttled { retry_after_us } => {
-                    IpcError::RateLimited { retry_after_us }
+                    self.channel.rate_limited(retry_after_us)
                 }
-                QuotaDecision::Rejected => IpcError::RateLimited {
-                    retry_after_us: u64::MAX,
-                },
+                QuotaDecision::Rejected => self.channel.rate_limited(u64::MAX),
                 QuotaDecision::Allowed => unreachable!(),
             })
         }
-        match self.channel.dequeue() {
+        match self.channel.dequeue(now_us) {
             Ok(message) => Ok(message),
             Err(error) => {
                 let _ = self.capabilities.refund_quota(

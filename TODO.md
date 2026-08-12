@@ -131,11 +131,11 @@ Build the real operating system core before adding more advanced features.
 
 ### IPC safety
 
-- [ ] Define endpoint cleanup and ownership rules.
-- [ ] Define shared-buffer lifetime and revocation rules.
-- [ ] Add IPC backpressure and deadlock handling.
-- [ ] Apply IPC quotas and fairness between processes.
-- [ ] Add IPC tracing and stuck-request diagnostics.
+- [x] Define endpoint cleanup and ownership rules.
+- [x] Define shared-buffer lifetime and revocation rules.
+- [x] Add IPC backpressure and deadlock handling.
+- [x] Apply IPC quotas and fairness between processes.
+- [x] Add IPC tracing and stuck-request diagnostics.
 
 ### Security hardening
 
