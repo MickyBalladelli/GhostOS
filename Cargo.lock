@@ -716,9 +716,11 @@ version = "0.1.0"
 dependencies = [
  "syn-shell",
  "synos-abi",
+ "synos-app",
  "synos-boot-protocol",
  "synos-fabric",
  "synos-fsd",
+ "synos-init",
  "synos-ipc",
  "synos-legacy-pc-drivers",
  "synos-numa",

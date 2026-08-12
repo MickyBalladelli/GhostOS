@@ -28,11 +28,13 @@ bench = false
 
 [dependencies]
 synos-abi = { path = "../crates/abi" }
+synos-app = { path = "../crates/app" }
 synos-boot-protocol = { path = "../crates/boot-protocol" }
 synos-fabric = { path = "../crates/fabric" }
 synos-fsd = { path = "../crates/fsd" }
 synos-legacy-pc-drivers = { path = "../crates/legacy-pc-drivers" }
 synos-ipc = { path = "../crates/ipc" }
+synos-init = { path = "../crates/init" }
 synos-observability = { path = "../crates/observability" }
 synos-numa = { path = "../crates/numa" }
 synos-power = { path = "../crates/power" }

@@ -38,6 +38,7 @@ mod power;
 #[allow(unsafe_code)]
 mod persistence;
 pub mod partition;
+pub mod process;
 pub mod scheduler;
 pub mod runtime;
 pub mod saturation;
@@ -95,6 +96,9 @@ pub use micro_silo::{
 };
 pub use page_fault::{
     PageFault, PageFaultDispatchError, PageFaultHandler, PageFaultHandlerError,
+};
+pub use process::{
+    KernelProcessBackend, KernelProcessError, ProcessMemory, DEFAULT_KERNEL_PROCESS_CAPACITY,
 };
 pub use quota::{
     BucketConfig, CapabilityQuota, QuotaContentionReport, QuotaDecision, QuotaPolicy,
