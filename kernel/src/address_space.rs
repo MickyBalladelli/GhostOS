@@ -85,6 +85,21 @@ pub enum AddressSpaceError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryAccess {
+    Read,
+    Write,
+    Execute,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessIsolationError {
+    NotFound,
+    SameAddressSpace,
+    SharedPageTable,
+    SharedBacking,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StackGrowthError {
     NotGuardPage,
     Collision,
@@ -163,6 +178,34 @@ impl AddressSpace {
 
     pub const fn root(self) -> PageTableRoot {
         self.root
+    }
+
+    pub fn can_access(&self, address: u64, size: u64, access: MemoryAccess) -> bool {
+        if !is_user_range(address, size) {
+            return false
+        }
+        self.regions.iter().flatten().any(|region| {
+            let Some(permissions) = region.permissions else {
+                return false
+            };
+            region.contains(address, size)
+                && match access {
+                    MemoryAccess::Read => permissions.readable(),
+                    MemoryAccess::Write => permissions.writable(),
+                    MemoryAccess::Execute => permissions.executable(),
+                }
+        })
+    }
+
+    fn shares_backing_with(&self, other: &Self) -> bool {
+        self.regions.iter().flatten().any(|left| {
+            let Some(left_backing) = left.backing else {
+                return false
+            };
+            other.regions.iter().flatten().any(|right| {
+                right.backing.is_some_and(|right_backing| left_backing.overlaps(right_backing))
+            })
+        })
     }
 
     pub fn reserve(&mut self, request: MappingRequest) -> Result<Mapping, AddressSpaceError> {
@@ -826,6 +869,32 @@ impl<const CAPACITY: usize> AddressSpaceTable<CAPACITY> {
             .flatten()
             .find(|space| space.id() == id)
             .ok_or(AddressSpaceError::NotFound)
+    }
+
+    /// Prove two address spaces cannot reach the same private physical page.
+    /// Shared-memory and COW mappings are deliberately rejected: callers must
+    /// use their explicit sharing protocol instead of treating them as private.
+    pub fn check_isolation(
+        &self,
+        first: AddressSpaceId,
+        second: AddressSpaceId,
+    ) -> Result<(), ProcessIsolationError> {
+        if first == second {
+            return Err(ProcessIsolationError::SameAddressSpace)
+        }
+        let first_space = self
+            .get(first)
+            .map_err(|_| ProcessIsolationError::NotFound)?;
+        let second_space = self
+            .get(second)
+            .map_err(|_| ProcessIsolationError::NotFound)?;
+        if first_space.root() == second_space.root() {
+            return Err(ProcessIsolationError::SharedPageTable)
+        }
+        if first_space.shares_backing_with(second_space) {
+            return Err(ProcessIsolationError::SharedBacking)
+        }
+        Ok(())
     }
 
     pub fn destroy(&mut self, id: AddressSpaceId) -> Result<(), AddressSpaceError> {

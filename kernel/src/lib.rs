@@ -93,7 +93,8 @@ pub use allocator::{
     MAX_OWNED_FRAME_RANGES, FRAME_SIZE,
 };
 pub use address_space::{
-    AddressSpace, AddressSpaceError, AddressSpaceTable, PageTableRoot,
+    AddressSpace, AddressSpaceError, AddressSpaceTable, MemoryAccess, PageTableRoot,
+    ProcessIsolationError,
     MAX_ADDRESS_SPACE_REGIONS, PAGE_SIZE as ADDRESS_SPACE_PAGE_SIZE, USER_SPACE_END,
     USER_SPACE_START, KERNEL_SPACE_END, KERNEL_SPACE_START, VIRTUAL_ADDRESS_LAYOUT,
     StackGrowth, StackGrowthError, VirtualAddressLayout, is_user_range,

@@ -35,7 +35,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add copy-on-write memory.
 - [x] Add guard pages, stack growth, and invalid-access termination.
 - [x] Add capability-checked DMA and IOMMU protection.
-- [ ] Prove one process cannot read or write another process.
+- [x] Prove one process cannot read or write another process.
 
 ## P0: Integrate physical storage and drivers
 

@@ -26,6 +26,70 @@ fn address_space(raw: u32) -> AddressSpaceId {
 }
 
 #[test]
+fn address_spaces_prove_private_read_write_boundaries() {
+    let first = address_space(41);
+    let second = address_space(42);
+    let mut spaces = crate::AddressSpaceTable::<2>::new();
+    spaces
+        .create(first, crate::PageTableRoot::new(0x1000).unwrap())
+        .expect("first page table");
+    spaces
+        .create(second, crate::PageTableRoot::new(0x2000).unwrap())
+        .expect("second page table");
+    let mut capabilities = CapabilitySpace::<4>::new();
+    let first_memory = capabilities
+        .mint_untyped(
+            first,
+            crate::PhysicalRange::new(0x40_0000, 0x1000).unwrap(),
+            Rights::MAP.union(Rights::READ).union(Rights::WRITE),
+        )
+        .expect("first private memory");
+    let second_memory = capabilities
+        .mint_untyped(
+            second,
+            crate::PhysicalRange::new(0x50_0000, 0x1000).unwrap(),
+            Rights::MAP.union(Rights::READ).union(Rights::WRITE),
+        )
+        .expect("second private memory");
+    let first_mapping = spaces
+        .get_mut(first)
+        .unwrap()
+        .map_backing(
+            first_memory,
+            crate::PhysicalRange::new(0x40_0000, 0x1000).unwrap(),
+            true,
+        )
+        .unwrap();
+    let second_mapping = spaces
+        .get_mut(second)
+        .unwrap()
+        .map_backing(
+            second_memory,
+            crate::PhysicalRange::new(0x50_0000, 0x1000).unwrap(),
+            true,
+        )
+        .unwrap();
+
+    assert_eq!(spaces.check_isolation(first, second), Ok(()));
+    assert!(spaces
+        .get(first)
+        .unwrap()
+        .can_access(first_mapping.base, 0x1000, crate::MemoryAccess::Read));
+    assert!(spaces
+        .get(first)
+        .unwrap()
+        .can_access(first_mapping.base, 0x1000, crate::MemoryAccess::Write));
+    assert!(spaces
+        .get(second)
+        .unwrap()
+        .can_access(second_mapping.base, 0x1000, crate::MemoryAccess::Read));
+    assert!(spaces
+        .get(second)
+        .unwrap()
+        .can_access(second_mapping.base, 0x1000, crate::MemoryAccess::Write));
+}
+
+#[test]
 fn delegation_attenuates_rights() {
     let owner = address_space(1);
     let borrower = address_space(2);
