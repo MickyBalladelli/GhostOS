@@ -287,6 +287,26 @@ pub struct OutputField {
     pub value: OutputValue,
 }
 
+pub struct OutputFields<'a> {
+    fields: &'a [Option<OutputField>; MAX_OUTPUT_FIELDS],
+    index: usize,
+}
+
+impl Iterator for OutputFields<'_> {
+    type Item = OutputField;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < MAX_OUTPUT_FIELDS {
+            let field = self.fields[self.index];
+            self.index += 1;
+            if field.is_some() {
+                return field
+            }
+        }
+        None
+    }
+}
+
 pub struct StructuredOutput {
     status: Status,
     fields: [Option<OutputField>; MAX_OUTPUT_FIELDS],
@@ -304,8 +324,11 @@ impl StructuredOutput {
         self.status
     }
 
-    pub fn fields(&self) -> impl Iterator<Item = OutputField> + '_ {
-        self.fields.iter().flatten().copied()
+    pub fn fields(&self) -> OutputFields<'_> {
+        OutputFields {
+            fields: &self.fields,
+            index: 0,
+        }
     }
 
     pub fn insert(&mut self, name: &str, value: OutputValue) -> Result<(), CommandError> {
