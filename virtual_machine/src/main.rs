@@ -1000,6 +1000,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
         let report = vm
             .run_for_steps_with_monitor(steps, &mut poll_monitor)
             .map_err(|error| format!("VM error: {error:?}"))?;
+        vm.flush_serial_output();
         println!(
             "VM stopped after {} steps at RIP 0x{:016x} (halted={})",
             report.steps, report.rip, report.halted

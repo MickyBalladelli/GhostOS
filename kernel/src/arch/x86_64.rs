@@ -6,10 +6,12 @@ pub mod paging {
     pub const TABLE_FRAME_COUNT: usize = 6;
     const PRESENT: u64 = 1;
     const WRITABLE: u64 = 1 << 1;
+    const USER: u64 = 1 << 2;
     const HUGE_PAGE: u64 = 1 << 7;
     const ENTRY_COUNT: usize = 512;
     const TWO_MIB: u64 = 2 * 1024 * 1024;
     const ONE_GIB: u64 = 1024 * 1024 * 1024;
+    pub const DEMO_TABLE_FRAME_COUNT: usize = 7;
 
     /// Creates a fresh four-level root table with low physical memory identity mapped.
     ///
@@ -64,6 +66,127 @@ pub mod paging {
     pub unsafe fn activate_root(root: u64) {
         unsafe {
             asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+        }
+    }
+
+    /// Build a small real user address space for the boot hello-world image.
+    ///
+    /// The image pages are identity-mapped, while every other low-memory page
+    /// remains supervisor-only. This gives the proof process a separate root,
+    /// user permissions, and a user stack without requiring an ELF loader.
+    ///
+    /// # Safety
+    /// All frames must be distinct, aligned, writable physical frames. The
+    /// four image frames must occupy one 2 MiB physical region.
+    pub unsafe fn install_demo_root(
+        tables: &[u64; DEMO_TABLE_FRAME_COUNT],
+        pages: &[u64; 4],
+        physical_offset: u64,
+    ) -> Option<crate::PageTableRoot> {
+        let region = pages[0] / TWO_MIB;
+        if pages.iter().any(|page| {
+            *page == 0
+                || *page % crate::FRAME_SIZE != 0
+                || *page / TWO_MIB != region
+                || region >= 4 * ENTRY_COUNT as u64
+        }) {
+            return None
+        }
+        if tables.iter().any(|frame| *frame == 0 || *frame % crate::FRAME_SIZE != 0) {
+            return None
+        }
+
+        let root = (tables[0] + physical_offset) as *mut u64;
+        let pdpt = (tables[1] + physical_offset) as *mut u64;
+        unsafe {
+            for frame in tables {
+                core::ptr::write_bytes(
+                    (*frame + physical_offset) as *mut u8,
+                    0,
+                    crate::FRAME_SIZE as usize,
+                );
+            }
+            core::ptr::write_bytes(
+                (tables[6] + physical_offset) as *mut u8,
+                0,
+                crate::FRAME_SIZE as usize,
+            );
+
+            root.write(tables[1] | PRESENT | WRITABLE | USER);
+            for directory_group in 0..4 {
+                let directory = (tables[directory_group + 2] + physical_offset) as *mut u64;
+                pdpt.add(directory_group).write(
+                    tables[directory_group + 2] | PRESENT | WRITABLE | USER,
+                );
+                for index in 0..ENTRY_COUNT {
+                    let address =
+                        (directory_group * ENTRY_COUNT + index) as u64 * TWO_MIB;
+                    directory
+                        .add(index)
+                        .write(address | PRESENT | WRITABLE | HUGE_PAGE);
+                }
+            }
+
+            let directory_group = (region as usize) / ENTRY_COUNT;
+            let directory_index = (region as usize) % ENTRY_COUNT;
+            let directory = (tables[directory_group + 2] + physical_offset) as *mut u64;
+            directory.add(directory_index).write(
+                tables[6] | PRESENT | WRITABLE | USER,
+            );
+
+            let page_table = (tables[6] + physical_offset) as *mut u64;
+            for page in pages {
+                let index = ((*page % TWO_MIB) / crate::FRAME_SIZE) as usize;
+                page_table.add(index).write(*page | PRESENT | WRITABLE | USER);
+            }
+        }
+
+        crate::PageTableRoot::new(tables[0])
+    }
+
+    /// Install the request, response, and machine code for the boot proof.
+    ///
+    /// # Safety
+    /// `pages` must be the four writable frames passed to
+    /// [`install_demo_root`].
+    pub unsafe fn write_demo_image(pages: &[u64; 4], physical_offset: u64) {
+        let mut image = [0u8; 24];
+        image[0..2].copy_from_slice(&[0x48, 0xbf]);
+        image[2..10].copy_from_slice(&pages[1].to_le_bytes());
+        image[10..12].copy_from_slice(&[0x48, 0xbe]);
+        image[12..20].copy_from_slice(&pages[2].to_le_bytes());
+        image[20..24].copy_from_slice(&[0xcd, 0x80, 0xeb, 0xfe]);
+
+        unsafe {
+            core::ptr::write_bytes(
+                (pages[0] + physical_offset) as *mut u8,
+                0,
+                crate::FRAME_SIZE as usize,
+            );
+            core::ptr::write_bytes(
+                (pages[1] + physical_offset) as *mut u8,
+                0,
+                crate::FRAME_SIZE as usize,
+            );
+            core::ptr::write_bytes(
+                (pages[2] + physical_offset) as *mut u8,
+                0,
+                crate::FRAME_SIZE as usize,
+            );
+            core::ptr::write_bytes(
+                (pages[3] + physical_offset) as *mut u8,
+                0,
+                crate::FRAME_SIZE as usize,
+            );
+            core::ptr::copy_nonoverlapping(
+                image.as_ptr(),
+                (pages[0] + physical_offset) as *mut u8,
+                image.len(),
+            );
+            ((pages[1] + physical_offset) as *mut synos_runtime::Request)
+                .write(synos_runtime::Request::new(synos_runtime::Operation::Yield));
+            ((pages[2] + physical_offset) as *mut synos_runtime::Response)
+                .write(synos_runtime::Response::EMPTY);
         }
     }
 
@@ -240,6 +363,10 @@ pub mod interrupts {
             };
             asm!("lidt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags));
         }
+    }
+
+    pub fn disable() {
+        unsafe { asm!("cli", options(nomem, nostack)) }
     }
 
     unsafe fn install_gdt() {

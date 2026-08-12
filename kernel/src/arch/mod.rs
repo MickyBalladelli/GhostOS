@@ -37,6 +37,10 @@ pub use current::{halt, interrupts, paging};
 
 pub(crate) use current::enter_user;
 
+pub(crate) fn disable_interrupts() {
+    current::interrupts::disable()
+}
+
 pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_offset: u64) {
     crate::invariants::debug_assert_valid(crate::invariants::check_page_table_transition(
         tables,

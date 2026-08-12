@@ -68,6 +68,10 @@ pub mod interrupts {
 
     pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
 
+    pub fn disable() {
+        unsafe { asm!("msr daifset, #2", options(nomem, nostack)) }
+    }
+
 
     unsafe extern "C" {
         static synos_aarch64_vectors: u8;

@@ -485,9 +485,13 @@ impl CpuState {
         let entry_addr = intc
             .idt_entry_address(vector)
             .ok_or(CpuError::InterruptNotConfigured)?;
-        let raw = mmu
-            .read_descriptor(entry_addr)
-            .map_err(|_| CpuError::InterruptNotConfigured)?;
+        // Hardware performs IDT lookup in supervisor context even when the
+        // interrupted code runs with user page tables.
+        let was_user = self.privilege == PrivilegeLevel::Ring3;
+        mmu.set_privilege(false);
+        let raw_result = mmu.read_descriptor(entry_addr);
+        mmu.set_privilege(was_user);
+        let raw = raw_result.map_err(|_| CpuError::InterruptNotConfigured)?;
         let gate = IdtGate::decode(&raw);
 
         if !gate.present() {
@@ -513,7 +517,10 @@ impl CpuState {
                 .map_err(|_| CpuError::MemoryAccessError)
         };
 
-        let new_privilege = if gate.dpl() == 0 {
+        // DPL controls which callers may enter the gate. The target ring is
+        // determined by the selector in the gate, so a DPL 3 syscall gate
+        // still enters its Ring 0 handler.
+        let new_privilege = if gate.selector & 3 == 0 {
             PrivilegeLevel::Ring0
         } else {
             PrivilegeLevel::Ring3

@@ -10,7 +10,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add syscall or call-gate entry and dispatch.
 - [x] Add real register context switching.
 - [x] Add process exit, wait, cancellation, and crash reporting.
-- [ ] Prove one native Ring 3 hello-world process runs after boot.
+- [x] Prove one native Ring 3 hello-world process runs after boot.
 
 ## P0: Start system services
 

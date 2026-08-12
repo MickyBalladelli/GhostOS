@@ -71,6 +71,7 @@ use synos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
 };
 use synos_status::Status;
+use synos_runtime::{Operation, Request, Response};
 
 pub use allocator::{
     AllocationError, EarlyFrameAllocator, QuotaAllocationError, FRAME_SIZE,
@@ -151,6 +152,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         fatal_kernel_halt(status)
     }
 
+    arch::disable_interrupts();
     console::init(boot_info.framebuffer);
     info!(
         EventKind::Boot,
@@ -214,7 +216,103 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         task::MAX_THREADS,
         scheduler_clock
     );
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    boot_hello_world(&mut frames, scheduler, boot_info.physical_address_offset);
+
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    )))]
     shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
+}
+
+fn boot_hello_dispatch(caller: AddressSpaceId, request: Request) -> Response {
+    if Operation::from_raw(request.operation) != Some(Operation::Yield) {
+        return Response {
+            status: Status::INVALID_ARGUMENT.raw(),
+            flags: 0,
+            values: [0; 4],
+        }
+    }
+    println!("Ring 3 hello-world (address space {})", caller.raw());
+    Response {
+        status: Status::NORMAL.raw(),
+        flags: 0,
+        values: [0; 4],
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+#[allow(unsafe_code)]
+fn boot_hello_world(
+    frames: &mut EarlyFrameAllocator<'_>,
+    scheduler: &'static mut Scheduler,
+    physical_offset: u64,
+) -> ! {
+    let mut tables = [0u64; arch::paging::DEMO_TABLE_FRAME_COUNT];
+    for frame in &mut tables {
+        let Ok(address) = frames.allocate() else {
+            fatal_kernel_halt(Status::NO_SPACE)
+        };
+        *frame = address;
+    }
+    let mut pages = [0u64; 4];
+    for page in &mut pages {
+        let Ok(address) = frames.allocate() else {
+            fatal_kernel_halt(Status::NO_SPACE)
+        };
+        *page = address;
+    }
+
+    let Some(root) = (unsafe {
+        arch::paging::install_demo_root(&tables, &pages, physical_offset)
+    }) else {
+        fatal_kernel_halt(Status::INVALID_ARGUMENT)
+    };
+    unsafe { arch::paging::write_demo_image(&pages, physical_offset) };
+
+    let address_space = AddressSpaceId::new(1).expect("boot address space id");
+    let mut capabilities: CapabilitySpace<MAX_CAPABILITIES> = CapabilitySpace::new();
+    let authority = capabilities
+        .mint_root(
+            AddressSpaceId::KERNEL,
+            CapabilityObject::AddressSpace(address_space),
+            Rights::ALL,
+        )
+        .expect("boot address-space capability");
+    let thread = scheduler
+        .create_user(
+            &capabilities,
+            AddressSpaceId::KERNEL,
+            authority,
+            address_space,
+            root,
+            SchedulingPolicy::Cooperative,
+            pages[0] as usize,
+            (pages[3] + FRAME_SIZE) as usize,
+        )
+        .unwrap_or_else(|_| fatal_kernel_halt(Status::CORRUPT));
+    let Some(_) = scheduler.dispatch() else {
+        fatal_kernel_halt(Status::BUSY)
+    };
+    if syscall::install_dispatcher(boot_hello_dispatch).is_err() {
+        fatal_kernel_halt(Status::BUSY)
+    }
+    let context = scheduler
+        .thread(thread)
+        .map(|thread| thread.context)
+        .unwrap_or_else(|_| {
+            fatal_kernel_halt(Status::CORRUPT)
+        });
+    println!("starting native Ring 3 hello-world (thread={})", thread.raw());
+    arch::enter_user(&context, root)
 }
 
 pub fn halt() -> ! {

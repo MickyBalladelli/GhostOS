@@ -63,6 +63,10 @@ pub mod interrupts {
 
     pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
 
+    pub fn disable() {
+        unsafe { asm!("csrc sstatus, {0}", in(reg) (1 << 1), options(nomem, nostack)) }
+    }
+
 
     pub unsafe fn init() {
         unsafe {

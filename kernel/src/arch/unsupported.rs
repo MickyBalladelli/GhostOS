@@ -11,6 +11,8 @@ pub(crate) fn enter_user(_: &crate::Context, _: crate::PageTableRoot) -> ! {
 pub mod interrupts {
     pub fn set_core_isolated(_cpu: u8, _isolated: bool) {}
 
+    pub fn disable() {}
+
 
     pub unsafe fn init() {}
 }
