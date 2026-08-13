@@ -102,7 +102,9 @@ impl BootDiagnostics {
     }
 
     pub fn begin(previous: Option<Self>) -> (Self, Option<BootAttempt>) {
-        let previous = previous.unwrap_or_else(|| Self::initial(0));
+        let Some(previous) = previous else {
+            return (Self::initial(1), None)
+        };
         let mut last_failure = previous.last_failure;
         let mut reported = None;
         let mut failure_count = previous.failure_count;
