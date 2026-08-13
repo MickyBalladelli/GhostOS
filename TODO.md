@@ -216,7 +216,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Support SSH-key login for configured remote sessions.
 - [x] Display useful failure messages without revealing whether an account exists.
 - [x] Rate-limit failed login attempts.
-- [ ] Lock login temporarily after repeated failures.
+- [x] Lock login temporarily after repeated failures.
 - [ ] Add `LOGOUT` and `WHOAMI` commands.
 - [ ] Return to the locked prompt after logout, timeout, or session revocation.
 - [ ] Connect successful auth sessions to shell authorization and capabilities.

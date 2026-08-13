@@ -227,6 +227,11 @@ static LOGIN_RETRY_AFTER_US: AtomicU64 = AtomicU64::new(0);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static LOGIN_LOCKED_UNTIL_US: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static LOGIN_PASSKEY_CHALLENGE_READY: AtomicBool = AtomicBool::new(false);
 #[cfg(all(
     target_arch = "x86_64",
@@ -521,6 +526,16 @@ const LOGIN_RATE_LIMIT_BASE_US: u64 = 1_000_000;
     any(target_os = "none", target_os = "uefi")
 ))]
 const LOGIN_RATE_LIMIT_MAX_US: u64 = 60_000_000;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOGIN_LOCK_FAILURE_THRESHOLD: u32 = 5;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOGIN_LOCK_DURATION_US: u64 = 300_000_000;
 
 #[cfg(all(
     target_arch = "x86_64",
@@ -636,6 +651,39 @@ fn login_rate_limited() -> bool {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+fn login_lock_until_us() -> u64 {
+    let now_us = time::monotonic_now_us();
+    let locked_until_us = LOGIN_LOCKED_UNTIL_US.load(Ordering::Acquire);
+    if locked_until_us == 0 || now_us < locked_until_us {
+        return locked_until_us
+    }
+    match LOGIN_LOCKED_UNTIL_US.compare_exchange(
+        locked_until_us,
+        0,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => {
+            LOGIN_FAILED_ATTEMPTS.store(0, Ordering::Release);
+            LOGIN_RETRY_AFTER_US.store(0, Ordering::Release);
+            0
+        }
+        Err(current) => current,
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn login_locked() -> bool {
+    login_lock_until_us() != 0
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 fn record_login_failure() {
     let mut previous = LOGIN_FAILED_ATTEMPTS.load(Ordering::Relaxed);
     let failures = loop {
@@ -654,10 +702,17 @@ fn record_login_failure() {
     let delay = LOGIN_RATE_LIMIT_BASE_US
         .saturating_mul(1_u64 << shift)
         .min(LOGIN_RATE_LIMIT_MAX_US);
+    let now_us = time::monotonic_now_us();
     LOGIN_RETRY_AFTER_US.store(
-        time::monotonic_now_us().saturating_add(delay),
+        now_us.saturating_add(delay),
         Ordering::Release,
     );
+    if failures >= LOGIN_LOCK_FAILURE_THRESHOLD {
+        LOGIN_LOCKED_UNTIL_US.store(
+            now_us.saturating_add(LOGIN_LOCK_DURATION_US),
+            Ordering::Release,
+        );
+    }
 }
 
 #[cfg(all(
@@ -667,6 +722,7 @@ fn record_login_failure() {
 fn clear_login_failures() {
     LOGIN_FAILED_ATTEMPTS.store(0, Ordering::Release);
     LOGIN_RETRY_AFTER_US.store(0, Ordering::Release);
+    LOGIN_LOCKED_UNTIL_US.store(0, Ordering::Release);
 }
 
 #[cfg(all(
@@ -836,7 +892,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !LOGIN_REQUESTED.load(Ordering::Acquire) {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        if login_rate_limited() {
+        if login_rate_limited() || login_locked() {
             return syscall_error(Status::ACCESS_DENIED)
         }
         let username_address = request.arguments[0];
@@ -891,7 +947,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !LOGIN_REQUESTED.load(Ordering::Acquire) {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        if login_rate_limited() {
+        if login_rate_limited() || login_locked() {
             return syscall_error(Status::ACCESS_DENIED)
         }
         let username_address = request.arguments[0];
@@ -940,7 +996,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         return syscall_success([
             LOGIN_REQUESTED.load(Ordering::Acquire) as u64,
             LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire) as u64,
-            0,
+            login_lock_until_us(),
             0,
         ])
     }
@@ -971,7 +1027,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        if login_rate_limited() {
+        if login_rate_limited() || login_locked() {
             return syscall_error(Status::ACCESS_DENIED)
         }
         if !LOGIN_REQUESTED.load(Ordering::Acquire) || !random::ready() {
@@ -1002,7 +1058,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        if login_rate_limited() {
+        if login_rate_limited() || login_locked() {
             return syscall_error(Status::ACCESS_DENIED)
         }
         if !LOGIN_REQUESTED.load(Ordering::Acquire) || !random::ready() {

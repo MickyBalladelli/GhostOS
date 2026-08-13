@@ -104,6 +104,17 @@ static void idle(void)
     }
 }
 
+static void wait_until(u64 deadline)
+{
+    for (;;) {
+        struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0);
+        if (clock.status != 0 || clock.values[0] >= deadline) {
+            return;
+        }
+        call(OP_SLEEP_UNTIL, deadline, 0, 0, 0);
+    }
+}
+
 static int login_requested(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
@@ -114,6 +125,12 @@ static int administrator_account_exists(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
     return response.status == 0 && response.values[1] != 0;
+}
+
+static u64 login_lock_until(void)
+{
+    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    return response.status == 0 ? response.values[2] : 0;
 }
 
 static void clear_bytes(void *bytes, u64 capacity)
@@ -267,6 +284,12 @@ void _start(void)
     for (;;) {
         while (!login_requested()) {
             idle();
+        }
+        u64 locked_until = login_lock_until();
+        if (locked_until != 0) {
+            write_text("Login temporarily locked after repeated failures.\n");
+            wait_until(locked_until);
+            continue;
         }
         write_text("login: ");
         u64 username_length = read_line(username, sizeof(username), 1);
