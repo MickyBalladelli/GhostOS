@@ -78,6 +78,8 @@ pub mod task;
 pub mod time;
 pub mod monitor;
 pub mod tlb;
+#[allow(dead_code)]
+mod watchdog;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -99,7 +101,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use core::sync::atomic::{AtomicU32, AtomicU64};
+use core::sync::atomic::AtomicU32;
 use synos_boot_protocol::BootInfo;
 use synos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
@@ -190,11 +192,6 @@ static mut BOOT_SERVICE_CAPABILITIES:
     any(target_os = "none", target_os = "uefi")
 ))]
 static SERVICE_READY: AtomicU32 = AtomicU32::new(0);
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
-static SERVICE_HEARTBEATS: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -274,6 +271,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     let bootstrap_cpu = arch::interrupts::current_cpu();
     let mut cpu_topology = arch::cpu::CpuTopology::<{ task::MAX_CPUS }>::new();
     let _ = cpu_topology.add_bootstrap(bootstrap_cpu.raw() as u32);
+    watchdog::cpu_online(bootstrap_cpu, time::monotonic_now_us());
     println!(
         "cpu topology online={} bootstrap={}",
         cpu_topology.online_count(),
@@ -560,6 +558,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         let ready = SERVICE_READY.load(Ordering::Acquire);
         if ready & bit == 0 {
             SERVICE_READY.store(ready | bit, Ordering::Release);
+            watchdog::service_ready(role, time::monotonic_now_us());
             println!("{} ready in Ring 3 (address space {})", name, role);
         }
         return syscall_success([role as u64, 0, 0, 0])
@@ -573,17 +572,16 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if SERVICE_READY.load(Ordering::Acquire) & (1u32 << role) == 0 {
             return syscall_error(Status::BUSY)
         }
-        SERVICE_HEARTBEATS[role].store(request.arguments[1], Ordering::Release);
+        watchdog::service_heartbeat(role, request.arguments[1], time::monotonic_now_us());
         return syscall_success([request.arguments[1], 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::SystemInfo) {
         if role != 9 || request.arguments != [0; 6] {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        let heartbeats = SERVICE_HEARTBEATS
-            .iter()
+        let heartbeats = watchdog::service_sequences()
             .skip(1)
-            .fold(0u64, |total, value| total.saturating_add(value.load(Ordering::Acquire)));
+            .fold(0u64, |total, value| total.saturating_add(value));
         return syscall_success([
             scheduler_clock(),
             SERVICE_READY.load(Ordering::Acquire) as u64,

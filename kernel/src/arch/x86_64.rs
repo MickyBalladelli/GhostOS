@@ -658,6 +658,9 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                 apic_write(APIC_ICR_LOW, APIC_STARTUP | u32::from(startup_vector));
                 if first_sipi && wait_delivery() {
                     started += 1;
+                    if let Some(cpu) = crate::task::CpuId::new((hardware_id & 0x7f) as u8) {
+                        crate::watchdog::cpu_online(cpu, crate::time::monotonic_now_us());
+                    }
                 }
             }
         }
@@ -901,6 +904,9 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
             isolated,
             !isolated,
         ));
+        if vector == 32 {
+            crate::watchdog::cpu_tick(cpu, crate::time::monotonic_now_us());
+        }
         if isolated {
             if vector >= 32 {
                 end_of_interrupt()
@@ -1034,6 +1040,38 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                                 next.mode,
                                 context_switch.next_address_space_root,
                             );
+                        }
+                    }
+                    if cpu.raw() == 0 {
+                        let report = crate::watchdog::poll(crate::time::monotonic_now_us());
+                        if report.stale_services != 0 {
+                            crate::SERVICE_READY.fetch_and(
+                                !report.stale_services,
+                                core::sync::atomic::Ordering::Release,
+                            );
+                            for role in 1..crate::watchdog::SERVICE_CAPACITY {
+                                if report.stale_services & (1u32 << role) != 0 {
+                                    crate::println!(
+                                        "watchdog fenced hung service role={} for supervisor recovery",
+                                        role
+                                    );
+                                }
+                            }
+                        }
+                        for raw in 1..crate::task::MAX_CPUS {
+                            let Some(stale_cpu) = crate::task::CpuId::new(raw as u8) else {
+                                continue
+                            };
+                            if report.stale_cpus.contains(stale_cpu) {
+                                let offlined = scheduler.watchdog_offline(stale_cpu);
+                                crate::watchdog::cpu_offline(stale_cpu);
+                                if offlined {
+                                    crate::println!(
+                                        "watchdog offlined stalled CPU {}",
+                                        stale_cpu.raw()
+                                    );
+                                }
+                            }
                         }
                     }
                 }

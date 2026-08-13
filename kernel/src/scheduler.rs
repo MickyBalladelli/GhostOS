@@ -414,6 +414,24 @@ impl Scheduler {
         self.dispatch()
     }
 
+    /// Remove a CPU from normal scheduling after the kernel watchdog has
+    /// proved that it stopped servicing timer interrupts. CPU 0 is retained
+    /// as the last housekeeping CPU so the watchdog and recovery path remain
+    /// alive.
+    #[allow(dead_code)]
+    pub(crate) fn watchdog_offline(&mut self, cpu: CpuId) -> bool {
+        if cpu == CpuId::new(0).expect("CPU 0 is valid") || !self.partition.is_online(cpu) {
+            return false
+        }
+        let online = self.partition.online().difference(CpuMask::from_cpu(cpu));
+        if self.partition.set_online(online).is_err() {
+            return false
+        }
+        self.sync_per_cpu_online();
+        self.debug_check();
+        true
+    }
+
     pub const fn partition(&self) -> CorePartition {
         self.partition
     }

@@ -162,7 +162,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add suspend and resume on supported hardware.
 - [x] Add thermal throttling and thermal event reporting.
 - [x] Add battery and power-source reporting.
-- [ ] Add watchdog-based recovery for hung services and CPUs.
+- [x] Add watchdog-based recovery for hung services and CPUs.
 
 ### Observability and debugging
 

@@ -15,6 +15,7 @@ pub const DEFAULT_SERVICE_CAPACITY: usize = 32;
 pub const MAX_SERVICE_NAME_BYTES: usize = 48;
 pub const MAX_SERVICE_DEPENDENCIES: usize = DEFAULT_SERVICE_CAPACITY;
 pub const LIFECYCLE_TRACE_CAPACITY: usize = 128;
+pub const DEFAULT_SERVICE_WATCHDOG_TIMEOUT_US: u64 = 5_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -325,6 +326,8 @@ struct ServiceSlot {
     restart_at_us: u64,
     last_exit: Option<ExitReason>,
     fault_domain: Option<FaultDomain>,
+    heartbeat_at_us: u64,
+    watchdog_armed: bool,
 }
 
 impl ServiceSlot {
@@ -352,6 +355,8 @@ impl ServiceSlot {
         restart_at_us: 0,
         last_exit: None,
         fault_domain: None,
+        heartbeat_at_us: 0,
+        watchdog_armed: false,
     };
 }
 
@@ -573,6 +578,8 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
             .map_err(|_| SupervisorError::FenceFailed)?;
         slot.process = None;
         slot.ready = false;
+        slot.watchdog_armed = false;
+        slot.heartbeat_at_us = 0;
         slot.last_exit = Some(reason);
 
         let ExitReason::Crash(crash) = reason else {
@@ -656,6 +663,59 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
             .transpose()
             .map_err(SupervisorError::FaultDomainError)?;
         spawn(&mut self.services[index], runtime, injector, fault_fence).map(Some)
+    }
+
+    /// Record a service liveness heartbeat. The watchdog only consumes
+    /// heartbeats from the service's current generation.
+    pub fn heartbeat(&mut self, id: ServiceId, now_us: u64) -> Result<(), SupervisorError> {
+        let index = self.slot_index(id)?;
+        let slot = &mut self.services[index];
+        if slot.state != ServiceState::Running || slot.process.is_none() {
+            return Err(SupervisorError::NotReady)
+        }
+        slot.heartbeat_at_us = now_us;
+        slot.watchdog_armed = true;
+        Ok(())
+    }
+
+    /// Fence the first service whose heartbeat has expired and feed the
+    /// resulting watchdog crash through the normal bounded restart policy.
+    /// One service is handled per call so recovery work cannot starve the
+    /// supervisor's other lifecycle duties.
+    pub fn watchdog_tick<R: SupervisorRuntime>(
+        &mut self,
+        now_us: u64,
+        runtime: &mut R,
+    ) -> Result<Option<SupervisorEvent>, SupervisorError> {
+        let Some(index) = (0..CAPACITY).find(|index| {
+            let slot = &self.services[*index];
+            if !slot.occupied || slot.state != ServiceState::Running || slot.process.is_none() {
+                return false
+            }
+            if !slot.watchdog_armed {
+                return true
+            }
+            now_us.saturating_sub(slot.heartbeat_at_us) > DEFAULT_SERVICE_WATCHDOG_TIMEOUT_US
+        }) else {
+            return Ok(None)
+        };
+
+        if !self.services[index].watchdog_armed {
+            self.services[index].watchdog_armed = true;
+            self.services[index].heartbeat_at_us = now_us;
+            return Ok(None)
+        }
+
+        let process = self.services[index]
+            .process
+            .ok_or(SupervisorError::NotReady)?;
+        self.report_exit(
+            process,
+            ExitReason::Crash(CrashReason::Watchdog),
+            now_us,
+            runtime,
+        )
+        .map(Some)
     }
 
     pub fn boot<R: SupervisorRuntime>(
@@ -962,6 +1022,8 @@ fn spawn<R: SupervisorRuntime>(
     slot.process = Some(process);
     slot.state = ServiceState::Running;
     slot.ready = true;
+    slot.heartbeat_at_us = 0;
+    slot.watchdog_armed = false;
     Ok(SupervisorEvent::Started {
         service: slot.spec.id,
         process,
