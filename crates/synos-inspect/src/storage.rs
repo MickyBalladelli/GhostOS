@@ -49,6 +49,12 @@ pub struct SynFsVolumeSample {
     pub cow_overhead_bytes: u64,
     pub retained_versions: u64,
     pub checkpoints: u32,
+    pub quota_max_bytes: u64,
+    pub quota_used_bytes: u64,
+    pub quota_max_files: u64,
+    pub quota_used_files: u64,
+    pub quota_max_blocks: u64,
+    pub quota_used_blocks: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,6 +120,9 @@ impl StorageReport {
             || sample.capacity_bytes == 0
             || sample.used_bytes > sample.capacity_bytes
             || sample.cow_overhead_bytes > sample.used_bytes
+            || exceeds_quota(sample.quota_used_bytes, sample.quota_max_bytes)
+            || exceeds_quota(sample.quota_used_files, sample.quota_max_files)
+            || exceeds_quota(sample.quota_used_blocks, sample.quota_max_blocks)
             || self.volumes().any(|entry| entry.id == sample.id)
         {
             return Err(InspectError::InvalidSample);
@@ -172,6 +181,16 @@ impl StorageReport {
                 .saturating_mul(BLOCK_SIZE as u64),
             retained_versions: diagnostics.retained_versions,
             checkpoints: diagnostics.checkpoints as u32,
+            quota_max_bytes: diagnostics.max_bytes,
+            quota_used_bytes: diagnostics.retained_bytes,
+            quota_max_files: diagnostics.max_files,
+            quota_used_files: diagnostics.file_count,
+            quota_max_blocks: if diagnostics.max_blocks == usize::MAX {
+                u64::MAX
+            } else {
+                diagnostics.max_blocks as u64
+            },
+            quota_used_blocks: diagnostics.allocated_blocks as u64,
         })?;
         self.push_synfs_capacity(id, node, name, CapacityResource::SynFs, filesystem, 0)
     }
@@ -275,4 +294,8 @@ fn insert<T: Copy, const CAPACITY: usize>(
         .ok_or(InspectError::Capacity)?;
     *slot = Some(sample);
     Ok(())
+}
+
+fn exceeds_quota(used: u64, limit: u64) -> bool {
+    limit != u64::MAX && used > limit
 }

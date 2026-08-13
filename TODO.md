@@ -153,7 +153,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Define atomic rename and `fsync` guarantees.
 - [x] Add file and record locking through the filesystem service.
 - [x] Add symbolic links and permission checks.
-- [ ] Add filesystem quotas visible to users and operators.
+- [x] Add filesystem quotas visible to users and operators.
 - [ ] Add mapped-file support with capability checks.
 
 ### Power management

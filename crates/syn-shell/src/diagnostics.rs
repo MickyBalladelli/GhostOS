@@ -57,6 +57,12 @@ pub struct DiskSnapshot {
     pub cxl_devices: u64,
     pub degraded_devices: u64,
     pub failed_devices: u64,
+    pub quota_max_bytes: u64,
+    pub quota_used_bytes: u64,
+    pub quota_max_files: u64,
+    pub quota_used_files: u64,
+    pub quota_max_blocks: u64,
+    pub quota_used_blocks: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -544,6 +550,36 @@ fn disk_output(snapshot: DiskSnapshot) -> Result<StructuredOutput, Status> {
         "failed-devices",
         OutputValue::Unsigned(snapshot.failed_devices),
     )?;
+    insert(
+        &mut output,
+        "quota-max-bytes",
+        OutputValue::Unsigned(snapshot.quota_max_bytes),
+    )?;
+    insert(
+        &mut output,
+        "quota-used-bytes",
+        OutputValue::Unsigned(snapshot.quota_used_bytes),
+    )?;
+    insert(
+        &mut output,
+        "quota-max-files",
+        OutputValue::Unsigned(snapshot.quota_max_files),
+    )?;
+    insert(
+        &mut output,
+        "quota-used-files",
+        OutputValue::Unsigned(snapshot.quota_used_files),
+    )?;
+    insert(
+        &mut output,
+        "quota-max-blocks",
+        OutputValue::Unsigned(snapshot.quota_max_blocks),
+    )?;
+    insert(
+        &mut output,
+        "quota-used-blocks",
+        OutputValue::Unsigned(snapshot.quota_used_blocks),
+    )?;
     Ok(output)
 }
 
@@ -811,6 +847,12 @@ mod tests {
             cxl_devices: 0,
             degraded_devices: 0,
             failed_devices: 0,
+            quota_max_bytes: 0,
+            quota_used_bytes: 0,
+            quota_max_files: 0,
+            quota_used_files: 0,
+            quota_max_blocks: 0,
+            quota_used_blocks: 0,
         })
         .expect("diagnostic output");
         let rendered = render(&output, OutputFormat::Json).expect("diagnostic JSON");

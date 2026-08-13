@@ -524,6 +524,7 @@ pub struct SynFsDiagnostics {
     pub free_bytes: u64,
     pub max_bytes: u64,
     pub max_files: u64,
+    pub max_blocks: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1077,6 +1078,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             free_bytes: self.free_bytes(),
             max_bytes: self.limits.max_bytes,
             max_files: self.limits.max_files,
+            max_blocks: self.limits.max_blocks,
         })
     }
 

@@ -109,6 +109,12 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
             cxl_devices: 0,
             degraded_devices: 0,
             failed_devices: 0,
+            quota_max_bytes: 0,
+            quota_used_bytes: 0,
+            quota_max_files: 0,
+            quota_used_files: 0,
+            quota_max_blocks: 0,
+            quota_used_blocks: 0,
         };
         for device in report.devices() {
             snapshot.capacity_bytes = snapshot
@@ -147,7 +153,28 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
                 .saturating_add(volume.retained_versions);
             snapshot.checkpoints = snapshot
                 .checkpoints
-                .saturating_add(volume.checkpoints as u64)
+                .saturating_add(volume.checkpoints as u64);
+            snapshot.quota_used_bytes = snapshot
+                .quota_used_bytes
+                .saturating_add(volume.quota_used_bytes);
+            snapshot.quota_used_files = snapshot
+                .quota_used_files
+                .saturating_add(volume.quota_used_files);
+            snapshot.quota_used_blocks = snapshot
+                .quota_used_blocks
+                .saturating_add(volume.quota_used_blocks);
+            snapshot.quota_max_bytes = add_quota_limit(
+                snapshot.quota_max_bytes,
+                volume.quota_max_bytes,
+            );
+            snapshot.quota_max_files = add_quota_limit(
+                snapshot.quota_max_files,
+                volume.quota_max_files,
+            );
+            snapshot.quota_max_blocks = add_quota_limit(
+                snapshot.quota_max_blocks,
+                volume.quota_max_blocks,
+            );
         }
         Ok(snapshot)
     }
@@ -367,6 +394,14 @@ impl<Provider: InspectionProvider> DiagnosticSource for ShellInspectionSource<Pr
         Ok(UptimeSnapshot {
             uptime_us: self.now_us.saturating_sub(self.boot_at_us),
         })
+    }
+}
+
+fn add_quota_limit(current: u64, next: u64) -> u64 {
+    if current == u64::MAX || next == u64::MAX {
+        u64::MAX
+    } else {
+        current.saturating_add(next)
     }
 }
 
