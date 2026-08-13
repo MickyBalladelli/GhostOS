@@ -214,7 +214,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Support passkey login from the local terminal.
 - [x] Support TPM-backed credential login from the local terminal.
 - [x] Support SSH-key login for configured remote sessions.
-- [ ] Display useful failure messages without revealing whether an account exists.
+- [x] Display useful failure messages without revealing whether an account exists.
 - [ ] Rate-limit failed login attempts.
 - [ ] Lock login temporarily after repeated failures.
 - [ ] Add `LOGOUT` and `WHOAMI` commands.

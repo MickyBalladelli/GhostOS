@@ -177,6 +177,46 @@ static int hex_digit(u8 byte)
     return -1;
 }
 
+static int valid_username(const char *username, u64 username_length)
+{
+    u64 index;
+    if (username_length == 0 || username_length > 32) {
+        return 0;
+    }
+    for (index = 0; index < username_length; index++) {
+        u8 byte = (u8)username[index];
+        if (!(byte >= 'a' && byte <= 'z')
+            && !(byte >= 'A' && byte <= 'Z')
+            && !(byte >= '0' && byte <= '9')
+            && byte != '.' && byte != '_' && byte != '-' && byte != '$') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int valid_hex(const char *text, u64 text_length)
+{
+    u64 index;
+    if (text_length == 0
+        || (text_length & 1) != 0
+        || text_length > TPM_MAX_QUOTE_BYTES * 2) {
+        return 0;
+    }
+    for (index = 0; index < text_length; index++) {
+        if (hex_digit((u8)text[index]) < 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void write_login_rejected(void)
+{
+    write_text("Login failed: username or credential was not accepted.\n");
+    write_text("Check both and try again.\n");
+}
+
 static u64 decode_hex(const char *text, u64 text_length, u8 *output, u64 capacity)
 {
     u64 count = 0;
@@ -239,7 +279,13 @@ void _start(void)
         int use_passkey = method_length == 0
             || (method[0] == 'p' || method[0] == 'P');
         if (!use_tpm && !use_passkey) {
-            write_text("\nUnknown credential type. Try again.\n");
+            write_text("\nUnknown credential type. Use passkey or tpm.\n");
+            clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
+            continue;
+        }
+        if (!valid_username(username, username_length)) {
+            write_text("\nUsername must be 1-32 letters, numbers, or . _ - $.\n");
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
             continue;
@@ -255,9 +301,7 @@ void _start(void)
             0
         );
         if (challenge_response.status != 0) {
-            write_text(use_tpm
-                ? "\nTPM credential unavailable. Try again.\n"
-                : "\nPasskey unavailable. Try again.\n");
+            write_login_rejected();
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
             continue;
@@ -279,8 +323,9 @@ void _start(void)
         );
         write_text("\n");
 
-        if (username_length == 0 || credential_length == 0) {
-            write_text("Login failed. Try again.\n");
+        if (!valid_hex(credential_hex, credential_hex_length)
+            || credential_length == 0) {
+            write_text("Credential must be non-empty hexadecimal data.\n");
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
             clear_bytes(credential_hex, sizeof(credential_hex));
@@ -303,7 +348,7 @@ void _start(void)
         clear_bytes(credential_hex, sizeof(credential_hex));
         clear_bytes(credential, sizeof(credential));
         if (completed.status != 0) {
-            write_text("Login failed. Try again.\n");
+            write_login_rejected();
             continue;
         }
         write_text("Login accepted.\n");
