@@ -234,7 +234,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Make first-admin creation safe to retry after power loss.
 - [x] Prevent first-admin setup from replacing an existing account database.
 - [x] Provide a recovery mode for an interrupted or failed first-login setup.
-- [ ] Provide a documented recovery procedure when the first administrator loses all credentials.
+- [x] Provide a documented recovery procedure when the first administrator loses all credentials.
 - [ ] Audit first-admin creation, recovery, and cancellation events.
 
 ### Account lifecycle
