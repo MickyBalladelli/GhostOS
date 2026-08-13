@@ -7,8 +7,9 @@ the Cargo SBOM, dependency lockfile provenance, compiler identity, source and
 configuration digests, and a byte-for-byte reproducibility comparison against
 an independently produced artifact.
 
-The signing key is supplied by the release operator. Only the public key and
-detached signatures are written to the attestation directory.
+The signing key is supplied by the release operator. The attestation directory
+contains the generated release metadata, public key, and detached signatures;
+the private key is never copied there.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ PREDICATE_TYPE = "https://synos.dev/attestations/release/v1"
 INDEX_NAME = "attestations-index.json"
 INDEX_SIGNATURE_NAME = "attestations-index.json.sig"
 PUBLIC_KEY_NAME = "attestation-public-key.pem"
+SBOM_NAME = "synos-sbom.cdx.json"
+PROVENANCE_NAME = "dependency-provenance.json"
 ARTIFACT_SIGNATURE_SUFFIX = ".artifact.sig"
 LOCKFILE = ROOT / "Cargo.lock"
 
@@ -278,6 +281,16 @@ def public_key_id(path: pathlib.Path) -> str:
     return sha256_path(path)
 
 
+def dependency_provenance(provenance: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "schema": 1,
+        "kind": "synos-cargo-dependency-provenance",
+        "lockfile": "Cargo.lock",
+        "lockfile_sha256": sha256_path(LOCKFILE),
+        "packages": provenance,
+    }
+
+
 def statement_for(
     name: str,
     artifact: pathlib.Path,
@@ -286,7 +299,7 @@ def statement_for(
     configuration: dict[str, object],
     compiler: dict[str, object],
     sbom: dict[str, object],
-    provenance: list[dict[str, object]],
+    dependency_record: dict[str, object],
 ) -> dict[str, object]:
     artifact_digest = sha256_path(artifact)
     reproducible_digest = sha256_path(reproducible)
@@ -302,10 +315,14 @@ def statement_for(
             "schema": ATTESTATION_SCHEMA,
             "artifact": {"path": artifact.name, "size": artifact.stat().st_size},
             "sbom": sbom,
-            "dependency_provenance": {
-                "lockfile": "Cargo.lock",
-                "lockfile_sha256": sha256_path(LOCKFILE),
-                "packages": provenance,
+            "sbom_file": {
+                "path": SBOM_NAME,
+                "sha256": sha256_bytes(canonical_json(sbom)),
+            },
+            "dependency_provenance": dependency_record,
+            "dependency_provenance_file": {
+                "path": PROVENANCE_NAME,
+                "sha256": sha256_bytes(canonical_json(dependency_record)),
             },
             "compiler_identity": compiler,
             "source": source,
@@ -339,6 +356,11 @@ def write_attestations(
     configuration = configuration_record(configuration_files)
     compiler = compiler_record(target)
     sbom, provenance = cargo_components()
+    dependency_record = dependency_provenance(provenance)
+    sbom_bytes = canonical_json(sbom)
+    dependency_bytes = canonical_json(dependency_record)
+    (output_dir / SBOM_NAME).write_bytes(sbom_bytes)
+    (output_dir / PROVENANCE_NAME).write_bytes(dependency_bytes)
     public_key = output_dir / PUBLIC_KEY_NAME
     openssl("pkey", "-pubout", "-in", str(signing_key), output_path=public_key)
     key_id = public_key_id(public_key)
@@ -352,7 +374,7 @@ def write_attestations(
             configuration,
             compiler,
             sbom,
-            provenance,
+            dependency_record,
         )
         statement_path = output_dir / f"{name}.intoto.json"
         signature_path = output_dir / f"{name}.intoto.json.sig"
@@ -380,6 +402,11 @@ def write_attestations(
         "source_digest": source["digest"],
         "public_key": public_key.name,
         "public_key_sha256": key_id,
+        "sbom": {"path": SBOM_NAME, "sha256": sha256_bytes(sbom_bytes)},
+        "dependency_provenance": {
+            "path": PROVENANCE_NAME,
+            "sha256": sha256_bytes(dependency_bytes),
+        },
         "attestations": entries,
     }
     index_bytes = canonical_json(index)
@@ -417,7 +444,13 @@ def check_attestations(
         raise ValueError("attestation index contains duplicate artifact names")
     if set(entries) != set(artifacts):
         raise ValueError("attestation coverage does not match release artifacts")
-    expected_files = {INDEX_NAME, INDEX_SIGNATURE_NAME, PUBLIC_KEY_NAME}
+    expected_files = {
+        INDEX_NAME,
+        INDEX_SIGNATURE_NAME,
+        PUBLIC_KEY_NAME,
+        SBOM_NAME,
+        PROVENANCE_NAME,
+    }
     expected_files.update(
         filename
         for entry in raw_entries
@@ -436,6 +469,24 @@ def check_attestations(
             f"missing={sorted(expected_files - actual_files)}, "
             f"extra={sorted(actual_files - expected_files)}"
         )
+    sbom, provenance = cargo_components()
+    dependency_record = dependency_provenance(provenance)
+    sbom_path = attestation_dir / SBOM_NAME
+    dependency_path = attestation_dir / PROVENANCE_NAME
+    if sbom_path.read_bytes() != canonical_json(sbom):
+        raise ValueError("release SBOM does not match Cargo.lock")
+    if dependency_path.read_bytes() != canonical_json(dependency_record):
+        raise ValueError("dependency provenance does not match Cargo.lock")
+    if index.get("sbom") != {
+        "path": SBOM_NAME,
+        "sha256": sha256_path(sbom_path),
+    }:
+        raise ValueError("attestation index SBOM record does not match the release SBOM")
+    if index.get("dependency_provenance") != {
+        "path": PROVENANCE_NAME,
+        "sha256": sha256_path(dependency_path),
+    }:
+        raise ValueError("attestation index provenance record does not match the release provenance")
     for name, artifact in artifacts.items():
         entry = entries[name]
         statement_path = attestation_dir / str(entry["statement"])
@@ -469,6 +520,20 @@ def check_attestations(
         }
         if not required_records.issubset(predicate):
             raise ValueError(f"statement is missing required release records: {name}")
+        if predicate.get("sbom_file") != {
+            "path": SBOM_NAME,
+            "sha256": sha256_path(sbom_path),
+        }:
+            raise ValueError(f"statement SBOM reference does not match the release SBOM: {name}")
+        if predicate.get("dependency_provenance_file") != {
+            "path": PROVENANCE_NAME,
+            "sha256": sha256_path(dependency_path),
+        }:
+            raise ValueError(
+                f"statement provenance reference does not match the release provenance: {name}"
+            )
+        if predicate.get("sbom") != sbom or predicate.get("dependency_provenance") != dependency_record:
+            raise ValueError(f"statement dependency records do not match the release records: {name}")
         reproducible = predicate["reproducible_build"]
         if reproducible.get("verified") is not True:
             raise ValueError(f"reproducibility was not verified: {name}")

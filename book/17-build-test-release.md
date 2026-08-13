@@ -155,13 +155,15 @@ python3 scripts/release-attestations.py --write \
   --reproducible-artifact synos-loader=/independent-build/synos-loader.efi
 ```
 
-The generator emits a CycloneDX SBOM, Cargo.lock dependency provenance,
-compiler/toolchain identity, tracked-source and release-configuration digests,
-and a byte-for-byte reproducibility result inside each signed statement. It
+The generator emits `synos-sbom.cdx.json` in CycloneDX 1.5 format and
+`dependency-provenance.json` with the exact `Cargo.lock` digest and package
+checksums. Each signed statement embeds those records and binds both files by
+SHA-256, along with compiler/toolchain identity, tracked-source and
+release-configuration digests, and a byte-for-byte reproducibility result. It
 also writes one detached SHA-256 signature for the exact bytes of every
 release artifact, including the BIOS image and UEFI loader. The private key
-stays outside the repository; the archive carries only the public key and
-signatures.
+stays outside the repository; the archive carries the SBOM, provenance, public
+key, and signatures.
 Packaging runs the verifier with the public key and rejects missing coverage,
 changed artifact bytes, invalid signatures, or an unverified reproducibility
 comparison. Verify an attestation directory independently with:

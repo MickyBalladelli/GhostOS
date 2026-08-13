@@ -17,6 +17,8 @@ release archive/
 │   ├── attestation-public-key.pem
 │   ├── attestations-index.json
 │   ├── attestations-index.json.sig
+│   ├── synos-sbom.cdx.json
+│   ├── dependency-provenance.json
 │   ├── synos-bios.artifact.sig
 │   ├── synos-loader.efi.artifact.sig
 │   └── ...
@@ -39,7 +41,10 @@ The archive has manifest schema `1`. `release-manifest.json` contains:
 | `test_evidence` | Evidence JSON paths, digests, tier, test ID, state, command, firmware, host, and skip reason |
 | `known_host_limitations` | Hardware acceleration, terminal, networking, migration, and optional-test limits |
 
-The attestation directory also contains signed in-toto statements. Each
+The attestation directory contains a CycloneDX SBOM and dependency provenance
+document. The provenance records the exact `Cargo.lock` digest and package
+checksums. Signed in-toto statements embed both documents and bind their file
+digests. Each
 release artifact has a matching `<artifact>.artifact.sig` detached signature
 over its raw bytes. Consumers must verify that signature with
 `attestation-public-key.pem` before installing the image or boot artifact.
