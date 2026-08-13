@@ -242,7 +242,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add `ACCOUNT LIST` with safe summaries of local accounts.
 - [x] Add `ACCOUNT SHOW <username>` with permission-checked details.
 - [x] Add `ACCOUNT CREATE <username>` for administrators.
-- [ ] Add `ACCOUNT DELETE <username>` with confirmation and last-admin protection.
+- [x] Add `ACCOUNT DELETE <username>` with confirmation and last-admin protection.
 - [ ] Add `ACCOUNT ENABLE <username>` and `ACCOUNT DISABLE <username>`.
 - [ ] Add `ACCOUNT RENAME <old> <new>` with persistent identity rules.
 - [ ] Add account creation, update, disable, and deletion through the management API.

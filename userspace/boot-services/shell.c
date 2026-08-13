@@ -51,6 +51,8 @@ enum {
     ACCOUNT_CREDENTIAL_CAPACITY = 96,
     ACCOUNT_RECORD_HEADER_BYTES = 36,
     ACCOUNT_DATABASE_CAPACITY = 4096,
+    ACCOUNT_RECORD_PENDING = 0,
+    ACCOUNT_RECORD_DELETED = 4,
 };
 
 struct request {
@@ -314,31 +316,45 @@ static const char *account_credential_name(u8 kind)
     return 0;
 }
 
+static int account_username_bytes_match(
+    const u8 *left,
+    u64 left_length,
+    const u8 *right,
+    u64 right_length
+)
+{
+    u64 index;
+    if (left_length != right_length) {
+        return 0;
+    }
+    for (index = 0; index < left_length; index++) {
+        u8 left_byte = left[index];
+        u8 right_byte = right[index];
+        if (left_byte >= 'a' && left_byte <= 'z') {
+            left_byte = (u8)(left_byte - ('a' - 'A'));
+        }
+        if (right_byte >= 'a' && right_byte <= 'z') {
+            right_byte = (u8)(right_byte - ('a' - 'A'));
+        }
+        if (left_byte != right_byte) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int account_username_matches(
     const u8 *stored,
     u64 stored_length,
     const char *requested
 )
 {
-    u64 requested_length = length(requested);
-    u64 index;
-    if (stored_length != requested_length) {
-        return 0;
-    }
-    for (index = 0; index < stored_length; index++) {
-        u8 left = stored[index];
-        u8 right = (u8)requested[index];
-        if (left >= 'a' && left <= 'z') {
-            left = (u8)(left - ('a' - 'A'));
-        }
-        if (right >= 'a' && right <= 'z') {
-            right = (u8)(right - ('a' - 'A'));
-        }
-        if (left != right) {
-            return 0;
-        }
-    }
-    return 1;
+    return account_username_bytes_match(
+        stored,
+        stored_length,
+        (const u8 *)requested,
+        length(requested)
+    );
 }
 
 static int valid_account_record(const u8 *buffer, u64 record_bytes)
@@ -351,7 +367,8 @@ static int valid_account_record(const u8 *buffer, u64 record_bytes)
         || !valid_account_username(buffer + 2, username_length)) {
         return 0;
     }
-    if (buffer[ACCOUNT_USERNAME_CAPACITY + 2] == 0) {
+    if (buffer[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
+        || buffer[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
         return credential_length == 0 && record_bytes == ACCOUNT_RECORD_HEADER_BYTES;
     }
     return account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]) != 0
@@ -373,6 +390,33 @@ static u64 account_record_size(const u8 *buffer, u64 remaining)
         return 0;
     }
     return valid_account_record(buffer, record_bytes) ? record_bytes : 0;
+}
+
+static int account_record_is_latest(
+    const u8 *buffer,
+    u64 database_bytes,
+    u64 offset,
+    u64 record_bytes
+)
+{
+    u64 next_offset = offset + record_bytes;
+    while (next_offset < database_bytes) {
+        const u8 *next = buffer + next_offset;
+        u64 next_bytes = account_record_size(next, database_bytes - next_offset);
+        if (next_bytes == 0) {
+            return -1;
+        }
+        if (account_username_bytes_match(
+            buffer + offset + 2,
+            buffer[offset + 1],
+            next + 2,
+            next[1]
+        )) {
+            return 0;
+        }
+        next_offset += next_bytes;
+    }
+    return 1;
 }
 
 static int read_account_database(u8 *buffer, u64 *database_bytes)
@@ -407,6 +451,40 @@ static int read_account_database(u8 *buffer, u64 *database_bytes)
     return *database_bytes != 0;
 }
 
+static int append_account_record(
+    const u8 *record,
+    u64 record_bytes,
+    u64 database_bytes,
+    u32 *failure_status
+)
+{
+    struct response opened = call(
+        OP_SYNFS_OPEN,
+        OPEN_READ | OPEN_WRITE,
+        0,
+        (u64)ACCOUNT_AUTHORIZATION_PATH,
+        length(ACCOUNT_AUTHORIZATION_PATH),
+        0,
+        0
+    );
+    if (opened.status != 0) {
+        *failure_status = opened.status;
+        return 0;
+    }
+    struct response written = call(
+        OP_SYNFS_WRITE,
+        0,
+        opened.values[0],
+        (u64)record,
+        record_bytes,
+        0,
+        database_bytes
+    );
+    call(OP_SYNFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
+    *failure_status = written.status;
+    return written.status == 0 && written.values[0] == record_bytes;
+}
+
 static void list_accounts(u8 *buffer)
 {
     u64 database_bytes = 0;
@@ -431,6 +509,15 @@ static void list_accounts(u8 *buffer)
         if (record_bytes == 0) {
             write_text("Account database is corrupt.\n");
             return;
+        }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest == 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+            offset += record_bytes;
+            continue;
         }
         const char *state = record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
             ? "pending"
@@ -487,6 +574,15 @@ static void show_account(const char *username, u8 *buffer)
             write_text("Account database is corrupt.\n");
             return;
         }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest == 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+            offset += record_bytes;
+            continue;
+        }
         if (account_username_matches(record + 2, record[1], username)) {
             write_text("username=");
             write_bytes((const char *)(record + 2), record[1]);
@@ -537,6 +633,15 @@ static void create_account(const char *username, u8 *buffer)
             write_text("Account database is corrupt.\n");
             return;
         }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest == 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+            offset += record_bytes;
+            continue;
+        }
         if (account_username_matches(record + 2, record[1], username)) {
             write_text("Account already exists.\n");
             return;
@@ -554,36 +659,113 @@ static void create_account(const char *username, u8 *buffer)
     for (offset = 0; offset < username_length; offset++) {
         record[2 + offset] = (u8)username[offset];
     }
-    struct response opened = call(
-        OP_SYNFS_OPEN,
-        OPEN_READ | OPEN_WRITE,
-        0,
-        (u64)ACCOUNT_AUTHORIZATION_PATH,
-        length(ACCOUNT_AUTHORIZATION_PATH),
-        0,
-        0
-    );
-    if (opened.status != 0) {
-        write_text("Account create failed.\n");
-        write_status(opened.status);
-        return;
-    }
-    struct response written = call(
-        OP_SYNFS_WRITE,
-        0,
-        opened.values[0],
-        (u64)record,
+    u32 failure_status = 0;
+    if (!append_account_record(
+        record,
         ACCOUNT_RECORD_HEADER_BYTES,
-        0,
-        database_bytes
-    );
-    call(OP_SYNFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
-    if (written.status != 0 || written.values[0] != ACCOUNT_RECORD_HEADER_BYTES) {
+        database_bytes,
+        &failure_status
+    )) {
         write_text("Account create failed.\n");
-        write_status(written.status);
+        write_status(failure_status);
         return;
     }
     write_text("Account created in pending setup state.\n");
+}
+
+static void delete_account(
+    const char *username,
+    const char *confirmation,
+    u8 *buffer
+)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+    if (!equal_name(confirmation, "CONFIRM")) {
+        write_text("Confirmation required. Use: ACCOUNT DELETE <username> CONFIRM\n");
+        return;
+    }
+    u64 username_length = length(username);
+    if (!valid_account_username((const u8 *)username, username_length)) {
+        write_text("Invalid username.\n");
+        return;
+    }
+
+    u64 database_bytes = 0;
+    int read = read_account_database(buffer, &database_bytes);
+    if (read < 0) {
+        write_text("Account database unavailable.\n");
+        return;
+    }
+    if (read == 0 || database_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account not found.\n");
+        return;
+    }
+
+    u64 offset = 0;
+    u64 administrator_count = 0;
+    int found = 0;
+    int target_is_administrator = 0;
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest == 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+            offset += record_bytes;
+            continue;
+        }
+        int is_administrator = record[ACCOUNT_USERNAME_CAPACITY + 2] != ACCOUNT_RECORD_PENDING;
+        if (is_administrator) {
+            administrator_count++;
+        }
+        if (account_username_matches(record + 2, record[1], username)) {
+            found = 1;
+            target_is_administrator = is_administrator;
+        }
+        offset += record_bytes;
+    }
+    if (!found) {
+        write_text("Account not found.\n");
+        return;
+    }
+    if (target_is_administrator && administrator_count <= 1) {
+        write_text("Cannot delete the last administrator.\n");
+        return;
+    }
+    if (database_bytes + ACCOUNT_RECORD_HEADER_BYTES > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account database is full.\n");
+        return;
+    }
+
+    u8 tombstone[ACCOUNT_RECORD_HEADER_BYTES] = {0};
+    tombstone[0] = ACCOUNT_RECORD_VERSION;
+    tombstone[1] = (u8)username_length;
+    for (offset = 0; offset < username_length; offset++) {
+        tombstone[2 + offset] = (u8)username[offset];
+    }
+    tombstone[ACCOUNT_USERNAME_CAPACITY + 2] = ACCOUNT_RECORD_DELETED;
+    u32 failure_status = 0;
+    if (!append_account_record(
+        tombstone,
+        ACCOUNT_RECORD_HEADER_BYTES,
+        database_bytes,
+        &failure_status
+    )) {
+        write_text("Account delete failed.\n");
+        write_status(failure_status);
+        return;
+    }
+    write_text("Account deleted.\n");
 }
 
 static void execute_line(char *line, u8 *buffer)
@@ -640,9 +822,10 @@ static void execute_line(char *line, u8 *buffer)
     if (equal_name(command, "ACCOUNT")) {
         char action[256];
         char username[256];
+        char confirmation[256];
         u64 action_length = next_word(&cursor, action);
         if (action_length == 0) {
-            write_text("Use: ACCOUNT LIST, ACCOUNT SHOW <username>, or ACCOUNT CREATE <username>\n");
+            write_text("Use: ACCOUNT LIST, SHOW, CREATE, or DELETE <username> CONFIRM\n");
             return;
         }
         if (equal_name(action, "LIST")) {
@@ -665,8 +848,19 @@ static void execute_line(char *line, u8 *buffer)
             create_account(username, buffer);
             return;
         }
+        if (equal_name(action, "DELETE")) {
+            if (next_word(&cursor, username) == 0) {
+                write_text("Use: ACCOUNT DELETE <username> CONFIRM\n");
+                return;
+            }
+            if (next_word(&cursor, confirmation) == 0) {
+                confirmation[0] = 0;
+            }
+            delete_account(username, confirmation, buffer);
+            return;
+        }
         {
-            write_text("Use: ACCOUNT LIST, ACCOUNT SHOW <username>, or ACCOUNT CREATE <username>\n");
+            write_text("Use: ACCOUNT LIST, SHOW, CREATE, or DELETE <username> CONFIRM\n");
             return;
         }
     }
