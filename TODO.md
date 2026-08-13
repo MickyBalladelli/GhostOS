@@ -215,7 +215,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Support TPM-backed credential login from the local terminal.
 - [x] Support SSH-key login for configured remote sessions.
 - [x] Display useful failure messages without revealing whether an account exists.
-- [ ] Rate-limit failed login attempts.
+- [x] Rate-limit failed login attempts.
 - [ ] Lock login temporarily after repeated failures.
 - [ ] Add `LOGOUT` and `WHOAMI` commands.
 - [ ] Return to the locked prompt after logout, timeout, or session revocation.

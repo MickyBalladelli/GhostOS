@@ -107,7 +107,7 @@ use core::sync::atomic::AtomicU8;
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, AtomicU64};
 use synos_boot_protocol::BootInfo;
 use synos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
@@ -213,6 +213,16 @@ static LOGIN_REQUESTED: AtomicBool = AtomicBool::new(true);
     any(target_os = "none", target_os = "uefi")
 ))]
 static LOGIN_ADMINISTRATOR_EXISTS: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_FAILED_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_RETRY_AFTER_US: AtomicU64 = AtomicU64::new(0);
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -501,6 +511,16 @@ const LOCAL_TPM_SIGNATURE_MIN_BYTES: usize = 16;
     any(target_os = "none", target_os = "uefi")
 ))]
 const LOCAL_TPM_PCR_DIGEST_BYTES: usize = 32;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOGIN_RATE_LIMIT_BASE_US: u64 = 1_000_000;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOGIN_RATE_LIMIT_MAX_US: u64 = 60_000_000;
 
 #[cfg(all(
     target_arch = "x86_64",
@@ -602,6 +622,51 @@ fn clear_login_challenge() {
     for slot in &LOGIN_TPM_CHALLENGE {
         slot.store(0, Ordering::Relaxed)
     }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn login_rate_limited() -> bool {
+    time::monotonic_now_us() < LOGIN_RETRY_AFTER_US.load(Ordering::Acquire)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn record_login_failure() {
+    let mut previous = LOGIN_FAILED_ATTEMPTS.load(Ordering::Relaxed);
+    let failures = loop {
+        let next = previous.saturating_add(1);
+        match LOGIN_FAILED_ATTEMPTS.compare_exchange_weak(
+            previous,
+            next,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => break next,
+            Err(actual) => previous = actual,
+        }
+    };
+    let shift = failures.saturating_sub(1).min(6);
+    let delay = LOGIN_RATE_LIMIT_BASE_US
+        .saturating_mul(1_u64 << shift)
+        .min(LOGIN_RATE_LIMIT_MAX_US);
+    LOGIN_RETRY_AFTER_US.store(
+        time::monotonic_now_us().saturating_add(delay),
+        Ordering::Release,
+    );
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn clear_login_failures() {
+    LOGIN_FAILED_ATTEMPTS.store(0, Ordering::Release);
+    LOGIN_RETRY_AFTER_US.store(0, Ordering::Release);
 }
 
 #[cfg(all(
@@ -771,6 +836,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !LOGIN_REQUESTED.load(Ordering::Acquire) {
             return syscall_error(Status::ACCESS_DENIED)
         }
+        if login_rate_limited() {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
         let username_address = request.arguments[0];
         let username_length = request.arguments[1] as usize;
         let assertion_address = request.arguments[2];
@@ -796,9 +864,11 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             || !valid_local_passkey_assertion(&assertion[..assertion_length])
         {
             clear_login_challenge();
+            record_login_failure();
             return syscall_error(Status::ACCESS_DENIED)
         }
         clear_login_challenge();
+        clear_login_failures();
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
         LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
@@ -819,6 +889,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
         if !LOGIN_REQUESTED.load(Ordering::Acquire) {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        if login_rate_limited() {
             return syscall_error(Status::ACCESS_DENIED)
         }
         let username_address = request.arguments[0];
@@ -846,9 +919,11 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             || !valid_local_tpm_quote(&quote[..quote_length])
         {
             clear_login_challenge();
+            record_login_failure();
             return syscall_error(Status::ACCESS_DENIED)
         }
         clear_login_challenge();
+        clear_login_failures();
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
         LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
@@ -896,6 +971,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
+        if login_rate_limited() {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
         if !LOGIN_REQUESTED.load(Ordering::Acquire) || !random::ready() {
             return syscall_error(Status::ACCESS_DENIED)
         }
@@ -923,6 +1001,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             || !arch::paging::service_user_range(request.arguments[0], 32, true)
         {
             return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if login_rate_limited() {
+            return syscall_error(Status::ACCESS_DENIED)
         }
         if !LOGIN_REQUESTED.load(Ordering::Acquire) || !random::ready() {
             return syscall_error(Status::ACCESS_DENIED)
