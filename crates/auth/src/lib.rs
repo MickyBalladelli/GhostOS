@@ -54,7 +54,8 @@ pub use revocation_monitor::{
 };
 pub use startup::{
     AccountManagementRequest, AccountManagementResult, BootLoginService, GroupDirectory, GroupId,
-    GroupRecord, PasswordRecoveryPolicy, SecurityPolicy, SecurityState, SecurityStore,
+    GroupRecord, PasswordRecoveryPolicy, PhysicalRecovery, RecoveryChallenge, SecurityPolicy,
+    SecurityState, SecurityStore,
     SecurityStoreError, SessionHandle,
     SessionManager, SessionView, StartupError,
     MAX_ACTIVE_SESSIONS, MAX_CHALLENGE_LIFETIME_US, MAX_GROUP_MEMBERS, MAX_GROUP_RIGHTS,

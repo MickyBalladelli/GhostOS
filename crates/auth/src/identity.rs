@@ -458,6 +458,10 @@ impl UserRecord {
             .ok_or(AuthError::CredentialNotFound)
     }
 
+    pub fn credential(&self, id: CredentialId) -> Option<Credential> {
+        self.credentials.iter().flatten().find(|credential| credential.id == id).copied()
+    }
+
     pub fn rights(&self) -> impl Iterator<Item = RightIdentifier> + '_ {
         self.rights.iter().flatten().copied()
     }
@@ -506,6 +510,17 @@ impl UserRecord {
             .ok_or(AuthError::Capacity)?;
         credential.created_at_us = created_at_us;
         *slot = Some(credential);
+        Ok(())
+    }
+
+    pub fn replace_credentials_for_recovery(
+        &mut self,
+        credential: Credential,
+        created_at_us: u64,
+    ) -> Result<(), AuthError> {
+        self.credentials = [None; MAX_CREDENTIALS_PER_USER];
+        self.add_credential_at(credential, created_at_us)?;
+        self.set_state(AccountState::Active);
         Ok(())
     }
 
@@ -630,10 +645,6 @@ impl UserRecord {
             .ok_or(AuthError::CapabilityNotFound)?;
         self.initial_capabilities[slot] = None;
         Ok(())
-    }
-
-    fn credential(&self, id: CredentialId) -> Option<Credential> {
-        self.credentials().find(|credential| credential.id == id)
     }
 
     pub fn ssh_key_credential(&self, public_key: &[u8]) -> Option<CredentialId> {

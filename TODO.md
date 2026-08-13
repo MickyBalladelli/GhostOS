@@ -274,7 +274,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Enforce idle timeout and maximum session lifetime.
 - [x] Bind sessions to the authenticated identity, terminal, node, and revocation epoch.
 - [x] Reject replayed, expired, malformed, or cross-node login responses.
-- [ ] Add safe credential-loss recovery requiring a trusted recovery key or physical recovery action.
+- [x] Add safe credential-loss recovery requiring a trusted recovery key or physical recovery action.
 - [ ] Prevent recovery from silently bypassing normal authorization policy.
 - [ ] Audit login success, login failure, logout, timeout, lockout, recovery, and account changes.
 - [ ] Redact credentials, challenges, tokens, and private account data from logs and crash reports.

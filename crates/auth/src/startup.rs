@@ -1,6 +1,8 @@
 //! Security startup composition: persistent policy, first-admin bootstrap,
 //! and bounded local login sessions.
 
+use core::convert::TryFrom;
+
 use synos_fabric::NodeId;
 use synos_kernel::{
     AddressSpaceId, CapabilityObject, IdentityId, RightIdentifier, Rights,
@@ -38,6 +40,7 @@ impl PasswordRecoveryPolicy {
     ) -> Result<Self, StartupError> {
         if trusted_recovery_identity.raw() == IdentityId::ANONYMOUS.raw()
             || trusted_recovery_key_id == 0
+            || trusted_recovery_key_id > u32::MAX as u64
             || recovery_window_us == 0
         {
             return Err(StartupError::InvalidPolicy)
@@ -48,6 +51,32 @@ impl PasswordRecoveryPolicy {
             recovery_window_us,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryChallenge {
+    pub target_identity: IdentityId,
+    pub recovery_identity: IdentityId,
+    pub recovery_credential: CredentialId,
+    pub nonce: u64,
+    pub expires_at_us: u64,
+}
+
+impl RecoveryChallenge {
+    pub fn bytes(self) -> [u8; 40] {
+        let mut bytes = [0; 40];
+        bytes[0..4].copy_from_slice(b"SYRC");
+        bytes[4..12].copy_from_slice(&self.target_identity.raw().to_be_bytes());
+        bytes[12..20].copy_from_slice(&self.recovery_identity.raw().to_be_bytes());
+        bytes[20..24].copy_from_slice(&self.recovery_credential.raw().to_be_bytes());
+        bytes[24..32].copy_from_slice(&self.nonce.to_be_bytes());
+        bytes[32..40].copy_from_slice(&self.expires_at_us.to_be_bytes());
+        bytes
+    }
+}
+
+pub trait PhysicalRecovery {
+    fn authorize(&mut self, challenge: RecoveryChallenge) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -915,6 +944,8 @@ pub struct BootLoginService<
     state: SecurityState<USERS, GROUPS>,
     sessions: SessionManager<USERS, CHALLENGES, SESSIONS>,
     provisioning_required: bool,
+    pending_recovery: [Option<RecoveryChallenge>; CHALLENGES],
+    next_recovery_nonce: u64,
 }
 
 impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const GROUPS: usize>
@@ -934,6 +965,8 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             state,
             sessions,
             provisioning_required,
+            pending_recovery: [None; CHALLENGES],
+            next_recovery_nonce: boot_nonce,
         })
     }
 
@@ -999,6 +1032,103 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
     ) -> Result<AuthenticationChallenge, StartupError> {
         self.require_password_login_policy()?;
         self.begin_login(username, node, credential, CredentialKind::Password, now_us)
+    }
+
+    pub fn begin_credential_recovery(
+        &mut self,
+        target_identity: IdentityId,
+        now_us: u64,
+    ) -> Result<RecoveryChallenge, StartupError> {
+        let policy = self
+            .state
+            .policy
+            .password_recovery_policy
+            .ok_or(StartupError::InvalidPolicy)?;
+        if target_identity == IdentityId::ANONYMOUS {
+            return Err(StartupError::InvalidRecord)
+        }
+        self.state
+            .database
+            .record(target_identity)
+            .map_err(StartupError::Authentication)?;
+        let recovery_credential = CredentialId::new(
+            u32::try_from(policy.trusted_recovery_key_id)
+                .map_err(|_| StartupError::InvalidPolicy)?,
+        )
+        .ok_or(StartupError::InvalidPolicy)?;
+        let recovery_record = self
+            .state
+            .database
+            .record(policy.trusted_recovery_identity)
+            .map_err(StartupError::Authentication)?;
+        let credential = recovery_record
+            .credential(recovery_credential)
+            .ok_or(StartupError::BootstrapCredentialRequired)?;
+        if !credential.is_usable_at(now_us) {
+            return Err(StartupError::BootstrapCredentialRequired)
+        }
+        self.pending_recovery
+            .iter_mut()
+            .filter(|entry| entry.is_some_and(|challenge| challenge.expires_at_us <= now_us))
+            .for_each(|entry| *entry = None);
+        let slot = self
+            .pending_recovery
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(StartupError::Capacity)?;
+        self.next_recovery_nonce = self.next_recovery_nonce.wrapping_add(1).max(1);
+        let challenge = RecoveryChallenge {
+            target_identity,
+            recovery_identity: policy.trusted_recovery_identity,
+            recovery_credential,
+            nonce: self.next_recovery_nonce,
+            expires_at_us: now_us.saturating_add(policy.recovery_window_us),
+        };
+        *slot = Some(challenge);
+        Ok(challenge)
+    }
+
+    pub fn complete_credential_recovery<S: SecurityStore<USERS, GROUPS>, V: CredentialVerifier>(
+        &mut self,
+        store: &mut S,
+        challenge: RecoveryChallenge,
+        proof: &[u8],
+        verifier: &mut V,
+        replacement: Credential,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        let challenge = self.take_recovery_challenge(challenge, now_us)?;
+        let credential = self.recovery_credential(challenge, now_us)?;
+        if proof.is_empty()
+            || proof.len() > crate::identity::MAX_AUTH_RESPONSE_BYTES
+            || !verifier.verify(
+                credential.kind(),
+                credential.public_material(),
+                &challenge.bytes(),
+                proof,
+            )
+        {
+            return Err(StartupError::Authentication(AuthError::VerificationFailed))
+        }
+        self.finish_credential_recovery(store, challenge, replacement, now_us)
+    }
+
+    pub fn complete_physical_credential_recovery<
+        S: SecurityStore<USERS, GROUPS>,
+        P: PhysicalRecovery,
+    >(
+        &mut self,
+        store: &mut S,
+        challenge: RecoveryChallenge,
+        physical: &mut P,
+        replacement: Credential,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        let challenge = self.take_recovery_challenge(challenge, now_us)?;
+        if !physical.authorize(challenge) {
+            return Err(StartupError::Authentication(AuthError::VerificationFailed))
+        }
+        self.finish_credential_recovery(store, challenge, replacement, now_us)
     }
 
     pub fn expire_accounts<S: SecurityStore<USERS, GROUPS>>(
@@ -1171,6 +1301,89 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             .record(identity)
             .map_err(StartupError::Authentication)?;
         Ok(self.sessions.revoke_identity(identity))
+    }
+
+    fn take_recovery_challenge(
+        &mut self,
+        challenge: RecoveryChallenge,
+        now_us: u64,
+    ) -> Result<RecoveryChallenge, StartupError> {
+        let slot = self
+            .pending_recovery
+            .iter()
+            .position(|entry| entry.is_some_and(|pending| pending == challenge))
+            .ok_or(StartupError::SessionNotFound)?;
+        let challenge = self.pending_recovery[slot]
+            .take()
+            .expect("recovery challenge");
+        if now_us >= challenge.expires_at_us {
+            return Err(StartupError::SessionExpired)
+        }
+        let policy = self
+            .state
+            .policy
+            .password_recovery_policy
+            .ok_or(StartupError::InvalidPolicy)?;
+        if challenge.recovery_identity != policy.trusted_recovery_identity
+            || u64::from(challenge.recovery_credential.raw()) != policy.trusted_recovery_key_id
+        {
+            return Err(StartupError::InvalidPolicy)
+        }
+        Ok(challenge)
+    }
+
+    fn recovery_credential(
+        &self,
+        challenge: RecoveryChallenge,
+        now_us: u64,
+    ) -> Result<Credential, StartupError> {
+        let record = self
+            .state
+            .database
+            .record(challenge.recovery_identity)
+            .map_err(StartupError::Authentication)?;
+        let credential = record
+            .credential(challenge.recovery_credential)
+            .ok_or(StartupError::BootstrapCredentialRequired)?;
+        if !credential.is_usable_at(now_us) {
+            return Err(StartupError::BootstrapCredentialRequired)
+        }
+        Ok(credential)
+    }
+
+    fn finish_credential_recovery<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        challenge: RecoveryChallenge,
+        replacement: Credential,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        let mut next_state = self.state;
+        let mut record = next_state
+            .database
+            .record(challenge.target_identity)
+            .map_err(StartupError::Authentication)?;
+        if record.account_state() == AccountState::Expired
+            || replacement.public_material().is_empty()
+        {
+            return Err(StartupError::InvalidRecord)
+        }
+        record
+            .replace_credentials_for_recovery(replacement, now_us)
+            .map_err(StartupError::Authentication)?;
+        record.apply_expiration_policy(
+            next_state.policy.account_lifetime_us,
+            next_state.policy.credential_lifetime_us,
+            now_us,
+        );
+        next_state
+            .database
+            .replace(record)
+            .map_err(StartupError::Authentication)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        self.commit_state(store, next_state)?;
+        self.sessions.revoke_identity(challenge.target_identity);
+        Ok(record)
     }
 
     fn commit_state<S: SecurityStore<USERS, GROUPS>>(
