@@ -1363,14 +1363,20 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             .database
             .record(challenge.target_identity)
             .map_err(StartupError::Authentication)?;
-        if record.account_state() == AccountState::Expired
-            || replacement.public_material().is_empty()
+        if replacement.public_material().is_empty()
+            || matches!(
+                record.account_state(),
+                AccountState::Disabled | AccountState::Locked | AccountState::Expired
+            )
         {
             return Err(StartupError::InvalidRecord)
         }
         record
             .replace_credentials_for_recovery(replacement, now_us)
             .map_err(StartupError::Authentication)?;
+        if record.account_state() == AccountState::PendingSetup {
+            record.set_state(AccountState::Active);
+        }
         record.apply_expiration_policy(
             next_state.policy.account_lifetime_us,
             next_state.policy.credential_lifetime_us,

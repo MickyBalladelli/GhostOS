@@ -520,7 +520,6 @@ impl UserRecord {
     ) -> Result<(), AuthError> {
         self.credentials = [None; MAX_CREDENTIALS_PER_USER];
         self.add_credential_at(credential, created_at_us)?;
-        self.set_state(AccountState::Active);
         Ok(())
     }
 
