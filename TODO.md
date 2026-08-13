@@ -269,7 +269,7 @@ Build the real operating system core before adding more advanced features.
 
 ### Sessions, recovery, and audit
 
-- [ ] Add active-session listing for administrators.
+- [x] Add active-session listing for administrators.
 - [ ] Add administrator session termination for a selected account or session.
 - [ ] Enforce idle timeout and maximum session lifetime.
 - [ ] Bind sessions to the authenticated identity, terminal, node, and revocation epoch.

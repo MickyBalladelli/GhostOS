@@ -751,6 +751,23 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         expired
     }
 
+    pub fn active_sessions(
+        &self,
+        now_us: u64,
+    ) -> impl Iterator<Item = SessionView> + '_ {
+        self.active.iter().flatten().filter_map(move |active| {
+            if active.revocation_epoch == self.revocation_epoch
+                && now_us < active.session.expires_at_us
+                && now_us.saturating_sub(active.last_activity_us) < self.policy.idle_timeout_us
+                && active.session.is_usable_at(active.credential, now_us)
+            {
+                Some(Self::view_of(*active))
+            } else {
+                None
+            }
+        })
+    }
+
     pub const fn revocation_epoch(&self) -> u64 {
         self.revocation_epoch
     }
@@ -989,6 +1006,22 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
 
     pub fn revoke_identity(&mut self, identity: IdentityId) -> usize {
         self.sessions.revoke_identity(identity)
+    }
+
+    pub fn list_active_sessions(
+        &mut self,
+        handle: SessionHandle,
+        now_us: u64,
+    ) -> Result<[Option<SessionView>; SESSIONS], StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut sessions = [None; SESSIONS];
+        for (slot, session) in sessions
+            .iter_mut()
+            .zip(self.sessions.active_sessions(now_us))
+        {
+            *slot = Some(session);
+        }
+        Ok(sessions)
     }
 
     fn commit_state<S: SecurityStore<USERS, GROUPS>>(
