@@ -152,6 +152,8 @@ panic = "abort"
 panic = "abort"
 lto = true
 codegen-units = 1
+debug = 0
+incremental = false
 
 [profile.release.package.synos-kernel]
 opt-level = "z"

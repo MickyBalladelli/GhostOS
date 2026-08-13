@@ -20,7 +20,7 @@ COPY . .
 
 # Build both BIOS and UEFI images.
 RUN ./scripts/build-bios-image.sh
-RUN cargo uefi --release && ./scripts/build-portable-image.sh
+RUN ./scripts/build-uefi-loader.sh && ./scripts/build-portable-image.sh
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim

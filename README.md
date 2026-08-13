@@ -71,7 +71,7 @@ workspace tests in one step:
 Build the UEFI application:
 
 ```sh
-cargo uefi --release
+./scripts/build-uefi-loader.sh
 ```
 
 The EFI executable is written under
@@ -80,7 +80,7 @@ The EFI executable is written under
 Build a portable loopback image:
 
 ```sh
-cargo uefi --release
+./scripts/build-uefi-loader.sh
 ./scripts/build-portable-image.sh
 ```
 
@@ -881,7 +881,7 @@ the loader is not signed.
 Build the UEFI application:
 
 ```sh
-cargo uefi --release
+./scripts/build-uefi-loader.sh
 ```
 
 Format the USB drive as GPT with a FAT32 partition. On macOS:

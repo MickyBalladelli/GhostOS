@@ -2,6 +2,15 @@
 kernel-x86 = "build -p synos-kernel --target x86_64-unknown-none"
 uefi = "build -p synos-uefi --target x86_64-unknown-uefi"
 
+[env]
+CARGO_INCREMENTAL = { value = "0", force = false }
+CARGO_BUILD_JOBS = { value = "1", force = false }
+CARGO_TERM_COLOR = { value = "never", force = false }
+SOURCE_DATE_EPOCH = { value = "0", force = false }
+TZ = { value = "UTC", force = false }
+LC_ALL = { value = "C", force = false }
+LANG = { value = "C", force = false }
+
 [target.x86_64-unknown-none]
 rustflags = [
     "-Ccode-model=kernel",

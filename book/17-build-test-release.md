@@ -36,14 +36,22 @@ Build the whole practical path:
 Build the UEFI loader:
 
 ```sh
-cargo uefi --release
+./scripts/build-uefi-loader.sh
 ```
 
 Build a portable image:
 
 ```sh
-cargo uefi --release
+./scripts/build-uefi-loader.sh
 ./scripts/build-portable-image.sh
+```
+
+Release image scripts set `SOURCE_DATE_EPOCH` from the source revision, pin
+locale and timezone inputs, disable incremental compilation, remap checkout
+paths, and use invariant FAT metadata. Verify BIOS and UEFI image bytes with:
+
+```sh
+./scripts/check-reproducible-image.sh
 ```
 
 ## Test tiers

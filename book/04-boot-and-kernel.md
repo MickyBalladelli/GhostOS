@@ -38,7 +38,7 @@ The image is written to `build/bios/synos-bios.img`. The script assembles the 16
 The UEFI loader validates and loads a PE/COFF application, captures the firmware memory map, passes the GOP framebuffer, exits boot services, and calls the same kernel entry. The loader also supports initrd and command-line handoff and has a chainload path for compatible firmware workflows.
 
 ```sh
-cargo uefi --release
+./scripts/build-uefi-loader.sh
 ```
 
 The EFI program lands under the target directory for `x86_64-unknown-uefi`.
