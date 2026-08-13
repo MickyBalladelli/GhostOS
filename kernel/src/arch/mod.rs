@@ -45,6 +45,10 @@ pub(crate) fn disable_interrupts() {
     current::interrupts::disable()
 }
 
+pub(crate) fn enable_interrupts() {
+    current::interrupts::enable()
+}
+
 pub(crate) fn invalidate_tlb_range(start: u64, length: u64) {
     // The caller validates alignment and overflow before reaching the
     // architecture backend.

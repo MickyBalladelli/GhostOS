@@ -104,6 +104,7 @@ pub struct SleepTypes {
 pub struct AcpiPlatform {
     pub revision: u8,
     pub fixed: FixedHardware,
+    pub suspend: Option<SleepTypes>,
     pub soft_off: Option<SleepTypes>,
     pub thermal: ThermalTripPoints,
 }
@@ -194,6 +195,7 @@ pub trait PowerIo {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PowerState {
+    Suspend,
     SoftOff,
     Reboot,
 }
@@ -361,6 +363,7 @@ impl<Io: PowerIo> PowerController<Io> {
 
     pub fn request(&mut self, state: PowerState) -> Result<(), AcpiError> {
         match state {
+            PowerState::Suspend => self.suspend(),
             PowerState::SoftOff => self.soft_off(),
             PowerState::Reboot => {
                 let reset = self.platform.fixed.reset.ok_or(AcpiError::Unsupported)?;
@@ -375,6 +378,15 @@ impl<Io: PowerIo> PowerController<Io> {
 
     fn soft_off(&mut self) -> Result<(), AcpiError> {
         let sleep = self.platform.soft_off.ok_or(AcpiError::Unsupported)?;
+        self.write_sleep_state(sleep)
+    }
+
+    fn suspend(&mut self) -> Result<(), AcpiError> {
+        let sleep = self.platform.suspend.ok_or(AcpiError::Unsupported)?;
+        self.write_sleep_state(sleep)
+    }
+
+    fn write_sleep_state(&mut self, sleep: SleepTypes) -> Result<(), AcpiError> {
         if self.platform.fixed.reduced_hardware {
             let register = self
                 .platform
@@ -569,7 +581,7 @@ fn parse_fadt(
         let aml_start = dsdt + SDT_HEADER_BYTES as u64;
         let aml_length = dsdt_header.length - SDT_HEADER_BYTES as u32;
         (
-            parse_sleep_types(memory, aml_start, aml_length)?,
+            parse_sleep_types(memory, aml_start, aml_length, b"_S5_")?,
             ThermalTripPoints {
                 passive_deci_kelvin: parse_named_integer(
                     memory,
@@ -595,10 +607,23 @@ fn parse_fadt(
             },
         )
     };
+    let suspend = if dsdt == 0 {
+        None
+    } else {
+        let dsdt_header = read_sdt_header(memory, dsdt)?;
+        if &dsdt_header.signature != b"DSDT" {
+            return Err(AcpiError::MalformedTable)
+        }
+        validate_sdt(memory, dsdt, dsdt_header)?;
+        let aml_start = dsdt + SDT_HEADER_BYTES as u64;
+        let aml_length = dsdt_header.length - SDT_HEADER_BYTES as u32;
+        parse_sleep_types(memory, aml_start, aml_length, b"_S3_")?
+    };
 
     Ok(AcpiPlatform {
         revision,
         fixed,
+        suspend,
         soft_off,
         thermal,
     })
@@ -653,8 +678,9 @@ fn parse_sleep_types(
     memory: &impl AcpiMemory,
     aml_start: u64,
     aml_length: u32,
+    name: &[u8; 4],
 ) -> Result<Option<SleepTypes>, AcpiError> {
-    let Some(position) = find_name(memory, aml_start, aml_length, b"_S5_")? else {
+    let Some(position) = find_name(memory, aml_start, aml_length, name)? else {
         return Ok(None)
     };
     let mut bytes = [0; 40];

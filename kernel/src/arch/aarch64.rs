@@ -134,6 +134,10 @@ pub mod interrupts {
         unsafe { asm!("msr daifset, #2", options(nomem, nostack)) }
     }
 
+    pub fn enable() {
+        unsafe { asm!("msr daifclr, #2", options(nomem, nostack)) }
+    }
+
 
     unsafe extern "C" {
         static synos_aarch64_vectors: u8;

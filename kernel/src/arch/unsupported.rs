@@ -30,6 +30,8 @@ pub mod interrupts {
 
     pub fn disable() {}
 
+    pub fn enable() {}
+
 
     pub unsafe fn init() {}
 }

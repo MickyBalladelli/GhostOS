@@ -70,6 +70,44 @@ pub fn power_button_pressed(platform: &AcpiPlatform) -> bool {
         .is_ok_and(|events| events.contains(FixedEvent::PowerButton))
 }
 
+pub fn suspend(platform: Option<&AcpiPlatform>) -> Result<(), AcpiError> {
+    let platform = platform.ok_or(AcpiError::Unsupported)?;
+    let mut controller = PowerController::new(*platform, PlatformIo);
+    controller.enable_acpi(1_000_000)?;
+    if !platform.fixed.reduced_hardware && platform.fixed.pm1a_event.is_some() {
+        let _ = controller.poll_fixed_events()?;
+        for event in [
+            FixedEvent::PowerButton,
+            FixedEvent::SleepButton,
+            FixedEvent::PcieWake,
+        ] {
+            controller.set_fixed_event_enabled(event, true)?
+        }
+    }
+
+    crate::println!("Suspending SynOS...");
+    crate::arch::disable_interrupts();
+    let requested = controller.request(PowerState::Suspend);
+    let result = match requested {
+        Ok(()) => resume(platform),
+        Err(error) => Err(error),
+    };
+    crate::arch::enable_interrupts();
+    if result.is_ok() {
+        crate::println!("SynOS resumed")
+    }
+    result
+}
+
+pub fn resume(platform: &AcpiPlatform) -> Result<(), AcpiError> {
+    let mut controller = PowerController::new(*platform, PlatformIo);
+    controller.enable_acpi(1_000_000)?;
+    if platform.fixed.pm1a_event.is_some() {
+        let _ = controller.poll_fixed_events()?;
+    }
+    Ok(())
+}
+
 pub fn shutdown(platform: Option<&AcpiPlatform>) -> ! {
     crate::println!("Shutting down SynOS...");
     let acpi_requested = if let Some(platform) = platform {

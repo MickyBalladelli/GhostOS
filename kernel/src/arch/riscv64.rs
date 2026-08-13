@@ -111,6 +111,10 @@ pub mod interrupts {
         unsafe { asm!("csrc sstatus, {0}", in(reg) (1 << 1), options(nomem, nostack)) }
     }
 
+    pub fn enable() {
+        unsafe { asm!("csrs sstatus, {0}", in(reg) (1 << 1), options(nomem, nostack)) }
+    }
+
     unsafe extern "C" {
         fn trap_entry();
     }

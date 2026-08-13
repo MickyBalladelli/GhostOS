@@ -726,6 +726,10 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
         unsafe { asm!("cli", options(nomem, nostack)) }
     }
 
+    pub fn enable() {
+        unsafe { asm!("sti", options(nomem, nostack)) }
+    }
+
     unsafe fn install_gdt() {
         let rsp0: u64;
         unsafe {

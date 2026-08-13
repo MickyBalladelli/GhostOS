@@ -36,6 +36,7 @@ const SET_PROCESS_ROUTE: u16 = 11;
 const SYNOS_ISOLATE_ROUTE: u16 = 12;
 const UPTIME_ROUTE: u16 = 13;
 const SHOW_SERVICES_ROUTE: u16 = 14;
+const SUSPEND_ROUTE: u16 = 15;
 const COMMAND_CAPACITY: usize = 96;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
@@ -196,6 +197,7 @@ pub(crate) unsafe fn initialize(
     register(registry, "SHOW-SYSTEM", SHOW_SYSTEM_ROUTE);
     register(registry, "REBOOT", REBOOT_ROUTE);
     register(registry, "SHUTDOWN", SHUTDOWN_ROUTE);
+    register(registry, "SUSPEND", SUSPEND_ROUTE);
     register(registry, "MONITOR", MONITOR_ROUTE);
     register(registry, "SHOW-PROCESSES", SHOW_PROCESSES_ROUTE);
     register(registry, "TOP-CPU", TOP_CPU_ROUTE);
@@ -505,6 +507,11 @@ fn execute_line(
     }
     if executor.take_shutdown_requested() {
         crate::power::shutdown(acpi)
+    }
+    if executor.take_suspend_requested() {
+        if let Err(error) = crate::power::suspend(acpi) {
+            print_operator_error("suspend unavailable", error.status())
+        }
     }
 }
 
@@ -1300,7 +1307,12 @@ fn help_category(value: &str) -> Option<&'static str> {
 fn command_category(route: u16) -> &'static str {
     match route {
         HELP_ROUTE => "SHELL",
-        SHOW_SYSTEM_ROUTE | SHOW_SERVICES_ROUTE | REBOOT_ROUTE | SHUTDOWN_ROUTE | UPTIME_ROUTE => {
+        SHOW_SYSTEM_ROUTE
+        | SHOW_SERVICES_ROUTE
+        | REBOOT_ROUTE
+        | SHUTDOWN_ROUTE
+        | SUSPEND_ROUTE
+        | UPTIME_ROUTE => {
             "SYSTEM"
         }
         SHOW_PROCESSES_ROUTE | TOP_CPU_ROUTE | STOP_JOB_ROUTE | SET_PROCESS_ROUTE => "PROCESS",
@@ -2136,6 +2148,7 @@ struct KernelExecutor {
     completion: Option<(u64, Result<StructuredOutput, Status>)>,
     reboot_requested: bool,
     shutdown_requested: bool,
+    suspend_requested: bool,
     monitor: MonitorState,
     scheduler: *mut Scheduler,
     capabilities: CapabilitySpace,
@@ -2195,6 +2208,7 @@ impl KernelExecutor {
             completion: None,
             reboot_requested: false,
             shutdown_requested: false,
+            suspend_requested: false,
             monitor: MonitorState::new(),
             scheduler,
             capabilities,
@@ -2217,6 +2231,7 @@ impl KernelExecutor {
             SHOW_SYSTEM_ROUTE => self.show_system(),
             REBOOT_ROUTE => self.request_reboot(),
             SHUTDOWN_ROUTE => self.request_shutdown(),
+            SUSPEND_ROUTE => self.request_suspend(),
             MONITOR_ROUTE => self.monitor_view(command.json()),
             SHOW_PROCESSES_ROUTE => self.show_processes(command.json()),
             TOP_CPU_ROUTE => self.top_cpu(command.json()),
@@ -2863,6 +2878,20 @@ impl KernelExecutor {
 
     fn take_shutdown_requested(&mut self) -> bool {
         core::mem::take(&mut self.shutdown_requested)
+    }
+
+    fn request_suspend(&mut self) -> Result<StructuredOutput, Status> {
+        if self.shutdown_requested || self.reboot_requested || self.suspend_requested {
+            return Ok(StructuredOutput::new(Status::NORMAL))
+        }
+        self.suspend_requested = true;
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert_text(&mut output, "action", "suspending")?;
+        Ok(output)
+    }
+
+    fn take_suspend_requested(&mut self) -> bool {
+        core::mem::take(&mut self.suspend_requested)
     }
 
     fn monitor_view(&mut self, json: bool) -> Result<StructuredOutput, Status> {

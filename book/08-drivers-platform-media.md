@@ -34,6 +34,7 @@ Port and MMIO access remain controlled by the platform service.
 
 Power operations include:
 
+- ACPI S3 suspend and firmware-assisted resume when `_S3_` is advertised;
 - `SHUTDOWN`;
 - `REBOOT`;
 - physical power-button handling;
@@ -59,4 +60,3 @@ ONLINE -> DRAINING -> QUIESCE -> RELEASE LEASES -> REMOVED
 ```
 
 If a lease remains, removal stops. If a request is in flight, the service completes, cancels, or reports failure before the device leaves the graph.
-
