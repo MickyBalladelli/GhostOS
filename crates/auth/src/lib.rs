@@ -16,7 +16,7 @@ pub use identity::{
     AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, AuthorizationStore,
     AccountState, Credential, CredentialId, CredentialKind, CredentialVerifier, DatabaseScope,
     InitialCapability, PublicCredentialData, Session, SessionCapabilities, UserRecord, Username,
-    MAX_USERNAME_BYTES, RESERVED_USERNAMES,
+    MAX_CREDENTIAL_LABEL_BYTES, MAX_USERNAME_BYTES, RESERVED_USERNAMES,
 };
 pub use federation::{
     accept_offer, ClusterId, DiscoveryAnnouncement, FederatedLease, FederatedResourceKind,

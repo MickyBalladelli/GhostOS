@@ -887,7 +887,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             .record(identity)
             .map_err(StartupError::Authentication)?;
         record
-            .add_credential(credential)
+            .add_credential_at(credential, now_us)
             .map_err(StartupError::Authentication)?;
         if record.account_state() == AccountState::PendingSetup {
             record.set_state(AccountState::Active);

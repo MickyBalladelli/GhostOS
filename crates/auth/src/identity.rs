@@ -9,6 +9,7 @@ use synos_observability::{EventField, Level, audit_event, field};
 
 pub const MAX_USERNAME_BYTES: usize = 32;
 pub const MAX_CREDENTIAL_BYTES: usize = 96;
+pub const MAX_CREDENTIAL_LABEL_BYTES: usize = 32;
 pub const MAX_CREDENTIALS_PER_USER: usize = 4;
 pub const MAX_INITIAL_CAPABILITIES: usize = 8;
 pub const MAX_USER_RIGHTS: usize = 16;
@@ -146,6 +147,11 @@ pub struct Credential {
     pub id: CredentialId,
     pub kind: CredentialKind,
     public_material: PublicCredentialData,
+    label: [u8; MAX_CREDENTIAL_LABEL_BYTES],
+    label_length: u8,
+    created_at_us: u64,
+    last_used_at_us: Option<u64>,
+    revoked: bool,
     sign_count: u32,
 }
 
@@ -155,6 +161,10 @@ impl fmt::Debug for Credential {
             .debug_struct("Credential")
             .field("id", &self.id)
             .field("kind", &self.kind)
+            .field("label", &self.label())
+            .field("created_at_us", &self.created_at_us)
+            .field("last_used_at_us", &self.last_used_at_us)
+            .field("revoked", &self.revoked)
             .field("sign_count", &self.sign_count)
             .finish()
     }
@@ -182,6 +192,11 @@ impl Credential {
             id,
             kind,
             public_material,
+            label: [0; MAX_CREDENTIAL_LABEL_BYTES],
+            label_length: 0,
+            created_at_us: 0,
+            last_used_at_us: None,
+            revoked: false,
             sign_count: 0,
         }
     }
@@ -212,6 +227,36 @@ impl Credential {
 
     pub fn public_material(&self) -> &[u8] {
         self.public_material.as_bytes()
+    }
+
+    pub fn label(&self) -> &str {
+        core::str::from_utf8(&self.label[..self.label_length as usize])
+            .expect("Credential label invariant")
+    }
+
+    pub fn set_label(&mut self, label: &str) -> Result<(), AuthError> {
+        let bytes = label.as_bytes();
+        if bytes.len() > MAX_CREDENTIAL_LABEL_BYTES
+            || bytes.iter().any(|byte| !(0x20..=0x7e).contains(byte))
+        {
+            return Err(AuthError::InvalidRecord)
+        }
+        self.label = [0; MAX_CREDENTIAL_LABEL_BYTES];
+        self.label[..bytes.len()].copy_from_slice(bytes);
+        self.label_length = bytes.len() as u8;
+        Ok(())
+    }
+
+    pub const fn created_at_us(&self) -> u64 {
+        self.created_at_us
+    }
+
+    pub const fn last_used_at_us(&self) -> Option<u64> {
+        self.last_used_at_us
+    }
+
+    pub const fn is_revoked(&self) -> bool {
+        self.revoked
     }
 
     pub const fn kind(&self) -> CredentialKind {
@@ -315,6 +360,14 @@ impl UserRecord {
     }
 
     pub fn add_credential(&mut self, credential: Credential) -> Result<(), AuthError> {
+        self.add_credential_at(credential, 0)
+    }
+
+    pub fn add_credential_at(
+        &mut self,
+        mut credential: Credential,
+        created_at_us: u64,
+    ) -> Result<(), AuthError> {
         if self
             .credentials()
             .any(|existing| existing.id == credential.id)
@@ -326,7 +379,45 @@ impl UserRecord {
             .iter_mut()
             .find(|entry| entry.is_none())
             .ok_or(AuthError::Capacity)?;
+        credential.created_at_us = created_at_us;
         *slot = Some(credential);
+        Ok(())
+    }
+
+    pub fn set_credential_revoked(
+        &mut self,
+        id: CredentialId,
+        revoked: bool,
+    ) -> Result<(), AuthError> {
+        let active_count = self.credentials().filter(|credential| !credential.revoked).count();
+        let credential = self
+            .credentials
+            .iter_mut()
+            .flatten()
+            .find(|credential| credential.id == id)
+            .ok_or(AuthError::CredentialNotFound)?;
+        if revoked && !credential.revoked && active_count <= 1 {
+            return Err(AuthError::InvalidRecord)
+        }
+        credential.revoked = revoked;
+        Ok(())
+    }
+
+    fn record_credential_use(
+        &mut self,
+        id: CredentialId,
+        now_us: u64,
+    ) -> Result<(), AuthError> {
+        let credential = self
+            .credentials
+            .iter_mut()
+            .flatten()
+            .find(|credential| credential.id == id)
+            .ok_or(AuthError::CredentialNotFound)?;
+        if credential.revoked {
+            return Err(AuthError::CredentialNotFound)
+        }
+        credential.last_used_at_us = Some(now_us);
         Ok(())
     }
 
@@ -379,6 +470,7 @@ impl UserRecord {
         self.credentials()
             .find(|credential| {
                 credential.kind == CredentialKind::SshKey
+                    && !credential.revoked
                     && credential.public_material() == public_key
             })
             .map(|credential| credential.id)
@@ -723,6 +815,9 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         let selected = record
             .credential(credential)
             .ok_or(AuthError::CredentialNotFound)?;
+        if selected.revoked {
+            return Err(AuthError::CredentialNotFound)
+        }
         if required_kind.is_some_and(|kind| kind != selected.kind) {
             return Err(AuthError::CredentialNotFound)
         }
@@ -783,6 +878,9 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             );
             return Err(AuthError::VerificationFailed)
         }
+        let mut session_record = record;
+        session_record.record_credential_use(challenge.credential, now_us)?;
+        self.database.replace(session_record)?;
         audit_event!(
             Level::Info,
             EventField::unsigned(field::AUTH_ACTION, 1),
@@ -791,7 +889,7 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             EventField::status(synos_status::Status::NORMAL),
         );
         Ok(Session {
-            record,
+            record: session_record,
             login_address_space,
             expires_at_us: now_us.saturating_add(session_lifetime_us),
         })

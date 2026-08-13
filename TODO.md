@@ -259,7 +259,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add `CREDENTIAL REMOVE <username> <id>` with self-lockout protection.
 - [x] Allow users to enroll and remove their own credentials under policy.
 - [x] Store only credential public data and metadata, never private keys or secrets.
-- [ ] Add credential labels, creation time, last-used time, and revocation state.
+- [x] Add credential labels, creation time, last-used time, and revocation state.
 - [ ] Rotate and revoke credentials without deleting the account.
 - [ ] Support account expiration and credential expiration policies.
 - [ ] Add password login only if a password verifier and secure recovery policy exist.
