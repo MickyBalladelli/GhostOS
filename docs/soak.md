@@ -6,9 +6,11 @@ Run all bounded workflow soaks with:
 SYNOS_SOAK_RUNS=3 ./scripts/soak.sh
 ```
 
-The runner covers boot, shell, filesystem, network, compiler, cluster, VM, and
-the lifecycle campaign. The lifecycle campaign repeats reboot, snapshot-based
-suspend/resume, memory hotplug, and init-service restart paths. It accounts for
+The runner covers boot, shell, filesystem, network, compiler, cluster, VM,
+lifecycle, and capability campaigns. The lifecycle campaign repeats reboot,
+snapshot-based suspend/resume, memory hotplug, and init-service restart paths.
+The capability campaign repeatedly creates, delegates, revokes, deletes, and
+reuses capability slots while rejecting stale generations. It accounts for
 pages, handles, IRQ routes, timers, capabilities, and worker tasks, and fails
 if any ownership remains after a cycle.
 Each command has a per-run timeout. It writes one JSON report to
@@ -32,6 +34,12 @@ Run only the lifecycle campaign, with a longer cycle count:
 
 ```sh
 SYNOS_SOAK_RUNS=3 SYNOS_LIFECYCLE_CYCLES=512 ./scripts/soak.sh --scenario lifecycle
+```
+
+Run only the capability campaign, with a longer cycle count:
+
+```sh
+SYNOS_SOAK_RUNS=3 SYNOS_CAPABILITY_SOAK_CYCLES=4096 ./scripts/soak.sh --scenario capabilities
 ```
 
 Use `SYNOS_SOAK_<WORKFLOW>_COMMAND` to replace a command, for example

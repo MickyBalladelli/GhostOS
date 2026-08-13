@@ -160,7 +160,7 @@ evidence described in `platforms/README.md`.
 | hardware-boot | `python3 scripts/record-hardware-boot-evidence.py ...` | manual | COM1 log, hardware inventory, boot artifact hash, and revision |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
 | performance | `python3 scripts/benchmark.py --baseline <same-host-report> -- cargo bench -p synos-vm --bench bounded` | required | benchmark report, hardware signature, budgets, and regression state |
-| soak | `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle ownership report, logs, and resource-drift snapshots |
+| soak | `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle and capability ownership reports, logs, and resource-drift snapshots |
 
 The root workspace includes both `synos-test-support` and `synos-vm` in
 `default-members`. Therefore `cargo test` runs every deterministic SynOS and VM
@@ -383,6 +383,8 @@ corresponding compatibility decision.
 | `SYNOS_VM_SOAK_INNER_RUNS` | `32` | In-process VM lifecycle repetitions per soak run. |
 | `SYNOS_VM_SOAK_MEMORY_TOLERANCE_BYTES` | `67108864` | Allowed runner RSS growth per soak run. |
 | `SYNOS_VM_SOAK_COMMAND` | focused soak test | Optional command override for the soak runner. |
+| `SYNOS_CAPABILITY_SOAK_CYCLES` | `512` | Capability create/delegate/revoke/delete cycles per capability soak process. |
+| `SYNOS_CAPABILITY_SOAK_REPORT` | `build/soak/capabilities/report.json` | Machine-readable capability soak report path. |
 | `SYNOS_SOAK_RUNS` | `3` | Number of bounded repetitions for each workflow. |
 | `SYNOS_SOAK_TIMEOUT_SECONDS` | `300` | Maximum duration of one workflow repetition. |
 | `SYNOS_SOAK_MEMORY_TOLERANCE_BYTES` | `67108864` | Allowed runner RSS growth per repetition. |

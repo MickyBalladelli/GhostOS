@@ -55,6 +55,10 @@ SCENARIOS: dict[str, dict[str, object]] = {
         "description": "reboot, suspend/resume, memory-hotplug, and service-restart ownership campaign",
         "command": ["cargo", "test", "-p", "synos-vm", "--test", "lifecycle_soak", "--", "--nocapture"],
     },
+    "capabilities": {
+        "description": "capability slot reclamation, generation reuse, and stale-handle rejection campaign",
+        "command": ["cargo", "test", "-p", "synos-kernel", "--test", "capability_soak", "--", "--nocapture"],
+    },
 }
 
 
@@ -310,6 +314,7 @@ def run_once(
     error = None
     timed_out = False
     lifecycle_report = None
+    capability_report = None
     try:
         with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
             run_environment = environment
@@ -317,6 +322,10 @@ def run_once(
                 run_environment = environment.copy()
                 lifecycle_report = report_dir / f"run-{run_number}.lifecycle.json"
                 run_environment["SYNOS_LIFECYCLE_REPORT"] = str(lifecycle_report)
+            elif name == "capabilities":
+                run_environment = environment.copy()
+                capability_report = report_dir / f"run-{run_number}.capabilities.json"
+                run_environment["SYNOS_CAPABILITY_SOAK_REPORT"] = str(capability_report)
             child = subprocess.Popen(command, cwd=ROOT, env=run_environment, stdout=stdout, stderr=stderr)
             while child.poll() is None:
                 current_rss = rss_bytes(child.pid)
@@ -392,6 +401,7 @@ def run_once(
         "stdout": str(stdout_path),
         "stderr": str(stderr_path),
         **({"lifecycle_report": str(lifecycle_report)} if lifecycle_report is not None else {}),
+        **({"capability_report": str(capability_report)} if capability_report is not None else {}),
     }
 
 
