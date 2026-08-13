@@ -262,7 +262,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add credential labels, creation time, last-used time, and revocation state.
 - [x] Rotate and revoke credentials without deleting the account.
 - [x] Support account expiration and credential expiration policies.
-- [ ] Add password login only if a password verifier and secure recovery policy exist.
+- [x] Add password login only if a password verifier and secure recovery policy exist.
 - [ ] Define administrator, operator, auditor, and read-only account roles.
 - [ ] Add group membership management with `GROUP LIST`, `GROUP CREATE`, `GROUP ADD`, and `GROUP REMOVE`.
 - [ ] Persist role, group, capability, and account policy changes atomically.

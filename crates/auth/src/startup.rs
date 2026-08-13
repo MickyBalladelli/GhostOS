@@ -8,8 +8,8 @@ use synos_kernel::{
 
 use crate::identity::{
     AccountState, AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, Credential,
-    CredentialId, CredentialKind, CredentialVerifier, DatabaseScope, InitialCapability, Session,
-    UserRecord, Username,
+    CredentialId, CredentialKind, CredentialVerifier, DatabaseScope, InitialCapability,
+    PasswordVerifier, Session, UserRecord, Username,
 };
 
 pub const MAX_GROUPS: usize = 32;
@@ -23,6 +23,33 @@ pub const DEFAULT_IDLE_TIMEOUT_US: u64 = 300_000_000;
 pub const MAX_IDLE_TIMEOUT_US: u64 = 900_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PasswordRecoveryPolicy {
+    pub trusted_recovery_identity: IdentityId,
+    pub trusted_recovery_key_id: u64,
+    pub recovery_window_us: u64,
+}
+
+impl PasswordRecoveryPolicy {
+    pub const fn new(
+        trusted_recovery_identity: IdentityId,
+        trusted_recovery_key_id: u64,
+        recovery_window_us: u64,
+    ) -> Result<Self, StartupError> {
+        if trusted_recovery_identity.raw() == IdentityId::ANONYMOUS.raw()
+            || trusted_recovery_key_id == 0
+            || recovery_window_us == 0
+        {
+            return Err(StartupError::InvalidPolicy)
+        }
+        Ok(Self {
+            trusted_recovery_identity,
+            trusted_recovery_key_id,
+            recovery_window_us,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SecurityPolicy {
     pub challenge_lifetime_us: u64,
     pub session_lifetime_us: u64,
@@ -30,6 +57,8 @@ pub struct SecurityPolicy {
     pub allow_self_credential_changes: bool,
     pub account_lifetime_us: Option<u64>,
     pub credential_lifetime_us: Option<u64>,
+    pub password_login_enabled: bool,
+    pub password_recovery_policy: Option<PasswordRecoveryPolicy>,
 }
 
 impl SecurityPolicy {
@@ -55,6 +84,8 @@ impl SecurityPolicy {
             allow_self_credential_changes: true,
             account_lifetime_us: None,
             credential_lifetime_us: None,
+            password_login_enabled: false,
+            password_recovery_policy: None,
         })
     }
 
@@ -73,9 +104,29 @@ impl SecurityPolicy {
         self
     }
 
+    pub const fn with_password_login(
+        mut self,
+        enabled: bool,
+        recovery_policy: Option<PasswordRecoveryPolicy>,
+    ) -> Self {
+        self.password_login_enabled = enabled;
+        self.password_recovery_policy = recovery_policy;
+        self
+    }
+
     fn validate(&self) -> Result<(), StartupError> {
-        if self.account_lifetime_us == Some(0) || self.credential_lifetime_us == Some(0) {
+        if self.account_lifetime_us == Some(0)
+            || self.credential_lifetime_us == Some(0)
+            || (self.password_login_enabled && self.password_recovery_policy.is_none())
+        {
             return Err(StartupError::InvalidPolicy)
+        }
+        if let Some(recovery) = self.password_recovery_policy {
+            PasswordRecoveryPolicy::new(
+                recovery.trusted_recovery_identity,
+                recovery.trusted_recovery_key_id,
+                recovery.recovery_window_us,
+            )?;
         }
         Ok(())
     }
@@ -90,6 +141,8 @@ impl Default for SecurityPolicy {
             allow_self_credential_changes: true,
             account_lifetime_us: None,
             credential_lifetime_us: None,
+            password_login_enabled: false,
+            password_recovery_policy: None,
         }
     }
 }
@@ -450,6 +503,9 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         kind: CredentialKind,
         now_us: u64,
     ) -> Result<AuthenticationChallenge, StartupError> {
+        if kind == CredentialKind::Password && !self.password_login_allowed() {
+            return Err(StartupError::InvalidPolicy)
+        }
         self.authd
             .begin_authentication_for_kind(
                 username,
@@ -470,6 +526,9 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         login_address_space: AddressSpaceId,
         now_us: u64,
     ) -> Result<SessionView, StartupError> {
+        if self.challenge_is_password(challenge) {
+            return Err(StartupError::InvalidPolicy)
+        }
         let session = self
             .authd
             .complete_authentication(
@@ -497,6 +556,59 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         };
         *slot = Some(active);
         Ok(Self::view_of(active))
+    }
+
+    pub fn complete_password_login<V: PasswordVerifier>(
+        &mut self,
+        challenge: AuthenticationChallenge,
+        password: &[u8],
+        verifier: &mut V,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
+        if !self.password_login_allowed() {
+            return Err(StartupError::InvalidPolicy)
+        }
+        let session = self
+            .authd
+            .complete_password_authentication(
+                challenge,
+                password,
+                verifier,
+                login_address_space,
+                now_us,
+                self.policy.session_lifetime_us,
+            )
+            .map_err(StartupError::Authentication)?;
+        let slot = self
+            .active
+            .iter_mut()
+            .find(|entry| entry.is_none())
+            .ok_or(StartupError::Capacity)?;
+        self.next_handle = self.next_handle.wrapping_add(1).max(1);
+        let active = ActiveSession {
+            handle: SessionHandle::new(self.next_handle).expect("nonzero session handle"),
+            session,
+            credential: challenge.credential,
+            authenticated_at_us: now_us,
+            last_activity_us: now_us,
+            revocation_epoch: self.revocation_epoch,
+        };
+        *slot = Some(active);
+        Ok(Self::view_of(active))
+    }
+
+    fn password_login_allowed(&self) -> bool {
+        self.policy.password_login_enabled && self.policy.password_recovery_policy.is_some()
+    }
+
+    fn challenge_is_password(&self, challenge: AuthenticationChallenge) -> bool {
+        self.authd
+            .database()
+            .record(challenge.identity)
+            .ok()
+            .and_then(|record| record.credential_kind(challenge.credential).ok())
+            == Some(CredentialKind::Password)
     }
 
     pub fn authorize(
@@ -715,6 +827,17 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         result
     }
 
+    pub fn begin_password_login(
+        &mut self,
+        username: &str,
+        node: NodeId,
+        credential: CredentialId,
+        now_us: u64,
+    ) -> Result<AuthenticationChallenge, StartupError> {
+        self.require_password_login_policy()?;
+        self.begin_login(username, node, credential, CredentialKind::Password, now_us)
+    }
+
     pub fn expire_accounts<S: SecurityStore<USERS, GROUPS>>(
         &mut self,
         store: &mut S,
@@ -755,6 +878,35 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         )?;
         self.state.database = *self.sessions.authd().database();
         Ok(view)
+    }
+
+    pub fn complete_password_login<V: PasswordVerifier>(
+        &mut self,
+        challenge: AuthenticationChallenge,
+        password: &[u8],
+        verifier: &mut V,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
+        self.require_password_login_policy()?;
+        let view = self.sessions.complete_password_login(
+            challenge,
+            password,
+            verifier,
+            login_address_space,
+            now_us,
+        )?;
+        self.state.database = *self.sessions.authd().database();
+        Ok(view)
+    }
+
+    fn require_password_login_policy(&self) -> Result<(), StartupError> {
+        if !self.state.policy.password_login_enabled
+            || self.state.policy.password_recovery_policy.is_none()
+        {
+            return Err(StartupError::InvalidPolicy)
+        }
+        Ok(())
     }
 
     pub fn authorize(

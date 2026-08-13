@@ -15,7 +15,8 @@ pub mod token;
 pub use identity::{
     AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, AuthorizationStore,
     AccountState, Credential, CredentialId, CredentialKind, CredentialVerifier, DatabaseScope,
-    InitialCapability, PublicCredentialData, Session, SessionCapabilities, UserRecord, Username,
+    InitialCapability, PasswordVerifier, PublicCredentialData, Session, SessionCapabilities,
+    UserRecord, Username,
     MAX_CREDENTIAL_LABEL_BYTES, MAX_USERNAME_BYTES, RESERVED_USERNAMES,
 };
 pub use federation::{
@@ -52,7 +53,8 @@ pub use revocation_monitor::{
 };
 pub use startup::{
     AccountManagementRequest, AccountManagementResult, BootLoginService, GroupDirectory, GroupId,
-    GroupRecord, SecurityPolicy, SecurityState, SecurityStore, SecurityStoreError, SessionHandle,
+    GroupRecord, PasswordRecoveryPolicy, SecurityPolicy, SecurityState, SecurityStore,
+    SecurityStoreError, SessionHandle,
     SessionManager, SessionView, StartupError,
     MAX_ACTIVE_SESSIONS, MAX_CHALLENGE_LIFETIME_US, MAX_GROUP_MEMBERS, MAX_GROUP_RIGHTS,
     MAX_GROUPS, MAX_SESSION_LIFETIME_US,

@@ -91,6 +91,7 @@ pub enum CredentialKind {
     Passkey = 1,
     Tpm20 = 2,
     SshKey = 3,
+    Password = 4,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -228,6 +229,13 @@ impl Credential {
         Self::new(id, CredentialKind::SshKey, public_key)
     }
 
+    pub fn new_password(
+        id: CredentialId,
+        verifier_reference: &[u8],
+    ) -> Result<Self, AuthError> {
+        Self::new(id, CredentialKind::Password, verifier_reference)
+    }
+
     pub fn public_material(&self) -> &[u8] {
         self.public_material.as_bytes()
     }
@@ -291,6 +299,17 @@ pub trait CredentialVerifier {
         public_material: &[u8],
         challenge: &[u8],
         response: &[u8],
+    ) -> bool;
+}
+
+pub trait PasswordVerifier {
+    /// Verify an ephemeral password against an external verifier.
+    /// The credential stores only its public verifier reference.
+    fn verify(
+        &mut self,
+        verifier_reference: &[u8],
+        challenge: &[u8],
+        password: &[u8],
     ) -> bool;
 }
 
@@ -1003,6 +1022,51 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             EventField::unsigned(field::CALLER, login_address_space.raw() as u64),
             EventField::status(synos_status::Status::NORMAL),
         );
+        Ok(Session {
+            record: session_record,
+            login_address_space,
+            expires_at_us: now_us.saturating_add(session_lifetime_us),
+        })
+    }
+
+    pub fn complete_password_authentication<V: PasswordVerifier>(
+        &mut self,
+        challenge: AuthenticationChallenge,
+        password: &[u8],
+        verifier: &mut V,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+        session_lifetime_us: u64,
+    ) -> Result<Session, AuthError> {
+        let slot = self
+            .pending
+            .iter()
+            .position(|entry| entry.is_some_and(|pending| pending.challenge == challenge))
+            .ok_or(AuthError::InvalidChallenge)?;
+        let pending = self.pending[slot].take().expect("pending challenge");
+        if now_us >= challenge.expires_at_us || session_lifetime_us == 0 {
+            return Err(AuthError::InvalidChallenge)
+        }
+        let record = self
+            .database
+            .identity_record(pending.record.identity, now_us)
+            .ok_or(AuthError::UserNotFound)?;
+        let credential = record
+            .credential(challenge.credential)
+            .ok_or(AuthError::CredentialNotFound)?;
+        if credential.kind != CredentialKind::Password || !credential.is_usable_at(now_us) {
+            return Err(AuthError::CredentialNotFound)
+        }
+        if !verifier.verify(
+            credential.public_material(),
+            &challenge.bytes(),
+            password,
+        ) {
+            return Err(AuthError::VerificationFailed)
+        }
+        let mut session_record = record;
+        session_record.record_credential_use(challenge.credential, now_us)?;
+        self.database.replace(session_record)?;
         Ok(Session {
             record: session_record,
             login_address_space,
