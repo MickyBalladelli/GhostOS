@@ -606,6 +606,31 @@ const LOGIN_SESSION_LIFETIME_US: u64 = 900_000_000;
     any(target_os = "none", target_os = "uefi")
 ))]
 const LOGIN_SESSION_IDLE_TIMEOUT_US: u64 = 300_000_000;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const AUDIT_LOGIN_SUCCESS: u64 = 1;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const AUDIT_LOGIN_FAILURE: u64 = 2;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const AUDIT_LOGOUT: u64 = 3;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const AUDIT_TIMEOUT: u64 = 4;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const AUDIT_LOCKOUT: u64 = 5;
 
 #[cfg(all(
     target_arch = "x86_64",
@@ -799,6 +824,12 @@ fn record_login_failure() {
         .saturating_mul(1_u64 << shift)
         .min(LOGIN_RATE_LIMIT_MAX_US);
     let now_us = time::monotonic_now_us();
+    synos_observability::audit_event!(
+        synos_observability::Level::Warn,
+        EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGIN_FAILURE),
+        EventField::unsigned(field::CALLER, 14),
+        EventField::status(Status::ACCESS_DENIED),
+    );
     LOGIN_RETRY_AFTER_US.store(
         now_us.saturating_add(delay),
         Ordering::Release,
@@ -807,6 +838,12 @@ fn record_login_failure() {
         LOGIN_LOCKED_UNTIL_US.store(
             now_us.saturating_add(LOGIN_LOCK_DURATION_US),
             Ordering::Release,
+        );
+        synos_observability::audit_event!(
+            synos_observability::Level::Warn,
+            EventField::unsigned(field::AUTH_ACTION, AUDIT_LOCKOUT),
+            EventField::unsigned(field::CALLER, 14),
+            EventField::status(Status::ACCESS_DENIED),
         );
     }
 }
@@ -856,6 +893,12 @@ fn login_session_active() -> bool {
     if !login_session_matches(identity, expires_at_us, epoch, now_us)
         || !shell::session_matches(identity, expires_at_us, epoch)
     {
+        synos_observability::audit_event!(
+            synos_observability::Level::Warn,
+            EventField::unsigned(field::AUTH_ACTION, AUDIT_TIMEOUT),
+            EventField::unsigned(field::IDENTITY, identity),
+            EventField::status(Status::ACCESS_DENIED),
+        );
         revoke_login_session();
         return false
     }
@@ -936,6 +979,13 @@ fn start_login_session(username: &[u8]) -> bool {
     LOGIN_SESSION_IDENTITY.store(identity, Ordering::Release);
     LOGIN_REQUESTED.store(false, Ordering::Release);
     LOGIN_AUTHORIZED.store(true, Ordering::Release);
+    synos_observability::audit_event!(
+        synos_observability::Level::Info,
+        EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGIN_SUCCESS),
+        EventField::unsigned(field::IDENTITY, identity),
+        EventField::unsigned(field::CALLER, 14),
+        EventField::status(Status::NORMAL),
+    );
     true
 }
 
@@ -1365,6 +1415,15 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !login_session_active() {
             return syscall_error(Status::ACCESS_DENIED)
         }
+        synos_observability::audit_event!(
+            synos_observability::Level::Info,
+            EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGOUT),
+            EventField::unsigned(
+                field::IDENTITY,
+                LOGIN_SESSION_IDENTITY.load(Ordering::Acquire),
+            ),
+            EventField::status(Status::NORMAL),
+        );
         revoke_login_session();
         return syscall_success([1, 0, 0, 0])
     }
@@ -1379,6 +1438,15 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !login_session_active() {
             return syscall_error(Status::ACCESS_DENIED)
         }
+        synos_observability::audit_event!(
+            synos_observability::Level::Info,
+            EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGOUT),
+            EventField::unsigned(
+                field::IDENTITY,
+                LOGIN_SESSION_IDENTITY.load(Ordering::Acquire),
+            ),
+            EventField::status(Status::NORMAL),
+        );
         revoke_login_session();
         return syscall_success([1, 0, 0, 0])
     }

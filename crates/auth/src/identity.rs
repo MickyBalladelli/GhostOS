@@ -1207,11 +1207,25 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             &challenge.bytes(),
             password,
         ) {
+            audit_event!(
+                Level::Warn,
+                EventField::unsigned(field::AUTH_ACTION, 1),
+                EventField::unsigned(field::IDENTITY, record.identity.raw()),
+                EventField::unsigned(field::CALLER, login_address_space.raw() as u64),
+                EventField::status(synos_status::Status::ACCESS_DENIED),
+            );
             return Err(AuthError::VerificationFailed)
         }
         let mut session_record = record;
         session_record.record_credential_use(challenge.credential, now_us)?;
         self.database.replace(session_record)?;
+        audit_event!(
+            Level::Info,
+            EventField::unsigned(field::AUTH_ACTION, 1),
+            EventField::unsigned(field::IDENTITY, record.identity.raw()),
+            EventField::unsigned(field::CALLER, login_address_space.raw() as u64),
+            EventField::status(synos_status::Status::NORMAL),
+        );
         Ok(Session {
             record: session_record,
             login_address_space,

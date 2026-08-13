@@ -7,6 +7,8 @@ use synos_fabric::NodeId;
 use synos_kernel::{
     AddressSpaceId, CapabilityObject, IdentityId, RightIdentifier, Rights,
 };
+use synos_observability::{audit_event, field, EventField, Level};
+use synos_status::Status;
 
 use crate::identity::{
     AccountRole, AccountState, AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase,
@@ -24,6 +26,42 @@ pub const DEFAULT_SESSION_LIFETIME_US: u64 = 900_000_000;
 pub const MAX_SESSION_LIFETIME_US: u64 = 900_000_000;
 pub const DEFAULT_IDLE_TIMEOUT_US: u64 = 300_000_000;
 pub const MAX_IDLE_TIMEOUT_US: u64 = 900_000_000;
+
+const AUDIT_LOGIN_SUCCESS: u64 = 1;
+const AUDIT_LOGIN_FAILURE: u64 = 2;
+const AUDIT_LOGOUT: u64 = 3;
+const AUDIT_TIMEOUT: u64 = 4;
+const AUDIT_LOCKOUT: u64 = 5;
+const AUDIT_RECOVERY: u64 = 6;
+const AUDIT_ACCOUNT_CHANGE: u64 = 7;
+
+fn audit_security_event(
+    action: u64,
+    identity: Option<IdentityId>,
+    caller: u64,
+    status: Status,
+) {
+    let level = if status == Status::NORMAL {
+        Level::Info
+    } else {
+        Level::Warn
+    };
+    match identity {
+        Some(identity) => audit_event!(
+            level,
+            EventField::unsigned(field::AUTH_ACTION, action),
+            EventField::unsigned(field::IDENTITY, identity.raw()),
+            EventField::unsigned(field::CALLER, caller),
+            EventField::status(status),
+        ),
+        None => audit_event!(
+            level,
+            EventField::unsigned(field::AUTH_ACTION, action),
+            EventField::unsigned(field::CALLER, caller),
+            EventField::status(status),
+        ),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PasswordRecoveryPolicy {
@@ -744,15 +782,39 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         let idle_timeout_us = self.policy.idle_timeout_us;
         let active = self.active_session_mut(handle)?;
         if active.revocation_epoch != revocation_epoch {
+            audit_security_event(
+                AUDIT_TIMEOUT,
+                Some(active.session.identity()),
+                handle.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::SessionRevoked)
         }
         if now_us >= active.session.expires_at_us {
+            audit_security_event(
+                AUDIT_TIMEOUT,
+                Some(active.session.identity()),
+                handle.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::SessionExpired)
         }
         if !active.session.is_usable_at(active.credential, now_us) {
+            audit_security_event(
+                AUDIT_TIMEOUT,
+                Some(active.session.identity()),
+                handle.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::SessionExpired)
         }
         if now_us.saturating_sub(active.last_activity_us) >= idle_timeout_us {
+            audit_security_event(
+                AUDIT_TIMEOUT,
+                Some(active.session.identity()),
+                handle.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::SessionExpired)
         }
         if !active.session.persona().map_err(StartupError::Authentication)?.has(right) {
@@ -783,12 +845,24 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         let idle_timeout_us = self.policy.idle_timeout_us;
         let active = self.active_session_mut(handle)?;
         if active.revocation_epoch != revocation_epoch {
+            audit_security_event(
+                AUDIT_TIMEOUT,
+                Some(active.session.identity()),
+                handle.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::SessionRevoked)
         }
         if now_us >= active.session.expires_at_us
             || now_us.saturating_sub(active.last_activity_us) >= idle_timeout_us
             || !active.session.is_usable_at(active.credential, now_us)
         {
+            audit_security_event(
+                AUDIT_TIMEOUT,
+                Some(active.session.identity()),
+                handle.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::SessionExpired)
         }
         active.last_activity_us = now_us;
@@ -812,7 +886,9 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
             .iter_mut()
             .find(|entry| entry.is_some_and(|active| active.handle == handle))
             .ok_or(StartupError::SessionNotFound)?;
+        let identity = slot.as_ref().map(|active| active.session.identity());
         *slot = None;
+        audit_security_event(AUDIT_LOGOUT, identity, handle.raw(), Status::NORMAL);
         Ok(())
     }
 
@@ -840,6 +916,14 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
                         >= self.policy.idle_timeout_us
                     || !active.session.is_usable_at(active.credential, now_us)
             }) {
+                if let Some(active) = slot {
+                    audit_security_event(
+                        AUDIT_TIMEOUT,
+                        Some(active.session.identity()),
+                        active.handle.raw(),
+                        Status::NORMAL,
+                    );
+                }
                 *slot = None;
                 expired += 1;
             }
@@ -1020,6 +1104,14 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         }
         let result = self.sessions.begin_login(username, node, credential, kind, now_us);
         self.state.database = *self.sessions.authd().database();
+        if result.is_err() {
+            audit_security_event(
+                AUDIT_LOGIN_FAILURE,
+                None,
+                node.raw() as u64,
+                Status::ACCESS_DENIED,
+            );
+        }
         result
     }
 
@@ -1097,8 +1189,31 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         replacement: Credential,
         now_us: u64,
     ) -> Result<UserRecord, StartupError> {
-        let challenge = self.take_recovery_challenge(challenge, now_us)?;
-        let credential = self.recovery_credential(challenge, now_us)?;
+        let challenge = match self.take_recovery_challenge(challenge, now_us) {
+            Ok(challenge) => challenge,
+            Err(error) => {
+                audit_security_event(
+                    AUDIT_RECOVERY,
+                    Some(challenge.target_identity),
+                    challenge.recovery_identity.raw(),
+                    Status::ACCESS_DENIED,
+                );
+                return Err(error)
+            }
+        };
+        let target_identity = challenge.target_identity;
+        let credential = match self.recovery_credential(challenge, now_us) {
+            Ok(credential) => credential,
+            Err(error) => {
+                audit_security_event(
+                    AUDIT_RECOVERY,
+                    Some(target_identity),
+                    challenge.recovery_identity.raw(),
+                    Status::ACCESS_DENIED,
+                );
+                return Err(error)
+            }
+        };
         if proof.is_empty()
             || proof.len() > crate::identity::MAX_AUTH_RESPONSE_BYTES
             || !verifier.verify(
@@ -1108,9 +1223,26 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                 proof,
             )
         {
+            audit_security_event(
+                AUDIT_RECOVERY,
+                Some(target_identity),
+                challenge.recovery_identity.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::Authentication(AuthError::VerificationFailed))
         }
-        self.finish_credential_recovery(store, challenge, replacement, now_us)
+        let result = self.finish_credential_recovery(store, challenge, replacement, now_us);
+        audit_security_event(
+            AUDIT_RECOVERY,
+            Some(target_identity),
+            challenge.recovery_identity.raw(),
+            if result.is_ok() {
+                Status::NORMAL
+            } else {
+                Status::ACCESS_DENIED
+            },
+        );
+        result
     }
 
     pub fn complete_physical_credential_recovery<
@@ -1124,11 +1256,40 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         replacement: Credential,
         now_us: u64,
     ) -> Result<UserRecord, StartupError> {
-        let challenge = self.take_recovery_challenge(challenge, now_us)?;
+        let challenge = match self.take_recovery_challenge(challenge, now_us) {
+            Ok(challenge) => challenge,
+            Err(error) => {
+                audit_security_event(
+                    AUDIT_RECOVERY,
+                    Some(challenge.target_identity),
+                    challenge.recovery_identity.raw(),
+                    Status::ACCESS_DENIED,
+                );
+                return Err(error)
+            }
+        };
+        let target_identity = challenge.target_identity;
         if !physical.authorize(challenge) {
+            audit_security_event(
+                AUDIT_RECOVERY,
+                Some(target_identity),
+                challenge.recovery_identity.raw(),
+                Status::ACCESS_DENIED,
+            );
             return Err(StartupError::Authentication(AuthError::VerificationFailed))
         }
-        self.finish_credential_recovery(store, challenge, replacement, now_us)
+        let result = self.finish_credential_recovery(store, challenge, replacement, now_us);
+        audit_security_event(
+            AUDIT_RECOVERY,
+            Some(target_identity),
+            challenge.recovery_identity.raw(),
+            if result.is_ok() {
+                Status::NORMAL
+            } else {
+                Status::ACCESS_DENIED
+            },
+        );
+        result
     }
 
     pub fn expire_accounts<S: SecurityStore<USERS, GROUPS>>(
@@ -1159,15 +1320,34 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         login_address_space: AddressSpaceId,
         now_us: u64,
     ) -> Result<SessionView, StartupError> {
-        let view = self.sessions.complete_login(
+        let result = self.sessions.complete_login(
             challenge,
             response,
             verifier,
             login_address_space,
             now_us,
-        )?;
-        self.state.database = *self.sessions.authd().database();
-        Ok(view)
+        );
+        match result {
+            Ok(view) => {
+                audit_security_event(
+                    AUDIT_LOGIN_SUCCESS,
+                    Some(view.identity),
+                    login_address_space.raw() as u64,
+                    Status::NORMAL,
+                );
+                self.state.database = *self.sessions.authd().database();
+                Ok(view)
+            }
+            Err(error) => {
+                audit_security_event(
+                    AUDIT_LOGIN_FAILURE,
+                    Some(challenge.identity),
+                    login_address_space.raw() as u64,
+                    Status::ACCESS_DENIED,
+                );
+                Err(error)
+            }
+        }
     }
 
     pub fn complete_password_login<V: PasswordVerifier>(
@@ -1179,15 +1359,34 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         now_us: u64,
     ) -> Result<SessionView, StartupError> {
         self.require_password_login_policy()?;
-        let view = self.sessions.complete_password_login(
+        let result = self.sessions.complete_password_login(
             challenge,
             password,
             verifier,
             login_address_space,
             now_us,
-        )?;
-        self.state.database = *self.sessions.authd().database();
-        Ok(view)
+        );
+        match result {
+            Ok(view) => {
+                audit_security_event(
+                    AUDIT_LOGIN_SUCCESS,
+                    Some(view.identity),
+                    login_address_space.raw() as u64,
+                    Status::NORMAL,
+                );
+                self.state.database = *self.sessions.authd().database();
+                Ok(view)
+            }
+            Err(error) => {
+                audit_security_event(
+                    AUDIT_LOGIN_FAILURE,
+                    Some(challenge.identity),
+                    login_address_space.raw() as u64,
+                    Status::ACCESS_DENIED,
+                );
+                Err(error)
+            }
+        }
     }
 
     fn require_password_login_policy(&self) -> Result<(), StartupError> {
@@ -1256,7 +1455,11 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
     }
 
     pub fn logout(&mut self, handle: SessionHandle) -> Result<(), StartupError> {
-        self.sessions.logout(handle)
+        let result = self.sessions.logout(handle);
+        if let Err(_) = result {
+            audit_security_event(AUDIT_LOGOUT, None, handle.raw(), Status::NOT_FOUND);
+        }
+        result
     }
 
     pub fn revoke_identity(&mut self, identity: IdentityId) -> usize {
@@ -1499,6 +1702,21 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         if let Some(identity) = revoked_identity {
             self.sessions.revoke_identity(identity);
         }
+        let (identity, action) = match result {
+            AccountManagementResult::Created(record) => (record.identity, AUDIT_ACCOUNT_CHANGE),
+            AccountManagementResult::Updated(record) => (
+                record.identity,
+                if record.account_state() == AccountState::Locked {
+                    AUDIT_LOCKOUT
+                } else {
+                    AUDIT_ACCOUNT_CHANGE
+                },
+            ),
+            AccountManagementResult::Renamed(record) => (record.identity, AUDIT_ACCOUNT_CHANGE),
+            AccountManagementResult::Disabled(record) => (record.identity, AUDIT_LOCKOUT),
+            AccountManagementResult::Deleted(record) => (record.identity, AUDIT_ACCOUNT_CHANGE),
+        };
+        audit_security_event(action, Some(identity), handle.raw(), Status::NORMAL);
         Ok(result)
     }
 
