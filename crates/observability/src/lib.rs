@@ -107,6 +107,7 @@ pub mod field {
     pub const THROTTLE_PERCENT: u16 = 38;
     pub const THERMAL_ACTION: u16 = 39;
     pub const THERMAL_EVENT: u16 = 40;
+    pub const SERVICE: u16 = 41;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -674,6 +675,28 @@ impl TraceEvent {
         if (self.field_count as usize) < MAX_EVENT_FIELDS {
             self.fields[self.field_count as usize] = field;
             self.field_count += 1
+        }
+        self
+    }
+
+    /// Attach the bounded service owner used by the persistent service log.
+    /// If the event is already full, the last field is replaced so the owner
+    /// cannot be silently omitted from the durable record.
+    pub const fn for_service(mut self, service: u32) -> Self {
+        let service = EventField::unsigned(field::SERVICE, service as u64);
+        let mut index = 0;
+        while index < self.field_count as usize {
+            if self.fields[index].key == field::SERVICE {
+                self.fields[index] = service;
+                return self;
+            }
+            index += 1;
+        }
+        if (self.field_count as usize) < MAX_EVENT_FIELDS {
+            self.fields[self.field_count as usize] = service;
+            self.field_count += 1
+        } else {
+            self.fields[MAX_EVENT_FIELDS - 1] = service
         }
         self
     }

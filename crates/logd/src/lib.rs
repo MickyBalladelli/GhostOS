@@ -8,11 +8,12 @@ use synos_observability::{
 };
 use synos_observability::{BatchController, ProducerPolicy};
 use synos_synfs::{
-    CapacityObservation, CapacityResource, Error as SynFsError, SynFs, SynfsPurged,
+    BlockStore, CapacityObservation, CapacityResource, Error as SynFsError, SynFs, SynfsPurged,
 };
 
 pub const SYSTEM_JOURNAL: &str = "SYS$LOG:SYSTEM.JOURNAL";
 pub const SECURITY_JOURNAL: &str = "SYS$LOG:SECURITY.AUDIT";
+pub const SERVICE_JOURNAL: &str = "SYS$LOG:SERVICE.JOURNAL";
 pub const RECOVERY_AUDIT_JOURNAL: &str = "SYS$LOG:SECURITY.RECOVERY";
 pub const DEFAULT_JOURNAL_RETENTION: u32 = 1024;
 pub const DEFAULT_OPCOM_SUBSCRIBERS: usize = 16;
@@ -24,6 +25,7 @@ pub enum LogError {
     Recovery,
     RecoveryUnavailable,
     CoreIsolated,
+    InvalidService,
     SubscriberCapacity,
     UnknownSubscriber,
 }
@@ -32,10 +34,18 @@ pub enum LogError {
 pub enum JournalStream {
     System,
     SecurityAudit,
+    Service(u32),
 }
 
 pub trait JournalWriter {
     fn append(&mut self, stream: JournalStream, event: TraceEvent) -> Result<(), LogError>;
+
+    fn append_service(&mut self, service: u32, event: TraceEvent) -> Result<(), LogError> {
+        if service == 0 {
+            return Err(LogError::InvalidService)
+        }
+        self.append(JournalStream::Service(service), event.for_service(service))
+    }
 
     fn append_batch(&mut self, stream: JournalStream, events: &[TraceEvent]) -> Result<(), LogError> {
         for event in events {
@@ -63,6 +73,9 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
             .map_err(|_| LogError::Journal)?;
         purger
             .add_rule(SECURITY_JOURNAL, keep_latest)
+            .map_err(|_| LogError::Journal)?;
+        purger
+            .add_rule(SERVICE_JOURNAL, keep_latest)
             .map_err(|_| LogError::Journal)?;
         purger
             .add_rule(RECOVERY_AUDIT_JOURNAL, keep_latest)
@@ -106,7 +119,12 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
         growth_bytes_per_hour: u64,
     ) -> Result<CapacityObservation, LogError> {
         let mut allocated_bytes = 0u64;
-        for path in [SYSTEM_JOURNAL, SECURITY_JOURNAL, RECOVERY_AUDIT_JOURNAL] {
+        for path in [
+            SYSTEM_JOURNAL,
+            SECURITY_JOURNAL,
+            SERVICE_JOURNAL,
+            RECOVERY_AUDIT_JOURNAL,
+        ] {
             if let Ok(diagnostics) = self.filesystem.path_diagnostics(path) {
                 allocated_bytes = allocated_bytes.saturating_add(diagnostics.retained_bytes)
             }
@@ -170,28 +188,74 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
         AuditJournal::recover(input, key).map_err(|_| LogError::Recovery)
     }
 
+    /// Make all log records visible to the persistent volume's recovery
+    /// generation. A successful return means the records survive reboot.
+    pub fn sync<D: BlockStore>(&mut self, device: &mut D) -> Result<(), LogError> {
+        self.filesystem
+            .fsync(device)
+            .map(|_| ())
+            .map_err(|_| LogError::Journal)
+    }
+
+    pub fn analyze_system(
+        &self,
+        query: AuditQuery,
+        visitor: impl FnMut(TraceEvent),
+    ) -> Result<usize, LogError> {
+        self.analyze_stream(SYSTEM_JOURNAL, query, visitor)
+    }
+
     pub fn analyze_security(
         &self,
         query: AuditQuery,
+        visitor: impl FnMut(TraceEvent),
+    ) -> Result<usize, LogError> {
+        self.analyze_stream(SECURITY_JOURNAL, query, visitor)
+    }
+
+    pub fn analyze_service(
+        &self,
+        service: u32,
+        query: AuditQuery,
         mut visitor: impl FnMut(TraceEvent),
     ) -> Result<usize, LogError> {
-        let (_, oldest) = self
-            .filesystem
-            .retained_version_span(SECURITY_JOURNAL)
-            .map_err(|_| LogError::Journal)?;
+        if service == 0 {
+            return Err(LogError::InvalidService)
+        }
+        let mut matched = 0;
+        self.analyze_stream(SERVICE_JOURNAL, query, |event| {
+            if event
+                .field(synos_observability::field::SERVICE)
+                .is_some_and(|field| field.as_u64() == u64::from(service))
+            {
+                matched += 1;
+                visitor(event)
+            }
+        })?;
+        Ok(matched)
+    }
+
+    fn analyze_stream(
+        &self,
+        path: &str,
+        query: AuditQuery,
+        mut visitor: impl FnMut(TraceEvent),
+    ) -> Result<usize, LogError> {
+        let (_, oldest) = match self.filesystem.retained_version_span(path) {
+            Ok(span) => span,
+            Err(SynFsError::NotFound) => return Ok(0),
+            Err(_) => return Err(LogError::Journal),
+        };
         let Some(oldest) = oldest else { return Ok(0) };
         let latest = self
             .filesystem
-            .lookup(SECURITY_JOURNAL)
+            .lookup(path)
             .map_err(|_| LogError::Journal)?
             .version;
         let mut matched = 0;
         let mut record = [0; JOURNAL_RECORD_SIZE];
         for version in oldest..=latest {
-            match self
-                .filesystem
-                .read_version(SECURITY_JOURNAL, version, &mut record)
-            {
+            match self.filesystem.read_version(path, version, &mut record) {
                 Ok(_) => {
                     let event = decode_record(&record).map_err(|_| LogError::Codec)?;
                     if query.matches(event) {
@@ -214,11 +278,25 @@ impl<const BLOCKS: usize> JournalWriter for SynFsJournal<'_, BLOCKS> {
                 recovery.append(event).map_err(|_| LogError::Recovery)?;
             }
         }
+        let event = match stream {
+            JournalStream::Service(service) if service != 0 => event.for_service(service),
+            JournalStream::Service(_) => return Err(LogError::InvalidService),
+            JournalStream::System | JournalStream::SecurityAudit => event,
+        };
         let mut record = [0; JOURNAL_RECORD_SIZE];
         encode_record(event, &mut record).map_err(|_| LogError::Codec)?;
         let path = match stream {
             JournalStream::System => SYSTEM_JOURNAL,
             JournalStream::SecurityAudit => SECURITY_JOURNAL,
+            JournalStream::Service(service) => {
+                if service == 0 {
+                    return Err(LogError::InvalidService)
+                }
+                self.filesystem
+                    .write(SERVICE_JOURNAL, &record)
+                    .map_err(|_| LogError::Journal)?;
+                return Ok(())
+            }
         };
         self.filesystem
             .write(path, &record)
@@ -231,6 +309,80 @@ impl<const BLOCKS: usize> JournalWriter for SynFsJournal<'_, BLOCKS> {
             .poll(self.filesystem, work_budget)
             .map(|report| report.versions_purged)
             .map_err(|_| LogError::Journal)
+    }
+}
+
+/// A SynFS journal connected to the volume's block device. The plain
+/// [`SynFsJournal`] is useful for volatile callers; this adapter makes every
+/// log batch and retention change power-loss durable before it returns.
+pub struct PersistentSynFsJournal<'fs, 'device, const BLOCKS: usize, D: BlockStore> {
+    journal: SynFsJournal<'fs, BLOCKS>,
+    device: &'device mut D,
+}
+
+impl<'fs, 'device, const BLOCKS: usize, D: BlockStore>
+    PersistentSynFsJournal<'fs, 'device, BLOCKS, D>
+{
+    pub fn new(
+        filesystem: &'fs mut SynFs<BLOCKS>,
+        device: &'device mut D,
+        keep_latest: u32,
+    ) -> Result<Self, LogError> {
+        Ok(Self {
+            journal: SynFsJournal::new(filesystem, keep_latest)?,
+            device,
+        })
+    }
+
+    pub fn new_with_recovery_key(
+        filesystem: &'fs mut SynFs<BLOCKS>,
+        device: &'device mut D,
+        keep_latest: u32,
+        key: AuditKey,
+    ) -> Result<Self, LogError> {
+        Ok(Self {
+            journal: SynFsJournal::new_with_recovery_key(filesystem, keep_latest, key)?,
+            device,
+        })
+    }
+
+    pub fn filesystem(&self) -> &SynFs<BLOCKS> {
+        self.journal.filesystem()
+    }
+
+    pub fn sync(&mut self) -> Result<(), LogError> {
+        self.journal.sync(self.device)
+    }
+
+    pub fn persist_recovery_audit(&mut self, staging: &mut [u8]) -> Result<(), LogError> {
+        self.journal.persist_recovery_audit(staging)?;
+        self.sync()
+    }
+
+    pub fn journal(&self) -> &SynFsJournal<'fs, BLOCKS> {
+        &self.journal
+    }
+}
+
+impl<const BLOCKS: usize, D: BlockStore> JournalWriter
+    for PersistentSynFsJournal<'_, '_, BLOCKS, D>
+{
+    fn append(&mut self, stream: JournalStream, event: TraceEvent) -> Result<(), LogError> {
+        self.journal.append(stream, event)?;
+        self.sync()
+    }
+
+    fn append_batch(&mut self, stream: JournalStream, events: &[TraceEvent]) -> Result<(), LogError> {
+        self.journal.append_batch(stream, events)?;
+        self.sync()
+    }
+
+    fn rotate(&mut self, work_budget: usize) -> Result<usize, LogError> {
+        let purged = self.journal.rotate(work_budget)?;
+        if purged != 0 {
+            self.sync()?
+        }
+        Ok(purged)
     }
 }
 
