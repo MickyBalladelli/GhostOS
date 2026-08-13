@@ -107,11 +107,45 @@ impl CredentialId {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
+pub struct PublicCredentialData {
+    bytes: [u8; MAX_CREDENTIAL_BYTES],
+    length: u8,
+}
+
+impl fmt::Debug for PublicCredentialData {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PublicCredentialData")
+            .field("length", &self.length)
+            .finish()
+    }
+}
+
+impl PublicCredentialData {
+    /// Build the only material type that can be retained by a credential.
+    /// Private keys, signing responses, and other secrets have no storage field.
+    pub fn new(public_bytes: &[u8]) -> Result<Self, AuthError> {
+        if public_bytes.is_empty() || public_bytes.len() > MAX_CREDENTIAL_BYTES {
+            return Err(AuthError::InvalidRecord)
+        }
+        let mut bytes = [0; MAX_CREDENTIAL_BYTES];
+        bytes[..public_bytes.len()].copy_from_slice(public_bytes);
+        Ok(Self {
+            bytes,
+            length: public_bytes.len() as u8,
+        })
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.length as usize]
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Credential {
     pub id: CredentialId,
     pub kind: CredentialKind,
-    public_material: [u8; MAX_CREDENTIAL_BYTES],
-    public_material_length: u8,
+    public_material: PublicCredentialData,
     sign_count: u32,
 }
 
@@ -132,18 +166,24 @@ impl Credential {
         kind: CredentialKind,
         public_material: &[u8],
     ) -> Result<Self, AuthError> {
-        if public_material.is_empty() || public_material.len() > MAX_CREDENTIAL_BYTES {
-            return Err(AuthError::InvalidRecord)
-        }
-        let mut stored = [0; MAX_CREDENTIAL_BYTES];
-        stored[..public_material.len()].copy_from_slice(public_material);
-        Ok(Self {
+        Ok(Self::from_public_material(
             id,
             kind,
-            public_material: stored,
-            public_material_length: public_material.len() as u8,
+            PublicCredentialData::new(public_material)?,
+        ))
+    }
+
+    fn from_public_material(
+        id: CredentialId,
+        kind: CredentialKind,
+        public_material: PublicCredentialData,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            public_material,
             sign_count: 0,
-        })
+        }
     }
 
     pub fn new_passkey(
@@ -171,7 +211,7 @@ impl Credential {
     }
 
     pub fn public_material(&self) -> &[u8] {
-        &self.public_material[..self.public_material_length as usize]
+        self.public_material.as_bytes()
     }
 
     pub const fn kind(&self) -> CredentialKind {

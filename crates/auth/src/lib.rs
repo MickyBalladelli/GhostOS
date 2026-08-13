@@ -15,7 +15,7 @@ pub mod token;
 pub use identity::{
     AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, AuthorizationStore,
     AccountState, Credential, CredentialId, CredentialKind, CredentialVerifier, DatabaseScope,
-    InitialCapability, Session, SessionCapabilities, UserRecord, Username,
+    InitialCapability, PublicCredentialData, Session, SessionCapabilities, UserRecord, Username,
     MAX_USERNAME_BYTES, RESERVED_USERNAMES,
 };
 pub use federation::{
