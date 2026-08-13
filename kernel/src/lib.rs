@@ -203,6 +203,11 @@ static LOGIN_AUTHORIZED: AtomicBool = AtomicBool::new(false);
     any(target_os = "none", target_os = "uefi")
 ))]
 static LOGIN_REQUESTED: AtomicBool = AtomicBool::new(true);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_ADMINISTRATOR_EXISTS: AtomicBool = AtomicBool::new(false);
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -606,6 +611,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !LOGIN_REQUESTED.load(Ordering::Acquire) {
             return syscall_error(Status::ACCESS_DENIED)
         }
+        LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
         LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
         return syscall_success([1, 0, 0, 0])
@@ -618,7 +624,12 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        return syscall_success([LOGIN_REQUESTED.load(Ordering::Acquire) as u64, 0, 0, 0])
+        return syscall_success([
+            LOGIN_REQUESTED.load(Ordering::Acquire) as u64,
+            LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire) as u64,
+            0,
+            0,
+        ])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginStart) {
         if caller.raw() != 9

@@ -100,6 +100,12 @@ static int login_requested(void)
     return response.status == 0 && response.values[0] != 0;
 }
 
+static int administrator_account_exists(void)
+{
+    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    return response.status == 0 && response.values[1] != 0;
+}
+
 static void read_line(char *line, u64 capacity, int echo)
 {
     u64 count = 0;
@@ -141,6 +147,10 @@ void _start(void)
     call(OP_SERVICE_READY, LOGIN_ROLE, 0, 0, 0);
     write_text("SynOS login service\n");
     write_text("The terminal is locked until login completes.\n");
+    if (!administrator_account_exists()) {
+        write_text("No administrator account exists.\n");
+        write_text("Complete first-boot administrator setup before logging in.\n");
+    }
 
     for (;;) {
         while (!login_requested()) {

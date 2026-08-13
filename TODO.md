@@ -209,7 +209,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Add a user-space login service that owns the terminal login flow.
 - [x] Add a `LOGIN` command or login screen to the service-owned shell.
-- [ ] Show a clear first-boot message when no administrator account exists.
+- [x] Show a clear first-boot message when no administrator account exists.
 - [ ] Prompt for username and credential without echoing private input.
 - [ ] Support passkey login from the local terminal.
 - [ ] Support TPM-backed credential login from the local terminal.

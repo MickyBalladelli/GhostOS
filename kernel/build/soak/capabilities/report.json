@@ -2,11 +2,11 @@
   "schema": 1,
   "campaign": "capabilities",
   "cycles_requested": 512,
-  "cycles_completed": 0,
-  "stale_rejections": 4,
-  "generation_reuses": 1,
+  "cycles_completed": 512,
+  "stale_rejections": 8182,
+  "generation_reuses": 512,
   "peak_live_capabilities": 3,
-  "zero_live_capabilities_after_cycle": false,
-  "result_state": "failed",
-  "failure": "cycle 1: stale handle 0x100000000 was inspectable"
+  "zero_live_capabilities_after_cycle": true,
+  "result_state": "passed",
+  "failure": null
 }
