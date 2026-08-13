@@ -53,6 +53,86 @@ fn file_flags() -> Flags {
 }
 
 #[test]
+fn whole_file_lock_blocks_other_process_io_until_unlock() {
+    let (mut daemon, process, authority) = daemon();
+    let file = daemon
+        .open(
+            process,
+            authority,
+            "/data/locked",
+            file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+        )
+        .expect("open locked file");
+    daemon
+        .write(process, file.capability, 0, b"locked")
+        .expect("write locked file");
+
+    let other = ProcessId::new(8).expect("valid process id");
+    let other_authority = daemon
+        .register_process(
+            other,
+            ProcessRights::from_bits(ProcessRights::READ.bits() | ProcessRights::WRITE.bits()),
+        )
+        .expect("register other process");
+    let other_file = daemon
+        .open(other, other_authority, "/data/locked", Flags::READ)
+        .expect("open from other process");
+    let lock = daemon
+        .lock(
+            process,
+            file.capability,
+            super::LockRange::WholeFile,
+            super::LockMode::Exclusive,
+        )
+        .expect("lock file");
+    let mut output = [0; 1];
+    assert_eq!(
+        daemon.read(other, other_file.capability, 0, &mut output),
+        Err(DaemonError::LockBusy)
+    );
+    daemon.unlock(process, lock.capability).expect("unlock file");
+    assert_eq!(daemon.read(other, other_file.capability, 0, &mut output), Ok(1));
+}
+
+#[test]
+fn record_lock_only_blocks_the_same_record_position() {
+    let (mut daemon, process, authority) = daemon();
+    let file = daemon
+        .open(
+            process,
+            authority,
+            "/data/records",
+            file_flags().union(Flags::CREATE).union(Flags::EXCLUSIVE),
+        )
+        .expect("open record file");
+    daemon
+        .write(process, file.capability, 0, b"records")
+        .expect("write record file");
+    let other = ProcessId::new(8).expect("valid process id");
+    let other_authority = daemon
+        .register_process(other, ProcessRights::READ)
+        .expect("register reader");
+    let other_file = daemon
+        .open(other, other_authority, "/data/records", Flags::READ)
+        .expect("open record file for reader");
+    let lock = daemon
+        .lock(
+            process,
+            file.capability,
+            super::LockRange::Record(4),
+            super::LockMode::Exclusive,
+        )
+        .expect("lock record");
+    let mut output = [0; 1];
+    assert_eq!(daemon.read(other, other_file.capability, 0, &mut output), Ok(1));
+    assert_eq!(
+        daemon.read(other, other_file.capability, 4, &mut output),
+        Err(DaemonError::LockBusy)
+    );
+    daemon.unlock(process, lock.capability).expect("unlock record");
+}
+
+#[test]
 fn link_keeps_data_alive_through_write_delete_and_rename() {
     let (mut daemon, process, authority) = daemon();
     let source = daemon

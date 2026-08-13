@@ -12,7 +12,8 @@ mod protocol;
 mod tests;
 
 pub use daemon::{
-    Daemon, DaemonError, DirectoryRemovalInfo, FileInfo, FileRights, GcReport, MountId, MountInfo, ProcessRights,
+    Daemon, DaemonError, DirectoryRemovalInfo, FileInfo, FileRights, GcReport, LockInfo, MountId,
+    MountInfo, ProcessRights,
     SnapshotInfo, DEFAULT_MAX_MOUNTS, DEFAULT_MAX_OPEN_FILES, DEFAULT_MAX_PROCESSES,
     DEFAULT_MAX_SNAPSHOTS, DEFAULT_SCRATCH_BYTES,
 };
@@ -24,6 +25,6 @@ pub use namespace::{
     TEMPORARY_PATH, USER_DATA_PATH,
 };
 pub use protocol::{
-    Capability, Flags, Operation, ProcessId, ProtocolError, Request, Response,
+    Capability, Flags, LockMode, LockRange, Operation, ProcessId, ProtocolError, Request, Response,
     MAX_IPC_BUFFER_BYTES, REQUEST_LABEL, RESPONSE_LABEL,
 };

@@ -27,6 +27,8 @@ pub enum Operation {
     Rmdir = 17,
     Link = 18,
     Links = 19,
+    Lock = 20,
+    Unlock = 21,
 }
 
 impl Operation {
@@ -51,6 +53,8 @@ impl Operation {
             17 => Some(Self::Rmdir),
             18 => Some(Self::Link),
             19 => Some(Self::Links),
+            20 => Some(Self::Lock),
+            21 => Some(Self::Unlock),
             _ => None,
         }
     }
@@ -75,6 +79,9 @@ impl Flags {
     pub const READ_ONLY: Self = Self(1 << 7);
     pub const RECURSIVE: Self = Self(1 << 8);
     pub const EXCLUSIVE: Self = Self(1 << 9);
+    pub const LOCK_SHARED: Self = Self(1 << 10);
+    pub const LOCK_EXCLUSIVE: Self = Self(1 << 11);
+    pub const LOCK_RECORD: Self = Self(1 << 12);
 
     pub const fn from_bits(bits: u16) -> Self {
         Self(bits)
@@ -91,6 +98,18 @@ impl Flags {
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LockMode {
+    Shared,
+    Exclusive,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LockRange {
+    WholeFile,
+    Record(u64),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

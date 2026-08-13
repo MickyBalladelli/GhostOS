@@ -19,7 +19,8 @@ use crate::namespace::{
 };
 
 use crate::protocol::{
-    Capability, Flags, Operation, ProcessId, ProtocolError, Request, Response, MAX_IPC_BUFFER_BYTES,
+    Capability, Flags, LockMode, LockRange, Operation, ProcessId, ProtocolError, Request,
+    Response, MAX_IPC_BUFFER_BYTES,
 };
 
 pub const DEFAULT_MAX_PROCESSES: usize = 64;
@@ -134,6 +135,14 @@ pub struct FileInfo {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LockInfo {
+    pub capability: Capability,
+    pub file: Capability,
+    pub range: LockRange,
+    pub mode: LockMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DirectoryRemovalInfo {
     pub file: FileInfo,
     pub removal_generation: u64,
@@ -203,6 +212,9 @@ pub enum DaemonError {
     InvalidPattern,
     InvalidRename,
     ScratchTooSmall { required: usize },
+    LockBusy,
+    LockExhausted,
+    InvalidLock,
     Namespace(NamespaceError),
     File(SynFsError),
 }
@@ -238,6 +250,9 @@ impl IntoStatus for DaemonError {
             | Self::SnapshotExhausted
             | Self::MountExhausted
             | Self::ScratchTooSmall { .. } => Status::NO_SPACE,
+            Self::LockExhausted => Status::NO_SPACE,
+            Self::LockBusy => Status::BUSY,
+            Self::InvalidLock => Status::INVALID_ARGUMENT,
             Self::NotFound => Status::NOT_FOUND,
             Self::BufferTooSmall { .. } => Status::new(Severity::Error, facility::FILESYSTEM, 1, 0)
                 .unwrap_or(Status::INVALID_ARGUMENT),
@@ -280,6 +295,9 @@ impl fmt::Display for DaemonError {
             Self::InvalidPattern => "malformed wildcard pattern",
             Self::InvalidRename => "invalid rename payload",
             Self::ScratchTooSmall { .. } => "daemon scratch space is too small",
+            Self::LockBusy => "filesystem lock is busy",
+            Self::LockExhausted => "filesystem lock table is full",
+            Self::InvalidLock => "invalid filesystem lock",
             Self::Namespace(_) => "invalid filesystem namespace operation",
             Self::File(_) => "SynFS operation failed",
         })
@@ -368,6 +386,29 @@ impl OpenFileSlot {
 }
 
 #[derive(Clone, Copy)]
+struct LockSlot {
+    occupied: bool,
+    generation: u32,
+    owner: ProcessId,
+    file: Capability,
+    path: Name,
+    range: LockRange,
+    mode: LockMode,
+}
+
+impl LockSlot {
+    const EMPTY: Self = Self {
+        occupied: false,
+        generation: 0,
+        owner: ProcessId::from_valid_raw(1),
+        file: Capability::from_valid_raw(1),
+        path: Name::EMPTY,
+        range: LockRange::WholeFile,
+        mode: LockMode::Shared,
+    };
+}
+
+#[derive(Clone, Copy)]
 struct SnapshotSlot {
     occupied: bool,
     generation: u32,
@@ -423,6 +464,7 @@ pub struct Daemon<
     filesystem: SynFs<MAX_BLOCKS>,
     processes: [ProcessSlot; MAX_PROCESSES],
     open_files: [OpenFileSlot; MAX_OPEN_FILES],
+    locks: [LockSlot; MAX_OPEN_FILES],
     snapshots: [SnapshotSlot; MAX_SNAPSHOTS],
     mounts: [MountSlot; MAX_MOUNTS],
     next_mount_id: u32,
@@ -473,6 +515,7 @@ impl<
             filesystem,
             processes: [ProcessSlot::EMPTY; MAX_PROCESSES],
             open_files: [OpenFileSlot::EMPTY; MAX_OPEN_FILES],
+            locks: [LockSlot::EMPTY; MAX_OPEN_FILES],
             snapshots: [SnapshotSlot::EMPTY; MAX_SNAPSHOTS],
             mounts,
             next_mount_id: 2,
@@ -570,6 +613,11 @@ impl<
                 file.occupied = false
             }
         }
+        for lock in &mut self.locks {
+            if lock.occupied && lock.owner == process {
+                lock.occupied = false
+            }
+        }
         for index in 0..self.snapshots.len() {
             if self.snapshots[index].occupied && self.snapshots[index].owner == process {
                 let checkpoint = self.snapshots[index].checkpoint;
@@ -634,6 +682,7 @@ impl<
             self.filesystem.write(path, &[])?;
         } else if flags.contains(Flags::TRUNCATE) {
             self.ensure_writable(process, authority)?;
+            self.check_io_lock(process, name, LockRange::WholeFile, LockMode::Exclusive)?;
             self.filesystem.write(path, &[])?;
         }
         let metadata = self.filesystem.lookup(path)?;
@@ -752,6 +801,60 @@ impl<
     pub fn close(&mut self, process: ProcessId, capability: Capability) -> Result<(), DaemonError> {
         let index = self.file_index(process, capability, FileRights(0))?;
         self.open_files[index].occupied = false;
+        for lock in &mut self.locks {
+            if lock.occupied && lock.file == capability {
+                lock.occupied = false
+            }
+        }
+        Ok(())
+    }
+
+    pub fn lock(
+        &mut self,
+        process: ProcessId,
+        file: Capability,
+        range: LockRange,
+        mode: LockMode,
+    ) -> Result<LockInfo, DaemonError> {
+        let required = match mode {
+            LockMode::Shared => FileRights::READ,
+            LockMode::Exclusive => FileRights::WRITE,
+        };
+        let file_index = self.file_index(process, file, required)?;
+        let path = self.open_files[file_index].path;
+        if self.locks.iter().any(|lock| {
+            lock.occupied
+                && lock.owner != process
+                && lock.path == path
+                && ranges_overlap(lock.range, range)
+                && (lock.mode == LockMode::Exclusive || mode == LockMode::Exclusive)
+        }) {
+            return Err(DaemonError::LockBusy);
+        }
+        let (index, slot) = self
+            .locks
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| !slot.occupied)
+            .ok_or(DaemonError::LockExhausted)?;
+        slot.generation = slot.generation.wrapping_add(1).max(1);
+        slot.occupied = true;
+        slot.owner = process;
+        slot.file = file;
+        slot.path = path;
+        slot.range = range;
+        slot.mode = mode;
+        Ok(LockInfo {
+            capability: token(index, slot.generation),
+            file,
+            range,
+            mode,
+        })
+    }
+
+    pub fn unlock(&mut self, process: ProcessId, capability: Capability) -> Result<(), DaemonError> {
+        let index = self.lock_index(process, capability)?;
+        self.locks[index].occupied = false;
         Ok(())
     }
 
@@ -769,6 +872,7 @@ impl<
         }
         let index = self.file_index(process, capability, FileRights::READ)?;
         let path = self.open_files[index].path;
+        self.check_io_lock(process, path, LockRange::Record(offset), LockMode::Shared)?;
         Ok(self
             .filesystem
             .read_at(path.as_str(), offset, destination)?
@@ -799,6 +903,7 @@ impl<
         } else {
             offset
         };
+        self.check_io_lock(process, path, LockRange::Record(offset), LockMode::Exclusive)?;
         self.write_range(path.as_str(), offset, contents)?;
         Ok(contents.len())
     }
@@ -836,6 +941,7 @@ impl<
             return Err(DaemonError::ReadOnly);
         }
         let path = self.open_files[index].path;
+        self.check_io_lock(process, path, LockRange::WholeFile, LockMode::Exclusive)?;
         let deleted = self.filesystem.delete(path.as_str())?;
         Ok(DeleteInfo {
             file: FileInfo {
@@ -1034,6 +1140,7 @@ impl<
             return Err(DaemonError::ReadOnly);
         }
         let old_path = self.open_files[index].path;
+        self.check_io_lock(process, old_path, LockRange::WholeFile, LockMode::Exclusive)?;
         let new_path = Name::from_str(new_path)?;
         if self.path_is_read_only(new_path.as_str())? {
             return Err(DaemonError::ReadOnly);
@@ -1584,6 +1691,24 @@ impl<
                 )?;
                 Ok(Response::success().with_value(0, bytes as u64))
             }
+            Operation::Lock => {
+                let capability = request.capability.ok_or(DaemonError::InvalidCapability)?;
+                let mode = lock_mode(request.flags)?;
+                let range = if request.flags.contains(Flags::LOCK_RECORD) {
+                    LockRange::Record(request.offset)
+                } else {
+                    LockRange::WholeFile
+                };
+                let lock = self.lock(request.process, capability, range, mode)?;
+                Ok(Response::success().with_value(0, lock.capability.raw()))
+            }
+            Operation::Unlock => {
+                self.unlock(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                )?;
+                Ok(Response::success())
+            }
         }
     }
 
@@ -1859,6 +1984,45 @@ impl<
         Ok(index)
     }
 
+    fn lock_index(
+        &self,
+        process: ProcessId,
+        capability: Capability,
+    ) -> Result<usize, DaemonError> {
+        let index = decode_slot(capability, 0).ok_or(DaemonError::InvalidCapability)?;
+        let slot = self
+            .locks
+            .get(index)
+            .ok_or(DaemonError::InvalidCapability)?;
+        if !slot.occupied
+            || slot.generation != capability_generation(capability)
+            || slot.owner != process
+        {
+            return Err(DaemonError::AccessDenied);
+        }
+        Ok(index)
+    }
+
+    fn check_io_lock(
+        &self,
+        process: ProcessId,
+        path: Name,
+        range: LockRange,
+        requested: LockMode,
+    ) -> Result<(), DaemonError> {
+        if self.locks.iter().any(|lock| {
+            lock.occupied
+                && lock.owner != process
+                && lock.path == path
+                && ranges_overlap(lock.range, range)
+                && (lock.mode == LockMode::Exclusive || requested == LockMode::Exclusive)
+        }) {
+            Err(DaemonError::LockBusy)
+        } else {
+            Ok(())
+        }
+    }
+
     fn snapshot_index(
         &self,
         process: ProcessId,
@@ -1923,6 +2087,7 @@ impl<
             filesystem: SynFs::new(),
             processes: [ProcessSlot::EMPTY; MAX_PROCESSES],
             open_files: [OpenFileSlot::EMPTY; MAX_OPEN_FILES],
+            locks: [LockSlot::EMPTY; MAX_OPEN_FILES],
             snapshots: [SnapshotSlot::EMPTY; MAX_SNAPSHOTS],
             mounts: [MountSlot::EMPTY; MAX_MOUNTS],
             next_mount_id: 1,
@@ -1951,6 +2116,23 @@ fn decode_slot(capability: Capability, expected_generation: u32) -> Option<usize
         return None;
     }
     Some(raw_slot.saturating_sub(1) as usize)
+}
+
+fn lock_mode(flags: Flags) -> Result<LockMode, DaemonError> {
+    match (
+        flags.contains(Flags::LOCK_SHARED),
+        flags.contains(Flags::LOCK_EXCLUSIVE),
+    ) {
+        (true, false) => Ok(LockMode::Shared),
+        (false, true) => Ok(LockMode::Exclusive),
+        _ => Err(DaemonError::InvalidLock),
+    }
+}
+
+fn ranges_overlap(left: LockRange, right: LockRange) -> bool {
+    matches!(left, LockRange::WholeFile)
+        || matches!(right, LockRange::WholeFile)
+        || left == right
 }
 
 fn input_buffer(buffer: Option<&mut [u8]>) -> Result<&mut [u8], DaemonError> {

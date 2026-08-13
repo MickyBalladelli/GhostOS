@@ -151,7 +151,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Add process file-descriptor tables and open-handle rules.
 - [x] Define atomic rename and `fsync` guarantees.
-- [ ] Add file and record locking through the filesystem service.
+- [x] Add file and record locking through the filesystem service.
 - [ ] Add symbolic links and permission checks.
 - [ ] Add filesystem quotas visible to users and operators.
 - [ ] Add mapped-file support with capability checks.
