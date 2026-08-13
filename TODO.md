@@ -168,7 +168,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Persist system and service logs across reboot.
 - [x] Export bounded metrics and tracing data.
-- [ ] Add crash-dump storage and a crash viewer.
+- [x] Add crash-dump storage and a crash viewer.
 - [ ] Add boot-failure diagnostics.
 - [ ] Add a capability-safe remote debugger.
 - [ ] Add service dependency and startup diagnostics.

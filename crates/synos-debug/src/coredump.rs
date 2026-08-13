@@ -15,6 +15,8 @@ pub const CORE_PAGE_BYTES: usize = PAGE_SIZE as usize;
 pub const CORE_PAGE_HEADER_BYTES: usize = 16;
 pub const MAX_CORE_PATH_BYTES: usize = 192;
 pub const CORE_METADATA_BYTES: usize = 8 + 2 + 1 + 1 + 8 + 8 + 4 + 8 * 32;
+pub const CORE_ROOT: &str = "/cores";
+pub const MAX_CORE_DIRECTORY_ENTRIES: usize = 128;
 
 const CORE_MAGIC: [u8; 8] = *b"SYNCORE1";
 
@@ -52,7 +54,17 @@ pub struct CorePath {
 
 impl CorePath {
     pub fn new(path: &str) -> Result<Self, Error> {
-        if path.is_empty() || path.len() > MAX_CORE_PATH_BYTES || path.contains('\0') {
+        if path.is_empty()
+            || path.len() > MAX_CORE_PATH_BYTES
+            || path.contains('\0')
+            || !path.starts_with('/')
+            || path.ends_with('/')
+            || path.contains("//")
+            || path.contains(';')
+            || path
+                .split('/')
+                .any(|component| component == "." || component == "..")
+        {
             return Err(Error::InvalidInput);
         }
         let mut result = Self {
@@ -67,7 +79,7 @@ impl CorePath {
         core::str::from_utf8(&self.bytes[..self.len as usize]).expect("core path invariant")
     }
 
-    fn child(&self, suffix: &str) -> Result<Self, Error> {
+    pub(crate) fn child(&self, suffix: &str) -> Result<Self, Error> {
         let required = self.len as usize + 1 + suffix.len();
         if required > MAX_CORE_PATH_BYTES {
             return Err(Error::BufferTooSmall { required });
@@ -79,7 +91,7 @@ impl CorePath {
         Ok(result)
     }
 
-    fn page(&self, index: usize) -> Result<Self, Error> {
+    pub(crate) fn page(&self, index: usize) -> Result<Self, Error> {
         if index > 99_999_999 {
             return Err(Error::Capacity);
         }
@@ -93,6 +105,25 @@ impl CorePath {
         let suffix = core::str::from_utf8(&suffix).expect("static core path suffix");
         self.child(suffix)
     }
+
+    pub(crate) fn metadata(&self) -> Result<Self, Error> {
+        self.child("META")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoreDumpMetadata {
+    pub process: ProcessId,
+    pub reason: CrashReason,
+    pub timestamp_us: u64,
+    pub pages: u32,
+    pub registers: RegisterFile,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoreDumpPage {
+    pub virtual_address: u64,
+    pub length: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -105,6 +136,80 @@ pub struct CoreDumpReceipt {
 }
 
 pub struct CoreDumpEngine;
+
+pub struct CrashDumpStore;
+
+impl CrashDumpStore {
+    pub fn capture<R, const MAX_BLOCKS: usize>(
+        runtime: &mut R,
+        filesystem: &mut SynFs<MAX_BLOCKS>,
+        request: CoreDumpRequest<'_>,
+    ) -> Result<CoreDumpReceipt, Error>
+    where
+        R: CoreDumpRuntime,
+    {
+        let directory = CorePath::new(request.directory)?;
+        if !is_core_directory(&directory) {
+            return Err(Error::InvalidInput);
+        }
+        CoreDumpEngine::capture(runtime, filesystem, request)
+    }
+
+    pub fn read_metadata<const MAX_BLOCKS: usize>(
+        filesystem: &SynFs<MAX_BLOCKS>,
+        directory: &str,
+    ) -> Result<CoreDumpMetadata, Error> {
+        let directory = CorePath::new(directory)?;
+        if !is_core_directory(&directory) {
+            return Err(Error::InvalidInput);
+        }
+        let metadata = directory.metadata()?;
+        let file = filesystem.lookup(metadata.as_str()).map_err(map_storage_error)?;
+        if file.file_type != FileType::Regular || file.size != CORE_METADATA_BYTES as u64 {
+            return Err(Error::Corrupt);
+        }
+        let mut bytes = [0; CORE_METADATA_BYTES];
+        let read = filesystem
+            .read(metadata.as_str(), &mut bytes)
+            .map_err(map_storage_error)?;
+        if read.bytes_read != bytes.len() {
+            return Err(Error::Corrupt);
+        }
+        decode_metadata(&bytes)
+    }
+
+    pub fn delete<const MAX_BLOCKS: usize>(
+        filesystem: &mut SynFs<MAX_BLOCKS>,
+        directory: &str,
+    ) -> Result<(), Error> {
+        let directory = CorePath::new(directory)?;
+        if !is_core_directory(&directory) {
+            return Err(Error::InvalidInput);
+        }
+        let file = filesystem.lookup(directory.as_str()).map_err(map_storage_error)?;
+        if file.file_type != FileType::Directory {
+            return Err(Error::InvalidInput);
+        }
+
+        let mut entries = [synos_synfs::DirectoryEntry::EMPTY; MAX_CORE_DIRECTORY_ENTRIES];
+        let count = filesystem
+            .list_directory(directory.as_str(), &mut entries)
+            .map_err(map_storage_error)?;
+        let mut transaction = filesystem.transaction();
+        for entry in entries[..count].iter().copied() {
+            if entry.file_type == FileType::Directory {
+                return Err(Error::InvalidInput);
+            }
+            let path = directory.child(entry.name.as_str())?;
+            transaction.delete(path.as_str()).map_err(Error::Storage)?;
+        }
+        transaction
+            .remove_directory(directory.as_str())
+            .map_err(Error::Storage)?;
+        transaction.commit().map_err(Error::Storage)?;
+        Ok(())
+    }
+}
 
 impl CoreDumpEngine {
     pub fn capture<R, const MAX_BLOCKS: usize>(
@@ -190,6 +295,67 @@ fn encode_metadata(
         output[start..start + 8].copy_from_slice(&value.to_le_bytes());
     }
     Ok(())
+}
+
+pub fn decode_metadata(input: &[u8]) -> Result<CoreDumpMetadata, Error> {
+    if input.len() < CORE_METADATA_BYTES {
+        return Err(Error::BufferTooSmall {
+            required: CORE_METADATA_BYTES,
+        });
+    }
+    if input[..8] != CORE_MAGIC || u16::from_le_bytes([input[8], input[9]]) != CORE_VERSION {
+        return Err(Error::Corrupt);
+    }
+    let reason = decode_crash_reason(input[10]).ok_or(Error::Corrupt)?;
+    let register_count = input[11] as usize;
+    if register_count == 0 || register_count > 32 {
+        return Err(Error::Corrupt);
+    }
+    let process = ProcessId::new(u64::from_le_bytes(
+        input[12..20].try_into().map_err(|_| Error::Corrupt)?,
+    ))
+    .ok_or(Error::Corrupt)?;
+    let timestamp_us = u64::from_le_bytes(input[20..28].try_into().map_err(|_| Error::Corrupt)?);
+    let pages = u32::from_le_bytes(input[28..32].try_into().map_err(|_| Error::Corrupt)?);
+    let mut values = [0; 32];
+    for (index, value) in values[..register_count].iter_mut().enumerate() {
+        let start = 32 + index * 8;
+        *value = u64::from_le_bytes(input[start..start + 8].try_into().map_err(|_| Error::Corrupt)?);
+    }
+    let registers = RegisterFile::from_slice(&values[..register_count])?;
+    Ok(CoreDumpMetadata {
+        process,
+        reason,
+        timestamp_us,
+        pages,
+        registers,
+    })
+}
+
+fn decode_crash_reason(value: u8) -> Option<CrashReason> {
+    match value {
+        1 => Some(CrashReason::Panic),
+        2 => Some(CrashReason::ProtectionFault),
+        3 => Some(CrashReason::IllegalInstruction),
+        4 => Some(CrashReason::Watchdog),
+        5 => Some(CrashReason::UnexpectedExit),
+        _ => None,
+    }
+}
+
+fn map_storage_error(error: synos_synfs::Error) -> Error {
+    match error {
+        synos_synfs::Error::NotFound => Error::NotFound,
+        error => Error::Storage(error),
+    }
+}
+
+fn is_core_directory(path: &CorePath) -> bool {
+    path.as_str() != CORE_ROOT
+        && path
+            .as_str()
+            .strip_prefix(CORE_ROOT)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn crash_reason(reason: CrashReason) -> u8 {
