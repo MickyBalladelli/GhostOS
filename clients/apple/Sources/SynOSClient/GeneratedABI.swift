@@ -4,7 +4,7 @@ import Foundation
 enum SynOSABI {
     static let apiVersion: UInt16 = 1
     static let schemaVersion: UInt16 = 1
-    static let revision: UInt16 = 7
+    static let revision: UInt16 = 8
     static let protocolVersion: UInt8 = 1
     static let magic = Data([83, 89, 82, 80])
     static let frameHeaderBytes = 24

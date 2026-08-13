@@ -217,6 +217,22 @@ static LOGIN_ADMINISTRATOR_EXISTS: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+const LOGIN_USERNAME_CAPACITY: usize = 32;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_USERNAME_LENGTH: AtomicU8 = AtomicU8::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_USERNAME: [AtomicU8; LOGIN_USERNAME_CAPACITY] =
+    [const { AtomicU8::new(0) }; LOGIN_USERNAME_CAPACITY];
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static LOGIN_FAILED_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(
     target_arch = "x86_64",
@@ -543,9 +559,35 @@ const LOGIN_LOCK_DURATION_US: u64 = 300_000_000;
 ))]
 fn valid_login_username(username: &[u8]) -> bool {
     !username.is_empty()
+        && username.len() <= LOGIN_USERNAME_CAPACITY
         && username
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-$".contains(byte))
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn set_login_username(username: &[u8]) {
+    for (slot, value) in LOGIN_USERNAME.iter().zip(username.iter().copied()) {
+        slot.store(value, Ordering::Relaxed)
+    }
+    for slot in LOGIN_USERNAME.iter().skip(username.len()) {
+        slot.store(0, Ordering::Relaxed)
+    }
+    LOGIN_USERNAME_LENGTH.store(username.len() as u8, Ordering::Release)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn clear_login_username() {
+    LOGIN_USERNAME_LENGTH.store(0, Ordering::Release);
+    for slot in &LOGIN_USERNAME {
+        slot.store(0, Ordering::Relaxed)
+    }
 }
 
 #[cfg(all(
@@ -925,6 +967,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         }
         clear_login_challenge();
         clear_login_failures();
+        set_login_username(&username[..username_length]);
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
         LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
@@ -980,6 +1023,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         }
         clear_login_challenge();
         clear_login_failures();
+        set_login_username(&username[..username_length]);
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
         LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
@@ -1012,9 +1056,55 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             return syscall_error(Status::ACCESS_DENIED)
         }
         clear_login_challenge();
+        clear_login_username();
         LOGIN_AUTHORIZED.store(false, Ordering::Release);
         LOGIN_REQUESTED.store(true, Ordering::Release);
         return syscall_success([1, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginLogout) {
+        if caller.raw() != 9
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments != [0; 6]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        clear_login_challenge();
+        clear_login_username();
+        LOGIN_AUTHORIZED.store(false, Ordering::Release);
+        LOGIN_REQUESTED.store(true, Ordering::Release);
+        return syscall_success([1, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginWhoami) {
+        if caller.raw() != 9
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments[0] == 0
+            || request.arguments[1] < LOGIN_USERNAME_CAPACITY as u64
+            || request.arguments[1] > 128
+            || request.arguments[2..] != [0; 4]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let address = request.arguments[0];
+        let capacity = request.arguments[1];
+        if !arch::paging::service_user_range(address, capacity, true) {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let length = LOGIN_USERNAME_LENGTH.load(Ordering::Acquire) as usize;
+        arch::with_user_access(|| unsafe {
+            let target = core::slice::from_raw_parts_mut(address as *mut u8, capacity as usize);
+            for (slot, byte) in LOGIN_USERNAME.iter().zip(target.iter_mut()).take(length) {
+                *byte = slot.load(Ordering::Relaxed);
+            }
+        });
+        return syscall_success([length as u64, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginChallenge) {
         if caller.raw() != 14

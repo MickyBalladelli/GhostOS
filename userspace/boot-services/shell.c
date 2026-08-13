@@ -27,6 +27,8 @@ enum {
     OP_TERMINAL_READ = 24,
     OP_TERMINAL_WRITE = 25,
     OP_LOGIN_START = 52,
+    OP_LOGIN_LOGOUT = 56,
+    OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
     SHELL_ROLE = 9,
     OPEN_READ = 1,
@@ -252,6 +254,30 @@ static void execute_line(char *line, u8 *buffer)
             write_text("Login request failed\n");
             write_status(login.status);
         }
+        return;
+    }
+    if (equal_name(command, "LOGOUT")) {
+        write_text("Logging out...\n");
+        struct response logout = call(OP_LOGIN_LOGOUT, 0, 0, 0, 0, 0, 0);
+        if (logout.status != 0) {
+            write_text("Logout request failed\n");
+            write_status(logout.status);
+        }
+        return;
+    }
+    if (equal_name(command, "WHOAMI")) {
+        char username[33];
+        struct response whoami = call(
+            OP_LOGIN_WHOAMI, 0, 0, (u64)username, sizeof(username), 0, 0
+        );
+        if (whoami.status != 0 || whoami.values[0] >= sizeof(username)) {
+            write_text("Whoami request failed\n");
+            write_status(whoami.status);
+            return;
+        }
+        username[whoami.values[0]] = 0;
+        write_text(username);
+        write_text("\n");
         return;
     }
     if (next_word(&cursor, path) == 0) {

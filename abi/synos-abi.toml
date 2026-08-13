@@ -1,6 +1,6 @@
 [abi]
 schema_version = 1
-revision = 7
+revision = 8
 rpc_protocol_version = 1
 rpc_magic = "SYRP"
 rpc_frame_header_bytes = 24
@@ -172,6 +172,12 @@ value = 54
 [[operations]]
 name = "LoginTpmComplete"
 value = 55
+[[operations]]
+name = "LoginLogout"
+value = 56
+[[operations]]
+name = "LoginWhoami"
+value = 57
 
 [[methods]]
 name = "ClusterState"
