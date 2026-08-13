@@ -103,6 +103,10 @@ pub mod field {
     pub const NUMA_SELECTED_NODE: u16 = 34;
     pub const NUMA_LOCALITY: u16 = 35;
     pub const REMOTE_MEMORY_BYTES: u16 = 36;
+    pub const TEMPERATURE_DECI_KELVIN: u16 = 37;
+    pub const THROTTLE_PERCENT: u16 = 38;
+    pub const THERMAL_ACTION: u16 = 39;
+    pub const THERMAL_EVENT: u16 = 40;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -525,6 +529,7 @@ pub enum EventKind {
     Capability = 6,
     Audit = 7,
     Operator = 8,
+    Thermal = 9,
 }
 
 impl EventKind {
@@ -538,6 +543,7 @@ impl EventKind {
             6 => Some(Self::Capability),
             7 => Some(Self::Audit),
             8 => Some(Self::Operator),
+            9 => Some(Self::Thermal),
             _ => None,
         }
     }

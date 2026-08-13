@@ -160,7 +160,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Add CPU idle-state management.
 - [x] Add suspend and resume on supported hardware.
-- [ ] Add thermal throttling and thermal event reporting.
+- [x] Add thermal throttling and thermal event reporting.
 - [ ] Add battery and power-source reporting.
 - [ ] Add watchdog-based recovery for hung services and CPUs.
 

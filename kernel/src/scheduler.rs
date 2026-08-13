@@ -298,7 +298,25 @@ impl Scheduler {
     }
 
     pub fn update_thermal_policy(&mut self, reading: ThermalReading) -> synos_power::ThermalAction {
-        self.power.update_thermal(reading)
+        let action = self.power.update_thermal(reading);
+        let mut events = [None; 4];
+        let count = self.power.drain_thermal_events(&mut events);
+        for event in events.iter().take(count).flatten() {
+            info!(
+                EventKind::Thermal,
+                EventField::unsigned(
+                    field::TEMPERATURE_DECI_KELVIN,
+                    event.reading.temperature_deci_kelvin as u64,
+                ),
+                EventField::unsigned(
+                    field::THROTTLE_PERCENT,
+                    event.action.throttle_percent() as u64,
+                ),
+                EventField::unsigned(field::THERMAL_ACTION, event.action.code() as u64),
+                EventField::unsigned(field::THERMAL_EVENT, event.kind.code() as u64),
+            )
+        }
+        action
     }
 
     pub fn idle_state_on(

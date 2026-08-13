@@ -18,8 +18,9 @@ pub use hotplug::{
     handle_cxl_insertion, handle_nvme_insertion,
 };
 pub use thermal::{
-    ThermalAction, ThermalActuator, ThermalManager, ThermalReading, ThermalSensor,
-    ThermalSupervisor, ThermalTripPoints,
+    ThermalAction, ThermalActuator, ThermalEvent, ThermalEventKind, ThermalEventLog,
+    ThermalManager, ThermalReading, ThermalSensor, ThermalSupervisor, ThermalTripPoints,
+    MAX_THERMAL_EVENTS,
 };
 pub use policy::{
     CpuIdleState, DevicePowerConfig, DevicePowerState, FrequencyDecision, IdleRequest,

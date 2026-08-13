@@ -1,4 +1,4 @@
-use crate::{ThermalAction, ThermalManager, ThermalReading, ThermalTripPoints};
+use crate::{ThermalAction, ThermalEvent, ThermalManager, ThermalReading, ThermalTripPoints};
 
 pub const MAX_POWER_CLUSTERS: usize = 8;
 pub const MAX_POWER_DEVICES: usize = 32;
@@ -395,6 +395,36 @@ impl PowerPolicy {
         self.metrics
     }
 
+    pub const fn thermal_action(&self) -> ThermalAction {
+        match self.thermal.as_ref() {
+            Some(thermal) => thermal.action(),
+            None => ThermalAction::Normal,
+        }
+    }
+
+    pub const fn thermal_events_pending(&self) -> usize {
+        match self.thermal.as_ref() {
+            Some(thermal) => thermal.thermal_events_pending(),
+            None => 0,
+        }
+    }
+
+    pub const fn dropped_thermal_events(&self) -> u64 {
+        match self.thermal.as_ref() {
+            Some(thermal) => thermal.dropped_thermal_events(),
+            None => 0,
+        }
+    }
+
+    pub fn drain_thermal_events(
+        &mut self,
+        destination: &mut [Option<ThermalEvent>],
+    ) -> usize {
+        self.thermal
+            .as_mut()
+            .map_or(0, |thermal| thermal.drain_thermal_events(destination))
+    }
+
     pub fn add_cluster(&mut self, config: PowerClusterConfig) -> Result<(), PowerPolicyError> {
         if !config.valid() {
             return Err(PowerPolicyError::InvalidCluster)
@@ -561,11 +591,7 @@ impl PowerPolicy {
         };
         let previous = thermal.action();
         let action = thermal.update(reading);
-        let throttle = match action {
-            ThermalAction::Normal => 0,
-            ThermalAction::Throttle { percent } => percent,
-            ThermalAction::EmergencyShutdown => 100,
-        };
+        let throttle = action.throttle_percent();
         for cluster in &mut self.clusters {
             if cluster.valid {
                 cluster.throttle_percent = throttle
