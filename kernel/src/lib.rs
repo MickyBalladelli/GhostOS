@@ -5,6 +5,7 @@
 mod allocator;
 #[allow(unsafe_code)]
 mod boot_services;
+pub mod boot_diagnostics;
 pub mod address_space;
 pub mod hot_allocator;
 #[allow(unsafe_code)]
@@ -212,12 +213,26 @@ pub(crate) fn current_address_space() -> Option<AddressSpaceId> {
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
+    let previous_boot_failure = boot_diagnostics::begin();
     if let Err(status) = validate_boot_info(boot_info) {
         fatal_kernel_halt(status)
     }
 
     arch::disable_interrupts();
     console::init(boot_info.framebuffer);
+    if let Some(failure) = previous_boot_failure {
+        let status = synos_status::Status::from_raw(failure.status)
+            .map(|status| status.message())
+            .unwrap_or("unknown");
+        println!(
+            "previous boot failure: attempt={} stage={} status={} ({}){}",
+            failure.id,
+            failure.stage.name(),
+            failure.status,
+            status,
+            if failure.interrupted { " (interrupted)" } else { "" },
+        );
+    }
     info!(
         EventKind::Boot,
         EventField::unsigned(field::OPERATION, 1),
@@ -229,6 +244,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         boot_info.method as u32,
         boot_info.memory_region_count
     );
+    boot_diagnostics::checkpoint(boot_diagnostics::BootStage::BootInfoValidated);
 
     let mut frames = EarlyFrameAllocator::new(boot_info.regions());
     let mut page_tables = [0; arch::paging::TABLE_FRAME_COUNT];
@@ -251,6 +267,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     SCHEDULER_READY.store(true, Ordering::Release);
 
     arch::initialize(&page_tables, boot_info.physical_address_offset);
+    boot_diagnostics::checkpoint(boot_diagnostics::BootStage::MemoryReady);
     time::initialize();
     random::initialize();
     let architecture = arch::evidence();
@@ -268,6 +285,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         time::monotonic_now_us(),
         random::ready(),
     );
+    boot_diagnostics::checkpoint(boot_diagnostics::BootStage::ArchitectureReady);
     let bootstrap_cpu = arch::interrupts::current_cpu();
     let mut cpu_topology = arch::cpu::CpuTopology::<{ task::MAX_CPUS }>::new();
     let _ = cpu_topology.add_bootstrap(bootstrap_cpu.raw() as u32);
@@ -290,6 +308,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     } else {
         println!("ACPI tables unavailable; platform fallback active")
     }
+    boot_diagnostics::checkpoint(boot_diagnostics::BootStage::HardwareReady);
 
     #[cfg(all(
         target_arch = "x86_64",
@@ -299,6 +318,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         println!(
             "NX/XD unavailable; Ring 3 services disabled, entering kernel shell"
         );
+        boot_diagnostics::complete();
         shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler.clock(), acpi)
     }
 
@@ -326,8 +346,10 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     );
 
     let physical_filesystem = physical_storage::mount(&pci_inventory);
+    boot_diagnostics::checkpoint(boot_diagnostics::BootStage::StorageReady);
     let boot_services = boot_services::start(physical_filesystem)
         .unwrap_or_else(|error| fatal_kernel_halt(error.status()));
+    boot_diagnostics::checkpoint(boot_diagnostics::BootStage::ServicesReady);
     println!(
         "filesystem service registered and started (process={})",
         boot_services.filesystem_process.raw()
@@ -396,6 +418,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         target_arch = "x86_64",
         any(target_os = "none", target_os = "uefi")
     )))]
+    boot_diagnostics::complete();
     shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
 }
 
@@ -810,6 +833,8 @@ fn boot_synos_init(
         "starting synos-init in Ring 3 (thread={}, services=12)",
         init_thread.raw()
     );
+    boot_diagnostics::checkpoint(boot_diagnostics::BootStage::UserHandoff);
+    boot_diagnostics::complete();
     arch::enter_user(&context, init_root)
 }
 
@@ -934,6 +959,7 @@ pub fn validate_boot_info(boot_info: &BootInfo) -> Result<(), Status> {
 
 /// The only deliberate non-returning failure boundary in kernel code.
 pub fn fatal_kernel_halt(status: Status) -> ! {
+    boot_diagnostics::fail(status);
     crash::capture_and_persist(
         crash::RegisterState::empty(),
         0,
@@ -971,6 +997,7 @@ pub(crate) fn capture_exception(
     status: Status,
     reason: u16,
 ) {
+    boot_diagnostics::fail(status);
     crash::capture_and_persist(
         registers,
         fault_address,

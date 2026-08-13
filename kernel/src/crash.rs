@@ -263,7 +263,7 @@ pub fn capture_and_persist(
     };
     let mut bytes = [0; MAX_CAPSULE_BYTES];
     if let Some(length) = capsule.encode(&mut bytes) {
-        PersistentStore::new().save(&bytes[..length])
+        PersistentStore::new().save_crash_capsule(&bytes[..length])
     }
 }
 
