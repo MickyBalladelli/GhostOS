@@ -41,6 +41,18 @@ pub trait SshAuthenticator {
         signature: &[u8],
         exchange_hash: &[u8],
     ) -> Result<AuthenticatedPrincipal, SshError>;
+
+    /// Revalidate an open shell before every I/O operation.
+    ///
+    /// Implementations should reject expired or revoked sessions and return
+    /// the current principal. A changed identity or capability closes the
+    /// shell instead of silently continuing with stale authority.
+    fn validate_session(
+        &mut self,
+        principal: AuthenticatedPrincipal,
+    ) -> Result<AuthenticatedPrincipal, SshError> {
+        Ok(principal)
+    }
 }
 
 pub trait ShellBackend {
@@ -174,7 +186,7 @@ impl<A: SshAuthenticator, B: ShellBackend, const SESSION_CAPACITY: usize>
         if bytes.len() > MAX_LINE_BYTES {
             return Err(SshError::BufferTooLarge);
         }
-        let handle = self.session(session)?.handle.ok_or(SshError::InvalidSession)?;
+        let handle = self.validated_handle(session)?;
         self.shell.input(handle, bytes)
     }
 
@@ -186,14 +198,14 @@ impl<A: SshAuthenticator, B: ShellBackend, const SESSION_CAPACITY: usize>
         if terminal.columns == 0 || terminal.rows == 0 {
             return Err(SshError::InvalidTerminal);
         }
-        let handle = self.session(session)?.handle.ok_or(SshError::InvalidSession)?;
+        let handle = self.validated_handle(session)?;
         self.shell.resize(handle, terminal)?;
         self.session_mut(session)?.terminal = Some(terminal);
         Ok(())
     }
 
     pub fn output(&mut self, session: SshSessionId, bytes: &mut [u8]) -> Result<usize, SshError> {
-        let handle = self.session(session)?.handle.ok_or(SshError::InvalidSession)?;
+        let handle = self.validated_handle(session)?;
         self.shell.output(handle, bytes)
     }
 
@@ -233,6 +245,38 @@ impl<A: SshAuthenticator, B: ShellBackend, const SESSION_CAPACITY: usize>
             return Err(SshError::InvalidSession);
         }
         Ok(slot)
+    }
+
+    fn validated_handle(&mut self, session: SshSessionId) -> Result<B::Handle, SshError> {
+        let slot_index = session.slot();
+        let (handle, principal) = {
+            let slot = self.session(session)?;
+            (
+                slot.handle.ok_or(SshError::InvalidSession)?,
+                slot.principal.ok_or(SshError::InvalidSession)?,
+            )
+        };
+        let current = match self.authenticator.validate_session(principal) {
+            Ok(current) => current,
+            Err(error) => {
+                self.close_slot(slot_index, handle);
+                return Err(error)
+            }
+        };
+        if current != principal {
+            self.close_slot(slot_index, handle);
+            return Err(SshError::AccessDenied)
+        }
+        Ok(handle)
+    }
+
+    fn close_slot(&mut self, slot_index: usize, handle: B::Handle) {
+        if let Some(slot) = self.sessions.get_mut(slot_index) {
+            slot.handle = None;
+            slot.principal = None;
+            slot.terminal = None;
+        }
+        self.shell.close(handle)
     }
 }
 

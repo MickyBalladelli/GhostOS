@@ -227,6 +227,11 @@ static LOGIN_SESSION_LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static LOGIN_SESSION_IDENTITY: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static LOGIN_REVOCATION_EPOCH: AtomicU64 = AtomicU64::new(1);
 #[cfg(all(
     target_arch = "x86_64",
@@ -801,6 +806,7 @@ fn revoke_login_session() {
     LOGIN_REQUESTED.store(true, Ordering::Release);
     LOGIN_SESSION_EXPIRES.store(0, Ordering::Release);
     LOGIN_SESSION_LAST_ACTIVITY.store(0, Ordering::Release);
+    LOGIN_SESSION_IDENTITY.store(0, Ordering::Release);
     let epoch = LOGIN_REVOCATION_EPOCH
         .fetch_add(1, Ordering::AcqRel)
         .wrapping_add(1)
@@ -821,14 +827,47 @@ fn login_session_active() -> bool {
     }
     let now_us = time::monotonic_now_us();
     let expires_at_us = LOGIN_SESSION_EXPIRES.load(Ordering::Acquire);
-    let last_activity_us = LOGIN_SESSION_LAST_ACTIVITY.load(Ordering::Acquire);
-    if expires_at_us == 0
-        || now_us >= expires_at_us
-        || now_us.saturating_sub(last_activity_us) >= LOGIN_SESSION_IDLE_TIMEOUT_US
+    let identity = LOGIN_SESSION_IDENTITY.load(Ordering::Acquire);
+    let epoch = LOGIN_REVOCATION_EPOCH.load(Ordering::Acquire);
+    if !login_session_matches(identity, expires_at_us, epoch, now_us)
+        || !shell::session_matches(identity, expires_at_us, epoch)
     {
         revoke_login_session();
         return false
     }
+    true
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn login_session_matches(
+    identity: u64,
+    expires_at_us: u64,
+    revocation_epoch: u64,
+    now_us: u64,
+) -> bool {
+    LOGIN_AUTHORIZED.load(Ordering::Acquire)
+        && identity != 0
+        && LOGIN_SESSION_IDENTITY.load(Ordering::Acquire) == identity
+        && LOGIN_SESSION_EXPIRES.load(Ordering::Acquire) == expires_at_us
+        && LOGIN_REVOCATION_EPOCH.load(Ordering::Acquire) == revocation_epoch
+        && now_us < expires_at_us
+        && now_us.saturating_sub(LOGIN_SESSION_LAST_ACTIVITY.load(Ordering::Acquire))
+            < LOGIN_SESSION_IDLE_TIMEOUT_US
+}
+
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+)))]
+pub(crate) fn login_session_matches(
+    _identity: u64,
+    _expires_at_us: u64,
+    _revocation_epoch: u64,
+    _now_us: u64,
+) -> bool {
     true
 }
 
@@ -870,6 +909,7 @@ fn start_login_session(username: &[u8]) -> bool {
     }
     LOGIN_SESSION_LAST_ACTIVITY.store(now_us, Ordering::Release);
     LOGIN_SESSION_EXPIRES.store(expires_at_us, Ordering::Release);
+    LOGIN_SESSION_IDENTITY.store(identity, Ordering::Release);
     LOGIN_REQUESTED.store(false, Ordering::Release);
     LOGIN_AUTHORIZED.store(true, Ordering::Release);
     true
@@ -992,7 +1032,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite) {
         let shell_active = caller.raw() == 9 && login_session_active();
-        if caller.raw() != 14 && caller.raw() != 9 {
+        if caller.raw() != 14 && !shell_active {
             return syscall_error(Status::ACCESS_DENIED)
         }
         let address = request.arguments[0] as usize;

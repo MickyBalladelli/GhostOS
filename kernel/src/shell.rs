@@ -248,8 +248,7 @@ pub(crate) fn poll_input() -> Result<u64, Status> {
     if !SHELL_READY.load(Ordering::Acquire) {
         return Err(Status::BUSY)
     }
-    if !session_authorized_at(crate::time::monotonic_now_us()) {
-        lock_shell_session();
+    if !ensure_session(crate::time::monotonic_now_us()) {
         return Ok(0)
     }
     let registry = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_REGISTRY)).assume_init_mut() };
@@ -389,7 +388,7 @@ fn execute_line(
     executor: &mut KernelExecutor,
     acpi: Option<&AcpiPlatform>,
 ) {
-    if !session_authorized_at(executor.scheduler().clock()) {
+    if !ensure_session(executor.scheduler().clock()) {
         print_operator_error("shell locked", Status::ACCESS_DENIED);
         return
     }
@@ -770,7 +769,7 @@ fn print_edit_result<const CAPACITY: usize>(operation: &str, editor: &FileEditor
 }
 
 fn prompt() {
-    if session_authorized() {
+    if session_authorized_at(crate::time::monotonic_now_us()) {
         crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
     } else {
         crate::print!("\x1b[1;33mSYNOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ")
@@ -813,6 +812,7 @@ pub(crate) fn authorize_session(
 pub(crate) fn revoke_session(revocation_epoch: u64) {
     SHELL_SESSION_EPOCH.store(revocation_epoch.max(1), Ordering::Release);
     SHELL_SESSION_IDENTITY.store(0, Ordering::Release);
+    SHELL_SESSION_EXPIRES.store(0, Ordering::Release);
     lock_shell_session()
 }
 
@@ -822,6 +822,13 @@ fn lock_shell_session() {
         let executor = unsafe {
             (&mut *core::ptr::addr_of_mut!(SHELL_EXECUTOR)).assume_init_mut()
         };
+        let interpreter = unsafe {
+            (&mut *core::ptr::addr_of_mut!(SHELL_INTERPRETER)).assume_init_mut()
+        };
+        if interpreter.is_running() {
+            let _ = interpreter.cancel(executor);
+        }
+        executor.clear_completion();
         drop_session_authority(executor);
     }
     if !was_authorized {
@@ -845,6 +852,45 @@ fn session_authorized_at(now_us: u64) -> bool {
     session_authorized() && now_us < SHELL_SESSION_EXPIRES.load(Ordering::Acquire)
 }
 
+fn ensure_session(now_us: u64) -> bool {
+    let identity = SHELL_SESSION_IDENTITY.load(Ordering::Acquire);
+    let expires_at_us = SHELL_SESSION_EXPIRES.load(Ordering::Acquire);
+    let revocation_epoch = SHELL_SESSION_EPOCH.load(Ordering::Acquire);
+    if session_authorized_at(now_us)
+        && crate::login_session_matches(identity, expires_at_us, revocation_epoch, now_us)
+    {
+        return true
+    }
+    if session_authorized() {
+        expire_session()
+    } else {
+        lock_shell_session()
+    }
+    false
+}
+
+fn expire_session() {
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    {
+        crate::revoke_login_session();
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    )))]
+    lock_shell_session()
+}
+
+pub(crate) fn session_matches(identity: u64, expires_at_us: u64, revocation_epoch: u64) -> bool {
+    SHELL_AUTHORIZED.load(Ordering::Acquire)
+        && SHELL_SESSION_IDENTITY.load(Ordering::Acquire) == identity
+        && SHELL_SESSION_EXPIRES.load(Ordering::Acquire) == expires_at_us
+        && SHELL_SESSION_EPOCH.load(Ordering::Acquire) == revocation_epoch
+}
+
 fn drop_session_authority(executor: &mut KernelExecutor) {
     let raw = SHELL_SESSION_AUTHORITY.swap(0, Ordering::AcqRel);
     if let Some(authority) = crate::CapabilityHandle::from_raw(raw) {
@@ -856,6 +902,17 @@ fn drop_session_authority(executor: &mut KernelExecutor) {
 
 fn active_session_authority() -> Option<crate::CapabilityHandle> {
     if !session_authorized_at(crate::time::monotonic_now_us()) {
+        return None
+    }
+    let identity = SHELL_SESSION_IDENTITY.load(Ordering::Acquire);
+    let expires_at_us = SHELL_SESSION_EXPIRES.load(Ordering::Acquire);
+    let revocation_epoch = SHELL_SESSION_EPOCH.load(Ordering::Acquire);
+    if !crate::login_session_matches(
+        identity,
+        expires_at_us,
+        revocation_epoch,
+        crate::time::monotonic_now_us(),
+    ) {
         return None
     }
     crate::CapabilityHandle::from_raw(SHELL_SESSION_AUTHORITY.load(Ordering::Acquire))
@@ -2317,6 +2374,10 @@ impl KernelExecutor {
         Ok(authority)
     }
 
+    fn clear_completion(&mut self) {
+        self.completion = None;
+    }
+
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
         self.session_control_authority()?;
         crate::crash::publish_capability_context(&self.capabilities);
@@ -3449,6 +3510,9 @@ impl CommandExecutor for KernelExecutor {
 
     fn poll(&mut self, token: ExecutionToken) -> Option<Result<StructuredOutput, Status>> {
         let (raw, completion) = self.completion.take()?;
+        if self.session_control_authority().is_err() {
+            return Some(Err(Status::ACCESS_DENIED));
+        }
         if raw == token.raw() {
             Some(completion)
         } else {
