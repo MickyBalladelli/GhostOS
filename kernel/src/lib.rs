@@ -441,6 +441,23 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     let boot_services = boot_services::start(physical_filesystem)
         .unwrap_or_else(|error| fatal_kernel_halt(error.status()));
     boot_diagnostics::checkpoint(boot_diagnostics::BootStage::ServicesReady);
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    {
+        LOGIN_ADMINISTRATOR_EXISTS.store(
+            !boot_services.provisioning_required,
+            Ordering::Release,
+        );
+        if boot_services.provisioning_required {
+            println!(
+                "unprovisioned system detected: authorization database is missing"
+            );
+        } else {
+            println!("authorization database found: administrator provisioning complete");
+        }
+    }
     println!(
         "filesystem service registered and started (process={})",
         boot_services.filesystem_process.raw()

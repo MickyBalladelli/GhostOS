@@ -69,6 +69,7 @@ const ETHERNET_PROCESS_ID: u64 = 13;
 const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
 const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
+pub const AUTHORIZATION_DATABASE_PATH: &str = "/system/security/authorization";
 const SERVICE_COUNT: usize = 13;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -92,6 +93,7 @@ static PCI_READY: AtomicBool = AtomicBool::new(false);
 static AHCI_READY: AtomicBool = AtomicBool::new(false);
 static NVME_READY: AtomicBool = AtomicBool::new(false);
 static ETHERNET_READY: AtomicBool = AtomicBool::new(false);
+static PROVISIONING_REQUIRED: AtomicBool = AtomicBool::new(true);
 static STARTUP_DIAGNOSTICS_READY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
@@ -129,6 +131,8 @@ pub struct BootServices {
     pub ahci_process: ProcessId,
     pub nvme_process: ProcessId,
     pub ethernet_process: ProcessId,
+    #[allow(dead_code)]
+    pub provisioning_required: bool,
 }
 
 fn service_ids() -> [ServiceId; SERVICE_COUNT] {
@@ -284,8 +288,17 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
             ahci_process: ahci_process_id().ok_or(StartError::Process)?,
             nvme_process: nvme_process_id().ok_or(StartError::Process)?,
             ethernet_process: ethernet_process_id().ok_or(StartError::Process)?,
+            provisioning_required: PROVISIONING_REQUIRED.load(Ordering::Acquire),
         })
     }
+
+    let provisioning_required = physical_filesystem.as_ref().map_or(true, |filesystem| {
+        !matches!(
+            filesystem.lookup(AUTHORIZATION_DATABASE_PATH),
+            Ok(record)
+                if record.file_type == synos_synfs::FileType::Regular && record.size != 0
+        )
+    });
 
     let filesystem_process = filesystem_process_id().ok_or(StartError::Process)?;
     let storage_process = storage_process_id().ok_or(StartError::Process)?;
@@ -583,6 +596,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
     AHCI_READY.store(true, Ordering::Release);
     NVME_READY.store(true, Ordering::Release);
     ETHERNET_READY.store(true, Ordering::Release);
+    PROVISIONING_REQUIRED.store(provisioning_required, Ordering::Release);
     Ok(BootServices {
         filesystem_process,
         storage_process,
@@ -597,6 +611,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         ahci_process,
         nvme_process,
         ethernet_process,
+        provisioning_required,
     })
 }
 
