@@ -900,6 +900,131 @@ static void set_account_enabled(
     write_text(enable ? "Account enabled.\n" : "Account disabled.\n");
 }
 
+static void rename_account(
+    const char *old_username,
+    const char *new_username,
+    u8 *buffer
+)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+
+    u64 old_length = length(old_username);
+    u64 new_length = length(new_username);
+    if (!valid_account_username((const u8 *)old_username, old_length)
+        || !valid_account_username((const u8 *)new_username, new_length)) {
+        write_text("Invalid username.\n");
+        return;
+    }
+    if (account_username_bytes_match(
+        (const u8 *)old_username,
+        old_length,
+        (const u8 *)new_username,
+        new_length
+    )) {
+        write_text("Account already uses that name.\n");
+        return;
+    }
+
+    u64 database_bytes = 0;
+    int read = read_account_database(buffer, &database_bytes);
+    if (read < 0) {
+        write_text("Account database unavailable.\n");
+        return;
+    }
+    if (read == 0 || database_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account not found.\n");
+        return;
+    }
+
+    u64 offset = 0;
+    u64 target_bytes = 0;
+    u8 renamed_record[ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY] = {0};
+    int found = 0;
+    int new_name_in_use = 0;
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest == 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+            offset += record_bytes;
+            continue;
+        }
+        if (account_username_matches(record + 2, record[1], old_username)) {
+            found = 1;
+            target_bytes = record_bytes;
+            for (u64 index = 0; index < record_bytes; index++) {
+                renamed_record[index] = record[index];
+            }
+        }
+        if (account_username_matches(record + 2, record[1], new_username)) {
+            new_name_in_use = 1;
+        }
+        offset += record_bytes;
+    }
+    if (new_name_in_use) {
+        write_text("Account already exists.\n");
+        return;
+    }
+    if (!found) {
+        write_text("Account not found.\n");
+        return;
+    }
+    if (database_bytes + ACCOUNT_RECORD_HEADER_BYTES + target_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account database is full.\n");
+        return;
+    }
+
+    renamed_record[1] = (u8)new_length;
+    for (offset = 0; offset < ACCOUNT_USERNAME_CAPACITY; offset++) {
+        renamed_record[2 + offset] = 0;
+    }
+    for (offset = 0; offset < new_length; offset++) {
+        renamed_record[2 + offset] = (u8)new_username[offset];
+    }
+
+    u8 tombstone[ACCOUNT_RECORD_HEADER_BYTES] = {0};
+    tombstone[0] = ACCOUNT_RECORD_VERSION;
+    tombstone[1] = (u8)old_length;
+    for (offset = 0; offset < old_length; offset++) {
+        tombstone[2 + offset] = (u8)old_username[offset];
+    }
+    tombstone[ACCOUNT_USERNAME_CAPACITY + 2] = ACCOUNT_RECORD_DELETED;
+
+    u32 failure_status = 0;
+    if (!append_account_record(
+        renamed_record,
+        target_bytes,
+        database_bytes,
+        &failure_status
+    )) {
+        write_text("Account rename failed.\n");
+        write_status(failure_status);
+        return;
+    }
+    if (!append_account_record(
+        tombstone,
+        ACCOUNT_RECORD_HEADER_BYTES,
+        database_bytes + target_bytes,
+        &failure_status
+    )) {
+        write_text("Account rename incomplete; new identity is retained.\n");
+        write_status(failure_status);
+        return;
+    }
+    write_text("Account renamed; credential identity preserved.\n");
+}
+
 static void execute_line(char *line, u8 *buffer)
 {
     char command[256];
@@ -957,7 +1082,7 @@ static void execute_line(char *line, u8 *buffer)
         char confirmation[256];
         u64 action_length = next_word(&cursor, action);
         if (action_length == 0) {
-            write_text("Use: ACCOUNT LIST, SHOW, CREATE, DELETE, ENABLE, or DISABLE <username>\n");
+            write_text("Use: ACCOUNT LIST, SHOW, CREATE, DELETE, ENABLE, DISABLE, or RENAME\n");
             return;
         }
         if (equal_name(action, "LIST")) {
@@ -1001,8 +1126,17 @@ static void execute_line(char *line, u8 *buffer)
             set_account_enabled(username, equal_name(action, "ENABLE"), buffer);
             return;
         }
+        if (equal_name(action, "RENAME")) {
+            char new_username[256];
+            if (next_word(&cursor, username) == 0 || next_word(&cursor, new_username) == 0) {
+                write_text("Use: ACCOUNT RENAME <old> <new>\n");
+                return;
+            }
+            rename_account(username, new_username, buffer);
+            return;
+        }
         {
-            write_text("Use: ACCOUNT LIST, SHOW, CREATE, DELETE, ENABLE, or DISABLE <username>\n");
+            write_text("Use: ACCOUNT LIST, SHOW, CREATE, DELETE, ENABLE, DISABLE, or RENAME\n");
             return;
         }
     }

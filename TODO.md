@@ -244,7 +244,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add `ACCOUNT CREATE <username>` for administrators.
 - [x] Add `ACCOUNT DELETE <username>` with confirmation and last-admin protection.
 - [x] Add `ACCOUNT ENABLE <username>` and `ACCOUNT DISABLE <username>`.
-- [ ] Add `ACCOUNT RENAME <old> <new>` with persistent identity rules.
+- [x] Add `ACCOUNT RENAME <old> <new>` with persistent identity rules.
 - [ ] Add account creation, update, disable, and deletion through the management API.
 - [ ] Enforce username syntax, length, normalization, and reserved-name rules.
 - [ ] Prevent deletion or disabling of the last usable administrator.
