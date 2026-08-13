@@ -190,7 +190,7 @@ Build the real operating system core before adding more advanced features.
       rejects hypervisor declarations, panic output, incomplete Ring 3 boot,
       stale hashes, and mismatched BIOS/UEFI inventory. See
       [`platforms/README.md`](platforms/README.md).
-- [ ] Add service-start and service-restart integration tests.
+- [x] Add service-start and service-restart integration tests.
 - [ ] Add process-isolation integration tests.
 - [ ] Add power-loss and disk-corruption tests.
 - [ ] Add long-running soak tests for leaks and stale capabilities.

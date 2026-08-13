@@ -919,6 +919,9 @@ impl<
                 status: -1,
                 reason: ExitReason::Crash(CrashReason::Watchdog),
             },
-        )
+        )?;
+        let index = self.slot_index(process)?;
+        self.slots[index] = ProcessSlot::EMPTY;
+        Ok(())
     }
 }
