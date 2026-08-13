@@ -167,7 +167,7 @@ Build the real operating system core before adding more advanced features.
 ### Observability and debugging
 
 - [x] Persist system and service logs across reboot.
-- [ ] Export bounded metrics and tracing data.
+- [x] Export bounded metrics and tracing data.
 - [ ] Add crash-dump storage and a crash viewer.
 - [ ] Add boot-failure diagnostics.
 - [ ] Add a capability-safe remote debugger.

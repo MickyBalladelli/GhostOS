@@ -17,6 +17,7 @@ pub mod throughput;
 pub mod cache;
 pub mod scaling;
 pub mod cardinality;
+pub mod telemetry_export;
 
 pub use cardinality::{
     AuditLabelAggregate, AuditLabelAggregator, AtomicCardinality, CardinalityDecision,
@@ -46,6 +47,12 @@ pub use slo::{
     SloDefinition, SloError, SloKind, SloMeasurement, SloObservation, SloReport,
     SloReportStatus, BUDGET_SCALE, DEFAULT_MAX_AGE_US, DEFAULT_OBJECTIVE_PER_MILLION,
     DEFAULT_WINDOW_US, SLO_COUNT,
+};
+pub use telemetry_export::{
+    validate_telemetry_export, TelemetryExportError, TelemetryExporter,
+    MAX_TELEMETRY_EXPORT_METRICS, MAX_TELEMETRY_EXPORT_TRACES,
+    METRIC_EXPORT_RECORD_BYTES, TELEMETRY_EXPORT_HEADER_BYTES,
+    TELEMETRY_EXPORT_MAGIC, TELEMETRY_EXPORT_VERSION, TRACE_EXPORT_RECORD_BYTES,
 };
 
 pub const MAX_EVENT_FIELDS: usize = 4;
@@ -1050,6 +1057,32 @@ impl<const CAPACITY: usize> TraceRing<CAPACITY> {
         }
         count
     }
+
+    /// Encode the newest records into caller-owned fixed-size storage without
+    /// consuming the ring. The returned byte count is always record aligned.
+    pub fn encode_recent(&self, destination: &mut [u8]) -> Result<usize, CodecError> {
+        let record_capacity = (destination.len() / JOURNAL_RECORD_SIZE).min(CAPACITY);
+        if record_capacity == 0 {
+            return Ok(0)
+        }
+        let end = self.write_position.load(Ordering::Acquire);
+        let start = end.saturating_sub(record_capacity as u64);
+        let mut count = 0;
+        for position in start..end {
+            let slot = &self.slots[position as usize % CAPACITY];
+            if slot.published.load(Ordering::Acquire) != position {
+                continue
+            }
+            let event = slot.event.read();
+            if slot.published.load(Ordering::Acquire) != position {
+                continue
+            }
+            let offset = count * JOURNAL_RECORD_SIZE;
+            encode_record(event, &mut destination[offset..offset + JOURNAL_RECORD_SIZE])?;
+            count += 1;
+        }
+        Ok(count * JOURNAL_RECORD_SIZE)
+    }
 }
 
 impl<const CAPACITY: usize> Default for TraceRing<CAPACITY> {
@@ -1602,6 +1635,17 @@ pub enum MetricKind {
     Counter = 1,
     Gauge = 2,
     Histogram = 3,
+}
+
+impl MetricKind {
+    pub const fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Counter),
+            2 => Some(Self::Gauge),
+            3 => Some(Self::Histogram),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
