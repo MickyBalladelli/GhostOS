@@ -196,3 +196,93 @@ Build the real operating system core before adding more advanced features.
 - [ ] Version and document the user-space package ABI.
 - [ ] Add migration tools for persistent system state.
 - [ ] Add a stable user-space SDK compatibility policy.
+
+## Login, first login, and account management
+
+### Login surface
+
+- [ ] Add a user-space login service that owns the terminal login flow.
+- [ ] Add a `LOGIN` command or login screen to the service-owned shell.
+- [ ] Show a clear first-boot message when no administrator account exists.
+- [ ] Prompt for username and credential without echoing private input.
+- [ ] Support passkey login from the local terminal.
+- [ ] Support TPM-backed credential login from the local terminal.
+- [ ] Support SSH-key login for configured remote sessions.
+- [ ] Display useful failure messages without revealing whether an account exists.
+- [ ] Rate-limit failed login attempts.
+- [ ] Lock login temporarily after repeated failures.
+- [ ] Add `LOGOUT` and `WHOAMI` commands.
+- [ ] Return to the locked prompt after logout, timeout, or session revocation.
+- [ ] Connect successful auth sessions to shell authorization and capabilities.
+- [ ] Preserve session expiry, revocation, and identity changes across all shell paths.
+
+### First login and administrator setup
+
+- [ ] Detect an unprovisioned system during boot.
+- [ ] Enter a restricted first-run setup mode before the normal shell starts.
+- [ ] Require physical-console access or an equivalent trusted bootstrap proof.
+- [ ] Create the first administrator username.
+- [ ] Register the first administrator passkey, TPM credential, or SSH key.
+- [ ] Require confirmation before committing the first administrator account.
+- [ ] Persist the first administrator atomically in SynFS.
+- [ ] Make first-admin creation safe to retry after power loss.
+- [ ] Prevent first-admin setup from replacing an existing account database.
+- [ ] Provide a recovery mode for an interrupted or failed first-login setup.
+- [ ] Provide a documented recovery procedure when the first administrator loses all credentials.
+- [ ] Audit first-admin creation, recovery, and cancellation events.
+
+### Account lifecycle
+
+- [ ] Add `ACCOUNT LIST` with safe summaries of local accounts.
+- [ ] Add `ACCOUNT SHOW <username>` with permission-checked details.
+- [ ] Add `ACCOUNT CREATE <username>` for administrators.
+- [ ] Add `ACCOUNT DELETE <username>` with confirmation and last-admin protection.
+- [ ] Add `ACCOUNT ENABLE <username>` and `ACCOUNT DISABLE <username>`.
+- [ ] Add `ACCOUNT RENAME <old> <new>` with persistent identity rules.
+- [ ] Add account creation, update, disable, and deletion through the management API.
+- [ ] Enforce username syntax, length, normalization, and reserved-name rules.
+- [ ] Prevent deletion or disabling of the last usable administrator.
+- [ ] Revoke all sessions when an account is disabled or deleted.
+- [ ] Keep stable identity IDs when account display names change.
+- [ ] Add account state for active, disabled, locked, expired, and pending setup.
+
+### Credentials and access policy
+
+- [ ] Add `CREDENTIAL LIST <username>` for authorized administrators.
+- [ ] Add `CREDENTIAL ADD <username>` for passkeys, TPM credentials, and SSH keys.
+- [ ] Add `CREDENTIAL REMOVE <username> <id>` with self-lockout protection.
+- [ ] Allow users to enroll and remove their own credentials under policy.
+- [ ] Store only credential public data and metadata, never private keys or secrets.
+- [ ] Add credential labels, creation time, last-used time, and revocation state.
+- [ ] Rotate and revoke credentials without deleting the account.
+- [ ] Support account expiration and credential expiration policies.
+- [ ] Add password login only if a password verifier and secure recovery policy exist.
+- [ ] Define administrator, operator, auditor, and read-only account roles.
+- [ ] Add group membership management with `GROUP LIST`, `GROUP CREATE`, `GROUP ADD`, and `GROUP REMOVE`.
+- [ ] Persist role, group, capability, and account policy changes atomically.
+
+### Sessions, recovery, and audit
+
+- [ ] Add active-session listing for administrators.
+- [ ] Add administrator session termination for a selected account or session.
+- [ ] Enforce idle timeout and maximum session lifetime.
+- [ ] Bind sessions to the authenticated identity, terminal, node, and revocation epoch.
+- [ ] Reject replayed, expired, malformed, or cross-node login responses.
+- [ ] Add safe credential-loss recovery requiring a trusted recovery key or physical recovery action.
+- [ ] Prevent recovery from silently bypassing normal authorization policy.
+- [ ] Audit login success, login failure, logout, timeout, lockout, recovery, and account changes.
+- [ ] Redact credentials, challenges, tokens, and private account data from logs and crash reports.
+- [ ] Add administrator-visible audit queries for account and session activity.
+
+### Verification and documentation
+
+- [ ] Add end-to-end tests for first boot, first login, normal login, logout, and relogin.
+- [ ] Add tests for wrong credentials, rate limits, lockouts, expiry, and revocation.
+- [ ] Add tests for account creation, deletion, disablement, rename, and last-admin protection.
+- [ ] Add tests for credential enrollment, removal, rotation, and credential loss recovery.
+- [ ] Add persistence and power-loss tests for account database updates.
+- [ ] Add QEMU coverage for the interactive login flow.
+- [ ] Document first boot and first administrator setup.
+- [ ] Document local and remote login methods.
+- [ ] Document account, group, role, credential, session, and recovery commands.
+- [ ] Document the emergency recovery process and its security limits.
