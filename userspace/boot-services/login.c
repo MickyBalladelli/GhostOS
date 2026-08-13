@@ -21,6 +21,7 @@ enum {
     OP_TERMINAL_READ = 24,
     OP_TERMINAL_WRITE = 25,
     OP_LOGIN_COMPLETE = 50,
+    OP_LOGIN_STATUS = 51,
     LOGIN_ROLE = 14,
 };
 
@@ -93,6 +94,12 @@ static void idle(void)
     }
 }
 
+static int login_requested(void)
+{
+    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    return response.status == 0 && response.values[0] != 0;
+}
+
 static void read_line(char *line, u64 capacity, int echo)
 {
     u64 count = 0;
@@ -136,6 +143,9 @@ void _start(void)
     write_text("The terminal is locked until login completes.\n");
 
     for (;;) {
+        while (!login_requested()) {
+            idle();
+        }
         write_text("login: ");
         read_line(username, sizeof(username), 1);
         write_text("\ncredential: ");
@@ -159,8 +169,5 @@ void _start(void)
             continue;
         }
         write_text("Login accepted.\n");
-        for (;;) {
-            idle();
-        }
     }
 }

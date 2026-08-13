@@ -26,6 +26,7 @@ enum {
     OP_SYNFS_DELETE = 22,
     OP_TERMINAL_READ = 24,
     OP_TERMINAL_WRITE = 25,
+    OP_LOGIN_START = 52,
     OP_SLEEP_UNTIL = 47,
     SHELL_ROLE = 9,
     OPEN_READ = 1,
@@ -241,6 +242,16 @@ static void execute_line(char *line, u8 *buffer)
             path[1] = 0;
         }
         print_directory(path, buffer);
+        return;
+    }
+    if (equal_name(command, "LOGIN")) {
+        struct response login = call(OP_LOGIN_START, 0, 0, 0, 0, 0, 0);
+        if (login.status == 0) {
+            write_text("Starting login...\n");
+        } else {
+            write_text("Login request failed\n");
+            write_status(login.status);
+        }
         return;
     }
     if (next_word(&cursor, path) == 0) {

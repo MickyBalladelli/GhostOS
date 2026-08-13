@@ -157,6 +157,12 @@ value = 49
 [[operations]]
 name = "LoginComplete"
 value = 50
+[[operations]]
+name = "LoginStatus"
+value = 51
+[[operations]]
+name = "LoginStart"
+value = 52
 
 [[methods]]
 name = "ClusterState"

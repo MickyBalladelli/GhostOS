@@ -62,6 +62,8 @@ pub enum Operation {
     SynFsMap = 48,
     SynFsUnmap = 49,
     LoginComplete = 50,
+    LoginStatus = 51,
+    LoginStart = 52,
 }
 
 impl Operation {
@@ -117,6 +119,8 @@ impl Operation {
             48 => Some(Self::SynFsMap),
             49 => Some(Self::SynFsUnmap),
             50 => Some(Self::LoginComplete),
+            51 => Some(Self::LoginStatus),
+            52 => Some(Self::LoginStart),
             _ => None,
         }
     }

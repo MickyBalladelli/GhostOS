@@ -198,6 +198,11 @@ static SERVICE_READY: AtomicU32 = AtomicU32::new(0);
     any(target_os = "none", target_os = "uefi")
 ))]
 static LOGIN_AUTHORIZED: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_REQUESTED: AtomicBool = AtomicBool::new(true);
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -598,7 +603,36 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
+        if !LOGIN_REQUESTED.load(Ordering::Acquire) {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
+        return syscall_success([1, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginStatus) {
+        if caller.raw() != 14
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments != [0; 6]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        return syscall_success([LOGIN_REQUESTED.load(Ordering::Acquire) as u64, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginStart) {
+        if caller.raw() != 9
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments != [0; 6]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        LOGIN_AUTHORIZED.store(false, Ordering::Release);
+        LOGIN_REQUESTED.store(true, Ordering::Release);
         return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::ServiceReady) {
