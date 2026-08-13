@@ -22,6 +22,9 @@ pub struct RightIdentifier(u64);
 
 impl RightIdentifier {
     pub const SYSTEM_ADMIN: Self = Self(0x5359_5354_454d_4144);
+    pub const SYSTEM_OPERATOR: Self = Self(0x5359_5354_454d_4f50);
+    pub const SYSTEM_AUDITOR: Self = Self(0x5359_5354_454d_4155);
+    pub const SYSTEM_READ_ONLY: Self = Self(0x5359_5354_454d_524f);
     pub const LLM_OPERATOR: Self = Self(0x4c4c_4d5f_4f50_4552);
     pub const NETWORK_INBOUND: Self = Self(0x4e45_545f_494e_4244);
     pub const BATCH_JOB: Self = Self(0x4241_5443_485f_4a4f);

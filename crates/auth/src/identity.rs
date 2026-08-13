@@ -86,6 +86,34 @@ pub enum AccountState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccountRole {
+    Administrator,
+    Operator,
+    Auditor,
+    ReadOnly,
+}
+
+impl AccountRole {
+    pub const fn right(self) -> RightIdentifier {
+        match self {
+            Self::Administrator => RightIdentifier::SYSTEM_ADMIN,
+            Self::Operator => RightIdentifier::SYSTEM_OPERATOR,
+            Self::Auditor => RightIdentifier::SYSTEM_AUDITOR,
+            Self::ReadOnly => RightIdentifier::SYSTEM_READ_ONLY,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Administrator => "administrator",
+            Self::Operator => "operator",
+            Self::Auditor => "auditor",
+            Self::ReadOnly => "read-only",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum CredentialKind {
     Passkey = 1,
@@ -431,6 +459,24 @@ impl UserRecord {
 
     pub fn rights(&self) -> impl Iterator<Item = RightIdentifier> + '_ {
         self.rights.iter().flatten().copied()
+    }
+
+    pub fn has_role(&self, role: AccountRole) -> bool {
+        self.rights().any(|right| right == role.right())
+    }
+
+    pub fn assign_role(&mut self, role: AccountRole) -> Result<(), AuthError> {
+        self.assign_right(role.right())
+    }
+
+    pub fn remove_role(&mut self, role: AccountRole) -> Result<(), AuthError> {
+        let slot = self
+            .rights
+            .iter()
+            .position(|entry| entry.is_some_and(|right| right == role.right()))
+            .ok_or(AuthError::RightNotFound)?;
+        self.rights[slot] = None;
+        Ok(())
     }
 
     pub fn initial_capabilities(&self) -> impl Iterator<Item = InitialCapability> + '_ {
@@ -1192,5 +1238,6 @@ pub enum AuthError {
     SessionExpired,
     StorageFailure,
     UserNotFound,
+    RightNotFound,
     VerificationFailed,
 }

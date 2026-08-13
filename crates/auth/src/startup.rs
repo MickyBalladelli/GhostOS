@@ -7,7 +7,8 @@ use synos_kernel::{
 };
 
 use crate::identity::{
-    AccountState, AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, Credential,
+    AccountRole, AccountState, AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase,
+    Credential,
     CredentialId, CredentialKind, CredentialVerifier, DatabaseScope, InitialCapability,
     PasswordVerifier, Session, UserRecord, Username,
 };
@@ -929,6 +930,15 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         }
     }
 
+    pub fn authorize_role(
+        &mut self,
+        handle: SessionHandle,
+        role: AccountRole,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
+        self.authorize(handle, role.right(), now_us)
+    }
+
     pub fn logout(&mut self, handle: SessionHandle) -> Result<(), StartupError> {
         self.sessions.logout(handle)
     }
@@ -1069,6 +1079,46 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             AccountManagementResult::Updated(record) => Ok(record),
             _ => Err(StartupError::InvalidRecord),
         }
+    }
+
+    pub fn assign_role<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        role: AccountRole,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut record = self
+            .state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        record
+            .assign_role(role)
+            .map_err(StartupError::Authentication)?;
+        self.update_account(store, handle, record, now_us)
+    }
+
+    pub fn remove_role<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        role: AccountRole,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut record = self
+            .state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        record
+            .remove_role(role)
+            .map_err(StartupError::Authentication)?;
+        self.update_account(store, handle, record, now_us)
     }
 
     pub fn rename_account<S: SecurityStore<USERS, GROUPS>>(

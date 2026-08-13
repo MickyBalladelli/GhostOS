@@ -14,7 +14,8 @@ pub mod token;
 
 pub use identity::{
     AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, AuthorizationStore,
-    AccountState, Credential, CredentialId, CredentialKind, CredentialVerifier, DatabaseScope,
+    AccountRole, AccountState, Credential, CredentialId, CredentialKind, CredentialVerifier,
+    DatabaseScope,
     InitialCapability, PasswordVerifier, PublicCredentialData, Session, SessionCapabilities,
     UserRecord, Username,
     MAX_CREDENTIAL_LABEL_BYTES, MAX_USERNAME_BYTES, RESERVED_USERNAMES,
