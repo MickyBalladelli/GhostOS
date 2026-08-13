@@ -517,7 +517,7 @@ graph LR
     format_SYNAPP01__synos_pkg__crates_pkg_src_lib_rs["APPLICATION_BUNDLE_MAGIC SYNAPP01 v1"]
     format_SYNBACK1__synos_backup__crates_synos_backup_src_lib_rs["ARCHIVE_MAGIC SYNBACK1 v1"]
     format_SYNBEND1__synos_backup__crates_synos_backup_src_lib_rs["TRAILER_MAGIC SYNBEND1 v1"]
-    format_SYNBNDL1__synos_pkg__crates_pkg_src_lib_rs["BUNDLE_MAGIC SYNBNDL1 v1"]
+    format_SYNBNDL1__synos_pkg__crates_pkg_src_lib_rs["PACKAGE_BUNDLE_MAGIC SYNBNDL1 v1"]
     format_SYNBOOT1__synos_storaged__crates_synos_storaged_src_bootstrap_rs["CLUSTER_BOOTSTRAP_MAGIC SYNBOOT1 v1"]
     format_SYNCH001__synos_storaged__crates_synos_storaged_src_security_rs["SYNCH001 SYNCH001 v?"]
     format_SYNCLID1__synos_storaged__crates_synos_storaged_src_cluster_rs["CLUSTER_METADATA_MAGIC SYNCLID1 v1"]
@@ -1008,10 +1008,10 @@ graph LR
 | --- | --- | --- | --- | --- |
 | ADMISSION_AUDIT_MAGIC | SYNADIT1 | 1 | synos-storaged | [`crates/synos-storaged/src/admission.rs:18`](../crates/synos-storaged/src/admission.rs#L18) |
 | STATE_MAGIC | SYNAGNT1 | 1 | synos-inference | [`crates/synos-inference/src/agent_state.rs:7`](../crates/synos-inference/src/agent_state.rs#L7) |
-| APPLICATION_BUNDLE_MAGIC | SYNAPP01 | 1 | synos-pkg | [`crates/pkg/src/lib.rs:19`](../crates/pkg/src/lib.rs#L19) |
+| APPLICATION_BUNDLE_MAGIC | SYNAPP01 | 1 | synos-pkg | [`crates/pkg/src/lib.rs:30`](../crates/pkg/src/lib.rs#L30) |
 | ARCHIVE_MAGIC | SYNBACK1 | 1 | synos-backup | [`crates/synos-backup/src/lib.rs:10`](../crates/synos-backup/src/lib.rs#L10) |
 | TRAILER_MAGIC | SYNBEND1 | 1 | synos-backup | [`crates/synos-backup/src/lib.rs:11`](../crates/synos-backup/src/lib.rs#L11) |
-| BUNDLE_MAGIC | SYNBNDL1 | 1 | synos-pkg | [`crates/pkg/src/lib.rs:12`](../crates/pkg/src/lib.rs#L12) |
+| PACKAGE_BUNDLE_MAGIC | SYNBNDL1 | 1 | synos-pkg | [`crates/pkg/src/lib.rs:23`](../crates/pkg/src/lib.rs#L23) |
 | CLUSTER_BOOTSTRAP_MAGIC | SYNBOOT1 | 1 | synos-storaged | [`crates/synos-storaged/src/bootstrap.rs:11`](../crates/synos-storaged/src/bootstrap.rs#L11) |
 | SYNCH001 | SYNCH001 |  | synos-storaged | [`crates/synos-storaged/src/security.rs:1289`](../crates/synos-storaged/src/security.rs#L1289) |
 | CLUSTER_METADATA_MAGIC | SYNCLID1 | 1 | synos-storaged | [`crates/synos-storaged/src/cluster.rs:4`](../crates/synos-storaged/src/cluster.rs#L4) |

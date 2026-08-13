@@ -70,3 +70,12 @@ NVMe controller: queue full
 ```
 
 The user sees a helpful message. The machine keeps the precise condition.
+
+## User-space package ABI
+
+Signed Ring 3 applications use the versioned `SYNBNDL1` inner package and
+`SYNAPP01` application envelope. Both are version 1 today, and application
+metadata uses schema 1. The package daemon verifies content IDs, dependencies,
+trusted-key signatures, and reserved bytes before installation. The supervisor
+then matches signed target and resource metadata before launch. The complete
+record layout and compatibility rules are in [`docs/package-abi.md`](../docs/package-abi.md).

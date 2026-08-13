@@ -199,7 +199,7 @@ Build the real operating system core before adding more advanced features.
 ### Compatibility
 
 - [x] Version and document the syscall ABI.
-- [ ] Version and document the user-space package ABI.
+- [x] Version and document the user-space package ABI.
 - [ ] Add migration tools for persistent system state.
 - [ ] Add a stable user-space SDK compatibility policy.
 

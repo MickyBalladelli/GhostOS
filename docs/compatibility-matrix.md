@@ -72,8 +72,8 @@ Source: [`snapshot.rs`](../virtual_machine/src/snapshot.rs),
 
 | Artifact | Current schema | Compatibility | Authority |
 | --- | ---: | --- | --- |
-| Signed package bundle | `SYNBNDL1`, version `1` | Read/write v1; signature, content IDs, dependencies, and lengths are mandatory | [`pkg/src/lib.rs`](../crates/pkg/src/lib.rs) |
-| Application bundle | `SYNAPP01`, version `1` | Read/write v1; outer metadata and inner package must both validate | [`pkg/src/lib.rs`](../crates/pkg/src/lib.rs) |
+| Signed package bundle | `SYNBNDL1`, version `1`; Package API `1.0` | Read/write v1; signature, content IDs, dependencies, and lengths are mandatory | [`package-abi.md`](package-abi.md), [`pkg/src/lib.rs`](../crates/pkg/src/lib.rs) |
+| Application bundle | `SYNAPP01`, version `1`; application metadata schema `1` | Read/write v1; outer metadata and inner package must both validate | [`package-abi.md`](package-abi.md), [`pkg/src/lib.rs`](../crates/pkg/src/lib.rs) |
 | Provenance chain | `SYNPROV1` | Read/write current fixed schema | Content and signature links must remain complete | [`pkg/src/lib.rs`](../crates/pkg/src/lib.rs) |
 | Toolchain archive | `SYNTOOL1`, version `1` | Read/write v1; signed asset paths and content IDs are checked | [`persistence-compatibility.md`](persistence-compatibility.md) |
 | Declarative system configuration | schema `1` | Read/write v1; signed canonical source activates atomically | [`synos-declarative/src/parser.rs`](../crates/synos-declarative/src/parser.rs) |

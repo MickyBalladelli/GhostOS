@@ -20,8 +20,8 @@ pub use synos_service_scale::{
     RequestId, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError, ScaleSnapshot,
 };
 
-const BUNDLE_MAGIC: &[u8; 8] = b"SYNBNDL1";
-const BUNDLE_VERSION: u16 = 1;
+pub const PACKAGE_BUNDLE_MAGIC: &[u8; 8] = b"SYNBNDL1";
+pub const PACKAGE_BUNDLE_VERSION: u16 = 1;
 const FIXED_HEADER_BYTES: usize = 144;
 const MAX_SIGNED_BYTES: usize = 107 + MAX_DEPENDENCIES * 32;
 pub const KEY_ID_BYTES: usize = 16;
@@ -29,7 +29,9 @@ pub const SIGNATURE_BYTES: usize = 32;
 pub const DEFAULT_TRUSTED_KEYS: usize = 8;
 pub const APPLICATION_BUNDLE_MAGIC: &[u8; 8] = b"SYNAPP01";
 pub const APPLICATION_BUNDLE_VERSION: u16 = 1;
-pub const PACKAGE_API_VERSION: synos_api_compat::ApiVersion = synos_api_compat::PACKAGE_API.current;
+pub const PACKAGE_ABI_VERSION: synos_api_compat::ApiVersion = synos_api_compat::PACKAGE_API.current;
+pub const PACKAGE_API_VERSION: synos_api_compat::ApiVersion = PACKAGE_ABI_VERSION;
+pub const APPLICATION_MANIFEST_SCHEMA: u16 = 1;
 pub const APPLICATION_BUNDLE_HEADER_BYTES: usize = 144;
 pub const APPLICATION_METADATA_BYTES: usize = 160;
 pub const PROVENANCE_LINKS: usize = 7;
@@ -418,7 +420,12 @@ impl ApplicationPackageManifest {
         debug_symbols: ContentId,
         build_record: ContentId,
     ) -> Result<Self, PackageError> {
-        if name.is_empty() || name.len() > 48 || memory_bytes == 0 || heap_bytes == 0 {
+        if schema != APPLICATION_MANIFEST_SCHEMA
+            || name.is_empty()
+            || name.len() > 48
+            || memory_bytes == 0
+            || heap_bytes == 0
+        {
             return Err(PackageError::InvalidConfiguration);
         }
         let mut stored_name = [0; 48];
@@ -442,7 +449,14 @@ impl ApplicationPackageManifest {
         core::str::from_utf8(&self.name[..self.name_length as usize]).unwrap_or("")
     }
 
+    pub const fn schema(&self) -> u16 {
+        self.schema
+    }
+
     fn encode(self, destination: &mut [u8]) -> Result<(), PackageError> {
+        if self.schema != APPLICATION_MANIFEST_SCHEMA {
+            return Err(PackageError::InvalidConfiguration);
+        }
         if destination.len() < APPLICATION_METADATA_BYTES {
             return Err(PackageError::BufferTooSmall {
                 required: APPLICATION_METADATA_BYTES,
@@ -468,14 +482,25 @@ impl ApplicationPackageManifest {
             return Err(PackageError::CorruptBundle);
         }
         let name_length = bytes[4] as usize;
-        if name_length == 0 || name_length > 48 || bytes[150..].iter().any(|byte| *byte != 0) {
+        if name_length == 0
+            || name_length > 48
+            || bytes[5] != 0
+            || bytes[102 + name_length..150]
+                .iter()
+                .any(|byte| *byte != 0)
+            || bytes[150..].iter().any(|byte| *byte != 0)
+        {
             return Err(PackageError::CorruptBundle);
         }
         let mut name = [0; 48];
         name.copy_from_slice(&bytes[102..150]);
         core::str::from_utf8(&name[..name_length]).map_err(|_| PackageError::CorruptBundle)?;
+        let schema = read_u16(bytes, 0)?;
+        if schema != APPLICATION_MANIFEST_SCHEMA {
+            return Err(PackageError::CorruptBundle);
+        }
         Ok(Self {
-            schema: read_u16(bytes, 0)?,
+            schema,
             target: bytes[2],
             kind: bytes[3],
             name,
@@ -680,7 +705,7 @@ impl<'a> PackageBundle<'a> {
         if bytes.len() < FIXED_HEADER_BYTES {
             return Err(PackageError::BundleTooSmall);
         }
-        if &bytes[..8] != BUNDLE_MAGIC || read_u16(bytes, 8)? != BUNDLE_VERSION {
+        if &bytes[..8] != PACKAGE_BUNDLE_MAGIC || read_u16(bytes, 8)? != PACKAGE_BUNDLE_VERSION {
             return Err(PackageError::CorruptBundle);
         }
 
@@ -810,8 +835,8 @@ pub fn encode_bundle(
     let key_id = key.id();
 
     destination[..required].fill(0);
-    destination[..8].copy_from_slice(BUNDLE_MAGIC);
-    destination[8..10].copy_from_slice(&BUNDLE_VERSION.to_be_bytes());
+    destination[..8].copy_from_slice(PACKAGE_BUNDLE_MAGIC);
+    destination[8..10].copy_from_slice(&PACKAGE_BUNDLE_VERSION.to_be_bytes());
     destination[10..12].copy_from_slice(&(header_length as u16).to_be_bytes());
     destination[12..20].copy_from_slice(&(payload.len() as u64).to_be_bytes());
     destination[20..28].copy_from_slice(&entry_offset.to_be_bytes());
@@ -1414,8 +1439,8 @@ fn signature_material(
     dependencies: &[Option<ContentId>; MAX_DEPENDENCIES],
 ) -> ([u8; MAX_SIGNED_BYTES], usize) {
     let mut material = [0; MAX_SIGNED_BYTES];
-    material[..8].copy_from_slice(BUNDLE_MAGIC);
-    material[8..10].copy_from_slice(&BUNDLE_VERSION.to_be_bytes());
+    material[..8].copy_from_slice(PACKAGE_BUNDLE_MAGIC);
+    material[8..10].copy_from_slice(&PACKAGE_BUNDLE_VERSION.to_be_bytes());
     material[10..18].copy_from_slice(&payload_length.to_be_bytes());
     material[18..26].copy_from_slice(&entry_offset.to_be_bytes());
     material[26..58].copy_from_slice(package.as_bytes());

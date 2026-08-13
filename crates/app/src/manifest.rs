@@ -4,7 +4,7 @@ use synos_init::RestartPolicy;
 use synos_status::{IntoStatus, Status};
 use synos_system_model::ContentId;
 
-pub const APP_MANIFEST_SCHEMA: u16 = 1;
+pub const APP_MANIFEST_SCHEMA: u16 = synos_pkg::APPLICATION_MANIFEST_SCHEMA;
 pub const MAX_APP_NAME_BYTES: usize = 48;
 pub const MAX_RESOURCE_NAME_BYTES: usize = 64;
 pub const MAX_APP_CAPABILITIES: usize = 16;

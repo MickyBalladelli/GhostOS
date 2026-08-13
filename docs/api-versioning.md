@@ -14,7 +14,7 @@ bits after this policy check.
 | Swift public API | 1 | 1 | Publish a new client adapter | `SynOSCompatibility.legacyVersion` |
 | Wire API | 1.0 | 1.0 | Negotiate before decoding | Stable `SYNOS-COMPAT-*` errors |
 | Shell API | 1.0 | 1.0 | Export commands and recreate state | Stable `SYNOS-COMPAT-*` errors |
-| Package API | 1.0 | 1.0 | Rebuild and sign with the target writer | Stable `SYNOS-COMPAT-*` errors |
+| Package API | 1.0 | 1.0 | Rebuild and sign with the target writer; see [`package-abi.md`](package-abi.md) | Stable `SYNOS-COMPAT-*` errors |
 | Snapshot API | 2.0 | 1.0–2.0 | `snapshot-v1-to-v2` | `LEGACY_SNAPSHOT_V1` |
 | Configuration API | 1.0 | 1.0 | Re-render and sign configuration | Stable `SYNOS-COMPAT-*` errors |
 
