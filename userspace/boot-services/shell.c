@@ -785,6 +785,134 @@ static void list_credentials(const char *username, u8 *buffer)
     write_text("Account not found.\n");
 }
 
+static u64 read_credential_line(char *line, u64 capacity)
+{
+    u64 count = 0;
+    u8 byte;
+    for (;;) {
+        if (!read_byte(&byte)) {
+            sleep_for(1000);
+            continue;
+        }
+        if (byte == '\r' || byte == '\n') {
+            line[count] = 0;
+            write_text("\n");
+            return count;
+        }
+        if (byte == 8 || byte == 127) {
+            if (count != 0) {
+                count--;
+                write_text("\b \b");
+            }
+            continue;
+        }
+        if (byte >= 32 && byte < 127 && count + 1 < capacity) {
+            line[count++] = (char)byte;
+            write_bytes((const char *)&byte, 1);
+        }
+    }
+}
+
+static void add_credential(const char *username, u8 *buffer)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+    u64 username_length = length(username);
+    if (!valid_account_username((const u8 *)username, username_length)) {
+        write_text("Invalid username.\n");
+        return;
+    }
+
+    u64 database_bytes = 0;
+    u64 offset = 0;
+    u8 target[ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY] = {0};
+    int found = 0;
+    int target_pending = 0;
+    int read = read_account_database(buffer, &database_bytes);
+    if (read < 0) {
+        write_text("Credential enrollment unavailable.\n");
+        return;
+    }
+    if (read == 0 || database_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account not found.\n");
+        return;
+    }
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest != 0
+            && record[ACCOUNT_USERNAME_CAPACITY + 2] != ACCOUNT_RECORD_DELETED
+            && account_username_matches(record + 2, record[1], username)) {
+            found = 1;
+            target_pending = record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING;
+            for (u64 index = 0; index < record_bytes; index++) {
+                target[index] = record[index];
+            }
+        }
+        offset += record_bytes;
+    }
+    if (!found) {
+        write_text("Account not found.\n");
+        return;
+    }
+    if (!target_pending) {
+        write_text("Account already has a credential.\n");
+        return;
+    }
+
+    char kind[256];
+    char material[256];
+    write_text("Credential type (PASSKEY, TPM, SSH): ");
+    u64 kind_length = read_credential_line(kind, sizeof(kind));
+    write_text("Public material (max 96 characters): ");
+    u64 material_length = read_credential_line(material, sizeof(material));
+    u8 kind_id = 0;
+    if (equal_name(kind, "PASSKEY")) {
+        kind_id = 1;
+    } else if (equal_name(kind, "TPM")) {
+        kind_id = 2;
+    } else if (equal_name(kind, "SSH")) {
+        kind_id = 3;
+    }
+    if (kind_length == 0 || material_length == 0
+        || material_length > ACCOUNT_CREDENTIAL_CAPACITY || kind_id == 0) {
+        write_text("Credential rejected.\n");
+        return;
+    }
+    if (database_bytes + ACCOUNT_RECORD_HEADER_BYTES + material_length > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account database is full.\n");
+        return;
+    }
+    target[ACCOUNT_USERNAME_CAPACITY + 2] = kind_id;
+    target[ACCOUNT_RECORD_HEADER_BYTES - 1] = (u8)material_length;
+    for (offset = 0; offset < material_length; offset++) {
+        target[ACCOUNT_RECORD_HEADER_BYTES + offset] = (u8)material[offset];
+    }
+    u32 failure_status = 0;
+    if (!append_account_record(
+        target,
+        ACCOUNT_RECORD_HEADER_BYTES + material_length,
+        database_bytes,
+        &failure_status
+    )) {
+        write_text("Credential enrollment failed.\n");
+        write_status(failure_status);
+        return;
+    }
+    write_text("Credential added; account is active.\n");
+}
+
 static void create_account(const char *username, u8 *buffer)
 {
     if (!login_authorized()) {
@@ -1259,15 +1387,23 @@ static void execute_line(char *line, u8 *buffer)
     if (equal_name(command, "CREDENTIAL")) {
         char action[256];
         char username[256];
-        if (next_word(&cursor, action) == 0 || !equal_name(action, "LIST")) {
-            write_text("Use: CREDENTIAL LIST <username>\n");
+        if (next_word(&cursor, action) == 0) {
+            write_text("Use: CREDENTIAL LIST <username> or CREDENTIAL ADD <username>\n");
             return;
         }
         if (next_word(&cursor, username) == 0) {
-            write_text("Use: CREDENTIAL LIST <username>\n");
+            write_text(equal_name(action, "LIST")
+                ? "Use: CREDENTIAL LIST <username>\n"
+                : "Use: CREDENTIAL ADD <username>\n");
             return;
         }
-        list_credentials(username, buffer);
+        if (equal_name(action, "LIST")) {
+            list_credentials(username, buffer);
+        } else if (equal_name(action, "ADD")) {
+            add_credential(username, buffer);
+        } else {
+            write_text("Use: CREDENTIAL LIST <username> or CREDENTIAL ADD <username>\n");
+        }
         return;
     }
     if (equal_name(command, "ACCOUNT")) {
