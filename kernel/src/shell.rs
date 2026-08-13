@@ -246,7 +246,8 @@ pub(crate) fn poll_input() -> Result<u64, Status> {
     if !SHELL_READY.load(Ordering::Acquire) {
         return Err(Status::BUSY)
     }
-    if !session_authorized() {
+    if !session_authorized_at(crate::time::monotonic_now_us()) {
+        lock_shell_session();
         return Ok(0)
     }
     let registry = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_REGISTRY)).assume_init_mut() };
@@ -793,7 +794,21 @@ pub(crate) fn authorize_session(
 
 pub(crate) fn revoke_session(revocation_epoch: u64) {
     SHELL_SESSION_EPOCH.store(revocation_epoch.max(1), Ordering::Release);
-    SHELL_AUTHORIZED.store(false, Ordering::Release)
+    lock_shell_session()
+}
+
+fn lock_shell_session() {
+    if !SHELL_AUTHORIZED.swap(false, Ordering::AcqRel) {
+        return
+    }
+    if !SHELL_READY.load(Ordering::Acquire) {
+        return
+    }
+    let session = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_SESSION)).assume_init_mut() };
+    session.editor.clear();
+    session.line_render.reset();
+    crate::println!();
+    prompt()
 }
 
 fn session_authorized() -> bool {

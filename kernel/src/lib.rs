@@ -217,6 +217,16 @@ static LOGIN_ADMINISTRATOR_EXISTS: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static LOGIN_SESSION_EXPIRES: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_SESSION_LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const LOGIN_USERNAME_CAPACITY: usize = 32;
 #[cfg(all(
     target_arch = "x86_64",
@@ -552,6 +562,16 @@ const LOGIN_LOCK_FAILURE_THRESHOLD: u32 = 5;
     any(target_os = "none", target_os = "uefi")
 ))]
 const LOGIN_LOCK_DURATION_US: u64 = 300_000_000;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOGIN_SESSION_LIFETIME_US: u64 = 900_000_000;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOGIN_SESSION_IDLE_TIMEOUT_US: u64 = 300_000_000;
 
 #[cfg(all(
     target_arch = "x86_64",
@@ -771,6 +791,63 @@ fn clear_login_failures() {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+fn revoke_login_session() {
+    LOGIN_AUTHORIZED.store(false, Ordering::Release);
+    LOGIN_REQUESTED.store(true, Ordering::Release);
+    LOGIN_SESSION_EXPIRES.store(0, Ordering::Release);
+    LOGIN_SESSION_LAST_ACTIVITY.store(0, Ordering::Release);
+    clear_login_challenge();
+    clear_login_username();
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn login_session_active() -> bool {
+    if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
+        return false
+    }
+    let now_us = time::monotonic_now_us();
+    let expires_at_us = LOGIN_SESSION_EXPIRES.load(Ordering::Acquire);
+    let last_activity_us = LOGIN_SESSION_LAST_ACTIVITY.load(Ordering::Acquire);
+    if expires_at_us == 0
+        || now_us >= expires_at_us
+        || now_us.saturating_sub(last_activity_us) >= LOGIN_SESSION_IDLE_TIMEOUT_US
+    {
+        revoke_login_session();
+        return false
+    }
+    true
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn start_login_session() {
+    let now_us = time::monotonic_now_us();
+    LOGIN_SESSION_LAST_ACTIVITY.store(now_us, Ordering::Release);
+    LOGIN_SESSION_EXPIRES.store(
+        now_us.saturating_add(LOGIN_SESSION_LIFETIME_US),
+        Ordering::Release,
+    );
+    LOGIN_REQUESTED.store(false, Ordering::Release);
+    LOGIN_AUTHORIZED.store(true, Ordering::Release);
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn record_login_activity() {
+    LOGIN_SESSION_LAST_ACTIVITY.store(time::monotonic_now_us(), Ordering::Release)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 #[allow(unsafe_code)]
 fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     let role = caller.raw() as usize;
@@ -796,6 +873,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                     | Operation::SynFsDelete
             )
         {
+            if !login_session_active() {
+                return syscall_error(Status::ACCESS_DENIED)
+            }
+            record_login_activity();
             let address = request.arguments[0];
             let length = request.arguments[1];
             let writable = request.arguments[2];
@@ -870,10 +951,11 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     if request.flags != 0 || request.capability != 0 {
         return syscall_error(Status::INVALID_ARGUMENT)
     }
-    if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite)
-        && ((caller.raw() == 9 && LOGIN_AUTHORIZED.load(Ordering::Acquire))
-            || caller.raw() == 14)
-    {
+    if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite) {
+        let shell_active = caller.raw() == 9 && login_session_active();
+        if caller.raw() != 14 && caller.raw() != 9 {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
         let address = request.arguments[0] as usize;
         let length = request.arguments[1] as usize;
         if request.arguments[2..] != [0; 4]
@@ -886,16 +968,19 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             let bytes = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
             console::write_bytes(bytes)
         });
+        if shell_active {
+            record_login_activity()
+        }
         return Response {
             status: Status::NORMAL.raw(),
             flags: 0,
             values: [length as u64, 0, 0, 0],
         }
     }
-    if Operation::from_raw(request.operation) == Some(Operation::TerminalRead)
-        && ((caller.raw() == 9 && LOGIN_AUTHORIZED.load(Ordering::Acquire))
-            || caller.raw() == 14)
-    {
+    if Operation::from_raw(request.operation) == Some(Operation::TerminalRead) {
+        if caller.raw() != 14 && (caller.raw() != 9 || !login_session_active()) {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
         let address = request.arguments[0] as usize;
         if request.arguments[1] != 1
             || request.arguments[2..] != [0; 4]
@@ -905,6 +990,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         }
         if let Some(byte) = keyboard::read_boot_byte().or_else(console::read_byte) {
             unsafe { arch::write_user(address as *mut u8, byte) };
+            if caller.raw() == 9 {
+                record_login_activity()
+            }
             return Response {
                 status: Status::NORMAL.raw(),
                 flags: 0,
@@ -969,8 +1057,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         clear_login_failures();
         set_login_username(&username[..username_length]);
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
-        LOGIN_REQUESTED.store(false, Ordering::Release);
-        LOGIN_AUTHORIZED.store(true, Ordering::Release);
+        start_login_session();
         return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginTpmComplete) {
@@ -1025,23 +1112,23 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         clear_login_failures();
         set_login_username(&username[..username_length]);
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
-        LOGIN_REQUESTED.store(false, Ordering::Release);
-        LOGIN_AUTHORIZED.store(true, Ordering::Release);
+        start_login_session();
         return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginStatus) {
-        if caller.raw() != 14
+        if caller.raw() != 9 && caller.raw() != 14
             || request.flags != 0
             || request.capability != 0
             || request.arguments != [0; 6]
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
+        let authorized = login_session_active();
         return syscall_success([
             LOGIN_REQUESTED.load(Ordering::Acquire) as u64,
             LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire) as u64,
             login_lock_until_us(),
-            0,
+            authorized as u64,
         ])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginStart) {
@@ -1052,13 +1139,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
+        if !login_session_active() {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        clear_login_challenge();
-        clear_login_username();
-        LOGIN_AUTHORIZED.store(false, Ordering::Release);
-        LOGIN_REQUESTED.store(true, Ordering::Release);
+        revoke_login_session();
         return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginLogout) {
@@ -1069,13 +1153,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
+        if !login_session_active() {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        clear_login_challenge();
-        clear_login_username();
-        LOGIN_AUTHORIZED.store(false, Ordering::Release);
-        LOGIN_REQUESTED.store(true, Ordering::Release);
+        revoke_login_session();
         return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginWhoami) {
@@ -1089,7 +1170,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
+        if !login_session_active() {
             return syscall_error(Status::ACCESS_DENIED)
         }
         let address = request.arguments[0];

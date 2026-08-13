@@ -26,6 +26,7 @@ enum {
     OP_SYNFS_DELETE = 22,
     OP_TERMINAL_READ = 24,
     OP_TERMINAL_WRITE = 25,
+    OP_LOGIN_STATUS = 51,
     OP_LOGIN_START = 52,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
@@ -137,6 +138,34 @@ static int read_byte(u8 *byte)
 {
     struct response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
     return response.status == 0 && response.values[0] == 1;
+}
+
+static int login_authorized(void)
+{
+    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
+    return response.status == 0 && response.values[3] != 0;
+}
+
+static void write_prompt(int authorized)
+{
+    if (authorized) {
+        write_text("$ ");
+    } else {
+        write_text("\x1b[1;33mSYNOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ");
+    }
+}
+
+static int update_prompt(int *prompt_authorized)
+{
+    int authorized = login_authorized();
+    if (*prompt_authorized != authorized) {
+        if (*prompt_authorized >= 0) {
+            write_text("\n");
+        }
+        write_prompt(authorized);
+        *prompt_authorized = authorized;
+    }
+    return authorized;
 }
 
 static void sleep_for(u64 duration_us)
@@ -321,8 +350,14 @@ void _start(void)
     u8 byte;
 
     call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
-    write_text("SynOS user shell\n$ ");
+    write_text("SynOS user shell\n");
+    int prompt_authorized = -1;
     for (;;) {
+        if (!update_prompt(&prompt_authorized)) {
+            line_length = 0;
+            sleep_for(1000);
+            continue;
+        }
         if (!read_byte(&byte)) {
             sleep_for(1000);
             idle_polls++;
@@ -338,7 +373,6 @@ void _start(void)
             line[line_length] = 0;
             execute_line(line, buffer);
             line_length = 0;
-            write_text("$ ");
         } else if (byte == 8 || byte == 127) {
             if (line_length != 0) {
                 line_length--;
