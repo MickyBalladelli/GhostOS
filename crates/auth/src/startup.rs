@@ -500,6 +500,8 @@ pub struct SessionView {
     pub handle: SessionHandle,
     pub identity: IdentityId,
     pub credential: CredentialId,
+    pub terminal: AddressSpaceId,
+    pub node: NodeId,
     pub authenticated_at_us: u64,
     pub last_activity_us: u64,
     pub expires_at_us: u64,
@@ -689,6 +691,18 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         Ok(Self::view_of(*active))
     }
 
+    pub fn authorize_from(
+        &mut self,
+        handle: SessionHandle,
+        right: RightIdentifier,
+        node: NodeId,
+        terminal: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
+        self.require_binding(handle, node, terminal)?;
+        self.authorize(handle, right, now_us)
+    }
+
     pub fn touch(
         &mut self,
         handle: SessionHandle,
@@ -708,6 +722,17 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         }
         active.last_activity_us = now_us;
         Ok(Self::view_of(*active))
+    }
+
+    pub fn touch_from(
+        &mut self,
+        handle: SessionHandle,
+        node: NodeId,
+        terminal: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
+        self.require_binding(handle, node, terminal)?;
+        self.touch(handle, now_us)
     }
 
     pub fn logout(&mut self, handle: SessionHandle) -> Result<(), StartupError> {
@@ -803,11 +828,34 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
             .ok_or(StartupError::SessionNotFound)
     }
 
+    fn require_binding(
+        &self,
+        handle: SessionHandle,
+        node: NodeId,
+        terminal: AddressSpaceId,
+    ) -> Result<(), StartupError> {
+        let active = self
+            .active
+            .iter()
+            .flatten()
+            .find(|active| active.handle == handle)
+            .ok_or(StartupError::SessionNotFound)?;
+        if active.revocation_epoch != self.revocation_epoch {
+            return Err(StartupError::SessionRevoked)
+        }
+        if active.session.node() != node || active.session.login_address_space != terminal {
+            return Err(StartupError::Authentication(AuthError::VerificationFailed))
+        }
+        Ok(())
+    }
+
     const fn view_of(active: ActiveSession) -> SessionView {
         SessionView {
             handle: active.handle,
             identity: active.session.identity(),
             credential: active.credential,
+            terminal: active.session.login_address_space,
+            node: active.session.node(),
             authenticated_at_us: active.authenticated_at_us,
             last_activity_us: active.last_activity_us,
             expires_at_us: active.session.expires_at_us,
@@ -995,6 +1043,33 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                         .identity,
                     right,
                 ) => self.sessions.touch(handle, now_us),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn authorize_from(
+        &mut self,
+        handle: SessionHandle,
+        right: RightIdentifier,
+        node: NodeId,
+        terminal: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
+        match self
+            .sessions
+            .authorize_from(handle, right, node, terminal, now_us)
+        {
+            Ok(view) => Ok(view),
+            Err(StartupError::Authentication(AuthError::VerificationFailed))
+                if self.state.groups.allows(
+                    self.sessions
+                        .touch_from(handle, node, terminal, now_us)
+                        .map_err(|_| StartupError::SessionRevoked)?
+                        .identity,
+                    right,
+                ) => self
+                    .sessions
+                    .touch_from(handle, node, terminal, now_us),
             Err(error) => Err(error),
         }
     }

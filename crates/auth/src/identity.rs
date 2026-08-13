@@ -941,6 +941,7 @@ impl AuthenticationChallenge {
 struct PendingChallenge {
     challenge: AuthenticationChallenge,
     record: UserRecord,
+    node: NodeId,
 }
 
 pub struct AuthDaemon<
@@ -1038,7 +1039,11 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             .iter_mut()
             .find(|entry| entry.is_none())
             .ok_or(AuthError::Capacity)?;
-        *slot = Some(PendingChallenge { challenge, record });
+        *slot = Some(PendingChallenge {
+            challenge,
+            record,
+            node,
+        });
         Ok(challenge)
     }
 
@@ -1099,6 +1104,7 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         Ok(Session {
             record: session_record,
             login_address_space,
+            node: pending.node,
             expires_at_us: now_us.saturating_add(session_lifetime_us),
         })
     }
@@ -1144,6 +1150,7 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         Ok(Session {
             record: session_record,
             login_address_space,
+            node: pending.node,
             expires_at_us: now_us.saturating_add(session_lifetime_us),
         })
     }
@@ -1153,6 +1160,7 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
 pub struct Session {
     record: UserRecord,
     pub login_address_space: AddressSpaceId,
+    node: NodeId,
     pub expires_at_us: u64,
 }
 
@@ -1170,6 +1178,10 @@ impl fmt::Debug for Session {
 impl Session {
     pub const fn identity(&self) -> IdentityId {
         self.record.identity
+    }
+
+    pub const fn node(&self) -> NodeId {
+        self.node
     }
 
     pub fn is_usable_at(&self, credential: CredentialId, now_us: u64) -> bool {
