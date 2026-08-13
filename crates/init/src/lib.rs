@@ -171,6 +171,13 @@ pub struct ServiceStatus {
     pub restart_at_us: u64,
     pub last_exit: Option<ExitReason>,
     pub fault_domain: Option<FaultDomain>,
+    pub dependency_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StartupDiagnostic {
+    pub status: ServiceStatus,
+    pub blocked_on: Option<ServiceId>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -770,8 +777,42 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
 
     pub fn status(&self, id: ServiceId) -> Result<ServiceStatus, SupervisorError> {
         let index = self.slot_index(id)?;
+        Ok(self.service_status(index))
+    }
+
+    pub fn startup_diagnostic(&self, id: ServiceId) -> Result<StartupDiagnostic, SupervisorError> {
+        let index = self.slot_index(id)?;
+        let status = self.service_status(index);
+        let blocked_on = self.services[index].dependencies[..self.services[index].dependency_count]
+            .iter()
+            .flatten()
+            .copied()
+            .find(|dependency| self.readiness(*dependency).unwrap_or(ServiceReadiness::Waiting) != ServiceReadiness::Ready);
+        Ok(StartupDiagnostic { status, blocked_on })
+    }
+
+    pub fn dependencies(
+        &self,
+        id: ServiceId,
+    ) -> Result<impl Iterator<Item = ServiceId> + '_, SupervisorError> {
+        let index = self.slot_index(id)?;
+        Ok(self.services[index].dependencies[..self.services[index].dependency_count]
+            .iter()
+            .flatten()
+            .copied())
+    }
+
+    pub fn services(&self) -> impl Iterator<Item = ServiceStatus> + '_ {
+        self.services
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| slot.occupied)
+            .map(|(index, _)| self.service_status(index))
+    }
+
+    fn service_status(&self, index: usize) -> ServiceStatus {
         let slot = &self.services[index];
-        Ok(ServiceStatus {
+        ServiceStatus {
             spec: slot.spec,
             state: slot.state,
             readiness: self.readiness_at(index, &mut [0; CAPACITY]),
@@ -781,27 +822,8 @@ impl<const CAPACITY: usize> Supervisor<CAPACITY> {
             restart_at_us: slot.restart_at_us,
             last_exit: slot.last_exit,
             fault_domain: slot.fault_domain,
-        })
-    }
-
-    pub fn services(&self) -> impl Iterator<Item = ServiceStatus> + '_ {
-        self.services
-            .iter()
-            .enumerate()
-            .filter(|(_, slot)| slot.occupied)
-            .map(|(index, slot)| {
-                ServiceStatus {
-                    spec: slot.spec,
-                    state: slot.state,
-                    readiness: self.readiness_at(index, &mut [0; CAPACITY]),
-                    process: slot.process,
-                    generation: slot.generation,
-                    restart_count: slot.restart_count,
-                    restart_at_us: slot.restart_at_us,
-                    last_exit: slot.last_exit,
-                    fault_domain: slot.fault_domain,
-                }
-            })
+            dependency_count: slot.dependency_count,
+        }
     }
 
     fn slot_index(&self, id: ServiceId) -> Result<usize, SupervisorError> {

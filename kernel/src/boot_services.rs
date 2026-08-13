@@ -5,8 +5,8 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use synos_fsd::{Daemon, ProcessRights};
 use synos_init::{
-    ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceSpec, SpawnRequest,
-    Supervisor, SupervisorEvent, SupervisorRuntime,
+    ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceReadiness, ServiceSpec,
+    ServiceState, SpawnRequest, StartupDiagnostic, Supervisor, SupervisorRuntime,
 };
 use synos_status::Status;
 use synos_synfs::SynFs;
@@ -60,6 +60,7 @@ const ETHERNET_PROCESS_ID: u64 = 13;
 const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
 const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
+const SERVICE_COUNT: usize = 12;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
 
@@ -77,6 +78,27 @@ static PCI_READY: AtomicBool = AtomicBool::new(false);
 static AHCI_READY: AtomicBool = AtomicBool::new(false);
 static NVME_READY: AtomicBool = AtomicBool::new(false);
 static ETHERNET_READY: AtomicBool = AtomicBool::new(false);
+static STARTUP_DIAGNOSTICS_READY: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy)]
+pub struct BootStartupDiagnostic {
+    pub startup_order: usize,
+    pub state: ServiceState,
+    pub readiness: ServiceReadiness,
+    pub dependency_count: usize,
+    pub blocked_on: Option<ServiceId>,
+}
+
+const EMPTY_STARTUP_DIAGNOSTIC: BootStartupDiagnostic = BootStartupDiagnostic {
+    startup_order: 0,
+    state: ServiceState::Stopped,
+    readiness: ServiceReadiness::Waiting,
+    dependency_count: 0,
+    blocked_on: None,
+};
+
+static mut STARTUP_DIAGNOSTICS: [BootStartupDiagnostic; SERVICE_COUNT] =
+    [EMPTY_STARTUP_DIAGNOSTIC; SERVICE_COUNT];
 
 #[derive(Clone, Copy)]
 pub struct BootServices {
@@ -92,6 +114,31 @@ pub struct BootServices {
     pub ahci_process: ProcessId,
     pub nvme_process: ProcessId,
     pub ethernet_process: ProcessId,
+}
+
+fn service_ids() -> [ServiceId; SERVICE_COUNT] {
+    [
+        filesystem_service_id(),
+        storage_service_id(),
+        network_service_id(),
+        logging_service_id(),
+        audit_service_id(),
+        authentication_service_id(),
+        package_service_id(),
+        shell_service_id(),
+        pci_service_id(),
+        ahci_service_id(),
+        nvme_service_id(),
+        ethernet_service_id(),
+    ]
+}
+
+pub(crate) fn startup_diagnostic(service: ServiceId) -> Option<BootStartupDiagnostic> {
+    if !STARTUP_DIAGNOSTICS_READY.load(Ordering::Acquire) {
+        return None
+    }
+    let index = service_ids().iter().position(|id| *id == service)?;
+    unsafe { Some(STARTUP_DIAGNOSTICS[index]) }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -405,6 +452,28 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         })
         .map_err(|_| StartError::Supervisor)?;
 
+    for (service, dependency) in [
+        (storage_service_id(), pci_service_id()),
+        (filesystem_service_id(), storage_service_id()),
+        (network_service_id(), ethernet_service_id()),
+        (audit_service_id(), logging_service_id()),
+        (authentication_service_id(), filesystem_service_id()),
+        (authentication_service_id(), audit_service_id()),
+        (package_service_id(), filesystem_service_id()),
+        (package_service_id(), logging_service_id()),
+        (shell_service_id(), authentication_service_id()),
+        (shell_service_id(), package_service_id()),
+        (shell_service_id(), network_service_id()),
+        (shell_service_id(), logging_service_id()),
+        (ahci_service_id(), pci_service_id()),
+        (nvme_service_id(), pci_service_id()),
+        (ethernet_service_id(), pci_service_id()),
+    ] {
+        supervisor
+            .add_dependency(service, dependency)
+            .map_err(|_| StartError::Supervisor)?;
+    }
+
     let mut runtime = BootRuntime {
         filesystem_process,
         storage_process,
@@ -419,27 +488,49 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         nvme_process,
         ethernet_process,
     };
-    for service in [
-        filesystem_service_id(),
-        storage_service_id(),
-        network_service_id(),
-        logging_service_id(),
-        audit_service_id(),
-        authentication_service_id(),
-        package_service_id(),
-        shell_service_id(),
-        pci_service_id(),
-        ahci_service_id(),
-        nvme_service_id(),
-        ethernet_service_id(),
-    ] {
-        let event = supervisor
-            .start(service, &mut runtime)
-            .map_err(|_| StartError::Supervisor)?;
-        if !matches!(event, SupervisorEvent::Started { .. }) {
+    let startup_trace = match supervisor.boot(&mut runtime) {
+        Ok(trace) => trace,
+        Err(error) => {
+            crate::println!("service startup failed: {:?}", error);
             return Err(StartError::Supervisor)
         }
+    };
+    let mut startup_orders = [0usize; SERVICE_COUNT];
+    let mut startup_order = 1usize;
+    crate::println!("service startup dependency order:");
+    for event in startup_trace.events() {
+        if let synos_init::LifecycleEvent::ServiceStarted { service, generation } = event {
+            if let Some(index) = service_ids().iter().position(|id| *id == service) {
+                startup_orders[index] = startup_order;
+            }
+            let diagnostic = supervisor
+                .startup_diagnostic(service)
+                .map_err(|_| StartError::Supervisor)?;
+            crate::println!(
+                "  service={} generation={} dependencies={} readiness={}",
+                service.raw(),
+                generation,
+                diagnostic.status.dependency_count,
+                matches!(diagnostic.status.readiness, ServiceReadiness::Ready),
+            );
+            startup_order += 1;
+        }
     }
+    for (index, service) in service_ids().iter().copied().enumerate() {
+        let diagnostic: StartupDiagnostic = supervisor
+            .startup_diagnostic(service)
+            .map_err(|_| StartError::Supervisor)?;
+        unsafe {
+            STARTUP_DIAGNOSTICS[index] = BootStartupDiagnostic {
+                startup_order: startup_orders[index],
+                state: diagnostic.status.state,
+                readiness: diagnostic.status.readiness,
+                dependency_count: diagnostic.status.dependency_count,
+                blocked_on: diagnostic.blocked_on,
+            };
+        }
+    }
+    STARTUP_DIAGNOSTICS_READY.store(true, Ordering::Release);
 
     // The daemon owns its namespace and capabilities for the lifetime of the
     // service. Publish it only after all startup checks have succeeded.

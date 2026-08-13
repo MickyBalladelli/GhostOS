@@ -37,6 +37,7 @@ const SYNOS_ISOLATE_ROUTE: u16 = 12;
 const UPTIME_ROUTE: u16 = 13;
 const SHOW_SERVICES_ROUTE: u16 = 14;
 const SUSPEND_ROUTE: u16 = 15;
+const SHOW_STARTUP_ROUTE: u16 = 16;
 const COMMAND_CAPACITY: usize = 96;
 const HISTORY_CAPACITY: usize = 8;
 const EDITOR_RENDER_BYTES: usize = 16 * 1024;
@@ -205,6 +206,7 @@ pub(crate) unsafe fn initialize(
     register(registry, "SHOW-DSM", SHOW_DSM_ROUTE);
     register(registry, "UPTIME", UPTIME_ROUTE);
     register(registry, "SHOW-SERVICES", SHOW_SERVICES_ROUTE);
+    register(registry, "SHOW-STARTUP", SHOW_STARTUP_ROUTE);
     register_control_commands(registry);
     syn_shell::cluster::register_cluster_commands_without_help(registry)
         .expect("kernel cluster command registry has capacity");
@@ -1327,6 +1329,7 @@ fn command_category(route: u16) -> &'static str {
         HELP_ROUTE => "SHELL",
         SHOW_SYSTEM_ROUTE
         | SHOW_SERVICES_ROUTE
+        | SHOW_STARTUP_ROUTE
         | REBOOT_ROUTE
         | SHUTDOWN_ROUTE
         | SUSPEND_ROUTE
@@ -2261,6 +2264,7 @@ impl KernelExecutor {
             SHOW_DSM_ROUTE => self.show_dsm(command.json()),
             UPTIME_ROUTE => self.uptime(),
             SHOW_SERVICES_ROUTE => self.show_services(command.json()),
+            SHOW_STARTUP_ROUTE => self.show_startup(command.json()),
             STOP_JOB_ROUTE => self.stop_job(command),
             SET_PROCESS_ROUTE => self.set_process(command),
             SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
@@ -2803,12 +2807,35 @@ impl KernelExecutor {
             "synos-ethernetd",
         ];
         let mut ready_count = 0u64;
+        let mut dependency_count = 0u64;
+        let mut blocked_count = 0u64;
+        let startup_ids = [
+            crate::boot_services::filesystem_service_id(),
+            crate::boot_services::storage_service_id(),
+            crate::boot_services::network_service_id(),
+            crate::boot_services::logging_service_id(),
+            crate::boot_services::audit_service_id(),
+            crate::boot_services::authentication_service_id(),
+            crate::boot_services::package_service_id(),
+            crate::boot_services::shell_service_id(),
+            crate::boot_services::pci_service_id(),
+            crate::boot_services::ahci_service_id(),
+            crate::boot_services::nvme_service_id(),
+            crate::boot_services::ethernet_service_id(),
+        ];
         if !json {
             crate::println!("\x1b[1;97;44mSERVICE          STATE\x1b[0m")
         }
         for (index, service) in services.iter().enumerate() {
             let is_ready = ready & (1u32 << (index + 1)) != 0;
             ready_count += is_ready as u64;
+            if let Some(diagnostic) = startup_ids
+                .get(index.wrapping_sub(1))
+                .and_then(|id| crate::boot_services::startup_diagnostic(*id))
+            {
+                dependency_count += diagnostic.dependency_count as u64;
+                blocked_count += diagnostic.blocked_on.is_some() as u64;
+            }
             if !json {
                 crate::println!(
                     "{:<16} {}",
@@ -2820,6 +2847,92 @@ impl KernelExecutor {
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert(&mut output, "service-count", OutputValue::Unsigned(services.len() as u64))?;
         insert(&mut output, "ready-count", OutputValue::Unsigned(ready_count))?;
+        insert(&mut output, "ready-mask", OutputValue::Unsigned(ready as u64))?;
+        insert(
+            &mut output,
+            "dependency-count",
+            OutputValue::Unsigned(dependency_count),
+        )?;
+        insert(
+            &mut output,
+            "blocked-count",
+            OutputValue::Unsigned(blocked_count),
+        )?;
+        Ok(output)
+    }
+
+    fn show_startup(&self, json: bool) -> Result<StructuredOutput, Status> {
+        let ready = crate::service_ready_mask();
+        let services = [
+            "synos-init",
+            "synos-fsd",
+            "synos-storaged",
+            "synos-netd",
+            "synos-logd",
+            "synos-auditd",
+            "synos-authd",
+            "synos-pkgd",
+            "synos-shell",
+            "synos-pcid",
+            "synos-ahcid",
+            "synos-nvmed",
+            "synos-ethernetd",
+        ];
+        let startup_ids = [
+            crate::boot_services::filesystem_service_id(),
+            crate::boot_services::storage_service_id(),
+            crate::boot_services::network_service_id(),
+            crate::boot_services::logging_service_id(),
+            crate::boot_services::audit_service_id(),
+            crate::boot_services::authentication_service_id(),
+            crate::boot_services::package_service_id(),
+            crate::boot_services::shell_service_id(),
+            crate::boot_services::pci_service_id(),
+            crate::boot_services::ahci_service_id(),
+            crate::boot_services::nvme_service_id(),
+            crate::boot_services::ethernet_service_id(),
+        ];
+        let mut dependency_count = 0u64;
+        let mut blocked_count = 0u64;
+        let mut ready_count = 0u64;
+        if !json {
+            crate::println!("\x1b[1;97;44mSERVICE          ORDER STATE      DEPS BLOCKED\x1b[0m")
+        }
+        for (index, service) in services.iter().enumerate() {
+            let is_ready = ready & (1u32 << (index + 1)) != 0;
+            let diagnostic = startup_ids
+                .get(index.wrapping_sub(1))
+                .and_then(|id| crate::boot_services::startup_diagnostic(*id));
+            let dependency_count_for_service = diagnostic.map_or(0, |value| value.dependency_count);
+            let blocked_on = diagnostic.and_then(|value| value.blocked_on);
+            let startup_order = diagnostic.map_or(0, |value| value.startup_order);
+            dependency_count += dependency_count_for_service as u64;
+            blocked_count += blocked_on.is_some() as u64;
+            ready_count += is_ready as u64;
+            if !json {
+                crate::println!(
+                    "{:<16} {:>5} {:<10} {:>4} {}",
+                    service,
+                    startup_order,
+                    startup_state_text(diagnostic, is_ready),
+                    dependency_count_for_service,
+                    blocked_on.map_or("-", startup_service_name),
+                )
+            }
+        }
+        let mut output = StructuredOutput::new(Status::NORMAL);
+        insert(&mut output, "service-count", OutputValue::Unsigned(services.len() as u64))?;
+        insert(&mut output, "ready-count", OutputValue::Unsigned(ready_count))?;
+        insert(
+            &mut output,
+            "dependency-count",
+            OutputValue::Unsigned(dependency_count),
+        )?;
+        insert(
+            &mut output,
+            "blocked-count",
+            OutputValue::Unsigned(blocked_count),
+        )?;
         insert(&mut output, "ready-mask", OutputValue::Unsigned(ready as u64))?;
         Ok(output)
     }
@@ -3287,6 +3400,56 @@ impl CommandExecutor for KernelExecutor {
 fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result<(), Status> {
     let text = OutputText::new(value).map_err(|_| Status::NO_SPACE)?;
     insert(output, name, OutputValue::Text(text))
+}
+
+fn startup_service_name(service: synos_init::ServiceId) -> &'static str {
+    if service == crate::boot_services::filesystem_service_id() {
+        "synos-fsd"
+    } else if service == crate::boot_services::storage_service_id() {
+        "synos-storaged"
+    } else if service == crate::boot_services::network_service_id() {
+        "synos-netd"
+    } else if service == crate::boot_services::logging_service_id() {
+        "synos-logd"
+    } else if service == crate::boot_services::audit_service_id() {
+        "synos-auditd"
+    } else if service == crate::boot_services::authentication_service_id() {
+        "synos-authd"
+    } else if service == crate::boot_services::package_service_id() {
+        "synos-pkgd"
+    } else if service == crate::boot_services::shell_service_id() {
+        "synos-shell"
+    } else if service == crate::boot_services::pci_service_id() {
+        "synos-pcid"
+    } else if service == crate::boot_services::ahci_service_id() {
+        "synos-ahcid"
+    } else if service == crate::boot_services::nvme_service_id() {
+        "synos-nvmed"
+    } else if service == crate::boot_services::ethernet_service_id() {
+        "synos-ethernetd"
+    } else {
+        "unknown"
+    }
+}
+
+fn startup_state_text(
+    diagnostic: Option<crate::boot_services::BootStartupDiagnostic>,
+    runtime_ready: bool,
+) -> &'static str {
+    let Some(diagnostic) = diagnostic else {
+        return if runtime_ready { "READY" } else { "STARTING" }
+    };
+    if matches!(diagnostic.state, synos_init::ServiceState::Failed) {
+        return "FAILED"
+    }
+    if matches!(diagnostic.state, synos_init::ServiceState::Backoff) {
+        return "BACKOFF"
+    }
+    if runtime_ready && matches!(diagnostic.readiness, synos_init::ServiceReadiness::Ready) {
+        "READY"
+    } else {
+        "STARTING"
+    }
 }
 
 fn thread_id(value: Option<Value>) -> Result<ThreadId, Status> {

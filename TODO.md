@@ -171,7 +171,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add crash-dump storage and a crash viewer.
 - [x] Add boot-failure diagnostics.
 - [x] Add a capability-safe remote debugger.
-- [ ] Add service dependency and startup diagnostics.
+- [x] Add service dependency and startup diagnostics.
 
 ### Build and release
 
