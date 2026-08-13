@@ -29,6 +29,8 @@ directories, including the boot-image SHA-256 digest where applicable.
 - `main.rs` unit tests: CLI parsing and command behavior.
 - `qemu_matrix_59_11.rs` and `test_environments.rs`: opt-in QEMU and storage
   integrity checks.
+- `qemu_login_e2e.rs`: opt-in first-boot, first-login, logout, normal-login,
+  and relogin coverage with a temporary persistent system disk.
 - `soak_leaks.rs`: repeated translation-cache and terminal teardown checks;
   `lifecycle_soak.rs` repeats reboot, suspend/resume, memory hotplug, and
   service restart while checking pages, handles, IRQ routes, timers,

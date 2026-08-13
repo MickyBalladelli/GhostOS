@@ -308,6 +308,8 @@ def run_qemu(capabilities: dict[str, object]) -> dict[str, object]:
         "qemu_matrix_59_11",
         "--test",
         "test_environments",
+        "--test",
+        "qemu_login_e2e",
         "--",
         "--ignored",
     ]

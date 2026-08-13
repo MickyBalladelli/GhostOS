@@ -149,7 +149,7 @@ python3 "$root_dir/scripts/validate-panic-policy.py"
 run_optional docs "$root_dir/scripts/validate-documentation.py"
 qemu_image=${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}
 qemu_uefi_image=${SYNOS_QEMU_UEFI_IMAGE:-$qemu_image}
-run_optional_with_vm_evidence qemu qemu "bios,uefi" 2 "$qemu_image" "$qemu_uefi_image" env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored
+run_optional_with_vm_evidence qemu qemu "bios,uefi" 2 "$qemu_image" "$qemu_uefi_image" env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/qemu" cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments --test qemu_login_e2e -- --ignored
 hardware_accel=${SYNOS_QEMU_ACCEL:-kvm}
 if [[ -z "${SYNOS_QEMU_ACCEL:-}" && "$(uname -s)" == Darwin ]]; then
     hardware_accel=hvf

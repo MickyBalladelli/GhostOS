@@ -449,6 +449,11 @@ file = "tests/test_environments.rs"
 tiers = ["qemu"]
 
 [[test]]
+id = "vm.qemu.login-first-boot-and-session-lifecycle"
+file = "tests/qemu_login_e2e.rs"
+tiers = ["qemu"]
+
+[[test]]
 id = "vm.qemu.bios-one-and-smp"
 file = "tests/qemu_matrix_59_11.rs"
 tiers = ["qemu"]
