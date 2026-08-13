@@ -434,7 +434,7 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         }
         let record = self
             .database()
-            .login_record_for_ssh(username, login_node, public_key)
+            .login_record_for_ssh(username, login_node, public_key, now_us)
             .ok_or(RemoteAuthError::Authentication(AuthError::CredentialNotFound))?;
         let credential = record
             .ssh_key_credential(public_key)

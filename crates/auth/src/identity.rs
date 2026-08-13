@@ -150,6 +150,7 @@ pub struct Credential {
     label: [u8; MAX_CREDENTIAL_LABEL_BYTES],
     label_length: u8,
     created_at_us: u64,
+    expires_at_us: Option<u64>,
     last_used_at_us: Option<u64>,
     revoked: bool,
     sign_count: u32,
@@ -163,6 +164,7 @@ impl fmt::Debug for Credential {
             .field("kind", &self.kind)
             .field("label", &self.label())
             .field("created_at_us", &self.created_at_us)
+            .field("expires_at_us", &self.expires_at_us)
             .field("last_used_at_us", &self.last_used_at_us)
             .field("revoked", &self.revoked)
             .field("sign_count", &self.sign_count)
@@ -195,6 +197,7 @@ impl Credential {
             label: [0; MAX_CREDENTIAL_LABEL_BYTES],
             label_length: 0,
             created_at_us: 0,
+            expires_at_us: None,
             last_used_at_us: None,
             revoked: false,
             sign_count: 0,
@@ -251,12 +254,24 @@ impl Credential {
         self.created_at_us
     }
 
+    pub const fn expires_at_us(&self) -> Option<u64> {
+        self.expires_at_us
+    }
+
+    pub fn set_expires_at_us(&mut self, expires_at_us: Option<u64>) {
+        self.expires_at_us = expires_at_us;
+    }
+
     pub const fn last_used_at_us(&self) -> Option<u64> {
         self.last_used_at_us
     }
 
     pub const fn is_revoked(&self) -> bool {
         self.revoked
+    }
+
+    pub fn is_usable_at(&self, now_us: u64) -> bool {
+        !self.revoked && !self.expires_at_us.is_some_and(|expires_at| now_us >= expires_at)
     }
 
     pub const fn kind(&self) -> CredentialKind {
@@ -293,6 +308,7 @@ pub struct UserRecord {
     pub state: AccountState,
     /// Compatibility flag. AccountState is authoritative for new callers.
     pub enabled: bool,
+    expires_at_us: Option<u64>,
     credentials: [Option<Credential>; MAX_CREDENTIALS_PER_USER],
     rights: [Option<RightIdentifier>; MAX_USER_RIGHTS],
     initial_capabilities: [Option<InitialCapability>; MAX_INITIAL_CAPABILITIES],
@@ -322,6 +338,7 @@ impl UserRecord {
             scope,
             state: AccountState::Active,
             enabled: true,
+            expires_at_us: None,
             credentials: [None; MAX_CREDENTIALS_PER_USER],
             rights: [None; MAX_USER_RIGHTS],
             initial_capabilities: [None; MAX_INITIAL_CAPABILITIES],
@@ -341,6 +358,46 @@ impl UserRecord {
         self.enabled
             && matches!(self.state, AccountState::Active)
             && self.credentials().any(|credential| !credential.is_revoked())
+    }
+
+    pub fn is_login_usable_at(&self, now_us: u64) -> bool {
+        self.is_login_usable()
+            && !self.expires_at_us.is_some_and(|expires_at| now_us >= expires_at)
+            && self.credentials().any(|credential| credential.is_usable_at(now_us))
+    }
+
+    pub const fn expires_at_us(&self) -> Option<u64> {
+        self.expires_at_us
+    }
+
+    pub fn set_expires_at_us(&mut self, expires_at_us: Option<u64>) {
+        self.expires_at_us = expires_at_us;
+    }
+
+    pub fn refresh_expiration(&mut self, now_us: u64) {
+        if self.state == AccountState::Active
+            && self.expires_at_us.is_some_and(|expires_at| now_us >= expires_at)
+        {
+            self.set_state(AccountState::Expired);
+        }
+    }
+
+    pub fn apply_expiration_policy(
+        &mut self,
+        account_lifetime_us: Option<u64>,
+        credential_lifetime_us: Option<u64>,
+        now_us: u64,
+    ) {
+        if self.expires_at_us.is_none() {
+            self.expires_at_us = account_lifetime_us
+                .map(|lifetime| now_us.saturating_add(lifetime));
+        }
+        for credential in self.credentials.iter_mut().flatten() {
+            if credential.expires_at_us.is_none() {
+                credential.expires_at_us = credential_lifetime_us
+                    .map(|lifetime| now_us.saturating_add(lifetime));
+            }
+        }
     }
 
     pub fn credentials(&self) -> impl Iterator<Item = Credential> + '_ {
@@ -422,6 +479,19 @@ impl UserRecord {
             .find(|credential| credential.id == id)
             .ok_or(AuthError::CredentialNotFound)?
             .set_label(label)
+    }
+
+    pub fn set_credential_expires_at(
+        &mut self,
+        id: CredentialId,
+        expires_at_us: Option<u64>,
+    ) -> Result<(), AuthError> {
+        self.credentials
+            .iter_mut()
+            .flatten()
+            .find(|credential| credential.id == id)
+            .ok_or(AuthError::CredentialNotFound)
+            .map(|credential| credential.set_expires_at_us(expires_at_us))
     }
 
     fn record_credential_use(
@@ -663,12 +733,24 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
         self.records[slot].take().ok_or(AuthError::UserNotFound)
     }
 
-    fn login_record(&self, username: &str, node: NodeId) -> Option<UserRecord> {
+    pub fn refresh_expirations(&mut self, now_us: u64) -> usize {
+        let mut expired = 0;
+        for record in self.records.iter_mut().flatten() {
+            let was_expired = record.account_state() == AccountState::Expired;
+            record.refresh_expiration(now_us);
+            if !was_expired && record.account_state() == AccountState::Expired {
+                expired += 1;
+            }
+        }
+        expired
+    }
+
+    fn login_record(&self, username: &str, node: NodeId, now_us: u64) -> Option<UserRecord> {
         self.records
             .iter()
             .flatten()
             .find(|record| {
-                record.is_login_usable()
+                record.is_login_usable_at(now_us)
                     && record.scope == DatabaseScope::NodeLocal(node)
                     && record.username.matches(username)
             })
@@ -678,7 +760,7 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
                     .iter()
                     .flatten()
                     .find(|record| {
-                        record.is_login_usable()
+                        record.is_login_usable_at(now_us)
                             && record.scope == DatabaseScope::Local
                             && record.username.matches(username)
                     })
@@ -691,12 +773,13 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
         username: &str,
         node: NodeId,
         public_key: &[u8],
+        now_us: u64,
     ) -> Option<UserRecord> {
         self.records
             .iter()
             .flatten()
             .find(|record| {
-                record.is_login_usable()
+                record.is_login_usable_at(now_us)
                     && record.scope == DatabaseScope::NodeLocal(node)
                     && record.username.matches(username)
                     && record.ssh_key_credential(public_key).is_some()
@@ -707,7 +790,7 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
                     .iter()
                     .flatten()
                     .find(|record| {
-                        record.is_login_usable()
+                        record.is_login_usable_at(now_us)
                             && record.scope == DatabaseScope::Local
                             && record.username.matches(username)
                             && record.ssh_key_credential(public_key).is_some()
@@ -716,11 +799,11 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
             })
     }
 
-    fn identity_record(&self, identity: IdentityId) -> Option<UserRecord> {
+    fn identity_record(&self, identity: IdentityId, now_us: u64) -> Option<UserRecord> {
         self.records
             .iter()
             .flatten()
-            .find(|record| record.is_login_usable() && record.identity == identity)
+            .find(|record| record.is_login_usable_at(now_us) && record.identity == identity)
             .copied()
     }
 }
@@ -793,6 +876,10 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         &mut self.database
     }
 
+    pub fn refresh_expirations(&mut self, now_us: u64) -> usize {
+        self.database.refresh_expirations(now_us)
+    }
+
     pub fn begin_authentication(
         &mut self,
         username: &str,
@@ -829,14 +916,18 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
                 entry.is_some_and(|pending| pending.challenge.expires_at_us <= now_us)
             })
             .for_each(|entry| *entry = None);
+        self.refresh_expirations(now_us);
         let record = self
             .database
-            .login_record(username, node)
+            .login_record(username, node, now_us)
             .ok_or(AuthError::UserNotFound)?;
         let selected = record
             .credential(credential)
             .ok_or(AuthError::CredentialNotFound)?;
         if selected.revoked {
+            return Err(AuthError::CredentialNotFound)
+        }
+        if !selected.is_usable_at(now_us) {
             return Err(AuthError::CredentialNotFound)
         }
         if required_kind.is_some_and(|kind| kind != selected.kind) {
@@ -879,11 +970,14 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         }
         let record = self
             .database
-            .identity_record(pending.record.identity)
+            .identity_record(pending.record.identity, now_us)
             .ok_or(AuthError::UserNotFound)?;
         let credential = record
             .credential(challenge.credential)
             .ok_or(AuthError::CredentialNotFound)?;
+        if !credential.is_usable_at(now_us) {
+            return Err(AuthError::CredentialNotFound)
+        }
         if !verifier.verify(
             credential.kind,
             credential.public_material(),
@@ -938,6 +1032,14 @@ impl fmt::Debug for Session {
 impl Session {
     pub const fn identity(&self) -> IdentityId {
         self.record.identity
+    }
+
+    pub fn is_usable_at(&self, credential: CredentialId, now_us: u64) -> bool {
+        self.record.is_login_usable_at(now_us)
+            && self
+                .record
+                .credential(credential)
+                .is_some_and(|credential| credential.is_usable_at(now_us))
     }
 
     pub fn persona(&self) -> Result<ExecutionPersona, AuthError> {

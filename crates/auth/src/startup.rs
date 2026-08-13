@@ -28,6 +28,8 @@ pub struct SecurityPolicy {
     pub session_lifetime_us: u64,
     pub idle_timeout_us: u64,
     pub allow_self_credential_changes: bool,
+    pub account_lifetime_us: Option<u64>,
+    pub credential_lifetime_us: Option<u64>,
 }
 
 impl SecurityPolicy {
@@ -51,12 +53,31 @@ impl SecurityPolicy {
             session_lifetime_us,
             idle_timeout_us,
             allow_self_credential_changes: true,
+            account_lifetime_us: None,
+            credential_lifetime_us: None,
         })
     }
 
     pub const fn with_self_credential_changes(mut self, enabled: bool) -> Self {
         self.allow_self_credential_changes = enabled;
         self
+    }
+
+    pub const fn with_account_lifetime_us(mut self, lifetime_us: Option<u64>) -> Self {
+        self.account_lifetime_us = lifetime_us;
+        self
+    }
+
+    pub const fn with_credential_lifetime_us(mut self, lifetime_us: Option<u64>) -> Self {
+        self.credential_lifetime_us = lifetime_us;
+        self
+    }
+
+    fn validate(&self) -> Result<(), StartupError> {
+        if self.account_lifetime_us == Some(0) || self.credential_lifetime_us == Some(0) {
+            return Err(StartupError::InvalidPolicy)
+        }
+        Ok(())
     }
 }
 
@@ -67,6 +88,8 @@ impl Default for SecurityPolicy {
             session_lifetime_us: DEFAULT_SESSION_LIFETIME_US,
             idle_timeout_us: DEFAULT_IDLE_TIMEOUT_US,
             allow_self_credential_changes: true,
+            account_lifetime_us: None,
+            credential_lifetime_us: None,
         }
     }
 }
@@ -227,6 +250,7 @@ impl<const USERS: usize, const GROUPS: usize> SecurityState<USERS, GROUPS> {
     }
 
     pub fn validate(&self) -> Result<(), StartupError> {
+        self.policy.validate()?;
         SecurityPolicy::new(
             self.policy.challenge_lifetime_us,
             self.policy.session_lifetime_us,
@@ -252,6 +276,17 @@ impl<const USERS: usize, const GROUPS: usize> SecurityState<USERS, GROUPS> {
         scope: DatabaseScope,
         credential: Credential,
     ) -> Result<UserRecord, StartupError> {
+        self.create_first_admin_at(identity, username, scope, credential, 0)
+    }
+
+    pub fn create_first_admin_at(
+        &mut self,
+        identity: IdentityId,
+        username: &str,
+        scope: DatabaseScope,
+        credential: Credential,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
         if !self.database.is_empty() || identity == IdentityId::ANONYMOUS {
             return Err(StartupError::AlreadyProvisioned)
         }
@@ -263,8 +298,13 @@ impl<const USERS: usize, const GROUPS: usize> SecurityState<USERS, GROUPS> {
         }
         let mut record = UserRecord::new(identity, Username::new(username).map_err(|_| StartupError::InvalidRecord)?, scope);
         record
-            .add_credential(credential)
+            .add_credential_at(credential, now_us)
             .map_err(StartupError::Authentication)?;
+        record.apply_expiration_policy(
+            self.policy.account_lifetime_us,
+            self.policy.credential_lifetime_us,
+            now_us,
+        );
         record
             .assign_right(RightIdentifier::SYSTEM_ADMIN)
             .map_err(StartupError::Authentication)?;
@@ -474,6 +514,9 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         if now_us >= active.session.expires_at_us {
             return Err(StartupError::SessionExpired)
         }
+        if !active.session.is_usable_at(active.credential, now_us) {
+            return Err(StartupError::SessionExpired)
+        }
         if now_us.saturating_sub(active.last_activity_us) >= idle_timeout_us {
             return Err(StartupError::SessionExpired)
         }
@@ -497,6 +540,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         }
         if now_us >= active.session.expires_at_us
             || now_us.saturating_sub(active.last_activity_us) >= idle_timeout_us
+            || !active.session.is_usable_at(active.credential, now_us)
         {
             return Err(StartupError::SessionExpired)
         }
@@ -536,6 +580,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
                 now_us >= active.session.expires_at_us
                     || now_us.saturating_sub(active.last_activity_us)
                         >= self.policy.idle_timeout_us
+                    || !active.session.is_usable_at(active.credential, now_us)
             }) {
                 *slot = None;
                 expired += 1;
@@ -623,8 +668,26 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         scope: DatabaseScope,
         credential: Credential,
     ) -> Result<UserRecord, StartupError> {
+        self.create_first_admin_at(store, identity, username, scope, credential, 0)
+    }
+
+    pub fn create_first_admin_at<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        identity: IdentityId,
+        username: &str,
+        scope: DatabaseScope,
+        credential: Credential,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
         let mut next_state = self.state;
-        let record = next_state.create_first_admin(identity, username, scope, credential)?;
+        let record = next_state.create_first_admin_at(
+            identity,
+            username,
+            scope,
+            credential,
+            now_us,
+        )?;
         store.store(&next_state).map_err(StartupError::Storage)?;
         self.sessions
             .authd_mut()
@@ -647,7 +710,32 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         if self.provisioning_required {
             return Err(StartupError::NotProvisioned)
         }
-        self.sessions.begin_login(username, node, credential, kind, now_us)
+        let result = self.sessions.begin_login(username, node, credential, kind, now_us);
+        self.state.database = *self.sessions.authd().database();
+        result
+    }
+
+    pub fn expire_accounts<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        now_us: u64,
+    ) -> Result<usize, StartupError> {
+        let expired = self.sessions.authd_mut().refresh_expirations(now_us);
+        if expired == 0 {
+            return Ok(0)
+        }
+        let mut next_state = self.state;
+        next_state.database = *self.sessions.authd().database();
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        self.state = next_state;
+        for record in next_state.database.records() {
+            if record.account_state() == AccountState::Expired {
+                self.sessions.revoke_identity(record.identity);
+            }
+        }
+        Ok(expired)
     }
 
     pub fn complete_login<V: CredentialVerifier>(
@@ -707,7 +795,12 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         self.authorize(handle, RightIdentifier::SYSTEM_ADMIN, now_us)?;
         let mut next_state = self.state;
         let (result, revoked_identity) = match request {
-            AccountManagementRequest::Create(record) => {
+            AccountManagementRequest::Create(mut record) => {
+                record.apply_expiration_policy(
+                    self.state.policy.account_lifetime_us,
+                    self.state.policy.credential_lifetime_us,
+                    now_us,
+                );
                 Self::validate_managed_record(record)?;
                 next_state
                     .database
@@ -715,14 +808,19 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                     .map_err(StartupError::Authentication)?;
                 (AccountManagementResult::Created(record), None)
             }
-            AccountManagementRequest::Update(record) => {
+            AccountManagementRequest::Update(mut record) => {
+                record.apply_expiration_policy(
+                    self.state.policy.account_lifetime_us,
+                    self.state.policy.credential_lifetime_us,
+                    now_us,
+                );
                 Self::validate_managed_record(record)?;
                 let previous = next_state
                     .database
                     .record(record.identity)
                     .map_err(StartupError::Authentication)?;
-                if Self::is_last_enabled_administrator(&next_state.database, previous)
-                    && (!record.is_login_usable() || !Self::is_administrator(&record))
+                if Self::is_last_enabled_administrator(&next_state.database, previous, now_us)
+                    && (!record.is_login_usable_at(now_us) || !Self::is_administrator(&record))
                 {
                     return Err(StartupError::LastAdministrator)
                 }
@@ -749,7 +847,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                     .database
                     .record(identity)
                     .map_err(StartupError::Authentication)?;
-                if Self::is_last_enabled_administrator(&next_state.database, record) {
+                if Self::is_last_enabled_administrator(&next_state.database, record, now_us) {
                     return Err(StartupError::LastAdministrator)
                 }
                 record.set_state(AccountState::Disabled);
@@ -764,7 +862,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                     .database
                     .record(identity)
                     .map_err(StartupError::Authentication)?;
-                if Self::is_last_enabled_administrator(&next_state.database, record) {
+                if Self::is_last_enabled_administrator(&next_state.database, record, now_us) {
                     return Err(StartupError::LastAdministrator)
                 }
                 next_state
@@ -893,6 +991,11 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         record
             .add_credential_at(credential, now_us)
             .map_err(StartupError::Authentication)?;
+        record.apply_expiration_policy(
+            self.state.policy.account_lifetime_us,
+            self.state.policy.credential_lifetime_us,
+            now_us,
+        );
         if record.account_state() == AccountState::PendingSetup {
             record.set_state(AccountState::Active);
         }
@@ -993,6 +1096,11 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         record
             .add_credential_at(new_credential, now_us)
             .map_err(StartupError::Authentication)?;
+        record.apply_expiration_policy(
+            self.state.policy.account_lifetime_us,
+            self.state.policy.credential_lifetime_us,
+            now_us,
+        );
         record
             .set_credential_revoked(old_credential, true)
             .map_err(StartupError::Authentication)?;
@@ -1042,12 +1150,15 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
     fn is_last_enabled_administrator(
         database: &AuthorizationDatabase<USERS>,
         target: UserRecord,
+        now_us: u64,
     ) -> bool {
         Self::is_administrator(&target)
-            && target.is_login_usable()
+            && target.is_login_usable_at(now_us)
             && database
                 .records()
-                .filter(|record| record.is_login_usable() && Self::is_administrator(record))
+                .filter(|record| {
+                    record.is_login_usable_at(now_us) && Self::is_administrator(record)
+                })
                 .count()
                 <= 1
     }
