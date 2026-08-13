@@ -618,6 +618,19 @@ impl UserRecord {
         Ok(())
     }
 
+    pub fn remove_initial_capability(
+        &mut self,
+        capability: InitialCapability,
+    ) -> Result<(), AuthError> {
+        let slot = self
+            .initial_capabilities
+            .iter()
+            .position(|entry| entry.is_some_and(|existing| existing == capability))
+            .ok_or(AuthError::CapabilityNotFound)?;
+        self.initial_capabilities[slot] = None;
+        Ok(())
+    }
+
     fn credential(&self, id: CredentialId) -> Option<Credential> {
         self.credentials().find(|credential| credential.id == id)
     }
@@ -808,6 +821,21 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
             }
         }
         expired
+    }
+
+    pub fn apply_expiration_policy(
+        &mut self,
+        account_lifetime_us: Option<u64>,
+        credential_lifetime_us: Option<u64>,
+        now_us: u64,
+    ) {
+        for record in self.records.iter_mut().flatten() {
+            record.apply_expiration_policy(
+                account_lifetime_us,
+                credential_lifetime_us,
+                now_us,
+            );
+        }
     }
 
     fn login_record(&self, username: &str, node: NodeId, now_us: u64) -> Option<UserRecord> {
@@ -1232,6 +1260,7 @@ pub enum AuthError {
     AlreadyExists,
     Capacity,
     CapabilityFailure,
+    CapabilityNotFound,
     CredentialNotFound,
     InvalidChallenge,
     InvalidRecord,

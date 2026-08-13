@@ -215,6 +215,16 @@ impl GroupRecord {
         Ok(())
     }
 
+    pub fn revoke_right(&mut self, right: RightIdentifier) -> Result<(), StartupError> {
+        let slot = self
+            .rights
+            .iter()
+            .position(|entry| entry.is_some_and(|existing| existing == right))
+            .ok_or(StartupError::GroupRightNotFound)?;
+        self.rights[slot] = None;
+        Ok(())
+    }
+
     pub fn add_member(&mut self, identity: IdentityId) -> Result<(), StartupError> {
         if identity == IdentityId::ANONYMOUS {
             return Err(StartupError::InvalidRecord)
@@ -411,10 +421,19 @@ pub trait SecurityStore<const USERS: usize, const GROUPS: usize> {
         state: &mut SecurityState<USERS, GROUPS>,
     ) -> Result<bool, SecurityStoreError>;
 
+    /// Replace the complete security state as one durable commit. An error
+    /// must leave the previously committed state unchanged.
     fn store(
         &mut self,
         state: &SecurityState<USERS, GROUPS>,
     ) -> Result<(), SecurityStoreError>;
+
+    fn store_atomic(
+        &mut self,
+        state: &SecurityState<USERS, GROUPS>,
+    ) -> Result<(), SecurityStoreError> {
+        self.store(state)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -434,6 +453,7 @@ pub enum StartupError {
     InvalidPolicy,
     InvalidRecord,
     GroupMemberNotFound,
+    GroupRightNotFound,
     GroupNotFound,
     NotProvisioned,
     SessionExpired,
@@ -743,6 +763,10 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         &mut self.authd
     }
 
+    pub fn set_policy(&mut self, policy: SecurityPolicy) {
+        self.policy = policy;
+    }
+
     fn active_session_mut(
         &mut self,
         handle: SessionHandle,
@@ -830,13 +854,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             credential,
             now_us,
         )?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        self.sessions
-            .authd_mut()
-            .database_mut()
-            .insert(record)
-            .map_err(StartupError::Authentication)?;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         self.provisioning_required = false;
         Ok(record)
     }
@@ -873,16 +891,13 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         store: &mut S,
         now_us: u64,
     ) -> Result<usize, StartupError> {
-        let expired = self.sessions.authd_mut().refresh_expirations(now_us);
+        let mut next_state = self.state;
+        let expired = next_state.database.refresh_expirations(now_us);
         if expired == 0 {
             return Ok(0)
         }
-        let mut next_state = self.state;
-        next_state.database = *self.sessions.authd().database();
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         for record in next_state.database.records() {
             if record.account_state() == AccountState::Expired {
                 self.sessions.revoke_identity(record.identity);
@@ -976,6 +991,21 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         self.sessions.revoke_identity(identity)
     }
 
+    fn commit_state<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        next_state: SecurityState<USERS, GROUPS>,
+    ) -> Result<(), StartupError> {
+        next_state.validate()?;
+        store
+            .store_atomic(&next_state)
+            .map_err(StartupError::Storage)?;
+        self.sessions.set_policy(next_state.policy);
+        *self.sessions.authd_mut().database_mut() = next_state.database;
+        self.state = next_state;
+        Ok(())
+    }
+
     pub fn manage_account<S: SecurityStore<USERS, GROUPS>>(
         &mut self,
         store: &mut S,
@@ -1064,10 +1094,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             }
         };
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        *self.sessions.authd_mut().database_mut() = next_state.database;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         if let Some(identity) = revoked_identity {
             self.sessions.revoke_identity(identity);
         }
@@ -1096,9 +1123,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         let group = GroupRecord::new(id, name)?;
         next_state.groups.insert(group)?;
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         Ok(group)
     }
 
@@ -1120,9 +1145,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         group_record.add_member(identity)?;
         let group_record = *group_record;
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         Ok(group_record)
     }
 
@@ -1140,10 +1163,64 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         group_record.remove_member(identity)?;
         let group_record = *group_record;
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         Ok(group_record)
+    }
+
+    pub fn grant_group_right<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        group: GroupId,
+        right: RightIdentifier,
+        now_us: u64,
+    ) -> Result<GroupRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        let group_record = next_state.groups.record_mut(group)?;
+        group_record.grant_right(right)?;
+        let group_record = *group_record;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        self.commit_state(store, next_state)?;
+        Ok(group_record)
+    }
+
+    pub fn revoke_group_right<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        group: GroupId,
+        right: RightIdentifier,
+        now_us: u64,
+    ) -> Result<GroupRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        let group_record = next_state.groups.record_mut(group)?;
+        group_record.revoke_right(right)?;
+        let group_record = *group_record;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        self.commit_state(store, next_state)?;
+        Ok(group_record)
+    }
+
+    pub fn update_policy<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        policy: SecurityPolicy,
+        now_us: u64,
+    ) -> Result<SecurityPolicy, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        next_state.policy = policy;
+        next_state.database.apply_expiration_policy(
+            policy.account_lifetime_us,
+            policy.credential_lifetime_us,
+            now_us,
+        );
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        self.commit_state(store, next_state)?;
+        Ok(policy)
     }
 
     pub fn create_account<S: SecurityStore<USERS, GROUPS>>(
@@ -1277,6 +1354,58 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         }
     }
 
+    pub fn grant_capability<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        capability: InitialCapability,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        let mut record = next_state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        record
+            .grant_initial_capability(capability)
+            .map_err(StartupError::Authentication)?;
+        next_state
+            .database
+            .replace(record)
+            .map_err(StartupError::Authentication)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        self.commit_state(store, next_state)?;
+        Ok(record)
+    }
+
+    pub fn revoke_capability<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        capability: InitialCapability,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        let mut record = next_state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        record
+            .remove_initial_capability(capability)
+            .map_err(StartupError::Authentication)?;
+        next_state
+            .database
+            .replace(record)
+            .map_err(StartupError::Authentication)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        self.commit_state(store, next_state)?;
+        Ok(record)
+    }
+
     pub fn add_credential<S: SecurityStore<USERS, GROUPS>>(
         &mut self,
         store: &mut S,
@@ -1307,10 +1436,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             .replace(record)
             .map_err(StartupError::Authentication)?;
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        *self.sessions.authd_mut().database_mut() = next_state.database;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         self.sessions.revoke_identity(identity);
         Ok(record)
     }
@@ -1337,10 +1463,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             .replace(record)
             .map_err(StartupError::Authentication)?;
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        *self.sessions.authd_mut().database_mut() = next_state.database;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         self.sessions.revoke_identity(identity);
         Ok(record)
     }
@@ -1367,10 +1490,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             .replace(record)
             .map_err(StartupError::Authentication)?;
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        *self.sessions.authd_mut().database_mut() = next_state.database;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         self.sessions.revoke_identity(identity);
         Ok(record)
     }
@@ -1412,10 +1532,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             .replace(record)
             .map_err(StartupError::Authentication)?;
         next_state.generation = next_state.generation.wrapping_add(1).max(1);
-        next_state.validate()?;
-        store.store(&next_state).map_err(StartupError::Storage)?;
-        *self.sessions.authd_mut().database_mut() = next_state.database;
-        self.state = next_state;
+        self.commit_state(store, next_state)?;
         self.sessions.revoke_identity(identity);
         Ok(record)
     }
