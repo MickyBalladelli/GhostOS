@@ -161,11 +161,15 @@ impl<'a, D: BlockDevice> MountedSystemVolume<'a, D> {
         })
     }
 
-    pub fn sync(&mut self) -> Result<(), SystemDiskError> {
+    pub fn fsync(&mut self) -> Result<(), SystemDiskError> {
         self.filesystem
-            .sync(&mut self.volume)
+            .fsync(&mut self.volume)
             .map(|_| ())
             .map_err(|_| SystemDiskError::Io)
+    }
+
+    pub fn sync(&mut self) -> Result<(), SystemDiskError> {
+        self.fsync()
     }
 }
 

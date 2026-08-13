@@ -159,6 +159,24 @@ fn persists_to_real_disk_image() {
 }
 
 #[test]
+fn fsync_persists_an_atomic_rename_after_reopen() {
+    let image_path = TemporaryImage::new("fsync-rename");
+    let mut disk = DiskImage::create(image_path.path());
+    let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+    SynFs::<MAX_BLOCKS>::format_to_device(&mut image, &mut disk).expect("format disk image");
+    let mut filesystem =
+        SynFs::<MAX_BLOCKS>::load_from_device(&mut image, &mut disk).expect("load image");
+    filesystem.write("/old", b"value").expect("write old file");
+    filesystem.rename("/old", "/new").expect("rename file");
+    filesystem.fsync(&mut disk).expect("fsync renamed file");
+    drop(disk);
+
+    let filesystem = read_state(image_path.path());
+    assert_eq!(filesystem.lookup("/old"), Err(Error::NotFound));
+    assert_eq!(filesystem.lookup("/new").expect("recover new name").size, 5);
+}
+
+#[test]
 fn persists_filesystem_shell_workflow_objects_and_relative_target() {
     let image_path = TemporaryImage::new("shell-workflow");
     let mut disk = DiskImage::create(image_path.path());

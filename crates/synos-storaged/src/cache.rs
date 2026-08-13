@@ -196,9 +196,14 @@ impl<const ENTRIES: usize, const BYTES: usize> CowCache<ENTRIES, BYTES> {
     }
 
     /// Flush dirty cache entries and return only after the remote durability
-    /// fence has completed.
-    pub fn sync(&mut self, backend: &mut impl RemoteFileBackend) -> Result<usize, CacheError> {
+    /// fence has completed. A successful return is the cache equivalent of
+    /// `fsync`; an error leaves dirty entries available for retry.
+    pub fn fsync(&mut self, backend: &mut impl RemoteFileBackend) -> Result<usize, CacheError> {
         self.flush(backend)
+    }
+
+    pub fn sync(&mut self, backend: &mut impl RemoteFileBackend) -> Result<usize, CacheError> {
+        self.fsync(backend)
     }
 
     pub fn invalidate(&mut self, path: StoragePath) -> bool {

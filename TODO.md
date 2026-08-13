@@ -150,7 +150,7 @@ Build the real operating system core before adding more advanced features.
 ### Filesystem behavior
 
 - [x] Add process file-descriptor tables and open-handle rules.
-- [ ] Define atomic rename and `fsync` guarantees.
+- [x] Define atomic rename and `fsync` guarantees.
 - [ ] Add file and record locking through the filesystem service.
 - [ ] Add symbolic links and permission checks.
 - [ ] Add filesystem quotas visible to users and operators.

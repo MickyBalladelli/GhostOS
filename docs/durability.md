@@ -8,8 +8,9 @@ The contract has two states that callers must not confuse:
 - **durable** means the state survived the required device or remote-service
   durability fence and is eligible for recovery after power loss.
 
-`write`, `rename`, and `commit` publish state. Only `sync` (or a lower-layer
-`flush` that is explicitly part of the sync path) may report durable state.
+`write`, `rename`, and `commit` publish state. Only `fsync`/`sync` (or a
+lower-layer `flush` that is explicitly part of the sync path) may report
+durable state.
 
 ## End-to-end order
 
@@ -65,15 +66,24 @@ needs a recovery promise.
 
 ### `rename`
 
-SynFS performs rename as one metadata transaction. The old name and new name
-cannot be observed as a half-applied pair in one generation. The rename is
+SynFS performs rename as one metadata transaction within one volume. The old
+name and new name cannot be observed as a half-applied pair in one generation:
+after publication, readers see the old name or the new name, never both. A
+failed or abandoned transaction leaves the old root and old name visible. The
+destination must not already exist; SynFS does not silently replace it. A
+directory rename moves its complete subtree as one transaction. The rename is
 volatile until the generation containing it reaches the block commit record
 and device flush.
 
-### `flush` and `sync`
+### `flush`, `fsync`, and `sync`
 
 At the volume layer, `flush_to_device` and `sync` write all inactive-bank data
 and metadata first, write the superblock last, then call `BlockStore::flush`.
+`fsync` is the explicit public name for this same end-to-end operation. It
+returns success only after the block-store durability fence completes; an
+error does not claim that the new generation survived power loss. Because
+SynFS commits a complete root generation, callers do not need a separate
+parent-directory `fsync` after a successful file rename.
 At the cache layer, `flush` first sends dirty data and then calls the remote
 backend fence; dirty bits clear only after that fence succeeds. A lower-layer
 write acknowledgement without its fence is not an end-to-end sync.

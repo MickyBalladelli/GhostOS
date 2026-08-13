@@ -888,6 +888,10 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
         }
     }
 
+    /// Stage a rename inside this transaction.
+    ///
+    /// The old root remains recoverable until the transaction commits. If the
+    /// transaction is dropped or fails, all staged name changes disappear.
     pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
         if self.failed {
             return Err(Error::TransactionAborted)
@@ -1351,6 +1355,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.lookup(target.as_str())
     }
 
+    /// Atomically publish one rename in the in-memory filesystem generation.
+    ///
+    /// The rename becomes power-loss durable only after [`Self::fsync`]
+    /// succeeds.
     pub fn rename(&mut self, old_path: &str, new_path: &str) -> Result<FileVersion, Error> {
         let mut no_interruption = NoInterruption;
         self.rename_with_interruption(old_path, new_path, &mut no_interruption)

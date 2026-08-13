@@ -79,6 +79,23 @@ fn interruption_hook_runs_after_flush_and_rename() {
 }
 
 #[test]
+fn abandoned_rename_transaction_keeps_the_old_root() {
+    let mut filesystem = SynFs::<FORMAT_BLOCKS>::new();
+    filesystem.write("/old", b"value").expect("write old file");
+
+    {
+        let mut transaction = filesystem.transaction();
+        transaction
+            .rename("/old", "/new")
+            .expect("stage rename");
+        assert!(transaction.lookup("/new").is_ok());
+    }
+
+    assert!(filesystem.lookup("/old").is_ok());
+    assert_eq!(filesystem.lookup("/new"), Err(Error::NotFound));
+}
+
+#[test]
 fn format_generation_selection_and_checksum_validation() {
     let geometry = SynFs::<FORMAT_BLOCKS>::volume_geometry();
     assert_eq!(geometry.block_size, BLOCK_SIZE);

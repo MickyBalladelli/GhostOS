@@ -301,13 +301,21 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.flush_to_device_with_interruption(device, &mut no_interruption)
     }
 
-    /// End-to-end sync for the persistent volume.
+    /// End-to-end `fsync` for the persistent volume.
     ///
     /// This publishes the current CoW root, writes all data and type-map
     /// blocks before the superblock commit record, and waits for the block
     /// store's durability fence before returning.
-    pub fn sync<D: BlockStore>(&mut self, device: &mut D) -> Result<VolumeCommit, Error> {
+    ///
+    /// A successful return means the current generation is eligible for
+    /// recovery after power loss. An error makes no durability promise.
+    pub fn fsync<D: BlockStore>(&mut self, device: &mut D) -> Result<VolumeCommit, Error> {
         self.flush_to_device(device)
+    }
+
+    /// Compatibility name for callers that use the volume-level `sync` API.
+    pub fn sync<D: BlockStore>(&mut self, device: &mut D) -> Result<VolumeCommit, Error> {
+        self.fsync(device)
     }
 
     pub fn flush_to_device_with_interruption<D: BlockStore, I: InterruptionInjector>(
