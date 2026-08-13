@@ -176,7 +176,7 @@ Build the real operating system core before adding more advanced features.
 ### Build and release
 
 - [x] Make release builds reproducible.
-- [ ] Sign release images and boot artifacts.
+- [x] Sign release images and boot artifacts.
 - [ ] Generate SBOM and dependency provenance for each release.
 - [ ] Produce complete installer and recovery artifacts.
 - [ ] Validate upgrade compatibility before release.

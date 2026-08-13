@@ -13,6 +13,13 @@ release archive/
 │   ├── synos-vm
 │   ├── synos-bios.img
 │   └── synos-loader.efi
+├── attestations/
+│   ├── attestation-public-key.pem
+│   ├── attestations-index.json
+│   ├── attestations-index.json.sig
+│   ├── synos-bios.artifact.sig
+│   ├── synos-loader.efi.artifact.sig
+│   └── ...
 └── evidence/
     └── <validation-run files>
 ```
@@ -31,6 +38,11 @@ The archive has manifest schema `1`. `release-manifest.json` contains:
 | `device_topology` | Default guest device names, transports, addresses, and interrupt vectors |
 | `test_evidence` | Evidence JSON paths, digests, tier, test ID, state, command, firmware, host, and skip reason |
 | `known_host_limitations` | Hardware acceleration, terminal, networking, migration, and optional-test limits |
+
+The attestation directory also contains signed in-toto statements. Each
+release artifact has a matching `<artifact>.artifact.sig` detached signature
+over its raw bytes. Consumers must verify that signature with
+`attestation-public-key.pem` before installing the image or boot artifact.
 
 The package command requires explicit `--artifact`, `--evidence-dir`,
 `--release-report`, `--release-claims`, and one or more `--firmware` values.

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Create and verify signed SynOS release attestations.
 
-Each artifact receives one signed in-toto-style statement. The statement binds
-the artifact digest to the Cargo SBOM, dependency lockfile provenance,
-compiler identity, source and configuration digests, and a byte-for-byte
-reproducibility comparison against an independently produced artifact.
+Each artifact receives one detached SHA-256 signature over its raw bytes and
+one signed in-toto-style statement. The statement binds the artifact digest to
+the Cargo SBOM, dependency lockfile provenance, compiler identity, source and
+configuration digests, and a byte-for-byte reproducibility comparison against
+an independently produced artifact.
 
 The signing key is supplied by the release operator. Only the public key and
 detached signatures are written to the attestation directory.
@@ -29,6 +30,7 @@ PREDICATE_TYPE = "https://synos.dev/attestations/release/v1"
 INDEX_NAME = "attestations-index.json"
 INDEX_SIGNATURE_NAME = "attestations-index.json.sig"
 PUBLIC_KEY_NAME = "attestation-public-key.pem"
+ARTIFACT_SIGNATURE_SUFFIX = ".artifact.sig"
 LOCKFILE = ROOT / "Cargo.lock"
 
 DEFAULT_CONFIGURATION_FILES = (
@@ -227,32 +229,49 @@ def openssl(*args: str, input_path: pathlib.Path | None = None, output_path: pat
         raise ValueError(detail) from error
 
 
-def sign(key: pathlib.Path, payload: bytes, output: pathlib.Path) -> None:
+def sign_payload(key: pathlib.Path, payload: bytes, output: pathlib.Path) -> None:
     temporary = output.with_suffix(output.suffix + ".payload")
     temporary.write_bytes(payload)
     try:
-        openssl("pkeyutl", "-sign", "-inkey", str(key), "-in", str(temporary), "-out", str(output))
+        sign_file(key, temporary, output)
     finally:
         temporary.unlink(missing_ok=True)
 
 
-def verify(public_key: pathlib.Path, payload: bytes, signature: pathlib.Path) -> None:
+def verify_payload(public_key: pathlib.Path, payload: bytes, signature: pathlib.Path) -> None:
     temporary = signature.with_suffix(signature.suffix + ".payload")
     temporary.write_bytes(payload)
     try:
-        openssl(
-            "pkeyutl",
-            "-verify",
-            "-pubin",
-            "-inkey",
-            str(public_key),
-            "-sigfile",
-            str(signature),
-            "-in",
-            str(temporary),
-        )
+        verify_file(public_key, temporary, signature)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def sign_file(key: pathlib.Path, input_path: pathlib.Path, output: pathlib.Path) -> None:
+    openssl(
+        "dgst",
+        "-sha256",
+        "-sign",
+        str(key),
+        input_path=input_path,
+        output_path=output,
+    )
+
+
+def verify_file(public_key: pathlib.Path, input_path: pathlib.Path, signature: pathlib.Path) -> None:
+    openssl(
+        "dgst",
+        "-sha256",
+        "-verify",
+        str(public_key),
+        "-signature",
+        str(signature),
+        input_path=input_path,
+    )
+
+
+def signature_name(name: str) -> str:
+    return f"{name}{ARTIFACT_SIGNATURE_SUFFIX}"
 
 
 def public_key_id(path: pathlib.Path) -> str:
@@ -337,9 +356,11 @@ def write_attestations(
         )
         statement_path = output_dir / f"{name}.intoto.json"
         signature_path = output_dir / f"{name}.intoto.json.sig"
+        artifact_signature_path = output_dir / signature_name(name)
         statement_bytes = canonical_json(statement)
         statement_path.write_bytes(statement_bytes)
-        sign(signing_key, statement_bytes, signature_path)
+        sign_payload(signing_key, statement_bytes, signature_path)
+        sign_file(signing_key, artifacts[name], artifact_signature_path)
         entries.append(
             {
                 "name": name,
@@ -347,6 +368,8 @@ def write_attestations(
                 "statement_sha256": sha256_bytes(statement_bytes),
                 "signature": signature_path.name,
                 "artifact_sha256": sha256_path(artifacts[name]),
+                "artifact_signature": artifact_signature_path.name,
+                "artifact_signature_sha256": sha256_path(artifact_signature_path),
             }
         )
     index = {
@@ -362,7 +385,7 @@ def write_attestations(
     index_bytes = canonical_json(index)
     index_path = output_dir / INDEX_NAME
     index_path.write_bytes(index_bytes)
-    sign(signing_key, index_bytes, output_dir / INDEX_SIGNATURE_NAME)
+    sign_payload(signing_key, index_bytes, output_dir / INDEX_SIGNATURE_NAME)
     print(f"wrote {len(entries)} signed release attestations to {output_dir}")
 
 
@@ -376,7 +399,7 @@ def check_attestations(
     if not index_path.is_file() or not index_signature.is_file() or not public_key.is_file():
         raise ValueError("attestation index, signature, or public key is missing")
     index_bytes = index_path.read_bytes()
-    verify(public_key, index_bytes, index_signature)
+    verify_payload(public_key, index_bytes, index_signature)
     index = json.loads(index_bytes)
     if (
         not isinstance(index, dict)
@@ -401,6 +424,11 @@ def check_attestations(
         for filename in (entry.get("statement"), entry.get("signature"))
         if isinstance(filename, str)
     )
+    expected_files.update(
+        entry.get("artifact_signature")
+        for entry in raw_entries
+        if isinstance(entry.get("artifact_signature"), str)
+    )
     actual_files = {path.name for path in attestation_dir.iterdir() if path.is_file()}
     if actual_files != expected_files:
         raise ValueError(
@@ -412,12 +440,18 @@ def check_attestations(
         entry = entries[name]
         statement_path = attestation_dir / str(entry["statement"])
         signature_path = attestation_dir / str(entry["signature"])
+        artifact_signature_path = attestation_dir / str(entry.get("artifact_signature", ""))
         statement_bytes = statement_path.read_bytes()
-        verify(public_key, statement_bytes, signature_path)
+        verify_payload(public_key, statement_bytes, signature_path)
+        if not artifact_signature_path.is_file():
+            raise ValueError(f"artifact signature is missing: {name}")
+        verify_file(public_key, artifact, artifact_signature_path)
         if entry.get("statement_sha256") != sha256_bytes(statement_bytes):
             raise ValueError(f"statement digest does not match the index: {name}")
         if entry.get("artifact_sha256") != sha256_path(artifact):
             raise ValueError(f"artifact digest does not match its attestation: {name}")
+        if entry.get("artifact_signature_sha256") != sha256_path(artifact_signature_path):
+            raise ValueError(f"artifact signature digest does not match the index: {name}")
         statement = json.loads(statement_bytes)
         if not isinstance(statement, dict) or statement.get("predicateType") != PREDICATE_TYPE:
             raise ValueError(f"statement predicate type is unsupported: {name}")

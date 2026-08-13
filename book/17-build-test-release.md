@@ -157,7 +157,11 @@ python3 scripts/release-attestations.py --write \
 
 The generator emits a CycloneDX SBOM, Cargo.lock dependency provenance,
 compiler/toolchain identity, tracked-source and release-configuration digests,
-and a byte-for-byte reproducibility result inside each signed statement.
+and a byte-for-byte reproducibility result inside each signed statement. It
+also writes one detached SHA-256 signature for the exact bytes of every
+release artifact, including the BIOS image and UEFI loader. The private key
+stays outside the repository; the archive carries only the public key and
+signatures.
 Packaging runs the verifier with the public key and rejects missing coverage,
 changed artifact bytes, invalid signatures, or an unverified reproducibility
 comparison. Verify an attestation directory independently with:
