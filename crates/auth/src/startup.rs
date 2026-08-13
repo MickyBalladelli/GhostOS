@@ -782,6 +782,14 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
 
     pub fn set_policy(&mut self, policy: SecurityPolicy) {
         self.policy = policy;
+        for active in self.active.iter_mut().flatten() {
+            let maximum_expiration = active
+                .authenticated_at_us
+                .saturating_add(policy.session_lifetime_us);
+            if active.session.expires_at_us > maximum_expiration {
+                active.session.expires_at_us = maximum_expiration;
+            }
+        }
     }
 
     fn active_session_mut(
