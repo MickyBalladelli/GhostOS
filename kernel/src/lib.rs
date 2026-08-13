@@ -1149,6 +1149,39 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         return boot_services::create_first_admin_username(&username[..length])
             .map_or_else(syscall_error, |_| syscall_success([length as u64, 0, 0, 0]))
     }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginBootstrapCredential) {
+        if caller.raw() != 9
+            || request.flags != 0
+            || request.capability != 0
+            || !(1..=3).contains(&request.arguments[0])
+            || request.arguments[1] == 0
+            || request.arguments[2] == 0
+            || request.arguments[2] > 96
+            || request.arguments[3..] != [0; 3]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire)
+            || !LOGIN_BOOTSTRAP_PROOF.load(Ordering::Acquire)
+        {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let address = request.arguments[1];
+        let length = request.arguments[2] as usize;
+        if !arch::paging::service_user_range(address, length as u64, false) {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let mut public_material = [0; 96];
+        arch::with_user_access(|| {
+            let source = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
+            public_material[..length].copy_from_slice(source);
+        });
+        return boot_services::create_first_admin_credential(
+            request.arguments[0] as u8,
+            &public_material[..length],
+        )
+        .map_or_else(syscall_error, |_| syscall_success([length as u64, 0, 0, 0]))
+    }
     if Operation::from_raw(request.operation) == Some(Operation::LoginComplete) {
         if caller.raw() != 14
             || request.flags != 0

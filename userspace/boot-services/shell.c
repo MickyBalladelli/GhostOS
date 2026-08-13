@@ -29,6 +29,7 @@ enum {
     OP_LOGIN_STATUS = 51,
     OP_LOGIN_START = 52,
     OP_LOGIN_BOOTSTRAP_USERNAME = 58,
+    OP_LOGIN_BOOTSTRAP_CREDENTIAL = 59,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
@@ -381,6 +382,39 @@ static void execute_first_run_line(char *line)
             write_text("Administrator username saved.\n");
         } else {
             write_text("Username rejected.\n");
+        }
+        return;
+    }
+    if (equal_name(command, "CREDENTIAL")) {
+        char kind[256];
+        char material[256];
+        u64 kind_length = next_word(&cursor, kind);
+        u64 material_length = next_word(&cursor, material);
+        u64 kind_id = 0;
+        if (equal_name(kind, "PASSKEY")) {
+            kind_id = 1;
+        } else if (equal_name(kind, "TPM")) {
+            kind_id = 2;
+        } else if (equal_name(kind, "SSH")) {
+            kind_id = 3;
+        }
+        if (kind_length == 0 || material_length == 0 || material_length > 96 || kind_id == 0) {
+            write_text("Use: CREDENTIAL PASSKEY|TPM|SSH <material>\n");
+            return;
+        }
+        struct response response = call(
+            OP_LOGIN_BOOTSTRAP_CREDENTIAL,
+            0,
+            0,
+            kind_id,
+            (u64)material,
+            material_length,
+            0
+        );
+        if (response.status == 0) {
+            write_text("Administrator credential saved.\n");
+        } else {
+            write_text("Credential rejected.\n");
         }
         return;
     }

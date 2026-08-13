@@ -71,7 +71,9 @@ const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
 pub const AUTHORIZATION_DATABASE_PATH: &str = "/system/security/authorization";
 pub const FIRST_ADMIN_USERNAME_PATH: &str = "/system/security/first-admin-username";
+pub const FIRST_ADMIN_CREDENTIAL_PATH: &str = "/system/security/first-admin-credential";
 const FIRST_ADMIN_USERNAME_CAPACITY: usize = 32;
+const FIRST_ADMIN_CREDENTIAL_CAPACITY: usize = 96;
 const SERVICE_COUNT: usize = 13;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -738,6 +740,53 @@ pub(crate) fn create_first_admin_username(username: &[u8]) -> Result<(), Status>
         slot.store(byte, Ordering::Relaxed)
     }
     FIRST_ADMIN_USERNAME_LENGTH.store(username.len() as u8, Ordering::Release);
+    Ok(())
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn create_first_admin_credential(
+    kind: u8,
+    public_material: &[u8],
+) -> Result<(), Status> {
+    if !(1..=3).contains(&kind)
+        || public_material.is_empty()
+        || public_material.len() > FIRST_ADMIN_CREDENTIAL_CAPACITY
+    {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    if !PROVISIONING_REQUIRED.load(Ordering::Acquire)
+        || !first_admin_username_pending()
+    {
+        return Err(Status::ACCESS_DENIED)
+    }
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    for path in [
+        AUTHORIZATION_DATABASE_PATH,
+        FIRST_ADMIN_USERNAME_PATH,
+        FIRST_ADMIN_CREDENTIAL_PATH,
+    ] {
+        match daemon.filesystem().lookup(path) {
+            Ok(_) => return Err(Status::ALREADY_EXISTS),
+            Err(synos_synfs::Error::NotFound) => {}
+            Err(error) => return Err(error.status()),
+        }
+    }
+    let mut transaction = daemon.filesystem_mut().transaction();
+    let mut record = [0; FIRST_ADMIN_CREDENTIAL_CAPACITY + 2];
+    record[0] = kind;
+    record[1] = public_material.len() as u8;
+    record[2..2 + public_material.len()].copy_from_slice(public_material);
+    transaction
+        .write(FIRST_ADMIN_CREDENTIAL_PATH, &record[..2 + public_material.len()])
+        .map_err(|error| error.status())?;
+    transaction
+        .commit()
+        .map_err(|error| error.status())?;
     Ok(())
 }
 
