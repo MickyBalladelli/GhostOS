@@ -6,7 +6,7 @@ mod container;
 mod pseudo;
 mod syscall;
 
-use fd::FdTable;
+use fd::{AccessMode, FdTable};
 use synos_ipc::SharedBuffer;
 use synos_runtime::{OpenOptions, Runtime, SystemCall};
 
@@ -48,6 +48,7 @@ pub enum Error {
     BadFileDescriptor,
     Buffer(BufferError),
     InvalidArgument,
+    PermissionDenied,
     Runtime(synos_runtime::Error),
     TooManyFiles,
 }
@@ -60,6 +61,7 @@ impl Error {
             Self::Buffer(BufferError::PermissionDenied) => LinuxErrno::BadAddress,
             Self::Buffer(BufferError::TooLarge) => LinuxErrno::InvalidArgument,
             Self::InvalidArgument => LinuxErrno::InvalidArgument,
+            Self::PermissionDenied => LinuxErrno::PermissionDenied,
             Self::TooManyFiles => LinuxErrno::TooManyOpenFiles,
             Self::Runtime(error) => match error {
                 synos_runtime::Error::InvalidResponse => LinuxErrno::Io,
@@ -146,6 +148,16 @@ impl OpenFlags {
     const fn append(self) -> bool {
         self.0 & Self::APPEND.0 != 0
     }
+
+    const fn access(self) -> AccessMode {
+        if self.0 & Self::READ_WRITE.0 != 0 {
+            AccessMode::ReadWrite
+        } else if self.0 & Self::WRITE_ONLY.0 != 0 {
+            AccessMode::WriteOnly
+        } else {
+            AccessMode::ReadOnly
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -179,11 +191,14 @@ impl<S: SystemCall, M: SharedBuffers, const MAX_FILES: usize> PosixCompat<S, M, 
         if path.is_empty() || path.contains(&0) || core::str::from_utf8(path).is_err() {
             return Err(Error::InvalidArgument);
         }
+        if !self.files.has_free_slot() {
+            return Err(Error::TooManyFiles)
+        }
         let descriptor = self.buffers.map_input(path)?;
         let result = self.runtime.open(descriptor, flags.options());
         self.buffers.release(descriptor);
         let file = result?;
-        match self.files.insert(file, flags.append()) {
+        match self.files.insert(file, flags.access(), flags.append()) {
             Ok(fd) => Ok(fd),
             Err(error) => {
                 let _ = self.runtime.close(file);
@@ -200,10 +215,10 @@ impl<S: SystemCall, M: SharedBuffers, const MAX_FILES: usize> PosixCompat<S, M, 
     }
 
     pub fn read(&mut self, fd: i32, output: &mut [u8]) -> Result<usize, Error> {
+        let entry = self.files.get_readable(fd)?;
         if output.is_empty() {
             return Ok(0);
         }
-        let entry = self.files.get(fd)?;
         let output_length =
             u32::try_from(output.len()).map_err(|_| Error::Buffer(BufferError::TooLarge))?;
         let descriptor = self.buffers.map_output(output)?;
@@ -226,10 +241,10 @@ impl<S: SystemCall, M: SharedBuffers, const MAX_FILES: usize> PosixCompat<S, M, 
     }
 
     pub fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize, Error> {
+        let entry = self.files.get_writable(fd)?;
         if input.is_empty() {
             return Ok(0);
         }
-        let entry = self.files.get(fd)?;
         let input_length =
             u32::try_from(input.len()).map_err(|_| Error::Buffer(BufferError::TooLarge))?;
         let descriptor = self.buffers.map_input(input)?;
