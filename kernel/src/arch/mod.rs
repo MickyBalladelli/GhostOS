@@ -136,5 +136,6 @@ pub(crate) fn initialize(tables: &[u64; paging::TABLE_FRAME_COUNT], physical_off
 }
 pub mod cpu;
 
+#[allow(dead_code)]
 pub const RESCHEDULE_IPI_VECTOR: u8 = 0xf0;
 pub const TLB_SHOOTDOWN_IPI_VECTOR: u8 = 0xf1;

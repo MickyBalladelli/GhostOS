@@ -25,6 +25,7 @@ pub mod interrupts {
         false
     }
 
+    #[allow(dead_code)]
     pub fn end_of_interrupt() {}
 
     pub fn disable() {}

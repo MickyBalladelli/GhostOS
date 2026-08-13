@@ -5,6 +5,7 @@
 use crate::task::{CpuId, CpuMask, MAX_CPUS};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub enum CpuStartupState {
     Absent,
     Requested,
@@ -20,6 +21,7 @@ pub struct CpuRecord {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub enum CpuTopologyError {
     InvalidCpu,
     DuplicateHardwareId,
@@ -33,6 +35,7 @@ pub struct CpuTopology<const CAPACITY: usize = MAX_CPUS> {
     count: usize,
 }
 
+#[allow(dead_code)]
 impl<const CAPACITY: usize> CpuTopology<CAPACITY> {
     pub const fn new() -> Self {
         Self {
@@ -153,6 +156,7 @@ impl<const CAPACITY: usize> Default for CpuTopology<CAPACITY> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub struct PerCpuInterruptState {
     pub cpu: CpuId,
     pub interrupt_depth: u16,
@@ -161,6 +165,7 @@ pub struct PerCpuInterruptState {
     pending_ipi: CpuMask,
 }
 
+#[allow(dead_code)]
 impl PerCpuInterruptState {
     pub const fn new(cpu: CpuId) -> Self {
         Self {

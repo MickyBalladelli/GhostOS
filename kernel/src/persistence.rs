@@ -11,6 +11,7 @@ impl PersistentStore {
         Self
     }
 
+    #[allow(dead_code)]
     pub fn load(&self, bytes: &mut [u8]) -> Option<usize> {
         if bytes.len() > SYNOS_PERSISTENCE_MAX_BYTES {
             return None
@@ -64,6 +65,7 @@ fn io_out8(_port: u16, _value: u8) {}
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+#[allow(dead_code)]
 fn io_in32(port: u16) -> u32 {
     let value: u32;
     unsafe {
@@ -81,6 +83,7 @@ fn io_in32(port: u16) -> u32 {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 )))]
+#[allow(dead_code)]
 fn io_in32(_port: u16) -> u32 {
     0
 }
@@ -89,6 +92,7 @@ fn io_in32(_port: u16) -> u32 {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+#[allow(dead_code)]
 fn io_in8(port: u16) -> u8 {
     let value: u8;
     unsafe {
@@ -106,6 +110,7 @@ fn io_in8(port: u16) -> u8 {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 )))]
+#[allow(dead_code)]
 fn io_in8(_port: u16) -> u8 {
     0
 }

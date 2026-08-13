@@ -10,6 +10,7 @@ pub(crate) const MAX_PCI_DEVICES: usize = 64;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PciInventory {
+    #[allow(dead_code)]
     devices: [Option<PciDevice>; MAX_PCI_DEVICES],
     count: usize,
 }
@@ -26,6 +27,7 @@ impl PciInventory {
         self.count
     }
 
+    #[allow(dead_code)]
     pub(crate) fn iter(&self) -> impl Iterator<Item = PciDevice> + '_ {
         self.devices[..self.count].iter().flatten().copied()
     }

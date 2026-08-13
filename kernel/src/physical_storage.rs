@@ -169,6 +169,7 @@ pub fn mount(
 }
 
 #[cfg(not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))))]
+#[allow(dead_code)]
 pub const fn service_image(_role: u8) -> Option<&'static [u8]> {
     None
 }

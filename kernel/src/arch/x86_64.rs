@@ -436,7 +436,9 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
     const APIC_ICR_HIGH: usize = 0x310;
     const APIC_TIMER_LVT: usize = 0x320;
     const APIC_SPURIOUS_VECTOR: u32 = 0x100 | 0xff;
+    #[allow(dead_code)]
     const APIC_INIT: u32 = 0x4500;
+    #[allow(dead_code)]
     const APIC_STARTUP: u32 = 0x4600;
     const APIC_DELIVERY_PENDING: u32 = 1 << 12;
     static mut IDT: [IdtEntry; IDT_ENTRIES] = [IdtEntry::MISSING; IDT_ENTRIES];
@@ -631,6 +633,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
     /// Start an AP using the standard INIT/SIPI sequence. The caller owns the
     /// trampoline and must keep it below 1 MiB; this function only performs
     /// bounded APIC delivery and reports how many requests were accepted.
+    #[allow(dead_code)]
     pub fn start_application_processors(
         targets: &[u32],
         startup_vector: u8,
@@ -682,6 +685,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
         APIC_READY.store(true, Ordering::Release);
     }
 
+    #[allow(dead_code)]
     unsafe fn wait_delivery() -> bool {
         let mut spins = 0;
         while unsafe { apic_read(APIC_ICR_LOW) } & APIC_DELIVERY_PENDING != 0 && spins < 10_000 {
@@ -940,7 +944,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
             end_of_interrupt();
             return 0
         }
-        if vector == 0xf1 {
+        if vector == crate::arch::TLB_SHOOTDOWN_IPI_VECTOR as u64 {
             // The coordinator performs the local invalidation before its
             // acknowledgement is published. This vector is the hardware
             // delivery point for remote TLB shootdowns.

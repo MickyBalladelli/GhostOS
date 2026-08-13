@@ -17,6 +17,7 @@ pub mod crash;
 pub mod cow;
 pub mod dma;
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 mod driver_capabilities;
 pub mod dlm;
 pub mod ipc;
@@ -54,6 +55,7 @@ pub mod persona;
 #[allow(unsafe_code)]
 mod power;
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 mod persistence;
 #[allow(unsafe_code)]
 mod pci;
