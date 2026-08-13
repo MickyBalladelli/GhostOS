@@ -460,7 +460,9 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
                 "unprovisioned system detected: authorization database is missing"
             );
         } else {
-            println!("authorization database found: administrator provisioning complete");
+            println!(
+                "authorization database path exists: first-admin setup disabled"
+            );
         }
     }
     println!(

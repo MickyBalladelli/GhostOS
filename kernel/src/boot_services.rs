@@ -315,11 +315,10 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         })
     }
 
-    let provisioning_required = physical_filesystem.as_ref().map_or(true, |filesystem| {
-        !matches!(
+    let provisioning_required = physical_filesystem.as_ref().is_none_or(|filesystem| {
+        matches!(
             filesystem.lookup(AUTHORIZATION_DATABASE_PATH),
-            Ok(record)
-                if record.file_type == synos_synfs::FileType::Regular && record.size != 0
+            Err(synos_synfs::Error::NotFound)
         )
     });
     #[cfg(all(
