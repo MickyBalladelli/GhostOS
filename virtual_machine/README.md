@@ -21,6 +21,7 @@ python3 scripts/package-vm-release.py \
   --evidence-dir build/test-evidence/<run-id> \
   --release-report build/release/release-report.json \
   --release-claims build/release/release-claims.json \
+  --upgrade-compatibility build/release/upgrade-compatibility.json \
   --attestation-dir build/release/attestations \
   --firmware bios --firmware uefi
 ```

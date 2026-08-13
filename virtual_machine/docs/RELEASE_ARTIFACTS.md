@@ -8,6 +8,7 @@ release archive/
 ├── release-manifest.json
 ├── release-report.json
 ├── release-claims.json
+├── upgrade-compatibility.json
 ├── CHANGELOG.md
 ├── artifacts/
 │   ├── synos-vm
@@ -37,6 +38,7 @@ The archive has manifest schema `1`. `release-manifest.json` contains:
 | `changelog` | The packaged changelog path and SHA-256 digest |
 | `release_report` | The verified release report path and SHA-256 digest |
 | `release_claims` | The verified claims manifest path and SHA-256 digest |
+| `upgrade_compatibility` | The verified upgrade and rollback compatibility proof path and SHA-256 digest |
 | `device_topology` | Default guest device names, transports, addresses, and interrupt vectors |
 | `test_evidence` | Evidence JSON paths, digests, tier, test ID, state, command, firmware, host, and skip reason |
 | `known_host_limitations` | Hardware acceleration, terminal, networking, migration, and optional-test limits |
@@ -50,7 +52,11 @@ over its raw bytes. Consumers must verify that signature with
 `attestation-public-key.pem` before installing the image or boot artifact.
 
 The package command requires explicit `--artifact`, `--evidence-dir`,
-`--release-report`, `--release-claims`, and one or more `--firmware` values.
+`--release-report`, `--release-claims`, `--upgrade-compatibility`, and one or
+more `--firmware` values. The compatibility proof must cover both directions
+of every listed boundary: the release accepts the previous version, and the
+previous release accepts the new version for rollback. Every direction must
+have passed JSON evidence in the supplied evidence directory.
 Artifact paths are
 stored only by basename in the
 manifest; host paths do not leak into the release metadata. Evidence files are

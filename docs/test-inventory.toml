@@ -54,7 +54,7 @@ artifact = "stdout.log"
 [gates]
 deterministic = "./scripts/test-all.sh"
 full_validation = "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
-release = "./scripts/release-gate.sh build/test-evidence/<run-id> <slo-report.json>"
+release = "./scripts/release-gate.sh build/test-evidence/<run-id> <slo-report.json> <release-claims.json> <upgrade-compatibility.json>"
 coverage_policy = "coverage.toml"
 mutation_scope = "status, auth, fsd, synfs, http, virtual_machine"
 fuzz_targets = ["path", "volume", "operations", "mount", "http", "script", "network"]

@@ -92,6 +92,7 @@ The code is the final authority. The main companion documents are:
 - [`docs/compatibility-matrix.md`](../docs/compatibility-matrix.md) —
   format, protocol, target, and SDK compatibility.
 - [`docs/persistence-compatibility.md`](../docs/persistence-compatibility.md) — durable formats, backup, migration, downgrade, and recovery evidence.
+- [`docs/release-compatibility.md`](../docs/release-compatibility.md) — two-way upgrade and rollback proof required before packaging.
 - [`docs/system-configuration.md`](../docs/system-configuration.md) — system configuration model.
 - [`virtual_machine/README.md`](../virtual_machine/README.md) — VM usage.
 - [`todo/TODO-VM-first.md`](../todo/TODO-VM-first.md) — VM-specific roadmap

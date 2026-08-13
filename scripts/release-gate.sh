@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-evidence_dir=${1:?usage: release-gate.sh EVIDENCE_DIRECTORY [SLO_REPORT] [RELEASE_CLAIMS]}
+evidence_dir=${1:?usage: release-gate.sh EVIDENCE_DIRECTORY [SLO_REPORT] [RELEASE_CLAIMS] [UPGRADE_COMPATIBILITY]}
 slo_report=${2:-${SYNOS_SLO_REPORT:-}}
 release_claims=${3:-${SYNOS_RELEASE_CLAIMS:-}}
+upgrade_compatibility=${4:-${SYNOS_UPGRADE_COMPATIBILITY:-}}
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 if [[ ! -d "$evidence_dir" ]]; then
@@ -24,6 +25,16 @@ if [[ -z "$release_claims" ]]; then
     echo "release gate: evidence-backed release claims manifest is required; pass RELEASE_CLAIMS or set SYNOS_RELEASE_CLAIMS" >&2
     exit 1
 fi
+
+if [[ -z "$upgrade_compatibility" ]]; then
+    echo "release gate: upgrade compatibility manifest is required; pass UPGRADE_COMPATIBILITY or set SYNOS_UPGRADE_COMPATIBILITY" >&2
+    exit 1
+fi
+
+python3 "$root_dir/scripts/validate-upgrade-compatibility.py" \
+    --manifest "$upgrade_compatibility" \
+    --evidence-dir "$evidence_dir" \
+    --release-revision "$(git -C "$root_dir" rev-parse HEAD)"
 
 python3 "$root_dir/scripts/release-slo-gate.py" \
     --evidence-dir "$evidence_dir" \

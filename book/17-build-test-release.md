@@ -127,6 +127,7 @@ python3 scripts/package-vm-release.py \
   --evidence-dir build/test-evidence/<run-id> \
   --release-report build/release/release-report.json \
   --release-claims build/release/release-claims.json \
+  --upgrade-compatibility build/release/upgrade-compatibility.json \
   --attestation-dir build/release/attestations \
   --firmware bios --firmware uefi
 ```
@@ -138,6 +139,14 @@ coverage, default device topology, every executed evidence record, and known
 host limitations. It also carries the exact changelog and its digest. Failed
 evidence prevents packaging; skipped evidence stays in the manifest with its
 prerequisite reason.
+
+Before packaging, create `upgrade-compatibility.json` from the previous
+release. It must list every compatibility boundary, prove that the new reader
+accepts the previous version and that rollback accepts the new version, declare
+any conversion, and point to passed upgrade and rollback evidence records. The
+release gate and package command both validate this file against the current
+Git revision, so a release cannot be packaged with a missing, one-way, or
+unproven upgrade path.
 
 Create the attestation directory before packaging. The release signer keeps
 the private key outside the repository and provides a separately produced copy

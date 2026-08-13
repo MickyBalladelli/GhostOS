@@ -182,6 +182,7 @@ def write_archive(
     changelog: pathlib.Path,
     release_report: pathlib.Path,
     release_claims: pathlib.Path,
+    upgrade_compatibility: pathlib.Path,
     evidence_root: pathlib.Path,
     evidence_files: Iterable[pathlib.Path],
     attestation_files: Iterable[pathlib.Path],
@@ -210,6 +211,7 @@ def write_archive(
                     add_file(archive, changelog, "CHANGELOG.md", timestamp)
                     add_file(archive, release_report, "release-report.json", timestamp)
                     add_file(archive, release_claims, "release-claims.json", timestamp)
+                    add_file(archive, upgrade_compatibility, "upgrade-compatibility.json", timestamp)
                     for name, path in artifacts:
                         add_file(archive, path, f"artifacts/{name}", timestamp)
                     for path in evidence_files:
@@ -239,6 +241,12 @@ def main() -> int:
         required=True,
         type=pathlib.Path,
         help="evidence-backed claims manifest produced for this release",
+    )
+    parser.add_argument(
+        "--upgrade-compatibility",
+        required=True,
+        type=pathlib.Path,
+        help="compatibility proof for upgrade and rollback against the previous release",
     )
     parser.add_argument(
         "--attestation-dir",
@@ -293,6 +301,25 @@ def main() -> int:
             check=True,
             cwd=ROOT,
         )
+        upgrade_compatibility = args.upgrade_compatibility.expanduser().resolve()
+        if not upgrade_compatibility.is_file():
+            raise ValueError(f"upgrade compatibility manifest does not exist: {upgrade_compatibility}")
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/validate-upgrade-compatibility.py"),
+                "--manifest",
+                str(upgrade_compatibility),
+                "--evidence-dir",
+                str(evidence_root),
+                "--release-revision",
+                git_value("rev-parse", "HEAD"),
+                "--release-version",
+                vm_version(),
+            ],
+            check=True,
+            cwd=ROOT,
+        )
         attestation_root = args.attestation_dir.expanduser().resolve()
         if not attestation_root.is_dir():
             raise ValueError(f"attestation directory does not exist: {attestation_root}")
@@ -334,6 +361,10 @@ def main() -> int:
             "changelog": {"path": "CHANGELOG.md", "sha256": sha256(CHANGELOG)},
             "release_report": {"path": "release-report.json", "sha256": sha256(release_report)},
             "release_claims": {"path": "release-claims.json", "sha256": sha256(release_claims)},
+            "upgrade_compatibility": {
+                "path": "upgrade-compatibility.json",
+                "sha256": sha256(upgrade_compatibility),
+            },
             "device_topology": DEFAULT_TOPOLOGY,
             "test_evidence": records,
             "attestations": {
@@ -360,6 +391,7 @@ def main() -> int:
             CHANGELOG,
             release_report,
             release_claims,
+            upgrade_compatibility,
             evidence_root,
             evidence_files,
             attestation_files,

@@ -55,6 +55,10 @@ the released text immutable.
   replay metadata for untrusted parser boundaries. Impact: tooling and
   documentation only. Compatibility: guest, snapshot, and disk behavior
   unchanged. Evidence: fuzz inventory validation.
+- Added a required release compatibility proof for upgrade and rollback paths.
+  Impact: release tooling now rejects packages without two-way compatibility
+  evidence. Compatibility: guest, snapshot, disk, and package formats are
+  unchanged. Evidence: release compatibility validator.
 
 ## Release format
 

@@ -179,7 +179,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Sign release images and boot artifacts.
 - [x] Generate SBOM and dependency provenance for each release.
 - [x] Produce complete installer and recovery artifacts.
-- [ ] Validate upgrade compatibility before release.
+- [x] Validate upgrade compatibility before release.
 
 ### Testing gates
 

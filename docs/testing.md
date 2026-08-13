@@ -253,13 +253,15 @@ rejects missing, stale, failed, or exhausted SLOs:
 ```sh
 SYNOS_SLO_REPORT=build/slo-report.json \
 SYNOS_RELEASE_CLAIMS=build/release/release-claims.json \
+SYNOS_UPGRADE_COMPATIBILITY=build/release/upgrade-compatibility.json \
   ./scripts/release-gate.sh build/test-evidence/<run-id>
 ```
 
 The JSON report must be supplied by the system's SLO exporter before the
-evidence manifest is written. A release gate without `SYNOS_SLO_REPORT` or
-`SYNOS_RELEASE_CLAIMS` always fails; the claims validator checks controlled
-release terms against retained evidence.
+evidence manifest is written. A release gate without `SYNOS_SLO_REPORT`,
+`SYNOS_RELEASE_CLAIMS`, or `SYNOS_UPGRADE_COMPATIBILITY` always fails. The
+claims validator checks controlled release terms against retained evidence,
+and the compatibility validator checks both upgrade and rollback directions.
 
 Local validation runs formatting, host, VM, no-std, documentation, inventory,
 QEMU, fuzz, coverage, mutation, cross-target, and reproducibility checks when
