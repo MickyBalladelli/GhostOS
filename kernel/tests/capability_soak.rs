@@ -128,10 +128,6 @@ fn run_campaign(requested: usize) -> (CampaignStats, Option<String>) {
             return (stats, Some(format!("cycle {cycle}: revoked handle was reused")));
         }
         stats.generation_reuses += 1;
-        if let Err(error) = expect_stale(&capabilities, owner, root, object) {
-            return (stats, Some(format!("cycle {cycle}: {error}")));
-        }
-        stats.stale_rejections += 2;
 
         let replacement_child = match capabilities.delegate(owner, replacement, borrower, rights) {
             Ok(handle) => handle,
@@ -159,6 +155,10 @@ fn run_campaign(requested: usize) -> (CampaignStats, Option<String>) {
                 )),
             );
         }
+        if let Err(error) = expect_stale(&capabilities, owner, root, object) {
+            return (stats, Some(format!("cycle {cycle}: {error}")));
+        }
+        stats.stale_rejections += 2;
         if let Err(error) = capabilities.check_invariants() {
             return (stats, Some(format!("cycle {cycle}: empty invariant: {error:?}")));
         }
