@@ -231,7 +231,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Register the first administrator passkey, TPM credential, or SSH key.
 - [x] Require confirmation before committing the first administrator account.
 - [x] Persist the first administrator atomically in SynFS.
-- [ ] Make first-admin creation safe to retry after power loss.
+- [x] Make first-admin creation safe to retry after power loss.
 - [ ] Prevent first-admin setup from replacing an existing account database.
 - [ ] Provide a recovery mode for an interrupted or failed first-login setup.
 - [ ] Provide a documented recovery procedure when the first administrator loses all credentials.

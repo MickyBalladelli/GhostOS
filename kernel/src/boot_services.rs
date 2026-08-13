@@ -696,32 +696,42 @@ fn load_first_admin_username(filesystem: Option<&SynFs<FILESYSTEM_BLOCKS>>) {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-pub(crate) fn first_admin_username_pending() -> bool {
-    FIRST_ADMIN_USERNAME_LENGTH.load(Ordering::Acquire) != 0
-}
-
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
 pub(crate) fn create_first_admin_username(username: &[u8]) -> Result<(), Status> {
     if !valid_first_admin_username(username) {
         return Err(Status::INVALID_ARGUMENT)
     }
-    if !PROVISIONING_REQUIRED.load(Ordering::Acquire)
-        || first_admin_username_pending()
-    {
+    if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ALREADY_EXISTS)
     }
     let daemon = unsafe {
         (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
     };
-    for path in [AUTHORIZATION_DATABASE_PATH, FIRST_ADMIN_USERNAME_PATH] {
-        match daemon.filesystem().lookup(path) {
-            Ok(_) => return Err(Status::ALREADY_EXISTS),
-            Err(synos_synfs::Error::NotFound) => {}
-            Err(error) => return Err(error.status()),
+    match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
+        Ok(_) => return Err(Status::ALREADY_EXISTS),
+        Err(synos_synfs::Error::NotFound) => {}
+        Err(error) => return Err(error.status()),
+    }
+    match daemon.filesystem().lookup(FIRST_ADMIN_USERNAME_PATH) {
+        Ok(metadata) => {
+            if metadata.file_type != synos_synfs::FileType::Regular
+                || metadata.size as usize != username.len()
+            {
+                return Err(Status::ALREADY_EXISTS)
+            }
+            let mut existing = [0; FIRST_ADMIN_USERNAME_CAPACITY];
+            let read = daemon
+                .filesystem()
+                .read(FIRST_ADMIN_USERNAME_PATH, &mut existing)
+                .map_err(|error| error.status())?;
+            if read.bytes_read != username.len()
+                || existing[..read.bytes_read] != *username
+            {
+                return Err(Status::ALREADY_EXISTS)
+            }
+            return Ok(())
         }
+        Err(synos_synfs::Error::NotFound) => {}
+        Err(error) => return Err(error.status()),
     }
     let mut transaction = daemon.filesystem_mut().transaction();
     match transaction.lookup("/system/security") {
@@ -765,24 +775,56 @@ pub(crate) fn create_first_admin_credential(
     {
         return Err(Status::INVALID_ARGUMENT)
     }
-    if !PROVISIONING_REQUIRED.load(Ordering::Acquire)
-        || !first_admin_username_pending()
-    {
+    if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ACCESS_DENIED)
     }
     let daemon = unsafe {
         (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
     };
-    for path in [
-        AUTHORIZATION_DATABASE_PATH,
-        FIRST_ADMIN_USERNAME_PATH,
-        FIRST_ADMIN_CREDENTIAL_PATH,
-    ] {
-        match daemon.filesystem().lookup(path) {
-            Ok(_) => return Err(Status::ALREADY_EXISTS),
-            Err(synos_synfs::Error::NotFound) => {}
-            Err(error) => return Err(error.status()),
+    match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
+        Ok(_) => return Err(Status::ALREADY_EXISTS),
+        Err(synos_synfs::Error::NotFound) => {}
+        Err(error) => return Err(error.status()),
+    }
+    match daemon.filesystem().lookup(FIRST_ADMIN_USERNAME_PATH) {
+        Ok(metadata) if metadata.file_type == synos_synfs::FileType::Regular => {}
+        Ok(_) => return Err(Status::CORRUPT),
+        Err(synos_synfs::Error::NotFound) => return Err(Status::ACCESS_DENIED),
+        Err(error) => return Err(error.status()),
+    }
+    match daemon.filesystem().lookup(FIRST_ADMIN_CREDENTIAL_PATH) {
+        Ok(metadata) => {
+            let size = metadata.size as usize;
+            if metadata.file_type != synos_synfs::FileType::Regular
+                || size < 3
+                || size > FIRST_ADMIN_CREDENTIAL_CAPACITY + 2
+            {
+                return Err(Status::CORRUPT)
+            }
+            let mut existing = [0; FIRST_ADMIN_CREDENTIAL_CAPACITY + 2];
+            let read = daemon
+                .filesystem()
+                .read(FIRST_ADMIN_CREDENTIAL_PATH, &mut existing)
+                .map_err(|error| error.status())?;
+            let existing_length = existing[1] as usize;
+            if read.bytes_read != size
+                || !(1..=3).contains(&existing[0])
+                || existing_length == 0
+                || existing_length > FIRST_ADMIN_CREDENTIAL_CAPACITY
+                || size != existing_length + 2
+            {
+                return Err(Status::CORRUPT)
+            }
+            if existing[0] != kind
+                || existing_length != public_material.len()
+                || existing[2..2 + existing_length] != *public_material
+            {
+                return Err(Status::ALREADY_EXISTS)
+            }
+            return Ok(())
         }
+        Err(synos_synfs::Error::NotFound) => {}
+        Err(error) => return Err(error.status()),
     }
     let mut transaction = daemon.filesystem_mut().transaction();
     let mut record = [0; FIRST_ADMIN_CREDENTIAL_CAPACITY + 2];
