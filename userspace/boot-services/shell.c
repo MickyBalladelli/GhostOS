@@ -53,6 +53,7 @@ enum {
     ACCOUNT_DATABASE_CAPACITY = 4096,
     ACCOUNT_RECORD_PENDING = 0,
     ACCOUNT_RECORD_DELETED = 4,
+    ACCOUNT_RECORD_DISABLED_OFFSET = 4,
 };
 
 struct request {
@@ -304,6 +305,9 @@ static int valid_account_username(const u8 *username, u64 username_length)
 
 static const char *account_credential_name(u8 kind)
 {
+    if (kind > ACCOUNT_RECORD_DISABLED_OFFSET) {
+        kind = (u8)(kind - ACCOUNT_RECORD_DISABLED_OFFSET);
+    }
     if (kind == 1) {
         return "passkey";
     }
@@ -314,6 +318,17 @@ static const char *account_credential_name(u8 kind)
         return "ssh";
     }
     return 0;
+}
+
+static int account_record_is_enabled(u8 kind)
+{
+    return kind >= 1 && kind <= 3;
+}
+
+static int account_record_is_disabled(u8 kind)
+{
+    return kind >= ACCOUNT_RECORD_DISABLED_OFFSET + 1
+        && kind <= ACCOUNT_RECORD_DISABLED_OFFSET + 3;
 }
 
 static int account_username_bytes_match(
@@ -519,10 +534,12 @@ static void list_accounts(u8 *buffer)
             offset += record_bytes;
             continue;
         }
-        const char *state = record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+        const char *state = record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
             ? "pending"
-            : "enabled";
-        const char *credential = record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+            : account_record_is_disabled(record[ACCOUNT_USERNAME_CAPACITY + 2])
+                ? "disabled"
+                : "enabled";
+        const char *credential = record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
             ? "none"
             : account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]);
         write_text("username=");
@@ -587,11 +604,13 @@ static void show_account(const char *username, u8 *buffer)
             write_text("username=");
             write_bytes((const char *)(record + 2), record[1]);
             write_text("\nstate=");
-            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
                 ? "pending"
-                : "enabled");
+                : account_record_is_disabled(record[ACCOUNT_USERNAME_CAPACITY + 2])
+                    ? "disabled"
+                    : "enabled");
             write_text("\nscope=local\ncredential=");
-            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
                 ? "none"
                 : account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
             write_text("\n");
@@ -724,7 +743,7 @@ static void delete_account(
             offset += record_bytes;
             continue;
         }
-        int is_administrator = record[ACCOUNT_USERNAME_CAPACITY + 2] != ACCOUNT_RECORD_PENDING;
+        int is_administrator = account_record_is_enabled(record[ACCOUNT_USERNAME_CAPACITY + 2]);
         if (is_administrator) {
             administrator_count++;
         }
@@ -766,6 +785,119 @@ static void delete_account(
         return;
     }
     write_text("Account deleted.\n");
+}
+
+static void set_account_enabled(
+    const char *username,
+    int enable,
+    u8 *buffer
+)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+    u64 username_length = length(username);
+    if (!valid_account_username((const u8 *)username, username_length)) {
+        write_text("Invalid username.\n");
+        return;
+    }
+
+    u64 database_bytes = 0;
+    int read = read_account_database(buffer, &database_bytes);
+    if (read < 0) {
+        write_text("Account database unavailable.\n");
+        return;
+    }
+    if (read == 0 || database_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account not found.\n");
+        return;
+    }
+
+    u64 offset = 0;
+    u64 administrator_count = 0;
+    u64 target_bytes = 0;
+    u8 target_kind = ACCOUNT_RECORD_DELETED;
+    int found = 0;
+    u8 next_record[ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY] = {0};
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest == 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+            offset += record_bytes;
+            continue;
+        }
+        if (account_record_is_enabled(record[ACCOUNT_USERNAME_CAPACITY + 2])) {
+            administrator_count++;
+        }
+        if (account_username_matches(record + 2, record[1], username)) {
+            found = 1;
+            target_bytes = record_bytes;
+            target_kind = record[ACCOUNT_USERNAME_CAPACITY + 2];
+            for (u64 index = 0; index < record_bytes; index++) {
+                next_record[index] = record[index];
+            }
+        }
+        offset += record_bytes;
+    }
+    if (!found) {
+        write_text("Account not found.\n");
+        return;
+    }
+
+    u8 next_kind = target_kind;
+    if (enable) {
+        if (account_record_is_enabled(target_kind)) {
+            write_text("Account is already enabled.\n");
+            return;
+        }
+        if (!account_record_is_disabled(target_kind)) {
+            write_text("Account is pending credential setup.\n");
+            return;
+        }
+        next_kind = (u8)(target_kind - ACCOUNT_RECORD_DISABLED_OFFSET);
+    } else {
+        if (account_record_is_disabled(target_kind)) {
+            write_text("Account is already disabled.\n");
+            return;
+        }
+        if (!account_record_is_enabled(target_kind)) {
+            write_text("Account is pending credential setup.\n");
+            return;
+        }
+        if (administrator_count <= 1) {
+            write_text("Cannot disable the last administrator.\n");
+            return;
+        }
+        next_kind = (u8)(target_kind + ACCOUNT_RECORD_DISABLED_OFFSET);
+    }
+    next_record[ACCOUNT_USERNAME_CAPACITY + 2] = next_kind;
+    if (database_bytes + target_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account database is full.\n");
+        return;
+    }
+
+    u32 failure_status = 0;
+    if (!append_account_record(
+        next_record,
+        target_bytes,
+        database_bytes,
+        &failure_status
+    )) {
+        write_text(enable ? "Account enable failed.\n" : "Account disable failed.\n");
+        write_status(failure_status);
+        return;
+    }
+    write_text(enable ? "Account enabled.\n" : "Account disabled.\n");
 }
 
 static void execute_line(char *line, u8 *buffer)
@@ -825,7 +957,7 @@ static void execute_line(char *line, u8 *buffer)
         char confirmation[256];
         u64 action_length = next_word(&cursor, action);
         if (action_length == 0) {
-            write_text("Use: ACCOUNT LIST, SHOW, CREATE, or DELETE <username> CONFIRM\n");
+            write_text("Use: ACCOUNT LIST, SHOW, CREATE, DELETE, ENABLE, or DISABLE <username>\n");
             return;
         }
         if (equal_name(action, "LIST")) {
@@ -859,8 +991,18 @@ static void execute_line(char *line, u8 *buffer)
             delete_account(username, confirmation, buffer);
             return;
         }
+        if (equal_name(action, "ENABLE") || equal_name(action, "DISABLE")) {
+            if (next_word(&cursor, username) == 0) {
+                write_text(equal_name(action, "ENABLE")
+                    ? "Use: ACCOUNT ENABLE <username>\n"
+                    : "Use: ACCOUNT DISABLE <username>\n");
+                return;
+            }
+            set_account_enabled(username, equal_name(action, "ENABLE"), buffer);
+            return;
+        }
         {
-            write_text("Use: ACCOUNT LIST, SHOW, CREATE, or DELETE <username> CONFIRM\n");
+            write_text("Use: ACCOUNT LIST, SHOW, CREATE, DELETE, ENABLE, or DISABLE <username>\n");
             return;
         }
     }
