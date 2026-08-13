@@ -231,6 +231,16 @@ impl GroupRecord {
         Ok(())
     }
 
+    pub fn remove_member(&mut self, identity: IdentityId) -> Result<(), StartupError> {
+        let slot = self
+            .members
+            .iter()
+            .position(|entry| entry.is_some_and(|member| member == identity))
+            .ok_or(StartupError::GroupMemberNotFound)?;
+        self.members[slot] = None;
+        Ok(())
+    }
+
     fn grants(&self, identity: IdentityId, right: RightIdentifier) -> bool {
         self.members().any(|member| member == identity)
             && self.rights().any(|granted| granted == right)
@@ -269,6 +279,23 @@ impl<const CAPACITY: usize> GroupDirectory<CAPACITY> {
 
     pub fn groups(&self) -> impl Iterator<Item = GroupRecord> + '_ {
         self.groups.iter().flatten().copied()
+    }
+
+    pub fn record(&self, id: GroupId) -> Result<GroupRecord, StartupError> {
+        self.groups
+            .iter()
+            .flatten()
+            .find(|group| group.id == id)
+            .copied()
+            .ok_or(StartupError::GroupNotFound)
+    }
+
+    pub fn record_mut(&mut self, id: GroupId) -> Result<&mut GroupRecord, StartupError> {
+        self.groups
+            .iter_mut()
+            .flatten()
+            .find(|group| group.id == id)
+            .ok_or(StartupError::GroupNotFound)
     }
 
     pub fn allows(&self, identity: IdentityId, right: RightIdentifier) -> bool {
@@ -406,6 +433,8 @@ pub enum StartupError {
     Capacity,
     InvalidPolicy,
     InvalidRecord,
+    GroupMemberNotFound,
+    GroupNotFound,
     NotProvisioned,
     SessionExpired,
     SessionNotFound,
@@ -1043,6 +1072,78 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             self.sessions.revoke_identity(identity);
         }
         Ok(result)
+    }
+
+    pub fn list_groups(
+        &mut self,
+        handle: SessionHandle,
+        now_us: u64,
+    ) -> Result<GroupDirectory<GROUPS>, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        Ok(self.state.groups)
+    }
+
+    pub fn create_group<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        id: GroupId,
+        name: &str,
+        now_us: u64,
+    ) -> Result<GroupRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        let group = GroupRecord::new(id, name)?;
+        next_state.groups.insert(group)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        self.state = next_state;
+        Ok(group)
+    }
+
+    pub fn add_group_member<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        group: GroupId,
+        identity: IdentityId,
+        now_us: u64,
+    ) -> Result<GroupRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        next_state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        let group_record = next_state.groups.record_mut(group)?;
+        group_record.add_member(identity)?;
+        let group_record = *group_record;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        self.state = next_state;
+        Ok(group_record)
+    }
+
+    pub fn remove_group_member<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        group: GroupId,
+        identity: IdentityId,
+        now_us: u64,
+    ) -> Result<GroupRecord, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut next_state = self.state;
+        let group_record = next_state.groups.record_mut(group)?;
+        group_record.remove_member(identity)?;
+        let group_record = *group_record;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        self.state = next_state;
+        Ok(group_record)
     }
 
     pub fn create_account<S: SecurityStore<USERS, GROUPS>>(
