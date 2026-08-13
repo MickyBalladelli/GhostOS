@@ -18,7 +18,7 @@ pub use identity::{
     DatabaseScope,
     InitialCapability, PasswordVerifier, PublicCredentialData, Session, SessionCapabilities,
     UserRecord, Username,
-    MAX_CREDENTIAL_LABEL_BYTES, MAX_USERNAME_BYTES, RESERVED_USERNAMES,
+    MAX_AUTH_RESPONSE_BYTES, MAX_CREDENTIAL_LABEL_BYTES, MAX_USERNAME_BYTES, RESERVED_USERNAMES,
 };
 pub use federation::{
     accept_offer, ClusterId, DiscoveryAnnouncement, FederatedLease, FederatedResourceKind,

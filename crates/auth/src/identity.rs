@@ -13,6 +13,7 @@ pub const MAX_CREDENTIAL_LABEL_BYTES: usize = 32;
 pub const MAX_CREDENTIALS_PER_USER: usize = 4;
 pub const MAX_INITIAL_CAPABILITIES: usize = 8;
 pub const MAX_USER_RIGHTS: usize = 16;
+pub const MAX_AUTH_RESPONSE_BYTES: usize = 4096;
 pub const DEFAULT_USER_CAPACITY: usize = 64;
 pub const DEFAULT_CHALLENGE_CAPACITY: usize = 16;
 pub const RESERVED_USERNAMES: &[&str] = &[
@@ -1057,13 +1058,40 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         now_us: u64,
         session_lifetime_us: u64,
     ) -> Result<Session, AuthError> {
+        self.complete_authentication_from_node(
+            challenge,
+            response,
+            verifier,
+            NodeId::LOCAL,
+            login_address_space,
+            now_us,
+            session_lifetime_us,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_authentication_from_node<V: CredentialVerifier>(
+        &mut self,
+        challenge: AuthenticationChallenge,
+        response: &[u8],
+        verifier: &mut V,
+        node: NodeId,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+        session_lifetime_us: u64,
+    ) -> Result<Session, AuthError> {
         let slot = self
             .pending
             .iter()
             .position(|entry| entry.is_some_and(|pending| pending.challenge == challenge))
             .ok_or(AuthError::InvalidChallenge)?;
         let pending = self.pending[slot].take().expect("pending challenge");
-        if now_us >= challenge.expires_at_us || session_lifetime_us == 0 {
+        if pending.node != node
+            || now_us >= challenge.expires_at_us
+            || session_lifetime_us == 0
+            || response.is_empty()
+            || response.len() > MAX_AUTH_RESPONSE_BYTES
+        {
             return Err(AuthError::InvalidChallenge)
         }
         let record = self
@@ -1118,13 +1146,40 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
         now_us: u64,
         session_lifetime_us: u64,
     ) -> Result<Session, AuthError> {
+        self.complete_password_authentication_from_node(
+            challenge,
+            password,
+            verifier,
+            NodeId::LOCAL,
+            login_address_space,
+            now_us,
+            session_lifetime_us,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_password_authentication_from_node<V: PasswordVerifier>(
+        &mut self,
+        challenge: AuthenticationChallenge,
+        password: &[u8],
+        verifier: &mut V,
+        node: NodeId,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+        session_lifetime_us: u64,
+    ) -> Result<Session, AuthError> {
         let slot = self
             .pending
             .iter()
             .position(|entry| entry.is_some_and(|pending| pending.challenge == challenge))
             .ok_or(AuthError::InvalidChallenge)?;
         let pending = self.pending[slot].take().expect("pending challenge");
-        if now_us >= challenge.expires_at_us || session_lifetime_us == 0 {
+        if pending.node != node
+            || now_us >= challenge.expires_at_us
+            || session_lifetime_us == 0
+            || password.is_empty()
+            || password.len() > MAX_AUTH_RESPONSE_BYTES
+        {
             return Err(AuthError::InvalidChallenge)
         }
         let record = self

@@ -75,6 +75,7 @@ impl WebAuthnPolicy {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct RemoteAuthenticationChallenge {
     pub authentication: AuthenticationChallenge,
+    pub login_node: NodeId,
     pub device: NodeId,
     pub rp_id_hash: [u8; 32],
     pub origin_hash: [u8; 32],
@@ -94,7 +95,7 @@ impl core::fmt::Debug for RemoteAuthenticationChallenge {
 }
 
 impl RemoteAuthenticationChallenge {
-    pub const WIRE_BYTES: usize = 136;
+    pub const WIRE_BYTES: usize = 140;
 
     /// WebAuthn challenge bytes. The assertion binds the login to this device,
     /// relying party, origin, credential, expiry, and one-shot daemon nonce.
@@ -103,10 +104,11 @@ impl RemoteAuthenticationChallenge {
         bytes[0..4].copy_from_slice(b"SYWA");
         bytes[4] = 1;
         bytes[8..36].copy_from_slice(&self.authentication.bytes());
-        bytes[36..40].copy_from_slice(&self.device.raw().to_be_bytes());
-        bytes[40..72].copy_from_slice(&self.rp_id_hash);
-        bytes[72..104].copy_from_slice(&self.origin_hash);
-        bytes[104..136].copy_from_slice(&self.ceremony_nonce);
+        bytes[36..40].copy_from_slice(&self.login_node.raw().to_be_bytes());
+        bytes[40..44].copy_from_slice(&self.device.raw().to_be_bytes());
+        bytes[44..76].copy_from_slice(&self.rp_id_hash);
+        bytes[76..108].copy_from_slice(&self.origin_hash);
+        bytes[108..140].copy_from_slice(&self.ceremony_nonce);
         bytes
     }
 }
@@ -206,6 +208,7 @@ impl SshLoginPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SshAuthenticationChallenge {
     pub authentication: AuthenticationChallenge,
+    pub login_node: NodeId,
     pub device: NodeId,
     public_key: [u8; MAX_SSH_PUBLIC_KEY_BYTES],
     public_key_length: u8,
@@ -216,10 +219,11 @@ pub struct SshAuthenticationChallenge {
 }
 
 impl SshAuthenticationChallenge {
-    pub const WIRE_BYTES: usize = 220;
+    pub const WIRE_BYTES: usize = 224;
 
     fn new(
         authentication: AuthenticationChallenge,
+        login_node: NodeId,
         device: NodeId,
         public_key: &[u8],
         exchange_hash: &[u8],
@@ -238,6 +242,7 @@ impl SshAuthenticationChallenge {
         hash[..exchange_hash.len()].copy_from_slice(exchange_hash);
         Ok(Self {
             authentication,
+            login_node,
             device,
             public_key: key,
             public_key_length: public_key.len() as u8,
@@ -263,13 +268,14 @@ impl SshAuthenticationChallenge {
         bytes[0..4].copy_from_slice(b"SYSH");
         bytes[4] = 1;
         bytes[8..36].copy_from_slice(&self.authentication.bytes());
-        bytes[36..40].copy_from_slice(&self.device.raw().to_be_bytes());
-        bytes[40] = self.public_key_length;
-        bytes[41] = self.exchange_hash_length;
-        bytes[44..140].copy_from_slice(&self.public_key);
-        bytes[140..204].copy_from_slice(&self.exchange_hash);
-        bytes[204..212].copy_from_slice(&self.challenge_lifetime_us.to_be_bytes());
-        bytes[212..220].copy_from_slice(&self.session_lifetime_us.to_be_bytes());
+        bytes[36..40].copy_from_slice(&self.login_node.raw().to_be_bytes());
+        bytes[40..44].copy_from_slice(&self.device.raw().to_be_bytes());
+        bytes[44] = self.public_key_length;
+        bytes[45] = self.exchange_hash_length;
+        bytes[48..144].copy_from_slice(&self.public_key);
+        bytes[144..208].copy_from_slice(&self.exchange_hash);
+        bytes[208..216].copy_from_slice(&self.challenge_lifetime_us.to_be_bytes());
+        bytes[216..224].copy_from_slice(&self.session_lifetime_us.to_be_bytes());
         bytes
     }
 }
@@ -346,6 +352,7 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             .map_err(RemoteAuthError::Authentication)?;
         Ok(RemoteAuthenticationChallenge {
             authentication,
+            login_node,
             device,
             rp_id_hash: policy.rp_id_hash,
             origin_hash: policy.origin_hash,
@@ -389,10 +396,11 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             sign_count: None,
         };
         let session = self
-            .complete_authentication(
+            .complete_authentication_from_node(
                 challenge.authentication,
                 assertion.signature,
                 &mut adapter,
+                challenge.login_node,
                 login_address_space,
                 now_us,
                 policy.session_lifetime_us,
@@ -451,6 +459,7 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             .map_err(RemoteAuthError::Authentication)?;
         SshAuthenticationChallenge::new(
             authentication,
+            login_node,
             device,
             public_key,
             exchange_hash,
@@ -482,10 +491,11 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             verifier,
         };
         let session = self
-            .complete_authentication(
+            .complete_authentication_from_node(
                 challenge.authentication,
                 signature,
                 &mut adapter,
+                challenge.login_node,
                 login_address_space,
                 now_us,
                 policy.session_lifetime_us,

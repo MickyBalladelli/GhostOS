@@ -578,15 +578,36 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         login_address_space: AddressSpaceId,
         now_us: u64,
     ) -> Result<SessionView, StartupError> {
+        self.complete_login_from_node(
+            challenge,
+            response,
+            verifier,
+            NodeId::LOCAL,
+            login_address_space,
+            now_us,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_login_from_node<V: CredentialVerifier>(
+        &mut self,
+        challenge: AuthenticationChallenge,
+        response: &[u8],
+        verifier: &mut V,
+        node: NodeId,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
         if self.challenge_is_password(challenge) {
             return Err(StartupError::InvalidPolicy)
         }
         let session = self
             .authd
-            .complete_authentication(
+            .complete_authentication_from_node(
                 challenge,
                 response,
                 verifier,
+                node,
                 login_address_space,
                 now_us,
                 self.policy.session_lifetime_us,
@@ -618,15 +639,36 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize>
         login_address_space: AddressSpaceId,
         now_us: u64,
     ) -> Result<SessionView, StartupError> {
+        self.complete_password_login_from_node(
+            challenge,
+            password,
+            verifier,
+            NodeId::LOCAL,
+            login_address_space,
+            now_us,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_password_login_from_node<V: PasswordVerifier>(
+        &mut self,
+        challenge: AuthenticationChallenge,
+        password: &[u8],
+        verifier: &mut V,
+        node: NodeId,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<SessionView, StartupError> {
         if !self.password_login_allowed() {
             return Err(StartupError::InvalidPolicy)
         }
         let session = self
             .authd
-            .complete_password_authentication(
+            .complete_password_authentication_from_node(
                 challenge,
                 password,
                 verifier,
+                node,
                 login_address_space,
                 now_us,
                 self.policy.session_lifetime_us,
