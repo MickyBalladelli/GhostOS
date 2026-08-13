@@ -304,6 +304,23 @@ pub enum StartupError {
     SessionNotFound,
     SessionRevoked,
     Storage(SecurityStoreError),
+    LastAdministrator,
+}
+
+#[derive(Clone, Copy)]
+pub enum AccountManagementRequest {
+    Create(UserRecord),
+    Update(UserRecord),
+    Disable(IdentityId),
+    Delete(IdentityId),
+}
+
+#[derive(Clone, Copy)]
+pub enum AccountManagementResult {
+    Created(UserRecord),
+    Updated(UserRecord),
+    Disabled(UserRecord),
+    Deleted(UserRecord),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -661,6 +678,178 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
 
     pub fn revoke_identity(&mut self, identity: IdentityId) -> usize {
         self.sessions.revoke_identity(identity)
+    }
+
+    pub fn manage_account<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        request: AccountManagementRequest,
+        now_us: u64,
+    ) -> Result<AccountManagementResult, StartupError> {
+        self.authorize(handle, RightIdentifier::SYSTEM_ADMIN, now_us)?;
+        let mut next_state = self.state;
+        let (result, revoked_identity) = match request {
+            AccountManagementRequest::Create(record) => {
+                Self::validate_managed_record(record)?;
+                next_state
+                    .database
+                    .insert(record)
+                    .map_err(StartupError::Authentication)?;
+                (AccountManagementResult::Created(record), None)
+            }
+            AccountManagementRequest::Update(record) => {
+                Self::validate_managed_record(record)?;
+                let previous = next_state
+                    .database
+                    .record(record.identity)
+                    .map_err(StartupError::Authentication)?;
+                if Self::is_last_enabled_administrator(&next_state.database, previous)
+                    && (!record.enabled || !Self::is_administrator(&record))
+                {
+                    return Err(StartupError::LastAdministrator)
+                }
+                next_state
+                    .database
+                    .replace(record)
+                    .map_err(StartupError::Authentication)?;
+                (AccountManagementResult::Updated(record), Some(record.identity))
+            }
+            AccountManagementRequest::Disable(identity) => {
+                let mut record = next_state
+                    .database
+                    .record(identity)
+                    .map_err(StartupError::Authentication)?;
+                if Self::is_last_enabled_administrator(&next_state.database, record) {
+                    return Err(StartupError::LastAdministrator)
+                }
+                record.enabled = false;
+                next_state
+                    .database
+                    .replace(record)
+                    .map_err(StartupError::Authentication)?;
+                (AccountManagementResult::Disabled(record), Some(identity))
+            }
+            AccountManagementRequest::Delete(identity) => {
+                let record = next_state
+                    .database
+                    .record(identity)
+                    .map_err(StartupError::Authentication)?;
+                if Self::is_last_enabled_administrator(&next_state.database, record) {
+                    return Err(StartupError::LastAdministrator)
+                }
+                next_state
+                    .database
+                    .remove(identity)
+                    .map_err(StartupError::Authentication)?;
+                (AccountManagementResult::Deleted(record), Some(identity))
+            }
+        };
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        *self.sessions.authd_mut().database_mut() = next_state.database;
+        self.state = next_state;
+        if let Some(identity) = revoked_identity {
+            self.sessions.revoke_identity(identity);
+        }
+        Ok(result)
+    }
+
+    pub fn create_account<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        record: UserRecord,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        match self.manage_account(
+            store,
+            handle,
+            AccountManagementRequest::Create(record),
+            now_us,
+        )? {
+            AccountManagementResult::Created(record) => Ok(record),
+            _ => Err(StartupError::InvalidRecord),
+        }
+    }
+
+    pub fn update_account<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        record: UserRecord,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        match self.manage_account(
+            store,
+            handle,
+            AccountManagementRequest::Update(record),
+            now_us,
+        )? {
+            AccountManagementResult::Updated(record) => Ok(record),
+            _ => Err(StartupError::InvalidRecord),
+        }
+    }
+
+    pub fn disable_account<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        match self.manage_account(
+            store,
+            handle,
+            AccountManagementRequest::Disable(identity),
+            now_us,
+        )? {
+            AccountManagementResult::Disabled(record) => Ok(record),
+            _ => Err(StartupError::InvalidRecord),
+        }
+    }
+
+    pub fn delete_account<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        match self.manage_account(
+            store,
+            handle,
+            AccountManagementRequest::Delete(identity),
+            now_us,
+        )? {
+            AccountManagementResult::Deleted(record) => Ok(record),
+            _ => Err(StartupError::InvalidRecord),
+        }
+    }
+
+    fn validate_managed_record(record: UserRecord) -> Result<(), StartupError> {
+        if record.identity == IdentityId::ANONYMOUS || record.credentials().count() == 0 {
+            return Err(StartupError::InvalidRecord)
+        }
+        Ok(())
+    }
+
+    fn is_administrator(record: &UserRecord) -> bool {
+        record.rights().any(|right| right == RightIdentifier::SYSTEM_ADMIN)
+    }
+
+    fn is_last_enabled_administrator(
+        database: &AuthorizationDatabase<USERS>,
+        target: UserRecord,
+    ) -> bool {
+        Self::is_administrator(&target)
+            && target.enabled
+            && database
+                .records()
+                .filter(|record| record.enabled && Self::is_administrator(record))
+                .count()
+                <= 1
     }
 
     pub fn expire(&mut self, now_us: u64) -> usize {

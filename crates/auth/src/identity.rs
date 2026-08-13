@@ -381,6 +381,15 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
         self.records.iter().flatten().copied()
     }
 
+    pub fn record(&self, identity: IdentityId) -> Result<UserRecord, AuthError> {
+        self.records
+            .iter()
+            .flatten()
+            .find(|record| record.identity == identity)
+            .copied()
+            .ok_or(AuthError::UserNotFound)
+    }
+
     pub fn import<S: AuthorizationStore>(
         &mut self,
         store: &mut S,
@@ -413,6 +422,35 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
             .flatten()
             .find(|record| record.identity == identity)
             .ok_or(AuthError::UserNotFound)
+    }
+
+    pub fn replace(&mut self, record: UserRecord) -> Result<(), AuthError> {
+        let slot = self
+            .records
+            .iter()
+            .position(|entry| entry.is_some_and(|existing| existing.identity == record.identity))
+            .ok_or(AuthError::UserNotFound)?;
+        if self.records.iter().flatten().any(|existing| {
+            existing.identity != record.identity
+                && existing.scope == record.scope
+                && existing
+                    .username
+                    .as_str()
+                    .eq_ignore_ascii_case(record.username.as_str())
+        }) {
+            return Err(AuthError::AlreadyExists)
+        }
+        self.records[slot] = Some(record);
+        Ok(())
+    }
+
+    pub fn remove(&mut self, identity: IdentityId) -> Result<UserRecord, AuthError> {
+        let slot = self
+            .records
+            .iter()
+            .position(|entry| entry.is_some_and(|record| record.identity == identity))
+            .ok_or(AuthError::UserNotFound)?;
+        self.records[slot].take().ok_or(AuthError::UserNotFound)
     }
 
     fn login_record(&self, username: &str, node: NodeId) -> Option<UserRecord> {

@@ -50,8 +50,9 @@ pub use revocation_monitor::{
     DEFAULT_REVOCATION_EVENT_CAPACITY, REVOCATION_CACHE_COUNT,
 };
 pub use startup::{
-    BootLoginService, GroupDirectory, GroupId, GroupRecord, SecurityPolicy, SecurityState, SecurityStore,
-    SecurityStoreError, SessionHandle, SessionManager, SessionView, StartupError,
+    AccountManagementRequest, AccountManagementResult, BootLoginService, GroupDirectory, GroupId,
+    GroupRecord, SecurityPolicy, SecurityState, SecurityStore, SecurityStoreError, SessionHandle,
+    SessionManager, SessionView, StartupError,
     MAX_ACTIVE_SESSIONS, MAX_CHALLENGE_LIFETIME_US, MAX_GROUP_MEMBERS, MAX_GROUP_RIGHTS,
     MAX_GROUPS, MAX_SESSION_LIFETIME_US,
 };
