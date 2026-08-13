@@ -47,9 +47,12 @@ enum {
 
 static const char ACCOUNT_AUTHORIZATION_PATH[] = "/system/security/authorization";
 enum {
-    ACCOUNT_RECORD_VERSION = 1,
+    ACCOUNT_RECORD_LEGACY_VERSION = 1,
+    ACCOUNT_RECORD_VERSION = 2,
     ACCOUNT_USERNAME_CAPACITY = 32,
     ACCOUNT_CREDENTIAL_CAPACITY = 96,
+    ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES = 3,
+    ACCOUNT_CREDENTIAL_MAX = 4,
     ACCOUNT_RECORD_HEADER_BYTES = 36,
     ACCOUNT_DATABASE_CAPACITY = 4096,
     ACCOUNT_RECORD_PENDING = 0,
@@ -427,6 +430,20 @@ static u8 account_credential_kind(u8 kind)
     return kind;
 }
 
+static u8 account_state_offset(u8 kind)
+{
+    if (kind >= ACCOUNT_RECORD_EXPIRED_OFFSET) {
+        return ACCOUNT_RECORD_EXPIRED_OFFSET;
+    }
+    if (kind >= ACCOUNT_RECORD_LOCKED_OFFSET) {
+        return ACCOUNT_RECORD_LOCKED_OFFSET;
+    }
+    if (kind > ACCOUNT_RECORD_DISABLED_OFFSET) {
+        return ACCOUNT_RECORD_DISABLED_OFFSET;
+    }
+    return 0;
+}
+
 static const char *account_state_name(u8 kind)
 {
     if (kind == ACCOUNT_RECORD_PENDING) {
@@ -442,6 +459,57 @@ static const char *account_state_name(u8 kind)
         return "expired";
     }
     return "active";
+}
+
+static u64 account_record_credential_count(const u8 *record)
+{
+    if (record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
+        || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+        return 0;
+    }
+    if (record[0] == ACCOUNT_RECORD_LEGACY_VERSION) {
+        return 1;
+    }
+    if (record[ACCOUNT_RECORD_HEADER_BYTES] == 0
+        || record[ACCOUNT_RECORD_HEADER_BYTES] > ACCOUNT_CREDENTIAL_MAX) {
+        return 0;
+    }
+    return record[ACCOUNT_RECORD_HEADER_BYTES];
+}
+
+static int account_record_credential(
+    const u8 *record,
+    u64 index,
+    u8 *id,
+    u8 *kind,
+    const u8 **material,
+    u64 *material_length
+)
+{
+    if (record[0] == ACCOUNT_RECORD_LEGACY_VERSION) {
+        if (index != 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING) {
+            return 0;
+        }
+        *id = 1;
+        *kind = account_credential_kind(record[ACCOUNT_USERNAME_CAPACITY + 2]);
+        *material = record + ACCOUNT_RECORD_HEADER_BYTES;
+        *material_length = record[ACCOUNT_RECORD_HEADER_BYTES - 1];
+        return 1;
+    }
+    u64 count = account_record_credential_count(record);
+    u64 offset = ACCOUNT_RECORD_HEADER_BYTES + 1;
+    for (u64 entry = 0; entry < count; entry++) {
+        u8 entry_length = record[offset + 2];
+        if (entry == index) {
+            *id = record[offset];
+            *kind = record[offset + 1];
+            *material = record + offset + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES;
+            *material_length = entry_length;
+            return 1;
+        }
+        offset += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + entry_length;
+    }
+    return 0;
 }
 
 static int account_username_bytes_match(
@@ -491,7 +559,8 @@ static int valid_account_record(const u8 *buffer, u64 record_bytes)
     u64 credential_length = buffer[ACCOUNT_RECORD_HEADER_BYTES - 1];
     if (record_bytes < ACCOUNT_RECORD_HEADER_BYTES
         || record_bytes > ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY
-        || buffer[0] != ACCOUNT_RECORD_VERSION
+        || (buffer[0] != ACCOUNT_RECORD_LEGACY_VERSION
+            && buffer[0] != ACCOUNT_RECORD_VERSION)
         || !valid_account_username(buffer + 2, username_length)) {
         return 0;
     }
@@ -499,10 +568,43 @@ static int valid_account_record(const u8 *buffer, u64 record_bytes)
         || buffer[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
         return credential_length == 0 && record_bytes == ACCOUNT_RECORD_HEADER_BYTES;
     }
-    return account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]) != 0
-        && credential_length != 0
-        && credential_length <= ACCOUNT_CREDENTIAL_CAPACITY
-        && record_bytes == ACCOUNT_RECORD_HEADER_BYTES + credential_length;
+    if (account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]) == 0
+        || credential_length == 0
+        || credential_length > ACCOUNT_CREDENTIAL_CAPACITY
+        || record_bytes != ACCOUNT_RECORD_HEADER_BYTES + credential_length) {
+        return 0;
+    }
+    if (buffer[0] == ACCOUNT_RECORD_LEGACY_VERSION) {
+        return 1;
+    }
+    u64 count = buffer[ACCOUNT_RECORD_HEADER_BYTES];
+    u64 offset = ACCOUNT_RECORD_HEADER_BYTES + 1;
+    u8 first_kind = 0;
+    if (count == 0 || count > ACCOUNT_CREDENTIAL_MAX) {
+        return 0;
+    }
+    for (u64 index = 0; index < count; index++) {
+        if (offset + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES > record_bytes
+            || buffer[offset] == 0
+            || account_credential_name(buffer[offset + 1]) == 0
+            || buffer[offset + 2] == 0
+            || offset + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + buffer[offset + 2] > record_bytes) {
+            return 0;
+        }
+        for (u64 previous = ACCOUNT_RECORD_HEADER_BYTES + 1;
+             previous < offset;
+             previous += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + buffer[previous + 2]) {
+            if (buffer[previous] == buffer[offset]) {
+                return 0;
+            }
+        }
+        if (index == 0) {
+            first_kind = buffer[offset + 1];
+        }
+        offset += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + buffer[offset + 2];
+    }
+    return offset == record_bytes
+        && account_credential_kind(buffer[ACCOUNT_USERNAME_CAPACITY + 2]) == first_kind;
 }
 
 static u64 account_record_size(const u8 *buffer, u64 remaining)
@@ -769,12 +871,33 @@ static void list_credentials(const char *username, u8 *buffer)
             write_text("username=");
             write_bytes((const char *)(record + 2), record[1]);
             write_text(" credential_count=");
-            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING ? "0" : "1");
+            write_hex((u32)account_record_credential_count(record));
             write_text(" state=");
             write_text(account_state_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
-            if (record[ACCOUNT_USERNAME_CAPACITY + 2] != ACCOUNT_RECORD_PENDING) {
-                write_text(" credential[0]=");
-                write_text(account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
+            for (u64 index = 0; index < account_record_credential_count(record); index++) {
+                u8 id = 0;
+                u8 kind = 0;
+                const u8 *material = 0;
+                u64 material_length = 0;
+                if (!account_record_credential(
+                    record,
+                    index,
+                    &id,
+                    &kind,
+                    &material,
+                    &material_length
+                )) {
+                    write_text("\nAccount database is corrupt.\n");
+                    return;
+                }
+                (void)material;
+                (void)material_length;
+                write_text(" credential[");
+                write_hex((u32)index);
+                write_text("]=id=");
+                write_hex(id);
+                write_text(" kind=");
+                write_text(account_credential_name(kind));
                 write_text(" material=public-only");
             }
             write_text("\n");
@@ -829,7 +952,6 @@ static void add_credential(const char *username, u8 *buffer)
     u64 offset = 0;
     u8 target[ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY] = {0};
     int found = 0;
-    int target_pending = 0;
     int read = read_account_database(buffer, &database_bytes);
     if (read < 0) {
         write_text("Credential enrollment unavailable.\n");
@@ -855,7 +977,6 @@ static void add_credential(const char *username, u8 *buffer)
             && record[ACCOUNT_USERNAME_CAPACITY + 2] != ACCOUNT_RECORD_DELETED
             && account_username_matches(record + 2, record[1], username)) {
             found = 1;
-            target_pending = record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING;
             for (u64 index = 0; index < record_bytes; index++) {
                 target[index] = record[index];
             }
@@ -866,9 +987,30 @@ static void add_credential(const char *username, u8 *buffer)
         write_text("Account not found.\n");
         return;
     }
-    if (!target_pending) {
-        write_text("Account already has a credential.\n");
+    u64 credential_count = account_record_credential_count(target);
+    if (credential_count >= ACCOUNT_CREDENTIAL_MAX) {
+        write_text("Account credential capacity reached.\n");
         return;
+    }
+
+    u8 ids[ACCOUNT_CREDENTIAL_MAX] = {0};
+    u8 kinds[ACCOUNT_CREDENTIAL_MAX] = {0};
+    u8 material_lengths[ACCOUNT_CREDENTIAL_MAX] = {0};
+    const u8 *materials[ACCOUNT_CREDENTIAL_MAX] = {0};
+    for (offset = 0; offset < credential_count; offset++) {
+        u64 existing_material_length = 0;
+        if (!account_record_credential(
+            target,
+            offset,
+            &ids[offset],
+            &kinds[offset],
+            &materials[offset],
+            &existing_material_length
+        )) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        material_lengths[offset] = (u8)existing_material_length;
     }
 
     char kind[256];
@@ -885,24 +1027,65 @@ static void add_credential(const char *username, u8 *buffer)
     } else if (equal_name(kind, "SSH")) {
         kind_id = 3;
     }
+    u8 new_id = 1;
+    for (u8 candidate = 1; candidate <= ACCOUNT_CREDENTIAL_MAX; candidate++) {
+        int used = 0;
+        for (offset = 0; offset < credential_count; offset++) {
+            if (ids[offset] == candidate) {
+                used = 1;
+            }
+        }
+        if (!used) {
+            new_id = candidate;
+            break;
+        }
+    }
+    u64 credential_payload = 1 + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + material_length;
+    for (offset = 0; offset < credential_count; offset++) {
+        credential_payload += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + material_lengths[offset];
+    }
     if (kind_length == 0 || material_length == 0
-        || material_length > ACCOUNT_CREDENTIAL_CAPACITY || kind_id == 0) {
+        || credential_payload > ACCOUNT_CREDENTIAL_CAPACITY || kind_id == 0) {
         write_text("Credential rejected.\n");
         return;
     }
-    if (database_bytes + ACCOUNT_RECORD_HEADER_BYTES + material_length > ACCOUNT_DATABASE_CAPACITY) {
+    if (database_bytes + ACCOUNT_RECORD_HEADER_BYTES + credential_payload > ACCOUNT_DATABASE_CAPACITY) {
         write_text("Account database is full.\n");
         return;
     }
-    target[ACCOUNT_USERNAME_CAPACITY + 2] = kind_id;
-    target[ACCOUNT_RECORD_HEADER_BYTES - 1] = (u8)material_length;
+    u8 next_record[ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY] = {0};
+    for (offset = 0; offset < ACCOUNT_RECORD_HEADER_BYTES; offset++) {
+        next_record[offset] = target[offset];
+    }
+    next_record[0] = ACCOUNT_RECORD_VERSION;
+    next_record[ACCOUNT_USERNAME_CAPACITY + 2] = (u8)(
+        account_state_offset(target[ACCOUNT_USERNAME_CAPACITY + 2])
+        + (credential_count == 0 ? kind_id : kinds[0])
+    );
+    next_record[ACCOUNT_RECORD_HEADER_BYTES - 1] = (u8)credential_payload;
+    next_record[ACCOUNT_RECORD_HEADER_BYTES] = (u8)(credential_count + 1);
+    u64 next_offset = ACCOUNT_RECORD_HEADER_BYTES + 1;
+    for (offset = 0; offset < credential_count; offset++) {
+        next_record[next_offset] = ids[offset];
+        next_record[next_offset + 1] = kinds[offset];
+        next_record[next_offset + 2] = material_lengths[offset];
+        for (u64 index = 0; index < material_lengths[offset]; index++) {
+            next_record[next_offset + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + index]
+                = materials[offset][index];
+        }
+        next_offset += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + material_lengths[offset];
+    }
+    next_record[next_offset] = new_id;
+    next_record[next_offset + 1] = kind_id;
+    next_record[next_offset + 2] = (u8)material_length;
     for (offset = 0; offset < material_length; offset++) {
-        target[ACCOUNT_RECORD_HEADER_BYTES + offset] = (u8)material[offset];
+        next_record[next_offset + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + offset]
+            = (u8)material[offset];
     }
     u32 failure_status = 0;
     if (!append_account_record(
-        target,
-        ACCOUNT_RECORD_HEADER_BYTES + material_length,
+        next_record,
+        ACCOUNT_RECORD_HEADER_BYTES + credential_payload,
         database_bytes,
         &failure_status
     )) {
@@ -911,6 +1094,188 @@ static void add_credential(const char *username, u8 *buffer)
         return;
     }
     write_text("Credential added; account is active.\n");
+}
+
+static int parse_credential_id(const char *text, u64 text_length, u8 *id)
+{
+    u64 index = 0;
+    u32 value = 0;
+    u32 base = 10;
+    if (text_length == 0) {
+        return 0;
+    }
+    if (text_length > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        index = 2;
+        base = 16;
+    }
+    if (index == text_length) {
+        return 0;
+    }
+    for (; index < text_length; index++) {
+        u8 byte = (u8)text[index];
+        u8 digit;
+        if (byte >= '0' && byte <= '9') {
+            digit = (u8)(byte - '0');
+        } else if (byte >= 'a' && byte <= 'f') {
+            digit = (u8)(byte - 'a' + 10);
+        } else if (byte >= 'A' && byte <= 'F') {
+            digit = (u8)(byte - 'A' + 10);
+        } else {
+            return 0;
+        }
+        if (digit >= base) {
+            return 0;
+        }
+        value = value * base + digit;
+        if (value == 0 || value > 255) {
+            return 0;
+        }
+    }
+    *id = (u8)value;
+    return 1;
+}
+
+static void remove_credential(
+    const char *username,
+    const char *id_text,
+    u8 *buffer
+)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+    u64 username_length = length(username);
+    u64 id_length = length(id_text);
+    u8 id_to_remove = 0;
+    if (!valid_account_username((const u8 *)username, username_length)
+        || !parse_credential_id(id_text, id_length, &id_to_remove)) {
+        write_text("Invalid credential or username.\n");
+        return;
+    }
+
+    u64 database_bytes = 0;
+    u64 offset = 0;
+    u8 target[ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY] = {0};
+    int found = 0;
+    int read = read_account_database(buffer, &database_bytes);
+    if (read < 0) {
+        write_text("Credential removal unavailable.\n");
+        return;
+    }
+    if (read == 0 || database_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account not found.\n");
+        return;
+    }
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest != 0
+            && record[ACCOUNT_USERNAME_CAPACITY + 2] != ACCOUNT_RECORD_DELETED
+            && account_username_matches(record + 2, record[1], username)) {
+            found = 1;
+            for (u64 index = 0; index < record_bytes; index++) {
+                target[index] = record[index];
+            }
+        }
+        offset += record_bytes;
+    }
+    if (!found) {
+        write_text("Account not found.\n");
+        return;
+    }
+    u64 credential_count = account_record_credential_count(target);
+    if (credential_count == 0) {
+        write_text("Account has no credentials.\n");
+        return;
+    }
+
+    u8 ids[ACCOUNT_CREDENTIAL_MAX] = {0};
+    u8 kinds[ACCOUNT_CREDENTIAL_MAX] = {0};
+    u8 material_lengths[ACCOUNT_CREDENTIAL_MAX] = {0};
+    const u8 *materials[ACCOUNT_CREDENTIAL_MAX] = {0};
+    u64 remove_index = credential_count;
+    for (offset = 0; offset < credential_count; offset++) {
+        u64 material_length = 0;
+        if (!account_record_credential(
+            target,
+            offset,
+            &ids[offset],
+            &kinds[offset],
+            &materials[offset],
+            &material_length
+        )) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        material_lengths[offset] = (u8)material_length;
+        if (ids[offset] == id_to_remove) {
+            remove_index = offset;
+        }
+    }
+    if (remove_index == credential_count) {
+        write_text("Credential not found.\n");
+        return;
+    }
+    if (credential_count <= 1) {
+        write_text("Cannot remove the last credential.\n");
+        return;
+    }
+
+    u64 remaining_count = credential_count - 1;
+    u64 payload_bytes = 1;
+    u64 first_remaining = remove_index == 0 ? 1 : 0;
+    for (offset = 0; offset < credential_count; offset++) {
+        if (offset != remove_index) {
+            payload_bytes += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + material_lengths[offset];
+        }
+    }
+    if (database_bytes + ACCOUNT_RECORD_HEADER_BYTES + payload_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account database is full.\n");
+        return;
+    }
+    target[0] = ACCOUNT_RECORD_VERSION;
+    target[ACCOUNT_USERNAME_CAPACITY + 2] = (u8)(
+        account_state_offset(target[ACCOUNT_USERNAME_CAPACITY + 2])
+        + kinds[first_remaining]
+    );
+    target[ACCOUNT_RECORD_HEADER_BYTES - 1] = (u8)payload_bytes;
+    target[ACCOUNT_RECORD_HEADER_BYTES] = (u8)remaining_count;
+    u64 target_offset = ACCOUNT_RECORD_HEADER_BYTES + 1;
+    for (offset = 0; offset < credential_count; offset++) {
+        if (offset == remove_index) {
+            continue;
+        }
+        target[target_offset] = ids[offset];
+        target[target_offset + 1] = kinds[offset];
+        target[target_offset + 2] = material_lengths[offset];
+        for (u64 index = 0; index < material_lengths[offset]; index++) {
+            target[target_offset + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + index]
+                = materials[offset][index];
+        }
+        target_offset += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + material_lengths[offset];
+    }
+    u32 failure_status = 0;
+    if (!append_account_record(
+        target,
+        ACCOUNT_RECORD_HEADER_BYTES + payload_bytes,
+        database_bytes,
+        &failure_status
+    )) {
+        write_text("Credential removal failed.\n");
+        write_status(failure_status);
+        return;
+    }
+    write_text("Credential removed.\n");
 }
 
 static void create_account(const char *username, u8 *buffer)
@@ -1387,22 +1752,31 @@ static void execute_line(char *line, u8 *buffer)
     if (equal_name(command, "CREDENTIAL")) {
         char action[256];
         char username[256];
+        char id[256];
         if (next_word(&cursor, action) == 0) {
-            write_text("Use: CREDENTIAL LIST <username> or CREDENTIAL ADD <username>\n");
+            write_text("Use: CREDENTIAL LIST <username>, ADD <username>, or REMOVE <username> <id>\n");
             return;
         }
         if (next_word(&cursor, username) == 0) {
             write_text(equal_name(action, "LIST")
                 ? "Use: CREDENTIAL LIST <username>\n"
-                : "Use: CREDENTIAL ADD <username>\n");
+                : equal_name(action, "ADD")
+                    ? "Use: CREDENTIAL ADD <username>\n"
+                    : "Use: CREDENTIAL REMOVE <username> <id>\n");
             return;
         }
         if (equal_name(action, "LIST")) {
             list_credentials(username, buffer);
         } else if (equal_name(action, "ADD")) {
             add_credential(username, buffer);
+        } else if (equal_name(action, "REMOVE")) {
+            if (next_word(&cursor, id) == 0) {
+                write_text("Use: CREDENTIAL REMOVE <username> <id>\n");
+                return;
+            }
+            remove_credential(username, id, buffer);
         } else {
-            write_text("Use: CREDENTIAL LIST <username> or CREDENTIAL ADD <username>\n");
+            write_text("Use: CREDENTIAL LIST <username>, ADD <username>, or REMOVE <username> <id>\n");
         }
         return;
     }
