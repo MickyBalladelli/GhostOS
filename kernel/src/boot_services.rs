@@ -1,7 +1,12 @@
 //! Services started by the first user-space boot sequence.
 
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+use core::sync::atomic::AtomicU64;
 
 use synos_fsd::{Daemon, ProcessRights};
 use synos_init::{
@@ -70,6 +75,10 @@ type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
 
 static mut FILESYSTEM_DAEMON: MaybeUninit<FilesystemDaemon> = MaybeUninit::uninit();
 static FILESYSTEM_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static SHELL_FILESYSTEM_AUTHORITY: AtomicU64 = AtomicU64::new(0);
 static STORAGE_READY: AtomicBool = AtomicBool::new(false);
 static NETWORK_READY: AtomicBool = AtomicBool::new(false);
@@ -306,18 +315,12 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
             ),
         )
         .map_err(|_| StartError::Daemon)?;
-    let shell_authority = daemon
+    daemon
         .register_process(
             synos_fsd::ProcessId::new(shell_process.raw()).ok_or(StartError::Process)?,
-            ProcessRights::from_bits(
-                ProcessRights::READ.bits()
-                    | ProcessRights::WRITE.bits()
-                    | ProcessRights::DELETE.bits()
-                    | ProcessRights::ADMIN.bits(),
-            ),
+            ProcessRights::NONE,
         )
         .map_err(|_| StartError::Daemon)?;
-    SHELL_FILESYSTEM_AUTHORITY.store(shell_authority.raw(), Ordering::Release);
 
     let filesystem_name = ServiceName::new("synos-fsd").map_err(|_| StartError::Supervisor)?;
     let storage_name = ServiceName::new("synos-storaged").map_err(|_| StartError::Supervisor)?;
@@ -675,6 +678,38 @@ pub(crate) fn dispatch_shell_filesystem(
         flags: 0,
         values: response.values,
     }
+}
+
+/// Bind filesystem authority to the current authenticated shell session.
+///
+/// Unregistering first closes old shell handles and rotates the authority, so
+/// a capability from an expired session cannot work after the next login.
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn set_shell_filesystem_rights(rights: ProcessRights) -> Result<(), Status> {
+    let process = synos_fsd::ProcessId::new(SHELL_PROCESS_ID).ok_or(Status::INVALID_ARGUMENT)?;
+    let previous = SHELL_FILESYSTEM_AUTHORITY.swap(0, Ordering::AcqRel);
+    if previous != 0 {
+        let daemon = unsafe {
+            (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+        };
+        daemon
+            .unregister_process(process)
+            .map_err(|_| Status::ACCESS_DENIED)?;
+    }
+    if rights.bits() == 0 {
+        return Ok(())
+    }
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    let authority = daemon
+        .register_process(process, rights)
+        .map_err(|_| Status::NO_SPACE)?;
+    SHELL_FILESYSTEM_AUTHORITY.store(authority.raw(), Ordering::Release);
+    Ok(())
 }
 
 pub const fn filesystem_service_id() -> ServiceId {

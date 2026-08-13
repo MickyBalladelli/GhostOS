@@ -227,6 +227,11 @@ static LOGIN_SESSION_LAST_ACTIVITY: AtomicU64 = AtomicU64::new(0);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static LOGIN_REVOCATION_EPOCH: AtomicU64 = AtomicU64::new(1);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const LOGIN_USERNAME_CAPACITY: usize = 32;
 #[cfg(all(
     target_arch = "x86_64",
@@ -796,6 +801,12 @@ fn revoke_login_session() {
     LOGIN_REQUESTED.store(true, Ordering::Release);
     LOGIN_SESSION_EXPIRES.store(0, Ordering::Release);
     LOGIN_SESSION_LAST_ACTIVITY.store(0, Ordering::Release);
+    let epoch = LOGIN_REVOCATION_EPOCH
+        .fetch_add(1, Ordering::AcqRel)
+        .wrapping_add(1)
+        .max(1);
+    let _ = boot_services::set_shell_filesystem_rights(synos_fsd::ProcessRights::NONE);
+    shell::revoke_session(epoch);
     clear_login_challenge();
     clear_login_username();
 }
@@ -825,15 +836,43 @@ fn login_session_active() -> bool {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-fn start_login_session() {
+fn login_identity(username: &[u8]) -> u64 {
+    let mut identity = 0xcbf2_9ce4_8422_2325u64;
+    for byte in username {
+        identity ^= *byte as u64;
+        identity = identity.wrapping_mul(0x1000_0000_01b3);
+    }
+    identity.max(1)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn start_login_session(username: &[u8]) -> bool {
     let now_us = time::monotonic_now_us();
+    let expires_at_us = now_us.saturating_add(LOGIN_SESSION_LIFETIME_US);
+    let epoch = LOGIN_REVOCATION_EPOCH.load(Ordering::Acquire).max(1);
+    let identity = login_identity(username);
+    if boot_services::set_shell_filesystem_rights(
+        synos_fsd::ProcessRights::from_bits(
+            synos_fsd::ProcessRights::READ.bits()
+                | synos_fsd::ProcessRights::WRITE.bits()
+                | synos_fsd::ProcessRights::DELETE.bits()
+                | synos_fsd::ProcessRights::ADMIN.bits(),
+        ),
+    )
+    .is_err()
+        || shell::authorize_session(identity, expires_at_us, epoch).is_err()
+    {
+        let _ = boot_services::set_shell_filesystem_rights(synos_fsd::ProcessRights::NONE);
+        return false
+    }
     LOGIN_SESSION_LAST_ACTIVITY.store(now_us, Ordering::Release);
-    LOGIN_SESSION_EXPIRES.store(
-        now_us.saturating_add(LOGIN_SESSION_LIFETIME_US),
-        Ordering::Release,
-    );
+    LOGIN_SESSION_EXPIRES.store(expires_at_us, Ordering::Release);
     LOGIN_REQUESTED.store(false, Ordering::Release);
     LOGIN_AUTHORIZED.store(true, Ordering::Release);
+    true
 }
 
 #[cfg(all(
@@ -1057,7 +1096,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         clear_login_failures();
         set_login_username(&username[..username_length]);
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
-        start_login_session();
+        if !start_login_session(&username[..username_length]) {
+            clear_login_username();
+            return syscall_error(Status::BUSY)
+        }
         return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginTpmComplete) {
@@ -1112,7 +1154,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         clear_login_failures();
         set_login_username(&username[..username_length]);
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
-        start_login_session();
+        if !start_login_session(&username[..username_length]) {
+            clear_login_username();
+            return syscall_error(Status::BUSY)
+        }
         return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginStatus) {

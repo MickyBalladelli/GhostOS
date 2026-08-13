@@ -219,7 +219,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Lock login temporarily after repeated failures.
 - [x] Add `LOGOUT` and `WHOAMI` commands.
 - [x] Return to the locked prompt after logout, timeout, or session revocation.
-- [ ] Connect successful auth sessions to shell authorization and capabilities.
+- [x] Connect successful auth sessions to shell authorization and capabilities.
 - [ ] Preserve session expiry, revocation, and identity changes across all shell paths.
 
 ### First login and administrator setup

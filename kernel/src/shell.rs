@@ -54,6 +54,8 @@ static SHELL_PRESENTED: AtomicBool = AtomicBool::new(false);
 static SHELL_AUTHORIZED: AtomicBool = AtomicBool::new(false);
 static SHELL_SESSION_EXPIRES: AtomicU64 = AtomicU64::new(0);
 static SHELL_SESSION_EPOCH: AtomicU64 = AtomicU64::new(0);
+static SHELL_SESSION_IDENTITY: AtomicU64 = AtomicU64::new(0);
+static SHELL_SESSION_AUTHORITY: AtomicU64 = AtomicU64::new(0);
 const HELP_CATEGORIES: [&str; 9] = [
     "SHELL",
     "SYSTEM",
@@ -786,22 +788,43 @@ pub(crate) fn authorize_session(
     if identity == 0 || expires_at_us == 0 || revocation_epoch == 0 {
         return Err(Status::ACCESS_DENIED)
     }
+    if !SHELL_READY.load(Ordering::Acquire) {
+        return Err(Status::BUSY)
+    }
+    let executor = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_EXECUTOR)).assume_init_mut() };
+    drop_session_authority(executor);
+    let authority = executor
+        .capabilities
+        .delegate(
+            AddressSpaceId::KERNEL,
+            executor.control_authority,
+            AddressSpaceId::KERNEL,
+            Rights::CONTROL,
+        )
+        .map_err(|_| Status::NO_SPACE)?;
+    SHELL_SESSION_IDENTITY.store(identity, Ordering::Release);
     SHELL_SESSION_EXPIRES.store(expires_at_us, Ordering::Release);
     SHELL_SESSION_EPOCH.store(revocation_epoch, Ordering::Release);
+    SHELL_SESSION_AUTHORITY.store(authority.raw(), Ordering::Release);
     SHELL_AUTHORIZED.store(true, Ordering::Release);
     Ok(())
 }
 
 pub(crate) fn revoke_session(revocation_epoch: u64) {
     SHELL_SESSION_EPOCH.store(revocation_epoch.max(1), Ordering::Release);
+    SHELL_SESSION_IDENTITY.store(0, Ordering::Release);
     lock_shell_session()
 }
 
 fn lock_shell_session() {
-    if !SHELL_AUTHORIZED.swap(false, Ordering::AcqRel) {
-        return
+    let was_authorized = SHELL_AUTHORIZED.swap(false, Ordering::AcqRel);
+    if SHELL_READY.load(Ordering::Acquire) {
+        let executor = unsafe {
+            (&mut *core::ptr::addr_of_mut!(SHELL_EXECUTOR)).assume_init_mut()
+        };
+        drop_session_authority(executor);
     }
-    if !SHELL_READY.load(Ordering::Acquire) {
+    if !was_authorized {
         return
     }
     let session = unsafe { (&mut *core::ptr::addr_of_mut!(SHELL_SESSION)).assume_init_mut() };
@@ -813,12 +836,29 @@ fn lock_shell_session() {
 
 fn session_authorized() -> bool {
     SHELL_AUTHORIZED.load(Ordering::Acquire)
+        && SHELL_SESSION_IDENTITY.load(Ordering::Acquire) != 0
         && SHELL_SESSION_EXPIRES.load(Ordering::Acquire) > 0
         && SHELL_SESSION_EPOCH.load(Ordering::Acquire) > 0
 }
 
 fn session_authorized_at(now_us: u64) -> bool {
     session_authorized() && now_us < SHELL_SESSION_EXPIRES.load(Ordering::Acquire)
+}
+
+fn drop_session_authority(executor: &mut KernelExecutor) {
+    let raw = SHELL_SESSION_AUTHORITY.swap(0, Ordering::AcqRel);
+    if let Some(authority) = crate::CapabilityHandle::from_raw(raw) {
+        let _ = executor
+            .capabilities
+            .delete(AddressSpaceId::KERNEL, authority);
+    }
+}
+
+fn active_session_authority() -> Option<crate::CapabilityHandle> {
+    if !session_authorized_at(crate::time::monotonic_now_us()) {
+        return None
+    }
+    crate::CapabilityHandle::from_raw(SHELL_SESSION_AUTHORITY.load(Ordering::Acquire))
 }
 
 fn parse_cpu_mask(value: &str) -> Result<CpuMask, Status> {
@@ -2221,7 +2261,7 @@ impl KernelExecutor {
             .mint_root(
                 AddressSpaceId::KERNEL,
                 CapabilityObject::SystemControl,
-                Rights::CONTROL,
+                Rights::CONTROL.union(Rights::DELEGATE),
             )
             .expect("kernel control capability");
         let network_diagnostic = capabilities
@@ -2264,7 +2304,21 @@ impl KernelExecutor {
         unsafe { &*self.scheduler }
     }
 
+    fn session_control_authority(&self) -> Result<crate::CapabilityHandle, Status> {
+        let authority = active_session_authority().ok_or(Status::ACCESS_DENIED)?;
+        self.capabilities
+            .authorize(
+                AddressSpaceId::KERNEL,
+                authority,
+                CapabilityObject::SystemControl,
+                Rights::CONTROL,
+            )
+            .map_err(|_| Status::ACCESS_DENIED)?;
+        Ok(authority)
+    }
+
     fn execute(&mut self, command: CommandCall) -> Result<StructuredOutput, Status> {
+        self.session_control_authority()?;
         crate::crash::publish_capability_context(&self.capabilities);
         match command.route.raw() {
             HELP_ROUTE => self.help(),
@@ -3028,7 +3082,7 @@ impl KernelExecutor {
         scheduler.terminate(
                 &self.capabilities,
                 AddressSpaceId::KERNEL,
-                self.control_authority,
+                self.session_control_authority()?,
                 id,
             )
             .map_err(|error| error.status())?;
@@ -3045,7 +3099,7 @@ impl KernelExecutor {
         scheduler.set_priority(
                 &self.capabilities,
                 AddressSpaceId::KERNEL,
-                self.control_authority,
+                self.session_control_authority()?,
                 id,
                 priority,
             )
@@ -3067,7 +3121,7 @@ impl KernelExecutor {
         scheduler.isolate_cores(
                 &self.capabilities,
                 AddressSpaceId::KERNEL,
-                self.control_authority,
+                self.session_control_authority()?,
                 cpus,
             )
             .map_err(|error| error.status())?;
@@ -3373,6 +3427,9 @@ impl CommandExecutor for KernelExecutor {
         command: CommandCall,
         pipeline_input: Option<&StructuredOutput>,
     ) -> Result<ExecutionToken, Error> {
+        if self.session_control_authority().is_err() {
+            return Err(Error::CommandFailed(Status::ACCESS_DENIED))
+        }
         if self.completion.is_some() {
             return Err(Error::AlreadyRunning);
         }
