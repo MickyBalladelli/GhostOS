@@ -586,8 +586,10 @@ dependencies = [
 name = "synos-debug"
 version = "0.1.0"
 dependencies = [
+ "synos-auth",
  "synos-fabric",
  "synos-init",
+ "synos-kernel",
  "synos-status",
  "synos-synfs",
 ]

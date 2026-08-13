@@ -75,7 +75,9 @@ impl Rights {
     pub const CONTROL: Self = Self(1 << 9);
     pub const DMA_READ: Self = Self(1 << 10);
     pub const DMA_WRITE: Self = Self(1 << 11);
-    pub const ALL: Self = Self((1 << 12) - 1);
+    /// Permit capability-scoped debugging of a process or task.
+    pub const DEBUG: Self = Self(1 << 12);
+    pub const ALL: Self = Self((1 << 13) - 1);
 
     pub const fn from_bits(bits: u16) -> Option<Self> {
         if bits & !Self::ALL.0 == 0 {

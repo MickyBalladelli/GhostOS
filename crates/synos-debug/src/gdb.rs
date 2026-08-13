@@ -37,11 +37,11 @@ pub trait DebugAuthority {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AllowAll;
+pub struct DenyAll;
 
-impl DebugAuthority for AllowAll {
+impl DebugAuthority for DenyAll {
     fn permits(&self, _token: DebugToken, _operation: DebugOperation) -> bool {
-        true
+        false
     }
 }
 
@@ -159,7 +159,7 @@ enum InputState {
     ChecksumLow,
 }
 
-pub struct GdbStub<R, A = AllowAll> {
+pub struct GdbStub<R, A = DenyAll> {
     runtime: R,
     authority: A,
     token: DebugToken,

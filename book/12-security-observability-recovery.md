@@ -37,7 +37,7 @@ Important evidence fields include:
 
 ## Inspection and debugging
 
-`synos-inspect` provides capability-scoped system inspection. `synos-debug` provides protected probes, GDB protocol support, breakpoints, watchpoints, register/memory access, and coredumps. Debugging authority is itself a capability.
+`synos-inspect` provides capability-scoped system inspection. `synos-debug` provides protected probes, GDB protocol support, breakpoints, watchpoints, register/memory access, and coredumps. Remote GDB sessions bind a signed, expiring capability to one process resource, require the dedicated debug right for every operation, and recheck revocation before each packet. Debugging authority is itself a capability.
 
 `synos-top` renders node memory, VRAM, DSM latency, and capability trees. It can target ANSI terminals and VGA/GOP output.
 
@@ -56,4 +56,3 @@ inspect -> drain -> fence -> reconcile -> recover/rejoin
 ```
 
 Do not release locks, memory ownership, or storage claims before isolation is confirmed. Use abandon only when reconciliation is impossible.
-

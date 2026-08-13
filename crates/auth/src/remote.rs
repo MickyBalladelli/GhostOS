@@ -618,6 +618,7 @@ pub const fn remote_safe_rights() -> Rights {
         .union(Rights::EXECUTE)
         .union(Rights::SEND)
         .union(Rights::RECEIVE)
+        .union(Rights::DEBUG)
 }
 
 const fn all_zero(bytes: &[u8; 32]) -> bool {

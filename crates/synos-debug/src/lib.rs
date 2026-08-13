@@ -7,9 +7,11 @@
 pub mod coredump;
 pub mod gdb;
 pub mod probes;
+pub mod remote;
 pub mod viewer;
 
 pub use coredump::{CoreDumpMetadata, CoreDumpPage, CrashDumpStore};
+pub use remote::{DebugClock, RemoteDebugAuthority, RemoteDebugError, RemoteGdbSession};
 pub use viewer::{CrashDumpSummary, CrashDumpView, CrashDumpViewer, CrashViewer};
 
 use synos_status::{IntoStatus, Severity, Status, facility};
