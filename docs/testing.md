@@ -218,6 +218,21 @@ python3 scripts/validate-vm-evidence.py build/test-evidence/<run-id> \
   --require-tier soak
 ```
 
+QEMU, hardware-accelerated, fuzz, and soak runs each have a dedicated
+top-level evidence directory and a matching tier `result.json`. The separation
+validator rejects a result stored under another tier, so one run cannot make a
+QEMU result look like hardware, fuzz, or soak evidence. Physical boot evidence
+uses its own `hardware-boot` directory and remains distinct from accelerated
+QEMU runs. Check the separation independently with:
+
+```sh
+python3 scripts/validate-evidence-separation.py build/test-evidence/<run-id> \
+  --require-tier qemu \
+  --require-tier hardware-accelerated \
+  --require-tier fuzz \
+  --require-tier soak
+```
+
 For one evidence-producing deterministic run, use:
 
 ```sh

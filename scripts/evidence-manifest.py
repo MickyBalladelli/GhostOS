@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 MANIFEST_NAME = "evidence-manifest.json"
 DIGEST_NAME = "evidence-manifest.json.sha256"
 RESULT_NAMES = {"result.json", "evidence.json"}
+SEPARATE_TIERS = {"qemu", "hardware-accelerated", "hardware-boot", "fuzz", "soak"}
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
@@ -62,6 +63,16 @@ def result_records(evidence_dir: pathlib.Path) -> tuple[list[dict[str, object]],
         if not isinstance(value, dict):
             errors.append(f"{path.relative_to(evidence_dir)}: result is not an object")
             continue
+        relative = path.relative_to(evidence_dir)
+        section = relative.parts[0] if relative.parts else ""
+        declared_tier = value.get("tier")
+        if isinstance(declared_tier, str) and declared_tier in SEPARATE_TIERS and section != declared_tier:
+            errors.append(
+                f"{relative}: tier {declared_tier!r} is stored under {section!r}; "
+                "external results must stay separate"
+            )
+        if section in SEPARATE_TIERS and section != "hardware-boot" and declared_tier != section:
+            errors.append(f"{relative}: tier must be {section!r}")
         state = value.get("result_state", value.get("state"))
         if state not in {"passed", "failed", "skipped", "inconclusive"}:
             errors.append(f"{path.relative_to(evidence_dir)}: invalid state {state!r}")

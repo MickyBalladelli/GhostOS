@@ -33,11 +33,14 @@ lines = [
     "| --- | ---: |",
 ]
 lines.extend(f"| {state} | {counts[state]} |" for state in sorted(counts))
-lines += ["", "| Tier | State | Reason | Evidence |", "| --- | --- | --- | --- |"]
+grouped = {}
 for path, result in results:
-    reason = str(result.get("reason", "missing reason")).replace("|", "\\|")
-    lines.append(
-        f"| {result.get('tier', path.parent.name)} | {result.get('state')} | {reason} | `{path}` |"
-    )
+    tier = str(result.get("tier") or path.relative_to(evidence).parts[0])
+    grouped.setdefault(tier, []).append((path, result))
+for tier in sorted(grouped):
+    lines += ["", f"## {tier}", "", "| State | Reason | Evidence |", "| --- | --- | --- |"]
+    for path, result in grouped[tier]:
+        reason = str(result.get("reason", "missing reason")).replace("|", "\\|")
+        lines.append(f"| {result.get('state')} | {reason} | `{path}` |")
 dashboard.write_text("\n".join(lines) + "\n")
 print(dashboard)

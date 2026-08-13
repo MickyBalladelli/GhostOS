@@ -66,7 +66,7 @@ run_optional() {
                 return 0
             fi
             ;;
-        hardware)
+        hardware-accelerated)
             if ! command -v "${SYNOS_QEMU_BIN:-qemu-system-x86_64}" >/dev/null 2>&1 || [[ ! -f "${SYNOS_QEMU_IMAGE:-$root_dir/build/bios/synos-bios.img}" ]]; then
                 printf '{"schema":1,"state":"skipped","tier":"%s","reason":"missing QEMU or boot image","prerequisite":"qemu-system-x86_64 and SYNOS_QEMU_IMAGE"}\n' "$tier" > "$output_dir/result.json"
                 echo "== $tier: skipped; missing QEMU or boot image"
@@ -154,7 +154,7 @@ hardware_accel=${SYNOS_QEMU_ACCEL:-kvm}
 if [[ -z "${SYNOS_QEMU_ACCEL:-}" && "$(uname -s)" == Darwin ]]; then
     hardware_accel=hvf
 fi
-run_optional hardware env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/hardware" SYNOS_QEMU_ACCEL="$hardware_accel" cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
+run_optional hardware-accelerated env SYNOS_RUN_QEMU_TESTS=1 SYNOS_QEMU_LOG_DIR="$evidence_dir/hardware-accelerated" SYNOS_QEMU_ACCEL="$hardware_accel" cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored
 run_optional cluster env SYNOS_RUN_QEMU_TESTS=1 "$root_dir/scripts/qemu-cluster-validation.sh"
 run_optional_with_vm_evidence fuzz fuzz "not-applicable" 1 "" "" "$root_dir/scripts/fuzz-smoke.sh"
 run_optional coverage "$root_dir/scripts/coverage.sh"
@@ -163,6 +163,12 @@ run_optional_with_vm_evidence soak soak "not-applicable" 1 "" "" env SYNOS_SOAK_
 run_optional reproducibility "$root_dir/scripts/check-reproducible-image.sh"
 run_optional dashboard "$root_dir/scripts/test-dashboard.py" "$evidence_dir"
 run_optional coverage-contract python3 "$root_dir/scripts/validate-test-coverage.py" "$evidence_dir"
+
+python3 "$root_dir/scripts/validate-evidence-separation.py" "$evidence_dir" \
+    --require-tier qemu \
+    --require-tier hardware-accelerated \
+    --require-tier fuzz \
+    --require-tier soak
 
 python3 "$root_dir/scripts/validate-vm-evidence.py" "$evidence_dir" \
     --require-tier fast-unit \

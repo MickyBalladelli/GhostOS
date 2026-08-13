@@ -194,7 +194,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add process-isolation integration tests.
 - [x] Add power-loss and disk-corruption tests.
 - [x] Add long-running soak tests for leaks and stale capabilities.
-- [ ] Keep QEMU, hardware, fuzz, and soak results separate.
+- [x] Keep QEMU, hardware, fuzz, and soak results separate.
 
 ### Compatibility
 

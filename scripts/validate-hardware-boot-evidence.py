@@ -164,11 +164,15 @@ def validate(evidence_dir: pathlib.Path, require_passed: bool = True) -> list[st
         fail(errors, f"evidence schema must be {SCHEMA}")
     if evidence.get("kind") != KIND:
         fail(errors, f"evidence kind must be {KIND}")
+    if evidence.get("tier") != "hardware-boot":
+        fail(errors, "evidence tier must be hardware-boot")
     state = evidence.get("result_state")
     if state not in {"passed", "failed", "skipped"}:
         fail(errors, "evidence result_state must be passed, failed, or skipped")
     if require_passed and state != "passed":
         fail(errors, "hardware boot evidence must be passed")
+    if not isinstance(evidence.get("reason"), str) or not evidence["reason"].strip():
+        fail(errors, "evidence reason is required")
     revision = evidence.get("revision")
     if not isinstance(revision, str) or not REVISION.fullmatch(revision):
         fail(errors, "evidence revision must be a Git revision")
