@@ -7,7 +7,7 @@ use synos_kernel::{
 };
 
 use crate::identity::{
-    AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, Credential,
+    AccountState, AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase, Credential,
     CredentialId, CredentialKind, CredentialVerifier, DatabaseScope, InitialCapability, Session,
     UserRecord, Username,
 };
@@ -225,7 +225,10 @@ impl<const USERS: usize, const GROUPS: usize> SecurityState<USERS, GROUPS> {
             self.policy.idle_timeout_us,
         )?;
         for record in self.database.records() {
-            if record.identity == IdentityId::ANONYMOUS || record.credentials().count() == 0 {
+            if record.identity == IdentityId::ANONYMOUS
+                || (record.account_state() != AccountState::PendingSetup
+                    && record.credentials().count() == 0)
+            {
                 return Err(StartupError::InvalidRecord)
             }
         }
@@ -707,7 +710,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                     .record(record.identity)
                     .map_err(StartupError::Authentication)?;
                 if Self::is_last_enabled_administrator(&next_state.database, previous)
-                    && (!record.enabled || !Self::is_administrator(&record))
+                    && (!record.is_login_usable() || !Self::is_administrator(&record))
                 {
                     return Err(StartupError::LastAdministrator)
                 }
@@ -737,7 +740,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                 if Self::is_last_enabled_administrator(&next_state.database, record) {
                     return Err(StartupError::LastAdministrator)
                 }
-                record.enabled = false;
+                record.set_state(AccountState::Disabled);
                 next_state
                     .database
                     .replace(record)
@@ -862,7 +865,10 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
     }
 
     fn validate_managed_record(record: UserRecord) -> Result<(), StartupError> {
-        if record.identity == IdentityId::ANONYMOUS || record.credentials().count() == 0 {
+        if record.identity == IdentityId::ANONYMOUS
+            || (record.account_state() != AccountState::PendingSetup
+                && record.credentials().count() == 0)
+        {
             return Err(StartupError::InvalidRecord)
         }
         Ok(())
@@ -877,10 +883,10 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         target: UserRecord,
     ) -> bool {
         Self::is_administrator(&target)
-            && target.enabled
+            && target.is_login_usable()
             && database
                 .records()
-                .filter(|record| record.enabled && Self::is_administrator(record))
+                .filter(|record| record.is_login_usable() && Self::is_administrator(record))
                 .count()
                 <= 1
     }

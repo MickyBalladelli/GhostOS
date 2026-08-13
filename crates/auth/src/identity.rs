@@ -76,6 +76,15 @@ pub enum DatabaseScope {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccountState {
+    Active,
+    Disabled,
+    Locked,
+    Expired,
+    PendingSetup,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum CredentialKind {
     Passkey = 1,
@@ -196,6 +205,8 @@ pub struct UserRecord {
     pub identity: IdentityId,
     pub username: Username,
     pub scope: DatabaseScope,
+    pub state: AccountState,
+    /// Compatibility flag. AccountState is authoritative for new callers.
     pub enabled: bool,
     credentials: [Option<Credential>; MAX_CREDENTIALS_PER_USER],
     rights: [Option<RightIdentifier>; MAX_USER_RIGHTS],
@@ -209,6 +220,7 @@ impl fmt::Debug for UserRecord {
             .field("identity", &self.identity)
             .field("username", &self.username)
             .field("scope", &self.scope)
+            .field("state", &self.state)
             .field("enabled", &self.enabled)
             .field("credential_count", &self.credentials().count())
             .field("right_count", &self.rights().count())
@@ -223,11 +235,25 @@ impl UserRecord {
             identity,
             username,
             scope,
+            state: AccountState::Active,
             enabled: true,
             credentials: [None; MAX_CREDENTIALS_PER_USER],
             rights: [None; MAX_USER_RIGHTS],
             initial_capabilities: [None; MAX_INITIAL_CAPABILITIES],
         }
+    }
+
+    pub fn set_state(&mut self, state: AccountState) {
+        self.state = state;
+        self.enabled = state == AccountState::Active;
+    }
+
+    pub const fn account_state(&self) -> AccountState {
+        self.state
+    }
+
+    pub const fn is_login_usable(&self) -> bool {
+        self.enabled && matches!(self.state, AccountState::Active)
     }
 
     pub fn credentials(&self) -> impl Iterator<Item = Credential> + '_ {
@@ -477,7 +503,7 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
             .iter()
             .flatten()
             .find(|record| {
-                record.enabled
+                record.is_login_usable()
                     && record.scope == DatabaseScope::NodeLocal(node)
                     && record.username.matches(username)
             })
@@ -487,7 +513,7 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
                     .iter()
                     .flatten()
                     .find(|record| {
-                        record.enabled
+                        record.is_login_usable()
                             && record.scope == DatabaseScope::Local
                             && record.username.matches(username)
                     })
@@ -505,7 +531,7 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
             .iter()
             .flatten()
             .find(|record| {
-                record.enabled
+                record.is_login_usable()
                     && record.scope == DatabaseScope::NodeLocal(node)
                     && record.username.matches(username)
                     && record.ssh_key_credential(public_key).is_some()
@@ -516,7 +542,7 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
                     .iter()
                     .flatten()
                     .find(|record| {
-                        record.enabled
+                        record.is_login_usable()
                             && record.scope == DatabaseScope::Local
                             && record.username.matches(username)
                             && record.ssh_key_credential(public_key).is_some()
@@ -529,7 +555,7 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
         self.records
             .iter()
             .flatten()
-            .find(|record| record.enabled && record.identity == identity)
+            .find(|record| record.is_login_usable() && record.identity == identity)
             .copied()
     }
 }

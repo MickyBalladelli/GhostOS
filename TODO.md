@@ -250,11 +250,11 @@ Build the real operating system core before adding more advanced features.
 - [x] Prevent deletion or disabling of the last usable administrator.
 - [x] Revoke all sessions when an account is disabled or deleted.
 - [x] Keep stable identity IDs when account display names change.
-- [ ] Add account state for active, disabled, locked, expired, and pending setup.
+- [x] Add account state for active, disabled, locked, expired, and pending setup.
 
 ### Credentials and access policy
 
-- [ ] Add `CREDENTIAL LIST <username>` for authorized administrators.
+- [x] Add `CREDENTIAL LIST <username>` for authorized administrators.
 - [ ] Add `CREDENTIAL ADD <username>` for passkeys, TPM credentials, and SSH keys.
 - [ ] Add `CREDENTIAL REMOVE <username> <id>` with self-lockout protection.
 - [ ] Allow users to enroll and remove their own credentials under policy.

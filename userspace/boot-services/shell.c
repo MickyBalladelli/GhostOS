@@ -55,6 +55,8 @@ enum {
     ACCOUNT_RECORD_PENDING = 0,
     ACCOUNT_RECORD_DELETED = 4,
     ACCOUNT_RECORD_DISABLED_OFFSET = 4,
+    ACCOUNT_RECORD_LOCKED_OFFSET = 8,
+    ACCOUNT_RECORD_EXPIRED_OFFSET = 12,
 };
 
 struct request {
@@ -361,7 +363,11 @@ static int revoke_account_sessions(const char *username, u64 username_length)
 
 static const char *account_credential_name(u8 kind)
 {
-    if (kind > ACCOUNT_RECORD_DISABLED_OFFSET) {
+    if (kind >= ACCOUNT_RECORD_EXPIRED_OFFSET) {
+        kind = (u8)(kind - ACCOUNT_RECORD_EXPIRED_OFFSET);
+    } else if (kind >= ACCOUNT_RECORD_LOCKED_OFFSET) {
+        kind = (u8)(kind - ACCOUNT_RECORD_LOCKED_OFFSET);
+    } else if (kind > ACCOUNT_RECORD_DISABLED_OFFSET) {
         kind = (u8)(kind - ACCOUNT_RECORD_DISABLED_OFFSET);
     }
     if (kind == 1) {
@@ -385,6 +391,57 @@ static int account_record_is_disabled(u8 kind)
 {
     return kind >= ACCOUNT_RECORD_DISABLED_OFFSET + 1
         && kind <= ACCOUNT_RECORD_DISABLED_OFFSET + 3;
+}
+
+static int account_record_is_locked(u8 kind)
+{
+    return kind >= ACCOUNT_RECORD_LOCKED_OFFSET + 1
+        && kind <= ACCOUNT_RECORD_LOCKED_OFFSET + 3;
+}
+
+static int account_record_is_expired(u8 kind)
+{
+    return kind >= ACCOUNT_RECORD_EXPIRED_OFFSET + 1
+        && kind <= ACCOUNT_RECORD_EXPIRED_OFFSET + 3;
+}
+
+static int account_record_has_credential(u8 kind)
+{
+    return account_record_is_enabled(kind)
+        || account_record_is_disabled(kind)
+        || account_record_is_locked(kind)
+        || account_record_is_expired(kind);
+}
+
+static u8 account_credential_kind(u8 kind)
+{
+    if (kind >= ACCOUNT_RECORD_EXPIRED_OFFSET) {
+        return (u8)(kind - ACCOUNT_RECORD_EXPIRED_OFFSET);
+    }
+    if (kind >= ACCOUNT_RECORD_LOCKED_OFFSET) {
+        return (u8)(kind - ACCOUNT_RECORD_LOCKED_OFFSET);
+    }
+    if (kind > ACCOUNT_RECORD_DISABLED_OFFSET) {
+        return (u8)(kind - ACCOUNT_RECORD_DISABLED_OFFSET);
+    }
+    return kind;
+}
+
+static const char *account_state_name(u8 kind)
+{
+    if (kind == ACCOUNT_RECORD_PENDING) {
+        return "pending";
+    }
+    if (account_record_is_disabled(kind)) {
+        return "disabled";
+    }
+    if (account_record_is_locked(kind)) {
+        return "locked";
+    }
+    if (account_record_is_expired(kind)) {
+        return "expired";
+    }
+    return "active";
 }
 
 static int account_username_bytes_match(
@@ -590,11 +647,7 @@ static void list_accounts(u8 *buffer)
             offset += record_bytes;
             continue;
         }
-        const char *state = record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
-            ? "pending"
-            : account_record_is_disabled(record[ACCOUNT_USERNAME_CAPACITY + 2])
-                ? "disabled"
-                : "enabled";
+        const char *state = account_state_name(record[ACCOUNT_USERNAME_CAPACITY + 2]);
         const char *credential = record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
             ? "none"
             : account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]);
@@ -660,15 +713,70 @@ static void show_account(const char *username, u8 *buffer)
             write_text("username=");
             write_bytes((const char *)(record + 2), record[1]);
             write_text("\nstate=");
-            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
-                ? "pending"
-                : account_record_is_disabled(record[ACCOUNT_USERNAME_CAPACITY + 2])
-                    ? "disabled"
-                    : "enabled");
+            write_text(account_state_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
             write_text("\nscope=local\ncredential=");
             write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING
                 ? "none"
                 : account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
+            write_text("\n");
+            return;
+        }
+        offset += record_bytes;
+    }
+    write_text("Account not found.\n");
+}
+
+static void list_credentials(const char *username, u8 *buffer)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+    u64 username_length = length(username);
+    if (!valid_account_username((const u8 *)username, username_length)) {
+        write_text("Invalid username.\n");
+        return;
+    }
+
+    u64 database_bytes = 0;
+    u64 offset = 0;
+    int read = read_account_database(buffer, &database_bytes);
+    if (read < 0) {
+        write_text("Credential list unavailable.\n");
+        return;
+    }
+    if (read == 0 || database_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account not found.\n");
+        return;
+    }
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        int latest = account_record_is_latest(buffer, database_bytes, offset, record_bytes);
+        if (latest < 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (latest == 0 || record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_DELETED) {
+            offset += record_bytes;
+            continue;
+        }
+        if (account_username_matches(record + 2, record[1], username)) {
+            write_text("username=");
+            write_bytes((const char *)(record + 2), record[1]);
+            write_text(" credential_count=");
+            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == ACCOUNT_RECORD_PENDING ? "0" : "1");
+            write_text(" state=");
+            write_text(account_state_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
+            if (record[ACCOUNT_USERNAME_CAPACITY + 2] != ACCOUNT_RECORD_PENDING) {
+                write_text(" credential[0]=");
+                write_text(account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
+                write_text(" material=public-only");
+            }
             write_text("\n");
             return;
         }
@@ -924,25 +1032,25 @@ static void set_account_enabled(
             write_text("Account is already enabled.\n");
             return;
         }
-        if (!account_record_is_disabled(target_kind)) {
+        if (!account_record_has_credential(target_kind)) {
             write_text("Account is pending credential setup.\n");
             return;
         }
-        next_kind = (u8)(target_kind - ACCOUNT_RECORD_DISABLED_OFFSET);
+        next_kind = account_credential_kind(target_kind);
     } else {
         if (account_record_is_disabled(target_kind)) {
             write_text("Account is already disabled.\n");
             return;
         }
-        if (!account_record_is_enabled(target_kind)) {
+        if (!account_record_has_credential(target_kind)) {
             write_text("Account is pending credential setup.\n");
             return;
         }
-        if (administrator_count <= 1) {
+        if (account_record_is_enabled(target_kind) && administrator_count <= 1) {
             write_text("Cannot disable the last administrator.\n");
             return;
         }
-        next_kind = (u8)(target_kind + ACCOUNT_RECORD_DISABLED_OFFSET);
+        next_kind = (u8)(account_credential_kind(target_kind) + ACCOUNT_RECORD_DISABLED_OFFSET);
     }
     next_record[ACCOUNT_USERNAME_CAPACITY + 2] = next_kind;
     if (database_bytes + target_bytes > ACCOUNT_DATABASE_CAPACITY) {
@@ -1146,6 +1254,20 @@ static void execute_line(char *line, u8 *buffer)
         username[whoami.values[0]] = 0;
         write_text(username);
         write_text("\n");
+        return;
+    }
+    if (equal_name(command, "CREDENTIAL")) {
+        char action[256];
+        char username[256];
+        if (next_word(&cursor, action) == 0 || !equal_name(action, "LIST")) {
+            write_text("Use: CREDENTIAL LIST <username>\n");
+            return;
+        }
+        if (next_word(&cursor, username) == 0) {
+            write_text("Use: CREDENTIAL LIST <username>\n");
+            return;
+        }
+        list_credentials(username, buffer);
         return;
     }
     if (equal_name(command, "ACCOUNT")) {
