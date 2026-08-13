@@ -10,7 +10,7 @@ use syn_shell::{
 };
 use synos_boot_protocol::BootInfo;
 use synos_boot_protocol::{BootMethod, MemoryKind};
-use synos_power::AcpiPlatform;
+use synos_power::{AcpiPlatform, BatteryState, PowerSource};
 use synos_status::{IntoStatus, Status};
 use synos_observability::{audit_event, field, next_correlation_id, EventField, Level};
 use synos_system_model::command::{
@@ -221,7 +221,7 @@ pub(crate) unsafe fn initialize(
             dlm,
             node_fences,
             scheduler_clock,
-            acpi.is_some(),
+            acpi,
         ));
         let session = &mut *core::ptr::addr_of_mut!(SHELL_SESSION);
         session.write(ShellSession::new(acpi));
@@ -1297,6 +1297,24 @@ fn argument_kind(kind: ArgumentKind) -> &'static str {
     }
 }
 
+fn power_source_text(source: PowerSource) -> &'static str {
+    match source {
+        PowerSource::Ac => "AC",
+        PowerSource::Battery => "BATTERY",
+        PowerSource::Unknown => "UNKNOWN",
+    }
+}
+
+fn battery_state_text(state: BatteryState) -> &'static str {
+    match state {
+        BatteryState::Charging => "CHARGING",
+        BatteryState::Discharging => "DISCHARGING",
+        BatteryState::Critical => "CRITICAL",
+        BatteryState::Idle => "IDLE",
+        BatteryState::Unknown => "UNKNOWN",
+    }
+}
+
 fn help_category(value: &str) -> Option<&'static str> {
     HELP_CATEGORIES
         .iter()
@@ -2136,6 +2154,7 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 
 
 struct KernelExecutor {
+    boot_info: &'static BootInfo,
     boot_method: BootMethod,
     memory_regions: &'static [synos_boot_protocol::MemoryRegion],
     memory_region_count: usize,
@@ -2144,6 +2163,7 @@ struct KernelExecutor {
     memory_used_bytes: u64,
     scheduler_clock: u64,
     acpi_ready: bool,
+    acpi: Option<AcpiPlatform>,
     generation: u64,
     completion: Option<(u64, Result<StructuredOutput, Status>)>,
     reboot_requested: bool,
@@ -2166,7 +2186,7 @@ impl KernelExecutor {
         dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
         _node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
         scheduler_clock: u64,
-        acpi_ready: bool,
+        acpi: Option<AcpiPlatform>,
     ) -> Self {
         let memory_total_bytes = boot_info
             .regions()
@@ -2196,6 +2216,7 @@ impl KernelExecutor {
         crate::crash::publish_capability_context(&capabilities);
 
         Self {
+            boot_info,
             boot_method: boot_info.method,
             memory_regions: boot_info.regions(),
             memory_region_count: boot_info.memory_region_count,
@@ -2203,7 +2224,8 @@ impl KernelExecutor {
             memory_available_bytes,
             memory_used_bytes: memory_total_bytes.saturating_sub(memory_available_bytes),
             scheduler_clock,
-            acpi_ready,
+            acpi_ready: acpi.is_some(),
+            acpi,
             generation: 0,
             completion: None,
             reboot_requested: false,
@@ -2694,6 +2716,7 @@ impl KernelExecutor {
     }
 
     fn show_system(&self) -> Result<StructuredOutput, Status> {
+        let power = crate::power::battery_report(self.boot_info, self.acpi.as_ref());
         let mut output = StructuredOutput::new(Status::NORMAL);
         insert_text(&mut output, "name", "SynOS")?;
         insert_text(&mut output, "architecture", architecture())?;
@@ -2720,6 +2743,43 @@ impl KernelExecutor {
             "acpi",
             if self.acpi_ready { "ready" } else { "unavailable" },
         )?;
+        insert_text(&mut output, "power-source", power_source_text(power.source))?;
+        insert(
+            &mut output,
+            "battery-count",
+            OutputValue::Unsigned(power.battery_count as u64),
+        )?;
+        if let Some(battery) = power.primary {
+            insert_text(&mut output, "battery-state", battery_state_text(battery.state))?;
+            if let Some(percent) = battery.capacity_percent {
+                insert(
+                    &mut output,
+                    "battery-percent",
+                    OutputValue::Unsigned(percent as u64),
+                )?;
+            }
+            if let Some(remaining) = battery.remaining_capacity {
+                insert(
+                    &mut output,
+                    "battery-remaining",
+                    OutputValue::Unsigned(remaining as u64),
+                )?;
+            }
+            if let Some(rate) = battery.present_rate {
+                insert(
+                    &mut output,
+                    "battery-rate",
+                    OutputValue::Unsigned(rate as u64),
+                )?;
+            }
+            if let Some(voltage) = battery.voltage {
+                insert(
+                    &mut output,
+                    "battery-voltage",
+                    OutputValue::Unsigned(voltage as u64),
+                )?;
+            }
+        }
         insert_text(&mut output, "shell", "ready")?;
         insert_text(&mut output, "monitor", "active")?;
         Ok(output)
@@ -2765,6 +2825,7 @@ impl KernelExecutor {
     }
 
     fn print_system(&self) {
+        let power = crate::power::battery_report(self.boot_info, self.acpi.as_ref());
         crate::println!("\x1b[1;97;44mPROPERTY             VALUE\x1b[0m");
         crate::println!("Name                 SynOS");
         crate::println!("Architecture         {}", architecture());
@@ -2781,6 +2842,23 @@ impl KernelExecutor {
             "ACPI                 {}",
             if self.acpi_ready { "ready" } else { "unavailable" }
         );
+        crate::println!("Power source         {}", power_source_text(power.source));
+        crate::println!("Battery count         {}", power.battery_count);
+        if let Some(battery) = power.primary {
+            crate::println!("Battery state         {}", battery_state_text(battery.state));
+            if let Some(percent) = battery.capacity_percent {
+                crate::println!("Battery charge       {}%", percent)
+            }
+            if let Some(remaining) = battery.remaining_capacity {
+                crate::println!("Battery remaining    {}", remaining)
+            }
+            if let Some(rate) = battery.present_rate {
+                crate::println!("Battery rate         {}", rate)
+            }
+            if let Some(voltage) = battery.voltage {
+                crate::println!("Battery voltage      {}", voltage)
+            }
+        }
         crate::println!("Shell                ready");
         crate::println!("Monitor              active");
         crate::println!()

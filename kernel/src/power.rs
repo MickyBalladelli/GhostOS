@@ -70,6 +70,16 @@ pub fn power_button_pressed(platform: &AcpiPlatform) -> bool {
         .is_ok_and(|events| events.contains(FixedEvent::PowerButton))
 }
 
+pub fn battery_report(
+    boot_info: &'static BootInfo,
+    platform: Option<&AcpiPlatform>,
+) -> synos_power::BatteryReport {
+    let Some(platform) = platform else {
+        return synos_power::BatteryReport::UNKNOWN
+    };
+    platform.battery_report(&PhysicalAcpiMemory { boot_info })
+}
+
 pub fn suspend(platform: Option<&AcpiPlatform>) -> Result<(), AcpiError> {
     let platform = platform.ok_or(AcpiError::Unsupported)?;
     let mut controller = PowerController::new(*platform, PlatformIo);

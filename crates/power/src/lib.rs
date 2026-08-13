@@ -8,8 +8,8 @@ mod thermal;
 
 pub use acpi::{
     AcpiError, AcpiMemory, AcpiPlatform, AddressSpace, FixedEvent, FixedEvents,
-    FixedHardware, GenericAddress, PowerController, PowerIo, PowerState, ResetRegister,
-    SleepTypes,
+    BatteryReport, BatteryState, BatteryStatus, FixedHardware, GenericAddress,
+    PowerController, PowerIo, PowerSource, PowerState, ResetRegister, SleepTypes,
 };
 pub use hotplug::{
     HotPlugDevice, HotPlugError, HotPlugState, HotPlugTransition,

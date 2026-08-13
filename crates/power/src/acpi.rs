@@ -14,6 +14,8 @@ const PM1_STATUS_WAKE: u16 = 1 << 15;
 const PM1_CONTROL_SCI_ENABLE: u64 = 1;
 const PM1_CONTROL_SLEEP_TYPE_MASK: u64 = 7 << 10;
 const PM1_CONTROL_SLEEP_ENABLE: u64 = 1 << 13;
+const MAX_BATTERIES: usize = 4;
+const MAX_METHOD_BYTES: usize = 512;
 
 pub trait AcpiMemory {
     fn read(
@@ -107,6 +109,64 @@ pub struct AcpiPlatform {
     pub suspend: Option<SleepTypes>,
     pub soft_off: Option<SleepTypes>,
     pub thermal: ThermalTripPoints,
+    battery: BatterySupport,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BatterySupport {
+    aml_start: u64,
+    aml_length: u32,
+    ac_adapter_status: Option<u32>,
+    batteries: [Option<BatteryMethods>; MAX_BATTERIES],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BatteryMethods {
+    status: Option<u32>,
+    info: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PowerSource {
+    Ac,
+    Battery,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BatteryState {
+    Charging,
+    Discharging,
+    Critical,
+    Idle,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BatteryStatus {
+    pub state: BatteryState,
+    pub state_flags: u32,
+    pub present_rate: Option<u32>,
+    pub remaining_capacity: Option<u32>,
+    pub voltage: Option<u32>,
+    pub capacity_percent: Option<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BatteryReport {
+    pub source: PowerSource,
+    pub ac_online: Option<bool>,
+    pub battery_count: u8,
+    pub primary: Option<BatteryStatus>,
+}
+
+impl BatteryReport {
+    pub const UNKNOWN: Self = Self {
+        source: PowerSource::Unknown,
+        ac_online: None,
+        battery_count: 0,
+        primary: None,
+    };
 }
 
 impl AcpiPlatform {
@@ -180,6 +240,40 @@ impl AcpiPlatform {
         }
         let (fadt_address, fadt) = fadt_address.ok_or(AcpiError::MissingFadt)?;
         parse_fadt(memory, revision, fadt_address, fadt)
+    }
+
+    pub fn battery_report<M: AcpiMemory>(&self, memory: &M) -> BatteryReport {
+        let ac_online = self
+            .battery
+            .ac_adapter_status
+            .and_then(|offset| read_method_integer(memory, self.battery, offset).ok().flatten())
+            .map(|value| value != 0);
+        let mut primary = None;
+        let mut battery_count = 0;
+
+        for methods in self.battery.batteries.iter().flatten() {
+            if methods.status.is_none() && methods.info.is_none() {
+                continue
+            }
+            battery_count += 1;
+            if primary.is_none() {
+                primary = read_battery_status(memory, self.battery, *methods).ok().flatten()
+            }
+        }
+
+        let source = match ac_online {
+            Some(true) => PowerSource::Ac,
+            Some(false) if battery_count != 0 => PowerSource::Battery,
+            Some(false) => PowerSource::Unknown,
+            None if battery_count != 0 => PowerSource::Battery,
+            None => PowerSource::Unknown,
+        };
+        BatteryReport {
+            source,
+            ac_online,
+            battery_count,
+            primary,
+        }
     }
 }
 
@@ -570,8 +664,8 @@ fn parse_fadt(
         fixed.sleep_status = prefer_gas(read_gas(memory, address + 256)?, None)
     }
 
-    let (soft_off, thermal) = if dsdt == 0 {
-        (None, ThermalTripPoints::NONE)
+    let (soft_off, thermal, battery) = if dsdt == 0 {
+        (None, ThermalTripPoints::NONE, BatterySupport::NONE)
     } else {
         let dsdt_header = read_sdt_header(memory, dsdt)?;
         if &dsdt_header.signature != b"DSDT" {
@@ -580,6 +674,7 @@ fn parse_fadt(
         validate_sdt(memory, dsdt, dsdt_header)?;
         let aml_start = dsdt + SDT_HEADER_BYTES as u64;
         let aml_length = dsdt_header.length - SDT_HEADER_BYTES as u32;
+        let battery = parse_battery_support(memory, aml_start, aml_length)?;
         (
             parse_sleep_types(memory, aml_start, aml_length, b"_S5_")?,
             ThermalTripPoints {
@@ -605,6 +700,7 @@ fn parse_fadt(
                 )?
                 .map(|value| value as u32),
             },
+            battery,
         )
     };
     let suspend = if dsdt == 0 {
@@ -626,7 +722,210 @@ fn parse_fadt(
         suspend,
         soft_off,
         thermal,
+        battery,
     })
+}
+
+impl BatterySupport {
+    const NONE: Self = Self {
+        aml_start: 0,
+        aml_length: 0,
+        ac_adapter_status: None,
+        batteries: [None; MAX_BATTERIES],
+    };
+}
+
+fn parse_battery_support(
+    memory: &impl AcpiMemory,
+    aml_start: u64,
+    aml_length: u32,
+) -> Result<BatterySupport, AcpiError> {
+    let ac_adapter_status = find_name(memory, aml_start, aml_length, b"_PSR")?
+        .map(|offset| offset as u32);
+    let status = find_name(memory, aml_start, aml_length, b"_BST")?
+        .map(|offset| offset as u32);
+    let info = find_name(memory, aml_start, aml_length, b"_BIF")?
+        .map(|offset| offset as u32);
+    let mut batteries = [None; MAX_BATTERIES];
+    if status.is_some() || info.is_some() {
+        batteries[0] = Some(BatteryMethods { status, info })
+    }
+    Ok(BatterySupport {
+        aml_start,
+        aml_length,
+        ac_adapter_status,
+        batteries,
+    })
+}
+
+fn read_battery_status(
+    memory: &impl AcpiMemory,
+    support: BatterySupport,
+    methods: BatteryMethods,
+) -> Result<Option<BatteryStatus>, AcpiError> {
+    let Some(status_offset) = methods.status else {
+        return Ok(None)
+    };
+    let Some(values) = read_method_package(memory, support, status_offset)? else {
+        return Ok(None)
+    };
+    if values.len < 4 {
+        return Err(AcpiError::MalformedAml)
+    }
+    let state_flags = values.values[0] as u32;
+    let remaining_capacity = acpi_value(values.values[2]);
+    let last_full_capacity = methods
+        .info
+        .and_then(|offset| read_method_package(memory, support, offset).ok().flatten())
+        .and_then(|values| values.values.get(2).copied())
+        .and_then(acpi_value);
+    let capacity_percent = last_full_capacity
+        .filter(|capacity| *capacity != 0)
+        .and_then(|capacity| remaining_capacity.map(|remaining| {
+            ((remaining as u64)
+                .saturating_mul(100)
+                .checked_div(capacity as u64)
+                .unwrap_or(0)
+                .min(100)) as u8
+        }));
+    Ok(Some(BatteryStatus {
+        state: battery_state(state_flags),
+        state_flags,
+        present_rate: acpi_value(values.values[1]),
+        remaining_capacity,
+        voltage: acpi_value(values.values[3]),
+        capacity_percent,
+    }))
+}
+
+#[derive(Clone, Copy)]
+struct AmlPackage {
+    values: [u64; 13],
+    len: usize,
+}
+
+fn read_method_package(
+    memory: &impl AcpiMemory,
+    support: BatterySupport,
+    offset: u32,
+) -> Result<Option<AmlPackage>, AcpiError> {
+    let bytes = read_method_bytes(memory, support, offset)?;
+    if is_name_object(memory, support, offset)? && bytes.get(4).copied() == Some(0x12) {
+        return parse_aml_package(&bytes[5..]).map(Some)
+    }
+    let Some(return_position) = bytes.iter().position(|byte| *byte == 0xa4) else {
+        return Ok(None)
+    };
+    let Some(package) = bytes.get(return_position + 1..) else {
+        return Err(AcpiError::MalformedAml)
+    };
+    if package.first().copied() != Some(0x12) {
+        return Ok(None)
+    }
+    parse_aml_package(&package[1..]).map(Some)
+}
+
+fn read_method_integer(
+    memory: &impl AcpiMemory,
+    support: BatterySupport,
+    offset: u32,
+) -> Result<Option<u64>, AcpiError> {
+    let bytes = read_method_bytes(memory, support, offset)?;
+    if is_name_object(memory, support, offset)?
+        && let Ok((value, _)) = parse_aml_integer(&bytes[4..])
+    {
+        return Ok(Some(value))
+    }
+    let Some(return_position) = bytes.iter().position(|byte| *byte == 0xa4) else {
+        return Ok(None)
+    };
+    parse_aml_integer(
+        bytes
+            .get(return_position + 1..)
+            .ok_or(AcpiError::MalformedAml)?,
+    )
+    .map(|(value, _)| Some(value))
+}
+
+fn read_method_bytes(
+    memory: &impl AcpiMemory,
+    support: BatterySupport,
+    offset: u32,
+) -> Result<[u8; MAX_METHOD_BYTES], AcpiError> {
+    let offset = offset as u64;
+    if support.aml_start == 0 || offset >= support.aml_length as u64 {
+        return Err(AcpiError::MalformedAml)
+    }
+    let amount = (support.aml_length as u64 - offset).min(MAX_METHOD_BYTES as u64) as usize;
+    let mut bytes = [0; MAX_METHOD_BYTES];
+    memory.read(support.aml_start + offset, &mut bytes[..amount])?;
+    Ok(bytes)
+}
+
+fn is_name_object(
+    memory: &impl AcpiMemory,
+    support: BatterySupport,
+    offset: u32,
+) -> Result<bool, AcpiError> {
+    if offset == 0 {
+        return Ok(false)
+    }
+    let mut opcode = [0];
+    memory.read(support.aml_start + offset as u64 - 1, &mut opcode)?;
+    Ok(opcode[0] == 0x08)
+}
+
+fn parse_aml_package(bytes: &[u8]) -> Result<AmlPackage, AcpiError> {
+    let (package_length, length_bytes) = parse_package_length(bytes)?;
+    let package_end = package_length;
+    if package_end > bytes.len()
+        || package_end <= length_bytes
+        || length_bytes >= bytes.len()
+    {
+        return Err(AcpiError::MalformedAml)
+    }
+    let count_position = length_bytes;
+    let count = *bytes.get(count_position).ok_or(AcpiError::MalformedAml)? as usize;
+    let mut values = [0; 13];
+    let mut len = 0;
+    let mut cursor = count_position + 1;
+    while len < count && len < values.len() && cursor < package_end {
+        let Ok((value, used)) = parse_aml_integer(&bytes[cursor..package_end]) else {
+            if len >= 3 {
+                break
+            }
+            return Err(AcpiError::MalformedAml)
+        };
+        values[len] = value;
+        len += 1;
+        cursor += used;
+    }
+    if len < count.min(3) {
+        return Err(AcpiError::MalformedAml)
+    }
+    Ok(AmlPackage { values, len })
+}
+
+fn acpi_value(value: u64) -> Option<u32> {
+    if value == u32::MAX as u64 {
+        None
+    } else {
+        u32::try_from(value).ok()
+    }
+}
+
+fn battery_state(flags: u32) -> BatteryState {
+    if flags & 4 != 0 {
+        BatteryState::Critical
+    } else if flags & 1 != 0 {
+        BatteryState::Charging
+    } else if flags & 2 != 0 {
+        BatteryState::Discharging
+    } else if flags == 0 {
+        BatteryState::Idle
+    } else {
+        BatteryState::Unknown
+    }
 }
 
 fn prefer_gas(
