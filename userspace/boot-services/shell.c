@@ -43,6 +43,14 @@ enum {
     FLAG_RECURSIVE = 1 << 8,
 };
 
+static const char ACCOUNT_AUTHORIZATION_PATH[] = "/system/security/authorization";
+enum {
+    ACCOUNT_RECORD_VERSION = 1,
+    ACCOUNT_USERNAME_CAPACITY = 32,
+    ACCOUNT_CREDENTIAL_CAPACITY = 96,
+    ACCOUNT_RECORD_HEADER_BYTES = 36,
+};
+
 struct request {
     u16 operation;
     u16 abi_version;
@@ -272,6 +280,175 @@ static void type_file(char *path, u8 *buffer)
     write_text("\n");
 }
 
+static int valid_account_username(const u8 *username, u64 username_length)
+{
+    u64 index;
+    if (username_length == 0 || username_length > ACCOUNT_USERNAME_CAPACITY) {
+        return 0;
+    }
+    for (index = 0; index < username_length; index++) {
+        u8 byte = username[index];
+        if (!(byte >= 'a' && byte <= 'z')
+            && !(byte >= 'A' && byte <= 'Z')
+            && !(byte >= '0' && byte <= '9')
+            && byte != '.' && byte != '_' && byte != '-' && byte != '$') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static const char *account_credential_name(u8 kind)
+{
+    if (kind == 1) {
+        return "passkey";
+    }
+    if (kind == 2) {
+        return "tpm";
+    }
+    if (kind == 3) {
+        return "ssh";
+    }
+    return 0;
+}
+
+static int account_username_matches(
+    const u8 *stored,
+    u64 stored_length,
+    const char *requested
+)
+{
+    u64 requested_length = length(requested);
+    u64 index;
+    if (stored_length != requested_length) {
+        return 0;
+    }
+    for (index = 0; index < stored_length; index++) {
+        u8 left = stored[index];
+        u8 right = (u8)requested[index];
+        if (left >= 'a' && left <= 'z') {
+            left = (u8)(left - ('a' - 'A'));
+        }
+        if (right >= 'a' && right <= 'z') {
+            right = (u8)(right - ('a' - 'A'));
+        }
+        if (left != right) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int valid_account_record(const u8 *buffer, u64 record_bytes)
+{
+    u64 username_length = buffer[1];
+    u64 credential_length = buffer[ACCOUNT_RECORD_HEADER_BYTES - 1];
+    return record_bytes >= ACCOUNT_RECORD_HEADER_BYTES
+        && record_bytes <= ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY
+        && buffer[0] == ACCOUNT_RECORD_VERSION
+        && valid_account_username(buffer + 2, username_length)
+        && account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]) != 0
+        && credential_length != 0
+        && credential_length <= ACCOUNT_CREDENTIAL_CAPACITY
+        && record_bytes == ACCOUNT_RECORD_HEADER_BYTES + credential_length;
+}
+
+static int read_account_record(u8 *buffer, u64 *record_bytes)
+{
+    struct response opened = call(
+        OP_SYNFS_OPEN,
+        OPEN_READ,
+        0,
+        (u64)ACCOUNT_AUTHORIZATION_PATH,
+        length(ACCOUNT_AUTHORIZATION_PATH),
+        0,
+        0
+    );
+    if (opened.status != 0) {
+        return 0;
+    }
+
+    struct response read = call(
+        OP_SYNFS_READ,
+        0,
+        opened.values[0],
+        (u64)buffer,
+        4096,
+        1,
+        0
+    );
+    call(OP_SYNFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
+    if (read.status != 0) {
+        return -1;
+    }
+    *record_bytes = read.values[0];
+    return *record_bytes != 0;
+}
+
+static void list_accounts(u8 *buffer)
+{
+    u64 record_bytes = 0;
+    int read = read_account_record(buffer, &record_bytes);
+    if (read < 0) {
+        write_text("Account list unavailable.\n");
+        return;
+    }
+    if (read == 0) {
+        write_text("No local accounts.\n");
+        return;
+    }
+    if (!valid_account_record(buffer, record_bytes)) {
+        write_text("Account database is corrupt.\n");
+        return;
+    }
+
+    u64 username_length = buffer[1];
+
+    write_text("username=");
+    write_bytes((const char *)(buffer + 2), username_length);
+    write_text(" state=enabled credential=");
+    write_text(account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]));
+    write_text("\n");
+}
+
+static void show_account(const char *username, u8 *buffer)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+    u64 username_length = length(username);
+    if (!valid_account_username((const u8 *)username, username_length)) {
+        write_text("Invalid username.\n");
+        return;
+    }
+
+    u64 record_bytes = 0;
+    int read = read_account_record(buffer, &record_bytes);
+    if (read < 0) {
+        write_text("Account details unavailable.\n");
+        return;
+    }
+    if (read == 0) {
+        write_text("Account not found.\n");
+        return;
+    }
+    if (!valid_account_record(buffer, record_bytes)) {
+        write_text("Account database is corrupt.\n");
+        return;
+    }
+    if (!account_username_matches(buffer + 2, buffer[1], username)) {
+        write_text("Account not found.\n");
+        return;
+    }
+
+    write_text("username=");
+    write_bytes((const char *)(buffer + 2), buffer[1]);
+    write_text("\nstate=enabled\nscope=local\ncredential=");
+    write_text(account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]));
+    write_text("\n");
+}
+
 static void execute_line(char *line, u8 *buffer)
 {
     char command[256];
@@ -322,6 +499,31 @@ static void execute_line(char *line, u8 *buffer)
         write_text(username);
         write_text("\n");
         return;
+    }
+    if (equal_name(command, "ACCOUNT")) {
+        char action[256];
+        char username[256];
+        u64 action_length = next_word(&cursor, action);
+        if (action_length == 0) {
+            write_text("Use: ACCOUNT LIST or ACCOUNT SHOW <username>\n");
+            return;
+        }
+        if (equal_name(action, "LIST")) {
+            list_accounts(buffer);
+            return;
+        }
+        if (equal_name(action, "SHOW")) {
+            if (next_word(&cursor, username) == 0) {
+                write_text("Use: ACCOUNT SHOW <username>\n");
+                return;
+            }
+            show_account(username, buffer);
+            return;
+        }
+        {
+            write_text("Use: ACCOUNT LIST or ACCOUNT SHOW <username>\n");
+            return;
+        }
     }
     if (next_word(&cursor, path) == 0) {
         write_text("missing path\n");

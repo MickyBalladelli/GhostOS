@@ -235,12 +235,12 @@ Build the real operating system core before adding more advanced features.
 - [x] Prevent first-admin setup from replacing an existing account database.
 - [x] Provide a recovery mode for an interrupted or failed first-login setup.
 - [x] Provide a documented recovery procedure when the first administrator loses all credentials.
-- [ ] Audit first-admin creation, recovery, and cancellation events.
+- [x] Audit first-admin creation, recovery, and cancellation events.
 
 ### Account lifecycle
 
-- [ ] Add `ACCOUNT LIST` with safe summaries of local accounts.
-- [ ] Add `ACCOUNT SHOW <username>` with permission-checked details.
+- [x] Add `ACCOUNT LIST` with safe summaries of local accounts.
+- [x] Add `ACCOUNT SHOW <username>` with permission-checked details.
 - [ ] Add `ACCOUNT CREATE <username>` for administrators.
 - [ ] Add `ACCOUNT DELETE <username>` with confirmation and last-admin protection.
 - [ ] Add `ACCOUNT ENABLE <username>` and `ACCOUNT DISABLE <username>`.

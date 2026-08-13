@@ -14,6 +14,11 @@ use synos_init::{
     ServiceState, SpawnRequest, StartupDiagnostic, Supervisor, SupervisorRuntime,
 };
 use synos_status::{IntoStatus, Status};
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+use synos_observability::{audit_event, field, EventField, Level};
 use synos_synfs::SynFs;
 
 const FILESYSTEM_SERVICE_ID: u32 = 0x4653_4444;
@@ -77,6 +82,12 @@ const FIRST_ADMIN_CREDENTIAL_CAPACITY: usize = 96;
 const FIRST_ADMIN_AUTHORIZATION_RECORD_VERSION: u8 = 1;
 const FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY: usize =
     2 + FIRST_ADMIN_USERNAME_CAPACITY + 2 + FIRST_ADMIN_CREDENTIAL_CAPACITY;
+const AUDIT_FIRST_ADMIN_USERNAME: u64 = 0x1001;
+const AUDIT_FIRST_ADMIN_CREDENTIAL: u64 = 0x1002;
+const AUDIT_FIRST_ADMIN_COMMIT: u64 = 0x1003;
+const AUDIT_FIRST_ADMIN_RECOVERY_STATUS: u64 = 0x1004;
+const AUDIT_FIRST_ADMIN_RECOVERY_RETRY: u64 = 0x1005;
+const AUDIT_FIRST_ADMIN_RECOVERY_RESET: u64 = 0x1006;
 const SERVICE_COUNT: usize = 13;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -663,6 +674,19 @@ fn valid_first_admin_username(username: &[u8]) -> bool {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+fn audit_first_admin(action: u64, status: Status) {
+    audit_event!(
+        if status.is_success() { Level::Info } else { Level::Warn },
+        EventField::unsigned(field::OPERATION, action),
+        EventField::unsigned(field::CALLER, SHELL_PROCESS_ID as u64),
+        EventField::status(status),
+    );
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 fn load_first_admin_username(filesystem: Option<&SynFs<FILESYSTEM_BLOCKS>>) {
     FIRST_ADMIN_USERNAME_LENGTH.store(0, Ordering::Release);
     let Some(filesystem) = filesystem else {
@@ -701,6 +725,19 @@ fn load_first_admin_username(filesystem: Option<&SynFs<FILESYSTEM_BLOCKS>>) {
     any(target_os = "none", target_os = "uefi")
 ))]
 pub(crate) fn create_first_admin_username(username: &[u8]) -> Result<(), Status> {
+    let result = create_first_admin_username_inner(username);
+    audit_first_admin(
+        AUDIT_FIRST_ADMIN_USERNAME,
+        result.as_ref().map(|_| Status::NORMAL).unwrap_or_else(|error| *error),
+    );
+    result
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
     if !valid_first_admin_username(username) {
         return Err(Status::INVALID_ARGUMENT)
     }
@@ -770,6 +807,22 @@ pub(crate) fn create_first_admin_username(username: &[u8]) -> Result<(), Status>
     any(target_os = "none", target_os = "uefi")
 ))]
 pub(crate) fn create_first_admin_credential(
+    kind: u8,
+    public_material: &[u8],
+) -> Result<(), Status> {
+    let result = create_first_admin_credential_inner(kind, public_material);
+    audit_first_admin(
+        AUDIT_FIRST_ADMIN_CREDENTIAL,
+        result.as_ref().map(|_| Status::NORMAL).unwrap_or_else(|error| *error),
+    );
+    result
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn create_first_admin_credential_inner(
     kind: u8,
     public_material: &[u8],
 ) -> Result<(), Status> {
@@ -849,6 +902,19 @@ pub(crate) fn create_first_admin_credential(
     any(target_os = "none", target_os = "uefi")
 ))]
 pub(crate) fn commit_first_admin() -> Result<(), Status> {
+    let result = commit_first_admin_inner();
+    audit_first_admin(
+        AUDIT_FIRST_ADMIN_COMMIT,
+        result.as_ref().map(|_| Status::NORMAL).unwrap_or_else(|error| *error),
+    );
+    result
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn commit_first_admin_inner() -> Result<(), Status> {
     if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ALREADY_EXISTS)
     }
@@ -968,6 +1034,25 @@ pub(crate) fn commit_first_admin() -> Result<(), Status> {
     any(target_os = "none", target_os = "uefi")
 ))]
 pub(crate) fn first_admin_recovery(action: u64) -> Result<[u64; 4], Status> {
+    let audit_action = match action {
+        1 => AUDIT_FIRST_ADMIN_RECOVERY_STATUS,
+        2 => AUDIT_FIRST_ADMIN_RECOVERY_RESET,
+        3 => AUDIT_FIRST_ADMIN_RECOVERY_RETRY,
+        _ => AUDIT_FIRST_ADMIN_RECOVERY_STATUS,
+    };
+    let result = first_admin_recovery_inner(action);
+    audit_first_admin(
+        audit_action,
+        result.as_ref().map(|_| Status::NORMAL).unwrap_or_else(|error| *error),
+    );
+    result
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn first_admin_recovery_inner(action: u64) -> Result<[u64; 4], Status> {
     if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ALREADY_EXISTS)
     }
