@@ -311,6 +311,7 @@ pub enum StartupError {
 pub enum AccountManagementRequest {
     Create(UserRecord),
     Update(UserRecord),
+    Rename { identity: IdentityId, username: Username },
     Disable(IdentityId),
     Delete(IdentityId),
 }
@@ -319,6 +320,7 @@ pub enum AccountManagementRequest {
 pub enum AccountManagementResult {
     Created(UserRecord),
     Updated(UserRecord),
+    Renamed(UserRecord),
     Disabled(UserRecord),
     Deleted(UserRecord),
 }
@@ -715,6 +717,18 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
                     .map_err(StartupError::Authentication)?;
                 (AccountManagementResult::Updated(record), Some(record.identity))
             }
+            AccountManagementRequest::Rename { identity, username } => {
+                let mut record = next_state
+                    .database
+                    .record(identity)
+                    .map_err(StartupError::Authentication)?;
+                record.username = username;
+                next_state
+                    .database
+                    .replace(record)
+                    .map_err(StartupError::Authentication)?;
+                (AccountManagementResult::Renamed(record), None)
+            }
             AccountManagementRequest::Disable(identity) => {
                 let mut record = next_state
                     .database
@@ -788,6 +802,25 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             now_us,
         )? {
             AccountManagementResult::Updated(record) => Ok(record),
+            _ => Err(StartupError::InvalidRecord),
+        }
+    }
+
+    pub fn rename_account<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        username: Username,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        match self.manage_account(
+            store,
+            handle,
+            AccountManagementRequest::Rename { identity, username },
+            now_us,
+        )? {
+            AccountManagementResult::Renamed(record) => Ok(record),
             _ => Err(StartupError::InvalidRecord),
         }
     }
