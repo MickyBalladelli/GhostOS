@@ -57,8 +57,8 @@ pub mod paging {
     const ONE_GIB: u64 = 1024 * 1024 * 1024;
     /// Root, kernel paging levels, and the private user mapping levels.
     pub const PROCESS_TABLE_FRAME_COUNT: usize = 9;
-    pub const SERVICE_PAGE_COUNT: usize = 7;
-    const SERVICE_CODE_PAGE_COUNT: usize = 5;
+    pub const SERVICE_PAGE_COUNT: usize = 8;
+    const SERVICE_CODE_PAGE_COUNT: usize = 6;
     const SERVICE_STACK_GUARD_OFFSET: usize = SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize - 8;
     const USER_MAPPING_PML4_INDEX: usize = (crate::USER_SPACE_START >> 39) as usize;
     const SERVICE_CODE: u64 = crate::USER_SPACE_START;

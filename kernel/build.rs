@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const SERVICE_CODE_BYTES: u64 = 5 * 4096;
+const SERVICE_CODE_BYTES: u64 = 6 * 4096;
 
 fn run(command: &mut Command, description: &str) {
     let status = command.status().unwrap_or_else(|error| {

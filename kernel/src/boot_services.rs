@@ -110,6 +110,11 @@ static FIRST_ADMIN_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static FIRST_ADMIN_RECOVERY_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static FIRST_ADMIN_USERNAME_LENGTH: AtomicU8 = AtomicU8::new(0);
 #[cfg(all(
     target_arch = "x86_64",
@@ -956,6 +961,83 @@ pub(crate) fn commit_first_admin() -> Result<(), Status> {
     FIRST_ADMIN_USERNAME_LENGTH.store(0, Ordering::Release);
     PROVISIONING_REQUIRED.store(false, Ordering::Release);
     Ok(())
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn first_admin_recovery(action: u64) -> Result<[u64; 4], Status> {
+    if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
+        return Err(Status::ALREADY_EXISTS)
+    }
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    if action == 1 {
+        let username = match daemon.filesystem().lookup(FIRST_ADMIN_USERNAME_PATH) {
+            Ok(metadata) => u64::from(
+                metadata.file_type == synos_synfs::FileType::Regular
+                    && metadata.size != 0,
+            ),
+            Err(synos_synfs::Error::NotFound) => 0,
+            Err(_) => 2,
+        };
+        let credential = match daemon.filesystem().lookup(FIRST_ADMIN_CREDENTIAL_PATH) {
+            Ok(metadata) => u64::from(
+                metadata.file_type == synos_synfs::FileType::Regular
+                    && metadata.size >= 3,
+            ),
+            Err(synos_synfs::Error::NotFound) => 0,
+            Err(_) => 2,
+        };
+        return Ok([
+            username,
+            credential,
+            u64::from(FIRST_ADMIN_SYNC_PENDING.load(Ordering::Acquire)),
+            1,
+        ])
+    }
+    if action == 3 {
+        commit_first_admin()?;
+        return Ok([1, 0, 0, 0])
+    }
+    if action != 2 {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    if FIRST_ADMIN_RECOVERY_SYNC_PENDING.load(Ordering::Acquire) {
+        crate::physical_storage::sync(daemon.filesystem_mut())
+            .map_err(|_| Status::INTERNAL)?;
+        FIRST_ADMIN_RECOVERY_SYNC_PENDING.store(false, Ordering::Release);
+        return Ok([0, 0, 0, 1])
+    }
+    match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
+        Ok(_) => return Err(Status::ALREADY_EXISTS),
+        Err(synos_synfs::Error::NotFound) => {}
+        Err(error) => return Err(error.status()),
+    }
+    let mut transaction = daemon.filesystem_mut().transaction();
+    for path in [FIRST_ADMIN_USERNAME_PATH, FIRST_ADMIN_CREDENTIAL_PATH] {
+        match transaction.lookup(path) {
+            Ok(metadata) if metadata.file_type == synos_synfs::FileType::Regular => {
+                transaction
+                    .delete(path)
+                    .map_err(|error| error.status())?;
+            }
+            Ok(_) => return Err(Status::CORRUPT),
+            Err(synos_synfs::Error::NotFound) => {}
+            Err(error) => return Err(error.status()),
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| error.status())?;
+    if crate::physical_storage::sync(daemon.filesystem_mut()).is_err() {
+        FIRST_ADMIN_RECOVERY_SYNC_PENDING.store(true, Ordering::Release);
+        return Err(Status::INTERNAL)
+    }
+    FIRST_ADMIN_USERNAME_LENGTH.store(0, Ordering::Release);
+    Ok([0, 0, 0, 0])
 }
 
 /// Dispatch a filesystem request issued by the Ring 3 shell.

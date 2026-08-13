@@ -233,7 +233,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Persist the first administrator atomically in SynFS.
 - [x] Make first-admin creation safe to retry after power loss.
 - [x] Prevent first-admin setup from replacing an existing account database.
-- [ ] Provide a recovery mode for an interrupted or failed first-login setup.
+- [x] Provide a recovery mode for an interrupted or failed first-login setup.
 - [ ] Provide a documented recovery procedure when the first administrator loses all credentials.
 - [ ] Audit first-admin creation, recovery, and cancellation events.
 

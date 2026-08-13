@@ -31,6 +31,7 @@ enum {
     OP_LOGIN_BOOTSTRAP_USERNAME = 58,
     OP_LOGIN_BOOTSTRAP_CREDENTIAL = 59,
     OP_LOGIN_BOOTSTRAP_CONFIRM = 60,
+    OP_LOGIN_BOOTSTRAP_RECOVERY = 61,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
@@ -361,7 +362,7 @@ static void execute_first_run_line(char *line)
         return;
     }
     if (equal_name(command, "HELP")) {
-        write_text("Use USERNAME, CREDENTIAL, or CONFIRM.\n");
+        write_text("Use USERNAME, CREDENTIAL, CONFIRM, or RECOVERY.\n");
         return;
     }
     if (equal_name(command, "USERNAME")) {
@@ -436,7 +437,48 @@ static void execute_first_run_line(char *line)
         }
         return;
     }
-    write_text("Use USERNAME, CREDENTIAL, or CONFIRM.\n");
+    if (equal_name(command, "RECOVERY")) {
+        char action[256];
+        u64 action_length = next_word(&cursor, action);
+        u64 action_id = 0;
+        if (action_length == 0 || equal_name(action, "STATUS")) {
+            action_id = 1;
+        } else if (equal_name(action, "RESET")) {
+            action_id = 2;
+        } else if (equal_name(action, "RETRY")) {
+            action_id = 3;
+        }
+        if (action_id == 0) {
+            write_text("Use: RECOVERY STATUS|RESET|RETRY\n");
+            return;
+        }
+        struct response response = call(
+            OP_LOGIN_BOOTSTRAP_RECOVERY,
+            0,
+            0,
+            action_id,
+            0,
+            0,
+            0
+        );
+        if (response.status != 0) {
+            write_text("Recovery failed.\n");
+        } else if (action_id == 1) {
+            write_text("Recovery state: username=");
+            write_hex((u32)response.values[0]);
+            write_text(" credential=");
+            write_hex((u32)response.values[1]);
+            write_text(" sync=");
+            write_hex((u32)response.values[2]);
+            write_text("\n");
+        } else if (action_id == 2) {
+            write_text("Pending setup cleared.\n");
+        } else {
+            write_text("Recovery retry complete.\n");
+        }
+        return;
+    }
+    write_text("Use USERNAME, CREDENTIAL, CONFIRM, or RECOVERY.\n");
 }
 
 __attribute__((section(".text._start"), noreturn))
