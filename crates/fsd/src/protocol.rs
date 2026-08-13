@@ -29,6 +29,9 @@ pub enum Operation {
     Links = 19,
     Lock = 20,
     Unlock = 21,
+    Symlink = 22,
+    ReadLink = 23,
+    Chmod = 24,
 }
 
 impl Operation {
@@ -55,6 +58,9 @@ impl Operation {
             19 => Some(Self::Links),
             20 => Some(Self::Lock),
             21 => Some(Self::Unlock),
+            22 => Some(Self::Symlink),
+            23 => Some(Self::ReadLink),
+            24 => Some(Self::Chmod),
             _ => None,
         }
     }

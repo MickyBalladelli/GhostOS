@@ -62,6 +62,7 @@ pub const MAX_KEYS: usize = 7;
 pub const MAX_RETENTION_RULES: usize = 16;
 pub const MAX_CHECKPOINTS: usize = 16;
 pub const MAX_WILDCARD_MATCHES: usize = 256;
+pub const MAX_SYMLINK_DEPTH: usize = 40;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -70,6 +71,8 @@ pub enum Error {
     Corrupt,
     DirectoryNotEmpty,
     InvalidPath,
+    SymlinkLoop,
+    NotSymlink,
     InvalidPattern,
     InvalidVersion,
     NotFound,
@@ -102,7 +105,8 @@ impl IntoStatus for Error {
                 Status::NO_SPACE
             }
             Self::Corrupt => Status::CORRUPT,
-            Self::InvalidPath | Self::InvalidVersion => Status::INVALID_PATH,
+            Self::InvalidPath | Self::InvalidVersion | Self::SymlinkLoop => Status::INVALID_PATH,
+            Self::NotSymlink => Status::INVALID_ARGUMENT,
             Self::InvalidPattern => Status::INVALID_PATTERN,
             Self::NotDirectory => Status::NOT_DIRECTORY,
             Self::DirectoryNotEmpty => Status::DIRECTORY_NOT_EMPTY,
@@ -603,7 +607,17 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         path: &str,
         entries: &mut [DirectoryEntry],
     ) -> Result<usize, Error> {
-        self.filesystem.list_directory_at(self.root, path, entries)
+        if path == "/" {
+            return self.filesystem.list_directory_at(self.root, path, entries)
+        }
+        let directory = self
+            .filesystem
+            .lookup_following_buffer(self.root, path.as_bytes())?;
+        if directory.file_type != FileType::Directory {
+            return Err(Error::NotDirectory)
+        }
+        self.filesystem
+            .list_directory_at(self.root, directory.file.as_str(), entries)
     }
 
     /// Expand a wildcard over names visible at the selected version.
@@ -1162,15 +1176,73 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn write(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
-        let result = self.write_uncommitted(path, contents);
+        let resolved = match self.lookup(path) {
+            Ok(file) if file.file_type == FileType::Symlink => {
+                Some(self.lookup_following(path)?.file)
+            }
+            Ok(_) | Err(Error::NotFound) => None,
+            Err(error) => return Err(error),
+        };
+        let result = match resolved {
+            Some(file) => self.write_uncommitted(file.as_str(), contents),
+            None => self.write_uncommitted(path, contents),
+        };
         if result == Err(Error::OutOfSpace) {
             self.collect_garbage();
-            return self.write_uncommitted(path, contents);
+            return match resolved {
+                Some(file) => self.write_uncommitted(file.as_str(), contents),
+                None => self.write_uncommitted(path, contents),
+            };
         }
         if result.is_err() {
             self.collect_garbage();
         }
         result
+    }
+
+    /// Create a symbolic link. The target is stored as link data and is not
+    /// required to exist yet.
+    pub fn symlink(&mut self, target: &str, link_path: &str) -> Result<FileVersion, Error> {
+        let target = target.as_bytes();
+        if target.is_empty()
+            || target.len() > MAX_PATH_BYTES
+            || target.contains(&0)
+            || target.contains(&b';')
+            || core::str::from_utf8(target).is_err()
+        {
+            return Err(Error::InvalidPath)
+        }
+        let link = FileName::new(link_path)?;
+        if self.latest_record_at(self.root, link)?.is_some() {
+            return Err(Error::AlreadyExists)
+        }
+        self.require_parent_directory(link)?;
+        self.enforce_limits(target.len() as u64, true)?;
+        let data = self.store_data(target)?;
+        let version = self.next_version(link)?;
+        let object_id = self.allocate_object_id()?;
+        self.insert_record(
+            link,
+            version,
+            object_id,
+            self.generation.saturating_add(1),
+            target.len() as u64,
+            data,
+            checksum(target),
+            FileType::Symlink,
+            1,
+            0o777,
+        )
+    }
+
+    /// Change the permission bits on one live filesystem object.
+    pub fn set_mode(&mut self, path: &str, mode: u16) -> Result<FileVersion, Error> {
+        let selected = self.lookup_record(path)?;
+        let mut updated = selected;
+        updated.mode = mode & 0o7777;
+        self.root = self.replace(self.root, selected.key, updated)?;
+        self.generation = self.generation.saturating_add(1);
+        Ok(updated.into())
     }
 
     fn write_uncommitted(&mut self, path: &str, contents: &[u8]) -> Result<FileVersion, Error> {
@@ -1326,7 +1398,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
     pub fn link(&mut self, existing: &str, new_path: &str) -> Result<FileVersion, Error> {
         let source = self.lookup_record(existing)?;
-        if source.file_type == FileType::Directory || source.object_id == 0 {
+        if source.file_type != FileType::Regular || source.object_id == 0 {
             return Err(Error::NotDirectory);
         }
         let parsed_target = VersionedPath::parse(new_path)?;
@@ -1480,7 +1552,14 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn list_directory(&self, path: &str, entries: &mut [DirectoryEntry]) -> Result<usize, Error> {
-        self.list_directory_at(self.root, path, entries)
+        if path == "/" {
+            return self.list_directory_at(self.root, path, entries)
+        }
+        let directory = self.lookup_following(path)?;
+        if directory.file_type != FileType::Directory {
+            return Err(Error::NotDirectory)
+        }
+        self.list_directory_at(self.root, directory.file.as_str(), entries)
     }
 
     /// Expand a bounded wildcard over names visible at the selected version.
@@ -1698,7 +1777,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             return Ok(())
         }
         let parent = FileName::new(core::str::from_utf8(&file.as_bytes()[..separator]).map_err(|_| Error::InvalidPath)?)?;
-        let record = self.latest_record_at(self.root, parent)?.ok_or(Error::NotFound)?;
+        let record = self.lookup_following(parent.as_str())?;
         if record.file_type != FileType::Directory {
             return Err(Error::NotDirectory);
         }
@@ -1776,6 +1855,92 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.lookup_at(self.root, path)
     }
 
+    /// Look up a path after following symbolic links in any path component.
+    pub fn lookup_following(&self, path: &str) -> Result<FileVersion, Error> {
+        let length = path.len();
+        if length == 0 || length > MAX_PATH_BYTES {
+            return Err(Error::InvalidPath)
+        }
+        let mut current = [0; MAX_PATH_BYTES];
+        current[..length].copy_from_slice(path.as_bytes());
+        self.lookup_following_buffer(self.root, &current[..length])
+    }
+
+    fn lookup_following_buffer(&self, root: BlockId, path: &[u8]) -> Result<FileVersion, Error> {
+        let mut current = [0; MAX_PATH_BYTES];
+        current[..path.len()].copy_from_slice(path);
+        let mut length = path.len();
+        let mut next = [0; MAX_PATH_BYTES];
+        for _ in 0..MAX_SYMLINK_DEPTH {
+            let current_path = core::str::from_utf8(&current[..length]).map_err(|_| Error::InvalidPath)?;
+            let mut component_end = 1;
+            let mut symlink = None;
+            while component_end <= length {
+                if component_end == length || current[component_end] == b'/' {
+                    if component_end > 1 {
+                        let component = core::str::from_utf8(&current[..component_end])
+                            .map_err(|_| Error::InvalidPath)?;
+                        match self.lookup_at(root, component) {
+                            Ok(file) if file.file_type == FileType::Symlink => {
+                                symlink = Some((component_end, file));
+                                break
+                            }
+                            Ok(_) | Err(Error::NotFound) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    component_end += 1;
+                } else {
+                    component_end += 1;
+                }
+            }
+            let Some((link_end, link)) = symlink else {
+                return self.lookup_at(root, current_path)
+            };
+            let mut target = [0; MAX_PATH_BYTES];
+            let target_len = usize::try_from(link.size).map_err(|_| Error::Corrupt)?;
+            if target_len > target.len() {
+                return Err(Error::Corrupt)
+            }
+            let record = self
+                .find_record_at(root, FileKey {
+                    file: link.file,
+                    version: link.version,
+                })?
+                .ok_or(Error::Corrupt)?;
+            self.read_record_range(record, 0, &mut target[..target_len])?;
+            let parent_end = current[..link_end]
+                .iter()
+                .rposition(|byte| *byte == b'/')
+                .unwrap_or(0);
+            let target = core::str::from_utf8(&target[..target_len]).map_err(|_| Error::Corrupt)?;
+            length = join_symlink_path(
+                &current[..parent_end.max(1)],
+                target.as_bytes(),
+                &current[link_end..length],
+                &mut next,
+            )?;
+            current[..length].copy_from_slice(&next[..length]);
+            next.fill(0);
+        }
+        Err(Error::SymlinkLoop)
+    }
+
+    pub fn read_link(&self, path: &str, destination: &mut [u8]) -> Result<ReadResult, Error> {
+        let file = self.lookup(path)?;
+        if file.file_type != FileType::Symlink {
+            return Err(Error::NotSymlink)
+        }
+        let record = self
+            .find_record(FileKey {
+                file: file.file,
+                version: file.version,
+            })?
+            .ok_or(Error::Corrupt)?;
+        let bytes_read = self.read_record_range(record, 0, destination)?;
+        Ok(ReadResult { file, bytes_read })
+    }
+
     /// Count links that are current directory entries, excluding versions
     /// visible only because a newer version was deleted.
     pub fn current_link_count(&self, path: &str) -> Result<u32, Error> {
@@ -1817,7 +1982,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn read(&self, path: &str, destination: &mut [u8]) -> Result<ReadResult, Error> {
-        let file = self.lookup(path)?;
+        let file = self.lookup_following(path)?;
         self.read_file_version(file, destination)
     }
 
@@ -1829,7 +1994,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         offset: u64,
         destination: &mut [u8],
     ) -> Result<ReadResult, Error> {
-        let file = self.lookup(path)?;
+        let file = self.lookup_following(path)?;
         let bytes_read = self.read_record_range(
             self.find_record(FileKey {
                 file: file.file,
@@ -2445,6 +2610,58 @@ impl From<FileRecord> for FileVersion {
 
 fn child_index(branch: &Branch, key: FileKey) -> usize {
     branch.keys[..branch.len as usize].partition_point(|separator| key >= *separator)
+}
+
+fn join_symlink_path(
+    parent: &[u8],
+    target: &[u8],
+    suffix: &[u8],
+    output: &mut [u8; MAX_PATH_BYTES],
+) -> Result<usize, Error> {
+    let mut length = 1;
+    output[0] = b'/';
+    if !target.starts_with(b"/") {
+        append_path_components(parent, output, &mut length)?;
+    }
+    append_path_components(target, output, &mut length)?;
+    append_path_components(suffix, output, &mut length)?;
+    Ok(length)
+}
+
+fn append_path_components(
+    source: &[u8],
+    output: &mut [u8; MAX_PATH_BYTES],
+    length: &mut usize,
+) -> Result<(), Error> {
+    for component in source.split(|byte| *byte == b'/') {
+        if component.is_empty() || component == b"." {
+            continue
+        }
+        if component == b".." {
+            if *length > 1 {
+                *length = output[..*length - 1]
+                    .iter()
+                    .rposition(|byte| *byte == b'/')
+                    .map_or(1, |position| position + 1);
+            }
+            continue
+        }
+        let required = component
+            .len()
+            .checked_add(usize::from(*length > 1))
+            .and_then(|size| (*length).checked_add(size))
+            .ok_or(Error::InvalidPath)?;
+        if required > output.len() || core::str::from_utf8(component).is_err() {
+            return Err(Error::InvalidPath)
+        }
+        if *length > 1 {
+            output[*length] = b'/';
+            *length += 1;
+        }
+        output[*length..*length + component.len()].copy_from_slice(component);
+        *length += component.len();
+    }
+    Ok(())
 }
 
 fn checksum(bytes: &[u8]) -> u64 {

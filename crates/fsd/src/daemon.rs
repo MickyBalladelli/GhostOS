@@ -56,6 +56,7 @@ impl FileRights {
     pub const WRITE: Self = Self(1 << 1);
     pub const DELETE: Self = Self(1 << 2);
     pub const ADMIN: Self = Self(1 << 3);
+    const TRAVERSE: Self = Self(1 << 4);
 
     pub const fn from_bits(bits: u16) -> Self {
         Self(bits)
@@ -679,24 +680,41 @@ impl<
         }
         if !exists {
             self.ensure_writable(process, authority)?;
+            self.check_parent_access(process, path, FileRights::WRITE)?;
             self.filesystem.write(path, &[])?;
-        } else if flags.contains(Flags::TRUNCATE) {
-            self.ensure_writable(process, authority)?;
-            self.check_io_lock(process, name, LockRange::WholeFile, LockMode::Exclusive)?;
-            self.filesystem.write(path, &[])?;
+            let metadata = self.filesystem.lookup_following(path)?;
+            self.check_mode_access(process, metadata.mode, requested)?;
+            return self.open_file_handle(
+                process,
+                Name::from_str(metadata.file.as_str())?,
+                requested,
+                read_only_mount,
+                flags.contains(Flags::APPEND),
+                metadata,
+            )
+        } else {
+            let metadata = self.filesystem.lookup_following(path)?;
+            self.check_mode_access(process, metadata.mode, requested)?;
+            let resolved_name = Name::from_str(metadata.file.as_str())?;
+            if flags.contains(Flags::TRUNCATE) {
+                self.ensure_writable(process, authority)?;
+                self.check_io_lock(process, resolved_name, LockRange::WholeFile, LockMode::Exclusive)?;
+                self.filesystem.write(resolved_name.as_str(), &[])?;
+            }
+            let metadata = self.filesystem.lookup_following(path)?;
+            if flags.contains(Flags::CREATE) && metadata.file_type != FileType::Regular {
+                return Err(DaemonError::File(SynFsError::NotDirectory));
+            }
+            self.check_mode_access(process, metadata.mode, requested)?;
+            return self.open_file_handle(
+                process,
+                resolved_name,
+                requested,
+                read_only_mount,
+                flags.contains(Flags::APPEND),
+                metadata,
+            )
         }
-        let metadata = self.filesystem.lookup(path)?;
-        if flags.contains(Flags::CREATE) && metadata.file_type != FileType::Regular {
-            return Err(DaemonError::File(SynFsError::NotDirectory));
-        }
-        self.open_file_handle(
-            process,
-            name,
-            requested,
-            read_only_mount,
-            flags.contains(Flags::APPEND),
-            metadata,
-        )
     }
 
     pub fn create_file(
@@ -739,8 +757,10 @@ impl<
         if exclusive && self.filesystem.lookup(name.as_str()).is_ok() {
             return Err(DaemonError::File(SynFsError::AlreadyExists));
         }
+        self.check_parent_access(process, name.as_str(), FileRights::WRITE)?;
         self.filesystem.write(name.as_str(), &[])?;
         let metadata = self.filesystem.lookup(name.as_str())?;
+        self.check_mode_access(process, metadata.mode, rights)?;
         self.open_file_handle(
             process,
             name,
@@ -872,6 +892,8 @@ impl<
         }
         let index = self.file_index(process, capability, FileRights::READ)?;
         let path = self.open_files[index].path;
+        let metadata = self.filesystem.lookup_following(path.as_str())?;
+        self.check_mode_access(process, metadata.mode, FileRights::READ)?;
         self.check_io_lock(process, path, LockRange::Record(offset), LockMode::Shared)?;
         Ok(self
             .filesystem
@@ -898,6 +920,8 @@ impl<
             return Err(DaemonError::ReadOnly);
         }
         let path = self.open_files[index].path;
+        let metadata = self.filesystem.lookup_following(path.as_str())?;
+        self.check_mode_access(process, metadata.mode, FileRights::WRITE)?;
         let offset = if self.open_files[index].append {
             self.filesystem.lookup(path.as_str())?.size
         } else {
@@ -916,6 +940,7 @@ impl<
         let index = self.file_index(process, capability, FileRights::READ)?;
         let slot = self.open_files[index];
         let metadata = self.filesystem.lookup(slot.path.as_str())?;
+        self.check_mode_access(process, metadata.mode, FileRights::READ)?;
         let link_count = self.filesystem.current_link_count(slot.path.as_str())?;
         Ok(FileInfo {
             capability,
@@ -941,6 +966,7 @@ impl<
             return Err(DaemonError::ReadOnly);
         }
         let path = self.open_files[index].path;
+        self.check_parent_access(process, path.as_str(), FileRights::DELETE)?;
         self.check_io_lock(process, path, LockRange::WholeFile, LockMode::Exclusive)?;
         let deleted = self.filesystem.delete(path.as_str())?;
         Ok(DeleteInfo {
@@ -1009,6 +1035,7 @@ impl<
                 failure_status = Some(Status::READ_ONLY);
                 break
             }
+            self.check_parent_access(process, selected.as_str(), FileRights::DELETE)?;
             match self.filesystem.delete(selected.as_str()) {
                 Ok(current) => {
                     deleted = Some(current);
@@ -1072,6 +1099,7 @@ impl<
         if self.mount_is_read_only(path.as_str()) {
             return Err(DaemonError::ReadOnly);
         }
+        self.check_parent_access(process, path.as_str(), FileRights::WRITE)?;
         let metadata = self.filesystem.create_directory(path.as_str(), recursive)?;
         Ok(FileInfo {
             capability: authority,
@@ -1105,6 +1133,7 @@ impl<
         if self.path_is_read_only(path.as_str())? {
             return Err(DaemonError::ReadOnly);
         }
+        self.check_parent_access(process, path.as_str(), FileRights::DELETE)?;
         let removed = self.filesystem.remove_directory(path.as_str())?;
         let removal_generation = self.filesystem.diagnostics()?.generation;
         Ok(DirectoryRemovalInfo {
@@ -1145,6 +1174,7 @@ impl<
         if self.path_is_read_only(new_path.as_str())? {
             return Err(DaemonError::ReadOnly);
         }
+        self.check_parent_access(process, new_path.as_str(), FileRights::WRITE)?;
         if !same_volume(
             self.namespace.resolve(mount_path(old_path.as_str())),
             self.namespace.resolve(mount_path(new_path.as_str())),
@@ -1152,6 +1182,86 @@ impl<
             return Err(DaemonError::CrossVolume);
         }
         let metadata = self.filesystem.link(old_path.as_str(), new_path.as_str())?;
+        Ok(FileInfo {
+            capability,
+            file: metadata.file,
+            version: metadata.version,
+            size: metadata.size,
+            checksum: metadata.checksum,
+            created_at: metadata.created_at,
+            rights: self.open_files[index].rights,
+            file_type: metadata.file_type,
+            link_count: metadata.link_count,
+            mode: metadata.mode,
+        })
+    }
+
+    pub fn symlink(
+        &mut self,
+        process: ProcessId,
+        authority: Capability,
+        target: &str,
+        link_path: &str,
+    ) -> Result<FileInfo, DaemonError> {
+        self.authorize_process(process, authority, FileRights::WRITE)?;
+        let link_path = Name::from_str(link_path)?;
+        if self.path_is_read_only(link_path.as_str())? {
+            return Err(DaemonError::ReadOnly);
+        }
+        self.check_parent_access(process, link_path.as_str(), FileRights::WRITE)?;
+        let metadata = self.filesystem.symlink(target, link_path.as_str())?;
+        Ok(FileInfo {
+            capability: authority,
+            file: metadata.file,
+            version: metadata.version,
+            size: metadata.size,
+            checksum: metadata.checksum,
+            created_at: metadata.created_at,
+            rights: FileRights::READ,
+            file_type: metadata.file_type,
+            link_count: metadata.link_count,
+            mode: metadata.mode,
+        })
+    }
+
+    pub fn read_link(
+        &self,
+        process: ProcessId,
+        authority: Capability,
+        path: &str,
+        output: &mut [u8],
+    ) -> Result<(FileInfo, usize), DaemonError> {
+        self.authorize_process(process, authority, FileRights::READ)?;
+        let path = Name::from_str(path)?;
+        self.check_parent_access(process, path.as_str(), FileRights::READ)?;
+        let result = self.filesystem.read_link(path.as_str(), output)?;
+        Ok((
+            FileInfo {
+                capability: authority,
+                file: result.file.file,
+                version: result.file.version,
+                size: result.file.size,
+                checksum: result.file.checksum,
+                created_at: result.file.created_at,
+                rights: FileRights::READ,
+                file_type: result.file.file_type,
+                link_count: result.file.link_count,
+                mode: result.file.mode,
+            },
+            result.bytes_read,
+        ))
+    }
+
+    pub fn chmod(
+        &mut self,
+        process: ProcessId,
+        capability: Capability,
+        mode: u16,
+    ) -> Result<FileInfo, DaemonError> {
+        self.require_process_rights(process, FileRights::ADMIN)?;
+        let index = self.file_index(process, capability, FileRights(0))?;
+        let path = self.open_files[index].path;
+        let metadata = self.filesystem.set_mode(path.as_str(), mode)?;
         Ok(FileInfo {
             capability,
             file: metadata.file,
@@ -1282,6 +1392,7 @@ impl<
         }
         let old_path = self.open_files[index].path;
         let new_path = Name::from_str(new_path)?;
+        self.check_parent_access(process, new_path.as_str(), FileRights::WRITE)?;
         if self.filesystem.lookup(new_path.as_str()).is_ok() {
             return Err(DaemonError::File(SynFsError::AlreadyExists));
         }
@@ -1676,6 +1787,49 @@ impl<
                     .with_value(1, info.size)
                     .with_value(2, info.link_count as u64))
             }
+            Operation::Symlink => {
+                let input = input_buffer(buffer)?;
+                let separator = input
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .ok_or(DaemonError::InvalidPath)?;
+                let target = core::str::from_utf8(&input[..separator])
+                    .map_err(|_| DaemonError::InvalidPath)?;
+                let link_path = Name::from_bytes(&input[separator + 1..], false)?;
+                let info = self.symlink(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    target,
+                    link_path.as_str(),
+                )?;
+                Ok(Response::success()
+                    .with_value(0, info.size)
+                    .with_value(1, info.version as u64))
+            }
+            Operation::ReadLink => {
+                let buffer = output_buffer(buffer)?;
+                let separator = buffer
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .ok_or(DaemonError::InvalidPath)?;
+                let path = Name::from_bytes(&buffer[..separator], false)?;
+                let output = &mut buffer[separator + 1..];
+                let (_, bytes) = self.read_link(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    path.as_str(),
+                    output,
+                )?;
+                Ok(Response::success().with_value(0, bytes as u64))
+            }
+            Operation::Chmod => {
+                let info = self.chmod(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    request.offset as u16,
+                )?;
+                Ok(Response::success().with_value(0, info.mode as u64))
+            }
             Operation::Links => {
                 let output = output_buffer(buffer)?;
                 let path_end = output
@@ -1752,6 +1906,19 @@ impl<
         output: &mut [u8],
     ) -> Result<(usize, usize), DaemonError> {
         self.authorize_process(process, authority, FileRights::READ)?;
+        let directory = if prefix.is_empty() || prefix == "/" {
+            None
+        } else {
+            Some(self.filesystem.lookup_following(prefix)?)
+        };
+        if let Some(directory) = directory {
+            if directory.file_type != FileType::Directory {
+                return Err(DaemonError::File(SynFsError::NotDirectory))
+            }
+            self.check_mode_access(process, directory.mode, FileRights::READ)?;
+        } else {
+            self.check_mode_access(process, 0o777, FileRights::READ)?;
+        }
         let checkpoint = self.filesystem.create_checkpoint()?;
         let listing = {
             match self
@@ -1910,6 +2077,71 @@ impl<
     ) -> Result<(), DaemonError> {
         self.authorize_process(process, authority, FileRights::WRITE)
             .map(|_| ())
+    }
+
+    fn check_mode_access(
+        &self,
+        process: ProcessId,
+        mode: u16,
+        required: FileRights,
+    ) -> Result<(), DaemonError> {
+        let process_index = self.process_index(process, None)?;
+        if self.processes[process_index]
+            .rights
+            .contains_file(FileRights::ADMIN)
+        {
+            return Ok(())
+        }
+        let class = if process.raw() == 1 {
+            (mode >> 6) & 0o7
+        } else {
+            mode & 0o7
+        };
+        if required.contains(FileRights::READ) && class & 0o4 == 0 {
+            return Err(DaemonError::AccessDenied)
+        }
+        if (required.contains(FileRights::WRITE) || required.contains(FileRights::DELETE))
+            && class & 0o2 == 0
+        {
+            return Err(DaemonError::AccessDenied)
+        }
+        if required.contains(FileRights::TRAVERSE) && class & 0o1 == 0 {
+            return Err(DaemonError::AccessDenied)
+        }
+        Ok(())
+    }
+
+    fn check_parent_access(
+        &self,
+        process: ProcessId,
+        path: &str,
+        required: FileRights,
+    ) -> Result<(), DaemonError> {
+        let parent = path
+            .rsplit_once('/')
+            .map_or("/", |(parent, _)| if parent.is_empty() { "/" } else { parent });
+        if parent == "/" {
+            return self.check_mode_access(process, 0o777, required.union(FileRights::TRAVERSE))
+        }
+        let mut end = 1;
+        while end <= parent.len() {
+            if end == parent.len() || parent.as_bytes()[end] == b'/' {
+                let metadata = self
+                    .filesystem
+                    .lookup_following(&parent[..end])?;
+                if metadata.file_type != FileType::Directory {
+                    return Err(DaemonError::File(SynFsError::NotDirectory))
+                }
+                let access = if end == parent.len() {
+                    required.union(FileRights::TRAVERSE)
+                } else {
+                    FileRights::TRAVERSE
+                };
+                self.check_mode_access(process, metadata.mode, access)?;
+            }
+            end += 1;
+        }
+        Ok(())
     }
 
     fn require_process_rights(
@@ -2167,6 +2399,8 @@ fn validate_buffer(
             | Operation::Mkdir
             | Operation::Rmdir
             | Operation::Link
+            | Operation::Symlink
+            | Operation::ReadLink
             | Operation::Links
     );
     if !needs_buffer {
@@ -2188,6 +2422,7 @@ fn validate_buffer(
         Operation::Read
             | Operation::List
             | Operation::Links
+            | Operation::ReadLink
             | Operation::SnapshotList
             | Operation::MountList
         );
