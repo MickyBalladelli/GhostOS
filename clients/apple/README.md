@@ -4,6 +4,9 @@ This Swift package shares one native client and SwiftUI control surface across
 macOS 14+ and iOS 17+. It speaks the versioned `SYRP` binary protocol exposed by
 `synos-client-sdk`.
 
+The Swift client follows the stable SDK contract in
+[`docs/sdk-compatibility.md`](../../docs/sdk-compatibility.md).
+
 The control surface shows cluster health, submits bounded jobs, and requests
 attenuated capability grants. Capability bytes travel inside the RPC envelope;
 the app never receives an issuer key.

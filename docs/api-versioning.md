@@ -1,7 +1,7 @@
 # SynOS API versioning
 
-SynOS treats public Rust, Swift, wire, shell, package, snapshot, and
-configuration boundaries as versioned contracts. The shared policy lives in
+SynOS treats public Rust, Swift, user-space SDK, wire, shell, package, snapshot,
+and configuration boundaries as versioned contracts. The shared policy lives in
 [`synos-api-compat`](../crates/api-compat/src/lib.rs). Format readers still
 validate their own magic, lengths, fields, checksums, signatures, and feature
 bits after this policy check.
@@ -17,6 +17,7 @@ bits after this policy check.
 | Package API | 1.0 | 1.0 | Rebuild and sign with the target writer; see [`package-abi.md`](package-abi.md) | Stable `SYNOS-COMPAT-*` errors |
 | Snapshot API | 2.0 | 1.0–2.0 | `snapshot-v1-to-v2` | `LEGACY_SNAPSHOT_V1` |
 | Configuration API | 1.0 | 1.0 | Re-render and sign configuration | Stable `SYNOS-COMPAT-*` errors |
+| User-space SDK | 1.0 | 1.0 | Add a new SDK major and an explicit adapter | No legacy entry point; use `SDK_API` |
 
 An offered version below the accepted minimum returns `SYNOS-COMPAT-001`.
 An offered version above the accepted maximum returns `SYNOS-COMPAT-002`.
@@ -49,3 +50,7 @@ error response.
    entry point for the old call shape.
 4. Update the compatibility matrix and this guide with a copyable migration.
 5. Record the exact command and result in release evidence.
+
+The user-space SDK additionally follows the rules in
+[`sdk-compatibility.md`](sdk-compatibility.md). A Rust crate or Swift package
+version never overrides the negotiated wire version or the SDK contract.

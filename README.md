@@ -743,6 +743,9 @@ the SDK.
 policy-owning `GatewayService`. Malformed input never reaches service handlers,
 and remote failures return stable protocol status codes.
 
+The stable source and wire compatibility rules for these clients are in the
+[`docs/sdk-compatibility.md`](docs/sdk-compatibility.md) policy.
+
 Cluster lifecycle, membership, invitations, plans, health, resources, topology,
 and audit activity share bounded SDK schemas. Subscriptions use cursors and a
 fixed maximum poll batch, so a slow dashboard cannot grow server state without

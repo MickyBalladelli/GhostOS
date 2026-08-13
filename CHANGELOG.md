@@ -59,6 +59,11 @@ the released text immutable.
   Impact: release tooling now rejects packages without two-way compatibility
   evidence. Compatibility: guest, snapshot, disk, and package formats are
   unchanged. Evidence: release compatibility validator.
+- Added the stable user-space SDK compatibility policy and exposed the SDK
+  contract to Rust and Swift clients. Impact: SDK releases now have an explicit
+  source, wire, deprecation, and migration contract. Compatibility: existing
+  SDK and `SYRP` v1 behavior is unchanged. Evidence: compatibility contract
+  registry and documentation review.
 
 ## Release format
 

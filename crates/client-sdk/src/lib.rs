@@ -12,6 +12,7 @@ pub use synos_protocol::{
     ProtocolError as TransportProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass,
     VersionRange,
 };
+pub use synos_api_compat::{ApiVersion, Compatibility, CompatibilityError};
 pub use synos_abi::{ABI_REVISION, ABI_SCHEMA_VERSION};
 pub use synos_system_model::performance::{
     PerformanceBudget, PerformanceDiagnostics, TailLatencyWindow,
@@ -50,3 +51,9 @@ pub use wire::{
 pub use synos_auth::{CryptographicCapability, TransportRights};
 pub use synos_fabric::NodeId;
 pub use synos_kernel::Rights;
+
+/// Stable source-level contract shared by the Rust and Swift user-space SDKs.
+pub const SDK_API: synos_api_compat::ApiContract = synos_api_compat::SDK_API;
+pub const SDK_API_VERSION: ApiVersion = SDK_API.current;
+pub const SDK_MINIMUM_API_VERSION: ApiVersion = SDK_API.supported.minimum;
+pub const SDK_MAXIMUM_API_VERSION: ApiVersion = SDK_API.supported.maximum;

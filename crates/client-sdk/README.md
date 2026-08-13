@@ -3,6 +3,18 @@
 Portable, heap-free SynOS RPC client and frontend gateway protocol. The core is
 `no_std` and contains no platform networking, async runtime, or allocator.
 
+## Compatibility policy
+
+The stable user-space SDK contract is `SDK_API_VERSION` `1.0`. Rust and Swift
+SDKs share this source-level contract; their package or toolchain versions do
+not change the wire contract. The supported range is exposed by
+`SDK_MINIMUM_API_VERSION` and `SDK_MAXIMUM_API_VERSION`.
+
+Follow [`docs/sdk-compatibility.md`](../../docs/sdk-compatibility.md) when
+publishing an SDK or changing a method, schema, status, frame limit, or
+transport rule. Compatibility is checked before decoding, and unsupported
+versions return stable compatibility errors.
+
 ## Transport boundary
 
 Implement `RpcTransport::round_trip` with the host platform:

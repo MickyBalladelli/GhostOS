@@ -95,10 +95,13 @@ Cargo compile.
 
 ## Client SDKs
 
+The normative source, wire, deprecation, and release rules are in the
+[`user-space SDK compatibility policy`](sdk-compatibility.md).
+
 | SDK | Package/tool version | Wire compatibility | Platform status |
 | --- | --- | --- | --- |
-| Rust `synos-client-sdk` | crate `0.1.0` | `SYRP` v1; shared transport guard v1 | `no_std`; transport supplied by the host; same contract for native and Wasm clients |
-| Swift `SynOSClient` | Swift tools `6.0`; protocol constant `1` | `SYRP` v1; same 24-byte header, method IDs, and status values | iOS 17+ and macOS 14+ |
+| Rust `synos-client-sdk` | SDK API `1.0`; crate `0.1.0` | `SYRP` v1; shared transport guard v1 | `no_std`; transport supplied by the host; same contract for native and Wasm clients |
+| Swift `SynOSClient` | SDK API `1.0`; Swift tools `6.0` | `SYRP` v1; same 24-byte header, method IDs, and status values | iOS 17+ and macOS 14+ |
 
 No SDK version is compatible merely because it compiles. A client must match
 the wire version, method IDs, frame limits, status mapping, and negotiated

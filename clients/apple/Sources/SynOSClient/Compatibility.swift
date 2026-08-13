@@ -1,7 +1,10 @@
 import Foundation
 
 public enum SynOSCompatibility {
-    public static let currentVersion: UInt16 = 1
+    /// Stable user-space SDK contract version. This is independent of the
+    /// SYRP wire version and the Swift package's toolchain version.
+    public static let sdkApiVersion: UInt16 = 1
+    public static let currentVersion: UInt16 = sdkApiVersion
     public static let minimumVersion: UInt16 = 1
 
     public static func validate(_ offered: UInt16) throws {

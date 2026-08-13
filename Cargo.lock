@@ -523,6 +523,7 @@ name = "synos-client-sdk"
 version = "0.1.0"
 dependencies = [
  "synos-abi",
+ "synos-api-compat",
  "synos-auth",
  "synos-fabric",
  "synos-ipc",

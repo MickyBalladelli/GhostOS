@@ -61,6 +61,7 @@ pub enum ApiKind {
     Package = 5,
     Snapshot = 6,
     Configuration = 7,
+    Sdk = 8,
 }
 
 impl ApiKind {
@@ -73,6 +74,7 @@ impl ApiKind {
             Self::Package => "package",
             Self::Snapshot => "snapshot",
             Self::Configuration => "configuration",
+            Self::Sdk => "user-space SDK",
         }
     }
 }
@@ -291,7 +293,15 @@ pub const CONFIGURATION_API: ApiContract = ApiContract {
     migration: None,
 };
 
-pub const ALL_CONTRACTS: [ApiContract; 7] = [
+pub const SDK_API: ApiContract = ApiContract {
+    kind: ApiKind::Sdk,
+    name: "user-space SDK",
+    current: ApiVersion::V1,
+    supported: VersionRange::new(ApiVersion::V1, ApiVersion::V1),
+    migration: None,
+};
+
+pub const ALL_CONTRACTS: [ApiContract; 8] = [
     RUST_API,
     SWIFT_API,
     WIRE_API,
@@ -299,6 +309,7 @@ pub const ALL_CONTRACTS: [ApiContract; 7] = [
     PACKAGE_API,
     SNAPSHOT_API,
     CONFIGURATION_API,
+    SDK_API,
 ];
 
 pub const fn contract(kind: ApiKind) -> ApiContract {
@@ -310,6 +321,7 @@ pub const fn contract(kind: ApiKind) -> ApiContract {
         ApiKind::Package => PACKAGE_API,
         ApiKind::Snapshot => SNAPSHOT_API,
         ApiKind::Configuration => CONFIGURATION_API,
+        ApiKind::Sdk => SDK_API,
     }
 }
 
@@ -326,7 +338,7 @@ mod tests {
 
     #[test]
     fn every_public_boundary_has_a_valid_contract() {
-        assert_eq!(ALL_CONTRACTS.len(), 7);
+        assert_eq!(ALL_CONTRACTS.len(), 8);
         for contract in ALL_CONTRACTS {
             assert!(contract.supported.is_valid());
             assert!(contract.accepts(contract.current));
@@ -356,5 +368,12 @@ mod tests {
         for contract in ALL_CONTRACTS {
             assert_eq!(contract.check(contract.current), Ok(Compatibility::Accepted));
         }
+    }
+
+    #[test]
+    fn sdk_contract_rejects_unknown_major_versions() {
+        let error = SDK_API.check(ApiVersion::new(2, 0)).unwrap_err();
+        assert_eq!(error.kind, ApiKind::Sdk);
+        assert_eq!(error.code, COMPATIBILITY_ERROR_TOO_NEW);
     }
 }
