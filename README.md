@@ -87,6 +87,17 @@ Build a portable loopback image:
 This needs `dosfstools` and `mtools`. The result is
 `build/portable/synos.img`.
 
+Build the complete installer and recovery release set:
+
+```sh
+./scripts/build-install-recovery-artifacts.sh
+```
+
+This writes `build/release/` with BIOS and UEFI disk images, bootable
+installer and recovery media, deterministic tar archives, a revision-bound
+manifest, SHA-256 checksums, and guarded install/restore helpers. The helpers
+require `--yes` before writing a target; use `--dry-run` first.
+
 The AArch64 backend programs `TTBR0_EL1`; the RISC-V backend programs an Sv39
 root through `satp`. Platform-specific firmware entry shims for those machines
 can hand their memory map to the same `kernel_entry`.
