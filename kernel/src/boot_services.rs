@@ -74,6 +74,9 @@ pub const FIRST_ADMIN_USERNAME_PATH: &str = "/system/security/first-admin-userna
 pub const FIRST_ADMIN_CREDENTIAL_PATH: &str = "/system/security/first-admin-credential";
 const FIRST_ADMIN_USERNAME_CAPACITY: usize = 32;
 const FIRST_ADMIN_CREDENTIAL_CAPACITY: usize = 96;
+const FIRST_ADMIN_AUTHORIZATION_RECORD_VERSION: u8 = 1;
+const FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY: usize =
+    2 + FIRST_ADMIN_USERNAME_CAPACITY + 2 + FIRST_ADMIN_CREDENTIAL_CAPACITY;
 const SERVICE_COUNT: usize = 13;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -787,6 +790,113 @@ pub(crate) fn create_first_admin_credential(
     transaction
         .commit()
         .map_err(|error| error.status())?;
+    Ok(())
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn commit_first_admin() -> Result<(), Status> {
+    if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
+        return Err(Status::ALREADY_EXISTS)
+    }
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
+        Ok(_) => return Err(Status::ALREADY_EXISTS),
+        Err(synos_synfs::Error::NotFound) => {}
+        Err(error) => return Err(error.status()),
+    }
+
+    let username_metadata = daemon
+        .filesystem()
+        .lookup(FIRST_ADMIN_USERNAME_PATH)
+        .map_err(|error| match error {
+            synos_synfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
+            other => other.status(),
+        })?;
+    if username_metadata.file_type != synos_synfs::FileType::Regular
+        || username_metadata.size == 0
+        || username_metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
+    {
+        return Err(Status::CORRUPT)
+    }
+    let mut username = [0; FIRST_ADMIN_USERNAME_CAPACITY];
+    let username_read = daemon
+        .filesystem()
+        .read(FIRST_ADMIN_USERNAME_PATH, &mut username)
+        .map_err(|error| error.status())?;
+    if username_read.bytes_read != username_metadata.size as usize
+        || !valid_first_admin_username(&username[..username_read.bytes_read])
+    {
+        return Err(Status::CORRUPT)
+    }
+
+    let credential_metadata = daemon
+        .filesystem()
+        .lookup(FIRST_ADMIN_CREDENTIAL_PATH)
+        .map_err(|error| match error {
+            synos_synfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
+            other => other.status(),
+        })?;
+    let credential_size = credential_metadata.size as usize;
+    if credential_metadata.file_type != synos_synfs::FileType::Regular
+        || credential_size < 3
+        || credential_size > FIRST_ADMIN_CREDENTIAL_CAPACITY + 2
+    {
+        return Err(Status::CORRUPT)
+    }
+    let mut credential = [0; FIRST_ADMIN_CREDENTIAL_CAPACITY + 2];
+    let credential_read = daemon
+        .filesystem()
+        .read(FIRST_ADMIN_CREDENTIAL_PATH, &mut credential)
+        .map_err(|error| error.status())?;
+    let credential_length = credential[1] as usize;
+    if credential_read.bytes_read != credential_size
+        || !(1..=3).contains(&credential[0])
+        || credential_length == 0
+        || credential_length > FIRST_ADMIN_CREDENTIAL_CAPACITY
+        || credential_size != credential_length + 2
+    {
+        return Err(Status::CORRUPT)
+    }
+
+    let mut record = [0; FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY];
+    record[0] = FIRST_ADMIN_AUTHORIZATION_RECORD_VERSION;
+    record[1] = username_read.bytes_read as u8;
+    record[2..2 + username_read.bytes_read]
+        .copy_from_slice(&username[..username_read.bytes_read]);
+    record[2 + FIRST_ADMIN_USERNAME_CAPACITY] = credential[0];
+    record[3 + FIRST_ADMIN_USERNAME_CAPACITY] = credential_length as u8;
+    let material_start = 4 + FIRST_ADMIN_USERNAME_CAPACITY;
+    record[material_start..material_start + credential_length]
+        .copy_from_slice(&credential[2..2 + credential_length]);
+
+    let mut transaction = daemon.filesystem_mut().transaction();
+    match transaction.lookup(AUTHORIZATION_DATABASE_PATH) {
+        Ok(_) => return Err(Status::ALREADY_EXISTS),
+        Err(synos_synfs::Error::NotFound) => {}
+        Err(error) => return Err(error.status()),
+    }
+    transaction
+        .write(
+            AUTHORIZATION_DATABASE_PATH,
+            &record[..material_start + credential_length],
+        )
+        .map_err(|error| error.status())?;
+    transaction
+        .delete(FIRST_ADMIN_USERNAME_PATH)
+        .map_err(|error| error.status())?;
+    transaction
+        .delete(FIRST_ADMIN_CREDENTIAL_PATH)
+        .map_err(|error| error.status())?;
+    transaction
+        .commit()
+        .map_err(|error| error.status())?;
+    FIRST_ADMIN_USERNAME_LENGTH.store(0, Ordering::Release);
+    PROVISIONING_REQUIRED.store(false, Ordering::Release);
     Ok(())
 }
 

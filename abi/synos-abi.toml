@@ -1,6 +1,6 @@
 [abi]
 schema_version = 1
-revision = 10
+revision = 11
 rpc_protocol_version = 1
 rpc_magic = "SYRP"
 rpc_frame_header_bytes = 24
@@ -184,6 +184,9 @@ value = 58
 [[operations]]
 name = "LoginBootstrapCredential"
 value = 59
+[[operations]]
+name = "LoginBootstrapConfirm"
+value = 60
 
 [[methods]]
 name = "ClusterState"

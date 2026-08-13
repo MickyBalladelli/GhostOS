@@ -229,7 +229,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Require physical-console access or an equivalent trusted bootstrap proof.
 - [x] Create the first administrator username.
 - [x] Register the first administrator passkey, TPM credential, or SSH key.
-- [ ] Require confirmation before committing the first administrator account.
+- [x] Require confirmation before committing the first administrator account.
 - [ ] Persist the first administrator atomically in SynFS.
 - [ ] Make first-admin creation safe to retry after power loss.
 - [ ] Prevent first-admin setup from replacing an existing account database.

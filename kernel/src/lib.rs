@@ -1182,6 +1182,27 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         )
         .map_or_else(syscall_error, |_| syscall_success([length as u64, 0, 0, 0]))
     }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginBootstrapConfirm) {
+        if caller.raw() != 9
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments != [0; 6]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire)
+            || !LOGIN_BOOTSTRAP_PROOF.load(Ordering::Acquire)
+        {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        return boot_services::commit_first_admin().map_or_else(
+            syscall_error,
+            |_| {
+                LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
+                syscall_success([1, 0, 0, 0])
+            },
+        )
+    }
     if Operation::from_raw(request.operation) == Some(Operation::LoginComplete) {
         if caller.raw() != 14
             || request.flags != 0
