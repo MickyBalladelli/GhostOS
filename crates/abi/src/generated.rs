@@ -73,6 +73,7 @@ pub enum Operation {
     LoginBootstrapCredential = 59,
     LoginBootstrapConfirm = 60,
     LoginBootstrapRecovery = 61,
+    LoginRevokeIdentity = 62,
 }
 
 impl Operation {
@@ -139,6 +140,7 @@ impl Operation {
             59 => Some(Self::LoginBootstrapCredential),
             60 => Some(Self::LoginBootstrapConfirm),
             61 => Some(Self::LoginBootstrapRecovery),
+            62 => Some(Self::LoginRevokeIdentity),
             _ => None,
         }
     }

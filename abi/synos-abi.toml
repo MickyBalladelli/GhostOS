@@ -190,6 +190,9 @@ value = 60
 [[operations]]
 name = "LoginBootstrapRecovery"
 value = 61
+[[operations]]
+name = "LoginRevokeIdentity"
+value = 62
 
 [[methods]]
 name = "ClusterState"

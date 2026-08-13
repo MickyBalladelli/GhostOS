@@ -625,7 +625,7 @@ fn valid_login_username(username: &[u8]) -> bool {
 ))]
 fn set_login_username(username: &[u8]) {
     for (slot, value) in LOGIN_USERNAME.iter().zip(username.iter().copied()) {
-        slot.store(value, Ordering::Relaxed)
+        slot.store(value.to_ascii_lowercase(), Ordering::Relaxed)
     }
     for slot in LOGIN_USERNAME.iter().skip(username.len()) {
         slot.store(0, Ordering::Relaxed)
@@ -902,7 +902,7 @@ pub(crate) fn login_session_matches(
 fn login_identity(username: &[u8]) -> u64 {
     let mut identity = 0xcbf2_9ce4_8422_2325u64;
     for byte in username {
-        identity ^= *byte as u64;
+        identity ^= byte.to_ascii_lowercase() as u64;
         identity = identity.wrapping_mul(0x1000_0000_01b3);
     }
     identity.max(1)
@@ -1409,6 +1409,40 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             }
         });
         return syscall_success([length as u64, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginRevokeIdentity) {
+        if caller.raw() != 9
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments[0] == 0
+            || request.arguments[1] == 0
+            || request.arguments[1] > LOGIN_USERNAME_CAPACITY as u64
+            || request.arguments[2..] != [0; 4]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if !login_session_active() {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let address = request.arguments[0];
+        let length = request.arguments[1] as usize;
+        if !arch::paging::service_user_range(address, length as u64, false) {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let mut username = [0; LOGIN_USERNAME_CAPACITY];
+        arch::with_user_access(|| unsafe {
+            let source = core::slice::from_raw_parts(address as *const u8, length);
+            username[..length].copy_from_slice(source);
+        });
+        if !valid_login_username(&username[..length]) {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let identity = login_identity(&username[..length]);
+        if LOGIN_SESSION_IDENTITY.load(Ordering::Acquire) == identity {
+            revoke_login_session();
+            return syscall_success([1, 0, 0, 0])
+        }
+        return syscall_success([0, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginChallenge) {
         if caller.raw() != 14

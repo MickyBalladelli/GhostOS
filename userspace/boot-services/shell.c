@@ -33,6 +33,7 @@ enum {
     OP_LOGIN_BOOTSTRAP_CREDENTIAL = 59,
     OP_LOGIN_BOOTSTRAP_CONFIRM = 60,
     OP_LOGIN_BOOTSTRAP_RECOVERY = 61,
+    OP_LOGIN_REVOKE_IDENTITY = 62,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
@@ -340,6 +341,22 @@ static void normalize_account_username(
         }
         normalized[index] = byte;
     }
+}
+
+static int revoke_account_sessions(const char *username, u64 username_length)
+{
+    u8 normalized[ACCOUNT_USERNAME_CAPACITY] = {0};
+    normalize_account_username(username, username_length, normalized);
+    struct response response = call(
+        OP_LOGIN_REVOKE_IDENTITY,
+        0,
+        0,
+        (u64)normalized,
+        username_length,
+        0,
+        0
+    );
+    return response.status == 0;
 }
 
 static const char *account_credential_name(u8 kind)
@@ -827,6 +844,10 @@ static void delete_account(
         write_status(failure_status);
         return;
     }
+    if (!revoke_account_sessions(username, username_length)) {
+        write_text("Account deleted, but session revocation failed.\n");
+        return;
+    }
     write_text("Account deleted.\n");
 }
 
@@ -938,6 +959,10 @@ static void set_account_enabled(
     )) {
         write_text(enable ? "Account enable failed.\n" : "Account disable failed.\n");
         write_status(failure_status);
+        return;
+    }
+    if (!enable && !revoke_account_sessions(username, username_length)) {
+        write_text("Account disabled, but session revocation failed.\n");
         return;
     }
     write_text(enable ? "Account enabled.\n" : "Account disabled.\n");
