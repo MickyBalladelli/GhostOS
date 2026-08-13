@@ -200,7 +200,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Version and document the syscall ABI.
 - [x] Version and document the user-space package ABI.
-- [ ] Add migration tools for persistent system state.
+- [x] Add migration tools for persistent system state.
 - [ ] Add a stable user-space SDK compatibility policy.
 
 ## Login, first login, and account management

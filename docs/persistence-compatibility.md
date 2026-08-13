@@ -24,7 +24,7 @@ code does not implement.
 
 | Artifact | Current format | Backup and migration | Downgrade and recovery |
 | --- | --- | --- | --- |
-| SynFS volume | `SYNFSVOL`, volume version `4`; `SYNFSMAP`; tree blocks `SYNT` version `1`. Two committed banks, checksummed type maps, and checksummed blocks. | Back up only after a flush, or stream a pinned root with `SYNBACK1`. v3 volumes migrate online through `FormatMigration`: progress is journaled in the inactive bank, each shadow is fully validated, and the new superblock is published last. Steps are bounded by `BackgroundIoLimit`; interruption resumes from the last durable record. | Older readers reject v4. Downgrade is refused as an ordinary migration; explicit rollback publishes the untouched v3 bank as a newer sequence. `migration_copies_in_bounded_steps_and_commits_one_complete_format` covers resumable publication, while `recovery_uses_newest_complete_generation_and_rejects_partial_objects`, `recovery_reports_corruption_when_no_complete_generation_remains`, and `format_generation_selection_and_checksum_validation` cover recovery. |
+| SynFS volume | `SYNFSVOL`, volume version `4`; `SYNFSMAP`; tree blocks `SYNT` version `1`. Two committed banks, checksummed type maps, and checksummed blocks. | Back up only after a flush, or stream a pinned root with `SYNBACK1`. v3 volumes migrate online through `FormatMigration`, or offline with `cargo synos migrate system-state --input OLD --output NEW`: progress is journaled in the inactive bank, each shadow is fully validated, and the new superblock is published last. Steps are bounded by `BackgroundIoLimit`; interruption resumes from the staged image. | Older readers reject v4. Downgrade is refused as an ordinary migration; explicit rollback publishes the untouched v3 bank as a newer sequence. `migration_copies_in_bounded_steps_and_commits_one_complete_format` covers resumable publication, while `recovery_uses_newest_complete_generation_and_rejects_partial_objects`, `recovery_reports_corruption_when_no_complete_generation_remains`, and `format_generation_selection_and_checksum_validation` cover recovery. |
 | RMS record image | `SYNRMS01`; fixed 24-byte header, descriptor, and bounded length-prefixed records. It has no independent version field. | Store the record image as a normal SynFS file and back up that file. Descriptor changes require a record-level converter. | Treat layout changes as incompatible. Validate the complete image before use; never parse a newer image as an older one. |
 | SynFS backup stream | Header `SYNBACK1`, format `1`; trailer `SYNBEND1`. Header includes checkpoint and generation; file entries include version, size, checksum, and creation time. | The legacy stream remains export-only. Recovery backups use the fixed-capacity manifest/object API in `crates/synos-backup/src/recovery.rs`: keyed content IDs, HMAC-authenticated encrypted chunks, resumable object offsets, catalog retention/legal holds, and transactional restore verification. | A recovery manifest is accepted only after all encrypted objects authenticate and the target volume verifies. Restore drills return source generation, RPO/RTO, bytes transferred, bootability, and bounded skipped-object reasons. |
 | Legacy kernel shell store | `SYNFS001`, version `1`, bounded to 32 KiB in the kernel persistence port. | It is legacy bootstrap state, not a SynFS volume. Copy it only as a whole validated blob. No converter exists. | Invalid or unknown data is ignored and the built-in filesystem remains. Upgrade by exporting through the legacy API and recreating state; no in-place downgrade. |
@@ -80,10 +80,11 @@ Before release, run the named checks and store the required evidence artifact:
 | Cluster state | `cargo test -p synos-storaged --test coverage_59_5 mount_catalog_round_trips_through_synfs_and_rejects_corruption`; `cargo test -p synos-storaged --test coverage_59_5 cluster_metadata_is_generation_safe_and_persistent`; membership and bootstrap round-trip checks in the same test targets. |
 | Replay evidence | `cargo test -p synos-replay --test coverage_59_9 crash_flight_recorder_preserves_bounded_evidence`; VM replay coverage in the VM test inventory. |
 
-The current repository has no general restore decoder for `SYNBACK1`, no
-in-place downgrade converter for SynFS or service-state blobs, and no promise
-that a raw VM snapshot restores external disks. Those are explicit boundaries,
-not compatibility claims.
+The migration command operates on the fixed-size standalone SynFS system-state
+volume used by the operator tools. It refuses malformed images, overwriting an
+existing destination, and downgrade requests. Service-state blobs still need
+their own explicit converters; the command does not reinterpret unknown bytes.
+There is no promise that a raw VM snapshot restores external disks.
 
 ## Deliberately outside this inventory
 
