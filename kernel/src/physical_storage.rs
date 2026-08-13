@@ -34,9 +34,9 @@ mod platform {
     static mut DMA: Dma = Dma([0; 4096]);
     static mut MANIFEST: Manifest = Manifest([0; SYSTEM_DISK_MANIFEST_BYTES]);
     static mut VOLUME: Volume = Volume([0; SynFs::<SYSTEM_VOLUME_BLOCKS>::volume_bytes()]);
-    static mut SERVICE_IMAGES: [ServiceImage; 14] =
-        [const { ServiceImage([0; SERVICE_IMAGE_BYTES]) }; 14];
-    static SERVICE_LENGTHS: [AtomicUsize; 14] = [const { AtomicUsize::new(0) }; 14];
+    static mut SERVICE_IMAGES: [ServiceImage; 15] =
+        [const { ServiceImage([0; SERVICE_IMAGE_BYTES]) }; 15];
+    static SERVICE_LENGTHS: [AtomicUsize; 15] = [const { AtomicUsize::new(0) }; 15];
 
     pub fn mount(inventory: &PciInventory) -> Option<SynFs<SYSTEM_VOLUME_BLOCKS>> {
         for device in inventory.iter().filter(|device| device.is_ahci()) {

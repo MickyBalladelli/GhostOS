@@ -43,6 +43,10 @@ const SHELL_SERVICE_ID: u32 = 0x5348_454c;
 const SHELL_PROCESS_ID: u64 = 9;
 const SHELL_IMAGE_ID: u128 = 0x5359_4e4f_5353_4845_4c4c_0000_0000_0001;
 const SHELL_CAPABILITY_PROFILE: u64 = 0x5348_454c_4c5f_524f;
+const LOGIN_SERVICE_ID: u32 = 0x4c4f_4749;
+const LOGIN_PROCESS_ID: u64 = 14;
+const LOGIN_IMAGE_ID: u128 = 0x5359_4e4f_4c4f_4749_4e00_0000_0000_0001;
+const LOGIN_CAPABILITY_PROFILE: u64 = 0x4c4f_4749_4e5f_524f;
 const PCI_SERVICE_ID: u32 = 0x5043_4944;
 const PCI_PROCESS_ID: u64 = 10;
 const PCI_IMAGE_ID: u128 = 0x5359_4e4f_5043_4944_0000_0000_0000_0001;
@@ -60,7 +64,7 @@ const ETHERNET_PROCESS_ID: u64 = 13;
 const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
 const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
-const SERVICE_COUNT: usize = 12;
+const SERVICE_COUNT: usize = 13;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
 
@@ -74,6 +78,7 @@ static AUDIT_READY: AtomicBool = AtomicBool::new(false);
 static AUTHENTICATION_READY: AtomicBool = AtomicBool::new(false);
 static PACKAGE_READY: AtomicBool = AtomicBool::new(false);
 static SHELL_READY: AtomicBool = AtomicBool::new(false);
+static LOGIN_READY: AtomicBool = AtomicBool::new(false);
 static PCI_READY: AtomicBool = AtomicBool::new(false);
 static AHCI_READY: AtomicBool = AtomicBool::new(false);
 static NVME_READY: AtomicBool = AtomicBool::new(false);
@@ -110,6 +115,7 @@ pub struct BootServices {
     pub authentication_process: ProcessId,
     pub package_process: ProcessId,
     pub shell_process: ProcessId,
+    pub login_process: ProcessId,
     pub pci_process: ProcessId,
     pub ahci_process: ProcessId,
     pub nvme_process: ProcessId,
@@ -126,6 +132,7 @@ fn service_ids() -> [ServiceId; SERVICE_COUNT] {
         authentication_service_id(),
         package_service_id(),
         shell_service_id(),
+        login_service_id(),
         pci_service_id(),
         ahci_service_id(),
         nvme_service_id(),
@@ -167,6 +174,7 @@ struct BootRuntime {
     authentication_process: ProcessId,
     package_process: ProcessId,
     shell_process: ProcessId,
+    login_process: ProcessId,
     pci_process: ProcessId,
     ahci_process: ProcessId,
     nvme_process: ProcessId,
@@ -201,6 +209,9 @@ impl SupervisorRuntime for BootRuntime {
         if request.service == shell_service_id() {
             return Ok(self.shell_process)
         }
+        if request.service == login_service_id() {
+            return Ok(self.login_process)
+        }
         if request.service == pci_service_id() {
             return Ok(self.pci_process)
         }
@@ -225,6 +236,7 @@ impl SupervisorRuntime for BootRuntime {
             || process == self.authentication_process
             || process == self.package_process
             || process == self.shell_process
+            || process == self.login_process
             || process == self.pci_process
             || process == self.ahci_process
             || process == self.nvme_process
@@ -243,6 +255,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         && AUTHENTICATION_READY.load(Ordering::Acquire)
         && PACKAGE_READY.load(Ordering::Acquire)
         && SHELL_READY.load(Ordering::Acquire)
+        && LOGIN_READY.load(Ordering::Acquire)
         && PCI_READY.load(Ordering::Acquire)
         && AHCI_READY.load(Ordering::Acquire)
         && NVME_READY.load(Ordering::Acquire)
@@ -257,6 +270,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
             authentication_process: authentication_process_id().ok_or(StartError::Process)?,
             package_process: package_process_id().ok_or(StartError::Process)?,
             shell_process: shell_process_id().ok_or(StartError::Process)?,
+            login_process: login_process_id().ok_or(StartError::Process)?,
             pci_process: pci_process_id().ok_or(StartError::Process)?,
             ahci_process: ahci_process_id().ok_or(StartError::Process)?,
             nvme_process: nvme_process_id().ok_or(StartError::Process)?,
@@ -272,6 +286,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
     let authentication_process = authentication_process_id().ok_or(StartError::Process)?;
     let package_process = package_process_id().ok_or(StartError::Process)?;
     let shell_process = shell_process_id().ok_or(StartError::Process)?;
+    let login_process = login_process_id().ok_or(StartError::Process)?;
     let pci_process = pci_process_id().ok_or(StartError::Process)?;
     let ahci_process = ahci_process_id().ok_or(StartError::Process)?;
     let nvme_process = nvme_process_id().ok_or(StartError::Process)?;
@@ -313,6 +328,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         ServiceName::new("synos-authd").map_err(|_| StartError::Supervisor)?;
     let package_name = ServiceName::new("synos-pkgd").map_err(|_| StartError::Supervisor)?;
     let shell_name = ServiceName::new("synos-shell").map_err(|_| StartError::Supervisor)?;
+    let login_name = ServiceName::new("synos-logind").map_err(|_| StartError::Supervisor)?;
     let pci_name = ServiceName::new("synos-pcid").map_err(|_| StartError::Supervisor)?;
     let ahci_name = ServiceName::new("synos-ahcid").map_err(|_| StartError::Supervisor)?;
     let nvme_name = ServiceName::new("synos-nvmed").map_err(|_| StartError::Supervisor)?;
@@ -409,6 +425,17 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         .map_err(|_| StartError::Supervisor)?;
     supervisor
         .register(ServiceSpec {
+            id: login_service_id(),
+            name: login_name,
+            kind: ServiceKind::System,
+            image_id: LOGIN_IMAGE_ID,
+            capability_profile: LOGIN_CAPABILITY_PROFILE,
+            restart: RestartPolicy::on_failure(3, 60_000_000, 100_000, 5_000_000)
+                .map_err(|_| StartError::Supervisor)?,
+        })
+        .map_err(|_| StartError::Supervisor)?;
+    supervisor
+        .register(ServiceSpec {
             id: pci_service_id(),
             name: pci_name,
             kind: ServiceKind::System,
@@ -462,6 +489,8 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         (package_service_id(), filesystem_service_id()),
         (package_service_id(), logging_service_id()),
         (shell_service_id(), authentication_service_id()),
+        (login_service_id(), authentication_service_id()),
+        (shell_service_id(), login_service_id()),
         (shell_service_id(), package_service_id()),
         (shell_service_id(), network_service_id()),
         (shell_service_id(), logging_service_id()),
@@ -483,6 +512,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         authentication_process,
         package_process,
         shell_process,
+        login_process,
         pci_process,
         ahci_process,
         nvme_process,
@@ -545,6 +575,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
     AUTHENTICATION_READY.store(true, Ordering::Release);
     PACKAGE_READY.store(true, Ordering::Release);
     SHELL_READY.store(true, Ordering::Release);
+    LOGIN_READY.store(true, Ordering::Release);
     PCI_READY.store(true, Ordering::Release);
     AHCI_READY.store(true, Ordering::Release);
     NVME_READY.store(true, Ordering::Release);
@@ -558,6 +589,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         authentication_process,
         package_process,
         shell_process,
+        login_process,
         pci_process,
         ahci_process,
         nvme_process,
@@ -677,6 +709,10 @@ pub const fn shell_service_id() -> ServiceId {
     ServiceId::new(SHELL_SERVICE_ID).unwrap()
 }
 
+pub const fn login_service_id() -> ServiceId {
+    ServiceId::new(LOGIN_SERVICE_ID).unwrap()
+}
+
 pub const fn pci_service_id() -> ServiceId {
     ServiceId::new(PCI_SERVICE_ID).unwrap()
 }
@@ -723,6 +759,10 @@ const fn package_process_id() -> Option<ProcessId> {
 
 const fn shell_process_id() -> Option<ProcessId> {
     ProcessId::new(SHELL_PROCESS_ID)
+}
+
+const fn login_process_id() -> Option<ProcessId> {
+    ProcessId::new(LOGIN_PROCESS_ID)
 }
 
 const fn pci_process_id() -> Option<ProcessId> {

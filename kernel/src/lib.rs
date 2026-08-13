@@ -186,13 +186,18 @@ static SCHEDULER_READY: AtomicBool = AtomicBool::new(false);
     any(target_os = "none", target_os = "uefi")
 ))]
 static mut BOOT_SERVICE_CAPABILITIES:
-    [MaybeUninit<CapabilitySpace<MAX_CAPABILITIES>>; 14] =
-    [const { MaybeUninit::uninit() }; 14];
+    [MaybeUninit<CapabilitySpace<MAX_CAPABILITIES>>; 15] =
+    [const { MaybeUninit::uninit() }; 15];
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
 static SERVICE_READY: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_AUTHORIZED: AtomicBool = AtomicBool::new(false);
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -383,6 +388,10 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         boot_services.shell_process.raw()
     );
     println!(
+        "login service registered and started (process={})",
+        boot_services.login_process.raw()
+    );
+    println!(
         "PCI driver service registered and started (process={})",
         boot_services.pci_process.raw()
     );
@@ -531,7 +540,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         return syscall_error(Status::INVALID_ARGUMENT)
     }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite)
-        && caller.raw() == 9
+        && ((caller.raw() == 9 && LOGIN_AUTHORIZED.load(Ordering::Acquire))
+            || caller.raw() == 14)
     {
         let address = request.arguments[0] as usize;
         let length = request.arguments[1] as usize;
@@ -552,7 +562,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         }
     }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalRead)
-        && caller.raw() == 9
+        && ((caller.raw() == 9 && LOGIN_AUTHORIZED.load(Ordering::Acquire))
+            || caller.raw() == 14)
     {
         let address = request.arguments[0] as usize;
         if request.arguments[1] != 1
@@ -575,11 +586,29 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             values: [0; 4],
         }
     }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginComplete) {
+        if caller.raw() != 14
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments[0] == 0
+            || request.arguments[0] > 127
+            || request.arguments[1] == 0
+            || request.arguments[1] > 255
+            || request.arguments[2..] != [0; 4]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        LOGIN_AUTHORIZED.store(true, Ordering::Release);
+        return syscall_success([1, 0, 0, 0])
+    }
     if Operation::from_raw(request.operation) == Some(Operation::ServiceReady) {
         if request.arguments[0] as usize != role || request.arguments[1..] != [0; 5] {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        if role == 9 && SERVICE_READY.load(Ordering::Acquire) & (1u32 << 7) == 0 {
+        if role == 9
+            && SERVICE_READY.load(Ordering::Acquire) & ((1u32 << 7) | (1u32 << 14))
+                != ((1u32 << 7) | (1u32 << 14))
+        {
             return syscall_error(Status::BUSY)
         }
         let bit = 1u32 << role;
@@ -700,6 +729,7 @@ fn service_name(role: usize) -> Option<&'static str> {
         Some("synos-ahcid"),
         Some("synos-nvmed"),
         Some("synos-ethernetd"),
+        Some("synos-logind"),
     ]
     .get(role)
     .copied()
@@ -801,8 +831,9 @@ fn boot_synos_init(
         services.ahci_process,
         services.nvme_process,
         services.ethernet_process,
+        services.login_process,
     ];
-    for (address_space_raw, process) in (2u32..=13).zip(service_processes) {
+    for (address_space_raw, process) in (2u32..=14).zip(service_processes) {
         let address_space = AddressSpaceId::new(address_space_raw)
             .expect("boot service address space id");
         let (thread, _) = boot_service_process(
@@ -835,7 +866,7 @@ fn boot_synos_init(
             fatal_kernel_halt(Status::CORRUPT)
         });
     println!(
-        "starting synos-init in Ring 3 (thread={}, services=12)",
+        "starting synos-init in Ring 3 (thread={}, services=13)",
         init_thread.raw()
     );
     boot_diagnostics::checkpoint(boot_diagnostics::BootStage::UserHandoff);
@@ -872,7 +903,7 @@ fn boot_service_process(
         *page = address;
     }
 
-    if role as usize >= 14 {
+    if role as usize >= 15 {
         fatal_kernel_halt(Status::INVALID_ARGUMENT)
     }
     let capabilities = unsafe {

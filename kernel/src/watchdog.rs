@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::task::{CpuId, CpuMask, MAX_CPUS};
 
-pub const SERVICE_CAPACITY: usize = 14;
+pub const SERVICE_CAPACITY: usize = 15;
 pub const SERVICE_TIMEOUT_US: u64 = 5_000_000;
 pub const CPU_TIMEOUT_US: u64 = 100_000;
 

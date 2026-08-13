@@ -64,6 +64,7 @@ pub mod paging {
     const SERVICE_CODE: u64 = crate::USER_SPACE_START;
     const SERVICE_STACK_TOP: u64 = SERVICE_CODE + SERVICE_PAGE_COUNT as u64 * crate::FRAME_SIZE;
     const SERVICE_IMAGE: &[u8] = include_bytes!(env!("SYNOS_SERVICE_IMAGE"));
+    const LOGIN_IMAGE: &[u8] = include_bytes!(env!("SYNOS_LOGIN_IMAGE"));
     const SHELL_IMAGE: &[u8] = include_bytes!(env!("SYNOS_SHELL_IMAGE"));
 
     /// Creates a fresh four-level root table with low physical memory identity mapped.
@@ -313,7 +314,13 @@ pub mod paging {
         external_image: Option<&[u8]>,
     ) {
         let built_in = external_image.is_none();
-        let image = external_image.unwrap_or(if shell { SHELL_IMAGE } else { SERVICE_IMAGE });
+        let image = external_image.unwrap_or(if shell {
+            SHELL_IMAGE
+        } else if role == 14 {
+            LOGIN_IMAGE
+        } else {
+            SERVICE_IMAGE
+        });
         assert!(image.len() <= SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize);
 
         unsafe {

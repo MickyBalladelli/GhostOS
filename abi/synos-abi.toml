@@ -1,6 +1,6 @@
 [abi]
 schema_version = 1
-revision = 4
+revision = 5
 rpc_protocol_version = 1
 rpc_magic = "SYRP"
 rpc_frame_header_bytes = 24
@@ -154,6 +154,9 @@ value = 48
 [[operations]]
 name = "SynFsUnmap"
 value = 49
+[[operations]]
+name = "LoginComplete"
+value = 50
 
 [[methods]]
 name = "ClusterState"
