@@ -260,7 +260,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Allow users to enroll and remove their own credentials under policy.
 - [x] Store only credential public data and metadata, never private keys or secrets.
 - [x] Add credential labels, creation time, last-used time, and revocation state.
-- [ ] Rotate and revoke credentials without deleting the account.
+- [x] Rotate and revoke credentials without deleting the account.
 - [ ] Support account expiration and credential expiration policies.
 - [ ] Add password login only if a password verifier and secure recovery policy exist.
 - [ ] Define administrator, operator, auditor, and read-only account roles.

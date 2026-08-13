@@ -337,8 +337,10 @@ impl UserRecord {
         self.state
     }
 
-    pub const fn is_login_usable(&self) -> bool {
-        self.enabled && matches!(self.state, AccountState::Active)
+    pub fn is_login_usable(&self) -> bool {
+        self.enabled
+            && matches!(self.state, AccountState::Active)
+            && self.credentials().any(|credential| !credential.is_revoked())
     }
 
     pub fn credentials(&self) -> impl Iterator<Item = Credential> + '_ {
@@ -401,6 +403,12 @@ impl UserRecord {
         }
         credential.revoked = revoked;
         Ok(())
+    }
+
+    pub fn credential_is_revoked(&self, id: CredentialId) -> Result<bool, AuthError> {
+        self.credential(id)
+            .map(|credential| credential.is_revoked())
+            .ok_or(AuthError::CredentialNotFound)
     }
 
     pub fn set_credential_label(

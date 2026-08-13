@@ -235,7 +235,9 @@ impl<const USERS: usize, const GROUPS: usize> SecurityState<USERS, GROUPS> {
         for record in self.database.records() {
             if record.identity == IdentityId::ANONYMOUS
                 || (record.account_state() != AccountState::PendingSetup
-                    && record.credentials().count() == 0)
+                    && (record.credentials().count() == 0
+                        || (record.account_state() == AccountState::Active
+                            && !record.is_login_usable())))
             {
                 return Err(StartupError::InvalidRecord)
             }
@@ -937,6 +939,76 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         Ok(record)
     }
 
+    pub fn revoke_credential<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        credential: CredentialId,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_credential_change(handle, identity, now_us)?;
+        let mut next_state = self.state;
+        let mut record = next_state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        record
+            .set_credential_revoked(credential, true)
+            .map_err(StartupError::Authentication)?;
+        next_state
+            .database
+            .replace(record)
+            .map_err(StartupError::Authentication)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        *self.sessions.authd_mut().database_mut() = next_state.database;
+        self.state = next_state;
+        self.sessions.revoke_identity(identity);
+        Ok(record)
+    }
+
+    pub fn rotate_credential<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        old_credential: CredentialId,
+        new_credential: Credential,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_credential_change(handle, identity, now_us)?;
+        let mut next_state = self.state;
+        let mut record = next_state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        if record
+            .credential_is_revoked(old_credential)
+            .map_err(StartupError::Authentication)?
+        {
+            return Err(StartupError::InvalidRecord)
+        }
+        record
+            .add_credential_at(new_credential, now_us)
+            .map_err(StartupError::Authentication)?;
+        record
+            .set_credential_revoked(old_credential, true)
+            .map_err(StartupError::Authentication)?;
+        next_state
+            .database
+            .replace(record)
+            .map_err(StartupError::Authentication)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        *self.sessions.authd_mut().database_mut() = next_state.database;
+        self.state = next_state;
+        self.sessions.revoke_identity(identity);
+        Ok(record)
+    }
+
     fn authorize_credential_change(
         &mut self,
         handle: SessionHandle,
@@ -954,7 +1026,9 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
     fn validate_managed_record(record: UserRecord) -> Result<(), StartupError> {
         if record.identity == IdentityId::ANONYMOUS
             || (record.account_state() != AccountState::PendingSetup
-                && record.credentials().count() == 0)
+                && (record.credentials().count() == 0
+                    || (record.account_state() == AccountState::Active
+                        && !record.is_login_usable())))
         {
             return Err(StartupError::InvalidRecord)
         }
