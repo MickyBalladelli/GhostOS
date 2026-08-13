@@ -20,6 +20,7 @@ enum {
     OP_SYNFS_OPEN = 12,
     OP_SYNFS_CLOSE = 13,
     OP_SYNFS_READ = 14,
+    OP_SYNFS_WRITE = 15,
     OP_SYNFS_MKDIR = 17,
     OP_SYNFS_RMDIR = 18,
     OP_SYNFS_LIST = 20,
@@ -49,6 +50,7 @@ enum {
     ACCOUNT_USERNAME_CAPACITY = 32,
     ACCOUNT_CREDENTIAL_CAPACITY = 96,
     ACCOUNT_RECORD_HEADER_BYTES = 36,
+    ACCOUNT_DATABASE_CAPACITY = 4096,
 };
 
 struct request {
@@ -343,17 +345,37 @@ static int valid_account_record(const u8 *buffer, u64 record_bytes)
 {
     u64 username_length = buffer[1];
     u64 credential_length = buffer[ACCOUNT_RECORD_HEADER_BYTES - 1];
-    return record_bytes >= ACCOUNT_RECORD_HEADER_BYTES
-        && record_bytes <= ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY
-        && buffer[0] == ACCOUNT_RECORD_VERSION
-        && valid_account_username(buffer + 2, username_length)
-        && account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]) != 0
+    if (record_bytes < ACCOUNT_RECORD_HEADER_BYTES
+        || record_bytes > ACCOUNT_RECORD_HEADER_BYTES + ACCOUNT_CREDENTIAL_CAPACITY
+        || buffer[0] != ACCOUNT_RECORD_VERSION
+        || !valid_account_username(buffer + 2, username_length)) {
+        return 0;
+    }
+    if (buffer[ACCOUNT_USERNAME_CAPACITY + 2] == 0) {
+        return credential_length == 0 && record_bytes == ACCOUNT_RECORD_HEADER_BYTES;
+    }
+    return account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]) != 0
         && credential_length != 0
         && credential_length <= ACCOUNT_CREDENTIAL_CAPACITY
         && record_bytes == ACCOUNT_RECORD_HEADER_BYTES + credential_length;
 }
 
-static int read_account_record(u8 *buffer, u64 *record_bytes)
+static u64 account_record_size(const u8 *buffer, u64 remaining)
+{
+    u64 credential_length;
+    u64 record_bytes;
+    if (remaining < ACCOUNT_RECORD_HEADER_BYTES) {
+        return 0;
+    }
+    credential_length = buffer[ACCOUNT_RECORD_HEADER_BYTES - 1];
+    record_bytes = ACCOUNT_RECORD_HEADER_BYTES + credential_length;
+    if (record_bytes > remaining) {
+        return 0;
+    }
+    return valid_account_record(buffer, record_bytes) ? record_bytes : 0;
+}
+
+static int read_account_database(u8 *buffer, u64 *database_bytes)
 {
     struct response opened = call(
         OP_SYNFS_OPEN,
@@ -381,14 +403,16 @@ static int read_account_record(u8 *buffer, u64 *record_bytes)
     if (read.status != 0) {
         return -1;
     }
-    *record_bytes = read.values[0];
-    return *record_bytes != 0;
+    *database_bytes = read.values[0];
+    return *database_bytes != 0;
 }
 
 static void list_accounts(u8 *buffer)
 {
-    u64 record_bytes = 0;
-    int read = read_account_record(buffer, &record_bytes);
+    u64 database_bytes = 0;
+    u64 offset = 0;
+    u64 count = 0;
+    int read = read_account_database(buffer, &database_bytes);
     if (read < 0) {
         write_text("Account list unavailable.\n");
         return;
@@ -397,18 +421,36 @@ static void list_accounts(u8 *buffer)
         write_text("No local accounts.\n");
         return;
     }
-    if (!valid_account_record(buffer, record_bytes)) {
+    if (database_bytes > ACCOUNT_DATABASE_CAPACITY) {
         write_text("Account database is corrupt.\n");
         return;
     }
-
-    u64 username_length = buffer[1];
-
-    write_text("username=");
-    write_bytes((const char *)(buffer + 2), username_length);
-    write_text(" state=enabled credential=");
-    write_text(account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]));
-    write_text("\n");
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        const char *state = record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+            ? "pending"
+            : "enabled";
+        const char *credential = record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+            ? "none"
+            : account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]);
+        write_text("username=");
+        write_bytes((const char *)(record + 2), record[1]);
+        write_text(" state=");
+        write_text(state);
+        write_text(" credential=");
+        write_text(credential);
+        write_text("\n");
+        offset += record_bytes;
+        count++;
+    }
+    if (count == 0) {
+        write_text("No local accounts.\n");
+    }
 }
 
 static void show_account(const char *username, u8 *buffer)
@@ -423,8 +465,9 @@ static void show_account(const char *username, u8 *buffer)
         return;
     }
 
-    u64 record_bytes = 0;
-    int read = read_account_record(buffer, &record_bytes);
+    u64 database_bytes = 0;
+    u64 offset = 0;
+    int read = read_account_database(buffer, &database_bytes);
     if (read < 0) {
         write_text("Account details unavailable.\n");
         return;
@@ -433,20 +476,114 @@ static void show_account(const char *username, u8 *buffer)
         write_text("Account not found.\n");
         return;
     }
-    if (!valid_account_record(buffer, record_bytes)) {
+    if (database_bytes > ACCOUNT_DATABASE_CAPACITY) {
         write_text("Account database is corrupt.\n");
         return;
     }
-    if (!account_username_matches(buffer + 2, buffer[1], username)) {
-        write_text("Account not found.\n");
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (account_username_matches(record + 2, record[1], username)) {
+            write_text("username=");
+            write_bytes((const char *)(record + 2), record[1]);
+            write_text("\nstate=");
+            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+                ? "pending"
+                : "enabled");
+            write_text("\nscope=local\ncredential=");
+            write_text(record[ACCOUNT_USERNAME_CAPACITY + 2] == 0
+                ? "none"
+                : account_credential_name(record[ACCOUNT_USERNAME_CAPACITY + 2]));
+            write_text("\n");
+            return;
+        }
+        offset += record_bytes;
+    }
+    write_text("Account not found.\n");
+}
+
+static void create_account(const char *username, u8 *buffer)
+{
+    if (!login_authorized()) {
+        write_text("Access denied.\n");
+        return;
+    }
+    u64 username_length = length(username);
+    if (!valid_account_username((const u8 *)username, username_length)) {
+        write_text("Invalid username.\n");
         return;
     }
 
-    write_text("username=");
-    write_bytes((const char *)(buffer + 2), buffer[1]);
-    write_text("\nstate=enabled\nscope=local\ncredential=");
-    write_text(account_credential_name(buffer[ACCOUNT_USERNAME_CAPACITY + 2]));
-    write_text("\n");
+    u64 database_bytes = 0;
+    int read = read_account_database(buffer, &database_bytes);
+    if (read < 0) {
+        write_text("Account database unavailable.\n");
+        return;
+    }
+    if (read == 0 || database_bytes > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account database unavailable.\n");
+        return;
+    }
+
+    u64 offset = 0;
+    while (offset < database_bytes) {
+        u8 *record = buffer + offset;
+        u64 record_bytes = account_record_size(record, database_bytes - offset);
+        if (record_bytes == 0) {
+            write_text("Account database is corrupt.\n");
+            return;
+        }
+        if (account_username_matches(record + 2, record[1], username)) {
+            write_text("Account already exists.\n");
+            return;
+        }
+        offset += record_bytes;
+    }
+    if (database_bytes + ACCOUNT_RECORD_HEADER_BYTES > ACCOUNT_DATABASE_CAPACITY) {
+        write_text("Account database is full.\n");
+        return;
+    }
+
+    u8 record[ACCOUNT_RECORD_HEADER_BYTES] = {0};
+    record[0] = ACCOUNT_RECORD_VERSION;
+    record[1] = (u8)username_length;
+    for (offset = 0; offset < username_length; offset++) {
+        record[2 + offset] = (u8)username[offset];
+    }
+    struct response opened = call(
+        OP_SYNFS_OPEN,
+        OPEN_READ | OPEN_WRITE,
+        0,
+        (u64)ACCOUNT_AUTHORIZATION_PATH,
+        length(ACCOUNT_AUTHORIZATION_PATH),
+        0,
+        0
+    );
+    if (opened.status != 0) {
+        write_text("Account create failed.\n");
+        write_status(opened.status);
+        return;
+    }
+    struct response written = call(
+        OP_SYNFS_WRITE,
+        0,
+        opened.values[0],
+        (u64)record,
+        ACCOUNT_RECORD_HEADER_BYTES,
+        0,
+        database_bytes
+    );
+    call(OP_SYNFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
+    if (written.status != 0 || written.values[0] != ACCOUNT_RECORD_HEADER_BYTES) {
+        write_text("Account create failed.\n");
+        write_status(written.status);
+        return;
+    }
+    write_text("Account created in pending setup state.\n");
 }
 
 static void execute_line(char *line, u8 *buffer)
@@ -505,7 +642,7 @@ static void execute_line(char *line, u8 *buffer)
         char username[256];
         u64 action_length = next_word(&cursor, action);
         if (action_length == 0) {
-            write_text("Use: ACCOUNT LIST or ACCOUNT SHOW <username>\n");
+            write_text("Use: ACCOUNT LIST, ACCOUNT SHOW <username>, or ACCOUNT CREATE <username>\n");
             return;
         }
         if (equal_name(action, "LIST")) {
@@ -520,8 +657,16 @@ static void execute_line(char *line, u8 *buffer)
             show_account(username, buffer);
             return;
         }
+        if (equal_name(action, "CREATE")) {
+            if (next_word(&cursor, username) == 0) {
+                write_text("Use: ACCOUNT CREATE <username>\n");
+                return;
+            }
+            create_account(username, buffer);
+            return;
+        }
         {
-            write_text("Use: ACCOUNT LIST or ACCOUNT SHOW <username>\n");
+            write_text("Use: ACCOUNT LIST, ACCOUNT SHOW <username>, or ACCOUNT CREATE <username>\n");
             return;
         }
     }
