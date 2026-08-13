@@ -422,6 +422,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                     | Operation::SynFsClose
                     | Operation::SynFsRead
                     | Operation::SynFsWrite
+                    | Operation::SynFsMap
+                    | Operation::SynFsUnmap
                     | Operation::SynFsMkdir
                     | Operation::SynFsRmdir
                     | Operation::SynFsList
@@ -440,6 +442,39 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                     request.flags,
                     request.capability,
                     0,
+                    0,
+                    None,
+                )
+            }
+            if operation == Operation::SynFsUnmap {
+                if request.flags != 0 || request.arguments != [0; 6] {
+                    return syscall_error(Status::INVALID_ARGUMENT)
+                }
+                return boot_services::dispatch_shell_filesystem(
+                    operation,
+                    request.flags,
+                    request.capability,
+                    0,
+                    0,
+                    None,
+                )
+            }
+            if operation == Operation::SynFsMap {
+                if request.flags & !synos_fsd::Flags::WRITE.bits() != 0
+                    || request.arguments[0] % 4096 != 0
+                    || request.arguments[1] == 0
+                    || request.arguments[1] % 4096 != 0
+                    || request.arguments[1] >> 48 != 0
+                    || request.arguments[2..] != [0; 4]
+                {
+                    return syscall_error(Status::INVALID_ARGUMENT)
+                }
+                return boot_services::dispatch_shell_filesystem(
+                    operation,
+                    request.flags,
+                    request.capability,
+                    request.arguments[0],
+                    request.arguments[1],
                     None,
                 )
             }
@@ -460,6 +495,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                     request.flags,
                     request.capability,
                     request.arguments[4],
+                    0,
                     Some(bytes),
                 )
             })

@@ -488,6 +488,7 @@ pub(crate) fn dispatch_shell_filesystem(
     flags: u16,
     capability: u64,
     offset: u64,
+    length: u64,
     buffer: Option<&mut [u8]>,
 ) -> synos_runtime::Response {
     let Some(process) = synos_fsd::ProcessId::new(SHELL_PROCESS_ID as u64) else {
@@ -502,6 +503,8 @@ pub(crate) fn dispatch_shell_filesystem(
         synos_runtime::Operation::SynFsClose => Some(synos_fsd::Operation::Close),
         synos_runtime::Operation::SynFsRead => Some(synos_fsd::Operation::Read),
         synos_runtime::Operation::SynFsWrite => Some(synos_fsd::Operation::Write),
+        synos_runtime::Operation::SynFsMap => Some(synos_fsd::Operation::Map),
+        synos_runtime::Operation::SynFsUnmap => Some(synos_fsd::Operation::Unmap),
         synos_runtime::Operation::SynFsMkdir => Some(synos_fsd::Operation::Mkdir),
         synos_runtime::Operation::SynFsRmdir => Some(synos_fsd::Operation::Rmdir),
         synos_runtime::Operation::SynFsList => Some(synos_fsd::Operation::List),
@@ -538,7 +541,8 @@ pub(crate) fn dispatch_shell_filesystem(
     let request = synos_fsd::Request::new(fs_operation, process)
         .with_flags(synos_fsd::Flags::from_bits(flags))
         .with_capability(request_capability)
-        .with_offset(offset);
+        .with_offset(offset)
+        .with_length(length);
     let response = unsafe {
         (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
     }

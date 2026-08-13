@@ -424,6 +424,8 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 | Operation::SynFsClose
                 | Operation::SynFsRead
                 | Operation::SynFsWrite
+                | Operation::SynFsMap
+                | Operation::SynFsUnmap
                 | Operation::SynFsMetadata
                 | Operation::SynFsList
                 | Operation::SynFsMkdir
@@ -490,6 +492,8 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsClose
             | Operation::SynFsRead
             | Operation::SynFsWrite
+            | Operation::SynFsMap
+            | Operation::SynFsUnmap
             | Operation::SynFsMetadata
             | Operation::SynFsList
             | Operation::SynFsMkdir
@@ -519,6 +523,8 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             Operation::SynFsClose => FsdOperation::Close,
             Operation::SynFsRead => FsdOperation::Read,
             Operation::SynFsWrite => FsdOperation::Write,
+            Operation::SynFsMap => FsdOperation::Map,
+            Operation::SynFsUnmap => FsdOperation::Unmap,
             Operation::SynFsMetadata => FsdOperation::Metadata,
             Operation::SynFsList => FsdOperation::List,
             Operation::SynFsMkdir => FsdOperation::Mkdir,
@@ -557,6 +563,12 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 }
                 FsdFlags::from_bits(request.flags)
             }
+            Operation::SynFsMap => {
+                if request.flags & !FsdFlags::WRITE.bits() != 0 {
+                    return Err(RuntimeDispatchError::InvalidRequest)
+                }
+                FsdFlags::from_bits(request.flags)
+            }
             _ if request.flags == 0 => FsdFlags::from_bits(0),
             _ => return Err(RuntimeDispatchError::InvalidRequest),
         };
@@ -577,6 +589,10 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             if request.arguments[5] != 0 {
                 return Err(RuntimeDispatchError::InvalidRequest)
             }
+        } else if operation == Operation::SynFsMap {
+            if request.arguments[5] == 0 || request.arguments[5] >> 48 != 0 {
+                return Err(RuntimeDispatchError::InvalidRequest)
+            }
         } else if request.arguments != [0; 6] {
             return Err(RuntimeDispatchError::InvalidRequest)
         }
@@ -584,7 +600,8 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         let fs_request = synos_fsd::Request::new(fs_operation, slot.process)
             .with_flags(flags)
             .with_capability(capability)
-            .with_offset(request.arguments[4]);
+            .with_offset(request.arguments[4])
+            .with_length(request.arguments[5]);
         let response = self.filesystem.transact(caller, fs_request, buffer);
         let response = Response {
             status: response.status.raw(),
@@ -682,6 +699,16 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                     return Err(RuntimeDispatchError::InvalidCapability)
                 }
             }
+            Operation::SynFsMap => {
+                if FsdCapability::from_raw(response.values[0]).is_none()
+                    || response.values[1] % 4096 != 0
+                    || response.values[2] == 0
+                    || response.values[2] % 4096 != 0
+                    || response.values[3] > 1
+                {
+                    return Err(RuntimeDispatchError::InvalidCapability)
+                }
+            }
             Operation::SynFsRead | Operation::SynFsWrite => {
                 let length = buffer
                     .map(|buffer| buffer.length as u64)
@@ -707,6 +734,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 }
             }
             Operation::SynFsClose
+            | Operation::SynFsUnmap
             | Operation::SynFsMetadata
             | Operation::SynFsMkdir
             | Operation::SynFsLink => {}

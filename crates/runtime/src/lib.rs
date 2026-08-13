@@ -16,7 +16,7 @@ pub use abi::{
 };
 pub use synos_path_pattern::{Pattern, PatternError};
 pub use fs::{
-    DirectoryPage, DirectoryRemovalMetadata, File, LinkMetadata, Metadata, OpenOptions,
+    DirectoryPage, DirectoryRemovalMetadata, File, FileMapping, LinkMetadata, Metadata, OpenOptions,
     PathBuffer, DIRECTORY_RECORD_HEADER_BYTES,
 };
 pub use ipc::{IpcAccess, IpcMapping};

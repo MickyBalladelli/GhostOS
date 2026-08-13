@@ -12,7 +12,7 @@ mod protocol;
 mod tests;
 
 pub use daemon::{
-    Daemon, DaemonError, DirectoryRemovalInfo, FileInfo, FileRights, GcReport, LockInfo, MountId,
+    Daemon, DaemonError, DirectoryRemovalInfo, FileInfo, FileMappingInfo, FileRights, GcReport, LockInfo, MountId,
     MountInfo, ProcessRights,
     SnapshotInfo, DEFAULT_MAX_MOUNTS, DEFAULT_MAX_OPEN_FILES, DEFAULT_MAX_PROCESSES,
     DEFAULT_MAX_SNAPSHOTS, DEFAULT_SCRATCH_BYTES,

@@ -28,6 +28,14 @@ pub struct File {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FileMapping {
+    capability: Capability,
+    offset: u64,
+    length: u64,
+    writable: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Metadata {
     pub length: u64,
     pub version: u32,
@@ -94,6 +102,24 @@ impl File {
     }
 }
 
+impl FileMapping {
+    pub const fn capability(self) -> Capability {
+        self.capability
+    }
+
+    pub const fn offset(self) -> u64 {
+        self.offset
+    }
+
+    pub const fn length(self) -> u64 {
+        self.length
+    }
+
+    pub const fn writable(self) -> bool {
+        self.writable
+    }
+}
+
 impl<S: SystemCall> Runtime<S> {
     pub fn open_path(&self, path: PathBuffer, options: OpenOptions) -> Result<File, Error> {
         self.open(path.buffer, options)
@@ -109,6 +135,38 @@ impl<S: SystemCall> Runtime<S> {
 
     pub fn close(&self, file: File) -> Result<(), Error> {
         self.execute(Request::new(Operation::SynFsClose).with_capability(file.capability))?;
+        Ok(())
+    }
+
+    pub fn map_file(
+        &self,
+        file: File,
+        offset: u64,
+        length: u64,
+        writable: bool,
+    ) -> Result<FileMapping, Error> {
+        let mut request = Request::new(Operation::SynFsMap).with_capability(file.capability);
+        request.flags = writable as u16;
+        request.arguments[4] = offset;
+        request.arguments[5] = length;
+        let response = self.execute(request)?;
+        let capability = Capability::from_raw(response.values[0]).ok_or(Error::InvalidResponse)?;
+        if response.values[1] != offset
+            || response.values[2] != length
+            || response.values[3] != writable as u64
+        {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(FileMapping {
+            capability,
+            offset,
+            length,
+            writable,
+        })
+    }
+
+    pub fn unmap_file(&self, mapping: FileMapping) -> Result<(), Error> {
+        self.execute(Request::new(Operation::SynFsUnmap).with_capability(mapping.capability))?;
         Ok(())
     }
 

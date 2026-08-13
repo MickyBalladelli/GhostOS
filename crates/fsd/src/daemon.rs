@@ -32,6 +32,8 @@ const MAX_DIRECTORY_ENTRIES: usize = 256;
 const MAX_NAME_BYTES: usize = synos_synfs::MAX_PATH_BYTES;
 const ROOT_MOUNT_NAME: &str = "SYS$ROOT";
 const INTERNAL_MAPPING_CAPABILITY: u64 = 1 << 32;
+const MAPPING_CAPABILITY_BIT: u32 = 1 << 31;
+const MAPPED_FILE_PAGE_SIZE: u64 = 4096;
 
 fn pattern_error(error: PatternError) -> DaemonError {
     match error {
@@ -133,6 +135,15 @@ pub struct FileInfo {
     pub file_type: FileType,
     pub link_count: u32,
     pub mode: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FileMappingInfo {
+    pub capability: Capability,
+    pub file: Capability,
+    pub offset: u64,
+    pub length: u64,
+    pub writable: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -387,6 +398,31 @@ impl OpenFileSlot {
 }
 
 #[derive(Clone, Copy)]
+struct MappingSlot {
+    occupied: bool,
+    generation: u32,
+    owner: ProcessId,
+    file: Capability,
+    path: Name,
+    offset: u64,
+    length: u64,
+    writable: bool,
+}
+
+impl MappingSlot {
+    const EMPTY: Self = Self {
+        occupied: false,
+        generation: 0,
+        owner: ProcessId::from_valid_raw(1),
+        file: Capability::from_valid_raw(1),
+        path: Name::EMPTY,
+        offset: 0,
+        length: 0,
+        writable: false,
+    };
+}
+
+#[derive(Clone, Copy)]
 struct LockSlot {
     occupied: bool,
     generation: u32,
@@ -465,6 +501,7 @@ pub struct Daemon<
     filesystem: SynFs<MAX_BLOCKS>,
     processes: [ProcessSlot; MAX_PROCESSES],
     open_files: [OpenFileSlot; MAX_OPEN_FILES],
+    mappings: [MappingSlot; MAX_OPEN_FILES],
     locks: [LockSlot; MAX_OPEN_FILES],
     snapshots: [SnapshotSlot; MAX_SNAPSHOTS],
     mounts: [MountSlot; MAX_MOUNTS],
@@ -516,6 +553,7 @@ impl<
             filesystem,
             processes: [ProcessSlot::EMPTY; MAX_PROCESSES],
             open_files: [OpenFileSlot::EMPTY; MAX_OPEN_FILES],
+            mappings: [MappingSlot::EMPTY; MAX_OPEN_FILES],
             locks: [LockSlot::EMPTY; MAX_OPEN_FILES],
             snapshots: [SnapshotSlot::EMPTY; MAX_SNAPSHOTS],
             mounts,
@@ -612,6 +650,11 @@ impl<
         for file in &mut self.open_files {
             if file.occupied && file.owner == process {
                 file.occupied = false
+            }
+        }
+        for mapping in &mut self.mappings {
+            if mapping.occupied && mapping.owner == process {
+                mapping.occupied = false
             }
         }
         for lock in &mut self.locks {
@@ -821,11 +864,95 @@ impl<
     pub fn close(&mut self, process: ProcessId, capability: Capability) -> Result<(), DaemonError> {
         let index = self.file_index(process, capability, FileRights(0))?;
         self.open_files[index].occupied = false;
+        for mapping in &mut self.mappings {
+            if mapping.occupied && mapping.file == capability {
+                mapping.occupied = false
+            }
+        }
         for lock in &mut self.locks {
             if lock.occupied && lock.file == capability {
                 lock.occupied = false
             }
         }
+        Ok(())
+    }
+
+    /// Create a process-owned mapping capability for a regular file range.
+    ///
+    /// The open file capability is checked again here. Read mappings need
+    /// READ; writable mappings need both READ and WRITE. The returned mapping
+    /// capability is a separate namespace, so it cannot be used as a file
+    /// capability or confused with another open handle.
+    pub fn map(
+        &mut self,
+        process: ProcessId,
+        file: Capability,
+        offset: u64,
+        length: u64,
+        writable: bool,
+    ) -> Result<FileMappingInfo, DaemonError> {
+        if offset % MAPPED_FILE_PAGE_SIZE != 0
+            || length == 0
+            || length % MAPPED_FILE_PAGE_SIZE != 0
+            || length > (u64::from(u32::MAX) << 16)
+        {
+            return Err(DaemonError::InvalidRequest);
+        }
+        let required = if writable {
+            FileRights::READ.union(FileRights::WRITE)
+        } else {
+            FileRights::READ
+        };
+        let file_index = self.file_index(process, file, required)?;
+        if writable && self.open_files[file_index].read_only_mount {
+            return Err(DaemonError::ReadOnly);
+        }
+        let path = self.open_files[file_index].path;
+        let metadata = self.filesystem.lookup_following(path.as_str())?;
+        if metadata.file_type != FileType::Regular
+            || offset > metadata.size
+            || offset.checked_add(length).is_none()
+        {
+            return Err(DaemonError::InvalidRequest);
+        }
+        self.check_mode_access(process, metadata.mode, required)?;
+        self.check_io_lock(
+            process,
+            path,
+            LockRange::WholeFile,
+            if writable {
+                LockMode::Exclusive
+            } else {
+                LockMode::Shared
+            },
+        )?;
+        let (index, slot) = self
+            .mappings
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| !slot.occupied)
+            .ok_or(DaemonError::HandleExhausted)?;
+        slot.generation = slot.generation.wrapping_add(1).max(1);
+        slot.occupied = true;
+        slot.owner = process;
+        slot.file = file;
+        slot.path = path;
+        slot.offset = offset;
+        slot.length = length;
+        slot.writable = writable;
+        let capability = mapping_token(index, slot.generation);
+        Ok(FileMappingInfo {
+            capability,
+            file,
+            offset,
+            length,
+            writable,
+        })
+    }
+
+    pub fn unmap(&mut self, process: ProcessId, capability: Capability) -> Result<(), DaemonError> {
+        let index = self.mapping_index(process, capability)?;
+        self.mappings[index].occupied = false;
         Ok(())
     }
 
@@ -1609,6 +1736,33 @@ impl<
                 )?;
                 Ok(Response::success().with_value(0, bytes as u64))
             }
+            Operation::Map => {
+                if request.flags.bits() & !Flags::WRITE.bits() != 0 {
+                    return Err(DaemonError::InvalidRequest);
+                }
+                let mapping = self.map(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                    request.offset,
+                    request.length,
+                    request.flags.contains(Flags::WRITE),
+                )?;
+                Ok(Response::success()
+                    .with_value(0, mapping.capability.raw())
+                    .with_value(1, mapping.offset)
+                    .with_value(2, mapping.length)
+                    .with_value(3, mapping.writable as u64))
+            }
+            Operation::Unmap => {
+                if request.flags.bits() != 0 || request.offset != 0 || request.length != 0 {
+                    return Err(DaemonError::InvalidRequest);
+                }
+                self.unmap(
+                    request.process,
+                    request.capability.ok_or(DaemonError::InvalidCapability)?,
+                )?;
+                Ok(Response::success())
+            }
             Operation::Metadata => {
                 let info = self.metadata(
                     request.process,
@@ -2235,6 +2389,25 @@ impl<
         Ok(index)
     }
 
+    fn mapping_index(
+        &self,
+        process: ProcessId,
+        capability: Capability,
+    ) -> Result<usize, DaemonError> {
+        let index = decode_mapping_slot(capability).ok_or(DaemonError::InvalidCapability)?;
+        let slot = self
+            .mappings
+            .get(index)
+            .ok_or(DaemonError::InvalidCapability)?;
+        if !slot.occupied
+            || slot.generation != capability_generation(capability)
+            || slot.owner != process
+        {
+            return Err(DaemonError::AccessDenied);
+        }
+        Ok(index)
+    }
+
     fn check_io_lock(
         &self,
         process: ProcessId,
@@ -2319,6 +2492,7 @@ impl<
             filesystem: SynFs::new(),
             processes: [ProcessSlot::EMPTY; MAX_PROCESSES],
             open_files: [OpenFileSlot::EMPTY; MAX_OPEN_FILES],
+            mappings: [MappingSlot::EMPTY; MAX_OPEN_FILES],
             locks: [LockSlot::EMPTY; MAX_OPEN_FILES],
             snapshots: [SnapshotSlot::EMPTY; MAX_SNAPSHOTS],
             mounts: [MountSlot::EMPTY; MAX_MOUNTS],
@@ -2332,6 +2506,12 @@ impl<
 
 fn token(index: usize, generation: u32) -> Capability {
     Capability::from_valid_raw(((generation as u64) << 32) | (index as u64 + 1))
+}
+
+fn mapping_token(index: usize, generation: u32) -> Capability {
+    Capability::from_valid_raw(
+        ((generation as u64) << 32) | (u64::from(MAPPING_CAPABILITY_BIT) | index as u64 + 1),
+    )
 }
 
 fn capability_generation(capability: Capability) -> u32 {
@@ -2348,6 +2528,14 @@ fn decode_slot(capability: Capability, expected_generation: u32) -> Option<usize
         return None;
     }
     Some(raw_slot.saturating_sub(1) as usize)
+}
+
+fn decode_mapping_slot(capability: Capability) -> Option<usize> {
+    let raw_slot = capability.raw() as u32;
+    if raw_slot & MAPPING_CAPABILITY_BIT == 0 {
+        return None;
+    }
+    Some((raw_slot & !MAPPING_CAPABILITY_BIT).checked_sub(1)? as usize)
 }
 
 fn lock_mode(flags: Flags) -> Result<LockMode, DaemonError> {

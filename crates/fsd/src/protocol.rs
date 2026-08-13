@@ -32,6 +32,8 @@ pub enum Operation {
     Symlink = 22,
     ReadLink = 23,
     Chmod = 24,
+    Map = 25,
+    Unmap = 26,
 }
 
 impl Operation {
@@ -61,6 +63,8 @@ impl Operation {
             22 => Some(Self::Symlink),
             23 => Some(Self::ReadLink),
             24 => Some(Self::Chmod),
+            25 => Some(Self::Map),
+            26 => Some(Self::Unmap),
             _ => None,
         }
     }
@@ -166,6 +170,7 @@ pub struct Request {
     pub process: ProcessId,
     pub capability: Option<Capability>,
     pub offset: u64,
+    pub length: u64,
 }
 
 impl Request {
@@ -176,6 +181,7 @@ impl Request {
             process,
             capability: None,
             offset: 0,
+            length: 0,
         }
     }
 
@@ -194,6 +200,11 @@ impl Request {
         self
     }
 
+    pub const fn with_length(mut self, length: u64) -> Self {
+        self.length = length;
+        self
+    }
+
     pub fn to_envelope(self, buffer: Option<SharedBuffer>) -> Envelope {
         Envelope {
             correlation: 0,
@@ -203,7 +214,7 @@ impl Request {
                 self.process.raw(),
                 self.capability.map_or(0, Capability::raw),
                 self.offset,
-                self.flags.bits() as u64,
+                self.flags.bits() as u64 | (self.length << 16),
             ],
         }
     }
@@ -222,8 +233,10 @@ impl Request {
         } else {
             Some(Capability::from_raw(envelope.words[1]).ok_or(ProtocolError::InvalidCapability)?)
         };
+        let packed_flags = envelope.words[3];
         let flags = Flags::from_bits(
-            u16::try_from(envelope.words[3]).map_err(|_| ProtocolError::InvalidFlags)?,
+            u16::try_from(packed_flags & u64::from(u16::MAX))
+                .map_err(|_| ProtocolError::InvalidFlags)?,
         );
         Ok((
             Self {
@@ -232,6 +245,7 @@ impl Request {
                 process,
                 capability,
                 offset: envelope.words[2],
+                length: packed_flags >> 16,
             },
             envelope.buffer,
         ))
