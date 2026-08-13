@@ -106,7 +106,17 @@ static int administrator_account_exists(void)
     return response.status == 0 && response.values[1] != 0;
 }
 
-static void read_line(char *line, u64 capacity, int echo)
+static void clear_bytes(char *bytes, u64 capacity)
+{
+    volatile u8 *target = (volatile u8 *)bytes;
+    while (capacity != 0) {
+        *target = 0;
+        target++;
+        capacity--;
+    }
+}
+
+static u64 read_line(char *line, u64 capacity, int echo)
 {
     u64 count = 0;
     u8 byte;
@@ -117,7 +127,7 @@ static void read_line(char *line, u64 capacity, int echo)
         }
         if (byte == '\r' || byte == '\n') {
             line[count] = 0;
-            return;
+            return count;
         }
         if (byte == 8 || byte == 127) {
             if (count != 0) {
@@ -136,6 +146,11 @@ static void read_line(char *line, u64 capacity, int echo)
             write_bytes((const char *)&byte, 1);
         }
     }
+}
+
+static u64 read_private_line(char *line, u64 capacity)
+{
+    return read_line(line, capacity, 0);
 }
 
 __attribute__((section(".text._start"), noreturn))
@@ -157,23 +172,27 @@ void _start(void)
             idle();
         }
         write_text("login: ");
-        read_line(username, sizeof(username), 1);
+        u64 username_length = read_line(username, sizeof(username), 1);
         write_text("\ncredential: ");
-        read_line(credential, sizeof(credential), 0);
+        u64 credential_length = read_private_line(credential, sizeof(credential));
         write_text("\n");
 
-        if (length(username) == 0 || length(credential) == 0) {
+        if (username_length == 0 || credential_length == 0) {
             write_text("Login failed. Try again.\n");
+            clear_bytes(username, sizeof(username));
+            clear_bytes(credential, sizeof(credential));
             continue;
         }
 
         struct response completed = call(
             OP_LOGIN_COMPLETE,
-            length(username),
-            length(credential),
+            username_length,
+            credential_length,
             0,
             0
         );
+        clear_bytes(username, sizeof(username));
+        clear_bytes(credential, sizeof(credential));
         if (completed.status != 0) {
             write_text("Login failed. Try again.\n");
             continue;
