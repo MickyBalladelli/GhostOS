@@ -419,6 +419,11 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         any(target_os = "none", target_os = "uefi")
     )))]
     boot_diagnostics::complete();
+
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    )))]
     shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler_clock, acpi)
 }
 
