@@ -6,10 +6,14 @@ use crate::{
     CredentialId, CredentialKind, CredentialVerifier, CryptographicCapability, Session,
     TokenError, TransportRights,
 };
+use crate::identity::MAX_CREDENTIAL_BYTES;
 
 pub const MAX_WEBAUTHN_AUTHENTICATOR_DATA_BYTES: usize = 256;
 pub const MAX_WEBAUTHN_CLIENT_DATA_BYTES: usize = 1_024;
 pub const MAX_WEBAUTHN_SIGNATURE_BYTES: usize = 128;
+pub const MAX_SSH_PUBLIC_KEY_BYTES: usize = MAX_CREDENTIAL_BYTES;
+pub const MAX_SSH_EXCHANGE_HASH_BYTES: usize = 64;
+pub const MAX_SSH_SIGNATURE_BYTES: usize = 512;
 pub const MAX_REMOTE_CHALLENGE_LIFETIME_US: u64 = 120_000_000;
 pub const MAX_REMOTE_SESSION_LIFETIME_US: u64 = 900_000_000;
 pub const MAX_REMOTE_TOKEN_LIFETIME_US: u64 = 300_000_000;
@@ -166,6 +170,122 @@ pub trait WebAuthnVerifier {
     ) -> Result<WebAuthnVerification, RemoteAuthError>;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SshLoginPolicy {
+    challenge_lifetime_us: u64,
+    session_lifetime_us: u64,
+}
+
+impl SshLoginPolicy {
+    pub const fn new(
+        challenge_lifetime_us: u64,
+        session_lifetime_us: u64,
+    ) -> Result<Self, RemoteAuthError> {
+        if challenge_lifetime_us == 0
+            || challenge_lifetime_us > MAX_REMOTE_CHALLENGE_LIFETIME_US
+            || session_lifetime_us == 0
+            || session_lifetime_us > MAX_REMOTE_SESSION_LIFETIME_US
+        {
+            return Err(RemoteAuthError::InvalidPolicy)
+        }
+        Ok(Self {
+            challenge_lifetime_us,
+            session_lifetime_us,
+        })
+    }
+
+    pub const fn challenge_lifetime_us(self) -> u64 {
+        self.challenge_lifetime_us
+    }
+
+    pub const fn session_lifetime_us(self) -> u64 {
+        self.session_lifetime_us
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SshAuthenticationChallenge {
+    pub authentication: AuthenticationChallenge,
+    pub device: NodeId,
+    public_key: [u8; MAX_SSH_PUBLIC_KEY_BYTES],
+    public_key_length: u8,
+    exchange_hash: [u8; MAX_SSH_EXCHANGE_HASH_BYTES],
+    exchange_hash_length: u8,
+    challenge_lifetime_us: u64,
+    session_lifetime_us: u64,
+}
+
+impl SshAuthenticationChallenge {
+    pub const WIRE_BYTES: usize = 220;
+
+    fn new(
+        authentication: AuthenticationChallenge,
+        device: NodeId,
+        public_key: &[u8],
+        exchange_hash: &[u8],
+        policy: SshLoginPolicy,
+    ) -> Result<Self, RemoteAuthError> {
+        if public_key.is_empty()
+            || public_key.len() > MAX_SSH_PUBLIC_KEY_BYTES
+            || exchange_hash.is_empty()
+            || exchange_hash.len() > MAX_SSH_EXCHANGE_HASH_BYTES
+        {
+            return Err(RemoteAuthError::InvalidSshProof)
+        }
+        let mut key = [0; MAX_SSH_PUBLIC_KEY_BYTES];
+        key[..public_key.len()].copy_from_slice(public_key);
+        let mut hash = [0; MAX_SSH_EXCHANGE_HASH_BYTES];
+        hash[..exchange_hash.len()].copy_from_slice(exchange_hash);
+        Ok(Self {
+            authentication,
+            device,
+            public_key: key,
+            public_key_length: public_key.len() as u8,
+            exchange_hash: hash,
+            exchange_hash_length: exchange_hash.len() as u8,
+            challenge_lifetime_us: policy.challenge_lifetime_us,
+            session_lifetime_us: policy.session_lifetime_us,
+        })
+    }
+
+    pub fn public_key(&self) -> &[u8] {
+        &self.public_key[..self.public_key_length as usize]
+    }
+
+    pub fn exchange_hash(&self) -> &[u8] {
+        &self.exchange_hash[..self.exchange_hash_length as usize]
+    }
+
+    /// SSH challenge bytes. They bind the configured credential, device,
+    /// public key, exchange hash, expiry, and one-shot authentication nonce.
+    pub fn bytes(self) -> [u8; Self::WIRE_BYTES] {
+        let mut bytes = [0; Self::WIRE_BYTES];
+        bytes[0..4].copy_from_slice(b"SYSH");
+        bytes[4] = 1;
+        bytes[8..36].copy_from_slice(&self.authentication.bytes());
+        bytes[36..40].copy_from_slice(&self.device.raw().to_be_bytes());
+        bytes[40] = self.public_key_length;
+        bytes[41] = self.exchange_hash_length;
+        bytes[44..140].copy_from_slice(&self.public_key);
+        bytes[140..204].copy_from_slice(&self.exchange_hash);
+        bytes[204..212].copy_from_slice(&self.challenge_lifetime_us.to_be_bytes());
+        bytes[212..220].copy_from_slice(&self.session_lifetime_us.to_be_bytes());
+        bytes
+    }
+}
+
+pub struct SshSignatureVerificationRequest<'a> {
+    pub public_key: &'a [u8],
+    pub exchange_hash: &'a [u8],
+    pub challenge: &'a [u8],
+    pub signature: &'a [u8],
+}
+
+/// Platform boundary for SSH public-key signature verification.
+pub trait SshSignatureVerifier {
+    fn verify(&mut self, request: SshSignatureVerificationRequest<'_>) -> bool;
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct RemoteAdminSession {
     session: Session,
@@ -292,6 +412,120 @@ impl<const USERS: usize, const CHALLENGES: usize> AuthDaemon<USERS, CHALLENGES> 
             device: challenge.device,
             credential: challenge.authentication.credential,
             authenticated_at_us: now_us,
+        })
+    }
+
+    pub(crate) fn begin_ssh_login(
+        &mut self,
+        username: &str,
+        login_node: NodeId,
+        device: NodeId,
+        public_key: &[u8],
+        exchange_hash: &[u8],
+        policy: SshLoginPolicy,
+        now_us: u64,
+    ) -> Result<SshAuthenticationChallenge, RemoteAuthError> {
+        if public_key.is_empty()
+            || public_key.len() > MAX_SSH_PUBLIC_KEY_BYTES
+            || exchange_hash.is_empty()
+            || exchange_hash.len() > MAX_SSH_EXCHANGE_HASH_BYTES
+        {
+            return Err(RemoteAuthError::InvalidSshProof)
+        }
+        let record = self
+            .database()
+            .login_record_for_ssh(username, login_node, public_key)
+            .ok_or(RemoteAuthError::Authentication(AuthError::CredentialNotFound))?;
+        let credential = record
+            .ssh_key_credential(public_key)
+            .ok_or(RemoteAuthError::Authentication(AuthError::CredentialNotFound))?;
+        let authentication = self
+            .begin_authentication_for_kind(
+                username,
+                login_node,
+                credential,
+                Some(CredentialKind::SshKey),
+                now_us,
+                policy.challenge_lifetime_us,
+            )
+            .map_err(RemoteAuthError::Authentication)?;
+        SshAuthenticationChallenge::new(
+            authentication,
+            device,
+            public_key,
+            exchange_hash,
+            policy,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn complete_ssh_login<V: SshSignatureVerifier>(
+        &mut self,
+        challenge: SshAuthenticationChallenge,
+        signature: &[u8],
+        verifier: &mut V,
+        policy: SshLoginPolicy,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<RemoteAdminSession, RemoteAuthError> {
+        if challenge.challenge_lifetime_us != policy.challenge_lifetime_us
+            || challenge.session_lifetime_us != policy.session_lifetime_us
+        {
+            return Err(RemoteAuthError::PolicyMismatch)
+        }
+        if signature.is_empty() || signature.len() > MAX_SSH_SIGNATURE_BYTES {
+            return Err(RemoteAuthError::InvalidSshProof)
+        }
+        let mut adapter = SshAdapter {
+            challenge,
+            signature,
+            verifier,
+        };
+        let session = self
+            .complete_authentication(
+                challenge.authentication,
+                signature,
+                &mut adapter,
+                login_address_space,
+                now_us,
+                policy.session_lifetime_us,
+            )
+            .map_err(RemoteAuthError::Authentication)?;
+        Ok(RemoteAdminSession {
+            session,
+            device: challenge.device,
+            credential: challenge.authentication.credential,
+            authenticated_at_us: now_us,
+        })
+    }
+}
+
+struct SshAdapter<'a, V> {
+    challenge: SshAuthenticationChallenge,
+    signature: &'a [u8],
+    verifier: &'a mut V,
+}
+
+impl<V: SshSignatureVerifier> CredentialVerifier for SshAdapter<'_, V> {
+    fn verify(
+        &mut self,
+        kind: CredentialKind,
+        public_material: &[u8],
+        challenge: &[u8],
+        response: &[u8],
+    ) -> bool {
+        if kind != CredentialKind::SshKey
+            || public_material != self.challenge.public_key()
+            || challenge != self.challenge.authentication.bytes()
+            || response != self.signature
+        {
+            return false
+        }
+        self.verifier.verify(SshSignatureVerificationRequest {
+            public_key: self.challenge.public_key(),
+            exchange_hash: self.challenge.exchange_hash(),
+            challenge: &self.challenge.bytes(),
+            signature: self.signature,
         })
     }
 }
@@ -639,6 +873,7 @@ pub enum RemoteAuthError {
     InvalidChallengeEntropy,
     InvalidPolicy,
     InvalidRemoteChallenge,
+    InvalidSshProof,
     PolicyMismatch,
 }
 
@@ -665,6 +900,7 @@ pub struct RemoteSecurityGateway<
     policy: WebAuthnPolicy,
     tokens: RemoteTokenIssuer<SCOPES>,
     pending: [Option<RemoteAuthenticationChallenge>; CHALLENGES],
+    ssh_pending: [Option<SshAuthenticationChallenge>; CHALLENGES],
 }
 
 impl<const USERS: usize, const CHALLENGES: usize, const SCOPES: usize>
@@ -680,6 +916,7 @@ impl<const USERS: usize, const CHALLENGES: usize, const SCOPES: usize>
             policy,
             tokens,
             pending: [None; CHALLENGES],
+            ssh_pending: [None; CHALLENGES],
         }
     }
 
@@ -737,6 +974,67 @@ impl<const USERS: usize, const CHALLENGES: usize, const SCOPES: usize>
             assertion,
             verifier,
             self.policy,
+            login_address_space,
+            now_us,
+        )
+    }
+
+    pub fn begin_ssh_login(
+        &mut self,
+        username: &str,
+        login_node: NodeId,
+        device: NodeId,
+        public_key: &[u8],
+        exchange_hash: &[u8],
+        policy: SshLoginPolicy,
+        now_us: u64,
+    ) -> Result<SshAuthenticationChallenge, RemoteAuthError> {
+        self.ssh_pending
+            .iter_mut()
+            .filter(|entry| {
+                entry.is_some_and(|challenge| {
+                    challenge.authentication.expires_at_us <= now_us
+                })
+            })
+            .for_each(|entry| *entry = None);
+        let slot = self
+            .ssh_pending
+            .iter()
+            .position(Option::is_none)
+            .ok_or(RemoteAuthError::Authentication(AuthError::Capacity))?;
+        let challenge = self.authd.begin_ssh_login(
+            username,
+            login_node,
+            device,
+            public_key,
+            exchange_hash,
+            policy,
+            now_us,
+        )?;
+        self.ssh_pending[slot] = Some(challenge);
+        Ok(challenge)
+    }
+
+    pub fn complete_ssh_login<V: SshSignatureVerifier>(
+        &mut self,
+        challenge: SshAuthenticationChallenge,
+        signature: &[u8],
+        verifier: &mut V,
+        policy: SshLoginPolicy,
+        login_address_space: AddressSpaceId,
+        now_us: u64,
+    ) -> Result<RemoteAdminSession, RemoteAuthError> {
+        let slot = self
+            .ssh_pending
+            .iter()
+            .position(|entry| entry.is_some_and(|pending| pending == challenge))
+            .ok_or(RemoteAuthError::InvalidRemoteChallenge)?;
+        self.ssh_pending[slot] = None;
+        self.authd.complete_ssh_login(
+            challenge,
+            signature,
+            verifier,
+            policy,
             login_address_space,
             now_us,
         )

@@ -135,6 +135,13 @@ impl Credential {
         Self::new(id, CredentialKind::Tpm20, public_material)
     }
 
+    pub fn new_ssh_key(
+        id: CredentialId,
+        public_key: &[u8],
+    ) -> Result<Self, AuthError> {
+        Self::new(id, CredentialKind::SshKey, public_key)
+    }
+
     pub fn public_material(&self) -> &[u8] {
         &self.public_material[..self.public_material_length as usize]
     }
@@ -269,6 +276,15 @@ impl UserRecord {
 
     fn credential(&self, id: CredentialId) -> Option<Credential> {
         self.credentials().find(|credential| credential.id == id)
+    }
+
+    pub fn ssh_key_credential(&self, public_key: &[u8]) -> Option<CredentialId> {
+        self.credentials()
+            .find(|credential| {
+                credential.kind == CredentialKind::SshKey
+                    && credential.public_material() == public_key
+            })
+            .map(|credential| credential.id)
     }
 
     pub fn record_passkey_use(
@@ -417,6 +433,36 @@ impl<const CAPACITY: usize> AuthorizationDatabase<CAPACITY> {
                         record.enabled
                             && record.scope == DatabaseScope::Local
                             && record.username.matches(username)
+                    })
+                    .copied()
+            })
+    }
+
+    pub(crate) fn login_record_for_ssh(
+        &self,
+        username: &str,
+        node: NodeId,
+        public_key: &[u8],
+    ) -> Option<UserRecord> {
+        self.records
+            .iter()
+            .flatten()
+            .find(|record| {
+                record.enabled
+                    && record.scope == DatabaseScope::NodeLocal(node)
+                    && record.username.matches(username)
+                    && record.ssh_key_credential(public_key).is_some()
+            })
+            .copied()
+            .or_else(|| {
+                self.records
+                    .iter()
+                    .flatten()
+                    .find(|record| {
+                        record.enabled
+                            && record.scope == DatabaseScope::Local
+                            && record.username.matches(username)
+                            && record.ssh_key_credential(public_key).is_some()
                     })
                     .copied()
             })

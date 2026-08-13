@@ -417,7 +417,7 @@ crypto verifier. A successful session builds the kernel-owned execution
 persona and mints only the configured initial capability set into the login
 address space.
 
-Remote administration uses a stricter WebAuthn path. The daemon binds each
+Browser remote administration uses a stricter WebAuthn path. The daemon binds each
 one-shot assertion to a server-supplied 256-bit ceremony nonce, frontend device,
 relying-party ID, HTTPS origin, credential, and expiry. It requires both
 authenticator user-presence and user-verification flags, so a platform passkey
@@ -426,11 +426,11 @@ must complete its device biometric or PIN check. COSE signature and
 `synos-auth` enforces ceremony type, origin and RP hashes, bounded inputs, and
 monotonic authenticator counters.
 
-The remote security gateway issues capabilities only after that passkey
-session. Trusted code installs an exact resource allowlist; the frontend may
+The remote security gateway issues capabilities only after that authenticated
+remote session. Trusted code installs an exact resource allowlist; the frontend may
 request only a subset of its safe rights and a lifetime of at most five
 minutes. Issued tokens are bound to the authenticated device, restricted to
-Layer 2, capped by the passkey session expiry, sealed against subject rebinding,
+Layer 2, capped by the authenticated session expiry, sealed against subject rebinding,
 and fenced by a gateway revocation epoch. Remote tokens can never carry map,
 create, delegate, or revoke rights.
 
@@ -766,10 +766,11 @@ erase and insertion operations, SGR colors and attributes, DEC private modes,
 and OSC framing. Dirty rows become fixed WebGPU cell instances, allowing a
 WebAssembly frontend to update only changed GPU buffer ranges.
 
-Its Ring 3 SSH gate accepts public-key proofs through a platform authentication
-trait, requires an authenticated shell capability before opening `syn-shell`,
-and binds every generation-checked session to its principal. Terminal resize,
-bounded input, output polling, and close operations stay transport-independent.
+Its Ring 3 SSH gate accepts configured public-key proofs through a platform
+authentication trait. SSH login uses one-shot, exchange-hash-bound challenges
+and expiring sessions before opening `syn-shell`; every generation-checked
+session stays bound to its principal. Terminal resize, bounded input, output
+polling, and close operations stay transport-independent.
 
 `synos-remote-display` moves capture surfaces through explicit available,
 capturing, encoding, and in-flight lease states. NV12, P010, RGBA, and BGRA

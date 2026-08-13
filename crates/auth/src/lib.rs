@@ -39,7 +39,10 @@ pub use remote::{
     MAX_WEBAUTHN_SIGNATURE_BYTES, RemoteAdminSession, RemoteAuthError,
     RemoteAuthenticationChallenge, RemoteCapabilityScope, RemoteSecurityGateway,
     RemoteTokenError, RemoteTokenIssuer, WebAuthnAssertion, WebAuthnPolicy,
-    WebAuthnVerification, WebAuthnVerificationRequest, WebAuthnVerifier, remote_safe_rights,
+    WebAuthnVerification, WebAuthnVerificationRequest, WebAuthnVerifier, SshLoginPolicy,
+    SshAuthenticationChallenge, SshSignatureVerificationRequest, SshSignatureVerifier,
+    MAX_SSH_EXCHANGE_HASH_BYTES, MAX_SSH_PUBLIC_KEY_BYTES, MAX_SSH_SIGNATURE_BYTES,
+    remote_safe_rights,
 };
 pub use revocation_monitor::{
     CacheReport, PropagationObservation, PropagationReport, RevocationCache, RevocationKey,
