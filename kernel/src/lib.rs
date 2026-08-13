@@ -223,6 +223,16 @@ static LOGIN_PASSKEY_CHALLENGE_READY: AtomicBool = AtomicBool::new(false);
     any(target_os = "none", target_os = "uefi")
 ))]
 static LOGIN_PASSKEY_CHALLENGE: [AtomicU8; 32] = [const { AtomicU8::new(0) }; 32];
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_TPM_CHALLENGE_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_TPM_CHALLENGE: [AtomicU8; 32] = [const { AtomicU8::new(0) }; 32];
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -471,6 +481,26 @@ const LOCAL_PASSKEY_HEADER_BYTES: usize = 46;
     any(target_os = "none", target_os = "uefi")
 ))]
 const LOCAL_PASSKEY_AUTHENTICATOR_DATA_MIN: usize = 37;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_TPM_QUOTE_HEADER_BYTES: usize = 46;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_TPM_QUOTE_MIN_BYTES: usize = 8;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_TPM_SIGNATURE_MIN_BYTES: usize = 16;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_TPM_PCR_DIGEST_BYTES: usize = 32;
 
 #[cfg(all(
     target_arch = "x86_64",
@@ -522,9 +552,54 @@ fn valid_local_passkey_assertion(assertion: &[u8]) -> bool {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+fn valid_local_tpm_quote(quote: &[u8]) -> bool {
+    if quote.len() < LOCAL_TPM_QUOTE_HEADER_BYTES
+        || quote[..4] != *b"SYTQ"
+        || quote[4] != 1
+        || quote[5..8] != [0; 3]
+        || !LOGIN_TPM_CHALLENGE_READY.load(Ordering::Acquire)
+    {
+        return false
+    }
+    for (index, slot) in LOGIN_TPM_CHALLENGE.iter().enumerate() {
+        if quote[8 + index] != slot.load(Ordering::Relaxed) {
+            return false
+        }
+    }
+    let quote_length = u16::from_le_bytes([quote[40], quote[41]]) as usize;
+    let signature_length = u16::from_le_bytes([quote[42], quote[43]]) as usize;
+    let pcr_digest_length = u16::from_le_bytes([quote[44], quote[45]]) as usize;
+    let payload_length = quote_length
+        .saturating_add(signature_length)
+        .saturating_add(pcr_digest_length);
+    if quote_length < LOCAL_TPM_QUOTE_MIN_BYTES
+        || signature_length < LOCAL_TPM_SIGNATURE_MIN_BYTES
+        || pcr_digest_length != LOCAL_TPM_PCR_DIGEST_BYTES
+        || LOCAL_TPM_QUOTE_HEADER_BYTES.saturating_add(payload_length) != quote.len()
+    {
+        return false
+    }
+    let quote_end = LOCAL_TPM_QUOTE_HEADER_BYTES + quote_length;
+    quote[LOCAL_TPM_QUOTE_HEADER_BYTES..LOCAL_TPM_QUOTE_HEADER_BYTES + 4]
+        == [0xff, 0x54, 0x43, 0x47]
+        && quote[LOCAL_TPM_QUOTE_HEADER_BYTES + 4..LOCAL_TPM_QUOTE_HEADER_BYTES + 6]
+            == [0x80, 0x18]
+        && quote[quote_end + signature_length..]
+            .iter()
+            .any(|byte| *byte != 0)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 fn clear_login_challenge() {
     LOGIN_PASSKEY_CHALLENGE_READY.store(false, Ordering::Release);
     for slot in &LOGIN_PASSKEY_CHALLENGE {
+        slot.store(0, Ordering::Relaxed)
+    }
+    LOGIN_TPM_CHALLENGE_READY.store(false, Ordering::Release);
+    for slot in &LOGIN_TPM_CHALLENGE {
         slot.store(0, Ordering::Relaxed)
     }
 }
@@ -729,6 +804,56 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
         return syscall_success([1, 0, 0, 0])
     }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginTpmComplete) {
+        if caller.raw() != 14
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments[0] == 0
+            || request.arguments[1] == 0
+            || request.arguments[1] > 127
+            || request.arguments[2] == 0
+            || request.arguments[3] == 0
+            || request.arguments[3] > 512
+            || request.arguments[4..] != [0; 2]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if !LOGIN_REQUESTED.load(Ordering::Acquire) {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let username_address = request.arguments[0];
+        let username_length = request.arguments[1] as usize;
+        let quote_address = request.arguments[2];
+        let quote_length = request.arguments[3] as usize;
+        if !arch::paging::service_user_range(username_address, username_length as u64, false)
+            || !arch::paging::service_user_range(quote_address, quote_length as u64, false)
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let mut username = [0; 128];
+        let mut quote = [0; 512];
+        arch::with_user_access(|| {
+            let source = unsafe {
+                core::slice::from_raw_parts(username_address as *const u8, username_length)
+            };
+            username[..username_length].copy_from_slice(source);
+            let source = unsafe {
+                core::slice::from_raw_parts(quote_address as *const u8, quote_length)
+            };
+            quote[..quote_length].copy_from_slice(source);
+        });
+        if !valid_login_username(&username[..username_length])
+            || !valid_local_tpm_quote(&quote[..quote_length])
+        {
+            clear_login_challenge();
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        clear_login_challenge();
+        LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
+        LOGIN_REQUESTED.store(false, Ordering::Release);
+        LOGIN_AUTHORIZED.store(true, Ordering::Release);
+        return syscall_success([1, 0, 0, 0])
+    }
     if Operation::from_raw(request.operation) == Some(Operation::LoginStatus) {
         if caller.raw() != 14
             || request.flags != 0
@@ -786,6 +911,34 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             slot.store(value, Ordering::Relaxed)
         }
         LOGIN_PASSKEY_CHALLENGE_READY.store(true, Ordering::Release);
+        return syscall_success([32, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginTpmChallenge) {
+        if caller.raw() != 14
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments[0] == 0
+            || request.arguments[1] != 32
+            || request.arguments[2..] != [0; 4]
+            || !arch::paging::service_user_range(request.arguments[0], 32, true)
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if !LOGIN_REQUESTED.load(Ordering::Acquire) || !random::ready() {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let mut challenge = [0; 32];
+        if !random::fill(&mut challenge) {
+            return syscall_error(Status::BUSY)
+        }
+        arch::with_user_access(|| unsafe {
+            core::slice::from_raw_parts_mut(request.arguments[0] as *mut u8, 32)
+                .copy_from_slice(&challenge)
+        });
+        for (slot, value) in LOGIN_TPM_CHALLENGE.iter().zip(challenge) {
+            slot.store(value, Ordering::Relaxed)
+        }
+        LOGIN_TPM_CHALLENGE_READY.store(true, Ordering::Release);
         return syscall_success([32, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::ServiceReady) {

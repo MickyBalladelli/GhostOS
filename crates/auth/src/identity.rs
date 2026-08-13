@@ -128,6 +128,13 @@ impl Credential {
         Ok(credential)
     }
 
+    pub fn new_tpm20(
+        id: CredentialId,
+        public_material: &[u8],
+    ) -> Result<Self, AuthError> {
+        Self::new(id, CredentialKind::Tpm20, public_material)
+    }
+
     pub fn public_material(&self) -> &[u8] {
         &self.public_material[..self.public_material_length as usize]
     }

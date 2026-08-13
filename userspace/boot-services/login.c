@@ -23,12 +23,16 @@ enum {
     OP_LOGIN_COMPLETE = 50,
     OP_LOGIN_STATUS = 51,
     OP_LOGIN_CHALLENGE = 53,
+    OP_LOGIN_TPM_CHALLENGE = 54,
+    OP_LOGIN_TPM_COMPLETE = 55,
     LOGIN_ROLE = 14,
 };
 
 enum {
     PASSKEY_CHALLENGE_BYTES = 32,
     PASSKEY_MAX_ASSERTION_BYTES = 512,
+    TPM_CHALLENGE_BYTES = 32,
+    TPM_MAX_QUOTE_BYTES = 512,
 };
 
 struct request {
@@ -207,9 +211,10 @@ __attribute__((section(".text._start"), noreturn))
 void _start(void)
 {
     char username[128];
-    char passkey_hex[PASSKEY_MAX_ASSERTION_BYTES * 2 + 1];
-    u8 passkey[PASSKEY_MAX_ASSERTION_BYTES];
-    u8 challenge[PASSKEY_CHALLENGE_BYTES];
+    char method[16];
+    char credential_hex[TPM_MAX_QUOTE_BYTES * 2 + 1];
+    u8 credential[TPM_MAX_QUOTE_BYTES];
+    u8 challenge[TPM_CHALLENGE_BYTES];
 
     call(OP_SERVICE_READY, LOGIN_ROLE, 0, 0, 0);
     write_text("SynOS login service\n");
@@ -225,48 +230,78 @@ void _start(void)
         }
         write_text("login: ");
         u64 username_length = read_line(username, sizeof(username), 1);
+        write_text("\ncredential [passkey/tpm]: ");
+        u64 method_length = read_line(method, sizeof(method), 1);
+        int use_tpm = method_length == 3
+            && (method[0] == 't' || method[0] == 'T')
+            && (method[1] == 'p' || method[1] == 'P')
+            && (method[2] == 'm' || method[2] == 'M');
+        int use_passkey = method_length == 0
+            || (method[0] == 'p' || method[0] == 'P');
+        if (!use_tpm && !use_passkey) {
+            write_text("\nUnknown credential type. Try again.\n");
+            clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
+            continue;
+        }
+        u16 challenge_operation = use_tpm
+            ? OP_LOGIN_TPM_CHALLENGE
+            : OP_LOGIN_CHALLENGE;
         struct response challenge_response = call(
-            OP_LOGIN_CHALLENGE,
+            challenge_operation,
             (u64)challenge,
             sizeof(challenge),
             0,
             0
         );
         if (challenge_response.status != 0) {
-            write_text("\nPasskey unavailable. Try again.\n");
+            write_text(use_tpm
+                ? "\nTPM credential unavailable. Try again.\n"
+                : "\nPasskey unavailable. Try again.\n");
             clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
             continue;
         }
-        write_text("\nTouch your passkey and paste its assertion as hex.\nchallenge: ");
+        write_text(use_tpm
+            ? "\nPresent your TPM-backed credential and paste its quote as hex.\nchallenge: "
+            : "\nTouch your passkey and paste its assertion as hex.\nchallenge: ");
         write_hex_bytes(challenge, sizeof(challenge));
-        write_text("\npasskey: ");
-        u64 passkey_hex_length = read_private_line(passkey_hex, sizeof(passkey_hex));
-        u64 passkey_length = decode_hex(
-            passkey_hex,
-            passkey_hex_length,
-            passkey,
-            sizeof(passkey)
+        write_text(use_tpm ? "\ntpm quote: " : "\npasskey: ");
+        u64 credential_hex_length = read_private_line(
+            credential_hex,
+            sizeof(credential_hex)
+        );
+        u64 credential_length = decode_hex(
+            credential_hex,
+            credential_hex_length,
+            credential,
+            sizeof(credential)
         );
         write_text("\n");
 
-        if (username_length == 0 || passkey_length == 0) {
+        if (username_length == 0 || credential_length == 0) {
             write_text("Login failed. Try again.\n");
             clear_bytes(username, sizeof(username));
-            clear_bytes(passkey_hex, sizeof(passkey_hex));
-            clear_bytes(passkey, sizeof(passkey));
+            clear_bytes(method, sizeof(method));
+            clear_bytes(credential_hex, sizeof(credential_hex));
+            clear_bytes(credential, sizeof(credential));
             continue;
         }
 
+        u16 complete_operation = use_tpm
+            ? OP_LOGIN_TPM_COMPLETE
+            : OP_LOGIN_COMPLETE;
         struct response completed = call(
-            OP_LOGIN_COMPLETE,
+            complete_operation,
             (u64)username,
             username_length,
-            (u64)passkey,
-            passkey_length
+            (u64)credential,
+            credential_length
         );
         clear_bytes(username, sizeof(username));
-        clear_bytes(passkey_hex, sizeof(passkey_hex));
-        clear_bytes(passkey, sizeof(passkey));
+        clear_bytes(method, sizeof(method));
+        clear_bytes(credential_hex, sizeof(credential_hex));
+        clear_bytes(credential, sizeof(credential));
         if (completed.status != 0) {
             write_text("Login failed. Try again.\n");
             continue;

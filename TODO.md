@@ -212,7 +212,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Show a clear first-boot message when no administrator account exists.
 - [x] Prompt for username and credential without echoing private input.
 - [x] Support passkey login from the local terminal.
-- [ ] Support TPM-backed credential login from the local terminal.
+- [x] Support TPM-backed credential login from the local terminal.
 - [ ] Support SSH-key login for configured remote sessions.
 - [ ] Display useful failure messages without revealing whether an account exists.
 - [ ] Rate-limit failed login attempts.
