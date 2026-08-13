@@ -656,13 +656,15 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         login_address_space: AddressSpaceId,
         now_us: u64,
     ) -> Result<SessionView, StartupError> {
-        self.sessions.complete_login(
+        let view = self.sessions.complete_login(
             challenge,
             response,
             verifier,
             login_address_space,
             now_us,
-        )
+        )?;
+        self.state.database = *self.sessions.authd().database();
+        Ok(view)
     }
 
     pub fn authorize(

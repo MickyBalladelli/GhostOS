@@ -403,6 +403,19 @@ impl UserRecord {
         Ok(())
     }
 
+    pub fn set_credential_label(
+        &mut self,
+        id: CredentialId,
+        label: &str,
+    ) -> Result<(), AuthError> {
+        self.credentials
+            .iter_mut()
+            .flatten()
+            .find(|credential| credential.id == id)
+            .ok_or(AuthError::CredentialNotFound)?
+            .set_label(label)
+    }
+
     fn record_credential_use(
         &mut self,
         id: CredentialId,
