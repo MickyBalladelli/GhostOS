@@ -105,6 +105,11 @@ static PROVISIONING_REQUIRED: AtomicBool = AtomicBool::new(true);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static FIRST_ADMIN_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static FIRST_ADMIN_USERNAME_LENGTH: AtomicU8 = AtomicU8::new(0);
 #[cfg(all(
     target_arch = "x86_64",
@@ -804,6 +809,14 @@ pub(crate) fn commit_first_admin() -> Result<(), Status> {
     let daemon = unsafe {
         (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
     };
+    if FIRST_ADMIN_SYNC_PENDING.load(Ordering::Acquire) {
+        crate::physical_storage::sync(daemon.filesystem_mut())
+            .map_err(|_| Status::INTERNAL)?;
+        FIRST_ADMIN_SYNC_PENDING.store(false, Ordering::Release);
+        FIRST_ADMIN_USERNAME_LENGTH.store(0, Ordering::Release);
+        PROVISIONING_REQUIRED.store(false, Ordering::Release);
+        return Ok(())
+    }
     match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
         Err(synos_synfs::Error::NotFound) => {}
@@ -895,6 +908,10 @@ pub(crate) fn commit_first_admin() -> Result<(), Status> {
     transaction
         .commit()
         .map_err(|error| error.status())?;
+    if crate::physical_storage::sync(daemon.filesystem_mut()).is_err() {
+        FIRST_ADMIN_SYNC_PENDING.store(true, Ordering::Release);
+        return Err(Status::INTERNAL)
+    }
     FIRST_ADMIN_USERNAME_LENGTH.store(0, Ordering::Release);
     PROVISIONING_REQUIRED.store(false, Ordering::Release);
     Ok(())

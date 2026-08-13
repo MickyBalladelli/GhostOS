@@ -2,13 +2,16 @@
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
 mod platform {
+    use core::mem::MaybeUninit;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     use synos_legacy_pc_drivers::pci::{ConfigAccess, PortConfig};
-    use synos_legacy_pc_drivers::storage::{AhciCommandList, AhciCommandTable, AhciController};
+    use synos_legacy_pc_drivers::storage::{
+        AhciCommandList, AhciCommandTable, AhciController, AhciPort,
+    };
     use synos_legacy_pc_drivers::AhciBlockDevice;
     use synos_synfs::{
-        MountedSystemVolume, ServiceManifest, SynFs, SYSTEM_DISK_MANIFEST_BYTES,
+        MountedSystemVolume, ServiceManifest, SynFs, SystemDiskManifest, SYSTEM_DISK_MANIFEST_BYTES,
         SYSTEM_VOLUME_BLOCKS,
     };
 
@@ -34,6 +37,9 @@ mod platform {
     static mut DMA: Dma = Dma([0; 4096]);
     static mut MANIFEST: Manifest = Manifest([0; SYSTEM_DISK_MANIFEST_BYTES]);
     static mut VOLUME: Volume = Volume([0; SynFs::<SYSTEM_VOLUME_BLOCKS>::volume_bytes()]);
+    static mut ACTIVE_PORT: MaybeUninit<AhciPort> = MaybeUninit::uninit();
+    static mut ACTIVE_MANIFEST: MaybeUninit<SystemDiskManifest> = MaybeUninit::uninit();
+    static ACTIVE_VOLUME_READY: AtomicUsize = AtomicUsize::new(0);
     static mut SERVICE_IMAGES: [ServiceImage; 15] =
         [const { ServiceImage([0; SERVICE_IMAGE_BYTES]) }; 15];
     static SERVICE_LENGTHS: [AtomicUsize; 15] = [const { AtomicUsize::new(0) }; 15];
@@ -118,14 +124,50 @@ mod platform {
                 let _ = port.stop(SPIN_LIMIT);
                 continue
             };
-            let filesystem = mounted.filesystem;
+            let MountedSystemVolume {
+                manifest,
+                filesystem,
+                volume,
+            } = mounted;
+            drop(volume);
+            drop(block);
             if unsafe { load_service_images(&filesystem) }.is_none() {
                 let _ = port.stop(SPIN_LIMIT);
                 continue
             }
+            unsafe {
+                (&mut *core::ptr::addr_of_mut!(ACTIVE_PORT)).write(port);
+                (&mut *core::ptr::addr_of_mut!(ACTIVE_MANIFEST)).write(manifest);
+                ACTIVE_VOLUME_READY.store(1, Ordering::Release);
+            }
             return Some(filesystem)
         }
         None
+    }
+
+    pub fn sync(filesystem: &mut SynFs<SYSTEM_VOLUME_BLOCKS>) -> Result<(), ()> {
+        if ACTIVE_VOLUME_READY.load(Ordering::Acquire) == 0 {
+            return Err(())
+        }
+        let manifest = unsafe {
+            (&*core::ptr::addr_of!(ACTIVE_MANIFEST)).assume_init_ref()
+        };
+        let mut block = unsafe {
+            AhciBlockDevice::new(
+                (&mut *core::ptr::addr_of_mut!(ACTIVE_PORT)).assume_init_mut(),
+                &mut *core::ptr::addr_of_mut!(COMMAND_LIST),
+                &mut *core::ptr::addr_of_mut!(COMMAND_TABLE),
+                (&raw const COMMAND_TABLE) as u64,
+                &mut *core::ptr::addr_of_mut!(DMA.0),
+                (&raw const DMA.0) as u64,
+                512,
+                SPIN_LIMIT,
+            )
+            .map_err(|_| ())?
+        };
+        let mut volume =
+            synos_synfs::SystemDiskVolume::new(&mut block, *manifest).map_err(|_| ())?;
+        filesystem.fsync(&mut volume).map(|_| ()).map_err(|_| ())
     }
 
     unsafe fn load_service_images(filesystem: &SynFs<SYSTEM_VOLUME_BLOCKS>) -> Option<()> {
@@ -159,13 +201,20 @@ mod platform {
 }
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
-pub use platform::{mount, service_image};
+pub use platform::{mount, service_image, sync};
 
 #[cfg(not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))))]
 pub fn mount(
     _inventory: &crate::pci::PciInventory,
 ) -> Option<synos_synfs::SynFs<{ synos_synfs::SYSTEM_VOLUME_BLOCKS }>> {
     None
+}
+
+#[cfg(not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))))]
+pub fn sync(
+    _filesystem: &mut synos_synfs::SynFs<{ synos_synfs::SYSTEM_VOLUME_BLOCKS }>,
+) -> Result<(), ()> {
+    Err(())
 }
 
 #[cfg(not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))))]
