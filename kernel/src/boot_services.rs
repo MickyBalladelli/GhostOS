@@ -663,11 +663,57 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
     any(target_os = "none", target_os = "uefi")
 ))]
 fn valid_first_admin_username(username: &[u8]) -> bool {
-    !username.is_empty()
-        && username.len() <= FIRST_ADMIN_USERNAME_CAPACITY
-        && username
+    if username.is_empty()
+        || username.len() > FIRST_ADMIN_USERNAME_CAPACITY
+        || !username
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-$".contains(byte))
+    {
+        return false
+    }
+    let mut normalized = [0; FIRST_ADMIN_USERNAME_CAPACITY];
+    for (slot, byte) in normalized.iter_mut().zip(username.iter().copied()) {
+        *slot = byte.to_ascii_lowercase();
+    }
+    !is_reserved_first_admin_username(&normalized[..username.len()])
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn is_reserved_first_admin_username(username: &[u8]) -> bool {
+    [
+        b".".as_slice(),
+        b"..".as_slice(),
+        b"account".as_slice(),
+        b"anonymous".as_slice(),
+        b"daemon".as_slice(),
+        b"guest".as_slice(),
+        b"kernel".as_slice(),
+        b"nobody".as_slice(),
+        b"operator".as_slice(),
+        b"root".as_slice(),
+        b"service".as_slice(),
+        b"system".as_slice(),
+    ]
+    .iter()
+    .any(|reserved| *reserved == username)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn normalized_first_admin_username(username: &[u8]) -> Option<[u8; FIRST_ADMIN_USERNAME_CAPACITY]> {
+    if !valid_first_admin_username(username) {
+        return None
+    }
+    let mut normalized = [0; FIRST_ADMIN_USERNAME_CAPACITY];
+    for (slot, byte) in normalized.iter_mut().zip(username.iter().copied()) {
+        *slot = byte.to_ascii_lowercase();
+    }
+    Some(normalized)
 }
 
 #[cfg(all(
@@ -705,14 +751,12 @@ fn load_first_admin_username(filesystem: Option<&SynFs<FILESYSTEM_BLOCKS>>) {
     let Ok(read) = filesystem.read(FIRST_ADMIN_USERNAME_PATH, &mut username) else {
         return
     };
-    if read.bytes_read != metadata.size as usize
-        || !valid_first_admin_username(&username[..read.bytes_read])
-    {
+    let Some(normalized) = normalized_first_admin_username(&username[..read.bytes_read]) else {
         return
-    }
+    };
     for (slot, byte) in FIRST_ADMIN_USERNAME
         .iter()
-        .zip(username.iter().copied())
+        .zip(normalized.iter().copied())
         .take(read.bytes_read)
     {
         slot.store(byte, Ordering::Relaxed)
@@ -738,9 +782,9 @@ pub(crate) fn create_first_admin_username(username: &[u8]) -> Result<(), Status>
     any(target_os = "none", target_os = "uefi")
 ))]
 fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
-    if !valid_first_admin_username(username) {
-        return Err(Status::INVALID_ARGUMENT)
-    }
+    let normalized = normalized_first_admin_username(username)
+        .ok_or(Status::INVALID_ARGUMENT)?;
+    let username = &normalized[..username.len()];
     if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ALREADY_EXISTS)
     }
@@ -990,9 +1034,11 @@ fn commit_first_admin_inner() -> Result<(), Status> {
 
     let mut record = [0; FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY];
     record[0] = FIRST_ADMIN_AUTHORIZATION_RECORD_VERSION;
+    let normalized_username = normalized_first_admin_username(&username[..username_read.bytes_read])
+        .ok_or(Status::CORRUPT)?;
     record[1] = username_read.bytes_read as u8;
     record[2..2 + username_read.bytes_read]
-        .copy_from_slice(&username[..username_read.bytes_read]);
+        .copy_from_slice(&normalized_username[..username_read.bytes_read]);
     record[2 + FIRST_ADMIN_USERNAME_CAPACITY] = credential[0];
     record[3 + FIRST_ADMIN_USERNAME_CAPACITY] = credential_length as u8;
     let material_start = 4 + FIRST_ADMIN_USERNAME_CAPACITY;

@@ -288,6 +288,10 @@ static void type_file(char *path, u8 *buffer)
 static int valid_account_username(const u8 *username, u64 username_length)
 {
     u64 index;
+    static const char *reserved[] = {
+        ".", "..", "account", "anonymous", "daemon", "guest", "kernel",
+        "nobody", "operator", "root", "service", "system"
+    };
     if (username_length == 0 || username_length > ACCOUNT_USERNAME_CAPACITY) {
         return 0;
     }
@@ -300,7 +304,42 @@ static int valid_account_username(const u8 *username, u64 username_length)
             return 0;
         }
     }
+    for (index = 0; index < sizeof(reserved) / sizeof(reserved[0]); index++) {
+        u64 reserved_length = length(reserved[index]);
+        u64 reserved_index;
+        if (reserved_length != username_length) {
+            continue;
+        }
+        for (reserved_index = 0; reserved_index < reserved_length; reserved_index++) {
+            u8 byte = username[reserved_index];
+            if (byte >= 'A' && byte <= 'Z') {
+                byte = (u8)(byte + ('a' - 'A'));
+            }
+            if (byte != (u8)reserved[index][reserved_index]) {
+                break;
+            }
+        }
+        if (reserved_index == reserved_length) {
+            return 0;
+        }
+    }
     return 1;
+}
+
+static void normalize_account_username(
+    const char *username,
+    u64 username_length,
+    u8 *normalized
+)
+{
+    u64 index;
+    for (index = 0; index < username_length; index++) {
+        u8 byte = (u8)username[index];
+        if (byte >= 'A' && byte <= 'Z') {
+            byte = (u8)(byte + ('a' - 'A'));
+        }
+        normalized[index] = byte;
+    }
 }
 
 static const char *account_credential_name(u8 kind)
@@ -673,10 +712,12 @@ static void create_account(const char *username, u8 *buffer)
     }
 
     u8 record[ACCOUNT_RECORD_HEADER_BYTES] = {0};
+    u8 normalized_username[ACCOUNT_USERNAME_CAPACITY] = {0};
+    normalize_account_username(username, username_length, normalized_username);
     record[0] = ACCOUNT_RECORD_VERSION;
     record[1] = (u8)username_length;
     for (offset = 0; offset < username_length; offset++) {
-        record[2 + offset] = (u8)username[offset];
+        record[2 + offset] = normalized_username[offset];
     }
     u32 failure_status = 0;
     if (!append_account_record(
@@ -767,10 +808,12 @@ static void delete_account(
     }
 
     u8 tombstone[ACCOUNT_RECORD_HEADER_BYTES] = {0};
+    u8 normalized_username[ACCOUNT_USERNAME_CAPACITY] = {0};
+    normalize_account_username(username, username_length, normalized_username);
     tombstone[0] = ACCOUNT_RECORD_VERSION;
     tombstone[1] = (u8)username_length;
     for (offset = 0; offset < username_length; offset++) {
-        tombstone[2 + offset] = (u8)username[offset];
+        tombstone[2 + offset] = normalized_username[offset];
     }
     tombstone[ACCOUNT_USERNAME_CAPACITY + 2] = ACCOUNT_RECORD_DELETED;
     u32 failure_status = 0;
@@ -986,18 +1029,22 @@ static void rename_account(
     }
 
     renamed_record[1] = (u8)new_length;
+    u8 normalized_new_username[ACCOUNT_USERNAME_CAPACITY] = {0};
+    normalize_account_username(new_username, new_length, normalized_new_username);
     for (offset = 0; offset < ACCOUNT_USERNAME_CAPACITY; offset++) {
         renamed_record[2 + offset] = 0;
     }
     for (offset = 0; offset < new_length; offset++) {
-        renamed_record[2 + offset] = (u8)new_username[offset];
+        renamed_record[2 + offset] = normalized_new_username[offset];
     }
 
     u8 tombstone[ACCOUNT_RECORD_HEADER_BYTES] = {0};
+    u8 normalized_old_username[ACCOUNT_USERNAME_CAPACITY] = {0};
+    normalize_account_username(old_username, old_length, normalized_old_username);
     tombstone[0] = ACCOUNT_RECORD_VERSION;
     tombstone[1] = (u8)old_length;
     for (offset = 0; offset < old_length; offset++) {
-        tombstone[2 + offset] = (u8)old_username[offset];
+        tombstone[2 + offset] = normalized_old_username[offset];
     }
     tombstone[ACCOUNT_USERNAME_CAPACITY + 2] = ACCOUNT_RECORD_DELETED;
 

@@ -14,6 +14,20 @@ pub const MAX_INITIAL_CAPABILITIES: usize = 8;
 pub const MAX_USER_RIGHTS: usize = 16;
 pub const DEFAULT_USER_CAPACITY: usize = 64;
 pub const DEFAULT_CHALLENGE_CAPACITY: usize = 16;
+pub const RESERVED_USERNAMES: &[&str] = &[
+    ".",
+    "..",
+    "account",
+    "anonymous",
+    "daemon",
+    "guest",
+    "kernel",
+    "nobody",
+    "operator",
+    "root",
+    "service",
+    "system",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Username {
@@ -34,7 +48,12 @@ impl Username {
             return Err(AuthError::InvalidRecord)
         }
         let mut bytes = [0; MAX_USERNAME_BYTES];
-        bytes[..source.len()].copy_from_slice(source);
+        for (slot, byte) in bytes.iter_mut().zip(source.iter().copied()) {
+            *slot = byte.to_ascii_lowercase();
+        }
+        if RESERVED_USERNAMES.contains(&core::str::from_utf8(&bytes[..source.len()]).unwrap()) {
+            return Err(AuthError::InvalidRecord)
+        }
         Ok(Self {
             bytes,
             length: source.len() as u8,

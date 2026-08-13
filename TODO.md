@@ -246,7 +246,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add `ACCOUNT ENABLE <username>` and `ACCOUNT DISABLE <username>`.
 - [x] Add `ACCOUNT RENAME <old> <new>` with persistent identity rules.
 - [x] Add account creation, update, disable, and deletion through the management API.
-- [ ] Enforce username syntax, length, normalization, and reserved-name rules.
+- [x] Enforce username syntax, length, normalization, and reserved-name rules.
 - [ ] Prevent deletion or disabling of the last usable administrator.
 - [ ] Revoke all sessions when an account is disabled or deleted.
 - [ ] Keep stable identity IDs when account display names change.
