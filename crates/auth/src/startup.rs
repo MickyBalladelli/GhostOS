@@ -7,7 +7,10 @@ use synos_fabric::NodeId;
 use synos_kernel::{
     AddressSpaceId, CapabilityObject, IdentityId, RightIdentifier, Rights,
 };
-use synos_observability::{audit_event, field, EventField, Level};
+use synos_observability::{
+    audit_event, field, AuditQuery, EventField, Level, TraceEvent, GLOBAL_AUDIT_CAPACITY,
+    SECURITY_AUDIT,
+};
 use synos_status::Status;
 
 use crate::identity::{
@@ -1510,6 +1513,29 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             *slot = Some(session);
         }
         Ok(sessions)
+    }
+
+    /// Query recent account and session audit activity for an administrator.
+    /// Only events carrying the security authentication-action field are
+    /// returned, keeping unrelated system telemetry out of this API.
+    pub fn query_audit(
+        &mut self,
+        handle: SessionHandle,
+        query: AuditQuery,
+        now_us: u64,
+        mut visitor: impl FnMut(TraceEvent),
+    ) -> Result<usize, StartupError> {
+        self.authorize_role(handle, AccountRole::Administrator, now_us)?;
+        let mut events = [None; GLOBAL_AUDIT_CAPACITY];
+        let available = SECURITY_AUDIT.copy_recent(&mut events);
+        let mut matched = 0;
+        for event in events.into_iter().take(available).flatten() {
+            if event.field(field::AUTH_ACTION).is_some() && query.matches(event) {
+                visitor(event);
+                matched += 1;
+            }
+        }
+        Ok(matched)
     }
 
     pub fn terminate_session(

@@ -1526,6 +1526,9 @@ pub struct AuditQuery {
     pub capability: Option<u64>,
     pub node: Option<u32>,
     pub status: Option<u32>,
+    pub auth_action: Option<u64>,
+    pub identity: Option<u64>,
+    pub caller: Option<u64>,
 }
 
 impl AuditQuery {
@@ -1550,6 +1553,27 @@ impl AuditQuery {
             event
                 .field(field::STATUS)
                 .is_none_or(|field| field.as_u64() as u32 != value)
+        }) {
+            return false;
+        }
+        if self.auth_action.is_some_and(|value| {
+            event
+                .field(field::AUTH_ACTION)
+                .is_none_or(|field| field.as_u64() != value)
+        }) {
+            return false;
+        }
+        if self.identity.is_some_and(|value| {
+            event
+                .field(field::IDENTITY)
+                .is_none_or(|field| field.as_u64() != value)
+        }) {
+            return false;
+        }
+        if self.caller.is_some_and(|value| {
+            event
+                .field(field::CALLER)
+                .is_none_or(|field| field.as_u64() != value)
         }) {
             return false;
         }
@@ -1584,7 +1608,8 @@ pub fn analyze_audit(
     Ok(matched)
 }
 
-/// Parser for `analyze/audit /since=N /before=N /capability=N /node=N /status=N`.
+/// Parser for `analyze/audit /since=N /before=N /capability=N /node=N /status=N`
+/// plus security fields `/auth_action=N /identity=N /caller=N`.
 pub fn parse_audit_command<'a>(
     arguments: impl IntoIterator<Item = &'a str>,
 ) -> Result<AuditQuery, QueryError> {
@@ -1612,6 +1637,15 @@ pub fn parse_audit_command<'a>(
                     u32::try_from(parse_u64(raw_value)?)
                         .map_err(|_| QueryError::InvalidArgument)?,
                 )
+            }
+            _ if name.eq_ignore_ascii_case("auth_action") => {
+                query.auth_action = Some(parse_u64(raw_value)?)
+            }
+            _ if name.eq_ignore_ascii_case("identity") => {
+                query.identity = Some(parse_u64(raw_value)?)
+            }
+            _ if name.eq_ignore_ascii_case("caller") => {
+                query.caller = Some(parse_u64(raw_value)?)
             }
             _ => return Err(QueryError::InvalidArgument),
         }

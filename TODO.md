@@ -278,7 +278,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Prevent recovery from silently bypassing normal authorization policy.
 - [x] Audit login success, login failure, logout, timeout, lockout, recovery, and account changes.
 - [x] Redact credentials, challenges, tokens, and private account data from logs and crash reports.
-- [ ] Add administrator-visible audit queries for account and session activity.
+- [x] Add administrator-visible audit queries for account and session activity.
 
 ### Verification and documentation
 

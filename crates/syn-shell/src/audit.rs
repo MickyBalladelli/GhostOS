@@ -29,8 +29,23 @@ pub fn register_audit_command<const CAPACITY: usize>(
     let capability = qualifier("CAPABILITY")?;
     let node = qualifier("NODE")?;
     let status = qualifier("STATUS")?;
+    let auth_action = qualifier("AUTH_ACTION")?;
+    let identity = qualifier("IDENTITY")?;
+    let caller = qualifier("CALLER")?;
     registry.register(
-        CommandSpec::new("ANALYZE-AUDIT", &[since, before, capability, node, status])
+        CommandSpec::new(
+            "ANALYZE-AUDIT",
+            &[
+                since,
+                before,
+                capability,
+                node,
+                status,
+                auth_action,
+                identity,
+                caller,
+            ],
+        )
             .map_err(|_| Error::InvalidValue)?,
         RouteId::from_valid_raw(ANALYZE_AUDIT_ROUTE),
     )
@@ -95,6 +110,9 @@ pub fn query_from_call(command: CommandCall) -> Result<AuditQuery, Status> {
             .map(u32::try_from)
             .transpose()
             .map_err(|_| Status::INVALID_ARGUMENT)?,
+        auth_action: unsigned(command.get("AUTH_ACTION"))?,
+        identity: unsigned(command.get("IDENTITY"))?,
+        caller: unsigned(command.get("CALLER"))?,
     })
 }
 
