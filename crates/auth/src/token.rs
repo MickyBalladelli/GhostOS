@@ -1,10 +1,21 @@
+use core::fmt;
+
 use synos_fabric::NodeId;
 use synos_kernel::Rights;
 
 pub const MAX_CAPABILITY_CAVEATS: usize = 4;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct CapabilityKey([u8; 32]);
+
+impl fmt::Debug for CapabilityKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CapabilityKey")
+            .field("value", &"[redacted]")
+            .finish()
+    }
+}
 
 impl CapabilityKey {
     pub const fn new(bytes: [u8; 32]) -> Self {
@@ -71,7 +82,7 @@ pub struct CapabilityCaveat {
 }
 
 /// HMAC-SHA256 capability with a fixed Macaroon-style attenuation chain.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct CryptographicCapability {
     pub issuer: NodeId,
     pub subject: NodeId,
@@ -84,6 +95,15 @@ pub struct CryptographicCapability {
     pub nonce: u64,
     caveats: [Option<CapabilityCaveat>; MAX_CAPABILITY_CAVEATS],
     tag: [u8; 32],
+}
+
+impl fmt::Debug for CryptographicCapability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CryptographicCapability")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl CryptographicCapability {

@@ -1,3 +1,5 @@
+use core::fmt;
+
 use synos_fabric::NodeId;
 use synos_kernel::{AddressSpaceId, IdentityId, Rights};
 
@@ -23,12 +25,24 @@ const AUTHENTICATOR_DATA_HEADER_BYTES: usize = 37;
 const FLAG_USER_PRESENT: u8 = 1 << 0;
 const FLAG_USER_VERIFIED: u8 = 1 << 2;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct WebAuthnPolicy {
     rp_id_hash: [u8; 32],
     origin_hash: [u8; 32],
     challenge_lifetime_us: u64,
     session_lifetime_us: u64,
+}
+
+impl fmt::Debug for WebAuthnPolicy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WebAuthnPolicy")
+            .field("rp_id_hash", &"[redacted]")
+            .field("origin_hash", &"[redacted]")
+            .field("challenge_lifetime_us", &self.challenge_lifetime_us)
+            .field("session_lifetime_us", &self.session_lifetime_us)
+            .finish()
+    }
 }
 
 impl WebAuthnPolicy {
@@ -86,10 +100,7 @@ impl core::fmt::Debug for RemoteAuthenticationChallenge {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("RemoteAuthenticationChallenge")
-            .field("authentication", &self.authentication)
-            .field("device", &self.device)
-            .field("rp_id_hash", &self.rp_id_hash)
-            .field("origin_hash", &self.origin_hash)
+            .field("value", &"[redacted]")
             .finish()
     }
 }
@@ -113,11 +124,20 @@ impl RemoteAuthenticationChallenge {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct WebAuthnAssertion<'a> {
     pub authenticator_data: &'a [u8],
     pub client_data_json: &'a [u8],
     pub signature: &'a [u8],
+}
+
+impl fmt::Debug for WebAuthnAssertion<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WebAuthnAssertion")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl<'a> WebAuthnAssertion<'a> {
@@ -152,12 +172,24 @@ pub struct WebAuthnVerificationRequest<'a> {
     pub signature: &'a [u8],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct WebAuthnVerification {
     pub signature_valid: bool,
     pub challenge_bound: bool,
     pub ceremony_is_get: bool,
     pub origin_hash: [u8; 32],
+}
+
+impl fmt::Debug for WebAuthnVerification {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WebAuthnVerification")
+            .field("signature_valid", &self.signature_valid)
+            .field("challenge_bound", &self.challenge_bound)
+            .field("ceremony_is_get", &self.ceremony_is_get)
+            .field("origin_hash", &"[redacted]")
+            .finish()
+    }
 }
 
 /// Platform boundary for COSE signature and clientDataJSON verification.
@@ -205,7 +237,7 @@ impl SshLoginPolicy {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct SshAuthenticationChallenge {
     pub authentication: AuthenticationChallenge,
     pub login_node: NodeId,
@@ -216,6 +248,15 @@ pub struct SshAuthenticationChallenge {
     exchange_hash_length: u8,
     challenge_lifetime_us: u64,
     session_lifetime_us: u64,
+}
+
+impl fmt::Debug for SshAuthenticationChallenge {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SshAuthenticationChallenge")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl SshAuthenticationChallenge {
@@ -292,12 +333,21 @@ pub trait SshSignatureVerifier {
     fn verify(&mut self, request: SshSignatureVerificationRequest<'_>) -> bool;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct RemoteAdminSession {
     session: Session,
     device: NodeId,
     credential: CredentialId,
     authenticated_at_us: u64,
+}
+
+impl fmt::Debug for RemoteAdminSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RemoteAdminSession")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl RemoteAdminSession {
@@ -661,7 +711,7 @@ pub struct RemoteTokenIssuer<const SCOPES: usize = DEFAULT_REMOTE_SCOPE_CAPACITY
     next_nonce: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 struct RemoteGrant {
     nonce: u64,
     resource: u64,
@@ -670,6 +720,15 @@ struct RemoteGrant {
     credential: CredentialId,
     authenticated_at_us: u64,
     expires_at_us: u64,
+}
+
+impl fmt::Debug for RemoteGrant {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RemoteGrant")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl<const SCOPES: usize> RemoteTokenIssuer<SCOPES> {

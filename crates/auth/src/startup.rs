@@ -1,7 +1,7 @@
 //! Security startup composition: persistent policy, first-admin bootstrap,
 //! and bounded local login sessions.
 
-use core::convert::TryFrom;
+use core::{convert::TryFrom, fmt};
 
 use synos_fabric::NodeId;
 use synos_kernel::{
@@ -91,13 +91,22 @@ impl PasswordRecoveryPolicy {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct RecoveryChallenge {
     pub target_identity: IdentityId,
     pub recovery_identity: IdentityId,
     pub recovery_credential: CredentialId,
     pub nonce: u64,
     pub expires_at_us: u64,
+}
+
+impl fmt::Debug for RecoveryChallenge {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RecoveryChallenge")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl RecoveryChallenge {
@@ -229,13 +238,25 @@ impl GroupId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct GroupRecord {
     pub id: GroupId,
     name: [u8; 32],
     name_length: u8,
     rights: [Option<RightIdentifier>; MAX_GROUP_RIGHTS],
     members: [Option<IdentityId>; MAX_GROUP_MEMBERS],
+}
+
+impl fmt::Debug for GroupRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GroupRecord")
+            .field("id", &self.id)
+            .field("name", &"[redacted]")
+            .field("rights", &"[redacted]")
+            .field("members", &"[redacted]")
+            .finish()
+    }
 }
 
 impl GroupRecord {
@@ -562,7 +583,7 @@ impl SessionHandle {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct SessionView {
     pub handle: SessionHandle,
     pub identity: IdentityId,
@@ -573,6 +594,15 @@ pub struct SessionView {
     pub last_activity_us: u64,
     pub expires_at_us: u64,
     pub revocation_epoch: u64,
+}
+
+impl fmt::Debug for SessionView {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionView")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy)]

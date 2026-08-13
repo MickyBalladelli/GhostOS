@@ -277,7 +277,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add safe credential-loss recovery requiring a trusted recovery key or physical recovery action.
 - [x] Prevent recovery from silently bypassing normal authorization policy.
 - [x] Audit login success, login failure, logout, timeout, lockout, recovery, and account changes.
-- [ ] Redact credentials, challenges, tokens, and private account data from logs and crash reports.
+- [x] Redact credentials, challenges, tokens, and private account data from logs and crash reports.
 - [ ] Add administrator-visible audit queries for account and session activity.
 
 ### Verification and documentation

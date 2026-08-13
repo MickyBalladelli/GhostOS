@@ -31,10 +31,19 @@ pub const RESERVED_USERNAMES: &[&str] = &[
     "system",
 ];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Username {
     bytes: [u8; MAX_USERNAME_BYTES],
     length: u8,
+}
+
+impl fmt::Debug for Username {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Username")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl Username {
@@ -147,7 +156,7 @@ impl fmt::Debug for PublicCredentialData {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PublicCredentialData")
-            .field("length", &self.length)
+            .field("value", &"[redacted]")
             .finish()
     }
 }
@@ -192,7 +201,8 @@ impl fmt::Debug for Credential {
             .debug_struct("Credential")
             .field("id", &self.id)
             .field("kind", &self.kind)
-            .field("label", &self.label())
+            .field("public_material", &"[redacted]")
+            .field("label", &"[redacted]")
             .field("created_at_us", &self.created_at_us)
             .field("expires_at_us", &self.expires_at_us)
             .field("last_used_at_us", &self.last_used_at_us)
@@ -342,10 +352,19 @@ pub trait PasswordVerifier {
     ) -> bool;
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct InitialCapability {
     pub object: CapabilityObject,
     pub rights: Rights,
+}
+
+impl fmt::Debug for InitialCapability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InitialCapability")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -367,8 +386,8 @@ impl fmt::Debug for UserRecord {
         formatter
             .debug_struct("UserRecord")
             .field("identity", &self.identity)
-            .field("username", &self.username)
-            .field("scope", &self.scope)
+            .field("username", &"[redacted]")
+            .field("scope", &"[redacted]")
             .field("state", &self.state)
             .field("enabled", &self.enabled)
             .field("credential_count", &self.credentials().count())
@@ -930,9 +949,7 @@ impl fmt::Debug for AuthenticationChallenge {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AuthenticationChallenge")
-            .field("identity", &self.identity)
-            .field("credential", &self.credential)
-            .field("expires_at_us", &self.expires_at_us)
+            .field("value", &"[redacted]")
             .finish()
     }
 }
@@ -1247,9 +1264,7 @@ impl fmt::Debug for Session {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Session")
-            .field("identity", &self.identity())
-            .field("login_address_space", &self.login_address_space)
-            .field("expires_at_us", &self.expires_at_us)
+            .field("value", &"[redacted]")
             .finish()
     }
 }
@@ -1309,9 +1324,18 @@ impl Session {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SessionCapabilities {
     handles: [Option<CapabilityHandle>; MAX_INITIAL_CAPABILITIES],
+}
+
+impl fmt::Debug for SessionCapabilities {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionCapabilities")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl SessionCapabilities {

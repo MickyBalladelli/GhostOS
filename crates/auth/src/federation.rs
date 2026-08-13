@@ -1,3 +1,5 @@
+use core::fmt;
+
 use synos_fabric::{AddressRange, NodeId};
 use synos_kernel::{FederationClusterId, Rights};
 
@@ -32,7 +34,7 @@ impl ClusterId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct DiscoveryAnnouncement {
     pub cluster: ClusterId,
     pub gateway: NodeId,
@@ -42,6 +44,15 @@ pub struct DiscoveryAnnouncement {
     pub nonce: u64,
     pub transports: TransportRights,
     authenticator: [u8; 32],
+}
+
+impl fmt::Debug for DiscoveryAnnouncement {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DiscoveryAnnouncement")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl DiscoveryAnnouncement {
@@ -217,7 +228,7 @@ pub enum FederatedResourceKind {
     Cpu = 3,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct FederatedResourceOffer {
     pub provider: ClusterId,
     pub resource: u64,
@@ -229,6 +240,15 @@ pub struct FederatedResourceOffer {
     pub epoch: u64,
     pub expires_at_us: u64,
     authenticator: [u8; 32],
+}
+
+impl fmt::Debug for FederatedResourceOffer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FederatedResourceOffer")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl FederatedResourceOffer {
@@ -452,7 +472,7 @@ pub enum RevocationReason {
     Policy = 4,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct RevocationSignal {
     pub provider: ClusterId,
     pub resource: u64,
@@ -462,6 +482,15 @@ pub struct RevocationSignal {
     pub deadline_us: u64,
     pub reason: RevocationReason,
     authenticator: [u8; 32],
+}
+
+impl fmt::Debug for RevocationSignal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RevocationSignal")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl RevocationSignal {

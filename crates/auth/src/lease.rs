@@ -1,3 +1,5 @@
+use core::fmt;
+
 use synos_fabric::NodeId;
 use synos_kernel::Rights;
 
@@ -37,7 +39,7 @@ pub enum LeaseError {
 /// A signed, bounded capability lease. Every authorization input is bound to
 /// the same signature, so a valid token for one daemon, object, tenant,
 /// generation, or purpose cannot become valid in another context.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct CapabilityLease {
     pub issuer: NodeId,
     pub subject: NodeId,
@@ -52,6 +54,15 @@ pub struct CapabilityLease {
     pub revocation_epoch: u64,
     pub nonce: u64,
     tag: [u8; 32],
+}
+
+impl fmt::Debug for CapabilityLease {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CapabilityLease")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl CapabilityLease {

@@ -1,3 +1,5 @@
+use core::fmt;
+
 use super::{ClusterId, FederatedResourceKind, FederationError};
 use crate::token::{CapabilityKey, TransportRights};
 
@@ -81,7 +83,7 @@ pub enum LeaseOwner {
 /// It never contains a node identity, filesystem path, process identifier, or
 /// socket. Resource capabilities are issued later and remain separately
 /// bounded by the accepted scope and federation epoch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct FederationInvitation {
     pub issuer: ClusterId,
     pub subject: ClusterId,
@@ -92,6 +94,15 @@ pub struct FederationInvitation {
     pub revocation_epoch: u64,
     pub nonce: u64,
     authenticator: [u8; 32],
+}
+
+impl fmt::Debug for FederationInvitation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FederationInvitation")
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 impl FederationInvitation {
