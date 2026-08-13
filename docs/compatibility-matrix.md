@@ -45,6 +45,7 @@ formats (Ext4, FAT32, and NTFS) are read-only inputs, not SynOS-owned formats.
 
 | Boundary | Version | Compatibility contract | Authority |
 | --- | ---: | --- | --- |
+| Native syscall ABI | schema `1`, revision `4`; 64-byte request, 40-byte response | Exact schema match; unsupported versions return `PROTOCOL_MISMATCH`; operation numbers and field offsets are stable | [`abi.md`](abi.md), [`abi/synos-abi.toml`](../abi/synos-abi.toml) |
 | Shared transport guard: HTTP, gRPC, SDK, remote terminal, mesh, cluster | `1` | Negotiated version ranges, replay window, authentication, size, and backpressure limits | [`protocol/src/lib.rs`](../crates/protocol/src/lib.rs), [`protocol-compatibility.md`](protocol-compatibility.md) |
 | Client RPC frames (`SYRP`) | `1`; 24-byte header; 4096-byte maximum | Rust and Swift clients use the same frame version and method IDs | [`client-sdk/src/wire.rs`](../crates/client-sdk/src/wire.rs), [`SynOSClient.swift`](../clients/apple/Sources/SynOSClient/SynOSClient.swift) |
 | Boot handoff (`BootInfo`) | magic `SYNOSBOO`, version `1` | Bootloader and kernel must agree on the exact version; unknown versions reject | [`boot-protocol/src/lib.rs`](../crates/boot-protocol/src/lib.rs) |

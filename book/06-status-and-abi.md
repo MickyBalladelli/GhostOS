@@ -31,6 +31,11 @@ The exact encoded value is less important than preserving the category through e
 
 `synos-runtime` is the user-facing system-call contract. It validates operation numbers, arguments, buffer directions, shared-region bounds, and descriptor lifecycles. Unknown operations return a stable status rather than falling into an unchecked default.
 
+The complete native contract is in [`docs/abi.md`](../docs/abi.md). The current
+syscall schema is version 1, with a fixed 64-byte request and 40-byte response.
+The request carries the schema version, and the kernel rejects a mismatched
+version before dispatch.
+
 The ABI should be treated like a wire protocol:
 
 1. identify the operation;
@@ -65,4 +70,3 @@ NVMe controller: queue full
 ```
 
 The user sees a helpful message. The machine keeps the precise condition.
-

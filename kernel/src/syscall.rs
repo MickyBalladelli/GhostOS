@@ -276,6 +276,10 @@ pub extern "C" fn synos_call_gate_dispatch(
         return 0
     };
     let request = unsafe { crate::arch::read_user(request) };
+    if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+        unsafe { crate::arch::write_user(response, error(Status::PROTOCOL_MISMATCH)) };
+        return 0
+    }
     if !validate_request_shape(&request) {
         unsafe { crate::arch::write_user(response, error(Status::INVALID_ARGUMENT)) };
         return 0

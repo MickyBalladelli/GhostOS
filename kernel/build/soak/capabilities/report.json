@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "campaign": "capabilities",
+  "cycles_requested": 512,
+  "cycles_completed": 0,
+  "stale_rejections": 4,
+  "generation_reuses": 1,
+  "peak_live_capabilities": 3,
+  "zero_live_capabilities_after_cycle": false,
+  "result_state": "failed",
+  "failure": "cycle 1: stale handle 0x100000000 was inspectable"
+}
