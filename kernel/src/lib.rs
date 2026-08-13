@@ -1049,7 +1049,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite) {
         let shell_active = caller.raw() == 9 && login_session_active();
-        if caller.raw() != 14 && !shell_active {
+        let shell_first_run = caller.raw() == 9
+            && !LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire);
+        if caller.raw() != 14 && !shell_active && !shell_first_run {
             return syscall_error(Status::ACCESS_DENIED)
         }
         let address = request.arguments[0] as usize;
@@ -1074,7 +1076,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         }
     }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalRead) {
-        if caller.raw() != 14 && (caller.raw() != 9 || !login_session_active()) {
+        let shell_allowed = caller.raw() == 9
+            && (login_session_active()
+                || !LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire));
+        if caller.raw() != 14 && !shell_allowed {
             return syscall_error(Status::ACCESS_DENIED)
         }
         let address = request.arguments[0] as usize;

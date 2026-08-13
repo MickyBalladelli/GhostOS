@@ -146,26 +146,36 @@ static int login_authorized(void)
     return response.status == 0 && response.values[3] != 0;
 }
 
-static void write_prompt(int authorized)
+static int first_run_mode(void)
+{
+    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
+    return response.status == 0 && response.values[1] == 0;
+}
+
+static void write_prompt(int authorized, int first_run)
 {
     if (authorized) {
         write_text("$ ");
+    } else if (first_run) {
+        write_text("\x1b[1;33mSYNOS\x1b[90m::\x1b[35mFIRST-RUN\x1b[0m> ");
     } else {
         write_text("\x1b[1;33mSYNOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ");
     }
 }
 
-static int update_prompt(int *prompt_authorized)
+static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 {
     int authorized = login_authorized();
-    if (*prompt_authorized != authorized) {
-        if (*prompt_authorized >= 0) {
+    int first_run = first_run_mode();
+    if (*prompt_authorized != authorized || *prompt_first_run != first_run) {
+        if (*prompt_authorized >= 0 || *prompt_first_run >= 0) {
             write_text("\n");
         }
-        write_prompt(authorized);
+        write_prompt(authorized, first_run);
         *prompt_authorized = authorized;
+        *prompt_first_run = first_run;
     }
-    return authorized;
+    return authorized || first_run;
 }
 
 static void sleep_for(u64 duration_us)
@@ -339,6 +349,22 @@ static void execute_line(char *line, u8 *buffer)
     }
 }
 
+static void execute_first_run_line(char *line)
+{
+    char command[256];
+    char *cursor = line;
+    if (next_word(&cursor, command) == 0) {
+        return;
+    }
+    if (equal_name(command, "HELP") || equal_name(command, "STATUS")
+        || equal_name(command, "SETUP")) {
+        write_text("First-run setup mode. Normal shell commands are disabled.\n");
+        write_text("Administrator setup will be available here.\n");
+        return;
+    }
+    write_text("Restricted first-run mode: use HELP or STATUS.\n");
+}
+
 __attribute__((section(".text._start"), noreturn))
 void _start(void)
 {
@@ -350,10 +376,11 @@ void _start(void)
     u8 byte;
 
     call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
-    write_text("SynOS user shell\n");
+    write_text(first_run_mode() ? "SynOS first-run setup mode\n" : "SynOS user shell\n");
     int prompt_authorized = -1;
+    int prompt_first_run = -1;
     for (;;) {
-        if (!update_prompt(&prompt_authorized)) {
+        if (!update_prompt(&prompt_authorized, &prompt_first_run)) {
             line_length = 0;
             sleep_for(1000);
             continue;
@@ -371,7 +398,11 @@ void _start(void)
         if (byte == '\r' || byte == '\n') {
             write_text("\n");
             line[line_length] = 0;
-            execute_line(line, buffer);
+            if (first_run_mode()) {
+                execute_first_run_line(line);
+            } else if (login_authorized()) {
+                execute_line(line, buffer);
+            }
             line_length = 0;
         } else if (byte == 8 || byte == 127) {
             if (line_length != 0) {

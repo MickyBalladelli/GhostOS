@@ -278,10 +278,13 @@ void _start(void)
     write_text("The terminal is locked until login completes.\n");
     if (!administrator_account_exists()) {
         write_text("No administrator account exists.\n");
-        write_text("Complete first-boot administrator setup before logging in.\n");
+        write_text("First-run setup mode is active; normal login is disabled.\n");
     }
 
     for (;;) {
+        while (!administrator_account_exists()) {
+            idle();
+        }
         while (!login_requested()) {
             idle();
         }
