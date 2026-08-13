@@ -183,7 +183,13 @@ Build the real operating system core before adding more advanced features.
 
 ### Testing gates
 
-- [ ] Add real hardware boot evidence.
+- [x] Add real hardware boot evidence.
+      Implementation: [`scripts/record-hardware-boot-evidence.py`](scripts/record-hardware-boot-evidence.py)
+      packages a COM1 capture, bare-metal inventory, exact boot artifact hash,
+      and Git revision. [`scripts/validate-hardware-boot-evidence.py`](scripts/validate-hardware-boot-evidence.py)
+      rejects hypervisor declarations, panic output, incomplete Ring 3 boot,
+      stale hashes, and mismatched BIOS/UEFI inventory. See
+      [`platforms/README.md`](platforms/README.md).
 - [ ] Add service-start and service-restart integration tests.
 - [ ] Add process-isolation integration tests.
 - [ ] Add power-loss and disk-corruption tests.

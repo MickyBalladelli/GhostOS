@@ -4,6 +4,55 @@ These profiles separate repeatable platform validation from development claims.
 A platform passes only when `scripts/qualify-platform.sh` accepts evidence
 captured from that exact machine or emulated topology.
 
+## One physical x86_64 boot
+
+Capture the COM1 output from one supported x86_64 machine. The capture must
+reach the Ring 3 shell; QEMU, KVM, and HVF output is not hardware evidence.
+Write `inventory.txt` in `key=value` form using the fields below:
+
+```text
+environment=bare-metal
+hypervisor=none
+architecture=x86_64
+boot_mode=bios
+console=com1
+machine_id=<local non-secret machine label>
+firmware_vendor=<firmware vendor>
+firmware_version=<firmware version>
+motherboard=<board model>
+cpu=<CPU model>
+memory_mib=<RAM in MiB>
+storage=<boot disk model>
+nic=<NIC model and PCI ID>
+```
+
+After shutting the machine down, package the serial log, inventory, and exact
+boot artifact used for that boot:
+
+```sh
+python3 scripts/record-hardware-boot-evidence.py \
+  --evidence-dir build/test-evidence/<run-id>/hardware-boot \
+  --serial-log /path/to/node.serial.log \
+  --inventory /path/to/inventory.txt \
+  --artifact build/bios/synos-bios.img \
+  --boot-mode bios \
+  --operator <operator-id> \
+  --revision "$(git rev-parse HEAD)" \
+  --started-at 2026-08-13T09:00:00Z \
+  --ended-at 2026-08-13T09:05:00Z
+```
+
+Validate the retained bundle and its hashes with:
+
+```sh
+./scripts/qualify-platform.sh hardware-boot build/test-evidence/<run-id>/hardware-boot
+```
+
+The validator requires the kernel bootstrap, x86_64 hardware discovery,
+`synos-init` Ring 3 handoff, and `synos-shell` readiness markers. It also
+rejects panic output, a hypervisor declaration, missing artifact hashes, and
+an inventory that does not identify the target machine.
+
 ## Two consumer PCs
 
 Use two x86_64 PCs with supported Intel E1000-family or Realtek RTL8169-family

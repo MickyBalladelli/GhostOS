@@ -157,6 +157,7 @@ evidence described in `platforms/README.md`.
 | qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
 | cluster | `scripts/qemu-cluster-validation.sh` | opt-in | node serial logs, command logs, QMP input, failover log |
 | hardware-accelerated | `SYNOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
+| hardware-boot | `python3 scripts/record-hardware-boot-evidence.py ...` | manual | COM1 log, hardware inventory, boot artifact hash, and revision |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
 | performance | `python3 scripts/benchmark.py --baseline <same-host-report> -- cargo bench -p synos-vm --bench bounded` | required | benchmark report, hardware signature, budgets, and regression state |
 | soak | `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle ownership report, logs, and resource-drift snapshots |

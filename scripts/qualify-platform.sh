@@ -6,7 +6,7 @@ evidence_dir=${2:-}
 
 if [ -z "$profile" ] || [ -z "$evidence_dir" ]; then
     echo "usage: $0 PROFILE EVIDENCE_DIRECTORY" >&2
-    echo "profiles: legacy-two-node, qemu-cluster, enterprise-cxl, enterprise-gpu" >&2
+    echo "profiles: hardware-boot, legacy-two-node, qemu-cluster, enterprise-cxl, enterprise-gpu" >&2
     exit 1
 fi
 
@@ -14,6 +14,8 @@ if ! command -v rg >/dev/null 2>&1; then
     echo "ripgrep is required" >&2
     exit 1
 fi
+
+root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 failures=0
 
@@ -43,6 +45,10 @@ require_cluster_evidence() {
 }
 
 case "$profile" in
+    hardware-boot)
+        python3 "$root_dir/scripts/validate-hardware-boot-evidence.py" "$evidence_dir"
+        exit $?
+        ;;
     legacy-two-node)
         require_cluster_evidence
         require_pattern "(E1000|RTL8169)" "$evidence_dir/inventory.txt"
