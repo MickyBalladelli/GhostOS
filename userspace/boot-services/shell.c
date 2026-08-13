@@ -376,7 +376,12 @@ void _start(void)
     u8 byte;
 
     call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
-    write_text(first_run_mode() ? "SynOS first-run setup mode\n" : "SynOS user shell\n");
+    if (first_run_mode()) {
+        write_text("SynOS first-run setup mode\n");
+        write_text("Attach a trusted local keyboard to continue setup.\n");
+    } else {
+        write_text("SynOS user shell\n");
+    }
     int prompt_authorized = -1;
     int prompt_first_run = -1;
     for (;;) {

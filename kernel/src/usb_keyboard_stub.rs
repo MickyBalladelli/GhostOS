@@ -9,3 +9,8 @@ impl UsbKeyboard {
         None
     }
 }
+
+#[allow(dead_code)]
+pub const fn read_boot_byte() -> Option<u8> {
+    None
+}

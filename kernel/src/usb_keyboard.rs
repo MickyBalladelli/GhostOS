@@ -1,4 +1,6 @@
+use core::mem::MaybeUninit;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicU8, Ordering};
 use synos_legacy_pc_drivers::pci::{Bar, ConfigAccess, PortConfig, enumerate};
 
 const TRB_COUNT: usize = 256;
@@ -135,6 +137,29 @@ pub struct UsbKeyboard {
     pending: [u8; 6],
     pending_start: usize,
     pending_count: usize,
+}
+
+static mut BOOT_KEYBOARD: MaybeUninit<UsbKeyboard> = MaybeUninit::uninit();
+static BOOT_KEYBOARD_STATE: AtomicU8 = AtomicU8::new(0);
+
+pub fn read_boot_byte() -> Option<u8> {
+    if BOOT_KEYBOARD_STATE.load(Ordering::Acquire) == 0 {
+        let Some(keyboard) = UsbKeyboard::new() else {
+            BOOT_KEYBOARD_STATE.store(2, Ordering::Release);
+            return None
+        };
+        unsafe {
+            (&raw mut BOOT_KEYBOARD).write(MaybeUninit::new(keyboard));
+        }
+        BOOT_KEYBOARD_STATE.store(1, Ordering::Release);
+    }
+    if BOOT_KEYBOARD_STATE.load(Ordering::Acquire) != 1 {
+        return None
+    }
+    unsafe {
+        let keyboard = core::ptr::addr_of_mut!(BOOT_KEYBOARD);
+        (*keyboard).assume_init_mut().read_byte()
+    }
 }
 
 impl UsbKeyboard {

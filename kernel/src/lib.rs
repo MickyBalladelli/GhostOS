@@ -1089,7 +1089,13 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        if let Some(byte) = keyboard::read_boot_byte().or_else(console::read_byte) {
+        let first_run = !LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire);
+        let byte = if caller.raw() == 9 && first_run {
+            keyboard::read_boot_byte().or_else(usb_keyboard::read_boot_byte)
+        } else {
+            keyboard::read_boot_byte().or_else(console::read_byte)
+        };
+        if let Some(byte) = byte {
             unsafe { arch::write_user(address as *mut u8, byte) };
             if caller.raw() == 9 {
                 record_login_activity()
