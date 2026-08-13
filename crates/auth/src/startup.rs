@@ -1024,6 +1024,30 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
         Ok(sessions)
     }
 
+    pub fn terminate_session(
+        &mut self,
+        administrator: SessionHandle,
+        target: SessionHandle,
+        now_us: u64,
+    ) -> Result<(), StartupError> {
+        self.authorize_role(administrator, AccountRole::Administrator, now_us)?;
+        self.sessions.logout(target)
+    }
+
+    pub fn terminate_account_sessions(
+        &mut self,
+        administrator: SessionHandle,
+        identity: IdentityId,
+        now_us: u64,
+    ) -> Result<usize, StartupError> {
+        self.authorize_role(administrator, AccountRole::Administrator, now_us)?;
+        self.state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        Ok(self.sessions.revoke_identity(identity))
+    }
+
     fn commit_state<S: SecurityStore<USERS, GROUPS>>(
         &mut self,
         store: &mut S,
