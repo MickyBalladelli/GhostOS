@@ -22,7 +22,13 @@ enum {
     OP_TERMINAL_WRITE = 25,
     OP_LOGIN_COMPLETE = 50,
     OP_LOGIN_STATUS = 51,
+    OP_LOGIN_CHALLENGE = 53,
     LOGIN_ROLE = 14,
+};
+
+enum {
+    PASSKEY_CHALLENGE_BYTES = 32,
+    PASSKEY_MAX_ASSERTION_BYTES = 512,
 };
 
 struct request {
@@ -106,7 +112,7 @@ static int administrator_account_exists(void)
     return response.status == 0 && response.values[1] != 0;
 }
 
-static void clear_bytes(char *bytes, u64 capacity)
+static void clear_bytes(void *bytes, u64 capacity)
 {
     volatile u8 *target = (volatile u8 *)bytes;
     while (capacity != 0) {
@@ -153,11 +159,57 @@ static u64 read_private_line(char *line, u64 capacity)
     return read_line(line, capacity, 0);
 }
 
+static int hex_digit(u8 byte)
+{
+    if (byte >= '0' && byte <= '9') {
+        return (int)(byte - '0');
+    }
+    if (byte >= 'a' && byte <= 'f') {
+        return (int)(byte - 'a' + 10);
+    }
+    if (byte >= 'A' && byte <= 'F') {
+        return (int)(byte - 'A' + 10);
+    }
+    return -1;
+}
+
+static u64 decode_hex(const char *text, u64 text_length, u8 *output, u64 capacity)
+{
+    u64 count = 0;
+    u64 index;
+    if (text_length == 0 || (text_length & 1) != 0) {
+        return 0;
+    }
+    for (index = 0; index < text_length; index += 2) {
+        int high = hex_digit((u8)text[index]);
+        int low = hex_digit((u8)text[index + 1]);
+        if (high < 0 || low < 0 || count >= capacity) {
+            return 0;
+        }
+        output[count++] = (u8)((high << 4) | low);
+    }
+    return count;
+}
+
+static void write_hex_bytes(const u8 *bytes, u64 count)
+{
+    static const char digits[] = "0123456789abcdef";
+    u64 index;
+    for (index = 0; index < count; index++) {
+        char encoded[2];
+        encoded[0] = digits[bytes[index] >> 4];
+        encoded[1] = digits[bytes[index] & 0xf];
+        write_bytes(encoded, sizeof(encoded));
+    }
+}
+
 __attribute__((section(".text._start"), noreturn))
 void _start(void)
 {
     char username[128];
-    char credential[256];
+    char passkey_hex[PASSKEY_MAX_ASSERTION_BYTES * 2 + 1];
+    u8 passkey[PASSKEY_MAX_ASSERTION_BYTES];
+    u8 challenge[PASSKEY_CHALLENGE_BYTES];
 
     call(OP_SERVICE_READY, LOGIN_ROLE, 0, 0, 0);
     write_text("SynOS login service\n");
@@ -173,26 +225,48 @@ void _start(void)
         }
         write_text("login: ");
         u64 username_length = read_line(username, sizeof(username), 1);
-        write_text("\ncredential: ");
-        u64 credential_length = read_private_line(credential, sizeof(credential));
+        struct response challenge_response = call(
+            OP_LOGIN_CHALLENGE,
+            (u64)challenge,
+            sizeof(challenge),
+            0,
+            0
+        );
+        if (challenge_response.status != 0) {
+            write_text("\nPasskey unavailable. Try again.\n");
+            clear_bytes(username, sizeof(username));
+            continue;
+        }
+        write_text("\nTouch your passkey and paste its assertion as hex.\nchallenge: ");
+        write_hex_bytes(challenge, sizeof(challenge));
+        write_text("\npasskey: ");
+        u64 passkey_hex_length = read_private_line(passkey_hex, sizeof(passkey_hex));
+        u64 passkey_length = decode_hex(
+            passkey_hex,
+            passkey_hex_length,
+            passkey,
+            sizeof(passkey)
+        );
         write_text("\n");
 
-        if (username_length == 0 || credential_length == 0) {
+        if (username_length == 0 || passkey_length == 0) {
             write_text("Login failed. Try again.\n");
             clear_bytes(username, sizeof(username));
-            clear_bytes(credential, sizeof(credential));
+            clear_bytes(passkey_hex, sizeof(passkey_hex));
+            clear_bytes(passkey, sizeof(passkey));
             continue;
         }
 
         struct response completed = call(
             OP_LOGIN_COMPLETE,
+            (u64)username,
             username_length,
-            credential_length,
-            0,
-            0
+            (u64)passkey,
+            passkey_length
         );
         clear_bytes(username, sizeof(username));
-        clear_bytes(credential, sizeof(credential));
+        clear_bytes(passkey_hex, sizeof(passkey_hex));
+        clear_bytes(passkey, sizeof(passkey));
         if (completed.status != 0) {
             write_text("Login failed. Try again.\n");
             continue;

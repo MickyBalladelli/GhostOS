@@ -102,6 +102,11 @@ use core::sync::atomic::{AtomicBool, Ordering};
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+use core::sync::atomic::AtomicU8;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 use core::sync::atomic::AtomicU32;
 use synos_boot_protocol::BootInfo;
 use synos_observability::{
@@ -208,6 +213,16 @@ static LOGIN_REQUESTED: AtomicBool = AtomicBool::new(true);
     any(target_os = "none", target_os = "uefi")
 ))]
 static LOGIN_ADMINISTRATOR_EXISTS: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_PASSKEY_CHALLENGE_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static LOGIN_PASSKEY_CHALLENGE: [AtomicU8; 32] = [const { AtomicU8::new(0) }; 32];
 #[allow(dead_code)]
 static DLM: DistributedLockManager = DistributedLockManager::new();
 #[allow(dead_code)]
@@ -450,6 +465,74 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+const LOCAL_PASSKEY_HEADER_BYTES: usize = 46;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_PASSKEY_AUTHENTICATOR_DATA_MIN: usize = 37;
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn valid_login_username(username: &[u8]) -> bool {
+    !username.is_empty()
+        && username
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-$".contains(byte))
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn valid_local_passkey_assertion(assertion: &[u8]) -> bool {
+    if assertion.len() < LOCAL_PASSKEY_HEADER_BYTES
+        || assertion[..4] != *b"SYPA"
+        || assertion[4] != 1
+        || assertion[5..8] != [0; 3]
+        || !LOGIN_PASSKEY_CHALLENGE_READY.load(Ordering::Acquire)
+    {
+        return false
+    }
+    for (index, slot) in LOGIN_PASSKEY_CHALLENGE.iter().enumerate() {
+        if assertion[8 + index] != slot.load(Ordering::Relaxed) {
+            return false
+        }
+    }
+    let authenticator_length = u16::from_le_bytes([assertion[40], assertion[41]]) as usize;
+    let client_data_length = u16::from_le_bytes([assertion[42], assertion[43]]) as usize;
+    let signature_length = u16::from_le_bytes([assertion[44], assertion[45]]) as usize;
+    let payload_length = authenticator_length
+        .saturating_add(client_data_length)
+        .saturating_add(signature_length);
+    if authenticator_length < LOCAL_PASSKEY_AUTHENTICATOR_DATA_MIN
+        || client_data_length == 0
+        || signature_length == 0
+        || LOCAL_PASSKEY_HEADER_BYTES.saturating_add(payload_length) != assertion.len()
+    {
+        return false
+    }
+    let authenticator_flags = assertion[LOCAL_PASSKEY_HEADER_BYTES + 32];
+    authenticator_flags & 0x05 == 0x05
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn clear_login_challenge() {
+    LOGIN_PASSKEY_CHALLENGE_READY.store(false, Ordering::Release);
+    for slot in &LOGIN_PASSKEY_CHALLENGE {
+        slot.store(0, Ordering::Relaxed)
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 #[allow(unsafe_code)]
 fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     let role = caller.raw() as usize;
@@ -601,16 +684,46 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             || request.flags != 0
             || request.capability != 0
             || request.arguments[0] == 0
-            || request.arguments[0] > 127
             || request.arguments[1] == 0
-            || request.arguments[1] > 255
-            || request.arguments[2..] != [0; 4]
+            || request.arguments[1] > 127
+            || request.arguments[2] == 0
+            || request.arguments[3] == 0
+            || request.arguments[3] > 512
+            || request.arguments[4..] != [0; 2]
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
         if !LOGIN_REQUESTED.load(Ordering::Acquire) {
             return syscall_error(Status::ACCESS_DENIED)
         }
+        let username_address = request.arguments[0];
+        let username_length = request.arguments[1] as usize;
+        let assertion_address = request.arguments[2];
+        let assertion_length = request.arguments[3] as usize;
+        if !arch::paging::service_user_range(username_address, username_length as u64, false)
+            || !arch::paging::service_user_range(assertion_address, assertion_length as u64, false)
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let mut username = [0; 128];
+        let mut assertion = [0; 512];
+        arch::with_user_access(|| {
+            let source = unsafe {
+                core::slice::from_raw_parts(username_address as *const u8, username_length)
+            };
+            username[..username_length].copy_from_slice(source);
+            let source = unsafe {
+                core::slice::from_raw_parts(assertion_address as *const u8, assertion_length)
+            };
+            assertion[..assertion_length].copy_from_slice(source);
+        });
+        if !valid_login_username(&username[..username_length])
+            || !valid_local_passkey_assertion(&assertion[..assertion_length])
+        {
+            clear_login_challenge();
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        clear_login_challenge();
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
         LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_AUTHORIZED.store(true, Ordering::Release);
@@ -642,9 +755,38 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
             return syscall_error(Status::ACCESS_DENIED)
         }
+        clear_login_challenge();
         LOGIN_AUTHORIZED.store(false, Ordering::Release);
         LOGIN_REQUESTED.store(true, Ordering::Release);
         return syscall_success([1, 0, 0, 0])
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginChallenge) {
+        if caller.raw() != 14
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments[0] == 0
+            || request.arguments[1] != 32
+            || request.arguments[2..] != [0; 4]
+            || !arch::paging::service_user_range(request.arguments[0], 32, true)
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if !LOGIN_REQUESTED.load(Ordering::Acquire) || !random::ready() {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let mut challenge = [0; 32];
+        if !random::fill(&mut challenge) {
+            return syscall_error(Status::BUSY)
+        }
+        arch::with_user_access(|| unsafe {
+            core::slice::from_raw_parts_mut(request.arguments[0] as *mut u8, 32)
+                .copy_from_slice(&challenge)
+        });
+        for (slot, value) in LOGIN_PASSKEY_CHALLENGE.iter().zip(challenge) {
+            slot.store(value, Ordering::Relaxed)
+        }
+        LOGIN_PASSKEY_CHALLENGE_READY.store(true, Ordering::Release);
+        return syscall_success([32, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::ServiceReady) {
         if request.arguments[0] as usize != role || request.arguments[1..] != [0; 5] {

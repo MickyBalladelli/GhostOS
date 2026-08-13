@@ -1,6 +1,6 @@
 [abi]
 schema_version = 1
-revision = 5
+revision = 6
 rpc_protocol_version = 1
 rpc_magic = "SYRP"
 rpc_frame_header_bytes = 24
@@ -163,6 +163,9 @@ value = 51
 [[operations]]
 name = "LoginStart"
 value = 52
+[[operations]]
+name = "LoginChallenge"
+value = 53
 
 [[methods]]
 name = "ClusterState"
