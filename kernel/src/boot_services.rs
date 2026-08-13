@@ -6,14 +6,14 @@ use core::sync::atomic::{AtomicBool, Ordering};
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use core::sync::atomic::AtomicU64;
+use core::sync::atomic::{AtomicU8, AtomicU64};
 
 use synos_fsd::{Daemon, ProcessRights};
 use synos_init::{
     ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceReadiness, ServiceSpec,
     ServiceState, SpawnRequest, StartupDiagnostic, Supervisor, SupervisorRuntime,
 };
-use synos_status::Status;
+use synos_status::{IntoStatus, Status};
 use synos_synfs::SynFs;
 
 const FILESYSTEM_SERVICE_ID: u32 = 0x4653_4444;
@@ -70,6 +70,8 @@ const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
 const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
 pub const AUTHORIZATION_DATABASE_PATH: &str = "/system/security/authorization";
+pub const FIRST_ADMIN_USERNAME_PATH: &str = "/system/security/first-admin-username";
+const FIRST_ADMIN_USERNAME_CAPACITY: usize = 32;
 const SERVICE_COUNT: usize = 13;
 
 type FilesystemDaemon = Daemon<FILESYSTEM_BLOCKS>;
@@ -94,6 +96,17 @@ static AHCI_READY: AtomicBool = AtomicBool::new(false);
 static NVME_READY: AtomicBool = AtomicBool::new(false);
 static ETHERNET_READY: AtomicBool = AtomicBool::new(false);
 static PROVISIONING_REQUIRED: AtomicBool = AtomicBool::new(true);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static FIRST_ADMIN_USERNAME_LENGTH: AtomicU8 = AtomicU8::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+static FIRST_ADMIN_USERNAME: [AtomicU8; FIRST_ADMIN_USERNAME_CAPACITY] =
+    [const { AtomicU8::new(0) }; FIRST_ADMIN_USERNAME_CAPACITY];
 static STARTUP_DIAGNOSTICS_READY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
@@ -299,6 +312,11 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
                 if record.file_type == synos_synfs::FileType::Regular && record.size != 0
         )
     });
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    load_first_admin_username(physical_filesystem.as_ref());
 
     let filesystem_process = filesystem_process_id().ok_or(StartError::Process)?;
     let storage_process = storage_process_id().ok_or(StartError::Process)?;
@@ -613,6 +631,114 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         ethernet_process,
         provisioning_required,
     })
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn valid_first_admin_username(username: &[u8]) -> bool {
+    !username.is_empty()
+        && username.len() <= FIRST_ADMIN_USERNAME_CAPACITY
+        && username
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-$".contains(byte))
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn load_first_admin_username(filesystem: Option<&SynFs<FILESYSTEM_BLOCKS>>) {
+    FIRST_ADMIN_USERNAME_LENGTH.store(0, Ordering::Release);
+    let Some(filesystem) = filesystem else {
+        return
+    };
+    let Ok(metadata) = filesystem.lookup(FIRST_ADMIN_USERNAME_PATH) else {
+        return
+    };
+    if metadata.file_type != synos_synfs::FileType::Regular
+        || metadata.size == 0
+        || metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
+    {
+        return
+    }
+    let mut username = [0; FIRST_ADMIN_USERNAME_CAPACITY];
+    let Ok(read) = filesystem.read(FIRST_ADMIN_USERNAME_PATH, &mut username) else {
+        return
+    };
+    if read.bytes_read != metadata.size as usize
+        || !valid_first_admin_username(&username[..read.bytes_read])
+    {
+        return
+    }
+    for (slot, byte) in FIRST_ADMIN_USERNAME
+        .iter()
+        .zip(username.iter().copied())
+        .take(read.bytes_read)
+    {
+        slot.store(byte, Ordering::Relaxed)
+    }
+    FIRST_ADMIN_USERNAME_LENGTH.store(read.bytes_read as u8, Ordering::Release);
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn first_admin_username_pending() -> bool {
+    FIRST_ADMIN_USERNAME_LENGTH.load(Ordering::Acquire) != 0
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn create_first_admin_username(username: &[u8]) -> Result<(), Status> {
+    if !valid_first_admin_username(username) {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    if !PROVISIONING_REQUIRED.load(Ordering::Acquire)
+        || first_admin_username_pending()
+    {
+        return Err(Status::ALREADY_EXISTS)
+    }
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    for path in [AUTHORIZATION_DATABASE_PATH, FIRST_ADMIN_USERNAME_PATH] {
+        match daemon.filesystem().lookup(path) {
+            Ok(_) => return Err(Status::ALREADY_EXISTS),
+            Err(synos_synfs::Error::NotFound) => {}
+            Err(error) => return Err(error.status()),
+        }
+    }
+    let mut transaction = daemon.filesystem_mut().transaction();
+    match transaction.lookup("/system/security") {
+        Ok(metadata) if metadata.file_type == synos_synfs::FileType::Directory => {}
+        Ok(_) => return Err(Status::INVALID_PATH),
+        Err(synos_synfs::Error::NotFound) => {
+            transaction
+                .create_directory("/system/security", true)
+                .map_err(|error| error.status())?;
+        }
+        Err(error) => return Err(error.status()),
+    }
+    transaction
+        .write(FIRST_ADMIN_USERNAME_PATH, username)
+        .map_err(|error| error.status())?;
+    transaction
+        .commit()
+        .map_err(|error| error.status())?;
+    for (slot, byte) in FIRST_ADMIN_USERNAME
+        .iter()
+        .zip(username.iter().copied())
+        .take(username.len())
+    {
+        slot.store(byte, Ordering::Relaxed)
+    }
+    FIRST_ADMIN_USERNAME_LENGTH.store(username.len() as u8, Ordering::Release);
+    Ok(())
 }
 
 /// Dispatch a filesystem request issued by the Ring 3 shell.

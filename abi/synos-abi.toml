@@ -1,6 +1,6 @@
 [abi]
 schema_version = 1
-revision = 8
+revision = 9
 rpc_protocol_version = 1
 rpc_magic = "SYRP"
 rpc_frame_header_bytes = 24
@@ -178,6 +178,9 @@ value = 56
 [[operations]]
 name = "LoginWhoami"
 value = 57
+[[operations]]
+name = "LoginBootstrapUsername"
+value = 58
 
 [[methods]]
 name = "ClusterState"

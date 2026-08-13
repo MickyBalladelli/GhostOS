@@ -28,6 +28,7 @@ enum {
     OP_TERMINAL_WRITE = 25,
     OP_LOGIN_STATUS = 51,
     OP_LOGIN_START = 52,
+    OP_LOGIN_BOOTSTRAP_USERNAME = 58,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
@@ -352,17 +353,38 @@ static void execute_line(char *line, u8 *buffer)
 static void execute_first_run_line(char *line)
 {
     char command[256];
+    char username[256];
     char *cursor = line;
     if (next_word(&cursor, command) == 0) {
         return;
     }
-    if (equal_name(command, "HELP") || equal_name(command, "STATUS")
-        || equal_name(command, "SETUP")) {
-        write_text("First-run setup mode. Normal shell commands are disabled.\n");
-        write_text("Administrator setup will be available here.\n");
+    if (equal_name(command, "HELP")) {
+        write_text("Use: USERNAME <name>\n");
         return;
     }
-    write_text("Restricted first-run mode: use HELP or STATUS.\n");
+    if (equal_name(command, "USERNAME")) {
+        u64 username_length = next_word(&cursor, username);
+        if (username_length == 0 || username_length > 32) {
+            write_text("Username must be 1-32 valid characters.\n");
+            return;
+        }
+        struct response response = call(
+            OP_LOGIN_BOOTSTRAP_USERNAME,
+            0,
+            0,
+            (u64)username,
+            username_length,
+            0,
+            0
+        );
+        if (response.status == 0) {
+            write_text("Administrator username saved.\n");
+        } else {
+            write_text("Username rejected.\n");
+        }
+        return;
+    }
+    write_text("Use: USERNAME <name>\n");
 }
 
 __attribute__((section(".text._start"), noreturn))
@@ -378,7 +400,6 @@ void _start(void)
     call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
     if (first_run_mode()) {
         write_text("SynOS first-run setup mode\n");
-        write_text("Attach a trusted local keyboard to continue setup.\n");
     } else {
         write_text("SynOS user shell\n");
     }

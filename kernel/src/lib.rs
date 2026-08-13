@@ -217,6 +217,11 @@ static LOGIN_ADMINISTRATOR_EXISTS: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static LOGIN_BOOTSTRAP_PROOF: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static LOGIN_SESSION_EXPIRES: AtomicU64 = AtomicU64::new(0);
 #[cfg(all(
     target_arch = "x86_64",
@@ -1096,6 +1101,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             keyboard::read_boot_byte().or_else(console::read_byte)
         };
         if let Some(byte) = byte {
+            if caller.raw() == 9 && first_run {
+                LOGIN_BOOTSTRAP_PROOF.store(true, Ordering::Release)
+            }
             unsafe { arch::write_user(address as *mut u8, byte) };
             if caller.raw() == 9 {
                 record_login_activity()
@@ -1111,6 +1119,35 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             flags: 0,
             values: [0; 4],
         }
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginBootstrapUsername) {
+        if caller.raw() != 9
+            || request.flags != 0
+            || request.capability != 0
+            || request.arguments[0] == 0
+            || request.arguments[1] == 0
+            || request.arguments[1] > LOGIN_USERNAME_CAPACITY as u64
+            || request.arguments[2..] != [0; 4]
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire)
+            || !LOGIN_BOOTSTRAP_PROOF.load(Ordering::Acquire)
+        {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let address = request.arguments[0];
+        let length = request.arguments[1] as usize;
+        if !arch::paging::service_user_range(address, length as u64, false) {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let mut username = [0; LOGIN_USERNAME_CAPACITY];
+        arch::with_user_access(|| {
+            let source = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
+            username[..length].copy_from_slice(source);
+        });
+        return boot_services::create_first_admin_username(&username[..length])
+            .map_or_else(syscall_error, |_| syscall_success([length as u64, 0, 0, 0]))
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginComplete) {
         if caller.raw() != 14

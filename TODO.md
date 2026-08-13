@@ -227,7 +227,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Detect an unprovisioned system during boot.
 - [x] Enter a restricted first-run setup mode before the normal shell starts.
 - [x] Require physical-console access or an equivalent trusted bootstrap proof.
-- [ ] Create the first administrator username.
+- [x] Create the first administrator username.
 - [ ] Register the first administrator passkey, TPM credential, or SSH key.
 - [ ] Require confirmation before committing the first administrator account.
 - [ ] Persist the first administrator atomically in SynFS.
