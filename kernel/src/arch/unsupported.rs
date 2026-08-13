@@ -37,3 +37,7 @@ pub mod interrupts {
 pub fn halt() {
     core::hint::spin_loop()
 }
+
+pub(crate) fn idle(_state: synos_power::CpuIdleState) {
+    core::hint::spin_loop()
+}

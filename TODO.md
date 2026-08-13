@@ -158,7 +158,7 @@ Build the real operating system core before adding more advanced features.
 
 ### Power management
 
-- [ ] Add CPU idle-state management.
+- [x] Add CPU idle-state management.
 - [ ] Add suspend and resume on supported hardware.
 - [ ] Add thermal throttling and thermal event reporting.
 - [ ] Add battery and power-source reporting.

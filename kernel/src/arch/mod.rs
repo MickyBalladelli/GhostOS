@@ -37,6 +37,10 @@ pub use current::{halt, interrupts, paging};
 
 pub(crate) use current::enter_user;
 
+pub(crate) fn idle(state: synos_power::CpuIdleState) {
+    current::idle(state)
+}
+
 pub(crate) fn disable_interrupts() {
     current::interrupts::disable()
 }

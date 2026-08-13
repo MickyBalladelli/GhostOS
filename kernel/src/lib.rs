@@ -913,6 +913,21 @@ pub fn halt() -> ! {
     }
 }
 
+#[allow(unsafe_code)]
+pub(crate) fn cpu_idle() {
+    if !SCHEDULER_READY.load(Ordering::Acquire) {
+        arch::halt();
+        return
+    }
+    let state = unsafe {
+        let scheduler = (&mut *core::ptr::addr_of_mut!(SCHEDULER)).assume_init_mut();
+        let cpu = arch::interrupts::current_cpu();
+        let now = scheduler.clock();
+        scheduler.idle_state_on(cpu, now.saturating_add(1_000), 1_000)
+    };
+    arch::idle(state)
+}
+
 /// Validate bootloader data before any operation can use its variable-length
 /// regions. Invalid metadata is an external input failure, not a panic.
 pub fn validate_boot_info(boot_info: &BootInfo) -> Result<(), Status> {

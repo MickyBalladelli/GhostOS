@@ -1,5 +1,6 @@
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicBool, Ordering};
+use synos_power::CpuIdleState;
 
 const CR4_SMEP: u64 = 1 << 20;
 const CR4_SMAP: u64 = 1 << 21;
@@ -1198,6 +1199,59 @@ pub fn halt() {
     unsafe {
         asm!("hlt", options(nomem, nostack));
     }
+}
+
+pub(crate) fn idle(state: CpuIdleState) {
+    let flags: u64;
+    unsafe {
+        asm!("pushfq; pop {}", out(reg) flags, options(nomem, preserves_flags));
+    }
+    let interrupts_were_enabled = flags & (1 << 9) != 0;
+    if !interrupts_were_enabled {
+        unsafe { asm!("sti", options(nomem, nostack)) }
+    }
+
+    match state {
+        CpuIdleState::C0 => unsafe {
+            asm!("pause", options(nomem, nostack))
+        },
+        CpuIdleState::C1 => unsafe {
+            asm!("hlt", options(nomem, nostack))
+        },
+        CpuIdleState::C2 | CpuIdleState::C3 => {
+            if let Some(hint) = mwait_hint(state) {
+                unsafe {
+                    asm!(
+                        "mwait",
+                        in("eax") hint,
+                        in("ecx") 0_u32,
+                        options(nomem, nostack)
+                    )
+                }
+            } else {
+                unsafe { asm!("hlt", options(nomem, nostack)) }
+            }
+        }
+    }
+
+    if !interrupts_were_enabled {
+        unsafe { asm!("cli", options(nomem, nostack)) }
+    }
+}
+
+fn mwait_hint(state: CpuIdleState) -> Option<u32> {
+    let maximum_leaf = core::arch::x86_64::__cpuid(0).eax;
+    if maximum_leaf < 5
+        || core::arch::x86_64::__cpuid(1).ecx & (1 << 3) == 0
+    {
+        return None
+    }
+    let monitor = core::arch::x86_64::__cpuid(5);
+    let shift = u32::from(state.rank()) * 4;
+    if (monitor.edx >> shift) & 0xf == 0 {
+        return None
+    }
+    Some(u32::from(state.rank()) << 4)
 }
 
 pub(crate) fn capture_registers(fault_address: u64) -> crate::crash::RegisterState {

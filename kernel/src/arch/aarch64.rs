@@ -295,6 +295,12 @@ pub(crate) fn enter_user(context: &crate::Context, root: crate::PageTableRoot) -
     }
 }
 
+pub(crate) fn idle(_state: synos_power::CpuIdleState) {
+    unsafe {
+        asm!("wfi", options(nomem, nostack));
+    }
+}
+
 #[inline(always)]
 pub fn halt() {
     unsafe {

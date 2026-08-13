@@ -158,7 +158,7 @@ pub fn run(
     present();
     loop {
         if poll_input().unwrap_or(0) == 0 {
-            crate::arch::halt()
+            crate::cpu_idle()
         }
     }
 }
@@ -469,7 +469,7 @@ fn execute_line(
 
     while interpreter.is_running() {
         match interpreter.poll(executor) {
-            Ok(InterpreterEvent::Pending) => crate::arch::halt(),
+            Ok(InterpreterEvent::Pending) => crate::cpu_idle(),
             Ok(InterpreterEvent::Complete(output)) => {
                 if (!human_memory_output && !human_dsm_output && !human_monitor_output)
                     || json_output
@@ -1636,7 +1636,7 @@ fn wait_for_byte(
         if acpi.is_some_and(crate::power::power_button_pressed) {
             crate::power::shutdown(acpi)
         }
-        crate::arch::halt()
+        crate::cpu_idle()
     }
 }
 
