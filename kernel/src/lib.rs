@@ -292,6 +292,18 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     } else {
         println!("ACPI tables unavailable; platform fallback active")
     }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    if !arch::ring3_supported() {
+        println!(
+            "NX/XD unavailable; Ring 3 services disabled, entering kernel shell"
+        );
+        shell::run(boot_info, scheduler, &DLM, &NODE_FENCES, scheduler.clock(), acpi)
+    }
+
     info!(
         EventKind::Boot,
         EventField::unsigned(field::OPERATION, 2),

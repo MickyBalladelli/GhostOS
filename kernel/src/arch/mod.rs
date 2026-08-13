@@ -56,6 +56,17 @@ pub(crate) fn with_user_access<R>(operation: impl FnOnce() -> R) -> R {
     operation()
 }
 
+#[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
+pub(crate) fn ring3_supported() -> bool {
+    current::paging::supports_no_execute()
+}
+
+#[cfg(not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))))]
+#[allow(dead_code)]
+pub(crate) const fn ring3_supported() -> bool {
+    true
+}
+
 pub(crate) unsafe fn read_user<T: Copy>(pointer: *const T) -> T {
     with_user_access(|| unsafe { pointer.read() })
 }

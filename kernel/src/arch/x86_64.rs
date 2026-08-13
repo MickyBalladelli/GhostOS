@@ -372,7 +372,7 @@ pub mod paging {
         result.edx & (1 << 26) != 0
     }
 
-    fn supports_no_execute() -> bool {
+    pub(crate) fn supports_no_execute() -> bool {
         if core::arch::x86_64::__cpuid(0x8000_0000).eax < 0x8000_0001 {
             return false
         }

@@ -6,8 +6,8 @@ when a future boot target supplies relocation support; the kernel does not claim
 
 Every user mapping rejects simultaneous write and execute permissions. Context installation also
 requires an executable entry point and a writable, non-executable stack. x86_64 boot services are
-not started on hardware without NX support. Their code is read-only, while state, stack, and MMIO
-mappings are non-executable.
+not started on hardware without NX support; the kernel falls back to its Ring 0 shell instead.
+Their code is read-only, while state, stack, and MMIO mappings are non-executable.
 
 On x86_64, the kernel enables SMEP and SMAP when CPUID reports them. All kernel access to Ring 3
 request, response, filesystem, terminal, and random buffers passes through bounded SMAP access
