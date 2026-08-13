@@ -27,6 +27,7 @@ pub struct SecurityPolicy {
     pub challenge_lifetime_us: u64,
     pub session_lifetime_us: u64,
     pub idle_timeout_us: u64,
+    pub allow_self_credential_changes: bool,
 }
 
 impl SecurityPolicy {
@@ -49,7 +50,13 @@ impl SecurityPolicy {
             challenge_lifetime_us,
             session_lifetime_us,
             idle_timeout_us,
+            allow_self_credential_changes: true,
         })
+    }
+
+    pub const fn with_self_credential_changes(mut self, enabled: bool) -> Self {
+        self.allow_self_credential_changes = enabled;
+        self
     }
 }
 
@@ -59,6 +66,7 @@ impl Default for SecurityPolicy {
             challenge_lifetime_us: 120_000_000,
             session_lifetime_us: DEFAULT_SESSION_LIFETIME_US,
             idle_timeout_us: DEFAULT_IDLE_TIMEOUT_US,
+            allow_self_credential_changes: true,
         }
     }
 }
@@ -862,6 +870,83 @@ impl<const USERS: usize, const CHALLENGES: usize, const SESSIONS: usize, const G
             AccountManagementResult::Deleted(record) => Ok(record),
             _ => Err(StartupError::InvalidRecord),
         }
+    }
+
+    pub fn add_credential<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        credential: Credential,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_credential_change(handle, identity, now_us)?;
+        let mut next_state = self.state;
+        let mut record = next_state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        record
+            .add_credential(credential)
+            .map_err(StartupError::Authentication)?;
+        if record.account_state() == AccountState::PendingSetup {
+            record.set_state(AccountState::Active);
+        }
+        next_state
+            .database
+            .replace(record)
+            .map_err(StartupError::Authentication)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        *self.sessions.authd_mut().database_mut() = next_state.database;
+        self.state = next_state;
+        self.sessions.revoke_identity(identity);
+        Ok(record)
+    }
+
+    pub fn remove_credential<S: SecurityStore<USERS, GROUPS>>(
+        &mut self,
+        store: &mut S,
+        handle: SessionHandle,
+        identity: IdentityId,
+        credential: CredentialId,
+        now_us: u64,
+    ) -> Result<UserRecord, StartupError> {
+        self.authorize_credential_change(handle, identity, now_us)?;
+        let mut next_state = self.state;
+        let mut record = next_state
+            .database
+            .record(identity)
+            .map_err(StartupError::Authentication)?;
+        record
+            .remove_credential(credential)
+            .map_err(StartupError::Authentication)?;
+        next_state
+            .database
+            .replace(record)
+            .map_err(StartupError::Authentication)?;
+        next_state.generation = next_state.generation.wrapping_add(1).max(1);
+        next_state.validate()?;
+        store.store(&next_state).map_err(StartupError::Storage)?;
+        *self.sessions.authd_mut().database_mut() = next_state.database;
+        self.state = next_state;
+        self.sessions.revoke_identity(identity);
+        Ok(record)
+    }
+
+    fn authorize_credential_change(
+        &mut self,
+        handle: SessionHandle,
+        identity: IdentityId,
+        now_us: u64,
+    ) -> Result<(), StartupError> {
+        let caller = self.sessions.touch(handle, now_us)?.identity;
+        if caller == identity && self.state.policy.allow_self_credential_changes {
+            return Ok(())
+        }
+        self.authorize(handle, RightIdentifier::SYSTEM_ADMIN, now_us)?;
+        Ok(())
     }
 
     fn validate_managed_record(record: UserRecord) -> Result<(), StartupError> {

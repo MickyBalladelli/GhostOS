@@ -290,6 +290,18 @@ impl UserRecord {
         Ok(())
     }
 
+    pub fn remove_credential(&mut self, id: CredentialId) -> Result<Credential, AuthError> {
+        if self.credentials().count() <= 1 {
+            return Err(AuthError::InvalidRecord)
+        }
+        let slot = self
+            .credentials
+            .iter()
+            .position(|entry| entry.is_some_and(|credential| credential.id == id))
+            .ok_or(AuthError::CredentialNotFound)?;
+        self.credentials[slot].take().ok_or(AuthError::CredentialNotFound)
+    }
+
     pub fn assign_right(&mut self, right: RightIdentifier) -> Result<(), AuthError> {
         if self.rights().any(|existing| existing == right) {
             return Ok(())

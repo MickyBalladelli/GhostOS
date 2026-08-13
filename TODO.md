@@ -257,7 +257,7 @@ Build the real operating system core before adding more advanced features.
 - [x] Add `CREDENTIAL LIST <username>` for authorized administrators.
 - [x] Add `CREDENTIAL ADD <username>` for passkeys, TPM credentials, and SSH keys.
 - [x] Add `CREDENTIAL REMOVE <username> <id>` with self-lockout protection.
-- [ ] Allow users to enroll and remove their own credentials under policy.
+- [x] Allow users to enroll and remove their own credentials under policy.
 - [ ] Store only credential public data and metadata, never private keys or secrets.
 - [ ] Add credential labels, creation time, last-used time, and revocation state.
 - [ ] Rotate and revoke credentials without deleting the account.
