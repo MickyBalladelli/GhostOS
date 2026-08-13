@@ -120,6 +120,52 @@ impl Drop for TemporaryImage {
     }
 }
 
+fn corrupt_byte(path: &Path, offset: u64) {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .expect("open disk image for corruption");
+    file.seek(SeekFrom::Start(offset))
+        .expect("seek corrupted disk byte");
+    let mut byte = [0; 1];
+    file.read_exact(&mut byte).expect("read corrupted disk byte");
+    byte[0] ^= 1;
+    file.seek(SeekFrom::Start(offset))
+        .expect("rewind corrupted disk byte");
+    file.write_all(&byte).expect("write corrupted disk byte");
+    file.sync_all().expect("persist disk corruption");
+}
+
+fn write_two_durable_states(path: &Path) {
+    let mut disk = DiskImage::create(path);
+    let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+    SynFs::<MAX_BLOCKS>::format_to_device(&mut image, &mut disk).expect("format disk image");
+    let mut filesystem =
+        SynFs::<MAX_BLOCKS>::load_from_device(&mut image, &mut disk).expect("load formatted image");
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+    filesystem
+        .write("/data/state", b"old durable")
+        .expect("write old durable state");
+    filesystem
+        .flush_to_device(&mut disk)
+        .expect("commit old durable state");
+    filesystem
+        .write("/data/state", b"new durable")
+        .expect("write new durable state");
+    filesystem
+        .flush_to_device(&mut disk)
+        .expect("commit new durable state");
+}
+
+fn load_image(path: &Path) -> Result<SynFs<MAX_BLOCKS>, Error> {
+    let mut disk = DiskImage::open(path, None);
+    let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
+    SynFs::<MAX_BLOCKS>::load_from_device(&mut image, &mut disk)
+}
+
 fn write_durable_state(path: &Path) {
     let mut disk = DiskImage::create(path);
     let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
@@ -296,7 +342,7 @@ fn persists_exact_delete_and_recovers_the_remaining_version() {
 }
 
 #[test]
-fn recovers_previous_generation_after_torn_commit() {
+fn power_loss_at_every_commit_write_recovers_last_durable_generation() {
     let baseline_path = TemporaryImage::new("baseline");
     let trial_path = TemporaryImage::new("power-loss");
     write_durable_state(baseline_path.path());
@@ -325,6 +371,32 @@ fn recovers_previous_generation_after_torn_commit() {
         assert_eq!(&contents, b"durable state");
         recovered.check_consistency().expect("consistent recovery");
     }
+}
+
+#[test]
+fn recovers_previous_generation_when_latest_disk_bank_is_corrupt() {
+    let image_path = TemporaryImage::new("corrupt-latest");
+    write_two_durable_states(image_path.path());
+    corrupt_byte(image_path.path(), (MAX_BLOCKS + 2) as u64 * BLOCK_SIZE as u64 - 1);
+
+    let recovered = load_image(image_path.path()).expect("recover prior disk generation");
+    let mut contents = [0; 11];
+    recovered
+        .read("/data/state", &mut contents)
+        .expect("read state from prior generation");
+    assert_eq!(&contents, b"old durable");
+    recovered.check_consistency().expect("consistent prior generation");
+}
+
+#[test]
+fn rejects_disk_image_when_corruption_removes_both_generations() {
+    let image_path = TemporaryImage::new("corrupt-both");
+    write_two_durable_states(image_path.path());
+    let bank_bytes = (MAX_BLOCKS + 2) as u64 * BLOCK_SIZE as u64;
+    corrupt_byte(image_path.path(), bank_bytes - 1);
+    corrupt_byte(image_path.path(), bank_bytes * 2 - 1);
+
+    assert!(matches!(load_image(image_path.path()), Err(Error::Corrupt)));
 }
 
 #[test]
