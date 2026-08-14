@@ -2,8 +2,9 @@ use synos_auth::{
     AccountState, AuthenticationChallenge, BootLoginService, CapabilityCaveat, CapabilityKey,
     Credential, CredentialId, CredentialKind, CredentialVerifier, CryptographicCapability,
     DatabaseScope, DiscoveryAnnouncement, FederationError, InitialCapability, PeerDirectory,
-    SecurityPolicy, SecurityState, SecurityStore, SecurityStoreError, SessionManager, StartupError,
-    TokenError, TransportRights, UserRecord, Username, AuthDaemon, ClusterId,
+    PasswordRecoveryPolicy, SecurityPolicy, SecurityState, SecurityStore, SecurityStoreError,
+    SessionManager, StartupError, TokenError, TransportRights, UserRecord, Username, AuthDaemon,
+    ClusterId,
 };
 use synos_fabric::NodeId;
 use synos_kernel::{AddressSpaceId, CapabilityObject, CapabilitySpace, IdentityId, Rights};
@@ -71,8 +72,28 @@ fn management_service() -> (
     MemorySecurityStore<4, 4>,
     synos_auth::SessionHandle,
 ) {
+    management_service_with_policy(SecurityPolicy::default())
+}
+
+fn recovery_service() -> (
+    BootLoginService<4, 4, 4, 4>,
+    MemorySecurityStore<4, 4>,
+    synos_auth::SessionHandle,
+) {
+    let recovery_policy = PasswordRecoveryPolicy::new(IdentityId::new(1).unwrap(), 1, 100).unwrap();
+    let policy = SecurityPolicy::default().with_password_login(false, Some(recovery_policy));
+    management_service_with_policy(policy)
+}
+
+fn management_service_with_policy(
+    policy: SecurityPolicy,
+) -> (
+    BootLoginService<4, 4, 4, 4>,
+    MemorySecurityStore<4, 4>,
+    synos_auth::SessionHandle,
+) {
     let mut store = MemorySecurityStore::default();
-    let mut service = BootLoginService::start(&mut store, SecurityPolicy::default(), 100).unwrap();
+    let mut service = BootLoginService::start(&mut store, policy, 100).unwrap();
     let admin_identity = IdentityId::new(1).unwrap();
     service
         .create_first_admin_at(
@@ -243,6 +264,109 @@ fn last_administrator_cannot_be_disabled_or_deleted() {
     let record = service.state().database.record(identity).unwrap();
     assert_eq!(record.account_state(), AccountState::Active);
     assert!(record.has_role(synos_auth::AccountRole::Administrator));
+}
+
+#[test]
+fn credential_enrollment_removal_and_rotation_update_account_credentials() {
+    let (mut service, mut store, administrator) = management_service();
+    let identity = IdentityId::new(2).unwrap();
+    let mut account = UserRecord::new(
+        identity,
+        Username::new("CredentialUser").unwrap(),
+        DatabaseScope::Local,
+    );
+    account.add_credential(passkey(2)).unwrap();
+    service
+        .create_account(&mut store, administrator, account, 20)
+        .unwrap();
+
+    let enrolled = service
+        .add_credential(&mut store, administrator, identity, passkey(3), 30)
+        .unwrap();
+    assert_eq!(enrolled.credentials().count(), 2);
+    assert!(enrolled.credential(CredentialId::new(3).unwrap()).is_some());
+
+    let removed = service
+        .remove_credential(
+            &mut store,
+            administrator,
+            identity,
+            CredentialId::new(2).unwrap(),
+            40,
+        )
+        .unwrap();
+    assert_eq!(removed.credentials().count(), 1);
+    assert!(removed.credential(CredentialId::new(2).unwrap()).is_none());
+
+    let rotated = service
+        .rotate_credential(
+            &mut store,
+            administrator,
+            identity,
+            CredentialId::new(3).unwrap(),
+            passkey(4),
+            50,
+        )
+        .unwrap();
+    assert_eq!(rotated.credentials().count(), 2);
+    assert!(rotated
+        .credential_is_revoked(CredentialId::new(3).unwrap())
+        .unwrap());
+    assert!(!rotated
+        .credential_is_revoked(CredentialId::new(4).unwrap())
+        .unwrap());
+}
+
+#[test]
+fn credential_loss_recovery_replaces_credentials_and_restores_login() {
+    let (mut service, mut store, administrator) = recovery_service();
+    let identity = IdentityId::new(2).unwrap();
+    let mut account = UserRecord::new(
+        identity,
+        Username::new("LostCredential").unwrap(),
+        DatabaseScope::Local,
+    );
+    account.set_state(AccountState::PendingSetup);
+    service
+        .create_account(&mut store, administrator, account, 20)
+        .unwrap();
+
+    let recovery = service.begin_credential_recovery(identity, 30).unwrap();
+    assert_eq!(recovery.recovery_identity, IdentityId::new(1).unwrap());
+    assert_eq!(recovery.recovery_credential, CredentialId::new(1).unwrap());
+
+    let recovered = service
+        .complete_credential_recovery(
+            &mut store,
+            recovery,
+            b"recovery-proof",
+            &mut Verifier { accepts: true },
+            passkey(5),
+            40,
+        )
+        .unwrap();
+    assert_eq!(recovered.account_state(), AccountState::Active);
+    assert_eq!(recovered.credentials().count(), 1);
+    assert!(recovered.credential(CredentialId::new(5).unwrap()).is_some());
+
+    let challenge = service
+        .begin_login(
+            "lostcredential",
+            NodeId::LOCAL,
+            CredentialId::new(5).unwrap(),
+            CredentialKind::Passkey,
+            50,
+        )
+        .unwrap();
+    assert!(service
+        .complete_login(
+            challenge,
+            b"recovered-proof",
+            &mut Verifier { accepts: true },
+            AddressSpaceId::new(4).unwrap(),
+            50,
+        )
+        .is_ok());
 }
 
 #[test]
