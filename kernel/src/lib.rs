@@ -1156,6 +1156,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             if caller.raw() == 9 && first_run {
                 LOGIN_BOOTSTRAP_PROOF.store(true, Ordering::Release)
             }
+            if caller.raw() == 9 {
+                watchdog::service_activity(9, time::monotonic_now_us());
+            }
             unsafe { arch::write_user(address as *mut u8, byte) };
             if caller.raw() == 9 {
                 record_login_activity()
@@ -1165,6 +1168,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 flags: 0,
                 values: [1, 0, 0, 0],
             }
+        }
+        if caller.raw() == 9 {
+            watchdog::service_activity(9, time::monotonic_now_us());
         }
         return Response {
             status: Status::NORMAL.raw(),

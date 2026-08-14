@@ -59,6 +59,19 @@ pub(crate) fn service_heartbeat(role: usize, sequence: u64, now_us: u64) {
     SERVICE_LATCHED.fetch_and(!(1u32 << role), Ordering::Release);
 }
 
+pub(crate) fn service_activity(role: usize, now_us: u64) {
+    let Some(heartbeat) = SERVICE_HEARTBEATS.get(role) else { return };
+    let Some(sequence_slot) = SERVICE_SEQUENCES.get(role) else { return };
+    if SERVICE_READY.load(Ordering::Acquire) & (1u32 << role) == 0 {
+        return
+    }
+    if sequence_slot.load(Ordering::Relaxed) == 0 {
+        sequence_slot.store(1, Ordering::Relaxed);
+    }
+    heartbeat.store(now_us, Ordering::Release);
+    SERVICE_LATCHED.fetch_and(!(1u32 << role), Ordering::Release);
+}
+
 pub(crate) fn service_sequences() -> impl Iterator<Item = u64> {
     SERVICE_SEQUENCES
         .iter()
