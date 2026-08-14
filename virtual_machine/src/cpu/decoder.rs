@@ -1180,6 +1180,10 @@ impl InstructionDecoder {
                 ins.mnemonic = "WRMSR";
                 return Ok(());
             }
+            0x31 => {
+                ins.mnemonic = "RDTSC";
+                return Ok(());
+            }
             0x32 => {
                 ins.mnemonic = "RDMSR";
                 return Ok(());
@@ -1379,6 +1383,18 @@ impl InstructionDecoder {
                 let (reg, rm) =
                     self.decode_modrm_operands(mmu, pos, rex, width, addrsize, segment, false)?;
                 ins.operands = vec![rm, Operand::Register(reg)];
+                return Ok(());
+            }
+
+            0xC7 => {
+                let (digit, rm) =
+                    self.decode_modrm_operands(mmu, pos, rex, opsize, addrsize, segment, true)?;
+                ins.mnemonic = match digit {
+                    6 => "RDRAND",
+                    7 => "RDSEED",
+                    _ => return Err(InstructionDecodeError::InvalidOpcode),
+                };
+                ins.operands = vec![rm];
                 return Ok(());
             }
 

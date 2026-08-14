@@ -10,6 +10,7 @@ use crate::devices::{
 };
 use crate::firmware::bios::BiosContext;
 use crate::memory::{MemoryError, Mmu};
+use std::io::Read;
 
 // ---------------------------------------------------------------------------
 // RFLAGS bit positions
@@ -22,6 +23,8 @@ const SF: u64 = 1 << 7;
 const IF: u64 = 1 << 9;
 const DF: u64 = 1 << 10;
 const OF: u64 = 1 << 11;
+
+static RDTSC_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 /// `IA32_APIC_BASE` MSR number as a u64 (match patterns cannot cast).
 const IA32_APIC_BASE_MSR_U64: u64 = IA32_APIC_BASE_MSR as u64;
@@ -520,6 +523,8 @@ impl InstructionExecutor {
             }
             "IN" | "OUT" => self.execute_io(instruction, state, ports)?,
             "CPUID" => self.execute_cpuid(instruction, state)?,
+            "RDTSC" => self.execute_rdtsc(instruction, state)?,
+            "RDRAND" | "RDSEED" => self.execute_random(instruction, state)?,
             "WRMSR" | "RDMSR" => {
                 self.execute_msr(instruction, state, mmu, apic, pv_clock.as_deref_mut())?
             }
@@ -1724,7 +1729,12 @@ impl InstructionExecutor {
         let leaf = state.rax as u32;
         let (eax, ebx, ecx, edx): (u32, u32, u32, u32) = match leaf {
             0 => (1, 0x534F_6E53, 0x20204D56, 0x0000_0000), // "SynOSVM  "
-            1 => (0x0000_0601, 0, 0, (1 << 4) | (1 << 25) | (1 << 26) | (1 << 29)),
+            1 => (
+                0x0000_0601,
+                0,
+                1 << 30,
+                (1 << 4) | (1 << 25) | (1 << 26) | (1 << 29),
+            ),
             0x8000_0000 => (0x8000_0001, 0, 0, 0),
             // Long mode, NX/XD, and MMX/SSE2 are available to the guest.
             0x8000_0001 => (0, 0, 0, (1 << 20) | (1 << 26) | (1 << 29)),
@@ -1734,6 +1744,49 @@ impl InstructionExecutor {
         state.rbx = ebx as u64;
         state.rcx = ecx as u64;
         state.rdx = edx as u64;
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
+    fn execute_random(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+    ) -> Result<(), CpuError> {
+        let Some(Operand::Register(register)) = ins.operands.first() else {
+            return Err(CpuError::InvalidOpcode)
+        };
+        let mut bytes = [0; 8];
+        let success = std::fs::File::open("/dev/urandom")
+            .and_then(|mut source| source.read_exact(&mut bytes))
+            .is_ok();
+        if success {
+            let value = u64::from_le_bytes(bytes);
+            let width = match ins.opsize {
+                16 => 2,
+                32 => 4,
+                _ => 8,
+            };
+            state.set_reg_size(*register, width, value);
+            state.rflags |= CF;
+        } else {
+            state.rflags &= !CF;
+        }
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
+    fn execute_rdtsc(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+    ) -> Result<(), CpuError> {
+        let ticks = RDTSC_EPOCH
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_nanos() as u64;
+        state.rax = ticks & 0xFFFF_FFFF;
+        state.rdx = ticks >> 32;
         state.rip = ins.next_ip;
         Ok(())
     }
