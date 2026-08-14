@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const SERVICE_CODE_BYTES: u64 = 18 * 4096;
+const SERVICE_CODE_BYTES: u64 = 19 * 4096;
 
 fn run(command: &mut Command, description: &str) {
     let status = command.status().unwrap_or_else(|error| {
@@ -19,7 +19,7 @@ fn build_user_image(source: &Path, linker: &Path, output: &Path, tools: &Path) {
             .args([
                 "--target=x86_64-unknown-none-elf",
                 "-std=c11",
-                "-Os",
+                "-O2",
                 "-ffreestanding",
                 "-fno-builtin",
                 "-fno-pic",

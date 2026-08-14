@@ -186,10 +186,10 @@ static int first_run_mode(void)
     return response.status == 0 && response.values[1] == 0;
 }
 
-static int all_services_ready(void)
+static int services_ready(u32 required)
 {
     struct response response = call(OP_SYSTEM_INFO, 0, 0, 0, 0, 0, 0);
-    return response.status == 0 && (response.values[1] & 0x7ffe) == 0x7ffe;
+    return response.status == 0 && (response.values[1] & required) == required;
 }
 
 static void write_prompt(int authorized, int first_run)
@@ -2029,10 +2029,10 @@ void _start(void)
     u64 idle_polls = 0;
     u8 byte;
 
-    call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
-    while (!all_services_ready()) {
+    while (!services_ready(0x7ffe & ~(1u << SHELL_ROLE))) {
         sleep_for(1000);
     }
+    call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
     if (first_run_mode()) {
         write_text("SynOS first-run setup mode\n");
     } else {

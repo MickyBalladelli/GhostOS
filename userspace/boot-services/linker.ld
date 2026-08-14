@@ -15,7 +15,7 @@ SECTIONS
         *(.lrodata .lrodata.*)
     }
 
-    .stack_guard 0x0000008000011ff8 : {
+    .stack_guard 0x0000008000012ff8 : {
         KEEP(*(.stack_guard))
     }
 
