@@ -289,6 +289,6 @@ Build the real operating system core before adding more advanced features.
 - [x] Add persistence and power-loss tests for account database updates.
 - [x] Add QEMU coverage for the interactive login flow.
 - [x] Document first boot and first administrator setup.
-- [ ] Document local and remote login methods.
+- [x] Document local and remote login methods.
 - [ ] Document account, group, role, credential, session, and recovery commands.
 - [ ] Document the emergency recovery process and its security limits.
