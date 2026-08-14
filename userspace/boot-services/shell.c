@@ -55,6 +55,7 @@ enum {
     OPEN_CREATE = 4,
     OPEN_EXCLUSIVE = 1 << 9,
     FLAG_RECURSIVE = 1 << 8,
+    SHELL_POLL_DELAY_US = 100,
 };
 
 static const char ACCOUNT_AUTHORIZATION_PATH[] = "/system/security/authorization";
@@ -206,8 +207,9 @@ static void write_prompt(int authorized, int first_run)
 
 static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 {
-    int authorized = login_authorized();
-    int first_run = first_run_mode();
+    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
+    int authorized = response.status == 0 && response.values[3] != 0;
+    int first_run = response.status == 0 && response.values[1] == 0;
     if (*prompt_authorized != authorized || *prompt_first_run != first_run) {
         if (*prompt_authorized >= 0 || *prompt_first_run >= 0) {
             write_text("\n");
@@ -932,7 +934,7 @@ static u64 read_credential_line(char *line, u64 capacity)
     u8 byte;
     for (;;) {
         if (!read_byte(&byte)) {
-            sleep_for(1000);
+            sleep_for(SHELL_POLL_DELAY_US);
             continue;
         }
         if (byte == '\r' || byte == '\n') {
@@ -1716,6 +1718,7 @@ static void rename_account(
     write_text("Account renamed; credential identity preserved.\n");
 }
 
+__attribute__((noinline))
 static void execute_line(char *line, u8 *buffer)
 {
     char command[256];
@@ -1896,6 +1899,7 @@ static void execute_line(char *line, u8 *buffer)
     }
 }
 
+__attribute__((noinline))
 static void execute_first_run_line(char *line)
 {
     char command[256];
@@ -2058,7 +2062,7 @@ void _start(void)
     u8 byte;
 
     while (!services_ready(0x7ffe & ~(1u << SHELL_ROLE))) {
-        sleep_for(1000);
+        sleep_for(SHELL_POLL_DELAY_US);
     }
     call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
     if (first_run_mode()) {
@@ -2071,11 +2075,11 @@ void _start(void)
     for (;;) {
         if (!update_prompt(&prompt_authorized, &prompt_first_run)) {
             line_length = 0;
-            sleep_for(1000);
+            sleep_for(SHELL_POLL_DELAY_US);
             continue;
         }
         if (!read_byte(&byte)) {
-            sleep_for(1000);
+            sleep_for(SHELL_POLL_DELAY_US);
             idle_polls++;
             if (idle_polls == 256) {
                 call(OP_SERVICE_HEARTBEAT, 0, 0, SHELL_ROLE, ++heartbeat, 0, 0);
@@ -2087,9 +2091,9 @@ void _start(void)
         if (byte == '\r' || byte == '\n') {
             write_text("\n");
             line[line_length] = 0;
-            if (first_run_mode()) {
+            if (prompt_first_run) {
                 execute_first_run_line(line);
-            } else if (login_authorized()) {
+            } else if (prompt_authorized) {
                 execute_line(line, buffer);
             } else {
                 execute_locked_line(line);
