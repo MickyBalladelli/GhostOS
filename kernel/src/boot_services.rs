@@ -13,7 +13,12 @@ use synos_init::{
     ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceReadiness, ServiceSpec,
     ServiceState, SpawnRequest, StartupDiagnostic, Supervisor, SupervisorRuntime,
 };
-use synos_status::{IntoStatus, Status};
+use synos_status::Status;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+use synos_status::IntoStatus;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -75,18 +80,66 @@ const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
 const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
 const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
 pub const AUTHORIZATION_DATABASE_PATH: &str = "/system/security/authorization";
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 pub const FIRST_ADMIN_USERNAME_PATH: &str = "/system/security/first-admin-username";
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 pub const FIRST_ADMIN_CREDENTIAL_PATH: &str = "/system/security/first-admin-credential";
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const FIRST_ADMIN_USERNAME_CAPACITY: usize = 32;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const FIRST_ADMIN_CREDENTIAL_CAPACITY: usize = 96;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const FIRST_ADMIN_AUTHORIZATION_RECORD_VERSION: u8 = 1;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY: usize =
     2 + FIRST_ADMIN_USERNAME_CAPACITY + 2 + FIRST_ADMIN_CREDENTIAL_CAPACITY;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const AUDIT_FIRST_ADMIN_USERNAME: u64 = 0x1001;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const AUDIT_FIRST_ADMIN_CREDENTIAL: u64 = 0x1002;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const AUDIT_FIRST_ADMIN_COMMIT: u64 = 0x1003;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const AUDIT_FIRST_ADMIN_RECOVERY_STATUS: u64 = 0x1004;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const AUDIT_FIRST_ADMIN_RECOVERY_RETRY: u64 = 0x1005;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const AUDIT_FIRST_ADMIN_RECOVERY_RESET: u64 = 0x1006;
 const SERVICE_COUNT: usize = 13;
 
