@@ -327,7 +327,9 @@ impl Loader {
         cpu.state.rsi = self.multiboot_info_address;
         cpu.state.rax = MULTIBOOT_BOOTLOADER_MAGIC as u64;
         cpu.state.rbx = self.multiboot_info_address;
-        cpu.state.rflags = 0x202;
+        // Firmware enters the kernel with maskable interrupts disabled. The
+        // kernel installs its IDT before enabling them for user processes.
+        cpu.state.rflags = 0x2;
         cpu.state.halted = false;
         cpu.state.mode = CpuMode::Long64;
         cpu.state.privilege = PrivilegeLevel::Ring0;
