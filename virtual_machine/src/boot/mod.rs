@@ -23,6 +23,10 @@ const MULTIBOOT_INFO_SIZE: usize = 116;
 const MULTIBOOT_MODULE_SIZE: usize = 16;
 const MULTIBOOT_MMAP_ADDR: u64 = MULTIBOOT_INFO_ADDR + 0x200;
 
+fn kernel_stack_top(memory_size: u64) -> u64 {
+    KERNEL_STACK_TOP.min(memory_size) & !(PAGE_SIZE as u64 - 1)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KernelFormat {
     Raw,
@@ -123,10 +127,24 @@ impl Loader {
             let end = address
                 .checked_add(initrd.len() as u64)
                 .ok_or(LoaderError::InvalidFormat)?;
-            self.validate_layout(kernel_start, kernel_end, address, end, FramebufferInfo::EMPTY)?;
+            self.validate_layout(
+                kernel_start,
+                kernel_end,
+                address,
+                end,
+                FramebufferInfo::EMPTY,
+                KERNEL_STACK_TOP,
+            )?;
             address
         } else {
-            self.validate_layout(kernel_start, kernel_end, 0, 0, FramebufferInfo::EMPTY)?;
+            self.validate_layout(
+                kernel_start,
+                kernel_end,
+                0,
+                0,
+                FramebufferInfo::EMPTY,
+                KERNEL_STACK_TOP,
+            )?;
             0
         };
 
@@ -188,7 +206,8 @@ impl Loader {
             .initrd_address
             .checked_add(self.initrd_size as u64)
             .ok_or(LoaderError::InvalidFormat)?;
-        if KERNEL_STACK_TOP > memory_size as u64 {
+        let stack_top = kernel_stack_top(memory_size as u64);
+        if stack_top < KERNEL_STACK_SIZE {
             return Err(LoaderError::OutOfMemory)
         }
 
@@ -198,6 +217,7 @@ impl Loader {
             self.initrd_address,
             initrd_end,
             framebuffer,
+            stack_top,
         )?;
 
         let mut info = BootInfo::empty(method);
@@ -216,6 +236,7 @@ impl Loader {
             self.cmdline.len() as u64 + 1,
             self.multiboot_info_address,
             MULTIBOOT_INFO_SIZE as u64,
+            stack_top,
         ) {
             if !info.push_region(region) {
                 return Err(LoaderError::LoadFailed);
@@ -235,6 +256,7 @@ impl Loader {
         initrd_start: u64,
         initrd_end: u64,
         framebuffer: FramebufferInfo,
+        stack_top: u64,
     ) -> Result<(), LoaderError> {
         let cmdline_end = self
             .cmdline_address
@@ -279,9 +301,10 @@ impl Loader {
                 }
             }
         }
+        let stack_start = stack_top.saturating_sub(KERNEL_STACK_SIZE);
         if ranges[..2]
             .iter()
-            .any(|(_, start, end)| *start <= KERNEL_STACK_TOP && KERNEL_STACK_TOP < *end)
+            .any(|(_, start, end)| *start < stack_top && stack_start < *end)
         {
             return Err(LoaderError::MemoryOverlap)
         }
@@ -326,7 +349,7 @@ impl Loader {
             mmu.set_paging(true, cpu.state.cr3);
         }
         cpu.state.rip = self.entry_point;
-        cpu.state.rsp = KERNEL_STACK_TOP;
+        cpu.state.rsp = kernel_stack_top(mmu.ram_size() as u64);
         cpu.state.rdi = self.boot_info_address;
         cpu.state.rsi = self.multiboot_info_address;
         cpu.state.rax = MULTIBOOT_BOOTLOADER_MAGIC as u64;
@@ -628,6 +651,7 @@ fn memory_regions(
     cmdline_size: u64,
     multiboot_start: u64,
     multiboot_size: u64,
+    stack_top: u64,
 ) -> Vec<MemoryRegion> {
     let mut reserved = vec![
         (0, 0x100000, MemoryKind::Reserved),
@@ -654,8 +678,8 @@ fn memory_regions(
             MemoryKind::Bootloader,
         ),
         (
-            KERNEL_STACK_TOP.saturating_sub(KERNEL_STACK_SIZE),
-            KERNEL_STACK_TOP,
+            stack_top.saturating_sub(KERNEL_STACK_SIZE),
+            stack_top,
             MemoryKind::Reserved,
         ),
         (
