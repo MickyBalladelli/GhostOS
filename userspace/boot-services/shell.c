@@ -3,6 +3,8 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
+#define STATUS_NORMAL 0x00010009U
+
 u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
 
 void *memset(void *destination, int value, u64 count)
@@ -170,19 +172,19 @@ static void write_status(u32 status)
 static int read_byte(u8 *byte)
 {
     struct response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
-    return response.status == 0 && response.values[0] == 1;
+    return response.status == STATUS_NORMAL && response.values[0] == 1;
 }
 
 static int login_authorized(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
-    return response.status == 0 && response.values[3] != 0;
+    return response.status == STATUS_NORMAL && response.values[3] != 0;
 }
 
 static int first_run_mode(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
-    return response.status == 0 && response.values[1] == 0;
+    return response.status == STATUS_NORMAL && response.values[1] == 0;
 }
 
 static void write_prompt(int authorized, int first_run)
@@ -214,7 +216,7 @@ static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 static void sleep_for(u64 duration_us)
 {
     struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0, 0, 0);
-    if (clock.status == 0) {
+    if (clock.status == STATUS_NORMAL) {
         call(OP_SLEEP_UNTIL, 0, 0, clock.values[0] + duration_us, 0, 0, 0);
     }
 }
