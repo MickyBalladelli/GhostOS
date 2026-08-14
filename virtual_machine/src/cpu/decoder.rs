@@ -1149,6 +1149,18 @@ impl InstructionDecoder {
                 ins.operands = vec![rm];
                 return Ok(())
             }
+            0x1E => {
+                let (mod_, digit, rm) = Self::read_modrm(mmu, pos)?;
+                if ins.rep_prefix != Some(true) || mod_ != 0b11 || digit != 7 {
+                    return Err(InstructionDecodeError::InvalidOpcode);
+                }
+                ins.mnemonic = match rm {
+                    2 => "ENDBR64",
+                    3 => "ENDBR32",
+                    _ => return Err(InstructionDecodeError::InvalidOpcode),
+                };
+                return Ok(());
+            }
             0x1F => {
                 // Multi-byte NOP: consume the ModR/M and optional address
                 // bytes, but do not touch the referenced memory.

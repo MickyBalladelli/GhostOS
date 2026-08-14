@@ -525,6 +525,9 @@ impl InstructionExecutor {
             "CPUID" => self.execute_cpuid(instruction, state)?,
             "RDTSC" => self.execute_rdtsc(instruction, state)?,
             "RDRAND" | "RDSEED" => self.execute_random(instruction, state)?,
+            "ENDBR32" | "ENDBR64" => {
+                state.rip = instruction.next_ip;
+            }
             "WRMSR" | "RDMSR" => {
                 self.execute_msr(instruction, state, mmu, apic, pv_clock.as_deref_mut())?
             }

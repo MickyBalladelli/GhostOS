@@ -12,7 +12,7 @@ pub(crate) const MAX_DRIVER_RESOURCES: usize = 16;
 pub(crate) const SERVICE_RESOURCE_MAGIC: u64 = 0x5359_4e4f_4452_5653;
 pub(crate) const SERVICE_RESOURCE_VERSION: u32 = 1;
 pub(crate) const SERVICE_RESOURCE_STATE_OFFSET: u64 = 8;
-pub(crate) const SERVICE_MMIO_BASE: u64 = crate::USER_SPACE_START + 0x10_000;
+pub(crate) const SERVICE_MMIO_BASE: u64 = crate::USER_SPACE_START + 0x20_000;
 pub(crate) const SERVICE_MMIO_STRIDE: u64 = 0x10_000;
 const PAGE_SIZE: u64 = crate::FRAME_SIZE;
 

@@ -7,6 +7,7 @@ SECTIONS
     .text : ALIGN(4096) {
         KEEP(*(.text._start))
         *(.text .text.*)
+        *(.ltext .ltext.*)
     }
 
     .rodata : ALIGN(16) {
