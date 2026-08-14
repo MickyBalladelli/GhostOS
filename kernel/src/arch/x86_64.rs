@@ -928,10 +928,12 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
             unsafe {
                 let scheduler =
                     (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
-                let switch = if sleep_us == 0 {
+                let switch = if sleep_us == u64::MAX {
                     scheduler.yield_current()
-                } else {
+                } else if sleep_us != 0 {
                     scheduler.sleep_current(sleep_us)
+                } else {
+                    Ok(None)
                 };
                 if let Ok(Some(context_switch)) = switch {
                     if let Some(previous) = context_switch.previous {

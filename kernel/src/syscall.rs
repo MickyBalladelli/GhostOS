@@ -285,13 +285,17 @@ pub extern "C" fn synos_call_gate_dispatch(
         return 0
     }
     let result = dispatch(caller, request);
+    if (1..=14).contains(&caller.raw()) {
+        crate::watchdog::service_activity(caller.raw() as usize, crate::time::monotonic_now_us());
+    }
     unsafe { crate::arch::write_user(response, result) };
-    if result.status == Status::NORMAL.raw()
-        && synos_runtime::Operation::from_raw(request.operation)
-            == Some(synos_runtime::Operation::SleepUntil)
-    {
-        request.arguments[0].saturating_sub(crate::time::monotonic_now_us())
-    } else {
-        0
+    match synos_runtime::Operation::from_raw(request.operation) {
+        Some(synos_runtime::Operation::SleepUntil) if result.status == Status::NORMAL.raw() => {
+            request.arguments[0].saturating_sub(crate::time::monotonic_now_us())
+        }
+        Some(synos_runtime::Operation::Yield) if result.status == Status::NORMAL.raw() => {
+            u64::MAX
+        }
+        _ => 0,
     }
 }

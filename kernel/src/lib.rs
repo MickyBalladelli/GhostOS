@@ -459,6 +459,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
             println!(
                 "unprovisioned system detected: authorization database is missing"
             );
+            println!("First-run setup mode is active; normal login is disabled.");
         } else {
             println!(
                 "authorization database path exists: first-admin setup disabled"
