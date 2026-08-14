@@ -3,6 +3,8 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
+#define STATUS_NORMAL 0x00010009U
+
 u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
 
 void *memset(void *destination, int value, u64 count)
@@ -102,13 +104,13 @@ static void write_text(const char *text)
 static int read_byte(u8 *byte)
 {
     struct response response = call(OP_TERMINAL_READ, (u64)byte, 1, 0, 0);
-    return response.status == 0 && response.values[0] == 1;
+    return response.status == STATUS_NORMAL && response.values[0] == 1;
 }
 
 static void idle(void)
 {
     struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0);
-    if (clock.status == 0) {
+    if (clock.status == STATUS_NORMAL) {
         call(OP_SERVICE_HEARTBEAT, LOGIN_ROLE, 1, 0, 0);
         call(OP_SLEEP_UNTIL, clock.values[0] + 1000, 0, 0, 0);
     }
@@ -118,7 +120,7 @@ static void wait_until(u64 deadline)
 {
     for (;;) {
         struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0);
-        if (clock.status != 0 || clock.values[0] >= deadline) {
+        if (clock.status != STATUS_NORMAL || clock.values[0] >= deadline) {
             return;
         }
         call(OP_SLEEP_UNTIL, deadline, 0, 0, 0);
@@ -128,19 +130,19 @@ static void wait_until(u64 deadline)
 static int login_requested(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
-    return response.status == 0 && response.values[0] != 0;
+    return response.status == STATUS_NORMAL && response.values[0] != 0;
 }
 
 static int administrator_account_exists(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
-    return response.status == 0 && response.values[1] != 0;
+    return response.status == STATUS_NORMAL && response.values[1] != 0;
 }
 
 static u64 login_lock_until(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
-    return response.status == 0 ? response.values[2] : 0;
+    return response.status == STATUS_NORMAL ? response.values[2] : 0;
 }
 
 static void clear_bytes(void *bytes, u64 capacity)
@@ -336,7 +338,7 @@ void _start(void)
             0,
             0
         );
-        if (challenge_response.status != 0) {
+        if (challenge_response.status != STATUS_NORMAL) {
             write_login_rejected();
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
@@ -383,7 +385,7 @@ void _start(void)
         clear_bytes(method, sizeof(method));
         clear_bytes(credential_hex, sizeof(credential_hex));
         clear_bytes(credential, sizeof(credential));
-        if (completed.status != 0) {
+        if (completed.status != STATUS_NORMAL) {
             write_login_rejected();
             continue;
         }

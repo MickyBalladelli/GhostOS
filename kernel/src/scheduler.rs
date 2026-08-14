@@ -858,6 +858,19 @@ impl Scheduler {
         let Some(current) = self.current else {
             return self.dispatch_on(cpu);
         };
+
+        if self
+            .thread(current)
+            .is_ok_and(|thread| thread.policy == SchedulingPolicy::Cooperative)
+        {
+            if let Some(next) = self.pick_next(self.partition.housekeeping()) {
+                if next != current {
+                    self.threads[current.slot()].state = ThreadState::Ready;
+                    return self.dispatch();
+                }
+            }
+        }
+
         let candidate = self.pick_realtime(self.partition.housekeeping());
         if let Some(next) = candidate {
             if next != current && self.outranks(next, current) {
