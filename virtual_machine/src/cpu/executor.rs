@@ -428,6 +428,26 @@ fn resolve_target(
     }
 }
 
+fn resolve_call_target(
+    ins: &DecodedInstruction,
+    state: &mut CpuState,
+    mmu: &mut Mmu,
+    op: &Operand,
+) -> Result<u64, CpuError> {
+    if state.mode == CpuMode::Long64 && ins.opsize == 32 {
+        match op {
+            Operand::Register(reg) => return Ok(state.reg(*reg)),
+            Operand::Memory(mem) => {
+                let address = effective_address(ins, state, mem)
+                    .wrapping_add(segment_base(state, mem.segment));
+                return mmu.read_from_addr(address, 8).map_err(mem_err)
+            }
+            _ => {}
+        }
+    }
+    resolve_target(ins, state, mmu, op)
+}
+
 fn stack_operand_size(state: &CpuState, opsize: u8) -> u8 {
     match opsize {
         16 => 2,
@@ -1124,7 +1144,7 @@ impl InstructionExecutor {
                     state.rip = *offset;
                 }
                 _ => {
-                    let target = resolve_target(ins, state, mmu, op)?;
+                    let target = resolve_call_target(ins, state, mmu, op)?;
                     push_value(state, mmu, ins.next_ip, stack_operand_size(state, ins.opsize))?;
                     state.rip = target;
                 }
