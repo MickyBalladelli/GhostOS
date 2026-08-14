@@ -53,7 +53,7 @@ fn build_user_image(source: &Path, linker: &Path, output: &Path, tools: &Path) {
     );
     run(
         Command::new(tools.join("llvm-objcopy"))
-            .args(["-O", "binary"])
+            .args(["-O", "binary", "--remove-section=.stack_guard"])
             .arg(&elf)
             .arg(output),
         "Ring 3 service image conversion",

@@ -314,7 +314,6 @@ pub mod paging {
         shell: bool,
         external_image: Option<&[u8]>,
     ) {
-        let built_in = external_image.is_none();
         let image = external_image.unwrap_or(if shell {
             SHELL_IMAGE
         } else if role == 14 {
@@ -339,14 +338,12 @@ pub mod paging {
                     chunk.len(),
                 );
             }
-            if built_in {
-                let guard = crate::random::next_u64()
-                    .filter(|value| *value != 0)
-                    .expect("entropy initialized before Ring 3 service images");
-                let page = SERVICE_STACK_GUARD_OFFSET / crate::FRAME_SIZE as usize;
-                let offset = SERVICE_STACK_GUARD_OFFSET % crate::FRAME_SIZE as usize;
-                ((pages[page] + physical_offset + offset as u64) as *mut u64).write(guard);
-            }
+            let guard = crate::random::next_u64()
+                .filter(|value| *value != 0)
+                .expect("entropy initialized before Ring 3 service images");
+            let page = SERVICE_STACK_GUARD_OFFSET / crate::FRAME_SIZE as usize;
+            let offset = SERVICE_STACK_GUARD_OFFSET % crate::FRAME_SIZE as usize;
+            ((pages[page] + physical_offset + offset as u64) as *mut u64).write(guard);
             ((pages[SERVICE_CODE_PAGE_COUNT] + physical_offset) as *mut u8).write(role);
         }
     }
