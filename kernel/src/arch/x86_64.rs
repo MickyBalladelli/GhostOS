@@ -928,7 +928,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
             unsafe {
                 let scheduler =
                     (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
-                let switch = if sleep_us == u64::MAX {
+                let switch = if sleep_us == u64::MAX || sleep_us == crate::syscall::SLEEP_EXPIRED {
                     scheduler.yield_current()
                 } else if sleep_us != 0 {
                     scheduler.sleep_current(sleep_us)

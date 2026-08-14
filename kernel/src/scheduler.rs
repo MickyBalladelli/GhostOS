@@ -985,6 +985,7 @@ impl Scheduler {
     }
 
     fn debug_check(&self) {
+        #[cfg(debug_assertions)]
         crate::invariants::debug_assert_valid(self.check_invariants())
     }
 

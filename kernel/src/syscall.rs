@@ -12,6 +12,7 @@ use crate::task::AddressSpaceId;
 
 /// x86 user processes enter the kernel through this DPL 3 interrupt gate.
 pub const CALL_GATE_VECTOR: u8 = 0x80;
+pub const SLEEP_EXPIRED: u64 = u64::MAX - 1;
 
 /// A registered runtime dispatcher. The caller is taken from the currently
 /// running scheduler thread, never from user memory.
@@ -290,7 +291,12 @@ pub extern "C" fn synos_call_gate_dispatch(
     }
     let sleep_us = match synos_runtime::Operation::from_raw(request.operation) {
         Some(synos_runtime::Operation::SleepUntil) if result.status == Status::NORMAL.raw() => {
-            request.arguments[0].saturating_sub(crate::time::monotonic_now_us())
+            let remaining = request.arguments[0].saturating_sub(crate::time::monotonic_now_us());
+            if remaining == 0 {
+                SLEEP_EXPIRED
+            } else {
+                remaining
+            }
         }
         Some(synos_runtime::Operation::Yield) if result.status == Status::NORMAL.raw() => {
             u64::MAX
