@@ -46,6 +46,7 @@ enum {
     OP_LOGIN_BOOTSTRAP_RECOVERY = 61,
     OP_LOGIN_REVOKE_IDENTITY = 62,
     OP_SHUTDOWN = 63,
+    OP_WATCHDOG_DIAGNOSTICS = 64,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
@@ -243,6 +244,32 @@ static u64 next_word(char **cursor, char *word)
     }
     word[count] = 0;
     return count;
+}
+
+static void watchdog_command(char *cursor)
+{
+    char action[256];
+    u64 action_length = next_word(&cursor, action);
+    u64 mode = 0;
+    if (action_length != 0 && equal_name(action, "ON")) {
+        mode = 1;
+    } else if (action_length != 0 && equal_name(action, "OFF")) {
+        mode = 2;
+    } else if (action_length != 0 && !equal_name(action, "STATUS")) {
+        write_text("Use: WATCHDOG STATUS|ON|OFF\n");
+        return;
+    }
+    struct response response = call(OP_WATCHDOG_DIAGNOSTICS, 0, 0, mode, 0, 0, 0);
+    if (response.status != 0) {
+        write_text("Watchdog request failed\n");
+        write_status(response.status);
+        return;
+    }
+    write_text("Watchdog diagnostics: ");
+    write_text(response.values[0] != 0 ? "on" : "off");
+    write_text(" (timeout=");
+    write_hex((u32)(response.values[1] / 1000000));
+    write_text("s)\n");
 }
 
 static void print_directory(char *path, u8 *buffer)
@@ -1750,6 +1777,10 @@ static void execute_line(char *line, u8 *buffer)
         call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
         return;
     }
+    if (equal_name(command, "WATCHDOG")) {
+        watchdog_command(cursor);
+        return;
+    }
     if (equal_name(command, "LOGOUT")) {
         write_text("Logging out...\n");
         struct response logout = call(OP_LOGIN_LOGOUT, 0, 0, 0, 0, 0, 0);
@@ -1916,12 +1947,17 @@ static void execute_first_run_line(char *line)
             "  CONFIRM\n"
             "At login: admin, passkey, then the displayed assertion hex.\n"
             "Recovery: RECOVERY STATUS|RESET|RETRY\n"
+            "Watchdog diagnostics: WATCHDOG STATUS|ON|OFF\n"
             "Use SHUTDOWN to power off.\n"
         );
         return;
     }
     if (equal_name(command, "SHUTDOWN")) {
         call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
+        return;
+    }
+    if (equal_name(command, "WATCHDOG")) {
+        watchdog_command(cursor);
         return;
     }
     if (equal_name(command, "USERNAME")) {
@@ -2037,7 +2073,7 @@ static void execute_first_run_line(char *line)
         }
         return;
     }
-    write_text("Use HELP, USERNAME, CREDENTIAL, CONFIRM, RECOVERY, or SHUTDOWN.\n");
+    write_text("Use HELP, USERNAME, CREDENTIAL, CONFIRM, RECOVERY, WATCHDOG, or SHUTDOWN.\n");
 }
 
 static void execute_locked_line(char *line)

@@ -1056,12 +1056,14 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                                 !report.stale_services,
                                 core::sync::atomic::Ordering::Release,
                             );
-                            for role in 1..crate::watchdog::SERVICE_CAPACITY {
-                                if report.stale_services & (1u32 << role) != 0 {
-                                    crate::println!(
-                                        "watchdog fenced hung service role={} for supervisor recovery",
-                                        role
-                                    );
+                            if crate::watchdog::diagnostics_enabled() {
+                                for role in 1..crate::watchdog::SERVICE_CAPACITY {
+                                    if report.stale_services & (1u32 << role) != 0 {
+                                        crate::println!(
+                                            "watchdog fenced hung service role={} for supervisor recovery",
+                                            role
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1072,7 +1074,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                             if report.stale_cpus.contains(stale_cpu) {
                                 let offlined = scheduler.watchdog_offline(stale_cpu);
                                 crate::watchdog::cpu_offline(stale_cpu);
-                                if offlined {
+                                if offlined && crate::watchdog::diagnostics_enabled() {
                                     crate::println!(
                                         "watchdog offlined stalled CPU {}",
                                         stale_cpu.raw()

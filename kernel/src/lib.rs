@@ -1632,6 +1632,22 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             role as u64,
         ])
     }
+    if Operation::from_raw(request.operation) == Some(Operation::WatchdogDiagnostics) {
+        if role != 9 || request.arguments[1..] != [0; 5] || request.arguments[0] > 2 {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        if request.arguments[0] == 1 {
+            watchdog::set_diagnostics_enabled(true);
+        } else if request.arguments[0] == 2 {
+            watchdog::set_diagnostics_enabled(false);
+        }
+        return syscall_success([
+            watchdog::diagnostics_enabled() as u64,
+            watchdog::SERVICE_TIMEOUT_US,
+            watchdog::SERVICE_CAPACITY as u64,
+            0,
+        ])
+    }
     if Operation::from_raw(request.operation) == Some(Operation::ShellPoll) {
         if role != 9 || request.arguments != [0; 6] {
             return syscall_error(Status::ACCESS_DENIED)

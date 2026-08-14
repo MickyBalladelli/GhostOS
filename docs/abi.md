@@ -9,7 +9,7 @@ Current contract:
 | Field | Value | Meaning |
 | --- | ---: | --- |
 | `ABI_SCHEMA_VERSION` | `1` | Wire version carried in every request. The kernel accepts this value exactly. |
-| `ABI_REVISION` | `4` | Monotonic generated-registry revision. It identifies the binding set; it is not a negotiation value. |
+| `ABI_REVISION` | `14` | Monotonic generated-registry revision. It identifies the binding set; it is not a negotiation value. |
 | Request size | `64` bytes | Fixed `#[repr(C)]` request record. |
 | Response size | `40` bytes | Fixed `#[repr(C)]` response record. |
 
@@ -112,6 +112,12 @@ reuse a removed number.
 | 15 | `SynFsWrite` | 32 | `MemoryProtect` | 49 | `SynFsUnmap` |
 | 16 | `SynFsMetadata` | 33 | `CapabilityQuery` | | |
 | 17 | `SynFsMkdir` | 34 | `PipeCreate` | | |
+| 64 | `WatchdogDiagnostics` | | | | |
+
+`WatchdogDiagnostics` is shell-only. `arguments[0]` is `0` for status, `1` to
+enable diagnostic output, or `2` to disable it; all other arguments must be
+zero. The response returns enabled state, service timeout in microseconds,
+and service-role capacity in `values[0..3]`.
 
 The operation enum and typed argument construction live in
 [`crates/abi/src/generated.rs`](../crates/abi/src/generated.rs) and

@@ -4,7 +4,7 @@
 //! a lock needed by the watchdog. Recovery is latched once per fault and is
 //! cleared only after the owner reports progress again.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::task::{CpuId, CpuMask, MAX_CPUS};
 
@@ -18,6 +18,7 @@ static SERVICE_HEARTBEATS: [AtomicU64; SERVICE_CAPACITY] =
 static SERVICE_SEQUENCES: [AtomicU64; SERVICE_CAPACITY] =
     [const { AtomicU64::new(0) }; SERVICE_CAPACITY];
 static SERVICE_LATCHED: AtomicU32 = AtomicU32::new(0);
+static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(false);
 
 static CPU_ONLINE: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
 static CPU_HEARTBEATS: [AtomicU64; MAX_CPUS] = [const { AtomicU64::new(0) }; MAX_CPUS];
@@ -76,6 +77,14 @@ pub(crate) fn service_sequences() -> impl Iterator<Item = u64> {
     SERVICE_SEQUENCES
         .iter()
         .map(|sequence| sequence.load(Ordering::Acquire))
+}
+
+pub(crate) fn diagnostics_enabled() -> bool {
+    DIAGNOSTICS_ENABLED.load(Ordering::Acquire)
+}
+
+pub(crate) fn set_diagnostics_enabled(enabled: bool) {
+    DIAGNOSTICS_ENABLED.store(enabled, Ordering::Release);
 }
 
 pub(crate) fn cpu_online(cpu: CpuId, now_us: u64) {

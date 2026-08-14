@@ -1,6 +1,6 @@
 [abi]
 schema_version = 1
-revision = 13
+revision = 14
 rpc_protocol_version = 1
 rpc_magic = "SYRP"
 rpc_frame_header_bytes = 24
@@ -196,6 +196,9 @@ value = 62
 [[operations]]
 name = "Shutdown"
 value = 63
+[[operations]]
+name = "WatchdogDiagnostics"
+value = 64
 
 [[methods]]
 name = "ClusterState"
