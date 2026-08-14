@@ -291,4 +291,4 @@ Build the real operating system core before adding more advanced features.
 - [x] Document first boot and first administrator setup.
 - [x] Document local and remote login methods.
 - [x] Document account, group, role, credential, session, and recovery commands.
-- [ ] Document the emergency recovery process and its security limits.
+- [x] Document the emergency recovery process and its security limits.

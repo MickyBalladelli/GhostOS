@@ -135,6 +135,8 @@ first administrator login. Credential-loss recovery is documented in the
 SSH, and browser administration login.
 [Account, group, role, credential, session, and recovery commands](docs/account-management.md)
 covers the shell commands and authentication management API.
+[Emergency recovery](docs/emergency-recovery.md) covers restore order and
+security limits.
 
 Bare-metal controller, disk, USB, and input limits are listed in the
 [physical hardware support matrix](docs/hardware-support.md).
