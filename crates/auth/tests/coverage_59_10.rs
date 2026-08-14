@@ -1,8 +1,9 @@
 use synos_auth::{
-    AuthenticationChallenge, CapabilityCaveat, CapabilityKey, Credential, CredentialId,
-    CredentialKind, CredentialVerifier, CryptographicCapability, DatabaseScope, DiscoveryAnnouncement,
-    FederationError, PeerDirectory, TokenError, TransportRights, UserRecord, Username,
-    AuthDaemon, InitialCapability, SecurityPolicy, SessionManager, StartupError, ClusterId,
+    AccountState, AuthenticationChallenge, BootLoginService, CapabilityCaveat, CapabilityKey,
+    Credential, CredentialId, CredentialKind, CredentialVerifier, CryptographicCapability,
+    DatabaseScope, DiscoveryAnnouncement, FederationError, InitialCapability, PeerDirectory,
+    SecurityPolicy, SecurityState, SecurityStore, SecurityStoreError, SessionManager, StartupError,
+    TokenError, TransportRights, UserRecord, Username, AuthDaemon, ClusterId,
 };
 use synos_fabric::NodeId;
 use synos_kernel::{AddressSpaceId, CapabilityObject, CapabilitySpace, IdentityId, Rights};
@@ -25,6 +26,83 @@ fn record() -> UserRecord {
 
 struct Verifier {
     accepts: bool,
+}
+
+#[derive(Default)]
+struct MemorySecurityStore<const USERS: usize, const GROUPS: usize> {
+    state: Option<SecurityState<USERS, GROUPS>>,
+}
+
+impl<const USERS: usize, const GROUPS: usize> SecurityStore<USERS, GROUPS>
+    for MemorySecurityStore<USERS, GROUPS>
+{
+    fn load(
+        &mut self,
+        state: &mut SecurityState<USERS, GROUPS>,
+    ) -> Result<bool, SecurityStoreError> {
+        if let Some(saved) = self.state {
+            *state = saved;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn store(
+        &mut self,
+        state: &SecurityState<USERS, GROUPS>,
+    ) -> Result<(), SecurityStoreError> {
+        self.state = Some(*state);
+        Ok(())
+    }
+}
+
+fn passkey(id: u32) -> Credential {
+    Credential::new_passkey(
+        CredentialId::new(id).unwrap(),
+        &[id as u8, 0x42, 0x99],
+        0,
+    )
+    .unwrap()
+}
+
+fn management_service() -> (
+    BootLoginService<4, 4, 4, 4>,
+    MemorySecurityStore<4, 4>,
+    synos_auth::SessionHandle,
+) {
+    let mut store = MemorySecurityStore::default();
+    let mut service = BootLoginService::start(&mut store, SecurityPolicy::default(), 100).unwrap();
+    let admin_identity = IdentityId::new(1).unwrap();
+    service
+        .create_first_admin_at(
+            &mut store,
+            admin_identity,
+            "admin",
+            DatabaseScope::Local,
+            passkey(1),
+            10,
+        )
+        .unwrap();
+    let challenge = service
+        .begin_login(
+            "admin",
+            NodeId::LOCAL,
+            CredentialId::new(1).unwrap(),
+            CredentialKind::Passkey,
+            10,
+        )
+        .unwrap();
+    let session = service
+        .complete_login(
+            challenge,
+            b"proof",
+            &mut Verifier { accepts: true },
+            AddressSpaceId::new(4).unwrap(),
+            10,
+        )
+        .unwrap();
+    (service, store, session.handle)
 }
 
 impl CredentialVerifier for Verifier {
@@ -97,6 +175,74 @@ fn wrong_credentials_are_rejected_and_challenges_are_consumed() {
         ),
         Err(synos_auth::AuthError::InvalidChallenge)
     ));
+}
+
+#[test]
+fn account_management_creates_renames_disables_and_deletes_accounts() {
+    let (mut service, mut store, administrator) = management_service();
+    let identity = IdentityId::new(2).unwrap();
+    let mut account = UserRecord::new(
+        identity,
+        Username::new("Alice").unwrap(),
+        DatabaseScope::Local,
+    );
+    account.add_credential(passkey(2)).unwrap();
+
+    let created = service
+        .create_account(&mut store, administrator, account, 20)
+        .unwrap();
+    assert_eq!(created.identity, identity);
+    assert_eq!(created.username.as_str(), "alice");
+    let stored = service.state().database.record(identity).unwrap();
+    assert_eq!(stored.identity, created.identity);
+    assert_eq!(stored.username, created.username);
+
+    let renamed = service
+        .rename_account(
+            &mut store,
+            administrator,
+            identity,
+            Username::new("AliceRenamed").unwrap(),
+            30,
+        )
+        .unwrap();
+    assert_eq!(renamed.identity, identity);
+    assert_eq!(renamed.username.as_str(), "alicerenamed");
+
+    let disabled = service
+        .disable_account(&mut store, administrator, identity, 40)
+        .unwrap();
+    assert_eq!(disabled.account_state(), AccountState::Disabled);
+    assert!(!disabled.is_login_usable());
+
+    let deleted = service
+        .delete_account(&mut store, administrator, identity, 50)
+        .unwrap();
+    assert_eq!(deleted.identity, identity);
+    assert!(matches!(
+        service.state().database.record(identity),
+        Err(synos_auth::AuthError::UserNotFound)
+    ));
+    assert!(store.state.is_some());
+}
+
+#[test]
+fn last_administrator_cannot_be_disabled_or_deleted() {
+    let (mut service, mut store, administrator) = management_service();
+    let identity = IdentityId::new(1).unwrap();
+
+    assert!(matches!(
+        service.disable_account(&mut store, administrator, identity, 20),
+        Err(StartupError::LastAdministrator)
+    ));
+    assert!(matches!(
+        service.delete_account(&mut store, administrator, identity, 30),
+        Err(StartupError::LastAdministrator)
+    ));
+
+    let record = service.state().database.record(identity).unwrap();
+    assert_eq!(record.account_state(), AccountState::Active);
+    assert!(record.has_role(synos_auth::AccountRole::Administrator));
 }
 
 #[test]

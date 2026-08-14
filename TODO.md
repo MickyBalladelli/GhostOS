@@ -284,7 +284,7 @@ Build the real operating system core before adding more advanced features.
 
 - [x] Add end-to-end tests for first boot, first login, normal login, logout, and relogin.
 - [x] Add tests for wrong credentials, rate limits, lockouts, expiry, and revocation.
-- [ ] Add tests for account creation, deletion, disablement, rename, and last-admin protection.
+- [x] Add tests for account creation, deletion, disablement, rename, and last-admin protection.
 - [ ] Add tests for credential enrollment, removal, rotation, and credential loss recovery.
 - [ ] Add persistence and power-loss tests for account database updates.
 - [ ] Add QEMU coverage for the interactive login flow.
