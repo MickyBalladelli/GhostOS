@@ -288,8 +288,7 @@ pub extern "C" fn synos_call_gate_dispatch(
     if (1..=14).contains(&caller.raw()) {
         crate::watchdog::service_activity(caller.raw() as usize, crate::time::monotonic_now_us());
     }
-    unsafe { crate::arch::write_user(response, result) };
-    match synos_runtime::Operation::from_raw(request.operation) {
+    let sleep_us = match synos_runtime::Operation::from_raw(request.operation) {
         Some(synos_runtime::Operation::SleepUntil) if result.status == Status::NORMAL.raw() => {
             request.arguments[0].saturating_sub(crate::time::monotonic_now_us())
         }
@@ -297,5 +296,15 @@ pub extern "C" fn synos_call_gate_dispatch(
             u64::MAX
         }
         _ => 0,
-    }
+    };
+    let wire_result = if caller.raw() == 9 && result.status == Status::NORMAL.raw() {
+        Response {
+            status: 0,
+            ..result
+        }
+    } else {
+        result
+    };
+    unsafe { crate::arch::write_user(response, wire_result) };
+    sleep_us
 }
