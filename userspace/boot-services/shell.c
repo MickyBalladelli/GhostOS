@@ -27,6 +27,7 @@ enum {
     OP_CLOCK_NOW = 2,
     OP_SERVICE_READY = 42,
     OP_SERVICE_HEARTBEAT = 43,
+    OP_SYSTEM_INFO = 44,
     OP_SYNFS_OPEN = 12,
     OP_SYNFS_CLOSE = 13,
     OP_SYNFS_READ = 14,
@@ -183,6 +184,12 @@ static int first_run_mode(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
     return response.status == 0 && response.values[1] == 0;
+}
+
+static int all_services_ready(void)
+{
+    struct response response = call(OP_SYSTEM_INFO, 0, 0, 0, 0, 0, 0);
+    return response.status == 0 && (response.values[1] & 0x7ffe) == 0x7ffe;
 }
 
 static void write_prompt(int authorized, int first_run)
@@ -2023,6 +2030,9 @@ void _start(void)
     u8 byte;
 
     call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
+    while (!all_services_ready()) {
+        sleep_for(1000);
+    }
     if (first_run_mode()) {
         write_text("SynOS first-run setup mode\n");
     } else {

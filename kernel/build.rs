@@ -19,7 +19,7 @@ fn build_user_image(source: &Path, linker: &Path, output: &Path, tools: &Path) {
             .args([
                 "--target=x86_64-unknown-none-elf",
                 "-std=c11",
-                "-O2",
+                "-Os",
                 "-ffreestanding",
                 "-fno-builtin",
                 "-fno-pic",
