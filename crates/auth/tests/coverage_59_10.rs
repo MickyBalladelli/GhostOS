@@ -32,6 +32,14 @@ struct Verifier {
 #[derive(Default)]
 struct MemorySecurityStore<const USERS: usize, const GROUPS: usize> {
     state: Option<SecurityState<USERS, GROUPS>>,
+    pending_state: Option<SecurityState<USERS, GROUPS>>,
+    power_loss_next: bool,
+}
+
+impl<const USERS: usize, const GROUPS: usize> MemorySecurityStore<USERS, GROUPS> {
+    fn simulate_power_loss(&mut self) {
+        self.power_loss_next = true;
+    }
 }
 
 impl<const USERS: usize, const GROUPS: usize> SecurityStore<USERS, GROUPS>
@@ -53,7 +61,13 @@ impl<const USERS: usize, const GROUPS: usize> SecurityStore<USERS, GROUPS>
         &mut self,
         state: &SecurityState<USERS, GROUPS>,
     ) -> Result<(), SecurityStoreError> {
+        if self.power_loss_next {
+            self.pending_state = Some(*state);
+            self.power_loss_next = false;
+            return Err(SecurityStoreError::Unavailable)
+        }
         self.state = Some(*state);
+        self.pending_state = None;
         Ok(())
     }
 }
@@ -105,13 +119,21 @@ fn management_service_with_policy(
             10,
         )
         .unwrap();
+    let session = login_admin(&mut service, 10);
+    (service, store, session)
+}
+
+fn login_admin(
+    service: &mut BootLoginService<4, 4, 4, 4>,
+    now_us: u64,
+) -> synos_auth::SessionHandle {
     let challenge = service
         .begin_login(
             "admin",
             NodeId::LOCAL,
             CredentialId::new(1).unwrap(),
             CredentialKind::Passkey,
-            10,
+            now_us,
         )
         .unwrap();
     let session = service
@@ -120,10 +142,10 @@ fn management_service_with_policy(
             b"proof",
             &mut Verifier { accepts: true },
             AddressSpaceId::new(4).unwrap(),
-            10,
+            now_us,
         )
         .unwrap();
-    (service, store, session.handle)
+    session.handle
 }
 
 impl CredentialVerifier for Verifier {
@@ -367,6 +389,54 @@ fn credential_loss_recovery_replaces_credentials_and_restores_login() {
             50,
         )
         .is_ok());
+}
+
+#[test]
+fn account_updates_persist_across_reload_and_power_loss_keeps_last_commit() {
+    let (mut service, mut store, administrator) = management_service();
+    let identity = IdentityId::new(2).unwrap();
+    let mut account = UserRecord::new(
+        identity,
+        Username::new("PersistentUser").unwrap(),
+        DatabaseScope::Local,
+    );
+    account.add_credential(passkey(2)).unwrap();
+    service
+        .create_account(&mut store, administrator, account, 20)
+        .unwrap();
+    service
+        .rename_account(
+            &mut store,
+            administrator,
+            identity,
+            Username::new("RenamedPersistentUser").unwrap(),
+            30,
+        )
+        .unwrap();
+    service
+        .disable_account(&mut store, administrator, identity, 40)
+        .unwrap();
+
+    let mut rebooted =
+        BootLoginService::start(&mut store, SecurityPolicy::default(), 200).unwrap();
+    let reloaded = rebooted.state().database.record(identity).unwrap();
+    assert_eq!(reloaded.username.as_str(), "renamedpersistentuser");
+    assert_eq!(reloaded.account_state(), AccountState::Disabled);
+
+    let administrator = login_admin(&mut rebooted, 200);
+    store.simulate_power_loss();
+    assert!(matches!(
+        rebooted.delete_account(&mut store, administrator, identity, 210),
+        Err(StartupError::Storage(SecurityStoreError::Unavailable))
+    ));
+    assert!(store.pending_state.is_some());
+    assert!(store.state.unwrap().database.record(identity).is_ok());
+
+    let after_power_loss: BootLoginService<4, 4, 4, 4> =
+        BootLoginService::start(&mut store, SecurityPolicy::default(), 300).unwrap();
+    let recovered = after_power_loss.state().database.record(identity).unwrap();
+    assert_eq!(recovered.username.as_str(), "renamedpersistentuser");
+    assert_eq!(recovered.account_state(), AccountState::Disabled);
 }
 
 #[test]
