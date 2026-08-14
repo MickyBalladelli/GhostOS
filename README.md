@@ -128,6 +128,10 @@ are checked against source metadata and roadmap files by:
 python3 scripts/validate-documentation.py
 ```
 
+The [first-boot guide](docs/first-boot.md) covers new-system setup and the
+first administrator login. Credential-loss recovery is documented in the
+[recovery procedure](docs/first-admin-credential-loss-recovery.md).
+
 Bare-metal controller, disk, USB, and input limits are listed in the
 [physical hardware support matrix](docs/hardware-support.md).
 
