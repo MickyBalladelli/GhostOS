@@ -133,6 +133,8 @@ first administrator login. Credential-loss recovery is documented in the
 [recovery procedure](docs/first-admin-credential-loss-recovery.md).
 [Local and remote login methods](docs/login.md) covers physical-console,
 SSH, and browser administration login.
+[Account, group, role, credential, session, and recovery commands](docs/account-management.md)
+covers the shell commands and authentication management API.
 
 Bare-metal controller, disk, USB, and input limits are listed in the
 [physical hardware support matrix](docs/hardware-support.md).
