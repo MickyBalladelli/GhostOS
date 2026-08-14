@@ -446,7 +446,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
     let nvme_name = ServiceName::new("synos-nvmed").map_err(|_| StartError::Supervisor)?;
     let ethernet_name =
         ServiceName::new("synos-ethernetd").map_err(|_| StartError::Supervisor)?;
-    let mut supervisor = Supervisor::<12>::new();
+    let mut supervisor = Supervisor::<SERVICE_COUNT>::new();
     supervisor
         .register(ServiceSpec {
             id: filesystem_service_id(),
