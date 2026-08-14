@@ -107,6 +107,43 @@ fn drive_login_workflow(session: &mut QemuLoginSession) -> Result<(), String> {
     session.wait_for_after("SYNOS\x1b[90m::\x1b[31mLOCKED", logout_start)?;
     complete_login(session, "relogin", logout_start)?;
     assert_whoami(session, "relogin")?;
+    exercise_login_failures_and_lockout(session)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn exercise_login_failures_and_lockout(session: &mut QemuLoginSession) -> Result<(), String> {
+    let first_failure_start = session.serial_len();
+    session.send_text("logout\n")?;
+    session.wait_for_after("SYNOS\x1b[90m::\x1b[31mLOCKED", first_failure_start)?;
+    submit_bad_credential(session, first_failure_start)?;
+
+    let rate_limited_start = session.serial_len();
+    session.wait_for_after("login: ", rate_limited_start)?;
+    session.send_text("admin\npasskey\n")?;
+    let rate_limited_log = session.wait_for_after("Login failed", rate_limited_start)?;
+    if rate_limited_log[rate_limited_start..].contains("challenge: ") {
+        return Err("rate-limited login unexpectedly received a challenge".to_string())
+    }
+
+    let mut next_attempt_start = session.serial_len();
+    for delay_ms in [1_100, 2_100, 4_100, 8_100] {
+        session.wait_for_after("login: ", next_attempt_start)?;
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        submit_bad_credential(session, next_attempt_start)?;
+        next_attempt_start = session.serial_len();
+    }
+    session.wait_for_after("Login temporarily locked after repeated failures.", next_attempt_start)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn submit_bad_credential(session: &mut QemuLoginSession, search_from: usize) -> Result<(), String> {
+    session.wait_for_after("login: ", search_from)?;
+    session.send_text("admin\npasskey\n")?;
+    session.wait_for_after("passkey: ", search_from)?;
+    session.send_text("00\n")?;
+    session.wait_for_after("Login failed", search_from)?;
     Ok(())
 }
 

@@ -2,7 +2,7 @@ use synos_auth::{
     AuthenticationChallenge, CapabilityCaveat, CapabilityKey, Credential, CredentialId,
     CredentialKind, CredentialVerifier, CryptographicCapability, DatabaseScope, DiscoveryAnnouncement,
     FederationError, PeerDirectory, TokenError, TransportRights, UserRecord, Username,
-    AuthDaemon, InitialCapability, ClusterId,
+    AuthDaemon, InitialCapability, SecurityPolicy, SessionManager, StartupError, ClusterId,
 };
 use synos_fabric::NodeId;
 use synos_kernel::{AddressSpaceId, CapabilityObject, CapabilitySpace, IdentityId, Rights};
@@ -63,6 +63,119 @@ fn authentication_challenges_are_one_shot_and_sessions_expire() {
         .begin_authentication("alice", NodeId::LOCAL, CredentialId::new(1).unwrap(), 30, 1)
         .unwrap();
     assert!(matches!(daemon.complete_authentication(expired, b"proof", &mut Verifier { accepts: true }, login_space, 31, 10), Err(synos_auth::AuthError::InvalidChallenge)));
+}
+
+#[test]
+fn wrong_credentials_are_rejected_and_challenges_are_consumed() {
+    let mut database = synos_auth::AuthorizationDatabase::<2>::new();
+    database.insert(record()).unwrap();
+    let mut daemon = AuthDaemon::<2, 2>::new(database, 100);
+    let login_space = AddressSpaceId::new(4).unwrap();
+    let challenge = daemon
+        .begin_authentication("alice", NodeId::LOCAL, CredentialId::new(1).unwrap(), 10, 20)
+        .unwrap();
+
+    assert!(matches!(
+        daemon.complete_authentication(
+            challenge,
+            b"wrong-proof",
+            &mut Verifier { accepts: false },
+            login_space,
+            15,
+            10,
+        ),
+        Err(synos_auth::AuthError::VerificationFailed)
+    ));
+    assert!(matches!(
+        daemon.complete_authentication(
+            challenge,
+            b"proof",
+            &mut Verifier { accepts: true },
+            login_space,
+            15,
+            10,
+        ),
+        Err(synos_auth::AuthError::InvalidChallenge)
+    ));
+}
+
+#[test]
+fn session_lifetime_idle_timeout_and_identity_revocation_fence_access() {
+    let policy = SecurityPolicy::new(50, 20, 10).unwrap();
+    let login_space = AddressSpaceId::new(4).unwrap();
+
+    let mut lifetime_manager = session_manager(policy);
+    let lifetime_session = complete_session(&mut lifetime_manager, login_space, 10);
+    assert_eq!(lifetime_session.expires_at_us, 30);
+    lifetime_manager
+        .authorize(
+            lifetime_session.handle,
+            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            19,
+        )
+        .unwrap();
+    assert_eq!(
+        lifetime_manager.authorize(
+            lifetime_session.handle,
+            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            30,
+        ),
+        Err(StartupError::SessionExpired)
+    );
+
+    let mut idle_manager = session_manager(policy);
+    let idle_session = complete_session(&mut idle_manager, login_space, 10);
+    assert_eq!(
+        idle_manager.authorize(
+            idle_session.handle,
+            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            20,
+        ),
+        Err(StartupError::SessionExpired)
+    );
+
+    let mut revocation_manager = session_manager(policy);
+    let revoked_session = complete_session(&mut revocation_manager, login_space, 10);
+    assert_eq!(revocation_manager.revoke_identity(revoked_session.identity), 1);
+    assert_eq!(
+        revocation_manager.authorize(
+            revoked_session.handle,
+            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            11,
+        ),
+        Err(StartupError::SessionNotFound)
+    );
+}
+
+fn session_manager(policy: SecurityPolicy) -> SessionManager<2, 2, 2> {
+    let mut database = synos_auth::AuthorizationDatabase::<2>::new();
+    database.insert(record()).unwrap();
+    SessionManager::new(database, policy, 100)
+}
+
+fn complete_session(
+    manager: &mut SessionManager<2, 2, 2>,
+    login_space: AddressSpaceId,
+    now_us: u64,
+) -> synos_auth::SessionView {
+    let challenge = manager
+        .begin_login(
+            "alice",
+            NodeId::LOCAL,
+            CredentialId::new(1).unwrap(),
+            CredentialKind::Passkey,
+            now_us,
+        )
+        .unwrap();
+    manager
+        .complete_login(
+            challenge,
+            b"proof",
+            &mut Verifier { accepts: true },
+            login_space,
+            now_us,
+        )
+        .unwrap()
 }
 
 #[test]

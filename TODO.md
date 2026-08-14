@@ -283,7 +283,7 @@ Build the real operating system core before adding more advanced features.
 ### Verification and documentation
 
 - [x] Add end-to-end tests for first boot, first login, normal login, logout, and relogin.
-- [ ] Add tests for wrong credentials, rate limits, lockouts, expiry, and revocation.
+- [x] Add tests for wrong credentials, rate limits, lockouts, expiry, and revocation.
 - [ ] Add tests for account creation, deletion, disablement, rename, and last-admin protection.
 - [ ] Add tests for credential enrollment, removal, rotation, and credential loss recovery.
 - [ ] Add persistence and power-loss tests for account database updates.
