@@ -1,4 +1,4 @@
-//! Opt-in QEMU end-to-end coverage for first boot and the local login loop.
+//! Opt-in QEMU end-to-end coverage for the interactive local login flow.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -16,7 +16,7 @@ const SERIAL_TIMEOUT: Duration = Duration::from_secs(15);
 #[test]
 #[ignore = "requires SYNOS_RUN_QEMU_TESTS=1, QEMU, and SYNOS_QEMU_IMAGE"]
 #[cfg(unix)]
-fn qemu_first_boot_first_login_logout_and_relogin() {
+fn qemu_interactive_login_flow() {
     if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
         return
     }
@@ -31,7 +31,7 @@ fn qemu_first_boot_first_login_logout_and_relogin() {
 
     let mut session = QemuLoginSession::start(&writable_image, &system_disk, &kernel_payload);
     let result = drive_login_workflow(&mut session);
-    let log = session.finish("qemu-login-first-boot");
+    let log = session.finish("qemu-interactive-login");
     result.unwrap_or_else(|error| panic!("login workflow failed: {error}; serial output: {log:?}"));
 }
 
