@@ -272,6 +272,11 @@ pub(crate) fn poll_input() -> Result<u64, Status> {
     Ok(processed)
 }
 
+pub(crate) fn shutdown() -> ! {
+    let session = unsafe { (&*core::ptr::addr_of!(SHELL_SESSION)).assume_init_ref() };
+    crate::power::shutdown(session.acpi.as_ref())
+}
+
 fn process_input_byte(
     byte: u8,
     registry: &CommandRegistry<COMMAND_CAPACITY>,

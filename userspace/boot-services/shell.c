@@ -45,6 +45,7 @@ enum {
     OP_LOGIN_BOOTSTRAP_CONFIRM = 60,
     OP_LOGIN_BOOTSTRAP_RECOVERY = 61,
     OP_LOGIN_REVOKE_IDENTITY = 62,
+    OP_SHUTDOWN = 63,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
@@ -1742,6 +1743,10 @@ static void execute_line(char *line, u8 *buffer)
         }
         return;
     }
+    if (equal_name(command, "SHUTDOWN")) {
+        call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
+        return;
+    }
     if (equal_name(command, "LOGOUT")) {
         write_text("Logging out...\n");
         struct response logout = call(OP_LOGIN_LOGOUT, 0, 0, 0, 0, 0, 0);
@@ -1900,7 +1905,19 @@ static void execute_first_run_line(char *line)
         return;
     }
     if (equal_name(command, "HELP")) {
-        write_text("Use USERNAME, CREDENTIAL, CONFIRM, or RECOVERY.\n");
+        write_text(
+            "First login:\n"
+            "  USERNAME admin\n"
+            "  CREDENTIAL PASSKEY demo-public-material\n"
+            "  CONFIRM\n"
+            "At login: admin, passkey, then the displayed assertion hex.\n"
+            "Recovery: RECOVERY STATUS|RESET|RETRY\n"
+            "Use SHUTDOWN to power off.\n"
+        );
+        return;
+    }
+    if (equal_name(command, "SHUTDOWN")) {
+        call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
         return;
     }
     if (equal_name(command, "USERNAME")) {
@@ -2016,7 +2033,18 @@ static void execute_first_run_line(char *line)
         }
         return;
     }
-    write_text("Use USERNAME, CREDENTIAL, CONFIRM, or RECOVERY.\n");
+    write_text("Use HELP, USERNAME, CREDENTIAL, CONFIRM, RECOVERY, or SHUTDOWN.\n");
+}
+
+static void execute_locked_line(char *line)
+{
+    char command[256];
+    char *cursor = line;
+    if (next_word(&cursor, command) != 0 && equal_name(command, "SHUTDOWN")) {
+        call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
+        return;
+    }
+    write_text("Terminal locked. Use the login prompt or SHUTDOWN.\n");
 }
 
 __attribute__((section(".text._start"), noreturn))
@@ -2063,6 +2091,8 @@ void _start(void)
                 execute_first_run_line(line);
             } else if (login_authorized()) {
                 execute_line(line, buffer);
+            } else {
+                execute_locked_line(line);
             }
             line_length = 0;
         } else if (byte == 8 || byte == 127) {

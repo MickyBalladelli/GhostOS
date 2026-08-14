@@ -1105,6 +1105,12 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     if request.flags != 0 || request.capability != 0 {
         return syscall_error(Status::INVALID_ARGUMENT)
     }
+    if Operation::from_raw(request.operation) == Some(Operation::Shutdown) {
+        if caller.raw() != 9 || request.arguments != [0; 6] {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        shell::shutdown()
+    }
     if Operation::from_raw(request.operation) == Some(Operation::TerminalWrite) {
         let shell_active = caller.raw() == 9 && login_session_active();
         let shell_first_run = caller.raw() == 9
