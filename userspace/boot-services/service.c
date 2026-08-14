@@ -5,6 +5,16 @@ typedef unsigned long long u64;
 
 u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
 
+void *memset(void *destination, int value, u64 count)
+{
+    u8 *bytes = (u8 *)destination;
+    while (count != 0) {
+        *bytes++ = (u8)value;
+        count--;
+    }
+    return destination;
+}
+
 __attribute__((noreturn))
 void __stack_chk_fail(void)
 {
@@ -20,7 +30,7 @@ enum {
     OP_SERVICE_HEARTBEAT = 43,
     OP_REALTIME_NOW = 46,
     OP_SLEEP_UNTIL = 47,
-    SERVICE_STATE = 0x0000008000004000ULL,
+    SERVICE_STATE = 0x0000008000012000ULL,
     SERVICE_RESOURCE_STATE = SERVICE_STATE + 8,
     SERVICE_RESOURCE_MAGIC = 0x53594e4f44525653ULL,
     SERVICE_RESOURCE_VERSION = 1,

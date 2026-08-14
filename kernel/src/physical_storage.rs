@@ -16,9 +16,9 @@ mod platform {
     };
 
     use crate::pci::PciInventory;
+    use crate::arch::paging::SERVICE_IMAGE_BYTES;
 
     const SPIN_LIMIT: usize = 20_000_000;
-    const SERVICE_IMAGE_BYTES: usize = 16 * 1024;
 
     #[repr(C, align(256))]
     struct Fis([u8; 256]);

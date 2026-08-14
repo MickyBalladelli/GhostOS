@@ -5,6 +5,16 @@ typedef unsigned long long u64;
 
 u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
 
+void *memset(void *destination, int value, u64 count)
+{
+    u8 *bytes = (u8 *)destination;
+    while (count != 0) {
+        *bytes++ = (u8)value;
+        count--;
+    }
+    return destination;
+}
+
 __attribute__((noreturn))
 void __stack_chk_fail(void)
 {
