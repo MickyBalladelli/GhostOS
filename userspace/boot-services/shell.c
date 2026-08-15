@@ -51,6 +51,9 @@ enum {
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
     SHELL_ROLE = 9,
+    SHELL_REQUIRED_SERVICES = (1u << 2) | (1u << 3) | (1u << 4)
+        | (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8)
+        | (1u << 10) | (1u << 13) | (1u << 14),
     OPEN_READ = 1,
     OPEN_WRITE = 2,
     OPEN_CREATE = 4,
@@ -193,6 +196,13 @@ static int shell_ready(void)
 {
     struct response response = call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
     return response.status == 0;
+}
+
+static int shell_dependencies_ready(void)
+{
+    struct response response = call(OP_SYSTEM_INFO, 0, 0, 0, 0, 0, 0);
+    return response.status == 0
+        && (response.values[1] & SHELL_REQUIRED_SERVICES) == SHELL_REQUIRED_SERVICES;
 }
 
 static void write_prompt(int authorized, int first_run)
@@ -2097,6 +2107,9 @@ void _start(void)
     u64 idle_polls = 0;
     u8 byte;
 
+    while (!shell_dependencies_ready()) {
+        sleep_for(SHELL_POLL_DELAY_US);
+    }
     while (!shell_ready()) {
         sleep_for(SHELL_POLL_DELAY_US);
     }
