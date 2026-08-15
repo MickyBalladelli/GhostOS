@@ -49,8 +49,8 @@ CREDENTIAL REMOVE <username> <id>
 `CREDENTIAL ADD` prompts for:
 
 ```text
-Credential type (PASSKEY, TPM, SSH):
-Public material (max 96 characters):
+Credential type [PASSKEY/TPM/SSH]:
+Public credential material (max 96 chars):
 ```
 
 The supported kinds are `PASSKEY`, `TPM`, and `SSH`. An account can hold at

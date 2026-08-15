@@ -302,9 +302,9 @@ void _start(void)
             wait_until(locked_until);
             continue;
         }
-        write_text("login: ");
+        write_text("Username: ");
         u64 username_length = read_line(username, sizeof(username), 1);
-        write_text("\ncredential [passkey/tpm]: ");
+        write_text("\nCredential [passkey/tpm]: ");
         u64 method_length = read_line(method, sizeof(method), 1);
         int use_tpm = method_length == 3
             && (method[0] == 't' || method[0] == 'T')
@@ -341,10 +341,10 @@ void _start(void)
             continue;
         }
         write_text(use_tpm
-            ? "\nPresent your TPM-backed credential and paste its quote as hex.\nchallenge: "
-            : "\nTouch your passkey and paste its assertion as hex.\nchallenge: ");
+            ? "\nPresent your TPM-backed credential and paste the quote as hex.\nChallenge: "
+            : "\nTouch your passkey and paste the assertion as hex.\nChallenge: ");
         write_hex_bytes(challenge, sizeof(challenge));
-        write_text(use_tpm ? "\ntpm quote: " : "\npasskey: ");
+        write_text(use_tpm ? "\nTPM quote: " : "\nPasskey assertion: ");
         u64 credential_hex_length = read_private_line(
             credential_hex,
             sizeof(credential_hex)

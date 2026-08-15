@@ -1062,9 +1062,9 @@ static void add_credential(const char *username, u8 *buffer)
 
     char kind[256];
     char material[256];
-    write_text("Credential type (PASSKEY, TPM, SSH): ");
+    write_text("Credential type [PASSKEY/TPM/SSH]: ");
     u64 kind_length = read_credential_line(kind, sizeof(kind));
-    write_text("Public material (max 96 characters): ");
+    write_text("Public credential material (max 96 chars): ");
     u64 material_length = read_credential_line(material, sizeof(material));
     u8 kind_id = 0;
     if (equal_name(kind, "PASSKEY")) {
@@ -1945,7 +1945,7 @@ static void execute_first_run_line(char *line)
             "  USERNAME admin\n"
             "  CREDENTIAL PASSKEY demo-public-material\n"
             "  CONFIRM\n"
-            "At login: admin, passkey, then the displayed assertion hex.\n"
+            "At login: enter the username, credential type, then the displayed assertion hex.\n"
             "Recovery: RECOVERY STATUS|RESET|RETRY\n"
             "Watchdog diagnostics: WATCHDOG STATUS|ON|OFF\n"
             "Use SHUTDOWN to power off.\n"

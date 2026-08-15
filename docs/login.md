@@ -22,28 +22,28 @@ login
 The service asks for the username and credential type:
 
 ```text
-login: admin
-credential [passkey/tpm]: passkey
+Username: admin
+Credential [passkey/tpm]: passkey
 ```
 
 For a passkey, touch the authenticator when asked. The service displays a
 one-shot challenge and asks for the assertion as hexadecimal data:
 
 ```text
-Touch your passkey and paste its assertion as hex.
-challenge: <displayed-challenge>
-passkey: <assertion-hex>
+Touch your passkey and paste the assertion as hex.
+Challenge: <displayed-challenge>
+Passkey assertion: <assertion-hex>
 ```
 
 For a TPM credential, choose `tpm`. Present the TPM-backed credential and
 provide its quote as hexadecimal data:
 
 ```text
-credential [passkey/tpm]: tpm
+Credential [passkey/tpm]: tpm
 
-Present your TPM-backed credential and paste its quote as hex.
-challenge: <displayed-challenge>
-tpm quote: <quote-hex>
+Present your TPM-backed credential and paste the quote as hex.
+Challenge: <displayed-challenge>
+TPM quote: <quote-hex>
 ```
 
 Credential input is not echoed. The username accepts 1–32 letters, numbers,
