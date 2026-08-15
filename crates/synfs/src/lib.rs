@@ -421,17 +421,6 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
         Ok(BlockId(index as u32 + 1))
     }
 
-    fn allocate_shared_data(&mut self, block: DataBlock) -> Result<BlockId, Error> {
-        if let Some(index) = self
-            .slots
-            .iter()
-            .position(|slot| slot.block == Some(Block::Data(block)))
-        {
-            return Ok(BlockId(index as u32 + 1));
-        }
-        self.allocate(Block::Data(block))
-    }
-
     fn used(&self) -> usize {
         self.slots
             .iter()
@@ -2205,12 +2194,12 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         for chunk in contents.rchunks(DATA_BYTES) {
             let mut bytes = [0; DATA_BYTES];
             bytes[..chunk.len()].copy_from_slice(chunk);
-            next = self.arena.allocate_shared_data(DataBlock {
+            next = self.arena.allocate(Block::Data(DataBlock {
                 next,
                 len: chunk.len() as u16,
                 checksum: checksum(chunk),
                 bytes,
-            })?;
+            }))?;
         }
         Ok(next)
     }
