@@ -1010,13 +1010,20 @@ impl Vm {
         self.initialize()?;
 
         loop {
-            if self.replay_mode() == VmReplayMode::Replaying {
-                self.inject_replay_host_inputs()?;
+            let interrupted = if self.replay_mode() == VmReplayMode::Replaying {
+                self.inject_replay_host_inputs()?
             } else {
                 let input = terminal
                     .poll_at(self.clock.now_ns())
                     .map_err(|error| VmError::Terminal(error.diagnostic()))?;
+                let interrupted = input.bytes.contains(&3);
                 self.record_terminal_input(input, input_mode)?;
+                interrupted
+            };
+
+            if interrupted {
+                self.close_disks()?;
+                return Ok(TerminalExit::Interrupted)
             }
 
             if !monitor(self)? {
@@ -1321,9 +1328,9 @@ impl Vm {
         Ok(())
     }
 
-    fn inject_replay_host_inputs(&mut self) -> Result<(), VmError> {
+    fn inject_replay_host_inputs(&mut self) -> Result<bool, VmError> {
         if self.replay_mode() != VmReplayMode::Replaying {
-            return Ok(())
+            return Ok(false)
         }
         loop {
             let input = self
@@ -1332,9 +1339,13 @@ impl Vm {
                 .next_host_input()
                 .map_err(VmError::Replay)?;
             let Some(input) = input else {
-                return Ok(())
+                return Ok(false)
             };
+            let interrupted = input.bytes.contains(&3);
             self.apply_replay_host_input(input)?;
+            if interrupted {
+                return Ok(true)
+            }
         }
     }
 

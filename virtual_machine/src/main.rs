@@ -1040,6 +1040,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
         drop(terminal);
         match exit {
             TerminalExit::GuestShutdown => println!("\nGuest powered off"),
+            TerminalExit::Interrupted => println!("\nInterrupted"),
         }
     }
 

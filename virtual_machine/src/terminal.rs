@@ -165,6 +165,7 @@ impl TerminalTranscript {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalExit {
     GuestShutdown,
+    Interrupted,
 }
 
 /// Owns host input polling and terminal restoration for one VM session.
