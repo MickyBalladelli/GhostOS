@@ -1072,6 +1072,8 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn transaction(&mut self) -> SynFsTransaction<'_, MAX_BLOCKS> {
+        // Atomic groups need room for all CoW paths; reclaim abandoned blocks first.
+        self.collect_garbage();
         SynFsTransaction {
             original_root: self.root,
             original_generation: self.generation,

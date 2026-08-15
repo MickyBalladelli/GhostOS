@@ -1,5 +1,6 @@
 # Rust and local build output
 /build/
+/Trash/
 /target/
 /fuzz/artifacts/
 /fuzz/target/
