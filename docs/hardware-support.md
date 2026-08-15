@@ -28,7 +28,7 @@ synos-vm disk provision system.raw --kernel kernel.bin \
   --service 9=synos-shell.bin
 ```
 
-Roles are address-space IDs `1` through `13`. Missing roles use the kernel's
+Roles are address-space IDs `1` through `14`. Missing roles use the kernel's
 embedded bootstrap image.
 
 ## USB and input

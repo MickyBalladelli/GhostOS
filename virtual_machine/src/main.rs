@@ -679,7 +679,7 @@ fn parse_provision_command(values: &[String], upgrade: bool) -> Result<ParseResu
                     .ok_or_else(|| "--service needs ROLE=PATH".to_string())?;
                 let role = role
                     .parse::<u8>()
-                    .map_err(|_| "service role must be a number from 1 through 13".to_string())?;
+                    .map_err(|_| "service role must be a number from 1 through 14".to_string())?;
                 service_packages.push((role, PathBuf::from(path)));
             }
             "--json" => json = true,
@@ -2244,8 +2244,13 @@ fn make_disk_spec(
     }
     let canonical = std::fs::canonicalize(path)
         .map_err(|error| format!("cannot canonicalize disk {}: {error}", path.display()))?;
+    let controller = if role == DiskRole::System {
+        DiskController::Ahci
+    } else {
+        options.controller
+    };
     let mut spec = DiskSpec::new(id, canonical)
-        .with_controller(options.controller)
+        .with_controller(controller)
         .with_persistence(options.persistence)
         .read_only(options.read_only);
     spec.role = role;

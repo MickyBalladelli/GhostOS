@@ -4,8 +4,9 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
-DISK_PATH=./virtual_machine/state/data.raw
-DEFAULT_DISK_PATH=$DISK_PATH
+SYSTEM_DISK_PATH=./virtual_machine/state/system.raw
+DATA_DISK_PATH=./virtual_machine/state/data.raw
+DEFAULT_DATA_DISK_PATH=$DATA_DISK_PATH
 PERSISTENCE_ARGS=()
 VM_NAME=default
 FORCE_NEW=false
@@ -35,49 +36,66 @@ case "$VM_NAME" in
     exit 2
     ;;
   *)
-    DISK_PATH=./virtual_machine/state/$VM_NAME.raw
-    if [ ! -f "$DISK_PATH" ]; then
-      if [ ! -f "$DEFAULT_DISK_PATH" ]; then
-        echo "start-synos.sh: default disk is missing: $DEFAULT_DISK_PATH" >&2
+    SYSTEM_DISK_PATH=./virtual_machine/state/$VM_NAME-system.raw
+    DATA_DISK_PATH=./virtual_machine/state/$VM_NAME.raw
+    if [ ! -f "$DATA_DISK_PATH" ]; then
+      if [ ! -f "$DEFAULT_DATA_DISK_PATH" ]; then
+        echo "start-synos.sh: default data disk is missing: $DEFAULT_DATA_DISK_PATH" >&2
         exit 1
       fi
-      cp "$DEFAULT_DISK_PATH" "$DISK_PATH"
+      cp "$DEFAULT_DATA_DISK_PATH" "$DATA_DISK_PATH"
     fi
     ;;
 esac
 
-if [ "$FORCE_NEW" = true ]; then
-  PERSISTENCE_ARGS=(--copy-on-write)
-else
-  LOCK_STATUS=$(./target/release/synos-vm disk lock "$DISK_PATH" 2>/dev/null || true)
-  case "$LOCK_STATUS" in
-    "disk lock: active"*)
-      if [ "$VM_NAME" = default ]; then
-        PERSISTENCE_ARGS=(--copy-on-write)
-      else
-        echo "start-synos.sh: VM $VM_NAME is already running" >&2
-        exit 1
-      fi
-      ;;
-    "disk lock: stale"*)
-      ./target/release/synos-vm disk recover-lock "$DISK_PATH"
-      ;;
-  esac
-fi
-
 KERNEL_PATH=./build/bios/kernel.bin
-if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios -type f -newer "$KERNEL_PATH" -print -quit | grep -q .; then
+if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios ./userspace/boot-services -type f -newer "$KERNEL_PATH" -print -quit | grep -q .; then
   echo "Building stale BIOS image..." >&2
   ./scripts/build-bios-image.sh >/dev/null
 fi
 
+if [ ! -f "$SYSTEM_DISK_PATH" ]; then
+  echo "Provisioning SynOS system disk: $SYSTEM_DISK_PATH" >&2
+  ./target/release/synos-vm disk provision "$SYSTEM_DISK_PATH" \
+    --kernel "$KERNEL_PATH" \
+    --size 64M \
+    --boot-args console=serial0 \
+    --machine-id "$VM_NAME" \
+    --network-id "$VM_NAME"
+elif ! ./target/release/synos-vm disk validate "$SYSTEM_DISK_PATH" >/dev/null 2>&1; then
+  echo "start-synos.sh: system disk is invalid: $SYSTEM_DISK_PATH" >&2
+  echo "start-synos.sh: move it aside, then start again to provision a new one" >&2
+  exit 1
+fi
+
+if [ "$FORCE_NEW" = true ]; then
+  PERSISTENCE_ARGS=(--copy-on-write)
+else
+  for LOCKED_DISK in "$SYSTEM_DISK_PATH" "$DATA_DISK_PATH"; do
+    LOCK_STATUS=$(./target/release/synos-vm disk lock "$LOCKED_DISK" 2>/dev/null || true)
+    case "$LOCK_STATUS" in
+      "disk lock: active"*)
+        if [ "$VM_NAME" = default ]; then
+          PERSISTENCE_ARGS=(--copy-on-write)
+        else
+          echo "start-synos.sh: VM $VM_NAME is already running" >&2
+          exit 1
+        fi
+        ;;
+      "disk lock: stale"*)
+        ./target/release/synos-vm disk recover-lock "$LOCKED_DISK"
+        ;;
+    esac
+  done
+fi
+
 VM_COMMAND=(
   ./target/release/synos-vm \
-  --kernel "$KERNEL_PATH" \
-  --disk "$DISK_PATH" \
+  --system-disk "$SYSTEM_DISK_PATH" \
+  --disk "$DATA_DISK_PATH" \
   --disk-size 64M \
   --disk-format raw \
-  --disk-controller ahci
+  --disk-controller virtio-blk
 )
 
 if [ "${#PERSISTENCE_ARGS[@]}" -gt 0 ]; then

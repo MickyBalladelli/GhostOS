@@ -45,7 +45,7 @@ fn provision_login_system_disk(system_disk: &Path, kernel_payload: &Path) {
         .with_boot_args("console=serial0")
         .with_machine_identity("qemu-login-e2e")
         .with_network_identity("qemu-login-e2e");
-    for role in 0..15u8 {
+    for role in 1..=14u8 {
         let image = if role == 9 {
             &shell_image
         } else if role == 14 {

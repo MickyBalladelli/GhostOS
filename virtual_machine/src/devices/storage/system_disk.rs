@@ -702,13 +702,13 @@ fn validate_install(install: &SystemDiskInstall) -> Result<(), StorageError> {
         }
     }
     for (index, package) in install.service_packages.iter().enumerate() {
-        if !(1..=13).contains(&package.role)
+        if !(1..=14).contains(&package.role)
             || install.service_packages[..index]
                 .iter()
                 .any(|existing| existing.role == package.role)
         {
             return Err(StorageError::InvalidImage(
-                "service package roles must be unique values from 1 through 13".to_string(),
+                "service package roles must be unique values from 1 through 14".to_string(),
             ));
         }
         fs::metadata(&package.path)?;

@@ -12,6 +12,10 @@ Build or obtain a boot image, then start it:
 ./start-synos.sh
 ```
 
+The launcher provisions `virtual_machine/state/system.raw` on first start.
+The older `data.raw` file is only a data disk; it cannot save the first
+administrator account.
+
 The first-run shell prints:
 
 ```text
@@ -87,4 +91,3 @@ failures cause a temporary login lockout.
 - Preserve the system disk before recovery or credential-loss work.
 - For a committed administrator with lost credentials, follow
   [`first-admin-credential-loss-recovery.md`](first-admin-credential-loss-recovery.md).
-

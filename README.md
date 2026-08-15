@@ -46,6 +46,10 @@ Start named VMs with separate persistent disks so they can run side by side:
 ./start-synos.sh vm2
 ```
 
+`start-synos.sh` creates a bootable `system.raw` (or `<name>-system.raw`)
+and keeps `data.raw` as a separate data disk. The system disk contains the
+kernel and SynFS needed for first-run account setup.
+
 Run a temporary copy with `./start-synos.sh --new`. Its disk changes are
 discarded when the VM exits.
 
@@ -54,8 +58,8 @@ with `disk is already locked` after a crashed or killed VM, inspect and recover
 the stale lock:
 
 ```sh
-./target/release/synos-vm disk lock ./virtual_machine/state/data.raw
-./target/release/synos-vm disk recover-lock ./virtual_machine/state/data.raw
+./target/release/synos-vm disk lock ./virtual_machine/state/system.raw
+./target/release/synos-vm disk recover-lock ./virtual_machine/state/system.raw
 ```
 
 `recover-lock` only removes the marker when the recorded owner PID is gone.
