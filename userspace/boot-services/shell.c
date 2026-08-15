@@ -2147,6 +2147,8 @@ void _start(void)
                 execute_locked_line(line);
             }
             line_length = 0;
+            prompt_authorized = -1;
+            prompt_first_run = -1;
         } else if (byte == 8 || byte == 127) {
             if (line_length != 0) {
                 line_length--;
