@@ -77,7 +77,7 @@ VM_COMMAND=(
   --disk "$DISK_PATH" \
   --disk-size 64M \
   --disk-format raw \
-  --disk-controller virtio-blk
+  --disk-controller ahci
 )
 
 if [ "${#PERSISTENCE_ARGS[@]}" -gt 0 ]; then
