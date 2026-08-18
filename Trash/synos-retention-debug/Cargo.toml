@@ -1,7 +1,0 @@
-[package]
-name = "synos-retention-debug"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-synos-synfs = { path = "/Users/micky/dev/SynOS/crates/synfs" }
