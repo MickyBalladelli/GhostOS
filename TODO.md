@@ -1,294 +1,188 @@
-# SynOS TODO
+# Rename SynOS → GhostOS
 
-Build the real operating system core before adding more advanced features.
+This is the work list for renaming the project, product, crates, tools, and
+user-visible strings from **SynOS** to **GhostOS**. It is based on a full-tree
+scan of the workspace (Cargo members, kernel, VM, Apple client, boot, docs,
+scripts, ABI, and on-disk magics).
 
-## P0: Run user processes
+Do not treat this as a mechanical find-replace. On-disk magics, lock suffixes,
+Rust target triples, and RPC strings are compatibility surfaces. Change those
+only with an explicit format/ABI bump and a converter or dual-read window.
 
-- [x] Wire the application image loader to a real kernel process backend.
-- [x] Create real Ring 3 address spaces.
-- [x] Add user-mode entry and return paths.
-- [x] Add syscall or call-gate entry and dispatch.
-- [x] Add real register context switching.
-- [x] Add process exit, wait, cancellation, and crash reporting.
-- [x] Prove one native Ring 3 hello-world process runs after boot.
+Suggested identifier map (confirm before starting):
 
-## P0: Start system services
+| Kind | From | To |
+| --- | --- | --- |
+| Product / docs | SynOS | GhostOS |
+| Crate / package prefix | `synos-*` | `ghostos-*` |
+| Rust module prefix | `synos_` | `ghostos_` |
+| Env vars | `SYNOS_*` | `GHOSTOS_*` |
+| CLI binaries | `synos-vm`, `synos-loader`, `cargo-synos` | `ghostos-vm`, `ghostos-loader`, `cargo-ghostos` |
+| Custom targets | `x86_64-unknown-synos` | `x86_64-unknown-ghostos` |
+| Shell prompt / hostname | `SYNOS::ROOT`, hostname `synos` | `GHOSTOS::ROOT`, hostname `ghostos` |
+| Docker | `synos:latest`, `SYNOS_QEMU_ACCEL` | `ghostos:latest`, `GHOSTOS_QEMU_ACCEL` |
 
-- [x] Make the kernel start `synos-init` after early hardware setup.
-- [x] Register and start the filesystem service.
-- [x] Register and start the storage service.
-- [x] Register and start the network service.
-- [x] Register and start logging and audit services.
-- [x] Register and start authentication and package services.
-- [x] Connect service restart and fault fencing to real kernel processes.
-- [x] Replace empty service entrypoints with working Ring 3 programs.
-- [x] Boot to a service-owned shell instead of a kernel-owned shell.
+Open product names (decide in task 0, then apply everywhere):
 
-## P0: Finish memory isolation
+- `syn-shell` / `syn-script` (no `synos-` prefix today)
+- `SynFS` / crate `synos-synfs` / magics `SYNFS001`, `SYNMNT01`
+- Banner text `SYNCHRONOUS NETWORK OPERATING SYSTEM`
 
-- [x] Replace the single identity-mapped address space with per-process page tables.
-- [x] Add user/read/write/execute page permissions.
-- [x] Add kernel/user virtual address layout.
-- [x] Add physical frame ownership and reclamation.
-- [x] Add page mapping and unmapping syscalls.
-- [x] Add TLB invalidation and cross-CPU TLB shootdown.
-- [x] Add copy-on-write memory.
-- [x] Add guard pages, stack growth, and invalid-access termination.
-- [x] Add capability-checked DMA and IOMMU protection.
-- [x] Prove one process cannot read or write another process.
+---
 
-## P0: Integrate physical storage and drivers
+## 0. Decisions and inventory
 
-- [x] Discover PCI devices during boot.
-- [x] Start the PCI, AHCI, NVMe, and Ethernet driver services.
-- [x] Connect driver DMA and MMIO access to kernel capabilities.
-- [x] Add real block-device request and completion paths.
-- [x] Mount SynFS from a physical disk.
-- [x] Load the system manifest and service packages from SynFS.
-- [x] Add persistent filesystem recovery after power loss.
-- [x] Add USB host and USB storage support.
-- [x] Add basic real keyboard and mouse device support.
-- [x] Document unsupported hardware clearly.
+- [ ] Freeze the identifier map above (including `syn-shell`, `syn-script`, `SynFS`).
+- [ ] Decide whether on-disk/wire magics stay (`SYNOSDSK`, `SYNOSIG1`, `SYRP`, `SYNFS001`) for compatibility, or bump to GhostOS magics with dual-read.
+- [ ] Decide whether `archive/` historical TODOs are rewritten or left as SynOS history.
+- [ ] Record the git checkout rename (`dev/SynOS` → `dev/GhostOS`) as a local/operator step, not a source change.
+- [ ] Snapshot current `rg -i 'synos|syn-os|synos_|SYNOS'` counts so leftover strings can be audited at the end.
 
-## P0: Make installation and boot persistent
+## 1. Workspace crate and package names
 
-- [x] Put the kernel, initrd, system manifest, and service packages on a system disk.
-- [x] Make the BIOS loader read the installed system image.
-- [x] Make the UEFI loader read the installed system image.
-- [x] Add signed boot artifacts and measured boot metadata.
-- [x] Add install, upgrade, rollback, and recovery commands.
-- [x] Validate that a machine can reboot and return to the same usable system.
+Almost every Cargo package is `synos-*` even when the directory is not. Rename
+package `name`, path members, and `use synos_*` imports together.
 
-## P1: Add authentication and security startup
+- [ ] Rename workspace members whose **directories** start with `synos-`:
+  `synos-backup`, `synos-storaged`, `synos-kvd`, `synos-inference`,
+  `synos-agent-bridge`, `synos-agentd`, `synos-embedded-script`,
+  `synos-wasm-script`, `synos-audit`, `synos-shield`, `synos-confidential`,
+  `synos-update`, `synos-heal`, `synos-top`, `synos-inspect`, `synos-debug`,
+  `synos-replay`, `synos-webterm`, `synos-remote-display`, `synos-mesh`,
+  `synos-declarative`, `synos-rustd`.
+- [ ] Rename crate **package names** that are `synos-*` while keeping or also
+  renaming directories: `synos-kernel`, `synos-vm`, `synos-uefi` / bin
+  `synos-loader`, `synos-abi`, `synos-boot-protocol`, `synos-runtime`,
+  `synos-status`, `synos-protocol`, `synos-synfs`, `synos-fsd`, `synos-auth`,
+  `synos-netd`, `synos-http`, `synos-init`, `synos-app`, `synos-actors`,
+  `synos-ipc`, `synos-client-sdk`, `synos-test-support`, `synos-posix-compat`,
+  and the rest of the workspace `Cargo.toml` members.
+- [ ] Rename `syn-shell` → `ghostos-shell` and `syn-script` → `ghostos-script` if
+  task 0 includes them.
+- [ ] Update root `Cargo.toml` `members` / `default-members`, every path
+  dependency, `.cargo/config.toml` aliases (`-p synos-kernel`, `-p synos-uefi`),
+  `Cargo.lock`, and `virtual_machine/Cargo.lock` if still present.
+- [ ] Rename `fuzz` package `synos-fuzz` and any `synos-vm-fuzz-*` temp names.
 
-- [x] Add a boot login/session service.
-- [x] Create the first administrator identity safely.
-- [x] Load users, groups, capabilities, and policy from persistent storage.
-- [x] Connect passkey, TPM, and SSH authentication to real sessions.
-- [x] Add session logout, revocation, and timeout handling.
-- [x] Ensure the kernel shell cannot bypass authorization.
-- [x] Keep secrets out of logs, snapshots, and crash capsules.
+## 2. Binaries, tools, and scripts
 
-## P1: Finish CPU and architecture support
+- [ ] Rename `virtual_machine` binary `synos-vm` → `ghostos-vm`; update CLI help,
+  error prefixes (`synos-vm:`), and `start-synos.sh` → `start-ghostos.sh`.
+- [ ] Rename UEFI binary `synos-loader` → `ghostos-loader`; update
+  `scripts/check-reproducible-image.sh` and image layout docs.
+- [ ] Rename `tools/cargo-synos` → `tools/cargo-ghostos` (`cargo ghostos build …`).
+- [ ] Rename `tools/synos-compiler` → `tools/ghostos-compiler`.
+- [ ] Rename `scripts/install-synos.sh`, `scripts/recover-synos.sh`, and every
+  `scripts/*.sh` that hard-codes `-p synos-*` or `./target/release/synos-vm`.
+- [ ] Update `boot/grub/grub.cfg` (`/synos.img`, `synos_loop`, `synos_host`).
+- [ ] Update `Dockerfile`, `docker-compose.yml` (`synos`, `synos-cluster`,
+  `synos:latest`), and `scripts/docker-*.sh`.
 
-- [x] Bring up application processors on x86_64.
-- [x] Add local APIC and inter-processor interrupt routing.
-- [x] Add per-CPU scheduler and interrupt state.
-- [x] Add real AArch64 exception, syscall, and user-mode paths.
-- [x] Add real RISC-V trap, syscall, and user-mode paths.
-- [x] Replace AArch64 and RISC-V isolation stubs.
-- [x] Add architecture-specific boot and hardware evidence.
+## 3. Rust targets, PAL, and compiler
 
-## P1: Make networking usable
+These names leak into user builds (`App.toml`, `cargo synos`, `cfg(target_os)`).
 
-- [x] Connect physical NIC drivers to `synos-netd`.
-- [x] Add interface discovery and naming.
-- [x] Add DHCP and static network configuration at boot.
-- [x] Persist network configuration in SynFS.
-- [x] Add firewall policy activation during service startup.
-- [x] Add DNS and basic time synchronization services.
-- [x] Prove network recovery after link loss and service restart.
+- [ ] Rename `targets/x86_64-unknown-synos.json` and
+  `targets/aarch64-unknown-synos.json`; update `os` / llvm target strings inside.
+- [ ] Rename `crates/runtime/src/sys/synos.rs` and `synos_runtime::sys::synos`.
+- [ ] Replace `cfg(target_os = "synos")` (see `examples/compiler-acceptance`).
+- [ ] Rename `SYNOS_TOOLCHAIN_ROOT`, `SYNOS_REGISTRY_ROOT`, `SYNOS_SOURCE_ROOT`,
+  `SYNOS_BUILD_ROOT`, `SYNOS_TEMP_ROOT` in runtime PAL and compiler.
+- [ ] Rename kernel embed env vars `SYNOS_SERVICE_IMAGE`, `SYNOS_LOGIN_IMAGE`,
+  `SYNOS_SHELL_IMAGE` (`kernel/src/arch/x86_64.rs`).
+- [ ] Update `examples/hello-world/App.toml` target triple.
 
-## P1: Make updates and recovery real
+## 4. Kernel, boot, and shell branding
 
-- [x] Build the complete power-loss, disk-full, device-reset, and network-failure matrix.
-- [x] Add rolling, canary, blue/green, and emergency update strategies.
-- [x] Add boot-time automatic rollback after failed health checks.
-- [x] Add a recovery shell that works when normal services fail.
-- [x] Add backup restore that recreates a bootable system.
-- [x] Test repeated reboot, suspend, resume, hotplug, and service restart cycles.
+- [ ] Change bootstrap string `SynOS kernel bootstrap` and shell banner
+  `SYNCHRONOUS NETWORK OPERATING SYSTEM`.
+- [ ] Change prompt brand (`SYNOS::ROOT`) and default hostname `synos`.
+- [ ] Rename `boot_synos_init` / service names such as `"synos-init"`.
+- [ ] Update `kernel/src/physical_storage.rs` “no mountable AHCI SynOS system
+  volume” and any operator-facing panic/help text.
+- [ ] Update BIOS/UEFI comments and boot-contract tests that mention SynOS
+  (`crates/test-support/tests/boot_contracts.rs`,
+  `virtual_machine/tests/firmware_boot_synos_10_4.rs` — rename the test file).
 
-## P2: Usability and compatibility
+## 5. Compatibility surfaces (do not blindly replace)
 
-- [x] Move normal filesystem commands out of Ring 0.
-- [ ] Add a stable shell session and terminal service.
-- [ ] Expand POSIX compatibility beyond the current small syscall set.
-- [ ] Add process resource limits visible to users and operators.
-- [ ] Add package installation and removal from the running system.
-- [ ] Add clear hardware, service, and recovery diagnostics.
-- [ ] Add documented support levels for x86_64, AArch64, and RISC-V.
+Bump format version and dual-read, or keep old magics and only change docs.
 
-## Definition of usable OS
+- [ ] System disk header `SYNOSDSK` (`virtual_machine/src/devices/storage/system_disk.rs`).
+- [ ] Snapshot auth magic `SYNOSIG1` (`virtual_machine/src/snapshot.rs`).
+- [ ] Migration HMAC domain `SYNOS-MIGRATION-HMAC-SHA256-V3`.
+- [ ] Monitor HMAC domain `SYNOS-MONITOR-HMAC-SHA256-V1`.
+- [ ] Disk lock suffix `.synos.lock` and recovery CLI text in README.
+- [ ] Migration replay dir `.synos-vm-migration-replay`.
+- [ ] Guest persistence ports/constants `SYNOS_PERSISTENCE_*`.
+- [ ] ABI file `abi/synos-abi.toml` (filename + any SynOS strings; RPC magic
+  `SYRP` is four bytes — changing it is a protocol break).
+- [ ] Confidential crypto labels `synos-kem`, `synos-ss`, `synos-ctr`, `synos-tag`.
+- [ ] Profile prefix `synos-profile-host-v1`.
+- [ ] POSIX header `crates/posix-compat/include/synos_posix.h`.
+- [ ] Inference proto `crates/synos-inference/proto/synos_inference.proto`.
+- [ ] Kernel shell store magic `SYNFS001` if SynFS is renamed.
+- [ ] Device serial strings `SYNOSVM00001` (AHCI/NVMe models).
+- [ ] Add `CHANGELOG.md` entries under Disk formats / Snapshot and migration /
+  Guest-visible for every wire change (`scripts/validate-changelog.py`).
 
-- [x] Boot from disk on real x86_64 hardware.
-- [x] Start isolated user-space services.
-- [x] Log in as an administrator.
-- [x] Create, read, write, and delete persistent files.
-- [x] Run two isolated applications at the same time.
-- [x] Use a network interface.
-- [x] Restart a failed service without rebooting the machine.
-- [x] Reboot and recover the same system state.
-- [x] Recover safely after a failed update.
+## 6. Apple client
 
-## Extra system work
+- [ ] Rename Swift package `SynOSControl` and products `SynOSClient`,
+  `SynOSControlUI`, `SynOSControl`.
+- [ ] Rename source trees
+  `clients/apple/Sources/SynOSClient`,
+  `SynOSControlUI`, `SynOSControlApp`.
+- [ ] Update `clients/apple/Package.swift`, README, and any generated ABI
+  (`GeneratedABI.swift`) after `abi/` rename.
 
-### Time and randomness
+## 7. Docs, book, and operator copy
 
-- [x] Add a real-time clock.
-- [x] Add a monotonic clock shared by kernel and services.
-- [x] Add timers, sleep, and wakeup primitives.
-- [x] Add a trusted entropy and random-number service.
+Hundreds of hits live in `README.md`, `docs/`, `book/`, crate READMEs.
 
-### IPC safety
+- [ ] Rewrite `README.md` title, bootstrap description, `start-ghostos.sh`, and
+  disk-lock examples.
+- [ ] Rename `book/01-what-synos-is.md` and retitle the book.
+- [ ] Sweep `book/02-repository-map.md`, `appendix-a-crate-catalog.md`,
+  `17-build-test-release.md`, `15-operations-and-lifecycle.md`.
+- [ ] Sweep `docs/api.md`, `docs/testing.md`, `docs/native-compiler.md`,
+  `docs/compatibility-matrix.md`, `docs/persistence-compatibility.md`,
+  `docs/inventory-diagrams.md`, `docs/roadmap-metadata.toml`,
+  `docs/test-inventory.toml`, `docs/test-coverage.toml`, `docs/invariants.toml`.
+- [ ] Update `AGENTS.md` only if it mentions SynOS by name after the rename.
+- [ ] Update golden logs `crates/test-support/golden/*` that contain `SynOS` /
+  `SYNOS::`.
 
-- [x] Define endpoint cleanup and ownership rules.
-- [x] Define shared-buffer lifetime and revocation rules.
-- [x] Add IPC backpressure and deadlock handling.
-- [x] Apply IPC quotas and fairness between processes.
-- [x] Add IPC tracing and stuck-request diagnostics.
+## 8. Tests, fuzz, CI, and env vars
 
-### Security hardening
+- [ ] Replace `cargo test -p synos-*` in `scripts/test-all.sh`,
+  `scripts/test-vm-matrix.sh`, `scripts/mutation.sh`, `scripts/coverage.sh`,
+  `scripts/qemu-*.sh`, `scripts/full-validation.sh`.
+- [ ] Rename env vars: `SYNOS_FULL_VALIDATION`, `SYNOS_RUN_QEMU_TESTS`,
+  `SYNOS_QEMU_ACCEL`, `SYNOS_GUEST_MEMORY`, `SYNOS_CLUSTER_NODES`,
+  `SYNOS_TEST_RUN_ID`, `SYNOS_EVIDENCE_DIR`, `SYNOS_VM_CPUS`,
+  `SYNOS_BENCH_*`, `SYNOS_MUTATION_PACKAGE`, `SYNOS_LOCK_*`.
+- [ ] Rename fuzz corpus temp prefixes (`synos-vm-fuzz-image-*`,
+  `synos-vm-cluster-kernel-*`).
+- [ ] Update coverage IDs / file names that embed `synos` only if they are not
+  frozen evidence hashes; keep historical evidence filenames if they are
+  immutable artifacts.
 
-- [x] Add ASLR and KASLR where supported.
-- [x] Enforce W^X for every process and loaded image.
-- [x] Add SMEP and SMAP protection on x86_64.
-- [x] Add stack protection and control-flow hardening.
-- [x] Add isolated secure key storage.
-- [x] Fuzz syscall and privilege-boundary inputs.
-- [x] Test for privilege escalation and confused-deputy bugs.
+## 9. Verification
 
-### Filesystem behavior
+- [ ] `rg -i 'synos|syn-os|SYNOS|SynOS'` on the tree excluding `archive/` (and
+  excluding kept magics if task 0 said keep them). Remaining hits should be
+  documented compatibility aliases only.
+- [ ] `cargo test` default workspace members.
+- [ ] `./scripts/build-bios-image.sh` and boot to a GhostOS prompt.
+- [ ] `cargo test -p ghostos-vm` (or new VM package name) including lock-recovery
+  strings.
+- [ ] Apple package `swift build` if the toolchain is present.
+- [ ] Docker compose config still builds after image/env rename.
 
-- [x] Add process file-descriptor tables and open-handle rules.
-- [x] Define atomic rename and `fsync` guarantees.
-- [x] Add file and record locking through the filesystem service.
-- [x] Add symbolic links and permission checks.
-- [x] Add filesystem quotas visible to users and operators.
-- [x] Add mapped-file support with capability checks.
+## 10. Out of tree / operator follow-up
 
-### Power management
-
-- [x] Add CPU idle-state management.
-- [x] Add suspend and resume on supported hardware.
-- [x] Add thermal throttling and thermal event reporting.
-- [x] Add battery and power-source reporting.
-- [x] Add watchdog-based recovery for hung services and CPUs.
-
-### Observability and debugging
-
-- [x] Persist system and service logs across reboot.
-- [x] Export bounded metrics and tracing data.
-- [x] Add crash-dump storage and a crash viewer.
-- [x] Add boot-failure diagnostics.
-- [x] Add a capability-safe remote debugger.
-- [x] Add service dependency and startup diagnostics.
-
-### Build and release
-
-- [x] Make release builds reproducible.
-- [x] Sign release images and boot artifacts.
-- [x] Generate SBOM and dependency provenance for each release.
-- [x] Produce complete installer and recovery artifacts.
-- [x] Validate upgrade compatibility before release.
-
-### Testing gates
-
-- [x] Add real hardware boot evidence.
-      Implementation: [`scripts/record-hardware-boot-evidence.py`](scripts/record-hardware-boot-evidence.py)
-      packages a COM1 capture, bare-metal inventory, exact boot artifact hash,
-      and Git revision. [`scripts/validate-hardware-boot-evidence.py`](scripts/validate-hardware-boot-evidence.py)
-      rejects hypervisor declarations, panic output, incomplete Ring 3 boot,
-      stale hashes, and mismatched BIOS/UEFI inventory. See
-      [`platforms/README.md`](platforms/README.md).
-- [x] Add service-start and service-restart integration tests.
-- [x] Add process-isolation integration tests.
-- [x] Add power-loss and disk-corruption tests.
-- [x] Add long-running soak tests for leaks and stale capabilities.
-- [x] Keep QEMU, hardware, fuzz, and soak results separate.
-
-### Compatibility
-
-- [x] Version and document the syscall ABI.
-- [x] Version and document the user-space package ABI.
-- [x] Add migration tools for persistent system state.
-- [x] Add a stable user-space SDK compatibility policy.
-
-## Login, first login, and account management
-
-### Login surface
-
-- [x] Add a user-space login service that owns the terminal login flow.
-- [x] Add a `LOGIN` command or login screen to the service-owned shell.
-- [x] Show a clear first-boot message when no administrator account exists.
-- [x] Prompt for username and credential without echoing private input.
-- [x] Support passkey login from the local terminal.
-- [x] Support TPM-backed credential login from the local terminal.
-- [x] Support SSH-key login for configured remote sessions.
-- [x] Display useful failure messages without revealing whether an account exists.
-- [x] Rate-limit failed login attempts.
-- [x] Lock login temporarily after repeated failures.
-- [x] Add `LOGOUT` and `WHOAMI` commands.
-- [x] Return to the locked prompt after logout, timeout, or session revocation.
-- [x] Connect successful auth sessions to shell authorization and capabilities.
-- [x] Preserve session expiry, revocation, and identity changes across all shell paths.
-
-### First login and administrator setup
-
-- [x] Detect an unprovisioned system during boot.
-- [x] Enter a restricted first-run setup mode before the normal shell starts.
-- [x] Require physical-console access or an equivalent trusted bootstrap proof.
-- [x] Create the first administrator username.
-- [x] Register the first administrator passkey, TPM credential, or SSH key.
-- [x] Require confirmation before committing the first administrator account.
-- [x] Persist the first administrator atomically in SynFS.
-- [x] Make first-admin creation safe to retry after power loss.
-- [x] Prevent first-admin setup from replacing an existing account database.
-- [x] Provide a recovery mode for an interrupted or failed first-login setup.
-- [x] Provide a documented recovery procedure when the first administrator loses all credentials.
-- [x] Audit first-admin creation, recovery, and cancellation events.
-
-### Account lifecycle
-
-- [x] Add `ACCOUNT LIST` with safe summaries of local accounts.
-- [x] Add `ACCOUNT SHOW <username>` with permission-checked details.
-- [x] Add `ACCOUNT CREATE <username>` for administrators.
-- [x] Add `ACCOUNT DELETE <username>` with confirmation and last-admin protection.
-- [x] Add `ACCOUNT ENABLE <username>` and `ACCOUNT DISABLE <username>`.
-- [x] Add `ACCOUNT RENAME <old> <new>` with persistent identity rules.
-- [x] Add account creation, update, disable, and deletion through the management API.
-- [x] Enforce username syntax, length, normalization, and reserved-name rules.
-- [x] Prevent deletion or disabling of the last usable administrator.
-- [x] Revoke all sessions when an account is disabled or deleted.
-- [x] Keep stable identity IDs when account display names change.
-- [x] Add account state for active, disabled, locked, expired, and pending setup.
-
-### Credentials and access policy
-
-- [x] Add `CREDENTIAL LIST <username>` for authorized administrators.
-- [x] Add `CREDENTIAL ADD <username>` for passkeys, TPM credentials, and SSH keys.
-- [x] Add `CREDENTIAL REMOVE <username> <id>` with self-lockout protection.
-- [x] Allow users to enroll and remove their own credentials under policy.
-- [x] Store only credential public data and metadata, never private keys or secrets.
-- [x] Add credential labels, creation time, last-used time, and revocation state.
-- [x] Rotate and revoke credentials without deleting the account.
-- [x] Support account expiration and credential expiration policies.
-- [x] Add password login only if a password verifier and secure recovery policy exist.
-- [x] Define administrator, operator, auditor, and read-only account roles.
-- [x] Add group membership management with `GROUP LIST`, `GROUP CREATE`, `GROUP ADD`, and `GROUP REMOVE`.
-- [x] Persist role, group, capability, and account policy changes atomically.
-
-### Sessions, recovery, and audit
-
-- [x] Add active-session listing for administrators.
-- [x] Add administrator session termination for a selected account or session.
-- [x] Enforce idle timeout and maximum session lifetime.
-- [x] Bind sessions to the authenticated identity, terminal, node, and revocation epoch.
-- [x] Reject replayed, expired, malformed, or cross-node login responses.
-- [x] Add safe credential-loss recovery requiring a trusted recovery key or physical recovery action.
-- [x] Prevent recovery from silently bypassing normal authorization policy.
-- [x] Audit login success, login failure, logout, timeout, lockout, recovery, and account changes.
-- [x] Redact credentials, challenges, tokens, and private account data from logs and crash reports.
-- [x] Add administrator-visible audit queries for account and session activity.
-
-### Verification and documentation
-
-- [x] Add end-to-end tests for first boot, first login, normal login, logout, and relogin.
-- [x] Add tests for wrong credentials, rate limits, lockouts, expiry, and revocation.
-- [x] Add tests for account creation, deletion, disablement, rename, and last-admin protection.
-- [x] Add tests for credential enrollment, removal, rotation, and credential loss recovery.
-- [x] Add persistence and power-loss tests for account database updates.
-- [x] Add QEMU coverage for the interactive login flow.
-- [x] Document first boot and first administrator setup.
-- [x] Document local and remote login methods.
-- [x] Document account, group, role, credential, session, and recovery commands.
-- [x] Document the emergency recovery process and its security limits.
+- [ ] Rename local checkout directory and any git remotes/org names.
+- [ ] Update Docker Hub / GHCR image names if published.
+- [ ] Warn operators: old `.synos.lock` files, system disks, snapshots, and
+  `x86_64-unknown-synos` toolchains will not match until converted.
