@@ -618,7 +618,7 @@ mod tests {
         ahci.attach_disk(disk("round-trip"));
         assert_eq!(ahci.sector_count(), Some(8));
         let identify = ahci.build_identify();
-        assert_eq!(&identify[46..64], b"GhostOS Virtual Disk");
+        assert_eq!(&identify[46..66], b"GhostOS Virtual Disk");
 
         let mut mmu = Mmu::new(0x20_000);
         let source = 0x1000;
