@@ -79,8 +79,10 @@ struct AhciHostRegisters {
 
 #[repr(C)]
 struct AhciPortRegisters {
-    command_list_base: u64,
-    fis_base: u64,
+    command_list_base_low: u32,
+    command_list_base_high: u32,
+    fis_base_low: u32,
+    fis_base_high: u32,
     interrupt_status: u32,
     interrupt_enable: u32,
     command: u32,
@@ -181,10 +183,18 @@ impl AhciPort {
         unsafe {
             let registers = self.registers.as_mut();
             write_volatile(
-                &mut registers.command_list_base,
-                command_list_physical,
+                &mut registers.command_list_base_low,
+                command_list_physical as u32,
             );
-            write_volatile(&mut registers.fis_base, received_fis_physical);
+            write_volatile(
+                &mut registers.command_list_base_high,
+                (command_list_physical >> 32) as u32,
+            );
+            write_volatile(&mut registers.fis_base_low, received_fis_physical as u32);
+            write_volatile(
+                &mut registers.fis_base_high,
+                (received_fis_physical >> 32) as u32,
+            );
             write_volatile(&mut registers.sata_error, u32::MAX);
             write_volatile(&mut registers.interrupt_status, u32::MAX)
         }

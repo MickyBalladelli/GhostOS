@@ -70,7 +70,12 @@ mod platform {
             let Some(mut port) = controller.port(index) else {
                 continue
             };
-            if !port.has_sata_device() || port.stop(SPIN_LIMIT).is_err() {
+            if !port.has_sata_device() {
+                crate::println!("AHCI port {index}: no SATA device");
+                continue
+            }
+            if let Err(error) = port.stop(SPIN_LIMIT) {
+                crate::println!("AHCI port {index}: stop failed {error:?}");
                 continue
             }
             unsafe {
@@ -92,10 +97,8 @@ mod platform {
                     (&raw const RECEIVED_FIS.0) as u64,
                 )
             };
-            if port
-                .configure(command_list_physical, received_fis_physical)
-                .is_err()
-            {
+            if let Err(error) = port.configure(command_list_physical, received_fis_physical) {
+                crate::println!("AHCI port {index}: configure failed {error:?}");
                 continue
             }
             port.start();
@@ -113,12 +116,17 @@ mod platform {
                 .ok()?
             };
             let mounted = unsafe {
-                MountedSystemVolume::mount(
+                match MountedSystemVolume::mount(
                     &mut block,
                     &mut *(&raw mut MANIFEST.0),
                     &mut *(&raw mut VOLUME.0),
-                )
-                .ok()
+                ) {
+                    Ok(mounted) => Some(mounted),
+                    Err(error) => {
+                        crate::println!("AHCI port {index}: system volume mount failed {error:?}");
+                        None
+                    }
+                }
             };
             let Some(mounted) = mounted else {
                 let _ = port.stop(SPIN_LIMIT);
@@ -132,6 +140,7 @@ mod platform {
             drop(volume);
             drop(block);
             if unsafe { load_service_images(&filesystem) }.is_none() {
+                crate::println!("AHCI port {index}: service image load failed");
                 let _ = port.stop(SPIN_LIMIT);
                 continue
             }
@@ -172,14 +181,27 @@ mod platform {
 
     unsafe fn load_service_images(filesystem: &SynFs<SYSTEM_VOLUME_BLOCKS>) -> Option<()> {
         let mut scratch = [0; 2048];
-        let manifest = ServiceManifest::load(filesystem, &mut scratch).ok()?;
+        let manifest = match ServiceManifest::load(filesystem, &mut scratch) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                crate::println!("service manifest load failed {error:?}");
+                return None
+            }
+        };
         for entry in manifest.entries() {
             let role = entry.role as usize;
             if role >= SERVICE_LENGTHS.len() || entry.image_bytes as usize > SERVICE_IMAGE_BYTES {
+                crate::println!("service package bounds failed role={role}");
                 return None
             }
             let image = unsafe { &mut *(&raw mut SERVICE_IMAGES[role].0) };
-            let length = manifest.load_package(filesystem, entry.role, image).ok()?;
+            let length = match manifest.load_package(filesystem, entry.role, image) {
+                Ok(length) => length,
+                Err(error) => {
+                    crate::println!("service package load failed role={role} error={error:?}");
+                    return None
+                }
+            };
             SERVICE_LENGTHS[role].store(length, Ordering::Release)
         }
         Some(())

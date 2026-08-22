@@ -162,7 +162,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let mut largest_free_run = 0;
         let mut current_free_run = 0;
         for slot in &self.arena.slots {
-            if slot.block.is_none() {
+            if slot.is_empty() {
                 current_free_run += 1;
                 continue
             }

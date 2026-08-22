@@ -260,7 +260,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         write_type_map::<MAX_BLOCKS>(image, bank, &map)?;
         for (index, slot) in self.arena.slots.iter().enumerate() {
             let destination = block_slice_mut::<MAX_BLOCKS>(image, bank, index)?;
-            match slot.block {
+            match slot.block() {
                 None => destination.fill(0),
                 Some(Block::Tree(tree)) => encode_tree(destination, tree)?,
                 Some(Block::Data(data)) => encode_data(destination, data),
@@ -340,7 +340,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             .map_err(|_| Error::Io)?;
         for (index, slot) in self.arena.slots.iter().enumerate() {
             scratch.fill(0);
-            match slot.block {
+            match slot.block() {
                 None => {}
                 Some(Block::Tree(tree)) => encode_tree(&mut scratch, tree)?,
                 Some(Block::Data(data)) => encode_data(&mut scratch, data),
@@ -443,7 +443,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         if !root.is_some() {
             return Ok(());
         }
-        self.validate_tree(root, tree_seen, data_owners, None, None)
+        self.validate_tree(root, tree_seen, data_owners)
     }
 
     fn validate_tree(
@@ -451,8 +451,6 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         id: BlockId,
         tree_seen: &mut [bool; MAX_BLOCKS],
         data_owners: &mut [Option<u64>; MAX_BLOCKS],
-        lower: Option<FileKey>,
-        upper: Option<FileKey>,
     ) -> Result<(), Error> {
         let index = block_index::<MAX_BLOCKS>(id)?;
         if tree_seen[index] {
@@ -478,8 +476,6 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         || record.key.file.len == 0
                         || usize::from(record.key.file.len) > MAX_PATH_BYTES
                         || record.created_at > self.generation
-                        || lower.is_some_and(|bound| record.key < bound)
-                        || upper.is_some_and(|bound| record.key >= bound)
                     {
                         return Err(Error::Corrupt);
                     }
@@ -526,29 +522,13 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                         return Err(Error::Corrupt);
                     }
                 }
-                if branch.keys[..length]
-                    .iter()
-                    .any(|key| lower.is_some_and(|bound| *key < bound) || upper.is_some_and(|bound| *key >= bound))
-                {
-                    return Err(Error::Corrupt);
-                }
+                // Record access walks every child, so separators are hints rather than
+                // trusted lookup boundaries. Validate their local order and every subtree.
                 for index in 0..=length {
-                    let child_lower = if index == 0 {
-                        lower
-                    } else {
-                        Some(branch.keys[index - 1])
-                    };
-                    let child_upper = if index < length {
-                        Some(branch.keys[index])
-                    } else {
-                        upper
-                    };
                     self.validate_tree(
                         branch.children[index],
                         tree_seen,
                         data_owners,
-                        child_lower,
-                        child_upper,
                     )?;
                 }
             }
@@ -703,7 +683,7 @@ fn type_map_bytes<const MAX_BLOCKS: usize>() -> [u8; BLOCK_SIZE] {
 fn bank_type_map<const MAX_BLOCKS: usize>(arena: &BlockArena<MAX_BLOCKS>) -> [u8; BLOCK_SIZE] {
     let mut map = type_map_bytes::<MAX_BLOCKS>();
     for (index, slot) in arena.slots.iter().enumerate() {
-        let kind = match slot.block {
+        let kind = match slot.block() {
             None => TYPE_MAP_EMPTY,
             Some(Block::Tree(TreeBlock::Leaf(_))) => TYPE_MAP_TREE,
             Some(Block::Tree(TreeBlock::Branch(_))) => TYPE_MAP_BRANCH,
@@ -928,9 +908,12 @@ pub(crate) fn load_bank<const MAX_BLOCKS: usize>(
             TYPE_MAP_DATA => Some(decode_data(block)?),
             _ => return Err(Error::Corrupt),
         };
-        filesystem.arena.slots[index].block = decoded;
+        filesystem.arena.slots[index].set(decoded);
     }
     filesystem.check_consistency()?;
+    // A committed bank can contain unreachable blocks left by earlier CoW paths.
+    // Reclaim them before accepting new writes on a small boot volume.
+    filesystem.collect_garbage();
     Ok(filesystem)
 }
 

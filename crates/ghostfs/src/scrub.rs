@@ -170,12 +170,12 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
 
         for (index, slot) in self.arena.slots.iter().enumerate() {
-            let Some(block) = slot.block.as_ref() else {
+            let Some(block) = slot.block() else {
                 continue
             };
             inspected_blocks += 1;
             let id = BlockId(index as u32 + 1);
-            let fingerprint = block_fingerprint(block);
+            let fingerprint = block_fingerprint(&block);
             let corrupt = self.validate_scrub_block(id).is_err();
             if corrupt {
                 let issue = if self.has_stale_generation(id) {
@@ -277,13 +277,13 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             let Some(slot) = self.arena.slots.get_mut(finding.block as usize - 1) else {
                 return Err(Error::StaleRepairPlan)
             };
-            let Some(block) = slot.block.as_ref() else {
+            let Some(block) = slot.block() else {
                 return Err(Error::StaleRepairPlan)
             };
-            if block_fingerprint(block) != finding.before_fingerprint {
+            if block_fingerprint(&block) != finding.before_fingerprint {
                 return Err(Error::StaleRepairPlan)
             }
-            slot.block = None;
+            slot.set(None);
             evidence[index] = Some(RepairEvidence {
                 scope: finding.scope,
                 block: finding.block,

@@ -379,11 +379,37 @@ enum Block {
 
 #[derive(Clone, Copy)]
 struct Slot {
-    block: Option<Block>,
+    tree: Option<TreeBlock>,
+    data: Option<DataBlock>,
 }
 
 impl Slot {
-    const EMPTY: Self = Self { block: None };
+    const EMPTY: Self = Self {
+        tree: None,
+        data: None,
+    };
+
+    fn block(self) -> Option<Block> {
+        match (self.tree, self.data) {
+            (Some(tree), None) => Some(Block::Tree(tree)),
+            (None, Some(data)) => Some(Block::Data(data)),
+            _ => None,
+        }
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.tree.is_none() && self.data.is_none()
+    }
+
+    fn set(&mut self, block: Option<Block>) {
+        self.tree = None;
+        self.data = None;
+        match block {
+            Some(Block::Tree(tree)) => self.tree = Some(tree),
+            Some(Block::Data(data)) => self.data = Some(data),
+            None => {}
+        }
+    }
 }
 
 /// TEMPORARY first-run diagnostics ring capacity.
@@ -424,16 +450,22 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
     }
 
     fn get(&self, id: BlockId) -> Result<Block, Error> {
-        Ok(*self.get_ref(id)?)
-    }
-
-    fn get_ref(&self, id: BlockId) -> Result<&Block, Error> {
         if !id.is_some() {
             return Err(Error::Corrupt);
         }
         self.slots
             .get(id.0 as usize - 1)
-            .and_then(|slot| slot.block.as_ref())
+            .and_then(|slot| slot.block())
+            .ok_or(Error::Corrupt)
+    }
+
+    fn get_data_ref(&self, id: BlockId) -> Result<&DataBlock, Error> {
+        if !id.is_some() {
+            return Err(Error::Corrupt);
+        }
+        self.slots
+            .get(id.0 as usize - 1)
+            .and_then(|slot| slot.data.as_ref())
             .ok_or(Error::Corrupt)
     }
 
@@ -441,10 +473,10 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
         let index = self
             .slots
             .iter()
-            .position(|slot| slot.block.is_none())
+            .position(Slot::is_empty)
             .ok_or(Error::OutOfSpace)?;
         let kind = u64::from(matches!(block, Block::Data(_))) + 1;
-        self.slots[index].block = Some(block);
+        self.slots[index].set(Some(block));
         self.record_debug_event(1, index as u64 + 1, kind);
         Ok(BlockId(index as u32 + 1))
     }
@@ -452,7 +484,7 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
     fn used(&self) -> usize {
         self.slots
             .iter()
-            .filter(|slot| slot.block.is_some())
+            .filter(|slot| !slot.is_empty())
             .count()
     }
 }
@@ -754,9 +786,7 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         let mut id = record.data;
         let mut file_offset = 0_u64;
         while id.is_some() {
-            let Block::Data(block) = self.filesystem.arena.get_ref(id)? else {
-                return Err(Error::Corrupt);
-            };
+            let block = self.filesystem.arena.get_data_ref(id)?;
             let length = block.len as usize;
             if length == 0 || length > DATA_BYTES || checksum(&block.bytes[..length]) != block.checksum {
                 return Err(Error::Corrupt);
@@ -1019,7 +1049,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         if raw == 0 || raw > MAX_BLOCKS {
             return Ok((record.size, record.data.0 as u64, 4, record.checksum, 0));
         }
-        match &self.arena.slots[raw - 1].block {
+        match self.arena.slots[raw - 1].block() {
             Some(Block::Data(data)) => {
                 let mut head = [0u8; 8];
                 head.copy_from_slice(&data.bytes[..8]);
@@ -1044,7 +1074,7 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     pub fn debug_arena_dump(&self) -> ([u64; 5], u64, u64) {
         let mut words = [0u64; 5];
         for (index, slot) in self.arena.slots.iter().enumerate().take(80) {
-            let kind = match &slot.block {
+            let kind = match slot.block() {
                 None => 0u64,
                 Some(Block::Data(_)) => 1,
                 Some(Block::Tree(_)) => 2,
@@ -2248,13 +2278,13 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         let mut live_blocks = 0;
         let mut freed_blocks = 0;
         for index in 0..MAX_BLOCKS {
-            if self.arena.slots[index].block.is_none() {
+            if self.arena.slots[index].is_empty() {
                 continue;
             }
             if marked[index] {
                 live_blocks += 1
             } else {
-                self.arena.slots[index].block = None;
+                self.arena.slots[index].set(None);
                 freed_blocks += 1;
                 self.arena.record_debug_event(2, index as u64 + 1, 0);
             }
@@ -2336,15 +2366,24 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         match self.arena.get(id)? {
             Block::Tree(TreeBlock::Leaf(mut leaf)) => {
                 let index = leaf.records[..leaf.len as usize]
-                    .binary_search_by_key(&key, |item| item.key)
-                    .map_err(|_| Error::NotFound)?;
+                    .iter()
+                    .position(|item| item.key == key)
+                    .ok_or(Error::NotFound)?;
                 leaf.records[index] = record;
                 self.arena.allocate(Block::Tree(TreeBlock::Leaf(leaf)))
             }
             Block::Tree(TreeBlock::Branch(mut branch)) => {
-                let index = child_index(&branch, key);
-                branch.children[index] = self.replace(branch.children[index], key, record)?;
-                self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
+                for index in 0..=branch.len as usize {
+                    match self.replace(branch.children[index], key, record) {
+                        Ok(child) => {
+                            branch.children[index] = child;
+                            return self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
+                        }
+                        Err(Error::NotFound) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(Error::NotFound)
             }
             Block::Data(_) => Err(Error::Corrupt),
         }
@@ -2463,24 +2502,34 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn find_record_at(&self, root: BlockId, key: FileKey) -> Result<Option<FileRecord>, Error> {
-        if !root.is_some() {
-            return Ok(None);
-        }
-        let mut id = root;
-        loop {
-            match self.arena.get(id)? {
+        fn visit<const MAX_BLOCKS: usize>(
+            filesystem: &SynFs<MAX_BLOCKS>,
+            id: BlockId,
+            key: FileKey,
+        ) -> Result<Option<FileRecord>, Error> {
+            match filesystem.arena.get(id)? {
                 Block::Tree(TreeBlock::Leaf(leaf)) => {
-                    return Ok(leaf.records[..leaf.len as usize]
-                        .binary_search_by_key(&key, |record| record.key)
-                        .ok()
-                        .map(|index| leaf.records[index]));
+                    Ok(leaf.records[..leaf.len as usize]
+                        .iter()
+                        .find(|record| record.key == key)
+                        .copied())
                 }
                 Block::Tree(TreeBlock::Branch(branch)) => {
-                    id = branch.children[child_index(&branch, key)]
+                    for child in &branch.children[..=branch.len as usize] {
+                        if let Some(record) = visit(filesystem, *child, key)? {
+                            return Ok(Some(record))
+                        }
+                    }
+                    Ok(None)
                 }
-                Block::Data(_) => return Err(Error::Corrupt),
+                Block::Data(_) => Err(Error::Corrupt),
             }
         }
+
+        if !root.is_some() {
+            return Ok(None)
+        }
+        visit(self, root, key)
     }
 
     fn last_record(&self, file: FileName) -> Result<Option<FileRecord>, Error> {
@@ -2505,29 +2554,40 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn last_record_at(&self, root: BlockId, file: FileName) -> Result<Option<FileRecord>, Error> {
-        if !root.is_some() {
-            return Ok(None);
-        }
-        let key = FileKey {
-            file,
-            version: u32::MAX,
-        };
-        let mut id = root;
-        loop {
-            match self.arena.get(id)? {
+        fn visit<const MAX_BLOCKS: usize>(
+            filesystem: &SynFs<MAX_BLOCKS>,
+            id: BlockId,
+            file: FileName,
+            latest: &mut Option<FileRecord>,
+        ) -> Result<(), Error> {
+            match filesystem.arena.get(id)? {
                 Block::Tree(TreeBlock::Leaf(leaf)) => {
-                    return Ok(leaf.records[..leaf.len as usize]
-                        .iter()
-                        .rev()
-                        .find(|record| record.key.file == file)
-                        .copied());
+                    for record in &leaf.records[..leaf.len as usize] {
+                        if record.key.file == file
+                            && latest.map_or(true, |current| {
+                                current.key.version < record.key.version
+                            })
+                        {
+                            *latest = Some(*record)
+                        }
+                    }
                 }
                 Block::Tree(TreeBlock::Branch(branch)) => {
-                    id = branch.children[child_index(&branch, key)]
+                    for child in &branch.children[..=branch.len as usize] {
+                        visit(filesystem, *child, file, latest)?
+                    }
                 }
                 Block::Data(_) => return Err(Error::Corrupt),
             }
+            Ok(())
         }
+
+        if !root.is_some() {
+            return Ok(None);
+        }
+        let mut latest = None;
+        visit(self, root, file, &mut latest)?;
+        Ok(latest)
     }
 
     fn version_span(&self, file: FileName) -> Result<(u32, Option<u32>), Error> {
@@ -2668,8 +2728,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         match self.arena.get(id)? {
             Block::Tree(TreeBlock::Leaf(mut leaf)) => {
                 let index = leaf.records[..leaf.len as usize]
-                    .binary_search_by_key(&key, |record| record.key)
-                    .map_err(|_| Error::NotFound)?;
+                    .iter()
+                    .position(|record| record.key == key)
+                    .ok_or(Error::NotFound)?;
                 leaf.records[index].deleted = true;
                 leaf.records[index].size = 0;
                 leaf.records[index].data = BlockId::NONE;
@@ -2677,9 +2738,17 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 self.arena.allocate(Block::Tree(TreeBlock::Leaf(leaf)))
             }
             Block::Tree(TreeBlock::Branch(mut branch)) => {
-                let index = child_index(&branch, key);
-                branch.children[index] = self.tombstone(branch.children[index], key)?;
-                self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
+                for index in 0..=branch.len as usize {
+                    match self.tombstone(branch.children[index], key) {
+                        Ok(child) => {
+                            branch.children[index] = child;
+                            return self.arena.allocate(Block::Tree(TreeBlock::Branch(branch)))
+                        }
+                        Err(Error::NotFound) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(Error::NotFound)
             }
             Block::Data(_) => Err(Error::Corrupt),
         }

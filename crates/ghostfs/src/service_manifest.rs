@@ -161,7 +161,9 @@ impl ServiceManifest {
         let info = filesystem.lookup(SERVICE_MANIFEST_PATH).map_err(|_| ServiceManifestError::Filesystem)?;
         let length = usize::try_from(info.size).map_err(|_| ServiceManifestError::BufferTooSmall)?;
         let output = scratch.get_mut(..length).ok_or(ServiceManifestError::BufferTooSmall)?;
-        filesystem.read(SERVICE_MANIFEST_PATH, output).map_err(|_| ServiceManifestError::Filesystem)?;
+        filesystem
+            .read_version(SERVICE_MANIFEST_PATH, info.version, output)
+            .map_err(|_| ServiceManifestError::Filesystem)?;
         Self::decode(output)
     }
 
@@ -174,7 +176,10 @@ impl ServiceManifest {
         let entry = self.entries().find(|entry| entry.role == role).ok_or(ServiceManifestError::Corrupt)?;
         let length = entry.image_bytes as usize;
         let output = output.get_mut(..length).ok_or(ServiceManifestError::BufferTooSmall)?;
-        filesystem.read(entry.path(), output).map_err(|_| ServiceManifestError::Filesystem)?;
+        let info = filesystem.lookup(entry.path()).map_err(|_| ServiceManifestError::Filesystem)?;
+        filesystem
+            .read_version(entry.path(), info.version, output)
+            .map_err(|_| ServiceManifestError::Filesystem)?;
         if checksum(output) != entry.checksum {
             return Err(ServiceManifestError::Corrupt)
         }

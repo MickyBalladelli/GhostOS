@@ -321,11 +321,11 @@ impl Ahci {
             return Err(StorageError::Dma("invalid AHCI command header".into()))
         };
         let dw0 = u32::from_le_bytes(dw0_bytes);
-        let prdtl = (dw0 & 0xFFFF) as usize;
+        let prdtl = (dw0 >> 16) as usize;
         if prdtl == 0 || prdtl > 256 {
             return Err(StorageError::Dma("invalid PRDT length".into()));
         }
-        if dw0 & (1 << 28) != 0 {
+        if dw0 & (1 << 5) != 0 {
             return Err(StorageError::Unsupported("ATAPI".into()));
         }
         let Ok(ctba_bytes) = header[8..16].try_into() else {

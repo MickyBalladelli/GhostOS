@@ -428,12 +428,7 @@ impl PciFunction {
             0x00 => self.id.vendor as u32 | (self.id.device as u32) << 16,
             0x04 => self.command as u32 | (self.status as u32) << 16,
             0x08 => self.reg_dword(0x08),
-            0x0C => u32::from_le_bytes([
-                self.id.revision,
-                self.id.prog_if,
-                self.id.subclass,
-                self.id.class,
-            ]),
+            0x0C => self.reg_dword(0x0C),
             0x10..=0x24 if !self.is_bridge => {
                 let bar = (off - 0x10) / 4;
                 self.bar_register(bar)

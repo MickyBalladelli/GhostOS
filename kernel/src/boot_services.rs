@@ -822,7 +822,11 @@ fn load_first_admin_username(filesystem: Option<&SynFs<FILESYSTEM_BLOCKS>>) {
         return
     }
     let mut username = [0; FIRST_ADMIN_USERNAME_CAPACITY];
-    let Ok(read) = filesystem.read(FIRST_ADMIN_USERNAME_PATH, &mut username) else {
+    let Ok(read) = filesystem.read_version(
+        FIRST_ADMIN_USERNAME_PATH,
+        metadata.version,
+        &mut username,
+    ) else {
         return
     };
     let Some(normalized) = normalized_first_admin_username(&username[..read.bytes_read]) else {
@@ -880,7 +884,7 @@ fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
             let mut existing = [0; FIRST_ADMIN_USERNAME_CAPACITY];
             let read = daemon
                 .filesystem()
-                .read(FIRST_ADMIN_USERNAME_PATH, &mut existing)
+                .read_version(FIRST_ADMIN_USERNAME_PATH, metadata.version, &mut existing)
                 .map_err(|error| error.status())?;
             if read.bytes_read != username.len()
                 || existing[..read.bytes_read] != *username
@@ -909,9 +913,14 @@ fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
     transaction
         .commit()
         .map_err(|error| error.status())?;
+    #[cfg(debug_assertions)]
     {
         let mut probe = [0u8; FIRST_ADMIN_USERNAME_CAPACITY];
-        let read_back = daemon.filesystem().read(FIRST_ADMIN_USERNAME_PATH, &mut probe);
+        let read_back = daemon.filesystem().read_version(
+            FIRST_ADMIN_USERNAME_PATH,
+            1,
+            &mut probe,
+        );
         crate::println!(
             "[fsprobe] username saved: len={} readback={:?} used_blocks={}",
             username.len(),
@@ -1000,7 +1009,7 @@ fn create_first_admin_credential_inner(
             let mut existing = [0; FIRST_ADMIN_CREDENTIAL_CAPACITY + 2];
             let read = daemon
                 .filesystem()
-                .read(FIRST_ADMIN_CREDENTIAL_PATH, &mut existing)
+                .read_version(FIRST_ADMIN_CREDENTIAL_PATH, metadata.version, &mut existing)
                 .map_err(|error| error.status())?;
             let existing_length = existing[1] as usize;
             if read.bytes_read != size
@@ -1033,9 +1042,14 @@ fn create_first_admin_credential_inner(
     transaction
         .commit()
         .map_err(|error| error.status())?;
+    #[cfg(debug_assertions)]
     {
         let mut probe = [0u8; FIRST_ADMIN_USERNAME_CAPACITY];
-        let username_back = daemon.filesystem().read(FIRST_ADMIN_USERNAME_PATH, &mut probe);
+        let username_back = daemon.filesystem().read_version(
+            FIRST_ADMIN_USERNAME_PATH,
+            1,
+            &mut probe,
+        );
         crate::println!(
             "[fsprobe] credential saved: kind={} material_len={} username_readback={:?} used_blocks={}",
             kind,
@@ -1090,6 +1104,7 @@ fn first_admin_corrupt(site: u8) -> Status {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+#[cfg(debug_assertions)]
 fn print_arena(filesystem: &mut SynFs<FILESYSTEM_BLOCKS>) {
     let (words, root, generation) = filesystem.debug_arena_dump();
     crate::println!(
@@ -1141,20 +1156,23 @@ fn commit_first_admin_inner() -> Result<(), Status> {
             ghostos_ghostfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
             other => other.status(),
         })?;
-    crate::println!(
-        "[fsprobe] confirm: username type={:?} size={} used_blocks={}",
-        username_metadata.file_type,
-        username_metadata.size,
-        daemon.filesystem().used_blocks()
-    );
-    match daemon.filesystem().debug_data_probe(FIRST_ADMIN_USERNAME_PATH) {
-        Ok((size, slot, kind, checksum, head)) => crate::println!(
-            "[fsprobe] confirm: username data size={} slot={} kind={} checksum={:#x} head={:#x}",
-            size, slot, kind, checksum, head
-        ),
-        Err(error) => crate::println!("[fsprobe] confirm: username probe failed {error:?}"),
+    #[cfg(debug_assertions)]
+    {
+        crate::println!(
+            "[fsprobe] confirm: username type={:?} size={} used_blocks={}",
+            username_metadata.file_type,
+            username_metadata.size,
+            daemon.filesystem().used_blocks()
+        );
+        match daemon.filesystem().debug_data_probe(FIRST_ADMIN_USERNAME_PATH) {
+            Ok((size, slot, kind, checksum, head)) => crate::println!(
+                "[fsprobe] confirm: username data size={} slot={} kind={} checksum={:#x} head={:#x}",
+                size, slot, kind, checksum, head
+            ),
+            Err(error) => crate::println!("[fsprobe] confirm: username probe failed {error:?}"),
+        }
+        print_arena(daemon.filesystem_mut());
     }
-    print_arena(daemon.filesystem_mut());
     if username_metadata.file_type != ghostos_ghostfs::FileType::Regular
         || username_metadata.size == 0
         || username_metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
@@ -1164,7 +1182,11 @@ fn commit_first_admin_inner() -> Result<(), Status> {
     let mut username = [0; FIRST_ADMIN_USERNAME_CAPACITY];
     let username_read = daemon
         .filesystem()
-        .read(FIRST_ADMIN_USERNAME_PATH, &mut username)
+        .read_version(
+            FIRST_ADMIN_USERNAME_PATH,
+            username_metadata.version,
+            &mut username,
+        )
         .map_err(|error| {
             crate::println!(
                 "[fsprobe] confirm: USERNAME READ FAILED: {error:?} used_blocks={}",
@@ -1198,7 +1220,11 @@ fn commit_first_admin_inner() -> Result<(), Status> {
     let mut credential = [0; FIRST_ADMIN_CREDENTIAL_CAPACITY + 2];
     let credential_read = daemon
         .filesystem()
-        .read(FIRST_ADMIN_CREDENTIAL_PATH, &mut credential)
+        .read_version(
+            FIRST_ADMIN_CREDENTIAL_PATH,
+            credential_metadata.version,
+            &mut credential,
+        )
         .map_err(|error| match error {
             ghostos_ghostfs::Error::Corrupt => first_admin_corrupt(8),
             other => other.status(),
