@@ -1984,7 +1984,9 @@ static int commit_first_admin_account(
         0
     );
     if (response.status != 0) {
-        write_text("Username rejected.\n");
+        write_text("Username rejected. status=");
+        write_hex(response.status);
+        write_text("\n");
         write_text("Repeat setup with identical answers until the commit succeeds.\n");
         return 0;
     }
@@ -1999,14 +2001,18 @@ static int commit_first_admin_account(
         0
     );
     if (response.status != 0) {
-        write_text("Credential rejected.\n");
+        write_text("Credential rejected. status=");
+        write_hex(response.status);
+        write_text("\n");
         write_text("Repeat setup with identical answers until the commit succeeds.\n");
         return 0;
     }
     write_text("Administrator credential saved.\n");
     response = call(OP_LOGIN_BOOTSTRAP_CONFIRM, 0, 0, 0, 0, 0, 0);
     if (response.status != 0) {
-        write_text("Confirmation rejected.\n");
+        write_text("Confirmation rejected. status=");
+        write_hex(response.status);
+        write_text("\n");
         write_text("Repeat setup with identical answers until the commit succeeds.\n");
         return 0;
     }
