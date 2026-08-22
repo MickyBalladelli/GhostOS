@@ -1000,8 +1000,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     /// TEMPORARY first-run diagnostics: summarize where a file's payload lives.
-    /// Returns (size, slot index, kind, record checksum, first bytes as u64).
-    /// kind: 0=no data block, 1=data block, 2=tree block, 3=missing slot.
+    /// Returns (size, raw data-id bits, kind, record checksum, first bytes).
+    /// kind: 0=no data block, 1=data block, 2=tree block, 3=slot missing,
+    /// 4=data id out of range. Fails only when lookup/find_record fails.
     #[doc(hidden)]
     pub fn debug_data_probe(&self, path: &str) -> Result<(u64, u64, u8, u64, u64), Error> {
         let file = self.lookup_following(path)?;
@@ -1012,11 +1013,11 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             })?
             .ok_or(Error::Corrupt)?;
         if !record.data.is_some() {
-            return Ok((record.size, u64::MAX, 0, record.checksum, 0));
+            return Ok((record.size, 0, 0, record.checksum, 0));
         }
         let raw = record.data.0 as usize;
         if raw == 0 || raw > MAX_BLOCKS {
-            return Err(Error::Corrupt);
+            return Ok((record.size, record.data.0 as u64, 4, record.checksum, 0));
         }
         match &self.arena.slots[raw - 1].block {
             Some(Block::Data(data)) => {

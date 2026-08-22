@@ -334,14 +334,14 @@ impl EthernetRuntime {
                     .checked_add(physical_address_offset)
                     .ok_or(EthernetError::InvalidRegisterBase)?;
                 let mut e1000 = unsafe { IntelE1000::new(virtual_address as usize)? };
+                e1000.set_admin_up(false);
                 let mac = e1000.read_mac(100_000)?;
-                e1000.set_admin_up(true);
                 Ok(Self {
                     kind: adapter.kind,
                     e1000: Some(e1000),
                     virtio_port: None,
                     mac,
-                    admin_up: true,
+                    admin_up: false,
                 })
             }
             EthernetKind::VirtioNet => {

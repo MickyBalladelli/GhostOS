@@ -209,12 +209,24 @@ fn probe_fresh_volume_in_memory() {
     run_first_admin_sequence(&mut filesystem, "in-memory");
 }
 
-/// Reproduce the kernel's fallback path: AHCI mount fails -> SynFs::new().
+/// Reproduce the kernel's fallback path: AHCI mount fails -> SynFs::new(),
+/// then Daemon::new() creates /packages /logs /data /tmp BEFORE any saves.
 #[test]
 fn probe_bootstrap_new_filesystem() {
     let mut filesystem = SynFs::<MAX_BLOCKS>::new();
     println!("bootstrap filesystem constructed (no format, no load)");
     report("bootstrap fresh", &filesystem);
+    for directory in ["/packages", "/logs", "/data", "/tmp"] {
+        {
+            let mut transaction = filesystem.transaction();
+            transaction
+                .create_directory(directory, true)
+                .expect("daemon setup dir");
+            transaction.commit().expect("daemon setup commit");
+        }
+        let (_, root, generation) = filesystem.debug_arena_dump();
+        println!("[bootstrap] after mkdir {directory}: root={root} gen={generation}");
+    }
     run_first_admin_sequence(&mut filesystem, "bootstrap");
     match filesystem.lookup(DATABASE) {
         Ok(metadata) => println!(
