@@ -182,7 +182,7 @@ fn drain_network(vm: &mut Vm) {
 }
 
 fn icmp_echo(id: u16, sequence: u16, reply: bool) -> Vec<u8> {
-    let mut payload = vec![0u8; 18];
+    let mut payload = vec![0u8; 20];
     payload[0] = if reply { 0 } else { 8 };
     payload[4..6].copy_from_slice(&id.to_be_bytes());
     payload[6..8].copy_from_slice(&sequence.to_be_bytes());
