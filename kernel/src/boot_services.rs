@@ -395,6 +395,22 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         any(target_os = "none", target_os = "uefi")
     ))]
     load_first_admin_username(physical_filesystem.as_ref());
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "none", target_os = "uefi")
+    ))]
+    if let Some(filesystem) = physical_filesystem.as_ref() {
+        crate::println!(
+            "[fsprobe] boot: provisioning_required={} used_blocks={} free_bytes={}",
+            provisioning_required,
+            filesystem.used_blocks(),
+            filesystem.free_bytes()
+        );
+        match filesystem.check_consistency() {
+            Ok(()) => crate::println!("[fsprobe] boot: consistency ok"),
+            Err(error) => crate::println!("[fsprobe] boot: consistency {error:?}"),
+        }
+    }
 
     let filesystem_process = filesystem_process_id().ok_or(StartError::Process)?;
     let storage_process = storage_process_id().ok_or(StartError::Process)?;
@@ -888,6 +904,19 @@ fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
     transaction
         .commit()
         .map_err(|error| error.status())?;
+    {
+        let mut probe = [0u8; FIRST_ADMIN_USERNAME_CAPACITY];
+        let read_back = daemon.filesystem().read(FIRST_ADMIN_USERNAME_PATH, &mut probe);
+        crate::println!(
+            "[fsprobe] username saved: len={} readback={:?} used_blocks={}",
+            username.len(),
+            read_back.as_ref().map(|read| read.bytes_read),
+            daemon.filesystem().used_blocks()
+        );
+        if let Ok(read) = read_back {
+            crate::println!("[fsprobe] username bytes: {:02x?}", &probe[..read.bytes_read]);
+        }
+    }
     for (slot, byte) in FIRST_ADMIN_USERNAME
         .iter()
         .zip(username.iter().copied())
@@ -991,6 +1020,20 @@ fn create_first_admin_credential_inner(
     transaction
         .commit()
         .map_err(|error| error.status())?;
+    {
+        let mut probe = [0u8; FIRST_ADMIN_USERNAME_CAPACITY];
+        let username_back = daemon.filesystem().read(FIRST_ADMIN_USERNAME_PATH, &mut probe);
+        crate::println!(
+            "[fsprobe] credential saved: kind={} material_len={} username_readback={:?} used_blocks={}",
+            kind,
+            public_material.len(),
+            username_back.as_ref().map(|read| read.bytes_read),
+            daemon.filesystem().used_blocks()
+        );
+        if let Ok(read) = username_back {
+            crate::println!("[fsprobe] username bytes now: {:02x?}", &probe[..read.bytes_read]);
+        }
+    }
     Ok(())
 }
 
@@ -1048,6 +1091,12 @@ fn commit_first_admin_inner() -> Result<(), Status> {
             ghostos_ghostfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
             other => other.status(),
         })?;
+    crate::println!(
+        "[fsprobe] confirm: username type={:?} size={} used_blocks={}",
+        username_metadata.file_type,
+        username_metadata.size,
+        daemon.filesystem().used_blocks()
+    );
     if username_metadata.file_type != ghostos_ghostfs::FileType::Regular
         || username_metadata.size == 0
         || username_metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
@@ -1058,9 +1107,15 @@ fn commit_first_admin_inner() -> Result<(), Status> {
     let username_read = daemon
         .filesystem()
         .read(FIRST_ADMIN_USERNAME_PATH, &mut username)
-        .map_err(|error| match error {
-            ghostos_ghostfs::Error::Corrupt => first_admin_corrupt(7),
-            other => other.status(),
+        .map_err(|error| {
+            crate::println!(
+                "[fsprobe] confirm: USERNAME READ FAILED: {error:?} used_blocks={}",
+                daemon.filesystem().used_blocks()
+            );
+            match error {
+                ghostos_ghostfs::Error::Corrupt => first_admin_corrupt(7),
+                other => other.status(),
+            }
         })?;
     if username_read.bytes_read != username_metadata.size as usize
         || !valid_first_admin_username(&username[..username_read.bytes_read])

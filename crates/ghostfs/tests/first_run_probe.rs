@@ -1,21 +1,106 @@
-//! TEMPORARY diagnostic probe: replays the provisioner volume layout plus the
-//! kernel first-admin sequence against GhostFS to find why CONFIRM fails.
-//! Delete this file after diagnosis.
+//! TEMPORARY diagnostic probe: replays the kernel first-admin sequence
+//! (fresh volume, no service packages) to find why CONFIRM fails with
+//! CORRUPT at the username read-back. Delete this file after diagnosis.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use ghostos_ghostfs::{
-    BlockIoError, BlockStore, ServiceManifest, ServiceManifestEntry, StorageDeviceId, SynFs,
-    BLOCK_SIZE,
+    BlockDevice, BlockIoError, BlockStore, MountedSystemVolume, ServiceManifest,
+    StorageDeviceId, SynFs, BLOCK_SIZE, SYSTEM_DISK_MANIFEST_BYTES, SYSTEM_VOLUME_BLOCKS,
 };
+
+struct RealDisk {
+    file: File,
+}
+
+impl RealDisk {
+    fn open_read_only(path: &Path) -> Self {
+        let file = File::open(path).expect("open real system.raw");
+        Self { file }
+    }
+}
+
+impl BlockDevice for RealDisk {
+    fn read_block(&mut self, lba: u64, output: &mut [u8]) -> Result<(), ()> {
+        self.file
+            .seek(SeekFrom::Start(lba * 512))
+            .map_err(|_| ())?;
+        self.file.read_exact(output).map_err(|_| ())
+    }
+
+    fn write_block(&mut self, _lba: u64, _input: &[u8]) -> Result<(), ()> {
+        Err(())
+    }
+
+    fn flush(&mut self) -> Result<(), ()> {
+        Err(())
+    }
+
+    fn discard_block(&mut self, _lba: u64) -> Result<(), ()> {
+        Err(())
+    }
+}
+
+#[test]
+fn inspect_real_system_disk() {
+    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../virtual_machine/state/system.raw"));
+    let mut device = RealDisk::open_read_only(path);
+    let mut manifest_scratch = [0u8; SYSTEM_DISK_MANIFEST_BYTES];
+    let mut volume_image = vec![0u8; SynFs::<SYSTEM_VOLUME_BLOCKS>::volume_bytes()];
+    let mounted =
+        MountedSystemVolume::mount(&mut device, &mut manifest_scratch, &mut volume_image);
+    let mounted = match mounted {
+        Ok(mounted) => mounted,
+        Err(error) => {
+            println!("MOUNT FAILED: {error:?}");
+            return;
+        }
+    };
+    println!(
+        "manifest: generation={} disk_size={} volume_offset={} volume_size={}",
+        mounted.manifest.generation,
+        mounted.manifest.disk_size,
+        mounted.manifest.system_volume_offset,
+        mounted.manifest.system_volume_size
+    );
+    report("real disk", &mounted.filesystem);
+
+    let mut filesystem = mounted.filesystem;
+
+    for path in [
+        "/system",
+        "/system/security",
+        "/system/security/first-admin-username",
+        "/system/security/first-admin-credential",
+        "/system/security/authorization",
+    ] {
+        match filesystem.lookup(path) {
+            Ok(metadata) => {
+                println!("[{path}] type={:?} size={}", metadata.file_type, metadata.size);
+                if metadata.file_type == ghostos_ghostfs::FileType::Regular && metadata.size > 0 && metadata.size <= 128 {
+                    let mut buffer = [0u8; 128];
+                    match filesystem.read(path, &mut buffer[..metadata.size as usize]) {
+                        Ok(read) => println!("[{path}] bytes={:02x?}", &buffer[..read.bytes_read]),
+                        Err(error) => println!("[{path}] READ FAILED: {error:?}"),
+                    }
+                } else if metadata.file_type == ghostos_ghostfs::FileType::Regular {
+                    println!("[{path}] too large to dump");
+                }
+            }
+            Err(error) => println!("[{path}] lookup: {error:?}"),
+        }
+    }
+
+    run_first_admin_sequence(&mut filesystem, "real-disk");
+}
 
 const MAX_BLOCKS: usize = 32;
 
-const SERVICE_BIN: usize = 1058;
-const LOGIN_BIN: usize = 8897;
-const SHELL_BIN: usize = 66792;
+const DATABASE: &str = "/system/security/authorization";
+const USERNAME_PATH: &str = "/system/security/first-admin-username";
+const CREDENTIAL_PATH: &str = "/system/security/first-admin-credential";
 
 struct DiskImage {
     file: File,
@@ -86,6 +171,54 @@ fn report(stage: &str, filesystem: &SynFs<MAX_BLOCKS>) {
     );
 }
 
+fn read_back(filesystem: &SynFs<MAX_BLOCKS>, path: &str, expected: &[u8]) {
+    match filesystem.lookup(path) {
+        Ok(metadata) => println!(
+            "[{path}] lookup ok: type={:?} size={}",
+            metadata.file_type, metadata.size
+        ),
+        Err(error) => println!("[{path}] LOOKUP FAILED: {error:?}"),
+    }
+    let mut buffer = vec![0u8; expected.len().max(1)];
+    match filesystem.read(path, &mut buffer) {
+        Ok(read) => {
+            if buffer[..read.bytes_read] == *expected {
+                println!("[{path}] read ok: {} bytes match", read.bytes_read);
+            } else {
+                println!("[{path}] READ MISMATCH: {:?}", &buffer[..read.bytes_read]);
+            }
+        }
+        Err(error) => println!("[{path}] READ FAILED: {error:?}"),
+    }
+}
+
+#[test]
+fn probe_fresh_volume_in_memory() {
+    let mut filesystem = build_provisioned_volume();
+    report("after provisioning", &filesystem);
+    run_first_admin_sequence(&mut filesystem, "in-memory");
+}
+
+#[test]
+fn probe_boot_from_disk_then_first_run() {
+    let mut disk = DiskImage::create(Path::new("/tmp/ghostos-fsprobe-boot.img"));
+    {
+        let mut filesystem = build_provisioned_volume();
+        filesystem.fsync(&mut disk).expect("initial fsync");
+    }
+
+    let mut image = vec![0u8; SynFs::<MAX_BLOCKS>::volume_bytes()];
+    disk.seek_block(0);
+    disk.file.read_exact(&mut image).expect("read back");
+    let mut filesystem = SynFs::<MAX_BLOCKS>::load(&image).expect("boot-time mount");
+    println!("mounted from disk");
+    report("after boot mount", &filesystem);
+
+    run_first_admin_sequence(&mut filesystem, "after-disk-mount");
+
+    filesystem.fsync(&mut disk).expect("final fsync");
+}
+
 fn build_provisioned_volume() -> SynFs<MAX_BLOCKS> {
     let mut image = vec![0u8; SynFs::<MAX_BLOCKS>::volume_bytes()];
     SynFs::<MAX_BLOCKS>::format(&mut image).expect("format");
@@ -123,71 +256,41 @@ fn build_provisioned_volume() -> SynFs<MAX_BLOCKS> {
     filesystem
         .write("/etc/ghostos/disk-format", b"1")
         .expect("disk format");
-    let mut manifest = ServiceManifest::new();
-    for role in 1..=14u8 {
-        let size = match role {
-            9 => SHELL_BIN,
-            14 => LOGIN_BIN,
-            _ => SERVICE_BIN,
-        };
-        let image = vec![0xA5u8; size];
-        let path = format!("/system/services/{role}.pkg");
-        filesystem.write(&path, &image).expect("service package");
-        manifest
-            .push(ServiceManifestEntry::new(role, &path, &image).expect("manifest entry"))
-            .expect("manifest push");
-    }
+    let manifest = ServiceManifest::new();
     let mut bytes = [0; 2048];
     let length = manifest.encode(&mut bytes).expect("encode manifest");
     filesystem
         .write(ghostos_ghostfs::SERVICE_MANIFEST_PATH, &bytes[..length])
         .expect("manifest write");
-    filesystem.flush(&mut image).expect("flush");
-    filesystem.check_consistency().expect("consistent");
+    report("after provisioning", &filesystem);
+    assert!(filesystem.lookup(DATABASE).is_err(), "database exists?!");
     filesystem
 }
 
-#[test]
-fn probe_first_run_commit() {
-    let mut filesystem = build_provisioned_volume();
-    report("after provisioning", &filesystem);
-
-    const DATABASE: &str = "/system/security/authorization";
-    const USERNAME_PATH: &str = "/system/security/first-admin-username";
-    const CREDENTIAL_PATH: &str = "/system/security/first-admin-credential";
-
-    assert!(filesystem.lookup(DATABASE).is_err(), "database exists?!");
-
-    match filesystem.transaction().create_directory("/system/security", true) {
-        Ok(_) => {}
-        Err(error) => println!("create /system/security failed in standalone txn: {error:?}"),
-    }
+fn run_first_admin_sequence(filesystem: &mut SynFs<MAX_BLOCKS>, label: &str) {
     {
         let mut transaction = filesystem.transaction();
-        transaction.create_directory("/system/security", true).expect("security dir");
-        match transaction.write(USERNAME_PATH, b"admin") {
-            Ok(_) => println!("username staged ok"),
-            Err(error) => println!("USERNAME STAGE FAILED: {error:?}"),
-        }
-        match transaction.commit() {
-            Ok(_) => println!("username committed"),
-            Err(error) => println!("USERNAME COMMIT FAILED: {error:?}"),
-        }
+        transaction
+            .create_directory("/system/security", true)
+            .expect("security dir");
+        transaction.write(USERNAME_PATH, b"admin").expect("username stage");
+        transaction.commit().expect("username commit");
     }
-    report("after username save", &filesystem);
+    println!("[{label}] username save committed");
+    report(&format!("{label} after username save"), filesystem);
+    read_back(filesystem, USERNAME_PATH, b"admin");
 
     {
         let mut transaction = filesystem.transaction();
-        match transaction.write(CREDENTIAL_PATH, &[1u8, 5, b'h', b'e', b'l', b'l', b'o']) {
-            Ok(_) => println!("credential staged ok"),
-            Err(error) => println!("CREDENTIAL STAGE FAILED: {error:?}"),
-        }
-        match transaction.commit() {
-            Ok(_) => println!("credential committed"),
-            Err(error) => println!("CREDENTIAL COMMIT FAILED: {error:?}"),
-        }
+        transaction
+            .write(CREDENTIAL_PATH, &[1u8, 5, b'h', b'e', b'l', b'l', b'o'])
+            .expect("credential stage");
+        transaction.commit().expect("credential commit");
     }
-    report("after credential save", &filesystem);
+    println!("[{label}] credential save committed");
+    report(&format!("{label} after credential save"), filesystem);
+    read_back(filesystem, USERNAME_PATH, b"admin");
+    read_back(filesystem, CREDENTIAL_PATH, &[1u8, 5, b'h', b'e', b'l', b'l', b'o']);
 
     let mut record = [0u8; 2 + 32 + 2 + 96];
     record[0] = 1;
@@ -198,31 +301,19 @@ fn probe_first_run_commit() {
     record[4 + 32..4 + 32 + 5].copy_from_slice(b"hello");
     {
         let mut transaction = filesystem.transaction();
-        if let Ok(_) = transaction.lookup(DATABASE) {
-            panic!("database already exists before commit");
-        }
-        match transaction.write(DATABASE, &record[..4 + 32 + 5]) {
-            Ok(_) => println!("record staged ok"),
-            Err(error) => println!("RECORD STAGE FAILED: {error:?}"),
-        }
-        match transaction.delete(USERNAME_PATH) {
-            Ok(_) => println!("username delete staged ok"),
-            Err(error) => println!("USERNAME DELETE STAGE FAILED: {error:?}"),
-        }
-        match transaction.delete(CREDENTIAL_PATH) {
-            Ok(_) => println!("credential delete staged ok"),
-            Err(error) => println!("CREDENTIAL DELETE STAGE FAILED: {error:?}"),
-        }
-        match transaction.commit() {
-            Ok(commit) => println!("commit ok: {commit:?}"),
-            Err(error) => println!("COMMIT FAILED: {error:?}"),
-        }
+        assert!(transaction.lookup(DATABASE).is_err(), "database exists?!");
+        transaction
+            .write(DATABASE, &record[..4 + 32 + 5])
+            .expect("record stage");
+        transaction.delete(USERNAME_PATH).expect("username delete");
+        transaction.delete(CREDENTIAL_PATH).expect("credential delete");
+        transaction.commit().expect("confirm commit");
     }
-    report("after confirm transaction", &filesystem);
+    println!("[{label}] confirm transaction committed");
+    report(&format!("{label} after confirm transaction"), filesystem);
 
-    let mut disk = DiskImage::create(Path::new("/tmp/ghostos-fsprobe-volume.img"));
-    match filesystem.fsync(&mut disk) {
-        Ok(_) => println!("fsync ok"),
-        Err(error) => println!("FSYNC FAILED: {error:?}"),
+    match filesystem.lookup(USERNAME_PATH) {
+        Ok(_) => panic!("[{label}] username still present after confirm"),
+        Err(_) => println!("[{label}] username removed after confirm"),
     }
 }
