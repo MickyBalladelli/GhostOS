@@ -918,6 +918,13 @@ fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
             read_back.as_ref().map(|read| read.bytes_read),
             daemon.filesystem().used_blocks()
         );
+        match daemon.filesystem().debug_data_probe(FIRST_ADMIN_USERNAME_PATH) {
+            Ok((size, slot, kind, checksum, head)) => crate::println!(
+                "[fsprobe] username data: size={} slot={} kind={} checksum={:#x} head={:#x}",
+                size, slot, kind, checksum, head
+            ),
+            Err(error) => crate::println!("[fsprobe] username data: probe failed {error:?}"),
+        }
         if let Ok(read) = read_back {
             crate::println!("[fsprobe] username bytes: {:02x?}", &probe[..read.bytes_read]);
         }
@@ -1035,6 +1042,20 @@ fn create_first_admin_credential_inner(
             username_back.as_ref().map(|read| read.bytes_read),
             daemon.filesystem().used_blocks()
         );
+        for (label, path) in [
+            ("username", FIRST_ADMIN_USERNAME_PATH),
+            ("credential", FIRST_ADMIN_CREDENTIAL_PATH),
+        ] {
+            match daemon.filesystem().debug_data_probe(path) {
+                Ok((size, slot, block_kind, checksum, head)) => crate::println!(
+                    "[fsprobe] {} data: size={} slot={} kind={} checksum={:#x} head={:#x}",
+                    label, size, slot, block_kind, checksum, head
+                ),
+                Err(error) => {
+                    crate::println!("[fsprobe] {label} data: probe failed {error:?}")
+                }
+            }
+        }
         if let Ok(read) = username_back {
             crate::println!("[fsprobe] username bytes now: {:02x?}", &probe[..read.bytes_read]);
         }
@@ -1102,6 +1123,13 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         username_metadata.size,
         daemon.filesystem().used_blocks()
     );
+    match daemon.filesystem().debug_data_probe(FIRST_ADMIN_USERNAME_PATH) {
+        Ok((size, slot, kind, checksum, head)) => crate::println!(
+            "[fsprobe] confirm: username data size={} slot={} kind={} checksum={:#x} head={:#x}",
+            size, slot, kind, checksum, head
+        ),
+        Err(error) => crate::println!("[fsprobe] confirm: username probe failed {error:?}"),
+    }
     if username_metadata.file_type != ghostos_ghostfs::FileType::Regular
         || username_metadata.size == 0
         || username_metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY

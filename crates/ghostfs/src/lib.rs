@@ -963,6 +963,42 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         self.generation
     }
 
+    /// TEMPORARY first-run diagnostics: summarize where a file's payload lives.
+    /// Returns (size, slot index, kind, record checksum, first bytes as u64).
+    /// kind: 0=no data block, 1=data block, 2=tree block, 3=missing slot.
+    #[doc(hidden)]
+    pub fn debug_data_probe(&self, path: &str) -> Result<(u64, u64, u8, u64, u64), Error> {
+        let file = self.lookup_following(path)?;
+        let record = self
+            .find_record(FileKey {
+                file: file.file,
+                version: file.version,
+            })?
+            .ok_or(Error::Corrupt)?;
+        if !record.data.is_some() {
+            return Ok((record.size, u64::MAX, 0, record.checksum, 0));
+        }
+        let raw = record.data.0 as usize;
+        if raw == 0 || raw > MAX_BLOCKS {
+            return Err(Error::Corrupt);
+        }
+        match &self.arena.slots[raw - 1].block {
+            Some(Block::Data(data)) => {
+                let mut head = [0u8; 8];
+                head.copy_from_slice(&data.bytes[..8]);
+                Ok((
+                    record.size,
+                    raw as u64,
+                    1,
+                    record.checksum,
+                    u64::from_le_bytes(head),
+                ))
+            }
+            Some(Block::Tree(_)) => Ok((record.size, raw as u64, 2, record.checksum, 0)),
+            None => Ok((record.size, raw as u64, 3, record.checksum, 0)),
+        }
+    }
+
     pub const fn format_version(&self) -> u16 {
         self.format_version
     }
