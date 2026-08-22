@@ -84,13 +84,15 @@ fn kernel_build_output(name: &str) -> PathBuf {
 fn drive_login_workflow(session: &mut QemuLoginSession) -> Result<(), String> {
     session.wait_for("No administrator account exists.")?;
     session.wait_for("GhostOS first-run setup mode")?;
-
-    session.send_text("username admin\n")?;
-    session.wait_for("Administrator username saved.")?;
-    session.send_text("credential passkey fixture\n")?;
-    session.wait_for("Administrator credential saved.")?;
+    session.wait_for("Administrator username: ")?;
+    session.send_text("admin\n")?;
+    session.wait_for("Credential type [PASSKEY/TPM/SSH] (PASSKEY): ")?;
+    session.send_text("passkey\n")?;
+    session.wait_for("Public credential material: ")?;
+    session.send_text("fixture\n")?;
+    session.wait_for("Create this administrator account? [y/N]: ")?;
     let setup_start = session.serial_len();
-    session.send_text("confirm\n")?;
+    session.send_text("y\n")?;
     session.wait_for_after("Administrator account committed.", setup_start)?;
 
     complete_login(session, "first login", setup_start)?;

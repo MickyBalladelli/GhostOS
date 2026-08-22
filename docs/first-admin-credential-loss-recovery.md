@@ -6,18 +6,10 @@ its registered passkeys, TPM credentials, or SSH keys can be used.
 ## Important boundary
 
 GhostOS must not turn an existing account database back into first-run setup.
-The built-in `RECOVERY` commands are only for interrupted setup while the
-authorization database is absent:
+First-run setup is only available while the authorization database is absent.
 
-```text
-RECOVERY STATUS
-RECOVERY RETRY
-RECOVERY RESET
-```
-
-If `/system/security/authorization` exists, first-admin setup and these
-commands are disabled. `RECOVERY RESET` must never be used to erase an account
-database.
+If `/system/security/authorization` exists, first-run setup is disabled. It
+must never be used to erase or replace an account database.
 
 The current build does not yet ship an in-place credential-loss enrollment
 command. Until trusted recovery-key tooling is available, use the final

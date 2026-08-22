@@ -6,7 +6,7 @@ system availability. It is not an authentication bypass.
 
 For a working system with lost administrator credentials, use
 [`first-admin-credential-loss-recovery.md`](first-admin-credential-loss-recovery.md).
-For an interrupted first-admin setup, use the `RECOVERY` commands in
+For an interrupted first-admin setup, follow
 [`first-boot.md`](first-boot.md).
 
 ## Recovery order
@@ -85,9 +85,8 @@ Recovery cannot:
 - recover data that was not copied to a verified backup or preserved disk
   image.
 
-`RECOVERY STATUS`, `RECOVERY RETRY`, and `RECOVERY RESET` are only for
-interrupted first-run setup while the authorization database is absent.
-`RECOVERY RESET` is not a factory reset and must never be used as one.
+First-run setup retry is only available while the authorization database is
+absent. First-run setup is not a factory reset and must never be used as one.
 
 ## After an unsafe or incomplete attempt
 

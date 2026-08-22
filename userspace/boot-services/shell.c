@@ -1940,150 +1940,134 @@ static void execute_line(char *line, u8 *buffer)
     }
 }
 
-__attribute__((noinline))
-static void execute_first_run_line(char *line)
+static u64 credential_kind_from_answer(const char *answer)
 {
-    char command[256];
+    if (answer[0] == 0 || equal_name(answer, "PASSKEY") || equal_name(answer, "1")) {
+        return 1;
+    }
+    if (equal_name(answer, "TPM") || equal_name(answer, "2")) {
+        return 2;
+    }
+    if (equal_name(answer, "SSH") || equal_name(answer, "3")) {
+        return 3;
+    }
+    return 0;
+}
+
+static const char *credential_kind_name(u64 kind_id)
+{
+    if (kind_id == 2) {
+        return "TPM";
+    }
+    if (kind_id == 3) {
+        return "SSH";
+    }
+    return "PASSKEY";
+}
+
+__attribute__((noinline))
+static int commit_first_admin_account(
+    const char *username,
+    u64 username_length,
+    u64 kind_id,
+    const char *material,
+    u64 material_length
+)
+{
+    struct response response = call(
+        OP_LOGIN_BOOTSTRAP_USERNAME,
+        0,
+        0,
+        (u64)username,
+        username_length,
+        0,
+        0
+    );
+    if (response.status != 0) {
+        write_text("Username rejected.\n");
+        write_text("Repeat setup with identical answers until the commit succeeds.\n");
+        return 0;
+    }
+    write_text("Administrator username saved.\n");
+    response = call(
+        OP_LOGIN_BOOTSTRAP_CREDENTIAL,
+        0,
+        0,
+        kind_id,
+        (u64)material,
+        material_length,
+        0
+    );
+    if (response.status != 0) {
+        write_text("Credential rejected.\n");
+        write_text("Repeat setup with identical answers until the commit succeeds.\n");
+        return 0;
+    }
+    write_text("Administrator credential saved.\n");
+    response = call(OP_LOGIN_BOOTSTRAP_CONFIRM, 0, 0, 0, 0, 0, 0);
+    if (response.status != 0) {
+        write_text("Confirmation rejected.\n");
+        write_text("Repeat setup with identical answers until the commit succeeds.\n");
+        return 0;
+    }
+    write_text("Administrator account committed.\n");
+    return 1;
+}
+
+__attribute__((noinline))
+static void run_first_run_wizard(void)
+{
     char username[256];
-    char *cursor = line;
-    if (next_word(&cursor, command) == 0) {
-        return;
-    }
-    if (equal_name(command, "HELP")) {
-        write_text(
-            "First login:\n"
-            "  USERNAME admin\n"
-            "  CREDENTIAL PASSKEY demo-public-material\n"
-            "  CONFIRM\n"
-            "At login: enter the username, credential type, then the displayed assertion hex.\n"
-            "Recovery: RECOVERY STATUS|RESET|RETRY\n"
-            "Watchdog diagnostics: WATCHDOG STATUS|ON|OFF\n"
-            "Use SHUTDOWN to power off.\n"
-        );
-        return;
-    }
-    if (equal_name(command, "SHUTDOWN")) {
-        call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
-        return;
-    }
-    if (equal_name(command, "WATCHDOG")) {
-        watchdog_command(cursor);
-        return;
-    }
-    if (equal_name(command, "USERNAME")) {
-        u64 username_length = next_word(&cursor, username);
+    char kind[256];
+    char material[256];
+    char answer[256];
+    u64 username_length;
+    u64 material_length;
+    u64 kind_id;
+
+    write_text("Answer each question to create the administrator account.\n");
+    write_text("GhostOS starts once the account is committed.\n");
+    write_text("Public credential material only; never type passwords or private keys.\n");
+    for (;;) {
+        write_text("\nAdministrator username: ");
+        username_length = read_credential_line(username, sizeof(username));
         if (username_length == 0 || username_length > 32) {
             write_text("Username must be 1-32 valid characters.\n");
+            continue;
+        }
+        write_text("Credential type [PASSKEY/TPM/SSH] (PASSKEY): ");
+        read_credential_line(kind, sizeof(kind));
+        kind_id = credential_kind_from_answer(kind);
+        if (kind_id == 0) {
+            write_text("Unknown credential type. Use PASSKEY, TPM, or SSH.\n");
+            continue;
+        }
+        write_text("Public credential material: ");
+        material_length = read_credential_line(material, sizeof(material));
+        if (material_length == 0 || material_length > 96) {
+            write_text("Credential material must be 1-96 characters.\n");
+            continue;
+        }
+        write_text("\nUsername: ");
+        write_bytes(username, username_length);
+        write_text("\nCredential type: ");
+        write_text(credential_kind_name(kind_id));
+        write_text("\nMaterial: ");
+        write_bytes(material, material_length);
+        write_text("\nCreate this administrator account? [y/N]: ");
+        read_credential_line(answer, sizeof(answer));
+        if (equal_name(answer, "SHUTDOWN")) {
+            call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
+            continue;
+        }
+        if (!equal_name(answer, "Y") && !equal_name(answer, "YES")) {
+            write_text("Setup restarted with new answers.\n");
+            continue;
+        }
+        if (commit_first_admin_account(username, username_length, kind_id, material, material_length)) {
             return;
         }
-        struct response response = call(
-            OP_LOGIN_BOOTSTRAP_USERNAME,
-            0,
-            0,
-            (u64)username,
-            username_length,
-            0,
-            0
-        );
-        if (response.status == 0) {
-            write_text("Administrator username saved.\n");
-        } else {
-            write_text("Username rejected.\n");
-        }
-        return;
     }
-    if (equal_name(command, "CREDENTIAL")) {
-        char kind[256];
-        char material[256];
-        u64 kind_length = next_word(&cursor, kind);
-        u64 material_length = next_word(&cursor, material);
-        u64 kind_id = 0;
-        if (equal_name(kind, "PASSKEY")) {
-            kind_id = 1;
-        } else if (equal_name(kind, "TPM")) {
-            kind_id = 2;
-        } else if (equal_name(kind, "SSH")) {
-            kind_id = 3;
-        }
-        if (kind_length == 0 || material_length == 0 || material_length > 96 || kind_id == 0) {
-            write_text("Use: CREDENTIAL PASSKEY|TPM|SSH <material>\n");
-            return;
-        }
-        struct response response = call(
-            OP_LOGIN_BOOTSTRAP_CREDENTIAL,
-            0,
-            0,
-            kind_id,
-            (u64)material,
-            material_length,
-            0
-        );
-        if (response.status == 0) {
-            write_text("Administrator credential saved.\n");
-        } else {
-            write_text("Credential rejected.\n");
-        }
-        return;
-    }
-    if (equal_name(command, "CONFIRM")) {
-        struct response response = call(
-            OP_LOGIN_BOOTSTRAP_CONFIRM,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0
-        );
-        if (response.status == 0) {
-            write_text("Administrator account committed.\n");
-        } else {
-            write_text("Confirmation rejected.\n");
-        }
-        return;
-    }
-    if (equal_name(command, "RECOVERY")) {
-        char action[256];
-        u64 action_length = next_word(&cursor, action);
-        u64 action_id = 0;
-        if (action_length == 0 || equal_name(action, "STATUS")) {
-            action_id = 1;
-        } else if (equal_name(action, "RESET")) {
-            action_id = 2;
-        } else if (equal_name(action, "RETRY")) {
-            action_id = 3;
-        }
-        if (action_id == 0) {
-            write_text("Use: RECOVERY STATUS|RESET|RETRY\n");
-            return;
-        }
-        struct response response = call(
-            OP_LOGIN_BOOTSTRAP_RECOVERY,
-            0,
-            0,
-            action_id,
-            0,
-            0,
-            0
-        );
-        if (response.status != 0) {
-            write_text("Recovery failed.\n");
-        } else if (action_id == 1) {
-            write_text("Recovery state: username=");
-            write_hex((u32)response.values[0]);
-            write_text(" credential=");
-            write_hex((u32)response.values[1]);
-            write_text(" sync=");
-            write_hex((u32)response.values[2]);
-            write_text("\n");
-        } else if (action_id == 2) {
-            write_text("Pending setup cleared.\n");
-        } else {
-            write_text("Recovery retry complete.\n");
-        }
-        return;
-    }
-    write_text("Use HELP, USERNAME, CREDENTIAL, CONFIRM, RECOVERY, WATCHDOG, or SHUTDOWN.\n");
 }
 
 static void execute_locked_line(char *line)
@@ -2114,7 +2098,10 @@ void _start(void)
         sleep_for(SHELL_POLL_DELAY_US);
     }
     if (first_run_mode()) {
+        write_text("No administrator account exists.\n");
         write_text("GhostOS first-run setup mode\n");
+        run_first_run_wizard();
+        write_text("\nGhostOS user shell\n");
     } else {
         write_text("GhostOS user shell\n");
     }
@@ -2139,9 +2126,7 @@ void _start(void)
         if (byte == '\r' || byte == '\n') {
             write_text("\n");
             line[line_length] = 0;
-            if (prompt_first_run) {
-                execute_first_run_line(line);
-            } else if (prompt_authorized) {
+            if (prompt_authorized) {
                 execute_line(line, buffer);
             } else {
                 execute_locked_line(line);

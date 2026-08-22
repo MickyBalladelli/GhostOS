@@ -112,22 +112,15 @@ authentication time, last activity, expiry, and revocation epoch. Account
 disablement, deletion, credential changes, expiry, and explicit revocation
 invalidate affected sessions.
 
-## First-run recovery commands
+## First-run setup
 
-Before an authorization database exists, the first-run shell accepts:
+Before an authorization database exists, the shell asks setup questions
+instead of showing a prompt: an administrator username, a credential type,
+public credential material, and a final confirmation. The pending answers stay
+valid until the commit succeeds; repeat identical answers after an interrupted
+attempt.
 
-```text
-RECOVERY STATUS
-RECOVERY RETRY
-RECOVERY RESET
-```
-
-`RECOVERY STATUS` reports the pending username, credential, and sync state as
-bounded hexadecimal values. `RECOVERY RETRY` retries a failed durable write.
-`RECOVERY RESET` clears only interrupted setup that has not committed an
-authorization database.
-
-These commands cannot reset an existing account database. If a committed
+This setup cannot reset an existing account database. If a committed
 administrator loses every credential, do not delete
 `/system/security/authorization`. Follow
 [`first-admin-credential-loss-recovery.md`](first-admin-credential-loss-recovery.md).
