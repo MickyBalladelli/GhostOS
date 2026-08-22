@@ -100,7 +100,9 @@ VM_COMMAND=(
   --disk "$DATA_DISK_PATH" \
   --disk-size 64M \
   --disk-format raw \
-  --disk-controller virtio-blk
+  --disk-controller virtio-blk \
+  --kernel "$KERNEL_PATH" \
+  --append console=serial0
 )
 
 if [ "${#PERSISTENCE_ARGS[@]}" -gt 0 ]; then
