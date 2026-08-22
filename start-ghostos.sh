@@ -54,6 +54,11 @@ if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios ./userspace/boo
   ./scripts/build-bios-image.sh >/dev/null
 fi
 
+if [ ! -x ./target/release/ghostos-vm ]; then
+  echo "Building ghostos-vm (release)..." >&2
+  cargo build -p ghostos-vm --release >/dev/null
+fi
+
 if [ ! -f "$SYSTEM_DISK_PATH" ]; then
   echo "Provisioning GhostOS system disk: $SYSTEM_DISK_PATH" >&2
   ./target/release/ghostos-vm disk provision "$SYSTEM_DISK_PATH" \

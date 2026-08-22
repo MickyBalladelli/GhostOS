@@ -32,12 +32,6 @@ Open product names (decide in task 0, then apply everywhere):
 
 ## 0. Decisions and inventory
 
-- [ ] Freeze the identifier map above (including `syn-shell`, `syn-script`, `SynFS`).
-- [ ] Decide whether on-disk/wire magics stay (`SYNOSDSK`, `SYNOSIG1`, `SYRP`, `SYNFS001`) for compatibility, or bump to GhostOS magics with dual-read.
-- [ ] Decide whether `archive/` historical TODOs are rewritten or left as SynOS history.
-- [ ] Record the git checkout rename (`dev/SynOS` → `dev/GhostOS`) as a local/operator step, not a source change.
-- [ ] Snapshot current `rg -i 'synos|syn-os|synos_|SYNOS'` counts so leftover strings can be audited at the end.
-
 ## 1. Workspace crate and package names
 
 Almost every Cargo package is `synos-*` even when the directory is not. Rename
