@@ -999,6 +999,24 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
     }
 
+    /// TEMPORARY first-run diagnostics: raw arena shape.
+    /// Returns (packed slot kinds, root id, generation); kinds are 4-bit
+    /// fields, 16 per word: 0=free, 1=data, 2=tree. Covers the first 80
+    /// slots.
+    #[doc(hidden)]
+    pub fn debug_arena_dump(&self) -> ([u64; 5], u64, u64) {
+        let mut words = [0u64; 5];
+        for (index, slot) in self.arena.slots.iter().enumerate().take(80) {
+            let kind = match &slot.block {
+                None => 0u64,
+                Some(Block::Data(_)) => 1,
+                Some(Block::Tree(_)) => 2,
+            };
+            words[index / 16] |= kind << ((index % 16) * 4);
+        }
+        (words, self.root.0 as u64, self.generation)
+    }
+
     pub const fn format_version(&self) -> u16 {
         self.format_version
     }

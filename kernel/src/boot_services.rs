@@ -925,6 +925,7 @@ fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
             ),
             Err(error) => crate::println!("[fsprobe] username data: probe failed {error:?}"),
         }
+        print_arena(daemon.filesystem());
         if let Ok(read) = read_back {
             crate::println!("[fsprobe] username bytes: {:02x?}", &probe[..read.bytes_read]);
         }
@@ -1056,6 +1057,7 @@ fn create_first_admin_credential_inner(
                 }
             }
         }
+        print_arena(daemon.filesystem());
         if let Ok(read) = username_back {
             crate::println!("[fsprobe] username bytes now: {:02x?}", &probe[..read.bytes_read]);
         }
@@ -1082,6 +1084,24 @@ pub(crate) fn commit_first_admin() -> Result<(), Status> {
 ))]
 fn first_admin_corrupt(site: u8) -> Status {
     Status::new(Severity::Fatal, facility::SYSTEM, 6, site).unwrap_or(Status::CORRUPT)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn print_arena(filesystem: &SynFs<FILESYSTEM_BLOCKS>) {
+    let (words, root, generation) = filesystem.debug_arena_dump();
+    crate::println!(
+        "[fsprobe] arena: used={} root={} gen={} daemon@{:#x}",
+        filesystem.used_blocks(),
+        root,
+        generation,
+        (&raw const FILESYSTEM_DAEMON) as usize
+    );
+    for (index, word) in words.iter().enumerate() {
+        crate::println!("[fsprobe] arena[{:02}]: {:#018x}", index * 16, word);
+    }
 }
 
 #[cfg(all(
@@ -1130,6 +1150,7 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         ),
         Err(error) => crate::println!("[fsprobe] confirm: username probe failed {error:?}"),
     }
+    print_arena(daemon.filesystem());
     if username_metadata.file_type != ghostos_ghostfs::FileType::Regular
         || username_metadata.size == 0
         || username_metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
