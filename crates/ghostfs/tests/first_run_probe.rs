@@ -45,6 +45,16 @@ impl BlockDevice for RealDisk {
 
 #[test]
 fn inspect_real_system_disk() {
+    // MountedSystemVolume::mount consumes multi-megabyte stack frames in
+    // debug builds; libtest threads are too small for it.
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(inspect_real_system_disk_body)
+        .expect("spawn big-stack probe thread");
+    handle.join().expect("real disk probe panicked");
+}
+
+fn inspect_real_system_disk_body() {
     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../virtual_machine/state/system.raw"));
     let mut device = RealDisk::open_read_only(path);
     let mut manifest_scratch = [0u8; SYSTEM_DISK_MANIFEST_BYTES];

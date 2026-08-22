@@ -13,12 +13,12 @@ use ghostos_init::{
     ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceReadiness, ServiceSpec,
     ServiceState, SpawnRequest, StartupDiagnostic, Supervisor, SupervisorRuntime,
 };
-use ghostos_status::{facility, Severity, Status};
+use ghostos_status::Status;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use ghostos_status::IntoStatus;
+use ghostos_status::{facility, IntoStatus, Severity};
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -1059,14 +1059,14 @@ pub(crate) fn commit_first_admin() -> Result<(), Status> {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
 fn first_admin_corrupt(site: u8) -> Status {
     Status::new(Severity::Fatal, facility::SYSTEM, 6, site).unwrap_or(Status::CORRUPT)
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 fn commit_first_admin_inner() -> Result<(), Status> {
     if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ALREADY_EXISTS)
