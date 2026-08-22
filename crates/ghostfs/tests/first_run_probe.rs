@@ -304,6 +304,14 @@ fn run_first_admin_sequence(filesystem: &mut SynFs<MAX_BLOCKS>, label: &str) {
     }
     println!("[{label}] username save committed");
     report(&format!("{label} after username save"), filesystem);
+    let (words, root, generation) = filesystem.debug_arena_dump();
+    println!(
+        "[{label}] arena: root={root} gen={generation} words={words:05x?}"
+    );
+    println!(
+        "[{label}] username data probe: {:x?}",
+        filesystem.debug_data_probe(USERNAME_PATH)
+    );
     read_back(filesystem, USERNAME_PATH, b"admin");
 
     {
@@ -315,6 +323,18 @@ fn run_first_admin_sequence(filesystem: &mut SynFs<MAX_BLOCKS>, label: &str) {
     }
     println!("[{label}] credential save committed");
     report(&format!("{label} after credential save"), filesystem);
+    let (words, root, generation) = filesystem.debug_arena_dump();
+    println!(
+        "[{label}] arena: root={root} gen={generation} words={words:05x?}"
+    );
+    println!(
+        "[{label}] username data probe: {:x?}",
+        filesystem.debug_data_probe(USERNAME_PATH)
+    );
+    println!(
+        "[{label}] credential data probe: {:x?}",
+        filesystem.debug_data_probe(CREDENTIAL_PATH)
+    );
     read_back(filesystem, USERNAME_PATH, b"admin");
     read_back(filesystem, CREDENTIAL_PATH, &[1u8, 5, b'h', b'e', b'l', b'l', b'o']);
 
