@@ -386,15 +386,41 @@ impl Slot {
     const EMPTY: Self = Self { block: None };
 }
 
+/// TEMPORARY first-run diagnostics ring capacity.
+const DEBUG_EVENT_CAPACITY: usize = 48;
+
 struct BlockArena<const MAX_BLOCKS: usize> {
     slots: [Slot; MAX_BLOCKS],
+    /// TEMPORARY first-run diagnostics ring: (kind, first, second).
+    /// kinds: 1=allocate(slot,block-kind) 2=gc-free(slot)
+    /// 3=transaction-begin(root) 4=commit(generation,ops) 5=rollback(root)
+    debug_events: [(u64, u64, u64); DEBUG_EVENT_CAPACITY],
+    debug_event_next: usize,
 }
 
 impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
     const fn new() -> Self {
         Self {
             slots: [Slot::EMPTY; MAX_BLOCKS],
+            debug_events: [(0, 0, 0); DEBUG_EVENT_CAPACITY],
+            debug_event_next: 0,
         }
+    }
+
+    fn record_debug_event(&mut self, kind: u64, first: u64, second: u64) {
+        let index = self.debug_event_next;
+        if index < DEBUG_EVENT_CAPACITY {
+            self.debug_events[index] = (kind, first, second);
+        }
+        self.debug_event_next = index.saturating_add(1);
+    }
+
+    fn debug_event_slice(&self) -> &[(u64, u64, u64)] {
+        &self.debug_events[..self.debug_event_next.min(DEBUG_EVENT_CAPACITY)]
+    }
+
+    fn debug_reset_events(&mut self) {
+        self.debug_event_next = 0;
     }
 
     fn get(&self, id: BlockId) -> Result<Block, Error> {
@@ -417,7 +443,9 @@ impl<const MAX_BLOCKS: usize> BlockArena<MAX_BLOCKS> {
             .iter()
             .position(|slot| slot.block.is_none())
             .ok_or(Error::OutOfSpace)?;
+        let kind = u64::from(matches!(block, Block::Data(_))) + 1;
         self.slots[index].block = Some(block);
+        self.record_debug_event(1, index as u64 + 1, kind);
         Ok(BlockId(index as u32 + 1))
     }
 
@@ -925,6 +953,11 @@ impl<const MAX_BLOCKS: usize> SynFsTransaction<'_, MAX_BLOCKS> {
             return Err(Error::TransactionAborted);
         }
         self.committed = true;
+        self.filesystem.arena.record_debug_event(
+            4,
+            self.filesystem.generation,
+            self.operations as u64,
+        );
         Ok(TransactionCommit {
             generation: self.filesystem.generation,
             operations: self.operations,
@@ -939,6 +972,9 @@ impl<const MAX_BLOCKS: usize> Drop for SynFsTransaction<'_, MAX_BLOCKS> {
         }
         self.filesystem.root = self.original_root;
         self.filesystem.generation = self.original_generation;
+        self.filesystem
+            .arena
+            .record_debug_event(5, self.original_root.0 as u64, 0);
         self.filesystem.collect_garbage();
     }
 }
@@ -1015,6 +1051,18 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             words[index / 16] |= kind << ((index % 16) * 4);
         }
         (words, self.root.0 as u64, self.generation)
+    }
+
+    /// TEMPORARY first-run diagnostics: events recorded since last reset.
+    #[doc(hidden)]
+    pub fn debug_event_slice(&self) -> &[(u64, u64, u64)] {
+        self.arena.debug_event_slice()
+    }
+
+    /// TEMPORARY first-run diagnostics: clear the event ring.
+    #[doc(hidden)]
+    pub fn debug_reset_events(&mut self) {
+        self.arena.debug_reset_events();
     }
 
     pub const fn format_version(&self) -> u16 {
@@ -1128,6 +1176,8 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     pub fn transaction(&mut self) -> SynFsTransaction<'_, MAX_BLOCKS> {
         // Atomic groups need room for all CoW paths; reclaim abandoned blocks first.
         self.collect_garbage();
+        self.arena
+            .record_debug_event(3, self.root.0 as u64, self.generation);
         SynFsTransaction {
             original_root: self.root,
             original_generation: self.generation,
@@ -2196,15 +2246,16 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 
         let mut live_blocks = 0;
         let mut freed_blocks = 0;
-        for (index, slot) in self.arena.slots.iter_mut().enumerate() {
-            if slot.block.is_none() {
+        for index in 0..MAX_BLOCKS {
+            if self.arena.slots[index].block.is_none() {
                 continue;
             }
             if marked[index] {
                 live_blocks += 1
             } else {
-                slot.block = None;
-                freed_blocks += 1
+                self.arena.slots[index].block = None;
+                freed_blocks += 1;
+                self.arena.record_debug_event(2, index as u64 + 1, 0);
             }
         }
         GcReport {

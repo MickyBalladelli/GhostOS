@@ -397,6 +397,16 @@ fn property_wildcard_version_selection_never_falls_back_to_latest() {
 
 #[test]
 fn path_limits_and_quotas_reject_unsafe_or_excessive_input() {
+    // SynFs::new() returns a large struct by value; libtest stacks are too
+    // small for debug-build frames at this size.
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(path_limits_and_quotas_reject_unsafe_or_excessive_input_body)
+        .unwrap();
+    handle.join().unwrap();
+}
+
+fn path_limits_and_quotas_reject_unsafe_or_excessive_input_body() {
     assert_eq!(VersionedPath::parse("/tmp/file;0").unwrap().version, VersionSelector::Latest);
     assert_eq!(VersionedPath::parse("/tmp/file;7").unwrap().version, VersionSelector::Exact(7));
     assert_eq!(VersionedPath::parse("/tmp/file;wat"), Err(Error::InvalidVersion));
