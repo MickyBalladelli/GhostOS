@@ -1,5 +1,5 @@
 [package]
-name = "synos-ras"
+name = "ghostos-ras"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-synos-fabric = { path = "../fabric" }
-synos-legacy-pc-drivers = { path = "../legacy-pc-drivers" }
-synos-observability = { path = "../observability" }
-synos-status = { path = "../status" }
-synos-synfs = { path = "../synfs" }
+ghostos-fabric = { path = "../fabric" }
+ghostos-legacy-pc-drivers = { path = "../legacy-pc-drivers" }
+ghostos-observability = { path = "../observability" }
+ghostos-status = { path = "../status" }
+ghostos-ghostfs = { path = "../ghostfs" }

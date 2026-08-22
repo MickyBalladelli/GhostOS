@@ -1,9 +1,9 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use syn_shell::network::register_network_commands;
-use syn_shell::parser::CommandRegistry;
-use synos_netd::{
+use ghostos_shell::network::register_network_commands;
+use ghostos_shell::parser::CommandRegistry;
+use ghostos_netd::{
     inspect_frame, DhcpClient, DhcpError, DhcpLease, DhcpLeaseRecord, DhcpLeaseRuntime,
     InterfaceConfig, NetworkFrameKind, StaticSnapshot,
 };

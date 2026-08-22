@@ -36,16 +36,16 @@ impl Config {
 
     /// Read optional replay controls. Unset variables use stable defaults.
     pub fn from_env() -> Self {
-        let seed = env::var("SYNOS_PROPERTY_SEED")
+        let seed = env::var("GHOSTOS_PROPERTY_SEED")
             .ok()
             .and_then(|value| parse_integer(&value))
             .unwrap_or(DEFAULT_SEED);
-        let cases = env::var("SYNOS_PROPERTY_CASES")
+        let cases = env::var("GHOSTOS_PROPERTY_CASES")
             .ok()
             .and_then(|value| value.parse().ok())
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_CASES);
-        let replay_case = env::var("SYNOS_PROPERTY_CASE")
+        let replay_case = env::var("GHOSTOS_PROPERTY_CASE")
             .ok()
             .and_then(|value| value.parse().ok());
         Self {
@@ -81,7 +81,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "property {} failed at case {} (seed 0x{:016x}, case seed 0x{:016x}): {}\nreplay with SYNOS_PROPERTY_SEED=0x{:016x} SYNOS_PROPERTY_CASE={}",
+            "property {} failed at case {} (seed 0x{:016x}, case seed 0x{:016x}): {}\nreplay with GHOSTOS_PROPERTY_SEED=0x{:016x} GHOSTOS_PROPERTY_CASE={}",
             self.property,
             self.case,
             self.seed,
@@ -318,8 +318,8 @@ mod tests {
         })
         .expect_err("property must fail");
         let message = failure.to_string();
-        assert!(message.contains("SYNOS_PROPERTY_SEED=0x0000000000000009"));
-        assert!(message.contains("SYNOS_PROPERTY_CASE=0"));
+        assert!(message.contains("GHOSTOS_PROPERTY_SEED=0x0000000000000009"));
+        assert!(message.contains("GHOSTOS_PROPERTY_CASE=0"));
     }
 
     #[test]

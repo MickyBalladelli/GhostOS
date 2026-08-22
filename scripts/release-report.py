@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and validate the evidence-backed SynOS release report."""
+"""Build and validate the evidence-backed GhostOS release report."""
 
 from __future__ import annotations
 
@@ -303,7 +303,7 @@ def scale_report(benchmark_paths: list[pathlib.Path], explicit: list[int]) -> di
 
 def validate_report(report_path: pathlib.Path, evidence_dir: pathlib.Path | None = None) -> dict[str, object]:
     report = read_json(report_path)
-    if report.get("schema") != 1 or report.get("kind") != "synos-release-report":
+    if report.get("schema") != 1 or report.get("kind") != "ghostos-release-report":
         raise ValueError("release report has an unsupported schema")
     revision = git_revision()
     if report.get("revision") != revision:
@@ -415,9 +415,9 @@ def build_report(args: argparse.Namespace) -> dict[str, object]:
     correctness_state = "passed" if counts["failed"] == 0 and counts["inconclusive"] == 0 else "failed"
     report: dict[str, object] = {
         "schema": 1,
-        "kind": "synos-release-report",
+        "kind": "ghostos-release-report",
         "state": "passed" if correctness_state == "passed" else "failed",
-        "product": "synos-vm",
+        "product": "ghostos-vm",
         "version": vm_version(),
         "revision": revision,
         "generated_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),

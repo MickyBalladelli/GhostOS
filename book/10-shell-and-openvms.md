@@ -1,6 +1,6 @@
 # 10. The Shell and OpenVMS Ideas
 
-SynOS uses a native shell to make system state inspectable and automation predictable. It borrows useful OpenVMS ideas without copying the host shell model.
+GhostOS uses a native shell to make system state inspectable and automation predictable. It borrows useful OpenVMS ideas without copying the host shell model.
 
 ## Typed commands
 
@@ -46,7 +46,7 @@ The shell checks path syntax and submits the operation with the user’s capabil
 
 ## The editor
 
-`EDIT` is a bounded UTF-8 full-screen editor. It edits a selected SynFS version and saves as a new version. It supports cursor movement, selection, copy/cut/paste, scrolling, resizing, conflict detection, and terminal restoration.
+`EDIT` is a bounded UTF-8 full-screen editor. It edits a selected GhostFS version and saves as a new version. It supports cursor movement, selection, copy/cut/paste, scrolling, resizing, conflict detection, and terminal restoration.
 
 The memorable control set is:
 

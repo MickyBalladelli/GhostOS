@@ -1,14 +1,14 @@
 use core::fmt;
 
 use host_filesystems::{FileSystemKind, Partition};
-use synos_ipc::{Envelope, SharedBuffer};
-use synos_observability::{
+use ghostos_ipc::{Envelope, SharedBuffer};
+use ghostos_observability::{
     CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level, ProfileDomain, ProfileSample,
     record_profile_sample,
 };
-use synos_path_pattern::{Pattern, PatternError};
-use synos_status::{facility, IntoStatus, Severity, Status};
-use synos_synfs::{
+use ghostos_path_pattern::{Pattern, PatternError};
+use ghostos_status::{facility, IntoStatus, Severity, Status};
+use ghostos_ghostfs::{
     CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, LinkEntry, SynFs,
     SynFsDiagnostics, SynFsTransaction, TransactionCommit, VersionSelector, VersionedPath,
 };
@@ -29,7 +29,7 @@ pub const DEFAULT_MAX_SNAPSHOTS: usize = 16;
 pub const DEFAULT_MAX_MOUNTS: usize = 16;
 pub const DEFAULT_SCRATCH_BYTES: usize = MAX_IPC_BUFFER_BYTES;
 const MAX_DIRECTORY_ENTRIES: usize = 256;
-const MAX_NAME_BYTES: usize = synos_synfs::MAX_PATH_BYTES;
+const MAX_NAME_BYTES: usize = ghostos_ghostfs::MAX_PATH_BYTES;
 const ROOT_MOUNT_NAME: &str = "SYS$ROOT";
 const INTERNAL_MAPPING_CAPABILITY: u64 = 1 << 32;
 const MAPPING_CAPABILITY_BIT: u32 = 1 << 31;
@@ -39,7 +39,7 @@ fn pattern_error(error: PatternError) -> DaemonError {
     match error {
         PatternError::InvalidPath => DaemonError::InvalidPath,
         PatternError::TooLong => DaemonError::File(SynFsError::BufferTooSmall {
-            required: synos_path_pattern::MAX_PATTERN_BYTES.saturating_add(1),
+            required: ghostos_path_pattern::MAX_PATTERN_BYTES.saturating_add(1),
         }),
         PatternError::Empty
         | PatternError::TrailingEscape
@@ -126,7 +126,7 @@ impl ProcessRights {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FileInfo {
     pub capability: Capability,
-    pub file: synos_synfs::FileName,
+    pub file: ghostos_ghostfs::FileName,
     pub version: u32,
     pub size: u64,
     pub checksum: u64,
@@ -311,7 +311,7 @@ impl fmt::Display for DaemonError {
             Self::LockExhausted => "filesystem lock table is full",
             Self::InvalidLock => "invalid filesystem lock",
             Self::Namespace(_) => "invalid filesystem namespace operation",
-            Self::File(_) => "SynFS operation failed",
+            Self::File(_) => "GhostFS operation failed",
         })
     }
 }
@@ -459,7 +459,7 @@ impl SnapshotSlot {
         generation: 0,
         owner: ProcessId::from_valid_raw(1),
         checkpoint: CheckpointInfo {
-            id: synos_synfs::CheckpointId::from_valid_raw(1),
+            id: ghostos_ghostfs::CheckpointId::from_valid_raw(1),
             generation: 0,
         },
     };
@@ -484,9 +484,9 @@ impl MountSlot {
     };
 }
 
-/// Ring 3 owner of a SynFS volume.
+/// Ring 3 owner of a GhostFS volume.
 ///
-/// The daemon owns the mutable SynFS root and all externally visible handles.
+/// The daemon owns the mutable GhostFS root and all externally visible handles.
 /// Kernel IPC validates the shared mapping before this type is called; this
 /// type validates the descriptor length, operation shape, process authority,
 /// and daemon-issued capability generation again.
@@ -821,7 +821,7 @@ impl<
         rights: FileRights,
         read_only_mount: bool,
         append: bool,
-        metadata: synos_synfs::FileVersion,
+        metadata: ghostos_ghostfs::FileVersion,
     ) -> Result<FileInfo, DaemonError> {
         let (index, slot) = self
             .open_files
@@ -1028,7 +1028,7 @@ impl<
             .bytes_read)
     }
 
-    /// Publish a write in the daemon's SynFS view. This does not promise
+    /// Publish a write in the daemon's GhostFS view. This does not promise
     /// power-loss durability; the mount owner must complete `SynFs::sync`.
     pub fn write(
         &mut self,
@@ -1501,7 +1501,7 @@ impl<
         ))
     }
 
-    /// Atomically publish a rename in SynFS memory. The rename is durable only
+    /// Atomically publish a rename in GhostFS memory. The rename is durable only
     /// after the generation reaches the block-device sync barrier.
     pub fn rename(
         &mut self,
@@ -2141,7 +2141,7 @@ impl<
     }
 
     fn write_snapshot_listing<const BLOCKS: usize>(
-        snapshot: &synos_synfs::ReadOnlySnapshot<'_, BLOCKS>,
+        snapshot: &ghostos_ghostfs::ReadOnlySnapshot<'_, BLOCKS>,
         prefix: &str,
         continuation: usize,
         output: &mut [u8],
@@ -2620,8 +2620,8 @@ fn validate_buffer(
     Ok(Some(buffer))
 }
 
-fn rms_capability() -> synos_synfs::RmsMapHandle {
-    synos_synfs::RmsMapHandle::from_valid_capability(INTERNAL_MAPPING_CAPABILITY)
+fn rms_capability() -> ghostos_ghostfs::RmsMapHandle {
+    ghostos_ghostfs::RmsMapHandle::from_valid_capability(INTERNAL_MAPPING_CAPABILITY)
 }
 
 fn mount_path(path: &str) -> &str {

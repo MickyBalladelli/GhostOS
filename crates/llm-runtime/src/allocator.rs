@@ -1,4 +1,4 @@
-use synos_fabric::{
+use ghostos_fabric::{
     Access, AddressRange, NodeId, PAGE_SIZE, PageFault,
     memory::{
         GlobalAddressSpace, LeaseHandle, LeaseRights, LeaseTable, MemoryKind,
@@ -219,7 +219,7 @@ impl<const ALLOCATIONS: usize, const EXTENTS: usize> UnifiedAllocator<ALLOCATION
                         now_us,
                     ) {
                         Ok(range) => range,
-                        Err(synos_fabric::Error::Capacity) => break,
+                        Err(ghostos_fabric::Error::Capacity) => break,
                         Err(error) => {
                             self.rollback(leases, policy.lease_owner, &extents);
                             return Err(error.into())

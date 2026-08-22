@@ -1,5 +1,5 @@
-use synos_ipc::{Ring, RingError, SharedBuffer};
-use synos_netd::{
+use ghostos_ipc::{Ring, RingError, SharedBuffer};
+use ghostos_netd::{
     SOCKET_RESPONSE_SCHEMA, SocketCapability, SocketOperation, SocketRequest, SocketResponse,
     SocketRights,
 };
@@ -14,7 +14,7 @@ pub enum NetdError {
     UnexpectedCompletion,
 }
 
-/// Single-flight async client for a capability-mapped `synos-netd` channel.
+/// Single-flight async client for a capability-mapped `ghostos-netd` channel.
 pub struct NetdClient<'a, const RING_CAPACITY: usize> {
     requests: &'a Ring<RING_CAPACITY>,
     completions: &'a Ring<RING_CAPACITY>,
@@ -117,7 +117,7 @@ impl<'a, const RING_CAPACITY: usize> NetdClient<'a, RING_CAPACITY> {
         correlation
     }
 
-    fn submit(&mut self, request: synos_ipc::Envelope) -> Result<u128, NetdError> {
+    fn submit(&mut self, request: ghostos_ipc::Envelope) -> Result<u128, NetdError> {
         if self.outstanding.is_some() {
             return Err(NetdError::RequestPending);
         }

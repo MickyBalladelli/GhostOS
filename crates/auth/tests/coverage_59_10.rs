@@ -1,4 +1,4 @@
-use synos_auth::{
+use ghostos_auth::{
     AccountState, AuthenticationChallenge, BootLoginService, CapabilityCaveat, CapabilityKey,
     Credential, CredentialId, CredentialKind, CredentialVerifier, CryptographicCapability,
     DatabaseScope, DiscoveryAnnouncement, FederationError, InitialCapability, PeerDirectory,
@@ -6,8 +6,8 @@ use synos_auth::{
     SessionManager, StartupError, TokenError, TransportRights, UserRecord, Username, AuthDaemon,
     ClusterId,
 };
-use synos_fabric::NodeId;
-use synos_kernel::{AddressSpaceId, CapabilityObject, CapabilitySpace, IdentityId, Rights};
+use ghostos_fabric::NodeId;
+use ghostos_kernel::{AddressSpaceId, CapabilityObject, CapabilitySpace, IdentityId, Rights};
 
 fn record() -> UserRecord {
     let identity = IdentityId::new(7).unwrap();
@@ -15,7 +15,7 @@ fn record() -> UserRecord {
     record
         .add_credential(Credential::new_passkey(CredentialId::new(1).unwrap(), b"public-key", 0).unwrap())
         .unwrap();
-    record.assign_right(synos_kernel::RightIdentifier::NETWORK_INBOUND).unwrap();
+    record.assign_right(ghostos_kernel::RightIdentifier::NETWORK_INBOUND).unwrap();
     record
         .grant_initial_capability(InitialCapability {
             object: CapabilityObject::SystemControl,
@@ -84,7 +84,7 @@ fn passkey(id: u32) -> Credential {
 fn management_service() -> (
     BootLoginService<4, 4, 4, 4>,
     MemorySecurityStore<4, 4>,
-    synos_auth::SessionHandle,
+    ghostos_auth::SessionHandle,
 ) {
     management_service_with_policy(SecurityPolicy::default())
 }
@@ -92,7 +92,7 @@ fn management_service() -> (
 fn recovery_service() -> (
     BootLoginService<4, 4, 4, 4>,
     MemorySecurityStore<4, 4>,
-    synos_auth::SessionHandle,
+    ghostos_auth::SessionHandle,
 ) {
     let recovery_policy = PasswordRecoveryPolicy::new(IdentityId::new(1).unwrap(), 1, 100).unwrap();
     let policy = SecurityPolicy::default().with_password_login(false, Some(recovery_policy));
@@ -104,7 +104,7 @@ fn management_service_with_policy(
 ) -> (
     BootLoginService<4, 4, 4, 4>,
     MemorySecurityStore<4, 4>,
-    synos_auth::SessionHandle,
+    ghostos_auth::SessionHandle,
 ) {
     let mut store = MemorySecurityStore::default();
     let mut service = BootLoginService::start(&mut store, policy, 100).unwrap();
@@ -126,7 +126,7 @@ fn management_service_with_policy(
 fn login_admin(
     service: &mut BootLoginService<4, 4, 4, 4>,
     now_us: u64,
-) -> synos_auth::SessionHandle {
+) -> ghostos_auth::SessionHandle {
     let challenge = service
         .begin_login(
             "admin",
@@ -162,7 +162,7 @@ impl CredentialVerifier for Verifier {
 
 #[test]
 fn authentication_challenges_are_one_shot_and_sessions_expire() {
-    let mut database = synos_auth::AuthorizationDatabase::<2>::new();
+    let mut database = ghostos_auth::AuthorizationDatabase::<2>::new();
     database.insert(record()).unwrap();
     let mut daemon = AuthDaemon::<2, 2>::new(database, 100);
     let login_space = AddressSpaceId::new(4).unwrap();
@@ -174,21 +174,21 @@ fn authentication_challenges_are_one_shot_and_sessions_expire() {
         .complete_authentication(challenge, b"proof", &mut Verifier { accepts: true }, login_space, 15, 10)
         .unwrap();
     assert_eq!(session.identity(), IdentityId::new(7).unwrap());
-    assert!(matches!(daemon.complete_authentication(challenge, b"proof", &mut Verifier { accepts: true }, login_space, 15, 10), Err(synos_auth::AuthError::InvalidChallenge)));
+    assert!(matches!(daemon.complete_authentication(challenge, b"proof", &mut Verifier { accepts: true }, login_space, 15, 10), Err(ghostos_auth::AuthError::InvalidChallenge)));
 
     let mut capabilities = CapabilitySpace::<2>::new();
     assert_eq!(session.instantiate_capabilities(&mut capabilities, 24).unwrap().handles().count(), 1);
-    assert!(matches!(session.instantiate_capabilities(&mut capabilities, 25), Err(synos_auth::AuthError::SessionExpired)));
+    assert!(matches!(session.instantiate_capabilities(&mut capabilities, 25), Err(ghostos_auth::AuthError::SessionExpired)));
 
     let expired = daemon
         .begin_authentication("alice", NodeId::LOCAL, CredentialId::new(1).unwrap(), 30, 1)
         .unwrap();
-    assert!(matches!(daemon.complete_authentication(expired, b"proof", &mut Verifier { accepts: true }, login_space, 31, 10), Err(synos_auth::AuthError::InvalidChallenge)));
+    assert!(matches!(daemon.complete_authentication(expired, b"proof", &mut Verifier { accepts: true }, login_space, 31, 10), Err(ghostos_auth::AuthError::InvalidChallenge)));
 }
 
 #[test]
 fn wrong_credentials_are_rejected_and_challenges_are_consumed() {
-    let mut database = synos_auth::AuthorizationDatabase::<2>::new();
+    let mut database = ghostos_auth::AuthorizationDatabase::<2>::new();
     database.insert(record()).unwrap();
     let mut daemon = AuthDaemon::<2, 2>::new(database, 100);
     let login_space = AddressSpaceId::new(4).unwrap();
@@ -205,7 +205,7 @@ fn wrong_credentials_are_rejected_and_challenges_are_consumed() {
             15,
             10,
         ),
-        Err(synos_auth::AuthError::VerificationFailed)
+        Err(ghostos_auth::AuthError::VerificationFailed)
     ));
     assert!(matches!(
         daemon.complete_authentication(
@@ -216,7 +216,7 @@ fn wrong_credentials_are_rejected_and_challenges_are_consumed() {
             15,
             10,
         ),
-        Err(synos_auth::AuthError::InvalidChallenge)
+        Err(ghostos_auth::AuthError::InvalidChallenge)
     ));
 }
 
@@ -264,7 +264,7 @@ fn account_management_creates_renames_disables_and_deletes_accounts() {
     assert_eq!(deleted.identity, identity);
     assert!(matches!(
         service.state().database.record(identity),
-        Err(synos_auth::AuthError::UserNotFound)
+        Err(ghostos_auth::AuthError::UserNotFound)
     ));
     assert!(store.state.is_some());
 }
@@ -285,7 +285,7 @@ fn last_administrator_cannot_be_disabled_or_deleted() {
 
     let record = service.state().database.record(identity).unwrap();
     assert_eq!(record.account_state(), AccountState::Active);
-    assert!(record.has_role(synos_auth::AccountRole::Administrator));
+    assert!(record.has_role(ghostos_auth::AccountRole::Administrator));
 }
 
 #[test]
@@ -450,14 +450,14 @@ fn session_lifetime_idle_timeout_and_identity_revocation_fence_access() {
     lifetime_manager
         .authorize(
             lifetime_session.handle,
-            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            ghostos_kernel::RightIdentifier::NETWORK_INBOUND,
             19,
         )
         .unwrap();
     assert_eq!(
         lifetime_manager.authorize(
             lifetime_session.handle,
-            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            ghostos_kernel::RightIdentifier::NETWORK_INBOUND,
             30,
         ),
         Err(StartupError::SessionExpired)
@@ -468,7 +468,7 @@ fn session_lifetime_idle_timeout_and_identity_revocation_fence_access() {
     assert_eq!(
         idle_manager.authorize(
             idle_session.handle,
-            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            ghostos_kernel::RightIdentifier::NETWORK_INBOUND,
             20,
         ),
         Err(StartupError::SessionExpired)
@@ -480,7 +480,7 @@ fn session_lifetime_idle_timeout_and_identity_revocation_fence_access() {
     assert_eq!(
         revocation_manager.authorize(
             revoked_session.handle,
-            synos_kernel::RightIdentifier::NETWORK_INBOUND,
+            ghostos_kernel::RightIdentifier::NETWORK_INBOUND,
             11,
         ),
         Err(StartupError::SessionNotFound)
@@ -488,7 +488,7 @@ fn session_lifetime_idle_timeout_and_identity_revocation_fence_access() {
 }
 
 fn session_manager(policy: SecurityPolicy) -> SessionManager<2, 2, 2> {
-    let mut database = synos_auth::AuthorizationDatabase::<2>::new();
+    let mut database = ghostos_auth::AuthorizationDatabase::<2>::new();
     database.insert(record()).unwrap();
     SessionManager::new(database, policy, 100)
 }
@@ -497,7 +497,7 @@ fn complete_session(
     manager: &mut SessionManager<2, 2, 2>,
     login_space: AddressSpaceId,
     now_us: u64,
-) -> synos_auth::SessionView {
+) -> ghostos_auth::SessionView {
     let challenge = manager
         .begin_login(
             "alice",

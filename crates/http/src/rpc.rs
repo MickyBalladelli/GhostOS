@@ -1,9 +1,9 @@
-use synos_status::{AuditContext, PublicError, RetryHint, Status, operation};
+use ghostos_status::{AuditContext, PublicError, RetryHint, Status, operation};
 
 use crate::{DEFAULT_RESPONSE_HEADERS, Method, Request, Response, StatusCode};
-use synos_ipc::{BufferError, BufferLease, BufferOwner};
+use ghostos_ipc::{BufferError, BufferLease, BufferOwner};
 
-pub const SYNOS_RPC_CONTENT_TYPE: &str = "application/vnd.synos.rpc";
+pub const GHOSTOS_RPC_CONTENT_TYPE: &str = "application/vnd.ghostos.rpc";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RpcHttpError {
@@ -40,7 +40,7 @@ pub fn is_rpc_content_type(value: &str) -> bool {
     value
         .split(';')
         .next()
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case(SYNOS_RPC_CONTENT_TYPE))
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case(GHOSTOS_RPC_CONTENT_TYPE))
 }
 
 pub fn decode_rpc_request<'a>(
@@ -73,7 +73,7 @@ pub fn rpc_response<'a>(
     }
     destination[..frame.len()].copy_from_slice(frame);
     Response::new(StatusCode::OK, &destination[..frame.len()])
-        .with_header("content-type", SYNOS_RPC_CONTENT_TYPE)
+        .with_header("content-type", GHOSTOS_RPC_CONTENT_TYPE)
         .map_err(RpcHttpError::Encode)
 }
 
@@ -92,6 +92,6 @@ pub fn rpc_response_loaned<'a>(
         return Err(RpcHttpError::EmptyBody);
     }
     Response::new(StatusCode::OK, frame)
-        .with_header("content-type", SYNOS_RPC_CONTENT_TYPE)
+        .with_header("content-type", GHOSTOS_RPC_CONTENT_TYPE)
         .map_err(RpcHttpError::Encode)
 }

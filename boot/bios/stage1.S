@@ -51,7 +51,7 @@ disk_packet:
     .quad 1
 
 disk_error_message:
-    .asciz "SynOS: stage2 read failed"
+    .asciz "GhostOS: stage2 read failed"
 
 .org 510
 .word 0xaa55

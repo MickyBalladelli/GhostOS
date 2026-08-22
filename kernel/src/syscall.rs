@@ -1,9 +1,9 @@
-//! Kernel entry for the native SynOS request ABI.
+//! Kernel entry for the native GhostOS request ABI.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use synos_runtime::{Request, Response};
-use synos_status::Status;
+use ghostos_runtime::{Request, Response};
+use ghostos_status::Status;
 
 use crate::address_space::{AddressSpaceError, AddressSpaceTable, PAGE_SIZE};
 use crate::capability::{CapabilityHandle, CapabilitySpace, Rights};
@@ -200,15 +200,15 @@ impl<
     fn dispatch(
         &mut self,
         caller: AddressSpaceId,
-        operation: synos_runtime::Operation,
+        operation: ghostos_runtime::Operation,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
-        if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+        if request.abi_version != ghostos_abi::ABI_SCHEMA_VERSION {
             return Err(RuntimeDispatchError::AbiMismatch)
         }
         match operation {
-            synos_runtime::Operation::MemoryMap => self.map(caller, request),
-            synos_runtime::Operation::MemoryUnmap => self.unmap(caller, request),
+            ghostos_runtime::Operation::MemoryMap => self.map(caller, request),
+            ghostos_runtime::Operation::MemoryUnmap => self.unmap(caller, request),
             _ => Err(RuntimeDispatchError::InvalidRequest),
         }
     }
@@ -240,9 +240,9 @@ fn valid_user_range(address: usize, length: usize, alignment: usize) -> bool {
 }
 
 pub fn validate_request_shape(request: &Request) -> bool {
-    request.abi_version == synos_abi::ABI_SCHEMA_VERSION
+    request.abi_version == ghostos_abi::ABI_SCHEMA_VERSION
         && request.reserved == 0
-        && synos_runtime::Operation::from_raw(request.operation).is_some()
+        && ghostos_runtime::Operation::from_raw(request.operation).is_some()
 }
 
 /// Common raw-pointer boundary used by the architecture entry stubs.
@@ -251,7 +251,7 @@ pub fn validate_request_shape(request: &Request) -> bool {
 /// address range. Page ownership and permissions remain enforced by the
 /// active address-space page tables.
 #[unsafe(no_mangle)]
-pub extern "C" fn synos_call_gate_dispatch(
+pub extern "C" fn ghostos_call_gate_dispatch(
     request: *const Request,
     response: *mut Response,
 ) -> u64 {
@@ -277,7 +277,7 @@ pub extern "C" fn synos_call_gate_dispatch(
         return 0
     };
     let request = unsafe { crate::arch::read_user(request) };
-    if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+    if request.abi_version != ghostos_abi::ABI_SCHEMA_VERSION {
         unsafe { crate::arch::write_user(response, error(Status::PROTOCOL_MISMATCH)) };
         return 0
     }
@@ -289,8 +289,8 @@ pub extern "C" fn synos_call_gate_dispatch(
     if (1..=14).contains(&caller.raw()) {
         crate::watchdog::service_activity(caller.raw() as usize, crate::time::monotonic_now_us());
     }
-    let sleep_us = match synos_runtime::Operation::from_raw(request.operation) {
-        Some(synos_runtime::Operation::SleepUntil) if result.status == Status::NORMAL.raw() => {
+    let sleep_us = match ghostos_runtime::Operation::from_raw(request.operation) {
+        Some(ghostos_runtime::Operation::SleepUntil) if result.status == Status::NORMAL.raw() => {
             let remaining = request.arguments[0].saturating_sub(crate::time::monotonic_now_us());
             if remaining == 0 {
                 SLEEP_EXPIRED
@@ -298,7 +298,7 @@ pub extern "C" fn synos_call_gate_dispatch(
                 remaining
             }
         }
-        Some(synos_runtime::Operation::Yield) if result.status == Status::NORMAL.raw() => {
+        Some(ghostos_runtime::Operation::Yield) if result.status == Status::NORMAL.raw() => {
             u64::MAX
         }
         _ => 0,

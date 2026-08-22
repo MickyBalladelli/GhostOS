@@ -1,0 +1,17 @@
+[package]
+name = "ghostos-declarative"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Declarative GhostOS infrastructure configuration and atomic activation"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ghostos-api-compat = { path = "../api-compat" }
+ghostos-durability = { path = "../durability" }
+ghostos-fabric = { path = "../fabric" }
+ghostos-status = { path = "../status" }
+ghostos-ghostfs = { path = "../ghostfs" }
+ghostos-system-model = { path = "../system-model" }

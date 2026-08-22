@@ -52,24 +52,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
-name = "cargo-synos"
+name = "cargo-ghostos"
 version = "0.1.0"
 dependencies = [
- "synos-app",
- "synos-auth",
- "synos-compiler",
- "synos-fabric",
- "synos-init",
- "synos-kernel",
- "synos-netd",
- "synos-pkg",
- "synos-runtime",
- "synos-rustd",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
- "synos-update",
- "synos-vm",
+ "ghostos-app",
+ "ghostos-auth",
+ "ghostos-compiler",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-kernel",
+ "ghostos-netd",
+ "ghostos-pkg",
+ "ghostos-runtime",
+ "ghostos-rustd",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-update",
+ "ghostos-vm",
 ]
 
 [[package]]
@@ -158,6 +158,725 @@ dependencies = [
  "cfg-if",
  "libc",
  "wasi",
+]
+
+[[package]]
+name = "ghostos-abi"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ipc",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-actors"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ipc",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-admission"
+version = "0.1.0"
+
+[[package]]
+name = "ghostos-agent-bridge"
+version = "0.1.0"
+dependencies = [
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-kernel",
+ "ghostos-script",
+ "ghostos-shell",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-agentd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-kernel",
+ "ghostos-observability",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-api-compat"
+version = "0.1.0"
+
+[[package]]
+name = "ghostos-app"
+version = "0.1.0"
+dependencies = [
+ "ghostos-init",
+ "ghostos-observability",
+ "ghostos-pkg",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-time-sync",
+]
+
+[[package]]
+name = "ghostos-auditd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-observability",
+ "ghostos-pkg",
+ "ghostos-script",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-auth"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-kernel",
+ "ghostos-observability",
+ "ghostos-policy",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-backup"
+version = "0.1.0"
+dependencies = [
+ "ghostos-admission",
+ "ghostos-ghostfs",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-balancerd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-actors",
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-kernel",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-boot-protocol"
+version = "0.1.0"
+dependencies = [
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-client-sdk"
+version = "0.1.0"
+dependencies = [
+ "ghostos-abi",
+ "ghostos-api-compat",
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-ipc",
+ "ghostos-kernel",
+ "ghostos-observability",
+ "ghostos-protocol",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-compiler"
+version = "0.1.0"
+dependencies = [
+ "ghostos-app",
+ "ghostos-ghostfs",
+ "ghostos-observability",
+ "ghostos-pkg",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-compute"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ipc",
+ "ghostos-legacy-pc-drivers",
+ "ghostos-platform-io",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-confidential"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ipc",
+ "ghostos-observability",
+ "ghostos-shield",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-cookbook"
+version = "0.1.0"
+dependencies = [
+ "ghostos-auth",
+ "ghostos-backup",
+ "ghostos-boot-protocol",
+ "ghostos-durability",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-kernel",
+ "ghostos-netd",
+ "ghostos-rustd",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-debug"
+version = "0.1.0"
+dependencies = [
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-kernel",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-declarative"
+version = "0.1.0"
+dependencies = [
+ "ghostos-api-compat",
+ "ghostos-durability",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-durability"
+version = "0.1.0"
+
+[[package]]
+name = "ghostos-embedded-script"
+version = "0.1.0"
+dependencies = [
+ "ghostos-status",
+ "rhai",
+]
+
+[[package]]
+name = "ghostos-fabric"
+version = "0.1.0"
+dependencies = [
+ "ghostos-observability",
+ "ghostos-protocol",
+ "ghostos-status",
+ "ghostos-time-sync",
+]
+
+[[package]]
+name = "ghostos-fsd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ghostfs",
+ "ghostos-host-filesystems",
+ "ghostos-ipc",
+ "ghostos-observability",
+ "ghostos-path-pattern",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-ghostfs"
+version = "0.1.0"
+dependencies = [
+ "ghostos-durability",
+ "ghostos-path-pattern",
+ "ghostos-status",
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-heal"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-ipc",
+ "ghostos-observability",
+ "ghostos-status",
+ "ghostos-update",
+]
+
+[[package]]
+name = "ghostos-hello-world"
+version = "0.1.0"
+
+[[package]]
+name = "ghostos-host-filesystems"
+version = "0.1.0"
+dependencies = [
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-http"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ipc",
+ "ghostos-netd",
+ "ghostos-protocol",
+ "ghostos-service-scale",
+ "ghostos-status",
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-inference"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-llm",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-init"
+version = "0.1.0"
+dependencies = [
+ "ghostos-durability",
+ "ghostos-status",
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-inspect"
+version = "0.1.0"
+dependencies = [
+ "ghostos-admission",
+ "ghostos-auditd",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-heal",
+ "ghostos-observability",
+ "ghostos-shell",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-update",
+]
+
+[[package]]
+name = "ghostos-ipc"
+version = "0.1.0"
+dependencies = [
+ "zerocopy",
+]
+
+[[package]]
+name = "ghostos-kernel"
+version = "0.1.0"
+dependencies = [
+ "ghostos-abi",
+ "ghostos-app",
+ "ghostos-boot-protocol",
+ "ghostos-fabric",
+ "ghostos-fsd",
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-ipc",
+ "ghostos-legacy-pc-drivers",
+ "ghostos-numa",
+ "ghostos-observability",
+ "ghostos-power",
+ "ghostos-runtime",
+ "ghostos-shell",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-kvd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-legacy-pc-drivers"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ghostfs",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-llm"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-logd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ghostfs",
+ "ghostos-observability",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-mesh"
+version = "0.1.0"
+dependencies = [
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-protocol",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-netd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-ipc",
+ "ghostos-kernel",
+ "ghostos-numa",
+ "ghostos-observability",
+ "ghostos-policy",
+ "ghostos-status",
+ "ghostos-time-sync",
+ "smoltcp",
+]
+
+[[package]]
+name = "ghostos-numa"
+version = "0.1.0"
+
+[[package]]
+name = "ghostos-observability"
+version = "0.1.0"
+dependencies = [
+ "ghostos-service-scale",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-path-pattern"
+version = "0.1.0"
+dependencies = [
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-pkg"
+version = "0.1.0"
+dependencies = [
+ "ghostos-admission",
+ "ghostos-api-compat",
+ "ghostos-durability",
+ "ghostos-ghostfs",
+ "ghostos-policy",
+ "ghostos-service-scale",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-platform-io"
+version = "0.1.0"
+dependencies = [
+ "ghostos-numa",
+ "ghostos-observability",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-policy"
+version = "0.1.0"
+
+[[package]]
+name = "ghostos-posix-compat"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ipc",
+ "ghostos-llm",
+ "ghostos-runtime",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-power"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-legacy-pc-drivers",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-protocol"
+version = "0.1.0"
+dependencies = [
+ "ghostos-abi",
+ "ghostos-api-compat",
+]
+
+[[package]]
+name = "ghostos-ras"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-legacy-pc-drivers",
+ "ghostos-observability",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-remote-display"
+version = "0.1.0"
+dependencies = [
+ "ghostos-platform-io",
+]
+
+[[package]]
+name = "ghostos-replay"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-rms"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ghostfs",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-runtime"
+version = "0.1.0"
+dependencies = [
+ "ghostos-abi",
+ "ghostos-ipc",
+ "ghostos-path-pattern",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-rustd"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-observability",
+ "ghostos-pkg",
+ "ghostos-runtime",
+ "ghostos-service-scale",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-time-sync",
+ "ghostos-update",
+]
+
+[[package]]
+name = "ghostos-script"
+version = "0.1.0"
+dependencies = [
+ "ghostos-auth",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-ipc",
+ "ghostos-kernel",
+ "ghostos-shell",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-service-scale"
+version = "0.1.0"
+
+[[package]]
+name = "ghostos-shell"
+version = "0.1.0"
+dependencies = [
+ "ghostos-api-compat",
+ "ghostos-observability",
+ "ghostos-path-pattern",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-time-sync",
+]
+
+[[package]]
+name = "ghostos-shield"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-observability",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-status"
+version = "0.1.0"
+dependencies = [
+ "ghostos-test-support",
+]
+
+[[package]]
+name = "ghostos-storaged"
+version = "0.1.0"
+dependencies = [
+ "ghostos-admission",
+ "ghostos-auth",
+ "ghostos-durability",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-ipc",
+ "ghostos-kernel",
+ "ghostos-mesh",
+ "ghostos-netd",
+ "ghostos-numa",
+ "ghostos-observability",
+ "ghostos-policy",
+ "ghostos-service-scale",
+ "ghostos-status",
+ "ghostos-system-model",
+ "ghostos-test-support",
+ "ghostos-time-sync",
+]
+
+[[package]]
+name = "ghostos-system-model"
+version = "0.1.0"
+dependencies = [
+ "ghostos-durability",
+ "ghostos-ghostfs",
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-test-support"
+version = "0.1.0"
+dependencies = [
+ "ghostos-durability",
+ "ghostos-time-sync",
+]
+
+[[package]]
+name = "ghostos-time-sync"
+version = "0.1.0"
+dependencies = [
+ "ghostos-status",
+]
+
+[[package]]
+name = "ghostos-top"
+version = "0.1.0"
+dependencies = [
+ "ghostos-fabric",
+ "ghostos-time-sync",
+]
+
+[[package]]
+name = "ghostos-uefi"
+version = "0.1.0"
+dependencies = [
+ "ghostos-boot-protocol",
+ "ghostos-kernel",
+]
+
+[[package]]
+name = "ghostos-update"
+version = "0.1.0"
+dependencies = [
+ "ghostos-durability",
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-ipc",
+ "ghostos-pkg",
+ "ghostos-policy",
+ "ghostos-status",
+ "ghostos-system-model",
+]
+
+[[package]]
+name = "ghostos-vm"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.1",
+ "ghostos-abi",
+ "ghostos-api-compat",
+ "ghostos-app",
+ "ghostos-boot-protocol",
+ "ghostos-fabric",
+ "ghostos-ghostfs",
+ "ghostos-init",
+ "ghostos-ipc",
+ "ghostos-kernel",
+ "ghostos-netd",
+ "ghostos-observability",
+ "ghostos-pkg",
+ "ghostos-runtime",
+ "ghostos-status",
+ "ghostos-test-support",
+ "ghostos-webterm",
+ "libc",
+ "thiserror",
+]
+
+[[package]]
+name = "ghostos-wasm-script"
+version = "0.1.0"
+dependencies = [
+ "ghostos-status",
+ "wasmi",
+]
+
+[[package]]
+name = "ghostos-webterm"
+version = "0.1.0"
+dependencies = [
+ "ghostos-ipc",
+ "ghostos-protocol",
+ "ghostos-service-scale",
+ "ghostos-shell",
+ "ghostos-status",
 ]
 
 [[package]]
@@ -375,725 +1094,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "syn-script"
-version = "0.1.0"
-dependencies = [
- "syn-shell",
- "synos-auth",
- "synos-fabric",
- "synos-ipc",
- "synos-kernel",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "syn-shell"
-version = "0.1.0"
-dependencies = [
- "synos-api-compat",
- "synos-observability",
- "synos-path-pattern",
- "synos-status",
- "synos-system-model",
- "synos-time-sync",
-]
-
-[[package]]
-name = "synos-abi"
-version = "0.1.0"
-dependencies = [
- "synos-ipc",
- "synos-status",
-]
-
-[[package]]
-name = "synos-actors"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-ipc",
- "synos-status",
-]
-
-[[package]]
-name = "synos-admission"
-version = "0.1.0"
-
-[[package]]
-name = "synos-agent-bridge"
-version = "0.1.0"
-dependencies = [
- "syn-script",
- "syn-shell",
- "synos-auth",
- "synos-fabric",
- "synos-kernel",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-agentd"
-version = "0.1.0"
-dependencies = [
- "synos-auth",
- "synos-fabric",
- "synos-kernel",
- "synos-observability",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-api-compat"
-version = "0.1.0"
-
-[[package]]
-name = "synos-app"
-version = "0.1.0"
-dependencies = [
- "synos-init",
- "synos-observability",
- "synos-pkg",
- "synos-status",
- "synos-system-model",
- "synos-time-sync",
-]
-
-[[package]]
-name = "synos-auditd"
-version = "0.1.0"
-dependencies = [
- "syn-script",
- "synos-fabric",
- "synos-observability",
- "synos-pkg",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-auth"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-kernel",
- "synos-observability",
- "synos-policy",
- "synos-status",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-backup"
-version = "0.1.0"
-dependencies = [
- "synos-admission",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-balancerd"
-version = "0.1.0"
-dependencies = [
- "synos-actors",
- "synos-auth",
- "synos-fabric",
- "synos-kernel",
- "synos-status",
-]
-
-[[package]]
-name = "synos-boot-protocol"
-version = "0.1.0"
-dependencies = [
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-client-sdk"
-version = "0.1.0"
-dependencies = [
- "synos-abi",
- "synos-api-compat",
- "synos-auth",
- "synos-fabric",
- "synos-ipc",
- "synos-kernel",
- "synos-observability",
- "synos-protocol",
- "synos-status",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-compiler"
-version = "0.1.0"
-dependencies = [
- "synos-app",
- "synos-observability",
- "synos-pkg",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-compute"
-version = "0.1.0"
-dependencies = [
- "synos-ipc",
- "synos-legacy-pc-drivers",
- "synos-platform-io",
- "synos-status",
-]
-
-[[package]]
-name = "synos-confidential"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-ipc",
- "synos-observability",
- "synos-shield",
- "synos-status",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-cookbook"
-version = "0.1.0"
-dependencies = [
- "synos-auth",
- "synos-backup",
- "synos-boot-protocol",
- "synos-durability",
- "synos-fabric",
- "synos-kernel",
- "synos-netd",
- "synos-rustd",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-debug"
-version = "0.1.0"
-dependencies = [
- "synos-auth",
- "synos-fabric",
- "synos-init",
- "synos-kernel",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-declarative"
-version = "0.1.0"
-dependencies = [
- "synos-api-compat",
- "synos-durability",
- "synos-fabric",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-durability"
-version = "0.1.0"
-
-[[package]]
-name = "synos-embedded-script"
-version = "0.1.0"
-dependencies = [
- "rhai",
- "synos-status",
-]
-
-[[package]]
-name = "synos-fabric"
-version = "0.1.0"
-dependencies = [
- "synos-observability",
- "synos-protocol",
- "synos-status",
- "synos-time-sync",
-]
-
-[[package]]
-name = "synos-fsd"
-version = "0.1.0"
-dependencies = [
- "synos-host-filesystems",
- "synos-ipc",
- "synos-observability",
- "synos-path-pattern",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-heal"
-version = "0.1.0"
-dependencies = [
- "synos-init",
- "synos-ipc",
- "synos-observability",
- "synos-status",
- "synos-synfs",
- "synos-update",
-]
-
-[[package]]
-name = "synos-hello-world"
-version = "0.1.0"
-
-[[package]]
-name = "synos-host-filesystems"
-version = "0.1.0"
-dependencies = [
- "synos-status",
-]
-
-[[package]]
-name = "synos-http"
-version = "0.1.0"
-dependencies = [
- "synos-ipc",
- "synos-netd",
- "synos-protocol",
- "synos-service-scale",
- "synos-status",
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-inference"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-llm",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-init"
-version = "0.1.0"
-dependencies = [
- "synos-durability",
- "synos-status",
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-inspect"
-version = "0.1.0"
-dependencies = [
- "syn-shell",
- "synos-admission",
- "synos-auditd",
- "synos-fabric",
- "synos-heal",
- "synos-observability",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
- "synos-update",
-]
-
-[[package]]
-name = "synos-ipc"
-version = "0.1.0"
-dependencies = [
- "zerocopy",
-]
-
-[[package]]
-name = "synos-kernel"
-version = "0.1.0"
-dependencies = [
- "syn-shell",
- "synos-abi",
- "synos-app",
- "synos-boot-protocol",
- "synos-fabric",
- "synos-fsd",
- "synos-init",
- "synos-ipc",
- "synos-legacy-pc-drivers",
- "synos-numa",
- "synos-observability",
- "synos-power",
- "synos-runtime",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-kvd"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-legacy-pc-drivers"
-version = "0.1.0"
-dependencies = [
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-llm"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-status",
-]
-
-[[package]]
-name = "synos-logd"
-version = "0.1.0"
-dependencies = [
- "synos-observability",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-mesh"
-version = "0.1.0"
-dependencies = [
- "synos-auth",
- "synos-fabric",
- "synos-protocol",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-netd"
-version = "0.1.0"
-dependencies = [
- "smoltcp",
- "synos-auth",
- "synos-fabric",
- "synos-ipc",
- "synos-kernel",
- "synos-numa",
- "synos-observability",
- "synos-policy",
- "synos-status",
- "synos-synfs",
- "synos-time-sync",
-]
-
-[[package]]
-name = "synos-numa"
-version = "0.1.0"
-
-[[package]]
-name = "synos-observability"
-version = "0.1.0"
-dependencies = [
- "synos-service-scale",
- "synos-status",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-path-pattern"
-version = "0.1.0"
-dependencies = [
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-pkg"
-version = "0.1.0"
-dependencies = [
- "synos-admission",
- "synos-api-compat",
- "synos-durability",
- "synos-policy",
- "synos-service-scale",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-platform-io"
-version = "0.1.0"
-dependencies = [
- "synos-numa",
- "synos-observability",
- "synos-status",
-]
-
-[[package]]
-name = "synos-policy"
-version = "0.1.0"
-
-[[package]]
-name = "synos-posix-compat"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-ipc",
- "synos-llm",
- "synos-runtime",
- "synos-status",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-power"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-legacy-pc-drivers",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-protocol"
-version = "0.1.0"
-dependencies = [
- "synos-abi",
- "synos-api-compat",
-]
-
-[[package]]
-name = "synos-ras"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-legacy-pc-drivers",
- "synos-observability",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-remote-display"
-version = "0.1.0"
-dependencies = [
- "synos-platform-io",
-]
-
-[[package]]
-name = "synos-replay"
-version = "0.1.0"
-dependencies = [
- "synos-init",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-rms"
-version = "0.1.0"
-dependencies = [
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-runtime"
-version = "0.1.0"
-dependencies = [
- "synos-abi",
- "synos-ipc",
- "synos-path-pattern",
- "synos-status",
-]
-
-[[package]]
-name = "synos-rustd"
-version = "0.1.0"
-dependencies = [
- "synos-init",
- "synos-observability",
- "synos-pkg",
- "synos-runtime",
- "synos-service-scale",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
- "synos-time-sync",
- "synos-update",
-]
-
-[[package]]
-name = "synos-service-scale"
-version = "0.1.0"
-
-[[package]]
-name = "synos-shield"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-init",
- "synos-observability",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-status"
-version = "0.1.0"
-dependencies = [
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-storaged"
-version = "0.1.0"
-dependencies = [
- "synos-admission",
- "synos-auth",
- "synos-durability",
- "synos-fabric",
- "synos-ipc",
- "synos-kernel",
- "synos-mesh",
- "synos-netd",
- "synos-numa",
- "synos-observability",
- "synos-policy",
- "synos-service-scale",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
- "synos-test-support",
- "synos-time-sync",
-]
-
-[[package]]
-name = "synos-synfs"
-version = "0.1.0"
-dependencies = [
- "synos-durability",
- "synos-path-pattern",
- "synos-status",
- "synos-test-support",
-]
-
-[[package]]
-name = "synos-system-model"
-version = "0.1.0"
-dependencies = [
- "synos-durability",
- "synos-status",
- "synos-synfs",
-]
-
-[[package]]
-name = "synos-test-support"
-version = "0.1.0"
-dependencies = [
- "synos-durability",
- "synos-time-sync",
-]
-
-[[package]]
-name = "synos-time-sync"
-version = "0.1.0"
-dependencies = [
- "synos-status",
-]
-
-[[package]]
-name = "synos-top"
-version = "0.1.0"
-dependencies = [
- "synos-fabric",
- "synos-time-sync",
-]
-
-[[package]]
-name = "synos-uefi"
-version = "0.1.0"
-dependencies = [
- "synos-boot-protocol",
- "synos-kernel",
-]
-
-[[package]]
-name = "synos-update"
-version = "0.1.0"
-dependencies = [
- "synos-durability",
- "synos-init",
- "synos-ipc",
- "synos-pkg",
- "synos-policy",
- "synos-status",
- "synos-synfs",
- "synos-system-model",
-]
-
-[[package]]
-name = "synos-vm"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.13.1",
- "libc",
- "synos-abi",
- "synos-api-compat",
- "synos-app",
- "synos-boot-protocol",
- "synos-fabric",
- "synos-init",
- "synos-ipc",
- "synos-kernel",
- "synos-netd",
- "synos-observability",
- "synos-pkg",
- "synos-runtime",
- "synos-status",
- "synos-synfs",
- "synos-test-support",
- "synos-webterm",
- "thiserror",
-]
-
-[[package]]
-name = "synos-wasm-script"
-version = "0.1.0"
-dependencies = [
- "synos-status",
- "wasmi",
-]
-
-[[package]]
-name = "synos-webterm"
-version = "0.1.0"
-dependencies = [
- "syn-shell",
- "synos-ipc",
- "synos-protocol",
- "synos-service-scale",
- "synos-status",
 ]
 
 [[package]]

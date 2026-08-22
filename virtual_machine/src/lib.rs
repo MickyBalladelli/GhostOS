@@ -16,7 +16,7 @@ pub mod clock;
 pub mod replay;
 pub mod migration;
 
-pub const GUEST_ABI_SCHEMA_VERSION: u16 = synos_abi::ABI_SCHEMA_VERSION;
+pub const GUEST_ABI_SCHEMA_VERSION: u16 = ghostos_abi::ABI_SCHEMA_VERSION;
 const INTERACTIVE_STEP_BUDGET: usize = 256;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
@@ -52,7 +52,7 @@ pub use devices::{
     SYSTEM_DISK_FORMAT_VERSION,
     SYSTEM_DISK_BOOT_RECORD_OFFSET, SYSTEM_DISK_BOOT_RECORD_SIZE, SYSTEM_DISK_MANIFEST_SIZE,
     SYSTEM_DISK_MIN_SIZE, SYSTEM_DISK_PAYLOAD_OFFSET,
-    SYSTEM_DISK_SETTINGS_SIZE, SYNFS_SYSTEM_BLOCKS, SYNFS_SYSTEM_VOLUME_SIZE,
+    SYSTEM_DISK_SETTINGS_SIZE, GHOSTFS_SYSTEM_BLOCKS, GHOSTFS_SYSTEM_VOLUME_SIZE,
     AHCI_ABAR_SIZE, AHCI_CLASS, AHCI_DEVICE_ID, AHCI_PROG_IF, AHCI_SUBCLASS, AHCI_VENDOR_ID,
     APIC_BASE_DEFAULT, APIC_SIZE, HPET_BASE_DEFAULT, HPET_SIZE, IA32_APIC_BASE_MSR,
     NVME_BAR0_SIZE, NVME_CLASS, NVME_DEVICE_ID, NVME_PROG_IF, NVME_SUBCLASS, NVME_VENDOR_ID,
@@ -79,7 +79,7 @@ pub use cluster::{
     ClusterWorkload,
     CxlFabricFixture, SharedMemoryDevice, SharedMemoryFixture, SharedMemoryMapping, VmCluster,
 };
-pub use integration::{run_synos_integration, IntegrationError, SynosIntegrationReport};
+pub use integration::{run_ghostos_integration, IntegrationError, SynosIntegrationReport};
 pub use execution::{
     BlockProfile, ExecutionEngine, ExecutionEngineConfig, ExecutionStats,
 };
@@ -129,8 +129,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
 use replay::ReplayMode as VmReplayMode;
-use synos_boot_protocol::{
-    BootMethod, FramebufferInfo, SYNOS_PERSISTENCE_PORT, SYNOS_PERSISTENCE_PORT_SIZE,
+use ghostos_boot_protocol::{
+    BootMethod, FramebufferInfo, GHOSTOS_PERSISTENCE_PORT, GHOSTOS_PERSISTENCE_PORT_SIZE,
 };
 
 pub const COM1_PORT: u16 = 0x3F8;
@@ -344,8 +344,8 @@ impl Vm {
         ports.attach(PCI_CONFIG_PORT, PCI_CONFIG_PORT_SIZE, Box::new(pci.clone()));
         let persistence = Rc::new(RefCell::new(SynosPersistencePort::new()));
         ports.attach(
-            SYNOS_PERSISTENCE_PORT,
-            SYNOS_PERSISTENCE_PORT_SIZE,
+            GHOSTOS_PERSISTENCE_PORT,
+            GHOSTOS_PERSISTENCE_PORT_SIZE,
             Box::new(persistence.clone()),
         );
 
@@ -1056,7 +1056,7 @@ impl Vm {
     }
 
     /// Run a finite number of guest instructions and return the resulting
-    /// CPU position. This is the bounded bring-up entry point for SynOS
+    /// CPU position. This is the bounded bring-up entry point for GhostOS
     /// integration checks; a kernel that waits for input can be inspected
     /// without leaving a host process running forever.
     pub fn run_for_steps(&mut self, max_steps: u64) -> Result<VmRunReport, VmError> {
@@ -1885,8 +1885,8 @@ fn create_network_backends(
             ))
         }
         NetworkBackendConfig::UserNat { bind, peer } => {
-            let e1000_mac = MacAddress::synos_default(0x56);
-            let virtio_mac = MacAddress::synos_default(0x57);
+            let e1000_mac = MacAddress::ghostos_default(0x56);
+            let virtio_mac = MacAddress::ghostos_default(0x57);
             let e1000 = HostNetworkBackend::user_nat(*bind, *peer, e1000_mac)
                 .map_err(|error| VmError::Network(format!("cannot open user-mode network: {error}")))?;
             let virtio_bind = SocketAddr::new(bind.ip(), 0);
@@ -1901,8 +1901,8 @@ fn create_network_backends(
             ))
         }
         NetworkBackendConfig::Bridged { interface } => {
-            let e1000_mac = MacAddress::synos_default(0x56);
-            let virtio_mac = MacAddress::synos_default(0x57);
+            let e1000_mac = MacAddress::ghostos_default(0x56);
+            let virtio_mac = MacAddress::ghostos_default(0x57);
             let e1000 = HostNetworkBackend::bridged(interface, e1000_mac)
                 .map_err(|error| VmError::Network(format!("cannot open bridged network: {error}")))?;
             let virtio = HostNetworkBackend::bridged(interface, virtio_mac)

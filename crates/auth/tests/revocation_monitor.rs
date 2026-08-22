@@ -1,4 +1,4 @@
-use synos_auth::{
+use ghostos_auth::{
     RevocationCache, RevocationKey, RevocationMonitor, RevocationMonitorError,
     REVOCATION_CACHE_COUNT,
 };

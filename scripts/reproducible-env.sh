@@ -45,6 +45,6 @@ case "$target_dir" in
     /*) ;;
     *) target_dir="$project_root/$target_dir" ;;
 esac
-append_rustflag "--remap-path-prefix=$target_dir=/synos-target"
-append_rustflag "--remap-path-prefix=$project_root=/synos-source"
+append_rustflag "--remap-path-prefix=$target_dir=/ghostos-target"
+append_rustflag "--remap-path-prefix=$project_root=/ghostos-source"
 export RUSTFLAGS

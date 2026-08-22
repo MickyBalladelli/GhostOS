@@ -9,15 +9,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
-use synos_vm::devices::{SystemDiskInstall, SystemDiskProvisioner};
+use ghostos_vm::devices::{SystemDiskInstall, SystemDiskProvisioner};
 
 const SERIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[test]
-#[ignore = "requires SYNOS_RUN_QEMU_TESTS=1, QEMU, and SYNOS_QEMU_IMAGE"]
+#[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1, QEMU, and GHOSTOS_QEMU_IMAGE"]
 #[cfg(unix)]
 fn qemu_interactive_login_flow() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
 
@@ -36,11 +36,11 @@ fn qemu_interactive_login_flow() {
 }
 
 fn provision_login_system_disk(system_disk: &Path, kernel_payload: &Path) {
-    fs::write(kernel_payload, b"SynOS login E2E kernel payload")
+    fs::write(kernel_payload, b"GhostOS login E2E kernel payload")
         .expect("write login system-disk kernel payload");
-    let service_image = kernel_build_output("synos-service.bin");
-    let shell_image = kernel_build_output("synos-shell.bin");
-    let login_image = kernel_build_output("synos-login.bin");
+    let service_image = kernel_build_output("ghostos-service.bin");
+    let shell_image = kernel_build_output("ghostos-shell.bin");
+    let login_image = kernel_build_output("ghostos-login.bin");
     let mut install = SystemDiskInstall::new(kernel_payload)
         .with_boot_args("console=serial0")
         .with_machine_identity("qemu-login-e2e")
@@ -68,7 +68,7 @@ fn kernel_build_output(name: &str) -> PathBuf {
             continue
         };
         for entry in entries.flatten() {
-            if !entry.file_name().to_string_lossy().starts_with("synos-kernel-") {
+            if !entry.file_name().to_string_lossy().starts_with("ghostos-kernel-") {
                 continue
             }
             let output = entry.path().join("out").join(name);
@@ -83,7 +83,7 @@ fn kernel_build_output(name: &str) -> PathBuf {
 #[cfg(unix)]
 fn drive_login_workflow(session: &mut QemuLoginSession) -> Result<(), String> {
     session.wait_for("No administrator account exists.")?;
-    session.wait_for("SynOS first-run setup mode")?;
+    session.wait_for("GhostOS first-run setup mode")?;
 
     session.send_text("username admin\n")?;
     session.wait_for("Administrator username saved.")?;
@@ -98,13 +98,13 @@ fn drive_login_workflow(session: &mut QemuLoginSession) -> Result<(), String> {
 
     let logout_start = session.serial_len();
     session.send_text("logout\n")?;
-    session.wait_for_after("SYNOS\x1b[90m::\x1b[31mLOCKED", logout_start)?;
+    session.wait_for_after("GHOSTOS\x1b[90m::\x1b[31mLOCKED", logout_start)?;
     complete_login(session, "normal login", logout_start)?;
     assert_whoami(session, "normal login")?;
 
     let logout_start = session.serial_len();
     session.send_text("logout\n")?;
-    session.wait_for_after("SYNOS\x1b[90m::\x1b[31mLOCKED", logout_start)?;
+    session.wait_for_after("GHOSTOS\x1b[90m::\x1b[31mLOCKED", logout_start)?;
     complete_login(session, "relogin", logout_start)?;
     assert_whoami(session, "relogin")?;
     exercise_login_failures_and_lockout(session)?;
@@ -115,7 +115,7 @@ fn drive_login_workflow(session: &mut QemuLoginSession) -> Result<(), String> {
 fn exercise_login_failures_and_lockout(session: &mut QemuLoginSession) -> Result<(), String> {
     let first_failure_start = session.serial_len();
     session.send_text("logout\n")?;
-    session.wait_for_after("SYNOS\x1b[90m::\x1b[31mLOCKED", first_failure_start)?;
+    session.wait_for_after("GHOSTOS\x1b[90m::\x1b[31mLOCKED", first_failure_start)?;
     submit_bad_credential(session, first_failure_start)?;
 
     let rate_limited_start = session.serial_len();
@@ -224,13 +224,13 @@ fn hex_digit(value: u8) -> char {
 }
 
 fn qemu_binary() -> String {
-    std::env::var("SYNOS_QEMU_BIN").unwrap_or_else(|_| "qemu-system-x86_64".to_string())
+    std::env::var("GHOSTOS_QEMU_BIN").unwrap_or_else(|_| "qemu-system-x86_64".to_string())
 }
 
 fn qemu_image() -> PathBuf {
-    std::env::var_os("SYNOS_QEMU_IMAGE")
+    std::env::var_os("GHOSTOS_QEMU_IMAGE")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build/bios/synos-bios.img"))
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build/bios/ghostos-bios.img"))
 }
 
 fn temporary_path(name: &str) -> PathBuf {
@@ -238,7 +238,7 @@ fn temporary_path(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock before epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("synos-qemu-{name}-{}-{stamp}", std::process::id()))
+    std::env::temp_dir().join(format!("ghostos-qemu-{name}-{}-{stamp}", std::process::id()))
 }
 
 #[cfg(unix)]
@@ -273,7 +273,7 @@ impl QemuLoginSession {
                 "file={},format=raw,if=ide,index=1",
                 system_disk.display()
             ));
-        if let Some(accel) = std::env::var_os("SYNOS_QEMU_ACCEL") {
+        if let Some(accel) = std::env::var_os("GHOSTOS_QEMU_ACCEL") {
             command.arg("-accel").arg(accel);
         }
         let child = command.spawn().expect("start QEMU login session");
@@ -347,7 +347,7 @@ impl QemuLoginSession {
         let _ = qmp_exec(&mut self.qmp, "{\"execute\":\"quit\"}");
         let _ = self.child.wait();
         let log = fs::read_to_string(&self.serial).unwrap_or_default();
-        if let Some(directory) = std::env::var_os("SYNOS_QEMU_LOG_DIR") {
+        if let Some(directory) = std::env::var_os("GHOSTOS_QEMU_LOG_DIR") {
             let directory = PathBuf::from(directory);
             fs::create_dir_all(&directory).expect("create QEMU evidence directory");
             fs::write(directory.join(format!("{label}.log")), &log)

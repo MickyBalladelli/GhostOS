@@ -1,4 +1,4 @@
-use synos_init::{
+use ghostos_init::{
     CrashReason, ExitReason, ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName,
     ServiceReadiness, ServiceSpec, ServiceState, SpawnRequest, Supervisor, SupervisorError,
     SupervisorEvent, SupervisorRuntime,
@@ -248,16 +248,16 @@ fn boot_and_reboot_trace_dependencies_and_reverse_shutdown() {
     let mut runtime = Runtime::new();
     let boot = supervisor.boot(&mut runtime).unwrap();
     let boot_events: Vec<_> = boot.events().collect();
-    assert_eq!(boot_events[0], synos_init::LifecycleEvent::BootStarted);
+    assert_eq!(boot_events[0], ghostos_init::LifecycleEvent::BootStarted);
     assert_eq!(
         boot_events[1..7],
         [
-            synos_init::LifecycleEvent::ServiceStarted { service: ServiceId::new(1).unwrap(), generation: 1 },
-            synos_init::LifecycleEvent::ServiceReady { service: ServiceId::new(1).unwrap() },
-            synos_init::LifecycleEvent::ServiceStarted { service: ServiceId::new(2).unwrap(), generation: 1 },
-            synos_init::LifecycleEvent::ServiceReady { service: ServiceId::new(2).unwrap() },
-            synos_init::LifecycleEvent::ServiceStarted { service: ServiceId::new(3).unwrap(), generation: 1 },
-            synos_init::LifecycleEvent::ServiceReady { service: ServiceId::new(3).unwrap() },
+            ghostos_init::LifecycleEvent::ServiceStarted { service: ServiceId::new(1).unwrap(), generation: 1 },
+            ghostos_init::LifecycleEvent::ServiceReady { service: ServiceId::new(1).unwrap() },
+            ghostos_init::LifecycleEvent::ServiceStarted { service: ServiceId::new(2).unwrap(), generation: 1 },
+            ghostos_init::LifecycleEvent::ServiceReady { service: ServiceId::new(2).unwrap() },
+            ghostos_init::LifecycleEvent::ServiceStarted { service: ServiceId::new(3).unwrap(), generation: 1 },
+            ghostos_init::LifecycleEvent::ServiceReady { service: ServiceId::new(3).unwrap() },
         ]
     );
 
@@ -266,7 +266,7 @@ fn boot_and_reboot_trace_dependencies_and_reverse_shutdown() {
     let stopped: Vec<_> = reboot_events
         .iter()
         .filter_map(|event| match event {
-            synos_init::LifecycleEvent::ServiceStopped { service } => Some(*service),
+            ghostos_init::LifecycleEvent::ServiceStopped { service } => Some(*service),
             _ => None,
         })
         .collect();

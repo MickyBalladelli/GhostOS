@@ -22,77 +22,77 @@ evidence_artifact = "evidence.json"
 
 [commands]
 deterministic = "./scripts/test-all.sh"
-full_validation = "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
+full_validation = "GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
 
 # Crates with production targets but no local #[cfg(test)] module or tests/
 # target. Each exception must name the replacement integration evidence.
 [[crate]]
-name = "synos-uefi"
+name = "ghostos-uefi"
 reason = "The UEFI loader is firmware-targeted and cannot link into the host test harness."
 replacement_integration = "integration.02.boot-storage"
 
 [[crate]]
-name = "synos-balancerd"
+name = "ghostos-balancerd"
 reason = "The coordinator is exercised through cluster and actor integration boundaries."
 replacement_integration = "integration.40.cluster-balancing"
 
 [[crate]]
-name = "synos-init"
+name = "ghostos-init"
 reason = "The Ring 3 init entry point is target startup glue and is exercised by boot integration."
 replacement_integration = "integration.01.core"
 
 [[crate]]
-name = "synos-legacy-pc-drivers"
+name = "ghostos-legacy-pc-drivers"
 reason = "Hardware driver entry points require the VM and platform qualification harness."
 replacement_integration = "integration.02.boot-storage"
 
 [[crate]]
-name = "synos-platform-io"
+name = "ghostos-platform-io"
 reason = "Platform I/O is selected by target adapters and exercised by compatibility integration."
 replacement_integration = "integration.03.compatibility"
 
 [[crate]]
-name = "synos-power"
+name = "ghostos-power"
 reason = "ACPI and thermal paths require platform lifecycle integration fixtures."
 replacement_integration = "integration.19.lifecycle"
 
 [[crate]]
-name = "synos-auditd"
+name = "ghostos-auditd"
 reason = "The audit daemon is tested through the authenticated audit pipeline."
 replacement_integration = "integration.36.package-audit"
 
 [[crate]]
-name = "synos-inspect"
+name = "ghostos-inspect"
 reason = "Inspection output is a client-facing surface tested through shell and monitor integration."
 replacement_integration = "integration.32.inspect-api"
 
 [[crate]]
-name = "synos-kvd"
+name = "ghostos-kvd"
 reason = "The cache service is exercised through its bounded client API integration."
 replacement_integration = "integration.49.cache-api"
 
 [[crate]]
-name = "synos-system-model"
+name = "ghostos-system-model"
 reason = "The model is a shared declaration surface exercised by runtime integration."
 replacement_integration = "integration.57.config-activation"
 
 [[crate]]
-name = "cargo-synos"
+name = "cargo-ghostos"
 reason = "The Cargo subcommand is a thin host CLI wrapper tested through toolchain integration."
 replacement_integration = "integration.12.toolchain-runtime"
 
 [[crate]]
-name = "synos-compiler"
+name = "ghostos-compiler"
 reason = "The compiler driver is exercised through the toolchain integration boundary."
 replacement_integration = "integration.12.toolchain-runtime"
 
 [[crate]]
-name = "synos-durability"
+name = "ghostos-durability"
 reason = "Durability primitives are exercised by the backup and restore integration boundary."
 replacement_integration = "integration.18.backup-restore"
 
 [[crate]]
-name = "synos-hello-world"
+name = "ghostos-hello-world"
 reason = "The example package is a cross-target build fixture, not a host test target."
 replacement_integration = "integration.12.toolchain-runtime"
 
@@ -169,16 +169,16 @@ scenarios = ["register_configuration", "normal_io", "reset", "interrupt", "malfo
 name = "bios"
 test_id = "qemu.02.bios-uefi-chainload"
 vm_test = "firmware_loader_boot_parameters_and_uefi_state"
-serial_marker = "SynOS kernel bootstrap"
+serial_marker = "GhostOS kernel bootstrap"
 
 [[boot_path]]
 name = "uefi"
 test_id = "qemu.02.bios-uefi-chainload"
 vm_test = "firmware_loader_boot_parameters_and_uefi_state"
-serial_marker = "SynOS kernel bootstrap"
+serial_marker = "GhostOS kernel bootstrap"
 
 [[boot_path]]
 name = "multiboot"
 test_id = "integration.01.core"
 vm_test = "firmware_loader_boot_parameters_and_uefi_state"
-serial_marker = "SynOS kernel bootstrap"
+serial_marker = "GhostOS kernel bootstrap"

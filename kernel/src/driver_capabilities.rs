@@ -1,5 +1,5 @@
-use synos_legacy_pc_drivers::{EthernetAdapter, EthernetKind, PciDevice};
-use synos_status::{IntoStatus, Status};
+use ghostos_legacy_pc_drivers::{EthernetAdapter, EthernetKind, PciDevice};
+use ghostos_status::{IntoStatus, Status};
 
 use crate::capability::{
     CapabilityError, CapabilityHandle, CapabilityObject, CapabilitySpace, DmaDeviceId,

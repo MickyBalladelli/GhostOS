@@ -24,7 +24,7 @@ state, local scope, and credential kind, but never credential material.
 `ACCOUNT CREATE` makes a pending account. Add its first credential with
 `CREDENTIAL ADD`; the account then becomes active. `ACCOUNT DELETE` needs the
 literal `CONFIRM` argument and attempts to revoke that account's sessions.
-SynOS refuses to delete or disable the last administrator.
+GhostOS refuses to delete or disable the last administrator.
 
 `ACCOUNT ENABLE` needs at least one credential and changes a disabled account
 to active. `ACCOUNT DISABLE` keeps the account and credentials but blocks login

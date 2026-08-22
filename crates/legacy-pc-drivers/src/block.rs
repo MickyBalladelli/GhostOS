@@ -1,6 +1,6 @@
-//! Physical AHCI and NVMe backends for the SynFS block queue.
+//! Physical AHCI and NVMe backends for the GhostFS block queue.
 
-use synos_synfs::BlockDevice;
+use ghostos_ghostfs::BlockDevice;
 
 use crate::storage::{
     AhciCommandList, AhciCommandTable, AhciPort, DriverError, NvmeCommand, NvmeQueue,
@@ -29,7 +29,7 @@ impl<'a> AhciBlockDevice<'a> {
         spin_limit: usize,
     ) -> Result<Self, DriverError> {
         if !matches!(sector_size, 512 | 4096)
-            || dma.len() < synos_synfs::MAX_BLOCK_IO_BYTES.max(512)
+            || dma.len() < ghostos_ghostfs::MAX_BLOCK_IO_BYTES.max(512)
             || dma_physical == 0
         {
             return Err(DriverError::InvalidRequest)
@@ -119,7 +119,7 @@ impl<'a> NvmeBlockDevice<'a> {
     ) -> Result<Self, DriverError> {
         if namespace_id == 0
             || !matches!(block_size, 512 | 4096)
-            || dma.len() < synos_synfs::MAX_BLOCK_IO_BYTES
+            || dma.len() < ghostos_ghostfs::MAX_BLOCK_IO_BYTES
             || dma_physical == 0
             || dma_physical & 0xfff != 0
         {

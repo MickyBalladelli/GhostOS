@@ -1,7 +1,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-//! Version policy shared by every public SynOS boundary.
+//! Version policy shared by every public GhostOS boundary.
 //!
 //! A decoder remains responsible for validating its bytes. This crate gives
 //! callers one stable decision before decoding: accept, accept with a
@@ -12,11 +12,11 @@ extern crate alloc;
 
 use core::fmt;
 
-pub const COMPATIBILITY_ERROR_TOO_OLD: &str = "SYNOS-COMPAT-001";
-pub const COMPATIBILITY_ERROR_TOO_NEW: &str = "SYNOS-COMPAT-002";
-pub const COMPATIBILITY_ERROR_INVALID_RANGE: &str = "SYNOS-COMPAT-003";
-pub const COMPATIBILITY_ERROR_MIGRATION_REQUIRED: &str = "SYNOS-COMPAT-004";
-pub const DEPRECATION_WARNING_LEGACY: &str = "SYNOS-COMPAT-DEP-001";
+pub const COMPATIBILITY_ERROR_TOO_OLD: &str = "GHOSTOS-COMPAT-001";
+pub const COMPATIBILITY_ERROR_TOO_NEW: &str = "GHOSTOS-COMPAT-002";
+pub const COMPATIBILITY_ERROR_INVALID_RANGE: &str = "GHOSTOS-COMPAT-003";
+pub const COMPATIBILITY_ERROR_MIGRATION_REQUIRED: &str = "GHOSTOS-COMPAT-004";
+pub const DEPRECATION_WARNING_LEGACY: &str = "GHOSTOS-COMPAT-DEP-001";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ApiVersion {
@@ -281,7 +281,7 @@ pub const SNAPSHOT_API: ApiContract = ApiContract {
         id: "snapshot-v1-to-v2",
         from: ApiVersion::V1,
         to: ApiVersion::V2,
-        example: "synos-vm snapshot convert --from 1 --to 2 input.vm output.vm",
+        example: "ghostos-vm snapshot convert --from 1 --to 2 input.vm output.vm",
     }),
 };
 
@@ -349,7 +349,7 @@ mod tests {
     fn old_clients_get_stable_errors() {
         let error = WIRE_API.check(ApiVersion::new(0, 9)).unwrap_err();
         assert_eq!(error.code, COMPATIBILITY_ERROR_TOO_OLD);
-        assert_eq!(error.to_string(), "SYNOS-COMPAT-001: wire API version 0.9 is outside supported range 1.0..=1.0");
+        assert_eq!(error.to_string(), "GHOSTOS-COMPAT-001: wire API version 0.9 is outside supported range 1.0..=1.0");
 
         let error = WIRE_API.check(ApiVersion::new(2, 0)).unwrap_err();
         assert_eq!(error.code, COMPATIBILITY_ERROR_TOO_NEW);

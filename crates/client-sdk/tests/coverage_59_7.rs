@@ -1,4 +1,4 @@
-use synos_client_sdk::{
+use ghostos_client_sdk::{
     Client, ClientError, ClusterNode, ClusterState, FrameHeader, JobSpec, Method, NodeHealth,
     NodeId, ProtocolError, RpcStatus, RpcTransport, Rights, TransportRights,
 };
@@ -19,7 +19,7 @@ impl RpcTransport for BusyTransport {
         }
         .encode(response)
         .unwrap();
-        Ok(synos_client_sdk::FRAME_HEADER_BYTES)
+        Ok(ghostos_client_sdk::FRAME_HEADER_BYTES)
     }
 }
 
@@ -44,7 +44,7 @@ fn client_propagates_busy_and_model_guards_duplicates() {
     let mut client = Client::new(BusyTransport);
     assert_eq!(
         client.cluster_state(),
-        Err(ClientError::Remote(synos_client_sdk::RemoteError::new(
+        Err(ClientError::Remote(ghostos_client_sdk::RemoteError::new(
             RpcStatus::Busy,
             Method::ClusterState,
             1,
@@ -72,7 +72,7 @@ fn client_propagates_busy_and_model_guards_duplicates() {
 #[test]
 fn delegation_model_requires_real_resource_and_rights() {
     let subject = NodeId::new(2).unwrap();
-    assert!(synos_client_sdk::CapabilityDelegation::new(
+    assert!(ghostos_client_sdk::CapabilityDelegation::new(
         0,
         subject,
         Rights::READ,
@@ -80,7 +80,7 @@ fn delegation_model_requires_real_resource_and_rights() {
         10,
     )
     .is_err());
-    assert!(synos_client_sdk::CapabilityDelegation::new(
+    assert!(ghostos_client_sdk::CapabilityDelegation::new(
         7,
         subject,
         Rights::READ,

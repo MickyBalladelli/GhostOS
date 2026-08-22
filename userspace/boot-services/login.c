@@ -286,7 +286,7 @@ void _start(void)
     u8 challenge[TPM_CHALLENGE_BYTES];
 
     call(OP_SERVICE_READY, LOGIN_ROLE, 0, 0, 0);
-    write_text("SynOS login service\n");
+    write_text("GhostOS login service\n");
     write_text("The terminal is locked until login completes.\n");
 
     for (;;) {

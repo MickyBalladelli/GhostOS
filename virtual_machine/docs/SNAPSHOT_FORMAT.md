@@ -55,7 +55,7 @@ component.
 Migration reads and writes have a ten-second timeout. The receiver rejects
 payloads above its 8 GiB pre-allocation migration cap, rejects checkpoints older than
 24 hours or more than five minutes in the future, and records accepted
-checkpoint identities in `.synos-vm-migration-replay` beside the destination.
+checkpoint identities in `.ghostos-vm-migration-replay` beside the destination.
 The sender also bounds and regular-file-checks the source before reading it.
 The bounded ledger is private, locked across processes, and synced before
 publication; it rejects duplicate deliveries during the freshness window and

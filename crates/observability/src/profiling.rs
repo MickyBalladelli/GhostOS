@@ -7,7 +7,7 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-use synos_system_model::ContentId;
+use ghostos_system_model::ContentId;
 
 pub const MAX_PROFILE_FRAMES: usize = 16;
 pub const GLOBAL_PROFILE_CAPACITY: usize = 256;
@@ -56,7 +56,7 @@ impl ProfileDomain {
             Self::Boot => "boot",
             Self::Ipc => "ipc",
             Self::Scheduler => "scheduler",
-            Self::SynFs => "synfs",
+            Self::SynFs => "ghostfs",
             Self::Networking => "networking",
             Self::PackageActivation => "package-activation",
             Self::CompilerBuild => "compiler-build",
@@ -165,7 +165,7 @@ impl ProfileMetadata {
 /// stable hardware facts, never a hostname, network address, or user data.
 pub fn redacted_host_id(host_material: &[u8]) -> [u8; 16] {
     let mut material = [0u8; 64];
-    let prefix = b"synos-profile-host-v1";
+    let prefix = b"ghostos-profile-host-v1";
     let prefix_len = prefix.len().min(material.len());
     material[..prefix_len].copy_from_slice(&prefix[..prefix_len]);
     let available = material.len().saturating_sub(prefix_len);
@@ -550,7 +550,7 @@ pub struct RetainedProfile {
 }
 
 /// Fixed-capacity index used by a daemon to retain one profile per revision
-/// and host. The archive bytes can live in SynFS under the same key.
+/// and host. The archive bytes can live in GhostFS under the same key.
 pub struct ProfileRetention<const CAPACITY: usize> {
     entries: [Option<RetainedProfile>; CAPACITY],
 }

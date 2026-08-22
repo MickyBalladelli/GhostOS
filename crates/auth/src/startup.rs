@@ -3,15 +3,15 @@
 
 use core::{convert::TryFrom, fmt};
 
-use synos_fabric::NodeId;
-use synos_kernel::{
+use ghostos_fabric::NodeId;
+use ghostos_kernel::{
     AddressSpaceId, CapabilityObject, IdentityId, RightIdentifier, Rights,
 };
-use synos_observability::{
+use ghostos_observability::{
     audit_event, field, AuditQuery, EventField, Level, TraceEvent, GLOBAL_AUDIT_CAPACITY,
     SECURITY_AUDIT,
 };
-use synos_status::Status;
+use ghostos_status::Status;
 
 use crate::identity::{
     AccountRole, AccountState, AuthDaemon, AuthError, AuthenticationChallenge, AuthorizationDatabase,

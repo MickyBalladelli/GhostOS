@@ -1,10 +1,10 @@
 use core::fmt;
 
-use synos_init::RestartPolicy;
-use synos_status::{IntoStatus, Status};
-use synos_system_model::ContentId;
+use ghostos_init::RestartPolicy;
+use ghostos_status::{IntoStatus, Status};
+use ghostos_system_model::ContentId;
 
-pub const APP_MANIFEST_SCHEMA: u16 = synos_pkg::APPLICATION_MANIFEST_SCHEMA;
+pub const APP_MANIFEST_SCHEMA: u16 = ghostos_pkg::APPLICATION_MANIFEST_SCHEMA;
 pub const MAX_APP_NAME_BYTES: usize = 48;
 pub const MAX_RESOURCE_NAME_BYTES: usize = 64;
 pub const MAX_APP_CAPABILITIES: usize = 16;
@@ -111,8 +111,8 @@ pub enum AppTarget {
 impl AppTarget {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::X86_64 => "x86_64-unknown-synos",
-            Self::Aarch64 => "aarch64-unknown-synos",
+            Self::X86_64 => "x86_64-unknown-ghostos",
+            Self::Aarch64 => "aarch64-unknown-ghostos",
         }
     }
 }
@@ -442,8 +442,8 @@ impl Parser {
                 "target" => {
                     mark(&mut self.seen_application, 8)?;
                     self.manifest.target = Some(match parse_string(value)? {
-                        "x86_64-unknown-synos" => AppTarget::X86_64,
-                        "aarch64-unknown-synos" => AppTarget::Aarch64,
+                        "x86_64-unknown-ghostos" => AppTarget::X86_64,
+                        "aarch64-unknown-ghostos" => AppTarget::Aarch64,
                         _ => return Err(ManifestError::UnknownValue),
                     })
                 }

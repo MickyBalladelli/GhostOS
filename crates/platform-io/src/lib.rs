@@ -1,12 +1,12 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use synos_status::{IntoStatus, Severity, Status, facility};
-pub use synos_numa::{
+use ghostos_status::{IntoStatus, Severity, Status, facility};
+pub use ghostos_numa::{
     NumaCounters, NumaDecision, NumaPlacement, NumaReport, NumaTopology, NumaTopologyError,
     PlacementKind, PlacementLocality,
 };
-use synos_observability::{field, EventField, EventKind};
+use ghostos_observability::{field, EventField, EventKind};
 
 pub const DEFAULT_QUEUE_CAPACITY: usize = 64;
 pub const MAX_MEDIA_PLANES: usize = 4;
@@ -139,7 +139,7 @@ impl<Request: Copy, Response: Copy, const CAPACITY: usize> AsyncQueue<Request, R
         self.placement = self
             .numa
             .place(PlacementKind::Queue, preferred_cpu, preferred_node);
-        synos_observability::info!(
+        ghostos_observability::info!(
             EventKind::Kernel,
             EventField::unsigned(field::NUMA_KIND, PlacementKind::Queue as u64),
             EventField::unsigned(field::NUMA_REQUESTED_NODE, self.placement.requested_node as u64),

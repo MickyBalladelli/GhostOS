@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 evidence_dir=${1:?usage: release-gate.sh EVIDENCE_DIRECTORY [SLO_REPORT] [RELEASE_CLAIMS] [UPGRADE_COMPATIBILITY]}
-slo_report=${2:-${SYNOS_SLO_REPORT:-}}
-release_claims=${3:-${SYNOS_RELEASE_CLAIMS:-}}
-upgrade_compatibility=${4:-${SYNOS_UPGRADE_COMPATIBILITY:-}}
+slo_report=${2:-${GHOSTOS_SLO_REPORT:-}}
+release_claims=${3:-${GHOSTOS_RELEASE_CLAIMS:-}}
+upgrade_compatibility=${4:-${GHOSTOS_UPGRADE_COMPATIBILITY:-}}
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 if [[ ! -d "$evidence_dir" ]]; then
@@ -17,17 +17,17 @@ python3 "$root_dir/scripts/evidence-manifest.py" \
     --check
 
 if [[ -z "$slo_report" ]]; then
-    echo "release gate: fresh SLO report is required; pass SLO_REPORT or set SYNOS_SLO_REPORT" >&2
+    echo "release gate: fresh SLO report is required; pass SLO_REPORT or set GHOSTOS_SLO_REPORT" >&2
     exit 1
 fi
 
 if [[ -z "$release_claims" ]]; then
-    echo "release gate: evidence-backed release claims manifest is required; pass RELEASE_CLAIMS or set SYNOS_RELEASE_CLAIMS" >&2
+    echo "release gate: evidence-backed release claims manifest is required; pass RELEASE_CLAIMS or set GHOSTOS_RELEASE_CLAIMS" >&2
     exit 1
 fi
 
 if [[ -z "$upgrade_compatibility" ]]; then
-    echo "release gate: upgrade compatibility manifest is required; pass UPGRADE_COMPATIBILITY or set SYNOS_UPGRADE_COMPATIBILITY" >&2
+    echo "release gate: upgrade compatibility manifest is required; pass UPGRADE_COMPATIBILITY or set GHOSTOS_UPGRADE_COMPATIBILITY" >&2
     exit 1
 fi
 
@@ -39,7 +39,7 @@ python3 "$root_dir/scripts/validate-upgrade-compatibility.py" \
 python3 "$root_dir/scripts/release-slo-gate.py" \
     --evidence-dir "$evidence_dir" \
     --report "$slo_report" \
-    --max-age-seconds "${SYNOS_SLO_MAX_AGE_SECONDS:-86400}"
+    --max-age-seconds "${GHOSTOS_SLO_MAX_AGE_SECONDS:-86400}"
 
 python3 "$root_dir/scripts/validate-release-claims.py" \
     --claims "$release_claims" \
@@ -86,7 +86,7 @@ if rg -l "KERNEL PANIC|guest panic" "$evidence_dir" --glob '*.log' >/dev/null 2>
 fi
 
 if [[ -f "$evidence_dir/qemu/result.json" ]] && rg -q '"state"[[:space:]]*:[[:space:]]*"passed"' "$evidence_dir/qemu/result.json"; then
-    if ! rg -q "SynOS kernel bootstrap" "$evidence_dir/qemu" --glob '*.log'; then
+    if ! rg -q "GhostOS kernel bootstrap" "$evidence_dir/qemu" --glob '*.log'; then
         echo "release gate: clean QEMU boot marker is missing" >&2
         exit 1
     fi
@@ -100,7 +100,7 @@ if [[ -f "$evidence_dir/revision.txt" ]] && [[ "$(<"$evidence_dir/revision.txt")
     exit 1
 fi
 
-for image in "$root_dir/build/bios/synos-bios.img" "$root_dir/build/portable/synos.img"; do
+for image in "$root_dir/build/bios/ghostos-bios.img" "$root_dir/build/portable/ghostos.img"; do
     if [[ -f "$image" ]]; then
         if [[ ! -f "$image.revision" || "$(<"$image.revision")" != "$revision" ]]; then
             echo "release gate: image provenance does not match HEAD: $image" >&2

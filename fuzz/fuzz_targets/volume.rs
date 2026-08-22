@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_synfs::SynFs;
+use ghostos_ghostfs::SynFs;
 
 const MAX_BLOCKS: usize = 64;
 

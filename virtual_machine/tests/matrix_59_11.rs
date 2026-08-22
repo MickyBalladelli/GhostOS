@@ -9,12 +9,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use synos_vm::devices::{
+use ghostos_vm::devices::{
     Device, DeviceError, DiskFormat, InterruptController, PciDeviceId, PortBus, PortDevice,
 };
-use synos_vm::firmware::bios::BiosContext;
-use synos_vm::net::NetBackend;
-use synos_vm::{
+use ghostos_vm::firmware::bios::BiosContext;
+use ghostos_vm::net::NetBackend;
+use ghostos_vm::{
     ascii_to_scancodes, framebuffer_info, Cpu, CpuMode, DiskImage, FirmwareMode, LargePageSize,
     Loader, LoopbackHub, LoopbackPort, MacAddress, Mmu, PageFlags, PacketQueue,
     GuestInputMode, SnapshotChain, TerminalExit, Vm, VmConfig, VmSnapshot, POWER_CONTROL_PORT,
@@ -23,7 +23,7 @@ use synos_vm::{
 
 fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
-        "synos-vm-matrix-{name}-{}-{}.bin",
+        "ghostos-vm-matrix-{name}-{}-{}.bin",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -132,7 +132,7 @@ fn chipset_devices_ports_mmio_display_and_wakeup() {
     mmu.write_to_addr(0xF000, 0xCAFE, 2).expect("MMIO write");
     assert_eq!(mmu.read_from_addr(0xF000, 2).expect("MMIO read"), 0xCAFE);
 
-    let mut pci = synos_vm::devices::PciHostBridge::new();
+    let mut pci = ghostos_vm::devices::PciHostBridge::new();
     pci.add_device(
         0,
         1,
@@ -149,17 +149,17 @@ fn chipset_devices_ports_mmio_display_and_wakeup() {
     assert_eq!(pci.enumerate().expect("PCI enumerate"), 1);
     assert_eq!(pci.read_config(0, 1, 0, 0), 0x5678_1234);
 
-    let mut apic = synos_vm::devices::LocalApic::new(0);
-    apic.signal(0x40, synos_vm::devices::ApicTrigger::Edge);
+    let mut apic = ghostos_vm::devices::LocalApic::new(0);
+    apic.signal(0x40, ghostos_vm::devices::ApicTrigger::Edge);
     assert_eq!(apic.pending_vector(), Some(0x40));
 
-    let mut serial = synos_vm::devices::Serial16550::new(0x3F8);
+    let mut serial = ghostos_vm::devices::Serial16550::new(0x3F8);
     serial.write(0x3F8, b'X' as u64, 1).expect("serial write");
     assert_eq!(serial.output(), b"X");
     serial.push_input(b"ok");
     assert!(serial.input_pending());
 
-    let display = Rc::new(RefCell::new(synos_vm::devices::DisplayState::new()));
+    let display = Rc::new(RefCell::new(ghostos_vm::devices::DisplayState::new()));
     display.borrow_mut().port_write(0x3D4, 0x0E);
     display.borrow_mut().port_write(0x3D5, 0);
     assert_eq!(display.borrow().gop().modes[0].width, 640);
@@ -188,7 +188,7 @@ fn storage_network_and_device_reset_matrix() {
     image.read_sector(3, &mut readback).expect("read sector");
     assert_eq!(readback, sector);
 
-    let mut blk = synos_vm::devices::VirtioBlk::new();
+    let mut blk = ghostos_vm::devices::VirtioBlk::new();
     assert!(blk.attach_disk(image).is_none());
     assert_eq!(blk.sector_count(), Some(8));
     blk.reset();
@@ -196,8 +196,8 @@ fn storage_network_and_device_reset_matrix() {
     remove_fixture(&image_path);
 
     let hub = Rc::new(RefCell::new(LoopbackHub::new()));
-    let left_mac = MacAddress::synos_default(0x60);
-    let right_mac = MacAddress::synos_default(0x61);
+    let left_mac = MacAddress::ghostos_default(0x60);
+    let right_mac = MacAddress::ghostos_default(0x61);
     let mut left = LoopbackPort::new(hub.clone(), 0, left_mac);
     let mut right = LoopbackPort::new(hub, 1, right_mac);
     let mut frame = vec![0; 60];
@@ -221,19 +221,19 @@ fn firmware_loader_boot_parameters_and_uefi_state() {
     let mut loader = Loader::new();
     loader.load_kernel(&kernel_path).expect("load raw kernel");
     loader.set_cmdline("console=serial0 root=/dev/vda");
-    assert_eq!(loader.entry_point(), synos_vm::KERNEL_LOAD_ADDR);
+    assert_eq!(loader.entry_point(), ghostos_vm::KERNEL_LOAD_ADDR);
     assert_eq!(loader.kernel_size(), 3);
 
     let mut mmu = Mmu::new(8 * 1024 * 1024);
     loader
-        .load_to_memory(&mut mmu, synos_vm::KERNEL_LOAD_ADDR)
+        .load_to_memory(&mut mmu, ghostos_vm::KERNEL_LOAD_ADDR)
         .expect("load kernel to guest RAM");
     assert_eq!(
-        mmu.read_byte(synos_vm::KERNEL_LOAD_ADDR).expect("read entry"),
+        mmu.read_byte(ghostos_vm::KERNEL_LOAD_ADDR).expect("read entry"),
         0xF4
     );
     let header = [0x02, 0xB0, 0xAD, 0x1B, 0, 0, 0, 0, 0xFE, 0x4F, 0x52, 0xE4];
-    assert_eq!(synos_vm::boot::multiboot_header(&header), Some(0));
+    assert_eq!(ghostos_vm::boot::multiboot_header(&header), Some(0));
 
     let mut cpu = Cpu::new();
     let mut intc = InterruptController::new();
@@ -242,14 +242,14 @@ fn firmware_loader_boot_parameters_and_uefi_state() {
         .install_boot_parameters(
             &mut mmu,
             8 * 1024 * 1024,
-            synos_boot_protocol::BootMethod::Bios,
-            framebuffer_info(&synos_vm::devices::DisplayState::new().gop()),
+            ghostos_boot_protocol::BootMethod::Bios,
+            framebuffer_info(&ghostos_vm::devices::DisplayState::new().gop()),
         )
         .expect("install boot parameters");
     loader.handoff(&mut cpu, &mut mmu).expect("handoff to kernel");
     assert_eq!(cpu.mode(), CpuMode::Long64);
 
-    let mut uefi = synos_vm::UefiContext::new();
+    let mut uefi = ghostos_vm::UefiContext::new();
     uefi.set_memory_size(8 * 1024 * 1024);
     uefi.set_efi_application(vec![0x7F, b'E', b'L', b'F']);
     assert!(uefi.init(&mut mmu, &mut cpu.state).is_ok());

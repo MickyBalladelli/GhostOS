@@ -1,5 +1,5 @@
-use synos_ipc::{Envelope, SharedBuffer};
-use synos_status::{AuditContext, PublicError, Status};
+use ghostos_ipc::{Envelope, SharedBuffer};
+use ghostos_status::{AuditContext, PublicError, Status};
 
 use crate::{SocketCapability, SocketRights};
 

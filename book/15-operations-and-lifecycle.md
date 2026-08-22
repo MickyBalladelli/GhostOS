@@ -4,7 +4,7 @@ The project includes both low-level mechanisms and operator-facing lifecycle too
 
 ## Declarative configuration
 
-`synos-declarative` parses signed declarative configuration, validates schema and compatibility, produces structured diffs, and atomically activates a new system root. Configuration can include cluster identity, discovery, membership, quorum, transport, security, resources, federation, node overrides, policy inheritance, and maintenance windows.
+`ghostos-declarative` parses signed declarative configuration, validates schema and compatibility, produces structured diffs, and atomically activates a new system root. Configuration can include cluster identity, discovery, membership, quorum, transport, security, resources, federation, node overrides, policy inheritance, and maintenance windows.
 
 The activation pattern is:
 
@@ -16,50 +16,50 @@ parse -> validate -> diff -> sign -> quorum acknowledge -> activate
 
 ## Package lifecycle
 
-`synos-pkg` resolves packages by immutable content ID. `synos-auditd` watches package security and obsolescence. `synos-update` validates signed update manifests, compatibility, staged activation, rollback, and crash recovery.
+`ghostos-pkg` resolves packages by immutable content ID. `ghostos-auditd` watches package security and obsolescence. `ghostos-update` validates signed update manifests, compatibility, staged activation, rollback, and crash recovery.
 
 Do not update the running root in place. Stage a root, validate it, publish it, and keep the old generation until the new one proves healthy.
 
 ## Backup and disaster recovery
 
-`synos-backup` streams live SynFS versions from pinned checkpoints. Remote storage in `synos-storaged` models capability-gated NAS and enterprise storage operations. Recovery must preserve versions, checksums, authorization, and partial-failure evidence.
+`ghostos-backup` streams live GhostFS versions from pinned checkpoints. Remote storage in `ghostos-storaged` models capability-gated NAS and enterprise storage operations. Recovery must preserve versions, checksums, authorization, and partial-failure evidence.
 
 ## Cache and storage services
 
-`synos-kvd` provides a native bounded in-memory key-value cache. It must define eviction, persistence, restart, stale generation, and capacity behavior. `synos-storaged` provides remote storage service models with capability and lifecycle controls.
+`ghostos-kvd` provides a native bounded in-memory key-value cache. It must define eviction, persistence, restart, stale generation, and capacity behavior. `ghostos-storaged` provides remote storage service models with capability and lifecycle controls.
 
 ## Power and RAS
 
-`synos-power` handles ACPI and thermal lifecycle. `synos-ras` handles reliability, availability, serviceability records, hardware error prediction, alert deduplication, and fault-injection behavior.
+`ghostos-power` handles ACPI and thermal lifecycle. `ghostos-ras` handles reliability, availability, serviceability records, hardware error prediction, alert deduplication, and fault-injection behavior.
 
 ## Developer tools
 
-`cargo-synos` provides Cargo integration for repository workflows. `synos-debug`, `synos-inspect`, `synos-top`, and `synos-replay` form a practical operations kit:
+`cargo-ghostos` provides Cargo integration for repository workflows. `ghostos-debug`, `ghostos-inspect`, `ghostos-top`, and `ghostos-replay` form a practical operations kit:
 
 ```text
 inspect -> observe -> trace/replay -> debug -> recover
 ```
 
 The `clients/apple` package provides Swift transport, model, and control UI
-types for a native Apple client. `synos-posix-compat` provides a bounded
+types for a native Apple client. `ghostos-posix-compat` provides a bounded
 compatibility surface for software that needs familiar POSIX/Linux-shaped
 operations without moving the kernel back toward a monolithic Unix design.
 
 ## Rust service toolchain
 
-Ring 3 services target `targets/x86_64-unknown-synos.json` or
-`targets/aarch64-unknown-synos.json` as position-independent static images.
-`synos-posix-compat` translates a bounded file-descriptor and Linux syscall
-surface into SynFS capabilities and shared-buffer descriptors. It supports
+Ring 3 services target `targets/x86_64-unknown-ghostos.json` or
+`targets/aarch64-unknown-ghostos.json` as position-independent static images.
+`ghostos-posix-compat` translates a bounded file-descriptor and Linux syscall
+surface into GhostFS capabilities and shared-buffer descriptors. It supports
 familiar operations such as open, close, read, write, seek, clocks, getpid, and
 exit without giving the process an ambient Unix namespace.
 
-`cargo-synos` can build Ring 3 programs, build the required `core` and `alloc`
+`cargo-ghostos` can build Ring 3 programs, build the required `core` and `alloc`
 from pinned `rust-src`, and create signed `.synpkg` bundles:
 
 ```sh
-cargo install --path tools/cargo-synos
-cargo synos package --bin example-service --target x86_64 \
+cargo install --path tools/cargo-ghostos
+cargo ghostos package --bin example-service --target x86_64 \
   --release --key package-signing.key --output example-service.synpkg
 ```
 
@@ -76,8 +76,8 @@ UEFI copies the loader to the exact fallback path:
 EFI/BOOT/BOOTX64.EFI
 ```
 
-Legacy BIOS writes the complete `build/bios/synos-bios.img` to the whole drive,
-not to one partition. The UEFI loader can also present SynOS, Windows Boot
+Legacy BIOS writes the complete `build/bios/ghostos-bios.img` to the whole drive,
+not to one partition. The UEFI loader can also present GhostOS, Windows Boot
 Manager, and GRUB choices, and the portable image can be placed on an existing
 filesystem and started through a GRUB loopback entry without repartitioning.
 
@@ -117,9 +117,9 @@ The `platforms` directory defines profiles for consumer systems, QEMU/KVM cluste
 The Docker image bundles the build and QEMU environment. A single node can expose serial output and VNC. Cluster mode launches multiple q35 guests with unique displays and logs.
 
 ```sh
-docker build -t synos:latest .
-docker run --rm -it -p 5900:5900 synos single
-docker compose --profile cluster up synos-cluster
+docker build -t ghostos:latest .
+docker run --rm -it -p 5900:5900 ghostos single
+docker compose --profile cluster up ghostos-cluster
 ```
 
 This is useful for onboarding: the host needs Docker instead of the complete native toolchain.

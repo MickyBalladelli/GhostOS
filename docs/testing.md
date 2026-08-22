@@ -1,4 +1,4 @@
-# SynOS testing contract
+# GhostOS testing contract
 
 This document defines the minimum test evidence for every feature in
 `todo/TODO-first.md`. The machine-readable feature map is
@@ -35,7 +35,7 @@ validation.
 ## Contract
 
 The kernel litmus suite is deterministic and allocation-free. Run
-`synos_kernel::litmus::run_suite(seed)` with the same seed to reproduce the
+`ghostos_kernel::litmus::run_suite(seed)` with the same seed to reproduce the
 same actor interleaving. Fault replays return the first violated contract and
 remove schedule steps until `minimal_failing_schedule` no longer shrinks.
 The six cases cover IPC ordering, capability revocation, memory visibility,
@@ -152,18 +152,18 @@ evidence described in `platforms/README.md`.
 | --- | --- | --- | --- |
 | host-unit | `cargo test` | required | test output and package metadata |
 | workspace | `cargo test --workspace --all-targets` | required for workspace validation | test output and package metadata |
-| vm | `cargo test -p synos-vm --all-targets` | required for VM changes | test output and VM metadata |
+| vm | `cargo test -p ghostos-vm --all-targets` | required for VM changes | test output and VM metadata |
 | recovery | `cargo test --workspace --all-targets` | required | failure, restart, and recovery output |
-| qemu | `SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
+| qemu | `GHOSTOS_RUN_QEMU_TESTS=1 cargo test -p ghostos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
 | cluster | `scripts/qemu-cluster-validation.sh` | opt-in | node serial logs, command logs, QMP input, failover log |
-| hardware-accelerated | `SYNOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
+| hardware-accelerated | `GHOSTOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
 | hardware-boot | `python3 scripts/record-hardware-boot-evidence.py ...` | manual | COM1 log, hardware inventory, boot artifact hash, and revision |
 | fuzz | `cargo fuzz run <target>` from `fuzz/` | opt-in | corpus, crash artifact, revision |
-| performance | `python3 scripts/benchmark.py --baseline <same-host-report> -- cargo bench -p synos-vm --bench bounded` | required | benchmark report, hardware signature, budgets, and regression state |
-| soak | `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle and capability ownership reports, logs, and resource-drift snapshots |
+| performance | `python3 scripts/benchmark.py --baseline <same-host-report> -- cargo bench -p ghostos-vm --bench bounded` | required | benchmark report, hardware signature, budgets, and regression state |
+| soak | `GHOSTOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle and capability ownership reports, logs, and resource-drift snapshots |
 
-The root workspace includes both `synos-test-support` and `synos-vm` in
-`default-members`. Therefore `cargo test` runs every deterministic SynOS and VM
+The root workspace includes both `ghostos-test-support` and `ghostos-vm` in
+`default-members`. Therefore `cargo test` runs every deterministic GhostOS and VM
 unit/integration test. `cargo test --workspace --all-targets` is the explicit
 workspace command that checks every workspace target.
 
@@ -243,7 +243,7 @@ For ordered full validation, including opt-in QEMU, fuzz, coverage, mutation,
 reproducibility, and release gates, use:
 
 ```sh
-SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
+GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
 ```
 
 Optional tiers record `skipped` with the missing prerequisite. A release gate
@@ -256,7 +256,7 @@ digests and rejects malformed or unexplained result records.
 
 Release claims also require a fresh SLO report. The report is the JSON export
 of the capability-scoped `SloReport` and has schema `1`, kind
-`synos-slo-report`, the current Git `revision`, `generated_at`, and nine `slos`
+`ghostos-slo-report`, the current Git `revision`, `generated_at`, and nine `slos`
 entries named `boot`, `interactive-shell`, `ipc`, `storage-commit`, `dhcp`,
 `rpc`, `package-activation`, `snapshot-restore`, and `cluster-convergence`.
 Each entry records `observed_at`, `total_events`, `bad_events`,
@@ -267,15 +267,15 @@ younger than 24 hours. The gate prints each error-budget consumption and
 rejects missing, stale, failed, or exhausted SLOs:
 
 ```sh
-SYNOS_SLO_REPORT=build/slo-report.json \
-SYNOS_RELEASE_CLAIMS=build/release/release-claims.json \
-SYNOS_UPGRADE_COMPATIBILITY=build/release/upgrade-compatibility.json \
+GHOSTOS_SLO_REPORT=build/slo-report.json \
+GHOSTOS_RELEASE_CLAIMS=build/release/release-claims.json \
+GHOSTOS_UPGRADE_COMPATIBILITY=build/release/upgrade-compatibility.json \
   ./scripts/release-gate.sh build/test-evidence/<run-id>
 ```
 
 The JSON report must be supplied by the system's SLO exporter before the
-evidence manifest is written. A release gate without `SYNOS_SLO_REPORT`,
-`SYNOS_RELEASE_CLAIMS`, or `SYNOS_UPGRADE_COMPATIBILITY` always fails. The
+evidence manifest is written. A release gate without `GHOSTOS_SLO_REPORT`,
+`GHOSTOS_RELEASE_CLAIMS`, or `GHOSTOS_UPGRADE_COMPATIBILITY` always fails. The
 claims validator checks controlled release terms against retained evidence,
 and the compatibility validator checks both upgrade and rollback directions.
 
@@ -293,7 +293,7 @@ Run the platform probe locally with:
 python3 scripts/check-vm-platform.py --output build/platform-vm.json --run-qemu
 ```
 
-Run the bounded workflow soak locally with `SYNOS_SOAK_RUNS=3 ./scripts/soak.sh`;
+Run the bounded workflow soak locally with `GHOSTOS_SOAK_RUNS=3 ./scripts/soak.sh`;
 it writes `build/soak/report.json` plus per-scenario stdout and stderr logs.
 See [`soak.md`](soak.md) for workflow selection, limits, overrides, and report
 fields. The VM-only runner remains available for its focused inner-loop
@@ -305,7 +305,7 @@ decoder and devices, disk images, snapshots, terminal input/replay, and
 authenticated migration frames. Every target has an assigned owner, a checked-
 in seed corpus, and retained failure metadata with a deterministic replay
 command in [`fuzz/triage.toml`](../fuzz/triage.toml). They run in the
-full-validation fuzz tier. Mutation testing includes `synos-vm`; coverage emits
+full-validation fuzz tier. Mutation testing includes `ghostos-vm`; coverage emits
 workspace and per-crate reports. Full validation records separate `passed`,
 `failed`, and `skipped` results for QEMU, cluster, hardware-accelerated,
 performance, fuzz, and soak tiers.
@@ -318,7 +318,7 @@ failure coverage in the shell, storage, and client SDK test targets. Run the
 interactive two-node evidence path on a Linux host with a QEMU cluster image:
 
 ```sh
-SYNOS_RUN_QEMU_TESTS=1 ./scripts/qemu-cluster-validation.sh
+GHOSTOS_RUN_QEMU_TESTS=1 ./scripts/qemu-cluster-validation.sh
 ```
 
 The runner creates two guests with unique serial logs and QMP sockets. It sends
@@ -328,7 +328,7 @@ recover, and rejoin, then injects a node failure. Evidence is written under
 this tier when Linux, QEMU, and the image are available:
 
 ```sh
-SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
+GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
 ```
 
 Cluster writes require an administrator or an operation-specific delegated
@@ -341,7 +341,7 @@ attestation, incompatible protocol, and transport failure all remain explicit
 negative cases rather than being treated as successful degraded operation.
 
 For an unsafe node, operators should inspect health, drain work, fence first,
-reconcile shared memory, storage, jobs, capabilities, leases, SynFS deltas,
+reconcile shared memory, storage, jobs, capabilities, leases, GhostFS deltas,
 logs, reservations, and workloads, then recover or rejoin. Abandon is the last
 resort and permanently discards the node's unreconciled ownership.
 
@@ -357,7 +357,7 @@ coverage definition can pass.
 
 ## Shared harness
 
-[`synos-test-support`](../crates/test-support) is the test-only support crate.
+[`ghostos-test-support`](../crates/test-support) is the test-only support crate.
 It is a workspace member and a `default-member`; production crates do not
 inherit test helpers because they are only used through `dev-dependencies` or
 integration tests.
@@ -379,31 +379,31 @@ corresponding compatibility decision.
 
 | Variable | Default | Use |
 | --- | --- | --- |
-| `SYNOS_RUN_QEMU_TESTS` | unset | Enable ignored QEMU tests when set to `1`. |
-| `SYNOS_QEMU_IMAGE` | `build/bios/synos-bios.img` | Guest disk image for VM integration tests. |
-| `SYNOS_QEMU_BIN` | `qemu-system-x86_64` | QEMU executable. |
-| `SYNOS_QEMU_ACCEL` | `tcg` for tests | `tcg` or `kvm` acceleration. |
-| `SYNOS_QEMU_EXTRA` | empty | Extra QEMU arguments. |
-| `SYNOS_DISK_IMAGE` | `build/bios/synos-bios.img` | Image used by cluster and Docker flows. |
-| `SYNOS_CLUSTER_NODES` | `2` in the cluster script | Cluster guest count, from 2 through 8. |
-| `SYNOS_GUEST_MEMORY` | `1G` in the cluster script | Memory per guest. |
-| `SYNOS_CXL_MEMORY` | `256M` | Per-node CXL backing file size. |
-| `SYNOS_SHARED_MEMORY` | `256M` | Shared `ivshmem` backing file size. |
-| `SYNOS_CLUSTER_BUS` | `230.0.0.1:1234` | QEMU multicast cluster bus. |
-| `SYNOS_FULL_VALIDATION` | unset | Enable opt-in QEMU, fuzz, coverage, mutation, and release tiers. |
-| `SYNOS_EVIDENCE_DIR` | `build/test-evidence/<run-id>` | Evidence output directory for the unified runners. |
-| `SYNOS_BENCH_BASELINE` | unset | Same-host benchmark report used for relative regression budgets. |
-| `SYNOS_FUZZ_RUNS` | `1000` | Bounded fuzz smoke iterations per target. |
-| `SYNOS_VM_SOAK_RUNS` | `3` | Number of bounded VM soak repetitions. |
-| `SYNOS_VM_SOAK_INNER_RUNS` | `32` | In-process VM lifecycle repetitions per soak run. |
-| `SYNOS_VM_SOAK_MEMORY_TOLERANCE_BYTES` | `67108864` | Allowed runner RSS growth per soak run. |
-| `SYNOS_VM_SOAK_COMMAND` | focused soak test | Optional command override for the soak runner. |
-| `SYNOS_CAPABILITY_SOAK_CYCLES` | `512` | Capability create/delegate/revoke/delete cycles per capability soak process. |
-| `SYNOS_CAPABILITY_SOAK_REPORT` | `build/soak/capabilities/report.json` | Machine-readable capability soak report path. |
-| `SYNOS_SOAK_RUNS` | `3` | Number of bounded repetitions for each workflow. |
-| `SYNOS_SOAK_TIMEOUT_SECONDS` | `300` | Maximum duration of one workflow repetition. |
-| `SYNOS_SOAK_MEMORY_TOLERANCE_BYTES` | `67108864` | Allowed runner RSS growth per repetition. |
-| `SYNOS_SOAK_<WORKFLOW>_COMMAND` | workflow default | Optional command override for one workflow. |
+| `GHOSTOS_RUN_QEMU_TESTS` | unset | Enable ignored QEMU tests when set to `1`. |
+| `GHOSTOS_QEMU_IMAGE` | `build/bios/ghostos-bios.img` | Guest disk image for VM integration tests. |
+| `GHOSTOS_QEMU_BIN` | `qemu-system-x86_64` | QEMU executable. |
+| `GHOSTOS_QEMU_ACCEL` | `tcg` for tests | `tcg` or `kvm` acceleration. |
+| `GHOSTOS_QEMU_EXTRA` | empty | Extra QEMU arguments. |
+| `GHOSTOS_DISK_IMAGE` | `build/bios/ghostos-bios.img` | Image used by cluster and Docker flows. |
+| `GHOSTOS_CLUSTER_NODES` | `2` in the cluster script | Cluster guest count, from 2 through 8. |
+| `GHOSTOS_GUEST_MEMORY` | `1G` in the cluster script | Memory per guest. |
+| `GHOSTOS_CXL_MEMORY` | `256M` | Per-node CXL backing file size. |
+| `GHOSTOS_SHARED_MEMORY` | `256M` | Shared `ivshmem` backing file size. |
+| `GHOSTOS_CLUSTER_BUS` | `230.0.0.1:1234` | QEMU multicast cluster bus. |
+| `GHOSTOS_FULL_VALIDATION` | unset | Enable opt-in QEMU, fuzz, coverage, mutation, and release tiers. |
+| `GHOSTOS_EVIDENCE_DIR` | `build/test-evidence/<run-id>` | Evidence output directory for the unified runners. |
+| `GHOSTOS_BENCH_BASELINE` | unset | Same-host benchmark report used for relative regression budgets. |
+| `GHOSTOS_FUZZ_RUNS` | `1000` | Bounded fuzz smoke iterations per target. |
+| `GHOSTOS_VM_SOAK_RUNS` | `3` | Number of bounded VM soak repetitions. |
+| `GHOSTOS_VM_SOAK_INNER_RUNS` | `32` | In-process VM lifecycle repetitions per soak run. |
+| `GHOSTOS_VM_SOAK_MEMORY_TOLERANCE_BYTES` | `67108864` | Allowed runner RSS growth per soak run. |
+| `GHOSTOS_VM_SOAK_COMMAND` | focused soak test | Optional command override for the soak runner. |
+| `GHOSTOS_CAPABILITY_SOAK_CYCLES` | `512` | Capability create/delegate/revoke/delete cycles per capability soak process. |
+| `GHOSTOS_CAPABILITY_SOAK_REPORT` | `build/soak/capabilities/report.json` | Machine-readable capability soak report path. |
+| `GHOSTOS_SOAK_RUNS` | `3` | Number of bounded repetitions for each workflow. |
+| `GHOSTOS_SOAK_TIMEOUT_SECONDS` | `300` | Maximum duration of one workflow repetition. |
+| `GHOSTOS_SOAK_MEMORY_TOLERANCE_BYTES` | `67108864` | Allowed runner RSS growth per repetition. |
+| `GHOSTOS_SOAK_<WORKFLOW>_COMMAND` | workflow default | Optional command override for one workflow. |
 | `VM_QUALITY_BASE` | `HEAD^` | Git base used by `validate-vm-quality.py --changed`. |
 
 Tests are isolated from one another and must not depend on an unset variable
@@ -413,15 +413,15 @@ actually used.
 ## Unit and property tests
 
 Property tests use the deterministic runner in
-[`synos-test-support::property`](../crates/test-support/src/property.rs). A
+[`ghostos-test-support::property`](../crates/test-support/src/property.rs). A
 property receives a stable case seed and deterministic entropy. Failures print
 the seed and case as a replay command:
 
 ```text
-SYNOS_PROPERTY_SEED=0x53594e4f535f5445 SYNOS_PROPERTY_CASE=7
+GHOSTOS_PROPERTY_SEED=0x53594e4f535f5445 GHOSTOS_PROPERTY_CASE=7
 ```
 
-Use `SYNOS_PROPERTY_CASES` to choose a bounded case count. Generated tests must
+Use `GHOSTOS_PROPERTY_CASES` to choose a bounded case count. Generated tests must
 cover the empty, minimum, maximum, malformed, capacity, overflow, and
 authorization boundaries relevant to the API. Reference models in the support
 crate cover FIFO queues, capability attenuation/revocation, and lease expiry.

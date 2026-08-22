@@ -1,20 +1,20 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-//! Cross-platform SynOS client protocol.
+//! Cross-platform GhostOS client protocol.
 
 //!
 //! The crate contains no sockets, executor, allocator, or platform APIs. A
 //! macOS, iOS, Android, or WebAssembly host supplies an [`RpcTransport`] and
 //! receives the same versioned binary RPC contract on every platform.
 
-pub use synos_protocol::{
+pub use ghostos_protocol::{
     ProtocolError as TransportProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass,
     VersionRange,
 };
-pub use synos_api_compat::{ApiVersion, Compatibility, CompatibilityError};
-pub use synos_abi::{ABI_REVISION, ABI_SCHEMA_VERSION};
-pub use synos_system_model::performance::{
+pub use ghostos_api_compat::{ApiVersion, Compatibility, CompatibilityError};
+pub use ghostos_abi::{ABI_REVISION, ABI_SCHEMA_VERSION};
+pub use ghostos_system_model::performance::{
     PerformanceBudget, PerformanceDiagnostics, TailLatencyWindow,
     PERFORMANCE_DIAGNOSTICS_VERSION,
 };
@@ -48,12 +48,12 @@ pub use wire::{
     PROTOCOL_VERSION, ProtocolError, RpcStatus,
 };
 
-pub use synos_auth::{CryptographicCapability, TransportRights};
-pub use synos_fabric::NodeId;
-pub use synos_kernel::Rights;
+pub use ghostos_auth::{CryptographicCapability, TransportRights};
+pub use ghostos_fabric::NodeId;
+pub use ghostos_kernel::Rights;
 
 /// Stable source-level contract shared by the Rust and Swift user-space SDKs.
-pub const SDK_API: synos_api_compat::ApiContract = synos_api_compat::SDK_API;
+pub const SDK_API: ghostos_api_compat::ApiContract = ghostos_api_compat::SDK_API;
 pub const SDK_API_VERSION: ApiVersion = SDK_API.current;
 pub const SDK_MINIMUM_API_VERSION: ApiVersion = SDK_API.supported.minimum;
 pub const SDK_MAXIMUM_API_VERSION: ApiVersion = SDK_API.supported.maximum;

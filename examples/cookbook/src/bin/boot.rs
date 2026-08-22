@@ -1,4 +1,4 @@
-use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind, MemoryRegion};
+use ghostos_boot_protocol::{BootInfo, BootMethod, MemoryKind, MemoryRegion};
 
 fn main() {
     let mut info = BootInfo::empty(BootMethod::Bios);

@@ -8,8 +8,8 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use synos_vm::net::NetError;
-use synos_vm::{
+use ghostos_vm::net::NetError;
+use ghostos_vm::{
     ascii_to_scancodes, translate_input_bytes, DiskController, DiskSpec, FirmwareMode,
     LoopbackHub, LoopbackPort, MacAddress, NetBackend, PacketQueue, SnapshotChain,
     GuestInputMode, SnapshotError, Vm, VmConfig,
@@ -26,7 +26,7 @@ fn frame(destination: MacAddress, source: MacAddress) -> Vec<u8> {
 
 fn image_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "synos-vm-10-5-{label}-{}-{}.img",
+        "ghostos-vm-10-5-{label}-{}-{}.img",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -50,7 +50,7 @@ fn snapshot_serialization_restore_chain_and_failures() {
     vm.cpu_mut().state.halted = true;
     vm.apic()
         .borrow_mut()
-        .signal(0x40, synos_vm::ApicTrigger::Edge);
+        .signal(0x40, ghostos_vm::ApicTrigger::Edge);
     let first = vm.snapshot();
     let diff = base.diff(&first).expect("snapshot diff");
     assert_eq!(diff.apply_to(&base).expect("apply diff"), first);
@@ -71,7 +71,7 @@ fn snapshot_serialization_restore_chain_and_failures() {
     vm.cpu_mut().set_rip(0x9000);
     vm.apic()
         .borrow_mut()
-        .signal(0x41, synos_vm::ApicTrigger::Edge);
+        .signal(0x41, ghostos_vm::ApicTrigger::Edge);
     vm.restore_snapshot(&base).expect("restore base");
     assert_eq!(vm.mmu().read_byte(0x2000).expect("restored memory"), 0x11);
     assert_eq!(vm.cpu().rip(), 0x2000);
@@ -82,18 +82,18 @@ fn snapshot_serialization_restore_chain_and_failures() {
     let mut corrupted = bytes.clone();
     corrupted[0] ^= 1;
     assert!(matches!(
-        synos_vm::VmSnapshot::from_bytes(&corrupted),
+        ghostos_vm::VmSnapshot::from_bytes(&corrupted),
         Err(SnapshotError::InvalidFormat)
     ));
     let mut wrong_version = bytes;
     wrong_version[8..12].copy_from_slice(&3u32.to_le_bytes());
     assert!(matches!(
-        synos_vm::VmSnapshot::from_bytes(&wrong_version),
+        ghostos_vm::VmSnapshot::from_bytes(&wrong_version),
         Err(SnapshotError::VersionMismatch(3))
     ));
 
     let mut invalid = diff;
-    invalid.changed_pages.push(synos_vm::snapshot::SnapshotPage {
+    invalid.changed_pages.push(ghostos_vm::snapshot::SnapshotPage {
         page: u64::MAX,
         data: vec![1],
     });
@@ -131,8 +131,8 @@ fn terminal_translation_and_ps2_fallback_are_stable() {
 #[test]
 fn loopback_routes_isolates_and_applies_deterministic_faults() {
     let hub = Rc::new(RefCell::new(LoopbackHub::new()));
-    let left_mac = MacAddress::synos_default(0x70);
-    let right_mac = MacAddress::synos_default(0x71);
+    let left_mac = MacAddress::ghostos_default(0x70);
+    let right_mac = MacAddress::ghostos_default(0x71);
     let mut left = LoopbackPort::new(hub.clone(), 0, left_mac);
     let mut right = LoopbackPort::new(hub.clone(), 1, right_mac);
 

@@ -1,4 +1,4 @@
-use synos_ipc::SharedRegionId;
+use ghostos_ipc::SharedRegionId;
 
 use crate::{Capability, Error, Operation, Request, Runtime, SystemCall};
 

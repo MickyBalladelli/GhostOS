@@ -1,6 +1,6 @@
 use crate::{Error as ModelError, LogicalName};
 use crate::performance::PerformanceDiagnostics;
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_COMMAND_ARGUMENTS: usize = 16;
 pub const DEFAULT_COMMAND_CAPACITY: usize = 64;

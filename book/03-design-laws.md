@@ -1,6 +1,6 @@
 # 3. The Core Design Laws
 
-SynOS has many features, but a small set of laws repeats everywhere.
+GhostOS has many features, but a small set of laws repeats everywhere.
 
 ## Law 1: authority is data
 
@@ -51,7 +51,7 @@ The descriptor is part of the security boundary. It says where the bytes live, h
 
 ## Law 4: immutable state makes recovery easier
 
-SynFS uses Copy-on-Write generations. Snapshots pin old roots. Package roots are content-addressed. A backup reads a stable checkpoint. An update stages a new root before activation. Agent sandboxes publish only after validation.
+GhostFS uses Copy-on-Write generations. Snapshots pin old roots. Package roots are content-addressed. A backup reads a stable checkpoint. An update stages a new root before activation. Agent sandboxes publish only after validation.
 
 The simple pattern is:
 

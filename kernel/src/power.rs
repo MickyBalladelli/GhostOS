@@ -1,7 +1,7 @@
 use core::ptr::{read_volatile, write_volatile};
 
-use synos_boot_protocol::{BootInfo, MemoryKind};
-use synos_power::{
+use ghostos_boot_protocol::{BootInfo, MemoryKind};
+use ghostos_power::{
     AcpiError, AcpiMemory, AcpiPlatform, AddressSpace, FixedEvent, GenericAddress,
     PowerController, PowerIo, PowerState,
 };
@@ -73,9 +73,9 @@ pub fn power_button_pressed(platform: &AcpiPlatform) -> bool {
 pub fn battery_report(
     boot_info: &'static BootInfo,
     platform: Option<&AcpiPlatform>,
-) -> synos_power::BatteryReport {
+) -> ghostos_power::BatteryReport {
     let Some(platform) = platform else {
-        return synos_power::BatteryReport::UNKNOWN
+        return ghostos_power::BatteryReport::UNKNOWN
     };
     platform.battery_report(&PhysicalAcpiMemory { boot_info })
 }
@@ -95,7 +95,7 @@ pub fn suspend(platform: Option<&AcpiPlatform>) -> Result<(), AcpiError> {
         }
     }
 
-    crate::println!("Suspending SynOS...");
+    crate::println!("Suspending GhostOS...");
     crate::arch::disable_interrupts();
     let requested = controller.request(PowerState::Suspend);
     let result = match requested {
@@ -104,7 +104,7 @@ pub fn suspend(platform: Option<&AcpiPlatform>) -> Result<(), AcpiError> {
     };
     crate::arch::enable_interrupts();
     if result.is_ok() {
-        crate::println!("SynOS resumed")
+        crate::println!("GhostOS resumed")
     }
     result
 }
@@ -119,7 +119,7 @@ pub fn resume(platform: &AcpiPlatform) -> Result<(), AcpiError> {
 }
 
 pub fn shutdown(platform: Option<&AcpiPlatform>) -> ! {
-    crate::println!("Shutting down SynOS...");
+    crate::println!("Shutting down GhostOS...");
     let acpi_requested = if let Some(platform) = platform {
         let mut controller = PowerController::new(*platform, PlatformIo);
         let _ = controller.enable_acpi(1_000_000);
@@ -134,7 +134,7 @@ pub fn shutdown(platform: Option<&AcpiPlatform>) -> ! {
 }
 
 pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
-    crate::println!("Rebooting SynOS...");
+    crate::println!("Rebooting GhostOS...");
     let acpi_requested = if let Some(platform) = platform {
         let mut controller = PowerController::new(*platform, PlatformIo);
         let _ = controller.enable_acpi(1_000_000);

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_vm::{
+use ghostos_vm::{
     decode_migration_checkpoint, migration_checkpoint_tag, snapshot_digest, SnapshotAuthKey,
     SnapshotSchema,
 };

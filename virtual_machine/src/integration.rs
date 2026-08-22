@@ -1,11 +1,11 @@
-//! End-to-end checks for the SynOS kernel and its core kernel services.
+//! End-to-end checks for the GhostOS kernel and its core kernel services.
 
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityObject, CapabilitySpace, ExecutionMode, PhysicalRange, Rights,
     Scheduler, SchedulingPolicy,
 };
-use synos_kernel::ipc::{Channel, Message};
-use synos_kernel::ipc::{ChannelId, SharedRegionId};
+use ghostos_kernel::ipc::{Channel, Message};
+use ghostos_kernel::ipc::{ChannelId, SharedRegionId};
 
 use crate::{CpuMode, Vm, VmConfig, VmError, VmRunReport};
 
@@ -15,9 +15,9 @@ const CR0_PAGING: u64 = 1 << 31;
 pub enum IntegrationError {
     Vm(VmError),
     InvalidConfiguration,
-    Scheduler(synos_kernel::SchedulerError),
-    Capability(synos_kernel::CapabilityError),
-    Ipc(synos_kernel::ipc::IpcError),
+    Scheduler(ghostos_kernel::SchedulerError),
+    Capability(ghostos_kernel::CapabilityError),
+    Ipc(ghostos_kernel::ipc::IpcError),
     InvalidKernelState,
 }
 
@@ -40,7 +40,7 @@ pub struct SynosIntegrationReport {
 
 /// Boot the supplied kernel for a bounded number of instructions and exercise
 /// the same scheduler, capability, memory, and IPC APIs used by kernel code.
-pub fn run_synos_integration(
+pub fn run_ghostos_integration(
     mut config: VmConfig,
     max_steps: u64,
 ) -> Result<SynosIntegrationReport, IntegrationError> {
@@ -63,7 +63,7 @@ pub fn run_synos_integration(
     // The serial line may still be inside one formatted write when the
     // bounded run ends. Long-mode execution at the loaded kernel address is
     // the reliable handoff signal; serial text is retained for diagnostics.
-    let kernel_booted = boot_output.contains("SynOS kernel bootstrap")
+    let kernel_booted = boot_output.contains("GhostOS kernel bootstrap")
         || (paging_ready && vm_report.rip >= crate::KERNEL_LOAD_ADDR);
 
     let (scheduler_ready, capabilities_ready) = exercise_scheduler_and_capabilities()?;

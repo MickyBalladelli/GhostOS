@@ -1,4 +1,4 @@
-use synos_netd::{
+use ghostos_netd::{
     install_core_network_rules, FirewallPolicy, Ipv4Cidr, PacketQueue, PortRange,
 };
 

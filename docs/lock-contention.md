@@ -14,10 +14,10 @@ paths so daemon-held lease duration is measured with daemon time.
 Run the repeatable comparison on the same host:
 
 ```sh
-SYNOS_LOCK_ITERATIONS=100000 SYNOS_LOCK_WORKERS=4 \
+GHOSTOS_LOCK_ITERATIONS=100000 GHOSTOS_LOCK_WORKERS=4 \
   python3 scripts/benchmark.py --warmups 1 --samples 5 \
   --no-optional-metrics --output build/benchmarks/lock-contention.json -- \
-  cargo bench -p synos-kernel --bench lock_contention -- --nocapture
+  cargo bench -p ghostos-kernel --bench lock_contention -- --nocapture
 ```
 
 Evidence recorded on revision `21cef4bc1d55f85f3c5aa2ad57e87e64152613f2`,

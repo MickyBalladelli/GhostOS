@@ -1,5 +1,5 @@
-use synos_fabric::{Access, AddressRange, NodeId, memory::LeaseTable};
-use synos_llm::{Error as AllocationError, allocator::{AllocationInfo, AllocationPolicy, ModelAddress, UnifiedAllocator}};
+use ghostos_fabric::{Access, AddressRange, NodeId, memory::LeaseTable};
+use ghostos_llm::{Error as AllocationError, allocator::{AllocationInfo, AllocationPolicy, ModelAddress, UnifiedAllocator}};
 
 /// Memory placement policy for a legacy container.
 ///
@@ -57,8 +57,8 @@ impl ContainerMemoryPolicy {
         }
         Ok(AllocationPolicy {
             compute_node: self.compute_node,
-            lease_owner: synos_fabric::memory::LeaseOwner::Service(self.service_id),
-            memory_kind: synos_fabric::memory::MemoryKind::Ram,
+            lease_owner: ghostos_fabric::memory::LeaseOwner::Service(self.service_id),
+            memory_kind: ghostos_fabric::memory::MemoryKind::Ram,
             allow_local: self.allow_local,
             allow_cxl: self.allow_cxl,
             allow_layer2: self.allow_software_dsm,
@@ -85,8 +85,8 @@ impl From<AllocationError> for ZeroCopyMemoryError {
 /// while `GlobalAddressSpace` resolves each page to its current local, CXL, or
 /// software-DSM backing. The broker owns leases, not byte buffers.
 pub struct ZeroCopyContainerMemory<
-    const ALLOCATIONS: usize = { synos_llm::allocator::DEFAULT_ALLOCATION_CAPACITY },
-    const EXTENTS: usize = { synos_llm::allocator::DEFAULT_EXTENTS_PER_ALLOCATION },
+    const ALLOCATIONS: usize = { ghostos_llm::allocator::DEFAULT_ALLOCATION_CAPACITY },
+    const EXTENTS: usize = { ghostos_llm::allocator::DEFAULT_EXTENTS_PER_ALLOCATION },
 > {
     allocator: UnifiedAllocator<ALLOCATIONS, EXTENTS>,
 }
@@ -102,7 +102,7 @@ impl<const ALLOCATIONS: usize, const EXTENTS: usize>
 
     pub fn allocate<const POOLS: usize, const OVERRIDES: usize, const LEASES: usize>(
         &mut self,
-        space: &synos_fabric::memory::GlobalAddressSpace<POOLS, OVERRIDES>,
+        space: &ghostos_fabric::memory::GlobalAddressSpace<POOLS, OVERRIDES>,
         leases: &mut LeaseTable<LEASES>,
         bytes: u64,
         alignment: u64,
@@ -125,11 +125,11 @@ impl<const ALLOCATIONS: usize, const EXTENTS: usize>
 
     pub fn resolve<const POOLS: usize, const OVERRIDES: usize, const LEASES: usize>(
         &self,
-        allocation: synos_llm::allocator::AllocationHandle,
+        allocation: ghostos_llm::allocator::AllocationHandle,
         offset: u64,
         access: Access,
         now_us: u64,
-        space: &synos_fabric::memory::GlobalAddressSpace<POOLS, OVERRIDES>,
+        space: &ghostos_fabric::memory::GlobalAddressSpace<POOLS, OVERRIDES>,
         leases: &LeaseTable<LEASES>,
     ) -> Result<ModelAddress, ZeroCopyMemoryError> {
         self.allocator
@@ -139,7 +139,7 @@ impl<const ALLOCATIONS: usize, const EXTENTS: usize>
 
     pub fn renew<const LEASES: usize>(
         &self,
-        allocation: synos_llm::allocator::AllocationHandle,
+        allocation: ghostos_llm::allocator::AllocationHandle,
         leases: &mut LeaseTable<LEASES>,
         now_us: u64,
         lease_duration_us: u64,
@@ -151,7 +151,7 @@ impl<const ALLOCATIONS: usize, const EXTENTS: usize>
 
     pub fn release<const LEASES: usize>(
         &mut self,
-        allocation: synos_llm::allocator::AllocationHandle,
+        allocation: ghostos_llm::allocator::AllocationHandle,
         leases: &mut LeaseTable<LEASES>,
     ) -> Result<(), ZeroCopyMemoryError> {
         self.allocator

@@ -1,4 +1,4 @@
-use synos_fabric::{
+use ghostos_fabric::{
     Access, PAGE_SIZE,
     memory::{GlobalAddressSpace, LeaseTable, MemoryMapping},
 };
@@ -143,7 +143,7 @@ impl<const STREAMS: usize, const QUEUE: usize> PredictivePrefetcher<STREAMS, QUE
             if matches!(
                 address.mapping,
                 MemoryMapping::Direct { source, .. }
-                    if source.transport == synos_fabric::memory::Transport::Local
+                    if source.transport == ghostos_fabric::memory::Transport::Local
             ) || self.contains(allocation, next_offset)
             {
                 continue;

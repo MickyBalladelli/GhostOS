@@ -36,18 +36,38 @@ the released text immutable.
 
 ### Guest-visible
 
-- None yet.
+- Renamed the product from SynOS to GhostOS, including the kernel bootstrap
+  string, shell prompt (`GHOSTOS::ROOT`), default hostname, CLI binary
+  `ghostos-vm`, and UEFI loader `ghostos-loader`. Impact: operator-facing
+  names and guest serial/VGA branding change. Compatibility: CPU, firmware,
+  and device models are unchanged. Evidence: workspace compile after rename.
 
 ### Snapshot and migration
 
-- None yet.
+- Snapshot envelope magic `SYNOSIG1` and HMAC domains
+  `SYNOS-MIGRATION-HMAC-SHA256-V3` / `SYNOS-MONITOR-HMAC-SHA256-V1` are
+  unchanged. Impact: existing authenticated snapshots and live migration
+  continue to verify. Compatibility: no wire-format bump. Evidence: magic
+  strings retained in `snapshot.rs`, `migration.rs`, and `control.rs`.
+  Migration: none; readers and writers still use the SynOS fourccs.
 
 ### Disk formats
 
-- None yet.
+- Writable disk ownership markers are now `<image>.ghostos.lock`. Impact:
+  new VM runs create GhostOS lock files. Compatibility: inspect/recover still
+  accept leftover `<image>.synos.lock` files; new locks are only
+  `.ghostos.lock`. Evidence: `DiskImage` lock helpers. Migration: recover or
+  delete stale `.synos.lock` files, then start the VM so it can create a
+  `.ghostos.lock`. System-disk header `SYNOSDSK` and GhostFS volume magics
+  stay as previously published fourccs.
 
 ### Tooling and documentation
 
+- Renamed crates, scripts, Docker images, Rust targets, and docs from SynOS
+  to GhostOS (`ghostos-*`, `x86_64-unknown-ghostos`, `cargo ghostos`).
+  Impact: host tooling and package names change. Compatibility: guest
+  snapshot, disk header, and RPC `SYRP` bytes are unchanged. Evidence:
+  workspace package rename.
 - Added the VM public contract, compatibility matrices, and release artifact
   manifest process. Impact: documentation and packaging only. Compatibility:
   guest, snapshot, and disk behavior unchanged. Evidence: documentation review.

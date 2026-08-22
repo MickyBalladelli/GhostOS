@@ -1,7 +1,7 @@
-use synos_boot_protocol::{
-    SYNOS_PERSISTENCE_COMMAND_PORT, SYNOS_PERSISTENCE_DATA_PORT,
-    SYNOS_PERSISTENCE_FLUSH, SYNOS_PERSISTENCE_LENGTH_PORT, SYNOS_PERSISTENCE_LOAD,
-    SYNOS_PERSISTENCE_MAX_BYTES, SYNOS_PERSISTENCE_SAVE,
+use ghostos_boot_protocol::{
+    GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_DATA_PORT,
+    GHOSTOS_PERSISTENCE_FLUSH, GHOSTOS_PERSISTENCE_LENGTH_PORT, GHOSTOS_PERSISTENCE_LOAD,
+    GHOSTOS_PERSISTENCE_MAX_BYTES, GHOSTOS_PERSISTENCE_SAVE,
 };
 
 const PERSISTENCE_CONTAINER_MAGIC: [u8; 8] = *b"SYNREC01";
@@ -39,30 +39,30 @@ impl PersistentStore {
 
     #[allow(dead_code)]
     pub fn load(&self, bytes: &mut [u8]) -> Option<usize> {
-        if bytes.len() > SYNOS_PERSISTENCE_MAX_BYTES {
+        if bytes.len() > GHOSTOS_PERSISTENCE_MAX_BYTES {
             return None
         }
-        io_out8(SYNOS_PERSISTENCE_COMMAND_PORT, SYNOS_PERSISTENCE_LOAD);
-        let length = io_in32(SYNOS_PERSISTENCE_LENGTH_PORT) as usize;
+        io_out8(GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_LOAD);
+        let length = io_in32(GHOSTOS_PERSISTENCE_LENGTH_PORT) as usize;
         if length > bytes.len() {
             return None
         }
         for byte in &mut bytes[..length] {
-            *byte = io_in8(SYNOS_PERSISTENCE_DATA_PORT);
+            *byte = io_in8(GHOSTOS_PERSISTENCE_DATA_PORT);
         }
         Some(length)
     }
 
     pub fn save(&self, bytes: &[u8]) {
-        if bytes.len() > SYNOS_PERSISTENCE_MAX_BYTES {
+        if bytes.len() > GHOSTOS_PERSISTENCE_MAX_BYTES {
             return
         }
-        io_out8(SYNOS_PERSISTENCE_COMMAND_PORT, SYNOS_PERSISTENCE_SAVE);
-        io_out32(SYNOS_PERSISTENCE_LENGTH_PORT, bytes.len() as u32);
+        io_out8(GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_SAVE);
+        io_out32(GHOSTOS_PERSISTENCE_LENGTH_PORT, bytes.len() as u32);
         for byte in bytes {
-            io_out8(SYNOS_PERSISTENCE_DATA_PORT, *byte);
+            io_out8(GHOSTOS_PERSISTENCE_DATA_PORT, *byte);
         }
-        io_out8(SYNOS_PERSISTENCE_COMMAND_PORT, SYNOS_PERSISTENCE_FLUSH);
+        io_out8(GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_FLUSH);
     }
 
     pub fn load_boot_diagnostic(&self, bytes: &mut [u8]) -> Option<usize> {

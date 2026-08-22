@@ -1,4 +1,4 @@
-use synos_system_model::quota::{
+use ghostos_system_model::quota::{
     QuotaCharge, QuotaLedger, QuotaPolicy, QuotaRejection, QuotaResource,
 };
 

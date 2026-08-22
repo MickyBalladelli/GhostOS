@@ -4,7 +4,7 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$project_root/scripts/reproducible-env.sh"
 
-output_dir=${SYNOS_RELEASE_DIR:-$project_root/build/release}
+output_dir=${GHOSTOS_RELEASE_DIR:-$project_root/build/release}
 case "$output_dir" in
     /*) ;;
     *) output_dir="$project_root/$output_dir" ;;
@@ -21,21 +21,21 @@ fi
 "$project_root/scripts/build-portable-image.sh" >/dev/null
 
 revision=$(git -C "$project_root" rev-parse HEAD 2>/dev/null || printf 'unknown')
-loader="$project_root/target/x86_64-unknown-uefi/release/synos-loader.efi"
-bios_image="$project_root/build/bios/synos-bios.img"
-uefi_image="$project_root/build/portable/synos.img"
+loader="$project_root/target/x86_64-unknown-uefi/release/ghostos-loader.efi"
+bios_image="$project_root/build/bios/ghostos-bios.img"
+uefi_image="$project_root/build/portable/ghostos.img"
 
-cp "$loader" "$output_dir/synos-loader.efi"
-cp "$bios_image" "$output_dir/synos-bios.img"
-cp "$uefi_image" "$output_dir/synos-uefi.img"
-cp "$project_root/scripts/install-synos.sh" "$output_dir/install-synos.sh"
-cp "$project_root/scripts/recover-synos.sh" "$output_dir/recover-synos.sh"
-chmod 755 "$output_dir/install-synos.sh" "$output_dir/recover-synos.sh"
+cp "$loader" "$output_dir/ghostos-loader.efi"
+cp "$bios_image" "$output_dir/ghostos-bios.img"
+cp "$uefi_image" "$output_dir/ghostos-uefi.img"
+cp "$project_root/scripts/install-ghostos.sh" "$output_dir/install-ghostos.sh"
+cp "$project_root/scripts/recover-ghostos.sh" "$output_dir/recover-ghostos.sh"
+chmod 755 "$output_dir/install-ghostos.sh" "$output_dir/recover-ghostos.sh"
 
 create_media() {
     kind=$1
     label=$2
-    output="$output_dir/synos-$kind.img"
+    output="$output_dir/ghostos-$kind.img"
     volume_id=$(printf '%s%s' "$revision" "$kind" | cksum | awk '{ printf "%08x", $1 }' | cut -c1-8)
 
     truncate -s 256M "$output"
@@ -46,11 +46,11 @@ create_media() {
     mmd -i "$output" ::/tools
     mmd -i "$output" ::/docs
     mcopy -i "$output" "$loader" ::/EFI/BOOT/BOOTX64.EFI
-    mcopy -i "$output" "$bios_image" ::/payload/synos-bios.img
-    mcopy -i "$output" "$uefi_image" ::/payload/synos-uefi.img
+    mcopy -i "$output" "$bios_image" ::/payload/ghostos-bios.img
+    mcopy -i "$output" "$uefi_image" ::/payload/ghostos-uefi.img
     mcopy -i "$output" "$output_dir/MEDIA-SHA256SUMS" ::/MEDIA-SHA256SUMS
-    mcopy -i "$output" "$output_dir/install-synos.sh" ::/tools/install-synos.sh
-    mcopy -i "$output" "$output_dir/recover-synos.sh" ::/tools/recover-synos.sh
+    mcopy -i "$output" "$output_dir/install-ghostos.sh" ::/tools/install-ghostos.sh
+    mcopy -i "$output" "$output_dir/recover-ghostos.sh" ::/tools/recover-ghostos.sh
     mcopy -i "$output" "$project_root/docs/$kind-media.md" ::/docs/README.md
 }
 
@@ -61,11 +61,11 @@ else
 fi
 
 {
-    printf '%s  %s\n' "$(hash_file "$output_dir/synos-bios.img")" synos-bios.img
-    printf '%s  %s\n' "$(hash_file "$output_dir/synos-uefi.img")" synos-uefi.img
-    printf '%s  %s\n' "$(hash_file "$output_dir/synos-loader.efi")" synos-loader.efi
-    printf '%s  %s\n' "$(hash_file "$output_dir/install-synos.sh")" install-synos.sh
-    printf '%s  %s\n' "$(hash_file "$output_dir/recover-synos.sh")" recover-synos.sh
+    printf '%s  %s\n' "$(hash_file "$output_dir/ghostos-bios.img")" ghostos-bios.img
+    printf '%s  %s\n' "$(hash_file "$output_dir/ghostos-uefi.img")" ghostos-uefi.img
+    printf '%s  %s\n' "$(hash_file "$output_dir/ghostos-loader.efi")" ghostos-loader.efi
+    printf '%s  %s\n' "$(hash_file "$output_dir/install-ghostos.sh")" install-ghostos.sh
+    printf '%s  %s\n' "$(hash_file "$output_dir/recover-ghostos.sh")" recover-ghostos.sh
 } > "$output_dir/MEDIA-SHA256SUMS"
 
 create_media installer INSTALR

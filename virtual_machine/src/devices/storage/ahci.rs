@@ -484,7 +484,7 @@ impl Ahci {
         put(&mut id, 6, 63);
         let sn = b"SYNOSVM00001";
         id[20..20 + sn.len()].copy_from_slice(sn);
-        let mn = b"SynOS Virtual Disk";
+        let mn = b"GhostOS Virtual Disk";
         id[46..46 + mn.len()].copy_from_slice(mn);
         put(&mut id, 47, 0x8001);
         put(&mut id, 49, 0x0F00);
@@ -601,7 +601,7 @@ mod tests {
     use std::io::Write;
 
     fn image_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("synos-ahci-{name}-{}", std::process::id()))
+        std::env::temp_dir().join(format!("ghostos-ahci-{name}-{}", std::process::id()))
     }
 
     fn disk(name: &str) -> DiskImage {
@@ -618,7 +618,7 @@ mod tests {
         ahci.attach_disk(disk("round-trip"));
         assert_eq!(ahci.sector_count(), Some(8));
         let identify = ahci.build_identify();
-        assert_eq!(&identify[46..64], b"SynOS Virtual Disk");
+        assert_eq!(&identify[46..64], b"GhostOS Virtual Disk");
 
         let mut mmu = Mmu::new(0x20_000);
         let source = 0x1000;

@@ -1,21 +1,21 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use synos_admission::{AdmissionController, AdmissionOutcome, AdmissionPriority, WorkClass};
-use synos_status::{IntoStatus, Status};
-use synos_durability::{InterruptionInjector, NoInterruption};
-use synos_synfs::{
+use ghostos_admission::{AdmissionController, AdmissionOutcome, AdmissionPriority, WorkClass};
+use ghostos_status::{IntoStatus, Status};
+use ghostos_durability::{InterruptionInjector, NoInterruption};
+use ghostos_ghostfs::{
     CapacityObservation, CapacityResource, SynFs,
 };
-use synos_system_model::{
+use ghostos_system_model::{
     ContentId, DEFAULT_PACKAGE_CAPACITY, DEFAULT_ROOT_BINDINGS, Error as ModelError, LogicalName,
     MAX_DEPENDENCIES, PackageManifest, RepositoryError, RootBuilder, RootManifest, SynFsRepository,
 };
-use synos_policy::{
+use ghostos_policy::{
     ObjectId, PackageActivationChange, PolicyChange, PolicySnapshot, SimulationError,
     SimulationReport,
 };
-pub use synos_service_scale::{
+pub use ghostos_service_scale::{
     EffectReceipt, HandoffReceipt, HandoffToken, InstanceId, InstanceState, JoinReceipt, PackageScale,
     RequestId, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError, ScaleSnapshot,
 };
@@ -29,8 +29,8 @@ pub const SIGNATURE_BYTES: usize = 32;
 pub const DEFAULT_TRUSTED_KEYS: usize = 8;
 pub const APPLICATION_BUNDLE_MAGIC: &[u8; 8] = b"SYNAPP01";
 pub const APPLICATION_BUNDLE_VERSION: u16 = 1;
-pub const PACKAGE_ABI_VERSION: synos_api_compat::ApiVersion = synos_api_compat::PACKAGE_API.current;
-pub const PACKAGE_API_VERSION: synos_api_compat::ApiVersion = PACKAGE_ABI_VERSION;
+pub const PACKAGE_ABI_VERSION: ghostos_api_compat::ApiVersion = ghostos_api_compat::PACKAGE_API.current;
+pub const PACKAGE_API_VERSION: ghostos_api_compat::ApiVersion = PACKAGE_ABI_VERSION;
 pub const APPLICATION_MANIFEST_SCHEMA: u16 = 1;
 pub const APPLICATION_BUNDLE_HEADER_BYTES: usize = 144;
 pub const APPLICATION_METADATA_BYTES: usize = 160;
@@ -64,10 +64,10 @@ impl IntoStatus for PackageError {
     fn status(self) -> Status {
         match self {
             Self::Admission(outcome) => match outcome.action {
-                synos_admission::AdmissionAction::Dropped => Status::NO_SPACE,
-                synos_admission::AdmissionAction::Delayed
-                | synos_admission::AdmissionAction::Retried => Status::BUSY,
-                synos_admission::AdmissionAction::Admitted => Status::INTERNAL,
+                ghostos_admission::AdmissionAction::Dropped => Status::NO_SPACE,
+                ghostos_admission::AdmissionAction::Delayed
+                | ghostos_admission::AdmissionAction::Retried => Status::BUSY,
+                ghostos_admission::AdmissionAction::Admitted => Status::INTERNAL,
             },
             Self::BufferTooSmall { .. } | Self::TooManyDependencies | Self::TrustStoreFull => {
                 Status::NO_SPACE
@@ -964,7 +964,7 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
     }
 
     /// Preview root activation and its dependent package objects without
-    /// creating a checkpoint, changing the active root, or touching SynFS.
+    /// creating a checkpoint, changing the active root, or touching GhostFS.
     pub fn simulate_activation_policy<
         const PRINCIPALS: usize,
         const OBJECTS: usize,
@@ -1304,7 +1304,7 @@ impl<const PACKAGES: usize, const KEYS: usize> PackageDaemon<PACKAGES, KEYS> {
         let fragmentation = filesystem
             .fragmentation_report()
             .map_err(|error| PackageError::Repository(RepositoryError::SynFs(error)))?;
-        let block_bytes = synos_synfs::BLOCK_SIZE as u64;
+        let block_bytes = ghostos_ghostfs::BLOCK_SIZE as u64;
         let fragmented_bytes = (fragmentation.fragmented_blocks as u64).saturating_mul(block_bytes);
         Ok(CapacityObservation {
             resource: CapacityResource::PackageCache,

@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn registers_mac_link_interrupt_and_reset() {
-        let mac = MacAddress::synos_default(1);
+        let mac = MacAddress::ghostos_default(1);
         let mut nic = E1000::new(mac);
         assert_eq!(Device::read(&nic, REG_STATUS as u64, 4).unwrap() & STATUS_LU as u64, STATUS_LU as u64);
         assert_eq!(Device::read(&nic, REG_RAL0 as u64, 4).unwrap(), 0x1200_5452);
@@ -484,8 +484,8 @@ mod tests {
     #[test]
     fn tx_and_rx_descriptor_rings_move_a_frame() {
         let hub = Rc::new(RefCell::new(LoopbackHub::new()));
-        let tx_mac = MacAddress::synos_default(1);
-        let rx_mac = MacAddress::synos_default(2);
+        let tx_mac = MacAddress::ghostos_default(1);
+        let rx_mac = MacAddress::ghostos_default(2);
         let mut tx = E1000::new(tx_mac);
         let mut rx = E1000::new(rx_mac);
         tx.attach_backend(Box::new(LoopbackPort::new(hub.clone(), 0, tx_mac)));

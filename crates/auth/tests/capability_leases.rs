@@ -1,6 +1,6 @@
-use synos_auth::{CapabilityKey, CapabilityLease, LeaseContext, LeaseError, LeaseReplayGuard};
-use synos_fabric::NodeId;
-use synos_kernel::Rights;
+use ghostos_auth::{CapabilityKey, CapabilityLease, LeaseContext, LeaseError, LeaseReplayGuard};
+use ghostos_fabric::NodeId;
+use ghostos_kernel::Rights;
 
 const PURPOSE_IO: u64 = 7;
 

@@ -34,7 +34,7 @@ pub use system_disk::{
     SYSTEM_DISK_FORMAT_VERSION,
     SYSTEM_DISK_BOOT_RECORD_OFFSET, SYSTEM_DISK_BOOT_RECORD_SIZE, SYSTEM_DISK_MANIFEST_SIZE,
     SYSTEM_DISK_MIN_SIZE, SYSTEM_DISK_PAYLOAD_OFFSET,
-    SYSTEM_DISK_SETTINGS_SIZE, SYNFS_SYSTEM_BLOCKS, SYNFS_SYSTEM_VOLUME_SIZE,
+    SYSTEM_DISK_SETTINGS_SIZE, GHOSTFS_SYSTEM_BLOCKS, GHOSTFS_SYSTEM_VOLUME_SIZE,
 };
 
 use crate::devices::DeviceError;
@@ -80,11 +80,14 @@ impl fmt::Display for StorageError {
                 if !printed_owner {
                     writeln!(f, "  owner: {}", owner.trim().replace('\n', "; "))?;
                 }
-                let image_path = path.strip_suffix(".synos.lock").unwrap_or(path);
+                let image_path = path
+                    .strip_suffix(".ghostos.lock")
+                    .or_else(|| path.strip_suffix(".synos.lock"))
+                    .unwrap_or(path);
                 writeln!(f)?;
                 write!(
                     f,
-                    "  action: ./target/release/synos-vm disk lock {image_path}",
+                    "  action: ./target/release/ghostos-vm disk lock {image_path}",
                 )
             }
             StorageError::ReadOnly => write!(f, "disk image opened read-only"),

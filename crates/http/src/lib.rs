@@ -4,11 +4,11 @@
 //! Capability-constrained HTTP and gRPC building blocks for Ring 3 services.
 //!
 //! The API keeps parsing, routing, and transport separate. `HttpServer` talks
-//! to networking only through `synos-netd` IPC requests carrying an
+//! to networking only through `ghostos-netd` IPC requests carrying an
 //! owner-bound `SocketCapability`.
 
-pub use synos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
-pub use synos_service_scale::{
+pub use ghostos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
+pub use ghostos_service_scale::{
     EffectReceipt, HandoffReceipt, HandoffToken, HttpScale, InstanceId, InstanceState, JoinReceipt,
     RequestId, RouteDecision, ServiceKind, SessionId, SessionState, ScaleError, ScaleSnapshot,
 };
@@ -37,7 +37,7 @@ pub use http::{
 };
 pub use netd::{NetdClient, NetdError};
 pub use rpc::{
-    RpcHttpError, SYNOS_RPC_CONTENT_TYPE, decode_rpc_request, is_rpc_content_type,
+    RpcHttpError, GHOSTOS_RPC_CONTENT_TYPE, decode_rpc_request, is_rpc_content_type,
     rpc_error_response, rpc_response, rpc_response_loaned,
 };
 pub use router::{Handler, RequestContext, Route, RouteError, Router, WebRights};

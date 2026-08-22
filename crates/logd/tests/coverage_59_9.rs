@@ -1,10 +1,10 @@
-use synos_logd::{
+use ghostos_logd::{
     JournalStream, JournalWriter, LogDaemon, LogError, Opcom, PollReport, SynFsJournal,
     TerminalId, SECURITY_JOURNAL,
 };
-use synos_observability::{EventKind, Level, TraceEvent, TraceRing};
-use synos_observability::AuditQuery;
-use synos_synfs::SynFs;
+use ghostos_observability::{EventKind, Level, TraceEvent, TraceRing};
+use ghostos_observability::AuditQuery;
+use ghostos_ghostfs::SynFs;
 
 #[derive(Default)]
 struct Writer {

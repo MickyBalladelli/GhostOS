@@ -1,7 +1,7 @@
 use core::fmt;
 
-use synos_fabric::{AddressRange, NodeId};
-use synos_kernel::{FederationClusterId, Rights};
+use ghostos_fabric::{AddressRange, NodeId};
+use ghostos_kernel::{FederationClusterId, Rights};
 
 use crate::{
     LendingError, LendingKind, LendingRights, ResourceLender, RevocationAction,

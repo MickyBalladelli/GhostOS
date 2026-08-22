@@ -1,7 +1,7 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-pub use synos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
+pub use ghostos_protocol::{ProtocolError, ProtocolGuard, ProtocolLimits, TrafficClass, VersionRange};
 
 pub fn validate_cluster_message(
     guard: &mut ProtocolGuard,
@@ -13,7 +13,7 @@ pub fn validate_cluster_message(
     guard.accept_sequence(sequence)
 }
 
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub mod cluster;
 pub mod cxl;

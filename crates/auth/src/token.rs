@@ -1,7 +1,7 @@
 use core::fmt;
 
-use synos_fabric::NodeId;
-use synos_kernel::Rights;
+use ghostos_fabric::NodeId;
+use ghostos_kernel::Rights;
 
 pub const MAX_CAPABILITY_CAVEATS: usize = 4;
 

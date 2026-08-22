@@ -1,4 +1,4 @@
-use synos_test_support::fault_matrix::{
+use ghostos_test_support::fault_matrix::{
     matrix, Fault, FaultInjectionController, FaultMatrix, FaultTarget, MatrixError,
     RecoveryEvidence, Workflow, MATRIX_SIZE,
 };

@@ -1,4 +1,4 @@
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::ThermalTripPoints;
 

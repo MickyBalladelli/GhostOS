@@ -19,10 +19,10 @@ and fixed-capacity rings remain the queue and fairness boundaries.
 Run on each host with the same release profile and workload size:
 
 ```sh
-SYNOS_SCALE_ITERATIONS=20000 python3 scripts/benchmark.py \
+GHOSTOS_SCALE_ITERATIONS=20000 python3 scripts/benchmark.py \
   --warmups 2 --samples 9 --no-optional-metrics \
   --output build/benchmarks/scalability.json -- \
-  cargo bench -p synos-kernel --bench scalability -- --nocapture
+  cargo bench -p ghostos-kernel --bench scalability -- --nocapture
 ```
 
 The JSONL records contain one result for every path and CPU tier. Each record
@@ -47,7 +47,7 @@ an emulated tier run. Retain the resulting JSON with the source revision,
 command, host signature, and configuration next to release evidence.
 
 Smoke evidence recorded 2026-08-11 at revision `bbb8b3b93e5e02dc63fc28155bb923e5400daada`.
-Command: `SYNOS_SCALE_ITERATIONS=100 cargo bench -p synos-kernel --bench scalability -- --nocapture`.
+Command: `GHOSTOS_SCALE_ITERATIONS=100 cargo bench -p ghostos-kernel --bench scalability -- --nocapture`.
 It used the optimized bench profile on Darwin 25.5.0 arm64. All five paths
 stayed within their p99 budgets at all five policy tiers; the observed p99
 operation latency maximum was 983 ns, minimum reported throughput was

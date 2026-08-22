@@ -44,14 +44,14 @@ format and resource checks, not just a version check.
 
 All images must have non-zero sector-aligned capacity. Existing image capacity
 must equal `--disk-size` when supplied. The system-disk header, two redundant
-manifest slots, checksums, settings extent, and SynFS system volume must all
+manifest slots, checksums, settings extent, and GhostFS system volume must all
 validate. The newest complete manifest generation wins; a torn update may fall
 back to the other slot. A newer system-disk format is rejected, not silently
 mounted.
 
 `--read-only` opens the base without a writable ownership lock. `--copy-on-write`
 and `--disposable` clone the base and discard guest writes at close. Persistent
-writable use claims `<canonical-image>.synos.lock`; stale recovery is explicit.
+writable use claims `<canonical-image>.ghostos.lock`; stale recovery is explicit.
 
 ## Guest boot-image matrix
 
@@ -59,7 +59,7 @@ writable use claims `<canonical-image>.synos.lock`; stale recovery is explicit.
 | --- | --- | --- | --- | --- |
 | `--kernel PATH` | Supported | Supported | Ignored for boot handoff | Raw bytes are loaded at 1 MiB without architecture validation; a valid ELF64 uses its ELF load range and entry |
 | `--initrd PATH` | Conditional | Conditional | Ignored for EFI-app handoff | Optional arbitrary bytes, page-aligned after the kernel; layout overlap is rejected |
-| `--system-disk PATH` | Supported | Supported | Ignored for EFI-app handoff | Manifest v1 supplies kernel/initrd/settings/SynFS volume; kernel follows the same raw/ELF64 rules |
+| `--system-disk PATH` | Supported | Supported | Ignored for EFI-app handoff | Manifest v1 supplies kernel/initrd/settings/GhostFS volume; kernel follows the same raw/ELF64 rules |
 | `--efi PATH` | Rejected | N/A | Supported | PE32+ x86-64 (`MZ`, `PE\0\0`, machine `0x8664`, optional-header magic `0x20B`) |
 | ELF32 or another non-ELF kernel | Conditional | Conditional | Conditional | Treated as opaque raw bytes, not rejected by the loader; the long-mode handoff requires the payload itself to be x86-64-compatible |
 | Non-x86-64 EFI application | Rejected | Rejected | Rejected | PE must be PE32+ with machine `0x8664` |
@@ -69,7 +69,7 @@ then the VM's direct loader can boot `--kernel` or a system-disk kernel. When
 `--efi` is selected, the EFI application is the handoff target and direct
 kernel/system-disk boot loading is skipped. `--efi` requires `--firmware uefi`.
 
-Boot information is supplied in SynOS's versioned boot protocol and a
+Boot information is supplied in GhostOS's versioned boot protocol and a
 Multiboot-compatible structure. The kernel receives the boot-info pointer in
 `RDI`, the Multiboot pointer in `RSI`/`RBX`, and the Multiboot bootloader magic
 in `RAX`. `--append` overrides a system-disk `boot_args` value; otherwise the
@@ -91,8 +91,8 @@ system-disk setting/manifest value is used.
 | Virtio block | Legacy PCI/I/O `00:08.0` | RAW/VHD/QCOW2, one disk | Queue state excluded | One disk slot |
 | Virtio console | Legacy PCI/I/O `00:09.0` | No external backing | Queue/output excluded | Host-facing transient console |
 | Virtio RNG | Legacy PCI/I/O `00:0A.0` | Host entropy | RNG state excluded | Host entropy is nondeterministic |
-| Guest agent / PV clock | SynOS MMIO and KVM-compatible MSRs | Always present | Agent queues and host time excluded | Reattach to destination clock/APIC |
-| Memory hotplug | SynOS MMIO | RAM up to `max_memory_size` | Pending request excluded | Destination must have compatible RAM limits |
+| Guest agent / PV clock | GhostOS MMIO and KVM-compatible MSRs | Always present | Agent queues and host time excluded | Reattach to destination clock/APIC |
+| Memory hotplug | GhostOS MMIO | RAM up to `max_memory_size` | Pending request excluded | Destination must have compatible RAM limits |
 
 The device model, transport, PCI identity, BAR, and interrupt vector are
 guest-visible ABI. A snapshot does not carry the model inventory. Restoring or

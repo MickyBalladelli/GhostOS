@@ -138,7 +138,7 @@ impl Default for InterruptController {
 
 /// Minimal legacy PIC port model.
 ///
-/// SynOS acknowledges ISA interrupts through the 8259A command ports while
+/// GhostOS acknowledges ISA interrupts through the 8259A command ports while
 /// this VM delivers those interrupts through the local APIC. Forwarding EOI
 /// commands keeps both interrupt models in sync.
 pub struct LegacyPic {

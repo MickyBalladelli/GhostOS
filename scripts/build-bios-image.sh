@@ -25,10 +25,10 @@ clang --target=i386-unknown-none-elf -m16 -c \
     --oformat binary -Ttext 0x7c00 \
     "$build_dir/stage1.o" -o "$build_dir/stage1.bin"
 
-cargo build --locked --release -p synos-kernel --bin synos-kernel \
+cargo build --locked --release -p ghostos-kernel --bin ghostos-kernel \
     --target x86_64-unknown-none
 
-"$llvm_objcopy" -O binary "$target_dir/synos-kernel" "$build_dir/kernel.bin"
+"$llvm_objcopy" -O binary "$target_dir/ghostos-kernel" "$build_dir/kernel.bin"
 
 kernel_size=$(wc -c < "$build_dir/kernel.bin")
 kernel_sectors=$(( (kernel_size + 511) / 512 ))
@@ -53,10 +53,10 @@ if [ "$stage2_size" -gt 8192 ]; then
 fi
 
 image_sectors=$(( 1 + stage2_sectors + kernel_sectors ))
-dd if=/dev/zero of="$build_dir/synos-bios.img" bs=512 count="$image_sectors" status=none
-dd if="$build_dir/stage1.bin" of="$build_dir/synos-bios.img" conv=notrunc status=none
-dd if="$build_dir/stage2.bin" of="$build_dir/synos-bios.img" bs=512 seek=1 conv=notrunc status=none
-dd if="$build_dir/kernel.bin" of="$build_dir/synos-bios.img" bs=512 seek=$((1 + stage2_sectors)) conv=notrunc status=none
-printf '%s\n' "$source_revision" > "$build_dir/synos-bios.img.revision"
+dd if=/dev/zero of="$build_dir/ghostos-bios.img" bs=512 count="$image_sectors" status=none
+dd if="$build_dir/stage1.bin" of="$build_dir/ghostos-bios.img" conv=notrunc status=none
+dd if="$build_dir/stage2.bin" of="$build_dir/ghostos-bios.img" bs=512 seek=1 conv=notrunc status=none
+dd if="$build_dir/kernel.bin" of="$build_dir/ghostos-bios.img" bs=512 seek=$((1 + stage2_sectors)) conv=notrunc status=none
+printf '%s\n' "$source_revision" > "$build_dir/ghostos-bios.img.revision"
 
-echo "$build_dir/synos-bios.img"
+echo "$build_dir/ghostos-bios.img"

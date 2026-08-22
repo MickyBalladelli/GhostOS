@@ -11,7 +11,7 @@ to the mirror only after the failed-node mark is committed.
 
 The storage path uses two phases. `FailureController::apply(Fence)` records the
 fenced state, and `Recover` is the only action that invokes shared-memory,
-storage, job, capability, DLM, SynFS, log, reservation, and workload release
+storage, job, capability, DLM, GhostFS, log, reservation, and workload release
 hooks. A partition or clock-skew observation cannot skip the fence phase.
 
 Clock decisions use local monotonic sample time and received heartbeat age.
@@ -23,6 +23,6 @@ Direct regressions:
 - `crates/fabric/tests/coverage_59_7.rs`
   - `partition_recovery_does_not_release_memory_before_fencing`
   - `future_peer_timestamp_cannot_extend_partition_recovery_deadline`
-- `crates/synos-storaged/tests/coverage_59_5.rs`
+- `crates/ghostos-storaged/tests/coverage_59_5.rs`
   - `partition_fences_before_storage_and_memory_release`
   - `clock_skew_is_detected_at_local_sample_time_before_recovery`

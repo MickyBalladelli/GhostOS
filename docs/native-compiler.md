@@ -1,30 +1,30 @@
 # Native Compiler
 
-`cargo-synos compile-all` is the native-target build gate for the TODO
+`cargo-ghostos compile-all` is the native-target build gate for the TODO
 roadmap. It builds every production Ring 0 and Ring 3 library crate for a
-SynOS target with `core`, `alloc`, position-independent code, and the bundled
+GhostOS target with `core`, `alloc`, position-independent code, and the bundled
 Rust linker.
 
 ```sh
-cargo run -p cargo-synos -- synos compile-all --target x86_64 --release
-cargo run -p cargo-synos -- synos compile-all --target aarch64 --release
+cargo run -p cargo-ghostos -- ghostos compile-all --target x86_64 --release
+cargo run -p cargo-ghostos -- ghostos compile-all --target aarch64 --release
 ```
 
 Excluded packages are host-side tools or test machines:
 
-- `cargo-synos`
-- `synos-compiler`
-- `synos-test-support`
-- `synos-uefi`
-- `synos-vm`
+- `cargo-ghostos`
+- `ghostos-compiler`
+- `ghostos-test-support`
+- `ghostos-uefi`
+- `ghostos-vm`
 
-The compiler driver runs on the build host. The output is native SynOS code.
-Self-hosting Rust compilation inside a running SynOS instance needs a SynOS
+The compiler driver runs on the build host. The output is native GhostOS code.
+Self-hosting Rust compilation inside a running GhostOS instance needs a GhostOS
 `std` port, process loader, dynamic library support, compiler package, and a
 filesystem-backed compiler service. Those are separate runtime work, not a
 property that can be claimed from a host Cargo command.
 
-The current service boundary is represented by `synos-rustd`. Its requests are
+The current service boundary is represented by `ghostos-rustd`. Its requests are
 fixed-size and include the source root, manifest, target, profile, lock policy,
 network policy, and resource limits. The default policy denies network access.
 During user-space boot, `CompilerServiceBoot` verifies the package gate,
@@ -33,33 +33,33 @@ profile. `CompilerServiceHealthCheck` makes a system update fail and roll back
 when the service is not running or the active root is not bound to that
 package. The host driver accepts matching `--locked` and `--offline` flags and
 can write a signed package atomically after a successful build. Its
-`compile_synfs` path validates the source root and manifest through SynFS,
+`compile_ghostfs` path validates the source root and manifest through GhostFS,
 copies the bounded project tree into an isolated Cargo workspace, and compiles
 that snapshot with the same target and lock policy.
 
 ## Frozen design
 
-The primary self-hosting target is `x86_64-unknown-synos`. The
-`aarch64-unknown-synos` target follows after x86_64 self-hosting works. The
+The primary self-hosting target is `x86_64-unknown-ghostos`. The
+`aarch64-unknown-ghostos` target follows after x86_64 self-hosting works. The
 initial Rust surface includes `core`, `alloc`, `std`, Cargo, build scripts, proc
 macros, tests, and rustdoc. The compiler stack is upstream `rustc` plus LLVM.
 
-SynFS layout is fixed: `/system/toolchains` contains stage-0, stage-1, and
+GhostFS layout is fixed: `/system/toolchains` contains stage-0, stage-1, and
 stage-2 toolchains; `/system/registries` contains signed registries;
 `/system/sources` contains source snapshots; `/system/builds` contains build
 state; `/system/tmp` contains scratch data; and `/system/bundles` contains
-output bundles. These paths are exported as constants by `synos-rustd`.
+output bundles. These paths are exported as constants by `ghostos-rustd`.
 
 Compiler IPC is protocol version 1 with fixed-size frames. It supports
 `Submit`, `Start`, `Poll`, `Cancel`, `Release`, and `ReadLog`. Responses use
-existing `synos-status` values. Log records contain a job id, sequence number,
+existing `ghostos-status` values. Log records contain a job id, sequence number,
 level, event, and bounded message. Queued jobs cancel immediately; running
 jobs get a cooperative stop and are fenced after a five-second grace period;
 terminal jobs reject cancellation; partial output is never published.
 
 ## Native process contract
 
-`synos-app` now owns the Ring 3 side of native process loading. Its ELF64
+`ghostos-app` now owns the Ring 3 side of native process loading. Its ELF64
 loader accepts little-endian x86_64 and Aarch64 images, validates PT_LOAD
 bounds, entry points, TLS, relative relocations, and package payload identity.
 W^X is mandatory: writable/executable segments and executable stacks are
@@ -76,19 +76,19 @@ measurement, use `load_image`, and report the resulting process exit status.
 Executable pages can be measured through `measure_executable_pages` before
 the process is made runnable.
 
-`synos-rustd` also has a signed `ToolchainManifest`. It requires Cargo, rustc,
+`ghostos-rustd` also has a signed `ToolchainManifest`. It requires Cargo, rustc,
 and the linker, optionally requires build-script and proc-macro runners, then
 executes the ordered plan through a process-runtime hook. Every tool receives
 the bounded build request, and failed tools are fenced before the job fails.
-The native loader and SynOS `std` PAL still need to provide that hook for true
+The native loader and GhostOS `std` PAL still need to provide that hook for true
 in-guest execution.
 
-Signed compiler output can now be launched through `synos-app`. The supervisor
+Signed compiler output can now be launched through `ghostos-app`. The supervisor
 validates the package instantiation receipt and entry point, authorizes the
 manifest's requested capabilities against policy, and passes only the approved
 capabilities plus the package payload identity to the process runtime. The
 native executable-image loader still must map that payload before the process
-can run on a booted SynOS instance.
+can run on a booted GhostOS instance.
 
 The self-host path is represented by `SelfHostSession`. It submits and validates
 the runtime build first, refuses unlocked or networked requests, then submits
@@ -98,7 +98,7 @@ must carry non-zero package and payload identities for the session to finish.
 Reproducibility is checked with:
 
 ```sh
-cargo run -p cargo-synos -- synos reproduce --target x86_64 --release
+cargo run -p cargo-ghostos -- ghostos reproduce --target x86_64 --release
 ```
 
 The command creates one fresh source workspace, builds it twice from clean
@@ -113,19 +113,19 @@ whose generated declaration order is not stable.
 Run the compiler acceptance matrix with:
 
 ```sh
-cargo run -p cargo-synos -- synos acceptance --target x86_64 --release
+cargo run -p cargo-ghostos -- ghostos acceptance --target x86_64 --release
 ```
 
 The gate checks signed boot and storage contracts, offline locked requests,
 isolated concurrent jobs, cancellation and crash recovery, stage-2 ordering,
 signed/corrupt/unsigned package handling, hello-world compilation and host
 execution, build scripts, proc macros, application bundles, production Ring 3
-builds, reproducibility, fresh persisted SynFS roots, and target compatibility.
+builds, reproducibility, fresh persisted GhostFS roots, and target compatibility.
 The x86_64 check validates the admitted target specification and rust-lld; the
 full x86_64 gate also supplies the real runtime, loader, and boot evidence.
 The aarch64 target remains gated: its target JSON may be used for cross-build
 work, but cross-compilation alone cannot admit native compatibility.
-The fresh-root check compiles two identical SynFS snapshots in parallel, then
+The fresh-root check compiles two identical GhostFS snapshots in parallel, then
 writes `stage2-reproducibility-evidence.json` with canonical inputs, source,
 root-image, executable digests, and the executing host platform. Use
 `--skip-build` for the fast in-memory contract pass and `--json` for local
@@ -136,21 +136,21 @@ the recorded host-platform matrix.
 
 The cancellation contract runs the five-step toolchain plan with cancellation
 injected at Cargo, build-script, proc-macro, rustc, and linker boundaries. Each
-case fences the active tool, removes its SynFS workspace and scratch roots,
+case fences the active tool, removes its GhostFS workspace and scratch roots,
 releases dynamic artifacts, leaves both cache counts unchanged, keeps the
 verified package and compiler policy unchanged, and records only a cancelled
 audit with zero package/payload identities.
 
 The acceptance gate also produces a booted evidence artifact under its chosen
-root. It boots the real kernel in the VM, builds the native `synos-rustd`
+root. It boots the real kernel in the VM, builds the native `ghostos-rustd`
 process image with the runtime PAL linked in, signs and authorizes that image,
-maps and measures it through `synos-app`, verifies static-only dynamic artifact
+maps and measures it through `ghostos-app`, verifies static-only dynamic artifact
 cleanup, starts the service through init, and preserves the kernel serial log.
-It also stages the locked hello-world project in SynFS, builds its release
+It also stages the locked hello-world project in GhostFS, builds its release
 image, launches it through the application supervisor, commits the source,
 signed package, provenance, build audit, and output to the installed system
 volume, reboots from that disk, and verifies the recovered bytes and content
-IDs. The same booted artifact stages `examples/compiler-acceptance` in SynFS,
+IDs. The same booted artifact stages `examples/compiler-acceptance` in GhostFS,
 builds its build-script and proc-macro crates, and runs the signed toolchain
 plan with separate guest process/workspace/scratch identities. Each tool
 record carries explicit filesystem, network, device, secret, and
@@ -163,16 +163,16 @@ signed local-registry pins are resolved by content ID, source reads require a
 capability-bound `SourceGrant`, and each job receives independent build and
 scratch roots. `CompilerService::handle_ipc` streams state and structured log
 records; `tick` handles deadline expiry and cooperative cancellation; a
-`BuildWorkspaceRuntime` implementation performs the actual SynFS cleanup.
+`BuildWorkspaceRuntime` implementation performs the actual GhostFS cleanup.
 Successful results enter the immutable cache only after source, lockfile,
 toolchain, target, profile, and feature identities all match.
 
-For the complete host-side step, use `cargo-synos package` with
+For the complete host-side step, use `cargo-ghostos package` with
 `--manifest-path`, `--locked`, `--offline`, `--key`, and `--output`.
 
 ## Rust application bundles
 
-`cargo-synos package --app-manifest` turns a linked ELF into a signed SynOS
+`cargo-ghostos package --app-manifest` turns a linked ELF into a signed GhostOS
 application. The profile requires `schema`, application `name`, `image`,
 `kind`, `target`, and `entry_offset`, plus all three resource fields:
 
@@ -183,7 +183,7 @@ schema = 1
 name = "demo"
 image = "0x1"
 kind = "service"
-target = "x86_64-unknown-synos"
+target = "x86_64-unknown-ghostos"
 entry_offset = 0
 
 [resources]
@@ -199,7 +199,7 @@ the target, entry point, dependencies, resource limits, and manifest data,
 then writes a content-addressed `.build-record` beside the bundle.
 
 ```sh
-cargo synos package --bin demo --app-manifest App.toml \
+cargo ghostos package --bin demo --app-manifest App.toml \
   --target x86_64 --release --locked --offline \
   --key compiler.key --output demo.synapp \
   --debug-symbols demo.debug --stripped-output demo.stripped
@@ -212,21 +212,21 @@ the normal ELF loader receives the image.
 
 ## User workflow
 
-The host command mirrors the SynOS shell vocabulary:
+The host command mirrors the GhostOS shell vocabulary:
 
 ```sh
-cargo synos check --manifest-path service/Cargo.toml --bin service --locked --offline
-cargo synos build --manifest-path service/Cargo.toml --bin service --release --locked --offline
-cargo synos run --manifest-path service/Cargo.toml --bin service
-cargo synos test --manifest-path service/Cargo.toml --locked --offline
-cargo synos doc --manifest-path service/Cargo.toml --offline
+cargo ghostos check --manifest-path service/Cargo.toml --bin service --locked --offline
+cargo ghostos build --manifest-path service/Cargo.toml --bin service --release --locked --offline
+cargo ghostos run --manifest-path service/Cargo.toml --bin service
+cargo ghostos test --manifest-path service/Cargo.toml --locked --offline
+cargo ghostos doc --manifest-path service/Cargo.toml --offline
 ```
 
 Add `--json` to `check`, `build`, `test`, `doc`, or `run` for Cargo JSON
 diagnostics and a final machine-readable command record. Without it, Cargo's
 normal diagnostics stay visible to a human.
 
-Inside the shell, `syn-shell::rust::register_rust_commands` exposes the same
+Inside the shell, `ghostos-shell::rust::register_rust_commands` exposes the same
 operations as `RUST CHECK`, `RUST BUILD`, `RUST RUN`, `RUST TEST`, and `RUST
 DOC`, plus `SHOW-RUST-JOBS` and `TOOLCHAIN INSTALL|SELECT|UPDATE|ROLLBACK`.
 The adapter takes a capability-bound `RustSource`; it does not grant the
@@ -240,16 +240,16 @@ bounded per-job records for detailed inspection.
 Toolchain management requires an explicit capability root:
 
 ```sh
-cargo synos toolchain install --bundle stage-2.synpkg --key compiler.key \
+cargo ghostos toolchain install --bundle stage-2.synpkg --key compiler.key \
   --root /system/toolchains --stage 2 --target x86_64
-cargo synos toolchain select --root /system/toolchains --stage 2
-cargo synos toolchain rollback --root /system/toolchains
+cargo ghostos toolchain select --root /system/toolchains --stage 2
+cargo ghostos toolchain rollback --root /system/toolchains
 ```
 
 The manager verifies the signed bundle before install, keeps the previous
 bundle for rollback, and refuses `/` as a toolchain root.
 
-Small service recipe from inside SynOS:
+Small service recipe from inside GhostOS:
 
 ```text
 CREATE-DIRECTORY /sources/hello
@@ -273,7 +273,7 @@ policy and the request grant them. Every job exposes a bounded
 `BuildAuditRecord` containing source, dependency, toolchain, package, payload,
 capability, identity, and final status fields.
 
-If `synos-rustd` crashes, init fences the old process and applies its bounded
+If `ghostos-rustd` crashes, init fences the old process and applies its bounded
 restart policy. `CompilerServiceBoot::recover_after_crash` marks queued and
 running jobs failed, releases dynamic artifacts, leaves workspace cleanup
 pending, and starts only the next process generation. The workspace runtime
@@ -290,9 +290,9 @@ The host bootstrap can package the complete Rust toolchain needed by the
 native service:
 
 ```sh
-cargo run -p cargo-synos -- synos toolchain package \
+cargo run -p cargo-ghostos -- ghostos toolchain package \
   --stage 0 --target x86_64 --key compiler.key --output stage-0.synpkg
-cargo run -p cargo-synos -- synos toolchain verify \
+cargo run -p cargo-ghostos -- ghostos toolchain verify \
   --bundle stage-0.synpkg --key compiler.key
 ```
 
@@ -300,6 +300,6 @@ Stage 1 and stage 2 roots use the same format. Their root contains `bin/`
 with Cargo, rustc, rustdoc, and rust-lld, plus `sysroot/`,
 `target-libraries/`, and `rust-src/`; pass that root with `--root` and the
 matching stage number. The archive uses stable sorted paths, content IDs for
-every file, and no symbolic links. `synos-pkg` verifies the signed outer
-bundle before SynFS installation, while `synos-rustd` authorizes each
+every file, and no symbolic links. `ghostos-pkg` verifies the signed outer
+bundle before GhostFS installation, while `ghostos-rustd` authorizes each
 component and revokes build-script and proc-macro images when the build ends.

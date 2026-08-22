@@ -14,8 +14,8 @@ use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
 
-use synos_vm::{
-    run_synos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
+use ghostos_vm::{
+    run_ghostos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
     GuestInputMode, HardwareAcceleration, NetworkBackendConfig, TerminalExit, TerminalSession,
@@ -172,29 +172,29 @@ fn main() {
             print_help();
         }
         Ok(ParseResult::Version) => {
-            println!("synos-vm {VERSION}");
+            println!("ghostos-vm {VERSION}");
         }
         Ok(ParseResult::Run(cli)) => {
             if let Err(error) = run(cli) {
-                eprintln!("synos-vm: {error}");
+                eprintln!("ghostos-vm: {error}");
                 std::process::exit(1);
             }
         }
         Ok(ParseResult::Disk(command)) => {
             if let Err(error) = run_disk_command(command) {
-                eprintln!("synos-vm: {error}");
+                eprintln!("ghostos-vm: {error}");
                 std::process::exit(1);
             }
         }
         Ok(ParseResult::Migrate(command)) => {
             if let Err(error) = run_migrate_command(command) {
-                eprintln!("synos-vm: {error}");
+                eprintln!("ghostos-vm: {error}");
                 std::process::exit(1);
             }
         }
         Err(error) => {
-            eprintln!("synos-vm: {error}");
-            eprintln!("Try `synos-vm --help` for usage.");
+            eprintln!("ghostos-vm: {error}");
+            eprintln!("Try `ghostos-vm --help` for usage.");
             std::process::exit(2);
         }
     }
@@ -474,7 +474,7 @@ fn parse_migrate_command(values: &[String]) -> Result<ParseResult, String> {
         }
         None => Err("migrate needs `send SNAPSHOT ADDRESS` or `receive ADDRESS SNAPSHOT` plus security options".to_string()),
         _ => Err(
-            "usage: synos-vm migrate send SNAPSHOT ADDRESS|receive ADDRESS SNAPSHOT --key KEY --peer-key-id ID --audit-log PATH --secure-transport"
+            "usage: ghostos-vm migrate send SNAPSHOT ADDRESS|receive ADDRESS SNAPSHOT --key KEY --peer-key-id ID --audit-log PATH --secure-transport"
                 .to_string(),
         ),
     }
@@ -916,7 +916,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
     }
     if std::io::stdout().is_terminal() {
         print!(
-            "\x1b]0;SynOS | {}\x07",
+            "\x1b]0;GhostOS | {}\x07",
             format_memory(config.memory_size)
         );
     }
@@ -937,10 +937,10 @@ fn run(mut cli: Cli) -> Result<(), String> {
 
     if cli.integration {
         let steps = config.max_steps.unwrap_or(10_000_000);
-        let report = run_synos_integration(config, steps)
+        let report = run_ghostos_integration(config, steps)
             .map_err(|error| format!("integration failed: {error:?}"))?;
         println!(
-            "SynOS integration: boot={} paging={} scheduler={} capabilities={} ipc={} ({} steps)",
+            "GhostOS integration: boot={} paging={} scheduler={} capabilities={} ipc={} ({} steps)",
             report.kernel_booted,
             report.paging_ready,
             report.scheduler_ready,
@@ -961,7 +961,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
 
     let mut vm = Vm::try_with_config(config)
         .map_err(|error| format!("VM configuration error: {}", vm_error_message(&error, verbose)))?;
-    synos_vm::host_println(format_args!(
+    ghostos_vm::host_println(format_args!(
         "Hardware acceleration: {}",
         vm.hardware_acceleration()
     ));
@@ -1014,7 +1014,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
             .map(|session| session.poll(vm, auth_key))
             .transpose()
             .map(|value| value.unwrap_or(true))
-            .map_err(|_| synos_vm::VmError::IoError)
+            .map_err(|_| ghostos_vm::VmError::IoError)
     };
 
     if let Some(steps) = vm.config().max_steps {
@@ -1027,7 +1027,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
             report.steps, report.rip, report.halted
         );
     } else {
-        synos_vm::host_println(format_args!("Starting CPU emulation..."));
+        ghostos_vm::host_println(format_args!("Starting CPU emulation..."));
         let terminal = TerminalSession::new(if replay_path.is_some() {
             Some(false)
         } else {
@@ -1173,7 +1173,7 @@ fn run_migrate_operation(command: MigrateCommand) -> Result<(), String> {
                 .map_err(|error| format!("cannot load migration authentication key: {error}"))?;
             authorize_migration_key(key, security.authorized_peer_key_id)?;
             let bytes = read_bounded_migration_file(&snapshot)?;
-            let snapshot_value = synos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
+            let snapshot_value = ghostos_vm::VmSnapshot::from_authenticated_bytes(&bytes, key)
                 .map_err(|error| format!("cannot validate authenticated snapshot {}: {error}", snapshot.display()))?;
             let issued_at = checkpoint_timestamp(&snapshot)?;
             validate_checkpoint_time(issued_at)?;
@@ -1358,7 +1358,7 @@ fn read_migration_checkpoint<R, F>(
     sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
     receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
     validate_timestamp: F,
-) -> Result<synos_vm::MigrationCheckpointFrame, String>
+) -> Result<ghostos_vm::MigrationCheckpointFrame, String>
 where
     R: Read,
     F: Fn(u64) -> Result<(), String>,
@@ -1409,7 +1409,7 @@ fn publish_received_checkpoint(
     target: &Path,
     bytes: &[u8],
     key: SnapshotAuthKey,
-    expected: &synos_vm::VmSnapshot,
+    expected: &ghostos_vm::VmSnapshot,
 ) -> Result<(), String> {
     let parent = target
         .parent()
@@ -1441,7 +1441,7 @@ fn create_migration_temp(parent: &Path, target: &Path) -> Result<(PathBuf, File)
         .to_string_lossy();
     for attempt in 0..100u32 {
         let partial = parent.join(format!(
-            ".{name}.synos-migration-{}-{attempt}.partial",
+            ".{name}.ghostos-migration-{}-{attempt}.partial",
             std::process::id()
         ));
         let mut options = OpenOptions::new();
@@ -1463,10 +1463,10 @@ fn create_migration_temp(parent: &Path, target: &Path) -> Result<(PathBuf, File)
 fn verify_received_checkpoint(
     path: &Path,
     key: SnapshotAuthKey,
-    expected: &synos_vm::VmSnapshot,
+    expected: &ghostos_vm::VmSnapshot,
     stage: &str,
 ) -> Result<(), String> {
-    let reopened = synos_vm::VmSnapshot::load_authenticated(path, key)
+    let reopened = ghostos_vm::VmSnapshot::load_authenticated(path, key)
         .map_err(|error| format!("cannot verify {stage} migration checkpoint after reopen: {error}"))?;
     if &reopened != expected {
         return Err(format!("{stage} migration checkpoint changed during publication"));
@@ -1479,7 +1479,7 @@ fn publish_checkpoint_file(
     target: &Path,
     parent: &Path,
     key: SnapshotAuthKey,
-    expected: &synos_vm::VmSnapshot,
+    expected: &ghostos_vm::VmSnapshot,
 ) -> Result<(), String> {
     let had_old_target = match fs::symlink_metadata(target) {
         Ok(_) => true,
@@ -1545,7 +1545,7 @@ fn create_migration_backup(parent: &Path, target: &Path) -> Result<PathBuf, Stri
         .to_string_lossy();
     for attempt in 0..100u32 {
         let backup = parent.join(format!(
-            ".{name}.synos-migration-{}-{attempt}.backup",
+            ".{name}.ghostos-migration-{}-{attempt}.backup",
             std::process::id()
         ));
         match create_migration_backup_entry(target, &backup) {
@@ -1687,7 +1687,7 @@ fn replay_ledger_path(snapshot: &Path) -> PathBuf {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    parent.join(".synos-vm-migration-replay")
+    parent.join(".ghostos-vm-migration-replay")
 }
 
 fn reserve_replay(
@@ -2407,9 +2407,9 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
     }
 }
 
-fn vm_error_message(error: &synos_vm::VmError, verbose: bool) -> String {
+fn vm_error_message(error: &ghostos_vm::VmError, verbose: bool) -> String {
     match error {
-        synos_vm::VmError::Disk(message) if !verbose => {
+        ghostos_vm::VmError::Disk(message) if !verbose => {
             let summary = message.lines().next().unwrap_or(message);
             let action = message.lines().find(|line| line.starts_with("  action:"));
             match action {
@@ -2417,7 +2417,7 @@ fn vm_error_message(error: &synos_vm::VmError, verbose: bool) -> String {
                 None => summary.to_string(),
             }
         }
-        synos_vm::VmError::Disk(message) => message.clone(),
+        ghostos_vm::VmError::Disk(message) => message.clone(),
         other => format!("{other:?}"),
     }
 }
@@ -2542,7 +2542,7 @@ fn repair_disk(path: &PathBuf, json: bool) -> Result<(), String> {
     }
 }
 
-fn print_inspection_report(report: &synos_vm::DiskInspectionReport) {
+fn print_inspection_report(report: &ghostos_vm::DiskInspectionReport) {
     let format = report
         .format
         .map(format_name)
@@ -2587,7 +2587,7 @@ fn print_inspection_report(report: &synos_vm::DiskInspectionReport) {
     }
 }
 
-fn print_inspection_json(report: &synos_vm::DiskInspectionReport) {
+fn print_inspection_json(report: &ghostos_vm::DiskInspectionReport) {
     let format = report.format.map(format_name).unwrap_or("unknown");
     let capacity = report.capacity.map_or_else(|| "null".to_string(), |value| value.to_string());
     let file_size = report.file_size.map_or_else(|| "null".to_string(), |value| value.to_string());
@@ -2643,7 +2643,7 @@ fn print_lock_status(path: &PathBuf, verbose: bool, json: bool) -> Result<(), St
                     if let Some(image) = info.image_path.as_ref() {
                         println!();
                         println!(
-                            "action: ./target/release/synos-vm disk recover-lock {}",
+                            "action: ./target/release/ghostos-vm disk recover-lock {}",
                             image.display(),
                         );
                     }
@@ -2691,7 +2691,7 @@ fn print_lock_status(path: &PathBuf, verbose: bool, json: bool) -> Result<(), St
             if info.stale {
                 if let Some(image) = info.image_path.as_ref() {
                     println!(
-                        "  action: ./target/release/synos-vm disk recover-lock {}",
+                        "  action: ./target/release/ghostos-vm disk recover-lock {}",
                         image.display(),
                     );
                 }
@@ -2741,11 +2741,11 @@ fn format_name(format: DiskFormat) -> &'static str {
     }
 }
 
-fn finding_severity_name(severity: synos_vm::DiskFindingSeverity) -> &'static str {
+fn finding_severity_name(severity: ghostos_vm::DiskFindingSeverity) -> &'static str {
     match severity {
-        synos_vm::DiskFindingSeverity::Info => "info",
-        synos_vm::DiskFindingSeverity::Warning => "warning",
-        synos_vm::DiskFindingSeverity::Error => "error",
+        ghostos_vm::DiskFindingSeverity::Info => "info",
+        ghostos_vm::DiskFindingSeverity::Warning => "warning",
+        ghostos_vm::DiskFindingSeverity::Error => "error",
     }
 }
 
@@ -2764,11 +2764,11 @@ fn role_name(role: DiskRole) -> &'static str {
     }
 }
 
-fn persistence_name(persistence: synos_vm::DiskPersistence) -> &'static str {
+fn persistence_name(persistence: ghostos_vm::DiskPersistence) -> &'static str {
     match persistence {
-        synos_vm::DiskPersistence::Persistent => "persistent",
-        synos_vm::DiskPersistence::CopyOnWrite => "copy-on-write",
-        synos_vm::DiskPersistence::Disposable => "disposable",
+        ghostos_vm::DiskPersistence::Persistent => "persistent",
+        ghostos_vm::DiskPersistence::CopyOnWrite => "copy-on-write",
+        ghostos_vm::DiskPersistence::Disposable => "disposable",
     }
 }
 
@@ -2791,13 +2791,13 @@ fn format_memory(bytes: usize) -> String {
 fn print_help() {
     println!(
         "{}",
-        r#"SynOS virtual machine
+        r#"GhostOS virtual machine
 
 Usage:
-  synos-vm [OPTIONS]
+  ghostos-vm [OPTIONS]
 
 Boot options:
-  -k, --kernel <PATH>       Load a SynOS kernel image
+  -k, --kernel <PATH>       Load a GhostOS kernel image
   -i, --initrd <PATH>       Load an initrd image
   -a, --append <ARGS>       Pass kernel command-line arguments
   -f, --firmware <MODE>     Firmware: bios (default) or uefi
@@ -2823,7 +2823,7 @@ Machine options:
 
 Disk options:
       --disk <PATH>          Attach a data disk; repeat for more disks
-      --system-disk <PATH>   Attach the SynOS system disk
+      --system-disk <PATH>   Attach the GhostOS system disk
       --disk-controller <C>  Controller: ahci, nvme, or virtio-blk
       --disk-format <F>      Image format: raw, vhd, or qcow2
       --disk-size <SIZE>     Require this capacity, or use it when creating
@@ -2847,27 +2847,27 @@ State and management:
       --replay <PATH>        Replay a deterministic VM input trace
 
 Commands:
-      --integration          Run SynOS integration checks
-  synos-vm disk list [--json] List disk health and guest identities
-  synos-vm disk inspect PATH [--json]
+      --integration          Run GhostOS integration checks
+  ghostos-vm disk list [--json] List disk health and guest identities
+  ghostos-vm disk inspect PATH [--json]
                               Inspect an image without modifying it
-  synos-vm disk validate PATH [--json]
+  ghostos-vm disk validate PATH [--json]
                               Validate an installed system disk
-  synos-vm disk repair PATH [--json]
+  ghostos-vm disk repair PATH [--json]
                               Repair supported redundant image metadata
-  synos-vm disk rollback PATH [--json]
+  ghostos-vm disk rollback PATH [--json]
                               Restore the last safe system-disk image
-  synos-vm disk provision PATH --kernel PATH [OPTIONS]
+  ghostos-vm disk provision PATH --kernel PATH [OPTIONS]
                               Create/install a system disk without booting
-  synos-vm disk upgrade PATH --kernel PATH [OPTIONS]
+  ghostos-vm disk upgrade PATH --kernel PATH [OPTIONS]
                               Atomically install a new image and retain rollback
-  synos-vm disk lock PATH [--json]
+  ghostos-vm disk lock PATH [--json]
                               Diagnose an ownership lock
-  synos-vm disk recover-lock PATH [--json]
+  ghostos-vm disk recover-lock PATH [--json]
                               Recover a lock only when its owner is stale
-  synos-vm migrate send SNAPSHOT ADDRESS [SECURITY OPTIONS]
+  ghostos-vm migrate send SNAPSHOT ADDRESS [SECURITY OPTIONS]
                               Send an authenticated checkpoint
-  synos-vm migrate receive ADDRESS SNAPSHOT [SECURITY OPTIONS]
+  ghostos-vm migrate receive ADDRESS SNAPSHOT [SECURITY OPTIONS]
                               Receive an authenticated checkpoint
 
 Migration security options:
@@ -2897,7 +2897,7 @@ mod tests {
     fn migration_test_path(label: &str) -> PathBuf {
         let id = MIGRATION_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "synos-vm-migration-{label}-{}-{id}.bin",
+            "ghostos-vm-migration-{label}-{}-{id}.bin",
             std::process::id()
         ))
     }
@@ -2907,7 +2907,7 @@ mod tests {
         SnapshotSchema,
         [u8; MIGRATION_NONCE_BYTES],
         [u8; MIGRATION_NONCE_BYTES],
-        synos_vm::VmSnapshot,
+        ghostos_vm::VmSnapshot,
         Vec<u8>,
     ) {
         let key = SnapshotAuthKey::new([0x42; 32]);
@@ -2961,7 +2961,7 @@ mod tests {
         schema: SnapshotSchema,
         sender_nonce: &[u8; MIGRATION_NONCE_BYTES],
         receiver_nonce: &[u8; MIGRATION_NONCE_BYTES],
-    ) -> Result<synos_vm::MigrationCheckpointFrame, String> {
+    ) -> Result<ghostos_vm::MigrationCheckpointFrame, String> {
         read_migration_checkpoint(
             &mut Cursor::new(wire),
             key,
@@ -3058,7 +3058,7 @@ mod tests {
         });
         assert!(matches!(
             snapshot.restore_into(&mut incompatible),
-            Err(synos_vm::snapshot::SnapshotError::IncompatibleMemory { .. })
+            Err(ghostos_vm::snapshot::SnapshotError::IncompatibleMemory { .. })
         ));
     }
 
@@ -3071,7 +3071,7 @@ mod tests {
         };
         assert!(matches!(
             SnapshotSchema::negotiate(incompatible),
-            Err(synos_vm::snapshot::SnapshotError::MissingFeatures { missing })
+            Err(ghostos_vm::snapshot::SnapshotError::MissingFeatures { missing })
                 if missing & SnapshotFeatures::APIC_STATE.bits() != 0
         ));
     }

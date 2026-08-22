@@ -1,10 +1,10 @@
-use synos_pkg::{
+use ghostos_pkg::{
     bundle_size, encode_bundle, PackageBundle, PackageDaemon, PackageError, SigningKey,
     SystemConfiguration,
 };
-use synos_synfs::SynFs;
-use synos_system_model::ContentId;
-use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
+use ghostos_ghostfs::SynFs;
+use ghostos_system_model::ContentId;
+use ghostos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
 #[test]
 fn signed_bundle_round_trip_detects_tampering_and_trust_failures() {
@@ -66,8 +66,8 @@ fn package_install_and_activation_survive_duplicate_and_rollback_attempts() {
     assert!(daemon.active_configuration().is_some());
     assert!(matches!(
         daemon.activate(&mut filesystem, &configuration),
-        Err(PackageError::Repository(synos_system_model::RepositoryError::Model(
-            synos_system_model::Error::StaleRevision
+        Err(PackageError::Repository(ghostos_system_model::RepositoryError::Model(
+            ghostos_system_model::Error::StaleRevision
         )))
     ));
 }

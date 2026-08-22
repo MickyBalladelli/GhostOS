@@ -2,7 +2,7 @@ use super::{decode_grpc_frame, encode_grpc_frame, parse_request, Method, ParseEr
 
 #[test]
 fn parser_accepts_generated_content_lengths_only_when_complete() {
-    use synos_test_support::property::{run_assert, Config};
+    use ghostos_test_support::property::{run_assert, Config};
 
     run_assert("http.content-length", Config::new(0x59_3, 128), |_, _, _| {
         let bytes = b"POST /data HTTP/1.1\r\ncontent-length: 8\r\n\r\n12345678";
@@ -21,7 +21,7 @@ fn parser_accepts_generated_content_lengths_only_when_complete() {
 
 #[test]
 fn grpc_frame_round_trips_generated_messages() {
-    use synos_test_support::property::{run_assert, Config};
+    use ghostos_test_support::property::{run_assert, Config};
 
     run_assert("http.grpc-frame", Config::new(0x59_3, 128), |_, _, entropy| {
         let length = (entropy.next_u64() as usize) % 129;

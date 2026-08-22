@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create and verify signed SynOS release attestations.
+"""Create and verify signed GhostOS release attestations.
 
 Each artifact receives one detached SHA-256 signature over its raw bytes and
 one signed in-toto-style statement. The statement binds the artifact digest to
@@ -27,11 +27,11 @@ import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ATTESTATION_SCHEMA = 1
-PREDICATE_TYPE = "https://synos.dev/attestations/release/v1"
+PREDICATE_TYPE = "https://ghostos.dev/attestations/release/v1"
 INDEX_NAME = "attestations-index.json"
 INDEX_SIGNATURE_NAME = "attestations-index.json.sig"
 PUBLIC_KEY_NAME = "attestation-public-key.pem"
-SBOM_NAME = "synos-sbom.cdx.json"
+SBOM_NAME = "ghostos-sbom.cdx.json"
 PROVENANCE_NAME = "dependency-provenance.json"
 ARTIFACT_SIGNATURE_SUFFIX = ".artifact.sig"
 LOCKFILE = ROOT / "Cargo.lock"
@@ -49,8 +49,8 @@ DEFAULT_CONFIGURATION_FILES = (
     "scripts/build-install-recovery-artifacts.sh",
     "scripts/package-install-recovery.py",
     "scripts/validate-install-recovery-artifacts.py",
-    "scripts/install-synos.sh",
-    "scripts/recover-synos.sh",
+    "scripts/install-ghostos.sh",
+    "scripts/recover-ghostos.sh",
     "scripts/check-reproducible-image.sh",
     "scripts/package-vm-release.py",
     "scripts/validate-release-claims.py",
@@ -202,7 +202,7 @@ def cargo_components() -> tuple[dict[str, object], list[dict[str, object]]]:
         if package.get("checksum"):
             component["hashes"] = [{"alg": "SHA-256", "content": package["checksum"]}]
         if source:
-            component["properties"] = [{"name": "synos:cargo-source", "value": source}]
+            component["properties"] = [{"name": "ghostos:cargo-source", "value": source}]
         components.append(component)
         provenance.append(
             {
@@ -217,7 +217,7 @@ def cargo_components() -> tuple[dict[str, object], list[dict[str, object]]]:
         "specVersion": "1.5",
         "serialNumber": f"urn:uuid:{sha256_path(LOCKFILE)}",
         "version": 1,
-        "metadata": {"component": {"type": "application", "name": "SynOS"}},
+        "metadata": {"component": {"type": "application", "name": "GhostOS"}},
         "components": components,
     }
     return sbom, provenance
@@ -290,7 +290,7 @@ def public_key_id(path: pathlib.Path) -> str:
 def dependency_provenance(provenance: list[dict[str, object]]) -> dict[str, object]:
     return {
         "schema": 1,
-        "kind": "synos-cargo-dependency-provenance",
+        "kind": "ghostos-cargo-dependency-provenance",
         "lockfile": "Cargo.lock",
         "lockfile_sha256": sha256_path(LOCKFILE),
         "packages": provenance,
@@ -402,7 +402,7 @@ def write_attestations(
         )
     index = {
         "schema": ATTESTATION_SCHEMA,
-        "kind": "synos-release-attestations",
+        "kind": "ghostos-release-attestations",
         "predicate_type": PREDICATE_TYPE,
         "source_commit": source["git_commit"],
         "source_digest": source["digest"],
@@ -437,7 +437,7 @@ def check_attestations(
     if (
         not isinstance(index, dict)
         or index.get("schema") != ATTESTATION_SCHEMA
-        or index.get("kind") != "synos-release-attestations"
+        or index.get("kind") != "ghostos-release-attestations"
     ):
         raise ValueError("unsupported attestation index schema")
     if index.get("public_key_sha256") != public_key_id(public_key):

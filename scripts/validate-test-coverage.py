@@ -241,7 +241,7 @@ def validate_documented_runner(errors: list[str]) -> None:
     docs = (ROOT / "docs" / "testing.md").read_text()
     required_text = (
         "./scripts/test-all.sh",
-        "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh",
+        "GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh",
         "deterministic",
         "bounded",
         "isolated",

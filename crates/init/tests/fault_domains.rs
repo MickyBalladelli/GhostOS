@@ -1,4 +1,4 @@
-use synos_init::{
+use ghostos_init::{
     CapabilityFence, CrashReason, ExitReason, FaultCause, FaultDomain, FaultState, ProcessId,
     RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceSpec, Supervisor, SupervisorError,
     SupervisorEvent, SupervisorRuntime,
@@ -12,7 +12,7 @@ struct Runtime {
 impl SupervisorRuntime for Runtime {
     type Error = ();
 
-    fn spawn(&mut self, request: synos_init::SpawnRequest) -> Result<ProcessId, Self::Error> {
+    fn spawn(&mut self, request: ghostos_init::SpawnRequest) -> Result<ProcessId, Self::Error> {
         self.spawned_fences.push(request.fault_fence);
         let process = ProcessId::new(self.next_process).unwrap();
         self.next_process += 1;
@@ -37,7 +37,7 @@ fn spec(id: u32, name: &'static str) -> ServiceSpec {
 
 #[test]
 fn one_fault_invalidates_only_its_domain_epoch() {
-    let mut domains = synos_init::FaultDomainRegistry::<4>::new();
+    let mut domains = ghostos_init::FaultDomainRegistry::<4>::new();
     domains.attach(FaultDomain::StorageDaemon, 7).unwrap();
     domains.attach(FaultDomain::NetworkDaemon, 8).unwrap();
     let storage = domains.issue_capability(FaultDomain::StorageDaemon).unwrap();
@@ -52,7 +52,7 @@ fn one_fault_invalidates_only_its_domain_epoch() {
     assert_eq!(domains.validate(network), Ok(()));
     assert_eq!(
         domains.validate(storage),
-        Err(synos_init::FaultDomainError::StaleCapability)
+        Err(ghostos_init::FaultDomainError::StaleCapability)
     );
 
     let lease = domains.begin_recovery(FaultDomain::StorageDaemon).unwrap();
@@ -101,7 +101,7 @@ fn supervisor_contains_crash_and_keeps_other_service_inspectable() {
     assert_eq!(supervisor.status(network).unwrap().process, Some(ProcessId::new(11).unwrap()));
     assert_eq!(
         supervisor.fault_domains().validate(old_fence),
-        Err(synos_init::FaultDomainError::StaleCapability)
+        Err(ghostos_init::FaultDomainError::StaleCapability)
     );
 
     let fresh_fence: CapabilityFence = supervisor

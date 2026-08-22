@@ -1,14 +1,14 @@
 use std::vec::Vec;
 
-use synos_app::{
+use ghostos_app::{
     ImageArchitecture, Mapping, MappingRequest, ProcessArguments, ProcessContext, ProcessLimits,
     RuntimeSegment, SegmentPermissions, StackRequest, TlsRequest, DEFAULT_HEAP_BYTES,
 };
-use synos_init::{
+use ghostos_init::{
     CrashReason, ExitReason, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceSpec,
     ServiceState, Supervisor, SupervisorEvent,
 };
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityObject, CapabilitySpace, KernelProcessBackend, KernelSupervisorRuntime,
     NativeServiceImage, PageTableRoot, ProcessMemory, Rights, Scheduler,
 };
@@ -110,7 +110,7 @@ impl ProcessMemory for MemoryFixture {
         request: StackRequest,
         _arguments: ProcessArguments<'_>,
     ) -> Result<u64, Self::Error> {
-        Ok(synos_kernel::USER_SPACE_END - request.size)
+        Ok(ghostos_kernel::USER_SPACE_END - request.size)
     }
 
     fn allocate_heap(
@@ -129,7 +129,7 @@ impl ProcessMemory for MemoryFixture {
         _request: TlsRequest,
         _source: &[u8],
     ) -> Result<u64, Self::Error> {
-        Ok(synos_kernel::USER_SPACE_START + 0x4000_0000)
+        Ok(ghostos_kernel::USER_SPACE_START + 0x4000_0000)
     }
 
     fn install_context(
@@ -179,7 +179,7 @@ impl ImageFixture {
     }
 }
 
-impl synos_kernel::ServiceImageProvider for ImageFixture {
+impl ghostos_kernel::ServiceImageProvider for ImageFixture {
     fn image(&self, image_id: u128) -> Option<NativeServiceImage<'_>> {
         (image_id == 1).then_some(NativeServiceImage {
             bytes: &self.image,

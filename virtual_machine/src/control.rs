@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use synos_vm::{
+use ghostos_vm::{
     DiskController, DiskPersistence, DiskRole, PowerState, SnapshotFeatures, SnapshotSchema, Vm,
 };
 
@@ -190,13 +190,13 @@ pub struct MonitorRequestError {
 }
 
 pub struct MonitorAuthenticator {
-    key: synos_vm::SnapshotAuthKey,
+    key: ghostos_vm::SnapshotAuthKey,
     permissions: MonitorPermissions,
     seen_nonces: VecDeque<[u8; MONITOR_NONCE_BYTES]>,
 }
 
 impl MonitorAuthenticator {
-    pub fn new(key: synos_vm::SnapshotAuthKey, permissions: MonitorPermissions) -> Self {
+    pub fn new(key: ghostos_vm::SnapshotAuthKey, permissions: MonitorPermissions) -> Self {
         Self {
             key,
             permissions,
@@ -664,11 +664,11 @@ pub(crate) fn json_string(value: &str) -> String {
     output
 }
 
-fn format_name(format: synos_vm::DiskFormat) -> &'static str {
+fn format_name(format: ghostos_vm::DiskFormat) -> &'static str {
     match format {
-        synos_vm::DiskFormat::Raw => "raw",
-        synos_vm::DiskFormat::Vhd => "vhd",
-        synos_vm::DiskFormat::Qcow2 => "qcow2",
+        ghostos_vm::DiskFormat::Raw => "raw",
+        ghostos_vm::DiskFormat::Vhd => "vhd",
+        ghostos_vm::DiskFormat::Qcow2 => "qcow2",
     }
 }
 

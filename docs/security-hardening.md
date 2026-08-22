@@ -14,7 +14,7 @@ request, response, filesystem, terminal, and random buffers passes through bound
 windows. Built-in Ring 3 C services use stack canaries seeded by the kernel and compiler
 control-flow landing pads.
 
-Private key bytes remain behind the `synos-shield` `KeyProvider` boundary. The kernel-facing
+Private key bytes remain behind the `ghostos-shield` `KeyProvider` boundary. The kernel-facing
 authority accepts only hardware-backed or isolated-service providers, exposes opaque handles, and
 has no private-key import, export, logging, snapshot, or crash-capsule path.
 

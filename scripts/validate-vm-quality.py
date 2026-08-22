@@ -158,9 +158,9 @@ def validate_commands(errors: list[str]) -> None:
         fail(errors, "root Cargo workspace does not include virtual_machine")
     if "./scripts/test-all.sh" not in (ROOT / "docs/testing.md").read_text():
         fail(errors, "docs/testing.md does not name the deterministic VM runner")
-    if "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh" not in (ROOT / "docs/testing.md").read_text():
+    if "GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh" not in (ROOT / "docs/testing.md").read_text():
         fail(errors, "docs/testing.md does not name the full-validation runner")
-    if "SYNOS_SOAK_RUNS=3 ./scripts/soak.sh" not in (ROOT / "docs/testing.md").read_text():
+    if "GHOSTOS_SOAK_RUNS=3 ./scripts/soak.sh" not in (ROOT / "docs/testing.md").read_text():
         fail(errors, "docs/testing.md does not name the workflow soak runner")
     for script in (
         "scripts/test-all.sh",
@@ -183,7 +183,7 @@ def validate_commands(errors: list[str]) -> None:
         if field not in test_runner:
             fail(errors, f"VM runner does not record {field}")
     mutation = (ROOT / "scripts/mutation.sh").read_text()
-    if "synos-vm" not in mutation or "cargo mutants" not in mutation:
+    if "ghostos-vm" not in mutation or "cargo mutants" not in mutation:
         fail(errors, "VM mutation testing is not wired")
     fuzz_cargo = (ROOT / "fuzz/Cargo.toml").read_text()
     for target in (

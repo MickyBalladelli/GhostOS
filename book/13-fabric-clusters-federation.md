@@ -1,8 +1,8 @@
 # 13. Fabric, Clustering, Federation, and Time
 
-SynOS treats local memory, CXL memory, remote Layer-2 memory, VRAM, and selected storage as one controlled resource graph.
+GhostOS treats local memory, CXL memory, remote Layer-2 memory, VRAM, and selected storage as one controlled resource graph.
 
-## `synos-fabric`
+## `ghostos-fabric`
 
 The fabric crate discovers CXL endpoints through PCI CXL DVSECs, validates Type-3 devices, and programs HDM decoder component registers through isolated MMIO. Generation-checked leases allocate aligned RAM or VRAM ranges.
 
@@ -52,13 +52,13 @@ When a node fails:
 
 ## Federation
 
-Federated clusters discover peers through signed, expiring announcements. They trade bounded CPU, RAM, and VRAM leases. Borrowed work runs inside a `BlindMicroSilo` that cannot see host process trees, foreign SynFS mounts, sockets, or federation controls.
+Federated clusters discover peers through signed, expiring announcements. They trade bounded CPU, RAM, and VRAM leases. Borrowed work runs inside a `BlindMicroSilo` that cannot see host process trees, foreign GhostFS mounts, sockets, or federation controls.
 
 Revocation has a deadline and epoch. A lending cluster can force a borrowed workload to stop or lose its resource.
 
 ## Load balancing and mesh
 
-`synos-balancerd` handles active-active actor placement and cache-aware leases. `synos-mesh` handles edge-to-cloud discovery, advertisements, dynamic cluster membership, offload, and CoW delta reconciliation.
+`ghostos-balancerd` handles active-active actor placement and cache-aware leases. `ghostos-mesh` handles edge-to-cloud discovery, advertisements, dynamic cluster membership, offload, and CoW delta reconciliation.
 
 Mesh advertisements are signed and expiring. They carry cluster/node identity,
 protocol versions, capabilities, and ordered endpoints across CXL, Ethernet,
@@ -69,7 +69,7 @@ offline advertisements remain inspectable.
 
 ## Time
 
-`synos-time-sync` keeps monotonic and synchronized clock contracts explicit. Time affects leases, heartbeats, deadlines, expiry, inference checkpoints, and replay. Tests use fake clocks and bounded jumps rather than sleeping and hoping.
+`ghostos-time-sync` keeps monotonic and synchronized clock contracts explicit. Time affects leases, heartbeats, deadlines, expiry, inference checkpoints, and replay. Tests use fake clocks and bounded jumps rather than sleeping and hoping.
 
 ## Easy example: cluster recovery
 

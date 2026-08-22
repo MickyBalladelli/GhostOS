@@ -1,4 +1,4 @@
-use synos_time_sync::{
+use ghostos_time_sync::{
     ClusterClock, EpochStamp, ManualClock, MonotonicClock, MonotonicEpochCounter, PtpDaemon,
     PtpMessage, PtpRole,
     PtpTimestamp, SyncError, SyncMeasurement,
@@ -25,8 +25,8 @@ fn ptp_wire_round_trip_and_timestamp_bounds() {
         origin_timestamp: timestamp,
         correction_ns: -4,
     };
-    let mut wire = [0; synos_time_sync::PTP_PACKET_BYTES];
-    assert_eq!(message.encode(&mut wire).unwrap(), synos_time_sync::PTP_PACKET_BYTES);
+    let mut wire = [0; ghostos_time_sync::PTP_PACKET_BYTES];
+    assert_eq!(message.encode(&mut wire).unwrap(), ghostos_time_sync::PTP_PACKET_BYTES);
     assert_eq!(PtpMessage::decode(&wire).unwrap(), message);
     wire[0] = b'X';
     assert_eq!(PtpMessage::decode(&wire), Err(SyncError::InvalidPacket));

@@ -1,19 +1,19 @@
 [package]
-name = "synos-http"
+name = "ghostos-http"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Heap-free HTTP and gRPC service primitives for SynOS"
+description = "Heap-free HTTP and gRPC service primitives for GhostOS"
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-synos-protocol = { path = "../protocol" }
-synos-ipc = { path = "../ipc" }
-synos-netd = { path = "../netd" }
-synos-status = { path = "../status" }
-synos-service-scale = { path = "../service-scale" }
+ghostos-protocol = { path = "../protocol" }
+ghostos-ipc = { path = "../ipc" }
+ghostos-netd = { path = "../netd" }
+ghostos-status = { path = "../status" }
+ghostos-service-scale = { path = "../service-scale" }
 
 [dev-dependencies]
-synos-test-support = { path = "../test-support" }
+ghostos-test-support = { path = "../test-support" }

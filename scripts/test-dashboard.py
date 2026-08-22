@@ -25,7 +25,7 @@ counts = Counter(result["state"] for _, result in results)
 dashboard = root / "build/test-dashboard.md"
 dashboard.parent.mkdir(parents=True, exist_ok=True)
 lines = [
-    "# SynOS test status",
+    "# GhostOS test status",
     "",
     f"Evidence root: `{evidence}`",
     "",

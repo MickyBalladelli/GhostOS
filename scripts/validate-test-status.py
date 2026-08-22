@@ -257,7 +257,7 @@ def write_markdown(path: Path, report: dict[str, object]) -> None:
         return str(value if value not in (None, "") else "—").replace("|", "\\|")
 
     lines = [
-        "# SynOS roadmap status",
+        "# GhostOS roadmap status",
         "",
         f"Generated: `{report['generated_at']}`",
         f"Evidence age threshold: `{report['stale_after_days']} days`",

@@ -1,4 +1,4 @@
-use synos_netd::{
+use ghostos_netd::{
     CaptureDirection, CaptureKind, CapabilityKey, CapabilityRight, Direction, Firewall,
     FirewallDecision, FirewallError,
     FirewallPolicy, FirewallRule, Ipv4Cidr, NetworkCapability, PacketContext, PacketError,
@@ -119,10 +119,10 @@ fn packet_capture_preserves_frame_decision_order_and_bounds() {
         [0; 4],
         0,
         0,
-        &[1; synos_netd::MAX_CAPTURE_BYTES + 1],
+        &[1; ghostos_netd::MAX_CAPTURE_BYTES + 1],
     );
     assert!(capture.records()[2].truncated);
-    assert_eq!(capture.records()[2].original_length, synos_netd::MAX_CAPTURE_BYTES + 1);
+    assert_eq!(capture.records()[2].original_length, ghostos_netd::MAX_CAPTURE_BYTES + 1);
     capture.record_event(44, CaptureKind::Link, 0);
     capture.record_event(45, CaptureKind::Rollback, 0);
     assert_eq!(capture.len(), 4);

@@ -23,7 +23,7 @@ DEFAULT_COMMAND = [
     "cargo",
     "test",
     "-p",
-    "synos-vm",
+    "ghostos-vm",
     "--test",
     "soak_leaks",
     "--",
@@ -298,33 +298,33 @@ def main() -> int:
         "--report",
         type=pathlib.Path,
         default=pathlib.Path(
-            os.environ.get("SYNOS_VM_SOAK_REPORT", ROOT / "build/vm-soak/report.json")
+            os.environ.get("GHOSTOS_VM_SOAK_REPORT", ROOT / "build/vm-soak/report.json")
         ),
     )
     args = parser.parse_args()
     try:
-        runs = positive_env("SYNOS_VM_SOAK_RUNS", 3)
-        inner_runs = positive_env("SYNOS_VM_SOAK_INNER_RUNS", 32)
+        runs = positive_env("GHOSTOS_VM_SOAK_RUNS", 3)
+        inner_runs = positive_env("GHOSTOS_VM_SOAK_INNER_RUNS", 32)
         memory_tolerance = positive_env(
-            "SYNOS_VM_SOAK_MEMORY_TOLERANCE_BYTES", DEFAULT_MEMORY_TOLERANCE
+            "GHOSTOS_VM_SOAK_MEMORY_TOLERANCE_BYTES", DEFAULT_MEMORY_TOLERANCE
         )
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
-    command_value = os.environ.get("SYNOS_VM_SOAK_COMMAND")
+    command_value = os.environ.get("GHOSTOS_VM_SOAK_COMMAND")
     try:
         command = shlex.split(command_value) if command_value else DEFAULT_COMMAND
     except ValueError as error:
-        print(f"invalid SYNOS_VM_SOAK_COMMAND: {error}", file=sys.stderr)
+        print(f"invalid GHOSTOS_VM_SOAK_COMMAND: {error}", file=sys.stderr)
         return 2
     if not command:
-        print("SYNOS_VM_SOAK_COMMAND must not be empty", file=sys.stderr)
+        print("GHOSTOS_VM_SOAK_COMMAND must not be empty", file=sys.stderr)
         return 2
 
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    scratch = pathlib.Path(tempfile.mkdtemp(prefix="synos-vm-soak-"))
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix="ghostos-vm-soak-"))
     environment = os.environ.copy()
-    environment["SYNOS_VM_SOAK_INNER_RUNS"] = str(inner_runs)
+    environment["GHOSTOS_VM_SOAK_INNER_RUNS"] = str(inner_runs)
     for variable in ("TMPDIR", "TMP", "TEMP"):
         environment[variable] = str(scratch)
     report: dict[str, object] = {

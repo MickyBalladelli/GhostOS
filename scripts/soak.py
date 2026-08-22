@@ -25,39 +25,39 @@ DEFAULT_TIMEOUT_SECONDS = 300.0
 SCENARIOS: dict[str, dict[str, object]] = {
     "boot": {
         "description": "boot contract and image metadata workflow",
-        "command": ["cargo", "test", "-p", "synos-test-support", "--test", "boot_contracts", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-test-support", "--test", "boot_contracts", "--", "--nocapture"],
     },
     "shell": {
         "description": "shell command, job, and terminal workflow",
-        "command": ["cargo", "test", "-p", "syn-shell", "--test", "coverage_59_6", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-shell", "--test", "coverage_59_6", "--", "--nocapture"],
     },
     "filesystem": {
-        "description": "SynFS persistence and restart workflow",
-        "command": ["cargo", "test", "-p", "synos-synfs", "--test", "persistence", "--", "--nocapture"],
+        "description": "GhostFS persistence and restart workflow",
+        "command": ["cargo", "test", "-p", "ghostos-ghostfs", "--test", "persistence", "--", "--nocapture"],
     },
     "network": {
         "description": "network lease, rollback, and client workflow",
-        "command": ["cargo", "test", "-p", "synos-netd", "--test", "dhcp_client", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-netd", "--test", "dhcp_client", "--", "--nocapture"],
     },
     "compiler": {
         "description": "compiler cancellation, timeout, and recovery workflow",
-        "command": ["cargo", "test", "-p", "synos-rustd", "--test", "model", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-rustd", "--test", "model", "--", "--nocapture"],
     },
     "cluster": {
         "description": "storage cluster membership and recovery workflow",
-        "command": ["cargo", "test", "-p", "synos-storaged", "--test", "coverage_59_5", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-storaged", "--test", "coverage_59_5", "--", "--nocapture"],
     },
     "vm": {
         "description": "VM translation cache and terminal teardown workflow",
-        "command": ["cargo", "test", "-p", "synos-vm", "--test", "soak_leaks", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-vm", "--test", "soak_leaks", "--", "--nocapture"],
     },
     "lifecycle": {
         "description": "reboot, suspend/resume, memory-hotplug, and service-restart ownership campaign",
-        "command": ["cargo", "test", "-p", "synos-vm", "--test", "lifecycle_soak", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-vm", "--test", "lifecycle_soak", "--", "--nocapture"],
     },
     "capabilities": {
         "description": "capability slot reclamation, generation reuse, and stale-handle rejection campaign",
-        "command": ["cargo", "test", "-p", "synos-kernel", "--test", "capability_soak", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-kernel", "--test", "capability_soak", "--", "--nocapture"],
     },
 }
 
@@ -275,15 +275,15 @@ def numeric_delta(before: dict[str, object], after: dict[str, object]) -> dict[s
 
 
 def scenario_command(name: str) -> list[str]:
-    value = os.environ.get(f"SYNOS_SOAK_{name.upper()}_COMMAND")
+    value = os.environ.get(f"GHOSTOS_SOAK_{name.upper()}_COMMAND")
     if value is None:
         return list(SCENARIOS[name]["command"])
     try:
         command = shlex.split(value)
     except ValueError as error:
-        raise ValueError(f"invalid SYNOS_SOAK_{name.upper()}_COMMAND: {error}") from error
+        raise ValueError(f"invalid GHOSTOS_SOAK_{name.upper()}_COMMAND: {error}") from error
     if not command:
-        raise ValueError(f"SYNOS_SOAK_{name.upper()}_COMMAND must not be empty")
+        raise ValueError(f"GHOSTOS_SOAK_{name.upper()}_COMMAND must not be empty")
     return command
 
 
@@ -321,11 +321,11 @@ def run_once(
             if name == "lifecycle":
                 run_environment = environment.copy()
                 lifecycle_report = report_dir / f"run-{run_number}.lifecycle.json"
-                run_environment["SYNOS_LIFECYCLE_REPORT"] = str(lifecycle_report)
+                run_environment["GHOSTOS_LIFECYCLE_REPORT"] = str(lifecycle_report)
             elif name == "capabilities":
                 run_environment = environment.copy()
                 capability_report = report_dir / f"run-{run_number}.capabilities.json"
-                run_environment["SYNOS_CAPABILITY_SOAK_REPORT"] = str(capability_report)
+                run_environment["GHOSTOS_CAPABILITY_SOAK_REPORT"] = str(capability_report)
             child = subprocess.Popen(command, cwd=ROOT, env=run_environment, stdout=stdout, stderr=stderr)
             while child.poll() is None:
                 current_rss = rss_bytes(child.pid)
@@ -414,18 +414,18 @@ def main() -> int:
     parser.add_argument(
         "--report",
         type=pathlib.Path,
-        default=pathlib.Path(os.environ.get("SYNOS_SOAK_REPORT", ROOT / "build/soak/report.json")),
+        default=pathlib.Path(os.environ.get("GHOSTOS_SOAK_REPORT", ROOT / "build/soak/report.json")),
     )
     args = parser.parse_args()
     try:
-        runs = positive_int("SYNOS_SOAK_RUNS", str(args.runs) if args.runs is not None else None, 3)
+        runs = positive_int("GHOSTOS_SOAK_RUNS", str(args.runs) if args.runs is not None else None, 3)
         timeout_seconds = positive_float(
-            "SYNOS_SOAK_TIMEOUT_SECONDS",
+            "GHOSTOS_SOAK_TIMEOUT_SECONDS",
             str(args.timeout_seconds) if args.timeout_seconds is not None else None,
             DEFAULT_TIMEOUT_SECONDS,
         )
         memory_tolerance = positive_int(
-            "SYNOS_SOAK_MEMORY_TOLERANCE_BYTES",
+            "GHOSTOS_SOAK_MEMORY_TOLERANCE_BYTES",
             str(args.memory_tolerance_bytes) if args.memory_tolerance_bytes is not None else None,
             DEFAULT_MEMORY_TOLERANCE,
         )
@@ -437,7 +437,7 @@ def main() -> int:
 
     report_path = args.report if args.report.is_absolute() else ROOT / args.report
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    scratch = pathlib.Path(tempfile.mkdtemp(prefix="synos-soak-"))
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix="ghostos-soak-"))
     environment = os.environ.copy()
     for variable in ("TMPDIR", "TMP", "TEMP"):
         environment[variable] = str(scratch)

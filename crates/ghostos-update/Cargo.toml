@@ -1,0 +1,18 @@
+[package]
+name = "ghostos-update"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ghostos-durability = { path = "../durability" }
+ghostos-init = { path = "../init" }
+ghostos-ipc = { path = "../ipc" }
+ghostos-pkg = { path = "../pkg" }
+ghostos-policy = { path = "../policy" }
+ghostos-status = { path = "../status" }
+ghostos-ghostfs = { path = "../ghostfs" }
+ghostos-system-model = { path = "../system-model" }

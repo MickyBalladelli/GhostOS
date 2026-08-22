@@ -74,13 +74,13 @@ def main() -> int:
     root = args.root.resolve()
     output = args.output.resolve()
     payloads = [
-        (output / "synos-bios.img", "bios-disk-image"),
-        (output / "synos-uefi.img", "uefi-disk-image"),
-        (output / "synos-installer.img", "installer-media"),
-        (output / "synos-recovery.img", "recovery-media"),
-        (output / "synos-loader.efi", "uefi-loader"),
+        (output / "ghostos-bios.img", "bios-disk-image"),
+        (output / "ghostos-uefi.img", "uefi-disk-image"),
+        (output / "ghostos-installer.img", "installer-media"),
+        (output / "ghostos-recovery.img", "recovery-media"),
+        (output / "ghostos-loader.efi", "uefi-loader"),
     ]
-    tools = [output / "install-synos.sh", output / "recover-synos.sh"]
+    tools = [output / "install-ghostos.sh", output / "recover-ghostos.sh"]
     support = [output / "MEDIA-SHA256SUMS"]
     for path, _ in payloads + [(tool, "tool") for tool in tools] + [(path, "support") for path in support]:
         if not path.is_file():
@@ -88,22 +88,22 @@ def main() -> int:
 
     manifest = {
         "schema": SCHEMA,
-        "product": "SynOS",
+        "product": "GhostOS",
         "revision": args.revision,
         "source_date_epoch": args.source_date_epoch,
         "installer": {
-            "media": "synos-installer.img",
-            "archive": "synos-installer.tar.gz",
+            "media": "ghostos-installer.img",
+            "archive": "ghostos-installer.tar.gz",
             "boot_modes": ["bios", "uefi"],
             "payloads": [artifact(path, root, kind) for path, kind in payloads[:3]],
-            "tool": "install-synos.sh",
+            "tool": "install-ghostos.sh",
         },
         "recovery": {
-            "media": "synos-recovery.img",
-            "archive": "synos-recovery.tar.gz",
+            "media": "ghostos-recovery.img",
+            "archive": "ghostos-recovery.tar.gz",
             "boot_modes": ["bios", "uefi"],
             "payloads": [artifact(path, root, kind) for path, kind in payloads[1:4]],
-            "tool": "recover-synos.sh",
+            "tool": "recover-ghostos.sh",
             "guarantees": [
                 "verify payload checksums before writing",
                 "restore a bootable BIOS or UEFI image",
@@ -125,18 +125,18 @@ def main() -> int:
         (manifest_path, "manifest.json"),
         (checksums_path, "SHA256SUMS"),
         (output / "MEDIA-SHA256SUMS", "MEDIA-SHA256SUMS"),
-        (output / "synos-loader.efi", "payload/synos-loader.efi"),
-        (output / "synos-bios.img", "payload/synos-bios.img"),
-        (output / "synos-uefi.img", "payload/synos-uefi.img"),
-        (output / "synos-installer.img", "media/synos-installer.img"),
-        (output / "synos-recovery.img", "media/synos-recovery.img"),
+        (output / "ghostos-loader.efi", "payload/ghostos-loader.efi"),
+        (output / "ghostos-bios.img", "payload/ghostos-bios.img"),
+        (output / "ghostos-uefi.img", "payload/ghostos-uefi.img"),
+        (output / "ghostos-installer.img", "media/ghostos-installer.img"),
+        (output / "ghostos-recovery.img", "media/ghostos-recovery.img"),
     ]
-    write_archive(output / "synos-installer.tar.gz", common + [
-        (output / "install-synos.sh", "tools/install-synos.sh"),
+    write_archive(output / "ghostos-installer.tar.gz", common + [
+        (output / "install-ghostos.sh", "tools/install-ghostos.sh"),
         (root / "docs/installer-media.md", "docs/README.md"),
     ], args.source_date_epoch)
-    write_archive(output / "synos-recovery.tar.gz", common + [
-        (output / "recover-synos.sh", "tools/recover-synos.sh"),
+    write_archive(output / "ghostos-recovery.tar.gz", common + [
+        (output / "recover-ghostos.sh", "tools/recover-ghostos.sh"),
         (root / "docs/recovery-media.md", "docs/README.md"),
     ], args.source_date_epoch)
 

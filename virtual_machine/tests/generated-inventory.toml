@@ -654,8 +654,8 @@ symbols = [
     "use:PowerState",
     "use:Ps2Controller",
     "use:PvClock",
-    "use:SYNFS_SYSTEM_BLOCKS",
-    "use:SYNFS_SYSTEM_VOLUME_SIZE",
+    "use:GHOSTFS_SYSTEM_BLOCKS",
+    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:SYSTEM_DISK_ALIGNMENT",
     "use:SYSTEM_DISK_FORMAT_VERSION",
     "use:SYSTEM_DISK_MANIFEST_SIZE",
@@ -1021,8 +1021,8 @@ symbols = [
     "use:NVME_SUBCLASS",
     "use:NVME_VENDOR_ID",
     "use:Nvme",
-    "use:SYNFS_SYSTEM_BLOCKS",
-    "use:SYNFS_SYSTEM_VOLUME_SIZE",
+    "use:GHOSTFS_SYSTEM_BLOCKS",
+    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:SYSTEM_DISK_ALIGNMENT",
     "use:SYSTEM_DISK_FORMAT_VERSION",
     "use:SYSTEM_DISK_MANIFEST_SIZE",
@@ -1098,8 +1098,8 @@ tests = ["vm.device.failure", "vm.gates.inventory-contract"]
 [[source.public_api]]
 tests = ["vm.gates.inventory-contract"]
 symbols = [
-    "const:SYNFS_SYSTEM_BLOCKS",
-    "const:SYNFS_SYSTEM_VOLUME_SIZE",
+    "const:GHOSTFS_SYSTEM_BLOCKS",
+    "const:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "const:SYSTEM_DISK_ALIGNMENT",
     "const:SYSTEM_DISK_FORMAT_VERSION",
     "const:SYSTEM_DISK_MANIFEST_SIZE",
@@ -1388,10 +1388,10 @@ path = "src/integration.rs"
 tests = ["vm.foundation.deterministic-fixtures"]
 
 [[source.public_api]]
-tests = ["vm.foundation.deterministic-fixtures", "vm.synos.minimal-boot-services-and-synfs"]
+tests = ["vm.foundation.deterministic-fixtures", "vm.ghostos.minimal-boot-services-and-ghostfs"]
 symbols = [
     "enum:IntegrationError",
-    "fn:run_synos_integration",
+    "fn:run_ghostos_integration",
     "struct:SynosIntegrationReport",
 ]
 
@@ -1658,8 +1658,8 @@ symbols = [
     "use:SNAPSHOT_AUTH_TAG_BYTES",
     "use:SNAPSHOT_FORMAT_VERSION",
     "use:SNAPSHOT_MIN_FORMAT_VERSION",
-    "use:SYNFS_SYSTEM_BLOCKS",
-    "use:SYNFS_SYSTEM_VOLUME_SIZE",
+    "use:GHOSTFS_SYSTEM_BLOCKS",
+    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:SYSTEM_DISK_ALIGNMENT",
     "use:SYSTEM_DISK_FORMAT_VERSION",
     "use:SYSTEM_DISK_MANIFEST_SIZE",
@@ -1745,7 +1745,7 @@ symbols = [
     "use:VmSnapshot",
     "use:ascii_to_scancodes",
     "use:framebuffer_info",
-    "use:run_synos_integration",
+    "use:run_ghostos_integration",
     "use:serial_resize_sequence",
     "use:shared_replay",
     "use:snapshot_digest",
@@ -1914,7 +1914,7 @@ symbols = [
     "fn:MacAddress::is_multicast",
     "fn:MacAddress::is_unicast",
     "fn:MacAddress::new",
-    "fn:MacAddress::synos_default",
+    "fn:MacAddress::ghostos_default",
     "fn:MacAddress::to_bytes",
     "fn:mac_matches",
     "struct:MacAddress",

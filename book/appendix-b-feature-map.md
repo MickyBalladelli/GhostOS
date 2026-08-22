@@ -4,7 +4,7 @@ The root `TODO.md` numbers the project’s feature program. This map compresses 
 
 | TODO | Feature | Remember it as |
 | ---: | --- | --- |
-| 1 | Core kernel architecture and SynFS | boot, memory, filesystem |
+| 1 | Core kernel architecture and GhostFS | boot, memory, filesystem |
 | 2 | Legacy PC hardware and dual boot | PCI, drivers, compatibility |
 | 3 | Linux pain-point solutions | clean service boundaries |
 | 4 | OpenVMS integration | locks, names, records, status |

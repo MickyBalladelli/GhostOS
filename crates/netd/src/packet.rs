@@ -1,6 +1,6 @@
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
-use synos_ipc::{
+use ghostos_ipc::{
     BufferCapability, BufferError, BufferLease, BufferOwner, BufferRights, SharedBuffer,
 };
 

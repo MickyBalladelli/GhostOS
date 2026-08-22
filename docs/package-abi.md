@@ -1,7 +1,7 @@
-# SynOS user-space package ABI
+# GhostOS user-space package ABI
 
 This is the contract for signed packages that install and run Ring 3
-programs. The Rust implementation is in [`synos-pkg`](../crates/pkg/src/lib.rs).
+programs. The Rust implementation is in [`ghostos-pkg`](../crates/pkg/src/lib.rs).
 The compiler emits this format; the package daemon verifies it; the application
 supervisor checks its metadata before the ELF loader maps the image.
 
@@ -16,7 +16,7 @@ supervisor checks its metadata before the ELF loader maps the image.
 
 The public version constants are `PACKAGE_ABI_VERSION`,
 `PACKAGE_BUNDLE_VERSION`, `APPLICATION_BUNDLE_VERSION`, and
-`APPLICATION_MANIFEST_SCHEMA` in `synos-pkg`. The application parser uses the
+`APPLICATION_MANIFEST_SCHEMA` in `ghostos-pkg`. The application parser uses the
 same manifest schema constant. There is no package migration path yet. A
 future incompatible format gets a new version and a new writer; old bytes are
 not edited in place.
@@ -108,6 +108,6 @@ process limits. The package ABI never grants capabilities by itself.
    [compatibility matrix](compatibility-matrix.md), the decoder and writer,
    and compatibility evidence.
 
-The normal producer is `cargo synos package`. The normal consumer is
+The normal producer is `cargo ghostos package`. The normal consumer is
 `PackageDaemon::install_application_bundle`, followed by the application
 supervisor's signed metadata checks.

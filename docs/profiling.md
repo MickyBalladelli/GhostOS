@@ -1,9 +1,9 @@
 # Continuous profiling
 
-SynOS records bounded folded-stack samples through
-[`synos-observability`](../crates/observability/src/profiling.rs). The sampler
+GhostOS records bounded folded-stack samples through
+[`ghostos-observability`](../crates/observability/src/profiling.rs). The sampler
 is overwrite-oldest and lock-free, so a slow collector cannot block boot, IPC,
-the scheduler, SynFS, networking, package activation, compiler builds, VM
+the scheduler, GhostFS, networking, package activation, compiler builds, VM
 execution, or client RPC.
 
 Each producer records stable generated symbol IDs, not instruction addresses.
@@ -19,7 +19,7 @@ The nine domains are wired at their central paths:
 | boot | `kernel_entry` |
 | IPC | successful kernel send |
 | scheduler | successful context dispatch |
-| SynFS | filesystem daemon dispatch |
+| GhostFS | filesystem daemon dispatch |
 | networking | network service execution |
 | package activation | application supervisor launch |
 | compiler builds | compiler host-run entry |

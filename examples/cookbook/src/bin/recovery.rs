@@ -1,7 +1,7 @@
-use synos_backup::{
+use ghostos_backup::{
     BackupCatalog, BackupId, BackupManifest, Digest, EncryptionKey, ManifestFile, RetentionPolicy,
 };
-use synos_synfs::{FileName, FileType, FileVersion};
+use ghostos_ghostfs::{FileName, FileType, FileVersion};
 
 fn main() {
     let id = BackupId::from_raw(7).expect("nonzero backup id");

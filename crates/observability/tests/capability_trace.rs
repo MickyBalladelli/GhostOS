@@ -1,4 +1,4 @@
-use synos_observability::{
+use ghostos_observability::{
     CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level, decode_record, encode_record,
 };
 

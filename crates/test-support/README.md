@@ -1,9 +1,9 @@
-# synos-test-support
+# ghostos-test-support
 
-Shared test-only helpers for SynOS crates and integration tests.
+Shared test-only helpers for GhostOS crates and integration tests.
 
 The crate provides deterministic boot, memory-map, capability, identity,
-node, clock, entropy, packet, disk, SynFS-volume, manifest, wire-frame, and
+node, clock, entropy, packet, disk, GhostFS-volume, manifest, wire-frame, and
 terminal fixtures. It also provides bounded in-memory block, network, IPC,
 storage, attestation, accelerator, and device doubles; one-shot failure
 injection; LIFO cleanup guards; and checked-in golden fixtures.
@@ -12,7 +12,7 @@ Use it from a test target or a crate's `dev-dependencies`:
 
 ```toml
 [dev-dependencies]
-synos-test-support = { path = "../test-support" }
+ghostos-test-support = { path = "../test-support" }
 ```
 
 Do not add it to production dependencies. The doubles model test behavior and
@@ -22,7 +22,7 @@ failed. `TestScope` combines a fixed seed with a cleanup guard; its `Drop`
 implementation performs best-effort cleanup after a panic.
 
 Property tests use `property::run`. The default seed and case count are stable,
-and a failure prints `SYNOS_PROPERTY_SEED` plus `SYNOS_PROPERTY_CASE` for exact
-replay. Set `SYNOS_PROPERTY_CASES` to bound local runs. The bounded queue,
+and a failure prints `GHOSTOS_PROPERTY_SEED` plus `GHOSTOS_PROPERTY_CASE` for exact
+replay. Set `GHOSTOS_PROPERTY_CASES` to bound local runs. The bounded queue,
 capability, and lease models are reference behavior for state-machine tests;
 they are not production implementations.

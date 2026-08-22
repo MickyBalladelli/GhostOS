@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn property_wildcards_never_cross_a_separator() {
-        use synos_test_support::property::{ascii, run_assert, Config};
+        use ghostos_test_support::property::{ascii, run_assert, Config};
 
         run_assert("path-pattern.wildcard-separator", Config::new(0x59_3, 128), |_, _, entropy| {
             let name = ascii(entropy, 32);
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn property_unescape_preserves_literal_bytes() {
-        use synos_test_support::property::{ascii, run_assert, Config};
+        use ghostos_test_support::property::{ascii, run_assert, Config};
 
         run_assert("path-pattern.unescape", Config::new(0x59_3, 128), |_, _, entropy| {
             let value = ascii(entropy, 32);

@@ -1,5 +1,5 @@
 use core::ptr::{NonNull, read_volatile, write_volatile};
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::pci::{Bar, PciDevice};
 

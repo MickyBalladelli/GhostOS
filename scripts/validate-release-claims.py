@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate evidence-backed claims made by a SynOS release."""
+"""Validate evidence-backed claims made by a GhostOS release."""
 
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ def validate_claim(claim: object, index: int, evidence_dir: pathlib.Path) -> str
 
 def validate(claims_path: pathlib.Path, evidence_dir: pathlib.Path, release_notes: pathlib.Path) -> int:
     claims = read_json(claims_path)
-    if claims.get("schema") != 1 or claims.get("kind") != "synos-release-claims":
+    if claims.get("schema") != 1 or claims.get("kind") != "ghostos-release-claims":
         raise ValueError("release claims have an unsupported schema")
     revision = git_revision()
     if claims.get("revision") != revision:

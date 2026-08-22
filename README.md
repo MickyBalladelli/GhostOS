@@ -1,6 +1,6 @@
-# SynOS
+# GhostOS
 
-SynOS now has an initial `no_std` bare-metal bootstrap for x86_64 BIOS and
+GhostOS now has an initial `no_std` bare-metal bootstrap for x86_64 BIOS and
 UEFI machines, plus early page-table backends for x86_64, AArch64, and
 RISC-V 64.
 
@@ -30,40 +30,40 @@ Build a BIOS disk image:
 ./scripts/build-bios-image.sh
 ```
 
-The image is written to `build/bios/synos-bios.img`.
+The image is written to `build/bios/ghostos-bios.img`.
 
-Run the interactive BIOS VM (builds the release `synos-vm` first if needed):
+Run the interactive BIOS VM (builds the release `ghostos-vm` first if needed):
 
 ```sh
-cargo build -p synos-vm --release
-./start-synos.sh
+cargo build -p ghostos-vm --release
+./start-ghostos.sh
 ```
 
 Start named VMs with separate persistent disks so they can run side by side:
 
 ```sh
-./start-synos.sh vm1
-./start-synos.sh vm2
+./start-ghostos.sh vm1
+./start-ghostos.sh vm2
 ```
 
-`start-synos.sh` creates a bootable `system.raw` (or `<name>-system.raw`)
+`start-ghostos.sh` creates a bootable `system.raw` (or `<name>-system.raw`)
 and keeps `data.raw` as a separate data disk. The system disk contains the
-kernel and SynFS needed for first-run account setup.
+kernel and GhostFS needed for first-run account setup.
 
-Run a temporary copy with `./start-synos.sh --new`. Its disk changes are
+Run a temporary copy with `./start-ghostos.sh --new`. Its disk changes are
 discarded when the VM exits.
 
-Writable disks create a `<image>.synos.lock` ownership marker. If start fails
+Writable disks create a `<image>.ghostos.lock` ownership marker. If start fails
 with `disk is already locked` after a crashed or killed VM, inspect and recover
 the stale lock:
 
 ```sh
-./target/release/synos-vm disk lock ./virtual_machine/state/system.raw
-./target/release/synos-vm disk recover-lock ./virtual_machine/state/system.raw
+./target/release/ghostos-vm disk lock ./virtual_machine/state/system.raw
+./target/release/ghostos-vm disk recover-lock ./virtual_machine/state/system.raw
 ```
 
 `recover-lock` only removes the marker when the recorded owner PID is gone.
-Then run `./start-synos.sh` again.
+Then run `./start-ghostos.sh` again.
 
 Build the BIOS image, build the virtual machine in release mode, and run the
 workspace tests in one step:
@@ -79,7 +79,7 @@ Build the UEFI application:
 ```
 
 The EFI executable is written under
-`target/x86_64-unknown-uefi/release/synos-loader.efi`.
+`target/x86_64-unknown-uefi/release/ghostos-loader.efi`.
 
 Build a portable loopback image:
 
@@ -89,7 +89,7 @@ Build a portable loopback image:
 ```
 
 This needs `dosfstools` and `mtools`. The result is
-`build/portable/synos.img`.
+`build/portable/ghostos.img`.
 
 Build the complete installer and recovery release set:
 
@@ -174,12 +174,12 @@ crates deny implicit unsafe operations, keeping raw register, MMIO, page-table,
 firmware, and ABI access inside explicit boundary blocks. The lock-free kernel
 IPC queue stores every message field in atomics and needs no unsafe cell.
 
-`synos-system-model` replaces mutable global directory conventions with sealed
+`ghostos-system-model` replaces mutable global directory conventions with sealed
 root manifests. A root binds logical service names to SHA-256 package IDs, and
 activation validates the complete manifest before replacing the active root.
 Packages and dependencies resolve only by immutable digest. Each process gets a
 bounded package namespace, so undeclared host paths and packages are invisible.
-Package payloads live as versioned SynFS objects; the system model is their
+Package payloads live as versioned GhostFS objects; the system model is their
 heap-free metadata and activation layer. `SynFsRepository` writes payload and
 manifest objects under digest-derived names, verifies existing objects before
 reuse, and records every activated root as a new `system/root.manifest`
@@ -187,7 +187,7 @@ version.
 
 ## Async platform I/O and media
 
-`synos-platform-io` provides generation-checked, fixed-capacity asynchronous
+`ghostos-platform-io` provides generation-checked, fixed-capacity asynchronous
 request/completion queues. Its API has submit, dispatch, complete, cancel, and
 poll operations, with no blocking compatibility call.
 
@@ -198,7 +198,7 @@ therefore stay in shared pages instead of being copied through IPC messages.
 
 ## Legacy x86 PC drivers
 
-The `synos-legacy-pc-drivers` crate provides heap-free Ring 3 driver building
+The `ghostos-legacy-pc-drivers` crate provides heap-free Ring 3 driver building
 blocks. It enumerates conventional PCI configuration space, identifies AHCI and
 NVMe controllers, prepares their DMA queues and commands, and exposes descriptor
 ring hooks for Intel E1000-family and Realtek RTL8169-family Ethernet devices.
@@ -206,7 +206,7 @@ Port and MMIO access remain capability-controlled by the platform service.
 
 ## User-space async networking
 
-`synos-netd` is a heap-free Ring 3 TCP/IP service built on `smoltcp`. NIC
+`ghostos-netd` is a heap-free Ring 3 TCP/IP service built on `smoltcp`. NIC
 drivers loan fixed packet slots to the stack, so ingress and egress frames stay
 in their original buffers while queue ownership changes. Polling accepts an
 ingress budget to keep network work bounded under load.
@@ -219,7 +219,7 @@ against capability-mapped shared regions before the daemon touches them.
 
 ## Web applications and microservices
 
-`synos-http` provides heap-free HTTP/1 request parsing, response encoding, and a
+`ghostos-http` provides heap-free HTTP/1 request parsing, response encoding, and a
 fixed-capacity method/path router for Ring 3 services. Routes carry web-service
 rights, so the authenticated principal and attenuated grant are checked before
 handler dispatch. Its gRPC layer validates `application/grpc` requests, applies
@@ -227,14 +227,14 @@ the same route rights, and frames bounded protobuf messages without reflection
 or allocation.
 
 The asynchronous HTTP server owns no raw network backend. It submits bounded
-open, listen, receive, send, and close operations through `synos-netd` IPC
+open, listen, receive, send, and close operations through `ghostos-netd` IPC
 rings, and every operation carries the generation-checked socket capability
 returned by that daemon. Callers drive both services cooperatively and provide
 capability-mapped request and response buffers.
 
 ## Service isolation and fault recovery
 
-`synos-init` supervises fixed-capacity Ring 3 storage, network, and system
+`ghostos-init` supervises fixed-capacity Ring 3 storage, network, and system
 services. A panic or protection fault fences only the dead process' capabilities,
 IPC endpoints, DMA mappings, and interrupts. The service then restarts with a
 new generation after bounded exponential backoff; unrelated services remain
@@ -252,10 +252,10 @@ available. On UEFI machines, the loader passes the current GOP framebuffer.
 The early kernel console writes there and falls back to VGA text mode when no
 linear framebuffer was supplied. COM1 remains active in every case.
 
-## SynFS day-one core
+## GhostFS day-one core
 
-`synos-synfs` is a `no_std`, fixed-capacity filesystem core for the Ring 3
-SynFS service. Metadata lives in immutable Copy-on-Write B+tree blocks. A write
+`ghostos-ghostfs` is a `no_std`, fixed-capacity filesystem core for the Ring 3
+GhostFS service. Metadata lives in immutable Copy-on-Write B+tree blocks. A write
 creates the next file version, so `notes.txt`, `notes.txt;0`, and the highest
 numbered version resolve to the latest contents while `notes.txt;1` selects an
 exact immutable version.
@@ -270,8 +270,8 @@ network block targets into striped or fault-domain-separated mirrored pools. It
 supports device registration, pool creation and growth, draining/failure health
 changes, allocation accounting, safe detach, and degraded/offline reporting.
 
-SynFS checkpoints pin immutable tree roots across later writes and garbage
-collection. The `synos-backup` worker streams every live file version from one
+GhostFS checkpoints pin immutable tree roots across later writes and garbage
+collection. The `ghostos-backup` worker streams every live file version from one
 checkpoint into a checksummed `SYNBACK1` archive through bounded cooperative
 polls, then releases the root after the caller commits the completed backup.
 
@@ -282,18 +282,18 @@ and named resources. Lock requests require a matching resource capability,
 conflicts queue in FIFO order, and all locks from a failed cluster node can be
 released together.
 
-`synos-system-model` provides process, job, group, system, and cluster logical-name
+`ghostos-system-model` provides process, job, group, system, and cluster logical-name
 scopes. Entries target files, devices, or IPC channels and use owner-controlled
 ACLs. Its command dictionary accepts positional arguments and DCL-style
 qualifiers, validates Boolean, integer, and text values before dispatch, and
 returns bounded structured fields.
 
-SynFS stores sequential and indexed RMS record files as ordinary immutable file
+GhostFS stores sequential and indexed RMS record files as ordinary immutable file
 versions. Callers supply serialization scratch space and can select records by
 position or indexed key; flat byte-stream files continue to use `write` and
 `read`.
 
-`synos-rms` adds the application-facing record API. `RecordFile` supports
+`ghostos-rms` adds the application-facing record API. `RecordFile` supports
 create, read, insert, update, and delete operations, while `StructuredRecord`
 lets applications bind their own bounded binary codecs. Record selectors can
 be resolved to stable ordinal ranges and protected through `DlmRecordLocks`;
@@ -301,18 +301,18 @@ the native DLM binding maps read/update access to protected-read/protected-write
 locks and uses one-byte ranges to avoid unrelated-record contention.
 
 The same crate provides a fixed-capacity embedded key-value database. Binary
-keys are encoded into the SynFS B+tree namespace, values remain normal
+keys are encoded into the GhostFS B+tree namespace, values remain normal
 versioned CoW files, and mapped snapshots expose immutable value pages without
 copying. Bounded transactions stage operations without a heap and publish one
-new SynFS root only after every put and delete succeeds. Dropped or failed
+new GhostFS root only after every put and delete succeeds. Dropped or failed
 transactions restore the old root and reclaim abandoned blocks.
 
-`synos-status` defines the common 32-bit condition layout used by kernel,
+`ghostos-status` defines the common 32-bit condition layout used by kernel,
 filesystem, driver, command, and system-model errors. It keeps the OpenVMS
 odd-value success convention while exposing facility, code, severity, and flag
 fields without platform-sized error values.
 
-`syn-script` builds native command procedures on those primitives. It compiles
+`ghostos-script` builds native command procedures on those primitives. It compiles
 bounded DCL-style statements, validates every pipeline stage against the typed
 command registry, and passes structured output records between stages through
 checksummed shared-memory IPC payloads. Scripts can define scoped logical
@@ -322,19 +322,19 @@ ACLs. `$STATUS`, `IF SUCCESS`, `IF FAILURE`, `SET ON`, `SET NOON`, and
 `ON ERROR THEN` provide deterministic condition handling without host shell
 exit-code conventions.
 
-For agent-generated procedures, `syn-script` reflects the live typed command
+For agent-generated procedures, `ghostos-script` reflects the live typed command
 registry into deterministic function-tool JSON schemas. Function names map
 back to command routes without stringly typed dispatch. `SandboxExecutor`
 drives each typed pipeline command exactly once through a handler bound to an
-exclusive private SynFS root: the agent can read and validate staged state,
+exclusive private GhostFS root: the agent can read and validate staged state,
 then either discard it or atomically publish the whole transaction. Dropped and
 failed sandboxes always restore the original generation, and every finish
 returns a base/staged/result generation receipt.
 
-`synos-agent-bridge` joins those primitives into the native AI execution
+`ghostos-agent-bridge` joins those primitives into the native AI execution
 boundary. It exports live command schemas, derives short-lived capabilities
 sealed to one agent and exact task rights, and consumes each grant once through
-a fixed replay ledger. `RUN /SANDBOX` always discards its private SynFS root;
+a fixed replay ledger. `RUN /SANDBOX` always discards its private GhostFS root;
 an approved normal run publishes that root only after successful script
 completion and a write-authorized token. A prepared run can be inspected before
 approval, so commit publishes the exact validated root without rerunning agent
@@ -342,13 +342,13 @@ commands.
 
 ## Embedded scripting and Wasm extensions
 
-`synos-embedded-script` embeds Rhai for service automation. Each evaluation has
+`ghostos-embedded-script` embeds Rhai for service automation. Each evaluation has
 hard limits for source size, instructions, recursion, expression depth,
 functions, variables, collections, strings, and queued work. Scripts can only
 enqueue operations named in their capability list; the owning service validates
 and performs those requests after evaluation.
 
-`synos-wasm-script` runs untrusted binary Wasm through the pure-Rust Wasmi
+`ghostos-wasm-script` runs untrusted binary Wasm through the pure-Rust Wasmi
 interpreter. It exposes no WASI filesystem, network, environment, or clock.
 Each invocation gets strict compile limits, a module-size and fuel budget,
 bounded memory/table resources, and a small numeric host ABI guarded by
@@ -358,7 +358,7 @@ authority.
 
 ## Hardware fabric and clustering
 
-`synos-fabric` gives CXL and legacy Ethernet clusters one bounded, heap-free
+`ghostos-fabric` gives CXL and legacy Ethernet clusters one bounded, heap-free
 memory control plane. Its CXL 3.0/3.1 path accepts endpoints discovered through
 PCI CXL DVSECs, validates Type-3 devices, and programs HDM decoder component
 registers through an isolated MMIO boundary. Generation-checked leases allocate
@@ -382,7 +382,7 @@ every mirrored pool resolve through its surviving node.
 
 ## Power and hardware lifecycle
 
-The UEFI loader passes the ACPI RSDP into the kernel. `synos-power` validates
+The UEFI loader passes the ACPI RSDP into the kernel. `ghostos-power` validates
 RSDP, RSDT/XSDT, FADT, and DSDT checksums without allocation, reads fixed-event
 and reset registers, extracts `_S5` shutdown values and static thermal trip
 points, and applies hysteresis-based throttling or emergency shutdown policy.
@@ -391,7 +391,7 @@ ACPI-backed `SHUTDOWN` and `REBOOT` commands with the legacy reset fallback.
 
 CXL Type-3 devices and NVMe namespaces have explicit online, draining, and
 removed lifecycle states. CXL pool draining blocks new memory leases and
-refuses removal while leases remain. NVMe draining blocks new SynFS
+refuses removal while leases remain. NVMe draining blocks new GhostFS
 allocations and refuses removal while a storage pool still claims the device.
 HDM decoders and NVMe controllers expose quiesce operations for the final
 hardware detach.
@@ -405,7 +405,7 @@ sequential read streams and feeds future non-local pages to a bounded
 asynchronous prefetch queue.
 
 Applications capability-map IPC rings once, then exchange records with daemons
-using lock-free atomic operations. SynFS can bind a read capability to an
+using lock-free atomic operations. GhostFS can bind a read capability to an
 immutable CoW tree generation and expose its data pages directly; the
 `MappedRecordFile` runtime validates and searches RMS records in-process without
 per-record IPC or copying.
@@ -424,7 +424,7 @@ epoch-protected atomic hash pages for Ring 3 lookup.
 
 ## Authentication, authorization, and identity
 
-`synos-auth` is the heap-free Ring 3 identity core. Its fixed authorization
+`ghostos-auth` is the heap-free Ring 3 identity core. Its fixed authorization
 database holds local and node-local user records with passkey, TPM 2.0, and SSH
 public credentials. Authentication uses one-shot challenges and a platform
 crypto verifier. A successful session builds the kernel-owned execution
@@ -437,7 +437,7 @@ relying-party ID, HTTPS origin, credential, and expiry. It requires both
 authenticator user-presence and user-verification flags, so a platform passkey
 must complete its device biometric or PIN check. COSE signature and
 `clientDataJSON` validation stay behind a platform crypto boundary, while
-`synos-auth` enforces ceremony type, origin and RP hashes, bounded inputs, and
+`ghostos-auth` enforces ceremony type, origin and RP hashes, bounded inputs, and
 monotonic authenticator counters.
 
 The remote security gateway issues capabilities only after that authenticated
@@ -465,7 +465,7 @@ remote unmapping, DSM invalidation, or compute stop.
 
 ## Native applications and actor runtimes
 
-`synos-app` defines the bounded `App.toml` application contract. A manifest
+`ghostos-app` defines the bounded `App.toml` application contract. A manifest
 names an immutable image, application kind, node placement, restart policy, and
 up to 16 exact capability requests. Before registration, the Ring 3 application
 supervisor intersects those requests with an administrator policy. Missing
@@ -473,7 +473,7 @@ required resources, wrong object kinds, and rights escalation stop the spawn;
 optional unavailable resources are omitted. Each restart fences the old process
 and receives a fresh generation and only the approved capability set.
 
-`synos-actors` gives local and distributed processes one actor API. Local
+`ghostos-actors` gives local and distributed processes one actor API. Local
 mailboxes use native IPC channels. Remote actor references use page-aligned
 Software DSM mailboxes carrying a live write authority and DLM lease epoch.
 Message routing, remote supervisor selection, process spawning, replies, and
@@ -488,14 +488,14 @@ VRAM leases over the transports advertised by that peer. A lending cluster can
 send an authenticated revocation with a deadline below one millisecond.
 
 Borrowed workloads run in kernel `BlindMicroSilo` scopes. Host process trees,
-SynFS mounts, network sockets, and federation controls are always invisible.
+GhostFS mounts, network sockets, and federation controls are always invisible.
 CXL-IDE and SEV, TDX, or CCA memory encryption are required when the platform
 advertises them; otherwise kernel page isolation remains active. Federation
 epochs fence stale DLM locks after expiry, revocation, or cluster failover.
 
 ## LLM memory runtime
 
-`synos-llm` presents many local and CXL fabric leases as one contiguous virtual
+`ghostos-llm` presents many local and CXL fabric leases as one contiguous virtual
 model allocation. Allocations use 64-bit sizes, may span multiple-terabyte
 extents, and resolve page faults without exposing tensor or pipeline placement
 to the model framework.
@@ -513,11 +513,11 @@ replacement journal replica without changing the request identity.
 
 ## High-level AI execution
 
-`synos-inference` is the bounded, `no_std` Ring 3 service layer above
-`synos-llm`. Its transport-neutral gateway accepts OpenAI-compatible model,
+`ghostos-inference` is the bounded, `no_std` Ring 3 service layer above
+`ghostos-llm`. Its transport-neutral gateway accepts OpenAI-compatible model,
 text-completion, and chat-completion requests, emits JSON or server-sent
 completion chunks, and also accepts length-prefixed gRPC/protobuf records.
-`synos-netd` can carry it now; the native HTTP stack can bind it without
+`ghostos-netd` can carry it now; the native HTTP stack can bind it without
 changing model execution.
 
 The cluster inference service registers models already mapped in pooled memory.
@@ -526,13 +526,13 @@ dual-journal recovery ledger, and exposes explicit acknowledge, token
 checkpoint, node-failure, replica-repair, and completion transitions.
 
 Long-running agents use `AgentSnapshotter` to write checksummed execution
-images as immutable SynFS file versions on a fixed interval. The newest image
+images as immutable GhostFS file versions on a fixed interval. The newest image
 pins its complete CoW filesystem generation for crash-consistent stack
 recovery, while earlier state versions remain addressable for rollback.
 
 ## Pure-Rust AI compute
 
-`synos-compute` gives Candle and Burn a small native SynOS runtime contract
+`ghostos-compute` gives Candle and Burn a small native GhostOS runtime contract
 without a C, C++, CUDA, or POSIX dependency. Fixed-rank tensor metadata points
 directly into capability-mapped IPC regions; read-only and writable views
 borrow those pages in place and validate shape, stride, bounds, alignment, and
@@ -560,19 +560,19 @@ lease cleanup, mirrored redirection, and inference recovery can be observed.
 
 ## Docker-based local testing
 
-A multi-stage Docker image builds SynOS from source and bundles QEMU so you can
-run a bootable SynOS guest on any Docker host without installing Rust, clang,
+A multi-stage Docker image builds GhostOS from source and bundles QEMU so you can
+run a bootable GhostOS guest on any Docker host without installing Rust, clang,
 or QEMU locally. The guest exposes a VNC display; connect with any VNC client
-to see the SynOS console.
+to see the GhostOS console.
 
 ### Quick start — single node
 
 ```sh
 # Build the Docker image (takes several minutes on first run)
-docker build -t synos:latest .
+docker build -t ghostos:latest .
 
-# Launch a single SynOS guest with serial on stdout + VNC on :0
-docker run --rm -it -p 5900:5900 synos single
+# Launch a single GhostOS guest with serial on stdout + VNC on :0
+docker run --rm -it -p 5900:5900 ghostos single
 ```
 
 Open a VNC client to `localhost:5900` (password is empty). Press Ctrl-C to stop
@@ -582,10 +582,10 @@ the guest.
 
 ```sh
 # Single node (foreground, Ctrl-C to stop)
-docker compose up synos
+docker compose up ghostos
 
 # Three-node CXL cluster
-docker compose --profile cluster up synos-cluster
+docker compose --profile cluster up ghostos-cluster
 ```
 
 ### Cluster mode
@@ -594,37 +594,37 @@ docker compose --profile cluster up synos-cluster
 # 2–8 node cluster with CXL fabric and shared ivshmem region
 docker run --rm -it \
   -p 5900-5907:5900-5907 \
-  -e SYNOS_CLUSTER_NODES=3 \
-  synos cluster
+  -e GHOSTOS_CLUSTER_NODES=3 \
+  ghostos cluster
 ```
 
 Each node receives its own VNC display starting at port 5900. Serial logs for
-every node are written to `/tmp/synos-qemu/node-*.serial.log` inside the
+every node are written to `/tmp/ghostos-qemu/node-*.serial.log` inside the
 container.
 
 ### Environment variables
 
 | Variable               | Default                              | Description                              |
 | ---------------------- | ------------------------------------ | ---------------------------------------- |
-| `SYNOS_DISK_IMAGE`     | `/synos/build/bios/synos-bios.img`   | Path to the raw disk image               |
-| `SYNOS_CLUSTER_NODES`  | `1`                                  | Number of cluster guests (2–8)           |
-| `SYNOS_GUEST_MEMORY`   | `512M`                               | RAM per guest                            |
-| `SYNOS_VNC_BASE`       | `5900`                               | Starting VNC port                        |
-| `SYNOS_QEMU_ACCEL`     | `tcg`                                | QEMU accelerator: `tcg` or `kvm`         |
-| `SYNOS_QEMU_EXTRA`     | (empty)                              | Extra flags appended to QEMU             |
+| `GHOSTOS_DISK_IMAGE`     | `/ghostos/build/bios/ghostos-bios.img`   | Path to the raw disk image               |
+| `GHOSTOS_CLUSTER_NODES`  | `1`                                  | Number of cluster guests (2–8)           |
+| `GHOSTOS_GUEST_MEMORY`   | `512M`                               | RAM per guest                            |
+| `GHOSTOS_VNC_BASE`       | `5900`                               | Starting VNC port                        |
+| `GHOSTOS_QEMU_ACCEL`     | `tcg`                                | QEMU accelerator: `tcg` or `kvm`         |
+| `GHOSTOS_QEMU_EXTRA`     | (empty)                              | Extra flags appended to QEMU             |
 
 ### Platform notes
 
-- On Linux with `/dev/kvm` accessible, set `SYNOS_QEMU_ACCEL=kvm` for
+- On Linux with `/dev/kvm` accessible, set `GHOSTOS_QEMU_ACCEL=kvm` for
   near-native speed.
 - On macOS and Windows, TCG software emulation is used. Performance is adequate
   for interactive shell testing.
 - The Docker image includes both the BIOS raw image and the portable UEFI image;
-  set `SYNOS_DISK_IMAGE` to `/synos/build/portable/synos.img` to boot via UEFI.
+  set `GHOSTOS_DISK_IMAGE` to `/ghostos/build/portable/ghostos.img` to boot via UEFI.
 
 ## Native interactive shell
 
-`syn-shell` is a heap-free Ring 3 shell core. Its UTF-8 line editor provides
+`ghostos-shell` is a heap-free Ring 3 shell core. Its UTF-8 line editor provides
 cursor editing and bounded history. The parser supports quoted values,
 DCL-style qualifiers and negated Boolean qualifiers, comments, structured
 pipelines, and trailing `&` background submission.
@@ -688,7 +688,7 @@ partition or stale membership epoch blocks writes until an administrator
 reconciles or fences the unsafe node.
 
 Safe recovery order is: inspect `SHOW CLUSTER/HEALTH`, stop new work with
-`DRAIN NODE`, fence unsafe nodes, reconcile membership/SynFS/leases, then use
+`DRAIN NODE`, fence unsafe nodes, reconcile membership/GhostFS/leases, then use
 `RECOVER NODE` or `REJOIN NODE`. Use `ABANDON NODE /FORCE /CONFIRM` only when
 data reconciliation is impossible. `REMOVE CLUSTER` is destructive and must
 follow workload, lease, membership, and storage checks.
@@ -697,7 +697,7 @@ The opt-in two-node QEMU validation captures command input, serial output, QMP
 control traffic, failure injection, and node logs:
 
 ```sh
-SYNOS_RUN_QEMU_TESTS=1 ./scripts/qemu-cluster-validation.sh
+GHOSTOS_RUN_QEMU_TESTS=1 ./scripts/qemu-cluster-validation.sh
 ```
 
 The runner covers create, list, show, join/leave, federation, fencing,
@@ -705,7 +705,7 @@ recovery, rejoin, and a failed-node path. It needs Linux QEMU with CXL,
 ivshmem, and multicast socket support.
 
 EDIT file (also EDT) opens a bounded UTF-8 full-screen editor. It edits a
-selected version and saves as a new SynFS version; an omitted selector opens
+selected version and saves as a new GhostFS version; an omitted selector opens
 the latest version. Ctrl-S saves, Ctrl-Z saves and exits, and Ctrl-X discards
 and exits. Escape enters command mode: I inserts, S saves, E saves and exits,
 Q quits, while Y, X, and P copy, cut, and paste the current selection.
@@ -715,7 +715,7 @@ and requires an explicit confirmation before publishing another version.
 
 ## Cluster topology monitor
 
-`synos-top` is a heap-free real-time dashboard core. It renders per-node RAM
+`ghostos-top` is a heap-free real-time dashboard core. It renders per-node RAM
 and VRAM heatmaps, p50/p99 remote DSM page-fault latency, and the live
 capability derivation tree. Its fixed-rate sampler keeps the last coherent
 snapshot when a telemetry read fails.
@@ -726,7 +726,7 @@ interval percentiles without allocation. Trusted diagnostics can enumerate
 live kernel capability descriptors through `CapabilitySpace::entries`; the
 serving process remains responsible for filtering what a caller may see.
 
-`synos-mesh` carries signed, expiring cluster advertisements. Each advertisement
+`ghostos-mesh` carries signed, expiring cluster advertisements. Each advertisement
 contains the cluster and node identity, protocol versions, capabilities, and up
 to four ordered endpoints. Endpoints support CXL, Ethernet, wireless, 5G,
 loopback, and tunnels, including direct, NAT, relay, and offline routes.
@@ -745,7 +745,7 @@ cancellation, and lost-worker recovery.
 
 ## Cross-platform client SDKs
 
-`synos-client-sdk` is a `no_std`, allocation-free client and frontend gateway
+`ghostos-client-sdk` is a `no_std`, allocation-free client and frontend gateway
 contract for macOS, iOS, Android, and WebAssembly. Its versioned `SYRP` frames
 carry optional 192-byte cryptographic capabilities and provide typed RPCs for
 cluster snapshots, job submission, and capability delegation. Platform code
@@ -763,7 +763,7 @@ The stable source and wire compatibility rules for these clients are in the
 Cluster lifecycle, membership, invitations, plans, health, resources, topology,
 and audit activity share bounded SDK schemas. Subscriptions use cursors and a
 fixed maximum poll batch, so a slow dashboard cannot grow server state without
-bound. `synos-observability` exports dimensioned metric samples, trace/log
+bound. `ghostos-observability` exports dimensioned metric samples, trace/log
 records, audit records, and alerts keyed by cluster, node, transport, workload,
 and operation.
 
@@ -774,7 +774,7 @@ HTTP gateway.
 
 ## Remote console and display
 
-`synos-webterm` provides a heap-free VT100/VT420/DECterm terminal model for
+`ghostos-webterm` provides a heap-free VT100/VT420/DECterm terminal model for
 browser and native clients. It handles UTF-8, cursor and scrolling regions,
 erase and insertion operations, SGR colors and attributes, DEC private modes,
 and OSC framing. Dirty rows become fixed WebGPU cell instances, allowing a
@@ -782,11 +782,11 @@ WebAssembly frontend to update only changed GPU buffer ranges.
 
 Its Ring 3 SSH gate accepts configured public-key proofs through a platform
 authentication trait. SSH login uses one-shot, exchange-hash-bound challenges
-and expiring sessions before opening `syn-shell`; every generation-checked
+and expiring sessions before opening `ghostos-shell`; every generation-checked
 session stays bound to its principal. Terminal resize, bounded input, output
 polling, and close operations stay transport-independent.
 
-`synos-remote-display` moves capture surfaces through explicit available,
+`ghostos-remote-display` moves capture surfaces through explicit available,
 capturing, encoding, and in-flight lease states. NV12, P010, RGBA, and BGRA
 planes remain in capability-mapped shared memory. The AV1 encoder boundary
 returns another shared descriptor, and the RFC 9364 RTP packetizer creates
@@ -800,26 +800,26 @@ tablets, and desktop browsers.
 
 ## Rust toolchain and runtime
 
-Ring 3 Rust programs target `targets/x86_64-unknown-synos.json` or
-`targets/aarch64-unknown-synos.json`. Both targets produce position-independent
+Ring 3 Rust programs target `targets/x86_64-unknown-ghostos.json` or
+`targets/aarch64-unknown-ghostos.json`. Both targets produce position-independent
 static images with abort-on-panic behavior.
 
-`synos-runtime` provides the native `sys::synos` platform contract used by the
-SynOS `std` port. The loader installs one call gate and an initial capability
+`ghostos-runtime` provides the native `sys::ghostos` platform contract used by the
+GhostOS `std` port. The loader installs one call gate and an initial capability
 set. Files, threads, wait words, clocks, memory mappings, IPC endpoints, and
-SynFS objects therefore use generation-checked handles instead of an ambient
+GhostFS objects therefore use generation-checked handles instead of an ambient
 Unix syscall namespace.
 
-`synos-ipc` owns the shared MPMC ring used by Ring 0 and Ring 3. Fixed envelopes
+`ghostos-ipc` owns the shared MPMC ring used by Ring 0 and Ring 3. Fixed envelopes
 move through atomics while structured payloads stay in capability-mapped pages.
 `zerocopy` validates typed views over those pages, and `SharedArena` archives
 messages without heap allocation.
 
-Legacy C and C++ components can opt into `synos-posix-compat`. It maintains a
+Legacy C and C++ components can opt into `ghostos-posix-compat`. It maintains a
 bounded process-local file-descriptor table and translates open, close, read,
-write, seek, and clock operations into SynFS capabilities and shared-buffer
+write, seek, and clock operations into GhostFS capabilities and shared-buffer
 descriptors. Its C contract is in
-`crates/posix-compat/include/synos_posix.h`.
+`crates/posix-compat/include/ghostos_posix.h`.
 
 The same Ring 3 compatibility layer decodes x86_64 and AArch64 Linux syscall
 vectors for read, write, open/openat, close, lseek, monotonic clock, getpid,
@@ -837,13 +837,13 @@ copy the container's byte stream.
 
 ## Rust package toolchain
 
-`cargo-synos` builds Ring 3 programs for either SynOS target, builds the required
+`cargo-ghostos` builds Ring 3 programs for either GhostOS target, builds the required
 `core` and `alloc` libraries from the pinned `rust-src`, and creates signed
 binary bundles:
 
 ```sh
-cargo install --path tools/cargo-synos
-cargo synos package \
+cargo install --path tools/cargo-ghostos
+cargo ghostos package \
   --bin example-service \
   --target x86_64 \
   --release \
@@ -858,7 +858,7 @@ standalone `build` and `bundle` commands expose each half of the workflow.
 Compile a native Ring 3 binary with the reusable compiler driver:
 
 ```sh
-cargo run -p cargo-synos -- synos compile \
+cargo run -p cargo-ghostos -- ghostos compile \
   --manifest-path examples/hello-world/Cargo.toml \
   --bin hello-world --target x86_64
 ```
@@ -866,27 +866,27 @@ cargo run -p cargo-synos -- synos compile \
 Run the same example on the host:
 
 ```sh
-cargo run -p cargo-synos -- synos run \
+cargo run -p cargo-ghostos -- ghostos run \
   --manifest-path examples/hello-world/Cargo.toml \
   --bin hello-world
 ```
 
-The compiler emits a position-independent SynOS binary. Package it with the
-existing signing command before installing it into SynFS.
+The compiler emits a position-independent GhostOS binary. Package it with the
+existing signing command before installing it into GhostFS.
 
 Compile every production Ring 0 and Ring 3 library crate used by the TODO roadmap:
 
 ```sh
-cargo run -p cargo-synos -- synos compile-all --target x86_64 --release
+cargo run -p cargo-ghostos -- ghostos compile-all --target x86_64 --release
 ```
 
 The workspace command excludes only host-side Cargo tooling, test fixtures,
 the UEFI host application, and the host virtual machine. See
 [`docs/native-compiler.md`](docs/native-compiler.md) for the boundary.
 
-The heap-free `synos-pkg` daemon rejects bundles from unknown trust keys,
+The heap-free `ghostos-pkg` daemon rejects bundles from unknown trust keys,
 validates the signature and payload digest, and installs payloads and manifests
-under SHA-256-derived SynFS names. A bounded `SystemConfiguration` declares the
+under SHA-256-derived GhostFS names. A bounded `SystemConfiguration` declares the
 complete logical-name-to-package mapping. Activation first validates every
 package and dependency, then commits one new `system/root.manifest` version, so
 readers see either the old root or the complete new root.
@@ -917,11 +917,11 @@ Format the USB drive as GPT with a FAT32 partition. On macOS:
 
 ```sh
 diskutil list
-diskutil eraseDisk FAT32 SYNOS GPT /dev/disk5
-mkdir -p /Volumes/SYNOS/EFI/BOOT
+diskutil eraseDisk FAT32 GHOSTOS GPT /dev/disk5
+mkdir -p /Volumes/GHOSTOS/EFI/BOOT
 
-cp target/x86_64-unknown-uefi/release/synos-loader.efi \
-    /Volumes/SYNOS/EFI/BOOT/BOOTX64.EFI
+cp target/x86_64-unknown-uefi/release/ghostos-loader.efi \
+    /Volumes/GHOSTOS/EFI/BOOT/BOOTX64.EFI
 sync
 diskutil eject /dev/disk5
 ```
@@ -929,9 +929,9 @@ diskutil eject /dev/disk5
 On Linux, after creating and mounting a FAT32 EFI System Partition:
 
 ```sh
-mkdir -p /Volumes/SYNOS/EFI/BOOT
-cp target/x86_64-unknown-uefi/release/synos-loader.efi \
-  /Volumes/SYNOS/EFI/BOOT/BOOTX64.EFI
+mkdir -p /Volumes/GHOSTOS/EFI/BOOT
+cp target/x86_64-unknown-uefi/release/ghostos-loader.efi \
+  /Volumes/GHOSTOS/EFI/BOOT/BOOTX64.EFI
 sync
 diskutil eject /dev/disk5
 ```
@@ -943,12 +943,12 @@ EFI/BOOT/BOOTX64.EFI
 ```
 
 Choose the UEFI USB entry in the firmware boot menu. Current UEFI screen output
-shows a `SynOS bare-metal bootstrap` prompt. Press a key to start the kernel.
+shows a `GhostOS bare-metal bootstrap` prompt. Press a key to start the kernel.
 If firmware handoff fails, the loader displays the EFI status instead of
 silently returning to another operating system.
 
 After rebuilding, always replace `EFI/BOOT/BOOTX64.EFI` on the USB drive with
-the new `synos-loader.efi`.
+the new `ghostos-loader.efi`.
 
 
 ### Legacy BIOS
@@ -963,14 +963,14 @@ Build the image:
 ```
 
 Do not copy individual files to the USB drive. Write the complete
-`build/bios/synos-bios.img` image to the whole drive, not to a partition.
+`build/bios/ghostos-bios.img` image to the whole drive, not to a partition.
 
 On macOS:
 
 ```sh
 diskutil list
 diskutil unmountDisk /dev/diskN
-sudo dd if=build/bios/synos-bios.img of=/dev/rdiskN bs=4m
+sudo dd if=build/bios/ghostos-bios.img of=/dev/rdiskN bs=4m
 sync
 diskutil eject /dev/diskN
 ```
@@ -982,7 +982,7 @@ On Linux:
 ```sh
 lsblk -p
 sudo umount /dev/sdX1
-sudo dd if=build/bios/synos-bios.img of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=build/bios/ghostos-bios.img of=/dev/sdX bs=4M status=progress conv=fsync
 sudo eject /dev/sdX
 ```
 
@@ -990,26 +990,26 @@ Replace `sdX` with the whole USB drive. Unmount every mounted partition if the
 drive has more than one.
 
 Boot the computer's one-time boot menu and choose the USB drive under its
-Legacy or CSM entry. A successful start prints `SynOS kernel bootstrap` on VGA
+Legacy or CSM entry. A successful start prints `GhostOS kernel bootstrap` on VGA
 and COM1 serial.
 
 
 ## Dual boot without repartitioning
 
-The UEFI loader presents a boot menu for SynOS, Windows Boot Manager, and GRUB.
+The UEFI loader presents a boot menu for GhostOS, Windows Boot Manager, and GRUB.
 It searches every firmware-visible EFI System Partition for the standard
 Windows path and common GRUB paths. A selected child loader runs through UEFI
-`LoadImage`/`StartImage`; SynOS does not alter firmware boot variables.
+`LoadImage`/`StartImage`; GhostOS does not alter firmware boot variables.
 
-To keep SynOS as one ordinary file on an existing EXT4 or NTFS partition, copy
-`build/portable/synos.img` to the partition root and add the contents of
+To keep GhostOS as one ordinary file on an existing EXT4 or NTFS partition, copy
+`build/portable/ghostos.img` to the partition root and add the contents of
 `boot/grub/grub.cfg` to the host GRUB configuration. GRUB finds the file,
 mounts it as a loopback FAT image, and starts its fallback UEFI loader. No
 partition-table change is needed.
 
 ## Read-only host filesystems
 
-`synos-host-filesystems` is a heap-free Ring 3 storage building block. It scans
+`ghostos-host-filesystems` is a heap-free Ring 3 storage building block. It scans
 MBR and GPT partition tables, detects FAT32, EXT4, and NTFS volumes, resolves
 paths, and provides bounded positional file reads. FAT long names, EXT4 extent
 trees, NTFS MFT data runs, large directory indexes, resident data, sparse data,
@@ -1027,7 +1027,7 @@ COM1 uses 38400 baud, 8 data bits, no parity, and 1 stop bit. A USB-to-serial
 adapter connected to the target machine can capture the earliest boot output.
 
 
-### SynOS-shell commands
+### GhostOS-shell commands
 
 ````
 

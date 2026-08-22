@@ -1,6 +1,6 @@
 use crate::{DEFAULT_RESPONSE_HEADERS, Method, RequestContext, Response, StatusCode, WebRights};
-use synos_status::{AuditContext, PublicError, Status};
-use synos_ipc::{BufferError, BufferLease, BufferOwner};
+use ghostos_status::{AuditContext, PublicError, Status};
+use ghostos_ipc::{BufferError, BufferLease, BufferOwner};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -33,7 +33,7 @@ impl GrpcStatus {
 
     pub const fn public_error(self, audit: AuditContext) -> PublicError {
         self.public_status()
-            .public_error(synos_status::operation::GRPC, audit)
+            .public_error(ghostos_status::operation::GRPC, audit)
     }
 }
 
@@ -93,7 +93,7 @@ pub enum GrpcError {
     InvalidPath,
     MethodNotAllowed,
     NotFound,
-    Protocol(synos_protocol::ProtocolError),
+    Protocol(ghostos_protocol::ProtocolError),
     Buffer(BufferError),
 }
 
@@ -112,7 +112,7 @@ impl GrpcError {
             Self::Protocol(_) => Status::INVALID_ARGUMENT,
             Self::Buffer(_) => Status::ACCESS_DENIED,
         };
-        status.public_error(synos_status::operation::GRPC, audit)
+        status.public_error(ghostos_status::operation::GRPC, audit)
     }
 }
 
@@ -254,12 +254,12 @@ pub fn decode_grpc_frame_guarded<'a>(
 }
 
 pub fn decode_grpc_frame_checked<'a>(
-    guard: &mut synos_protocol::ProtocolGuard,
+    guard: &mut ghostos_protocol::ProtocolGuard,
     sequence: u64,
     bytes: &'a [u8],
 ) -> Result<(bool, &'a [u8], usize), GrpcError> {
     guard
-        .require_class(synos_protocol::TrafficClass::Grpc)
+        .require_class(ghostos_protocol::TrafficClass::Grpc)
         .map_err(GrpcError::Protocol)?;
     guard
         .validate_message(bytes.len())

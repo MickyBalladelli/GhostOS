@@ -2,9 +2,9 @@
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use synos_legacy_pc_drivers::pci::{enumerate, PortConfig};
+use ghostos_legacy_pc_drivers::pci::{enumerate, PortConfig};
 
-use synos_legacy_pc_drivers::PciDevice;
+use ghostos_legacy_pc_drivers::PciDevice;
 
 pub(crate) const MAX_PCI_DEVICES: usize = 64;
 

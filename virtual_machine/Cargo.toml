@@ -1,34 +1,34 @@
 [package]
-name = "synos-vm"
+name = "ghostos-vm"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "A lightweight virtual machine for testing SynOS"
+description = "A lightweight virtual machine for testing GhostOS"
 
 [dependencies]
 bitflags = "2.4"
-synos-api-compat = { path = "../crates/api-compat" }
+ghostos-api-compat = { path = "../crates/api-compat" }
 thiserror = "1.0"
-synos-abi = { path = "../crates/abi" }
-synos-boot-protocol = { path = "../crates/boot-protocol" }
-synos-fabric = { path = "../crates/fabric" }
-synos-kernel = { path = "../kernel" }
-synos-observability = { path = "../crates/observability" }
-synos-synfs = { path = "../crates/synfs" }
+ghostos-abi = { path = "../crates/abi" }
+ghostos-boot-protocol = { path = "../crates/boot-protocol" }
+ghostos-fabric = { path = "../crates/fabric" }
+ghostos-kernel = { path = "../kernel" }
+ghostos-observability = { path = "../crates/observability" }
+ghostos-ghostfs = { path = "../crates/ghostfs" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
-synos-app = { path = "../crates/app" }
-synos-ipc = { path = "../crates/ipc" }
-synos-netd = { path = "../crates/netd" }
-synos-init = { path = "../crates/init" }
-synos-pkg = { path = "../crates/pkg" }
-synos-runtime = { path = "../crates/runtime" }
-synos-status = { path = "../crates/status" }
-synos-test-support = { path = "../crates/test-support" }
-synos-webterm = { path = "../crates/synos-webterm" }
+ghostos-app = { path = "../crates/app" }
+ghostos-ipc = { path = "../crates/ipc" }
+ghostos-netd = { path = "../crates/netd" }
+ghostos-init = { path = "../crates/init" }
+ghostos-pkg = { path = "../crates/pkg" }
+ghostos-runtime = { path = "../crates/runtime" }
+ghostos-status = { path = "../crates/status" }
+ghostos-test-support = { path = "../crates/test-support" }
+ghostos-webterm = { path = "../crates/ghostos-webterm" }
 
 [features]
 default = []

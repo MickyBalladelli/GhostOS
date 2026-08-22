@@ -53,10 +53,10 @@ artifact = "stdout.log"
 
 [gates]
 deterministic = "./scripts/test-all.sh"
-full_validation = "SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
+full_validation = "GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh"
 release = "./scripts/release-gate.sh build/test-evidence/<run-id> <slo-report.json> <release-claims.json> <upgrade-compatibility.json>"
 coverage_policy = "coverage.toml"
-mutation_scope = "status, auth, fsd, synfs, http, virtual_machine"
+mutation_scope = "status, auth, fsd, ghostfs, http, virtual_machine"
 fuzz_targets = ["path", "volume", "operations", "mount", "http", "script", "network"]
 
 [evidence_manifest]
@@ -70,7 +70,7 @@ command = "cargo test --workspace --all-targets"
 artifact = "stdout.log"
 
 [tiers.qemu]
-command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments --test qemu_login_e2e -- --ignored"
+command = "GHOSTOS_RUN_QEMU_TESTS=1 cargo test -p ghostos-vm --test qemu_matrix_59_11 --test test_environments --test qemu_login_e2e -- --ignored"
 artifact = "serial.log"
 
 [tiers.fault]
@@ -87,7 +87,7 @@ artifact = "result.json"
 
 [[feature]]
 id = "01"
-todo_heading = "Core SynOS Kernel Architecture & SynFS"
+todo_heading = "Core GhostOS Kernel Architecture & GhostFS"
 unit = ["unit.01.core"]
 integration = ["integration.01.core", "integration.01.remote-rmdir-safety"]
 qemu = ["qemu.01.boot-filesystem", "qemu.01.rmdir-safety"]
@@ -107,7 +107,7 @@ performance = ["performance.02.storage-io"]
 
 [[feature]]
 id = "03"
-todo_heading = "Solving Core Linux Pain Points in SynOS"
+todo_heading = "Solving Core Linux Pain Points in GhostOS"
 unit = ["unit.03.platform"]
 integration = ["integration.03.compatibility"]
 qemu = ["qemu.03.user-runtime"]
@@ -207,7 +207,7 @@ performance = ["performance.12.runtime-overhead"]
 
 [[feature]]
 id = "13"
-todo_heading = "Native Rust Interactive Shell (syn-shell)"
+todo_heading = "Native Rust Interactive Shell (ghostos-shell)"
 unit = ["unit.13.parser-editor"]
 integration = ["integration.13.shell-pipeline"]
 qemu = ["qemu.13.shell-session"]
@@ -364,7 +364,7 @@ performance = ["performance.27.http-throughput"]
 
 [[feature]]
 id = "28"
-todo_heading = "Native Command Scripting (syn-script)"
+todo_heading = "Native Command Scripting (ghostos-script)"
 unit = ["unit.28.script"]
 integration = ["integration.28.script-shell"]
 qemu = ["qemu.28.script-runtime"]
@@ -394,7 +394,7 @@ performance = ["performance.30.agent-scheduling"]
 
 [[feature]]
 id = "31"
-todo_heading = "AI Agent Native Script Execution (synos-agent-bridge)"
+todo_heading = "AI Agent Native Script Execution (ghostos-agent-bridge)"
 unit = ["unit.31.agent-bridge"]
 integration = ["integration.31.bridge-script"]
 qemu = ["qemu.31.agent-bridge"]
@@ -434,7 +434,7 @@ performance = ["performance.34.control-dispatch"]
 
 [[feature]]
 id = "35"
-todo_heading = "Atomic System Patching & Hot-Swapping (synos-update)"
+todo_heading = "Atomic System Patching & Hot-Swapping (ghostos-update)"
 unit = ["unit.35.update"]
 integration = ["integration.35.atomic-update"]
 qemu = ["qemu.35.update-rollback"]
@@ -444,7 +444,7 @@ performance = ["performance.35.activation"]
 
 [[feature]]
 id = "36"
-todo_heading = "Package Obsolescence & Vulnerability Monitoring (synos-audit)"
+todo_heading = "Package Obsolescence & Vulnerability Monitoring (ghostos-audit)"
 unit = ["unit.36.audit"]
 integration = ["integration.36.package-audit"]
 qemu = ["qemu.36.audit-service"]
@@ -454,7 +454,7 @@ performance = ["performance.36.audit-scan"]
 
 [[feature]]
 id = "37"
-todo_heading = "Microkernel Cyber Defense & Runtime Protection (synos-shield)"
+todo_heading = "Microkernel Cyber Defense & Runtime Protection (ghostos-shield)"
 unit = ["unit.37.shield"]
 integration = ["integration.37.runtime-policy"]
 qemu = ["qemu.37.shield-enforcement"]
@@ -484,7 +484,7 @@ performance = ["performance.39.verification"]
 
 [[feature]]
 id = "40"
-todo_heading = "Intra-Cluster Load Balancing & Resource Pooling (synos-balancerd)"
+todo_heading = "Intra-Cluster Load Balancing & Resource Pooling (ghostos-balancerd)"
 unit = ["unit.40.balancer"]
 integration = ["integration.40.cluster-balancing"]
 qemu = ["qemu.40.multi-node-balancing"]
@@ -564,7 +564,7 @@ performance = ["performance.47.debug-overhead"]
 
 [[feature]]
 id = "48"
-todo_heading = "Capability-Gated Network Firewall & Packet Filtering (synos-firewall)"
+todo_heading = "Capability-Gated Network Firewall & Packet Filtering (ghostos-firewall)"
 unit = ["unit.48.firewall"]
 integration = ["integration.48.packet-filter"]
 qemu = ["qemu.48.firewall-network"]
@@ -574,7 +574,7 @@ performance = ["performance.48.filter-throughput"]
 
 [[feature]]
 id = "49"
-todo_heading = "Native In-Memory Key-Value Cache Engine (synos-kvd)"
+todo_heading = "Native In-Memory Key-Value Cache Engine (ghostos-kvd)"
 unit = ["unit.49.kvd"]
 integration = ["integration.49.cache-api"]
 qemu = ["qemu.49.cache-service"]
@@ -584,7 +584,7 @@ performance = ["performance.49.cache-throughput"]
 
 [[feature]]
 id = "50"
-todo_heading = "Enterprise Remote Storage & NAS Mount Services (synos-storaged)"
+todo_heading = "Enterprise Remote Storage & NAS Mount Services (ghostos-storaged)"
 unit = ["unit.50.remote-storage"]
 integration = ["integration.50.nas-mount"]
 qemu = ["qemu.50.remote-storage"]
@@ -594,7 +594,7 @@ performance = ["performance.50.remote-storage"]
 
 [[feature]]
 id = "51"
-todo_heading = "Hardware-Rooted Confidential Computing & TEE Enclaves (synos-confidential)"
+todo_heading = "Hardware-Rooted Confidential Computing & TEE Enclaves (ghostos-confidential)"
 unit = ["unit.51.confidential"]
 integration = ["integration.51.attestation"]
 qemu = ["qemu.51.tee-policy"]
@@ -604,7 +604,7 @@ performance = ["performance.51.attestation"]
 
 [[feature]]
 id = "52"
-todo_heading = "Deterministic Time-Travel Execution & Replay (synos-replay)"
+todo_heading = "Deterministic Time-Travel Execution & Replay (ghostos-replay)"
 unit = ["unit.52.replay"]
 integration = ["integration.52.replay-restore"]
 qemu = ["qemu.52.replay-guest"]
@@ -614,7 +614,7 @@ performance = ["performance.52.replay-overhead"]
 
 [[feature]]
 id = "53"
-todo_heading = "Agent-Native Semantic Memory & Context Bus (synos-agentd)"
+todo_heading = "Agent-Native Semantic Memory & Context Bus (ghostos-agentd)"
 unit = ["unit.53.semantic-memory"]
 integration = ["integration.53.context-bus"]
 qemu = ["qemu.53.agent-memory"]
@@ -624,7 +624,7 @@ performance = ["performance.53.vector-search"]
 
 [[feature]]
 id = "54"
-todo_heading = "Self-Healing Daemon Supervisor (synos-heal)"
+todo_heading = "Self-Healing Daemon Supervisor (ghostos-heal)"
 unit = ["unit.54.healing"]
 integration = ["integration.54.supervisor"]
 qemu = ["qemu.54.daemon-recovery"]
@@ -634,7 +634,7 @@ performance = ["performance.54.recovery-latency"]
 
 [[feature]]
 id = "55"
-todo_heading = "Zero-Overhead POSIX/Linux Compatibility (synos-compatd)"
+todo_heading = "Zero-Overhead POSIX/Linux Compatibility (ghostos-compatd)"
 unit = ["unit.55.posix"]
 integration = ["integration.55.compatibility"]
 qemu = ["qemu.55.posix-application"]
@@ -644,7 +644,7 @@ performance = ["performance.55.compatibility-overhead"]
 
 [[feature]]
 id = "56"
-todo_heading = "Edge-to-Cloud Dynamic Cluster Mesh (synos-mesh)"
+todo_heading = "Edge-to-Cloud Dynamic Cluster Mesh (ghostos-mesh)"
 unit = ["unit.56.mesh"]
 integration = ["integration.56.mesh-discovery"]
 qemu = ["qemu.56.edge-cloud"]
@@ -654,7 +654,7 @@ performance = ["performance.56.mesh-routing"]
 
 [[feature]]
 id = "57"
-todo_heading = "Declarative OS Infrastructure-as-Code (synos-declarative)"
+todo_heading = "Declarative OS Infrastructure-as-Code (ghostos-declarative)"
 unit = ["unit.57.declarative"]
 integration = ["integration.57.config-activation"]
 qemu = ["qemu.57.declarative-boot"]

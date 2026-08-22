@@ -7,9 +7,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use synos_vm::devices::{Device, DeviceError, InterruptController, PortBus, PortDevice};
-use synos_vm::firmware::bios::BiosContext;
-use synos_vm::{
+use ghostos_vm::devices::{Device, DeviceError, InterruptController, PortBus, PortDevice};
+use ghostos_vm::firmware::bios::BiosContext;
+use ghostos_vm::{
     Cpu, CpuError, CpuMode, ExecutionEngine, ExecutionEngineConfig, Mmu, PageFlags,
     PrivilegeLevel,
 };
@@ -617,7 +617,7 @@ fn differential_privilege_interrupt_and_reset_state() {
     assert_eq!(mmu.read_u64(expected_rsp + 32).expect("saved SS"), 0x23);
 
     cpu.reset();
-    assert_eq!(cpu.state, synos_vm::cpu::CpuState::default());
+    assert_eq!(cpu.state, ghostos_vm::cpu::CpuState::default());
 }
 
 fn install_gate(mmu: &mut Mmu, intc: &mut InterruptController, vector: u8, offset: u64) {

@@ -1,4 +1,4 @@
-use synos_client_sdk::{
+use ghostos_client_sdk::{
     Client, ClientError, ClusterCreateRequest, ClusterId, ClusterJoinRequest,
     ClusterLeaveRequest, ClusterName, ClusterRemoveRequest, NodeId, ProtocolError, RpcTransport,
 };
@@ -56,8 +56,8 @@ fn lifecycle_api_preserves_transport_failures() {
 #[test]
 fn polling_rejects_zero_and_over_limit_before_transport() {
     let mut client = Client::new(TransportFailure);
-    let subscription = synos_client_sdk::Subscription {
-        kind: synos_client_sdk::SubscriptionKind::Lifecycle,
+    let subscription = ghostos_client_sdk::Subscription {
+        kind: ghostos_client_sdk::SubscriptionKind::Lifecycle,
         cursor: 0,
     };
     assert!(matches!(
@@ -65,7 +65,7 @@ fn polling_rejects_zero_and_over_limit_before_transport() {
         Err(ClientError::Protocol(ProtocolError::InvalidValue))
     ));
     assert!(matches!(
-        client.poll(subscription, synos_client_sdk::MAX_CLUSTER_CHANGES as u8 + 1),
+        client.poll(subscription, ghostos_client_sdk::MAX_CLUSTER_CHANGES as u8 + 1),
         Err(ClientError::Protocol(ProtocolError::InvalidValue))
     ));
 }

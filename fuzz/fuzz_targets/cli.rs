@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use syn_shell::{
+use ghostos_shell::{
     audit::register_audit_command,
     cluster::register_cluster_commands_without_help,
     diagnostics::register_builtin_commands,

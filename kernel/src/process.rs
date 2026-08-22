@@ -2,16 +2,16 @@
 
 use core::convert::TryFrom;
 
-use synos_app::{
+use ghostos_app::{
     ImageLoadRequest, ImageMapper, LoadedImage, Mapping, MappingRequest, NativeExecRequest,
     NativeSpawnRequest, ProcessArguments, ProcessBackend, ProcessContext, ProcessExit,
     ProcessLimits, ProcessState, ProcessStatus, ProcessUsage,
     RuntimeSegment, SegmentPermissions, StackRequest, TlsRequest, load_image, DEFAULT_GUARD_PAGES,
     DEFAULT_STACK_BYTES, LoaderError,
 };
-use synos_init::{CrashReason, ExitReason, ProcessId, SpawnRequest, SupervisorRuntime};
-use synos_status::{IntoStatus, Status};
-use synos_system_model::ContentId;
+use ghostos_init::{CrashReason, ExitReason, ProcessId, SpawnRequest, SupervisorRuntime};
+use ghostos_status::{IntoStatus, Status};
+use ghostos_system_model::ContentId;
 
 use crate::{
     AddressSpaceId, AddressSpaceTable, CapabilityHandle, CapabilityObject, CapabilitySpace,
@@ -24,7 +24,7 @@ pub const DEFAULT_KERNEL_PROCESS_CAPACITY: usize = 64;
 #[derive(Clone, Copy)]
 pub struct NativeServiceImage<'a> {
     pub bytes: &'a [u8],
-    pub architecture: synos_app::ImageArchitecture,
+    pub architecture: ghostos_app::ImageArchitecture,
     pub heap_bytes: u64,
     pub limits: ProcessLimits,
 }
@@ -35,7 +35,7 @@ pub trait ServiceImageProvider {
     fn image(&self, image_id: u128) -> Option<NativeServiceImage<'_>>;
 }
 
-/// Real kernel process runtime for [`synos_init::Supervisor`].
+/// Real kernel process runtime for [`ghostos_init::Supervisor`].
 ///
 /// Service restart calls `spawn` again after the supervisor's backoff. Service
 /// fencing calls the kernel process backend, which stops the thread, releases
@@ -613,7 +613,7 @@ impl<
         &mut self,
         address_space: AddressSpaceId,
         image: &[u8],
-        architecture: synos_app::ImageArchitecture,
+        architecture: ghostos_app::ImageArchitecture,
         expected_payload: Option<ContentId>,
         heap_bytes: u64,
         arguments: ProcessArguments<'_>,

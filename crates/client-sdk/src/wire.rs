@@ -1,13 +1,13 @@
-pub const PROTOCOL_VERSION: u8 = synos_abi::RPC_PROTOCOL_VERSION;
-pub const FRAME_HEADER_BYTES: usize = synos_abi::RPC_FRAME_HEADER_BYTES;
-pub const MAX_FRAME_BYTES: usize = synos_abi::RPC_MAX_FRAME_BYTES;
+pub const PROTOCOL_VERSION: u8 = ghostos_abi::RPC_PROTOCOL_VERSION;
+pub const FRAME_HEADER_BYTES: usize = ghostos_abi::RPC_FRAME_HEADER_BYTES;
+pub const MAX_FRAME_BYTES: usize = ghostos_abi::RPC_MAX_FRAME_BYTES;
 pub const PERFORMANCE_DIAGNOSTICS_BYTES: usize = 80;
 
-pub(crate) const FLAG_CAPABILITY: u16 = synos_abi::RPC_CAPABILITY_FLAG;
+pub(crate) const FLAG_CAPABILITY: u16 = ghostos_abi::RPC_CAPABILITY_FLAG;
 
-pub use synos_abi::{RpcMethod as Method, RpcStatus};
-use synos_ipc::{BufferError, BufferLease};
-use synos_system_model::performance::{
+pub use ghostos_abi::{RpcMethod as Method, RpcStatus};
+use ghostos_ipc::{BufferError, BufferLease};
+use ghostos_system_model::performance::{
     PerformanceBudget, PerformanceDiagnostics, PERFORMANCE_DIAGNOSTICS_VERSION,
 };
 
@@ -22,7 +22,7 @@ pub struct FrameHeader {
 
 impl FrameHeader {
     pub fn encode(self, output: &mut [u8]) -> Result<(), ProtocolError> {
-        synos_abi::RpcFrameHeader {
+        ghostos_abi::RpcFrameHeader {
             method: self.method,
             flags: self.flags,
             request_id: self.request_id,
@@ -34,7 +34,7 @@ impl FrameHeader {
     }
 
     pub fn decode(input: &[u8]) -> Result<Self, ProtocolError> {
-        let header = synos_abi::RpcFrameHeader::decode(input).map_err(ProtocolError::from)?;
+        let header = ghostos_abi::RpcFrameHeader::decode(input).map_err(ProtocolError::from)?;
         Ok(Self {
             method: header.method,
             flags: header.flags,
@@ -78,33 +78,33 @@ pub enum ProtocolError {
     InvalidUtf8,
     InvalidValue,
     MismatchedResponse,
-    Transport(synos_protocol::ProtocolError),
+    Transport(ghostos_protocol::ProtocolError),
     UnknownMethod,
 }
 
-impl From<synos_abi::FrameError> for ProtocolError {
-    fn from(error: synos_abi::FrameError) -> Self {
+impl From<ghostos_abi::FrameError> for ProtocolError {
+    fn from(error: ghostos_abi::FrameError) -> Self {
         match error {
-            synos_abi::FrameError::UnsupportedVersion
-            | synos_abi::FrameError::SchemaMismatch => Self::AbiMismatch,
-            synos_abi::FrameError::UnknownMethod => Self::UnknownMethod,
-            synos_abi::FrameError::InvalidStatus => Self::InvalidStatus,
-            synos_abi::FrameError::BufferTooSmall
-            | synos_abi::FrameError::InvalidFlags
-            | synos_abi::FrameError::InvalidFrame
-            | synos_abi::FrameError::InvalidLength
-            | synos_abi::FrameError::InvalidMagic => Self::InvalidFrame,
+            ghostos_abi::FrameError::UnsupportedVersion
+            | ghostos_abi::FrameError::SchemaMismatch => Self::AbiMismatch,
+            ghostos_abi::FrameError::UnknownMethod => Self::UnknownMethod,
+            ghostos_abi::FrameError::InvalidStatus => Self::InvalidStatus,
+            ghostos_abi::FrameError::BufferTooSmall
+            | ghostos_abi::FrameError::InvalidFlags
+            | ghostos_abi::FrameError::InvalidFrame
+            | ghostos_abi::FrameError::InvalidLength
+            | ghostos_abi::FrameError::InvalidMagic => Self::InvalidFrame,
         }
     }
 }
 
 pub fn decode_frame_checked(
-    guard: &mut synos_protocol::ProtocolGuard,
+    guard: &mut ghostos_protocol::ProtocolGuard,
     sequence: u64,
     input: &[u8],
 ) -> Result<FrameHeader, ProtocolError> {
     guard
-        .require_class(synos_protocol::TrafficClass::Sdk)
+        .require_class(ghostos_protocol::TrafficClass::Sdk)
         .map_err(ProtocolError::Transport)?;
     guard
         .validate_message(input.len())

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityError, CapabilityHandle, CapabilityObject, CapabilitySpace, Rights,
 };
 
@@ -20,7 +20,7 @@ struct CampaignStats {
 }
 
 fn cycles() -> usize {
-    std::env::var("SYNOS_CAPABILITY_SOAK_CYCLES")
+    std::env::var("GHOSTOS_CAPABILITY_SOAK_CYCLES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
@@ -28,7 +28,7 @@ fn cycles() -> usize {
 }
 
 fn report_path() -> PathBuf {
-    std::env::var_os("SYNOS_CAPABILITY_SOAK_REPORT")
+    std::env::var_os("GHOSTOS_CAPABILITY_SOAK_REPORT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("build/soak/capabilities/report.json"))
 }

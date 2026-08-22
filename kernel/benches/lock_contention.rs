@@ -2,7 +2,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Instant;
 
-use synos_kernel::{CapabilityQuota, QuotaContentionReport, QuotaResource};
+use ghostos_kernel::{CapabilityQuota, QuotaContentionReport, QuotaResource};
 
 const BATCHES: usize = 32;
 const DEFAULT_ITERATIONS: usize = 20_000;
@@ -35,7 +35,7 @@ fn run(workers: usize, iterations: usize) {
                 for index in 0..batch_size {
                     let now = (batch * batch_size + index) as u64;
                     let decision = quota.consume(resource, now, 1);
-                    assert_eq!(decision, synos_kernel::QuotaDecision::Allowed);
+                    assert_eq!(decision, ghostos_kernel::QuotaDecision::Allowed);
                     quota.refund(resource, 1);
                 }
                 batches.push(batch_started.elapsed().as_nanos() / batch_size as u128);
@@ -75,12 +75,12 @@ fn run(workers: usize, iterations: usize) {
 }
 
 fn main() {
-    let iterations = std::env::var("SYNOS_LOCK_ITERATIONS")
+    let iterations = std::env::var("GHOSTOS_LOCK_ITERATIONS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_ITERATIONS);
     let cpus = thread::available_parallelism().map_or(1, |value| value.get());
-    let many_workers = std::env::var("SYNOS_LOCK_WORKERS")
+    let many_workers = std::env::var("GHOSTOS_LOCK_WORKERS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(cpus.max(2));

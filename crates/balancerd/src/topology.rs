@@ -1,9 +1,9 @@
-use synos_auth::{
+use ghostos_auth::{
     accept_offer, token::CapabilityKey, ClusterId, FederatedLease, FederatedResourceOffer,
     FederationError, PeerDirectory, ResourceLender, RevocationAction, RevocationSignal,
 };
-use synos_fabric::NodeId as ClusterNodeId;
-use synos_kernel::FederationFenceTable;
+use ghostos_fabric::NodeId as ClusterNodeId;
+use ghostos_kernel::FederationFenceTable;
 
 use crate::NodeOffer;
 
@@ -110,7 +110,7 @@ pub enum ArbitrationError {
     InvalidRequest,
     NoEligibleNode,
     StaleEpoch,
-    Fence(synos_kernel::LockError),
+    Fence(ghostos_kernel::LockError),
 }
 
 #[derive(Clone, Copy)]

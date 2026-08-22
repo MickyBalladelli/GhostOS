@@ -1,16 +1,16 @@
-use synos_fabric::{
+use ghostos_fabric::{
     Access, AddressRange, NodeId, PAGE_SIZE,
     cluster::{Heartbeat, HeartbeatMonitor, NodeState},
     cxl::{CxlBandwidthDecision, CxlBandwidthPolicy, CxlBandwidthQos, CxlChannel, CxlVersion, DeviceType, Endpoint, Registry},
-    dsm::{CoherenceAction, CoherenceDirectory, DlmLeaseMode, DsmHeader, DsmPacket, MessageKind, PageAssembler, SoftwareDlmLease, SYNOS_DSM_ETHERTYPE},
+    dsm::{CoherenceAction, CoherenceDirectory, DlmLeaseMode, DsmHeader, DsmPacket, MessageKind, PageAssembler, SoftwareDlmLease, GHOSTOS_DSM_ETHERTYPE},
     PageFault,
 };
-use synos_fabric::cluster::{NodeFailure, NodeIsolation, recover_failed_node};
-use synos_fabric::memory::{
+use ghostos_fabric::cluster::{NodeFailure, NodeIsolation, recover_failed_node};
+use ghostos_fabric::memory::{
     GlobalAddressSpace, LeaseOwner, LeaseRights, LeaseTable, MemoryKind, MemoryPool, PoolId,
     Transport,
 };
-use synos_time_sync::ManualClock;
+use ghostos_time_sync::ManualClock;
 
 fn node(raw: u32) -> NodeId {
     NodeId::new(raw).unwrap()
@@ -31,9 +31,9 @@ fn cxl_discovery_qos_and_hot_remove_are_bounded() {
     };
     let mut registry = Registry::<1>::new();
     assert_eq!(registry.discover(endpoint, 2), Ok(0));
-    assert_eq!(registry.discover(endpoint, 0), Err(synos_fabric::Error::InvalidDevice));
-    assert_eq!(registry.begin_remove(7).unwrap().state, synos_fabric::cxl::DeviceState::Draining);
-    assert_eq!(registry.begin_remove(7), Err(synos_fabric::Error::Busy));
+    assert_eq!(registry.discover(endpoint, 0), Err(ghostos_fabric::Error::InvalidDevice));
+    assert_eq!(registry.begin_remove(7).unwrap().state, ghostos_fabric::cxl::DeviceState::Draining);
+    assert_eq!(registry.begin_remove(7), Err(ghostos_fabric::Error::Busy));
     registry.cancel_remove(7).unwrap();
     registry.begin_remove(7).unwrap();
     assert_eq!(registry.complete_remove(7).unwrap().endpoint.serial, 7);
@@ -61,11 +61,11 @@ fn dsm_packets_reassemble_and_reject_corruption() {
     let packet = DsmPacket::new(header, b"fetch").unwrap();
     let mut wire = [0; 64];
     let length = packet.encode(&mut wire).unwrap();
-    assert_eq!(u16::from_be_bytes([wire[0], wire[1]]), SYNOS_DSM_ETHERTYPE);
+    assert_eq!(u16::from_be_bytes([wire[0], wire[1]]), GHOSTOS_DSM_ETHERTYPE);
     assert_eq!(DsmPacket::decode(&wire[..length]).unwrap().payload(), b"fetch");
     assert!(matches!(
         DsmPacket::new(DsmHeader { page_address: 1, ..header }, b"x"),
-        Err(synos_fabric::Error::CorruptPacket)
+        Err(ghostos_fabric::Error::CorruptPacket)
     ));
 
     let mut page = [0; PAGE_SIZE as usize];
@@ -105,7 +105,7 @@ fn dsm_coherence_fences_stale_owners() {
     assert!(matches!(directory.begin_fault(owner, fault, 10), Ok(CoherenceAction::Invalidate { nodes, .. }) if nodes != 0));
     directory.invalidation_complete(page, owner).unwrap();
     assert_eq!(directory.begin_fault(owner, fault, 10), Ok(CoherenceAction::MapLocal { writable: true }));
-    assert_eq!(directory.begin_fault(owner, PageFault { reserved_bit: true, ..fault }, 10), Err(synos_fabric::Error::InvalidAddress));
+    assert_eq!(directory.begin_fault(owner, PageFault { reserved_bit: true, ..fault }, 10), Err(ghostos_fabric::Error::InvalidAddress));
     assert_eq!(directory.fail_node(owner).unwrap(), 1);
     assert_eq!(directory.pages().next().unwrap().lease, None);
 }
@@ -204,7 +204,7 @@ fn partition_recovery_does_not_release_memory_before_fencing() {
             &mut leases,
             &mut coherence,
         ),
-        Err(synos_fabric::Error::NodeNotFenced)
+        Err(ghostos_fabric::Error::NodeNotFenced)
     );
     assert!(!space.is_node_failed(owner));
     assert_eq!(leases.active_for_pool(PoolId::new(1).unwrap()), 1);
@@ -259,7 +259,7 @@ fn future_peer_timestamp_cannot_extend_partition_recovery_deadline() {
             &mut leases,
             &mut coherence,
         ),
-        Err(synos_fabric::Error::NodeNotFenced)
+        Err(ghostos_fabric::Error::NodeNotFenced)
     );
     assert!(!space.is_node_failed(owner));
     assert_eq!(leases.active_for_pool(PoolId::new(1).unwrap()), 1);
@@ -267,6 +267,6 @@ fn future_peer_timestamp_cannot_extend_partition_recovery_deadline() {
 
 #[test]
 fn invalid_ranges_are_not_admitted() {
-    assert_eq!(AddressRange::new(10, 0), Err(synos_fabric::Error::InvalidRange));
+    assert_eq!(AddressRange::new(10, 0), Err(ghostos_fabric::Error::InvalidRange));
     assert_eq!(NodeId::new(0), None);
 }

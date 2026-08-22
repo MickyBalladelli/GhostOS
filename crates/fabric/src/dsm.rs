@@ -1,6 +1,6 @@
 use crate::{Access, AddressRange, Error, NodeId, PAGE_SIZE, PageFault};
 
-pub const SYNOS_DSM_ETHERTYPE: u16 = 0x88b5;
+pub const GHOSTOS_DSM_ETHERTYPE: u16 = 0x88b5;
 pub const FRAME_DATA_BYTES: usize = 1400;
 pub const PAGE_FRAGMENT_COUNT: usize = 3;
 pub const DEFAULT_COHERENCE_PAGES: usize = 1024;
@@ -74,14 +74,14 @@ impl DsmPacket {
         &self.payload[..self.payload_length as usize]
     }
 
-    /// Encodes the SynOS DSM payload placed directly after an Ethernet header.
+    /// Encodes the GhostOS DSM payload placed directly after an Ethernet header.
     pub fn encode(&self, output: &mut [u8]) -> Result<usize, Error> {
         let length = Self::HEADER_BYTES + self.payload_length as usize;
         if output.len() < length {
             return Err(Error::Capacity)
         }
         output[..length].fill(0);
-        output[0..2].copy_from_slice(&SYNOS_DSM_ETHERTYPE.to_be_bytes());
+        output[0..2].copy_from_slice(&GHOSTOS_DSM_ETHERTYPE.to_be_bytes());
         output[2] = Self::VERSION;
         output[3] = self.header.kind as u8;
         output[4..8].copy_from_slice(&self.header.source.raw().to_be_bytes());
@@ -97,7 +97,7 @@ impl DsmPacket {
 
     pub fn decode(input: &[u8]) -> Result<Self, Error> {
         if input.len() < Self::HEADER_BYTES
-            || u16::from_be_bytes([input[0], input[1]]) != SYNOS_DSM_ETHERTYPE
+            || u16::from_be_bytes([input[0], input[1]]) != GHOSTOS_DSM_ETHERTYPE
             || input[2] != Self::VERSION
         {
             return Err(Error::CorruptPacket)

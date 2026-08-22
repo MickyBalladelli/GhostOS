@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_BUDGETS = ROOT / "benchmarks" / "budgets.toml"
-DEFAULT_COMMAND = ["cargo", "bench", "-p", "synos-vm", "--bench", "bounded"]
+DEFAULT_COMMAND = ["cargo", "bench", "-p", "ghostos-vm", "--bench", "bounded"]
 
 
 def now() -> str:
@@ -240,8 +240,8 @@ def run_once(
     command: list[str], revision: str, collect_optional: bool
 ) -> tuple[dict[str, object], int]:
     environment = os.environ.copy()
-    environment["SYNOS_BENCH_REVISION"] = revision
-    environment["SYNOS_BENCH_HARNESS"] = "1"
+    environment["GHOSTOS_BENCH_REVISION"] = revision
+    environment["GHOSTOS_BENCH_HARNESS"] = "1"
     paths = energy_paths()
     before_energy = energy_uj(paths)
     measured_command = command
@@ -490,7 +490,7 @@ def main() -> int:
     hardware = hardware_metadata()
     report: dict[str, object] = {
         "schema": 1,
-        "suite": "synos-vm-bounded",
+        "suite": "ghostos-vm-bounded",
         "status": "failed" if errors else "passed",
         "revision": revision,
         "started_at": started_at,

@@ -122,7 +122,7 @@ def validate_report(
         raise ValueError(f"cannot read SLO report: {error}") from error
     if not isinstance(report, dict):
         raise ValueError("SLO report must be a JSON object")
-    if report.get("schema") != 1 or report.get("kind") != "synos-slo-report":
+    if report.get("schema") != 1 or report.get("kind") != "ghostos-slo-report":
         raise ValueError("SLO report has an unsupported schema")
     revision = git_revision()
     if report.get("revision") != revision:

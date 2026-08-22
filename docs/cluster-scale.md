@@ -1,6 +1,6 @@
 # Cluster scale target
 
-SynOS's deterministic cluster control-plane target is 1,000 members. The
+GhostOS's deterministic cluster control-plane target is 1,000 members. The
 campaign covers 10, 100, and 1,000 nodes at each release boundary:
 
 - discovery returns every member;
@@ -20,7 +20,7 @@ amplification is bounded by one recovery message.
 Regression command:
 
 ```sh
-cargo test -p synos-vm --test cluster cluster_scale_campaign_is_bounded_at_10_100_and_1000_nodes
+cargo test -p ghostos-vm --test cluster cluster_scale_campaign_is_bounded_at_10_100_and_1000_nodes
 ```
 
 The campaign is deterministic and does not depend on wall-clock timing or

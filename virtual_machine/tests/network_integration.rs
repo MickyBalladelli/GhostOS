@@ -1,6 +1,6 @@
 //! Two-VM deterministic Ethernet integration coverage.
 
-use synos_vm::{
+use ghostos_vm::{
     DhcpServerConfig, DeterministicVmNetwork, MacAddress, NetError, NetworkBackendConfig, Vm,
     VmConfig,
 };
@@ -186,7 +186,7 @@ fn icmp_echo(id: u16, sequence: u16, reply: bool) -> Vec<u8> {
     payload[0] = if reply { 0 } else { 8 };
     payload[4..6].copy_from_slice(&id.to_be_bytes());
     payload[6..8].copy_from_slice(&sequence.to_be_bytes());
-    payload[8..].copy_from_slice(b"synos-ping");
+    payload[8..].copy_from_slice(b"ghostos-ping");
     let icmp_checksum = checksum(&payload);
     payload[2..4].copy_from_slice(&icmp_checksum.to_be_bytes());
     payload

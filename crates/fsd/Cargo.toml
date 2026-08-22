@@ -1,5 +1,5 @@
 [package]
-name = "synos-fsd"
+name = "ghostos-fsd"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -8,9 +8,9 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-host-filesystems = { package = "synos-host-filesystems", path = "../host-filesystems" }
-synos-ipc = { path = "../ipc" }
-synos-observability = { path = "../observability" }
-synos-path-pattern = { path = "../path-pattern" }
-synos-status = { path = "../status" }
-synos-synfs = { path = "../synfs" }
+host-filesystems = { package = "ghostos-host-filesystems", path = "../host-filesystems" }
+ghostos-ipc = { path = "../ipc" }
+ghostos-observability = { path = "../observability" }
+ghostos-path-pattern = { path = "../path-pattern" }
+ghostos-status = { path = "../status" }
+ghostos-ghostfs = { path = "../ghostfs" }

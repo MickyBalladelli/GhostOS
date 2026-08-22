@@ -1,7 +1,7 @@
-use synos_ipc::SharedBuffer;
-use synos_legacy_pc_drivers::{Bar, PciAddress, PciDevice};
-use synos_platform_io::{AsyncQueue, Completion, DEFAULT_QUEUE_CAPACITY, RequestToken, Submission};
-use synos_status::{IntoStatus, Status};
+use ghostos_ipc::SharedBuffer;
+use ghostos_legacy_pc_drivers::{Bar, PciAddress, PciDevice};
+use ghostos_platform_io::{AsyncQueue, Completion, DEFAULT_QUEUE_CAPACITY, RequestToken, Submission};
+use ghostos_status::{IntoStatus, Status};
 
 use crate::{Error, framework::BindingAccess, tensor::SharedTensor};
 

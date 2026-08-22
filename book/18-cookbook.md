@@ -17,8 +17,8 @@ Memory hook: **stage 1 loads stage 2, stage 2 loads the kernel, the kernel recei
 ## Recipe 2: boot in the VM
 
 ```sh
-cargo build --release -p synos-vm
-target/release/synos-vm \
+cargo build --release -p ghostos-vm
+target/release/ghostos-vm \
   --kernel build/bios/kernel.bin \
   --append "console=serial0" \
   --steps 100000
@@ -42,11 +42,11 @@ Memory hook: **show, create, inspect.**
 ## Recipe 4: persistent system disk
 
 ```sh
-target/release/synos-vm disk provision ./state/system.raw \
+target/release/ghostos-vm disk provision ./state/system.raw \
   --kernel build/bios/kernel.bin \
   --size 64M --boot-args "console=serial0"
 
-target/release/synos-vm --system-disk ./state/system.raw --firmware bios --interactive
+target/release/ghostos-vm --system-disk ./state/system.raw --firmware bios --interactive
 ```
 
 Memory hook: **provision first, boot from disk second.**
@@ -54,7 +54,7 @@ Memory hook: **provision first, boot from disk second.**
 ## Recipe 5: attach a data disk
 
 ```sh
-target/release/synos-vm \
+target/release/ghostos-vm \
   --kernel build/bios/kernel.bin \
   --disk ./state/data.raw \
   --disk-size 64M \
@@ -69,9 +69,9 @@ Memory hook: **path, size, format, controller, create.**
 ## Recipe 6: inspect safely
 
 ```sh
-target/release/synos-vm disk list --system-disk ./state/system.raw
-target/release/synos-vm disk inspect ./state/system.raw
-target/release/synos-vm disk validate ./state/system.raw
+target/release/ghostos-vm disk list --system-disk ./state/system.raw
+target/release/ghostos-vm disk inspect ./state/system.raw
+target/release/ghostos-vm disk validate ./state/system.raw
 ```
 
 Use `--read-only` for a shared base. Use copy-on-write for temporary mutation.
@@ -87,7 +87,7 @@ Memory hook: **fast, bounded, recorded.**
 ## Recipe 8: run full validation
 
 ```sh
-SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
+GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
 ```
 
 Memory hook: **QEMU, cluster, hardware, fuzz, coverage, mutation, soak, release.**

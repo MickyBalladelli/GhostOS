@@ -76,7 +76,7 @@ fn stable_messages_cover_public_status_constants() {
 
 #[test]
 fn property_valid_statuses_round_trip_their_raw_value() {
-    use synos_test_support::property::{run_assert, Config};
+    use ghostos_test_support::property::{run_assert, Config};
 
     run_assert("status.raw-round-trip", Config::new(0x59_3, 256), |_, _, entropy| {
         let severity = match (entropy.next_u64() % 5) as u8 {

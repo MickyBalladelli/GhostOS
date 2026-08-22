@@ -38,133 +38,133 @@ dependencies = [
 ]
 
 [[package]]
-name = "syn-shell"
+name = "ghostos-shell"
 version = "0.1.0"
 dependencies = [
- "synos-observability",
- "synos-path-pattern",
- "synos-status",
- "synos-system-model",
+ "ghostos-observability",
+ "ghostos-path-pattern",
+ "ghostos-status",
+ "ghostos-system-model",
 ]
 
 [[package]]
-name = "synos-boot-protocol"
+name = "ghostos-boot-protocol"
 version = "0.1.0"
 
 [[package]]
-name = "synos-fabric"
+name = "ghostos-fabric"
 version = "0.1.0"
 dependencies = [
- "synos-observability",
- "synos-status",
+ "ghostos-observability",
+ "ghostos-status",
 ]
 
 [[package]]
-name = "synos-fsd"
+name = "ghostos-fsd"
 version = "0.1.0"
 dependencies = [
- "synos-host-filesystems",
- "synos-ipc",
- "synos-path-pattern",
- "synos-status",
- "synos-synfs",
+ "ghostos-host-filesystems",
+ "ghostos-ipc",
+ "ghostos-path-pattern",
+ "ghostos-status",
+ "ghostos-ghostfs",
 ]
 
 [[package]]
-name = "synos-host-filesystems"
+name = "ghostos-host-filesystems"
 version = "0.1.0"
 dependencies = [
- "synos-status",
+ "ghostos-status",
 ]
 
 [[package]]
-name = "synos-ipc"
+name = "ghostos-ipc"
 version = "0.1.0"
 dependencies = [
  "zerocopy",
 ]
 
 [[package]]
-name = "synos-kernel"
+name = "ghostos-kernel"
 version = "0.1.0"
 dependencies = [
- "syn-shell",
- "synos-boot-protocol",
- "synos-fabric",
- "synos-fsd",
- "synos-ipc",
- "synos-legacy-pc-drivers",
- "synos-observability",
- "synos-power",
- "synos-runtime",
- "synos-status",
- "synos-system-model",
+ "ghostos-shell",
+ "ghostos-boot-protocol",
+ "ghostos-fabric",
+ "ghostos-fsd",
+ "ghostos-ipc",
+ "ghostos-legacy-pc-drivers",
+ "ghostos-observability",
+ "ghostos-power",
+ "ghostos-runtime",
+ "ghostos-status",
+ "ghostos-system-model",
 ]
 
 [[package]]
-name = "synos-legacy-pc-drivers"
+name = "ghostos-legacy-pc-drivers"
 version = "0.1.0"
 dependencies = [
- "synos-status",
+ "ghostos-status",
 ]
 
 [[package]]
-name = "synos-observability"
+name = "ghostos-observability"
 version = "0.1.0"
 dependencies = [
- "synos-status",
+ "ghostos-status",
 ]
 
 [[package]]
-name = "synos-path-pattern"
+name = "ghostos-path-pattern"
 version = "0.1.0"
 
 [[package]]
-name = "synos-power"
+name = "ghostos-power"
 version = "0.1.0"
 dependencies = [
- "synos-fabric",
- "synos-legacy-pc-drivers",
- "synos-status",
- "synos-synfs",
+ "ghostos-fabric",
+ "ghostos-legacy-pc-drivers",
+ "ghostos-status",
+ "ghostos-ghostfs",
 ]
 
 [[package]]
-name = "synos-runtime"
+name = "ghostos-runtime"
 version = "0.1.0"
 dependencies = [
- "synos-ipc",
- "synos-path-pattern",
- "synos-status",
+ "ghostos-ipc",
+ "ghostos-path-pattern",
+ "ghostos-status",
 ]
 
 [[package]]
-name = "synos-status"
+name = "ghostos-status"
 version = "0.1.0"
 
 [[package]]
-name = "synos-synfs"
+name = "ghostos-ghostfs"
 version = "0.1.0"
 dependencies = [
- "synos-path-pattern",
- "synos-status",
+ "ghostos-path-pattern",
+ "ghostos-status",
 ]
 
 [[package]]
-name = "synos-system-model"
+name = "ghostos-system-model"
 version = "0.1.0"
 dependencies = [
- "synos-status",
- "synos-synfs",
+ "ghostos-status",
+ "ghostos-ghostfs",
 ]
 
 [[package]]
-name = "synos-vm"
+name = "ghostos-vm"
 version = "0.1.0"
 dependencies = [
  "bitflags",
- "synos-boot-protocol",
- "synos-kernel",
+ "ghostos-boot-protocol",
+ "ghostos-kernel",
  "thiserror",
 ]
 

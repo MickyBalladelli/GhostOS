@@ -1,10 +1,10 @@
-use synos_init::{CrashReason, ExitReason, ProcessId};
-use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
-use synos_pkg::{
+use ghostos_init::{CrashReason, ExitReason, ProcessId};
+use ghostos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
+use ghostos_pkg::{
     InstantiationReceipt, PackageDaemon, PackageError, ProvenanceChain,
 };
-use synos_status::{IntoStatus, Status};
-use synos_system_model::ContentId;
+use ghostos_status::{IntoStatus, Status};
+use ghostos_system_model::ContentId;
 
 use crate::{
     AppManifest, AppTarget, ApplicationKind, BoundedText, CapabilityKind, CapabilityRequest,
@@ -326,7 +326,7 @@ impl ApplicationSlot {
             runtime: crate::RuntimeSpec {
                 placement: Placement::Local,
                 restart_mode: RestartMode::Never,
-                restart: synos_init::RestartPolicy::NEVER,
+                restart: ghostos_init::RestartPolicy::NEVER,
             },
             capabilities: [CapabilityRequest::EMPTY; MAX_APP_CAPABILITIES],
             capability_count: 0,

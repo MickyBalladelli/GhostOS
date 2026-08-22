@@ -113,7 +113,7 @@ def manifest_value(evidence_dir: pathlib.Path) -> dict[str, object]:
     inconclusive = [record for record in records if record["state"] == "inconclusive"]
     return {
         "schema": 1,
-        "kind": "synos-full-validation-evidence",
+        "kind": "ghostos-full-validation-evidence",
         "revision": git_revision(),
         "evidence_directory": evidence_dir.name,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),

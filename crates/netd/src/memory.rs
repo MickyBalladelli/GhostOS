@@ -1,4 +1,4 @@
-use synos_ipc::{
+use ghostos_ipc::{
     BufferCapability, BufferError, BufferLease, BufferOwner, SharedBuffer, SharedRegionId,
 };
 

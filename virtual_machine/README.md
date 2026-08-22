@@ -1,6 +1,6 @@
-# SynOS Virtual Machine
+# GhostOS Virtual Machine
 
-A lightweight virtual machine implementation in Rust designed to serve as a test environment for booting SynOS.
+A lightweight virtual machine implementation in Rust designed to serve as a test environment for booting GhostOS.
 
 The stable embedding, guest-hardware, checkpoint, disk, migration, and host
 terminal behavior is defined in [the public VM contract](docs/PUBLIC_VM_CONTRACT.md).
@@ -14,10 +14,10 @@ default device topology, executed test evidence, and host limitations:
 
 ```bash
 python3 scripts/package-vm-release.py \
-  --output build/release/synos-vm.tar.gz \
-  --artifact target/release/synos-vm \
-  --artifact build/bios/synos-bios.img \
-  --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
+  --output build/release/ghostos-vm.tar.gz \
+  --artifact target/release/ghostos-vm \
+  --artifact build/bios/ghostos-bios.img \
+  --artifact target/x86_64-unknown-uefi/release/ghostos-loader.efi \
   --evidence-dir build/test-evidence/<run-id> \
   --release-report build/release/release-report.json \
   --release-claims build/release/release-claims.json \
@@ -40,7 +40,7 @@ schema and verification rules.
 - **x86_64 CPU Emulation**: Instruction decoder and executor with support for protected mode and long mode transitions
 - **Memory Management**: Simple memory-mapped I/O with page table manager
 - **Hardware Emulation**: Basic PCI, interrupt controller, and BIOS support
-- **Boot Support**: Multiboot specification support for loading SynOS kernel
+- **Boot Support**: Multiboot specification support for loading GhostOS kernel
 
 ## Building
 
@@ -72,7 +72,7 @@ The whole sequence of commands is:
 cd virtual_machine
 cargo build --release
 
-../target/release/synos-vm \
+../target/release/ghostos-vm \
   --kernel ../build/bios/kernel.bin \
   --memory 128M \
   --append "console=serial0"
@@ -80,7 +80,7 @@ cargo build --release
 
 or using a precreated disk
 
-../target/release/synos-vm \
+../target/release/ghostos-vm \
   --kernel ../build/bios/kernel.bin \
   --disk ./state/data.raw \
   --disk-size 64M \
@@ -105,11 +105,11 @@ attachment; it never chooses a host disk. A new VM can provision and boot from
 a system disk like this:
 
 ```bash
-../target/release/synos-vm disk provision ./state/system.raw \
+../target/release/ghostos-vm disk provision ./state/system.raw \
   --kernel ../build/bios/kernel.bin \
   --size 64M --boot-args "console=serial0"
 
-../target/release/synos-vm \
+../target/release/ghostos-vm \
   --system-disk ./state/system.raw --firmware bios --interactive
 ```
 
@@ -118,7 +118,7 @@ disk like this:
 
 ```bash
 mkdir -p ./state
-../target/release/synos-vm \
+../target/release/ghostos-vm \
   --kernel ../build/bios/kernel.bin \
   --disk ./state/data.raw \
   --disk-size 64M \
@@ -135,7 +135,7 @@ Attach a data disk with
 capacity. `--create-if-missing` requires `--disk-size` and is the only way the
 CLI creates an image.
 
-The SynOS shell filesystem saves its files in the last 64 KiB of a writable,
+The GhostOS shell filesystem saves its files in the last 64 KiB of a writable,
 persistent attached disk. Files created in the shell therefore survive
 shutdown, reboot, and starting a new VM with the same disk. Read-only,
 copy-on-write, and disposable disks do not receive shell filesystem changes.
@@ -143,14 +143,14 @@ copy-on-write, and disposable disks do not receive shell filesystem changes.
 Inspect disks without booting:
 
 ```bash
-../target/release/synos-vm disk list --system-disk ./state/system.raw
-../target/release/synos-vm disk inspect ./state/system.raw
-../target/release/synos-vm disk validate ./state/system.raw
+../target/release/ghostos-vm disk list --system-disk ./state/system.raw
+../target/release/ghostos-vm disk inspect ./state/system.raw
+../target/release/ghostos-vm disk validate ./state/system.raw
 ```
 
 Use `--read-only` to share a base image safely, or `--copy-on-write` for a
 temporary writable clone. Writable persistent attachments create a
-`<image>.synos.lock` ownership marker. Use `disk lock PATH` to inspect its PID
+`<image>.ghostos.lock` ownership marker. Use `disk lock PATH` to inspect its PID
 and owner metadata, then `disk recover-lock PATH` only after the owner is
 reported stale. The record stores the canonical image path, disk format,
 owner, host identity, and process start marker. A different host, copied image,
@@ -166,9 +166,9 @@ compression, or an external backing file. The image parser validates table
 ranges before guest I/O and rejects truncated or corrupt metadata.
 
 Provisioned disks contain a versioned header, kernel/initrd payloads, settings,
-and a SynFS system volume. Two manifest slots are published only after payload
+and a GhostFS system volume. Two manifest slots are published only after payload
 sync; each manifest has checksums, layout, and generation data. Boot validation
-selects the newest complete generation, verifies settings and SynFS
+selects the newest complete generation, verifies settings and GhostFS
 consistency, and can fall back to the other slot after an interrupted write.
 
 Back up a quiesced VM by copying the whole disk image together with its format
@@ -176,8 +176,8 @@ and capacity metadata. Restore only to a new path, then run `disk validate`
 before attaching it. The on-disk format version is checked at boot; incompatible
 versions require a future migration step instead of being mounted silently.
 
-Run `synos-vm --help` for all boot and machine options. Use `--steps` for a
-bounded run or `--integration` to run the SynOS integration checks.
+Run `ghostos-vm --help` for all boot and machine options. Use `--steps` for a
+bounded run or `--integration` to run the GhostOS integration checks.
 
 ### Hardware acceleration
 
@@ -202,10 +202,10 @@ systems.
 Save and restore VM state with bounded or interactive runs:
 
 ```bash
-../target/release/synos-vm --kernel ../build/bios/kernel.bin \
+../target/release/ghostos-vm --kernel ../build/bios/kernel.bin \
   --steps 100000 --snapshot-key ./state/vm.key \
   --snapshot-save ./state/checkpoint.vm
-../target/release/synos-vm --snapshot-key ./state/vm.key \
+../target/release/ghostos-vm --snapshot-key ./state/vm.key \
   --snapshot-restore ./state/checkpoint.vm \
   --steps 100000
 ```
@@ -216,10 +216,10 @@ receiver with `--snapshot-restore`:
 ```bash
 openssl rand -out ./state/vm.key 32
 PEER_KEY_ID=$(openssl dgst -sha256 -binary ./state/vm.key | xxd -p -c 256 | cut -c1-32)
-../target/release/synos-vm migrate receive 0.0.0.0:9000 ./state/incoming.vm \
+../target/release/ghostos-vm migrate receive 0.0.0.0:9000 ./state/incoming.vm \
   --key ./state/vm.key --peer-key-id "$PEER_KEY_ID" \
   --audit-log ./state/migration-audit.jsonl --secure-transport
-../target/release/synos-vm migrate send ./state/checkpoint.vm HOST:9000 \
+../target/release/ghostos-vm migrate send ./state/checkpoint.vm HOST:9000 \
   --key ./state/vm.key --peer-key-id "$PEER_KEY_ID" \
   --audit-log ./state/migration-audit.jsonl --secure-transport
 ```
@@ -249,7 +249,7 @@ regular file accessible only by its owner. The socket is created with mode
 `0600`. Permissions are opt-in and independent; `status` is the safe default:
 
 ```bash
-../target/release/synos-vm --monitor ./state/vm.sock \
+../target/release/ghostos-vm --monitor ./state/vm.sock \
   --monitor-auth-key ./state/monitor.key \
   --monitor-allow status,device,disk,migration,save,quit \
   --snapshot-key ./state/snapshot.key
@@ -291,7 +291,7 @@ When stdin and stdout are TTYs, an unbounded VM run attaches the host terminal
 to the guest serial console automatically:
 
 ```bash
-../target/release/synos-vm \
+../target/release/ghostos-vm \
   --kernel ../build/bios/kernel.bin \
   --append "console=serial0" \
   --interactive
@@ -361,7 +361,7 @@ Runnable examples live in [`examples/`](examples/):
 The default VM has a virtio-net device connected to an in-memory loopback
 backend. The storage example attaches a disk for guest I/O. A disk attached
 with `DiskRole::System` can also supply the kernel, initrd, persistent settings,
-and SynFS root volume when no host kernel is configured. Explicit host kernel
+and GhostFS root volume when no host kernel is configured. Explicit host kernel
 and initrd paths take precedence.
 
 ## Architecture

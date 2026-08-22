@@ -1,5 +1,5 @@
-use synos_fabric::NodeId;
-use synos_status::{IntoStatus, Status};
+use ghostos_fabric::NodeId;
+use ghostos_status::{IntoStatus, Status};
 
 pub const MAX_RESOURCE_LABELS: usize = 8;
 pub const MAX_RESOURCE_TAINTS: usize = 4;

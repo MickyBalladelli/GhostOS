@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the SynOS guest-compatibility changelog contract."""
+"""Validate the GhostOS guest-compatibility changelog contract."""
 
 from __future__ import annotations
 

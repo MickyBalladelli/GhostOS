@@ -1,5 +1,5 @@
-use synos_auth::CryptographicCapability;
-use synos_system_model::performance::{
+use ghostos_auth::CryptographicCapability;
+use ghostos_system_model::performance::{
     PerformanceBudget, PerformanceDiagnostics, TailLatencyWindow,
 };
 

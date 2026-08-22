@@ -1,4 +1,4 @@
-use synos_durability::{
+use ghostos_durability::{
     ContractError, DurabilityEvent, DurabilityTrace,
 };
 

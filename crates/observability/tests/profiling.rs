@@ -1,4 +1,4 @@
-use synos_observability::{
+use ghostos_observability::{
     ContentId, ProfileAggregator, ProfileDomain, ProfileError, ProfileMetadata, ProfileRetention,
     ProfileRing, ProfileSample, RetainedProfile, redacted_host_id, validate_profile_export,
 };

@@ -1,6 +1,6 @@
-use synos_ipc::SharedBuffer;
-use synos_netd::{SocketCapability, SocketRights};
-use synos_status::{AuditContext, PublicError, RetryHint, Status, operation};
+use ghostos_ipc::SharedBuffer;
+use ghostos_netd::{SocketCapability, SocketRights};
+use ghostos_status::{AuditContext, PublicError, RetryHint, Status, operation};
 
 use crate::{
     DEFAULT_REQUEST_HEADERS, EncodeError, NetdClient, NetdError,
@@ -66,7 +66,7 @@ impl From<EncodeError> for ServerError {
     }
 }
 
-/// Bounded HTTP/1 server loop over a single `synos-netd` TCP capability.
+/// Bounded HTTP/1 server loop over a single `ghostos-netd` TCP capability.
 ///
 /// The caller maps `receive_descriptor` to `request_bytes` and
 /// `send_descriptor` to `response_bytes`. It also drives `NetworkDaemon`

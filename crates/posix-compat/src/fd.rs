@@ -1,4 +1,4 @@
-use synos_runtime::File;
+use ghostos_runtime::File;
 
 use crate::Error;
 

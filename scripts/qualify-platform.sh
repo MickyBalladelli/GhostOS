@@ -37,8 +37,8 @@ require_pattern() {
 }
 
 require_cluster_evidence() {
-    require_pattern "SynOS kernel bootstrap" "$evidence_dir/node-1.serial.log"
-    require_pattern "SynOS kernel bootstrap" "$evidence_dir/node-2.serial.log"
+    require_pattern "GhostOS kernel bootstrap" "$evidence_dir/node-1.serial.log"
+    require_pattern "GhostOS kernel bootstrap" "$evidence_dir/node-2.serial.log"
     require_pattern "heartbeat.*node" "$evidence_dir/fabric.log"
     require_pattern "page.*(fetch|migration)" "$evidence_dir/fabric.log"
     require_pattern "failover.*complete" "$evidence_dir/failover.log"

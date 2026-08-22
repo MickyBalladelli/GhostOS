@@ -1,16 +1,16 @@
 # User-space SDK compatibility policy
 
-This is the stable compatibility policy for SynOS user-space SDKs. It applies
-to the Rust `synos-client-sdk` crate, the Swift `SynOSClient` package, and any
+This is the stable compatibility policy for GhostOS user-space SDKs. It applies
+to the Rust `ghostos-client-sdk` crate, the Swift `GhostOSClient` package, and any
 future SDK that implements the same contract.
 
 ## Stable contract
 
 The SDK source-level contract is version `1.0`. The authoritative registry is
-[`synos-api-compat::SDK_API`](../crates/api-compat/src/lib.rs). The Rust SDK
+[`ghostos-api-compat::SDK_API`](../crates/api-compat/src/lib.rs). The Rust SDK
 exports the contract and its accepted range as `SDK_API_VERSION`,
 `SDK_MINIMUM_API_VERSION`, and `SDK_MAXIMUM_API_VERSION`. Swift exposes the
-same value as `SynOSCompatibility.sdkApiVersion`.
+same value as `GhostOSCompatibility.sdkApiVersion`.
 
 SDK package versions and toolchain versions are implementation versions. They
 must not be used as a substitute for the SDK contract or the wire version.
@@ -23,7 +23,7 @@ must not be used as a substitute for the SDK contract or the wire version.
 | `SYRP` client RPC | protocol `1` | Keep the 24-byte header, byte order, frame limit, method IDs, and status meanings stable. New methods get new IDs. |
 | Shared transport | SDK traffic class `1` | Negotiate the highest common version before processing messages; retain the bounded size, replay, authentication, backpressure, and reconnect rules. |
 | Native user ABI | schema `1`, revision `4` | User programs use the versioned syscall and package contracts; a revision is not permission to reinterpret the schema. |
-| Public errors | `SYNOS-COMPAT-*` and SDK status mappings | Error codes and retry meaning remain machine-readable and stable across Rust and Swift. |
+| Public errors | `GHOSTOS-COMPAT-*` and SDK status mappings | Error codes and retry meaning remain machine-readable and stable across Rust and Swift. |
 
 The SDK may be updated independently of the operating system implementation as
 long as these layers remain within their accepted ranges. A successful compile
@@ -69,8 +69,8 @@ The current stable promise is:
 
 | Client | SDK API | Wire | Platforms |
 | --- | ---: | ---: | --- |
-| Rust `synos-client-sdk` | `1.0` | `SYRP` v1 | `no_std`, native Rust and WebAssembly transports supplied by the host |
-| Swift `SynOSClient` | `1.0` | `SYRP` v1 | macOS 14+ and iOS 17+ |
+| Rust `ghostos-client-sdk` | `1.0` | `SYRP` v1 | `no_std`, native Rust and WebAssembly transports supplied by the host |
+| Swift `GhostOSClient` | `1.0` | `SYRP` v1 | macOS 14+ and iOS 17+ |
 
 The accepted range is intentionally `1.0..=1.0` until a compatible minor
 contract is implemented and evidence is recorded. The policy itself does not

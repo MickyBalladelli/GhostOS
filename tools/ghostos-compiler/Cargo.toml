@@ -1,0 +1,16 @@
+[package]
+name = "ghostos-compiler"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Native Rust compiler driver for GhostOS Ring 3 programs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ghostos-app = { path = "../../crates/app" }
+ghostos-observability = { path = "../../crates/observability" }
+ghostos-pkg = { path = "../../crates/pkg" }
+ghostos-ghostfs = { path = "../../crates/ghostfs" }
+ghostos-system-model = { path = "../../crates/system-model" }

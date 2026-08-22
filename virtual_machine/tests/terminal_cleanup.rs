@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use synos_vm::{
+use ghostos_vm::{
     serial_resize_sequence, TerminalInput, TerminalOperation, TerminalResize,
     TerminalSession, TerminalTranscriptEvent,
 };
@@ -269,7 +269,7 @@ mod unix_pty {
             .arg("--exact")
             .arg("terminal_child_entrypoint")
             .arg("--nocapture")
-            .env("SYNOS_TERMINAL_CHILD", action)
+            .env("GHOSTOS_TERMINAL_CHILD", action)
             .stdin(Stdio::from(stdin))
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
@@ -291,7 +291,7 @@ mod unix_pty {
         wait_for_ready(&mut master);
 
         if cleanup_with_guard {
-            let mut cleanup = synos_test_support::CleanupGuard::new();
+            let mut cleanup = ghostos_test_support::CleanupGuard::new();
             let pid = child.id() as libc::pid_t;
             cleanup.defer("terminal-child", move || {
                 let result = unsafe { libc::kill(pid, libc::SIGTERM) };
@@ -340,7 +340,7 @@ mod unix_pty {
 
 #[test]
 fn terminal_child_entrypoint() {
-    let Some(action) = std::env::var_os("SYNOS_TERMINAL_CHILD") else {
+    let Some(action) = std::env::var_os("GHOSTOS_TERMINAL_CHILD") else {
         return;
     };
     let action = action.to_string_lossy();

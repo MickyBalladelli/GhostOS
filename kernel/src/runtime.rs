@@ -1,4 +1,4 @@
-//! Kernel-side dispatch for the native SynOS runtime ABI.
+//! Kernel-side dispatch for the native GhostOS runtime ABI.
 //!
 //! The kernel checks the fixed ABI request and shared-buffer descriptor, then
 //! hands filesystem work to the filesystem IPC transport. The transport is
@@ -8,16 +8,16 @@
 use crate::task::AddressSpaceId;
 use crate::ipc::{Channel, Message};
 use crate::{CapabilityHandle, CapabilitySpace};
-use synos_fsd::{Capability as FsdCapability, Flags as FsdFlags, Operation as FsdOperation};
-use synos_ipc::{ChannelId, Envelope, SharedBuffer, SharedRegionId};
-use synos_runtime::{Operation, Request, Response};
-use synos_status::Status;
+use ghostos_fsd::{Capability as FsdCapability, Flags as FsdFlags, Operation as FsdOperation};
+use ghostos_ipc::{ChannelId, Envelope, SharedBuffer, SharedRegionId};
+use ghostos_runtime::{Operation, Request, Response};
+use ghostos_status::Status;
 
 pub const MAX_FILESYSTEM_PROCESSES: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FilesystemIdentity {
-    pub process: synos_fsd::ProcessId,
+    pub process: ghostos_fsd::ProcessId,
     pub authority: FsdCapability,
 }
 
@@ -46,7 +46,7 @@ impl RuntimeDispatchError {
 
 /// The kernel IPC endpoint used by the runtime dispatcher.
 ///
-/// An implementation normally sends one message to `synos-fsd`, waits for its
+/// An implementation normally sends one message to `ghostos-fsd`, waits for its
 /// response, and validates the shared mapping in both address spaces. Keeping
 /// this as a transport lets the kernel stay independent from the daemon's
 /// scheduler while making the ABI translation explicit and testable.
@@ -54,17 +54,17 @@ pub trait FilesystemIpc {
     fn transact(
         &mut self,
         caller: AddressSpaceId,
-        request: synos_fsd::Request,
+        request: ghostos_fsd::Request,
         buffer: Option<SharedBuffer>,
-    ) -> synos_fsd::Response;
+    ) -> ghostos_fsd::Response;
 }
 
 pub trait FilesystemService {
     fn dispatch(
         &mut self,
-        request: synos_fsd::Request,
+        request: ghostos_fsd::Request,
         buffer: Option<&mut [u8]>,
-    ) -> synos_fsd::Response;
+    ) -> ghostos_fsd::Response;
 }
 
 impl<
@@ -75,7 +75,7 @@ impl<
         const MAX_MOUNTS: usize,
         const SCRATCH_BYTES: usize,
     > FilesystemService
-    for synos_fsd::Daemon<
+    for ghostos_fsd::Daemon<
         MAX_BLOCKS,
         MAX_PROCESSES,
         MAX_OPEN_FILES,
@@ -86,10 +86,10 @@ impl<
 {
     fn dispatch(
         &mut self,
-        request: synos_fsd::Request,
+        request: ghostos_fsd::Request,
         buffer: Option<&mut [u8]>,
-    ) -> synos_fsd::Response {
-        synos_fsd::Daemon::dispatch(self, request, buffer)
+    ) -> ghostos_fsd::Response {
+        ghostos_fsd::Daemon::dispatch(self, request, buffer)
     }
 }
 
@@ -218,9 +218,9 @@ impl<
     fn transact(
         &mut self,
         _caller: AddressSpaceId,
-        request: synos_fsd::Request,
+        request: ghostos_fsd::Request,
         buffer: Option<SharedBuffer>,
-    ) -> synos_fsd::Response {
+    ) -> ghostos_fsd::Response {
         let request_message = Message::from(request.to_envelope(buffer));
         if self
             .request_channel
@@ -233,7 +233,7 @@ impl<
             )
             .is_err()
         {
-            return synos_fsd::Response::error(Status::BUSY)
+            return ghostos_fsd::Response::error(Status::BUSY)
         }
 
         let incoming = match self.request_channel.try_receive(
@@ -242,16 +242,16 @@ impl<
             self.endpoints.daemon_request,
         ) {
             Ok(message) => message,
-            Err(_) => return synos_fsd::Response::error(Status::BUSY),
+            Err(_) => return ghostos_fsd::Response::error(Status::BUSY),
         };
-        let (request, descriptor) = match synos_fsd::Request::from_envelope(incoming.into()) {
+        let (request, descriptor) = match ghostos_fsd::Request::from_envelope(incoming.into()) {
             Ok(value) => value,
-            Err(_) => return synos_fsd::Response::error(Status::INVALID_ARGUMENT),
+            Err(_) => return ghostos_fsd::Response::error(Status::INVALID_ARGUMENT),
         };
         let response = match descriptor {
             Some(descriptor) => match self.memory.resolve(self.daemon, descriptor) {
                 Ok(buffer) => self.service.dispatch(request, Some(buffer)),
-                Err(_) => synos_fsd::Response::error(Status::ACCESS_DENIED),
+                Err(_) => ghostos_fsd::Response::error(Status::ACCESS_DENIED),
             },
             None => self.service.dispatch(request, None),
         };
@@ -268,7 +268,7 @@ impl<
             )
             .is_err()
         {
-            return synos_fsd::Response::error(Status::BUSY)
+            return ghostos_fsd::Response::error(Status::BUSY)
         }
         let outgoing = match self.response_channel.try_receive(
             &self.capabilities,
@@ -276,21 +276,21 @@ impl<
             self.endpoints.kernel_response,
         ) {
             Ok(message) => message,
-            Err(_) => return synos_fsd::Response::error(Status::BUSY),
+            Err(_) => return ghostos_fsd::Response::error(Status::BUSY),
         };
         let envelope: Envelope = outgoing.into();
-        if envelope.label != synos_fsd::RESPONSE_LABEL
+        if envelope.label != ghostos_fsd::RESPONSE_LABEL
             || envelope.correlation != incoming.correlation.raw()
         {
-            return synos_fsd::Response::error(Status::INVALID_ARGUMENT)
+            return ghostos_fsd::Response::error(Status::INVALID_ARGUMENT)
         }
         let Ok(status_raw) = u32::try_from(envelope.words[0]) else {
-            return synos_fsd::Response::error(Status::INVALID_ARGUMENT)
+            return ghostos_fsd::Response::error(Status::INVALID_ARGUMENT)
         };
         let Some(status) = Status::from_raw(status_raw) else {
-            return synos_fsd::Response::error(Status::INVALID_ARGUMENT)
+            return ghostos_fsd::Response::error(Status::INVALID_ARGUMENT)
         };
-        synos_fsd::Response {
+        ghostos_fsd::Response {
             status,
             values: [
                 envelope.words[1],
@@ -398,14 +398,14 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
     }
 
     /// Dispatch the extended PAL operations through the kernel subsystem that
-    /// owns them. Basic clock, wait, and SynFS calls keep their existing path.
+    /// owns them. Basic clock, wait, and GhostFS calls keep their existing path.
     pub fn dispatch_with_operations<O: RuntimeOperationService>(
         &mut self,
         caller: AddressSpaceId,
         request: Request,
         operations: &mut O,
     ) -> Response {
-        if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+        if request.abi_version != ghostos_abi::ABI_SCHEMA_VERSION {
             return Response {
                 status: RuntimeDispatchError::AbiMismatch.status().raw(),
                 flags: 0,
@@ -452,7 +452,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         caller: AddressSpaceId,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
-        if request.abi_version != synos_abi::ABI_SCHEMA_VERSION {
+        if request.abi_version != ghostos_abi::ABI_SCHEMA_VERSION {
             return Err(RuntimeDispatchError::AbiMismatch)
         }
         let operation = Operation::from_raw(request.operation)
@@ -597,7 +597,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             return Err(RuntimeDispatchError::InvalidRequest)
         }
 
-        let fs_request = synos_fsd::Request::new(fs_operation, slot.process)
+        let fs_request = ghostos_fsd::Request::new(fs_operation, slot.process)
             .with_flags(flags)
             .with_capability(capability)
             .with_offset(request.arguments[4])
@@ -662,7 +662,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             .map_err(|_| RuntimeDispatchError::InvalidBuffer)?;
         if request.arguments[3] > 1
             || offset.checked_add(length).is_none()
-            || length as usize > synos_fsd::MAX_IPC_BUFFER_BYTES
+            || length as usize > ghostos_fsd::MAX_IPC_BUFFER_BYTES
         {
             return Err(RuntimeDispatchError::InvalidBuffer)
         }

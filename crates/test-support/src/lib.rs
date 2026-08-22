@@ -1,4 +1,4 @@
-//! Shared, deterministic test fixtures for SynOS.
+//! Shared, deterministic test fixtures for GhostOS.
 //!
 //! Production crates must use this crate only from `dev-dependencies` or from
 //! integration tests. It intentionally contains no production protocol or
@@ -134,7 +134,7 @@ impl TestClock for DeterministicClock {
     }
 }
 
-impl synos_time_sync::MonotonicClock for DeterministicClock {
+impl ghostos_time_sync::MonotonicClock for DeterministicClock {
     fn now_us(&self) -> u64 {
         self.now_us()
     }
@@ -324,7 +324,7 @@ impl Default for PacketFixture {
             source: [0x52, 0x54, 0x00, 0x53, 0x59, 0x01],
             destination: [0x52, 0x54, 0x00, 0x53, 0x59, 0x02],
             ethertype: 0x88b5,
-            payload: b"synos-test-packet".to_vec(),
+            payload: b"ghostos-test-packet".to_vec(),
         }
     }
 }
@@ -404,7 +404,7 @@ pub struct SynFsVolumeFixture {
 impl Default for SynFsVolumeFixture {
     fn default() -> Self {
         let mut files = BTreeMap::new();
-        files.insert("/README".into(), b"SynOS test volume\n".to_vec());
+        files.insert("/README".into(), b"GhostOS test volume\n".to_vec());
         Self {
             generation: 1,
             files,

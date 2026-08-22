@@ -7,11 +7,11 @@ use crate::ipc::{Channel, IpcError, Message};
 use crate::runtime::{Dispatcher, FilesystemIpc, FilesystemIdentity};
 use crate::scheduler::SchedulerError;
 use crate::task::{ExecutionMode, SchedulingPolicy, ThreadState};
-use synos_boot_protocol::{BootInfo, BootMethod, MemoryKind, MemoryRegion, MAX_MEMORY_REGIONS};
-use synos_fsd::{Capability as FsdCapability, ProcessId as FsdProcessId, Response as FsdResponse};
-use synos_ipc::{SharedBuffer, SharedRegionId};
-use synos_runtime::{Operation, Request};
-use synos_status::Status;
+use ghostos_boot_protocol::{BootInfo, BootMethod, MemoryKind, MemoryRegion, MAX_MEMORY_REGIONS};
+use ghostos_fsd::{Capability as FsdCapability, ProcessId as FsdProcessId, Response as FsdResponse};
+use ghostos_ipc::{SharedBuffer, SharedRegionId};
+use ghostos_runtime::{Operation, Request};
+use ghostos_status::Status;
 
 #[test]
 fn malformed_boot_info_returns_a_stable_status() {
@@ -248,12 +248,12 @@ fn mapped_editor_memory_requires_owner_and_requested_rights() {
 }
 
 struct RuntimeLinkIpc {
-    request: Option<synos_fsd::Request>,
+    request: Option<ghostos_fsd::Request>,
     buffer: Option<SharedBuffer>,
 }
 
 struct RuntimeDeleteIpc {
-    request: Option<synos_fsd::Request>,
+    request: Option<ghostos_fsd::Request>,
     buffer: Option<SharedBuffer>,
 }
 
@@ -261,7 +261,7 @@ impl FilesystemIpc for RuntimeDeleteIpc {
     fn transact(
         &mut self,
         _caller: AddressSpaceId,
-        request: synos_fsd::Request,
+        request: ghostos_fsd::Request,
         buffer: Option<SharedBuffer>,
     ) -> FsdResponse {
         self.request = Some(request);
@@ -278,7 +278,7 @@ impl FilesystemIpc for RuntimeLinkIpc {
     fn transact(
         &mut self,
         _caller: AddressSpaceId,
-        request: synos_fsd::Request,
+        request: ghostos_fsd::Request,
         buffer: Option<SharedBuffer>,
     ) -> FsdResponse {
         self.request = Some(request);
@@ -300,7 +300,7 @@ fn runtime_link_dispatch_preserves_operation_and_buffer_direction() {
         .register_filesystem_process(caller, FilesystemIdentity { process, authority })
         .expect("register filesystem process");
 
-    let capability = synos_runtime::Capability::from_raw((2_u64 << 32) | 1)
+    let capability = ghostos_runtime::Capability::from_raw((2_u64 << 32) | 1)
         .expect("valid file capability");
     let buffer = SharedBuffer {
         region: SharedRegionId::new(4).expect("valid region"),
@@ -318,7 +318,7 @@ fn runtime_link_dispatch_preserves_operation_and_buffer_direction() {
     assert_eq!(Status::from_raw(response.status), Some(Status::NORMAL));
     assert_eq!(
         dispatcher.filesystem().request.unwrap().operation,
-        synos_fsd::Operation::Link
+        ghostos_fsd::Operation::Link
     );
     assert_eq!(
         dispatcher.filesystem().request.unwrap().capability,
@@ -334,7 +334,7 @@ fn runtime_link_dispatch_preserves_operation_and_buffer_direction() {
     assert_eq!(Status::from_raw(links_response.status), Some(Status::NORMAL));
     assert_eq!(
         dispatcher.filesystem().request.unwrap().operation,
-        synos_fsd::Operation::Links
+        ghostos_fsd::Operation::Links
     );
     assert_eq!(
         dispatcher.filesystem().request.unwrap().capability,
@@ -367,12 +367,12 @@ fn runtime_delete_dispatch_uses_authority_and_bounded_input_buffer() {
         Request::new(Operation::SynFsDelete).with_buffer(buffer),
     );
     assert_eq!(Status::from_raw(response.status), Some(Status::NORMAL));
-    assert_eq!(dispatcher.filesystem().request.unwrap().operation, synos_fsd::Operation::Delete);
+    assert_eq!(dispatcher.filesystem().request.unwrap().operation, ghostos_fsd::Operation::Delete);
     assert_eq!(dispatcher.filesystem().request.unwrap().capability, Some(authority));
     assert_eq!(dispatcher.filesystem().buffer, Some(buffer));
 
     let oversized = SharedBuffer {
-        length: (synos_fsd::MAX_IPC_BUFFER_BYTES + 1) as u32,
+        length: (ghostos_fsd::MAX_IPC_BUFFER_BYTES + 1) as u32,
         ..buffer
     };
     let response = dispatcher.dispatch(
@@ -384,7 +384,7 @@ fn runtime_delete_dispatch_uses_authority_and_bounded_input_buffer() {
 
 #[test]
 fn property_delegation_never_escalates_rights() {
-    use synos_test_support::property::{run_assert, Config};
+    use ghostos_test_support::property::{run_assert, Config};
 
     run_assert("kernel.capability-attenuation", Config::new(0x59_3, 128), |_, _, entropy| {
         let owner = address_space(1);
@@ -594,7 +594,7 @@ fn ipc_enforces_identity_queue_bounds_and_zero_copy_buffers() {
         .expect("memory capability");
     let channel = Channel::<2>::new(channel_id);
     let message = Message {
-        correlation: synos_observability::CorrelationId::NONE,
+        correlation: ghostos_observability::CorrelationId::NONE,
         label: 42,
         buffer: Some(SharedBuffer {
             region,
@@ -647,7 +647,7 @@ fn page_fault_dispatch_is_quota_limited_and_status_mapped() {
         .expect("configure pager quota");
     let fault = crate::PageFault {
         virtual_address: 0x4000,
-        access: synos_fabric::Access::Read,
+        access: ghostos_fabric::Access::Read,
         user: true,
         present: false,
         reserved_bit: false,

@@ -1,6 +1,6 @@
 # 5. Tasks, Scheduling, IPC, and Capabilities
 
-SynOS calls a running unit a task or thread depending on the layer. The kernel keeps the representation fixed and generation-checked.
+GhostOS calls a running unit a task or thread depending on the layer. The kernel keeps the representation fixed and generation-checked.
 
 ## Tasks and address spaces
 
@@ -98,7 +98,7 @@ Imagine a file write:
 2. shell maps a 4 KiB shared buffer
 3. shell sends {path, offset, len, buffer_cap}
 4. fsd rejects len > buffer size
-5. fsd writes into a new SynFS generation
+5. fsd writes into a new GhostFS generation
 6. fsd returns {status = SUCCESS, generation = 18}
 ```
 

@@ -1,9 +1,9 @@
-use synos_fabric::{AddressRange, NodeId, PAGE_SIZE};
-use synos_fabric::memory::{GlobalAddressSpace, LeaseTable, MemoryKind, MemoryPool, PoolId, Transport};
-use synos_llm::{Error, RequestId};
-use synos_llm::allocator::{AllocationPolicy, UnifiedAllocator};
-use synos_llm::inference::{InferenceLedger, InferenceState, RecoveryRecord};
-use synos_llm::kv_cache::KvCachePool;
+use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE};
+use ghostos_fabric::memory::{GlobalAddressSpace, LeaseTable, MemoryKind, MemoryPool, PoolId, Transport};
+use ghostos_llm::{Error, RequestId};
+use ghostos_llm::allocator::{AllocationPolicy, UnifiedAllocator};
+use ghostos_llm::inference::{InferenceLedger, InferenceState, RecoveryRecord};
+use ghostos_llm::kv_cache::KvCachePool;
 
 fn space() -> GlobalAddressSpace<2, 2> {
     let mut space = GlobalAddressSpace::new();
@@ -40,10 +40,10 @@ fn allocator_aligns_ranges_and_releases_leases() {
         .unwrap();
     assert_eq!(allocation.virtual_range.length, PAGE_SIZE * 2);
     let resolved = allocator
-        .resolve(allocation.handle, 0, synos_fabric::Access::Read, 20, &space, &leases)
+        .resolve(allocation.handle, 0, ghostos_fabric::Access::Read, 20, &space, &leases)
         .unwrap();
     assert_eq!(resolved.resolved.transport, Transport::Local);
-    assert!(matches!(allocator.resolve(allocation.handle, allocation.virtual_range.length, synos_fabric::Access::Read, 20, &space, &leases), Err(Error::InvalidRange)));
+    assert!(matches!(allocator.resolve(allocation.handle, allocation.virtual_range.length, ghostos_fabric::Access::Read, 20, &space, &leases), Err(Error::InvalidRange)));
     allocator.release(allocation.handle, &mut leases).unwrap();
     assert!(matches!(allocator.info(allocation.handle), Err(Error::AllocationNotFound)));
 }
@@ -71,14 +71,14 @@ fn kv_cache_grows_commits_tokens_and_rejects_bad_offsets() {
     assert_eq!(cache.reserved_tokens, 2);
     caches.commit_tokens(cache.handle, 1).unwrap();
     assert_eq!(caches.info(cache.handle).unwrap().committed_tokens, 1);
-    assert!(caches.resolve(cache.handle, 2, 0, synos_fabric::Access::Read, 1, &allocator, &space, &leases).is_err());
+    assert!(caches.resolve(cache.handle, 2, 0, ghostos_fabric::Access::Read, 1, &allocator, &space, &leases).is_err());
 }
 
 #[test]
 fn inference_checkpoint_wire_and_failover_are_deterministic() {
     let request = RequestId::new(9).unwrap();
-    let model = synos_llm::allocator::AllocationHandle::from_raw((1u64 << 32) | 1).unwrap();
-    let cache = synos_llm::kv_cache::KvCacheHandle::from_raw((1u64 << 32) | 2).unwrap();
+    let model = ghostos_llm::allocator::AllocationHandle::from_raw((1u64 << 32) | 1).unwrap();
+    let cache = ghostos_llm::kv_cache::KvCacheHandle::from_raw((1u64 << 32) | 2).unwrap();
     let mut ledger = InferenceLedger::<2>::new();
     let (handle, initial) = ledger.begin(request, model, cache, NodeId::new(2).unwrap(), NodeId::new(3).unwrap(), 44).unwrap();
     assert_eq!(RecoveryRecord::decode(initial.bytes).unwrap().rng_state, 44);

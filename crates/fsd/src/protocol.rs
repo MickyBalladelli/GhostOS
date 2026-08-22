@@ -1,5 +1,5 @@
-use synos_ipc::{Envelope, SharedBuffer};
-use synos_status::{AuditContext, PublicError, Status};
+use ghostos_ipc::{Envelope, SharedBuffer};
+use ghostos_status::{AuditContext, PublicError, Status};
 
 pub const REQUEST_LABEL: u64 = 0x5346_5300_0000_0000;
 pub const RESPONSE_LABEL: u64 = 0x5346_5301_0000_0000;

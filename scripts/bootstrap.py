@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the reproducible SynOS developer prerequisites."""
+"""Check the reproducible GhostOS developer prerequisites."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ import tomllib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOLCHAIN_FILE = ROOT / "rust-toolchain.toml"
 IMAGE_ARTIFACTS = (
-    ("BIOS image", ROOT / "build/bios/synos-bios.img"),
-    ("portable UEFI image", ROOT / "build/portable/synos.img"),
+    ("BIOS image", ROOT / "build/bios/ghostos-bios.img"),
+    ("portable UEFI image", ROOT / "build/portable/ghostos.img"),
 )
 
 
@@ -203,8 +203,8 @@ def check_custom_targets(checks: list[dict[str, object]]) -> None:
 
 
 def check_qemu(checks: list[dict[str, object]], require_qemu: bool) -> None:
-    qemu = os.environ.get("SYNOS_QEMU_BIN", "qemu-system-x86_64")
-    qemu_img = os.environ.get("SYNOS_QEMU_IMG_BIN", "qemu-img")
+    qemu = os.environ.get("GHOSTOS_QEMU_BIN", "qemu-system-x86_64")
+    qemu_img = os.environ.get("GHOSTOS_QEMU_IMG_BIN", "qemu-img")
     missing = [
         command
         for command in (qemu, qemu_img)

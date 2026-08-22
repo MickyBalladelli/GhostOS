@@ -1,4 +1,4 @@
-use synos_ipc::SharedBuffer;
+use ghostos_ipc::SharedBuffer;
 
 use crate::{Capability, Error, Operation, Request, Runtime, SystemCall};
 
@@ -64,7 +64,7 @@ pub struct DeleteMetadata {
     pub shared_data_reachable: bool,
 }
 
-/// Bytes returned by `list_directory` use the bounded SynFS directory wire
+/// Bytes returned by `list_directory` use the bounded GhostFS directory wire
 /// format. The caller owns the shared buffer and can decode each record while
 /// following the returned continuation offset.
 pub const DIRECTORY_RECORD_HEADER_BYTES: usize = 22;
@@ -179,7 +179,7 @@ impl<S: SystemCall> Runtime<S> {
         usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)
     }
 
-    /// Write bytes into the published SynFS view. This is volatile until the
+    /// Write bytes into the published GhostFS view. This is volatile until the
     /// filesystem owner completes the documented sync barrier.
     pub fn write_at(&self, file: File, offset: u64, input: SharedBuffer) -> Result<usize, Error> {
         let mut request = Request::new(Operation::SynFsWrite)
@@ -309,8 +309,8 @@ impl<S: SystemCall> Runtime<S> {
 mod tests {
     use core::cell::Cell;
 
-    use synos_ipc::{SharedRegionId, SharedBuffer};
-    use synos_status::Status;
+    use ghostos_ipc::{SharedRegionId, SharedBuffer};
+    use ghostos_status::Status;
 
     use crate::Response;
 

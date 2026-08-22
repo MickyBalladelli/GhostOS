@@ -1,7 +1,7 @@
 //! UEFI firmware: SystemTable, boot services, runtime services, and EFI
 //! application (PE32+) loading.
 //!
-//! The SynOS boot manager (`boot/uefi`) is a real UEFI application. When it
+//! The GhostOS boot manager (`boot/uefi`) is a real UEFI application. When it
 //! runs in this VM it finds the `EFI_SYSTEM_TABLE` handed to `efi_main`,
 //! prints a menu through `ConOut`, reads a key through `ConIn`, queries the
 //! memory map and GOP framebuffer, then calls `ExitBootServices` before the
@@ -389,11 +389,11 @@ impl UefiContext {
                 // No application configured: firmware is initialized but the
                 // guest has nothing to execute yet.
                 println!(
-                    "SynOS VM: UEFI firmware initialized (SystemTable at 0x{:X})",
+                    "GhostOS VM: UEFI firmware initialized (SystemTable at 0x{:X})",
                     self.system_table
                 );
                 println!(
-                    "SynOS VM: no EFI application; pass `--efi <BOOTX64.EFI>` to boot one."
+                    "GhostOS VM: no EFI application; pass `--efi <BOOTX64.EFI>` to boot one."
                 );
                 self.state = UefiState::Initialized;
                 cpu.halted = true;
@@ -500,7 +500,7 @@ impl UefiContext {
         w64(mmu, ci + 0x10, 0x1122_3344); // wait_for_key event handle
 
         // Firmware vendor string.
-        let vendor = utf16_bytes("SynOS VM");
+        let vendor = utf16_bytes("GhostOS VM");
         wmem(mmu, base + TBL_FIRMWARE_VENDOR, &vendor);
 
         // SystemTable.
@@ -1220,7 +1220,7 @@ impl UefiContext {
         };
 
         // Ignore the exact path — the VM exposes a single boot volume whose
-        // EFI application is the configured image. Chainload of the SynOS
+        // EFI application is the configured image. Chainload of the GhostOS
         // boot manager therefore always succeeds.
         let _ = device_path_filename(mmu, device_path);
 

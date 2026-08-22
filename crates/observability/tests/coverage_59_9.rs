@@ -1,4 +1,4 @@
-use synos_observability::{
+use ghostos_observability::{
     AuditQuery, CodecError, CorrelationId, EventField, EventKind, FieldKind, JOURNAL_RECORD_SIZE,
     Alert, AlertLevel, AlertRegistry, AuditJournal, AuditJournalError, AuditKey, Level,
     HealthError, HealthReport, HealthState, HealthTransport, MetricError, MetricKind,
@@ -7,7 +7,7 @@ use synos_observability::{
     TraceEvent, TraceRing, analyze_audit, decode_record, encode_record, field,
     parse_audit_command,
 };
-use synos_status::Status;
+use ghostos_status::Status;
 
 fn audit(timestamp: u64, node: u32, capability: u64, status: Status) -> TraceEvent {
     TraceEvent::new(Level::Info, EventKind::Audit)
@@ -219,7 +219,7 @@ fn cardinality_overflow_is_folded_and_visible() {
     );
     assert_eq!(metrics.aggregates().next().unwrap().value, 3);
 
-    let mut labels = synos_observability::AuditLabelAggregator::<1>::new();
+    let mut labels = ghostos_observability::AuditLabelAggregator::<1>::new();
     labels.observe(audit(1, 1, 1, Status::NORMAL));
     labels.observe(audit(2, 1, 2, Status::NORMAL));
     assert_eq!(labels.snapshot().overflow, 5);

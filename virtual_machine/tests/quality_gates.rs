@@ -24,7 +24,7 @@ fn inventory_contract_names_all_quality_surfaces() {
     for boot_path in ["name = \"bios\"", "name = \"uefi\"", "name = \"multiboot\""] {
         assert!(text.contains(boot_path), "missing boot path {boot_path}");
     }
-    assert!(text.contains("serial_marker = \"SynOS kernel bootstrap\""));
+    assert!(text.contains("serial_marker = \"GhostOS kernel bootstrap\""));
 }
 
 #[test]

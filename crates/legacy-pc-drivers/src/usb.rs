@@ -1,6 +1,6 @@
 //! USB class protocol support shared by xHCI host drivers.
 
-use synos_synfs::BlockDevice;
+use ghostos_ghostfs::BlockDevice;
 
 pub const BOT_CBW_SIGNATURE: u32 = 0x4342_5355;
 pub const BOT_CSW_SIGNATURE: u32 = 0x5342_5355;

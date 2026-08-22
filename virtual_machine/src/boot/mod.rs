@@ -2,7 +2,7 @@ use crate::cpu::{Cpu, CpuError, CpuMode, PrivilegeLevel};
 use crate::devices::{GopPixelFormat, VESA_FB_SIZE, VESA_LFB_BASE};
 use crate::memory::{Mmu, PageFlags, PAGE_SIZE};
 use std::path::Path;
-use synos_boot_protocol::{
+use ghostos_boot_protocol::{
     BootInfo, BootMethod, FramebufferInfo, MemoryKind, MemoryRegion, BOOT_INFO_MAGIC,
     BOOT_INFO_VERSION, FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB, MAX_MEMORY_REGIONS,
 };

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the compatibility proof required for a SynOS release."""
+"""Validate the compatibility proof required for a GhostOS release."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 from typing import Any
 
 
-SCHEMA = "synos-upgrade-compatibility"
+SCHEMA = "ghostos-upgrade-compatibility"
 SCHEMA_VERSION = 1
 MODES = {"read-write", "read-convert"}
 

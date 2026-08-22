@@ -108,16 +108,16 @@ use core::sync::atomic::AtomicU8;
     any(target_os = "none", target_os = "uefi")
 ))]
 use core::sync::atomic::{AtomicU32, AtomicU64};
-use synos_boot_protocol::BootInfo;
-use synos_observability::{
+use ghostos_boot_protocol::BootInfo;
+use ghostos_observability::{
     EventField, EventKind, ProfileDomain, ProfileSample, field, info, record_profile_sample,
 };
-use synos_status::Status;
+use ghostos_status::Status;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use synos_runtime::{Operation, Request, Response};
+use ghostos_runtime::{Operation, Request, Response};
 
 pub use allocator::{
     AllocationError, EarlyFrameAllocator, QuotaAllocationError, ReclaimError,
@@ -134,7 +134,7 @@ pub use hot_allocator::{
     HotAllocation, HotAllocationError, HotAllocationPlacement, HotAllocatorConfigError,
     HotAllocatorReport, HotAllocatorStats, HotObjectAllocator, HotObjectKind, HotReclaimError,
 };
-pub use synos_numa::{NumaCounters, NumaDecision, NumaPlacement, NumaReport, NumaTopology, NumaTopologyError, PlacementKind, PlacementLocality};
+pub use ghostos_numa::{NumaCounters, NumaDecision, NumaPlacement, NumaReport, NumaTopology, NumaTopologyError, PlacementKind, PlacementLocality};
 pub use capability::{
     CapabilityError, CapabilityHandle, CapabilityInfo, CapabilityLinks, CapabilityObject,
     CapabilityRevocationHook, CapabilitySpace, DmaDeviceId, MAX_CAPABILITIES, PhysicalRange,
@@ -172,7 +172,7 @@ pub use persona::{
     ExecutionPersona, IdentityId, PersonaError, RightIdentifier, MAX_PERSONA_RIGHTS,
 };
 pub use scheduler::{ContextSwitch, Scheduler, SchedulerError};
-pub use synos_observability::{AffinitySet, ScalePath, ScalePolicy, SCALE_CPU_TIERS};
+pub use ghostos_observability::{AffinitySet, ScalePath, ScalePolicy, SCALE_CPU_TIERS};
 pub use task::{
     AddressSpaceId, Context, CpuId, CpuMask, ExecutionMode, SchedulingPolicy, Thread, ThreadId,
     ThreadState,
@@ -317,7 +317,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     arch::disable_interrupts();
     console::init(boot_info.framebuffer);
     if let Some(failure) = previous_boot_failure {
-        let status = synos_status::Status::from_raw(failure.status)
+        let status = ghostos_status::Status::from_raw(failure.status)
             .map(|status| status.message())
             .unwrap_or("unknown");
         println!(
@@ -333,7 +333,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         EventKind::Boot,
         EventField::unsigned(field::OPERATION, 1),
     );
-    println!("SynOS kernel bootstrap");
+    println!("GhostOS kernel bootstrap");
 
     println!(
         "boot method={} memory regions={}",
@@ -523,7 +523,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
         target_arch = "x86_64",
         any(target_os = "none", target_os = "uefi")
     ))]
-    boot_synos_init(
+    boot_ghostos_init(
         &mut frames,
         scheduler,
         boot_info.physical_address_offset,
@@ -825,8 +825,8 @@ fn record_login_failure() {
         .saturating_mul(1_u64 << shift)
         .min(LOGIN_RATE_LIMIT_MAX_US);
     let now_us = time::monotonic_now_us();
-    synos_observability::audit_event!(
-        synos_observability::Level::Warn,
+    ghostos_observability::audit_event!(
+        ghostos_observability::Level::Warn,
         EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGIN_FAILURE),
         EventField::unsigned(field::CALLER, 14),
         EventField::status(Status::ACCESS_DENIED),
@@ -840,8 +840,8 @@ fn record_login_failure() {
             now_us.saturating_add(LOGIN_LOCK_DURATION_US),
             Ordering::Release,
         );
-        synos_observability::audit_event!(
-            synos_observability::Level::Warn,
+        ghostos_observability::audit_event!(
+            ghostos_observability::Level::Warn,
             EventField::unsigned(field::AUTH_ACTION, AUDIT_LOCKOUT),
             EventField::unsigned(field::CALLER, 14),
             EventField::status(Status::ACCESS_DENIED),
@@ -873,7 +873,7 @@ fn revoke_login_session() {
         .fetch_add(1, Ordering::AcqRel)
         .wrapping_add(1)
         .max(1);
-    let _ = boot_services::set_shell_filesystem_rights(synos_fsd::ProcessRights::NONE);
+    let _ = boot_services::set_shell_filesystem_rights(ghostos_fsd::ProcessRights::NONE);
     shell::revoke_session(epoch);
     clear_login_challenge();
     clear_login_username();
@@ -894,8 +894,8 @@ fn login_session_active() -> bool {
     if !login_session_matches(identity, expires_at_us, epoch, now_us)
         || !shell::session_matches(identity, expires_at_us, epoch)
     {
-        synos_observability::audit_event!(
-            synos_observability::Level::Warn,
+        ghostos_observability::audit_event!(
+            ghostos_observability::Level::Warn,
             EventField::unsigned(field::AUTH_ACTION, AUDIT_TIMEOUT),
             EventField::unsigned(field::IDENTITY, identity),
             EventField::status(Status::ACCESS_DENIED),
@@ -962,17 +962,17 @@ fn start_login_session(username: &[u8]) -> bool {
     let epoch = LOGIN_REVOCATION_EPOCH.load(Ordering::Acquire).max(1);
     let identity = login_identity(username);
     if boot_services::set_shell_filesystem_rights(
-        synos_fsd::ProcessRights::from_bits(
-            synos_fsd::ProcessRights::READ.bits()
-                | synos_fsd::ProcessRights::WRITE.bits()
-                | synos_fsd::ProcessRights::DELETE.bits()
-                | synos_fsd::ProcessRights::ADMIN.bits(),
+        ghostos_fsd::ProcessRights::from_bits(
+            ghostos_fsd::ProcessRights::READ.bits()
+                | ghostos_fsd::ProcessRights::WRITE.bits()
+                | ghostos_fsd::ProcessRights::DELETE.bits()
+                | ghostos_fsd::ProcessRights::ADMIN.bits(),
         ),
     )
     .is_err()
         || shell::authorize_session(identity, expires_at_us, epoch).is_err()
     {
-        let _ = boot_services::set_shell_filesystem_rights(synos_fsd::ProcessRights::NONE);
+        let _ = boot_services::set_shell_filesystem_rights(ghostos_fsd::ProcessRights::NONE);
         return false
     }
     LOGIN_SESSION_LAST_ACTIVITY.store(now_us, Ordering::Release);
@@ -980,8 +980,8 @@ fn start_login_session(username: &[u8]) -> bool {
     LOGIN_SESSION_IDENTITY.store(identity, Ordering::Release);
     LOGIN_REQUESTED.store(false, Ordering::Release);
     LOGIN_AUTHORIZED.store(true, Ordering::Release);
-    synos_observability::audit_event!(
-        synos_observability::Level::Info,
+    ghostos_observability::audit_event!(
+        ghostos_observability::Level::Info,
         EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGIN_SUCCESS),
         EventField::unsigned(field::IDENTITY, identity),
         EventField::unsigned(field::CALLER, 14),
@@ -1008,7 +1008,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
     let Some(name) = service_name(role) else {
         return syscall_error(Status::ACCESS_DENIED)
     };
-    if request.abi_version != synos_runtime::ABI_SCHEMA_VERSION || request.reserved != 0 {
+    if request.abi_version != ghostos_runtime::ABI_SCHEMA_VERSION || request.reserved != 0 {
         return syscall_error(Status::INVALID_ARGUMENT)
     }
     if role == 9 {
@@ -1061,7 +1061,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 )
             }
             if operation == Operation::SynFsMap {
-                if request.flags & !synos_fsd::Flags::WRITE.bits() != 0
+                if request.flags & !ghostos_fsd::Flags::WRITE.bits() != 0
                     || request.arguments[0] % 4096 != 0
                     || request.arguments[1] == 0
                     || request.arguments[1] % 4096 != 0
@@ -1082,7 +1082,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             if request.arguments[3] != 0
                 || writable > 1
                 || length == 0
-                || length > synos_fsd::MAX_IPC_BUFFER_BYTES as u64
+                || length > ghostos_fsd::MAX_IPC_BUFFER_BYTES as u64
                 || !arch::paging::service_user_range(address, length, writable != 0)
             {
                 return syscall_error(Status::INVALID_ARGUMENT)
@@ -1428,8 +1428,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !login_session_active() {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        synos_observability::audit_event!(
-            synos_observability::Level::Info,
+        ghostos_observability::audit_event!(
+            ghostos_observability::Level::Info,
             EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGOUT),
             EventField::unsigned(
                 field::IDENTITY,
@@ -1451,8 +1451,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         if !login_session_active() {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        synos_observability::audit_event!(
-            synos_observability::Level::Info,
+        ghostos_observability::audit_event!(
+            ghostos_observability::Level::Info,
             EventField::unsigned(field::AUTH_ACTION, AUDIT_LOGOUT),
             EventField::unsigned(
                 field::IDENTITY,
@@ -1718,20 +1718,20 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
 fn service_name(role: usize) -> Option<&'static str> {
     [
         None,
-        Some("synos-init"),
-        Some("synos-fsd"),
-        Some("synos-storaged"),
-        Some("synos-netd"),
-        Some("synos-logd"),
-        Some("synos-auditd"),
-        Some("synos-authd"),
-        Some("synos-pkgd"),
-        Some("synos-shell"),
-        Some("synos-pcid"),
-        Some("synos-ahcid"),
-        Some("synos-nvmed"),
-        Some("synos-ethernetd"),
-        Some("synos-logind"),
+        Some("ghostos-init"),
+        Some("ghostos-fsd"),
+        Some("ghostos-storaged"),
+        Some("ghostos-netd"),
+        Some("ghostos-logd"),
+        Some("ghostos-auditd"),
+        Some("ghostos-authd"),
+        Some("ghostos-pkgd"),
+        Some("ghostos-shell"),
+        Some("ghostos-pcid"),
+        Some("ghostos-ahcid"),
+        Some("ghostos-nvmed"),
+        Some("ghostos-ethernetd"),
+        Some("ghostos-logind"),
     ]
     .get(role)
     .copied()
@@ -1791,14 +1791,14 @@ fn syscall_error(status: Status) -> Response {
     any(target_os = "none", target_os = "uefi")
 ))]
 #[allow(unsafe_code)]
-fn boot_synos_init(
+fn boot_ghostos_init(
     frames: &mut EarlyFrameAllocator,
     scheduler: &'static mut Scheduler,
     physical_offset: u64,
     services: boot_services::BootServices,
     boot_info: &'static BootInfo,
     scheduler_clock: u64,
-    acpi: Option<synos_power::AcpiPlatform>,
+    acpi: Option<ghostos_power::AcpiPlatform>,
     pci_inventory: &pci::PciInventory,
 ) -> ! {
     unsafe {
@@ -1868,7 +1868,7 @@ fn boot_synos_init(
             fatal_kernel_halt(Status::CORRUPT)
         });
     println!(
-        "starting synos-init in Ring 3 (thread={}, services=13)",
+        "starting ghostos-init in Ring 3 (thread={}, services=13)",
         init_thread.raw()
     );
     boot_diagnostics::checkpoint(boot_diagnostics::BootStage::UserHandoff);

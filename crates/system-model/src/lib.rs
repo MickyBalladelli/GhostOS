@@ -2,9 +2,9 @@
 #![forbid(unsafe_code)]
 
 use core::fmt;
-use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
-use synos_status::{IntoStatus, Severity, Status, facility};
-use synos_synfs::{Error as SynFsError, SynFs};
+use ghostos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_ghostfs::{Error as SynFsError, SynFs};
 
 pub mod command;
 pub mod logical;
@@ -161,7 +161,7 @@ impl fmt::Debug for LogicalName {
 pub struct PackageManifest {
     /// Digest of the complete package manifest and dependency closure.
     pub content: ContentId,
-    /// Digest used to locate the immutable payload object in SynFS.
+    /// Digest used to locate the immutable payload object in GhostFS.
     pub payload: ContentId,
     pub byte_length: u64,
     pub entry_offset: u64,
@@ -208,7 +208,7 @@ impl PackageManifest {
     }
 }
 
-/// Metadata index for immutable package payloads stored in SynFS by digest.
+/// Metadata index for immutable package payloads stored in GhostFS by digest.
 ///
 /// Installing the same bytes is idempotent. Dependencies are digest-pinned,
 /// so package resolution never reads ambient paths or mutable global state.
@@ -469,7 +469,7 @@ impl<const CAPACITY: usize> Default for PackageNamespace<CAPACITY> {
     }
 }
 
-/// Persistent system repository backed by immutable, versioned SynFS objects.
+/// Persistent system repository backed by immutable, versioned GhostFS objects.
 pub struct SynFsRepository<const PACKAGES: usize = DEFAULT_PACKAGE_CAPACITY> {
     packages: PackageStore<PACKAGES>,
     root: RootController<DEFAULT_ROOT_BINDINGS>,

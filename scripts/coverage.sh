@@ -9,7 +9,7 @@ if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     exit 2
 fi
 
-coverage_dir=${SYNOS_COVERAGE_DIR:-$root_dir/build/coverage}
+coverage_dir=${GHOSTOS_COVERAGE_DIR:-$root_dir/build/coverage}
 mkdir -p "$coverage_dir/crates"
 
 cargo llvm-cov --workspace --all-targets --json --output-path "$coverage_dir/workspace.json"

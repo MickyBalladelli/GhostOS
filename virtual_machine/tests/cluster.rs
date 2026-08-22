@@ -3,9 +3,9 @@
 use std::fs::{self, File};
 use std::io::Write;
 
-use synos_fabric::dsm::{CoherenceAction, CoherenceDirectory, DlmLeaseMode, SoftwareDlmLease};
-use synos_fabric::{Access, AddressRange, NodeId, PageFault, PAGE_SIZE};
-use synos_vm::{
+use ghostos_fabric::dsm::{CoherenceAction, CoherenceDirectory, DlmLeaseMode, SoftwareDlmLease};
+use ghostos_fabric::{Access, AddressRange, NodeId, PageFault, PAGE_SIZE};
+use ghostos_vm::{
     ClusterFault, ClusterNetwork, ClusterNetworkConfig, ClusterNetworkOutcome, ClusterNodeId,
     ClusterNodeState, ClusterPacket, ClusterWorkload, CxlFabricFixture, VmCluster, VmConfig,
 };
@@ -24,7 +24,7 @@ fn packet(source: u32, target: u32, payload: &[u8]) -> ClusterPacket {
 
 fn serial_kernel() -> Vec<u8> {
     let mut code = Vec::new();
-    for byte in b"SynOS kernel bootstrap\nsynos> " {
+    for byte in b"GhostOS kernel bootstrap\nghostos> " {
         code.extend_from_slice(&[0xBA, 0xF8, 0x03, 0x00, 0x00, 0xB0, *byte, 0xEE]);
     }
     code.push(0xF4);
@@ -254,7 +254,7 @@ fn coherence_fences_stale_owner_and_recovers_a_fetched_page() {
         .expect("fence old owner");
     assert_eq!(
         directory.pages().next().expect("coherence page").state,
-        synos_fabric::dsm::DsmPageState::Exclusive
+        ghostos_fabric::dsm::DsmPageState::Exclusive
     );
 }
 
@@ -393,9 +393,9 @@ fn cluster_scale_campaign_is_bounded_at_10_100_and_1000_nodes() {
 }
 
 #[test]
-fn two_and_three_node_synos_boot_has_serial_evidence() {
+fn two_and_three_node_ghostos_boot_has_serial_evidence() {
     let kernel_path = std::env::temp_dir().join(format!(
-        "synos-vm-cluster-kernel-{}-{}.bin",
+        "ghostos-vm-cluster-kernel-{}-{}.bin",
         std::process::id(),
         10_6
     ));
@@ -425,7 +425,7 @@ fn two_and_three_node_synos_boot_has_serial_evidence() {
         assert!(String::from_utf8_lossy(
             &cluster.node(node(raw)).expect("booted node").serial_output()
         )
-        .contains("SynOS kernel bootstrap"));
+        .contains("GhostOS kernel bootstrap"));
     }
     assert!(cluster.nodes().all(|node| node.executed_steps() > 0));
     assert_eq!(cluster.evidence().serial_output.len(), 3);

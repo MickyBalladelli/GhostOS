@@ -1,12 +1,12 @@
 # Local and remote login
 
-SynOS supports these login paths:
+GhostOS supports these login paths:
 
 - local physical-console login with a passkey
 - local physical-console login with a TPM-backed credential
 - remote login with an SSH public key or a browser passkey
 
-SynOS stores public credential material only. Never put a private key, passkey
+GhostOS stores public credential material only. Never put a private key, passkey
 seed, TPM secret, password, or recovery secret on the system disk or in a
 serial log.
 
@@ -76,19 +76,19 @@ flow. Keep the matching private key on the client only.
 The configured SSH transport performs this flow:
 
 1. The client starts an SSH connection and sends the username and public key.
-2. SynOS checks that the account, node, credential, and policy allow the key.
-3. SynOS creates a one-shot challenge bound to the SSH exchange hash, public
+2. GhostOS checks that the account, node, credential, and policy allow the key.
+3. GhostOS creates a one-shot challenge bound to the SSH exchange hash, public
    key, node, device, and expiry.
 4. The client signs the challenge with the private key.
-5. SynOS verifies the signature, creates an expiring session, and opens
-   `syn-shell` with the session's shell capability.
+5. GhostOS verifies the signature, creates an expiring session, and opens
+   `ghostos-shell` with the session's shell capability.
 
 Use the SSH client and endpoint configured by the system operator. The
 transport adapter owns host, port, and key-file settings; this repository does
 not define one universal SSH address. A normal client shape is:
 
 ```sh
-ssh -i <private-key> <username>@<synos-host>
+ssh -i <private-key> <username>@<ghostos-host>
 ```
 
 The server must never ask for the private key. A failed key, unknown account,
@@ -110,7 +110,7 @@ The browser and gateway perform this flow:
 3. The browser returns the authenticator data, `clientDataJSON`, and signature.
 4. The gateway verifies the COSE signature, challenge, ceremony type, origin,
    relying-party hash, credential, expiry, and authenticator counter.
-5. SynOS creates the remote session. The gateway may then issue only the
+5. GhostOS creates the remote session. The gateway may then issue only the
    configured subset of capabilities for that session.
 
 Challenges are one-shot and live for at most 120 seconds. Remote sessions live

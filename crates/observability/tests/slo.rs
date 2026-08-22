@@ -1,4 +1,4 @@
-use synos_observability::{SloKind, SloObservation, SloReport, SLO_COUNT};
+use ghostos_observability::{SloKind, SloObservation, SloReport, SLO_COUNT};
 
 fn complete_report(bad_events: u64) -> SloReport {
     let mut report = SloReport::new(100);

@@ -7,9 +7,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use synos_vm::devices::{ApicTrigger, InterruptController, LocalApic, PortBus};
-use synos_vm::firmware::bios::BiosContext;
-use synos_vm::{
+use ghostos_vm::devices::{ApicTrigger, InterruptController, LocalApic, PortBus};
+use ghostos_vm::firmware::bios::BiosContext;
+use ghostos_vm::{
     translate_input_bytes, Cpu, DiskImage, ExecutionEngine, ExecutionEngineConfig, LoopbackHub,
     LoopbackPort, MacAddress, Mmu, NetBackend, PAGE_SIZE,
 };
@@ -195,7 +195,7 @@ impl TemporaryFile {
     fn create_raw(bytes: u64) -> Result<Self, String> {
         for sequence in 0..1024 {
             let path = std::env::temp_dir().join(format!(
-                "synos-vm-bounded-bench-{}-{sequence}.raw",
+                "ghostos-vm-bounded-bench-{}-{sequence}.raw",
                 std::process::id(),
             ));
             match OpenOptions::new().write(true).create_new(true).open(&path) {
@@ -224,7 +224,7 @@ impl Drop for TemporaryFile {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("synos-vm bounded benchmark failed: {error}");
+        eprintln!("ghostos-vm bounded benchmark failed: {error}");
         std::process::exit(1)
     }
 }
@@ -246,11 +246,11 @@ fn run() -> Result<(), String> {
 }
 
 fn print_metadata() {
-    let revision = std::env::var("SYNOS_BENCH_REVISION").unwrap_or_else(|_| "unknown".to_string());
+    let revision = std::env::var("GHOSTOS_BENCH_REVISION").unwrap_or_else(|_| "unknown".to_string());
     let logical_cpus = std::thread::available_parallelism().map_or(1, |value| value.get());
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
     println!(
-        "{{\"schema\":{SCHEMA_VERSION},\"record\":\"metadata\",\"suite\":\"synos-vm-bounded\",\"workload_version\":1,\"command\":\"cargo bench -p synos-vm --bench bounded\",\"crate_version\":\"{}\",\"revision\":\"{}\",\"target_os\":\"{}\",\"target_arch\":\"{}\",\"logical_cpus\":{},\"profile\":\"{}\"}}",
+        "{{\"schema\":{SCHEMA_VERSION},\"record\":\"metadata\",\"suite\":\"ghostos-vm-bounded\",\"workload_version\":1,\"command\":\"cargo bench -p ghostos-vm --bench bounded\",\"crate_version\":\"{}\",\"revision\":\"{}\",\"target_os\":\"{}\",\"target_arch\":\"{}\",\"logical_cpus\":{},\"profile\":\"{}\"}}",
         env!("CARGO_PKG_VERSION"),
         json_escape(&revision),
         std::env::consts::OS,
@@ -480,8 +480,8 @@ fn benchmark_storage() -> Result<BenchmarkResult, String> {
 
 fn benchmark_network() -> Result<BenchmarkResult, String> {
     let hub = Rc::new(RefCell::new(LoopbackHub::new()));
-    let left_mac = MacAddress::synos_default(0x10);
-    let right_mac = MacAddress::synos_default(0x11);
+    let left_mac = MacAddress::ghostos_default(0x10);
+    let right_mac = MacAddress::ghostos_default(0x11);
     let mut left = LoopbackPort::new(hub.clone(), 0, left_mac);
     let mut right = LoopbackPort::new(hub, 1, right_mac);
     let mut frame = vec![0x5A; NETWORK_FRAME_BYTES];

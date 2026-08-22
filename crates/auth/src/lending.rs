@@ -1,8 +1,8 @@
-use synos_fabric::{
+use ghostos_fabric::{
     Access, AddressRange, NodeId, PageFault,
     dsm::{RemotePageAuthority, SoftwareDlmLease},
 };
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityHandle, CapabilityInfo, CapabilityObject, CapabilityRevocationHook,
     CapabilitySpace, Rights,
 };
@@ -336,7 +336,7 @@ impl<const CAPACITY: usize> ResourceLender<CAPACITY> {
         authority: CapabilityHandle,
         resource: u64,
     ) -> Result<RevocationAction, LendingError> {
-        let resource_id = synos_kernel::ResourceId::new(resource)
+        let resource_id = ghostos_kernel::ResourceId::new(resource)
             .ok_or(LendingError::Invalid)?;
         capabilities
             .authorize(

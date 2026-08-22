@@ -22,10 +22,10 @@
 | Persona | Kernel-owned execution identity and initial authority set |
 | Ring 0 | Privileged kernel execution |
 | Ring 3 | Isolated user/service execution |
-| SynFS | SynOS Copy-on-Write, fixed-capacity filesystem core |
-| SynFS generation | A published immutable filesystem root/version |
+| GhostFS | GhostOS Copy-on-Write, fixed-capacity filesystem core |
+| GhostFS generation | A published immutable filesystem root/version |
 | TEE | Trusted execution environment |
-| VM | The Rust virtual machine used to boot and test SynOS |
+| VM | The Rust virtual machine used to boot and test GhostOS |
 
 ## Six useful diagrams in words
 
@@ -71,5 +71,5 @@ For any new operation, ask:
 
 > Who owns the bytes, who owns the authority, what is the bound, what is the epoch, and how do we recover?
 
-If the design answers all five, it is probably speaking SynOS.
+If the design answers all five, it is probably speaking GhostOS.
 

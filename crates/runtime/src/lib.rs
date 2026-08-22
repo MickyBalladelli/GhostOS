@@ -8,13 +8,13 @@ mod pal;
 pub mod sys;
 mod thread;
 
-use synos_status::Status;
+use ghostos_status::Status;
 
 pub use abi::{
     ABI_REVISION, ABI_SCHEMA_VERSION, Capability, GateFn, NativeGate, Operation, Request, Response,
     SystemCall,
 };
-pub use synos_path_pattern::{Pattern, PatternError};
+pub use ghostos_path_pattern::{Pattern, PatternError};
 pub use fs::{
     DirectoryPage, DirectoryRemovalMetadata, File, FileMapping, LinkMetadata, Metadata, OpenOptions,
     PathBuffer, DIRECTORY_RECORD_HEADER_BYTES,
@@ -25,8 +25,8 @@ pub use pal::{
     DynamicLoadingPolicy, MemoryProtection, PanicModel, Pipe, ProcessExitReason,
     ProcessExitStatus, ProcessHandle, ProcessState, ProcessStatus, RuntimeCondvar, RuntimeMutex,
     Terminal, TlsKey, PANIC_MODEL, MAX_PAL_ARGUMENT_BYTES, MAX_PAL_PATH_BYTES,
-    SYNOS_BUILD_ROOT, SYNOS_REGISTRY_ROOT, SYNOS_SOURCE_ROOT, SYNOS_TEMP_ROOT,
-    SYNOS_TOOLCHAIN_ROOT,
+    GHOSTOS_BUILD_ROOT, GHOSTOS_REGISTRY_ROOT, GHOSTOS_SOURCE_ROOT, GHOSTOS_TEMP_ROOT,
+    GHOSTOS_TOOLCHAIN_ROOT,
 };
 pub use thread::{Thread, ThreadStart, WaitWord};
 

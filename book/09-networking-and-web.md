@@ -1,10 +1,10 @@
 # 9. Networking, HTTP, and Remote Surfaces
 
-SynOS networking is asynchronous, capability-controlled, and designed around buffer ownership.
+GhostOS networking is asynchronous, capability-controlled, and designed around buffer ownership.
 
-## `synos-netd`
+## `ghostos-netd`
 
-`synos-netd` is a heap-free Ring 3 TCP/IP service built on `smoltcp`. NIC drivers loan fixed packet slots to the stack. Ingress and egress frames stay in their original buffers while ownership changes.
+`ghostos-netd` is a heap-free Ring 3 TCP/IP service built on `smoltcp`. NIC drivers loan fixed packet slots to the stack. Ingress and egress frames stay in their original buffers while ownership changes.
 
 Applications submit socket operations through shared IPC rings. A socket token is:
 
@@ -25,19 +25,19 @@ The stack polls with an ingress budget. That keeps a flood from taking all sched
 
 ## HTTP and gRPC
 
-`synos-http` provides heap-free HTTP/1 parsing, response encoding, fixed-capacity method/path routing, and gRPC framing. Routes carry web-service rights. The authenticated principal and attenuated grant are checked before handler dispatch.
+`ghostos-http` provides heap-free HTTP/1 parsing, response encoding, fixed-capacity method/path routing, and gRPC framing. Routes carry web-service rights. The authenticated principal and attenuated grant are checked before handler dispatch.
 
-The server does not own a raw network backend. It submits open, listen, receive, send, and close operations through `synos-netd` IPC rings.
+The server does not own a raw network backend. It submits open, listen, receive, send, and close operations through `ghostos-netd` IPC rings.
 
 ## Client SDK and remote services
 
-`synos-client-sdk` is `no_std` and allocation-free. Its versioned `SYRP` frames carry bounded typed RPCs and optional cryptographic capabilities for cluster snapshots, job submission, capability delegation, membership, invitations, plans, health, resources, topology, and audit activity.
+`ghostos-client-sdk` is `no_std` and allocation-free. Its versioned `SYRP` frames carry bounded typed RPCs and optional cryptographic capabilities for cluster snapshots, job submission, capability delegation, membership, invitations, plans, health, resources, topology, and audit activity.
 
 `FrontendGateway` decodes and bounds-checks a request before it reaches a policy-owning service. Subscriptions use cursors and fixed poll batches, so a slow dashboard cannot grow server state without bound. The transport trait lets native HTTP and browser `fetch` share the same SDK contract.
 
 The repository also contains an Apple Swift client and SwiftUI control surface for macOS and iOS. It displays node health and resources, submits bounded jobs, and requests restricted grants through a TLS HTTP gateway.
 
-`synos-webterm` exposes remote terminal workflows. `synos-remote-display` carries remote console/display data. Both preserve authentication, framing, resize, reconnect, and cleanup contracts.
+`ghostos-webterm` exposes remote terminal workflows. `ghostos-remote-display` carries remote console/display data. Both preserve authentication, framing, resize, reconnect, and cleanup contracts.
 
 The web terminal models VT100/VT420/DECterm behavior: UTF-8, cursor movement,
 scrolling regions, erase and insert operations, SGR colors, DEC private modes,

@@ -1,4 +1,4 @@
-use synos_fabric::NodeId;
+use ghostos_fabric::NodeId;
 
 use crate::ProtocolError;
 

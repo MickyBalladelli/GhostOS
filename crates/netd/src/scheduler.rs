@@ -1,6 +1,6 @@
-use synos_time_sync::MonotonicClock;
-use synos_observability::{field, BatchController, BatchDecision, EventField, EventKind, ProducerPolicy};
-use synos_numa::{NumaDecision, NumaPlacement, NumaReport, NumaTopology, PlacementKind};
+use ghostos_time_sync::MonotonicClock;
+use ghostos_observability::{field, BatchController, BatchDecision, EventField, EventKind, ProducerPolicy};
+use ghostos_numa::{NumaDecision, NumaPlacement, NumaReport, NumaTopology, PlacementKind};
 
 use crate::memory::SharedMemory;
 use crate::service::{ClientChannel, NetworkDaemon, ServiceError, SocketBackend};
@@ -120,7 +120,7 @@ impl NetworkServiceScheduler {
             self.interrupt_cpu,
             self.interrupt_node,
         );
-        synos_observability::info!(
+        ghostos_observability::info!(
             EventKind::Kernel,
             EventField::unsigned(field::NUMA_KIND, PlacementKind::NetworkInterrupt as u64),
             EventField::unsigned(field::NUMA_REQUESTED_NODE, interrupt_placement.requested_node as u64),
@@ -194,7 +194,7 @@ impl NetworkServiceScheduler {
             self.interrupt_cpu,
             self.interrupt_node,
         );
-        synos_observability::info!(
+        ghostos_observability::info!(
             EventKind::Kernel,
             EventField::unsigned(field::NUMA_KIND, PlacementKind::NetworkInterrupt as u64),
             EventField::unsigned(field::NUMA_REQUESTED_NODE, interrupt_placement.requested_node as u64),

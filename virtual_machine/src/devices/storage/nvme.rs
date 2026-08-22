@@ -593,7 +593,7 @@ impl Nvme {
         c[2..4].copy_from_slice(&NVME_VENDOR_ID.to_le_bytes());
         let sn = b"SYNOSVM00001";
         c[4..4 + sn.len()].copy_from_slice(sn);
-        let mn = b"SynOS NVMe Virtual Disk";
+        let mn = b"GhostOS NVMe Virtual Disk";
         c[24..24 + mn.len()].copy_from_slice(mn);
         c[64..68].copy_from_slice(b"0.1\0");
         c[512] = 6; // SQES min
@@ -749,7 +749,7 @@ mod tests {
     use std::io::Write;
 
     fn disk(name: &str) -> DiskImage {
-        let path = std::env::temp_dir().join(format!("synos-nvme-{name}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("ghostos-nvme-{name}-{}", std::process::id()));
         let mut file = File::create(path.clone()).unwrap();
         file.set_len(4096).unwrap();
         file.flush().unwrap();

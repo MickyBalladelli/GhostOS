@@ -1,6 +1,6 @@
 //! Crash-safe evidence for the last kernel boot attempt.
 
-use synos_status::Status;
+use ghostos_status::Status;
 
 use crate::persistence::PersistentStore;
 

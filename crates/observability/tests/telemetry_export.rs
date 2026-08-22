@@ -1,4 +1,4 @@
-use synos_observability::{
+use ghostos_observability::{
     EventKind, Level, MetricKind, MetricRegistry, MetricSample, TelemetryDimensions,
     TelemetryExportError, TelemetryExporter, TraceEvent, TraceRing, validate_telemetry_export,
 };

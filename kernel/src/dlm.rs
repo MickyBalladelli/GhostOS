@@ -3,7 +3,7 @@ use crate::capability::{
 };
 use crate::contention::{duration_bucket, LOCK_DURATION_BUCKETS};
 use crate::task::AddressSpaceId;
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_RESOURCE_NAME_BYTES: usize = 64;
 pub const DEFAULT_LOCK_CAPACITY: usize = 256;
@@ -174,8 +174,8 @@ impl<const CAPACITY: usize> Default for NodeFenceTable<CAPACITY> {
     }
 }
 
-impl<const CAPACITY: usize> synos_fabric::cluster::NodeIsolation for NodeFenceTable<CAPACITY> {
-    fn is_node_isolated(&self, node: synos_fabric::NodeId) -> bool {
+impl<const CAPACITY: usize> ghostos_fabric::cluster::NodeIsolation for NodeFenceTable<CAPACITY> {
+    fn is_node_isolated(&self, node: ghostos_fabric::NodeId) -> bool {
         NodeId::new(node.raw()).is_some_and(|node| self.is_isolated(node))
     }
 }

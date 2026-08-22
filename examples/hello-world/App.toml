@@ -4,7 +4,7 @@ schema = 1
 name = "hello-world"
 image = "0x1"
 kind = "service"
-target = "x86_64-unknown-synos"
+target = "x86_64-unknown-ghostos"
 entry_offset = 0
 
 [resources]

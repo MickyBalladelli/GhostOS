@@ -37,7 +37,7 @@ pub use current::{halt, interrupts, paging};
 
 pub(crate) use current::enter_user;
 
-pub(crate) fn idle(state: synos_power::CpuIdleState) {
+pub(crate) fn idle(state: ghostos_power::CpuIdleState) {
     current::idle(state)
 }
 

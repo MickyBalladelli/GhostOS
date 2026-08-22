@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package a successful SynOS boot captured from physical x86_64 hardware."""
+"""Package a successful GhostOS boot captured from physical x86_64 hardware."""
 
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ from datetime import datetime, timezone
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VALIDATOR = ROOT / "scripts/validate-hardware-boot-evidence.py"
 MARKERS = {
-    "kernel_entry": "SynOS kernel bootstrap",
+    "kernel_entry": "GhostOS kernel bootstrap",
     "boot_info": "boot method=",
     "architecture": "architecture=x86_64",
     "cpu": "cpu topology online=",
     "pci": "PCI discovery complete",
-    "user_handoff": "starting synos-init in Ring 3",
-    "shell": "synos-shell ready in Ring 3",
+    "user_handoff": "starting ghostos-init in Ring 3",
+    "shell": "ghostos-shell ready in Ring 3",
 }
 
 
@@ -106,7 +106,7 @@ def main() -> int:
     if missing_markers:
         print(f"serial log is missing markers: {', '.join(missing_markers)}", file=sys.stderr)
         return 1
-    if any(marker.lower() in serial.lower() for marker in ("KERNEL PANIC", "guest panic", "SynOS boot failure")):
+    if any(marker.lower() in serial.lower() for marker in ("KERNEL PANIC", "guest panic", "GhostOS boot failure")):
         print("serial log contains a boot failure marker", file=sys.stderr)
         return 1
     if values.get("boot_mode") != args.boot_mode:
@@ -136,7 +136,7 @@ def main() -> int:
     inventory_record = file_record(evidence_dir / "inventory.txt", "inventory.txt")
     evidence = {
         "schema": 1,
-        "kind": "synos-hardware-boot-evidence",
+        "kind": "ghostos-hardware-boot-evidence",
         "test_id": "hardware.boot.x86_64",
         "tier": "hardware-boot",
         "result_state": "passed",
@@ -163,7 +163,7 @@ def main() -> int:
     (evidence_dir / "evidence.json").write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
     result = {
         "schema": 1,
-        "kind": "synos-hardware-boot-evidence-result",
+        "kind": "ghostos-hardware-boot-evidence-result",
         "tier": "hardware-boot",
         "state": "passed",
         "revision": revision,

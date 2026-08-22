@@ -148,14 +148,14 @@ pub mod interrupts {
     }
 
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn synos_riscv_trap_dispatch(frame: *mut TrapFrame) {
+    unsafe extern "C" fn ghostos_riscv_trap_dispatch(frame: *mut TrapFrame) {
         let frame = unsafe { &mut *frame };
         let is_interrupt = frame.scause >> 63 != 0;
         let cause = frame.scause & !(1u64 << 63);
         if !is_interrupt && cause == 8 {
-            crate::syscall::synos_call_gate_dispatch(
-                frame.registers[10] as *const synos_runtime::Request,
-                frame.registers[11] as *mut synos_runtime::Response,
+            crate::syscall::ghostos_call_gate_dispatch(
+                frame.registers[10] as *const ghostos_runtime::Request,
+                frame.registers[11] as *mut ghostos_runtime::Response,
             );
             frame.sepc = frame.sepc.saturating_add(4);
             return
@@ -163,7 +163,7 @@ pub mod interrupts {
         crate::capture_exception(
             super::capture_registers(frame.stval),
             frame.stval,
-            synos_status::Status::CORRUPT,
+            ghostos_status::Status::CORRUPT,
             cause as u16,
         );
         crate::println!("RISC-V supervisor trap cause={cause:#x}");
@@ -218,7 +218,7 @@ trap_entry:
     csrr t0, stval
     sd t0, 280(sp)
     mv a0, sp
-    call synos_riscv_trap_dispatch
+    call ghostos_riscv_trap_dispatch
     ld t0, 256(sp)
     csrw sepc, t0
     ld t0, 264(sp)
@@ -294,7 +294,7 @@ pub(crate) fn enter_user(context: &crate::Context, root: crate::PageTableRoot) -
     }
 }
 
-pub(crate) fn idle(_state: synos_power::CpuIdleState) {
+pub(crate) fn idle(_state: ghostos_power::CpuIdleState) {
     unsafe {
         asm!("wfi", options(nomem, nostack));
     }

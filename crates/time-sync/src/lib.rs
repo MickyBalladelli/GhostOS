@@ -1,7 +1,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub const PTP_PACKET_BYTES: usize = 64;
 pub const PTP_VERSION: u8 = 2;

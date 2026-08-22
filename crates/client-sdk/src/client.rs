@@ -1,11 +1,11 @@
 use core::convert::Infallible;
 
-use synos_auth::CryptographicCapability;
-use synos_fabric::NodeId;
-use synos_ipc::{BufferError, BufferLease, BufferOwner, BufferRights};
-use synos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
-use synos_status::PublicError;
-use synos_system_model::performance::PerformanceDiagnostics;
+use ghostos_auth::CryptographicCapability;
+use ghostos_fabric::NodeId;
+use ghostos_ipc::{BufferError, BufferLease, BufferOwner, BufferRights};
+use ghostos_observability::{ProfileDomain, ProfileSample, record_profile_sample};
+use ghostos_status::PublicError;
+use ghostos_system_model::performance::PerformanceDiagnostics;
 
 use crate::{
     AuditEventList, CapabilityDelegation, ChangeBatch, ClusterCreateRequest, ClusterHealthSnapshot,
@@ -125,7 +125,7 @@ impl RemoteError {
             status,
             error: status.public_status().public_error(
                 operation as u16,
-                synos_status::AuditContext::new(request_id as u128, 0),
+                ghostos_status::AuditContext::new(request_id as u128, 0),
             ),
         }
     }
@@ -641,8 +641,8 @@ pub(crate) fn decode_delegation(input: &[u8]) -> Result<CapabilityDelegation, Pr
     CapabilityDelegation::new(
         read_u64(input, 0)?,
         NodeId::new(read_u32(input, 8)?).ok_or(ProtocolError::InvalidValue)?,
-        synos_kernel::Rights::from_bits(read_u16(input, 12)?).ok_or(ProtocolError::InvalidValue)?,
-        synos_auth::TransportRights::from_bits(input[14]).ok_or(ProtocolError::InvalidValue)?,
+        ghostos_kernel::Rights::from_bits(read_u16(input, 12)?).ok_or(ProtocolError::InvalidValue)?,
+        ghostos_auth::TransportRights::from_bits(input[14]).ok_or(ProtocolError::InvalidValue)?,
         read_u64(input, 16)?,
     )
 }

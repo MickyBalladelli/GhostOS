@@ -1,0 +1,26 @@
+[package]
+name = "cargo-ghostos"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cargo-ghostos"
+path = "src/main.rs"
+
+[dependencies]
+ghostos-auth = { path = "../../crates/auth" }
+ghostos-fabric = { path = "../../crates/fabric" }
+ghostos-kernel = { path = "../../kernel" }
+ghostos-netd = { path = "../../crates/netd" }
+ghostos-pkg = { path = "../../crates/pkg" }
+ghostos-app = { path = "../../crates/app" }
+ghostos-init = { path = "../../crates/init" }
+ghostos-rustd = { path = "../../crates/ghostos-rustd" }
+ghostos-status = { path = "../../crates/status" }
+ghostos-runtime = { path = "../../crates/runtime" }
+ghostos-ghostfs = { path = "../../crates/ghostfs" }
+ghostos-system-model = { path = "../../crates/system-model" }
+ghostos-update = { path = "../../crates/ghostos-update" }
+ghostos-compiler = { path = "../ghostos-compiler" }
+ghostos-vm = { path = "../../virtual_machine" }

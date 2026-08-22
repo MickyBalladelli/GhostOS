@@ -1,8 +1,8 @@
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use synos_boot_protocol::FramebufferInfo;
+use ghostos_boot_protocol::FramebufferInfo;
 #[cfg(target_arch = "x86_64")]
-use synos_boot_protocol::{FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB};
+use ghostos_boot_protocol::{FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB};
 
 static LOCKED: AtomicBool = AtomicBool::new(false);
 static REMOTE_COLUMNS: AtomicUsize = AtomicUsize::new(0);

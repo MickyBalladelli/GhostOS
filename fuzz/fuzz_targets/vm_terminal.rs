@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_vm::{ascii_to_scancodes, translate_input_bytes, ReplaySession};
+use ghostos_vm::{ascii_to_scancodes, translate_input_bytes, ReplaySession};
 
 fuzz_target!(|data: &[u8]| {
     let data = &data[..data.len().min(64 * 1024)];

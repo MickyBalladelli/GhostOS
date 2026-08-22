@@ -1,9 +1,9 @@
-use synos_ipc::{Ring, RingError, SharedBuffer};
-use synos_observability::{
+use ghostos_ipc::{Ring, RingError, SharedBuffer};
+use ghostos_observability::{
     CapabilityDomain, CapabilityTrace, CapabilityTraceStage, Level, ProfileDomain, ProfileSample,
     record_profile_sample,
 };
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 use crate::memory::{MemoryError, SharedMemory};
 use crate::protocol::{ProtocolError, SocketOperation, SocketRequest, socket_response};

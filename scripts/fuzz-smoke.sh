@@ -11,9 +11,9 @@ if ! command -v cargo-fuzz >/dev/null 2>&1; then
     exit 2
 fi
 
-runs=${SYNOS_FUZZ_RUNS:-1000}
-timeout_seconds=${SYNOS_FUZZ_TIMEOUT_SECONDS:-10}
-rss_limit_mb=${SYNOS_FUZZ_RSS_LIMIT_MB:-1024}
+runs=${GHOSTOS_FUZZ_RUNS:-1000}
+timeout_seconds=${GHOSTOS_FUZZ_TIMEOUT_SECONDS:-10}
+rss_limit_mb=${GHOSTOS_FUZZ_RSS_LIMIT_MB:-1024}
 for target in path volume operations mount http script network manifest abi-frame cli vm-decoder vm-devices vm-images vm-snapshot vm-terminal vm-migration; do
     echo "fuzz smoke: $target ($runs runs)"
     set +e

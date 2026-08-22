@@ -1,5 +1,5 @@
 use crate::record::RecordLocation;
-use synos_status::{IntoStatus, Status};
+use ghostos_status::{IntoStatus, Status};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DlmResource {

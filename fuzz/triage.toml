@@ -10,13 +10,13 @@ test_id = "fuzz.47.path"
 
 [[target]]
 name = "volume"
-boundary = "SynFS volume images"
+boundary = "GhostFS volume images"
 owner = "storage"
 test_id = "fuzz.47.volume"
 
 [[target]]
 name = "operations"
-boundary = "SynFS operation sequences"
+boundary = "GhostFS operation sequences"
 owner = "storage"
 test_id = "fuzz.47.operations"
 

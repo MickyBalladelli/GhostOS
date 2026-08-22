@@ -1,6 +1,6 @@
-use synos_auth::{CapabilityKey, CapabilityLease, LeaseContext};
-use synos_fabric::NodeId;
-use synos_kernel::Rights;
+use ghostos_auth::{CapabilityKey, CapabilityLease, LeaseContext};
+use ghostos_fabric::NodeId;
+use ghostos_kernel::Rights;
 
 fn main() {
     let key = CapabilityKey::new([7; 32]);

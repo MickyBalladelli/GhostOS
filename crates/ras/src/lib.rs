@@ -7,11 +7,11 @@
 //! platform adapter supplies the actual EDAC, CXL, PCIe, power, and persistent
 //! memory register access.
 
-use synos_fabric::{AddressRange, NodeId, PAGE_SIZE, memory::PoolId};
-use synos_legacy_pc_drivers::{PciAddress, PcieAerStatus};
-use synos_observability::{EventField, EventKind, Level, TraceEvent, emit, field};
-use synos_status::{IntoStatus, Status};
-use synos_synfs::{DeviceHealth, StorageDeviceId, StoragePoolAdmin, StoragePoolError};
+use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE, memory::PoolId};
+use ghostos_legacy_pc_drivers::{PciAddress, PcieAerStatus};
+use ghostos_observability::{EventField, EventKind, Level, TraceEvent, emit, field};
+use ghostos_status::{IntoStatus, Status};
+use ghostos_ghostfs::{DeviceHealth, StorageDeviceId, StoragePoolAdmin, StoragePoolError};
 
 pub const DEFAULT_EVENT_CAPACITY: usize = 256;
 pub const DEFAULT_POISON_CAPACITY: usize = 128;
@@ -826,7 +826,7 @@ impl<const CAPACITY: usize> Default for PersistentPool<CAPACITY> {
     }
 }
 
-/// Marks a SynFS device failed after a hardware error, so future pool IO can
+/// Marks a GhostFS device failed after a hardware error, so future pool IO can
 /// select mirrors or report degradation instead of retrying corrupt media.
 pub fn fail_storage_device<const DEVICES: usize, const POOLS: usize>(
     storage: &mut StoragePoolAdmin<DEVICES, POOLS>,

@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU8, Ordering};
-use synos_legacy_pc_drivers::pci::{Bar, ConfigAccess, PortConfig, enumerate};
+use ghostos_legacy_pc_drivers::pci::{Bar, ConfigAccess, PortConfig, enumerate};
 
 const TRB_COUNT: usize = 256;
 const EVENT_COUNT: usize = 256;

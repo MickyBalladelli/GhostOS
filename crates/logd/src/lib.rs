@@ -1,13 +1,13 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use synos_observability::{
+use ghostos_observability::{
     AuditJournal, AuditKey, AuditQuery, EventKind, JOURNAL_RECORD_SIZE, Level,
     SECURITY_AUDIT, SYSTEM_TRACE, TraceEvent, TraceRing, decode_record, encode_record,
     DEFAULT_RECOVERY_AUDIT_CAPACITY, MAX_TELEMETRY_BATCH, ScalePath, ScalePolicy,
 };
-use synos_observability::{BatchController, ProducerPolicy};
-use synos_synfs::{
+use ghostos_observability::{BatchController, ProducerPolicy};
+use ghostos_ghostfs::{
     BlockStore, CapacityObservation, CapacityResource, Error as SynFsError, SynFs, SynfsPurged,
 };
 
@@ -57,7 +57,7 @@ pub trait JournalWriter {
     fn rotate(&mut self, work_budget: usize) -> Result<usize, LogError>;
 }
 
-/// SynFS journal backend. Every fixed-size record is committed as a new CoW
+/// GhostFS journal backend. Every fixed-size record is committed as a new CoW
 /// file version. Rotation tombstones old versions in bounded background work.
 pub struct SynFsJournal<'a, const BLOCKS: usize> {
     filesystem: &'a mut SynFs<BLOCKS>,
@@ -133,7 +133,7 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
             .filesystem
             .fragmentation_report()
             .map_err(|_| LogError::Journal)?;
-        let block_bytes = synos_synfs::BLOCK_SIZE as u64;
+        let block_bytes = ghostos_ghostfs::BLOCK_SIZE as u64;
         let fragmented_bytes = (fragmentation.fragmented_blocks as u64).saturating_mul(block_bytes);
         Ok(CapacityObservation {
             resource,
@@ -225,7 +225,7 @@ impl<'a, const BLOCKS: usize> SynFsJournal<'a, BLOCKS> {
         let mut matched = 0;
         self.analyze_stream(SERVICE_JOURNAL, query, |event| {
             if event
-                .field(synos_observability::field::SERVICE)
+                .field(ghostos_observability::field::SERVICE)
                 .is_some_and(|field| field.as_u64() == u64::from(service))
             {
                 matched += 1;
@@ -312,7 +312,7 @@ impl<const BLOCKS: usize> JournalWriter for SynFsJournal<'_, BLOCKS> {
     }
 }
 
-/// A SynFS journal connected to the volume's block device. The plain
+/// A GhostFS journal connected to the volume's block device. The plain
 /// [`SynFsJournal`] is useful for volatile callers; this adapter makes every
 /// log batch and retention change power-loss durable before it returns.
 pub struct PersistentSynFsJournal<'fs, 'device, const BLOCKS: usize, D: BlockStore> {

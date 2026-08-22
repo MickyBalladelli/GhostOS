@@ -2,11 +2,11 @@ use crate::dlm::ResourceId;
 use crate::ipc::{ChannelId, SharedRegionId};
 use crate::quota::{CapabilityQuota, QuotaDecision, QuotaPolicy, QuotaResource, QuotaUsage};
 use crate::task::AddressSpaceId;
-use synos_observability::{
+use ghostos_observability::{
     CapabilityDomain, CapabilityTraceStage, EventField, Level, audit_event,
     emit_capability_trace, field,
 };
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_CAPABILITIES: usize = 256;
 const NO_DESCRIPTOR: usize = usize::MAX;
@@ -676,7 +676,7 @@ impl<const CAPACITY: usize> CapabilitySpace<CAPACITY> {
     }
 
     /// Snapshot every live descriptor for trusted diagnostics such as
-    /// `synos-top`. User-space visibility is still decided by the service that
+    /// `ghostos-top`. User-space visibility is still decided by the service that
     /// owns this kernel capability space.
     pub fn entries(
         &self,

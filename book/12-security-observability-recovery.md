@@ -1,10 +1,10 @@
 # 12. Identity, Security, Observability, and Recovery
 
-Security in SynOS is not one login screen. It is the combined behavior of identity, capabilities, isolation, audit, and failure recovery.
+Security in GhostOS is not one login screen. It is the combined behavior of identity, capabilities, isolation, audit, and failure recovery.
 
 ## Authentication
 
-`synos-auth` stores bounded local and node-local identity records with passkey, TPM 2.0, and SSH public credentials. Authentication uses one-shot challenges and a platform crypto verifier. A successful session creates a kernel-owned persona and mints only the configured initial capability set.
+`ghostos-auth` stores bounded local and node-local identity records with passkey, TPM 2.0, and SSH public credentials. Authentication uses one-shot challenges and a platform crypto verifier. A successful session creates a kernel-owned persona and mints only the configured initial capability set.
 
 Remote administration uses WebAuthn-style ceremonies. Assertions bind to a server nonce, device, relying-party ID, origin, credential, expiry, presence, verification, and monotonic authenticator counter.
 
@@ -16,11 +16,11 @@ Remote tokens cannot gain dangerous rights such as map, create, delegate, or rev
 
 ## Runtime shield and confidential computing
 
-`synos-shield` provides bounded runtime protection and hardware admission. `synos-confidential` handles attestation, enclave admission, confidential fabric transport, and downgrade rejection. Policy decides whether a workload can run with CXL-IDE, SEV, TDX, CCA, or kernel-only isolation.
+`ghostos-shield` provides bounded runtime protection and hardware admission. `ghostos-confidential` handles attestation, enclave admission, confidential fabric transport, and downgrade rejection. Policy decides whether a workload can run with CXL-IDE, SEV, TDX, CCA, or kernel-only isolation.
 
 ## Audit and observability
 
-`synos-observability` defines bounded events, fields, levels, traces, and metrics. `synos-auditd` records security-sensitive actions such as authentication, authorization, package verification, filesystem mutation, fencing, patching, and destructive operations.
+`ghostos-observability` defines bounded events, fields, levels, traces, and metrics. `ghostos-auditd` records security-sensitive actions such as authentication, authorization, package verification, filesystem mutation, fencing, patching, and destructive operations.
 
 Important evidence fields include:
 
@@ -33,19 +33,19 @@ Important evidence fields include:
 - correlation ID;
 - timestamp or monotonic sequence.
 
-`synos-logd` handles bounded logging, filtering, sinks, flush, rotation, and restart. Sinks can fail without making the core event model unbounded.
+`ghostos-logd` handles bounded logging, filtering, sinks, flush, rotation, and restart. Sinks can fail without making the core event model unbounded.
 
 ## Inspection and debugging
 
-`synos-inspect` provides capability-scoped system inspection. `synos-debug` provides protected probes, GDB protocol support, breakpoints, watchpoints, register/memory access, and coredumps. Remote GDB sessions bind a signed, expiring capability to one process resource, require the dedicated debug right for every operation, and recheck revocation before each packet. Debugging authority is itself a capability.
+`ghostos-inspect` provides capability-scoped system inspection. `ghostos-debug` provides protected probes, GDB protocol support, breakpoints, watchpoints, register/memory access, and coredumps. Remote GDB sessions bind a signed, expiring capability to one process resource, require the dedicated debug right for every operation, and recheck revocation before each packet. Debugging authority is itself a capability.
 
-`synos-top` renders node memory, VRAM, DSM latency, and capability trees. It can target ANSI terminals and VGA/GOP output.
+`ghostos-top` renders node memory, VRAM, DSM latency, and capability trees. It can target ANSI terminals and VGA/GOP output.
 
 ## Replay and healing
 
-`synos-replay` records deterministic inputs, checkpoints, and flight recorder state. A replay detects divergent input and can restore a previous checkpoint.
+`ghostos-replay` records deterministic inputs, checkpoints, and flight recorder state. A replay detects divergent input and can restore a previous checkpoint.
 
-`synos-heal` selects clean CoW snapshots, restores daemon state, preserves connections where safe, and limits repeated crash loops.
+`ghostos-heal` selects clean CoW snapshots, restores daemon state, preserves connections where safe, and limits repeated crash loops.
 
 ## Safe recovery order
 

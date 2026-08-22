@@ -1,6 +1,6 @@
 use std::fmt;
 
-pub use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector};
+pub use ghostos_durability::{CrashBoundary, CrashDomain, InterruptionInjector};
 
 const DOMAIN_COUNT: usize = 6;
 const BOUNDARY_COUNT: usize = 6;

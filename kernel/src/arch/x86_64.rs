@@ -1,6 +1,6 @@
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicBool, Ordering};
-use synos_power::CpuIdleState;
+use ghostos_power::CpuIdleState;
 
 const CR4_SMEP: u64 = 1 << 20;
 const CR4_SMAP: u64 = 1 << 21;
@@ -64,9 +64,9 @@ pub mod paging {
     const USER_MAPPING_PML4_INDEX: usize = (crate::USER_SPACE_START >> 39) as usize;
     const SERVICE_CODE: u64 = crate::USER_SPACE_START;
     const SERVICE_STACK_TOP: u64 = SERVICE_CODE + SERVICE_PAGE_COUNT as u64 * crate::FRAME_SIZE;
-    const SERVICE_IMAGE: &[u8] = include_bytes!(env!("SYNOS_SERVICE_IMAGE"));
-    const LOGIN_IMAGE: &[u8] = include_bytes!(env!("SYNOS_LOGIN_IMAGE"));
-    const SHELL_IMAGE: &[u8] = include_bytes!(env!("SYNOS_SHELL_IMAGE"));
+    const SERVICE_IMAGE: &[u8] = include_bytes!(env!("GHOSTOS_SERVICE_IMAGE"));
+    const LOGIN_IMAGE: &[u8] = include_bytes!(env!("GHOSTOS_LOGIN_IMAGE"));
+    const SHELL_IMAGE: &[u8] = include_bytes!(env!("GHOSTOS_SHELL_IMAGE"));
 
     /// Creates a fresh four-level root table with low physical memory identity mapped.
     ///
@@ -575,7 +575,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
     }
 
     unsafe extern "C" {
-        static synos_isr_table: [u64; IDT_ENTRIES];
+        static ghostos_isr_table: [u64; IDT_ENTRIES];
     }
 
     /// Installs an IDT, remaps the legacy PIC, and enables timer and keyboard IRQs.
@@ -590,7 +590,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
             for index in 0..IDT_ENTRIES {
                 let privilege = (index == crate::syscall::CALL_GATE_VECTOR as usize) as u16 * 3;
                 IDT[index] = IdtEntry::handler(
-                    synos_isr_table[index],
+                    ghostos_isr_table[index],
                     KERNEL_CODE_SELECTOR,
                     privilege,
                 );
@@ -920,9 +920,9 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
         }
         if vector == crate::syscall::CALL_GATE_VECTOR as u64 {
             let frame_ref = unsafe { &mut *frame };
-            let sleep_us = crate::syscall::synos_call_gate_dispatch(
-                frame_ref.rdi as *const synos_runtime::Request,
-                frame_ref.rsi as *mut synos_runtime::Response,
+            let sleep_us = crate::syscall::ghostos_call_gate_dispatch(
+                frame_ref.rdi as *const ghostos_runtime::Request,
+                frame_ref.rsi as *mut ghostos_runtime::Response,
             );
             let mut return_mode = 0;
             unsafe {
@@ -978,7 +978,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                     options(nomem, nostack, preserves_flags)
                 );
             }
-            let fault = synos_fabric::PageFault::from_x86_error(fault_address, error_code);
+            let fault = ghostos_fabric::PageFault::from_x86_error(fault_address, error_code);
             if crate::page_fault::dispatch(fault) {
                 return 0
             }
@@ -986,7 +986,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                 crate::capture_exception(
                     super::capture_registers(fault_address),
                     fault_address,
-                    synos_status::Status::CORRUPT,
+                    ghostos_status::Status::CORRUPT,
                     vector as u16,
                 );
                 unsafe {
@@ -1008,7 +1008,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
             crate::capture_exception(
                 super::capture_registers(fault_address),
                 fault_address,
-                synos_status::Status::CORRUPT,
+                ghostos_status::Status::CORRUPT,
                 vector as u16,
             );
         }
@@ -1017,7 +1017,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                 crate::capture_exception(
                     super::capture_registers(0),
                     0,
-                    synos_status::Status::CORRUPT,
+                    ghostos_status::Status::CORRUPT,
                     vector as u16,
                 );
             }
@@ -1144,18 +1144,18 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
 .extern interrupt_dispatch
 
 .macro ISR_NOERR vector
-.global synos_isr_\vector
-synos_isr_\vector:
+.global ghostos_isr_\vector
+ghostos_isr_\vector:
     push 0
     push \vector
-    jmp synos_isr_common
+    jmp ghostos_isr_common
 .endm
 
 .macro ISR_ERR vector
-.global synos_isr_\vector
-synos_isr_\vector:
+.global ghostos_isr_\vector
+ghostos_isr_\vector:
     push \vector
-    jmp synos_isr_common
+    jmp ghostos_isr_common
 .endm
 
 .set vector, 0
@@ -1168,7 +1168,7 @@ synos_isr_\vector:
     .set vector, vector + 1
 .endr
 
-synos_isr_common:
+ghostos_isr_common:
     cld
     push rax
     push rbx
@@ -1227,10 +1227,10 @@ synos_isr_common:
 
 .section .rodata
 .align 8
-.global synos_isr_table
-synos_isr_table:
+.global ghostos_isr_table
+ghostos_isr_table:
 .macro ISR_TABLE_ENTRY vector
-    .quad synos_isr_\vector
+    .quad ghostos_isr_\vector
 .endm
 .set vector, 0
 .rept 256

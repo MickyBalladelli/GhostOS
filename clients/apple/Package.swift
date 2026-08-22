@@ -3,25 +3,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "SynOSControl",
+    name: "GhostOSControl",
     platforms: [
         .iOS(.v17),
         .macOS(.v14)
     ],
     products: [
-        .library(name: "SynOSClient", targets: ["SynOSClient"]),
-        .library(name: "SynOSControlUI", targets: ["SynOSControlUI"]),
-        .executable(name: "SynOSControl", targets: ["SynOSControlApp"])
+        .library(name: "GhostOSClient", targets: ["GhostOSClient"]),
+        .library(name: "GhostOSControlUI", targets: ["GhostOSControlUI"]),
+        .executable(name: "GhostOSControl", targets: ["GhostOSControlApp"])
     ],
     targets: [
-        .target(name: "SynOSClient"),
+        .target(name: "GhostOSClient"),
         .target(
-            name: "SynOSControlUI",
-            dependencies: ["SynOSClient"]
+            name: "GhostOSControlUI",
+            dependencies: ["GhostOSClient"]
         ),
         .executableTarget(
-            name: "SynOSControlApp",
-            dependencies: ["SynOSClient", "SynOSControlUI"]
+            name: "GhostOSControlApp",
+            dependencies: ["GhostOSClient", "GhostOSControlUI"]
         )
     ]
 )

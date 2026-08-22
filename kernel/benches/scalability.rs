@@ -1,16 +1,16 @@
 use std::time::Instant;
 
-use synos_ipc::{Envelope, Ring};
-use synos_observability::{
+use ghostos_ipc::{Envelope, Ring};
+use ghostos_observability::{
     BatchController, ProducerPolicy, ScalePath, ScalePolicy, SCALE_CPU_TIERS,
 };
-use synos_kernel::Scheduler;
+use ghostos_kernel::Scheduler;
 
 const DEFAULT_ITERATIONS: usize = 20_000;
 const SAMPLE_COUNT: usize = 5;
 
 fn iterations() -> usize {
-    std::env::var("SYNOS_SCALE_ITERATIONS")
+    std::env::var("GHOSTOS_SCALE_ITERATIONS")
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|value| *value > 0)

@@ -1,9 +1,9 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use synos_fabric::{AddressRange, NodeId, PAGE_SIZE, dsm::RemotePageAuthority};
-use synos_ipc::{ChannelId, Envelope, SharedBuffer};
-use synos_status::{IntoStatus, Status};
+use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE, dsm::RemotePageAuthority};
+use ghostos_ipc::{ChannelId, Envelope, SharedBuffer};
+use ghostos_status::{IntoStatus, Status};
 
 pub const DEFAULT_ACTOR_CAPACITY: usize = 128;
 pub const DEFAULT_NODE_CAPACITY: usize = 32;

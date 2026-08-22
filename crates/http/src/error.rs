@@ -1,4 +1,4 @@
-use synos_status::{AuditContext, PublicError, RetryHint, Status};
+use ghostos_status::{AuditContext, PublicError, RetryHint, Status};
 
 use crate::{DEFAULT_RESPONSE_HEADERS, EncodeError, Response, StatusCode};
 
@@ -90,7 +90,7 @@ pub const fn route_error(
         crate::RouteError::MethodNotAllowed => (Status::METHOD_NOT_ALLOWED, RetryHint::Never),
         crate::RouteError::NotFound => (Status::NOT_FOUND, RetryHint::Never),
     };
-    PublicError::new(code, synos_status::operation::HTTP_ROUTE, retry, audit)
+    PublicError::new(code, ghostos_status::operation::HTTP_ROUTE, retry, audit)
 }
 
 pub const fn parse_error(error: crate::ParseError, audit: AuditContext) -> PublicError {
@@ -100,7 +100,7 @@ pub const fn parse_error(error: crate::ParseError, audit: AuditContext) -> Publi
     };
     PublicError::new(
         Status::INVALID_ARGUMENT,
-        synos_status::operation::HTTP_PARSE,
+        ghostos_status::operation::HTTP_PARSE,
         retry,
         audit,
     )

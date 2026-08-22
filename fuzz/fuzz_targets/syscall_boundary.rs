@@ -1,9 +1,9 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_abi::Request;
-use synos_auth::{CapabilityKey, CryptographicCapability, TransportRights};
-use synos_kernel::Rights;
+use ghostos_abi::Request;
+use ghostos_auth::{CapabilityKey, CryptographicCapability, TransportRights};
+use ghostos_kernel::Rights;
 
 fuzz_target!(|data: &[u8]| {
     if data.len() >= 64 {
@@ -15,7 +15,7 @@ fuzz_target!(|data: &[u8]| {
             capability: read_u64(data, 8),
             arguments: core::array::from_fn(|index| read_u64(data, 16 + index * 8)),
         };
-        let _ = synos_kernel::syscall::validate_request_shape(&request);
+        let _ = ghostos_kernel::syscall::validate_request_shape(&request);
     }
 
     if data.len() >= CryptographicCapability::WIRE_BYTES {

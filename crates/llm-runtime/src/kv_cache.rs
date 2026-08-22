@@ -1,4 +1,4 @@
-use synos_fabric::{
+use ghostos_fabric::{
     Access, NodeId, PAGE_SIZE,
     memory::{
         GlobalAddressSpace, LeaseTable, MemoryKind, Migration, MigrationCopy,

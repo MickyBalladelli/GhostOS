@@ -1,6 +1,6 @@
 # VM behavior inventory. Test IDs resolve to executed evidence records.
 schema = 1
-crate = "synos-vm"
+crate = "ghostos-vm"
 
 [evidence]
 record_schema = 1
@@ -10,22 +10,22 @@ result_states = ["passed", "failed", "skipped"]
 
 [[tier]]
 name = "fast-unit"
-command = "cargo test -p synos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test cpu_differential --test snapshot_terminal_network_10_5 --test terminal_cleanup --test negative_matrix --test network_integration"
+command = "cargo test -p ghostos-vm --lib --test foundation_59_1 --test matrix_59_11 --test cpu_memory_execution --test cpu_differential --test snapshot_terminal_network_10_5 --test terminal_cleanup --test negative_matrix --test network_integration"
 status = "deterministic"
 
 [[tier]]
 name = "vm-integration"
-command = "cargo test -p synos-vm --test matrix_59_11 --test firmware_boot_synos_10_4 --test network_integration"
+command = "cargo test -p ghostos-vm --test matrix_59_11 --test firmware_boot_ghostos_10_4 --test network_integration"
 status = "deterministic"
 
 [[tier]]
 name = "cli"
-command = "cargo test -p synos-vm --bin synos-vm"
+command = "cargo test -p ghostos-vm --bin ghostos-vm"
 status = "deterministic"
 
 [[tier]]
 name = "qemu"
-command = "SYNOS_RUN_QEMU_TESTS=1 cargo test -p synos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored"
+command = "GHOSTOS_RUN_QEMU_TESTS=1 cargo test -p ghostos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored"
 status = "opt-in"
 
 [[tier]]
@@ -35,17 +35,17 @@ status = "opt-in"
 
 [[tier]]
 name = "performance"
-command = "cargo bench -p synos-vm --bench bounded"
+command = "cargo bench -p ghostos-vm --bench bounded"
 status = "deterministic"
 
 [[tier]]
 name = "hardware-accelerated"
-command = "SYNOS_QEMU_ACCEL=kvm cargo test -p synos-vm --test qemu_matrix_59_11 -- --ignored"
+command = "GHOSTOS_QEMU_ACCEL=kvm cargo test -p ghostos-vm --test qemu_matrix_59_11 -- --ignored"
 status = "opt-in"
 
 [[tier]]
 name = "soak"
-command = "SYNOS_SOAK_RUNS=3 ./scripts/soak.sh"
+command = "GHOSTOS_SOAK_RUNS=3 ./scripts/soak.sh"
 status = "opt-in"
 
 [[tier]]
@@ -145,32 +145,32 @@ tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
 id = "vm.firmware.bios-post-services-and-mbr"
-file = "tests/firmware_boot_synos_10_4.rs"
+file = "tests/firmware_boot_ghostos_10_4.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
 id = "vm.firmware.uefi-tables-services-and-images"
-file = "tests/firmware_boot_synos_10_4.rs"
+file = "tests/firmware_boot_ghostos_10_4.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
 id = "vm.boot.multiboot-layout-and-validation"
-file = "tests/firmware_boot_synos_10_4.rs"
+file = "tests/firmware_boot_ghostos_10_4.rs"
 tiers = ["fast-unit", "vm-integration"]
 
 [[test]]
 id = "vm.config.bounded-boot-and-power-lifecycle"
-file = "tests/firmware_boot_synos_10_4.rs"
+file = "tests/firmware_boot_ghostos_10_4.rs"
 tiers = ["vm-integration"]
 
 [[test]]
-id = "vm.synos.minimal-boot-services-and-synfs"
-file = "tests/firmware_boot_synos_10_4.rs"
+id = "vm.ghostos.minimal-boot-services-and-ghostfs"
+file = "tests/firmware_boot_ghostos_10_4.rs"
 tiers = ["vm-integration"]
 
 [[test]]
 id = "vm.boot.bios-uefi-single-and-smp-bounded"
-file = "tests/firmware_boot_synos_10_4.rs"
+file = "tests/firmware_boot_ghostos_10_4.rs"
 tiers = ["vm-integration"]
 
 [[test]]
@@ -275,13 +275,13 @@ tests = [
 ]
 
 [[source]]
-path = "tests/firmware_boot_synos_10_4.rs"
+path = "tests/firmware_boot_ghostos_10_4.rs"
 tests = [
     "vm.firmware.bios-post-services-and-mbr",
     "vm.firmware.uefi-tables-services-and-images",
     "vm.boot.multiboot-layout-and-validation",
     "vm.config.bounded-boot-and-power-lifecycle",
-    "vm.synos.minimal-boot-services-and-synfs",
+    "vm.ghostos.minimal-boot-services-and-ghostfs",
     "vm.boot.bios-uefi-single-and-smp-bounded",
 ]
 
@@ -536,17 +536,17 @@ tiers = ["fast-unit"]
 [[boot_path]]
 name = "bios"
 test = "vm.boot.bios-uefi-single-and-smp-bounded"
-serial_marker = "SynOS kernel bootstrap"
+serial_marker = "GhostOS kernel bootstrap"
 
 [[boot_path]]
 name = "uefi"
 test = "vm.boot.bios-uefi-single-and-smp-bounded"
-serial_marker = "SynOS kernel bootstrap"
+serial_marker = "GhostOS kernel bootstrap"
 
 [[boot_path]]
 name = "multiboot"
 test = "vm.boot.multiboot-layout-and-validation"
-serial_marker = "SynOS kernel bootstrap"
+serial_marker = "GhostOS kernel bootstrap"
 
 [[device]]
 name = "pci"
@@ -674,9 +674,9 @@ source = "src/lib.rs"
 tests = ["vm.config.bounded-boot-and-power-lifecycle"]
 
 [[public_api]]
-name = "run_synos_integration"
+name = "run_ghostos_integration"
 source = "src/integration.rs"
-tests = ["vm.synos.minimal-boot-services-and-synfs"]
+tests = ["vm.ghostos.minimal-boot-services-and-ghostfs"]
 
 [[public_api]]
 name = "Cpu::{new,reset,decode_instruction,step}"
@@ -734,7 +734,7 @@ source = "src/snapshot.rs"
 tests = ["vm.foundation.cleanup-golden"]
 
 [[public_api]]
-name = "run_synos_integration"
+name = "run_ghostos_integration"
 source = "src/integration.rs"
 tests = ["vm.foundation.deterministic-fixtures"]
 

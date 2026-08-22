@@ -4,8 +4,8 @@ set -Eeuo pipefail
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root_dir"
 
-run_id=${SYNOS_TEST_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
-evidence_dir=${SYNOS_EVIDENCE_DIR:-$root_dir/build/test-evidence/$run_id}
+run_id=${GHOSTOS_TEST_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
+evidence_dir=${GHOSTOS_EVIDENCE_DIR:-$root_dir/build/test-evidence/$run_id}
 mkdir -p "$evidence_dir"
 
 write_metadata() {
@@ -26,7 +26,7 @@ import sys
 
 environment = {}
 for key, value in os.environ.items():
-    if key.startswith("SYNOS_"):
+    if key.startswith("GHOSTOS_"):
         environment[key] = "<redacted>" if any(token in key.lower() for token in ("token", "secret", "password")) else value
 
 metadata = {
@@ -75,7 +75,7 @@ run_tier() {
                 --tier "$inventory_tier" \
                 --command "$command" \
                 --firmware "bios,uefi,multiboot" \
-                --cpu-count "${SYNOS_VM_CPUS:-2}" \
+                --cpu-count "${GHOSTOS_VM_CPUS:-2}" \
                 --result-file "$output_dir/result.json" \
                 --started-at "$started_at" \
                 --ended-at "$ended_at"
@@ -85,19 +85,19 @@ run_tier() {
 }
 
 run_tier host-unit cargo test
-run_tier unit cargo test -p synos-vm --lib
-run_tier integration cargo test -p synos-vm --tests
+run_tier unit cargo test -p ghostos-vm --lib
+run_tier integration cargo test -p ghostos-vm --tests
 run_tier workspace cargo test --workspace --all-targets
-run_tier vm cargo test -p synos-vm --all-targets
+run_tier vm cargo test -p ghostos-vm --all-targets
 run_tier vm-quality python3 "$root_dir/scripts/validate-vm-quality.py"
 benchmark_revision=$(git rev-parse HEAD 2>/dev/null || printf unknown)
 benchmark_command=(python3 "$root_dir/scripts/benchmark.py" \
     --output "$evidence_dir/performance/benchmark-report.json")
-if [[ -n "${SYNOS_BENCH_BASELINE:-}" ]]; then
-    benchmark_command+=(--baseline "$SYNOS_BENCH_BASELINE")
+if [[ -n "${GHOSTOS_BENCH_BASELINE:-}" ]]; then
+    benchmark_command+=(--baseline "$GHOSTOS_BENCH_BASELINE")
 fi
-benchmark_command+=(-- cargo bench -p synos-vm --bench bounded)
-run_tier performance env SYNOS_BENCH_REVISION="$benchmark_revision" "${benchmark_command[@]}"
+benchmark_command+=(-- cargo bench -p ghostos-vm --bench bounded)
+run_tier performance env GHOSTOS_BENCH_REVISION="$benchmark_revision" "${benchmark_command[@]}"
 run_tier recovery cargo test --workspace --all-targets
 
 python3 "$root_dir/scripts/validate-vm-evidence.py" "$evidence_dir" \

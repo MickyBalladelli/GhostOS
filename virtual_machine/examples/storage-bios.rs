@@ -1,4 +1,4 @@
-//! Boot SynOS with a host disk image attached to AHCI, NVMe, or virtio-blk.
+//! Boot GhostOS with a host disk image attached to AHCI, NVMe, or virtio-blk.
 //!
 //! Run with:
 //! cargo run --release --example storage-bios -- \
@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use synos_vm::{DiskImage, FirmwareMode, Vm, VmConfig};
+use ghostos_vm::{DiskImage, FirmwareMode, Vm, VmConfig};
 
 fn value(args: &mut impl Iterator<Item = String>, name: &str) -> Result<String, String> {
     args.next().ok_or_else(|| format!("{name} needs a value"))

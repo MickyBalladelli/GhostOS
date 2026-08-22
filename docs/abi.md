@@ -1,7 +1,7 @@
-# SynOS syscall ABI
+# GhostOS syscall ABI
 
 This is the native Ring 3 system-call contract. The machine-readable source is
-[`abi/synos-abi.toml`](../abi/synos-abi.toml). It also owns the shared RPC
+[`abi/ghostos-abi.toml`](../abi/ghostos-abi.toml). It also owns the shared RPC
 registry and status values. Rust and Swift bindings are generated from it.
 
 Current contract:
@@ -30,7 +30,7 @@ memory. The kernel validates the ranges before reading or writing them.
 | AArch64 | `svc` exception | `x0` | `x1` |
 | RISC-V 64 | `ecall` from user mode | `a0` | `a1` |
 
-The common entry is `synos_call_gate_dispatch`. A successful `SleepUntil`
+The common entry is `ghostos_call_gate_dispatch`. A successful `SleepUntil`
 call may cause the scheduler to block the current thread before returning.
 
 ## Fixed records
@@ -52,7 +52,7 @@ All integer fields are little-endian, and all unused fields must be zero.
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
-| `0` | 4 | `status: u32`, a raw `synos-status` value |
+| `0` | 4 | `status: u32`, a raw `ghostos-status` value |
 | `4` | 4 | `flags: u32`, currently zero |
 | `8` | 32 | `values: u64[4]`, operation-specific return values |
 
@@ -85,7 +85,7 @@ For buffer operations, `arguments[0..4]` is a shared-buffer descriptor:
 | `3` | writable bit (`0` or `1`) |
 
 `arguments[4]` and `arguments[5]` then carry an operation's offset, length,
-or continuation value. The typed `synos-runtime` API is the safe way to build
+or continuation value. The typed `ghostos-runtime` API is the safe way to build
 these descriptors.
 
 ## Operation registry

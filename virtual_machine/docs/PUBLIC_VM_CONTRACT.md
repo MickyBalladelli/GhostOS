@@ -1,7 +1,7 @@
 # Public VM contract
 
 This document is the compatibility contract for embedders, guest drivers, and
-operators of the `synos-vm` crate and binary. Public Rust items may expose more
+operators of the `ghostos-vm` crate and binary. Public Rust items may expose more
 mechanism than is listed here. The invariants below are the behavior callers
 may rely on.
 
@@ -90,14 +90,14 @@ The default topology is fixed by `Vm::build_with_config`. PCI addresses use
 | Virtio block | I/O `0x5100-0x51FF` | `00:08.0`, BAR0 | One optional disk |
 | Virtio console | I/O `0x5200-0x52FF` | `00:09.0`, BAR0 | Legacy Virtio console |
 | Virtio RNG | I/O `0x5300-0x53FF` | `00:0A.0`, BAR0 | Legacy Virtio entropy device |
-| SynOS persistence | I/O `0x5400-0x540B` | none | Command, length, and data registers |
+| GhostOS persistence | I/O `0x5400-0x540B` | none | Command, length, and data registers |
 | VGA text | MMIO `0x000B8000-0x000BFFFF` | none | 32 KiB text aperture; 80x25 model |
 | PCIe ECAM | MMIO `0xE0000000-0xEFFFFFFF` | host bridge | 256 buses, 32 devices, 8 functions |
 | VESA framebuffer | MMIO `0xF0000000-0xF0FFFFFF` | none | 16 MiB linear framebuffer |
 | AHCI | MMIO `0xF1000000-0xF1000FFF` | `00:04.0`, BAR5 | One SATA disk |
 | NVMe | MMIO `0xF1100000-0xF1101FFF` | `00:05.0`, BAR0 | One namespace |
 | Intel e1000 | MMIO `0xF1200000-0xF121FFFF` | `00:06.0`, BAR0 | ID `8086:100E`, loopback backend |
-| Memory hotplug | MMIO `0xFEBE0000-0xFEBE0FFF` | none | SynOS paravirtual device |
+| Memory hotplug | MMIO `0xFEBE0000-0xFEBE0FFF` | none | GhostOS paravirtual device |
 | Guest agent | MMIO `0xFEBF0000-0xFEBF0FFF` | none | Magic `SOGA`, interface version 1 |
 | HPET | MMIO `0xFED00000-0xFED00FFF` | none | 32 timer slots |
 | Local APIC | MMIO `0xFEE00000-0xFEE00FFF` | none | BSP APIC ID 0; also MSR `0x1B` |
@@ -194,7 +194,7 @@ Format detection is content based; an explicit `DiskSpec.format` must match.
 An explicit capacity must equal the detected logical capacity exactly.
 
 Each controller has one slot at bus 0, slot 0. `Persistent` writes the original
-image and uses an exclusive `<canonical-image>.synos.lock` for writable use.
+image and uses an exclusive `<canonical-image>.ghostos.lock` for writable use.
 `CopyOnWrite` and `Disposable` operate on a temporary clone discarded at close;
 read-only mode never modifies or locks the base. The lock records version,
 canonical image identity, owner, PID/start marker, host identity, and format.

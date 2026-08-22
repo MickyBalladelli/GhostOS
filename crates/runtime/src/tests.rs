@@ -1,7 +1,7 @@
 use core::cell::Cell;
 
-use synos_ipc::{SharedBuffer, SharedRegionId};
-use synos_status::Status;
+use ghostos_ipc::{SharedBuffer, SharedRegionId};
+use ghostos_status::Status;
 
 use super::*;
 

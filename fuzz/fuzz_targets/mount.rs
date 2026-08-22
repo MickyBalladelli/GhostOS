@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_host_filesystems::{scan_partitions, Error, Partition, ReadAt, Volume};
+use ghostos_host_filesystems::{scan_partitions, Error, Partition, ReadAt, Volume};
 
 struct Bytes<'a> {
     bytes: &'a [u8],
@@ -32,7 +32,7 @@ fuzz_target!(|data: &[u8]| {
     let partition = Partition {
         start: 0,
         length: data.len() as u64,
-        kind: synos_host_filesystems::PartitionKind::Other,
+        kind: ghostos_host_filesystems::PartitionKind::Other,
     };
     let mut device = Bytes { bytes: data };
     let _ = Volume::mount(&mut device, partition, &mut scratch);

@@ -699,9 +699,9 @@ mod tests {
     #[test]
     fn shared_segment_delivers_unicast_and_broadcast() {
         let segment = DeterministicSegment::new(3);
-        let first_mac = MacAddress::synos_default(0x60);
-        let second_mac = MacAddress::synos_default(0x61);
-        let third_mac = MacAddress::synos_default(0x62);
+        let first_mac = MacAddress::ghostos_default(0x60);
+        let second_mac = MacAddress::ghostos_default(0x61);
+        let third_mac = MacAddress::ghostos_default(0x62);
         let mut first = DeterministicSegment::connect(segment.clone(), first_mac).unwrap();
         let mut second = DeterministicSegment::connect(segment.clone(), second_mac).unwrap();
         let mut third = DeterministicSegment::connect(segment, third_mac).unwrap();
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn administrative_state_is_distinct_from_carrier_state() {
         let segment = DeterministicSegment::new(1);
-        let mac = MacAddress::synos_default(0x63);
+        let mac = MacAddress::ghostos_default(0x63);
         let mut port = DeterministicSegment::connect(segment.clone(), mac).unwrap();
         assert!(port.link_up());
         port.set_admin_up(false);

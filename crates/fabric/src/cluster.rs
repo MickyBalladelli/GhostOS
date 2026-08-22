@@ -3,7 +3,7 @@ use crate::{
     dsm::CoherenceDirectory,
     memory::{GlobalAddressSpace, LeaseTable},
 };
-use synos_time_sync::MonotonicClock;
+use ghostos_time_sync::MonotonicClock;
 
 pub const MAX_CLUSTER_NODES: usize = 64;
 pub const MAX_HEARTBEAT_PERIOD_US: u32 = 999;

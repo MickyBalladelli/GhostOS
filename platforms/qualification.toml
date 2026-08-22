@@ -6,11 +6,11 @@ boot_modes = ["bios", "uefi"]
 console = "COM1"
 environment = "bare-metal"
 required_markers = [
-    "SynOS kernel bootstrap",
+    "GhostOS kernel bootstrap",
     "architecture=x86_64",
     "PCI discovery complete",
-    "starting synos-init in Ring 3",
-    "synos-shell ready in Ring 3",
+    "starting ghostos-init in Ring 3",
+    "ghostos-shell ready in Ring 3",
 ]
 
 [legacy_two_node]

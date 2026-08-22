@@ -2,24 +2,24 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-run_dir=${SYNOS_CLUSTER_RUN_DIR:-"$project_root/build/qemu-cluster"}
-image=${SYNOS_DISK_IMAGE:-"$project_root/build/bios/synos-bios.img"}
-qemu_bin=${SYNOS_QEMU_BIN:-qemu-system-x86_64}
-node_count=${SYNOS_CLUSTER_NODES:-2}
-guest_memory=${SYNOS_GUEST_MEMORY:-1G}
-cxl_memory=${SYNOS_CXL_MEMORY:-256M}
-shared_memory=${SYNOS_SHARED_MEMORY:-256M}
-cluster_bus=${SYNOS_CLUSTER_BUS:-230.0.0.1:1234}
+run_dir=${GHOSTOS_CLUSTER_RUN_DIR:-"$project_root/build/qemu-cluster"}
+image=${GHOSTOS_DISK_IMAGE:-"$project_root/build/bios/ghostos-bios.img"}
+qemu_bin=${GHOSTOS_QEMU_BIN:-qemu-system-x86_64}
+node_count=${GHOSTOS_CLUSTER_NODES:-2}
+guest_memory=${GHOSTOS_GUEST_MEMORY:-1G}
+cxl_memory=${GHOSTOS_CXL_MEMORY:-256M}
+shared_memory=${GHOSTOS_SHARED_MEMORY:-256M}
+cluster_bus=${GHOSTOS_CLUSTER_BUS:-230.0.0.1:1234}
 
 case "$node_count" in
     ''|*[!0-9]*)
-        echo "SYNOS_CLUSTER_NODES must be a number" >&2
+        echo "GHOSTOS_CLUSTER_NODES must be a number" >&2
         exit 1
         ;;
 esac
 
 if [ "$node_count" -lt 2 ] || [ "$node_count" -gt 8 ]; then
-    echo "SYNOS_CLUSTER_NODES must be between 2 and 8" >&2
+    echo "GHOSTOS_CLUSTER_NODES must be between 2 and 8" >&2
     exit 1
 fi
 
@@ -39,7 +39,7 @@ if [ "$(uname -s)" != Linux ]; then
 fi
 
 if [ ! -f "$image" ]; then
-    echo "SynOS image not found: $image" >&2
+    echo "GhostOS image not found: $image" >&2
     echo "Build it first with ./scripts/build-bios-image.sh" >&2
     exit 1
 fi
@@ -57,8 +57,8 @@ if ! "$qemu_bin" -machine help | rg -q 'q35'; then
     exit 1
 fi
 
-if [ -n "${SYNOS_QEMU_ACCEL:-}" ]; then
-    accelerator=$SYNOS_QEMU_ACCEL
+if [ -n "${GHOSTOS_QEMU_ACCEL:-}" ]; then
+    accelerator=$GHOSTOS_QEMU_ACCEL
 elif [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
     accelerator=kvm
 else
@@ -117,7 +117,7 @@ while [ "$node" -le "$node_count" ]; do
     } > "$command_log"
 
     "$qemu_bin" \
-        -name "synos-node-$node" \
+        -name "ghostos-node-$node" \
         -machine "q35,cxl=on,accel=$accelerator" \
         -cpu "$cpu" \
         -smp 2 \

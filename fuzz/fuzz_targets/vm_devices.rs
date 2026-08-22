@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_vm::{PciDeviceId, PciHostBridge, PortBus};
+use ghostos_vm::{PciDeviceId, PciHostBridge, PortBus};
 
 fuzz_target!(|data: &[u8]| {
     let mut pci = PciHostBridge::new();

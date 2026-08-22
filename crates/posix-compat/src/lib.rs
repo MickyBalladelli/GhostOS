@@ -7,8 +7,8 @@ mod pseudo;
 mod syscall;
 
 use fd::{AccessMode, FdTable};
-use synos_ipc::SharedBuffer;
-use synos_runtime::{OpenOptions, Runtime, SystemCall};
+use ghostos_ipc::SharedBuffer;
+use ghostos_runtime::{OpenOptions, Runtime, SystemCall};
 
 pub use container::{
     ContainerMemoryPolicy, ZeroCopyContainerMemory, ZeroCopyMemoryError,
@@ -35,7 +35,7 @@ pub enum BufferError {
 /// Maps a legacy process slice into an existing capability-owned shared region.
 ///
 /// Implementations may use a fixed bounce window for C libraries that cannot
-/// supply shared memory. Native SynOS callers should return their already
+/// supply shared memory. Native GhostOS callers should return their already
 /// mapped descriptor so reads and writes stay zero-copy.
 pub trait SharedBuffers {
     fn map_input(&mut self, input: &[u8]) -> Result<SharedBuffer, BufferError>;
@@ -49,7 +49,7 @@ pub enum Error {
     Buffer(BufferError),
     InvalidArgument,
     PermissionDenied,
-    Runtime(synos_runtime::Error),
+    Runtime(ghostos_runtime::Error),
     TooManyFiles,
 }
 
@@ -64,15 +64,15 @@ impl Error {
             Self::PermissionDenied => LinuxErrno::PermissionDenied,
             Self::TooManyFiles => LinuxErrno::TooManyOpenFiles,
             Self::Runtime(error) => match error {
-                synos_runtime::Error::InvalidResponse => LinuxErrno::Io,
-                synos_runtime::Error::Status(status) => {
-                    if status == synos_status::Status::NOT_FOUND {
+                ghostos_runtime::Error::InvalidResponse => LinuxErrno::Io,
+                ghostos_runtime::Error::Status(status) => {
+                    if status == ghostos_status::Status::NOT_FOUND {
                         LinuxErrno::NoSuchFile
-                    } else if status == synos_status::Status::ACCESS_DENIED {
+                    } else if status == ghostos_status::Status::ACCESS_DENIED {
                         LinuxErrno::PermissionDenied
-                    } else if status == synos_status::Status::NO_SPACE {
+                    } else if status == ghostos_status::Status::NO_SPACE {
                         LinuxErrno::NoSpace
-                    } else if status == synos_status::Status::BUSY {
+                    } else if status == ghostos_status::Status::BUSY {
                         LinuxErrno::Busy
                     } else {
                         LinuxErrno::Io
@@ -89,8 +89,8 @@ impl From<BufferError> for Error {
     }
 }
 
-impl From<synos_runtime::Error> for Error {
-    fn from(error: synos_runtime::Error) -> Self {
+impl From<ghostos_runtime::Error> for Error {
+    fn from(error: ghostos_runtime::Error) -> Self {
         Self::Runtime(error)
     }
 }
@@ -170,7 +170,7 @@ pub enum SeekFrom {
 /// Fixed-capacity translation layer for legacy C/POSIX-style file calls.
 ///
 /// File descriptors are process-local indexes. Every backing object remains a
-/// generation-checked SynOS capability and every buffer crosses the boundary
+/// generation-checked GhostOS capability and every buffer crosses the boundary
 /// through a shared-region descriptor.
 pub struct PosixCompat<S, M, const MAX_FILES: usize = DEFAULT_MAX_FILES> {
     runtime: Runtime<S>,
@@ -230,7 +230,7 @@ impl<S: SystemCall, M: SharedBuffers, const MAX_FILES: usize> PosixCompat<S, M, 
         self.buffers.release(descriptor);
         let read = result?;
         if read > output.len() {
-            return Err(Error::Runtime(synos_runtime::Error::InvalidResponse));
+            return Err(Error::Runtime(ghostos_runtime::Error::InvalidResponse));
         }
         let offset = entry
             .offset
@@ -267,7 +267,7 @@ impl<S: SystemCall, M: SharedBuffers, const MAX_FILES: usize> PosixCompat<S, M, 
         self.buffers.release(descriptor);
         let written = result?;
         if written > input.len() {
-            return Err(Error::Runtime(synos_runtime::Error::InvalidResponse));
+            return Err(Error::Runtime(ghostos_runtime::Error::InvalidResponse));
         }
         let offset = write_offset
             .checked_add(written as u64)

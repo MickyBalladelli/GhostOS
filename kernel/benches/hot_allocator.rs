@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use synos_kernel::{
+use ghostos_kernel::{
     HotAllocation, HotObjectAllocator, HotObjectKind,
 };
 
@@ -37,7 +37,7 @@ fn print_reports<const CPUS: usize, const NODES: usize>(
 }
 
 fn main() {
-    let iterations = std::env::var("SYNOS_HOT_ALLOCATOR_ITERATIONS")
+    let iterations = std::env::var("GHOSTOS_HOT_ALLOCATOR_ITERATIONS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_ITERATIONS);

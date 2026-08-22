@@ -1,8 +1,8 @@
-use synos_rustd::{
+use ghostos_rustd::{
     BuildPolicy, BuildRequest, CompilerService, NetworkPolicy, Profile, ResourceLimits, Target,
     Text, MAX_BINARY_BYTES, MAX_FEATURES, MAX_PATH_BYTES,
 };
-use synos_system_model::ContentId;
+use ghostos_system_model::ContentId;
 
 fn main() {
     let request = BuildRequest {

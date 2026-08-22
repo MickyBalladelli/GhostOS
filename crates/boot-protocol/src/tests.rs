@@ -122,7 +122,7 @@ fn boot_info_layout_is_aligned_for_handoff() {
 
 #[test]
 fn property_region_capacity_is_stable_for_generated_counts() {
-    use synos_test_support::property::{run_assert, Config};
+    use ghostos_test_support::property::{run_assert, Config};
 
     run_assert("boot-protocol.region-capacity", Config::new(0x59_3, 128), |_, _, entropy| {
         let count = (entropy.next_u64() as usize) % (MAX_MEMORY_REGIONS * 2 + 1);

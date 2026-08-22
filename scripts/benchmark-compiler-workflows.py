@@ -88,16 +88,16 @@ def main() -> int:
     parser.add_argument("--cancel-after", type=float, default=0.25)
     parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument(
-        "--cargo-synos",
-        default="cargo synos",
-        help="command prefix for the cargo-synos subcommand",
+        "--cargo-ghostos",
+        default="cargo ghostos",
+        help="command prefix for the cargo-ghostos subcommand",
     )
     args = parser.parse_args()
     if args.samples < 1 or args.warmups < 0 or args.cancel_after <= 0:
         parser.error("samples, warmups, and cancel-after must be positive")
 
     command = [
-        *shlex.split(args.cargo_synos),
+        *shlex.split(args.cargo_ghostos),
         "build",
         "--manifest-path",
         args.manifest_path,
@@ -111,7 +111,7 @@ def main() -> int:
         command.append("--release")
 
     measurements: dict[str, list[float]] = {"clean": [], "warm": [], "offline": [], "cancelled": []}
-    with tempfile.TemporaryDirectory(prefix="synos-compiler-bench-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="ghostos-compiler-bench-") as temporary:
         root = pathlib.Path(temporary)
         warm_target = root / "warm"
         for _ in range(args.warmups):

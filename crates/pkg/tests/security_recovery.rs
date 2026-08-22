@@ -1,10 +1,10 @@
-use synos_pkg::{
+use ghostos_pkg::{
     ApplicationPackageManifest, PackageDaemon, PackageError, SigningKey,
     SystemConfiguration, application_bundle_size, bundle_size, encode_application_bundle,
     encode_bundle,
 };
-use synos_synfs::SynFs;
-use synos_system_model::{ContentId, Error as ModelError, RepositoryError};
+use ghostos_ghostfs::SynFs;
+use ghostos_system_model::{ContentId, Error as ModelError, RepositoryError};
 
 fn filesystem() -> SynFs<64> {
     let mut filesystem = SynFs::new();

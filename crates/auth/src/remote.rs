@@ -1,7 +1,7 @@
 use core::fmt;
 
-use synos_fabric::NodeId;
-use synos_kernel::{AddressSpaceId, IdentityId, Rights};
+use ghostos_fabric::NodeId;
+use ghostos_kernel::{AddressSpaceId, IdentityId, Rights};
 
 use crate::{
     AuthDaemon, AuthError, AuthenticationChallenge, CapabilityCaveat, CapabilityKey,

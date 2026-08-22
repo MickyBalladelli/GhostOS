@@ -1,4 +1,4 @@
-use synos_netd::{
+use ghostos_netd::{
     dhcp_client_firewall_rules, format_ipv4, install_dhcp_client_rules, CaptureDirection,
     CaptureKind, CapabilityRight, CapturingDhcpTransport, DhcpLifecycleEvent, DHCP_CLIENT_PORT,
     DHCP_SERVER_PORT,
@@ -104,7 +104,7 @@ impl DhcpLeaseRuntime for RecordingRuntime {
         &mut self,
         interface: &str,
         previous: Option<&DhcpLease>,
-        application: &synos_netd::DhcpLeaseApplication,
+        application: &ghostos_netd::DhcpLeaseApplication,
     ) -> Result<(), DhcpError> {
         self.reconciled += 1;
         self.previous_lease = previous.copied();
@@ -814,10 +814,10 @@ fn release_without_lease_and_poll_without_link_are_safe() {
 #[test]
 fn firewall_allows_capability_gated_dhcp_client_ports() {
     let mut policy = FirewallPolicy::<8>::new();
-    policy.default_action = synos_netd::RuleAction::Drop;
+    policy.default_action = ghostos_netd::RuleAction::Drop;
     install_dhcp_client_rules(&mut policy).unwrap();
     let mut firewall = Firewall::<8, 4, 4>::new(policy);
-    let key = synos_netd::CapabilityKey::new([3; 32]);
+    let key = ghostos_netd::CapabilityKey::new([3; 32]);
     firewall.set_capability_key(key);
 
     let discover = [0u8; 8];
@@ -839,12 +839,12 @@ fn firewall_allows_capability_gated_dhcp_client_ports() {
     );
 
     // inspect() validates capability ports against the packet destination port.
-    let raw = synos_netd::NetworkCapability::issue(
+    let raw = ghostos_netd::NetworkCapability::issue(
         &key,
         1,
         CapabilityRight::Raw as u8,
-        synos_netd::PortRange::new(DHCP_SERVER_PORT, DHCP_SERVER_PORT).unwrap(),
-        synos_netd::Ipv4Cidr::ANY,
+        ghostos_netd::PortRange::new(DHCP_SERVER_PORT, DHCP_SERVER_PORT).unwrap(),
+        ghostos_netd::Ipv4Cidr::ANY,
         1_000,
         1,
     )
@@ -858,12 +858,12 @@ fn firewall_allows_capability_gated_dhcp_client_ports() {
         FirewallDecision::Allow
     );
 
-    let ingress_cap = synos_netd::NetworkCapability::issue(
+    let ingress_cap = ghostos_netd::NetworkCapability::issue(
         &key,
         1,
         CapabilityRight::Ingress as u8,
-        synos_netd::PortRange::new(DHCP_CLIENT_PORT, DHCP_CLIENT_PORT).unwrap(),
-        synos_netd::Ipv4Cidr::ANY,
+        ghostos_netd::PortRange::new(DHCP_CLIENT_PORT, DHCP_CLIENT_PORT).unwrap(),
+        ghostos_netd::Ipv4Cidr::ANY,
         1_000,
         2,
     )
@@ -882,7 +882,7 @@ fn firewall_allows_capability_gated_dhcp_client_ports() {
         FirewallDecision::Allow
     );
     assert_eq!(
-        synos_netd::PacketView::parse(&egress).unwrap().protocol,
+        ghostos_netd::PacketView::parse(&egress).unwrap().protocol,
         Protocol::Udp
     );
 }

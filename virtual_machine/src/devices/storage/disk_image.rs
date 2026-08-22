@@ -349,7 +349,26 @@ impl DiskImage {
     pub fn lock_path<P: AsRef<Path>>(path: P) -> PathBuf {
         let path = path.as_ref();
         let image_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        PathBuf::from(format!("{}.ghostos.lock", image_path.display()))
+    }
+
+    /// Pre-rename SynOS lock path, still accepted for inspect/recover.
+    fn legacy_lock_path<P: AsRef<Path>>(path: P) -> PathBuf {
+        let path = path.as_ref();
+        let image_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         PathBuf::from(format!("{}.synos.lock", image_path.display()))
+    }
+
+    fn resolved_lock_path<P: AsRef<Path>>(path: P) -> PathBuf {
+        let current = Self::lock_path(&path);
+        if current.exists() {
+            return current;
+        }
+        let legacy = Self::legacy_lock_path(&path);
+        if legacy.exists() {
+            return legacy;
+        }
+        current
     }
 
     /// Open an image for a VM and claim exclusive writable ownership.
@@ -378,6 +397,15 @@ impl DiskImage {
 
     fn acquire_lock(path: &Path, format: DiskFormat) -> Result<DiskLock, StorageError> {
         let lock_path = Self::lock_path(path);
+        let legacy_lock_path = Self::legacy_lock_path(path);
+        if !lock_path.exists() && legacy_lock_path.exists() {
+            let owner = fs::read_to_string(&legacy_lock_path)
+                .unwrap_or_else(|_| "owner metadata unavailable".to_string());
+            return Err(StorageError::Locked {
+                path: legacy_lock_path.display().to_string(),
+                owner,
+            });
+        }
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -434,7 +462,7 @@ impl DiskImage {
     /// Keep this helper private so every public recovery request must pass
     /// through `recover_stale_lock`.
     fn recover_lock<P: AsRef<Path>>(path: P, expected_owner: &str) -> Result<(), StorageError> {
-        let lock_path = Self::lock_path(path);
+        let lock_path = Self::resolved_lock_path(path);
         let mut lock_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -469,7 +497,7 @@ impl DiskImage {
         path: P,
     ) -> Result<Option<DiskLockInfo>, StorageError> {
         let image_path = path.as_ref();
-        let lock_path = Self::lock_path(image_path);
+        let lock_path = Self::resolved_lock_path(image_path);
         if !lock_path.exists() {
             return Ok(None);
         }
@@ -1370,7 +1398,7 @@ mod tests {
     fn lock_test_path(label: &str) -> PathBuf {
         let counter = LOCK_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "synos-vm-lock-{label}-{}-{counter}.raw",
+            "ghostos-vm-lock-{label}-{}-{counter}.raw",
             std::process::id()
         ))
     }
@@ -1705,7 +1733,7 @@ mod tests {
     #[test]
     fn raw_image_round_trip() {
         let dir = std::env::temp_dir();
-        let path = dir.join("synos_vm_raw_test.img");
+        let path = dir.join("ghostos_vm_raw_test.img");
         let f = File::create(&path).unwrap();
         f.set_len(1024 * 1024).unwrap();
         drop(f);
@@ -1731,7 +1759,7 @@ mod tests {
     #[test]
     fn raw_read_only() {
         let dir = std::env::temp_dir();
-        let path = dir.join("synos_vm_raw_ro_test.img");
+        let path = dir.join("ghostos_vm_raw_ro_test.img");
         {
             let f = File::create(&path).unwrap();
             f.set_len(4096).unwrap();
@@ -1755,7 +1783,7 @@ mod tests {
     #[test]
     fn vhd_fixed_footer_parse() {
         let dir = std::env::temp_dir();
-        let path = dir.join("synos_vm_vhd_test.vhd");
+        let path = dir.join("ghostos_vm_vhd_test.vhd");
         let mut data = vec![0u8; 1024 * 1024 + 512];
         let footer = &mut data[1024 * 1024..];
         footer[0..8].copy_from_slice(VHD_MAGIC);
@@ -1790,7 +1818,7 @@ mod tests {
     #[test]
     fn qcow2_minimal() {
         let dir = std::env::temp_dir();
-        let path = dir.join("synos_vm_qcow2_test.qcow2");
+        let path = dir.join("ghostos_vm_qcow2_test.qcow2");
         // Hand-craft a tiny QCOW2: 1 MiB disk, 64 KiB clusters, one L1 entry.
         let mut data = vec![0u8; 0x40000];
         let hdr = &mut data[0..104];
@@ -1829,7 +1857,7 @@ mod tests {
 
     #[test]
     fn raw_image_rejects_unaligned_capacity() {
-        let path = std::env::temp_dir().join("synos_vm_raw_unaligned_test.img");
+        let path = std::env::temp_dir().join("ghostos_vm_raw_unaligned_test.img");
         File::create(&path).unwrap().set_len(513).unwrap();
 
         let error = DiskImage::open(&path).unwrap_err();
@@ -1840,7 +1868,7 @@ mod tests {
 
     #[test]
     fn qcow2_rejects_l2_table_outside_image() {
-        let path = std::env::temp_dir().join("synos_vm_qcow2_invalid_test.qcow2");
+        let path = std::env::temp_dir().join("ghostos_vm_qcow2_invalid_test.qcow2");
         let mut data = vec![0u8; 0x40000];
         data[0..4].copy_from_slice(QCOW2_MAGIC);
         data[4..8].copy_from_slice(&2u32.to_be_bytes());

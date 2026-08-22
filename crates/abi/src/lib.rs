@@ -1,7 +1,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-//! Generated SynOS ABI. Edit abi/synos-abi.toml, then run
+//! Generated GhostOS ABI. Edit abi/ghostos-abi.toml, then run
 //! python3 tools/generate_abi.py.
 
 include!("generated.rs");

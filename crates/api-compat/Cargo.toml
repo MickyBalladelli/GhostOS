@@ -1,9 +1,9 @@
 [package]
-name = "synos-api-compat"
+name = "ghostos-api-compat"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Stable version and migration contracts for public SynOS APIs"
+description = "Stable version and migration contracts for public GhostOS APIs"
 
 [lib]
 path = "src/lib.rs"

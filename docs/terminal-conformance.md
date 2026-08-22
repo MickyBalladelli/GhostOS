@@ -1,13 +1,13 @@
 # Terminal Conformance and Compatibility Policy
 
-SynOS uses one bounded terminal model for serial, SSH, and browser output:
-`crates/synos-webterm/src/terminal.rs`. The model is heap-free and fixed-size.
+GhostOS uses one bounded terminal model for serial, SSH, and browser output:
+`crates/ghostos-webterm/src/terminal.rs`. The model is heap-free and fixed-size.
 The deterministic transcript corpus is in
-`crates/synos-webterm/tests/terminal_conformance.rs`.
+`crates/ghostos-webterm/tests/terminal_conformance.rs`.
 
 ## Supported compatibility subset
 
-VT100, VT420, and DECterm are compatibility profiles for the same SynOS
+VT100, VT420, and DECterm are compatibility profiles for the same GhostOS
 subset. The implementation does not claim to be a complete emulator for any
 of those terminals.
 
@@ -54,5 +54,5 @@ colors, private modes, OSC BEL/ST termination, and unsupported-sequence
 consumption. Run it with:
 
 ```text
-cargo test -p synos-webterm --test terminal_conformance
+cargo test -p ghostos-webterm --test terminal_conformance
 ```

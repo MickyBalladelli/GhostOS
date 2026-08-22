@@ -11,7 +11,7 @@ use crate::cpu::{Cpu, CpuError, CpuMode, PrivilegeLevel};
 use crate::devices::{InterruptController, PortBus};
 use crate::firmware::bios::BiosContext;
 use crate::memory::Mmu;
-use synos_observability::{
+use ghostos_observability::{
     record_profile_sample, CacheEvent, CacheKind, CachePolicyReport, CachePolicyRegistry,
     ProfileDomain, ProfileSample,
 };

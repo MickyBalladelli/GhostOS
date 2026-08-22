@@ -67,7 +67,7 @@ It records separate results for host, unit, integration, workspace, VM, VM quali
 Full validation is opt-in:
 
 ```sh
-SYNOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
+GHOSTOS_FULL_VALIDATION=1 ./scripts/full-validation.sh
 ```
 
 It adds QEMU, cluster, hardware acceleration, fuzzing, coverage, mutation testing, soak runs, reproducibility, dashboard, and release-gate checks. Missing prerequisites become explicit `skipped` results.
@@ -120,10 +120,10 @@ Then package the VM release:
 
 ```sh
 python3 scripts/package-vm-release.py \
-  --output build/release/synos-vm.tar.gz \
-  --artifact target/release/synos-vm \
-  --artifact build/bios/synos-bios.img \
-  --artifact target/x86_64-unknown-uefi/release/synos-loader.efi \
+  --output build/release/ghostos-vm.tar.gz \
+  --artifact target/release/ghostos-vm \
+  --artifact build/bios/ghostos-bios.img \
+  --artifact target/x86_64-unknown-uefi/release/ghostos-loader.efi \
   --evidence-dir build/test-evidence/<run-id> \
   --release-report build/release/release-report.json \
   --release-claims build/release/release-claims.json \
@@ -156,15 +156,15 @@ of every artifact for the reproducibility comparison:
 python3 scripts/release-attestations.py --write \
   --output-dir build/release/attestations \
   --signing-key /secure/release-key.pem \
-  --artifact synos-vm=target/release/synos-vm \
-  --artifact synos-bios=build/bios/synos-bios.img \
-  --artifact synos-loader=target/x86_64-unknown-uefi/release/synos-loader.efi \
-  --reproducible-artifact synos-vm=/independent-build/synos-vm \
-  --reproducible-artifact synos-bios=/independent-build/synos-bios.img \
-  --reproducible-artifact synos-loader=/independent-build/synos-loader.efi
+  --artifact ghostos-vm=target/release/ghostos-vm \
+  --artifact ghostos-bios=build/bios/ghostos-bios.img \
+  --artifact ghostos-loader=target/x86_64-unknown-uefi/release/ghostos-loader.efi \
+  --reproducible-artifact ghostos-vm=/independent-build/ghostos-vm \
+  --reproducible-artifact ghostos-bios=/independent-build/ghostos-bios.img \
+  --reproducible-artifact ghostos-loader=/independent-build/ghostos-loader.efi
 ```
 
-The generator emits `synos-sbom.cdx.json` in CycloneDX 1.5 format and
+The generator emits `ghostos-sbom.cdx.json` in CycloneDX 1.5 format and
 `dependency-provenance.json` with the exact `Cargo.lock` digest and package
 checksums. Each signed statement embeds those records and binds both files by
 SHA-256, along with compiler/toolchain identity, tracked-source and
@@ -180,9 +180,9 @@ comparison. Verify an attestation directory independently with:
 ```sh
 python3 scripts/release-attestations.py --check \
   --attestation-dir build/release/attestations \
-  --artifact synos-vm=target/release/synos-vm \
-  --artifact synos-bios=build/bios/synos-bios.img \
-  --artifact synos-loader=target/x86_64-unknown-uefi/release/synos-loader.efi
+  --artifact ghostos-vm=target/release/ghostos-vm \
+  --artifact ghostos-bios=build/bios/ghostos-bios.img \
+  --artifact ghostos-loader=target/x86_64-unknown-uefi/release/ghostos-loader.efi
 ```
 
 If the `.tar.gz` archive itself is published as an artifact, run the same
@@ -211,7 +211,7 @@ The fuzz workspace targets parsers and untrusted bytes. VM-specific targets cove
 - `vm-devices` — PCI and port-device boundaries;
 - `vm-images` — raw/VHD/QCOW2 image parsing.
 
-Other targets cover paths, SynFS volumes, filesystem operations, mounts, HTTP, and scripts.
+Other targets cover paths, GhostFS volumes, filesystem operations, mounts, HTTP, and scripts.
 
 Every fuzz crash should become a deterministic regression test with the original seed or corpus artifact.
 
@@ -219,7 +219,7 @@ Every fuzz crash should become a deterministic regression test with the original
 
 `scripts/coverage.sh` produces workspace and per-crate reports. Per-crate thresholds stop a large healthy crate from hiding a small untested crate.
 
-`scripts/mutation.sh` runs `cargo-mutants` across high-risk boundaries including status, auth, filesystem, SynFS, HTTP, and the VM.
+`scripts/mutation.sh` runs `cargo-mutants` across high-risk boundaries including status, auth, filesystem, GhostFS, HTTP, and the VM.
 
 ## Cross-platform validation
 

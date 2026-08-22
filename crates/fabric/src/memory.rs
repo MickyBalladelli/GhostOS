@@ -1,10 +1,10 @@
 use crate::{Access, AddressRange, Error, NodeId, PAGE_SIZE};
 use crate::cxl::{CxlBandwidthDecision, CxlBandwidthQos, CxlChannel};
-use synos_observability::{
+use ghostos_observability::{
     CorrelationId, EventField, EventKind, Level, TraceEvent, emit, field,
     next_correlation_id,
 };
-use synos_time_sync::MonotonicClock;
+use ghostos_time_sync::MonotonicClock;
 
 pub const DEFAULT_POOL_CAPACITY: usize = 64;
 pub const DEFAULT_LEASE_CAPACITY: usize = 256;

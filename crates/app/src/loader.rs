@@ -4,8 +4,8 @@
 //! the privileged page operations, so this crate never needs raw pointers or
 //! executable memory in its address space.
 
-use synos_status::{IntoStatus, Status};
-use synos_system_model::ContentId;
+use ghostos_status::{IntoStatus, Status};
+use ghostos_system_model::ContentId;
 
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_LOAD_SEGMENTS: usize = 16;

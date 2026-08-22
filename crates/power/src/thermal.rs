@@ -1,5 +1,5 @@
 use crate::AcpiError;
-use synos_status::Status;
+use ghostos_status::Status;
 
 pub const MAX_THERMAL_EVENTS: usize = 32;
 

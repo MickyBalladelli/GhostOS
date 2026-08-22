@@ -109,7 +109,7 @@ def generated_records() -> list[dict[str, str]]:
             **item,
             "owner": owner_for(item["parent"], item["section"]),
             "issue": (
-                "https://github.com/PixelSins/SynOS/issues"
+                "https://github.com/PixelSins/GhostOS/issues"
                 f"?q=is%3Aissue+{title_query}"
             ),
             "risk": risk_for(item["parent"], item["section"], item["state"]),
@@ -210,7 +210,7 @@ def validate(errors: list[str]) -> None:
         for field in required_fields:
             if not str(raw.get(field, "")).strip():
                 errors.append(f"metadata item {item_id} has no {field}")
-        if not str(raw.get("issue", "")).startswith("https://github.com/PixelSins/SynOS/issues"):
+        if not str(raw.get("issue", "")).startswith("https://github.com/PixelSins/GhostOS/issues"):
             errors.append(f"metadata item {item_id} has no repository issue link")
         if str(raw.get("risk", "")) not in RISKS:
             errors.append(f"metadata item {item_id} has invalid risk rating")

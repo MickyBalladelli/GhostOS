@@ -4,7 +4,7 @@ The kernel does not absorb every device driver. Hardware access is split between
 
 ## Asynchronous platform I/O
 
-`synos-platform-io` provides fixed-capacity request and completion queues. The lifecycle is:
+`ghostos-platform-io` provides fixed-capacity request and completion queues. The lifecycle is:
 
 ```text
 submit -> dispatch -> complete
@@ -18,7 +18,7 @@ The same descriptor rules cover storage and multi-plane audio/video operations s
 
 ## Legacy PC drivers
 
-`synos-legacy-pc-drivers` provides heap-free Ring 3 building blocks for:
+`ghostos-legacy-pc-drivers` provides heap-free Ring 3 building blocks for:
 
 - conventional PCI enumeration;
 - AHCI and NVMe discovery and command preparation;
@@ -30,7 +30,7 @@ Port and MMIO access remain controlled by the platform service.
 
 ## Power and ACPI
 
-`synos-power` validates the ACPI RSDP, RSDT/XSDT, FADT, and DSDT checksums without allocation. It reads reset and fixed-event registers, extracts `_S5` shutdown values, and applies thermal thresholds with hysteresis.
+`ghostos-power` validates the ACPI RSDP, RSDT/XSDT, FADT, and DSDT checksums without allocation. It reads reset and fixed-event registers, extracts `_S5` shutdown values, and applies thermal thresholds with hysteresis.
 
 Power operations include:
 
@@ -45,7 +45,7 @@ The safe order is: quiesce work, flush persistent state, notify services, then i
 
 ## Storage device lifecycle
 
-NVMe namespaces and CXL pools expose online, draining, and removed states. A draining NVMe namespace refuses new SynFS allocations and waits for existing users. A CXL pool refuses new memory leases while draining. Final detach requires controller or decoder quiescence.
+NVMe namespaces and CXL pools expose online, draining, and removed states. A draining NVMe namespace refuses new GhostFS allocations and waits for existing users. A CXL pool refuses new memory leases while draining. Final detach requires controller or decoder quiescence.
 
 ## Media and compute devices
 

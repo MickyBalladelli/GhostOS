@@ -1,4 +1,4 @@
-use synos_platform_io::{AsyncQueue, Error};
+use ghostos_platform_io::{AsyncQueue, Error};
 
 #[test]
 fn queue_saturation_keeps_every_submitted_slot_bounded() {

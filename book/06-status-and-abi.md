@@ -1,8 +1,8 @@
 # 6. The Status and ABI Contracts
 
-Many operating systems fail at the edges between subsystems. SynOS gives those edges names.
+Many operating systems fail at the edges between subsystems. GhostOS gives those edges names.
 
-## `synos-status`
+## `ghostos-status`
 
 The status crate defines a common 32-bit condition layout. It preserves the OpenVMS convention that odd values indicate success while exposing structured fields for:
 
@@ -29,7 +29,7 @@ The exact encoded value is less important than preserving the category through e
 
 ## Runtime ABI
 
-`synos-runtime` is the user-facing system-call contract. It validates operation numbers, arguments, buffer directions, shared-region bounds, and descriptor lifecycles. Unknown operations return a stable status rather than falling into an unchecked default.
+`ghostos-runtime` is the user-facing system-call contract. It validates operation numbers, arguments, buffer directions, shared-region bounds, and descriptor lifecycles. Unknown operations return a stable status rather than falling into an unchecked default.
 
 The complete native contract is in [`docs/abi.md`](../docs/abi.md). The current
 syscall schema is version 1, with a fixed 64-byte request and 40-byte response.
@@ -48,7 +48,7 @@ The ABI should be treated like a wire protocol:
 
 ## Boot protocol
 
-`synos-boot-protocol` is the cross-architecture handoff crate. Keep it boring. It should contain representations that both firmware and kernel can agree on, alignment and version constants, memory kinds, and framebuffer formats.
+`ghostos-boot-protocol` is the cross-architecture handoff crate. Keep it boring. It should contain representations that both firmware and kernel can agree on, alignment and version constants, memory kinds, and framebuffer formats.
 
 ## Versioning rule
 

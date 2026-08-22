@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
-pub const DHCP_SERVER_MAC: MacAddress = MacAddress::synos_default(0xD0);
+pub const DHCP_SERVER_MAC: MacAddress = MacAddress::ghostos_default(0xD0);
 pub const DHCP_SERVER_PORT: u16 = 67;
 pub const DHCP_CLIENT_PORT: u16 = 68;
 pub const MAX_DHCP_SERVER_LEASES: usize = 256;

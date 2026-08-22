@@ -1,0 +1,18 @@
+[package]
+name = "ghostos-auditd"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Bounded background package security auditing for GhostOS"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ghostos-fabric = { path = "../fabric" }
+ghostos-pkg = { path = "../pkg" }
+ghostos-script = { path = "../ghostos-script" }
+ghostos-status = { path = "../status" }
+ghostos-ghostfs = { path = "../ghostfs" }
+ghostos-system-model = { path = "../system-model" }
+ghostos-observability = { path = "../observability" }

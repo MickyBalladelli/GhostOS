@@ -1,5 +1,5 @@
-use synos_status::{IntoStatus, Status};
-use synos_system_model::quota::{
+use ghostos_status::{IntoStatus, Status};
+use ghostos_system_model::quota::{
     QuotaCharge, QuotaLedger, QuotaPolicy, QuotaRejection, QuotaResource,
     QUOTA_RESOURCE_COUNT,
 };

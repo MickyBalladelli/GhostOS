@@ -1,6 +1,6 @@
 # Horizontal service scaling
 
-`synos-service-scale` is the shared bounded control plane for HTTP, remote
+`ghostos-service-scale` is the shared bounded control plane for HTTP, remote
 terminal, package, compiler, storage, and observability services.
 
 An instance joins with a monotonically increasing generation and becomes

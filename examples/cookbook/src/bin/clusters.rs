@@ -1,5 +1,5 @@
-use synos_fabric::cluster::{Heartbeat, HeartbeatMonitor, NodeState};
-use synos_fabric::NodeId;
+use ghostos_fabric::cluster::{Heartbeat, HeartbeatMonitor, NodeState};
+use ghostos_fabric::NodeId;
 
 fn main() {
     let peer = NodeId::new(2).expect("nonzero node id");

@@ -1,4 +1,4 @@
-use synos_fabric::{
+use ghostos_fabric::{
     Access, NodeId,
     memory::{GlobalAddressSpace, LeaseTable},
 };

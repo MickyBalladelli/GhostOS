@@ -28,14 +28,14 @@ enum {
     OP_SERVICE_READY = 42,
     OP_SERVICE_HEARTBEAT = 43,
     OP_SYSTEM_INFO = 44,
-    OP_SYNFS_OPEN = 12,
-    OP_SYNFS_CLOSE = 13,
-    OP_SYNFS_READ = 14,
-    OP_SYNFS_WRITE = 15,
-    OP_SYNFS_MKDIR = 17,
-    OP_SYNFS_RMDIR = 18,
-    OP_SYNFS_LIST = 20,
-    OP_SYNFS_DELETE = 22,
+    OP_GHOSTFS_OPEN = 12,
+    OP_GHOSTFS_CLOSE = 13,
+    OP_GHOSTFS_READ = 14,
+    OP_GHOSTFS_WRITE = 15,
+    OP_GHOSTFS_MKDIR = 17,
+    OP_GHOSTFS_RMDIR = 18,
+    OP_GHOSTFS_LIST = 20,
+    OP_GHOSTFS_DELETE = 22,
     OP_TERMINAL_READ = 24,
     OP_TERMINAL_WRITE = 25,
     OP_LOGIN_STATUS = 51,
@@ -210,9 +210,9 @@ static void write_prompt(int authorized, int first_run)
     if (authorized) {
         write_text("$ ");
     } else if (first_run) {
-        write_text("\x1b[1;33mSYNOS\x1b[90m::\x1b[35mFIRST-RUN\x1b[0m> ");
+        write_text("\x1b[1;33mGHOSTOS\x1b[90m::\x1b[35mFIRST-RUN\x1b[0m> ");
     } else {
-        write_text("\x1b[1;33mSYNOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ");
+        write_text("\x1b[1;33mGHOSTOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ");
     }
 }
 
@@ -295,7 +295,7 @@ static void print_directory(char *path, u8 *buffer)
         for (index = path_length + 1; index < 4096; index++) {
             buffer[index] = 0;
         }
-        struct response response = call(OP_SYNFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation);
+        struct response response = call(OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation);
         if (response.status != 0) {
             write_status(response.status);
             return;
@@ -326,14 +326,14 @@ static void print_directory(char *path, u8 *buffer)
 static void type_file(char *path, u8 *buffer)
 {
     u64 path_length = length(path);
-    struct response opened = call(OP_SYNFS_OPEN, OPEN_READ, 0, (u64)path, path_length, 0, 0);
+    struct response opened = call(OP_GHOSTFS_OPEN, OPEN_READ, 0, (u64)path, path_length, 0, 0);
     if (opened.status != 0) {
         write_status(opened.status);
         return;
     }
     u64 offset = 0;
     for (;;) {
-        struct response read = call(OP_SYNFS_READ, 0, opened.values[0], (u64)buffer, 4096, 1, offset);
+        struct response read = call(OP_GHOSTFS_READ, 0, opened.values[0], (u64)buffer, 4096, 1, offset);
         if (read.status != 0) {
             write_status(read.status);
             break;
@@ -344,7 +344,7 @@ static void type_file(char *path, u8 *buffer)
         write_bytes((const char *)buffer, read.values[0]);
         offset += read.values[0];
     }
-    call(OP_SYNFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
+    call(OP_GHOSTFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
     write_text("\n");
 }
 
@@ -709,7 +709,7 @@ static int account_record_is_latest(
 static int read_account_database(u8 *buffer, u64 *database_bytes)
 {
     struct response opened = call(
-        OP_SYNFS_OPEN,
+        OP_GHOSTFS_OPEN,
         OPEN_READ,
         0,
         (u64)ACCOUNT_AUTHORIZATION_PATH,
@@ -722,7 +722,7 @@ static int read_account_database(u8 *buffer, u64 *database_bytes)
     }
 
     struct response read = call(
-        OP_SYNFS_READ,
+        OP_GHOSTFS_READ,
         0,
         opened.values[0],
         (u64)buffer,
@@ -730,7 +730,7 @@ static int read_account_database(u8 *buffer, u64 *database_bytes)
         1,
         0
     );
-    call(OP_SYNFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
+    call(OP_GHOSTFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
     if (read.status != 0) {
         return -1;
     }
@@ -746,7 +746,7 @@ static int append_account_record(
 )
 {
     struct response opened = call(
-        OP_SYNFS_OPEN,
+        OP_GHOSTFS_OPEN,
         OPEN_READ | OPEN_WRITE,
         0,
         (u64)ACCOUNT_AUTHORIZATION_PATH,
@@ -759,7 +759,7 @@ static int append_account_record(
         return 0;
     }
     struct response written = call(
-        OP_SYNFS_WRITE,
+        OP_GHOSTFS_WRITE,
         0,
         opened.values[0],
         (u64)record,
@@ -767,7 +767,7 @@ static int append_account_record(
         0,
         database_bytes
     );
-    call(OP_SYNFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
+    call(OP_GHOSTFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
     *failure_status = written.status;
     return written.status == 0 && written.values[0] == record_bytes;
 }
@@ -1917,20 +1917,20 @@ static void execute_line(char *line, u8 *buffer)
     u64 path_length = length(path);
     struct response response;
     if (equal_name(command, "CREATE")) {
-        response = call(OP_SYNFS_OPEN, OPEN_READ | OPEN_WRITE | OPEN_CREATE | OPEN_EXCLUSIVE,
+        response = call(OP_GHOSTFS_OPEN, OPEN_READ | OPEN_WRITE | OPEN_CREATE | OPEN_EXCLUSIVE,
                         0, (u64)path, path_length, 0, 0);
         if (response.status == 0) {
-            call(OP_SYNFS_CLOSE, 0, response.values[0], 0, 0, 0, 0);
+            call(OP_GHOSTFS_CLOSE, 0, response.values[0], 0, 0, 0, 0);
         }
     } else if (equal_name(command, "TYPE") || equal_name(command, "CAT")) {
         type_file(path, buffer);
         return;
     } else if (equal_name(command, "MKDIR")) {
-        response = call(OP_SYNFS_MKDIR, FLAG_RECURSIVE, 0, (u64)path, path_length, 0, 0);
+        response = call(OP_GHOSTFS_MKDIR, FLAG_RECURSIVE, 0, (u64)path, path_length, 0, 0);
     } else if (equal_name(command, "RMDIR") || equal_name(command, "RD")) {
-        response = call(OP_SYNFS_RMDIR, 0, 0, (u64)path, path_length, 0, 0);
+        response = call(OP_GHOSTFS_RMDIR, 0, 0, (u64)path, path_length, 0, 0);
     } else if (equal_name(command, "DELETE") || equal_name(command, "DEL")) {
-        response = call(OP_SYNFS_DELETE, 0, 0, (u64)path, path_length, 0, 0);
+        response = call(OP_GHOSTFS_DELETE, 0, 0, (u64)path, path_length, 0, 0);
     } else {
         write_text("unknown filesystem command\n");
         return;
@@ -2114,9 +2114,9 @@ void _start(void)
         sleep_for(SHELL_POLL_DELAY_US);
     }
     if (first_run_mode()) {
-        write_text("SynOS first-run setup mode\n");
+        write_text("GhostOS first-run setup mode\n");
     } else {
-        write_text("SynOS user shell\n");
+        write_text("GhostOS user shell\n");
     }
     int prompt_authorized = -1;
     int prompt_first_run = -1;

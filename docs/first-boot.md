@@ -1,6 +1,6 @@
 # First boot and first administrator setup
 
-This guide covers a new SynOS system with no authorization database. Keep the
+This guide covers a new GhostOS system with no authorization database. Keep the
 machine on a trusted physical console during setup.
 
 ## Boot
@@ -9,7 +9,7 @@ Build or obtain a boot image, then start it:
 
 ```sh
 ./scripts/build-bios-image.sh
-./start-synos.sh
+./start-ghostos.sh
 ```
 
 The launcher provisions `virtual_machine/state/system.raw` on first start.
@@ -20,7 +20,7 @@ The first-run shell prints:
 
 ```text
 No administrator account exists.
-SynOS first-run setup mode
+GhostOS first-run setup mode
 ```
 
 First-run commands are accepted case-insensitively. Use a valid username and
@@ -32,7 +32,7 @@ CREDENTIAL PASSKEY <public-material>
 CONFIRM
 ```
 
-The supported credential kinds are `PASSKEY`, `TPM`, and `SSH`. SynOS stores
+The supported credential kinds are `PASSKEY`, `TPM`, and `SSH`. GhostOS stores
 public credential material; never type or save a private key, seed, password,
 or recovery secret in the system disk or serial logs.
 
@@ -72,7 +72,7 @@ passkey
 <assertion-for-the-displayed-challenge>
 ```
 
-On success, SynOS prints `Login accepted.`. Verify the identity, then test the
+On success, GhostOS prints `Login accepted.`. Verify the identity, then test the
 lock cycle:
 
 ```text

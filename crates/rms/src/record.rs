@@ -1,5 +1,5 @@
-use synos_status::{IntoStatus, Status};
-use synos_synfs::{
+use ghostos_status::{IntoStatus, Status};
+use ghostos_ghostfs::{
     Error as SynFsError, FileVersion, MappedRecordFile, RecordDescriptor, RecordFileInfo,
     RecordImageBuilder, RecordRead, RecordSelector, RmsError, RmsMapHandle, SynFs,
 };

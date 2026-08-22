@@ -1,10 +1,10 @@
-# SynOS compatibility matrix
+# GhostOS compatibility matrix
 
 The shared public-API registry and migration procedure are in
 [`api-versioning.md`](api-versioning.md).
 
 This table is the operator-facing map of the compatibility contracts currently
-implemented by SynOS. The reader and decoder in source remain authoritative;
+implemented by GhostOS. The reader and decoder in source remain authoritative;
 this page does not promise compatibility beyond the versions listed here.
 
 ## Compatibility rules
@@ -21,34 +21,34 @@ this page does not promise compatibility beyond the versions listed here.
 
 | Artifact | Identifier and current version | Compatibility | Downgrade / recovery boundary | Authority |
 | --- | --- | --- | --- | --- |
-| SynFS volume | `SYNFSVOL`, volume `3`; `SYNFSMAP`; tree `SYNT`/`1` | Read/write v3 | Older readers reject v3; export/import into a target volume | [`synfs/src/volume.rs`](../crates/synfs/src/volume.rs), [`persistence-compatibility.md`](persistence-compatibility.md) |
-| RMS record image | `SYNRMS01` | Read/write current fixed layout | No in-place downgrade; convert records | [`synfs/src/rms.rs`](../crates/synfs/src/rms.rs) |
-| SynFS backup stream | `SYNBACK1`/`1`, trailer `SYNBEND1` | Write/export v1; no restore decoder | Preserve a complete pinned stream; it is not a mountable restore input | [`synos-backup/src/lib.rs`](../crates/synos-backup/src/lib.rs) |
+| GhostFS volume | `SYNFSVOL`, volume `3`; `SYNFSMAP`; tree `SYNT`/`1` | Read/write v3 | Older readers reject v3; export/import into a target volume | [`ghostfs/src/volume.rs`](../crates/ghostfs/src/volume.rs), [`persistence-compatibility.md`](persistence-compatibility.md) |
+| RMS record image | `SYNRMS01` | Read/write current fixed layout | No in-place downgrade; convert records | [`ghostfs/src/rms.rs`](../crates/ghostfs/src/rms.rs) |
+| GhostFS backup stream | `SYNBACK1`/`1`, trailer `SYNBEND1` | Write/export v1; no restore decoder | Preserve a complete pinned stream; it is not a mountable restore input | [`ghostos-backup/src/lib.rs`](../crates/ghostos-backup/src/lib.rs) |
 | Legacy shell store | `SYNFS001`/`1` | Read/write legacy v1 | Invalid data falls back to the built-in store; no converter | [`persistence-compatibility.md`](persistence-compatibility.md) |
-| SynOS system disk | `SYNOSDSK`/`1`, `SYNMANIF`, `SYNSET01` | Read/write v1 with two manifest slots | Unknown versions reject; recovery selects the newest complete checksum-valid slot | [`system_disk.rs`](../virtual_machine/src/devices/storage/system_disk.rs), [`persistence-compatibility.md`](persistence-compatibility.md) |
-| Boot service manifest | `SYNSVC01`/`1` | Read/write v1; bounded role/path/checksum entries | Unknown versions, duplicate roles, bad paths, and package checksum failures reject | [`service_manifest.rs`](../crates/synfs/src/service_manifest.rs) |
+| GhostOS system disk | `SYNOSDSK`/`1`, `SYNMANIF`, `SYNSET01` | Read/write v1 with two manifest slots | Unknown versions reject; recovery selects the newest complete checksum-valid slot | [`system_disk.rs`](../virtual_machine/src/devices/storage/system_disk.rs), [`persistence-compatibility.md`](persistence-compatibility.md) |
+| Boot service manifest | `SYNSVC01`/`1` | Read/write v1; bounded role/path/checksum entries | Unknown versions, duplicate roles, bad paths, and package checksum failures reject | [`service_manifest.rs`](../crates/ghostfs/src/service_manifest.rs) |
 | Guest persistence tail | `SYNOPS01`/`1` | Read/write v1 | Invalid metadata is treated as empty state; no in-place downgrade | [`persistence.rs`](../virtual_machine/src/devices/storage/persistence.rs) |
 | Observability journal record | `SLOG`/`1`, exactly 128 bytes | Read/write v1 with checksum | Reject unknown versions, bad fields, and bad checksums | [`observability/src/lib.rs`](../crates/observability/src/lib.rs) |
-| VM replay trace | `SYNREP01`/`1` | Read/write v1 | Version mismatch or trailing bytes is corruption; no downgrade | [`synos-replay/src/lib.rs`](../crates/synos-replay/src/lib.rs) |
-| Cluster metadata | `SYNCLID1`/`1` | Read/write v1 | Checksum and generation must remain valid; no in-place downgrade | [`cluster.rs`](../crates/synos-storaged/src/cluster.rs) |
-| Membership registry | `SYNMEMB1`/`1` | Read/write v1 | Rebuild stale state through quorum-approved recovery | [`membership.rs`](../crates/synos-storaged/src/membership.rs) |
-| Cluster bootstrap | `SYNBOOT1`/`1` | Read/write v1 with signature and checksum | Revalidate trust and epoch; rotate through a new record | [`bootstrap.rs`](../crates/synos-storaged/src/bootstrap.rs) |
-| Admission audit | `SYNADIT1`/`1` | Read/write v1 with bounded records | Corruption is an evidence failure, not an empty journal | [`admission.rs`](../crates/synos-storaged/src/admission.rs) |
-| Mount catalog | `SYNMNT01`; monotonic catalog version | Read/write current layout | Layout changes need a new magic or explicit converter | [`state.rs`](../crates/synos-storaged/src/state.rs) |
-| KVD state | `SYNKVD01` | Read/write current bounded layout | Invalid cache state is discarded; no downgrade | [`synos-kvd/src/lib.rs`](../crates/synos-kvd/src/lib.rs) |
+| VM replay trace | `SYNREP01`/`1` | Read/write v1 | Version mismatch or trailing bytes is corruption; no downgrade | [`ghostos-replay/src/lib.rs`](../crates/ghostos-replay/src/lib.rs) |
+| Cluster metadata | `SYNCLID1`/`1` | Read/write v1 | Checksum and generation must remain valid; no in-place downgrade | [`cluster.rs`](../crates/ghostos-storaged/src/cluster.rs) |
+| Membership registry | `SYNMEMB1`/`1` | Read/write v1 | Rebuild stale state through quorum-approved recovery | [`membership.rs`](../crates/ghostos-storaged/src/membership.rs) |
+| Cluster bootstrap | `SYNBOOT1`/`1` | Read/write v1 with signature and checksum | Revalidate trust and epoch; rotate through a new record | [`bootstrap.rs`](../crates/ghostos-storaged/src/bootstrap.rs) |
+| Admission audit | `SYNADIT1`/`1` | Read/write v1 with bounded records | Corruption is an evidence failure, not an empty journal | [`admission.rs`](../crates/ghostos-storaged/src/admission.rs) |
+| Mount catalog | `SYNMNT01`; monotonic catalog version | Read/write current layout | Layout changes need a new magic or explicit converter | [`state.rs`](../crates/ghostos-storaged/src/state.rs) |
+| KVD state | `SYNKVD01` | Read/write current bounded layout | Invalid cache state is discarded; no downgrade | [`ghostos-kvd/src/lib.rs`](../crates/ghostos-kvd/src/lib.rs) |
 
 The complete storage and recovery discussion is in
 [`persistence-compatibility.md`](persistence-compatibility.md). External host
-formats (Ext4, FAT32, and NTFS) are read-only inputs, not SynOS-owned formats.
+formats (Ext4, FAT32, and NTFS) are read-only inputs, not GhostOS-owned formats.
 
 ## Wire protocols
 
 | Boundary | Version | Compatibility contract | Authority |
 | --- | ---: | --- | --- |
-| Native syscall ABI | schema `1`, revision `4`; 64-byte request, 40-byte response | Exact schema match; unsupported versions return `PROTOCOL_MISMATCH`; operation numbers and field offsets are stable | [`abi.md`](abi.md), [`abi/synos-abi.toml`](../abi/synos-abi.toml) |
+| Native syscall ABI | schema `1`, revision `4`; 64-byte request, 40-byte response | Exact schema match; unsupported versions return `PROTOCOL_MISMATCH`; operation numbers and field offsets are stable | [`abi.md`](abi.md), [`abi/ghostos-abi.toml`](../abi/ghostos-abi.toml) |
 | Shared transport guard: HTTP, gRPC, SDK, remote terminal, mesh, cluster | `1` | Negotiated version ranges, replay window, authentication, size, and backpressure limits | [`protocol/src/lib.rs`](../crates/protocol/src/lib.rs), [`protocol-compatibility.md`](protocol-compatibility.md) |
-| Client RPC frames (`SYRP`) | `1`; 24-byte header; 4096-byte maximum | Rust and Swift clients use the same frame version and method IDs | [`client-sdk/src/wire.rs`](../crates/client-sdk/src/wire.rs), [`SynOSClient.swift`](../clients/apple/Sources/SynOSClient/SynOSClient.swift) |
-| Boot handoff (`BootInfo`) | magic `SYNOSBOO`, version `1` | Bootloader and kernel must agree on the exact version; unknown versions reject | [`boot-protocol/src/lib.rs`](../crates/boot-protocol/src/lib.rs) |
+| Client RPC frames (`SYRP`) | `1`; 24-byte header; 4096-byte maximum | Rust and Swift clients use the same frame version and method IDs | [`client-sdk/src/wire.rs`](../crates/client-sdk/src/wire.rs), [`GhostOSClient.swift`](../clients/apple/Sources/GhostOSClient/GhostOSClient.swift) |
+| Boot handoff (`BootInfo`) | magic `GHOSTOSBOO`, version `1` | Bootloader and kernel must agree on the exact version; unknown versions reject | [`boot-protocol/src/lib.rs`](../crates/boot-protocol/src/lib.rs) |
 | Netd socket IPC | protocol `1`; request/response schemas `SYNNETRQ`/`SYNNETRS` | Exact version and schema required | [`netd/src/protocol.rs`](../crates/netd/src/protocol.rs) |
 | VM migration checkpoint | protocol `3` | Authenticated, bounded `SYNOMIG3` stream; schema and feature negotiation required | [`control.rs`](../virtual_machine/src/control.rs), [`migration.rs`](../virtual_machine/src/migration.rs) |
 
@@ -76,7 +76,7 @@ Source: [`snapshot.rs`](../virtual_machine/src/snapshot.rs),
 | Application bundle | `SYNAPP01`, version `1`; application metadata schema `1` | Read/write v1; outer metadata and inner package must both validate | [`package-abi.md`](package-abi.md), [`pkg/src/lib.rs`](../crates/pkg/src/lib.rs) |
 | Provenance chain | `SYNPROV1` | Read/write current fixed schema | Content and signature links must remain complete | [`pkg/src/lib.rs`](../crates/pkg/src/lib.rs) |
 | Toolchain archive | `SYNTOOL1`, version `1` | Read/write v1; signed asset paths and content IDs are checked | [`persistence-compatibility.md`](persistence-compatibility.md) |
-| Declarative system configuration | schema `1` | Read/write v1; signed canonical source activates atomically | [`synos-declarative/src/parser.rs`](../crates/synos-declarative/src/parser.rs) |
+| Declarative system configuration | schema `1` | Read/write v1; signed canonical source activates atomically | [`ghostos-declarative/src/parser.rs`](../crates/ghostos-declarative/src/parser.rs) |
 
 Package downgrade means rebuilding and signing with the older toolchain. Never
 change a bundle or activated configuration in place.
@@ -85,8 +85,8 @@ change a bundle or activated configuration in place.
 
 | Target triple | Architecture and image contract | Compatibility status |
 | --- | --- | --- |
-| `x86_64-unknown-synos` | 64-bit x86, PIC, static, abort-on-panic, `x86_64-unknown-none` LLVM target | Accepted target; primary build and boot evidence |
-| `aarch64-unknown-synos` | AArch64 v8a, PIC, static, abort-on-panic, `aarch64-unknown-none` LLVM target | Build/cross-build target; not a full acceptance promise until runtime, linker, loader, and boot evidence exist |
+| `x86_64-unknown-ghostos` | 64-bit x86, PIC, static, abort-on-panic, `x86_64-unknown-none` LLVM target | Accepted target; primary build and boot evidence |
+| `aarch64-unknown-ghostos` | AArch64 v8a, PIC, static, abort-on-panic, `aarch64-unknown-none` LLVM target | Build/cross-build target; not a full acceptance promise until runtime, linker, loader, and boot evidence exist |
 
 The target JSON files and acceptance policy are documented in
 [`targets/README.md`](../targets/README.md). Target compatibility requires the
@@ -100,8 +100,8 @@ The normative source, wire, deprecation, and release rules are in the
 
 | SDK | Package/tool version | Wire compatibility | Platform status |
 | --- | --- | --- | --- |
-| Rust `synos-client-sdk` | SDK API `1.0`; crate `0.1.0` | `SYRP` v1; shared transport guard v1 | `no_std`; transport supplied by the host; same contract for native and Wasm clients |
-| Swift `SynOSClient` | SDK API `1.0`; Swift tools `6.0` | `SYRP` v1; same 24-byte header, method IDs, and status values | iOS 17+ and macOS 14+ |
+| Rust `ghostos-client-sdk` | SDK API `1.0`; crate `0.1.0` | `SYRP` v1; shared transport guard v1 | `no_std`; transport supplied by the host; same contract for native and Wasm clients |
+| Swift `GhostOSClient` | SDK API `1.0`; Swift tools `6.0` | `SYRP` v1; same 24-byte header, method IDs, and status values | iOS 17+ and macOS 14+ |
 
 No SDK version is compatible merely because it compiles. A client must match
 the wire version, method IDs, frame limits, status mapping, and negotiated

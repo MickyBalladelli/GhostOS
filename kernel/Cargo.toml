@@ -1,5 +1,5 @@
 [package]
-name = "synos-kernel"
+name = "ghostos-kernel"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -21,28 +21,28 @@ name = "scalability"
 harness = false
 
 [[bin]]
-name = "synos-kernel"
+name = "ghostos-kernel"
 path = "src/main.rs"
 test = false
 bench = false
 
 [dependencies]
-synos-abi = { path = "../crates/abi" }
-synos-app = { path = "../crates/app" }
-synos-boot-protocol = { path = "../crates/boot-protocol" }
-synos-fabric = { path = "../crates/fabric" }
-synos-fsd = { path = "../crates/fsd" }
-synos-legacy-pc-drivers = { path = "../crates/legacy-pc-drivers" }
-synos-ipc = { path = "../crates/ipc" }
-synos-init = { path = "../crates/init" }
-synos-observability = { path = "../crates/observability" }
-synos-numa = { path = "../crates/numa" }
-synos-power = { path = "../crates/power" }
-syn-shell = { path = "../crates/syn-shell" }
-synos-status = { path = "../crates/status" }
-synos-runtime = { path = "../crates/runtime" }
-synos-synfs = { path = "../crates/synfs" }
-synos-system-model = { path = "../crates/system-model" }
+ghostos-abi = { path = "../crates/abi" }
+ghostos-app = { path = "../crates/app" }
+ghostos-boot-protocol = { path = "../crates/boot-protocol" }
+ghostos-fabric = { path = "../crates/fabric" }
+ghostos-fsd = { path = "../crates/fsd" }
+ghostos-legacy-pc-drivers = { path = "../crates/legacy-pc-drivers" }
+ghostos-ipc = { path = "../crates/ipc" }
+ghostos-init = { path = "../crates/init" }
+ghostos-observability = { path = "../crates/observability" }
+ghostos-numa = { path = "../crates/numa" }
+ghostos-power = { path = "../crates/power" }
+ghostos-shell = { path = "../crates/ghostos-shell" }
+ghostos-status = { path = "../crates/status" }
+ghostos-runtime = { path = "../crates/runtime" }
+ghostos-ghostfs = { path = "../crates/ghostfs" }
+ghostos-system-model = { path = "../crates/system-model" }
 
 [dev-dependencies]
-synos-test-support = { path = "../crates/test-support" }
+ghostos-test-support = { path = "../crates/test-support" }

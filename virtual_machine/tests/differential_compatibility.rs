@@ -7,14 +7,14 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use synos_abi::{RpcFrameHeader, RpcMethod, RpcStatus, RPC_FRAME_HEADER_BYTES};
-use synos_netd::PacketQueue as DriverPacketQueue;
-use synos_synfs::SynFs;
-use synos_test_support::differential::assert_no_divergence;
-use synos_webterm::{Cell, Terminal};
-use synos_vm::firmware::bios::{Bios, BiosState};
-use synos_vm::firmware::uefi::{UefiContext, UefiState, UEFI_TABLES_BASE};
-use synos_vm::{CpuState, Mmu};
+use ghostos_abi::{RpcFrameHeader, RpcMethod, RpcStatus, RPC_FRAME_HEADER_BYTES};
+use ghostos_netd::PacketQueue as DriverPacketQueue;
+use ghostos_ghostfs::SynFs;
+use ghostos_test_support::differential::assert_no_divergence;
+use ghostos_webterm::{Cell, Terminal};
+use ghostos_vm::firmware::bios::{Bios, BiosState};
+use ghostos_vm::firmware::uefi::{UefiContext, UefiState, UEFI_TABLES_BASE};
+use ghostos_vm::{CpuState, Mmu};
 
 #[derive(Clone, Debug)]
 enum FilesystemOp {
@@ -80,7 +80,7 @@ fn filesystem_matches_independent_reference() {
     assert_no_divergence(
         "filesystem",
         &operations,
-        "SynFS is authoritative for versioning and path rules; the BTreeMap models only latest visible contents.",
+        "GhostFS is authoritative for versioning and path rules; the BTreeMap models only latest visible contents.",
         compare_filesystem,
     );
 }

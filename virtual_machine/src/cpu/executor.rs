@@ -1751,7 +1751,7 @@ impl InstructionExecutor {
     ) -> Result<(), CpuError> {
         let leaf = state.rax as u32;
         let (eax, ebx, ecx, edx): (u32, u32, u32, u32) = match leaf {
-            0 => (1, 0x534F_6E53, 0x20204D56, 0x0000_0000), // "SynOSVM  "
+            0 => (1, 0x534F_6E53, 0x20204D56, 0x0000_0000), // "GhostOSVM  "
             1 => (
                 0x0000_0601,
                 0,

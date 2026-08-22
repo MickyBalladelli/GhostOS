@@ -1,1 +1,1 @@
-SynOS test serial
+GhostOS test serial

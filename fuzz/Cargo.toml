@@ -1,5 +1,5 @@
 [package]
-name = "synos-fuzz"
+name = "ghostos-fuzz"
 version = "0.1.0"
 publish = false
 edition = "2024"
@@ -9,18 +9,18 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-synos-fsd = { path = "../crates/fsd" }
-synos-app = { path = "../crates/app" }
-synos-abi = { path = "../crates/abi" }
-synos-host-filesystems = { path = "../crates/host-filesystems" }
-synos-synfs = { path = "../crates/synfs" }
-synos-http = { path = "../crates/http" }
-syn-script = { path = "../crates/syn-script" }
-synos-vm = { path = "../virtual_machine" }
-synos-netd = { path = "../crates/netd" }
-syn-shell = { path = "../crates/syn-shell" }
-synos-auth = { path = "../crates/auth" }
-synos-kernel = { path = "../kernel" }
+ghostos-fsd = { path = "../crates/fsd" }
+ghostos-app = { path = "../crates/app" }
+ghostos-abi = { path = "../crates/abi" }
+ghostos-host-filesystems = { path = "../crates/host-filesystems" }
+ghostos-ghostfs = { path = "../crates/ghostfs" }
+ghostos-http = { path = "../crates/http" }
+ghostos-script = { path = "../crates/ghostos-script" }
+ghostos-vm = { path = "../virtual_machine" }
+ghostos-netd = { path = "../crates/netd" }
+ghostos-shell = { path = "../crates/ghostos-shell" }
+ghostos-auth = { path = "../crates/auth" }
+ghostos-kernel = { path = "../kernel" }
 
 [[bin]]
 name = "path"

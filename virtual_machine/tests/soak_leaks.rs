@@ -3,8 +3,8 @@
 use std::io::Cursor;
 use std::time::{Duration, Instant};
 
-use synos_vm::firmware::bios::BiosContext;
-use synos_vm::{
+use ghostos_vm::firmware::bios::BiosContext;
+use ghostos_vm::{
     Cpu, ExecutionEngine, ExecutionEngineConfig, InterruptController, Mmu, PortBus,
     TerminalSession,
 };
@@ -13,7 +13,7 @@ const CODE: u64 = 0x1000;
 
 #[test]
 fn soak_translation_cache_and_terminal_state_release() {
-    let repeats = std::env::var("SYNOS_VM_SOAK_INNER_RUNS")
+    let repeats = std::env::var("GHOSTOS_VM_SOAK_INNER_RUNS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)

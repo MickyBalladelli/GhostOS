@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main() -> int:
     result = subprocess.run(
-        ["cargo", "check", "--locked", "-p", "synos-cookbook", "--bins"],
+        ["cargo", "check", "--locked", "-p", "ghostos-cookbook", "--bins"],
         cwd=ROOT,
         check=False,
     )

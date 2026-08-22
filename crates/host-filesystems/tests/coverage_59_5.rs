@@ -1,4 +1,4 @@
-use synos_host_filesystems::{
+use ghostos_host_filesystems::{
     detect, scan_partitions, Error, FileSystemKind, Partition, PartitionKind, ReadAt,
 };
 

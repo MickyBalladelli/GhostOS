@@ -7,7 +7,7 @@ MMU through memory-mapped I/O or to the CPU through port-mapped I/O.
 ## Runtime shape
 
 ```text
-                    synos-vm CLI or Vm API
+                    ghostos-vm CLI or Vm API
                               |
                               v
          +--------------------+--------------------+
@@ -47,7 +47,7 @@ create additional CPU execution contexts yet.
 6. Pending DMA, network traffic, and timer interrupts are serviced between
    CPU dispatches.
 
-BIOS kernel boot uses the SynOS multiboot handoff. UEFI mode starts the EFI
+BIOS kernel boot uses the GhostOS multiboot handoff. UEFI mode starts the EFI
 application supplied with `Vm::set_efi_application`. A kernel path cannot be
 used as a UEFI application.
 
@@ -85,7 +85,7 @@ event.
 | VGA text | MMIO | `0xB8000` | — |
 | VESA framebuffer | MMIO | `0xF000_0000` | — |
 
-The exact constants are exported from `synos_vm`, so guest-facing tools should
+The exact constants are exported from `ghostos_vm`, so guest-facing tools should
 use the Rust constants instead of copying addresses where possible.
 
 ## Execution and state
@@ -130,5 +130,5 @@ the execution cache while keeping the VM device topology attached.
 - `src/boot`: kernel, initrd, multiboot, and boot-parameter loading.
 - `src/execution.rs`: translated block cache and profiling.
 - `src/snapshot.rs`: full snapshots, page diffs, and snapshot chains.
-- `src/integration.rs`: bounded SynOS kernel/service checks.
+- `src/integration.rs`: bounded GhostOS kernel/service checks.
 - `src/replay.rs`: ordered event trace, bounded binary persistence, and replay.

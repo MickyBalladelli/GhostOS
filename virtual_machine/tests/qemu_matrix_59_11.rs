@@ -12,18 +12,18 @@ use std::os::unix::net::UnixStream;
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn qemu_binary() -> String {
-    std::env::var("SYNOS_QEMU_BIN").unwrap_or_else(|_| "qemu-system-x86_64".to_string())
+    std::env::var("GHOSTOS_QEMU_BIN").unwrap_or_else(|_| "qemu-system-x86_64".to_string())
 }
 
 fn qemu_image(firmware: &str) -> PathBuf {
     let variable = if firmware == "uefi" {
-        "SYNOS_QEMU_UEFI_IMAGE"
+        "GHOSTOS_QEMU_UEFI_IMAGE"
     } else {
-        "SYNOS_QEMU_IMAGE"
+        "GHOSTOS_QEMU_IMAGE"
     };
     std::env::var_os(variable)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build/bios/synos-bios.img"))
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build/bios/ghostos-bios.img"))
 }
 
 fn run_qemu(firmware: &str, cpus: usize) -> String {
@@ -52,13 +52,13 @@ fn run_qemu_with_images(firmware: &str, cpus: usize, extra_images: &[PathBuf]) -
             extra.display()
         ));
     }
-    if let Some(accel) = std::env::var_os("SYNOS_QEMU_ACCEL") {
+    if let Some(accel) = std::env::var_os("GHOSTOS_QEMU_ACCEL") {
         command.arg("-accel").arg(accel);
     }
     if firmware == "uefi" {
-        let firmware_path = std::env::var_os("SYNOS_QEMU_UEFI_FIRMWARE")
+        let firmware_path = std::env::var_os("GHOSTOS_QEMU_UEFI_FIRMWARE")
             .map(PathBuf::from)
-            .expect("set SYNOS_QEMU_UEFI_FIRMWARE for UEFI smoke tests");
+            .expect("set GHOSTOS_QEMU_UEFI_FIRMWARE for UEFI smoke tests");
         assert!(
             firmware_path.is_file(),
             "missing UEFI firmware: {}",
@@ -84,7 +84,7 @@ fn run_qemu_with_images(firmware: &str, cpus: usize, extra_images: &[PathBuf]) -
     let output = child.wait_with_output().expect("collect QEMU output");
     let mut log = String::from_utf8_lossy(&output.stdout).into_owned();
     log.push_str(&String::from_utf8_lossy(&output.stderr));
-    let log_dir = std::env::var_os("SYNOS_QEMU_LOG_DIR")
+    let log_dir = std::env::var_os("GHOSTOS_QEMU_LOG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build/qemu-matrix-59-11"));
     fs::create_dir_all(&log_dir).expect("create QEMU log directory");
@@ -95,16 +95,16 @@ fn run_qemu_with_images(firmware: &str, cpus: usize, extra_images: &[PathBuf]) -
 
 fn assert_boot(log: &str, firmware: &str, cpus: usize) {
     assert!(
-        log.contains("SynOS kernel bootstrap"),
+        log.contains("GhostOS kernel bootstrap"),
         "{firmware} QEMU boot failed with {cpus} CPUs; log: {log:?}"
     );
     assert!(!log.contains("KERNEL PANIC"), "guest panic; log: {log:?}");
 }
 
 #[test]
-#[ignore = "requires SYNOS_RUN_QEMU_TESTS=1, QEMU, and SYNOS_QEMU_IMAGE"]
+#[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1, QEMU, and GHOSTOS_QEMU_IMAGE"]
 fn qemu_bios_one_cpu_and_smp() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
     assert_boot(&run_qemu("bios", 1), "bios", 1);
@@ -112,9 +112,9 @@ fn qemu_bios_one_cpu_and_smp() {
 }
 
 #[test]
-#[ignore = "requires SYNOS_RUN_QEMU_TESTS=1, QEMU, SYNOS_QEMU_UEFI_IMAGE, and SYNOS_QEMU_UEFI_FIRMWARE"]
+#[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1, QEMU, GHOSTOS_QEMU_UEFI_IMAGE, and GHOSTOS_QEMU_UEFI_FIRMWARE"]
 fn qemu_uefi_one_cpu_and_smp() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
     assert_boot(&run_qemu("uefi", 1), "uefi", 1);
@@ -122,9 +122,9 @@ fn qemu_uefi_one_cpu_and_smp() {
 }
 
 #[test]
-#[ignore = "requires SYNOS_RUN_QEMU_TESTS=1, QEMU, and SYNOS_QEMU_IMAGE"]
+#[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1, QEMU, and GHOSTOS_QEMU_IMAGE"]
 fn qemu_attached_disk_boot() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
     let path = temporary_path("attached-disk");
@@ -137,9 +137,9 @@ fn qemu_attached_disk_boot() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_RUN_QEMU_TESTS=1 and QEMU"]
+#[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1 and QEMU"]
 fn qemu_reboot_and_shutdown_lifecycle() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
     let mut run = QmpRun::start("bios", 1, None);
@@ -151,9 +151,9 @@ fn qemu_reboot_and_shutdown_lifecycle() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_RUN_QEMU_TESTS=1 and QEMU"]
+#[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1 and QEMU"]
 fn qemu_terminal_wakeup() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
     let mut run = QmpRun::start("bios", 1, None);
@@ -166,12 +166,12 @@ fn qemu_terminal_wakeup() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_RUN_QEMU_TESTS=1, QEMU, and qemu-img"]
+#[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1, QEMU, and qemu-img"]
 fn qemu_snapshot_restore() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
-    let qemu_img = std::env::var_os("SYNOS_QEMU_IMG_BIN")
+    let qemu_img = std::env::var_os("GHOSTOS_QEMU_IMG_BIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("qemu-img"));
     let available = Command::new(&qemu_img)
@@ -198,8 +198,8 @@ fn snapshot_restore_with(qemu_img: &str) {
         .expect("start qemu-img");
     assert!(output.status.success(), "qemu-img failed: {:?}", output);
     let mut run = QmpRun::start_with_image("bios", 1, overlay.clone(), false);
-    assert_qmp_ok(&run.human("savevm synos-evidence"));
-    assert_qmp_ok(&run.human("loadvm synos-evidence"));
+    assert_qmp_ok(&run.human("savevm ghostos-evidence"));
+    assert_qmp_ok(&run.human("loadvm ghostos-evidence"));
     assert_qmp_ok(&run.command("quit"));
     let log = run.finish("bios-snapshot-restore");
     let _ = fs::remove_file(overlay);
@@ -209,7 +209,7 @@ fn snapshot_restore_with(qemu_img: &str) {
 #[test]
 #[ignore = "requires QEMU"]
 fn qemu_failure_cleanup() {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
         return
     }
     if !Command::new(qemu_binary())
@@ -235,7 +235,7 @@ fn temporary_path(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock before epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("synos-qemu-{name}-{}-{stamp}", std::process::id()))
+    std::env::temp_dir().join(format!("ghostos-qemu-{name}-{}-{stamp}", std::process::id()))
 }
 
 #[cfg(unix)]
@@ -275,12 +275,12 @@ impl QmpRun {
                 if base_image { "raw" } else { "qcow2" },
                 if base_image { "on" } else { "off" }
             ));
-        if let Some(accel) = std::env::var_os("SYNOS_QEMU_ACCEL") {
+        if let Some(accel) = std::env::var_os("GHOSTOS_QEMU_ACCEL") {
             command.arg("-accel").arg(accel);
         }
         if firmware == "uefi" {
-            let firmware_path = std::env::var_os("SYNOS_QEMU_UEFI_FIRMWARE")
-                .expect("set SYNOS_QEMU_UEFI_FIRMWARE for UEFI smoke tests");
+            let firmware_path = std::env::var_os("GHOSTOS_QEMU_UEFI_FIRMWARE")
+                .expect("set GHOSTOS_QEMU_UEFI_FIRMWARE for UEFI smoke tests");
             command.arg("-bios").arg(firmware_path);
         }
         let child = command.spawn().expect("start QEMU QMP session");
@@ -323,7 +323,7 @@ impl QmpRun {
     fn finish(mut self, label: &str) -> String {
         let _ = self.child.wait();
         let log = fs::read_to_string(&self.serial).unwrap_or_default();
-        if let Some(directory) = std::env::var_os("SYNOS_QEMU_LOG_DIR") {
+        if let Some(directory) = std::env::var_os("GHOSTOS_QEMU_LOG_DIR") {
             let directory = PathBuf::from(directory);
             fs::create_dir_all(&directory).expect("create QEMU evidence directory");
             fs::write(directory.join(format!("{label}.log")), &log).expect("write QEMU log");

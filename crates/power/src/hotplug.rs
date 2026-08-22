@@ -1,4 +1,4 @@
-use synos_fabric::{
+use ghostos_fabric::{
     Error as FabricError,
     cxl::{
         DeviceState as CxlDeviceState, Endpoint as CxlEndpoint,
@@ -6,12 +6,12 @@ use synos_fabric::{
     },
     memory::{GlobalAddressSpace, LeaseTable, PoolId},
 };
-use synos_legacy_pc_drivers::{
+use ghostos_legacy_pc_drivers::{
     NvmeNamespaceState, NvmeRegistry, PciAddress,
     storage::DriverError,
 };
-use synos_status::{IntoStatus, Status};
-use synos_synfs::{
+use ghostos_status::{IntoStatus, Status};
+use ghostos_ghostfs::{
     DeviceHealth, StorageDeviceId, StoragePoolAdmin, StoragePoolError,
 };
 
@@ -163,7 +163,7 @@ pub fn complete_cxl_memory_removal<
     })
 }
 
-/// Reject new SynFS allocations while an NVMe namespace drains.
+/// Reject new GhostFS allocations while an NVMe namespace drains.
 pub fn begin_nvme_storage_removal<
     const NAMESPACES: usize,
     const DEVICES: usize,
@@ -189,7 +189,7 @@ pub fn begin_nvme_storage_removal<
     })
 }
 
-/// Complete NVMe removal only when the namespace is no longer in a SynFS pool.
+/// Complete NVMe removal only when the namespace is no longer in a GhostFS pool.
 pub fn complete_nvme_storage_removal<
     const NAMESPACES: usize,
     const DEVICES: usize,

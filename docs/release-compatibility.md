@@ -2,7 +2,7 @@
 
 Every release needs a two-way compatibility proof against the previous
 release. The proof is a JSON file passed as `--upgrade-compatibility` (or
-`SYNOS_UPGRADE_COMPATIBILITY` for the release gate).
+`GHOSTOS_UPGRADE_COMPATIBILITY` for the release gate).
 
 The validator checks that:
 
@@ -18,7 +18,7 @@ Minimal shape:
 
 ```json
 {
-  "schema": "synos-upgrade-compatibility",
+  "schema": "ghostos-upgrade-compatibility",
   "schema_version": 1,
   "release": {"version": "0.2.0", "revision": "NEW_REVISION"},
   "previous": {"version": "0.1.0", "revision": "OLD_REVISION"},

@@ -1,11 +1,11 @@
 use std::vec::Vec;
 
-use synos_app::{
+use ghostos_app::{
     ImageArchitecture, Mapping, MappingRequest, NativeSpawnRequest, ProcessArguments,
     ProcessBackend, ProcessContext, ProcessLimits, ProcessState, RuntimeSegment,
     SegmentPermissions, StackRequest, TlsRequest,
 };
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityObject, CapabilitySpace, MemoryAccess, PageTableRoot,
     KernelProcessBackend, ProcessMemory, Rights, Scheduler, USER_SPACE_END,
 };
@@ -129,7 +129,7 @@ impl ProcessMemory for MemoryFixture {
         _request: TlsRequest,
         _source: &[u8],
     ) -> Result<u64, Self::Error> {
-        Ok(synos_kernel::USER_SPACE_START + 0x4000_0000)
+        Ok(ghostos_kernel::USER_SPACE_START + 0x4000_0000)
     }
 
     fn install_context(
@@ -184,7 +184,7 @@ fn spawn_request<'a>(image: &'a ImageFixture) -> NativeSpawnRequest<'a> {
         image: &image.bytes,
         architecture: ImageArchitecture::X86_64,
         expected_payload: None,
-        heap_bytes: synos_app::DEFAULT_HEAP_BYTES,
+        heap_bytes: ghostos_app::DEFAULT_HEAP_BYTES,
         arguments: ProcessArguments {
             argv: &[],
             environment: &[],
@@ -203,7 +203,7 @@ fn backend() -> KernelProcessBackend<'static, MemoryFixture, 2, CAPABILITIES> {
             Rights::ALL,
         )
         .expect("kernel authority");
-    synos_kernel::KernelProcessBackend::new(
+    ghostos_kernel::KernelProcessBackend::new(
         scheduler,
         capabilities,
         AddressSpaceId::KERNEL,

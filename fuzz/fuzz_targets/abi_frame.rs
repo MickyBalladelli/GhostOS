@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_abi::{RpcFrameHeader, RPC_FRAME_HEADER_BYTES, RPC_MAX_FRAME_BYTES};
+use ghostos_abi::{RpcFrameHeader, RPC_FRAME_HEADER_BYTES, RPC_MAX_FRAME_BYTES};
 
 fuzz_target!(|data: &[u8]| {
     let bounded = &data[..data.len().min(RPC_MAX_FRAME_BYTES)];

@@ -5,12 +5,12 @@ mod platform {
     use core::mem::MaybeUninit;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    use synos_legacy_pc_drivers::pci::{ConfigAccess, PortConfig};
-    use synos_legacy_pc_drivers::storage::{
+    use ghostos_legacy_pc_drivers::pci::{ConfigAccess, PortConfig};
+    use ghostos_legacy_pc_drivers::storage::{
         AhciCommandList, AhciCommandTable, AhciController, AhciPort,
     };
-    use synos_legacy_pc_drivers::AhciBlockDevice;
-    use synos_synfs::{
+    use ghostos_legacy_pc_drivers::AhciBlockDevice;
+    use ghostos_ghostfs::{
         MountedSystemVolume, ServiceManifest, SynFs, SystemDiskManifest, SYSTEM_DISK_MANIFEST_BYTES,
         SYSTEM_VOLUME_BLOCKS,
     };
@@ -55,11 +55,11 @@ mod platform {
             let Some(filesystem) = (unsafe { mount_controller(registers as usize) }) else {
                 continue
             };
-            crate::println!("physical SynFS mounted from AHCI {:02x}:{:02x}.{}",
+            crate::println!("physical GhostFS mounted from AHCI {:02x}:{:02x}.{}",
                 device.address.bus, device.address.device, device.address.function);
             return Some(filesystem)
         }
-        crate::println!("no mountable AHCI SynOS system volume; using bootstrap filesystem");
+        crate::println!("no mountable AHCI GhostOS system volume; using bootstrap filesystem");
         None
     }
 
@@ -166,7 +166,7 @@ mod platform {
             .map_err(|_| ())?
         };
         let mut volume =
-            synos_synfs::SystemDiskVolume::new(&mut block, *manifest).map_err(|_| ())?;
+            ghostos_ghostfs::SystemDiskVolume::new(&mut block, *manifest).map_err(|_| ())?;
         filesystem.fsync(&mut volume).map(|_| ()).map_err(|_| ())
     }
 
@@ -206,7 +206,7 @@ pub use platform::{mount, service_image, sync};
 #[cfg(not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))))]
 pub fn mount(
     _inventory: &crate::pci::PciInventory,
-) -> Option<synos_synfs::SynFs<{ synos_synfs::SYSTEM_VOLUME_BLOCKS }>> {
+) -> Option<ghostos_ghostfs::SynFs<{ ghostos_ghostfs::SYSTEM_VOLUME_BLOCKS }>> {
     None
 }
 

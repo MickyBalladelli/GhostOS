@@ -5,15 +5,15 @@ use crate::partition::CorePartition;
 use crate::quota::{QuotaDecision, QuotaResource};
 use crate::scheduler::{Scheduler, SchedulerError};
 use crate::task::{AddressSpaceId, CpuId, ThreadId};
-use synos_ipc::{Envelope, Ring, RingError};
-use synos_observability::{
+use ghostos_ipc::{Envelope, Ring, RingError};
+use ghostos_observability::{
     CapabilityDomain, CapabilityTraceStage, CorrelationId, EventField, EventKind,
     ProfileDomain, ProfileSample, emit_capability_trace, field, next_correlation_id,
     record_profile_sample, trace,
 };
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
-pub use synos_ipc::{ChannelId, SharedBuffer, SharedRegionId};
+pub use ghostos_ipc::{ChannelId, SharedBuffer, SharedRegionId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Message {
@@ -236,7 +236,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
                     0x2001,
                 ));
                 emit_capability_trace(
-                    synos_observability::Level::Trace,
+                    ghostos_observability::Level::Trace,
                     CapabilityDomain::Kernel,
                     CapabilityTraceStage::KernelIpc,
                     endpoint.raw(),
@@ -426,7 +426,7 @@ impl<const CAPACITY: usize> Channel<CAPACITY> {
             return Err(error);
         }
         emit_capability_trace(
-            synos_observability::Level::Trace,
+            ghostos_observability::Level::Trace,
             CapabilityDomain::Kernel,
             CapabilityTraceStage::KernelIpc,
             delegated.raw(),

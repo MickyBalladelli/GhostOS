@@ -1,0 +1,17 @@
+[package]
+name = "ghostos-debug"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Capability-scoped debugging, core dumps, and safe dynamic tracing"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ghostos-auth = { path = "../auth" }
+ghostos-fabric = { path = "../fabric" }
+ghostos-init = { path = "../init" }
+ghostos-kernel = { path = "../../kernel" }
+ghostos-status = { path = "../status" }
+ghostos-ghostfs = { path = "../ghostfs" }

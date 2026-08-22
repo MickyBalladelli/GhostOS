@@ -5,7 +5,7 @@ its registered passkeys, TPM credentials, or SSH keys can be used.
 
 ## Important boundary
 
-SynOS must not turn an existing account database back into first-run setup.
+GhostOS must not turn an existing account database back into first-run setup.
 The built-in `RECOVERY` commands are only for interrupted setup while the
 authorization database is absent:
 
@@ -40,14 +40,14 @@ tooling; they are not a license to edit the account file by hand.
    `/system/security/authorization`, or create a replacement first admin.
 6. Enroll one replacement public credential through the recovery tooling. Keep
    private passkey, TPM, and SSH material off the disk and out of logs.
-7. Commit the credential change atomically, flush the SynFS volume, and treat
+7. Commit the credential change atomically, flush the GhostFS volume, and treat
    recovery as successful only after the durability operation reports success.
 8. Remove the recovery media, reboot normally, log in with the replacement
    credential, and revoke the lost credential if it is still present.
 
 ## If trusted recovery proof is unavailable
 
-Stop. SynOS intentionally does not provide a password bypass or an
+Stop. GhostOS intentionally does not provide a password bypass or an
 unauthenticated account reset. Restore a known-good full-system backup through
 the verified recovery process, or reinstall after preserving user data. Do not
 delete the account database as a shortcut.

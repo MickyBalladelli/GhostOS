@@ -27,7 +27,7 @@ class ReleaseClaimsRegressionTests(unittest.TestCase):
         artifact.write_text(json.dumps({"revision": MODULE.git_revision(), "p99_ns": 983}) + "\n")
         claims = {
             "schema": 1,
-            "kind": "synos-release-claims",
+            "kind": "ghostos-release-claims",
             "revision": MODULE.git_revision(),
             "claims": [
                 {

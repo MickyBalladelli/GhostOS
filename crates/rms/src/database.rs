@@ -1,11 +1,11 @@
 use core::str;
-use synos_status::{IntoStatus, Status};
-use synos_synfs::{
+use ghostos_status::{IntoStatus, Status};
+use ghostos_ghostfs::{
     Error, MAX_PATH_BYTES, MappedFilePage, ReadOnlySnapshot, RmsMapHandle, SynFs, TransactionCommit,
 };
 
 pub const MAX_DATABASE_NAMESPACE_BYTES: usize = 48;
-const DATABASE_ROOT: &[u8] = b"/.synos/data/";
+const DATABASE_ROOT: &[u8] = b"/.ghostos/data/";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Namespace {

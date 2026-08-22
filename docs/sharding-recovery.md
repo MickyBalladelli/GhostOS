@@ -1,6 +1,6 @@
 # Control-plane sharding and recovery
 
-`synos-storaged::ClusterShardCoordinator` owns bounded shard placement for
+`ghostos-storaged::ClusterShardCoordinator` owns bounded shard placement for
 cluster metadata, capability indexes, package catalogs, audit streams, and
 placement decisions. Existing service state remains authoritative. The
 coordinator adds routing, ownership fencing, and recovery around that state.
@@ -25,7 +25,7 @@ fingerprint from the committed shard generations, indexes, ownership, and
 recovery events. Replay must produce identical evidence:
 
 ```sh
-cargo test -p synos-storaged --test sharding -- --nocapture
+cargo test -p ghostos-storaged --test sharding -- --nocapture
 ```
 
 The test covers shard movement, same-term split-brain rejection, deterministic

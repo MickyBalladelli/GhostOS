@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
-use synos_observability::{CorrelationId, SECURITY_AUDIT};
-use synos_status::Status;
+use ghostos_observability::{CorrelationId, SECURITY_AUDIT};
+use ghostos_status::Status;
 
 use crate::capability::{CapabilityObject, CapabilitySpace};
 use crate::persistence::PersistentStore;

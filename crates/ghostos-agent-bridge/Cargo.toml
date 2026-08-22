@@ -1,0 +1,19 @@
+[package]
+name = "ghostos-agent-bridge"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Native capability-scoped AI agent script execution for GhostOS"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ghostos-shell = { path = "../ghostos-shell" }
+ghostos-script = { path = "../ghostos-script" }
+ghostos-auth = { path = "../auth" }
+ghostos-fabric = { path = "../fabric" }
+ghostos-kernel = { path = "../../kernel" }
+ghostos-status = { path = "../status" }
+ghostos-ghostfs = { path = "../ghostfs" }
+ghostos-system-model = { path = "../system-model" }

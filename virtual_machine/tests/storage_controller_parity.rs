@@ -4,8 +4,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use synos_vm::devices::{Ahci, Device, Nvme, PortDevice, VirtioBlk};
-use synos_vm::{DiskImage, Mmu};
+use ghostos_vm::devices::{Ahci, Device, Nvme, PortDevice, VirtioBlk};
+use ghostos_vm::{DiskImage, Mmu};
 
 const SECTOR_SIZE: usize = 512;
 const SECTORS: u64 = 8;
@@ -22,7 +22,7 @@ struct BlockReport {
 
 fn image(name: &str) -> (PathBuf, DiskImage) {
     let path = std::env::temp_dir().join(format!(
-        "synos-storage-parity-{name}-{}.img",
+        "ghostos-storage-parity-{name}-{}.img",
         std::process::id()
     ));
     let mut file = File::create(&path).expect("create parity image");

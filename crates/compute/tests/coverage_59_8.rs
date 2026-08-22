@@ -1,9 +1,9 @@
-use synos_compute::{
+use ghostos_compute::{
     Error, accelerator::{AcceleratorCapability, AcceleratorDevice, AcceleratorId, AcceleratorKind, AcceleratorOperation, AcceleratorQueue, AcceleratorRequest, ComputeApi, ComputeDispatch, DeviceLimits, KernelDescriptor, KernelFormat, KernelHandle},
     tensor::{DType, SharedTensor, TensorLayout, TensorRegion, TensorShape},
 };
-use synos_ipc::{SharedBuffer, SharedRegionId};
-use synos_legacy_pc_drivers::{Bar, PciAddress, PciDevice};
+use ghostos_ipc::{SharedBuffer, SharedRegionId};
+use ghostos_legacy_pc_drivers::{Bar, PciAddress, PciDevice};
 
 fn buffer(region: u32, offset: u32, length: u32, writable: bool) -> SharedBuffer {
     SharedBuffer {
@@ -78,10 +78,10 @@ fn accelerator_queue_checks_capability_and_completes_dispatch() {
     let dispatch = ComputeDispatch::new(
         KernelHandle::new(1).unwrap(),
         [2, 1, 1],
-        &[synos_compute::accelerator::DispatchBinding {
+        &[ghostos_compute::accelerator::DispatchBinding {
             slot: 0,
             tensor,
-            access: synos_compute::framework::BindingAccess::ReadWrite,
+            access: ghostos_compute::framework::BindingAccess::ReadWrite,
         }],
     )
     .unwrap();
@@ -97,7 +97,7 @@ fn accelerator_queue_checks_capability_and_completes_dispatch() {
     queue
         .complete(
             submission.token,
-            synos_compute::accelerator::AcceleratorResult {
+            ghostos_compute::accelerator::AcceleratorResult {
                 status: 1,
                 device_timestamp_ns: 77,
             },

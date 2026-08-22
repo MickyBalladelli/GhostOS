@@ -1,5 +1,5 @@
-use synos_init::{ServiceId, ServiceKind, ServiceName, ServiceSpec, Supervisor, SupervisorError, SupervisorRuntime, RestartPolicy, SpawnRequest, ProcessId};
-use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
+use ghostos_init::{ServiceId, ServiceKind, ServiceName, ServiceSpec, Supervisor, SupervisorError, SupervisorRuntime, RestartPolicy, SpawnRequest, ProcessId};
+use ghostos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
 struct Runtime;
 

@@ -12,11 +12,11 @@ pub use topology::{
     TopologyArbiter, TrustScope, DEFAULT_ARBITRATION_NODE_CAPACITY,
 };
 
-use synos_actors::{
+use ghostos_actors::{
     ActorError, ActorId, ActorRef, ActorRuntime, ActorSpawnRequest, ActorSystem,
     DEFAULT_ACTOR_CAPACITY,
 };
-use synos_fabric::{
+use ghostos_fabric::{
     NodeId as ClusterNodeId,
     cluster::{
         Heartbeat, HeartbeatMonitor, NodeFailure, NodeState as HeartbeatNodeState,
@@ -26,12 +26,12 @@ use synos_fabric::{
     dsm::CoherenceDirectory,
     memory::{GlobalAddressSpace, LeaseTable},
 };
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityHandle, CapabilitySpace, DistributedLockManager, LockError,
     LockGrant, LockHandle, LockMode, LockOwner, LockRange, NodeFenceTable, ResourceId,
     ResourceKind, ResourceName,
 };
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub const DEFAULT_NODE_CAPACITY: usize = 32;
 pub const DEFAULT_JOB_CAPACITY: usize = 128;
@@ -104,7 +104,7 @@ pub enum BalancerError<E> {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum FailoverError<E> {
-    Fabric(synos_fabric::Error),
+    Fabric(ghostos_fabric::Error),
     Balancer(BalancerError<E>),
 }
 
@@ -165,7 +165,7 @@ impl<const THREADS: usize> JobSlot<THREADS> {
 /// Active-active compute placement for actor threads.
 ///
 /// The coordinator owns only bounded metadata. Actor execution remains in
-/// `synos-actors`, while every cache slice is protected by a kernel DLM lease.
+/// `ghostos-actors`, while every cache slice is protected by a kernel DLM lease.
 pub struct Balancer<
     const NODES: usize = DEFAULT_NODE_CAPACITY,
     const JOBS: usize = DEFAULT_JOB_CAPACITY,
@@ -756,7 +756,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
             .map(|entry| entry.3)
     }
 
-    fn pick_migration_node(&self, excluded: synos_kernel::NodeId) -> Option<usize> {
+    fn pick_migration_node(&self, excluded: ghostos_kernel::NodeId) -> Option<usize> {
         self.nodes
             .iter()
             .enumerate()
@@ -941,7 +941,7 @@ impl<const NODES: usize, const JOBS: usize, const THREADS: usize>
             .ok_or(BalancerError::JobNotFound)
     }
 
-    fn decrement_node(&mut self, node: synos_kernel::NodeId) {
+    fn decrement_node(&mut self, node: ghostos_kernel::NodeId) {
         if let Some(state) = self.nodes.iter_mut().flatten().find(|state| {
             kernel_node(state.offer.node) == node
         }) {
@@ -970,7 +970,7 @@ impl<const HEARTBEATS: usize> FailoverCoordinator<HEARTBEATS> {
         period_us: u32,
         missed_limit: u8,
         now_us: u64,
-    ) -> Result<Self, synos_fabric::Error> {
+    ) -> Result<Self, ghostos_fabric::Error> {
         Ok(Self {
             monitor: HeartbeatMonitor::new(local, period_us, missed_limit, now_us)?,
         })
@@ -980,7 +980,7 @@ impl<const HEARTBEATS: usize> FailoverCoordinator<HEARTBEATS> {
         &mut self,
         node: ClusterNodeId,
         now_us: u64,
-    ) -> Result<(), synos_fabric::Error> {
+    ) -> Result<(), ghostos_fabric::Error> {
         self.monitor.add_node(node, now_us)
     }
 
@@ -992,7 +992,7 @@ impl<const HEARTBEATS: usize> FailoverCoordinator<HEARTBEATS> {
         &mut self,
         heartbeat: Heartbeat,
         received_at_us: u64,
-    ) -> Result<(), synos_fabric::Error> {
+    ) -> Result<(), ghostos_fabric::Error> {
         self.monitor.observe(heartbeat, received_at_us)
     }
 
@@ -1032,7 +1032,7 @@ impl<const HEARTBEATS: usize> FailoverCoordinator<HEARTBEATS> {
         fences: &NodeFenceTable<FENCES>,
     ) -> Result<Option<FailoverSummary>, FailoverError<T::Error>>
     where
-        I: synos_fabric::cluster::NodeIsolation,
+        I: ghostos_fabric::cluster::NodeIsolation,
         T: ActorRuntime,
     {
         let Some(failure) = self.monitor.detect(now_us) else {
@@ -1085,8 +1085,8 @@ impl ThreadSlice for LockRange {
     }
 }
 
-fn kernel_node(node: ClusterNodeId) -> synos_kernel::NodeId {
-    synos_kernel::NodeId::new(node.raw()).expect("cluster node invariant")
+fn kernel_node(node: ClusterNodeId) -> ghostos_kernel::NodeId {
+    ghostos_kernel::NodeId::new(node.raw()).expect("cluster node invariant")
 }
 
 fn convert_error<E>(error: BalancerError<core::convert::Infallible>) -> BalancerError<E> {

@@ -18,7 +18,7 @@ use crate::{
     DhcpError, DhcpLease, DhcpLeaseRuntime, ServiceError, SocketBackend, SocketState,
     QueueMetrics, StaticSnapshot, NetworkStats,
 };
-use synos_time_sync::MonotonicClock;
+use ghostos_time_sync::MonotonicClock;
 
 /// smoltcp 0.13 keeps four routes per interface by default.
 pub const MAX_INTERFACE_ROUTES: usize = 4;

@@ -2,7 +2,7 @@
 
 AI is treated as a system workload, not a privileged exception.
 
-## `synos-compute`
+## `ghostos-compute`
 
 The compute runtime supports Candle and Burn through a small native contract without C, C++, CUDA, or POSIX dependencies. Tensor metadata points into capability-mapped IPC regions.
 
@@ -17,7 +17,7 @@ A tensor view validates:
 
 GPU and NPU work uses isolated Ring 3 drivers, bounded descriptors, capability-controlled BAR/interrupt/doorbell access, and generation-checked asynchronous queues.
 
-## `synos-llm`
+## `ghostos-llm`
 
 The LLM runtime presents local RAM, CXL, and remote memory leases as one contiguous virtual model allocation. Model placement is hidden behind the memory contract, but the failure and quota rules remain explicit.
 
@@ -37,22 +37,22 @@ The request identity stays stable while mirrored model and KV pages resolve thro
 
 ## Semantic memory
 
-`synos-agentd` provides a capability-scoped semantic memory and context bus. It handles indexing, vector encoding, similarity search, freshness/decay, authorization filtering, zero-copy retrieval, and garbage collection.
+`ghostos-agentd` provides a capability-scoped semantic memory and context bus. It handles indexing, vector encoding, similarity search, freshness/decay, authorization filtering, zero-copy retrieval, and garbage collection.
 
 An agent should not see every memory object. Retrieval is filtered by authority before records are returned.
 
 ## Agent execution
 
-`synos-agent-bridge` connects agents to typed tools. It exports live schemas, derives exact task capabilities, applies replay protection, and runs scripts in private filesystem sandboxes.
+`ghostos-agent-bridge` connects agents to typed tools. It exports live schemas, derives exact task capabilities, applies replay protection, and runs scripts in private filesystem sandboxes.
 
-Long-running agents use immutable SynFS execution snapshots. The newest snapshot pins a complete CoW generation so a crashed process can restore its stack and state.
+Long-running agents use immutable GhostFS execution snapshots. The newest snapshot pins a complete CoW generation so a crashed process can restore its stack and state.
 
 ## Easy example: an AI task
 
 ```text
 agent asks for: read /DATA/report, summarize, write /DATA/summary
 system grants: READ report + WRITE summary, expires in 5 minutes
-agent runs in: private SynFS stage
+agent runs in: private GhostFS stage
 system checks: tool schema, input bounds, status, audit event
 approve: publish summary generation
 reject: discard stage, keep original data

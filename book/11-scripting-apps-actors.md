@@ -1,8 +1,8 @@
 # 11. Scripts, Wasm, Applications, Jobs, and Actors
 
-SynOS has several automation layers. Each has a different trust level and resource contract.
+GhostOS has several automation layers. Each has a different trust level and resource contract.
 
-## `syn-script`
+## `ghostos-script`
 
 Native command procedures use DCL-style statements and typed command routes. The compiler validates pipeline stages against the command registry. Structured records, not text scraping, flow between stages.
 
@@ -33,9 +33,9 @@ The important difference from a host shell is that the command registry is typed
 
 ## Agent sandbox
 
-`synos-agent-bridge` exports live command schemas as function-tool JSON. It derives short-lived capabilities bound to one agent and exact task rights. A grant is consumed through a replay ledger.
+`ghostos-agent-bridge` exports live command schemas as function-tool JSON. It derives short-lived capabilities bound to one agent and exact task rights. A grant is consumed through a replay ledger.
 
-Sandbox execution uses an isolated private SynFS root:
+Sandbox execution uses an isolated private GhostFS root:
 
 ```text
 base generation -> private staged root -> inspect/validate
@@ -47,21 +47,21 @@ base generation -> private staged root -> inspect/validate
 
 ## Embedded Rhai
 
-`synos-embedded-script` embeds Rhai for service automation. Limits cover source size, instructions, recursion, expression depth, functions, variables, collections, strings, and queued work. Scripts can enqueue only operations in their capability list.
+`ghostos-embedded-script` embeds Rhai for service automation. Limits cover source size, instructions, recursion, expression depth, functions, variables, collections, strings, and queued work. Scripts can enqueue only operations in their capability list.
 
 ## Wasm
 
-`synos-wasm-script` runs untrusted Wasm through the pure-Rust Wasmi interpreter. It exposes no WASI filesystem, network, environment, or clock. Compilation, module size, fuel, memory, table growth, imports, entry signatures, and host operations are all bounded.
+`ghostos-wasm-script` runs untrusted Wasm through the pure-Rust Wasmi interpreter. It exposes no WASI filesystem, network, environment, or clock. Compilation, module size, fuel, memory, table growth, imports, entry signatures, and host operations are all bounded.
 
 ## Applications
 
-`synos-app` defines an `App.toml` contract. A manifest names an immutable image, application kind, node placement, restart policy, and exact capability requests. The supervisor intersects those requests with administrator policy before spawning.
+`ghostos-app` defines an `App.toml` contract. A manifest names an immutable image, application kind, node placement, restart policy, and exact capability requests. The supervisor intersects those requests with administrator policy before spawning.
 
 Optional resources may be omitted. Required resources, wrong object kinds, and rights escalation stop admission.
 
 ## Jobs and actors
 
-`synos-actors` gives local and distributed processes one actor API. Local mailboxes use native IPC. Remote references use DSM mailboxes with a live write authority and DLM epoch. Actor code does not construct packets or choose transports.
+`ghostos-actors` gives local and distributed processes one actor API. Local mailboxes use native IPC. Remote references use DSM mailboxes with a live write authority and DLM epoch. Actor code does not construct packets or choose transports.
 
 Jobs add scheduling, queues, leases, cancellation, retries, and recovery semantics. The goal is not only to start work, but to know whether work was accepted, running, cancelled, retried, or committed.
 

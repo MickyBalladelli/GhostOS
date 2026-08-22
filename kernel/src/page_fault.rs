@@ -8,9 +8,9 @@ use crate::capability::{CapabilityHandle, CapabilitySpace};
 use crate::cow::{CowError, CowManager, CowPageCopier, CowWriteResult};
 use crate::quota::{QuotaDecision, QuotaResource};
 use crate::task::AddressSpaceId;
-use synos_status::{IntoStatus, Status};
+use ghostos_status::{IntoStatus, Status};
 
-pub use synos_fabric::PageFault;
+pub use ghostos_fabric::PageFault;
 
 pub type PageFaultHandler = fn(PageFault) -> bool;
 
@@ -96,7 +96,7 @@ pub fn resolve_cow_fault<
     if !fault.user
         || !fault.present
         || fault.reserved_bit
-        || fault.access != synos_fabric::Access::Write
+        || fault.access != ghostos_fabric::Access::Write
     {
         return Err(CowFaultError::InvalidFault)
     }
@@ -221,7 +221,7 @@ pub fn dispatch_for<const MAX_CAPABILITIES: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synos_fabric::Access;
+    use ghostos_fabric::Access;
 
     #[test]
     fn x86_fault_bits_preserve_access_and_protection_state() {

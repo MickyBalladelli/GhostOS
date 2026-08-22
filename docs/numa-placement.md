@@ -1,6 +1,6 @@
 # NUMA placement
 
-`synos-numa` owns the bounded topology and placement contract used by the
+`ghostos-numa` owns the bounded topology and placement contract used by the
 kernel scheduler, platform queues, storage workers, and network interrupt
 polling. The topology is a fixed CPU-to-node table; placement never scans or
 allocates without a bound.

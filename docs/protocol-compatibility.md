@@ -1,7 +1,7 @@
 # Protocol compatibility contract
 
 All six network-facing boundaries expose a checked entry point backed by
-`synos-protocol::ProtocolGuard` before a message reaches the existing parser or
+`ghostos-protocol::ProtocolGuard` before a message reaches the existing parser or
 handler. The guard has no socket or allocator dependency.
 
 | Traffic | Max message | Inflight bytes | Replay window | Auth failures | First reconnect delay |

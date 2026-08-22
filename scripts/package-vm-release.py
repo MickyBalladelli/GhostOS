@@ -352,7 +352,7 @@ def main() -> int:
         timestamp = source_date_epoch()
         manifest = {
             "schema": 1,
-            "product": "synos-vm",
+            "product": "ghostos-vm",
             "version": vm_version(),
             "revision": git_value("rev-parse", "HEAD"),
             "source_date_epoch": timestamp,

@@ -2,17 +2,17 @@
 set -Eeuo pipefail
 
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-run_dir=${SYNOS_CLUSTER_VALIDATION_DIR:-$root_dir/build/qemu-cluster-validation-$$}
+run_dir=${GHOSTOS_CLUSTER_VALIDATION_DIR:-$root_dir/build/qemu-cluster-validation-$$}
 command_log="$run_dir/validation.commands.log"
 cluster_pid=""
 
-if [[ "${SYNOS_RUN_QEMU_TESTS:-}" != 1 ]]; then
-    echo "cluster QEMU validation skipped; set SYNOS_RUN_QEMU_TESTS=1"
+if [[ "${GHOSTOS_RUN_QEMU_TESTS:-}" != 1 ]]; then
+    echo "cluster QEMU validation skipped; set GHOSTOS_RUN_QEMU_TESTS=1"
     exit 0
 fi
 
 mkdir -p "$run_dir"
-export SYNOS_CLUSTER_RUN_DIR="$run_dir"
+export GHOSTOS_CLUSTER_RUN_DIR="$run_dir"
 
 cleanup() {
     if [[ -n "$cluster_pid" ]]; then
@@ -22,14 +22,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-SYNOS_CLUSTER_NODES=2 \
+GHOSTOS_CLUSTER_NODES=2 \
   "$root_dir/scripts/qemu-cluster.sh" > "$run_dir/launcher.log" 2>&1 &
 cluster_pid=$!
 
 deadline=$((SECONDS + 30))
 for node in 1 2; do
     serial_log="$run_dir/node-$node.serial.log"
-    while [[ ! -f "$serial_log" ]] || ! rg -q "SynOS kernel bootstrap" "$serial_log"; do
+    while [[ ! -f "$serial_log" ]] || ! rg -q "GhostOS kernel bootstrap" "$serial_log"; do
         if (( SECONDS >= deadline )); then
             echo "node $node did not boot; see $serial_log" >&2
             exit 1

@@ -11,17 +11,17 @@ release archive/
 ├── upgrade-compatibility.json
 ├── CHANGELOG.md
 ├── artifacts/
-│   ├── synos-vm
-│   ├── synos-bios.img
-│   └── synos-loader.efi
+│   ├── ghostos-vm
+│   ├── ghostos-bios.img
+│   └── ghostos-loader.efi
 ├── attestations/
 │   ├── attestation-public-key.pem
 │   ├── attestations-index.json
 │   ├── attestations-index.json.sig
-│   ├── synos-sbom.cdx.json
+│   ├── ghostos-sbom.cdx.json
 │   ├── dependency-provenance.json
-│   ├── synos-bios.artifact.sig
-│   ├── synos-loader.efi.artifact.sig
+│   ├── ghostos-bios.artifact.sig
+│   ├── ghostos-loader.efi.artifact.sig
 │   └── ...
 └── evidence/
     └── <validation-run files>
@@ -63,14 +63,14 @@ manifest; host paths do not leak into the release metadata. Evidence files are
 copied under `evidence/` and their paths are relative to the supplied evidence
 directory.
 
-`release-report.json` uses the `synos-release-report` schema. It contains the
+`release-report.json` uses the `ghostos-release-report` schema. It contains the
 correctness result inventory, p50/p95/p99 latency summaries, resource
 ceilings, measured fault-recovery RTO samples and percentiles, supported CPU
 scale tiers, known limits, and source digests. Generate and verify it with
 `scripts/release-report.py` before packaging. The report is bounded to 4096
 correctness records, 1024 latency metrics, and 1024 recovery samples.
 
-`release-claims.json` uses the `synos-release-claims` schema. Every controlled
+`release-claims.json` uses the `ghostos-release-claims` schema. Every controlled
 claim term has a named workload, measured threshold and observation, host
 configuration, and a SHA-256-pinned evidence artifact retained in the archive.
 The validator also checks the current `[Unreleased]` changelog section for

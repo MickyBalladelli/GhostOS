@@ -5,7 +5,7 @@
 //! CPUs on the same node, and finally a configured number of remote nodes.
 //! This makes the remote-memory cost explicit and measurable.
 
-use synos_observability::{field, EventField, EventKind};
+use ghostos_observability::{field, EventField, EventKind};
 
 const BITMAP_WORDS: usize = 4;
 const MAX_POOL_SLOTS: usize = BITMAP_WORDS * u64::BITS as usize;
@@ -432,7 +432,7 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
         self.stats[kind.index()].remote_memory_bytes = self.stats[kind.index()]
             .remote_memory_bytes
             .saturating_add(bytes);
-        synos_observability::trace!(
+        ghostos_observability::trace!(
             EventKind::RemoteMemory,
             EventField::unsigned(field::NUMA_KIND, 2),
             EventField::unsigned(field::REMOTE_MEMORY_BYTES, bytes),

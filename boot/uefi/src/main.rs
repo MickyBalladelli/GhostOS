@@ -6,7 +6,7 @@ mod chainload;
 
 use core::ffi::c_void;
 use core::panic::PanicInfo;
-use synos_boot_protocol::{
+use ghostos_boot_protocol::{
     BootInfo, BootMethod, FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB,
     FramebufferInfo, MemoryKind, MemoryRegion,
 };
@@ -22,7 +22,7 @@ const MEMORY_MAP_CAPACITY: usize = 32 * 1024;
 
 #[panic_handler]
 fn panic(info: &PanicInfo<'_>) -> ! {
-    synos_kernel::panic_report(info)
+    ghostos_kernel::panic_report(info)
 }
 
 #[repr(C)]
@@ -330,9 +330,9 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
         ((*output).reset)(output, false);
         ((*output).clear_screen)(output);
         loop {
-            write_text(output, "SynOS boot manager\r\n");
+            write_text(output, "GhostOS boot manager\r\n");
             write_text(output, "==================\r\n\r\n");
-            write_text(output, "1  Boot SynOS\r\n");
+            write_text(output, "1  Boot GhostOS\r\n");
             write_text(output, "2  Windows Boot Manager\r\n");
             write_text(output, "3  GRUB\r\n\r\n");
             write_text(output, "Choose 1, 2, or 3: ");
@@ -401,7 +401,7 @@ extern "efiapi" fn efi_main(image: EfiHandle, system_table: *mut EfiSystemTable)
 
             last_status = ((*services).exit_boot_services)(image, map_key);
             if last_status == EFI_SUCCESS {
-                synos_kernel::kernel_entry(&*boot_info)
+                ghostos_kernel::kernel_entry(&*boot_info)
             }
         }
 
@@ -646,7 +646,7 @@ unsafe fn write_text(output: *mut EfiSimpleTextOutput, text: &str) {
 
 unsafe fn write_failure(output: *mut EfiSimpleTextOutput, message: &str, status: EfiStatus) {
     unsafe {
-        write_text(output, "\r\nSynOS boot failure: ");
+        write_text(output, "\r\nGhostOS boot failure: ");
         write_text(output, message);
         write_text(output, "\r\nEFI status: 0x");
 
@@ -671,12 +671,12 @@ unsafe fn write_chainload_result(
 ) {
     unsafe {
         if status == EFI_SUCCESS {
-            write_text(output, "\r\nBoot target returned to SynOS.")
+            write_text(output, "\r\nBoot target returned to GhostOS.")
         } else {
             write_text(output, "\r\nCould not start boot target.\r\nEFI status: 0x");
             write_hex(output, status)
         }
-        write_text(output, "\r\nPress any key for the SynOS menu.\r\n");
+        write_text(output, "\r\nPress any key for the GhostOS menu.\r\n");
         wait_for_key(input)
     }
 }

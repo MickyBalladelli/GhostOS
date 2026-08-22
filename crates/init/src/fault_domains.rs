@@ -1,4 +1,4 @@
-use synos_status::{IntoStatus, Status};
+use ghostos_status::{IntoStatus, Status};
 
 pub const FAULT_DOMAIN_COUNT: usize = 6;
 

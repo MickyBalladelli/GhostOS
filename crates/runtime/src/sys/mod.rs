@@ -1,1 +1,1 @@
-pub mod synos;
+pub mod ghostos;

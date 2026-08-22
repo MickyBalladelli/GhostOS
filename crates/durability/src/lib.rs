@@ -214,7 +214,7 @@ impl<const CAPACITY: usize> DurabilityTrace<CAPACITY> {
             let application = self.find_before(index, transaction, |event| {
                 matches!(event, DurabilityEvent::ApplicationWrite { .. })
             });
-            let synfs_write = self.find_before(index, transaction, |event| {
+            let ghostfs_write = self.find_before(index, transaction, |event| {
                 matches!(event, DurabilityEvent::SynFsWrite { .. })
             });
             let commit = self.find_before(index, transaction, |event| {
@@ -232,7 +232,7 @@ impl<const CAPACITY: usize> DurabilityTrace<CAPACITY> {
             let Some(application) = application else {
                 return Err(ContractError::MissingStep { transaction })
             };
-            let Some(synfs_write) = synfs_write else {
+            let Some(ghostfs_write) = ghostfs_write else {
                 return Err(ContractError::MissingStep { transaction })
             };
             let Some(commit) = commit else {
@@ -247,8 +247,8 @@ impl<const CAPACITY: usize> DurabilityTrace<CAPACITY> {
             let Some(block_flush) = block_flush else {
                 return Err(ContractError::MissingStep { transaction })
             };
-            if !(application < synfs_write
-                && synfs_write < commit
+            if !(application < ghostfs_write
+                && ghostfs_write < commit
                 && commit < data
                 && data < commit_record
                 && commit_record < block_flush

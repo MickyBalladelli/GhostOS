@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
-use synos_vm::{DiskImage, LoopbackHub, LoopbackPort, MacAddress, NetBackend};
+use ghostos_vm::{DiskImage, LoopbackHub, LoopbackPort, MacAddress, NetBackend};
 
 const STORAGE_SECTORS: u64 = 256;
 const QEMU_BOOT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -24,7 +24,7 @@ fn temporary_path(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("system clock is before Unix epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("synos-vm-{name}-{}-{now}.img", std::process::id()))
+    std::env::temp_dir().join(format!("ghostos-vm-{name}-{}-{now}.img", std::process::id()))
 }
 
 fn create_raw_image(path: &Path, sectors: u64) {
@@ -36,8 +36,8 @@ fn create_raw_image(path: &Path, sectors: u64) {
 #[test]
 fn network_connectivity_loopback() {
     let hub = Rc::new(RefCell::new(LoopbackHub::new()));
-    let left_mac = MacAddress::synos_default(0x10);
-    let right_mac = MacAddress::synos_default(0x11);
+    let left_mac = MacAddress::ghostos_default(0x10);
+    let right_mac = MacAddress::ghostos_default(0x11);
     let mut left = LoopbackPort::new(hub.clone(), 0, left_mac);
     let mut right = LoopbackPort::new(hub, 1, right_mac);
 
@@ -108,7 +108,7 @@ fn throughput_mib(bytes: u64, elapsed: Duration) -> f64 {
 }
 
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_integration_boot() {
     let Some(output) = run_qemu_boot(1) else {
         return;
@@ -117,7 +117,7 @@ fn qemu_integration_boot() {
 }
 
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_smp_boot() {
     let Some(output) = run_qemu_boot(2) else {
         return;
@@ -127,7 +127,7 @@ fn qemu_smp_boot() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_link_lifecycle() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-link",
@@ -150,7 +150,7 @@ fn qemu_link_lifecycle() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_delete_file_and_link_workflow() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-delete-file-link",
@@ -182,7 +182,7 @@ fn qemu_delete_file_and_link_workflow() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_filesystem_shell_workflow() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-filesystem-shell",
@@ -219,7 +219,7 @@ fn qemu_filesystem_shell_workflow() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_rmdir_safety_workflow() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-rmdir-safety",
@@ -259,7 +259,7 @@ fn qemu_rmdir_safety_workflow() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_root_filesystem_mount_and_application_file_io() {
     let Some(output) = run_qemu_shell_session("qemu-root-filesystem-io", |qmp| {
         send_qemu_command(qmp, "directory /");
@@ -291,7 +291,7 @@ fn qemu_root_filesystem_mount_and_application_file_io() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_full_screen_editor_save_reopen_and_discard_workflow() {
     let Some(output) = run_qemu_shell_session("qemu-full-screen-editor", |qmp| {
         send_qemu_command(qmp, "create /data/editor-e2e");
@@ -332,7 +332,7 @@ fn qemu_full_screen_editor_save_reopen_and_discard_workflow() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "requires SYNOS_QEMU_IMAGE and a local QEMU installation"]
+#[ignore = "requires GHOSTOS_QEMU_IMAGE and a local QEMU installation"]
 fn qemu_wildcard_version_and_boundary_workflow() {
     let Some(output) = run_qemu_shell_commands(
         "qemu-wildcard-version",
@@ -358,21 +358,21 @@ fn qemu_wildcard_version_and_boundary_workflow() {
 }
 
 fn qemu_image() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("SYNOS_QEMU_IMAGE") {
+    if let Some(path) = std::env::var_os("GHOSTOS_QEMU_IMAGE") {
         return Some(PathBuf::from(path));
     }
 
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
-    Some(repository.join("build/bios/synos-bios.img"))
+    Some(repository.join("build/bios/ghostos-bios.img"))
 }
 
 fn run_qemu_boot(vcpus: usize) -> Option<String> {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
-        eprintln!("QEMU test skipped: set SYNOS_RUN_QEMU_TESTS=1 to enable");
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
+        eprintln!("QEMU test skipped: set GHOSTOS_RUN_QEMU_TESTS=1 to enable");
         return None;
     }
 
-    let qemu = std::env::var_os("SYNOS_QEMU_BIN").unwrap_or_else(|| "qemu-system-x86_64".into());
+    let qemu = std::env::var_os("GHOSTOS_QEMU_BIN").unwrap_or_else(|| "qemu-system-x86_64".into());
     let image = qemu_image().expect("locate repository root");
     if !image.is_file() {
         panic!("QEMU test image does not exist: {}", image.display());
@@ -416,7 +416,7 @@ fn run_qemu_boot(vcpus: usize) -> Option<String> {
 }
 
 fn persist_qemu_log(label: &str, output: &str) {
-    let Some(directory) = std::env::var_os("SYNOS_QEMU_LOG_DIR") else {
+    let Some(directory) = std::env::var_os("GHOSTOS_QEMU_LOG_DIR") else {
         return;
     };
     let directory = PathBuf::from(directory);
@@ -439,12 +439,12 @@ fn run_qemu_shell_session<F>(label: &str, session: F) -> Option<String>
 where
     F: FnOnce(&mut UnixStream),
 {
-    if std::env::var_os("SYNOS_RUN_QEMU_TESTS").is_none() {
-        eprintln!("QEMU shell test skipped: set SYNOS_RUN_QEMU_TESTS=1 to enable");
+    if std::env::var_os("GHOSTOS_RUN_QEMU_TESTS").is_none() {
+        eprintln!("QEMU shell test skipped: set GHOSTOS_RUN_QEMU_TESTS=1 to enable");
         return None;
     }
 
-    let qemu = std::env::var_os("SYNOS_QEMU_BIN").unwrap_or_else(|| "qemu-system-x86_64".into());
+    let qemu = std::env::var_os("GHOSTOS_QEMU_BIN").unwrap_or_else(|| "qemu-system-x86_64".into());
     let image = qemu_image().expect("locate repository root");
     if !image.is_file() {
         panic!("QEMU test image does not exist: {}", image.display());
@@ -566,11 +566,11 @@ fn wait_for_qemu(child: &mut Child) {
 
 fn assert_boot_output(output: &str, vcpus: usize) {
     assert!(
-        output.contains("SynOS kernel bootstrap"),
-        "QEMU did not boot SynOS with {vcpus} vCPUs; serial output was: {output:?}"
+        output.contains("GhostOS kernel bootstrap"),
+        "QEMU did not boot GhostOS with {vcpus} vCPUs; serial output was: {output:?}"
     );
     assert!(
         !output.contains("KERNEL PANIC"),
-        "SynOS panicked with {vcpus} vCPUs; serial output was: {output:?}"
+        "GhostOS panicked with {vcpus} vCPUs; serial output was: {output:?}"
     );
 }

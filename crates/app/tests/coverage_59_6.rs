@@ -1,9 +1,9 @@
-use synos_app::{
+use ghostos_app::{
     AppManifest, ApplicationEvent, ApplicationId, ApplicationRuntime, ApplicationState,
     ApplicationSupervisor, BoundedText, CapabilityKind, CapabilityPolicy, CapabilityRights,
     CapabilityRule, ManifestError,
 };
-use synos_init::{CrashReason, ExitReason, ProcessId};
+use ghostos_init::{CrashReason, ExitReason, ProcessId};
 
 const MANIFEST: &str = r#"
 schema = 1
@@ -35,7 +35,7 @@ struct Runtime {
 impl ApplicationRuntime for Runtime {
     type Error = ();
 
-    fn spawn(&mut self, _request: synos_app::AppSpawnRequest<'_>) -> Result<ProcessId, Self::Error> {
+    fn spawn(&mut self, _request: ghostos_app::AppSpawnRequest<'_>) -> Result<ProcessId, Self::Error> {
         self.next_process += 1;
         let process = ProcessId::new(self.next_process).unwrap();
         self.spawned.push(process);
@@ -66,7 +66,7 @@ fn application_manifest_and_capability_policy_validate_requests() {
     assert_eq!(manifest.name().as_str(), "demo");
     assert_eq!(manifest.image(), 1);
     assert_eq!(manifest.capabilities().count(), 1);
-    assert!(manifest.runtime().restart_mode == synos_app::RestartMode::OnFailure);
+    assert!(manifest.runtime().restart_mode == ghostos_app::RestartMode::OnFailure);
     assert_eq!(AppManifest::parse("schema = 2"), Err(ManifestError::MissingField));
 
     let mut restricted = CapabilityPolicy::<2>::new();
@@ -77,7 +77,7 @@ fn application_manifest_and_capability_policy_validate_requests() {
             maximum_rights: CapabilityRights::READ,
         })
         .unwrap();
-    assert!(matches!(restricted.authorize(&manifest), Err(synos_app::PolicyError::RightsEscalation)));
+    assert!(matches!(restricted.authorize(&manifest), Err(ghostos_app::PolicyError::RightsEscalation)));
 }
 
 #[test]

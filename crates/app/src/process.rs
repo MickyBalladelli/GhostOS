@@ -1,9 +1,9 @@
 //! Bounded native process lifecycle and resource policy.
 
-use synos_init::{CrashReason, ExitReason, ProcessId};
-use synos_status::{IntoStatus, Status};
-use synos_system_model::ContentId;
-use synos_time_sync::MonotonicClock;
+use ghostos_init::{CrashReason, ExitReason, ProcessId};
+use ghostos_status::{IntoStatus, Status};
+use ghostos_system_model::ContentId;
+use ghostos_time_sync::MonotonicClock;
 
 use crate::loader::{ImageArchitecture, ProcessArguments};
 

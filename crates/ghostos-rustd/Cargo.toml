@@ -1,0 +1,25 @@
+[package]
+name = "ghostos-rustd"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Bounded compiler-service protocol for GhostOS"
+
+[[bin]]
+name = "ghostos-rustd"
+path = "src/main.rs"
+
+[dependencies]
+ghostos-init = { path = "../init" }
+ghostos-observability = { path = "../observability" }
+ghostos-pkg = { path = "../pkg" }
+ghostos-runtime = { path = "../runtime" }
+ghostos-ghostfs = { path = "../ghostfs" }
+ghostos-status = { path = "../status" }
+ghostos-system-model = { path = "../system-model" }
+ghostos-time-sync = { path = "../time-sync" }
+ghostos-update = { path = "../ghostos-update" }
+ghostos-service-scale = { path = "../service-scale" }
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("ghostos"))'] }

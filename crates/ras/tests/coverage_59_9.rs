@@ -1,10 +1,10 @@
-use synos_fabric::{AddressRange, NodeId, PAGE_SIZE};
-use synos_legacy_pc_drivers::{PciAddress, PcieAerStatus};
-use synos_ras::{
+use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE};
+use ghostos_legacy_pc_drivers::{PciAddress, PcieAerStatus};
+use ghostos_ras::{
     BudgetArbiter, BudgetDecision, BudgetPolicy, BudgetReading, ErrorTelemetry, FaultSeverity,
     HardwareDiagnostics, PoisonTracker, PoisonedRange, WorkloadController, WorkloadId,
 };
-use synos_status::Status;
+use ghostos_status::Status;
 
 #[test]
 fn ras_records_bounded_hardware_history_and_quarantines_memory() {
@@ -57,8 +57,8 @@ fn ras_budget_prediction_throttles_and_evicts_before_critical() {
         prediction_horizon_us: 1_000_000,
     };
     let mut arbiter = BudgetArbiter::<2>::new(policy).unwrap();
-    arbiter.register(WorkloadId::new(1).unwrap(), synos_ras::WorkloadPriority::BestEffort).unwrap();
-    arbiter.register(WorkloadId::new(2).unwrap(), synos_ras::WorkloadPriority::Critical).unwrap();
+    arbiter.register(WorkloadId::new(1).unwrap(), ghostos_ras::WorkloadPriority::BestEffort).unwrap();
+    arbiter.register(WorkloadId::new(2).unwrap(), ghostos_ras::WorkloadPriority::Critical).unwrap();
     let mut controller = Controller::default();
     let decision = arbiter.observe(BudgetReading {
         timestamp_us: 1,
@@ -77,12 +77,12 @@ fn aer_status_requires_isolation_only_for_uncorrectable_errors() {
     let mut diagnostics = HardwareDiagnostics::<4, 4>::new();
     let mut isolated = Vec::new();
     struct Segment<'a>(&'a mut Vec<u8>);
-    impl synos_ras::PciSegmentController for Segment<'_> {
+    impl ghostos_ras::PciSegmentController for Segment<'_> {
         fn isolate_segment(&mut self, bus: u8) -> Result<(), Status> { self.0.push(bus); Ok(()) }
     }
     let address = PciAddress::new(4, 2, 0).unwrap();
     let mut controller = Segment(&mut isolated);
-    assert!(synos_ras::handle_aer(&mut diagnostics, &mut controller, 1, NodeId::LOCAL, address, PcieAerStatus { correctable: 1, non_fatal: 0, fatal: 0 }).unwrap().is_none());
-    assert!(synos_ras::handle_aer(&mut diagnostics, &mut controller, 2, NodeId::LOCAL, address, PcieAerStatus { correctable: 0, non_fatal: 1, fatal: 0 }).unwrap().is_some());
+    assert!(ghostos_ras::handle_aer(&mut diagnostics, &mut controller, 1, NodeId::LOCAL, address, PcieAerStatus { correctable: 1, non_fatal: 0, fatal: 0 }).unwrap().is_none());
+    assert!(ghostos_ras::handle_aer(&mut diagnostics, &mut controller, 2, NodeId::LOCAL, address, PcieAerStatus { correctable: 0, non_fatal: 1, fatal: 0 }).unwrap().is_some());
     assert_eq!(isolated, vec![4]);
 }

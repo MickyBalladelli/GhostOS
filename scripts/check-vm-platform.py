@@ -66,7 +66,7 @@ def acceleration() -> dict[str, str]:
             "reason": "Hypervisor.framework is unavailable; software emulation is allowed",
         }
     if system == "Windows":
-        qemu = os.environ.get("SYNOS_QEMU_BIN", "qemu-system-x86_64")
+        qemu = os.environ.get("GHOSTOS_QEMU_BIN", "qemu-system-x86_64")
         if "whpx" in command_output([qemu, "-accel", "help"]).lower():
             return {"backend": "whpx", "state": "available", "reason": "WHPX is listed by QEMU"}
         return {
@@ -82,11 +82,11 @@ def acceleration() -> dict[str, str]:
 
 
 def qemu_capabilities() -> dict[str, object]:
-    qemu = os.environ.get("SYNOS_QEMU_BIN", "qemu-system-x86_64")
-    qemu_img = os.environ.get("SYNOS_QEMU_IMG_BIN", "qemu-img")
-    bios = pathlib.Path(os.environ.get("SYNOS_QEMU_IMAGE", ROOT / "build/bios/synos-bios.img"))
-    uefi_image = pathlib.Path(os.environ.get("SYNOS_QEMU_UEFI_IMAGE", bios))
-    firmware_value = os.environ.get("SYNOS_QEMU_UEFI_FIRMWARE", "")
+    qemu = os.environ.get("GHOSTOS_QEMU_BIN", "qemu-system-x86_64")
+    qemu_img = os.environ.get("GHOSTOS_QEMU_IMG_BIN", "qemu-img")
+    bios = pathlib.Path(os.environ.get("GHOSTOS_QEMU_IMAGE", ROOT / "build/bios/ghostos-bios.img"))
+    uefi_image = pathlib.Path(os.environ.get("GHOSTOS_QEMU_UEFI_IMAGE", bios))
+    firmware_value = os.environ.get("GHOSTOS_QEMU_UEFI_FIRMWARE", "")
     firmware = pathlib.Path(firmware_value) if firmware_value else None
     missing: list[str] = []
     if not command_exists(qemu):
@@ -98,7 +98,7 @@ def qemu_capabilities() -> dict[str, object]:
     if not uefi_image.is_file():
         missing.append(f"UEFI image: {uefi_image}")
     if firmware is None or not firmware.is_file():
-        missing.append("UEFI firmware: SYNOS_QEMU_UEFI_FIRMWARE")
+        missing.append("UEFI firmware: GHOSTOS_QEMU_UEFI_FIRMWARE")
     result: dict[str, object] = {
         "state": "available" if not missing else "skipped",
         "binary": qemu,
@@ -303,7 +303,7 @@ def run_qemu(capabilities: dict[str, object]) -> dict[str, object]:
         "cargo",
         "test",
         "-p",
-        "synos-vm",
+        "ghostos-vm",
         "--test",
         "qemu_matrix_59_11",
         "--test",
@@ -316,18 +316,18 @@ def run_qemu(capabilities: dict[str, object]) -> dict[str, object]:
     if capabilities["state"] == "skipped":
         return {
             "state": "skipped",
-            "command": "SYNOS_RUN_QEMU_TESTS=1 " + " ".join(command),
+            "command": "GHOSTOS_RUN_QEMU_TESTS=1 " + " ".join(command),
             "reason": str(capabilities["reason"]),
         }
     environment = os.environ.copy()
-    environment["SYNOS_RUN_QEMU_TESTS"] = "1"
+    environment["GHOSTOS_RUN_QEMU_TESTS"] = "1"
     try:
         result = subprocess.run(command, cwd=ROOT, env=environment, check=False)
     except OSError as error:
         return {"state": "failed", "command": " ".join(command), "reason": str(error), "exit_code": 1}
     return {
         "state": "passed" if result.returncode == 0 else "failed",
-        "command": "SYNOS_RUN_QEMU_TESTS=1 " + " ".join(command),
+        "command": "GHOSTOS_RUN_QEMU_TESTS=1 " + " ".join(command),
         "reason": "QEMU matrix completed" if result.returncode == 0 else "QEMU matrix failed",
         "exit_code": result.returncode,
     }

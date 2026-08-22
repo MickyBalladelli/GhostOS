@@ -31,7 +31,7 @@ Build a BIOS image from the repository root:
 ./scripts/build-bios-image.sh
 ```
 
-The image is written to `build/bios/synos-bios.img`. The script assembles the 16-bit stages, builds the `x86_64-unknown-none` kernel, extracts its binary, checks the staging-sector limit, and writes the image with provenance.
+The image is written to `build/bios/ghostos-bios.img`. The script assembles the 16-bit stages, builds the `x86_64-unknown-none` kernel, extracts its binary, checks the staging-sector limit, and writes the image with provenance.
 
 ## UEFI path
 

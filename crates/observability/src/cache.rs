@@ -27,7 +27,7 @@ impl CacheKind {
 
     pub const fn name(self) -> &'static str {
         match self {
-            Self::SynFsMetadata => "synfs-metadata",
+            Self::SynFsMetadata => "ghostfs-metadata",
             Self::PackageArtifacts => "package-artifacts",
             Self::CompilerOutputs => "compiler-outputs",
             Self::Dns => "dns",

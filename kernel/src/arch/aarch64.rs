@@ -140,12 +140,12 @@ pub mod interrupts {
 
 
     unsafe extern "C" {
-        static synos_aarch64_vectors: u8;
+        static ghostos_aarch64_vectors: u8;
     }
 
     pub unsafe fn init() {
         unsafe {
-            let address = (&raw const synos_aarch64_vectors) as usize;
+            let address = (&raw const ghostos_aarch64_vectors) as usize;
             asm!("msr vbar_el1, {}", in(reg) address, options(nostack));
             asm!("isb", options(nostack));
         }
@@ -176,13 +176,13 @@ pub mod interrupts {
     }
 
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn synos_aarch64_exception_dispatch(frame: *mut ExceptionFrame) {
+    unsafe extern "C" fn ghostos_aarch64_exception_dispatch(frame: *mut ExceptionFrame) {
         let frame = unsafe { &mut *frame };
         let exception_class = (frame.esr >> 26) & 0x3f;
         if exception_class == 0x15 {
-            crate::syscall::synos_call_gate_dispatch(
-                frame.registers[0] as *const synos_runtime::Request,
-                frame.registers[1] as *mut synos_runtime::Response,
+            crate::syscall::ghostos_call_gate_dispatch(
+                frame.registers[0] as *const ghostos_runtime::Request,
+                frame.registers[1] as *mut ghostos_runtime::Response,
             );
             frame.elr = frame.elr.saturating_add(4);
             return
@@ -190,7 +190,7 @@ pub mod interrupts {
         crate::capture_exception(
             super::capture_registers(frame.far),
             frame.far,
-            synos_status::Status::CORRUPT,
+            ghostos_status::Status::CORRUPT,
             exception_class as u16,
         );
         crate::println!("AArch64 exception class={exception_class:#x}");
@@ -201,15 +201,15 @@ pub mod interrupts {
         r#"
 .section .text
 .balign 2048
-.global synos_aarch64_vectors
-synos_aarch64_vectors:
+.global ghostos_aarch64_vectors
+ghostos_aarch64_vectors:
 .rept 16
-    b synos_aarch64_exception_entry
+    b ghostos_aarch64_exception_entry
     .space 124
 .endr
 
 .balign 16
-synos_aarch64_exception_entry:
+ghostos_aarch64_exception_entry:
     sub sp, sp, #288
     stp x0, x1, [sp, #0]
     stp x2, x3, [sp, #16]
@@ -236,7 +236,7 @@ synos_aarch64_exception_entry:
     mrs x16, far_el1
     str x16, [sp, #272]
     mov x0, sp
-    bl synos_aarch64_exception_dispatch
+    bl ghostos_aarch64_exception_dispatch
     ldr x16, [sp, #248]
     msr elr_el1, x16
     ldr x16, [sp, #256]
@@ -299,7 +299,7 @@ pub(crate) fn enter_user(context: &crate::Context, root: crate::PageTableRoot) -
     }
 }
 
-pub(crate) fn idle(_state: synos_power::CpuIdleState) {
+pub(crate) fn idle(_state: ghostos_power::CpuIdleState) {
     unsafe {
         asm!("wfi", options(nomem, nostack));
     }

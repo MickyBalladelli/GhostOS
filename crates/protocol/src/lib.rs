@@ -1,15 +1,15 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-//! Shared wire-boundary policy for SynOS transports.
+//! Shared wire-boundary policy for GhostOS transports.
 //!
 //! The guard is deliberately transport-neutral. HTTP, gRPC, the SDK, remote
 //! terminal, mesh, and cluster code provide framing and authentication, while
 //! this crate gives each one the same bounded rules for compatibility,
 //! replay, flow control, and reconnects.
 
-pub const CURRENT_PROTOCOL_VERSION: u16 = synos_abi::ABI_SCHEMA_VERSION;
-pub const WIRE_API_VERSION: synos_api_compat::ApiVersion = synos_api_compat::WIRE_API.current;
+pub const CURRENT_PROTOCOL_VERSION: u16 = ghostos_abi::ABI_SCHEMA_VERSION;
+pub const WIRE_API_VERSION: ghostos_api_compat::ApiVersion = ghostos_api_compat::WIRE_API.current;
 pub const REPLAY_WINDOW_BITS: u8 = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -3,8 +3,8 @@
 
 mod fault_domains;
 
-use synos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_durability::{CrashBoundary, CrashDomain, InterruptionInjector, NoInterruption};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub use fault_domains::{
     CapabilityFence, FaultCause, FaultDomain, FaultDomainError, FaultDomainRegistry,

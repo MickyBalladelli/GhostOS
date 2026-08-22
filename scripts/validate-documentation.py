@@ -109,7 +109,7 @@ def workspace_packages() -> set[str]:
 def check_crate_catalog(errors: list[str]) -> None:
     catalog = (BOOK / "appendix-a-crate-catalog.md").read_text()
     listed = set(CATALOG_ROW.findall(catalog))
-    allowed_non_workspace = {"synos-fuzz"}
+    allowed_non_workspace = {"ghostos-fuzz"}
     packages = workspace_packages()
     missing = sorted(packages - listed)
     unknown = sorted(listed - packages - allowed_non_workspace)

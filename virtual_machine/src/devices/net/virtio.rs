@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn feature_mac_queue_status_and_reset_round_trip() {
-        let mac = MacAddress::synos_default(3);
+        let mac = MacAddress::ghostos_default(3);
         let mut net = VirtioNet::new(mac);
         assert_eq!(net.read_io(REG_DEVICE_FEATURES), DEVICE_FEATURES as u64);
         assert_eq!(net.read_io(REG_CONFIG), mac.0[0] as u64);
@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn loopback_backend_is_attached_and_invalid_access_is_rejected() {
         let hub = Rc::new(RefCell::new(LoopbackHub::new()));
-        let mac = MacAddress::synos_default(4);
+        let mac = MacAddress::ghostos_default(4);
         let mut net = VirtioNet::new(mac);
         net.attach_backend(Box::new(LoopbackPort::new(hub, 0, mac)));
         assert!(net.backend.as_ref().unwrap().link_up());

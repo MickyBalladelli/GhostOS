@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use synos_init::{
+use ghostos_init::{
     CrashReason, ExitReason, ProcessId, RestartPolicy, ServiceId, ServiceKind,
     ServiceName, ServiceSpec, SpawnRequest, Supervisor, SupervisorEvent,
     SupervisorRuntime,
 };
-use synos_vm::{FirmwareMode, PowerNotification, Vm, VmConfig, PAGE_SIZE};
+use ghostos_vm::{FirmwareMode, PowerNotification, Vm, VmConfig, PAGE_SIZE};
 
 const RESOURCE_NAMES: [&str; 6] = [
     "pages",
@@ -268,7 +268,7 @@ fn run_cycle(cycle: usize, ledger: &mut OwnershipLedger) -> Result<(), String> {
 }
 
 fn report_path() -> PathBuf {
-    std::env::var_os("SYNOS_LIFECYCLE_REPORT")
+    std::env::var_os("GHOSTOS_LIFECYCLE_REPORT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("build/soak/lifecycle/report.json"))
 }
@@ -328,7 +328,7 @@ fn write_report(
 
 #[test]
 fn lifecycle_campaign_reclaims_all_ownership() {
-    let cycles = std::env::var("SYNOS_LIFECYCLE_CYCLES")
+    let cycles = std::env::var("GHOSTOS_LIFECYCLE_CYCLES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)

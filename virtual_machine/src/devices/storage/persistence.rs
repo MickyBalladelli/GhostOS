@@ -2,10 +2,10 @@ use super::{DiskImage, StorageError};
 use crate::devices::{DeviceError, PortDevice};
 use std::cell::RefCell;
 use std::rc::Rc;
-use synos_boot_protocol::{
-    SYNOS_PERSISTENCE_COMMAND_PORT, SYNOS_PERSISTENCE_DATA_PORT,
-    SYNOS_PERSISTENCE_LENGTH_PORT, SYNOS_PERSISTENCE_LOAD, SYNOS_PERSISTENCE_MAX_BYTES,
-    SYNOS_PERSISTENCE_FLUSH, SYNOS_PERSISTENCE_SAVE,
+use ghostos_boot_protocol::{
+    GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_DATA_PORT,
+    GHOSTOS_PERSISTENCE_LENGTH_PORT, GHOSTOS_PERSISTENCE_LOAD, GHOSTOS_PERSISTENCE_MAX_BYTES,
+    GHOSTOS_PERSISTENCE_FLUSH, GHOSTOS_PERSISTENCE_SAVE,
 };
 
 const SECTOR_SIZE: usize = 512;
@@ -28,7 +28,7 @@ enum Mode {
 pub struct SynosPersistencePort {
     image: Option<DiskImage>,
     base_sector: u64,
-    bytes: [u8; SYNOS_PERSISTENCE_MAX_BYTES],
+    bytes: [u8; GHOSTOS_PERSISTENCE_MAX_BYTES],
     length: usize,
     cursor: usize,
     expected_length: usize,
@@ -40,7 +40,7 @@ impl SynosPersistencePort {
         Self {
             image: None,
             base_sector: 0,
-            bytes: [0; SYNOS_PERSISTENCE_MAX_BYTES],
+            bytes: [0; GHOSTOS_PERSISTENCE_MAX_BYTES],
             length: 0,
             cursor: 0,
             expected_length: 0,
@@ -51,7 +51,7 @@ impl SynosPersistencePort {
     pub fn attach_image(&mut self, mut image: DiskImage) -> Result<(), StorageError> {
         if image.sector_count() < REGION_SECTORS {
             return Err(StorageError::InvalidImage(
-                "disk is too small for SynOS persistence metadata".to_string(),
+                "disk is too small for GhostOS persistence metadata".to_string(),
             ));
         }
         self.base_sector = image.sector_count() - REGION_SECTORS;
@@ -92,7 +92,7 @@ impl SynosPersistencePort {
         }
         let length = u32::from_le_bytes([region[12], region[13], region[14], region[15]]) as usize;
         let stored_checksum = u32::from_le_bytes([region[16], region[17], region[18], region[19]]);
-        if length > SYNOS_PERSISTENCE_MAX_BYTES {
+        if length > GHOSTOS_PERSISTENCE_MAX_BYTES {
             return Ok(())
         }
         let payload = &region[HEADER_BYTES..HEADER_BYTES + length];
@@ -143,7 +143,7 @@ impl SynosPersistencePort {
 
     fn write_length(&mut self, value: u32) -> Result<(), DeviceError> {
         let length = value as usize;
-        if length > SYNOS_PERSISTENCE_MAX_BYTES {
+        if length > GHOSTOS_PERSISTENCE_MAX_BYTES {
             return Err(DeviceError::InvalidAddress)
         }
         self.mode = Mode::Write;
@@ -184,13 +184,13 @@ impl Default for SynosPersistencePort {
 impl PortDevice for SynosPersistencePort {
     fn read(&mut self, port: u16, size: u8) -> Result<u64, DeviceError> {
         match port {
-            SYNOS_PERSISTENCE_LENGTH_PORT if size == 4 => Ok(self.length as u64),
-            SYNOS_PERSISTENCE_DATA_PORT if size == 1 && self.mode == Mode::Read => {
+            GHOSTOS_PERSISTENCE_LENGTH_PORT if size == 4 => Ok(self.length as u64),
+            GHOSTOS_PERSISTENCE_DATA_PORT if size == 1 && self.mode == Mode::Read => {
                 let value = self.bytes.get(self.cursor).copied().unwrap_or(0);
                 self.cursor = self.cursor.saturating_add(1);
                 Ok(value as u64)
             }
-            SYNOS_PERSISTENCE_DATA_PORT if size == 4 && self.mode == Mode::Read => {
+            GHOSTOS_PERSISTENCE_DATA_PORT if size == 4 && self.mode == Mode::Read => {
                 let mut word = [0u8; 4];
                 let remaining = self.length.saturating_sub(self.cursor);
                 let count = remaining.min(4);
@@ -204,27 +204,27 @@ impl PortDevice for SynosPersistencePort {
 
     fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
         match port {
-            SYNOS_PERSISTENCE_COMMAND_PORT if size == 1 => match value as u8 {
-                SYNOS_PERSISTENCE_LOAD => {
+            GHOSTOS_PERSISTENCE_COMMAND_PORT if size == 1 => match value as u8 {
+                GHOSTOS_PERSISTENCE_LOAD => {
                     self.load_from_disk().map_err(|_| DeviceError::NotReady)?;
                     self.mode = Mode::Read;
                     self.cursor = 0;
                     Ok(())
                 }
-                SYNOS_PERSISTENCE_SAVE => {
+                GHOSTOS_PERSISTENCE_SAVE => {
                     self.begin_write();
                     Ok(())
                 }
-                SYNOS_PERSISTENCE_FLUSH => {
+                GHOSTOS_PERSISTENCE_FLUSH => {
                     self.persist().map_err(|_| DeviceError::NotReady)?;
                     self.mode = Mode::Idle;
                     Ok(())
                 }
                 _ => Err(DeviceError::InvalidAddress),
             },
-            SYNOS_PERSISTENCE_LENGTH_PORT if size == 4 => self.write_length(value as u32),
-            SYNOS_PERSISTENCE_DATA_PORT if size == 1 => self.write_data_byte(value as u8),
-            SYNOS_PERSISTENCE_DATA_PORT if size == 4 => self.write_data(value as u32),
+            GHOSTOS_PERSISTENCE_LENGTH_PORT if size == 4 => self.write_length(value as u32),
+            GHOSTOS_PERSISTENCE_DATA_PORT if size == 1 => self.write_data_byte(value as u8),
+            GHOSTOS_PERSISTENCE_DATA_PORT if size == 4 => self.write_data(value as u32),
             _ => Err(DeviceError::UnsupportedSize),
         }
     }

@@ -17,7 +17,7 @@ For an interrupted first-admin setup, use the `RECOVERY` commands in
    output. Keep logs and crash evidence unchanged.
 3. Power the machine down if the disk, filesystem, or firmware state may be
    unsafe. Preserve a sector-for-sector copy of the system disk before repair.
-4. Obtain the signed SynOS recovery release from a trusted source. Verify its
+4. Obtain the signed GhostOS recovery release from a trusted source. Verify its
    release manifest, checksums, and recovery-media provenance on a separate
    trusted machine.
 5. Choose the least destructive available action:
@@ -34,8 +34,8 @@ For an interrupted first-admin setup, use the `RECOVERY` commands in
    repeat with `--yes` only after the target is confirmed:
 
 ```sh
-./tools/recover-synos.sh --mode bios --target <target-device> --dry-run
-./tools/recover-synos.sh --mode bios --target <target-device> --yes
+./tools/recover-ghostos.sh --mode bios --target <target-device> --dry-run
+./tools/recover-ghostos.sh --mode bios --target <target-device> --yes
 ```
 
 Use `--mode uefi` for a UEFI image. The helper checks an available checksum
@@ -43,7 +43,7 @@ file and refuses a restore without explicit `--yes`. Do not substitute a
 different disk or image after the dry run.
 
 9. Eject the recovery media before rebooting. Confirm that the restored image
-   reaches the expected boot path, starts the required services, mounts SynFS,
+   reaches the expected boot path, starts the required services, mounts GhostFS,
    and presents the locked login prompt.
 10. Log in with a known-good credential. Check identity, persistent files,
     service health, network state, and the release revision. Revoke lost
@@ -91,7 +91,7 @@ interrupted first-run setup while the authorization database is absent.
 
 ## After an unsafe or incomplete attempt
 
-Stop if checksum verification, boot verification, SynFS mounting, or service
+Stop if checksum verification, boot verification, GhostFS mounting, or service
 health fails. Keep the original disk copy and the failed recovery media. Do
 not repeatedly overwrite the target, downgrade to an unknown release, or
 delete evidence to make the machine boot. Escalate with the preserved disk,

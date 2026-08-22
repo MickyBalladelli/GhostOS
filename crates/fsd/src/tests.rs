@@ -3,8 +3,8 @@ use super::{
     MAX_IPC_BUFFER_BYTES,
 };
 use alloc::{boxed::Box, vec};
-use synos_synfs::{FileType, SynFs};
-use synos_status::Status;
+use ghostos_ghostfs::{FileType, SynFs};
+use ghostos_status::Status;
 
 type TestDaemon = Daemon<16, 4, 8, 4, 8, 4096>;
 
@@ -335,7 +335,7 @@ fn rmdir_requires_empty_directory_and_parent_authority() {
         .expect("create child file");
     assert_eq!(
         daemon.remove_directory(process, authority, "/data/nonempty"),
-        Err(DaemonError::File(synos_synfs::Error::DirectoryNotEmpty))
+        Err(DaemonError::File(ghostos_ghostfs::Error::DirectoryNotEmpty))
     );
 }
 
@@ -444,7 +444,7 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
     assert_eq!(response.values[1], FileType::Regular as u64);
     assert_eq!(response.values[2], 0);
     assert_eq!(response.values[3], 0);
-    assert_eq!(daemon.filesystem().lookup("/data/first"), Err(synos_synfs::Error::NotFound));
+    assert_eq!(daemon.filesystem().lookup("/data/first"), Err(ghostos_ghostfs::Error::NotFound));
 
     let response = daemon.dispatch(
         Request::new(Operation::Delete, process).with_capability(authority),

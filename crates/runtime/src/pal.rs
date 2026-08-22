@@ -1,7 +1,7 @@
-//! Capability-backed primitives used by the native `std::sys::synos` PAL.
+//! Capability-backed primitives used by the native `std::sys::ghostos` PAL.
 
-use synos_ipc::SharedBuffer;
-use synos_status::Status;
+use ghostos_ipc::SharedBuffer;
+use ghostos_status::Status;
 
 use crate::{
     Capability, Error, Operation, Request, Response, Runtime, SystemCall, ThreadStart, WaitWord,
@@ -10,11 +10,11 @@ use crate::{
 pub const MAX_PAL_PATH_BYTES: usize = 4096;
 pub const MAX_PAL_ARGUMENT_BYTES: usize = 64 * 1024;
 
-pub const SYNOS_TOOLCHAIN_ROOT: &str = "/system/toolchains/stage-2";
-pub const SYNOS_REGISTRY_ROOT: &str = "/system/registries";
-pub const SYNOS_SOURCE_ROOT: &str = "/system/sources";
-pub const SYNOS_BUILD_ROOT: &str = "/system/builds";
-pub const SYNOS_TEMP_ROOT: &str = "/system/tmp";
+pub const GHOSTOS_TOOLCHAIN_ROOT: &str = "/system/toolchains/stage-2";
+pub const GHOSTOS_REGISTRY_ROOT: &str = "/system/registries";
+pub const GHOSTOS_SOURCE_ROOT: &str = "/system/sources";
+pub const GHOSTOS_BUILD_ROOT: &str = "/system/builds";
+pub const GHOSTOS_TEMP_ROOT: &str = "/system/tmp";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]

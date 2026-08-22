@@ -1,6 +1,6 @@
-# 16. The SynOS Virtual Machine
+# 16. The GhostOS Virtual Machine
 
-The `virtual_machine` crate is a Rust x86_64 machine used to boot and test SynOS. It is both an emulator and a contract test harness.
+The `virtual_machine` crate is a Rust x86_64 machine used to boot and test GhostOS. It is both an emulator and a contract test harness.
 
 ## VM layers
 
@@ -43,12 +43,12 @@ Every emulated device has quality-gate scenarios for register/configuration, nor
 
 Disk specifications include a stable ID, role, controller, location, image path, format, capacity, and persistence mode. The shared attachment path supports AHCI, NVMe, and Virtio block.
 
-Writable images use ownership markers. Read-only, copy-on-write, and disposable modes protect base images. System disks store boot metadata, kernel/initrd, SynFS volume, settings, identity, and reserved update space.
+Writable images use ownership markers. Read-only, copy-on-write, and disposable modes protect base images. System disks store boot metadata, kernel/initrd, GhostFS volume, settings, identity, and reserved update space.
 
 Provision a system disk:
 
 ```sh
-target/release/synos-vm disk provision ./state/system.raw \
+target/release/ghostos-vm disk provision ./state/system.raw \
   --kernel build/bios/kernel.bin \
   --size 64M --boot-args "console=serial0"
 ```
@@ -56,7 +56,7 @@ target/release/synos-vm disk provision ./state/system.raw \
 Boot it without host kernel arguments:
 
 ```sh
-target/release/synos-vm \
+target/release/ghostos-vm \
   --system-disk ./state/system.raw \
   --firmware bios --interactive
 ```
@@ -70,7 +70,7 @@ The interactive terminal owns host stdin polling, raw mode, input translation, o
 VM snapshots serialize CPU, memory, device, and disk-related state. Snapshot chains use diffs and stable IDs. A Unix monitor can report registers, status, disks, save state, and quit.
 
 ```sh
-target/release/synos-vm --kernel build/bios/kernel.bin \
+target/release/ghostos-vm --kernel build/bios/kernel.bin \
   --steps 100000 --snapshot-save ./state/checkpoint.vm
 ```
 
@@ -82,8 +82,8 @@ The VM cluster harness models multiple nodes, loopback network faults, latency, 
 
 ```sh
 ./scripts/build-bios-image.sh
-cargo build --release -p synos-vm
-target/release/synos-vm \
+cargo build --release -p ghostos-vm
+target/release/ghostos-vm \
   --kernel build/bios/kernel.bin \
   --append "console=serial0" \
   --steps 100000

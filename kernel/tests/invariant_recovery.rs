@@ -1,11 +1,11 @@
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityObject, CapabilitySpace, Rights, Scheduler,
 };
-use synos_kernel::ipc::{Channel, ChannelId};
-use synos_kernel::invariants::{self, InvariantId};
-use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
+use ghostos_kernel::ipc::{Channel, ChannelId};
+use ghostos_kernel::invariants::{self, InvariantId};
+use ghostos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
-fn recovered_capabilities() -> (CapabilitySpace<2>, AddressSpaceId, synos_kernel::CapabilityHandle) {
+fn recovered_capabilities() -> (CapabilitySpace<2>, AddressSpaceId, ghostos_kernel::CapabilityHandle) {
     let owner = AddressSpaceId::new(21).expect("valid owner");
     let mut capabilities = CapabilitySpace::<2>::new();
     let endpoint = capabilities
@@ -50,7 +50,7 @@ fn invariant_recovery_rebuilds_only_valid_state() {
         .is_ok());
     assert!(invariants::check_interrupt_delivery(
         48,
-        synos_kernel::CpuId::new(0).expect("bootstrap CPU"),
+        ghostos_kernel::CpuId::new(0).expect("bootstrap CPU"),
         false,
         true,
     )
@@ -63,7 +63,7 @@ fn invariant_recovery_rebuilds_only_valid_state() {
 
     let failure = invariants::check_interrupt_delivery(
         256,
-        synos_kernel::CpuId::new(0).expect("bootstrap CPU"),
+        ghostos_kernel::CpuId::new(0).expect("bootstrap CPU"),
         false,
         true,
     )

@@ -19,7 +19,7 @@ Minimal record shape:
 ```json
 {
   "schema": 1,
-  "kind": "synos-release-claims",
+  "kind": "ghostos-release-claims",
   "revision": "<git revision>",
   "claims": [
     {

@@ -3,17 +3,17 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use synos_vm::cpu::decoder::{InstructionDecodeError, InstructionDecoder, Operand};
-use synos_vm::devices::{ApicTrigger, Device, DeviceError, InterruptController, LocalApic, PortBus};
-use synos_vm::firmware::bios::BiosContext;
-use synos_vm::{
+use ghostos_vm::cpu::decoder::{InstructionDecodeError, InstructionDecoder, Operand};
+use ghostos_vm::devices::{ApicTrigger, Device, DeviceError, InterruptController, LocalApic, PortBus};
+use ghostos_vm::firmware::bios::BiosContext;
+use ghostos_vm::{
     Cpu, CpuError, CpuMode, ExecutionEngine, ExecutionEngineConfig, LargePageSize, Mmu,
     PageFlags, PrivilegeLevel, PAGE_SIZE,
 };
 
 const CODE: u64 = 0x1000;
 
-fn decode(bytes: &[u8]) -> Result<synos_vm::cpu::decoder::DecodedInstruction, InstructionDecodeError> {
+fn decode(bytes: &[u8]) -> Result<ghostos_vm::cpu::decoder::DecodedInstruction, InstructionDecodeError> {
     let mut mmu = Mmu::new(2 * 1024 * 1024);
     mmu.write_phys(CODE, bytes).expect("write decoder fixture");
     InstructionDecoder::new().decode(CODE, &mmu)
@@ -296,7 +296,7 @@ fn mmu_covers_frames_paging_permissions_large_pages_mmio_cow_bounds_and_stats() 
     );
     assert!(matches!(
         mmu.map_large_page(0x21_0000, 0x20_0000, LargePageSize::TwoMiB, PageFlags::PRESENT),
-        Err(synos_vm::MemoryError::AlignmentError)
+        Err(ghostos_vm::MemoryError::AlignmentError)
     ));
 
     mmu.attach_mmio(0xF000, 8, Box::new(RegisterDevice::default()));

@@ -1,6 +1,6 @@
-use synos_auth::TransportRights;
-use synos_fabric::NodeId;
-use synos_kernel::Rights;
+use ghostos_auth::TransportRights;
+use ghostos_fabric::NodeId;
+use ghostos_kernel::Rights;
 
 use crate::ProtocolError;
 

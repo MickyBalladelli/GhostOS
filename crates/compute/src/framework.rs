@@ -1,4 +1,4 @@
-use synos_ipc::SharedBuffer;
+use ghostos_ipc::SharedBuffer;
 
 use crate::{Error, tensor::SharedTensor};
 
@@ -123,7 +123,7 @@ impl Invocation {
     }
 }
 
-/// Native contract implemented by Candle and Burn SynOS ports.
+/// Native contract implemented by Candle and Burn GhostOS ports.
 ///
 /// Model bytes and tensors are imported by shared-page descriptor. An
 /// implementation keeps those mappings as runtime storage instead of copying
@@ -144,7 +144,7 @@ pub trait NativeFramework {
 
 /// Small host surface used instead of a libc or foreign-language runtime.
 ///
-/// The `std::sys::synos` ports for Candle and Burn can implement their thread,
+/// The `std::sys::ghostos` ports for Candle and Burn can implement their thread,
 /// clock, and accelerator hooks directly on this contract.
 pub trait SynosRuntime {
     fn monotonic_time_ns(&self) -> u64;

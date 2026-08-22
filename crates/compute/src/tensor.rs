@@ -1,4 +1,4 @@
-use synos_ipc::{SharedBuffer, SharedRegionId};
+use ghostos_ipc::{SharedBuffer, SharedRegionId};
 
 use crate::Error;
 

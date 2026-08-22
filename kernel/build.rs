@@ -103,9 +103,9 @@ fn main() {
     let sources = kernel.join("../userspace/boot-services");
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output directory"));
     let tools = rust_tools();
-    let service = output.join("synos-service.bin");
-    let login = output.join("synos-login.bin");
-    let shell = output.join("synos-shell.bin");
+    let service = output.join("ghostos-service.bin");
+    let login = output.join("ghostos-login.bin");
+    let shell = output.join("ghostos-shell.bin");
     let linker = sources.join("linker.ld");
 
     for source in ["service.c", "login.c", "shell.c", "linker.ld"] {
@@ -114,7 +114,7 @@ fn main() {
     build_user_image(&sources.join("service.c"), &linker, &service, &tools);
     build_user_image(&sources.join("login.c"), &linker, &login, &tools);
     build_user_image(&sources.join("shell.c"), &linker, &shell, &tools);
-    println!("cargo:rustc-env=SYNOS_SERVICE_IMAGE={}", service.display());
-    println!("cargo:rustc-env=SYNOS_LOGIN_IMAGE={}", login.display());
-    println!("cargo:rustc-env=SYNOS_SHELL_IMAGE={}", shell.display());
+    println!("cargo:rustc-env=GHOSTOS_SERVICE_IMAGE={}", service.display());
+    println!("cargo:rustc-env=GHOSTOS_LOGIN_IMAGE={}", login.display());
+    println!("cargo:rustc-env=GHOSTOS_SHELL_IMAGE={}", shell.display());
 }

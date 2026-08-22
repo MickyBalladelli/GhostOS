@@ -1,6 +1,6 @@
 //! Kernel-owned Ring 3 address-space records.
 
-use synos_app::{Mapping, MappingRequest, ProcessContext, RuntimeSegment, SegmentPermissions};
+use ghostos_app::{Mapping, MappingRequest, ProcessContext, RuntimeSegment, SegmentPermissions};
 
 use crate::capability::{CapabilityHandle, PhysicalRange};
 use crate::task::AddressSpaceId;

@@ -5,9 +5,9 @@ use std::fs::File;
 use std::io::Write;
 use std::rc::Rc;
 
-use synos_vm::devices::{Ahci, ApicTrigger, LocalApic, Nvme, PortDevice, VirtioBlk};
-use synos_vm::net::{LoopbackHub, LoopbackPort};
-use synos_vm::{
+use ghostos_vm::devices::{Ahci, ApicTrigger, LocalApic, Nvme, PortDevice, VirtioBlk};
+use ghostos_vm::net::{LoopbackHub, LoopbackPort};
+use ghostos_vm::{
     DiskImage, MacAddress, Mmu, NetBackend, PacketQueue,
 };
 
@@ -60,8 +60,8 @@ fn device_ordering_and_queue_backpressure_are_fifo_and_bounded() {
     assert!(queue.is_empty());
 
     let hub = Rc::new(RefCell::new(LoopbackHub::new()));
-    let source_mac = MacAddress::synos_default(1);
-    let destination_mac = MacAddress::synos_default(2);
+    let source_mac = MacAddress::ghostos_default(1);
+    let destination_mac = MacAddress::ghostos_default(2);
     let mut tx = LoopbackPort::new(hub.clone(), 0, source_mac);
     let mut rx = LoopbackPort::new(hub.clone(), 1, destination_mac);
     tx.transmit(&frame(destination_mac, source_mac, 1))
@@ -127,12 +127,12 @@ fn reset_during_io_drops_pending_work_and_stale_completion() {
 #[test]
 fn hot_removal_detaches_storage_without_leaving_guest_capacity() {
     let ahci_path = std::env::temp_dir().join(format!(
-        "synos-device-ahci-{}-{}.img",
+        "ghostos-device-ahci-{}-{}.img",
         std::process::id(),
         1
     ));
     let nvme_path = std::env::temp_dir().join(format!(
-        "synos-device-nvme-{}-{}.img",
+        "ghostos-device-nvme-{}-{}.img",
         std::process::id(),
         1
     ));

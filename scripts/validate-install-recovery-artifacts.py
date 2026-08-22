@@ -22,7 +22,7 @@ def validate_archive(path: pathlib.Path, tool_name: str) -> None:
     with tarfile.open(path, "r:gz") as archive:
         names = {member.name for member in archive.getmembers()}
     required = {"manifest.json", "SHA256SUMS", "MEDIA-SHA256SUMS"}
-    required.update({"payload/synos-bios.img", "payload/synos-uefi.img", f"tools/{tool_name}"})
+    required.update({"payload/ghostos-bios.img", "payload/ghostos-uefi.img", f"tools/{tool_name}"})
     if not required.issubset(names):
         missing = ", ".join(sorted(required - names))
         raise ValueError(f"{path.name} is missing archive members: {missing}")
@@ -38,7 +38,7 @@ def main() -> int:
     directory = args.directory.resolve()
     manifest_path = directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("schema") != 1 or manifest.get("product") != "SynOS":
+    if manifest.get("schema") != 1 or manifest.get("product") != "GhostOS":
         raise ValueError("unsupported installer/recovery manifest")
 
     entries = manifest.get("artifacts", []) + manifest.get("tools", []) + manifest.get("support", [])
@@ -57,8 +57,8 @@ def main() -> int:
         if not path.is_file() or sha256(path) != digest:
             raise ValueError(f"checksum mismatch: {name}")
 
-    validate_archive(directory / "synos-installer.tar.gz", "install-synos.sh")
-    validate_archive(directory / "synos-recovery.tar.gz", "recover-synos.sh")
+    validate_archive(directory / "ghostos-installer.tar.gz", "install-ghostos.sh")
+    validate_archive(directory / "ghostos-recovery.tar.gz", "recover-ghostos.sh")
     print(f"validated installer and recovery artifacts: {directory}")
     return 0
 

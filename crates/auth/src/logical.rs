@@ -1,7 +1,7 @@
-use synos_kernel::{
+use ghostos_kernel::{
     AddressSpaceId, CapabilityHandle, CapabilityObject, CapabilitySpace, Rights,
 };
-use synos_system_model::logical::{
+use ghostos_system_model::logical::{
     LogicalError, LogicalNameTable, LogicalRights, LogicalScope, LogicalTarget, Principal,
     ResolvedLogicalName,
 };

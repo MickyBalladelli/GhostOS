@@ -1,9 +1,9 @@
-use synos_boot_protocol::{MemoryKind, MemoryRegion};
+use ghostos_boot_protocol::{MemoryKind, MemoryRegion};
 
 use crate::capability::{CapabilityHandle, CapabilitySpace, PhysicalRange};
 use crate::quota::{CapabilityQuota, QuotaDecision, QuotaResource};
 use crate::task::AddressSpaceId;
-use synos_status::{IntoStatus, Status};
+use ghostos_status::{IntoStatus, Status};
 
 pub const FRAME_SIZE: u64 = 4096;
 pub const MAX_OWNED_FRAME_RANGES: usize = 256;
@@ -39,7 +39,7 @@ impl IntoStatus for QuotaAllocationError {
 }
 
 pub struct EarlyFrameAllocator {
-    free: [Option<FrameRange>; synos_boot_protocol::MAX_MEMORY_REGIONS],
+    free: [Option<FrameRange>; ghostos_boot_protocol::MAX_MEMORY_REGIONS],
     free_count: usize,
     owned: [Option<OwnedFrameRange>; MAX_OWNED_FRAME_RANGES],
     owned_count: usize,
@@ -74,7 +74,7 @@ struct OwnedFrameRange {
 impl EarlyFrameAllocator {
     pub fn new(regions: &[MemoryRegion]) -> Self {
         let mut allocator = Self {
-            free: [None; synos_boot_protocol::MAX_MEMORY_REGIONS],
+            free: [None; ghostos_boot_protocol::MAX_MEMORY_REGIONS],
             free_count: 0,
             owned: [None; MAX_OWNED_FRAME_RANGES],
             owned_count: 0,

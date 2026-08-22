@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send one bounded shell command to a SynOS QEMU console through QMP."""
+"""Send one bounded shell command to a GhostOS QEMU console through QMP."""
 
 from __future__ import annotations
 

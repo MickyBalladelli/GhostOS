@@ -4,7 +4,7 @@
 # not invent a different guest disk, network, terminal, firmware, or clock
 # shape. The qualification script turns every declared skip into evidence.
 schema = 1
-data_model = "synos-vm-guest-model-v1"
+data_model = "ghostos-vm-guest-model-v1"
 model_fields = [
   "guest_architecture",
   "firmware_mode",

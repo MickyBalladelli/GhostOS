@@ -1,6 +1,6 @@
 use crate::logical_fast::LogicalFastPath;
 use crate::{Error as ModelError, LogicalName};
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub const MAX_LOGICAL_VALUE_BYTES: usize = 192;
 pub const DEFAULT_LOGICAL_CAPACITY: usize = 128;

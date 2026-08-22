@@ -5,16 +5,16 @@ use crate::task::{
     ThreadId, ThreadState, MAX_CPUS,
 };
 use crate::partition::{CorePartition, CorePartitionError};
-use synos_observability::{
+use ghostos_observability::{
     field, CapabilityDomain, CapabilityTraceStage, EventField, EventKind, Level, ProfileDomain,
     ProfileSample, ScalePolicy, emit_capability_trace, info, record_profile_sample,
 };
-use synos_numa::{NumaPlacement, NumaReport, NumaTopology, PlacementKind};
-use synos_power::{
+use ghostos_numa::{NumaPlacement, NumaReport, NumaTopology, PlacementKind};
+use ghostos_power::{
     CpuIdleState, IdleRequest, PowerClusterConfig, PowerMetrics, PowerPolicy, ProcessorSet,
     ThermalReading, WorkloadClass, WorkloadRequest,
 };
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SchedulerError {
@@ -286,7 +286,7 @@ impl Scheduler {
         capabilities: &CapabilitySpace<MAX_CAPABILITIES>,
         caller: AddressSpaceId,
         authority: CapabilityHandle,
-        trips: synos_power::ThermalTripPoints,
+        trips: ghostos_power::ThermalTripPoints,
         hysteresis_deci_kelvin: u32,
     ) -> Result<(), SchedulerError> {
         self.authorize_system_control(capabilities, caller, authority)?;
@@ -297,7 +297,7 @@ impl Scheduler {
         Ok(())
     }
 
-    pub fn update_thermal_policy(&mut self, reading: ThermalReading) -> synos_power::ThermalAction {
+    pub fn update_thermal_policy(&mut self, reading: ThermalReading) -> ghostos_power::ThermalAction {
         let action = self.power.update_thermal(reading);
         let mut events = [None; 4];
         let count = self.power.drain_thermal_events(&mut events);

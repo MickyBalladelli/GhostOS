@@ -1,7 +1,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub mod allocator;
 pub mod inference;
@@ -14,7 +14,7 @@ pub enum Error {
     CacheNotFound,
     Capacity,
     CorruptRecoveryRecord,
-    Fabric(synos_fabric::Error),
+    Fabric(ghostos_fabric::Error),
     InvalidHandle,
     InvalidRange,
     NoFailoverReplica,
@@ -22,8 +22,8 @@ pub enum Error {
     StaleCheckpoint,
 }
 
-impl From<synos_fabric::Error> for Error {
-    fn from(error: synos_fabric::Error) -> Self {
+impl From<ghostos_fabric::Error> for Error {
+    fn from(error: ghostos_fabric::Error) -> Self {
         Self::Fabric(error)
     }
 }

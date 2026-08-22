@@ -14,7 +14,7 @@ pub use locking::{
     RecordLockGuard,
 };
 pub use record::{RecordError, RecordFile, RecordLocation, StructuredRecord};
-pub use synos_synfs::{
+pub use ghostos_ghostfs::{
     IndexDefinition, MappedRecordFile, RecordDescriptor, RecordFileInfo, RecordFormat,
     RecordOrganization, RecordRead, RecordSelector, RmsError, RmsMapHandle, TransactionCommit,
 };

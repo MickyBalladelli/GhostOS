@@ -1,11 +1,11 @@
 //! The bounded integration layer that makes the network service usable.
 //!
-//! Drivers own hardware. `synos-netd` owns packet queues and policy. This
+//! Drivers own hardware. `ghostos-netd` owns packet queues and policy. This
 //! module is the small, explicit boundary between those two worlds: it also
 //! owns the durable boot configuration and the two tiny UDP services needed
 //! before higher-level applications can start.
 
-use synos_synfs::{Error as SynFsError, SynFs};
+use ghostos_ghostfs::{Error as SynFsError, SynFs};
 
 use crate::{
     install_core_network_rules, install_dhcp_client_rules, FirewallError, FirewallPolicy,

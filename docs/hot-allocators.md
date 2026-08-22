@@ -1,6 +1,6 @@
 # Hot object allocators
 
-`synos_kernel::HotObjectAllocator` provides four bounded pools: IPC, packet,
+`ghostos_kernel::HotObjectAllocator` provides four bounded pools: IPC, packet,
 timer, and scheduler objects. Each NUMA node owns one bitmap pool per CPU and
 object kind. The allocator checks the current CPU first, then same-node CPUs,
 then at most the configured number of remote nodes. No heap or unbounded scan

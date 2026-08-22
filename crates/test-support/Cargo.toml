@@ -1,14 +1,14 @@
 [package]
-name = "synos-test-support"
+name = "ghostos-test-support"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Deterministic fixtures and failure injection for SynOS tests"
+description = "Deterministic fixtures and failure injection for GhostOS tests"
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-synos-durability = { path = "../durability" }
-synos-time-sync = { path = "../time-sync" }
+ghostos-durability = { path = "../durability" }
+ghostos-time-sync = { path = "../time-sync" }

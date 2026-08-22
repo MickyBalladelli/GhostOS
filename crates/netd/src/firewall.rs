@@ -1,8 +1,8 @@
 use crate::capture::{CaptureDirection, CaptureKind, PacketCapture};
-use synos_auth::{CapabilityKey as LeaseKey, CapabilityLease, LeaseContext, LeaseError};
-use synos_fabric::NodeId;
-use synos_kernel::Rights;
-use synos_policy::{FirewallChange, ObjectId, PolicyChange, PolicySnapshot, SimulationError, SimulationReport};
+use ghostos_auth::{CapabilityKey as LeaseKey, CapabilityLease, LeaseContext, LeaseError};
+use ghostos_fabric::NodeId;
+use ghostos_kernel::Rights;
+use ghostos_policy::{FirewallChange, ObjectId, PolicyChange, PolicySnapshot, SimulationError, SimulationReport};
 
 pub const POLICY_PATH: &str = "SYS$SYSTEM:FIREWALL.POLICY;1";
 pub const MAX_FIREWALL_RULES: usize = 32;
@@ -434,7 +434,7 @@ impl<const RULES: usize> FirewallPolicy<RULES> {
 }
 
 /// Append-only policy image ledger. Each entry represents one immutable
-/// SynFS version; publishing never overwrites an older image.
+/// GhostFS version; publishing never overwrites an older image.
 pub struct PolicyStore<const VERSIONS: usize = 8, const IMAGE_BYTES: usize = MAX_POLICY_IMAGE_BYTES> {
     images: [Option<PolicyImage<IMAGE_BYTES>>; VERSIONS],
     count: usize,
@@ -997,7 +997,7 @@ impl<const RULES: usize, const CONNECTIONS: usize, const BUCKETS: usize>
     }
 
     /// Existing socket handles are unforgeable, owner-bound network grants.
-    /// This path lets `synos-netd` carry that proof without copying a large
+    /// This path lets `ghostos-netd` carry that proof without copying a large
     /// cryptographic token through the socket wire envelope.
     pub fn authorize_socket_endpoint(
         &self,

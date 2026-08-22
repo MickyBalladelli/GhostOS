@@ -8,23 +8,23 @@ use core::sync::atomic::{AtomicBool, Ordering};
 ))]
 use core::sync::atomic::{AtomicU8, AtomicU64};
 
-use synos_fsd::{Daemon, ProcessRights};
-use synos_init::{
+use ghostos_fsd::{Daemon, ProcessRights};
+use ghostos_init::{
     ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceReadiness, ServiceSpec,
     ServiceState, SpawnRequest, StartupDiagnostic, Supervisor, SupervisorRuntime,
 };
-use synos_status::Status;
+use ghostos_status::Status;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use synos_status::IntoStatus;
+use ghostos_status::IntoStatus;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-use synos_observability::{audit_event, field, EventField, Level};
-use synos_synfs::SynFs;
+use ghostos_observability::{audit_event, field, EventField, Level};
+use ghostos_ghostfs::SynFs;
 
 const FILESYSTEM_SERVICE_ID: u32 = 0x4653_4444;
 const FILESYSTEM_PROCESS_ID: u64 = 2;
@@ -78,7 +78,7 @@ const ETHERNET_SERVICE_ID: u32 = 0x4554_4844;
 const ETHERNET_PROCESS_ID: u64 = 13;
 const ETHERNET_IMAGE_ID: u128 = 0x5359_4e4f_4554_4844_0000_0000_0000_0001;
 const ETHERNET_CAPABILITY_PROFILE: u64 = 0x4554_4844_5f52_4f4f;
-const FILESYSTEM_BLOCKS: usize = synos_synfs::SYSTEM_VOLUME_BLOCKS;
+const FILESYSTEM_BLOCKS: usize = ghostos_ghostfs::SYSTEM_VOLUME_BLOCKS;
 pub const AUTHORIZATION_DATABASE_PATH: &str = "/system/security/authorization";
 #[cfg(all(
     target_arch = "x86_64",
@@ -387,7 +387,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
     let provisioning_required = physical_filesystem.as_ref().is_none_or(|filesystem| {
         matches!(
             filesystem.lookup(AUTHORIZATION_DATABASE_PATH),
-            Err(synos_synfs::Error::NotFound)
+            Err(ghostos_ghostfs::Error::NotFound)
         )
     });
     #[cfg(all(
@@ -415,7 +415,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         .map_err(|_| StartError::Daemon)?;
     daemon
         .register_process(
-            synos_fsd::ProcessId::new(filesystem_process.raw()).ok_or(StartError::Process)?,
+            ghostos_fsd::ProcessId::new(filesystem_process.raw()).ok_or(StartError::Process)?,
             ProcessRights::from_bits(
                 ProcessRights::READ.bits()
                     | ProcessRights::WRITE.bits()
@@ -426,26 +426,26 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         .map_err(|_| StartError::Daemon)?;
     daemon
         .register_process(
-            synos_fsd::ProcessId::new(shell_process.raw()).ok_or(StartError::Process)?,
+            ghostos_fsd::ProcessId::new(shell_process.raw()).ok_or(StartError::Process)?,
             ProcessRights::NONE,
         )
         .map_err(|_| StartError::Daemon)?;
 
-    let filesystem_name = ServiceName::new("synos-fsd").map_err(|_| StartError::Supervisor)?;
-    let storage_name = ServiceName::new("synos-storaged").map_err(|_| StartError::Supervisor)?;
-    let network_name = ServiceName::new("synos-netd").map_err(|_| StartError::Supervisor)?;
-    let logging_name = ServiceName::new("synos-logd").map_err(|_| StartError::Supervisor)?;
-    let audit_name = ServiceName::new("synos-auditd").map_err(|_| StartError::Supervisor)?;
+    let filesystem_name = ServiceName::new("ghostos-fsd").map_err(|_| StartError::Supervisor)?;
+    let storage_name = ServiceName::new("ghostos-storaged").map_err(|_| StartError::Supervisor)?;
+    let network_name = ServiceName::new("ghostos-netd").map_err(|_| StartError::Supervisor)?;
+    let logging_name = ServiceName::new("ghostos-logd").map_err(|_| StartError::Supervisor)?;
+    let audit_name = ServiceName::new("ghostos-auditd").map_err(|_| StartError::Supervisor)?;
     let authentication_name =
-        ServiceName::new("synos-authd").map_err(|_| StartError::Supervisor)?;
-    let package_name = ServiceName::new("synos-pkgd").map_err(|_| StartError::Supervisor)?;
-    let shell_name = ServiceName::new("synos-shell").map_err(|_| StartError::Supervisor)?;
-    let login_name = ServiceName::new("synos-logind").map_err(|_| StartError::Supervisor)?;
-    let pci_name = ServiceName::new("synos-pcid").map_err(|_| StartError::Supervisor)?;
-    let ahci_name = ServiceName::new("synos-ahcid").map_err(|_| StartError::Supervisor)?;
-    let nvme_name = ServiceName::new("synos-nvmed").map_err(|_| StartError::Supervisor)?;
+        ServiceName::new("ghostos-authd").map_err(|_| StartError::Supervisor)?;
+    let package_name = ServiceName::new("ghostos-pkgd").map_err(|_| StartError::Supervisor)?;
+    let shell_name = ServiceName::new("ghostos-shell").map_err(|_| StartError::Supervisor)?;
+    let login_name = ServiceName::new("ghostos-logind").map_err(|_| StartError::Supervisor)?;
+    let pci_name = ServiceName::new("ghostos-pcid").map_err(|_| StartError::Supervisor)?;
+    let ahci_name = ServiceName::new("ghostos-ahcid").map_err(|_| StartError::Supervisor)?;
+    let nvme_name = ServiceName::new("ghostos-nvmed").map_err(|_| StartError::Supervisor)?;
     let ethernet_name =
-        ServiceName::new("synos-ethernetd").map_err(|_| StartError::Supervisor)?;
+        ServiceName::new("ghostos-ethernetd").map_err(|_| StartError::Supervisor)?;
     let mut supervisor = Supervisor::<SERVICE_COUNT>::new();
     supervisor
         .register(ServiceSpec {
@@ -641,7 +641,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
     let mut startup_order = 1usize;
     crate::println!("service startup dependency order:");
     for event in startup_trace.events() {
-        if let synos_init::LifecycleEvent::ServiceStarted { service, generation } = event {
+        if let ghostos_init::LifecycleEvent::ServiceStarted { service, generation } = event {
             if let Some(index) = service_ids().iter().position(|id| *id == service) {
                 startup_orders[index] = startup_order;
             }
@@ -794,7 +794,7 @@ fn load_first_admin_username(filesystem: Option<&SynFs<FILESYSTEM_BLOCKS>>) {
     let Ok(metadata) = filesystem.lookup(FIRST_ADMIN_USERNAME_PATH) else {
         return
     };
-    if metadata.file_type != synos_synfs::FileType::Regular
+    if metadata.file_type != ghostos_ghostfs::FileType::Regular
         || metadata.size == 0
         || metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
     {
@@ -846,12 +846,12 @@ fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
     };
     match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
-        Err(synos_synfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
     }
     match daemon.filesystem().lookup(FIRST_ADMIN_USERNAME_PATH) {
         Ok(metadata) => {
-            if metadata.file_type != synos_synfs::FileType::Regular
+            if metadata.file_type != ghostos_ghostfs::FileType::Regular
                 || metadata.size as usize != username.len()
             {
                 return Err(Status::ALREADY_EXISTS)
@@ -868,14 +868,14 @@ fn create_first_admin_username_inner(username: &[u8]) -> Result<(), Status> {
             }
             return Ok(())
         }
-        Err(synos_synfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
     }
     let mut transaction = daemon.filesystem_mut().transaction();
     match transaction.lookup("/system/security") {
-        Ok(metadata) if metadata.file_type == synos_synfs::FileType::Directory => {}
+        Ok(metadata) if metadata.file_type == ghostos_ghostfs::FileType::Directory => {}
         Ok(_) => return Err(Status::INVALID_PATH),
-        Err(synos_synfs::Error::NotFound) => {
+        Err(ghostos_ghostfs::Error::NotFound) => {
             transaction
                 .create_directory("/system/security", true)
                 .map_err(|error| error.status())?;
@@ -937,19 +937,19 @@ fn create_first_admin_credential_inner(
     };
     match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
-        Err(synos_synfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
     }
     match daemon.filesystem().lookup(FIRST_ADMIN_USERNAME_PATH) {
-        Ok(metadata) if metadata.file_type == synos_synfs::FileType::Regular => {}
+        Ok(metadata) if metadata.file_type == ghostos_ghostfs::FileType::Regular => {}
         Ok(_) => return Err(Status::CORRUPT),
-        Err(synos_synfs::Error::NotFound) => return Err(Status::ACCESS_DENIED),
+        Err(ghostos_ghostfs::Error::NotFound) => return Err(Status::ACCESS_DENIED),
         Err(error) => return Err(error.status()),
     }
     match daemon.filesystem().lookup(FIRST_ADMIN_CREDENTIAL_PATH) {
         Ok(metadata) => {
             let size = metadata.size as usize;
-            if metadata.file_type != synos_synfs::FileType::Regular
+            if metadata.file_type != ghostos_ghostfs::FileType::Regular
                 || size < 3
                 || size > FIRST_ADMIN_CREDENTIAL_CAPACITY + 2
             {
@@ -977,7 +977,7 @@ fn create_first_admin_credential_inner(
             }
             return Ok(())
         }
-        Err(synos_synfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
     }
     let mut transaction = daemon.filesystem_mut().transaction();
@@ -1028,7 +1028,7 @@ fn commit_first_admin_inner() -> Result<(), Status> {
     }
     match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
-        Err(synos_synfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
     }
 
@@ -1036,10 +1036,10 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         .filesystem()
         .lookup(FIRST_ADMIN_USERNAME_PATH)
         .map_err(|error| match error {
-            synos_synfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
+            ghostos_ghostfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
             other => other.status(),
         })?;
-    if username_metadata.file_type != synos_synfs::FileType::Regular
+    if username_metadata.file_type != ghostos_ghostfs::FileType::Regular
         || username_metadata.size == 0
         || username_metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
     {
@@ -1060,11 +1060,11 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         .filesystem()
         .lookup(FIRST_ADMIN_CREDENTIAL_PATH)
         .map_err(|error| match error {
-            synos_synfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
+            ghostos_ghostfs::Error::NotFound => Status::CONFIRMATION_REQUIRED,
             other => other.status(),
         })?;
     let credential_size = credential_metadata.size as usize;
-    if credential_metadata.file_type != synos_synfs::FileType::Regular
+    if credential_metadata.file_type != ghostos_ghostfs::FileType::Regular
         || credential_size < 3
         || credential_size > FIRST_ADMIN_CREDENTIAL_CAPACITY + 2
     {
@@ -1101,7 +1101,7 @@ fn commit_first_admin_inner() -> Result<(), Status> {
     let mut transaction = daemon.filesystem_mut().transaction();
     match transaction.lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
-        Err(synos_synfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
     }
     transaction
@@ -1161,18 +1161,18 @@ fn first_admin_recovery_inner(action: u64) -> Result<[u64; 4], Status> {
     if action == 1 {
         let username = match daemon.filesystem().lookup(FIRST_ADMIN_USERNAME_PATH) {
             Ok(metadata) => u64::from(
-                metadata.file_type == synos_synfs::FileType::Regular
+                metadata.file_type == ghostos_ghostfs::FileType::Regular
                     && metadata.size != 0,
             ),
-            Err(synos_synfs::Error::NotFound) => 0,
+            Err(ghostos_ghostfs::Error::NotFound) => 0,
             Err(_) => 2,
         };
         let credential = match daemon.filesystem().lookup(FIRST_ADMIN_CREDENTIAL_PATH) {
             Ok(metadata) => u64::from(
-                metadata.file_type == synos_synfs::FileType::Regular
+                metadata.file_type == ghostos_ghostfs::FileType::Regular
                     && metadata.size >= 3,
             ),
-            Err(synos_synfs::Error::NotFound) => 0,
+            Err(ghostos_ghostfs::Error::NotFound) => 0,
             Err(_) => 2,
         };
         return Ok([
@@ -1197,19 +1197,19 @@ fn first_admin_recovery_inner(action: u64) -> Result<[u64; 4], Status> {
     }
     match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
-        Err(synos_synfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
     }
     let mut transaction = daemon.filesystem_mut().transaction();
     for path in [FIRST_ADMIN_USERNAME_PATH, FIRST_ADMIN_CREDENTIAL_PATH] {
         match transaction.lookup(path) {
-            Ok(metadata) if metadata.file_type == synos_synfs::FileType::Regular => {
+            Ok(metadata) if metadata.file_type == ghostos_ghostfs::FileType::Regular => {
                 transaction
                     .delete(path)
                     .map_err(|error| error.status())?;
             }
             Ok(_) => return Err(Status::CORRUPT),
-            Err(synos_synfs::Error::NotFound) => {}
+            Err(ghostos_ghostfs::Error::NotFound) => {}
             Err(error) => return Err(error.status()),
         }
     }
@@ -1234,62 +1234,62 @@ fn first_admin_recovery_inner(action: u64) -> Result<[u64; 4], Status> {
     any(target_os = "none", target_os = "uefi")
 ))]
 pub(crate) fn dispatch_shell_filesystem(
-    operation: synos_runtime::Operation,
+    operation: ghostos_runtime::Operation,
     flags: u16,
     capability: u64,
     offset: u64,
     length: u64,
     buffer: Option<&mut [u8]>,
-) -> synos_runtime::Response {
-    let Some(process) = synos_fsd::ProcessId::new(SHELL_PROCESS_ID as u64) else {
-        return synos_runtime::Response {
+) -> ghostos_runtime::Response {
+    let Some(process) = ghostos_fsd::ProcessId::new(SHELL_PROCESS_ID as u64) else {
+        return ghostos_runtime::Response {
             status: Status::ACCESS_DENIED.raw(),
             flags: 0,
             values: [0; 4],
         }
     };
     let Some(fs_operation) = (match operation {
-        synos_runtime::Operation::SynFsOpen => Some(synos_fsd::Operation::Open),
-        synos_runtime::Operation::SynFsClose => Some(synos_fsd::Operation::Close),
-        synos_runtime::Operation::SynFsRead => Some(synos_fsd::Operation::Read),
-        synos_runtime::Operation::SynFsWrite => Some(synos_fsd::Operation::Write),
-        synos_runtime::Operation::SynFsMap => Some(synos_fsd::Operation::Map),
-        synos_runtime::Operation::SynFsUnmap => Some(synos_fsd::Operation::Unmap),
-        synos_runtime::Operation::SynFsMkdir => Some(synos_fsd::Operation::Mkdir),
-        synos_runtime::Operation::SynFsRmdir => Some(synos_fsd::Operation::Rmdir),
-        synos_runtime::Operation::SynFsList => Some(synos_fsd::Operation::List),
-        synos_runtime::Operation::SynFsDelete => Some(synos_fsd::Operation::Delete),
+        ghostos_runtime::Operation::SynFsOpen => Some(ghostos_fsd::Operation::Open),
+        ghostos_runtime::Operation::SynFsClose => Some(ghostos_fsd::Operation::Close),
+        ghostos_runtime::Operation::SynFsRead => Some(ghostos_fsd::Operation::Read),
+        ghostos_runtime::Operation::SynFsWrite => Some(ghostos_fsd::Operation::Write),
+        ghostos_runtime::Operation::SynFsMap => Some(ghostos_fsd::Operation::Map),
+        ghostos_runtime::Operation::SynFsUnmap => Some(ghostos_fsd::Operation::Unmap),
+        ghostos_runtime::Operation::SynFsMkdir => Some(ghostos_fsd::Operation::Mkdir),
+        ghostos_runtime::Operation::SynFsRmdir => Some(ghostos_fsd::Operation::Rmdir),
+        ghostos_runtime::Operation::SynFsList => Some(ghostos_fsd::Operation::List),
+        ghostos_runtime::Operation::SynFsDelete => Some(ghostos_fsd::Operation::Delete),
         _ => None,
     }) else {
-        return synos_runtime::Response {
+        return ghostos_runtime::Response {
             status: Status::INVALID_ARGUMENT.raw(),
             flags: 0,
             values: [0; 4],
         }
     };
-    let authority = synos_fsd::Capability::from_raw(
+    let authority = ghostos_fsd::Capability::from_raw(
         SHELL_FILESYSTEM_AUTHORITY.load(Ordering::Acquire),
     );
     let Some(authority) = authority else {
-        return synos_runtime::Response {
+        return ghostos_runtime::Response {
             status: Status::BUSY.raw(),
             flags: 0,
             values: [0; 4],
         }
     };
     let request_capability = match fs_operation {
-        synos_fsd::Operation::Open
-        | synos_fsd::Operation::Mkdir
-        | synos_fsd::Operation::Rmdir
-        | synos_fsd::Operation::List
-        | synos_fsd::Operation::Delete => authority,
-        _ => match synos_fsd::Capability::from_raw(capability) {
+        ghostos_fsd::Operation::Open
+        | ghostos_fsd::Operation::Mkdir
+        | ghostos_fsd::Operation::Rmdir
+        | ghostos_fsd::Operation::List
+        | ghostos_fsd::Operation::Delete => authority,
+        _ => match ghostos_fsd::Capability::from_raw(capability) {
             Some(capability) => capability,
             None => authority,
         },
     };
-    let request = synos_fsd::Request::new(fs_operation, process)
-        .with_flags(synos_fsd::Flags::from_bits(flags))
+    let request = ghostos_fsd::Request::new(fs_operation, process)
+        .with_flags(ghostos_fsd::Flags::from_bits(flags))
         .with_capability(request_capability)
         .with_offset(offset)
         .with_length(length);
@@ -1297,7 +1297,7 @@ pub(crate) fn dispatch_shell_filesystem(
         (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
     }
     .dispatch(request, buffer);
-    synos_runtime::Response {
+    ghostos_runtime::Response {
         status: response.status.raw(),
         flags: 0,
         values: response.values,
@@ -1313,7 +1313,7 @@ pub(crate) fn dispatch_shell_filesystem(
     any(target_os = "none", target_os = "uefi")
 ))]
 pub(crate) fn set_shell_filesystem_rights(rights: ProcessRights) -> Result<(), Status> {
-    let process = synos_fsd::ProcessId::new(SHELL_PROCESS_ID).ok_or(Status::INVALID_ARGUMENT)?;
+    let process = ghostos_fsd::ProcessId::new(SHELL_PROCESS_ID).ok_or(Status::INVALID_ARGUMENT)?;
     let previous = SHELL_FILESYSTEM_AUTHORITY.swap(0, Ordering::AcqRel);
     if previous != 0 {
         let daemon = unsafe {

@@ -1,17 +1,17 @@
-use synos_rms::{
+use ghostos_rms::{
     Database, DatabaseError, DlmBinding, DlmLockMode, DlmLockRange, DlmRecordLocks,
     RecordDescriptor, RecordError, RecordFile, RecordFormat, RecordOrganization, RecordSelector,
     RmsError,
 };
-use synos_status::{IntoStatus, Status};
-use synos_synfs::SynFs;
+use ghostos_status::{IntoStatus, Status};
+use ghostos_ghostfs::SynFs;
 
 const BLOCKS: usize = 96;
 
 #[test]
 fn indexed_records_support_persistence_style_crud_and_corruption_checks() {
     let descriptor = RecordDescriptor {
-        organization: RecordOrganization::Indexed(synos_rms::IndexDefinition {
+        organization: RecordOrganization::Indexed(ghostos_rms::IndexDefinition {
             key_offset: 0,
             key_length: 1,
             unique: true,
@@ -63,8 +63,8 @@ fn indexed_records_support_persistence_style_crud_and_corruption_checks() {
     filesystem.read("/records/index", &mut bytes).expect("read record image");
     bytes[0] ^= 1;
     assert!(matches!(
-        synos_rms::MappedRecordFile::open(
-            synos_rms::RmsMapHandle::from_capability(1 << 32).unwrap(),
+        ghostos_rms::MappedRecordFile::open(
+            ghostos_rms::RmsMapHandle::from_capability(1 << 32).unwrap(),
             &bytes,
         ),
         Err(RmsError::NotRecordFile | RmsError::File(_))
@@ -75,7 +75,7 @@ fn indexed_records_support_persistence_style_crud_and_corruption_checks() {
 fn database_transactions_and_key_boundaries_are_deterministic() {
     let mut filesystem = SynFs::<BLOCKS>::new();
     filesystem
-        .create_directory("/.synos/data/users", true)
+        .create_directory("/.ghostos/data/users", true)
         .expect("create database root");
     let mut database = Database::open(&mut filesystem, "users").expect("open database");
     assert_eq!(database.put(b"alice", b"one").unwrap(), 1);
@@ -118,7 +118,7 @@ impl DlmBinding for LockBackend {
 
     fn acquire(
         &mut self,
-        _resource: synos_rms::DlmResource,
+        _resource: ghostos_rms::DlmResource,
         _range: DlmLockRange,
         _mode: DlmLockMode,
         _wait: bool,
@@ -143,7 +143,7 @@ fn record_locks_release_on_explicit_release_and_drop() {
     assert_eq!(locks.binding().released, vec![1]);
     assert!(matches!(
         locks.lock("", DlmLockRange::WholeFile, DlmLockMode::Read, true),
-        Err(synos_rms::RecordLockError::InvalidPath)
+        Err(ghostos_rms::RecordLockError::InvalidPath)
     ));
     {
         let _guard = locks

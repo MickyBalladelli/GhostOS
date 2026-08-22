@@ -1,9 +1,9 @@
-use synos_actors::{
+use ghostos_actors::{
     ActorEndpoint, ActorError, ActorId, ActorMessage, ActorSystem, ActorTransport, DsmMailbox,
 };
-use synos_fabric::{AddressRange, NodeId, PAGE_SIZE, dsm::RemotePageAuthority};
-use synos_ipc::{ChannelId, Envelope, SharedBuffer};
-use synos_status::{IntoStatus, Status};
+use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE, dsm::RemotePageAuthority};
+use ghostos_ipc::{ChannelId, Envelope, SharedBuffer};
+use ghostos_status::{IntoStatus, Status};
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,7 +20,7 @@ impl IntoStatus for TransportError {
 #[derive(Default)]
 struct Transport {
     sent: Vec<(ChannelId, Envelope)>,
-    remote: Vec<synos_actors::DsmDelivery>,
+    remote: Vec<ghostos_actors::DsmDelivery>,
     now: u64,
 }
 
@@ -40,7 +40,7 @@ impl ActorTransport for Transport {
         Ok(None)
     }
 
-    fn send_dsm(&mut self, delivery: synos_actors::DsmDelivery) -> Result<(), Self::Error> {
+    fn send_dsm(&mut self, delivery: ghostos_actors::DsmDelivery) -> Result<(), Self::Error> {
         self.remote.push(delivery);
         Ok(())
     }
@@ -60,7 +60,7 @@ fn actor_messages_round_trip_and_reject_corrupt_identity() {
         correlation: 55,
         label: 9,
         payload: Some(SharedBuffer {
-            region: synos_ipc::SharedRegionId::new(3).unwrap(),
+            region: ghostos_ipc::SharedRegionId::new(3).unwrap(),
             offset: 4,
             length: 8,
             writable: false,

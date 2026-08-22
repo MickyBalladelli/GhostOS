@@ -4,9 +4,9 @@
 //! not become a guest #UD, and it does not silently halt or advance the CPU.
 //! Malformed bytes remain a separate decode error.
 
-use synos_vm::devices::{InterruptController, PortBus};
-use synos_vm::firmware::bios::BiosContext;
-use synos_vm::{Cpu, CpuError, CpuMode, Mmu};
+use ghostos_vm::devices::{InterruptController, PortBus};
+use ghostos_vm::firmware::bios::BiosContext;
+use ghostos_vm::{Cpu, CpuError, CpuMode, Mmu};
 
 const CODE: u64 = 0x1000;
 

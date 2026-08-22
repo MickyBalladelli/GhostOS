@@ -1,12 +1,12 @@
-use synos_http::{
+use ghostos_http::{
     GrpcError, Method, ParseError, StatusCode, decode_grpc_frame, encode_error_body,
     encode_grpc_frame, encode_response, parse_request,
 };
-use synos_status::{AuditContext, PublicError, RetryHint, Status};
+use ghostos_status::{AuditContext, PublicError, RetryHint, Status};
 
 #[test]
 fn http_parser_handles_query_body_and_rejects_ambiguous_lengths() {
-    let request = b"POST /run?x=1 HTTP/1.1\r\nHost: synos\r\nContent-Length: 3\r\n\r\nabcEXTRA";
+    let request = b"POST /run?x=1 HTTP/1.1\r\nHost: ghostos\r\nContent-Length: 3\r\n\r\nabcEXTRA";
     let parsed = parse_request::<4>(request).unwrap();
     assert_eq!(parsed.request.method, Method::Post);
     assert_eq!(parsed.request.path_without_query(), "/run");
@@ -37,20 +37,20 @@ fn grpc_framing_rejects_compression_and_truncation() {
 
 #[test]
 fn http_response_encoder_preserves_status_and_capacity_limits() {
-    let response = synos_http::Response::<2>::new(StatusCode::CREATED, b"ok")
+    let response = ghostos_http::Response::<2>::new(StatusCode::CREATED, b"ok")
         .with_header("content-type", "text/plain")
         .unwrap();
     let mut output = [0; 128];
     let written = encode_response(response, &mut output).unwrap();
     assert!(core::str::from_utf8(&output[..written]).unwrap().starts_with("HTTP/1.1 201 Created"));
-    assert!(matches!(encode_response(response, &mut [0; 4]), Err(synos_http::EncodeError::BufferTooSmall { .. })));
+    assert!(matches!(encode_response(response, &mut [0; 4]), Err(ghostos_http::EncodeError::BufferTooSmall { .. })));
 }
 
 #[test]
 fn public_http_error_contains_contract_fields_without_request_data() {
     let error = PublicError::new(
         Status::ACCESS_DENIED,
-        synos_status::operation::HTTP_ROUTE,
+        ghostos_status::operation::HTTP_ROUTE,
         RetryHint::Never,
         AuditContext::new(0xfeed, 2),
     );
@@ -68,9 +68,9 @@ fn public_http_error_contains_contract_fields_without_request_data() {
 
 #[test]
 fn grpc_errors_expose_safe_retry_and_audit_metadata() {
-    let error = GrpcError::AccessDenied.public_error(synos_status::AuditContext::new(7, 4));
+    let error = GrpcError::AccessDenied.public_error(ghostos_status::AuditContext::new(7, 4));
     assert_eq!(error.code, Status::ACCESS_DENIED);
-    assert_eq!(error.operation, synos_status::operation::GRPC);
+    assert_eq!(error.operation, ghostos_status::operation::GRPC);
     assert_eq!(error.audit.correlation, 7);
     assert_eq!(error.audit.node, 4);
     assert_eq!(error.retry, RetryHint::Never);

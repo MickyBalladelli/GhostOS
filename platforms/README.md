@@ -1,4 +1,4 @@
-# SynOS platform qualification
+# GhostOS platform qualification
 
 These profiles separate repeatable platform validation from development claims.
 A platform passes only when `scripts/qualify-platform.sh` accepts evidence
@@ -34,7 +34,7 @@ python3 scripts/record-hardware-boot-evidence.py \
   --evidence-dir build/test-evidence/<run-id>/hardware-boot \
   --serial-log /path/to/node.serial.log \
   --inventory /path/to/inventory.txt \
-  --artifact build/bios/synos-bios.img \
+  --artifact build/bios/ghostos-bios.img \
   --boot-mode bios \
   --operator <operator-id> \
   --revision "$(git rev-parse HEAD)" \
@@ -49,7 +49,7 @@ Validate the retained bundle and its hashes with:
 ```
 
 The validator requires the kernel bootstrap, x86_64 hardware discovery,
-`synos-init` Ring 3 handoff, and `synos-shell` readiness markers. It also
+`ghostos-init` Ring 3 handoff, and `ghostos-shell` readiness markers. It also
 rejects panic output, a hypervisor declaration, missing artifact hashes, and
 an inventory that does not identify the target machine.
 
@@ -60,7 +60,7 @@ Ethernet adapters. Connect both machines to one isolated Ethernet switch.
 Disable Wi-Fi and other cluster links so page traffic cannot escape the test
 network.
 
-1. Build `build/bios/synos-bios.img` and write it to two spare USB drives.
+1. Build `build/bios/ghostos-bios.img` and write it to two spare USB drives.
 2. Boot both PCs and capture COM1 output as `node-1.serial.log` and
    `node-2.serial.log`.
 3. Record NIC model, PCI IDs, CPU, RAM, boot mode, and the words `bare-metal`
@@ -95,8 +95,8 @@ The launcher creates two guests by default. Each guest receives:
 - separate serial, PID, and command evidence files under
   `build/qemu-cluster`.
 
-Set `SYNOS_CLUSTER_NODES`, `SYNOS_GUEST_MEMORY`, `SYNOS_CXL_MEMORY`,
-`SYNOS_SHARED_MEMORY`, or `SYNOS_QEMU_ACCEL` to change the topology.
+Set `GHOSTOS_CLUSTER_NODES`, `GHOSTOS_GUEST_MEMORY`, `GHOSTOS_CXL_MEMORY`,
+`GHOSTOS_SHARED_MEMORY`, or `GHOSTOS_QEMU_ACCEL` to change the topology.
 
 Inject one node loss from another terminal:
 
@@ -119,7 +119,7 @@ mirrored memory reachable after either host is removed. Capture:
 - every discovered endpoint and committed HDM decoder in `fabric.log`;
 - a remote page read/write and migration in `fabric.log`;
 - physical endpoint or host removal with mirror redirection in `failover.log`;
-- serial output from two SynOS hosts.
+- serial output from two GhostOS hosts.
 
 Qualify it with:
 

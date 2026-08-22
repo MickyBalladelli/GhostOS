@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use synos_vm::{SnapshotAuthKey, VmSnapshot};
+use ghostos_vm::{SnapshotAuthKey, VmSnapshot};
 
 const KEY: SnapshotAuthKey = SnapshotAuthKey::new([0x53; 32]);
 

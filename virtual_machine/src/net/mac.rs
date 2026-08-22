@@ -30,14 +30,14 @@ impl MacAddress {
     pub fn is_multicast(&self) -> bool {
         self.0[0] & 1 != 0 && !self.is_broadcast()
     }
-    pub const fn synos_default(slot: u8) -> Self {
+    pub const fn ghostos_default(slot: u8) -> Self {
         Self([0x52, 0x54, 0x00, 0x12, 0x34, slot])
     }
 }
 
 impl Default for MacAddress {
     fn default() -> Self {
-        Self::synos_default(0x56)
+        Self::ghostos_default(0x56)
     }
 }
 
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn mac_basics() {
-        let m = MacAddress::synos_default(0x56);
+        let m = MacAddress::ghostos_default(0x56);
         assert!(m.is_unicast());
         assert!(!m.is_broadcast());
         assert_eq!(m.to_string(), "52:54:00:12:34:56");
@@ -87,10 +87,10 @@ mod tests {
 
     #[test]
     fn mac_filtering() {
-        let own = MacAddress::synos_default(0x56);
+        let own = MacAddress::ghostos_default(0x56);
         assert!(mac_matches(&own.0, &own, false));
         assert!(mac_matches(&[0xFF; 6], &own, false));
-        let other = MacAddress::synos_default(0x57);
+        let other = MacAddress::ghostos_default(0x57);
         assert!(!mac_matches(&other.0, &own, false));
         assert!(mac_matches(&other.0, &own, true));
     }

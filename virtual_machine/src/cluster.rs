@@ -1,4 +1,4 @@
-//! Deterministic cluster fixtures for VM and SynOS integration tests.
+//! Deterministic cluster fixtures for VM and GhostOS integration tests.
 //!
 //! The harness drives VM instances in bounded steps, models an Ethernet-like
 //! transport with reproducible faults, and exposes CXL address-space actions
@@ -11,8 +11,8 @@ use core::mem::size_of;
 use std::collections::VecDeque;
 use std::cell::RefCell;
 use std::rc::Rc;
-use synos_fabric::memory::{GlobalAddressSpace, MemoryKind, MemoryPool, PoolId, Transport};
-use synos_fabric::{AddressRange, Error as FabricError, NodeId as FabricNodeId, PAGE_SIZE};
+use ghostos_fabric::memory::{GlobalAddressSpace, MemoryKind, MemoryPool, PoolId, Transport};
+use ghostos_fabric::{AddressRange, Error as FabricError, NodeId as FabricNodeId, PAGE_SIZE};
 
 const MAX_CLUSTER_NODES: usize = 1_000;
 
@@ -343,7 +343,7 @@ impl CxlFabricFixture {
     pub fn resolve(
         &self,
         address: u64,
-    ) -> Result<synos_fabric::memory::ResolvedAddress, FabricError> {
+    ) -> Result<ghostos_fabric::memory::ResolvedAddress, FabricError> {
         let global_page = address & !(PAGE_SIZE - 1);
         let page_offset = address - global_page;
         if let Some(redirect) = self
@@ -379,7 +379,7 @@ impl CxlFabricFixture {
         requester: ClusterNodeId,
         address: u64,
         write: bool,
-    ) -> Result<synos_fabric::memory::ResolvedAddress, FabricError> {
+    ) -> Result<ghostos_fabric::memory::ResolvedAddress, FabricError> {
         let requester = fabric_node(requester)?;
         let resolved = self.resolve(address)?;
         if resolved.node != requester && write {
@@ -436,7 +436,7 @@ impl CxlFabricFixture {
             .ok_or(FabricError::InvalidAddress)?
             .id;
         self.space
-            .begin_migration(synos_fabric::memory::Migration {
+            .begin_migration(ghostos_fabric::memory::Migration {
                 global_page,
                 source,
                 target,

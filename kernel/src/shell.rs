@@ -1,6 +1,6 @@
 use core::{fmt, mem::MaybeUninit};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use syn_shell::{
+use ghostos_shell::{
     Error,
     editor::{EditorAction, Key, LineEditor},
     interpreter::{CommandExecutor, ExecutionToken, Interpreter, InterpreterEvent},
@@ -8,12 +8,12 @@ use syn_shell::{
     render::{OutputFormat, render},
     Text, MAX_LINE_BYTES,
 };
-use synos_boot_protocol::BootInfo;
-use synos_boot_protocol::{BootMethod, MemoryKind};
-use synos_power::{AcpiPlatform, BatteryState, PowerSource};
-use synos_status::{IntoStatus, Status};
-use synos_observability::{audit_event, field, next_correlation_id, EventField, Level};
-use synos_system_model::command::{
+use ghostos_boot_protocol::BootInfo;
+use ghostos_boot_protocol::{BootMethod, MemoryKind};
+use ghostos_power::{AcpiPlatform, BatteryState, PowerSource};
+use ghostos_status::{IntoStatus, Status};
+use ghostos_observability::{audit_event, field, next_correlation_id, EventField, Level};
+use ghostos_system_model::command::{
     ArgumentKind, ArgumentSpec, CommandSpec, OutputText, OutputValue, StructuredOutput,
 };
 use crate::capability::{CapabilityObject, CapabilitySpace, Rights};
@@ -33,7 +33,7 @@ const SHOW_MEMORY_ROUTE: u16 = 8;
 const SHOW_DSM_ROUTE: u16 = 9;
 const STOP_JOB_ROUTE: u16 = 10;
 const SET_PROCESS_ROUTE: u16 = 11;
-const SYNOS_ISOLATE_ROUTE: u16 = 12;
+const GHOSTOS_ISOLATE_ROUTE: u16 = 12;
 const UPTIME_ROUTE: u16 = 13;
 const SHOW_SERVICES_ROUTE: u16 = 14;
 const SUSPEND_ROUTE: u16 = 15;
@@ -210,11 +210,11 @@ pub(crate) unsafe fn initialize(
     register(registry, "SHOW-SERVICES", SHOW_SERVICES_ROUTE);
     register(registry, "SHOW-STARTUP", SHOW_STARTUP_ROUTE);
     register_control_commands(registry);
-    syn_shell::cluster::register_cluster_commands_without_help(registry)
+    ghostos_shell::cluster::register_cluster_commands_without_help(registry)
         .expect("kernel cluster command registry has capacity");
-    syn_shell::firewall::register_firewall_commands(registry)
+    ghostos_shell::firewall::register_firewall_commands(registry)
         .expect("kernel firewall command registry has capacity");
-    syn_shell::network::register_network_commands(registry)
+    ghostos_shell::network::register_network_commands(registry)
         .expect("kernel network command registry has capacity");
 
     unsafe {
@@ -372,8 +372,8 @@ fn register_control_commands(registry: &mut CommandRegistry<COMMAND_CAPACITY>) {
         .expect("kernel command registry has capacity");
     registry
         .register(
-            CommandSpec::new("SYNOS-ISOLATE", &[cores]).expect("valid isolation command"),
-            RouteId::new(SYNOS_ISOLATE_ROUTE).expect("valid isolation route"),
+            CommandSpec::new("GHOSTOS-ISOLATE", &[cores]).expect("valid isolation command"),
+            RouteId::new(GHOSTOS_ISOLATE_ROUTE).expect("valid isolation route"),
         )
         .expect("kernel command registry has capacity");
     registry
@@ -595,7 +595,7 @@ mod input_tests {
         expand_command, register, register_control_commands, Key, ShellLineRender, VtInput,
         COMMAND_CAPACITY, HISTORY_CAPACITY,
     };
-    use syn_shell::{editor::LineEditor, parser::CommandRegistry};
+    use ghostos_shell::{editor::LineEditor, parser::CommandRegistry};
 
     fn decode(input: &mut VtInput, bytes: &[u8]) -> Key {
         bytes
@@ -638,14 +638,14 @@ mod input_tests {
     #[test]
     fn show_interface_singular_resolves_to_network_command() {
         let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
-        syn_shell::network::register_network_commands(&mut registry)
+        ghostos_shell::network::register_network_commands(&mut registry)
             .expect("network commands fit");
         let program = registry
             .parse("SHOW INTERFACE")
             .expect("show interface parses");
         assert_eq!(
             program.stage(0).unwrap().route.raw(),
-            syn_shell::network::SHOW_INTERFACES_ROUTE
+            ghostos_shell::network::SHOW_INTERFACES_ROUTE
         );
     }
 
@@ -660,24 +660,24 @@ mod input_tests {
         assert!(suggestions.commands().any(|n| n.as_str() == "SHOW-INTERFACES"));
         assert_eq!(
             registry.parse("show interfaces").unwrap().stage(0).unwrap().route.raw(),
-            syn_shell::network::SHOW_INTERFACES_ROUTE
+            ghostos_shell::network::SHOW_INTERFACES_ROUTE
         );
     }
 
     fn full_registry() -> CommandRegistry<COMMAND_CAPACITY> {
         let mut registry = CommandRegistry::<COMMAND_CAPACITY>::new();
-        let help_target = synos_system_model::command::ArgumentSpec::new(
+        let help_target = ghostos_system_model::command::ArgumentSpec::new(
             "COMMAND",
-            synos_system_model::command::ArgumentKind::Text,
+            ghostos_system_model::command::ArgumentKind::Text,
             false,
             true,
         )
         .expect("help arg");
         registry
             .register(
-                synos_system_model::command::CommandSpec::new("HELP", &[help_target])
+                ghostos_system_model::command::CommandSpec::new("HELP", &[help_target])
                     .expect("help"),
-                syn_shell::parser::RouteId::new(1).expect("route"),
+                ghostos_shell::parser::RouteId::new(1).expect("route"),
             )
             .expect("help register");
         register(&mut registry, "SHOW-SYSTEM", 2);
@@ -690,11 +690,11 @@ mod input_tests {
         register(&mut registry, "SHOW-DSM", 9);
         register(&mut registry, "UPTIME", 10);
         register_control_commands(&mut registry);
-        syn_shell::cluster::register_cluster_commands_without_help(&mut registry)
+        ghostos_shell::cluster::register_cluster_commands_without_help(&mut registry)
             .expect("cluster");
-        syn_shell::firewall::register_firewall_commands(&mut registry)
+        ghostos_shell::firewall::register_firewall_commands(&mut registry)
             .expect("firewall");
-        syn_shell::network::register_network_commands(&mut registry)
+        ghostos_shell::network::register_network_commands(&mut registry)
             .expect("network");
         registry
     }
@@ -718,7 +718,7 @@ mod input_tests {
             .unwrap_or_else(|error| panic!("parse failed: {error:?}"));
         assert_eq!(
             program.stage(0).unwrap().route.raw(),
-            syn_shell::network::SHOW_INTERFACES_ROUTE
+            ghostos_shell::network::SHOW_INTERFACES_ROUTE
         );
         let prefix = registry.suggestions("show int").expect("suggestions");
         assert!(prefix.commands().any(|name| name.as_str() == "SHOW-INTERFACES"));
@@ -775,9 +775,9 @@ fn print_edit_result<const CAPACITY: usize>(operation: &str, editor: &FileEditor
 
 fn prompt() {
     if session_authorized_at(crate::time::monotonic_now_us()) {
-        crate::print!("\x1b[1;32mSYNOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
+        crate::print!("\x1b[1;32mGHOSTOS\x1b[90m::\x1b[36mROOT\x1b[0m> ")
     } else {
-        crate::print!("\x1b[1;33mSYNOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ")
+        crate::print!("\x1b[1;33mGHOSTOS\x1b[90m::\x1b[31mLOCKED\x1b[0m> ")
     }
 }
 
@@ -1456,15 +1456,15 @@ fn command_category(route: u16) -> &'static str {
         SHOW_PROCESSES_ROUTE | TOP_CPU_ROUTE | STOP_JOB_ROUTE | SET_PROCESS_ROUTE => "PROCESS",
         SHOW_MEMORY_ROUTE | SHOW_DSM_ROUTE => "MEMORY",
         MONITOR_ROUTE => "MONITOR",
-        SYNOS_ISOLATE_ROUTE => "CONTROL",
-        syn_shell::cluster::SHOW_CLUSTER_ROUTE..=syn_shell::cluster::ABANDON_NODE_ROUTE => {
+        GHOSTOS_ISOLATE_ROUTE => "CONTROL",
+        ghostos_shell::cluster::SHOW_CLUSTER_ROUTE..=ghostos_shell::cluster::ABANDON_NODE_ROUTE => {
             "CLUSTER"
         }
-        syn_shell::firewall::SHOW_FIREWALL_ROUTE..=syn_shell::firewall::SET_FIREWALL_ROUTE => {
+        ghostos_shell::firewall::SHOW_FIREWALL_ROUTE..=ghostos_shell::firewall::SET_FIREWALL_ROUTE => {
             "FIREWALL"
         }
-        syn_shell::network::SHOW_NETWORK_ROUTE
-            ..=syn_shell::network::SHOW_PACKETS_ROUTE => "NETWORK",
+        ghostos_shell::network::SHOW_NETWORK_ROUTE
+            ..=ghostos_shell::network::SHOW_PACKETS_ROUTE => "NETWORK",
         _ => "SHELL",
     }
 }
@@ -1555,7 +1555,7 @@ fn banner() {
     crate::println!("\x1b[1;35m{}", r"/____/\__, /_/ /_/\____//____/");
     crate::println!("\x1b[1;95m{}", r"     /____/                     ");
     crate::println!();
-    crate::println!("\x1b[90m  SYNCHRONOUS NETWORK OPERATING SYSTEM // VT100 ONLINE\x1b[0m");
+    crate::println!("\x1b[90m  GHOST OPERATING SYSTEM // VT100 ONLINE\x1b[0m");
     crate::println!("\x1b[34m  --------------------------------------------------------\x1b[0m");
     crate::println!("\x1b[32m  READY\x1b[90m  TYPE \x1b[37mHELP\x1b[90m FOR COMMANDS\x1b[0m");
     crate::println!()
@@ -1791,15 +1791,15 @@ fn wait_for_byte(
 }
 
 struct KernelNetwork {
-    view: syn_shell::network::NetworkView,
-    devices: [Option<synos_legacy_pc_drivers::EthernetRuntime>;
-        syn_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1],
+    view: ghostos_shell::network::NetworkView,
+    devices: [Option<ghostos_legacy_pc_drivers::EthernetRuntime>;
+        ghostos_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1],
     diagnostic_capability: crate::CapabilityHandle,
-    neighbors: syn_shell::network::NeighborView,
-    dns: syn_shell::network::DnsView,
-    sockets: syn_shell::network::SocketView,
-    stats: syn_shell::network::NetworkStatsView,
-    packet_capture: syn_shell::network::PacketCaptureBuffer,
+    neighbors: ghostos_shell::network::NeighborView,
+    dns: ghostos_shell::network::DnsView,
+    sockets: ghostos_shell::network::SocketView,
+    stats: ghostos_shell::network::NetworkStatsView,
+    packet_capture: ghostos_shell::network::PacketCaptureBuffer,
     now_ms: u64,
 }
 
@@ -1809,7 +1809,7 @@ impl KernelNetwork {
         diagnostic_capability: crate::CapabilityHandle,
         scheduler_clock: u64,
     ) -> Self {
-        use syn_shell::network::{
+        use ghostos_shell::network::{
             InterfaceAddressMode, MAX_NETWORK_OUTPUT_ROWS, NetworkInterfaceView, NetworkText,
             NetworkView,
         };
@@ -1834,26 +1834,26 @@ impl KernelNetwork {
         let mut network = Self {
             view: NetworkView {
                 generation: 1,
-                hostname: Some(text("synos")),
+                hostname: Some(text("ghostos")),
                 interface_count: 1,
                 route_count: 0,
                 interfaces,
                 routes: [None; MAX_NETWORK_OUTPUT_ROWS],
-                link_events: [None; syn_shell::network::MAX_NETWORK_LINK_EVENTS],
+                link_events: [None; ghostos_shell::network::MAX_NETWORK_LINK_EVENTS],
                 next_interface: None,
                 next_route: None,
             },
             devices,
             diagnostic_capability,
-            neighbors: syn_shell::network::NeighborView::EMPTY,
-            dns: syn_shell::network::DnsView::EMPTY,
-            sockets: syn_shell::network::SocketView::EMPTY,
-            packet_capture: syn_shell::network::PacketCaptureBuffer::new(),
+            neighbors: ghostos_shell::network::NeighborView::EMPTY,
+            dns: ghostos_shell::network::DnsView::EMPTY,
+            sockets: ghostos_shell::network::SocketView::EMPTY,
+            packet_capture: ghostos_shell::network::PacketCaptureBuffer::new(),
             now_ms: scheduler_clock / 1_000,
-            stats: syn_shell::network::NetworkStatsView {
+            stats: ghostos_shell::network::NetworkStatsView {
                 generation: 1,
                 reset_generation: 1,
-                ..syn_shell::network::NetworkStatsView::EMPTY
+                ..ghostos_shell::network::NetworkStatsView::EMPTY
             },
         };
         network.refresh();
@@ -1872,7 +1872,7 @@ impl KernelNetwork {
     fn interface_mut(
         &mut self,
         name: &str,
-    ) -> Result<&mut syn_shell::network::NetworkInterfaceView, Status> {
+    ) -> Result<&mut ghostos_shell::network::NetworkInterfaceView, Status> {
         self.view
             .interfaces
             .iter_mut()
@@ -1881,12 +1881,12 @@ impl KernelNetwork {
             .ok_or(Status::NOT_FOUND)
     }
 
-    fn network_text(value: &str) -> Result<syn_shell::network::NetworkText, Status> {
-        syn_shell::network::NetworkText::new(value).map_err(|_| Status::INVALID_ARGUMENT)
+    fn network_text(value: &str) -> Result<ghostos_shell::network::NetworkText, Status> {
+        ghostos_shell::network::NetworkText::new(value).map_err(|_| Status::INVALID_ARGUMENT)
     }
 
-    fn mac_text(mac: [u8; 6]) -> syn_shell::network::NetworkText {
-        let mut text = syn_shell::network::NetworkText::empty();
+    fn mac_text(mac: [u8; 6]) -> ghostos_shell::network::NetworkText {
+        let mut text = ghostos_shell::network::NetworkText::empty();
         for (index, byte) in mac.iter().copied().enumerate() {
             if index != 0 {
                 let _ = text.push_char(':');
@@ -1899,9 +1899,9 @@ impl KernelNetwork {
     }
 
     fn queue_view(
-        queue: synos_legacy_pc_drivers::EthernetQueueSnapshot,
-    ) -> syn_shell::network::NetworkQueueView {
-        syn_shell::network::NetworkQueueView {
+        queue: ghostos_legacy_pc_drivers::EthernetQueueSnapshot,
+    ) -> ghostos_shell::network::NetworkQueueView {
+        ghostos_shell::network::NetworkQueueView {
             ready: queue.ready,
             head: queue.head,
             tail: queue.tail,
@@ -1909,15 +1909,15 @@ impl KernelNetwork {
         }
     }
 
-    fn interface_name(index: usize) -> syn_shell::network::NetworkText {
-        let mut name = syn_shell::network::NetworkText::empty();
+    fn interface_name(index: usize) -> ghostos_shell::network::NetworkText {
+        let mut name = ghostos_shell::network::NetworkText::empty();
         let _ = name.push_str("eth");
         let _ = name.push_char(b'0'.saturating_add(index as u8) as char);
         name
     }
 
     fn record_link_event(&mut self, index: usize, link_up: bool) {
-        use syn_shell::network::{NetworkLinkEvent, MAX_NETWORK_LINK_EVENTS};
+        use ghostos_shell::network::{NetworkLinkEvent, MAX_NETWORK_LINK_EVENTS};
 
         let event = NetworkLinkEvent {
             generation: self.view.generation.saturating_add(1),
@@ -1955,7 +1955,7 @@ impl KernelNetwork {
                 continue
             };
             let current = self.view.interfaces[interface_index];
-            let next = syn_shell::network::NetworkInterfaceView {
+            let next = ghostos_shell::network::NetworkInterfaceView {
                 name,
                 address,
                 prefix_len: current.and_then(|interface| interface.prefix_len),
@@ -1967,7 +1967,7 @@ impl KernelNetwork {
                 rx_queue: Some(Self::queue_view(snapshot.rx_queue)),
                 tx_queue: Some(Self::queue_view(snapshot.tx_queue)),
                 mode: current.map_or(
-                    syn_shell::network::InterfaceAddressMode::Static,
+                    ghostos_shell::network::InterfaceAddressMode::Static,
                     |interface| interface.mode,
                 ),
                 dhcp: current.and_then(|interface| interface.dhcp),
@@ -1993,25 +1993,25 @@ impl KernelNetwork {
 #[allow(unused_mut)]
 fn discover_runtime_network(
     boot_info: &'static BootInfo,
-) -> [Option<synos_legacy_pc_drivers::EthernetRuntime>;
-    syn_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1] {
+) -> [Option<ghostos_legacy_pc_drivers::EthernetRuntime>;
+    ghostos_shell::network::MAX_NETWORK_OUTPUT_ROWS - 1] {
     let mut devices = core::array::from_fn(|_| None);
     #[cfg(target_arch = "x86_64")]
     {
-        let mut config = synos_legacy_pc_drivers::pci::PortConfig;
-        synos_legacy_pc_drivers::pci::enumerate(&mut config, |device| {
-            let Some(candidate) = synos_legacy_pc_drivers::EthernetAdapter::from_pci(&device)
+        let mut config = ghostos_legacy_pc_drivers::pci::PortConfig;
+        ghostos_legacy_pc_drivers::pci::enumerate(&mut config, |device| {
+            let Some(candidate) = ghostos_legacy_pc_drivers::EthernetAdapter::from_pci(&device)
             else {
                 return
             };
             if !matches!(
                 candidate.kind,
-                synos_legacy_pc_drivers::EthernetKind::IntelE1000
-                    | synos_legacy_pc_drivers::EthernetKind::VirtioNet
+                ghostos_legacy_pc_drivers::EthernetKind::IntelE1000
+                    | ghostos_legacy_pc_drivers::EthernetKind::VirtioNet
             ) {
                 return
             }
-            let Some(runtime) = synos_legacy_pc_drivers::EthernetRuntime::open(
+            let Some(runtime) = ghostos_legacy_pc_drivers::EthernetRuntime::open(
                 candidate,
                 boot_info.physical_address_offset,
             )
@@ -2031,81 +2031,81 @@ fn discover_runtime_network(
     devices
 }
 
-impl syn_shell::network::NetworkSource for KernelNetwork {
+impl ghostos_shell::network::NetworkSource for KernelNetwork {
     fn authorize_mutation(&mut self) -> Result<(), Status> {
         Ok(())
     }
 
     fn authorize_ping(
         &mut self,
-        _request: syn_shell::network::ResolvedPingRequest<'_>,
+        _request: ghostos_shell::network::ResolvedPingRequest<'_>,
     ) -> Result<u64, Status> {
         Ok(self.diagnostic_capability.raw())
     }
 
     fn authorize_packet_capture(
         &mut self,
-        _request: syn_shell::network::PacketCaptureRequest<'_>,
+        _request: ghostos_shell::network::PacketCaptureRequest<'_>,
     ) -> Result<u64, Status> {
         Ok(self.diagnostic_capability.raw())
     }
 
     fn show_packets(
         &mut self,
-        request: syn_shell::network::PacketCaptureRequest<'_>,
-    ) -> Result<syn_shell::network::PacketCaptureView, Status> {
+        request: ghostos_shell::network::PacketCaptureRequest<'_>,
+    ) -> Result<ghostos_shell::network::PacketCaptureView, Status> {
         Ok(self.packet_capture.view(self.now_ms, request))
     }
 
-    fn show_network(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+    fn show_network(&mut self) -> Result<ghostos_shell::network::NetworkView, Status> {
         self.refresh();
         Ok(self.view)
     }
 
-    fn show_interfaces(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+    fn show_interfaces(&mut self) -> Result<ghostos_shell::network::NetworkView, Status> {
         self.refresh();
         Ok(self.view)
     }
 
-    fn show_routes(&mut self) -> Result<syn_shell::network::NetworkView, Status> {
+    fn show_routes(&mut self) -> Result<ghostos_shell::network::NetworkView, Status> {
         self.refresh();
         Ok(self.view)
     }
 
-    fn show_neighbors(&mut self) -> Result<syn_shell::network::NeighborView, Status> {
+    fn show_neighbors(&mut self) -> Result<ghostos_shell::network::NeighborView, Status> {
         Ok(self.neighbors)
     }
 
     fn clear_neighbors(&mut self) -> Result<u64, Status> {
         let cleared = self.neighbors.entry_count;
-        self.neighbors = syn_shell::network::NeighborView::EMPTY;
+        self.neighbors = ghostos_shell::network::NeighborView::EMPTY;
         Ok(cleared)
     }
 
-    fn show_dns(&mut self) -> Result<syn_shell::network::DnsView, Status> {
+    fn show_dns(&mut self) -> Result<ghostos_shell::network::DnsView, Status> {
         Ok(self.dns)
     }
 
-    fn show_sockets(&mut self) -> Result<syn_shell::network::SocketView, Status> {
+    fn show_sockets(&mut self) -> Result<ghostos_shell::network::SocketView, Status> {
         Ok(self.sockets)
     }
 
     fn show_network_stats(
         &mut self,
-    ) -> Result<syn_shell::network::NetworkStatsView, Status> {
+    ) -> Result<ghostos_shell::network::NetworkStatsView, Status> {
         self.refresh();
         self.stats.generation = self.view.generation;
         self.stats.interface_count = self.view.interface_count;
-        self.stats.interfaces = [None; syn_shell::network::MAX_NETWORK_STATS_INTERFACES];
+        self.stats.interfaces = [None; ghostos_shell::network::MAX_NETWORK_STATS_INTERFACES];
         for (index, interface) in self
             .view
             .interfaces
             .iter()
             .flatten()
-            .take(syn_shell::network::MAX_NETWORK_STATS_INTERFACES)
+            .take(ghostos_shell::network::MAX_NETWORK_STATS_INTERFACES)
             .enumerate()
         {
-            self.stats.interfaces[index] = Some(syn_shell::network::NetworkStatsInterfaceView {
+            self.stats.interfaces[index] = Some(ghostos_shell::network::NetworkStatsInterfaceView {
                 name: interface.name,
                 rx_packets: 0,
                 rx_bytes: 0,
@@ -2120,31 +2120,31 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 
     fn set_dns(
         &mut self,
-        update: syn_shell::network::DnsUpdate,
-    ) -> Result<syn_shell::network::DnsView, Status> {
-        let mut servers = [None; syn_shell::network::MAX_DNS_SERVERS];
+        update: ghostos_shell::network::DnsUpdate,
+    ) -> Result<ghostos_shell::network::DnsView, Status> {
+        let mut servers = [None; ghostos_shell::network::MAX_DNS_SERVERS];
         for (index, server) in update.servers.iter().take(update.server_count as usize).enumerate() {
             if let Some(address) = server {
-                servers[index] = Some(syn_shell::network::DnsServerView {
+                servers[index] = Some(ghostos_shell::network::DnsServerView {
                     address: *address,
                     source: match update.mode {
-                        syn_shell::network::DnsMode::Dhcp => syn_shell::network::DnsServerSource::Dhcp,
-                        syn_shell::network::DnsMode::Static => syn_shell::network::DnsServerSource::Static,
+                        ghostos_shell::network::DnsMode::Dhcp => ghostos_shell::network::DnsServerSource::Dhcp,
+                        ghostos_shell::network::DnsMode::Static => ghostos_shell::network::DnsServerSource::Static,
                     },
                     order: index as u8 + 1,
                 });
             }
         }
-        self.dns = syn_shell::network::DnsView {
+        self.dns = ghostos_shell::network::DnsView {
             generation: self.dns.generation.saturating_add(1),
             mode: update.mode,
             servers,
             server_count: update.server_count,
             search_domains: update.search_domains,
             search_count: update.search_count,
-            query_status: syn_shell::network::DnsQueryStatus::Idle,
+            query_status: ghostos_shell::network::DnsQueryStatus::Idle,
             query_name: None,
-            query_timeout_ms: syn_shell::network::MAX_PING_DNS_TIMEOUT_MS,
+            query_timeout_ms: ghostos_shell::network::MAX_PING_DNS_TIMEOUT_MS,
         };
         Ok(self.dns)
     }
@@ -2152,7 +2152,7 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
     fn set_hostname(
         &mut self,
         hostname: &str,
-    ) -> Result<syn_shell::network::NetworkView, Status> {
+    ) -> Result<ghostos_shell::network::NetworkView, Status> {
         self.refresh();
         self.view.hostname = Some(Self::network_text(hostname)?);
         self.bump();
@@ -2161,9 +2161,9 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 
     fn set_interface(
         &mut self,
-        update: syn_shell::network::InterfaceUpdate<'_>,
-    ) -> Result<syn_shell::network::NetworkView, Status> {
-        use syn_shell::network::{DhcpLeaseView, InterfaceAddressMode};
+        update: ghostos_shell::network::InterfaceUpdate<'_>,
+    ) -> Result<ghostos_shell::network::NetworkView, Status> {
+        use ghostos_shell::network::{DhcpLeaseView, InterfaceAddressMode};
 
         self.refresh();
         if let Some(enabled) = update.enabled {
@@ -2234,9 +2234,9 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 
     fn set_route(
         &mut self,
-        update: syn_shell::network::RouteUpdate<'_>,
-    ) -> Result<syn_shell::network::NetworkView, Status> {
-        use syn_shell::network::NetworkRouteView;
+        update: ghostos_shell::network::RouteUpdate<'_>,
+    ) -> Result<ghostos_shell::network::NetworkView, Status> {
+        use ghostos_shell::network::NetworkRouteView;
 
         self.refresh();
         self.interface_mut(update.interface)?;
@@ -2276,7 +2276,7 @@ impl syn_shell::network::NetworkSource for KernelNetwork {
 struct KernelExecutor {
     boot_info: &'static BootInfo,
     boot_method: BootMethod,
-    memory_regions: &'static [synos_boot_protocol::MemoryRegion],
+    memory_regions: &'static [ghostos_boot_protocol::MemoryRegion],
     memory_region_count: usize,
     memory_total_bytes: u64,
     memory_available_bytes: u64,
@@ -2402,16 +2402,16 @@ impl KernelExecutor {
             SHOW_STARTUP_ROUTE => self.show_startup(command.json()),
             STOP_JOB_ROUTE => self.stop_job(command),
             SET_PROCESS_ROUTE => self.set_process(command),
-            SYNOS_ISOLATE_ROUTE => self.isolate_cores(command),
-            syn_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
-            syn_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
-            route if (syn_shell::network::SHOW_NETWORK_ROUTE
-                ..=syn_shell::network::SHOW_PACKETS_ROUTE)
+            GHOSTOS_ISOLATE_ROUTE => self.isolate_cores(command),
+            ghostos_shell::firewall::SHOW_FIREWALL_ROUTE => self.show_firewall(),
+            ghostos_shell::firewall::SET_FIREWALL_ROUTE => self.set_firewall(command),
+            route if (ghostos_shell::network::SHOW_NETWORK_ROUTE
+                ..=ghostos_shell::network::SHOW_PACKETS_ROUTE)
                 .contains(&route) =>
             {
                 self.network.set_now_ms(self.scheduler().clock() / 1_000);
-                if route == syn_shell::network::PING_ROUTE
-                    || route == syn_shell::network::SHOW_PACKETS_ROUTE
+                if route == ghostos_shell::network::PING_ROUTE
+                    || route == ghostos_shell::network::SHOW_PACKETS_ROUTE
                 {
                     self.capabilities
                         .authorize(
@@ -2422,11 +2422,11 @@ impl KernelExecutor {
                         )
                         .map_err(|_| Status::ACCESS_DENIED)?;
                 }
-                syn_shell::network::dispatch_network_command(&mut self.network, command)
+                ghostos_shell::network::dispatch_network_command(&mut self.network, command)
             }
-            route if (syn_shell::cluster::SHOW_CLUSTER_ROUTE
-                ..=syn_shell::cluster::REMOVE_FEDERATION_ROUTE)
-                .contains(&route) => syn_shell::cluster::execute_cluster_surface_command(
+            route if (ghostos_shell::cluster::SHOW_CLUSTER_ROUTE
+                ..=ghostos_shell::cluster::REMOVE_FEDERATION_ROUTE)
+                .contains(&route) => ghostos_shell::cluster::execute_cluster_surface_command(
                 command,
                 None,
             ),
@@ -2435,7 +2435,7 @@ impl KernelExecutor {
     }
 
     fn show_firewall(&self) -> Result<StructuredOutput, Status> {
-        syn_shell::firewall::firewall_output(syn_shell::firewall::FirewallView {
+        ghostos_shell::firewall::firewall_output(ghostos_shell::firewall::FirewallView {
             policy_version: self.firewall_policy_version,
             rule_count: self.firewall_rule_count,
             active_connections: 0,
@@ -2857,7 +2857,7 @@ impl KernelExecutor {
     fn show_system(&self) -> Result<StructuredOutput, Status> {
         let power = crate::power::battery_report(self.boot_info, self.acpi.as_ref());
         let mut output = StructuredOutput::new(Status::NORMAL);
-        insert_text(&mut output, "name", "SynOS")?;
+        insert_text(&mut output, "name", "GhostOS")?;
         insert_text(&mut output, "architecture", architecture())?;
         insert_text(
             &mut output,
@@ -2927,19 +2927,19 @@ impl KernelExecutor {
     fn show_services(&self, json: bool) -> Result<StructuredOutput, Status> {
         let ready = crate::service_ready_mask();
         let services = [
-            "synos-init",
-            "synos-fsd",
-            "synos-storaged",
-            "synos-netd",
-            "synos-logd",
-            "synos-auditd",
-            "synos-authd",
-            "synos-pkgd",
-            "synos-shell",
-            "synos-pcid",
-            "synos-ahcid",
-            "synos-nvmed",
-            "synos-ethernetd",
+            "ghostos-init",
+            "ghostos-fsd",
+            "ghostos-storaged",
+            "ghostos-netd",
+            "ghostos-logd",
+            "ghostos-auditd",
+            "ghostos-authd",
+            "ghostos-pkgd",
+            "ghostos-shell",
+            "ghostos-pcid",
+            "ghostos-ahcid",
+            "ghostos-nvmed",
+            "ghostos-ethernetd",
         ];
         let mut ready_count = 0u64;
         let mut dependency_count = 0u64;
@@ -2999,19 +2999,19 @@ impl KernelExecutor {
     fn show_startup(&self, json: bool) -> Result<StructuredOutput, Status> {
         let ready = crate::service_ready_mask();
         let services = [
-            "synos-init",
-            "synos-fsd",
-            "synos-storaged",
-            "synos-netd",
-            "synos-logd",
-            "synos-auditd",
-            "synos-authd",
-            "synos-pkgd",
-            "synos-shell",
-            "synos-pcid",
-            "synos-ahcid",
-            "synos-nvmed",
-            "synos-ethernetd",
+            "ghostos-init",
+            "ghostos-fsd",
+            "ghostos-storaged",
+            "ghostos-netd",
+            "ghostos-logd",
+            "ghostos-auditd",
+            "ghostos-authd",
+            "ghostos-pkgd",
+            "ghostos-shell",
+            "ghostos-pcid",
+            "ghostos-ahcid",
+            "ghostos-nvmed",
+            "ghostos-ethernetd",
         ];
         let startup_ids = [
             crate::boot_services::filesystem_service_id(),
@@ -3075,7 +3075,7 @@ impl KernelExecutor {
     fn print_system(&self) {
         let power = crate::power::battery_report(self.boot_info, self.acpi.as_ref());
         crate::println!("\x1b[1;97;44mPROPERTY             VALUE\x1b[0m");
-        crate::println!("Name                 SynOS");
+        crate::println!("Name                 GhostOS");
         crate::println!("Architecture         {}", architecture());
         crate::println!(
             "Boot method          {}",
@@ -3501,11 +3501,11 @@ impl CommandExecutor for KernelExecutor {
         }
         self.generation = self.generation.wrapping_add(1).max(1);
         let token = ExecutionToken::new(self.generation).ok_or(Error::InvalidHandle)?;
-        let completion = if (syn_shell::cluster::SHOW_CLUSTER_ROUTE
-            ..=syn_shell::cluster::REMOVE_FEDERATION_ROUTE)
+        let completion = if (ghostos_shell::cluster::SHOW_CLUSTER_ROUTE
+            ..=ghostos_shell::cluster::REMOVE_FEDERATION_ROUTE)
             .contains(&command.route.raw())
         {
-            syn_shell::cluster::execute_cluster_surface_command(command, pipeline_input)
+            ghostos_shell::cluster::execute_cluster_surface_command(command, pipeline_input)
         } else {
             self.execute(command)
         };
@@ -3543,31 +3543,31 @@ fn insert_text(output: &mut StructuredOutput, name: &str, value: &str) -> Result
     insert(output, name, OutputValue::Text(text))
 }
 
-fn startup_service_name(service: synos_init::ServiceId) -> &'static str {
+fn startup_service_name(service: ghostos_init::ServiceId) -> &'static str {
     if service == crate::boot_services::filesystem_service_id() {
-        "synos-fsd"
+        "ghostos-fsd"
     } else if service == crate::boot_services::storage_service_id() {
-        "synos-storaged"
+        "ghostos-storaged"
     } else if service == crate::boot_services::network_service_id() {
-        "synos-netd"
+        "ghostos-netd"
     } else if service == crate::boot_services::logging_service_id() {
-        "synos-logd"
+        "ghostos-logd"
     } else if service == crate::boot_services::audit_service_id() {
-        "synos-auditd"
+        "ghostos-auditd"
     } else if service == crate::boot_services::authentication_service_id() {
-        "synos-authd"
+        "ghostos-authd"
     } else if service == crate::boot_services::package_service_id() {
-        "synos-pkgd"
+        "ghostos-pkgd"
     } else if service == crate::boot_services::shell_service_id() {
-        "synos-shell"
+        "ghostos-shell"
     } else if service == crate::boot_services::pci_service_id() {
-        "synos-pcid"
+        "ghostos-pcid"
     } else if service == crate::boot_services::ahci_service_id() {
-        "synos-ahcid"
+        "ghostos-ahcid"
     } else if service == crate::boot_services::nvme_service_id() {
-        "synos-nvmed"
+        "ghostos-nvmed"
     } else if service == crate::boot_services::ethernet_service_id() {
-        "synos-ethernetd"
+        "ghostos-ethernetd"
     } else {
         "unknown"
     }
@@ -3580,13 +3580,13 @@ fn startup_state_text(
     let Some(diagnostic) = diagnostic else {
         return if runtime_ready { "READY" } else { "STARTING" }
     };
-    if matches!(diagnostic.state, synos_init::ServiceState::Failed) {
+    if matches!(diagnostic.state, ghostos_init::ServiceState::Failed) {
         return "FAILED"
     }
-    if matches!(diagnostic.state, synos_init::ServiceState::Backoff) {
+    if matches!(diagnostic.state, ghostos_init::ServiceState::Backoff) {
         return "BACKOFF"
     }
-    if runtime_ready && matches!(diagnostic.readiness, synos_init::ServiceReadiness::Ready) {
+    if runtime_ready && matches!(diagnostic.readiness, ghostos_init::ServiceReadiness::Ready) {
         "READY"
     } else {
         "STARTING"

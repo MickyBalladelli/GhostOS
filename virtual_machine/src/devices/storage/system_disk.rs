@@ -1,4 +1,4 @@
-//! Provisioning and validation for an installed SynOS system disk.
+//! Provisioning and validation for an installed GhostOS system disk.
 //!
 //! The disk keeps a small boot area followed by two manifest slots. Payloads
 //! are written first and the new manifest is written last. A torn write can
@@ -10,7 +10,7 @@ use std::fs::{self, File};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use synos_synfs::{ServiceManifest, ServiceManifestEntry, SynFs};
+use ghostos_ghostfs::{ServiceManifest, ServiceManifestEntry, SynFs};
 
 pub const SYSTEM_DISK_FORMAT_VERSION: u32 = 1;
 pub const SYSTEM_DISK_ALIGNMENT: u64 = 1024 * 1024;
@@ -19,8 +19,8 @@ pub const SYSTEM_DISK_MANIFEST_SIZE: u64 = 64 * 1024;
 pub const SYSTEM_DISK_PAYLOAD_OFFSET: u64 = SYSTEM_DISK_ALIGNMENT;
 pub const SYSTEM_DISK_BOOT_RECORD_OFFSET: u64 = 64 * 1024;
 pub const SYSTEM_DISK_BOOT_RECORD_SIZE: u64 = SECTOR_SIZE;
-pub const SYNFS_SYSTEM_BLOCKS: usize = 32;
-pub const SYNFS_SYSTEM_VOLUME_SIZE: u64 = SynFs::<SYNFS_SYSTEM_BLOCKS>::volume_bytes() as u64;
+pub const GHOSTFS_SYSTEM_BLOCKS: usize = 32;
+pub const GHOSTFS_SYSTEM_VOLUME_SIZE: u64 = SynFs::<GHOSTFS_SYSTEM_BLOCKS>::volume_bytes() as u64;
 pub const SYSTEM_DISK_SETTINGS_SIZE: u64 = 64 * 1024;
 
 const HEADER_SIZE: usize = SECTOR_SIZE as usize;
@@ -83,7 +83,7 @@ pub struct SystemDiskRollbackReport {
     pub generation: u64,
 }
 
-/// Validated boot data loaded from an attached SynOS system disk.
+/// Validated boot data loaded from an attached GhostOS system disk.
 #[derive(Debug, Clone)]
 pub struct SystemDiskBootArtifacts {
     pub manifest: SystemDiskManifest,
@@ -533,7 +533,7 @@ impl SystemDiskProvisioner {
         Self::validate(path)
     }
 
-    /// Load the kernel, initrd, settings, and validated SynFS root volume.
+    /// Load the kernel, initrd, settings, and validated GhostFS root volume.
     ///
     /// The image is opened read-only, so this is safe while the same image is
     /// attached to a writable VM controller.
@@ -576,7 +576,7 @@ impl SystemDiskProvisioner {
         })
     }
 
-    /// Commit a new validated SynFS system volume and publish its manifest.
+    /// Commit a new validated GhostFS system volume and publish its manifest.
     ///
     /// The volume is written before the redundant manifest slot. A reboot can
     /// therefore recover either the old complete generation or the new one.
@@ -584,16 +584,16 @@ impl SystemDiskProvisioner {
         path: P,
         volume: &[u8],
     ) -> Result<SystemDiskManifest, StorageError> {
-        if volume.len() != SYNFS_SYSTEM_VOLUME_SIZE as usize {
+        if volume.len() != GHOSTFS_SYSTEM_VOLUME_SIZE as usize {
             return Err(StorageError::InvalidImage(
                 "system volume has the wrong size".to_string(),
             ));
         }
-        let filesystem = SynFs::<SYNFS_SYSTEM_BLOCKS>::recover(volume)
-            .map_err(|_| StorageError::InvalidImage("SynFS system volume is corrupt".to_string()))?;
+        let filesystem = SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover(volume)
+            .map_err(|_| StorageError::InvalidImage("GhostFS system volume is corrupt".to_string()))?;
         filesystem
             .check_consistency()
-            .map_err(|_| StorageError::InvalidImage("SynFS system volume is inconsistent".to_string()))?;
+            .map_err(|_| StorageError::InvalidImage("GhostFS system volume is inconsistent".to_string()))?;
 
         let path = path.as_ref();
         let mut image = DiskImage::open_for_vm(path, true)?;
@@ -632,7 +632,7 @@ impl SystemDiskProvisioner {
 
 fn default_settings() -> Vec<SystemSetting> {
     vec![
-        SystemSetting::new("hostname", "synos"),
+        SystemSetting::new("hostname", "ghostos"),
         SystemSetting::new("timezone", "UTC"),
         SystemSetting::new("updates.channel", "stable"),
     ]
@@ -726,7 +726,7 @@ fn make_layout(
     let system_volume_offset =
         align_up(checked_add(initrd_offset, initrd_size)?, PAYLOAD_ALIGNMENT)?;
     let settings_offset = align_up(
-        checked_add(system_volume_offset, SYNFS_SYSTEM_VOLUME_SIZE)?,
+        checked_add(system_volume_offset, GHOSTFS_SYSTEM_VOLUME_SIZE)?,
         PAYLOAD_ALIGNMENT,
     )?;
     let reserved_offset = align_up(
@@ -746,7 +746,7 @@ fn make_layout(
         initrd_offset,
         initrd_size,
         system_volume_offset,
-        system_volume_size: SYNFS_SYSTEM_VOLUME_SIZE,
+        system_volume_size: GHOSTFS_SYSTEM_VOLUME_SIZE,
         settings_offset,
         settings_size: SYSTEM_DISK_SETTINGS_SIZE,
         reserved_offset,
@@ -767,7 +767,7 @@ fn required_disk_size(kernel: u64, initrd: u64, reserved: u64) -> Result<u64, St
                 )?,
                 PAYLOAD_ALIGNMENT,
             )?,
-            SYNFS_SYSTEM_VOLUME_SIZE + SYSTEM_DISK_SETTINGS_SIZE,
+            GHOSTFS_SYSTEM_VOLUME_SIZE + SYSTEM_DISK_SETTINGS_SIZE,
         )?,
         SYSTEM_DISK_ALIGNMENT,
     )?;
@@ -779,11 +779,11 @@ fn create_system_volume(
     install: &SystemDiskInstall,
     settings: &[u8],
 ) -> Result<Vec<u8>, StorageError> {
-    let mut image = vec![0u8; SYNFS_SYSTEM_VOLUME_SIZE as usize];
-    SynFs::<SYNFS_SYSTEM_BLOCKS>::format(&mut image)
-        .map_err(|_| StorageError::InvalidImage("cannot format SynFS system volume".to_string()))?;
-    let mut volume = SynFs::<SYNFS_SYSTEM_BLOCKS>::load(&image)
-        .map_err(|_| StorageError::InvalidImage("cannot load SynFS system volume".to_string()))?;
+    let mut image = vec![0u8; GHOSTFS_SYSTEM_VOLUME_SIZE as usize];
+    SynFs::<GHOSTFS_SYSTEM_BLOCKS>::format(&mut image)
+        .map_err(|_| StorageError::InvalidImage("cannot format GhostFS system volume".to_string()))?;
+    let mut volume = SynFs::<GHOSTFS_SYSTEM_BLOCKS>::load(&image)
+        .map_err(|_| StorageError::InvalidImage("cannot load GhostFS system volume".to_string()))?;
     let settings_end = settings
         .iter()
         .rposition(|byte| *byte != 0)
@@ -791,7 +791,7 @@ fn create_system_volume(
         .unwrap_or(0);
     for directory in [
         "/etc",
-        "/etc/synos",
+        "/etc/ghostos",
         "/system",
         "/system/services",
         "/var",
@@ -804,23 +804,23 @@ fn create_system_volume(
         })?;
     }
     volume
-        .write("/etc/synos/settings", &settings[..settings_end])
+        .write("/etc/ghostos/settings", &settings[..settings_end])
         .map_err(|_| StorageError::InvalidImage("cannot write system settings".to_string()))?;
     volume
-        .write("/etc/synos/machine-id", install.machine_identity.as_bytes())
+        .write("/etc/ghostos/machine-id", install.machine_identity.as_bytes())
         .map_err(|_| StorageError::InvalidImage("cannot write machine identity".to_string()))?;
     volume
-        .write("/etc/synos/network-id", install.network_identity.as_bytes())
+        .write("/etc/ghostos/network-id", install.network_identity.as_bytes())
         .map_err(|_| StorageError::InvalidImage("cannot write network identity".to_string()))?;
     volume
         .write(
-            "/etc/synos/capabilities",
+            "/etc/ghostos/capabilities",
             install.capabilities.join("\n").as_bytes(),
         )
         .map_err(|_| StorageError::InvalidImage("cannot write capabilities".to_string()))?;
     volume
         .write(
-            "/etc/synos/disk-format",
+            "/etc/ghostos/disk-format",
             SYSTEM_DISK_FORMAT_VERSION.to_string().as_bytes(),
         )
         .map_err(|_| StorageError::InvalidImage("cannot write system version".to_string()))?;
@@ -844,15 +844,15 @@ fn create_system_volume(
         .map_err(|_| StorageError::InvalidImage("cannot encode service manifest".to_string()))?;
     volume
         .write(
-            synos_synfs::SERVICE_MANIFEST_PATH,
+            ghostos_ghostfs::SERVICE_MANIFEST_PATH,
             &manifest_bytes[..manifest_length],
         )
         .map_err(|_| StorageError::InvalidImage("cannot write service manifest".to_string()))?;
     volume
         .flush(&mut image)
-        .map_err(|_| StorageError::InvalidImage("cannot commit SynFS system volume".to_string()))?;
+        .map_err(|_| StorageError::InvalidImage("cannot commit GhostFS system volume".to_string()))?;
     volume.check_consistency().map_err(|_| {
-        StorageError::InvalidImage("SynFS system volume is inconsistent".to_string())
+        StorageError::InvalidImage("GhostFS system volume is inconsistent".to_string())
     })?;
     Ok(image)
 }
@@ -1029,10 +1029,10 @@ fn read_best_manifest(image: &mut DiskImage) -> Result<SystemDiskManifest, Stora
         .max_by_key(|manifest| manifest.generation)
         .ok_or_else(|| match first_error {
             Some(error) => StorageError::InvalidImage(format!(
-                "no valid SynOS system-disk installation: {error}"
+                "no valid GhostOS system-disk installation: {error}"
             )),
             None => StorageError::InvalidImage(
-                "no valid SynOS system-disk installation".to_string(),
+                "no valid GhostOS system-disk installation".to_string(),
             ),
         })
 }
@@ -1046,7 +1046,7 @@ fn validate_manifest(
         || manifest.disk_size != image.size()
         || manifest.format != image.format()
         || manifest.layout.boot_metadata_size != SYSTEM_DISK_PAYLOAD_OFFSET
-        || manifest.layout.system_volume_size != SYNFS_SYSTEM_VOLUME_SIZE
+        || manifest.layout.system_volume_size != GHOSTFS_SYSTEM_VOLUME_SIZE
         || manifest.layout.settings_size != SYSTEM_DISK_SETTINGS_SIZE
     {
         return Err(StorageError::InvalidImage(
@@ -1125,11 +1125,11 @@ fn validate_manifest(
         manifest.layout.system_volume_offset,
         manifest.layout.system_volume_size,
     )?;
-    let filesystem = SynFs::<SYNFS_SYSTEM_BLOCKS>::recover(&volume)
-        .map_err(|_| StorageError::InvalidImage("SynFS system volume is corrupt".to_string()))?;
+    let filesystem = SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover(&volume)
+        .map_err(|_| StorageError::InvalidImage("GhostFS system volume is corrupt".to_string()))?;
     filesystem
         .check_consistency()
-        .map_err(|_| StorageError::InvalidImage("SynFS system volume is inconsistent".to_string()))
+        .map_err(|_| StorageError::InvalidImage("GhostFS system volume is inconsistent".to_string()))
 }
 
 fn validate_boot_record(
@@ -1558,7 +1558,7 @@ fn temporary_path(path: &Path) -> Result<PathBuf, StorageError> {
         .as_nanos();
     for attempt in 0..32u32 {
         let candidate = path.with_extension(format!(
-            "synos-provision-{}-{attempt}-{stamp}",
+            "ghostos-provision-{}-{attempt}-{stamp}",
             std::process::id()
         ));
         if !candidate.exists() {
@@ -1682,7 +1682,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("synos-system-disk-{label}-{stamp}"))
+        std::env::temp_dir().join(format!("ghostos-system-disk-{label}-{stamp}"))
     }
 
     #[test]

@@ -6,12 +6,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use synos_test_support::{
+use ghostos_test_support::{
     golden_bytes, golden_text, FakeDevice, FakeDeviceError, FailureInjector, Fault, FaultPlan,
     FaultPoint, GoldenFixture, TestScope,
 };
-use synos_vm::devices::{ApicTrigger, Device, DeviceError, PortDevice};
-use synos_vm::{FirmwareMode, PageFlags, Vm, VmConfig, COM1_PORT};
+use ghostos_vm::devices::{ApicTrigger, Device, DeviceError, PortDevice};
+use ghostos_vm::{FirmwareMode, PageFlags, Vm, VmConfig, COM1_PORT};
 
 #[derive(Clone, Debug)]
 struct MmioFake {
@@ -196,7 +196,7 @@ fn cleanup_and_vm_golden_fixtures_are_registered() {
         assert!(!golden_bytes(fixture).expect("VM hex golden is valid").is_empty());
     }
     assert!(golden_text(GoldenFixture::VmSerialOutput).contains("serial"));
-    assert!(golden_text(GoldenFixture::TerminalOutput).contains("SynOS"));
+    assert!(golden_text(GoldenFixture::TerminalOutput).contains("GhostOS"));
 
     let inventory = include_str!("inventory.toml");
     for tier in [

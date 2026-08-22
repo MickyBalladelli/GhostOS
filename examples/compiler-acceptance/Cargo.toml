@@ -17,4 +17,4 @@ name = "acceptance-service"
 path = "src/main.rs"
 
 [lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("synos"))'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("ghostos"))'] }

@@ -1,6 +1,6 @@
 # Declarative system configuration
 
-`synos-declarative` parses bounded `System.toml` input without heap allocation. The
+`ghostos-declarative` parses bounded `System.toml` input without heap allocation. The
 existing `[system]`, `[[service]]`, `[[capability]]`, and `[network]` sections remain
 valid. Cluster policy is added with these sections:
 
@@ -59,6 +59,6 @@ transport, federation, trust-root, and override values before activation.
 `ConfigurationDiff::between` returns changed areas plus affected node and service
 identifiers. `ClusterConfigurationManager` stages signed updates, checks the
 expected previous revision, enforces optional maintenance windows, runs runtime
-health checks, requires quorum acknowledgement, commits through a SynFS
+health checks, requires quorum acknowledgement, commits through a GhostFS
 checkpoint, and keeps bounded rollback history. `ClusterSpec::effective_for`
 applies a node override over the base policy.

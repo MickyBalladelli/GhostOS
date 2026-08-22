@@ -1,8 +1,8 @@
-# SynOS: A Book of the System
+# GhostOS: A Book of the System
 
 ## A practical guide to the kernel, services, filesystem, clusters, AI, and virtual machine
 
-> SynOS is a capability-based, `no_std` operating-system project written in Rust. Its small kernel owns the hard boundaries. User-space services own drivers, storage, networking, policy, applications, and AI. The virtual machine makes the whole system testable.
+> GhostOS is a capability-based, `no_std` operating-system project written in Rust. Its small kernel owns the hard boundaries. User-space services own drivers, storage, networking, policy, applications, and AI. The virtual machine makes the whole system testable.
 
 This book explains the repository as it exists today. It is written for a new developer who wants a map before touching code, and for an experienced developer who wants one reference for the system’s contracts.
 
@@ -22,9 +22,9 @@ Remember five words:
 
 ## Table of contents
 
-### Part I — The shape of SynOS
+### Part I — The shape of GhostOS
 
-1. [What SynOS is](01-what-synos-is.md)
+1. [What GhostOS is](01-what-ghostos-is.md)
 2. [How the repository is organized](02-repository-map.md)
 3. [The core design laws](03-design-laws.md)
 
@@ -36,7 +36,7 @@ Remember five words:
 
 ### Part III — Data and devices
 
-7. [SynFS, persistence, and storage](07-synfs-storage.md)
+7. [GhostFS, persistence, and storage](07-ghostfs-storage.md)
 8. [Drivers, platform I/O, power, and media](08-drivers-platform-media.md)
 9. [Networking, HTTP, and remote surfaces](09-networking-and-web.md)
 
@@ -54,7 +54,7 @@ Remember five words:
 
 ### Part VI — The virtual machine and developer workflow
 
-16. [The SynOS virtual machine](16-virtual-machine.md)
+16. [The GhostOS virtual machine](16-virtual-machine.md)
 17. [Build, test, fuzz, and release](17-build-test-release.md)
 18. [Cookbook: memorable workflows](18-cookbook.md)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Symbolize, retain, and compare SynOS folded-stack profile archives."""
+"""Symbolize, retain, and compare GhostOS folded-stack profile archives."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def parse_binary(path: pathlib.Path) -> dict[str, object]:
 
     return {
         "schema": 1,
-        "format": "synos-folded-profile",
+        "format": "ghostos-folded-profile",
         "revision": data[12:44].hex(),
         "host_id": data[44:60].hex(),
         "sample_period_us": struct.unpack_from("<Q", data, 60)[0],
@@ -89,7 +89,7 @@ def domain_name(domain: int) -> str:
         1: "boot",
         2: "ipc",
         3: "scheduler",
-        4: "synfs",
+        4: "ghostfs",
         5: "networking",
         6: "package-activation",
         7: "compiler-build",

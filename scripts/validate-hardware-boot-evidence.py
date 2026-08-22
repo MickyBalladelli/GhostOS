@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a captured SynOS bare-metal boot evidence bundle."""
+"""Validate a captured GhostOS bare-metal boot evidence bundle."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any
 
 
 SCHEMA = 1
-KIND = "synos-hardware-boot-evidence"
+KIND = "ghostos-hardware-boot-evidence"
 REVISION = re.compile(r"[0-9a-f]{7,64}")
 REQUIRED_INVENTORY = (
     "environment",
@@ -32,15 +32,15 @@ REQUIRED_INVENTORY = (
     "nic",
 )
 REQUIRED_MARKERS = {
-    "kernel_entry": "SynOS kernel bootstrap",
+    "kernel_entry": "GhostOS kernel bootstrap",
     "boot_info": "boot method=",
     "architecture": "architecture=x86_64",
     "cpu": "cpu topology online=",
     "pci": "PCI discovery complete",
-    "user_handoff": "starting synos-init in Ring 3",
-    "shell": "synos-shell ready in Ring 3",
+    "user_handoff": "starting ghostos-init in Ring 3",
+    "shell": "ghostos-shell ready in Ring 3",
 }
-PANIC_MARKERS = ("KERNEL PANIC", "guest panic", "SynOS boot failure")
+PANIC_MARKERS = ("KERNEL PANIC", "guest panic", "GhostOS boot failure")
 
 
 def fail(errors: list[str], message: str) -> None:

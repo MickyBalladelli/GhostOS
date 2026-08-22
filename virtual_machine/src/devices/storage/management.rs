@@ -381,7 +381,7 @@ fn clone_to_temporary(source: &Path) -> Result<PathBuf, StorageError> {
         .as_nanos();
     for attempt in 0..32u32 {
         let path = std::env::temp_dir().join(format!(
-            "synos-vm-disk-{}-{timestamp}-{attempt}{extension}",
+            "ghostos-vm-disk-{}-{timestamp}-{attempt}{extension}",
             std::process::id()
         ));
         match OpenOptions::new().write(true).create_new(true).open(&path) {
@@ -414,7 +414,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "synos-disk-management-{label}-{}-{stamp}.raw",
+            "ghostos-disk-management-{label}-{}-{stamp}.raw",
             std::process::id()
         ))
     }

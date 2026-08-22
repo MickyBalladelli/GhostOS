@@ -1,5 +1,5 @@
-use synos_pkg::{PackageBundle, PackageDaemon, PackageError, SigningKey, bundle_size, encode_bundle};
-use synos_synfs::SynFs;
+use ghostos_pkg::{PackageBundle, PackageDaemon, PackageError, SigningKey, bundle_size, encode_bundle};
+use ghostos_ghostfs::SynFs;
 
 #[test]
 fn supply_chain_checks_signature_hash_and_dependency_bounds() {
@@ -20,7 +20,7 @@ fn supply_chain_checks_signature_hash_and_dependency_bounds() {
     let mut tampered_hash = bundle.clone();
     tampered_hash[64] ^= 1;
     assert!(matches!(PackageBundle::decode(&tampered_hash), Err(PackageError::CorruptBundle)));
-    assert_eq!(bundle_size(payload.len(), synos_system_model::MAX_DEPENDENCIES + 1), Err(PackageError::TooManyDependencies));
+    assert_eq!(bundle_size(payload.len(), ghostos_system_model::MAX_DEPENDENCIES + 1), Err(PackageError::TooManyDependencies));
 
     let mut filesystem = SynFs::<128>::new();
     filesystem.create_directory("system/store", true).unwrap();

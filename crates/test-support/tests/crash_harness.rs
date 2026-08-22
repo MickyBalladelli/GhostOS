@@ -1,4 +1,4 @@
-use synos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
+use ghostos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
 #[test]
 fn crash_matrix_is_stable_and_each_target_fires_once() {
@@ -9,7 +9,7 @@ fn crash_matrix_is_stable_and_each_target_fires_once() {
         let mut harness = CrashHarness::new(Some(point));
         assert_eq!(
             harness.checkpoint(point.domain, point.boundary),
-            Err(synos_test_support::crash::CrashInjected {
+            Err(ghostos_test_support::crash::CrashInjected {
                 point,
                 sequence: 1,
             })

@@ -1,11 +1,11 @@
-use synos_auth::{
+use ghostos_auth::{
     CapabilityLogicalNames, CapabilityKey, FederationError, FederationRegistry, FederationScope,
     LendingKind, LendingRights, ResourceLender, TokenError, TransportRights,
 };
-use synos_fabric::{Access, AddressRange, NodeId, PageFault, PAGE_SIZE};
-use synos_fabric::dsm::{DlmLeaseMode, SoftwareDlmLease};
-use synos_kernel::{AddressSpaceId, CapabilityObject, CapabilitySpace, Rights};
-use synos_system_model::logical::{LogicalScope, LogicalTarget, LogicalTargetKind, Principal};
+use ghostos_fabric::{Access, AddressRange, NodeId, PageFault, PAGE_SIZE};
+use ghostos_fabric::dsm::{DlmLeaseMode, SoftwareDlmLease};
+use ghostos_kernel::{AddressSpaceId, CapabilityObject, CapabilitySpace, Rights};
+use ghostos_system_model::logical::{LogicalScope, LogicalTarget, LogicalTargetKind, Principal};
 
 #[test]
 fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
@@ -62,7 +62,7 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
             Some(99),
             "OTHER",
         ),
-        Err(synos_system_model::logical::LogicalError::AccessDenied)
+        Err(ghostos_system_model::logical::LogicalError::AccessDenied)
     );
     assert_eq!(
         service.define(
@@ -73,7 +73,7 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
             "TARGET",
             target,
         ),
-        Err(synos_system_model::logical::LogicalError::AccessDenied)
+        Err(ghostos_system_model::logical::LogicalError::AccessDenied)
     );
     assert!(service
         .resolve(
@@ -98,7 +98,7 @@ fn logical_name_service_rejects_wrong_namespace_generation_and_operation() {
             None,
             "TARGET",
         ),
-        Err(synos_system_model::logical::LogicalError::AccessDenied)
+        Err(ghostos_system_model::logical::LogicalError::AccessDenied)
     );
 }
 
@@ -145,7 +145,7 @@ fn resource_service_rejects_valid_capability_for_wrong_object_or_tenant() {
             lease,
             10,
         ),
-        Err(synos_auth::LendingError::AccessDenied)
+        Err(ghostos_auth::LendingError::AccessDenied)
     );
     assert_eq!(
         lender.authorize_remote_fault(
@@ -159,15 +159,15 @@ fn resource_service_rejects_valid_capability_for_wrong_object_or_tenant() {
             lease,
             10,
         ),
-        Err(synos_auth::LendingError::AccessDenied)
+        Err(ghostos_auth::LendingError::AccessDenied)
     );
 }
 
 #[test]
 fn federation_service_rejects_valid_capability_for_wrong_generation() {
     let key = CapabilityKey::new([7; 32]);
-    let local = synos_auth::ClusterId::new(1).unwrap();
-    let peer = synos_auth::ClusterId::new(2).unwrap();
+    let local = ghostos_auth::ClusterId::new(1).unwrap();
+    let peer = ghostos_auth::ClusterId::new(2).unwrap();
     let mut registry = FederationRegistry::<2, 2>::new(local, key);
     let invitation = registry
         .invite(
@@ -183,7 +183,7 @@ fn federation_service_rejects_valid_capability_for_wrong_generation() {
     assert!(registry
         .authorize_offer(
             peer,
-            synos_auth::FederatedResourceKind::Cpu,
+            ghostos_auth::FederatedResourceKind::Cpu,
             TransportRights::LAYER2,
             1,
             2,
@@ -194,7 +194,7 @@ fn federation_service_rejects_valid_capability_for_wrong_generation() {
     assert_eq!(
         registry.authorize_offer(
             peer,
-            synos_auth::FederatedResourceKind::Cpu,
+            ghostos_auth::FederatedResourceKind::Cpu,
             TransportRights::LAYER2,
             1,
             4,
@@ -206,7 +206,7 @@ fn federation_service_rejects_valid_capability_for_wrong_generation() {
 #[test]
 fn capability_service_rejects_valid_capability_for_wrong_operation() {
     let key = CapabilityKey::new([8; 32]);
-    let token = synos_auth::CryptographicCapability::issue(
+    let token = ghostos_auth::CryptographicCapability::issue(
         key,
         NodeId::LOCAL,
         NodeId::new(2).unwrap(),

@@ -1,6 +1,6 @@
-pub use synos_abi::{Capability, Operation, Request, Response};
+pub use ghostos_abi::{Capability, Operation, Request, Response};
 
-pub use synos_abi::{ABI_REVISION, ABI_SCHEMA_VERSION};
+pub use ghostos_abi::{ABI_REVISION, ABI_SCHEMA_VERSION};
 
 pub type GateFn = unsafe extern "C" fn(*const Request, *mut Response);
 
@@ -10,11 +10,11 @@ pub struct NativeGate {
 }
 
 impl NativeGate {
-    /// Creates a call gate supplied by the SynOS process loader.
+    /// Creates a call gate supplied by the GhostOS process loader.
     ///
     /// # Safety
     ///
-    /// The gate must obey the generated SynOS system-call ABI for the life
+    /// The gate must obey the generated GhostOS system-call ABI for the life
     /// of this value.
     pub const unsafe fn new(gate: GateFn) -> Self {
         Self { gate }

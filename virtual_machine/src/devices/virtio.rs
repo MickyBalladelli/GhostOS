@@ -860,7 +860,7 @@ mod tests {
 
     #[test]
     fn block_capacity_and_console_output_are_visible() {
-        let path = std::env::temp_dir().join(format!("synos-virtio-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("ghostos-virtio-{}", std::process::id()));
         let mut file = File::create(path.clone()).unwrap();
         file.set_len(4096).unwrap();
         file.flush().unwrap();

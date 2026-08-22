@@ -1,7 +1,7 @@
-use synos_system_model::{LogicalName, logical::{LogicalError, LogicalTarget, LogicalTargetKind}};
-use synos_system_model::logical_fast::LogicalFastPath;
+use ghostos_system_model::{LogicalName, logical::{LogicalError, LogicalTarget, LogicalTargetKind}};
+use ghostos_system_model::logical_fast::LogicalFastPath;
 
-pub const MAX_PSEUDO_PATH_BYTES: usize = synos_system_model::MAX_NAME_BYTES;
+pub const MAX_PSEUDO_PATH_BYTES: usize = ghostos_system_model::MAX_NAME_BYTES;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PseudoResourceKind {

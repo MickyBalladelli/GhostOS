@@ -1,6 +1,6 @@
-use synos_auth::{CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights};
-use synos_fabric::NodeId;
-use synos_kernel::Rights;
+use ghostos_auth::{CapabilityCaveat, CapabilityKey, CryptographicCapability, TokenError, TransportRights};
+use ghostos_fabric::NodeId;
+use ghostos_kernel::Rights;
 
 #[test]
 fn attacker_cannot_add_rights_while_attenuating_capability() {

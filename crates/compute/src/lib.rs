@@ -1,12 +1,12 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-//! Heap-free, pure-Rust compute contracts for SynOS.
+//! Heap-free, pure-Rust compute contracts for GhostOS.
 //!
 //! Frameworks import tensors from capability-mapped IPC pages. GPU and NPU
 //! drivers stay in Ring 3 and consume bounded asynchronous command queues.
 
-use synos_status::{IntoStatus, Severity, Status, facility};
+use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub mod accelerator;
 pub mod framework;
@@ -32,12 +32,12 @@ pub enum Error {
     UnsupportedDevice,
 }
 
-impl From<synos_platform_io::Error> for Error {
-    fn from(error: synos_platform_io::Error) -> Self {
+impl From<ghostos_platform_io::Error> for Error {
+    fn from(error: ghostos_platform_io::Error) -> Self {
         match error {
-            synos_platform_io::Error::QueueFull => Self::QueueFull,
-            synos_platform_io::Error::InvalidBufferAccess => Self::AccessDenied,
-            synos_platform_io::Error::InvalidDevice => Self::InvalidDevice,
+            ghostos_platform_io::Error::QueueFull => Self::QueueFull,
+            ghostos_platform_io::Error::InvalidBufferAccess => Self::AccessDenied,
+            ghostos_platform_io::Error::InvalidDevice => Self::InvalidDevice,
             _ => Self::InvalidDispatch,
         }
     }

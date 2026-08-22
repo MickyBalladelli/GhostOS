@@ -11,7 +11,7 @@ use crate::firewall::{
     CapabilityRight, Direction, FirewallRule, Ipv4Cidr, PortRange, Protocol, RateLimit, RuleAction,
 };
 use crate::transport::DhcpIngress;
-use synos_time_sync::MonotonicClock;
+use ghostos_time_sync::MonotonicClock;
 
 pub const DHCP_CLIENT_PORT: u16 = 68;
 pub const DHCP_SERVER_PORT: u16 = 67;

@@ -148,7 +148,7 @@ def git_diff(base: str | None) -> str:
 
 
 def default_base() -> str | None:
-    configured = os.environ.get("SYNOS_REVIEW_BASE")
+    configured = os.environ.get("GHOSTOS_REVIEW_BASE")
     if configured:
         return configured
 
@@ -168,7 +168,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--base",
-        help="Git revision to compare with; defaults to SYNOS_REVIEW_BASE or origin/HEAD",
+        help="Git revision to compare with; defaults to GHOSTOS_REVIEW_BASE or origin/HEAD",
     )
     args = parser.parse_args()
     base = args.base or default_base()

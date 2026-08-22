@@ -1,6 +1,6 @@
-# synos-client-sdk
+# ghostos-client-sdk
 
-Portable, heap-free SynOS RPC client and frontend gateway protocol. The core is
+Portable, heap-free GhostOS RPC client and frontend gateway protocol. The core is
 `no_std` and contains no platform networking, async runtime, or allocator.
 
 ## Compatibility policy
@@ -26,7 +26,7 @@ Implement `RpcTransport::round_trip` with the host platform:
 
 The transport sends one complete request frame and returns one complete response
 frame. HTTP gateways use `POST` with
-`Content-Type: application/vnd.synos.rpc`.
+`Content-Type: application/vnd.ghostos.rpc`.
 
 ## Wire contract
 
@@ -64,6 +64,6 @@ The SDK currently exposes:
 only validates framing and typed payloads; possession of a decoded capability
 does not itself authorize an operation.
 
-HTTP gateways use `POST /...` with `application/vnd.synos.rpc`. The
-`synos-http` crate provides the content-type and response envelope helpers;
+HTTP gateways use `POST /...` with `application/vnd.ghostos.rpc`. The
+`ghostos-http` crate provides the content-type and response envelope helpers;
 its `GrpcRouter` provides the equivalent bounded gRPC dispatch path.
