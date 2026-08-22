@@ -399,16 +399,21 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
         target_arch = "x86_64",
         any(target_os = "none", target_os = "uefi")
     ))]
-    if let Some(filesystem) = physical_filesystem.as_ref() {
-        crate::println!(
-            "[fsprobe] boot: provisioning_required={} used_blocks={} free_bytes={}",
-            provisioning_required,
-            filesystem.used_blocks(),
-            filesystem.free_bytes()
-        );
-        match filesystem.check_consistency() {
-            Ok(()) => crate::println!("[fsprobe] boot: consistency ok"),
-            Err(error) => crate::println!("[fsprobe] boot: consistency {error:?}"),
+    match physical_filesystem.as_ref() {
+        Some(filesystem) => {
+            crate::println!(
+                "[fsprobe] boot: provisioning_required={} used_blocks={} free_bytes={}",
+                provisioning_required,
+                filesystem.used_blocks(),
+                filesystem.free_bytes()
+            );
+            match filesystem.check_consistency() {
+                Ok(()) => crate::println!("[fsprobe] boot: consistency ok"),
+                Err(error) => crate::println!("[fsprobe] boot: consistency {error:?}"),
+            }
+        }
+        None => {
+            crate::println!("[fsprobe] boot: AHCI MOUNT FAILED - running on transient bootstrap filesystem");
         }
     }
 

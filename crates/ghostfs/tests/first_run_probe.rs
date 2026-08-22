@@ -199,6 +199,22 @@ fn probe_fresh_volume_in_memory() {
     run_first_admin_sequence(&mut filesystem, "in-memory");
 }
 
+/// Reproduce the kernel's fallback path: AHCI mount fails -> SynFs::new().
+#[test]
+fn probe_bootstrap_new_filesystem() {
+    let mut filesystem = SynFs::<MAX_BLOCKS>::new();
+    println!("bootstrap filesystem constructed (no format, no load)");
+    report("bootstrap fresh", &filesystem);
+    run_first_admin_sequence(&mut filesystem, "bootstrap");
+    match filesystem.lookup(DATABASE) {
+        Ok(metadata) => println!(
+            "[bootstrap] database survived: type={:?} size={}",
+            metadata.file_type, metadata.size
+        ),
+        Err(error) => println!("[bootstrap] database lookup FAILED after confirm: {error:?}"),
+    }
+}
+
 #[test]
 fn probe_boot_from_disk_then_first_run() {
     let mut disk = DiskImage::create(Path::new("/tmp/ghostos-fsprobe-boot.img"));
