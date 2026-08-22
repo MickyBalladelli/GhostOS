@@ -13,7 +13,7 @@ use ghostos_init::{
     ProcessId, RestartPolicy, ServiceId, ServiceKind, ServiceName, ServiceReadiness, ServiceSpec,
     ServiceState, SpawnRequest, StartupDiagnostic, Supervisor, SupervisorRuntime,
 };
-use ghostos_status::Status;
+use ghostos_status::{facility, Severity, Status};
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -1011,6 +1011,14 @@ pub(crate) fn commit_first_admin() -> Result<(), Status> {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn first_admin_corrupt(site: u8) -> Status {
+    Status::new(Severity::Fatal, facility::SYSTEM, 6, site).unwrap_or(Status::CORRUPT)
+}
+
 fn commit_first_admin_inner() -> Result<(), Status> {
     if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ALREADY_EXISTS)
@@ -1029,6 +1037,7 @@ fn commit_first_admin_inner() -> Result<(), Status> {
     match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
         Err(ghostos_ghostfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::Corrupt) => return Err(first_admin_corrupt(6)),
         Err(error) => return Err(error.status()),
     }
 
@@ -1043,17 +1052,20 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         || username_metadata.size == 0
         || username_metadata.size as usize > FIRST_ADMIN_USERNAME_CAPACITY
     {
-        return Err(Status::CORRUPT)
+        return Err(first_admin_corrupt(1))
     }
     let mut username = [0; FIRST_ADMIN_USERNAME_CAPACITY];
     let username_read = daemon
         .filesystem()
         .read(FIRST_ADMIN_USERNAME_PATH, &mut username)
-        .map_err(|error| error.status())?;
+        .map_err(|error| match error {
+            ghostos_ghostfs::Error::Corrupt => first_admin_corrupt(7),
+            other => other.status(),
+        })?;
     if username_read.bytes_read != username_metadata.size as usize
         || !valid_first_admin_username(&username[..username_read.bytes_read])
     {
-        return Err(Status::CORRUPT)
+        return Err(first_admin_corrupt(2))
     }
 
     let credential_metadata = daemon
@@ -1068,13 +1080,16 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         || credential_size < 3
         || credential_size > FIRST_ADMIN_CREDENTIAL_CAPACITY + 2
     {
-        return Err(Status::CORRUPT)
+        return Err(first_admin_corrupt(3))
     }
     let mut credential = [0; FIRST_ADMIN_CREDENTIAL_CAPACITY + 2];
     let credential_read = daemon
         .filesystem()
         .read(FIRST_ADMIN_CREDENTIAL_PATH, &mut credential)
-        .map_err(|error| error.status())?;
+        .map_err(|error| match error {
+            ghostos_ghostfs::Error::Corrupt => first_admin_corrupt(8),
+            other => other.status(),
+        })?;
     let credential_length = credential[1] as usize;
     if credential_read.bytes_read != credential_size
         || !(1..=3).contains(&credential[0])
@@ -1082,13 +1097,13 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         || credential_length > FIRST_ADMIN_CREDENTIAL_CAPACITY
         || credential_size != credential_length + 2
     {
-        return Err(Status::CORRUPT)
+        return Err(first_admin_corrupt(4))
     }
 
     let mut record = [0; FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY];
     record[0] = FIRST_ADMIN_AUTHORIZATION_RECORD_VERSION;
     let normalized_username = normalized_first_admin_username(&username[..username_read.bytes_read])
-        .ok_or(Status::CORRUPT)?;
+        .ok_or_else(|| first_admin_corrupt(5))?;
     record[1] = username_read.bytes_read as u8;
     record[2..2 + username_read.bytes_read]
         .copy_from_slice(&normalized_username[..username_read.bytes_read]);
@@ -1102,23 +1117,28 @@ fn commit_first_admin_inner() -> Result<(), Status> {
     match transaction.lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
         Err(ghostos_ghostfs::Error::NotFound) => {}
+        Err(ghostos_ghostfs::Error::Corrupt) => return Err(first_admin_corrupt(9)),
         Err(error) => return Err(error.status()),
     }
+    let transaction_error_status = |error: ghostos_ghostfs::Error| match error {
+        ghostos_ghostfs::Error::Corrupt => first_admin_corrupt(10),
+        other => other.status(),
+    };
     transaction
         .write(
             AUTHORIZATION_DATABASE_PATH,
             &record[..material_start + credential_length],
         )
-        .map_err(|error| error.status())?;
+        .map_err(transaction_error_status)?;
     transaction
         .delete(FIRST_ADMIN_USERNAME_PATH)
-        .map_err(|error| error.status())?;
+        .map_err(transaction_error_status)?;
     transaction
         .delete(FIRST_ADMIN_CREDENTIAL_PATH)
-        .map_err(|error| error.status())?;
+        .map_err(transaction_error_status)?;
     transaction
         .commit()
-        .map_err(|error| error.status())?;
+        .map_err(transaction_error_status)?;
     if crate::physical_storage::sync(daemon.filesystem_mut()).is_err() {
         FIRST_ADMIN_SYNC_PENDING.store(true, Ordering::Release);
         return Err(Status::INTERNAL)
