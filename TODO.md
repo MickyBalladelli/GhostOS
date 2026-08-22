@@ -186,3 +186,85 @@ Hundreds of hits live in `README.md`, `docs/`, `book/`, crate READMEs.
 - [ ] Update Docker Hub / GHCR image names if published.
 - [ ] Warn operators: old `.synos.lock` files, system disks, snapshots, and
   `x86_64-unknown-synos` toolchains will not match until converted.
+
+---
+
+# Project simplification opportunities
+
+Suggestions from a full-tree review (803 files, 73 workspace members). Each item
+is independent; do them one at a time with `cargo test` between steps.
+
+## 1. Workspace and crate structure
+
+- [ ] Merge the eight single-file crates — `admission`, `api-compat`,
+  `ghostos-kvd`, `numa`, `path-pattern`, `policy`, `protocol`,
+  `service-scale` (each is just `Cargo.toml` + one `lib.rs`) — into one
+  support crate (for example `ghostos-support`) or into their primary
+  consumers. Each removal drops one entry from `members` *and*
+  `default-members`, one Cargo.lock node, and one test target.
+- [ ] Stop duplicating the member list: root `Cargo.toml` repeats all ~68
+  members verbatim in `default-members`. If default-members must stay,
+  generate both lists from one source (build script or workspace inheritance)
+  so they cannot drift.
+- [ ] Consolidate the three scripting runtimes (`ghostos-script` native DCL,
+  `ghostos-embedded-script` Rhai, `ghostos-wasm-script` Wasmi). Keep the
+  engines, but consider one facade crate with cargo features instead of three
+  parallel crates, READMEs, and test suites.
+- [ ] Shrink the AI stack: `ghostos-agentd` is three files — fold it into
+  `ghostos-agent-bridge` or `ghostos-inference`; review whether `llm-runtime`
+  and `compute` can share their allocator/tensor plumbing.
+- [ ] Pick one KV story: `ghostos-rms` already ships an embedded key-value
+  database over GhostFS, and `ghostos-kvd` is a second KV layer on GhostFS.
+  Merge or clearly split their responsibilities.
+- [ ] Review the two virtio implementations in the VM
+  (`virtual_machine/src/devices/virtio.rs`, 885 lines vs
+  `virtual_machine/src/devices/net/virtio.rs`, 464 lines) and share the
+  queue/ring code.
+- [ ] Define one shell roadmap: `kernel/src/shell.rs` (Ring 0 console shell)
+  and the `ghostos-shell` crate (Ring 3 DCL shell) duplicate parser/editor
+  concepts. Long term, move console handling onto the Ring 3 shell.
+- [ ] Slim the Apple client surface: `clients/apple` has three products
+  (Client, ControlUI, ControlApp) where one library + one app binary may do.
+
+## 2. Tests
+
+- [ ] Rename the 42 roadmap-named test files (`tests/coverage_59_5.rs` …
+  `coverage_59_10.rs`, `coverage_58_1.rs`) to descriptive names. The IDs tie
+  test files to roadmap metadata, make navigation hard, and invite collisions
+  when crates gain more tests.
+- [ ] Where a crate has several single-test `tests/*.rs` files, group related
+  coverage tests into one integration file per theme to cut compile time.
+- [ ] `virtual_machine/tests/generated-inventory.toml` is generated yet
+  tracked; regenerate it in CI/local validation instead of committing it.
+
+## 3. Scripts and evidence machinery
+
+- [ ] `scripts/` holds ~35 standalone Python validators/generators plus 27
+  shell scripts. Extract the shared helpers (inventory loading, evidence
+  paths, changelog access) into one Python package and expose a single CLI
+  with subcommands, keeping thin wrappers only where names are load-bearing.
+- [ ] Untracked build outputs are tracked: `kernel/build/soak/capabilities/
+  report.json` and `virtual_machine/build/soak/lifecycle/report.json` are
+  committed. Move evidence reports to an ignored evidence directory (the
+  `GHOSTOS_EVIDENCE_DIR` convention) and reference them by path in manifests.
+- [ ] Several docs are machine-checked registries (`docs/test-inventory.toml`,
+  `docs/test-coverage.toml`, `docs/invariants.toml`,
+  `docs/roadmap-metadata.toml`). Generate the derivable ones from source
+  metadata in one step rather than hand-maintaining four files validated by
+  four scripts.
+
+## 4. Documentation
+
+- [ ] Trim the 1050-line `README.md`: keep boot/build/test quickstart and
+  links; the feature essays largely duplicate `book/` chapters and `docs/`.
+- [ ] Fold `archive/TODO-*.md` into a single `archive/HISTORY.md` (or accept
+  them as-is) so only one live TODO exists at the root.
+- [ ] Crate-level READMEs repeat book content; keep one authoritative
+  description per subsystem in `book/` and link to it.
+
+## 5. Verification for every simplification step
+
+- [ ] `cargo test` (default members) passes.
+- [ ] `python3 scripts/validate-documentation.py` still passes after doc moves.
+- [ ] No compatibility-surface change (magics, wire formats, target triples)
+  is bundled into refactor commits.
