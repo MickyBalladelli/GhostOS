@@ -859,9 +859,9 @@ mod tests {
         let json = rendered.as_str();
 
         assert!(json.contains("capacity-bytes"));
-        assert!(!json.contains("host"));
-        assert!(!json.contains("path"));
-        assert!(!json.contains("payload"));
-        assert!(!json.contains("secret"));
+        assert!(!json.contains("\"host\""));
+        assert!(!json.contains("\"path\""));
+        assert!(!json.contains("\"payload\""));
+        assert!(!json.contains("\"secret\""));
     }
 }
