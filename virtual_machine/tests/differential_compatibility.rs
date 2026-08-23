@@ -23,7 +23,7 @@ enum FilesystemOp {
 }
 
 fn compare_filesystem(operations: &[FilesystemOp]) -> Option<String> {
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<32>::new();
     let mut reference = BTreeMap::<String, Vec<u8>>::new();
     let paths = ["/alpha", "/beta", "/gamma"];
 

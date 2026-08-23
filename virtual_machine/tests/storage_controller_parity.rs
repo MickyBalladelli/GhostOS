@@ -52,7 +52,8 @@ fn ahci_issue(
     buffer: u64,
 ) {
     let mut header = [0u8; 32];
-    header[0..4].copy_from_slice(&1u32.to_le_bytes());
+    let write = u32::from(command == 0x35) << 6;
+    header[0..4].copy_from_slice(&(5 | write | (1 << 16)).to_le_bytes());
     header[8..16].copy_from_slice(&0x3000u64.to_le_bytes());
     mmu.write_phys(0x1000, &header).expect("write AHCI header");
 
