@@ -479,7 +479,7 @@ impl PasskeyBridge {
                     .guest_text
                     .contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):") =>
             {
-                Some((b"passkey\r".as_slice(), InputFlow::EnrollMaterial { key: key.clone() }))
+                Some((b"".as_slice(), InputFlow::EnrollMaterial { key: key.clone() }))
             }
             InputFlow::EnrollMaterial { key }
                 if self
@@ -493,20 +493,17 @@ impl PasskeyBridge {
                     .guest_text
                     .contains("Create this administrator account? [y/N]:") =>
             {
-                Some((b"y\r".as_slice(), InputFlow::None))
+                Some((b"y".as_slice(), InputFlow::None))
             }
             InputFlow::LoginKind
                 if self.guest_text.contains("Credential [passkey/tpm]:") =>
             {
-                Some((b"passkey\r".as_slice(), InputFlow::None))
+                Some((b"".as_slice(), InputFlow::None))
             }
             _ => None,
         };
         let Some((bytes, next_flow)) = next else { return };
-        let mut line = bytes.to_vec();
-        if matches!(self.input_flow, InputFlow::EnrollMaterial { .. }) {
-            line.push(b'\r')
-        }
+        let line = guarded_line(bytes);
         vm.queue_terminal_input(&line, self.input_mode);
         self.input_flow = next_flow;
     }
@@ -584,7 +581,7 @@ impl PasskeyBridge {
             }
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_terminal_input(format!("{username}\r").as_bytes(), self.input_mode);
+            vm.queue_terminal_input(&guarded_line(username.as_bytes()), self.input_mode);
             self.input_flow = InputFlow::EnrollKind {
                 key: key.to_string(),
             };
@@ -610,7 +607,7 @@ impl PasskeyBridge {
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_terminal_input(format!("{username}\r").as_bytes(), self.input_mode);
+            vm.queue_terminal_input(&guarded_line(username.as_bytes()), self.input_mode);
             self.input_flow = InputFlow::LoginKind;
             return json_ok()
         }
@@ -628,11 +625,21 @@ impl PasskeyBridge {
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_terminal_input(format!("{assertion}\r").as_bytes(), self.input_mode);
+            vm.queue_terminal_input(&guarded_line(assertion.as_bytes()), self.input_mode);
             return json_ok()
         }
         text_response("404 Not Found", "Not found")
     }
+}
+
+fn guarded_line(bytes: &[u8]) -> Vec<u8> {
+    let mut line = Vec::with_capacity(bytes.len() + 2);
+    // Keep the first real byte away from the PS/2 prompt boundary. Backspace
+    // is harmless on an empty line whether it is consumed or delivered.
+    line.push(0x08);
+    line.extend_from_slice(bytes);
+    line.push(b'\r');
+    line
 }
 
 fn read_request(client: &mut Client) -> io::Result<Option<Request>> {
