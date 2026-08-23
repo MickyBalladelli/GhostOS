@@ -1316,13 +1316,12 @@ fn create_first_admin_credential_inner(
             {
                 return Err(Status::CORRUPT)
             }
-            if existing[0] != kind
-                || existing_length != public_material.len()
-                || existing[2..2 + existing_length] != *public_material
+            if existing[0] == kind
+                && existing_length == public_material.len()
+                && existing[2..2 + existing_length] == *public_material
             {
-                return Err(Status::ALREADY_EXISTS)
+                return Ok(())
             }
-            return Ok(())
         }
         Err(ghostos_ghostfs::Error::NotFound) => {}
         Err(error) => return Err(error.status()),
