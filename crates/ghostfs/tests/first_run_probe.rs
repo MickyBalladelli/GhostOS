@@ -77,7 +77,7 @@ fn inspect_real_system_disk_body() {
     );
     report("real disk", &mounted.filesystem);
 
-    let mut filesystem = mounted.filesystem;
+    let filesystem = mounted.filesystem;
 
     for path in [
         "/system",
@@ -103,7 +103,9 @@ fn inspect_real_system_disk_body() {
         }
     }
 
-    run_first_admin_sequence(&mut filesystem, "real-disk");
+    // The real system disk may already contain first-run paths. Keep this
+    // inspector read-only; probe_boot_from_disk_then_first_run uses a fresh
+    // image for the mutation sequence.
 }
 
 const MAX_BLOCKS: usize = 32;
