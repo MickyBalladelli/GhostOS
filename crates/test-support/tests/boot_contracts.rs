@@ -17,12 +17,12 @@ fn bios_stage_one_has_a_valid_boot_sector_and_bounded_edd_read() {
 
 #[test]
 fn bios_stage_two_checks_kernel_size_chunks_reads_and_handoff() {
-    assert!(BIOS_STAGE2.contains(".set MAX_KERNEL_SECTORS, 1148"));
+    assert!(BIOS_STAGE2.contains(".set MAX_KERNEL_SECTORS, 1196"));
     assert!(BIOS_STAGE2.contains(".if KERNEL_SECTORS > MAX_KERNEL_SECTORS"));
     assert!(BIOS_STAGE2.contains("cmpw $127, %ax"));
     assert!(BIOS_STAGE2.contains("movq $BOOT_INFO, %rdi"));
     assert!(BIOS_STAGE2.contains("jmp *%rax"));
-    assert!(BIOS_BUILDER.contains("max_kernel_sectors=1148"));
+    assert!(BIOS_BUILDER.contains("max_kernel_sectors=1196"));
     assert!(BIOS_BUILDER.contains("kernel exceeds its BIOS staging-memory limit"));
     assert!(BIOS_BUILDER.contains("stage2 exceeds its 16-sector reservation"));
 }
