@@ -44,6 +44,7 @@ impl BlockDevice for RealDisk {
 }
 
 #[test]
+#[ignore = "diagnostic requires virtual_machine/state/system.raw"]
 fn inspect_real_system_disk() {
     // MountedSystemVolume::mount consumes multi-megabyte stack frames in
     // debug builds; libtest threads are too small for it.
