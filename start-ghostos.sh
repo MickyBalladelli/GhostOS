@@ -51,7 +51,7 @@ if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios ./userspace/boo
   ./scripts/build-bios-image.sh >/dev/null
 fi
 
-if [ ! -x ./target/release/ghostos-vm ]; then
+if [ ! -x ./target/release/ghostos-vm ] || find ./virtual_machine ./Cargo.toml ./Cargo.lock -type f -newer ./target/release/ghostos-vm -print -quit | grep -q .; then
   echo "Building ghostos-vm (release)..." >&2
   cargo build -p ghostos-vm --release >/dev/null
 fi

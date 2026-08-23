@@ -428,12 +428,14 @@ fn resolve_target(
     }
 }
 
-fn resolve_call_target(
+fn resolve_near_target(
     ins: &DecodedInstruction,
     state: &mut CpuState,
     mmu: &mut Mmu,
     op: &Operand,
 ) -> Result<u64, CpuError> {
+    // Near CALL/JMP operands are 64-bit in long mode even when the default
+    // decoded operand size is 32-bit.
     if state.mode == CpuMode::Long64 && ins.opsize == 32 {
         match op {
             Operand::Register(reg) => return Ok(state.reg(*reg)),
@@ -1100,7 +1102,7 @@ impl InstructionExecutor {
         mmu: &mut Mmu,
     ) -> Result<(), CpuError> {
         if let Some(op) = ins.operands.first() {
-            let target = resolve_target(ins, state, mmu, op)?;
+            let target = resolve_near_target(ins, state, mmu, op)?;
             state.rip = target;
         } else {
             state.rip = ins.next_ip;
@@ -1144,7 +1146,7 @@ impl InstructionExecutor {
                     state.rip = *offset;
                 }
                 _ => {
-                    let target = resolve_call_target(ins, state, mmu, op)?;
+                    let target = resolve_near_target(ins, state, mmu, op)?;
                     push_value(state, mmu, ins.next_ip, stack_operand_size(state, ins.opsize))?;
                     state.rip = target;
                 }
@@ -2304,6 +2306,20 @@ mod tests {
         assert_ne!(cpu.state.rflags & ZF, 0);
         // jz next_ip = 0x100C + 1 = 0x100D (the second NOP).
         assert_eq!(cpu.state.rip, 0x100D);
+    }
+
+    #[test]
+    fn indirect_jump_reads_64_bit_target_in_long_mode() {
+        // jmp qword ptr [rax] (FF /4) has no REX.W prefix, but its target is
+        // still 64-bit in long mode.
+        let (mut cpu, mut mmu) = cpu_with(&[0xFF, 0x20]);
+        cpu.state.mode = CpuMode::Long64;
+        cpu.state.rax = 0x2000;
+        mmu.write_u64(0x2000, 0x0000_0080_0000_1FB0).unwrap();
+
+        single_run(&mut cpu, &mut mmu).unwrap();
+
+        assert_eq!(cpu.state.rip, 0x0000_0080_0000_1FB0);
     }
 
     #[test]
