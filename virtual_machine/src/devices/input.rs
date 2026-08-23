@@ -37,6 +37,7 @@ struct OutputByte {
 pub struct Ps2Controller {
     command_byte: u8,
     output: VecDeque<OutputByte>,
+    pending_keyboard: VecDeque<u8>,
     expecting_command_byte: bool,
     expecting_mouse_command: bool,
     keyboard_enabled: bool,
@@ -53,6 +54,7 @@ impl Ps2Controller {
         Self {
             command_byte: 0x44,
             output: VecDeque::new(),
+            pending_keyboard: VecDeque::new(),
             expecting_command_byte: false,
             expecting_mouse_command: false,
             keyboard_enabled: true,
@@ -94,6 +96,17 @@ impl Ps2Controller {
         }
     }
 
+    /// Queue host-generated scan codes without dropping long paste input.
+    /// The guest-visible controller queue remains bounded; excess bytes wait
+    /// here until the guest consumes them.
+    pub(crate) fn push_keyboard_scancodes_lossless(&mut self, scancodes: &[u8]) {
+        if !self.keyboard_enabled || scancodes.is_empty() {
+            return
+        }
+        self.pending_keyboard.extend(scancodes.iter().copied());
+        self.refill_keyboard_output()
+    }
+
     /// Inject a raw three-byte PS/2 mouse packet.
     pub fn push_mouse_packet(&mut self, packet: [u8; 3]) {
         if !self.mouse_enabled || !self.mouse_streaming {
@@ -122,7 +135,7 @@ impl Ps2Controller {
     }
 
     pub fn input_pending(&self) -> bool {
-        !self.output.is_empty()
+        !self.output.is_empty() || !self.pending_keyboard.is_empty()
     }
 
     fn keyboard_interrupt_enabled(&self) -> bool {
@@ -150,6 +163,18 @@ impl Ps2Controller {
                 self.keyboard_irq_vector
             };
             self.signal_irq(vector)
+        }
+    }
+
+    fn refill_keyboard_output(&mut self) {
+        while self.output.len() < OUTPUT_QUEUE_CAPACITY {
+            let Some(scancode) = self.pending_keyboard.pop_front() else {
+                break
+            };
+            self.push_output(OutputByte {
+                value: scancode,
+                auxiliary: false,
+            })
         }
     }
 
@@ -274,7 +299,11 @@ impl PortDevice for Ps2Controller {
             return Err(DeviceError::UnsupportedSize);
         }
         match port {
-            PS2_DATA_PORT => Ok(self.output.pop_front().map(|byte| byte.value).unwrap_or(0) as u64),
+            PS2_DATA_PORT => {
+                let value = self.output.pop_front().map(|byte| byte.value).unwrap_or(0);
+                self.refill_keyboard_output();
+                Ok(value as u64)
+            }
             PS2_STATUS_PORT => {
                 let mut status = 0;
                 if let Some(byte) = self.output.front() {

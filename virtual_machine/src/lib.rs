@@ -1316,13 +1316,7 @@ impl Vm {
                 .map_err(VmError::Replay)?;
             match input_mode {
                 GuestInputMode::Serial => self.enqueue_serial_input(&bytes),
-                GuestInputMode::Ps2 => {
-                    for byte in bytes {
-                        for scancode in ascii_to_scancodes(byte) {
-                            self.enqueue_keyboard_scancode(scancode)
-                        }
-                    }
-                }
+                GuestInputMode::Ps2 => self.enqueue_terminal_ps2_input(&bytes),
             }
         }
         Ok(())
@@ -1364,11 +1358,7 @@ impl Vm {
                 self.enqueue_serial_input(&input.bytes);
             }
             HOST_INPUT_TERMINAL_PS2 => {
-                for byte in input.bytes {
-                    for scancode in ascii_to_scancodes(byte) {
-                        self.enqueue_keyboard_scancode(scancode)
-                    }
-                }
+                self.enqueue_terminal_ps2_input(&input.bytes)
             }
             HOST_INPUT_KEYBOARD if input.rows.is_none() && input.bytes.len() == 1 => {
                 self.enqueue_keyboard_scancode(input.bytes[0]);
@@ -1657,6 +1647,19 @@ impl Vm {
     fn enqueue_keyboard_scancode(&mut self, scancode: u8) {
         self.cpu.state.halted = false;
         self.ps2.borrow_mut().push_keyboard_scancode(scancode)
+    }
+
+    fn enqueue_terminal_ps2_input(&mut self, bytes: &[u8]) {
+        let mut scancodes = Vec::new();
+        for &byte in bytes {
+            scancodes.extend(ascii_to_scancodes(byte))
+        }
+        if !scancodes.is_empty() {
+            self.cpu.state.halted = false;
+            self.ps2
+                .borrow_mut()
+                .push_keyboard_scancodes_lossless(&scancodes)
+        }
     }
 
     pub fn queue_mouse_packet(&mut self, packet: [u8; 3]) {
