@@ -93,7 +93,7 @@ fn drive_login_workflow(session: &mut QemuLoginSession, private_key: &Path) -> R
     session.send_text("admin\n")?;
     session.wait_for("Credential type [PASSKEY/TPM/SSH] (PASSKEY): ")?;
     session.send_text("passkey\n")?;
-    session.wait_for("Public credential material (passkey COSE key as hex): ")?;
+    session.wait_for("Waiting for passkey public key from local browser: ")?;
     session.send_text(&format!("{}\n", TEST_COSE_PUBLIC_KEY_HEX))?;
     session.wait_for("Create this administrator account? [y/N]: ")?;
     let setup_start = session.serial_len();

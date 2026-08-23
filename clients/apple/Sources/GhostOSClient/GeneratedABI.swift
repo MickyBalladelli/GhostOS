@@ -4,7 +4,7 @@ import Foundation
 enum GhostOSABI {
     static let apiVersion: UInt16 = 1
     static let schemaVersion: UInt16 = 1
-    static let revision: UInt16 = 14
+    static let revision: UInt16 = 15
     static let protocolVersion: UInt8 = 1
     static let magic = Data([83, 89, 82, 80])
     static let frameHeaderBytes = 24

@@ -227,6 +227,11 @@ static LOGIN_BOOTSTRAP_PROOF: AtomicBool = AtomicBool::new(false);
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+static LOGIN_BRIDGE_ACTIVE: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 static LOGIN_SESSION_EXPIRES: AtomicU64 = AtomicU64::new(0);
 #[cfg(all(
     target_arch = "x86_64",
@@ -1144,6 +1149,45 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             flags: 0,
             values: [0; 4],
         }
+    }
+    if Operation::from_raw(request.operation) == Some(Operation::LoginBridgeRead) {
+        let first_run = !LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire);
+        if !((caller.raw() == 9 && first_run)
+            || (caller.raw() == 14 && LOGIN_REQUESTED.load(Ordering::Acquire)))
+            || request.flags != 0
+            || request.capability != 0
+        {
+            return syscall_error(Status::ACCESS_DENIED)
+        }
+        let address = request.arguments[0] as usize;
+        if request.arguments[1] != 1
+            || request.arguments[2..] != [0; 4]
+            || !arch::paging::service_user_range(address as u64, 1, true)
+        {
+            return syscall_error(Status::INVALID_ARGUMENT)
+        }
+        let byte = if LOGIN_BRIDGE_ACTIVE.load(Ordering::Acquire) {
+            console::read_byte()
+        } else if let Some(byte) = console::read_byte() {
+            LOGIN_BRIDGE_ACTIVE.store(true, Ordering::Release);
+            Some(byte)
+        } else if caller.raw() == 9 {
+            keyboard::read_boot_byte().or_else(usb_keyboard::read_boot_byte)
+        } else {
+            keyboard::read_boot_byte()
+        };
+        if let Some(byte) = byte {
+            if caller.raw() == 9 {
+                LOGIN_BOOTSTRAP_PROOF.store(true, Ordering::Release);
+                watchdog::service_activity(9, time::monotonic_now_us());
+            }
+            unsafe { arch::write_user(address as *mut u8, byte) };
+            return syscall_success([1, 0, 0, 0])
+        }
+        if caller.raw() == 9 {
+            watchdog::service_activity(9, time::monotonic_now_us())
+        }
+        return syscall_success([0, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginBootstrapUsername) {
         if caller.raw() != 9

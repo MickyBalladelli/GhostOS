@@ -5,7 +5,7 @@ use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 
-use ghostos_vm::{GuestInputMode, Vm};
+use ghostos_vm::Vm;
 
 const MAX_CLIENTS: usize = 8;
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -338,12 +338,11 @@ pub struct PasskeyBridge {
     mode: Mode,
     challenge: Option<String>,
     error: Option<String>,
-    input_mode: GuestInputMode,
     input_flow: InputFlow,
 }
 
 impl PasskeyBridge {
-    pub fn bind(input_mode: GuestInputMode) -> io::Result<Self> {
+    pub fn bind() -> io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
@@ -359,7 +358,6 @@ impl PasskeyBridge {
             mode: Mode::Waiting,
             challenge: None,
             error: None,
-            input_mode,
             input_flow: InputFlow::None,
         })
     }
@@ -447,6 +445,8 @@ impl PasskeyBridge {
         }
         if self.guest_text.contains("Administrator account committed.") {
             self.mode = Mode::Login;
+            self.error = None;
+            self.input_flow = InputFlow::None;
         }
         if let Some(challenge) = last_challenge(&self.guest_text) {
             self.challenge = Some(challenge);
@@ -462,6 +462,15 @@ impl PasskeyBridge {
             self.mode = Mode::Login;
             self.challenge = None;
             self.error = Some("GhostOS rejected that passkey. Try again.".to_string());
+        } else if self.guest_text.contains("Username must be 1-32 valid characters.")
+            || self.guest_text.contains("Unknown credential type.")
+            || self.guest_text.contains("Credential material is invalid.")
+            || self.guest_text.contains("Credential rejected.")
+            || self.guest_text.contains("Confirmation rejected.")
+        {
+            self.mode = Mode::Enroll;
+            self.input_flow = InputFlow::None;
+            self.error = Some("GhostOS could not save that passkey. Create it again.".to_string());
         } else if self.mode == Mode::Waiting
             && self.guest_text.contains("\x1b]GhostOSLogin\x07")
             && !self.guest_text.contains("\x1b]GhostOSEnroll\x07")
@@ -484,7 +493,7 @@ impl PasskeyBridge {
             InputFlow::EnrollMaterial { key }
                 if self
                     .guest_text
-                    .contains("Public credential material (passkey COSE key as hex):") =>
+                    .contains("Waiting for passkey public key from local browser:") =>
             {
                 Some((key.as_bytes(), InputFlow::EnrollConfirm))
             }
@@ -503,8 +512,7 @@ impl PasskeyBridge {
             _ => None,
         };
         let Some((bytes, next_flow)) = next else { return };
-        let line = guarded_line(bytes);
-        vm.queue_terminal_input(&line, self.input_mode);
+        vm.queue_serial_input(&bridge_line(bytes));
         self.input_flow = next_flow;
     }
 
@@ -581,7 +589,7 @@ impl PasskeyBridge {
             }
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_terminal_input(&guarded_line(username.as_bytes()), self.input_mode);
+            vm.queue_serial_input(&bridge_line(username.as_bytes()));
             self.input_flow = InputFlow::EnrollKind {
                 key: key.to_string(),
             };
@@ -607,7 +615,7 @@ impl PasskeyBridge {
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_terminal_input(&guarded_line(username.as_bytes()), self.input_mode);
+            vm.queue_serial_input(&bridge_line(username.as_bytes()));
             self.input_flow = InputFlow::LoginKind;
             return json_ok()
         }
@@ -625,18 +633,15 @@ impl PasskeyBridge {
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_terminal_input(&guarded_line(assertion.as_bytes()), self.input_mode);
+            vm.queue_serial_input(&bridge_line(assertion.as_bytes()));
             return json_ok()
         }
         text_response("404 Not Found", "Not found")
     }
 }
 
-fn guarded_line(bytes: &[u8]) -> Vec<u8> {
-    let mut line = Vec::with_capacity(bytes.len() + 2);
-    // Keep the first real byte away from the PS/2 prompt boundary. Backspace
-    // is harmless on an empty line whether it is consumed or delivered.
-    line.push(0x08);
+fn bridge_line(bytes: &[u8]) -> Vec<u8> {
+    let mut line = Vec::with_capacity(bytes.len() + 1);
     line.extend_from_slice(bytes);
     line.push(b'\r');
     line

@@ -37,6 +37,7 @@ enum {
     OP_LOGIN_CHALLENGE = 53,
     OP_LOGIN_TPM_CHALLENGE = 54,
     OP_LOGIN_TPM_COMPLETE = 55,
+    OP_LOGIN_BRIDGE_READ = 65,
     LOGIN_ROLE = 14,
 };
 
@@ -106,7 +107,7 @@ static void write_text(const char *text)
 
 static int read_byte(u8 *byte)
 {
-    struct response response = call(OP_TERMINAL_READ, (u64)byte, 1, 0, 0);
+    struct response response = call(OP_LOGIN_BRIDGE_READ, (u64)byte, 1, 0, 0);
     return response.status == STATUS_NORMAL && response.values[0] == 1;
 }
 
@@ -306,9 +307,9 @@ void _start(void)
             continue;
         }
         write_text("\x1b]GhostOSLogin\x07");
-        u64 username_length = read_line(username, sizeof(username), 1);
+        u64 username_length = read_line(username, sizeof(username), 0);
         write_text("\nCredential [passkey/tpm]: ");
-        u64 method_length = read_line(method, sizeof(method), 1);
+        u64 method_length = read_line(method, sizeof(method), 0);
         int use_tpm = method_length == 3
             && (method[0] == 't' || method[0] == 'T')
             && (method[1] == 'p' || method[1] == 'P')
@@ -346,7 +347,7 @@ void _start(void)
         write_text(use_tpm
             ? "\nPresent your TPM-backed credential and paste the quote as hex.\nChallenge: "
             : "\nOpen the local passkey URL shown by the VM host.\n"
-              "Manual fallback uses WebAuthn RP ID localhost.\nChallenge: ");
+              "WebAuthn RP ID: localhost.\nChallenge: ");
         write_hex_bytes(challenge, sizeof(challenge));
         write_text(use_tpm ? "\nTPM quote: " : "\nWebAuthn assertion: ");
         u64 credential_hex_length = read_private_line(

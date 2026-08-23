@@ -47,6 +47,7 @@ enum {
     OP_LOGIN_REVOKE_IDENTITY = 62,
     OP_SHUTDOWN = 63,
     OP_WATCHDOG_DIAGNOSTICS = 64,
+    OP_LOGIN_BRIDGE_READ = 65,
     OP_LOGIN_LOGOUT = 56,
     OP_LOGIN_WHOAMI = 57,
     OP_SLEEP_UNTIL = 47,
@@ -177,6 +178,12 @@ static void write_status(u32 status)
 static int read_byte(u8 *byte)
 {
     struct response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
+    return response.status == 0 && response.values[0] == 1;
+}
+
+static int read_bridge_byte(u8 *byte)
+{
+    struct response response = call(OP_LOGIN_BRIDGE_READ, 0, 0, (u64)byte, 1, 0, 0);
     return response.status == 0 && response.values[0] == 1;
 }
 
@@ -965,12 +972,12 @@ static void list_credentials(const char *username, u8 *buffer)
     write_text("Account not found.\n");
 }
 
-static u64 read_credential_line(char *line, u64 capacity)
+static u64 read_credential_line_from(char *line, u64 capacity, int echo, int bridge)
 {
     u64 count = 0;
     u8 byte;
     for (;;) {
-        if (!read_byte(&byte)) {
+        if (!(bridge ? read_bridge_byte(&byte) : read_byte(&byte))) {
             sleep_for(SHELL_POLL_DELAY_US);
             continue;
         }
@@ -982,15 +989,34 @@ static u64 read_credential_line(char *line, u64 capacity)
         if (byte == 8 || byte == 127) {
             if (count != 0) {
                 count--;
-                write_text("\b \b");
+                if (echo) {
+                    write_text("\b \b");
+                }
             }
             continue;
         }
         if (byte >= 32 && byte < 127 && count + 1 < capacity) {
             line[count++] = (char)byte;
-            write_bytes((const char *)&byte, 1);
+            if (echo) {
+                write_bytes((const char *)&byte, 1);
+            }
         }
     }
+}
+
+static u64 read_credential_line(char *line, u64 capacity)
+{
+    return read_credential_line_from(line, capacity, 1, 0);
+}
+
+static u64 read_private_credential_line(char *line, u64 capacity)
+{
+    return read_credential_line_from(line, capacity, 0, 0);
+}
+
+static u64 read_bridge_credential_line(char *line, u64 capacity)
+{
+    return read_credential_line_from(line, capacity, 0, 1);
 }
 
 static int hex_value(u8 byte)
@@ -1112,8 +1138,8 @@ static void add_credential(const char *username, u8 *buffer)
     u8 material_bytes[ACCOUNT_CREDENTIAL_CAPACITY];
     write_text("Credential type [PASSKEY/TPM/SSH]: ");
     u64 kind_length = read_credential_line(kind, sizeof(kind));
-    write_text("Public credential material (passkey COSE key as hex): ");
-    u64 material_length = read_credential_line(material, sizeof(material));
+    write_text("Credential public material: ");
+    u64 material_length = read_private_credential_line(material, sizeof(material));
     u8 kind_id = 0;
     if (equal_name(kind, "PASSKEY")) {
         kind_id = 1;
@@ -2086,23 +2112,23 @@ static void run_first_run_wizard(void)
     write_text("Answer each question to create the administrator account.\n");
     write_text("GhostOS starts once the account is committed.\n");
     write_text("Open the local passkey URL shown by the VM host for guided setup.\n");
-    write_text("Public credential material only; never type passwords or private keys.\n");
+    write_text("Passkey public material arrives through the local bridge and stays hidden.\n");
     for (;;) {
         write_text("\n\x1b]GhostOSEnroll\x07");
-        username_length = read_credential_line(username, sizeof(username));
+        username_length = read_bridge_credential_line(username, sizeof(username));
         if (username_length == 0 || username_length > 32) {
             write_text("Username must be 1-32 valid characters.\n");
             continue;
         }
         write_text("Credential type [PASSKEY/TPM/SSH] (PASSKEY): ");
-        read_credential_line(kind, sizeof(kind));
+        read_bridge_credential_line(kind, sizeof(kind));
         kind_id = credential_kind_from_answer(kind);
         if (kind_id == 0) {
             write_text("Unknown credential type. Use PASSKEY, TPM, or SSH.\n");
             continue;
         }
-        write_text("Public credential material (passkey COSE key as hex): ");
-        material_length = read_credential_line(material, sizeof(material));
+        write_text("Waiting for passkey public key from local browser: ");
+        material_length = read_bridge_credential_line(material, sizeof(material));
         u64 stored_material_length = material_length;
         if (kind_id == 1) {
             stored_material_length = decode_hex_material(
@@ -2124,14 +2150,9 @@ static void run_first_run_wizard(void)
         write_bytes(username, username_length);
         write_text("\nCredential type: ");
         write_text(credential_kind_name(kind_id));
-        write_text("\nMaterial: ");
-        if (kind_id == 1) {
-            write_bytes(material, material_length);
-        } else {
-            write_bytes((const char *)material_bytes, stored_material_length);
-        }
+        write_text("\nMaterial: received");
         write_text("\nCreate this administrator account? [y/N]: ");
-        read_credential_line(answer, sizeof(answer));
+        read_bridge_credential_line(answer, sizeof(answer));
         if (equal_name(answer, "SHUTDOWN")) {
             call(OP_SHUTDOWN, 0, 0, 0, 0, 0, 0);
             continue;
