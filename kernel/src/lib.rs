@@ -1182,7 +1182,12 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 watchdog::service_activity(9, time::monotonic_now_us());
             }
             unsafe { arch::write_user(address as *mut u8, byte) };
-            return syscall_success([1, 0, 0, 0])
+            return syscall_success([
+                1,
+                u64::from(LOGIN_BRIDGE_ACTIVE.load(Ordering::Acquire)),
+                0,
+                0,
+            ])
         }
         if caller.raw() == 9 {
             watchdog::service_activity(9, time::monotonic_now_us())

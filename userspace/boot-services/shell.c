@@ -64,6 +64,7 @@ enum {
 };
 
 static const char ACCOUNT_AUTHORIZATION_PATH[] = "/system/security/authorization";
+static int bridge_transport_active = 0;
 enum {
     ACCOUNT_RECORD_LEGACY_VERSION = 1,
     ACCOUNT_RECORD_VERSION = 2,
@@ -184,6 +185,9 @@ static int read_byte(u8 *byte)
 static int read_bridge_byte(u8 *byte)
 {
     struct response response = call(OP_LOGIN_BRIDGE_READ, 0, 0, (u64)byte, 1, 0, 0);
+    if (response.status == 0 && response.values[0] == 1) {
+        bridge_transport_active = response.values[1] != 0;
+    }
     return response.status == 0 && response.values[0] == 1;
 }
 
@@ -1017,6 +1021,25 @@ static u64 read_private_credential_line(char *line, u64 capacity)
 static u64 read_bridge_credential_line(char *line, u64 capacity)
 {
     return read_credential_line_from(line, capacity, 0, 1);
+}
+
+static u64 read_bridge_material(u8 *material, u64 capacity)
+{
+    u8 material_length;
+    u64 count;
+    while (!read_bridge_byte(&material_length)) {
+        sleep_for(SHELL_POLL_DELAY_US);
+    }
+    if (material_length == 0 || material_length > capacity) {
+        return 0;
+    }
+    for (count = 0; count < material_length; count++) {
+        while (!read_bridge_byte(&material[count])) {
+            sleep_for(SHELL_POLL_DELAY_US);
+        }
+    }
+    write_text("\n");
+    return material_length;
 }
 
 static int hex_value(u8 byte)
@@ -2128,18 +2151,27 @@ static void run_first_run_wizard(void)
             continue;
         }
         write_text("Waiting for passkey public key from local browser: ");
-        material_length = read_bridge_credential_line(material, sizeof(material));
-        u64 stored_material_length = material_length;
-        if (kind_id == 1) {
-            stored_material_length = decode_hex_material(
-                material,
-                material_length,
+        u64 stored_material_length;
+        if (bridge_transport_active) {
+            stored_material_length = read_bridge_material(
                 material_bytes,
                 sizeof(material_bytes)
             );
+            material_length = stored_material_length;
         } else {
-            for (u64 index = 0; index < material_length && index < sizeof(material_bytes); index++) {
-                material_bytes[index] = (u8)material[index];
+            material_length = read_bridge_credential_line(material, sizeof(material));
+            stored_material_length = material_length;
+            if (kind_id == 1) {
+                stored_material_length = decode_hex_material(
+                    material,
+                    material_length,
+                    material_bytes,
+                    sizeof(material_bytes)
+                );
+            } else {
+                for (u64 index = 0; index < material_length && index < sizeof(material_bytes); index++) {
+                    material_bytes[index] = (u8)material[index];
+                }
             }
         }
         if (material_length == 0 || stored_material_length == 0) {
@@ -2165,7 +2197,7 @@ static void run_first_run_wizard(void)
             username,
             username_length,
             kind_id,
-            kind_id == 1 ? material_bytes : (const u8 *)material,
+            material_bytes,
             stored_material_length
         )) {
             return;

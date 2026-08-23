@@ -421,18 +421,22 @@ impl PasskeyBridge {
 
     fn observe_guest(&mut self, vm: &mut Vm) {
         let Some(serial) = vm.serial() else { return };
-        let serial = serial.borrow();
-        let output = serial.output();
-        if output.len() < self.observed_output {
-            self.observed_output = 0;
-            self.guest_text.clear();
-        }
-        if output.len() == self.observed_output {
-            return
-        }
+        let new_output = {
+            let serial = serial.borrow();
+            let output = serial.output();
+            if output.len() < self.observed_output {
+                self.observed_output = 0;
+                self.guest_text.clear();
+            }
+            if output.len() == self.observed_output {
+                return
+            }
+            let new_output = output[self.observed_output..].to_vec();
+            self.observed_output = output.len();
+            new_output
+        };
         self.guest_text
-            .push_str(&String::from_utf8_lossy(&output[self.observed_output..]));
-        self.observed_output = output.len();
+            .push_str(&String::from_utf8_lossy(&new_output));
         if self.guest_text.len() > 64 * 1024 {
             let keep = self.guest_text.len() - 32 * 1024;
             self.guest_text.drain(..keep);
@@ -488,31 +492,32 @@ impl PasskeyBridge {
                     .guest_text
                     .contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):") =>
             {
-                Some((b"".as_slice(), InputFlow::EnrollMaterial { key: key.clone() }))
+                Some((bridge_line(b""), InputFlow::EnrollMaterial { key: key.clone() }))
             }
             InputFlow::EnrollMaterial { key }
                 if self
                     .guest_text
                     .contains("Waiting for passkey public key from local browser:") =>
             {
-                Some((key.as_bytes(), InputFlow::EnrollConfirm))
+                passkey_material_frame(key)
+                    .map(|material| (material, InputFlow::EnrollConfirm))
             }
             InputFlow::EnrollConfirm
                 if self
                     .guest_text
                     .contains("Create this administrator account? [y/N]:") =>
             {
-                Some((b"y".as_slice(), InputFlow::None))
+                Some((bridge_line(b"y"), InputFlow::None))
             }
             InputFlow::LoginKind
                 if self.guest_text.contains("Credential [passkey/tpm]:") =>
             {
-                Some((b"".as_slice(), InputFlow::None))
+                Some((bridge_line(b""), InputFlow::None))
             }
             _ => None,
         };
         let Some((bytes, next_flow)) = next else { return };
-        vm.queue_serial_input(&bridge_line(bytes));
+        vm.queue_serial_input(&bytes);
         self.input_flow = next_flow;
     }
 
@@ -647,6 +652,18 @@ fn bridge_line(bytes: &[u8]) -> Vec<u8> {
     line
 }
 
+fn passkey_material_frame(hex: &str) -> Option<Vec<u8>> {
+    let material = decode_hex(hex)?;
+    let length = u8::try_from(material.len()).ok()?;
+    if length == 0 || length > 96 {
+        return None
+    }
+    let mut frame = Vec::with_capacity(material.len() + 1);
+    frame.push(length);
+    frame.extend_from_slice(&material);
+    Some(frame)
+}
+
 fn read_request(client: &mut Client) -> io::Result<Option<Request>> {
     let mut buffer = [0; 4096];
     loop {
@@ -747,6 +764,17 @@ fn valid_hex(input: &str, maximum: usize) -> bool {
         && input.len() <= maximum
         && input.len() % 2 == 0
         && input.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn decode_hex(input: &str) -> Option<Vec<u8>> {
+    if input.len() % 2 != 0 {
+        return None
+    }
+    input
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| Some((hex_digit(pair[0])? << 4) | hex_digit(pair[1])?))
+        .collect()
 }
 
 fn hex_digit(byte: u8) -> Option<u8> {

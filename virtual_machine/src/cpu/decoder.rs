@@ -1184,6 +1184,15 @@ impl InstructionDecoder {
                 ins.mnemonic = "SYSCALL";
                 return Ok(());
             }
+            0xC8..=0xCF => {
+                if opsize == 16 {
+                    return Err(InstructionDecodeError::InvalidOpcode);
+                }
+                ins.mnemonic = "BSWAP";
+                let register = (op2 - 0xC8) as u8 + if rex.b { 8 } else { 0 };
+                ins.operands = vec![Operand::Register(register)];
+                return Ok(());
+            }
             0x07 => {
                 ins.mnemonic = "SYSRET";
                 return Ok(());
@@ -1656,6 +1665,18 @@ mod tests {
         let i = dec(&[0x0F, 0x05]).unwrap();
         assert_eq!(i.mnemonic, "SYSCALL");
         assert_eq!(i.next_ip, 0x1002);
+    }
+
+    #[test]
+    fn bswap_register() {
+        let i = dec(&[0x48, 0x0F, 0xC8]).unwrap();
+        assert_eq!(i.mnemonic, "BSWAP");
+        assert_eq!(i.opsize, 64);
+        assert!(matches!(i.operands.as_slice(), [Operand::Register(0)]));
+
+        let i = dec(&[0x41, 0x0F, 0xCF]).unwrap();
+        assert_eq!(i.opsize, 32);
+        assert!(matches!(i.operands.as_slice(), [Operand::Register(15)]));
     }
 
     #[test]

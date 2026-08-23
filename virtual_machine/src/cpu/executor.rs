@@ -562,6 +562,7 @@ impl InstructionExecutor {
             "SETCC" => self.execute_setcc(instruction, state, mmu)?,
             "BT" => self.execute_bit_test(instruction, state, mmu)?,
             "BSF" | "BSR" => self.execute_bit_scan(instruction, state, mmu)?,
+            "BSWAP" => self.execute_bswap(instruction, state)?,
             "CLC" => {
                 state.rflags &= !CF;
                 state.rip = instruction.next_ip;
@@ -2055,6 +2056,26 @@ impl InstructionExecutor {
         Ok(())
     }
 
+    fn execute_bswap(
+        &self,
+        ins: &DecodedInstruction,
+        state: &mut CpuState,
+    ) -> Result<(), CpuError> {
+        let register = match operand_at(ins, 0)? {
+            Operand::Register(register) => *register,
+            _ => return Err(CpuError::InvalidOpcode),
+        };
+        let value = state.reg_size(register, operand_bytes(ins.opsize));
+        let swapped = if ins.opsize == 32 {
+            (value as u32).swap_bytes() as u64
+        } else {
+            value.swap_bytes()
+        };
+        state.set_reg_size(register, operand_bytes(ins.opsize), swapped);
+        state.rip = ins.next_ip;
+        Ok(())
+    }
+
     fn execute_bit_test(
         &self,
         ins: &DecodedInstruction,
@@ -2384,6 +2405,19 @@ mod tests {
         single_run(&mut cpu, &mut mmu).unwrap();
         assert_eq!(cpu.state.r8, 3);
         assert_eq!(cpu.state.rip, 0x1005);
+    }
+
+    #[test]
+    fn bswap_register_32_and_64() {
+        let (mut cpu, mut mmu) = cpu_with(&[0x0F, 0xC8]);
+        cpu.state.rax = 0x1122_3344_5566_7788;
+        single_run(&mut cpu, &mut mmu).unwrap();
+        assert_eq!(cpu.state.rax, 0x0000_0000_8877_6655);
+
+        let (mut cpu, mut mmu) = cpu_with(&[0x48, 0x0F, 0xC8]);
+        cpu.state.rax = 0x1122_3344_5566_7788;
+        single_run(&mut cpu, &mut mmu).unwrap();
+        assert_eq!(cpu.state.rax, 0x8877_6655_4433_2211);
     }
 
     #[test]
