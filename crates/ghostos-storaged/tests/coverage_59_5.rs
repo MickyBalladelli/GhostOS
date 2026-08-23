@@ -312,7 +312,7 @@ fn mount_catalog_round_trips_through_ghostfs_and_rejects_corruption() {
         Err(MountStateError::Corrupt)
     ));
 
-    let mut filesystem = SynFs::<128>::new();
+        let mut filesystem = SynFs::<64>::new();
     let mut staging = vec![0; catalog.encoded_len()];
     catalog.save_to_ghostfs(&mut filesystem, &mut staging).expect("persist mount catalog");
     let mut restored_bytes = vec![0; catalog.encoded_len()];
@@ -382,7 +382,7 @@ fn cluster_metadata_is_generation_safe_and_persistent() {
         .unwrap();
     catalog.set_active_cluster(id, catalog.catalog_generation()).unwrap();
 
-    let mut filesystem = SynFs::<128>::new();
+        let mut filesystem = SynFs::<64>::new();
     let mut staging = vec![0; ClusterMetadataCatalog::encoded_len()];
     catalog.save_to_ghostfs(&mut filesystem, &mut staging).unwrap();
     let restored = ClusterMetadataCatalog::load_from_ghostfs(&filesystem, &mut staging).unwrap();

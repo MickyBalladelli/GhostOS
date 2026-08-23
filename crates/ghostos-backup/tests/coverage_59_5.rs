@@ -19,7 +19,7 @@ impl BackupSink for Sink {
 
 #[test]
 fn backup_streams_a_pinned_snapshot_and_releases_it() {
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<64>::new();
     filesystem.write("/before", b"old").expect("write source file");
     let capability = RmsMapHandle::from_capability(1 << 32).unwrap();
     let mut job = BackupJob::start(&mut filesystem, capability).expect("start backup");

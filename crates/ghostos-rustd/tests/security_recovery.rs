@@ -8,9 +8,9 @@ use ghostos_rustd::{
 use ghostos_ghostfs::SynFs;
 use ghostos_system_model::ContentId;
 
-fn install<const PACKAGES: usize, const KEYS: usize>(
+fn install<const PACKAGES: usize, const KEYS: usize, const BLOCKS: usize>(
     daemon: &mut PackageDaemon<PACKAGES, KEYS>,
-    filesystem: &mut SynFs<128>,
+    filesystem: &mut SynFs<BLOCKS>,
     key: SigningKey,
     payload: &[u8],
 ) -> ContentId {
@@ -49,7 +49,7 @@ fn component(kind: ToolKind, package: ContentId, target: Target) -> ToolchainCom
 fn compiler_toolchain_rotation_revocation_replay_rollback_and_downgrade_are_fenced() {
     let old_key = SigningKey::new([101; 32]);
     let recovered_key = SigningKey::new([102; 32]);
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<64>::new();
     filesystem.create_directory("system/store", true).unwrap();
     filesystem.create_directory("system/manifests", true).unwrap();
     let mut daemon = PackageDaemon::<8, 2>::new();

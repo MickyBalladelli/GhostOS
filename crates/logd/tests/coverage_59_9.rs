@@ -80,7 +80,7 @@ fn daemon_preserves_bounded_sink_failures_and_subscriber_limits() {
 
 #[test]
 fn journal_records_survive_daemon_restart_and_bounded_rotation() {
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<64>::new();
     {
         let mut journal = SynFsJournal::new(&mut filesystem, 2).unwrap();
         for timestamp in 1..=3 {

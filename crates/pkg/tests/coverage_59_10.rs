@@ -22,7 +22,7 @@ fn supply_chain_checks_signature_hash_and_dependency_bounds() {
     assert!(matches!(PackageBundle::decode(&tampered_hash), Err(PackageError::CorruptBundle)));
     assert_eq!(bundle_size(payload.len(), ghostos_system_model::MAX_DEPENDENCIES + 1), Err(PackageError::TooManyDependencies));
 
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<64>::new();
     filesystem.create_directory("system/store", true).unwrap();
     filesystem.create_directory("system/manifests", true).unwrap();
     let mut daemon = PackageDaemon::<2, 1>::new();
@@ -41,7 +41,7 @@ fn package_hash_mismatch_cannot_become_an_instantiation_receipt() {
     let required = bundle_size(payload.len(), 0).unwrap();
     let mut bundle = vec![0; required];
     let info = encode_bundle(payload, 0, &[], key, &mut bundle).unwrap();
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<64>::new();
     filesystem.create_directory("system/store", true).unwrap();
     filesystem.create_directory("system/manifests", true).unwrap();
     let mut daemon = PackageDaemon::<2, 1>::new();

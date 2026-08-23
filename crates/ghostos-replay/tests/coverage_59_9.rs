@@ -47,7 +47,7 @@ fn crash_flight_recorder_preserves_bounded_evidence() {
     log.begin_recording();
     log.record(ReplayEvent::timing(11, 1, 2, 3)).unwrap();
     let process = ProcessId::new(8).unwrap();
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<64>::new();
     let receipt = log
         .preserve_on_crash(
             &mut filesystem,

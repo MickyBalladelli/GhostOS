@@ -34,7 +34,7 @@ fn package_install_and_activation_survive_duplicate_and_rollback_attempts() {
     let required = bundle_size(payload.len(), 0).unwrap();
     let mut bundle = vec![0; required];
     let info = encode_bundle(payload, 0, &[], key, &mut bundle).unwrap();
-    let mut filesystem = SynFs::<128>::new();
+    let mut filesystem = SynFs::<64>::new();
     filesystem
         .create_directory("system/store", true)
         .expect("create package store");
