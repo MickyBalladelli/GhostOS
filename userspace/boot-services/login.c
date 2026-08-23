@@ -40,6 +40,9 @@ enum {
     LOGIN_ROLE = 14,
 };
 
+/* The assertion wire format is SYWB, version 1, three little-endian u16
+ * lengths, then authenticatorData, clientDataJSON, and the signature. */
+
 enum {
     PASSKEY_CHALLENGE_BYTES = 32,
     PASSKEY_MAX_ASSERTION_BYTES = 512,
@@ -342,9 +345,10 @@ void _start(void)
         }
         write_text(use_tpm
             ? "\nPresent your TPM-backed credential and paste the quote as hex.\nChallenge: "
-            : "\nTouch your passkey and paste the assertion as hex.\nChallenge: ");
+            : "\nUse WebAuthn RP ID ghostos.local and origin https://ghostos.local.\n"
+              "Paste the packed assertion as hex.\nChallenge: ");
         write_hex_bytes(challenge, sizeof(challenge));
-        write_text(use_tpm ? "\nTPM quote: " : "\nPasskey assertion: ");
+        write_text(use_tpm ? "\nTPM quote: " : "\nWebAuthn assertion: ");
         u64 credential_hex_length = read_private_line(
             credential_hex,
             sizeof(credential_hex)

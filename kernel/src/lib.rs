@@ -84,6 +84,11 @@ mod watchdog;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
+))]
+mod webauthn;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
 ))
 ]
 #[allow(unsafe_code)]
@@ -551,16 +556,6 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
-const LOCAL_PASSKEY_HEADER_BYTES: usize = 46;
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
-const LOCAL_PASSKEY_AUTHENTICATOR_DATA_MIN: usize = 37;
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
 const LOCAL_TPM_QUOTE_HEADER_BYTES: usize = 46;
 #[cfg(all(
     target_arch = "x86_64",
@@ -668,41 +663,6 @@ fn clear_login_username() {
     for slot in &LOGIN_USERNAME {
         slot.store(0, Ordering::Relaxed)
     }
-}
-
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
-fn valid_local_passkey_assertion(assertion: &[u8]) -> bool {
-    if assertion.len() < LOCAL_PASSKEY_HEADER_BYTES
-        || assertion[..4] != *b"SYPA"
-        || assertion[4] != 1
-        || assertion[5..8] != [0; 3]
-        || !LOGIN_PASSKEY_CHALLENGE_READY.load(Ordering::Acquire)
-    {
-        return false
-    }
-    for (index, slot) in LOGIN_PASSKEY_CHALLENGE.iter().enumerate() {
-        if assertion[8 + index] != slot.load(Ordering::Relaxed) {
-            return false
-        }
-    }
-    let authenticator_length = u16::from_le_bytes([assertion[40], assertion[41]]) as usize;
-    let client_data_length = u16::from_le_bytes([assertion[42], assertion[43]]) as usize;
-    let signature_length = u16::from_le_bytes([assertion[44], assertion[45]]) as usize;
-    let payload_length = authenticator_length
-        .saturating_add(client_data_length)
-        .saturating_add(signature_length);
-    if authenticator_length < LOCAL_PASSKEY_AUTHENTICATOR_DATA_MIN
-        || client_data_length == 0
-        || signature_length == 0
-        || LOCAL_PASSKEY_HEADER_BYTES.saturating_add(payload_length) != assertion.len()
-    {
-        return false
-    }
-    let authenticator_flags = assertion[LOCAL_PASSKEY_HEADER_BYTES + 32];
-    authenticator_flags & 0x05 == 0x05
 }
 
 #[cfg(all(
@@ -1326,9 +1286,49 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             };
             assertion[..assertion_length].copy_from_slice(source);
         });
-        if !valid_login_username(&username[..username_length])
-            || !valid_local_passkey_assertion(&assertion[..assertion_length])
-        {
+        let mut challenge = [0; 32];
+        for (slot, value) in LOGIN_PASSKEY_CHALLENGE.iter().zip(challenge.iter_mut()) {
+            *value = slot.load(Ordering::Relaxed)
+        }
+        let passkey_result = webauthn::verify_local_assertion(
+            &assertion[..assertion_length],
+            &username[..username_length],
+            &challenge,
+        );
+        let passkey_valid = if let Some((_, key_fingerprint, sign_count)) = passkey_result {
+            let persisted = boot_services::local_passkey_sign_count(
+                &username[..username_length],
+                &key_fingerprint,
+            );
+            match persisted {
+                Err(_) => false,
+                Ok(persisted) => {
+                    let previous = persisted;
+                    if previous != 0 && sign_count != 0 && sign_count <= previous {
+                        false
+                    } else {
+                        if sign_count != 0 {
+                            if boot_services::record_local_passkey_sign_count(
+                                &username[..username_length],
+                                &key_fingerprint,
+                                sign_count,
+                            )
+                            .is_err()
+                            {
+                                false
+                            } else {
+                                true
+                            }
+                        } else {
+                            true
+                        }
+                    }
+                }
+            }
+        } else {
+            false
+        };
+        if !valid_login_username(&username[..username_length]) || !passkey_valid {
             clear_login_challenge();
             record_login_failure();
             return syscall_error(Status::ACCESS_DENIED)

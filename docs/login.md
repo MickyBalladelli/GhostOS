@@ -26,13 +26,32 @@ Username: admin
 Credential [passkey/tpm]: passkey
 ```
 
-For a passkey, touch the authenticator when asked. The service displays a
-one-shot challenge and asks for the assertion as hexadecimal data:
+For a passkey, use a WebAuthn `get()` ceremony with the configured relying
+party and origin:
 
 ```text
-Touch your passkey and paste the assertion as hex.
+RP ID: ghostos.local
+Origin: https://ghostos.local
+```
+
+The service displays a one-shot challenge and asks for one packed hexadecimal
+assertion. Pack the WebAuthn `authenticatorData`, `clientDataJSON`, and
+signature as:
+
+```text
+SYWB 01 00 00 00 <authenticator-data-length:u16le>
+     <client-data-json-length:u16le>
+     <authenticatorData> <clientDataJSON> <signature>
+```
+
+Remove spaces before pasting. The assertion is checked against the stored COSE
+ES256 public key, the RP ID hash, the origin, user presence, user verification,
+the challenge, and the monotonic authenticator counter:
+
+```text
+Use WebAuthn RP ID ghostos.local and origin https://ghostos.local.
 Challenge: <displayed-challenge>
-Passkey assertion: <assertion-hex>
+WebAuthn assertion: <packed-assertion-hex>
 ```
 
 For a TPM credential, choose `tpm`. Present the TPM-backed credential and

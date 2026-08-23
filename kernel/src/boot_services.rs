@@ -115,6 +115,41 @@ const FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY: usize =
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+pub(crate) const LOCAL_PASSKEY_MAX_KEYS: usize = 4;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) const LOCAL_PASSKEY_MAX_KEY_BYTES: usize = FIRST_ADMIN_CREDENTIAL_CAPACITY;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_PASSKEY_COUNTERS_PATH: &str = "/system/security/passkey-counters";
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_PASSKEY_COUNTERS_HEADER_BYTES: usize = 6;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_PASSKEY_COUNTER_ENTRY_BYTES: usize = 37;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_ACCOUNT_RECORD_HEADER_BYTES: usize = 36;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+const LOCAL_ACCOUNT_USERNAME_CAPACITY: usize = 32;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const AUDIT_FIRST_ADMIN_USERNAME: u64 = 0x1001;
 #[cfg(all(
     target_arch = "x86_64",
@@ -788,6 +823,266 @@ fn normalized_first_admin_username(username: &[u8]) -> Option<[u8; FIRST_ADMIN_U
         *slot = byte.to_ascii_lowercase();
     }
     Some(normalized)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn local_passkey_keys(
+    username: &[u8],
+    keys: &mut [[u8; LOCAL_PASSKEY_MAX_KEY_BYTES]; LOCAL_PASSKEY_MAX_KEYS],
+    lengths: &mut [u8; LOCAL_PASSKEY_MAX_KEYS],
+) -> Result<usize, Status> {
+    if !valid_first_admin_username(username) {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    let metadata = daemon
+        .filesystem()
+        .lookup(AUTHORIZATION_DATABASE_PATH)
+        .map_err(|error| error.status())?;
+    let database_size = metadata.size as usize;
+    if metadata.file_type != ghostos_ghostfs::FileType::Regular
+        || database_size == 0
+        || database_size > 4096
+    {
+        return Err(Status::CORRUPT)
+    }
+    let mut database = [0; 4096];
+    let read = daemon
+        .filesystem()
+        .read_version(AUTHORIZATION_DATABASE_PATH, metadata.version, &mut database)
+        .map_err(|error| error.status())?;
+    if read.bytes_read != database_size {
+        return Err(Status::CORRUPT)
+    }
+
+    let mut latest_offset = None;
+    let mut offset = 0;
+    while offset < database_size {
+        if database_size - offset < LOCAL_ACCOUNT_RECORD_HEADER_BYTES {
+            return Err(Status::CORRUPT)
+        }
+        let record = &database[offset..];
+        let record_bytes = LOCAL_ACCOUNT_RECORD_HEADER_BYTES
+            + record[LOCAL_ACCOUNT_RECORD_HEADER_BYTES - 1] as usize;
+        if record_bytes > database_size - offset
+            || !matches!(record[0], 1 | 2)
+            || record[1] == 0
+            || record[1] as usize > LOCAL_ACCOUNT_USERNAME_CAPACITY
+        {
+            return Err(Status::CORRUPT)
+        }
+        if record[2..2 + record[1] as usize]
+            .iter()
+            .zip(username.iter())
+            .all(|(stored, requested)| stored.eq_ignore_ascii_case(requested))
+            && record[1] as usize == username.len()
+        {
+            latest_offset = Some(offset)
+        }
+        offset += record_bytes
+    }
+    let Some(record_offset) = latest_offset else {
+        return Ok(0)
+    };
+    let record = &database[record_offset..];
+    let state = record[LOCAL_ACCOUNT_USERNAME_CAPACITY + 2];
+    if !(1..=3).contains(&state) {
+        return Ok(0)
+    }
+    let mut count = 0;
+    if record[0] == 1 {
+        let length = record[LOCAL_ACCOUNT_RECORD_HEADER_BYTES - 1] as usize;
+        if length <= LOCAL_PASSKEY_MAX_KEY_BYTES && state == 1 {
+            keys[0][..length].copy_from_slice(
+                &record[LOCAL_ACCOUNT_RECORD_HEADER_BYTES
+                    ..LOCAL_ACCOUNT_RECORD_HEADER_BYTES + length],
+            );
+            lengths[0] = length as u8;
+            return Ok(1)
+        }
+        return Ok(0)
+    }
+    let credential_count = record[LOCAL_ACCOUNT_RECORD_HEADER_BYTES] as usize;
+    if credential_count == 0 || credential_count > LOCAL_PASSKEY_MAX_KEYS {
+        return Err(Status::CORRUPT)
+    }
+    let mut credential_offset = LOCAL_ACCOUNT_RECORD_HEADER_BYTES + 1;
+    for _ in 0..credential_count {
+        if credential_offset + 3 > record_bytes(record) {
+            return Err(Status::CORRUPT)
+        }
+        let kind = record[credential_offset + 1];
+        let length = record[credential_offset + 2] as usize;
+        let material_start = credential_offset + 3;
+        if length == 0 || material_start + length > record_bytes(record) {
+            return Err(Status::CORRUPT)
+        }
+        if kind == 1 && count < LOCAL_PASSKEY_MAX_KEYS && length <= LOCAL_PASSKEY_MAX_KEY_BYTES {
+            keys[count][..length].copy_from_slice(&record[material_start..material_start + length]);
+            lengths[count] = length as u8;
+            count += 1;
+        }
+        credential_offset = material_start + length;
+    }
+    if credential_offset != record_bytes(record) {
+        return Err(Status::CORRUPT)
+    }
+    Ok(count)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn local_passkey_sign_count(
+    username: &[u8],
+    key_fingerprint: &[u8; 32],
+) -> Result<u32, Status> {
+    let mut database = [0; 4096];
+    let database_size = load_local_passkey_counters(&mut database)?;
+    let mut offset = LOCAL_PASSKEY_COUNTERS_HEADER_BYTES;
+    for _ in 0..database[5] {
+        let username_length = database[offset] as usize;
+        if offset + LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username_length > database_size {
+            return Err(Status::CORRUPT)
+        }
+        if database[offset + 5..offset + 37] == *key_fingerprint
+            && database[offset + 37..offset + 37 + username_length]
+                .eq_ignore_ascii_case(username)
+        {
+            return Ok(u32::from_be_bytes([
+                database[offset + 1],
+                database[offset + 2],
+                database[offset + 3],
+                database[offset + 4],
+            ]))
+        }
+        offset += LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username_length;
+    }
+    Ok(0)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn record_local_passkey_sign_count(
+    username: &[u8],
+    key_fingerprint: &[u8; 32],
+    sign_count: u32,
+) -> Result<(), Status> {
+    if username.is_empty() || username.len() > 32 {
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    let mut database = [0; 4096];
+    let mut database_size = load_local_passkey_counters(&mut database)?;
+    let mut offset = LOCAL_PASSKEY_COUNTERS_HEADER_BYTES;
+    for _ in 0..database[5] {
+        let username_length = database[offset] as usize;
+        if offset + LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username_length > database_size {
+            return Err(Status::CORRUPT)
+        }
+        if database[offset + 5..offset + 37] == *key_fingerprint
+            && database[offset + 37..offset + 37 + username_length]
+                .eq_ignore_ascii_case(username)
+        {
+            database[offset + 1..offset + 5].copy_from_slice(&sign_count.to_be_bytes());
+            return store_local_passkey_counters(&database[..database_size])
+        }
+        offset += LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username_length;
+    }
+    if database[5] == u8::MAX
+        || database_size + LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username.len() > database.len()
+    {
+        return Err(Status::NO_SPACE)
+    }
+    database[offset] = username.len() as u8;
+    database[offset + 1..offset + 5].copy_from_slice(&sign_count.to_be_bytes());
+    database[offset + 5..offset + 37].copy_from_slice(key_fingerprint);
+    database[offset + 37..offset + 37 + username.len()].copy_from_slice(username);
+    database[5] += 1;
+    database_size += LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username.len();
+    store_local_passkey_counters(&database[..database_size])
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn load_local_passkey_counters(database: &mut [u8; 4096]) -> Result<usize, Status> {
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    let metadata = match daemon.filesystem().lookup(LOCAL_PASSKEY_COUNTERS_PATH) {
+        Ok(metadata) => metadata,
+        Err(ghostos_ghostfs::Error::NotFound) => {
+            database[..4].copy_from_slice(b"SYPC");
+            database[4] = 2;
+            database[5] = 0;
+            return Ok(LOCAL_PASSKEY_COUNTERS_HEADER_BYTES)
+        }
+        Err(error) => return Err(error.status()),
+    };
+    let size = metadata.size as usize;
+    if metadata.file_type != ghostos_ghostfs::FileType::Regular
+        || !(LOCAL_PASSKEY_COUNTERS_HEADER_BYTES..=database.len()).contains(&size)
+    {
+        return Err(Status::CORRUPT)
+    }
+    let read = daemon
+        .filesystem()
+        .read_version(LOCAL_PASSKEY_COUNTERS_PATH, metadata.version, database)
+        .map_err(|error| error.status())?;
+    if read.bytes_read != size
+        || database[..4] != *b"SYPC"
+        || database[4] != 2
+    {
+        return Err(Status::CORRUPT)
+    }
+    let mut offset = LOCAL_PASSKEY_COUNTERS_HEADER_BYTES;
+    for _ in 0..database[5] {
+        if offset + LOCAL_PASSKEY_COUNTER_ENTRY_BYTES > size {
+            return Err(Status::CORRUPT)
+        }
+        let username_length = database[offset] as usize;
+        if username_length == 0
+            || username_length > 32
+            || offset + LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username_length > size
+        {
+            return Err(Status::CORRUPT)
+        }
+        offset += LOCAL_PASSKEY_COUNTER_ENTRY_BYTES + username_length;
+    }
+    (offset == size).then_some(size).ok_or(Status::CORRUPT)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn store_local_passkey_counters(database: &[u8]) -> Result<(), Status> {
+    let daemon = unsafe {
+        (&mut *core::ptr::addr_of_mut!(FILESYSTEM_DAEMON)).assume_init_mut()
+    };
+    let mut transaction = daemon.filesystem_mut().transaction();
+    transaction
+        .write(LOCAL_PASSKEY_COUNTERS_PATH, database)
+        .map_err(|error| error.status())?;
+    transaction.commit().map_err(|error| error.status())?;
+    crate::physical_storage::sync(daemon.filesystem_mut()).map_err(|_| Status::INTERNAL)
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn record_bytes(record: &[u8]) -> usize {
+    LOCAL_ACCOUNT_RECORD_HEADER_BYTES + record[LOCAL_ACCOUNT_RECORD_HEADER_BYTES - 1] as usize
 }
 
 #[cfg(all(

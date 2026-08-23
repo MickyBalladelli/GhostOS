@@ -993,6 +993,43 @@ static u64 read_credential_line(char *line, u64 capacity)
     }
 }
 
+static int hex_value(u8 byte)
+{
+    if (byte >= '0' && byte <= '9') {
+        return (int)(byte - '0');
+    }
+    if (byte >= 'a' && byte <= 'f') {
+        return (int)(byte - 'a' + 10);
+    }
+    if (byte >= 'A' && byte <= 'F') {
+        return (int)(byte - 'A' + 10);
+    }
+    return -1;
+}
+
+static u64 decode_hex_material(
+    const char *text,
+    u64 text_length,
+    u8 *output,
+    u64 capacity
+)
+{
+    u64 index;
+    u64 output_length = 0;
+    if (text_length == 0 || (text_length & 1) != 0) {
+        return 0;
+    }
+    for (index = 0; index < text_length; index += 2) {
+        int high = hex_value((u8)text[index]);
+        int low = hex_value((u8)text[index + 1]);
+        if (high < 0 || low < 0 || output_length >= capacity) {
+            return 0;
+        }
+        output[output_length++] = (u8)((high << 4) | low);
+    }
+    return output_length;
+}
+
 static void add_credential(const char *username, u8 *buffer)
 {
     if (!login_authorized()) {
@@ -1072,9 +1109,10 @@ static void add_credential(const char *username, u8 *buffer)
 
     char kind[256];
     char material[256];
+    u8 material_bytes[ACCOUNT_CREDENTIAL_CAPACITY];
     write_text("Credential type [PASSKEY/TPM/SSH]: ");
     u64 kind_length = read_credential_line(kind, sizeof(kind));
-    write_text("Public credential material (max 96 chars): ");
+    write_text("Public credential material (passkey COSE key as hex): ");
     u64 material_length = read_credential_line(material, sizeof(material));
     u8 kind_id = 0;
     if (equal_name(kind, "PASSKEY")) {
@@ -1097,11 +1135,24 @@ static void add_credential(const char *username, u8 *buffer)
             break;
         }
     }
-    u64 credential_payload = 1 + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + material_length;
+    u64 stored_material_length = material_length;
+    if (kind_id == 1) {
+        stored_material_length = decode_hex_material(
+            material,
+            material_length,
+            material_bytes,
+            sizeof(material_bytes)
+        );
+    } else {
+        for (offset = 0; offset < material_length && offset < sizeof(material_bytes); offset++) {
+            material_bytes[offset] = (u8)material[offset];
+        }
+    }
+    u64 credential_payload = 1 + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + stored_material_length;
     for (offset = 0; offset < credential_count; offset++) {
         credential_payload += ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + material_lengths[offset];
     }
-    if (kind_length == 0 || material_length == 0
+    if (kind_length == 0 || stored_material_length == 0
         || credential_payload > ACCOUNT_CREDENTIAL_CAPACITY || kind_id == 0) {
         write_text("Credential rejected.\n");
         return;
@@ -1134,10 +1185,10 @@ static void add_credential(const char *username, u8 *buffer)
     }
     next_record[next_offset] = new_id;
     next_record[next_offset + 1] = kind_id;
-    next_record[next_offset + 2] = (u8)material_length;
-    for (offset = 0; offset < material_length; offset++) {
+    next_record[next_offset + 2] = (u8)stored_material_length;
+    for (offset = 0; offset < stored_material_length; offset++) {
         next_record[next_offset + ACCOUNT_CREDENTIAL_ENTRY_HEADER_BYTES + offset]
-            = (u8)material[offset];
+            = material_bytes[offset];
     }
     u32 failure_status = 0;
     if (!append_account_record(
@@ -1970,7 +2021,7 @@ static int commit_first_admin_account(
     const char *username,
     u64 username_length,
     u64 kind_id,
-    const char *material,
+    const u8 *material,
     u64 material_length
 )
 {
@@ -2027,6 +2078,7 @@ static void run_first_run_wizard(void)
     char kind[256];
     char material[256];
     char answer[256];
+    u8 material_bytes[ACCOUNT_CREDENTIAL_CAPACITY];
     u64 username_length;
     u64 material_length;
     u64 kind_id;
@@ -2048,10 +2100,23 @@ static void run_first_run_wizard(void)
             write_text("Unknown credential type. Use PASSKEY, TPM, or SSH.\n");
             continue;
         }
-        write_text("Public credential material: ");
+        write_text("Public credential material (passkey COSE key as hex): ");
         material_length = read_credential_line(material, sizeof(material));
-        if (material_length == 0 || material_length > 96) {
-            write_text("Credential material must be 1-96 characters.\n");
+        u64 stored_material_length = material_length;
+        if (kind_id == 1) {
+            stored_material_length = decode_hex_material(
+                material,
+                material_length,
+                material_bytes,
+                sizeof(material_bytes)
+            );
+        } else {
+            for (u64 index = 0; index < material_length && index < sizeof(material_bytes); index++) {
+                material_bytes[index] = (u8)material[index];
+            }
+        }
+        if (material_length == 0 || stored_material_length == 0) {
+            write_text("Credential material is invalid.\n");
             continue;
         }
         write_text("\nUsername: ");
@@ -2059,7 +2124,11 @@ static void run_first_run_wizard(void)
         write_text("\nCredential type: ");
         write_text(credential_kind_name(kind_id));
         write_text("\nMaterial: ");
-        write_bytes(material, material_length);
+        if (kind_id == 1) {
+            write_bytes(material, material_length);
+        } else {
+            write_bytes((const char *)material_bytes, stored_material_length);
+        }
         write_text("\nCreate this administrator account? [y/N]: ");
         read_credential_line(answer, sizeof(answer));
         if (equal_name(answer, "SHUTDOWN")) {
@@ -2070,7 +2139,13 @@ static void run_first_run_wizard(void)
             write_text("Setup restarted with new answers.\n");
             continue;
         }
-        if (commit_first_admin_account(username, username_length, kind_id, material, material_length)) {
+        if (commit_first_admin_account(
+            username,
+            username_length,
+            kind_id,
+            kind_id == 1 ? material_bytes : (const u8 *)material,
+            stored_material_length
+        )) {
             return;
         }
     }

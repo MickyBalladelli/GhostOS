@@ -24,16 +24,17 @@ GhostOS first-run setup mode
 ```
 
 Answer each question. Use a valid username and public credential material
-only:
+only. For a passkey, enter the registered COSE ES256 public key as hexadecimal
+CBOR bytes:
 
 ```text
 Administrator username: admin
 Credential type [PASSKEY/TPM/SSH] (PASSKEY): passkey
-Public credential material: <public-material>
+Public credential material (passkey COSE key as hex): <cose-key-hex>
 
 Username: admin
 Credential type: PASSKEY
-Material: <public-material>
+Material: <cose-key-hex>
 Create this administrator account? [y/N]: y
 ```
 

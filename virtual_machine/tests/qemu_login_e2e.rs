@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
@@ -12,6 +12,8 @@ use std::os::unix::net::UnixStream;
 use ghostos_vm::devices::{SystemDiskInstall, SystemDiskProvisioner};
 
 const SERIAL_TIMEOUT: Duration = Duration::from_secs(15);
+const TEST_COSE_PUBLIC_KEY_HEX: &str = "a501020326200121582035a056b12045176be061f46901db4d9a9d8bb0d035395bb62f3598edefbfd2cb22582054b6146b69c1650b5f7904f8995ad379acf7434f20291b93e1cafb7022a60142";
+const TEST_PRIVATE_KEY: &str = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEILV48sAq+6W41k47/cTLq+oMT5WHfSVWcX5NR/jmwRdEoAoGCCqGSM49\nAwEHoUQDQgAENaBWsSBFF2vgYfRpAdtNmp2LsNA1OVu2LzWY7e+/0stUthRracFl\nC195BPiZWtN5rPdDTyApG5PhyvtwIqYBQg==\n-----END EC PRIVATE KEY-----\n";
 
 #[test]
 #[ignore = "requires GHOSTOS_RUN_QEMU_TESTS=1, QEMU, and GHOSTOS_QEMU_IMAGE"]
@@ -27,11 +29,14 @@ fn qemu_interactive_login_flow() {
     fs::copy(&source_image, &writable_image).expect("copy QEMU image for login workflow");
     let system_disk = temporary_path("login-system-disk");
     let kernel_payload = temporary_path("login-kernel");
+    let private_key = temporary_path("login-key");
+    fs::write(&private_key, TEST_PRIVATE_KEY).expect("write login test key");
     provision_login_system_disk(&system_disk, &kernel_payload);
 
     let mut session = QemuLoginSession::start(&writable_image, &system_disk, &kernel_payload);
-    let result = drive_login_workflow(&mut session);
+    let result = drive_login_workflow(&mut session, &private_key);
     let log = session.finish("qemu-interactive-login");
+    let _ = fs::remove_file(private_key);
     result.unwrap_or_else(|error| panic!("login workflow failed: {error}; serial output: {log:?}"));
 }
 
@@ -81,33 +86,33 @@ fn kernel_build_output(name: &str) -> PathBuf {
 }
 
 #[cfg(unix)]
-fn drive_login_workflow(session: &mut QemuLoginSession) -> Result<(), String> {
+fn drive_login_workflow(session: &mut QemuLoginSession, private_key: &Path) -> Result<(), String> {
     session.wait_for("No administrator account exists.")?;
     session.wait_for("GhostOS first-run setup mode")?;
     session.wait_for("Administrator username: ")?;
     session.send_text("admin\n")?;
     session.wait_for("Credential type [PASSKEY/TPM/SSH] (PASSKEY): ")?;
     session.send_text("passkey\n")?;
-    session.wait_for("Public credential material: ")?;
-    session.send_text("fixture\n")?;
+    session.wait_for("Public credential material (passkey COSE key as hex): ")?;
+    session.send_text(&format!("{}\n", TEST_COSE_PUBLIC_KEY_HEX))?;
     session.wait_for("Create this administrator account? [y/N]: ")?;
     let setup_start = session.serial_len();
     session.send_text("y\n")?;
     session.wait_for_after("Administrator account committed.", setup_start)?;
 
-    complete_login(session, "first login", setup_start)?;
+    complete_login(session, "first login", setup_start, private_key, 1)?;
     assert_whoami(session, "first login")?;
 
     let logout_start = session.serial_len();
     session.send_text("logout\n")?;
     session.wait_for_after("GHOSTOS\x1b[90m::\x1b[31mLOCKED", logout_start)?;
-    complete_login(session, "normal login", logout_start)?;
+    complete_login(session, "normal login", logout_start, private_key, 2)?;
     assert_whoami(session, "normal login")?;
 
     let logout_start = session.serial_len();
     session.send_text("logout\n")?;
     session.wait_for_after("GHOSTOS\x1b[90m::\x1b[31mLOCKED", logout_start)?;
-    complete_login(session, "relogin", logout_start)?;
+    complete_login(session, "relogin", logout_start, private_key, 3)?;
     assert_whoami(session, "relogin")?;
     exercise_login_failures_and_lockout(session)?;
     Ok(())
@@ -143,7 +148,7 @@ fn exercise_login_failures_and_lockout(session: &mut QemuLoginSession) -> Result
 fn submit_bad_credential(session: &mut QemuLoginSession, search_from: usize) -> Result<(), String> {
     session.wait_for_after("login: ", search_from)?;
     session.send_text("admin\npasskey\n")?;
-    session.wait_for_after("passkey: ", search_from)?;
+    session.wait_for_after("WebAuthn assertion: ", search_from)?;
     session.send_text("00\n")?;
     session.wait_for_after("Login failed", search_from)?;
     Ok(())
@@ -154,14 +159,19 @@ fn complete_login(
     session: &mut QemuLoginSession,
     label: &str,
     search_from: usize,
+    private_key: &Path,
+    counter: u32,
 ) -> Result<(), String> {
     session.wait_for_after("login: ", search_from)?;
     session.send_text("admin\npasskey\n")?;
-    let log = session.wait_for_after("passkey: ", search_from)?;
+    let log = session.wait_for_after("WebAuthn assertion: ", search_from)?;
     let challenge = challenge_from_log(&log).ok_or_else(|| {
         format!("{label}: login challenge was not present in serial output")
     })?;
-    session.send_text(&format!("{}\n", assertion_for_challenge(&challenge)))?;
+    session.send_text(&format!(
+        "{}\n",
+        assertion_for_challenge(&challenge, private_key, counter)
+    ))?;
     session.wait_for("Login accepted.")?;
     Ok(())
 }
@@ -201,24 +211,87 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn assertion_for_challenge(challenge: &[u8]) -> String {
+fn assertion_for_challenge(challenge: &[u8], private_key: &Path, counter: u32) -> String {
     assert_eq!(challenge.len(), 32);
-    let mut assertion = Vec::with_capacity(85);
-    assertion.extend_from_slice(b"SYPA");
+    let client_data = format!(
+        "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\",\"origin\":\"https://ghostos.local\"}}",
+        base64url(challenge)
+    );
+    let mut authenticator_data = sha256(b"ghostos.local");
+    authenticator_data.extend_from_slice(&[0x05]);
+    authenticator_data.extend_from_slice(&counter.to_be_bytes());
+    let mut signed_data = authenticator_data.clone();
+    signed_data.extend_from_slice(&sha256(client_data.as_bytes()));
+    let signature = openssl_sign(&signed_data, private_key);
+    let mut assertion = Vec::with_capacity(
+        12 + authenticator_data.len() + client_data.len() + signature.len(),
+    );
+    assertion.extend_from_slice(b"SYWB");
     assertion.extend_from_slice(&[1, 0, 0, 0]);
-    assertion.extend_from_slice(challenge);
-    assertion.extend_from_slice(&(37u16).to_le_bytes());
-    assertion.extend_from_slice(&(1u16).to_le_bytes());
-    assertion.extend_from_slice(&(1u16).to_le_bytes());
-    assertion.extend_from_slice(&[0; 32]);
-    assertion.push(0x05);
-    assertion.extend_from_slice(&[0; 4]);
-    assertion.push(0);
-    assertion.push(0);
+    assertion.extend_from_slice(&(authenticator_data.len() as u16).to_le_bytes());
+    assertion.extend_from_slice(&(client_data.len() as u16).to_le_bytes());
+    assertion.extend_from_slice(&authenticator_data);
+    assertion.extend_from_slice(client_data.as_bytes());
+    assertion.extend_from_slice(&signature);
     assertion
         .iter()
         .flat_map(|byte| [hex_digit(byte >> 4), hex_digit(byte & 0x0f)])
         .collect()
+}
+
+fn base64url(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut output = String::new();
+    for chunk in input.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16)
+            | if chunk.len() > 1 {
+                u32::from(chunk[1]) << 8
+            } else {
+                0
+            }
+            | if chunk.len() > 2 {
+                u32::from(chunk[2])
+            } else {
+                0
+            };
+        output.push(ALPHABET[(value >> 18) as usize] as char);
+        output.push(ALPHABET[((value >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            output.push(ALPHABET[((value >> 6) & 63) as usize] as char);
+        }
+        if chunk.len() > 2 {
+            output.push(ALPHABET[(value & 63) as usize] as char);
+        }
+    }
+    output
+}
+
+fn sha256(input: &[u8]) -> Vec<u8> {
+    let mut child = Command::new("openssl")
+        .args(["dgst", "-sha256", "-binary"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start openssl sha256");
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let output = child.wait_with_output().expect("read openssl sha256");
+    assert!(output.status.success(), "openssl sha256 failed");
+    output.stdout
+}
+
+fn openssl_sign(input: &[u8], private_key: &Path) -> Vec<u8> {
+    let mut child = Command::new("openssl")
+        .args(["dgst", "-sha256", "-sign"])
+        .arg(private_key)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start openssl signature");
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let output = child.wait_with_output().expect("read openssl signature");
+    assert!(output.status.success(), "openssl signature failed");
+    output.stdout
 }
 
 fn hex_digit(value: u8) -> char {

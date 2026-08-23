@@ -50,7 +50,7 @@ CREDENTIAL REMOVE <username> <id>
 
 ```text
 Credential type [PASSKEY/TPM/SSH]:
-Public credential material (max 96 chars):
+Public credential material (passkey COSE key as hex):
 ```
 
 The supported kinds are `PASSKEY`, `TPM`, and `SSH`. An account can hold at
