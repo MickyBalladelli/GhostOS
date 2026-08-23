@@ -1269,6 +1269,7 @@ fn create_first_admin_credential_inner(
     kind: u8,
     public_material: &[u8],
 ) -> Result<(), Status> {
+    // First-run retries may replace incomplete staged credential material.
     if !(1..=3).contains(&kind)
         || public_material.is_empty()
         || public_material.len() > FIRST_ADMIN_CREDENTIAL_CAPACITY

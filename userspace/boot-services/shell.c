@@ -2065,6 +2065,8 @@ static const char *credential_kind_name(u64 kind_id)
     return "PASSKEY";
 }
 
+static int reset_first_admin_staging(void);
+
 __attribute__((noinline))
 static int commit_first_admin_account(
     const char *username,
@@ -2101,6 +2103,11 @@ static int commit_first_admin_account(
         0
     );
     if (response.status != 0) {
+        if (response.status == 0x0001001aU
+            && reset_first_admin_staging()) {
+            write_text("Old setup cleared. Create the passkey again.\n");
+            return 0;
+        }
         write_text("Credential rejected. status=");
         write_hex(response.status);
         write_text("\n");

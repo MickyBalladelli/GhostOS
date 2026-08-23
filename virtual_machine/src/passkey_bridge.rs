@@ -30,7 +30,7 @@ const PAGE: &str = r#"<!doctype html>
     <form id="form" hidden>
       <label for="username">Administrator username</label>
       <input id="username" name="username" autocomplete="username" maxlength="32" required>
-      <button id="action" type="submit">Continue</button>
+      <button id="action" type="submit">Create passkey</button>
     </form>
     <p id="error" class="error" role="alert"></p>
     <p class="foot">Your private passkey stays in your authenticator.</p>
@@ -192,7 +192,18 @@ async function waitForChallenge() {
   throw new Error('GhostOS did not provide a login challenge')
 }
 
+async function waitForEnrollment() {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const state = await api('/api/state')
+    if (state.mode === 'enroll') return
+    if (state.error) throw new Error(state.error)
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  throw new Error('GhostOS setup is not ready yet')
+}
+
 async function enroll(name) {
+  await waitForEnrollment()
   const created = await navigator.credentials.create({publicKey: {
     challenge: crypto.getRandomValues(new Uint8Array(32)),
     rp: {id: 'localhost', name: 'GhostOS'},
@@ -435,26 +446,42 @@ impl PasskeyBridge {
             self.observed_output = output.len();
             new_output
         };
+        let new_text = String::from_utf8_lossy(&new_output);
         self.guest_text
-            .push_str(&String::from_utf8_lossy(&new_output));
+            .push_str(&new_text);
         if self.guest_text.len() > 64 * 1024 {
             let keep = self.guest_text.len() - 32 * 1024;
             self.guest_text.drain(..keep);
         }
 
-        if self.guest_text.contains("\x1b]GhostOSEnroll\x07")
-            && !self.guest_text.contains("Administrator account committed.")
-        {
+        let enrollment_pending = !self
+            .guest_text
+            .contains("Administrator account committed.")
+            && (self.guest_text.contains("\x1b]GhostOSEnroll\x07")
+                || self
+                    .guest_text
+                    .contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):")
+                || self
+                    .guest_text
+                    .contains("Waiting for passkey public key from local browser:")
+                || self
+                    .guest_text
+                    .contains("Create this administrator account? [y/N]:"));
+        if enrollment_pending {
             self.mode = Mode::Enroll;
+            self.error = None;
+            self.challenge = None;
         }
-        if self.guest_text.contains("Administrator account committed.") {
+        if new_text.contains("Administrator account committed.") {
             self.mode = Mode::Login;
             self.error = None;
             self.input_flow = InputFlow::None;
         }
-        if let Some(challenge) = last_challenge(&self.guest_text) {
-            self.challenge = Some(challenge);
-            self.mode = Mode::Challenge;
+        if !enrollment_pending {
+            if let Some(challenge) = last_challenge(&new_text) {
+                self.challenge = Some(challenge);
+                self.mode = Mode::Challenge;
+            }
         }
         if self.guest_text.contains("Login accepted.")
             || (self.guest_text.contains("GhostOS user shell")
@@ -462,15 +489,15 @@ impl PasskeyBridge {
         {
             self.mode = Mode::Success;
             self.error = None;
-        } else if self.guest_text.contains("Login failed:") {
+        } else if new_text.contains("Login failed:") {
             self.mode = Mode::Login;
             self.challenge = None;
             self.error = Some("GhostOS rejected that passkey. Try again.".to_string());
-        } else if self.guest_text.contains("Username must be 1-32 valid characters.")
-            || self.guest_text.contains("Unknown credential type.")
-            || self.guest_text.contains("Credential material is invalid.")
-            || self.guest_text.contains("Credential rejected.")
-            || self.guest_text.contains("Confirmation rejected.")
+        } else if new_text.contains("Username must be 1-32 valid characters.")
+            || new_text.contains("Unknown credential type.")
+            || new_text.contains("Credential material is invalid.")
+            || new_text.contains("Credential rejected.")
+            || new_text.contains("Confirmation rejected.")
         {
             self.mode = Mode::Enroll;
             self.input_flow = InputFlow::None;
@@ -566,6 +593,11 @@ impl PasskeyBridge {
                 Mode::Login | Mode::Challenge => "login",
                 Mode::Success => "success",
             };
+            let mode = if mode == "waiting" && enrollment_pending(&self.guest_text) {
+                "enroll"
+            } else {
+                mode
+            };
             let challenge = self.challenge.as_deref().unwrap_or("");
             let error = self.error.as_deref().unwrap_or("");
             return (
@@ -577,7 +609,8 @@ impl PasskeyBridge {
             )
         }
         if request.method == "POST" && path == "/api/enroll" {
-            if self.mode != Mode::Enroll {
+            let first_run_waiting = enrollment_pending(&self.guest_text);
+            if self.mode != Mode::Enroll && !first_run_waiting {
                 return text_response("409 Conflict", "GhostOS is not waiting for enrollment")
             }
             let Ok(body) = std::str::from_utf8(&request.body) else {
@@ -643,6 +676,14 @@ impl PasskeyBridge {
         }
         text_response("404 Not Found", "Not found")
     }
+}
+
+fn enrollment_pending(text: &str) -> bool {
+    !text.contains("Administrator account committed.")
+        && (text.contains("\x1b]GhostOSEnroll\x07")
+            || text.contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):")
+            || text.contains("Waiting for passkey public key from local browser:")
+            || text.contains("Create this administrator account? [y/N]:"))
 }
 
 fn bridge_line(bytes: &[u8]) -> Vec<u8> {
