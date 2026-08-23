@@ -589,7 +589,8 @@ impl SystemDiskProvisioner {
                 "system volume has the wrong size".to_string(),
             ));
         }
-        let filesystem = SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover(volume)
+        let mut filesystem = Box::new(SynFs::<GHOSTFS_SYSTEM_BLOCKS>::new());
+        SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover_into(volume, filesystem.as_mut())
             .map_err(|_| StorageError::InvalidImage("GhostFS system volume is corrupt".to_string()))?;
         filesystem
             .check_consistency()
@@ -782,7 +783,8 @@ fn create_system_volume(
     let mut image = vec![0u8; GHOSTFS_SYSTEM_VOLUME_SIZE as usize];
     SynFs::<GHOSTFS_SYSTEM_BLOCKS>::format(&mut image)
         .map_err(|_| StorageError::InvalidImage("cannot format GhostFS system volume".to_string()))?;
-    let mut volume = SynFs::<GHOSTFS_SYSTEM_BLOCKS>::load(&image)
+    let mut volume = Box::new(SynFs::<GHOSTFS_SYSTEM_BLOCKS>::new());
+    SynFs::<GHOSTFS_SYSTEM_BLOCKS>::load_into(&image, volume.as_mut())
         .map_err(|_| StorageError::InvalidImage("cannot load GhostFS system volume".to_string()))?;
     let settings_end = settings
         .iter()
@@ -1125,7 +1127,8 @@ fn validate_manifest(
         manifest.layout.system_volume_offset,
         manifest.layout.system_volume_size,
     )?;
-    let filesystem = SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover(&volume)
+    let mut filesystem = Box::new(SynFs::<GHOSTFS_SYSTEM_BLOCKS>::new());
+    SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover_into(&volume, filesystem.as_mut())
         .map_err(|_| StorageError::InvalidImage("GhostFS system volume is corrupt".to_string()))?;
     filesystem
         .check_consistency()
@@ -1677,6 +1680,14 @@ mod tests {
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom, Write};
 
+    fn run_on_large_stack(body: fn()) {
+        let handle = std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn large-stack system-disk test");
+        handle.join().expect("large-stack system-disk test panicked");
+    }
+
     fn test_path(label: &str) -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1687,6 +1698,10 @@ mod tests {
 
     #[test]
     fn provision_validate_and_reload_persistent_state() {
+        run_on_large_stack(provision_validate_and_reload_persistent_state_body);
+    }
+
+    fn provision_validate_and_reload_persistent_state_body() {
         let disk_path = test_path("persistent.raw");
         let kernel_path = test_path("kernel.bin");
         fs::write(&kernel_path, b"test kernel image").unwrap();

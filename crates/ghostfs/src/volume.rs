@@ -192,8 +192,19 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn load(image: &[u8]) -> Result<Self, Error> {
+        let mut filesystem = Self::new();
+        Self::load_into(image, &mut filesystem)?;
+        Ok(filesystem)
+    }
+
+    /// Load a committed generation into caller-owned storage.
+    ///
+    /// Callers with a large filesystem value can place it on the heap or in
+    /// another explicitly sized region before loading, avoiding a large
+    /// temporary return value on the current stack.
+    pub fn load_into(image: &[u8], filesystem: &mut Self) -> Result<(), Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
-        load_committed_generation::<MAX_BLOCKS>(image)
+        load_committed_generation_into::<MAX_BLOCKS>(image, filesystem)
     }
 
     pub fn load_volume(image: &[u8]) -> Result<Self, Error> {
@@ -225,8 +236,15 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn recover(image: &[u8]) -> Result<Self, Error> {
+        let mut filesystem = Self::new();
+        Self::recover_into(image, &mut filesystem)?;
+        Ok(filesystem)
+    }
+
+    /// Recover a committed generation into caller-owned storage.
+    pub fn recover_into(image: &[u8], filesystem: &mut Self) -> Result<(), Error> {
         require_image_size::<MAX_BLOCKS>(image)?;
-        load_committed_generation::<MAX_BLOCKS>(image)
+        load_committed_generation_into::<MAX_BLOCKS>(image, filesystem)
     }
 
     pub fn recover_volume(image: &[u8]) -> Result<Self, Error> {
@@ -583,9 +601,10 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
 /// valid. A durable header alone is not a commit: a torn object or map makes
 /// that bank ineligible, so recovery tries the other bank before reporting
 /// unrecoverable corruption.
-fn load_committed_generation<const MAX_BLOCKS: usize>(
+fn load_committed_generation_into<const MAX_BLOCKS: usize>(
     image: &[u8],
-) -> Result<SynFs<MAX_BLOCKS>, Error> {
+    filesystem: &mut SynFs<MAX_BLOCKS>,
+) -> Result<(), Error> {
     let candidates = [
         read_superblock::<MAX_BLOCKS>(image, 0)?.map(|superblock| (0, superblock)),
         read_superblock::<MAX_BLOCKS>(image, 1)?.map(|superblock| (1, superblock)),
@@ -621,8 +640,8 @@ fn load_committed_generation<const MAX_BLOCKS: usize>(
             break
         };
         attempted[index] = true;
-        if let Ok(filesystem) = load_bank::<MAX_BLOCKS>(image, index, superblock) {
-            return Ok(filesystem)
+        if load_bank_into::<MAX_BLOCKS>(image, index, superblock, filesystem).is_ok() {
+            return Ok(())
         }
     }
     Err(Error::Corrupt)
@@ -882,19 +901,28 @@ pub(crate) fn load_bank<const MAX_BLOCKS: usize>(
     bank: usize,
     superblock: Superblock,
 ) -> Result<SynFs<MAX_BLOCKS>, Error> {
+    let mut filesystem = SynFs::new();
+    load_bank_into(image, bank, superblock, &mut filesystem)?;
+    Ok(filesystem)
+}
+
+fn load_bank_into<const MAX_BLOCKS: usize>(
+    image: &[u8],
+    bank: usize,
+    superblock: Superblock,
+    filesystem: &mut SynFs<MAX_BLOCKS>,
+) -> Result<(), Error> {
     let map = read_type_map::<MAX_BLOCKS>(image, bank, superblock.type_map_checksum)?;
-    let mut filesystem = SynFs {
-        arena: BlockArena::new(),
-        root: superblock.root,
-        generation: superblock.generation,
-        checkpoints: superblock.checkpoints,
-        limits: superblock.limits,
-        next_checkpoint: superblock.next_checkpoint,
-        volume_bank: bank,
-        volume_sequence: superblock.sequence,
-        next_object_id: superblock.next_object_id,
-        format_version: superblock.format_version,
-    };
+    filesystem.arena = BlockArena::new();
+    filesystem.root = superblock.root;
+    filesystem.generation = superblock.generation;
+    filesystem.checkpoints = superblock.checkpoints;
+    filesystem.limits = superblock.limits;
+    filesystem.next_checkpoint = superblock.next_checkpoint;
+    filesystem.volume_bank = bank;
+    filesystem.volume_sequence = superblock.sequence;
+    filesystem.next_object_id = superblock.next_object_id;
+    filesystem.format_version = superblock.format_version;
     for index in 0..MAX_BLOCKS {
         let block = block_slice::<MAX_BLOCKS>(image, bank, index)?;
         let decoded = match map_kind(&map, index) {
@@ -914,7 +942,7 @@ pub(crate) fn load_bank<const MAX_BLOCKS: usize>(
     // A committed bank can contain unreachable blocks left by earlier CoW paths.
     // Reclaim them before accepting new writes on a small boot volume.
     filesystem.collect_garbage();
-    Ok(filesystem)
+    Ok(())
 }
 
 fn encode_data(destination: &mut [u8], data: DataBlock) {

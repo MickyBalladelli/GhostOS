@@ -942,7 +942,7 @@ mod tests {
         assert_eq!(Device::read(&pci, addr, 4).unwrap(), 0x1111_1234);
 
         // Byte access to the class/revision dword.
-        let class_addr = pci.ecam_base() | (3 << 15) | 0x0C;
+        let class_addr = pci.ecam_base() | (3 << 15) | 0x08;
         assert_eq!(Device::read(&pci, class_addr, 1).unwrap(), 0x01); // revision
         assert_eq!(Device::read(&pci, class_addr + 3, 1).unwrap(), 0x02); // class
 
