@@ -1272,6 +1272,7 @@ fn create_first_admin_credential_inner(
     if !(1..=3).contains(&kind)
         || public_material.is_empty()
         || public_material.len() > FIRST_ADMIN_CREDENTIAL_CAPACITY
+        || (kind == 1 && !crate::webauthn::valid_cose_es256_public_key(public_material))
     {
         return Err(Status::INVALID_ARGUMENT)
     }
@@ -1532,6 +1533,13 @@ fn commit_first_admin_inner() -> Result<(), Status> {
         || credential_size != credential_length + 2
     {
         return Err(first_admin_corrupt(4))
+    }
+    if credential[0] == 1
+        && !crate::webauthn::valid_cose_es256_public_key(
+            &credential[2..2 + credential_length],
+        )
+    {
+        return Err(Status::INVALID_ARGUMENT)
     }
 
     let mut record = [0; FIRST_ADMIN_AUTHORIZATION_RECORD_CAPACITY];

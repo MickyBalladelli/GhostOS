@@ -25,6 +25,9 @@ use ghostos_vm::{
 };
 
 mod control;
+mod passkey_bridge;
+
+use passkey_bridge::PasskeyBridge;
 
 use control::{
     MonitorAuthenticator, MonitorCommand, MonitorPermissions, MonitorRequestBuffer,
@@ -51,6 +54,7 @@ struct Cli {
     monitor_permissions: MonitorPermissions,
     replay_record: Option<PathBuf>,
     replay_path: Option<PathBuf>,
+    passkey_web: bool,
     verbose: bool,
 }
 
@@ -229,6 +233,7 @@ where
     let mut monitor_permissions_explicit = false;
     let mut replay_record = None;
     let mut replay_path = None;
+    let mut passkey_web = true;
     let mut verbose = false;
     let mut args = values.into_iter().peekable();
 
@@ -376,6 +381,8 @@ where
             "--replay" => {
                 replay_path = Some(PathBuf::from(next_value(&mut args, "--replay")?));
             }
+            "--passkey-web" => passkey_web = true,
+            "--no-passkey-web" => passkey_web = false,
             value if value.starts_with('-') => {
                 return Err(format!("unknown option `{value}`"));
             }
@@ -449,6 +456,7 @@ where
         monitor_permissions,
         replay_record,
         replay_path,
+        passkey_web,
         verbose,
     }))
 }
@@ -927,6 +935,7 @@ fn run(mut cli: Cli) -> Result<(), String> {
     let monitor_permissions = cli.monitor_permissions;
     let replay_record = cli.replay_record;
     let replay_path = cli.replay_path;
+    let passkey_web = cli.passkey_web;
     let efi_image = cli
         .efi_path
         .map(|path| {
@@ -1008,7 +1017,21 @@ fn run(mut cli: Cli) -> Result<(), String> {
             MonitorSession::bind(path, key, monitor_permissions)
         })
         .transpose()?;
+    let mut passkey_bridge = if passkey_web
+        && replay_path.is_none()
+        && vm.config().max_steps.is_none()
+        && vm.serial().is_some()
+    {
+        let bridge = PasskeyBridge::bind()
+            .map_err(|error| format!("cannot start local passkey page: {error}"))?;
+        Some(bridge)
+    } else {
+        None
+    };
     let mut poll_monitor = |vm: &mut Vm| {
+        if let Some(bridge) = passkey_bridge.as_mut() {
+            bridge.poll(vm).map_err(|_| ghostos_vm::VmError::IoError)?;
+        }
         monitor
             .as_mut()
             .map(|session| session.poll(vm, auth_key))
@@ -2814,6 +2837,8 @@ Machine options:
       --non-interactive      Disable raw mode; keep pipe input usable
   -v, --v, -verbose         Show verbose error details
       --input <MODE>         Host input path: serial (default) or ps2
+      --passkey-web          Enable local browser passkeys (default)
+      --no-passkey-web       Disable the local passkey setup/login page
       --steps <COUNT>        Run a bounded number of instructions
       --network <MODE>       Network: deterministic (default), nat, or bridged
       --network-peer <ADDR>  NAT gateway UDP address, such as 127.0.0.1:5555

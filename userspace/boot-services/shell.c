@@ -2085,6 +2085,7 @@ static void run_first_run_wizard(void)
 
     write_text("Answer each question to create the administrator account.\n");
     write_text("GhostOS starts once the account is committed.\n");
+    write_text("Open the local passkey URL shown by the VM host for guided setup.\n");
     write_text("Public credential material only; never type passwords or private keys.\n");
     for (;;) {
         write_text("\nAdministrator username: ");

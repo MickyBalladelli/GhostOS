@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 
-pub const RP_ID: &str = "ghostos.local";
-pub const ORIGIN: &str = "https://ghostos.local";
+pub const RP_ID: &str = "localhost";
+pub const ORIGIN: &str = "http://localhost";
 
 const HEADER_BYTES: usize = 12;
 const MAX_AUTHENTICATOR_DATA: usize = 256;
@@ -117,6 +117,10 @@ pub fn verify_local_assertion(
     None
 }
 
+pub fn valid_cose_es256_public_key(key: &[u8]) -> bool {
+    cose_es256_public_point(key).is_some()
+}
+
 fn parse_assertion(assertion: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
     if assertion.len() < HEADER_BYTES || assertion[..4] != *b"SYWB" || assertion[4] != 1 {
         return None
@@ -181,8 +185,32 @@ fn verify_client_data(client_data: &[u8], challenge: &[u8; 32]) -> bool {
         && kind[..kind_length] == *b"webauthn.get"
         && challenge_length == expected_length
         && encoded_challenge[..challenge_length] == expected_challenge[..expected_length]
-        && origin_length == ORIGIN.len()
-        && origin[..origin_length] == *ORIGIN.as_bytes()
+        && valid_local_origin(&origin[..origin_length])
+}
+
+fn valid_local_origin(origin: &[u8]) -> bool {
+    let prefix = ORIGIN.as_bytes();
+    if origin == prefix {
+        return true
+    }
+    if !origin.starts_with(prefix)
+        || origin.get(prefix.len()) != Some(&b':')
+        || origin.len() > prefix.len() + 6
+    {
+        return false
+    }
+    let port = &origin[prefix.len() + 1..];
+    if port.is_empty() || port.first() == Some(&b'0') {
+        return false
+    }
+    let mut value = 0u32;
+    for byte in port {
+        if !byte.is_ascii_digit() {
+            return false
+        }
+        value = value * 10 + u32::from(*byte - b'0');
+    }
+    value <= u16::MAX as u32
 }
 
 fn json_string_field(input: &[u8], wanted: &[u8], output: &mut [u8]) -> Option<usize> {
@@ -373,23 +401,11 @@ fn base64url_encode(input: &[u8], output: &mut [u8]) -> usize {
 }
 
 fn verify_cose_key(key: &[u8], digest: &[u8; 32], signature: &[u8]) -> bool {
-    let Some((x, y, algorithm, curve, key_type)) = parse_cose_key(key) else {
-        return false
-    };
-    if algorithm != -7 || curve != 1 || key_type != 2 {
-        return false
-    }
+    let Some(public) = cose_es256_public_point(key) else { return false };
     let Some((r, s)) = parse_signature(signature) else {
         return false
     };
     if r == ZERO || s == ZERO || ge(r, ORDER) || ge(s, ORDER) {
-        return false
-    }
-    if ge(x, FIELD_MODULUS) || ge(y, FIELD_MODULUS) {
-        return false
-    }
-    let public = Point { x, y, z: ONE };
-    if !on_curve(public) {
         return false
     }
     let mut message = *digest;
@@ -404,6 +420,20 @@ fn verify_cose_key(key: &[u8], digest: &[u8; 32], signature: &[u8]) -> bool {
     let x = if ge(x, ORDER) { sub_raw(x, ORDER) } else { x };
     message.fill(0);
     x == r
+}
+
+fn cose_es256_public_point(key: &[u8]) -> Option<Point> {
+    let (x, y, algorithm, curve, key_type) = parse_cose_key(key)?;
+    if algorithm != -7
+        || curve != 1
+        || key_type != 2
+        || ge(x, FIELD_MODULUS)
+        || ge(y, FIELD_MODULUS)
+    {
+        return None
+    }
+    let public = Point { x, y, z: ONE };
+    on_curve(public).then_some(public)
 }
 
 fn parse_signature(signature: &[u8]) -> Option<(U256, U256)> {

@@ -16,32 +16,20 @@ The launcher provisions `virtual_machine/state/system.raw` on first start.
 The older `data.raw` file is only a data disk; it cannot save the first
 administrator account.
 
-The first-run wizard prints:
+The VM prints a one-time local URL before GhostOS starts:
 
 ```text
-No administrator account exists.
-GhostOS first-run setup mode
+Passkey setup and login: http://localhost:<port>/?code=<one-time-code>
 ```
 
-Answer each question. Use a valid username and public credential material
-only. For a passkey, enter the registered COSE ES256 public key as hexadecimal
-CBOR bytes:
+Open that URL in a browser on the VM host. Enter the administrator username and
+choose **Create passkey**. The browser and authenticator create the private key;
+the local companion sends only the public key to GhostOS. The terminal wizard
+is completed automatically.
 
-```text
-Administrator username: admin
-Credential type [PASSKEY/TPM/SSH] (PASSKEY): passkey
-Public credential material (passkey COSE key as hex): <cose-key-hex>
-
-Username: admin
-Credential type: PASSKEY
-Material: <cose-key-hex>
-Create this administrator account? [y/N]: y
-```
-
-Press Enter at the credential type question to accept the default `PASSKEY`.
-The supported credential kinds are `PASSKEY`, `TPM`, and `SSH`. GhostOS stores
-public credential material; never type or save a private key, seed, password,
-or recovery secret in the system disk or serial logs.
+The local page is bound to loopback, protected by the one-time code, and uses
+the browser's secure `localhost` WebAuthn context. Disable it with
+`--no-passkey-web` only when using the manual TPM or SSH setup path.
 
 Expected responses after confirmation are:
 
@@ -64,15 +52,9 @@ repeated or the system disk is reprovisioned.
 
 ## First login
 
-After the administrator is committed, the normal shell appears. Log in from
-the physical console:
-
-```text
-login
-admin
-passkey
-<assertion-for-the-displayed-challenge>
-```
+After the administrator is committed, keep the local page open. It changes to
+**Unlock GhostOS**. Enter the username and choose **Use passkey**. The browser
+touch/biometric prompt completes the challenge automatically.
 
 On success, GhostOS prints `Login accepted.`. Verify the identity, then test the
 lock cycle:

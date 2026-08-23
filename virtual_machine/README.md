@@ -113,6 +113,11 @@ a system disk like this:
   --system-disk ./state/system.raw --firmware bios --interactive
 ```
 
+When GhostOS reaches administrator setup or login, the VM prints a one-time
+`http://localhost` URL immediately before the username prompt. Open it on the
+VM host with a browser or the standalone authenticator.
+Use `--no-passkey-web` to disable this local companion.
+
 Reopen that VM with the same `--system-disk` path. Create and attach a new data
 disk like this:
 

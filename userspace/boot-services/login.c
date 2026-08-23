@@ -345,8 +345,8 @@ void _start(void)
         }
         write_text(use_tpm
             ? "\nPresent your TPM-backed credential and paste the quote as hex.\nChallenge: "
-            : "\nUse WebAuthn RP ID ghostos.local and origin https://ghostos.local.\n"
-              "Paste the packed assertion as hex.\nChallenge: ");
+            : "\nOpen the local passkey URL shown by the VM host.\n"
+              "Manual fallback uses WebAuthn RP ID localhost.\nChallenge: ");
         write_hex_bytes(challenge, sizeof(challenge));
         write_text(use_tpm ? "\nTPM quote: " : "\nWebAuthn assertion: ");
         u64 credential_hex_length = read_private_line(
@@ -364,6 +364,28 @@ void _start(void)
         if (!valid_hex(credential_hex, credential_hex_length)
             || credential_length == 0) {
             write_text("Credential must be non-empty hexadecimal data.\n");
+            clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
+            clear_bytes(credential_hex, sizeof(credential_hex));
+            clear_bytes(credential, sizeof(credential));
+            continue;
+        }
+
+        if (!use_tpm && credential_length >= 4
+            && credential[0] == 'S' && credential[1] == 'Y'
+            && credential[2] == 'P' && credential[3] == 'A') {
+            write_text("Legacy SYPA assertions are not accepted. Use a real WebAuthn SYWB assertion.\n");
+            clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
+            clear_bytes(credential_hex, sizeof(credential_hex));
+            clear_bytes(credential, sizeof(credential));
+            continue;
+        }
+
+        if (!use_tpm && (credential_length < 4
+            || credential[0] != 'S' || credential[1] != 'Y'
+            || credential[2] != 'W' || credential[3] != 'B')) {
+            write_text("Passkey assertion must use the packed SYWB WebAuthn format.\n");
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
             clear_bytes(credential_hex, sizeof(credential_hex));

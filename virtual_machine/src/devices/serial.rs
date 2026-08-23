@@ -27,6 +27,7 @@ const FIFO_SIZE: usize = 16;
 const OUTPUT_LIMIT: usize = 1024 * 1024;
 const OUTPUT_COMPACTION_THRESHOLD: usize = OUTPUT_LIMIT * 2;
 const GUEST_PANIC_MARKER: &[u8] = b"KERNEL PANIC";
+const AUTHENTICATION_PROMPTS: [&[u8]; 2] = [b"Administrator username: ", b"Username: "];
 
 pub(crate) fn write_host_console<W: Write>(
     output: &mut W,
@@ -62,6 +63,7 @@ pub struct Serial16550 {
     tx_count: usize,
     host_last_was_cr: bool,
     host_output: Vec<u8>,
+    authentication_banner: Vec<u8>,
     rx_buffer: VecDeque<u8>,
     pending_input: VecDeque<u8>,
     output: Vec<u8>,
@@ -89,6 +91,7 @@ impl Serial16550 {
             tx_count: 0,
             host_last_was_cr: false,
             host_output: Vec::with_capacity(4096),
+            authentication_banner: Vec::new(),
             rx_buffer: VecDeque::new(),
             pending_input: VecDeque::new(),
             output: Vec::new(),
@@ -147,6 +150,13 @@ impl Serial16550 {
         !self.rx_buffer.is_empty() || !self.pending_input.is_empty()
     }
 
+    pub fn set_authentication_banner(&mut self, banner: &[u8]) {
+        if self.authentication_banner != banner {
+            self.authentication_banner.clear();
+            self.authentication_banner.extend_from_slice(banner);
+        }
+    }
+
     pub fn output(&self) -> &[u8] {
         &self.output
     }
@@ -163,11 +173,29 @@ impl Serial16550 {
     pub fn flush(&mut self) {
         self.flush_output();
         if !self.host_output.is_empty() {
+            self.insert_authentication_banner();
             let mut stdout = std::io::stdout().lock();
             let _ = stdout.write_all(&self.host_output);
             let _ = stdout.flush();
             self.host_output.clear();
         }
+    }
+
+    fn insert_authentication_banner(&mut self) {
+        if self.authentication_banner.is_empty() {
+            return
+        }
+        let Some(prompt) = AUTHENTICATION_PROMPTS
+            .iter()
+            .find(|prompt| self.host_output.ends_with(prompt))
+        else {
+            return
+        };
+        let prompt_start = self.host_output.len() - prompt.len();
+        self.host_output.splice(
+            prompt_start..prompt_start,
+            self.authentication_banner.iter().copied(),
+        );
     }
 
     fn signal_receive_irq(&mut self) {
@@ -400,6 +428,20 @@ mod tests {
 
         assert_eq!(s.tx_count, 0);
         assert_eq!(s.output(), b"\r");
+    }
+
+    #[test]
+    fn authentication_banner_is_inserted_immediately_before_prompt() {
+        let mut s = Serial16550::new(0x3F8);
+        s.set_authentication_banner(b"Passkey setup and login: http://localhost:1234/?code=test\r\n");
+        s.host_output.extend_from_slice(b"Ready\r\nAdministrator username: ");
+
+        s.insert_authentication_banner();
+
+        assert_eq!(
+            s.host_output,
+            b"Ready\r\nPasskey setup and login: http://localhost:1234/?code=test\r\nAdministrator username: "
+        );
     }
 
     #[test]

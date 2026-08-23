@@ -214,10 +214,10 @@ fn hex_value(byte: u8) -> Option<u8> {
 fn assertion_for_challenge(challenge: &[u8], private_key: &Path, counter: u32) -> String {
     assert_eq!(challenge.len(), 32);
     let client_data = format!(
-        "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\",\"origin\":\"https://ghostos.local\"}}",
+        "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\",\"origin\":\"http://localhost\"}}",
         base64url(challenge)
     );
-    let mut authenticator_data = sha256(b"ghostos.local");
+    let mut authenticator_data = sha256(b"localhost");
     authenticator_data.extend_from_slice(&[0x05]);
     authenticator_data.extend_from_slice(&counter.to_be_bytes());
     let mut signed_data = authenticator_data.clone();

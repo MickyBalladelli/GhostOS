@@ -13,46 +13,16 @@ serial log.
 ## Local physical-console login
 
 After the first administrator account exists, the login service keeps the
-terminal locked. At the physical console, type:
+terminal locked. Open the one-time local URL printed by the VM host:
 
 ```text
-login
+Passkey setup and login: http://localhost:<port>/?code=<one-time-code>
 ```
 
-The service asks for the username and credential type:
-
-```text
-Username: admin
-Credential [passkey/tpm]: passkey
-```
-
-For a passkey, use a WebAuthn `get()` ceremony with the configured relying
-party and origin:
-
-```text
-RP ID: ghostos.local
-Origin: https://ghostos.local
-```
-
-The service displays a one-shot challenge and asks for one packed hexadecimal
-assertion. Pack the WebAuthn `authenticatorData`, `clientDataJSON`, and
-signature as:
-
-```text
-SYWB 01 00 00 00 <authenticator-data-length:u16le>
-     <client-data-json-length:u16le>
-     <authenticatorData> <clientDataJSON> <signature>
-```
-
-Remove spaces before pasting. The assertion is checked against the stored COSE
-ES256 public key, the RP ID hash, the origin, user presence, user verification,
-the challenge, and the monotonic authenticator counter:
-
-```text
-Use WebAuthn RP ID ghostos.local and origin https://ghostos.local.
-Challenge: <displayed-challenge>
-WebAuthn assertion: <packed-assertion-hex>
-```
+Enter the username and choose **Use passkey**. The page calls WebAuthn with RP
+ID `localhost`, packs the signed response, and sends it through the local VM
+bridge. Users never handle COSE keys, challenges, signatures, or hexadecimal
+assertions. The private key stays in the authenticator.
 
 For a TPM credential, choose `tpm`. Present the TPM-backed credential and
 provide its quote as hexadecimal data:
