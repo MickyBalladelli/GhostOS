@@ -204,6 +204,14 @@ fn read_back(filesystem: &SynFs<MAX_BLOCKS>, path: &str, expected: &[u8]) {
 
 #[test]
 fn probe_fresh_volume_in_memory() {
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(probe_fresh_volume_in_memory_body)
+        .expect("spawn big-stack first-run thread");
+    handle.join().expect("in-memory first-run probe panicked");
+}
+
+fn probe_fresh_volume_in_memory_body() {
     let mut filesystem = build_provisioned_volume();
     report("after provisioning", &filesystem);
     run_first_admin_sequence(&mut filesystem, "in-memory");
@@ -213,6 +221,14 @@ fn probe_fresh_volume_in_memory() {
 /// then Daemon::new() creates /packages /logs /data /tmp BEFORE any saves.
 #[test]
 fn probe_bootstrap_new_filesystem() {
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(probe_bootstrap_new_filesystem_body)
+        .expect("spawn big-stack bootstrap thread");
+    handle.join().expect("bootstrap probe panicked");
+}
+
+fn probe_bootstrap_new_filesystem_body() {
     let mut filesystem = SynFs::<MAX_BLOCKS>::new();
     println!("bootstrap filesystem constructed (no format, no load)");
     report("bootstrap fresh", &filesystem);
@@ -239,6 +255,14 @@ fn probe_bootstrap_new_filesystem() {
 
 #[test]
 fn probe_boot_from_disk_then_first_run() {
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(probe_boot_from_disk_then_first_run_body)
+        .expect("spawn big-stack boot probe thread");
+    handle.join().expect("boot first-run probe panicked");
+}
+
+fn probe_boot_from_disk_then_first_run_body() {
     let mut disk = DiskImage::create(Path::new("/tmp/ghostos-fsprobe-boot.img"));
     {
         let mut filesystem = build_provisioned_volume();
