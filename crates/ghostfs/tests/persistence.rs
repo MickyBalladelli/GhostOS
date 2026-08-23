@@ -410,6 +410,16 @@ fn rejects_short_disk_images() {
 
 #[test]
 fn property_generated_operations_flush_and_recover() {
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(property_generated_operations_flush_and_recover_body)
+        .expect("spawn big-stack persistence property thread");
+    handle
+        .join()
+        .expect("persistence property thread panicked");
+}
+
+fn property_generated_operations_flush_and_recover_body() {
     use ghostos_test_support::property::{bytes, run, Config};
 
     run("ghostfs.flush-recover", Config::new(0x59_3, 32), |_, _, entropy| {
