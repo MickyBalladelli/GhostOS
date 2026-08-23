@@ -1171,8 +1171,13 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             let source = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
             username[..length].copy_from_slice(source);
         });
-        return boot_services::create_first_admin_username(&username[..length])
-            .map_or_else(syscall_error, |_| syscall_success([length as u64, 0, 0, 0]))
+        return boot_services::create_first_admin_username(&username[..length]).map_or_else(
+            syscall_error,
+            |_| {
+                set_login_username(&username[..length]);
+                syscall_success([length as u64, 0, 0, 0])
+            },
+        )
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginBootstrapCredential) {
         if caller.raw() != 9
@@ -1220,13 +1225,23 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::ACCESS_DENIED)
         }
-        return boot_services::commit_first_admin().map_or_else(
-            syscall_error,
-            |_| {
-                LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
-                syscall_success([1, 0, 0, 0])
-            },
-        )
+        if let Err(status) = boot_services::commit_first_admin() {
+            return syscall_error(status)
+        }
+        let username_length = LOGIN_USERNAME_LENGTH.load(Ordering::Acquire) as usize;
+        let mut username = [0; LOGIN_USERNAME_CAPACITY];
+        for (slot, value) in LOGIN_USERNAME
+            .iter()
+            .take(username_length)
+            .zip(username.iter_mut())
+        {
+            *value = slot.load(Ordering::Relaxed)
+        }
+        LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
+        if username_length != 0 {
+            let _ = start_login_session(&username[..username_length]);
+        }
+        return syscall_success([1, 0, 0, 0])
     }
     if Operation::from_raw(request.operation) == Some(Operation::LoginBootstrapRecovery) {
         if caller.raw() != 9

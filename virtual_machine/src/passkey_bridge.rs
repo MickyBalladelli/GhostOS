@@ -1,12 +1,15 @@
+use std::borrow::Cow;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::process::Command;
 
-use ghostos_vm::Vm;
+use ghostos_vm::{GuestInputMode, Vm};
 
 const MAX_CLIENTS: usize = 8;
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+const ICON: &[u8] = include_bytes!("../../icon.png");
 
 const PAGE: &str = r#"<!doctype html>
 <html lang="en">
@@ -15,11 +18,12 @@ const PAGE: &str = r#"<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>GhostOS Passkey</title>
+  <link rel="icon" href="/icon.png" type="image/png">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <main>
-    <div class="mark">G</div>
+    <img class="mark" src="/icon.png" alt="GhostOS">
     <p class="eyebrow">GHOSTOS LOCAL SECURITY</p>
     <h1 id="title">Passkey</h1>
     <p id="message" class="message">Connecting to GhostOS…</p>
@@ -36,7 +40,7 @@ const PAGE: &str = r#"<!doctype html>
 </html>
 "#;
 
-const STYLE: &str = r#"*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07090c;color:#f4f7fb;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:min(92vw,440px);padding:42px;border:1px solid #252b35;border-radius:24px;background:linear-gradient(145deg,#12161d,#0b0e13);box-shadow:0 30px 80px #0009}.mark{display:grid;place-items:center;width:48px;height:48px;border-radius:14px;background:#e7ff57;color:#080a0d;font-size:25px;font-weight:900}.eyebrow{margin:28px 0 10px;color:#9ca6b5;font-size:12px;font-weight:700;letter-spacing:.16em}h1{margin:0;font-size:42px;letter-spacing:-.04em}.message{min-height:48px;margin:16px 0 28px;color:#bdc5d1;line-height:1.5}form{display:grid;gap:12px}label{font-size:13px;font-weight:700;color:#d8dee8}input{width:100%;border:1px solid #303846;border-radius:12px;background:#080b10;color:#fff;padding:14px 15px;font:inherit;outline:none}input:focus{border-color:#e7ff57;box-shadow:0 0 0 3px #e7ff5722}button{margin-top:8px;border:0;border-radius:12px;background:#e7ff57;color:#080a0d;padding:15px;font:inherit;font-weight:850;cursor:pointer}button:disabled{cursor:wait;opacity:.55}.error{min-height:24px;color:#ff8585;font-size:14px}.foot{margin:26px 0 0;padding-top:20px;border-top:1px solid #252b35;color:#7f8998;font-size:12px}@media(max-width:520px){main{padding:28px;border-radius:18px}h1{font-size:36px}}"#;
+const STYLE: &str = r#"*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07090c;color:#f4f7fb;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:min(92vw,440px);padding:42px;border:1px solid #252b35;border-radius:24px;background:linear-gradient(145deg,#12161d,#0b0e13);box-shadow:0 30px 80px #0009}.mark{display:block;width:72px;height:72px;object-fit:contain}.eyebrow{margin:28px 0 10px;color:#9ca6b5;font-size:12px;font-weight:700;letter-spacing:.16em}h1{margin:0;font-size:42px;letter-spacing:-.04em}.message{min-height:48px;margin:16px 0 28px;color:#bdc5d1;line-height:1.5}form{display:grid;gap:12px}label{font-size:13px;font-weight:700;color:#d8dee8}input{width:100%;border:1px solid #303846;border-radius:12px;background:#080b10;color:#fff;padding:14px 15px;font:inherit;outline:none}input:focus{border-color:#e7ff57;box-shadow:0 0 0 3px #e7ff5722}button{margin-top:8px;border:0;border-radius:12px;background:#e7ff57;color:#080a0d;padding:15px;font:inherit;font-weight:850;cursor:pointer}button:disabled{cursor:wait;opacity:.55}.error{min-height:24px;color:#ff8585;font-size:14px}.foot{margin:26px 0 0;padding-top:20px;border-top:1px solid #252b35;color:#7f8998;font-size:12px}@media(max-width:520px){main{padding:28px;border-radius:18px}h1{font-size:36px}}"#;
 
 const SCRIPT: &str = r#"const code = new URLSearchParams(location.search).get('code') || ''
 const form = document.querySelector('#form')
@@ -47,6 +51,7 @@ const message = document.querySelector('#message')
 const error = document.querySelector('#error')
 let mode = ''
 let busy = false
+let pending = ''
 
 username.value = localStorage.getItem('ghostos-username') || ''
 
@@ -75,19 +80,90 @@ async function api(path, body) {
 
 function coseKey(response) {
   const publicKey = response.getPublicKey?.()
-  if (!publicKey) throw new Error('This authenticator did not return an ES256 public key')
-  const spki = new Uint8Array(publicKey)
-  let point = -1
-  for (let index = spki.length - 65; index >= 0; index -= 1) {
-    if (spki[index] === 4 && spki.length - index >= 65) {
-      point = index
-      break
+  if (publicKey) {
+    const spki = new Uint8Array(publicKey)
+    let point = -1
+    for (let index = spki.length - 65; index >= 0; index -= 1) {
+      if (spki[index] === 4 && spki.length - index >= 65) {
+        point = index
+        break
+      }
     }
+    if (point < 0 || spki.length - point !== 65) throw new Error('Unsupported passkey public key')
+    const x = spki.slice(point + 1, point + 33)
+    const y = spki.slice(point + 33, point + 65)
+    return new Uint8Array([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, ...x, 0x22, 0x58, 0x20, ...y])
   }
-  if (point < 0 || spki.length - point !== 65) throw new Error('Unsupported passkey public key')
-  const x = spki.slice(point + 1, point + 33)
-  const y = spki.slice(point + 33, point + 65)
-  return new Uint8Array([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, ...x, 0x22, 0x58, 0x20, ...y])
+
+  const attestation = cborValue(new Uint8Array(response.attestationObject))
+  const authenticator = attestation.value instanceof Map
+    ? attestation.value.get('authData')
+    : null
+  if (!(authenticator instanceof Uint8Array) || authenticator.length < 55) {
+    throw new Error('Authenticator did not return a usable ES256 public key')
+  }
+  const credentialLength = authenticator[53] * 256 + authenticator[54]
+  const keyStart = 55 + credentialLength
+  if (keyStart >= authenticator.length) throw new Error('Authenticator returned invalid credential data')
+  const key = cborValue(authenticator, keyStart)
+  return authenticator.slice(keyStart, key.next)
+}
+
+function cborValue(bytes, start = 0) {
+  if (start >= bytes.length) throw new Error('Truncated authenticator data')
+  const first = bytes[start]
+  const major = first >> 5
+  const additional = first & 31
+  let cursor = start + 1
+  let length = additional
+  if (additional === 24) {
+    if (cursor >= bytes.length) throw new Error('Truncated authenticator data')
+    length = bytes[cursor++]
+  } else if (additional === 25) {
+    if (cursor + 2 > bytes.length) throw new Error('Truncated authenticator data')
+    length = bytes[cursor] * 256 + bytes[cursor + 1]
+    cursor += 2
+  } else if (additional === 26) {
+    if (cursor + 4 > bytes.length) throw new Error('Truncated authenticator data')
+    length = new DataView(bytes.buffer, bytes.byteOffset + cursor, 4).getUint32(0)
+    cursor += 4
+  } else if (additional >= 27) {
+    throw new Error('Unsupported authenticator data')
+  }
+
+  if (major === 0) return {value: length, next: cursor}
+  if (major === 1) return {value: -1 - length, next: cursor}
+  if (major === 2 || major === 3) {
+    const end = cursor + length
+    if (end > bytes.length) throw new Error('Truncated authenticator data')
+    const value = major === 2
+      ? bytes.slice(cursor, end)
+      : new TextDecoder().decode(bytes.slice(cursor, end))
+    return {value, next: end}
+  }
+  if (major === 4) {
+    const value = []
+    for (let index = 0; index < length; index += 1) {
+      const item = cborValue(bytes, cursor)
+      value.push(item.value)
+      cursor = item.next
+    }
+    return {value, next: cursor}
+  }
+  if (major === 5) {
+    const value = new Map()
+    for (let index = 0; index < length; index += 1) {
+      const key = cborValue(bytes, cursor)
+      const item = cborValue(bytes, key.next)
+      value.set(key.value, item.value)
+      cursor = item.next
+    }
+    return {value, next: cursor}
+  }
+  if (major === 7 && additional === 20) return {value: false, next: cursor}
+  if (major === 7 && additional === 21) return {value: true, next: cursor}
+  if (major === 7 && additional === 22) return {value: null, next: cursor}
+  throw new Error('Unsupported authenticator data')
 }
 
 function packedAssertion(response) {
@@ -133,7 +209,8 @@ async function enroll(name) {
   const key = coseKey(created.response)
   await api('/api/enroll', `${encodeURIComponent(name)}\n${bytesToHex(key)}`)
   localStorage.setItem('ghostos-username', name)
-  message.textContent = 'Passkey created. GhostOS is creating your administrator account…'
+  pending = 'enroll'
+  message.textContent = 'Passkey created. GhostOS is finishing setup and unlocking…'
 }
 
 async function login(name) {
@@ -148,6 +225,7 @@ async function login(name) {
   }})
   await api('/api/login/complete', bytesToHex(packedAssertion(credential.response)))
   localStorage.setItem('ghostos-username', name)
+  pending = 'login'
   message.textContent = 'Assertion sent. GhostOS is verifying it…'
 }
 
@@ -166,8 +244,17 @@ function render(state) {
     action.textContent = 'Use passkey'
     form.hidden = false
   } else if (mode === 'success') {
+    pending = ''
     title.textContent = 'Unlocked'
     message.textContent = 'Authentication accepted. You may close this page.'
+    form.hidden = true
+  } else if (pending === 'enroll') {
+    title.textContent = 'Finishing setup'
+    message.textContent = 'Passkey created. GhostOS is creating your administrator and unlocking…'
+    form.hidden = true
+  } else if (pending === 'login') {
+    title.textContent = 'Unlocking'
+    message.textContent = 'GhostOS is verifying your passkey…'
     form.hidden = true
   } else {
     title.textContent = 'Waiting for GhostOS'
@@ -192,7 +279,8 @@ form.addEventListener('submit', async event => {
     if (mode === 'enroll') await enroll(name)
     else await login(name)
   } catch (problem) {
-    error.textContent = problem.message || String(problem)
+    pending = ''
+    error.textContent = `GhostOS setup did not finish: ${problem.message || String(problem)}`
   } finally {
     busy = false
     action.disabled = false
@@ -220,6 +308,14 @@ enum Mode {
     Success,
 }
 
+enum InputFlow {
+    None,
+    EnrollKind { key: String },
+    EnrollMaterial { key: String },
+    EnrollConfirm,
+    LoginKind,
+}
+
 struct Client {
     stream: TcpStream,
     bytes: Vec<u8>,
@@ -242,10 +338,12 @@ pub struct PasskeyBridge {
     mode: Mode,
     challenge: Option<String>,
     error: Option<String>,
+    input_mode: GuestInputMode,
+    input_flow: InputFlow,
 }
 
 impl PasskeyBridge {
-    pub fn bind() -> io::Result<Self> {
+    pub fn bind(input_mode: GuestInputMode) -> io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
@@ -261,6 +359,8 @@ impl PasskeyBridge {
             mode: Mode::Waiting,
             challenge: None,
             error: None,
+            input_mode,
+            input_flow: InputFlow::None,
         })
     }
 
@@ -268,10 +368,22 @@ impl PasskeyBridge {
         &self.url
     }
 
+    pub fn open_in_browser(&self) {
+        #[cfg(target_os = "macos")]
+        let _ = Command::new("open").arg(&self.url).spawn();
+
+        #[cfg(target_os = "linux")]
+        let _ = Command::new("xdg-open").arg(&self.url).spawn();
+    }
+
     pub fn poll(&mut self, vm: &mut Vm) -> io::Result<()> {
         if let Some(serial) = vm.serial() {
             serial.borrow_mut().set_authentication_banner(
-                format!("Passkey setup and login: {}\r\n", self.url).as_bytes(),
+                format!(
+                    "GhostOS authentication is open in your browser.\r\nIf it did not open: {}\r\nDo not type credentials in this terminal.\r\n",
+                    self.url()
+                )
+                .as_bytes(),
             );
         }
         self.observe_guest(vm);
@@ -290,19 +402,26 @@ impl PasskeyBridge {
             }
         }
         for (mut stream, request) in ready {
-            let (status, content_type, body) = self.handle(request, vm);
+            let icon_request = request.method == "GET"
+                && request.target.split('?').next() == Some("/icon.png");
+            let (status, content_type, body) = if icon_request {
+                ("200 OK", "image/png", Cow::Borrowed(ICON))
+            } else {
+                let (status, content_type, body) = self.handle(request, vm);
+                (status, content_type, Cow::Owned(body.into_bytes()))
+            };
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n",
                 body.len()
             );
             stream.set_nonblocking(false)?;
             stream.write_all(response.as_bytes())?;
-            stream.write_all(body.as_bytes())?;
+            stream.write_all(body.as_ref())?;
         }
         Ok(())
     }
 
-    fn observe_guest(&mut self, vm: &Vm) {
+    fn observe_guest(&mut self, vm: &mut Vm) {
         let Some(serial) = vm.serial() else { return };
         let serial = serial.borrow();
         let output = serial.output();
@@ -321,7 +440,7 @@ impl PasskeyBridge {
             self.guest_text.drain(..keep);
         }
 
-        if self.guest_text.contains("Administrator username: ")
+        if self.guest_text.contains("\x1b]GhostOSEnroll\x07")
             && !self.guest_text.contains("Administrator account committed.")
         {
             self.mode = Mode::Enroll;
@@ -333,7 +452,10 @@ impl PasskeyBridge {
             self.challenge = Some(challenge);
             self.mode = Mode::Challenge;
         }
-        if self.guest_text.contains("Login accepted.") {
+        if self.guest_text.contains("Login accepted.")
+            || (self.guest_text.contains("GhostOS user shell")
+                && self.guest_text.contains("$ "))
+        {
             self.mode = Mode::Success;
             self.error = None;
         } else if self.guest_text.contains("Login failed:") {
@@ -341,11 +463,52 @@ impl PasskeyBridge {
             self.challenge = None;
             self.error = Some("GhostOS rejected that passkey. Try again.".to_string());
         } else if self.mode == Mode::Waiting
-            && self.guest_text.contains("Username: ")
-            && !self.guest_text.contains("Administrator username: ")
+            && self.guest_text.contains("\x1b]GhostOSLogin\x07")
+            && !self.guest_text.contains("\x1b]GhostOSEnroll\x07")
         {
             self.mode = Mode::Login;
         }
+
+        self.advance_input(vm);
+    }
+
+    fn advance_input(&mut self, vm: &mut Vm) {
+        let next = match &self.input_flow {
+            InputFlow::EnrollKind { key }
+                if self
+                    .guest_text
+                    .contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):") =>
+            {
+                Some((b"passkey\r".as_slice(), InputFlow::EnrollMaterial { key: key.clone() }))
+            }
+            InputFlow::EnrollMaterial { key }
+                if self
+                    .guest_text
+                    .contains("Public credential material (passkey COSE key as hex):") =>
+            {
+                Some((key.as_bytes(), InputFlow::EnrollConfirm))
+            }
+            InputFlow::EnrollConfirm
+                if self
+                    .guest_text
+                    .contains("Create this administrator account? [y/N]:") =>
+            {
+                Some((b"y\r".as_slice(), InputFlow::None))
+            }
+            InputFlow::LoginKind
+                if self.guest_text.contains("Credential [passkey/tpm]:") =>
+            {
+                Some((b"passkey\r".as_slice(), InputFlow::None))
+            }
+            _ => None,
+        };
+        let Some((bytes, next_flow)) = next else { return };
+        let mut line = bytes.to_vec();
+        if matches!(self.input_flow, InputFlow::EnrollMaterial { .. }) {
+            line.push(b'\r')
+        }
+        vm.queue_terminal_input(&line, self.input_mode);
+        self.input_flow = next_flow;
     }
 
     fn accept_clients(&mut self) -> io::Result<()> {
@@ -421,7 +584,10 @@ impl PasskeyBridge {
             }
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_serial_input(format!("{username}\rpasskey\r{key}\ry\r").as_bytes());
+            vm.queue_terminal_input(format!("{username}\r").as_bytes(), self.input_mode);
+            self.input_flow = InputFlow::EnrollKind {
+                key: key.to_string(),
+            };
             self.mode = Mode::Waiting;
             self.error = None;
             return json_ok()
@@ -444,7 +610,8 @@ impl PasskeyBridge {
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_serial_input(format!("{username}\rpasskey\r").as_bytes());
+            vm.queue_terminal_input(format!("{username}\r").as_bytes(), self.input_mode);
+            self.input_flow = InputFlow::LoginKind;
             return json_ok()
         }
         if request.method == "POST" && path == "/api/login/complete" {
@@ -461,7 +628,7 @@ impl PasskeyBridge {
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_serial_input(format!("{assertion}\r").as_bytes());
+            vm.queue_terminal_input(format!("{assertion}\r").as_bytes(), self.input_mode);
             return json_ok()
         }
         text_response("404 Not Found", "Not found")

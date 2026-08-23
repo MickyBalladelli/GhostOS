@@ -1022,8 +1022,9 @@ fn run(mut cli: Cli) -> Result<(), String> {
         && vm.config().max_steps.is_none()
         && vm.serial().is_some()
     {
-        let bridge = PasskeyBridge::bind()
+        let bridge = PasskeyBridge::bind(input_mode)
             .map_err(|error| format!("cannot start local passkey page: {error}"))?;
+        bridge.open_in_browser();
         Some(bridge)
     } else {
         None

@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR"
 
 SYSTEM_DISK_PATH=./virtual_machine/state/system.raw
 DATA_DISK_PATH=./virtual_machine/state/data.raw
-DEFAULT_DATA_DISK_PATH=$DATA_DISK_PATH
+DATA_DISK_ARGS=()
 PERSISTENCE_ARGS=()
 VM_NAME=default
 FORCE_NEW=false
@@ -38,15 +38,12 @@ case "$VM_NAME" in
   *)
     SYSTEM_DISK_PATH=./virtual_machine/state/$VM_NAME-system.raw
     DATA_DISK_PATH=./virtual_machine/state/$VM_NAME.raw
-    if [ ! -f "$DATA_DISK_PATH" ]; then
-      if [ ! -f "$DEFAULT_DATA_DISK_PATH" ]; then
-        echo "start-ghostos.sh: default data disk is missing: $DEFAULT_DATA_DISK_PATH" >&2
-        exit 1
-      fi
-      cp "$DEFAULT_DATA_DISK_PATH" "$DATA_DISK_PATH"
-    fi
     ;;
 esac
+
+if [ ! -f "$DATA_DISK_PATH" ]; then
+  DATA_DISK_ARGS=(--create-if-missing)
+fi
 
 KERNEL_PATH=./build/bios/kernel.bin
 if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios ./userspace/boot-services -type f -newer "$KERNEL_PATH" -print -quit | grep -q .; then
@@ -107,6 +104,10 @@ VM_COMMAND=(
 
 if [ "${#PERSISTENCE_ARGS[@]}" -gt 0 ]; then
   VM_COMMAND+=("${PERSISTENCE_ARGS[@]}")
+fi
+
+if [ "${#DATA_DISK_ARGS[@]}" -gt 0 ]; then
+  VM_COMMAND+=("${DATA_DISK_ARGS[@]}")
 fi
 
 VM_COMMAND+=(--firmware bios --interactive --input ps2 "$@")

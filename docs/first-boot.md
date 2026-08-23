@@ -16,16 +16,16 @@ The launcher provisions `virtual_machine/state/system.raw` on first start.
 The older `data.raw` file is only a data disk; it cannot save the first
 administrator account.
 
-The VM prints a one-time local URL before GhostOS starts:
+The VM opens a one-time local page automatically:
 
 ```text
 Passkey setup and login: http://localhost:<port>/?code=<one-time-code>
 ```
 
-Open that URL in a browser on the VM host. Enter the administrator username and
-choose **Create passkey**. The browser and authenticator create the private key;
-the local companion sends only the public key to GhostOS. The terminal wizard
-is completed automatically.
+Enter the administrator username and choose **Create passkey**. The browser and
+authenticator create the private key; the local companion sends only the public
+key to GhostOS. GhostOS commits the account and opens the initial shell session
+automatically. Do not press Enter or type credentials in the terminal.
 
 The local page is bound to loopback, protected by the one-time code, and uses
 the browser's secure `localhost` WebAuthn context. Disable it with
@@ -41,7 +41,7 @@ Administrator account committed.
 
 Answering `y` at the confirmation question is the commit point. The account
 database is persisted atomically, and the system leaves first-run mode only
-after the commit succeeds, then the normal shell starts.
+after the commit succeeds. The initial shell session opens automatically.
 
 ## Interrupted setup
 
@@ -52,12 +52,10 @@ repeated or the system disk is reprovisioned.
 
 ## First login
 
-After the administrator is committed, keep the local page open. It changes to
-**Unlock GhostOS**. Enter the username and choose **Use passkey**. The browser
-touch/biometric prompt completes the challenge automatically.
-
-On success, GhostOS prints `Login accepted.`. Verify the identity, then test the
-lock cycle:
+The first administrator setup opens the shell directly after the passkey is
+created. On later boots, the local page changes to **Unlock GhostOS**. Enter the
+username and choose **Use passkey**; the browser touch/biometric prompt completes
+the challenge automatically. Verify the identity, then test the lock cycle:
 
 ```text
 whoami

@@ -1606,6 +1606,21 @@ impl Vm {
         self.enqueue_serial_input(bytes)
     }
 
+    pub fn queue_terminal_input(&mut self, bytes: &[u8], input_mode: GuestInputMode) {
+        let channel = match input_mode {
+            GuestInputMode::Serial => HOST_INPUT_SERIAL,
+            GuestInputMode::Ps2 => HOST_INPUT_TERMINAL_PS2,
+        };
+        let _ = self
+            .replay
+            .borrow_mut()
+            .host_input(channel, None, None, bytes);
+        match input_mode {
+            GuestInputMode::Serial => self.enqueue_serial_input(bytes),
+            GuestInputMode::Ps2 => self.enqueue_terminal_ps2_input(bytes),
+        }
+    }
+
     fn enqueue_serial_input(&mut self, bytes: &[u8]) {
         if !bytes.is_empty() {
             self.cpu.state.halted = false

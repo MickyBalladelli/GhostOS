@@ -27,7 +27,12 @@ const FIFO_SIZE: usize = 16;
 const OUTPUT_LIMIT: usize = 1024 * 1024;
 const OUTPUT_COMPACTION_THRESHOLD: usize = OUTPUT_LIMIT * 2;
 const GUEST_PANIC_MARKER: &[u8] = b"KERNEL PANIC";
-const AUTHENTICATION_PROMPTS: [&[u8]; 2] = [b"Administrator username: ", b"Username: "];
+const ENROLLMENT_MARKER: &[u8] = b"\x1b]GhostOSEnroll\x07";
+const LOGIN_MARKER: &[u8] = b"\x1b]GhostOSLogin\x07";
+const AUTHENTICATION_MARKERS: [(&[u8], &[u8]); 2] = [
+    (ENROLLMENT_MARKER, b"Administrator username: "),
+    (LOGIN_MARKER, b"Username: "),
+];
 
 pub(crate) fn write_host_console<W: Write>(
     output: &mut W,
@@ -173,29 +178,50 @@ impl Serial16550 {
     pub fn flush(&mut self) {
         self.flush_output();
         if !self.host_output.is_empty() {
-            self.insert_authentication_banner();
+            let writable = self.insert_authentication_banner();
             let mut stdout = std::io::stdout().lock();
-            let _ = stdout.write_all(&self.host_output);
-            let _ = stdout.flush();
-            self.host_output.clear();
+            if writable != 0 {
+                let _ = stdout.write_all(&self.host_output[..writable]);
+                let _ = stdout.flush();
+                self.host_output.drain(..writable);
+            }
         }
     }
 
-    fn insert_authentication_banner(&mut self) {
-        if self.authentication_banner.is_empty() {
-            return
-        }
-        let Some(prompt) = AUTHENTICATION_PROMPTS
+    fn insert_authentication_banner(&mut self) -> usize {
+        while let Some((marker_start, marker, fallback)) = AUTHENTICATION_MARKERS
             .iter()
-            .find(|prompt| self.host_output.ends_with(prompt))
-        else {
-            return
-        };
-        let prompt_start = self.host_output.len() - prompt.len();
-        self.host_output.splice(
-            prompt_start..prompt_start,
-            self.authentication_banner.iter().copied(),
-        );
+            .filter_map(|(marker, fallback)| {
+                self.host_output
+                    .windows(marker.len())
+                    .position(|bytes| bytes == *marker)
+                    .map(|start| (start, *marker, *fallback))
+            })
+            .min_by_key(|(start, _, _)| *start)
+        {
+            let marker_end = marker_start + marker.len();
+            let replacement = if self.authentication_banner.is_empty() {
+                fallback
+            } else {
+                self.authentication_banner.as_slice()
+            };
+            self.host_output.splice(
+                marker_start..marker_end,
+                replacement.iter().copied(),
+            );
+        }
+        let pending_marker_bytes = AUTHENTICATION_MARKERS
+            .iter()
+            .flat_map(|(marker, _)| 1..marker.len())
+            .filter(|length| {
+                AUTHENTICATION_MARKERS.iter().any(|(marker, _)| {
+                    *length < marker.len()
+                        && self.host_output.ends_with(&marker[..*length])
+                })
+            })
+            .max()
+            .unwrap_or(0);
+        self.host_output.len() - pending_marker_bytes
     }
 
     fn signal_receive_irq(&mut self) {
@@ -434,14 +460,45 @@ mod tests {
     fn authentication_banner_is_inserted_immediately_before_prompt() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey setup and login: http://localhost:1234/?code=test\r\n");
-        s.host_output.extend_from_slice(b"Ready\r\nAdministrator username: ");
+        s.host_output.extend_from_slice(
+            b"Ready\r\n\x1b]GhostOSEnroll\x07",
+        );
 
-        s.insert_authentication_banner();
+        let writable = s.insert_authentication_banner();
 
+        assert_eq!(writable, s.host_output.len());
         assert_eq!(
             s.host_output,
-            b"Ready\r\nPasskey setup and login: http://localhost:1234/?code=test\r\nAdministrator username: "
+            b"Ready\r\nPasskey setup and login: http://localhost:1234/?code=test\r\n"
         );
+    }
+
+    #[test]
+    fn partial_authentication_marker_waits_for_next_flush() {
+        let mut s = Serial16550::new(0x3F8);
+        s.set_authentication_banner(b"Passkey URL\r\n");
+        s.host_output.extend_from_slice(b"Ready\r\n\x1b]Ghost");
+
+        let writable = s.insert_authentication_banner();
+        assert_eq!(&s.host_output[..writable], b"Ready\r\n");
+        s.host_output.drain(..writable);
+        s.host_output
+            .extend_from_slice(b"OSEnroll\x07");
+
+        let writable = s.insert_authentication_banner();
+        assert_eq!(writable, s.host_output.len());
+        assert_eq!(s.host_output, b"Passkey URL\r\n");
+    }
+
+    #[test]
+    fn authentication_marker_becomes_manual_prompt_without_banner() {
+        let mut s = Serial16550::new(0x3F8);
+        s.host_output.extend_from_slice(ENROLLMENT_MARKER);
+
+        let writable = s.insert_authentication_banner();
+
+        assert_eq!(writable, s.host_output.len());
+        assert_eq!(s.host_output, b"Administrator username: ");
     }
 
     #[test]

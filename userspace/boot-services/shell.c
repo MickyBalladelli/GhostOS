@@ -2088,7 +2088,7 @@ static void run_first_run_wizard(void)
     write_text("Open the local passkey URL shown by the VM host for guided setup.\n");
     write_text("Public credential material only; never type passwords or private keys.\n");
     for (;;) {
-        write_text("\nAdministrator username: ");
+        write_text("\n\x1b]GhostOSEnroll\x07");
         username_length = read_credential_line(username, sizeof(username));
         if (username_length == 0 || username_length > 32) {
             write_text("Username must be 1-32 valid characters.\n");

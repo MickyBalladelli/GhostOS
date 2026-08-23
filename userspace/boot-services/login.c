@@ -305,7 +305,7 @@ void _start(void)
             wait_until(locked_until);
             continue;
         }
-        write_text("Username: ");
+        write_text("\x1b]GhostOSLogin\x07");
         u64 username_length = read_line(username, sizeof(username), 1);
         write_text("\nCredential [passkey/tpm]: ");
         u64 method_length = read_line(method, sizeof(method), 1);
