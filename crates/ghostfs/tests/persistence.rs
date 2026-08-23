@@ -8,6 +8,14 @@ use ghostos_ghostfs::{BlockIoError, BlockStore, Error, StorageDeviceId, SynFs, B
 const MAX_BLOCKS: usize = 32;
 const PROPERTY_BLOCKS: usize = 32;
 
+fn run_on_large_stack(body: fn()) {
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(body)
+        .expect("spawn large-stack persistence thread");
+    handle.join().expect("large-stack persistence thread panicked");
+}
+
 struct DiskImage {
     file: File,
     fail_after_writes: Option<usize>,
@@ -206,6 +214,10 @@ fn persists_to_real_disk_image() {
 
 #[test]
 fn fsync_persists_an_atomic_rename_after_reopen() {
+    run_on_large_stack(fsync_persists_an_atomic_rename_after_reopen_body);
+}
+
+fn fsync_persists_an_atomic_rename_after_reopen_body() {
     let image_path = TemporaryImage::new("fsync-rename");
     let mut disk = DiskImage::create(image_path.path());
     let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
@@ -224,6 +236,10 @@ fn fsync_persists_an_atomic_rename_after_reopen() {
 
 #[test]
 fn persists_filesystem_shell_workflow_objects_and_relative_target() {
+    run_on_large_stack(persists_filesystem_shell_workflow_objects_and_relative_target_body);
+}
+
+fn persists_filesystem_shell_workflow_objects_and_relative_target_body() {
     let image_path = TemporaryImage::new("shell-workflow");
     let mut disk = DiskImage::create(image_path.path());
     let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
@@ -258,6 +274,10 @@ fn persists_filesystem_shell_workflow_objects_and_relative_target() {
 
 #[test]
 fn persists_link_lifecycle_and_shared_data() {
+    run_on_large_stack(persists_link_lifecycle_and_shared_data_body);
+}
+
+fn persists_link_lifecycle_and_shared_data_body() {
     let image_path = TemporaryImage::new("link-lifecycle");
     let mut disk = DiskImage::create(image_path.path());
     let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
@@ -318,6 +338,10 @@ fn persists_link_lifecycle_and_shared_data() {
 
 #[test]
 fn persists_exact_delete_and_recovers_the_remaining_version() {
+    run_on_large_stack(persists_exact_delete_and_recovers_the_remaining_version_body);
+}
+
+fn persists_exact_delete_and_recovers_the_remaining_version_body() {
     let image_path = TemporaryImage::new("exact-delete");
     let mut disk = DiskImage::create(image_path.path());
     let mut image = vec![0; SynFs::<MAX_BLOCKS>::volume_bytes()];
@@ -343,6 +367,16 @@ fn persists_exact_delete_and_recovers_the_remaining_version() {
 
 #[test]
 fn power_loss_at_every_commit_write_recovers_last_durable_generation() {
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(power_loss_at_every_commit_write_recovers_last_durable_generation_body)
+        .expect("spawn big-stack power-loss thread");
+    handle
+        .join()
+        .expect("power-loss persistence thread panicked");
+}
+
+fn power_loss_at_every_commit_write_recovers_last_durable_generation_body() {
     let baseline_path = TemporaryImage::new("baseline");
     let trial_path = TemporaryImage::new("power-loss");
     write_durable_state(baseline_path.path());
@@ -375,6 +409,10 @@ fn power_loss_at_every_commit_write_recovers_last_durable_generation() {
 
 #[test]
 fn recovers_previous_generation_when_latest_disk_bank_is_corrupt() {
+    run_on_large_stack(recovers_previous_generation_when_latest_disk_bank_is_corrupt_body);
+}
+
+fn recovers_previous_generation_when_latest_disk_bank_is_corrupt_body() {
     let image_path = TemporaryImage::new("corrupt-latest");
     write_two_durable_states(image_path.path());
     corrupt_byte(image_path.path(), (MAX_BLOCKS + 2) as u64 * BLOCK_SIZE as u64 - 1);
