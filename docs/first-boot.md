@@ -46,9 +46,8 @@ after the commit succeeds. The initial shell session opens automatically.
 ## Interrupted setup
 
 If setup stops before the commit succeeds, start the machine again and repeat
-the wizard with identical answers; pending answers stay valid until the commit
-succeeds. Changing an answer is rejected until the original answers are
-repeated or the system disk is reprovisioned.
+the wizard. The next browser enrollment clears incomplete staged answers
+before saving the new username and passkey.
 
 ## First login
 

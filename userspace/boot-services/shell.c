@@ -2120,6 +2120,34 @@ static int commit_first_admin_account(
     return 1;
 }
 
+static int reset_first_admin_staging(void)
+{
+    struct response response = call(
+        OP_LOGIN_BOOTSTRAP_RECOVERY,
+        0,
+        0,
+        2,
+        0,
+        0,
+        0
+    );
+    if (response.status != 0) {
+        return 0;
+    }
+    response = call(
+        OP_LOGIN_BOOTSTRAP_RECOVERY,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+    );
+    return response.status == 0
+        && response.values[0] == 0
+        && response.values[1] == 0;
+}
+
 __attribute__((noinline))
 static void run_first_run_wizard(void)
 {
@@ -2141,6 +2169,10 @@ static void run_first_run_wizard(void)
         username_length = read_bridge_credential_line(username, sizeof(username));
         if (username_length == 0 || username_length > 32) {
             write_text("Username must be 1-32 valid characters.\n");
+            continue;
+        }
+        if (!reset_first_admin_staging()) {
+            write_text("Previous setup state could not be cleared.\n");
             continue;
         }
         write_text("Credential type [PASSKEY/TPM/SSH] (PASSKEY): ");

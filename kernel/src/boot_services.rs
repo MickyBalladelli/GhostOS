@@ -1655,7 +1655,6 @@ fn first_admin_recovery_inner(action: u64) -> Result<[u64; 4], Status> {
         crate::physical_storage::sync(daemon.filesystem_mut())
             .map_err(|_| Status::INTERNAL)?;
         FIRST_ADMIN_RECOVERY_SYNC_PENDING.store(false, Ordering::Release);
-        return Ok([0, 0, 0, 1])
     }
     match daemon.filesystem().lookup(AUTHORIZATION_DATABASE_PATH) {
         Ok(_) => return Err(Status::ALREADY_EXISTS),
