@@ -6,7 +6,7 @@ use ghostos_ghostfs::{
 };
 use ghostos_test_support::crash::{CrashBoundary, CrashDomain, CrashHarness, CrashPoint};
 
-const BLOCKS: usize = 128;
+const BLOCKS: usize = 64;
 const FORMAT_BLOCKS: usize = 16;
 
 fn corrupt_first_allocated_block<const BLOCKS: usize>(image: &mut [u8], bank: usize) {
