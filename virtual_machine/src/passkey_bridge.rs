@@ -4,11 +4,14 @@ use std::hash::{BuildHasher, Hasher};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use ghostos_vm::Vm;
 
 const MAX_CLIENTS: usize = 8;
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_millis(250);
 const ICON: &[u8] = include_bytes!("../../icon.png");
 
 const PAGE: &str = r#"<!doctype html>
@@ -335,6 +338,7 @@ enum InputFlow {
 struct Client {
     stream: TcpStream,
     bytes: Vec<u8>,
+    last_activity: Instant,
 }
 
 struct Request {
@@ -356,6 +360,7 @@ pub struct PasskeyBridge {
     error: Option<String>,
     input_flow: InputFlow,
     administrator_committed: bool,
+    login_in_progress: bool,
 }
 
 impl PasskeyBridge {
@@ -377,6 +382,7 @@ impl PasskeyBridge {
             error: None,
             input_flow: InputFlow::None,
             administrator_committed: false,
+            login_in_progress: false,
         })
     }
 
@@ -430,9 +436,13 @@ impl PasskeyBridge {
                 "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n",
                 body.len()
             );
-            stream.set_nonblocking(false)?;
-            stream.write_all(response.as_bytes())?;
-            stream.write_all(body.as_ref())?;
+            if stream.set_nonblocking(false).is_err() {
+                continue
+            }
+            let _ = stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
+            if stream.write_all(response.as_bytes()).is_ok() {
+                let _ = stream.write_all(body.as_ref());
+            }
         }
         Ok(())
     }
@@ -476,12 +486,12 @@ impl PasskeyBridge {
             self.error = None;
             self.challenge = None;
             self.input_flow = InputFlow::None;
+            self.login_in_progress = false;
         }
         let enrollment_pending = !self.administrator_committed
             && enrollment_pending(&self.guest_text);
         if enrollment_pending {
             self.mode = Mode::Enroll;
-            self.error = None;
             self.challenge = None;
         }
         if new_text.contains("Administrator account committed.") {
@@ -489,22 +499,21 @@ impl PasskeyBridge {
             self.error = None;
             self.input_flow = InputFlow::None;
         }
-        if !enrollment_pending {
-            if let Some(challenge) = last_challenge(&new_text) {
+        if self.login_in_progress && !enrollment_pending {
+            if let Some(challenge) = last_challenge(&self.guest_text) {
                 self.challenge = Some(challenge);
                 self.mode = Mode::Challenge;
             }
         }
-        if self.guest_text.contains("Login accepted.")
-            || (self.guest_text.contains("GhostOS user shell")
-                && self.guest_text.contains("$ "))
-        {
+        if authentication_succeeded(&self.guest_text) {
             self.mode = Mode::Success;
             self.error = None;
+            self.login_in_progress = false;
         } else if new_text.contains("Login failed:") {
             self.mode = Mode::Login;
             self.challenge = None;
             self.error = Some("GhostOS rejected that passkey. Try again.".to_string());
+            self.login_in_progress = false;
         } else if new_text.contains("Username must be 1-32 valid characters.")
             || new_text.contains("Unknown credential type.")
             || new_text.contains("Credential material is invalid.")
@@ -514,17 +523,10 @@ impl PasskeyBridge {
             self.mode = Mode::Enroll;
             self.input_flow = InputFlow::None;
             self.error = Some("GhostOS could not save that passkey. Create it again.".to_string());
-        } else if self.mode == Mode::Waiting {
-            // Pick whichever banner appeared most recently in the serial
-            // buffer: a stale enroll banner from an earlier boot must not
-            // keep the bridge in Waiting forever on a locked start.
-            let login = self.guest_text.rfind("\x1b]GhostOSLogin\x07");
-            let enroll = self.guest_text.rfind("\x1b]GhostOSEnroll\x07");
-            if let Some(login_at) = login {
-                if enroll.is_none_or(|enroll_at| login_at > enroll_at) {
-                    self.mode = Mode::Login;
-                }
-            }
+            self.login_in_progress = false;
+        } else if !self.login_in_progress && login_pending(&self.guest_text) {
+            self.mode = Mode::Login;
+            self.challenge = None;
         }
 
         self.advance_input(vm);
@@ -567,6 +569,8 @@ impl PasskeyBridge {
     }
 
     fn accept_clients(&mut self) -> io::Result<()> {
+        self.clients
+            .retain(|client| client.last_activity.elapsed() < CLIENT_IDLE_TIMEOUT);
         loop {
             match self.listener.accept() {
                 Ok((stream, _)) => {
@@ -577,6 +581,7 @@ impl PasskeyBridge {
                     self.clients.push(Client {
                         stream,
                         bytes: Vec::new(),
+                        last_activity: Instant::now(),
                     });
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -649,16 +654,20 @@ impl PasskeyBridge {
             }
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_serial_input(&bridge_line(username.as_bytes()));
+            let Some(username_frame) = bridge_username_frame(username.as_bytes()) else {
+                return text_response("400 Bad Request", "Invalid username")
+            };
+            vm.queue_serial_input(&username_frame);
             self.input_flow = InputFlow::EnrollKind {
                 key: key.to_string(),
             };
             self.mode = Mode::Waiting;
             self.error = None;
+            self.login_in_progress = false;
             return json_ok()
         }
         if request.method == "POST" && path == "/api/login/start" {
-            if !matches!(self.mode, Mode::Login) {
+            if !matches!(self.mode, Mode::Login | Mode::Challenge) {
                 return text_response("409 Conflict", "GhostOS is not waiting for login")
             }
             let Ok(encoded_username) = std::str::from_utf8(&request.body) else {
@@ -670,13 +679,20 @@ impl PasskeyBridge {
             if !valid_username(&username) {
                 return text_response("400 Bad Request", "Invalid username")
             }
+            if self.mode == Mode::Challenge {
+                return json_ok()
+            }
             self.challenge = None;
             self.error = None;
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_serial_input(&bridge_line(username.as_bytes()));
+            let Some(username_frame) = bridge_username_frame(username.as_bytes()) else {
+                return text_response("400 Bad Request", "Invalid username")
+            };
+            vm.queue_serial_input(&username_frame);
             self.input_flow = InputFlow::LoginKind;
+            self.login_in_progress = true;
             return json_ok()
         }
         if request.method == "POST" && path == "/api/login/complete" {
@@ -693,7 +709,11 @@ impl PasskeyBridge {
             self.mode = Mode::Waiting;
             self.guest_text.clear();
             self.observed_output = vm.serial().map_or(0, |serial| serial.borrow().output().len());
-            vm.queue_serial_input(&bridge_line(assertion.as_bytes()));
+            let Some(assertion_frame) = bridge_assertion_frame(assertion) else {
+                return text_response("400 Bad Request", "Invalid WebAuthn assertion")
+            };
+            vm.queue_serial_input(&assertion_frame);
+            self.login_in_progress = false;
             return json_ok()
         }
         text_response("404 Not Found", "Not found")
@@ -710,11 +730,37 @@ fn enrollment_pending(text: &str) -> bool {
     let login = text.rfind("\x1b]GhostOSLogin\x07");
     match (enroll, login) {
         (Some(enroll_at), Some(login_at)) => enroll_at > login_at,
-        (Some(_), None) => text.contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):")
-            || text.contains("Waiting for passkey public key from local browser:")
-            || text.contains("Create this administrator account? [y/N]:"),
+        (Some(_), None) => true,
         (None, _) => false,
     }
+}
+
+fn authentication_succeeded(text: &str) -> bool {
+    let latest_marker = text
+        .rfind("\x1b]GhostOSEnroll\x07")
+        .max(text.rfind("\x1b]GhostOSLogin\x07"));
+    if text
+        .rfind("Login accepted.")
+        .is_some_and(|accepted| latest_marker.is_none_or(|marker| accepted > marker))
+    {
+        return true
+    }
+    let Some(shell) = text.rfind("GhostOS user shell") else {
+        return false
+    };
+    latest_marker.is_none_or(|marker| shell > marker) && text[shell..].contains("$ ")
+}
+
+fn login_pending(text: &str) -> bool {
+    let Some(login) = text.rfind("\x1b]GhostOSLogin\x07") else {
+        return false
+    };
+    let enroll = text.rfind("\x1b]GhostOSEnroll\x07");
+    let accepted = text.rfind("Login accepted.");
+    let shell = text.rfind("GhostOS user shell");
+    enroll.is_none_or(|event| login > event)
+        && accepted.is_none_or(|event| login > event)
+        && shell.is_none_or(|event| login > event)
 }
 
 fn bridge_line(bytes: &[u8]) -> Vec<u8> {
@@ -722,6 +768,31 @@ fn bridge_line(bytes: &[u8]) -> Vec<u8> {
     line.extend_from_slice(bytes);
     line.push(b'\r');
     line
+}
+
+fn bridge_username_frame(username: &[u8]) -> Option<Vec<u8>> {
+    let length = u8::try_from(username.len()).ok()?;
+    if length == 0 || length > 32 {
+        return None
+    }
+    let mut frame = Vec::with_capacity(username.len() + 2);
+    frame.push(0);
+    frame.push(length);
+    frame.extend_from_slice(username);
+    Some(frame)
+}
+
+fn bridge_assertion_frame(hex: &str) -> Option<Vec<u8>> {
+    let assertion = decode_hex(hex)?;
+    let length = u16::try_from(assertion.len()).ok()?;
+    if length == 0 || length > 512 {
+        return None
+    }
+    let mut frame = Vec::with_capacity(assertion.len() + 3);
+    frame.push(0);
+    frame.extend_from_slice(&length.to_le_bytes());
+    frame.extend_from_slice(&assertion);
+    Some(frame)
 }
 
 fn passkey_material_frame(hex: &str) -> Option<Vec<u8>> {
@@ -747,6 +818,7 @@ fn read_request(client: &mut Client) -> io::Result<Option<Request>> {
                     return Err(io::ErrorKind::InvalidData.into())
                 }
                 client.bytes.extend_from_slice(&buffer[..count]);
+                client.last_activity = Instant::now();
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
             Err(error) => return Err(error),

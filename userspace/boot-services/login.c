@@ -191,9 +191,100 @@ static u64 read_line(char *line, u64 capacity, int echo)
     }
 }
 
-static u64 read_private_line(char *line, u64 capacity)
+static u64 read_bridge_username(char *line, u64 capacity)
 {
-    return read_line(line, capacity, 0);
+    u64 count = 0;
+    u8 byte;
+    while (!read_byte(&byte)) {
+        idle();
+    }
+    if (byte == 0) {
+        u8 framed_length;
+        while (!read_byte(&framed_length)) {
+            idle();
+        }
+        if (framed_length == 0 || (u64)framed_length >= capacity) {
+            return 0;
+        }
+        while (count < framed_length) {
+            while (!read_byte((u8 *)&line[count])) {
+                idle();
+            }
+            count++;
+        }
+        line[count] = 0;
+        return count;
+    }
+    for (;;) {
+        if (byte == '\r' || byte == '\n') {
+            line[count] = 0;
+            return count;
+        }
+        if (byte == 8 || byte == 127) {
+            if (count != 0) {
+                count--;
+            }
+        } else if (byte >= 32 && byte < 127 && count + 1 < capacity) {
+            line[count++] = (char)byte;
+        }
+        while (!read_byte(&byte)) {
+            idle();
+        }
+    }
+}
+
+static u64 read_bridge_credential(
+    char *encoded,
+    u64 encoded_capacity,
+    u8 *credential,
+    u64 credential_capacity,
+    int *framed
+)
+{
+    u64 count = 0;
+    u8 byte;
+    *framed = 0;
+    while (!read_byte(&byte)) {
+        idle();
+    }
+    if (byte == 0) {
+        u8 length_low;
+        u8 length_high;
+        while (!read_byte(&length_low)) {
+            idle();
+        }
+        while (!read_byte(&length_high)) {
+            idle();
+        }
+        u64 framed_length = (u64)length_low | ((u64)length_high << 8);
+        if (framed_length == 0 || framed_length > credential_capacity) {
+            return 0;
+        }
+        while (count < framed_length) {
+            while (!read_byte(&credential[count])) {
+                idle();
+            }
+            count++;
+        }
+        *framed = 1;
+        return count;
+    }
+    for (;;) {
+        if (byte == '\r' || byte == '\n') {
+            encoded[count] = 0;
+            return decode_hex(encoded, count, credential, credential_capacity);
+        }
+        if (byte == 8 || byte == 127) {
+            if (count != 0) {
+                count--;
+            }
+        } else if (byte >= 32 && byte < 127 && count + 1 < encoded_capacity) {
+            encoded[count++] = (char)byte;
+        }
+        while (!read_byte(&byte)) {
+            idle();
+        }
+    }
 }
 
 static int hex_digit(u8 byte)
@@ -313,7 +404,7 @@ void _start(void)
             continue;
         }
         write_text("\x1b]GhostOSLogin\x07");
-        u64 username_length = read_line(username, sizeof(username), 0);
+        u64 username_length = read_bridge_username(username, sizeof(username));
         write_text("\nCredential [passkey/tpm]: ");
         u64 method_length = read_line(method, sizeof(method), 0);
         int use_tpm = method_length == 3
@@ -356,20 +447,17 @@ void _start(void)
               "WebAuthn RP ID: localhost.\nChallenge: ");
         write_hex_bytes(challenge, sizeof(challenge));
         write_text(use_tpm ? "\nTPM quote: " : "\nWebAuthn assertion: ");
-        u64 credential_hex_length = read_private_line(
+        int credential_framed;
+        u64 credential_length = read_bridge_credential(
             credential_hex,
-            sizeof(credential_hex)
-        );
-        u64 credential_length = decode_hex(
-            credential_hex,
-            credential_hex_length,
+            sizeof(credential_hex),
             credential,
-            sizeof(credential)
+            sizeof(credential),
+            &credential_framed
         );
         write_text("\n");
 
-        if (!valid_hex(credential_hex, credential_hex_length)
-            || credential_length == 0) {
+        if (credential_length == 0) {
             write_text("Credential must be non-empty hexadecimal data.\n");
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
