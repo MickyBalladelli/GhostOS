@@ -783,15 +783,15 @@ fn bridge_username_frame(username: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn bridge_assertion_frame(hex: &str) -> Option<Vec<u8>> {
-    decode_hex(hex)?;
-    let length = u16::try_from(hex.len()).ok()?;
-    if length == 0 || length > 1024 {
+    let assertion = decode_hex(hex)?;
+    let length = u16::try_from(assertion.len()).ok()?;
+    if length == 0 || length > 512 {
         return None
     }
-    let mut frame = Vec::with_capacity(hex.len() + 3);
+    let mut frame = Vec::with_capacity(assertion.len() + 3);
     frame.push(0);
     frame.extend_from_slice(&length.to_le_bytes());
-    frame.extend_from_slice(hex.as_bytes());
+    frame.extend_from_slice(&assertion);
     Some(frame)
 }
 

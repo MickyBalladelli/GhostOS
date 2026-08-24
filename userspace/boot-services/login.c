@@ -366,12 +366,24 @@ void _start(void)
             credential_hex,
             sizeof(credential_hex)
         );
-        u64 credential_length = decode_hex(
-            credential_hex,
-            credential_hex_length,
-            credential,
-            sizeof(credential)
-        );
+        u64 credential_length;
+        if (!use_tpm && credential_hex_length >= 4
+            && credential_hex_length <= sizeof(credential)
+            && credential_hex[0] == 'S' && credential_hex[1] == 'Y'
+            && credential_hex[2] == 'W' && credential_hex[3] == 'B') {
+            u64 index;
+            credential_length = credential_hex_length;
+            for (index = 0; index < credential_length; index++) {
+                credential[index] = (u8)credential_hex[index];
+            }
+        } else {
+            credential_length = decode_hex(
+                credential_hex,
+                credential_hex_length,
+                credential,
+                sizeof(credential)
+            );
+        }
         write_text("\n");
 
         if (credential_length == 0) {
