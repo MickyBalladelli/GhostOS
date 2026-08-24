@@ -367,15 +367,13 @@ void _start(void)
             sizeof(credential_hex)
         );
         u64 credential_length;
+        u8 *credential_data = credential;
         if (!use_tpm && credential_hex_length >= 4
             && credential_hex_length <= sizeof(credential)
             && credential_hex[0] == 'S' && credential_hex[1] == 'Y'
             && credential_hex[2] == 'W' && credential_hex[3] == 'B') {
-            u64 index;
             credential_length = credential_hex_length;
-            for (index = 0; index < credential_length; index++) {
-                credential[index] = (u8)credential_hex[index];
-            }
+            credential_data = (u8 *)credential_hex;
         } else {
             credential_length = decode_hex(
                 credential_hex,
@@ -396,8 +394,8 @@ void _start(void)
         }
 
         if (!use_tpm && credential_length >= 4
-            && credential[0] == 'S' && credential[1] == 'Y'
-            && credential[2] == 'P' && credential[3] == 'A') {
+            && credential_data[0] == 'S' && credential_data[1] == 'Y'
+            && credential_data[2] == 'P' && credential_data[3] == 'A') {
             write_text("Legacy SYPA assertions are not accepted. Use a real WebAuthn SYWB assertion.\n");
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
@@ -407,8 +405,8 @@ void _start(void)
         }
 
         if (!use_tpm && (credential_length < 4
-            || credential[0] != 'S' || credential[1] != 'Y'
-            || credential[2] != 'W' || credential[3] != 'B')) {
+            || credential_data[0] != 'S' || credential_data[1] != 'Y'
+            || credential_data[2] != 'W' || credential_data[3] != 'B')) {
             write_text("Passkey assertion must use the packed SYWB WebAuthn format.\n");
             clear_bytes(username, sizeof(username));
             clear_bytes(method, sizeof(method));
@@ -424,7 +422,7 @@ void _start(void)
             complete_operation,
             (u64)username,
             username_length,
-            (u64)credential,
+            (u64)credential_data,
             credential_length
         );
         clear_bytes(username, sizeof(username));
