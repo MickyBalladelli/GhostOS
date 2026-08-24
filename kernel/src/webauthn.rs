@@ -49,6 +49,19 @@ const GENERATOR_Y: U256 = [
     0x8ee7_eb4a_7c0f_9e16,
     0x4fe3_42e2_fe1a_7f9b,
 ];
+const FIELD_MONTGOMERY_R2: U256 = [
+    0x0000_0000_0000_0003,
+    0xffff_fffb_ffff_ffff,
+    0xffff_ffff_ffff_fffe,
+    0x0000_0004_ffff_fffd,
+];
+const ORDER_MONTGOMERY_R2: U256 = [
+    0x8324_4c95_be79_eea2,
+    0x4699_799c_49bd_6fa6,
+    0x2845_b239_2b6b_ec59,
+    0x66e1_2d94_f3d9_5620,
+];
+const ORDER_MONTGOMERY_FACTOR: u64 = 0xccd1_c8aa_ee00_bc4f;
 
 #[derive(Clone, Copy)]
 struct Point {
@@ -778,15 +791,53 @@ fn sub_mod(left: U256, right: U256, modulus: U256) -> U256 {
 }
 
 fn mul_mod(left: U256, right: U256, modulus: U256) -> U256 {
-    let mut result = ZERO;
-    let mut addend = left;
-    for index in 0..256 {
-        if right[index / 64] & (1 << (index % 64)) != 0 {
-            result = add_mod(result, addend, modulus)
+    let left = if ge(left, modulus) { sub_raw(left, modulus) } else { left };
+    let right = if ge(right, modulus) { sub_raw(right, modulus) } else { right };
+    let (factor, r2) = if modulus == FIELD_MODULUS {
+        (1, FIELD_MONTGOMERY_R2)
+    } else {
+        (ORDER_MONTGOMERY_FACTOR, ORDER_MONTGOMERY_R2)
+    };
+    let left_montgomery = montgomery_mul(left, r2, modulus, factor);
+    montgomery_mul(left_montgomery, right, modulus, factor)
+}
+
+fn montgomery_mul(left: U256, right: U256, modulus: U256, factor: u64) -> U256 {
+    let mut accumulator = [0u64; 6];
+    for word in right {
+        add_product(&mut accumulator, left, word);
+        let reduction = accumulator[0].wrapping_mul(factor);
+        add_product(&mut accumulator, modulus, reduction);
+        for index in 0..5 {
+            accumulator[index] = accumulator[index + 1]
         }
-        addend = add_mod(addend, addend, modulus)
+        accumulator[5] = 0
     }
-    result
+    let result = [
+        accumulator[0],
+        accumulator[1],
+        accumulator[2],
+        accumulator[3],
+    ];
+    if accumulator[4] != 0 || ge(result, modulus) {
+        sub_raw(result, modulus)
+    } else {
+        result
+    }
+}
+
+fn add_product(accumulator: &mut [u64; 6], factor: U256, word: u64) {
+    let mut carry = 0u128;
+    for index in 0..4 {
+        let value = factor[index] as u128 * word as u128
+            + accumulator[index] as u128
+            + carry;
+        accumulator[index] = value as u64;
+        carry = value >> 64
+    }
+    let value = accumulator[4] as u128 + carry;
+    accumulator[4] = value as u64;
+    accumulator[5] = accumulator[5].wrapping_add((value >> 64) as u64)
 }
 
 fn inverse_mod(value: U256, modulus: U256) -> U256 {
