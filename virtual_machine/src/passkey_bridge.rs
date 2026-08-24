@@ -81,21 +81,36 @@ async function api(path, body) {
   return text ? JSON.parse(text) : {}
 }
 
-function coseKey(response) {
+function base64urlBytes(value) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/')
+    + '='.repeat((4 - value.length % 4) % 4)
+  const decoded = atob(padded)
+  return Uint8Array.from(decoded, byte => byte.charCodeAt(0))
+}
+
+function canonicalCoseKey(x, y) {
+  if (!(x instanceof Uint8Array) || x.length !== 32
+      || !(y instanceof Uint8Array) || y.length !== 32) {
+    throw new Error('Authenticator did not return a usable ES256 public key')
+  }
+  return new Uint8Array([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, ...x, 0x22, 0x58, 0x20, ...y])
+}
+
+async function coseKey(response) {
   const publicKey = response.getPublicKey?.()
   if (publicKey) {
-    const spki = new Uint8Array(publicKey)
-    let point = -1
-    for (let index = spki.length - 65; index >= 0; index -= 1) {
-      if (spki[index] === 4 && spki.length - index >= 65) {
-        point = index
-        break
-      }
+    const imported = await crypto.subtle.importKey(
+      'spki',
+      publicKey,
+      {name: 'ECDSA', namedCurve: 'P-256'},
+      true,
+      ['verify']
+    )
+    const jwk = await crypto.subtle.exportKey('jwk', imported)
+    if (jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) {
+      throw new Error('Unsupported passkey public key')
     }
-    if (point < 0 || spki.length - point !== 65) throw new Error('Unsupported passkey public key')
-    const x = spki.slice(point + 1, point + 33)
-    const y = spki.slice(point + 33, point + 65)
-    return new Uint8Array([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, ...x, 0x22, 0x58, 0x20, ...y])
+    return canonicalCoseKey(base64urlBytes(jwk.x), base64urlBytes(jwk.y))
   }
 
   const attestation = cborValue(new Uint8Array(response.attestationObject))
@@ -109,7 +124,27 @@ function coseKey(response) {
   const keyStart = 55 + credentialLength
   if (keyStart >= authenticator.length) throw new Error('Authenticator returned invalid credential data')
   const key = cborValue(authenticator, keyStart)
-  return authenticator.slice(keyStart, key.next)
+  if (!(key.value instanceof Map)
+      || key.value.get(1) !== 2
+      || key.value.get(3) !== -7
+      || key.value.get(-1) !== 1) {
+    throw new Error('Authenticator did not return an ES256 public key')
+  }
+  const x = key.value.get(-2)
+  const y = key.value.get(-3)
+  const canonical = canonicalCoseKey(x, y)
+  const point = new Uint8Array(65)
+  point[0] = 4
+  point.set(x, 1)
+  point.set(y, 33)
+  await crypto.subtle.importKey(
+    'raw',
+    point,
+    {name: 'ECDSA', namedCurve: 'P-256'},
+    false,
+    ['verify']
+  )
+  return canonical
 }
 
 function cborValue(bytes, start = 0) {
@@ -223,7 +258,7 @@ async function enroll(name) {
     attestation: 'none',
     timeout: 120000
   }})
-  const key = coseKey(created.response)
+  const key = await coseKey(created.response)
   await api('/api/enroll', `${encodeURIComponent(name)}\n${bytesToHex(key)}`)
   localStorage.setItem('ghostos-username', name)
   pending = 'enroll'

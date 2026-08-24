@@ -2126,7 +2126,7 @@ static int commit_first_admin_account(
         0
     );
     if (response.status != 0) {
-        if (response.status == 0x0001001aU
+        if (response.status == 0x00030018U
             && reset_first_admin_staging()) {
             write_text("Old setup cleared. Retrying the same passkey.\n");
             response = call(
