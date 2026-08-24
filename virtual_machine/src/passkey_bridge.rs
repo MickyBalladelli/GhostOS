@@ -196,6 +196,9 @@ async function waitForEnrollment() {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     const state = await api('/api/state')
     if (state.mode === 'enroll') return
+    // Setup may already be finished (administrator exists and the bridge
+    // flipped to login): that is success, not a timeout.
+    if (state.mode === 'login' || state.mode === 'success') return
     if (state.error) throw new Error(state.error)
     await new Promise(resolve => setTimeout(resolve, 250))
   }
@@ -291,7 +294,9 @@ form.addEventListener('submit', async event => {
     else await login(name)
   } catch (problem) {
     pending = ''
-    error.textContent = `GhostOS setup did not finish: ${problem.message || String(problem)}`
+    error.textContent = mode === 'enroll'
+      ? `GhostOS setup did not finish: ${problem.message || String(problem)}`
+      : (problem.message || String(problem))
   } finally {
     busy = false
     action.disabled = false
@@ -350,6 +355,7 @@ pub struct PasskeyBridge {
     challenge: Option<String>,
     error: Option<String>,
     input_flow: InputFlow,
+    administrator_committed: bool,
 }
 
 impl PasskeyBridge {
@@ -370,6 +376,7 @@ impl PasskeyBridge {
             challenge: None,
             error: None,
             input_flow: InputFlow::None,
+            administrator_committed: false,
         })
     }
 
@@ -454,19 +461,24 @@ impl PasskeyBridge {
             self.guest_text.drain(..keep);
         }
 
-        let enrollment_pending = !self
-            .guest_text
-            .contains("Administrator account committed.")
-            && (self.guest_text.contains("\x1b]GhostOSEnroll\x07")
-                || self
-                    .guest_text
-                    .contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):")
-                || self
-                    .guest_text
-                    .contains("Waiting for passkey public key from local browser:")
-                || self
-                    .guest_text
-                    .contains("Create this administrator account? [y/N]:"));
+        // Only the explicit commit line marks the administrator as
+        // committed. The "terminal is locked" notice is NOT reliable:
+        // on a first boot it can be printed before the enroll banner
+        // appears, which would wrongly flip the bridge into login mode.
+        // Locked reboots are handled below via the GhostOSLogin banner.
+        if self.guest_text.contains("Administrator account committed.") {
+            self.administrator_committed = true;
+        }
+        if self.administrator_committed
+            && matches!(self.mode, Mode::Waiting | Mode::Enroll)
+        {
+            self.mode = Mode::Login;
+            self.error = None;
+            self.challenge = None;
+            self.input_flow = InputFlow::None;
+        }
+        let enrollment_pending = !self.administrator_committed
+            && enrollment_pending(&self.guest_text);
         if enrollment_pending {
             self.mode = Mode::Enroll;
             self.error = None;
@@ -502,11 +514,17 @@ impl PasskeyBridge {
             self.mode = Mode::Enroll;
             self.input_flow = InputFlow::None;
             self.error = Some("GhostOS could not save that passkey. Create it again.".to_string());
-        } else if self.mode == Mode::Waiting
-            && self.guest_text.contains("\x1b]GhostOSLogin\x07")
-            && !self.guest_text.contains("\x1b]GhostOSEnroll\x07")
-        {
-            self.mode = Mode::Login;
+        } else if self.mode == Mode::Waiting {
+            // Pick whichever banner appeared most recently in the serial
+            // buffer: a stale enroll banner from an earlier boot must not
+            // keep the bridge in Waiting forever on a locked start.
+            let login = self.guest_text.rfind("\x1b]GhostOSLogin\x07");
+            let enroll = self.guest_text.rfind("\x1b]GhostOSEnroll\x07");
+            if let Some(login_at) = login {
+                if enroll.is_none_or(|enroll_at| login_at > enroll_at) {
+                    self.mode = Mode::Login;
+                }
+            }
         }
 
         self.advance_input(vm);
@@ -593,7 +611,10 @@ impl PasskeyBridge {
                 Mode::Login | Mode::Challenge => "login",
                 Mode::Success => "success",
             };
-            let mode = if mode == "waiting" && enrollment_pending(&self.guest_text) {
+            let mode = if mode == "waiting"
+                && !self.administrator_committed
+                && enrollment_pending(&self.guest_text)
+            {
                 "enroll"
             } else {
                 mode
@@ -609,7 +630,8 @@ impl PasskeyBridge {
             )
         }
         if request.method == "POST" && path == "/api/enroll" {
-            let first_run_waiting = enrollment_pending(&self.guest_text);
+            let first_run_waiting = !self.administrator_committed
+                && enrollment_pending(&self.guest_text);
             if self.mode != Mode::Enroll && !first_run_waiting {
                 return text_response("409 Conflict", "GhostOS is not waiting for enrollment")
             }
@@ -679,11 +701,20 @@ impl PasskeyBridge {
 }
 
 fn enrollment_pending(text: &str) -> bool {
-    !text.contains("Administrator account committed.")
-        && (text.contains("\x1b]GhostOSEnroll\x07")
-            || text.contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):")
+    if text.contains("Administrator account committed.") {
+        return false
+    }
+    // Compare banner positions: a stale enroll banner from an earlier boot
+    // must not win over a fresher login banner on a locked start.
+    let enroll = text.rfind("\x1b]GhostOSEnroll\x07");
+    let login = text.rfind("\x1b]GhostOSLogin\x07");
+    match (enroll, login) {
+        (Some(enroll_at), Some(login_at)) => enroll_at > login_at,
+        (Some(_), None) => text.contains("Credential type [PASSKEY/TPM/SSH] (PASSKEY):")
             || text.contains("Waiting for passkey public key from local browser:")
-            || text.contains("Create this administrator account? [y/N]:"))
+            || text.contains("Create this administrator account? [y/N]:"),
+        (None, _) => false,
+    }
 }
 
 fn bridge_line(bytes: &[u8]) -> Vec<u8> {

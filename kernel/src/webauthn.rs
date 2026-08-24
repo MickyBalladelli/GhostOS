@@ -1,3 +1,7 @@
+#![cfg_attr(
+    not(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi"))),
+    allow(dead_code)
+)]
 use core::cmp::Ordering;
 
 pub const RP_ID: &str = "localhost";
@@ -17,7 +21,7 @@ const ZERO: U256 = [0; 4];
 const ONE: U256 = [1, 0, 0, 0];
 const FIELD_MODULUS: U256 = [
     0xffff_ffff_ffff_ffff,
-    0xffff_ffff_0000_0000,
+    0x0000_0000_ffff_ffff,
     0,
     0xffff_ffff_0000_0001,
 ];
@@ -75,6 +79,10 @@ impl Point {
     }
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 pub fn verify_local_assertion(
     assertion: &[u8],
     username: &[u8],
@@ -918,4 +926,82 @@ fn on_curve(point: Point) -> bool {
         FIELD_MODULUS,
     );
     left == right
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GENERATOR_KEY_HEX: &str = "a50102032620012158206b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2962258204fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    const BROWSER_KEY_HEX: &str = "a50102032620012158205c4b9868b5f144608bf9eca9ce5c5ceb790ff7af5c9cc1be2a81c7df6eb65233225820237a2f5bdaeae3cacd36bf793ecc7667b9ca06cb2ec0bac5f5734a1d93588b52";
+    const DIGEST_HEX: &str = "a79114a8a4a33276e206962ab3dec3a468008e9290c10693475d3fcdead2f35e";
+    const DER_SIGNATURE_HEX: &str = "304402201586614b8713fdc2b38c4f3065ccc5556c7656edb950df82045fd49d8c5f47020220425bdf5781f923fb72631f21e38babe28178974036274e255079f786c6df225c";
+
+    fn decode_into<const SIZE: usize>(hex: &str) -> [u8; SIZE] {
+        let mut output = [0; SIZE];
+        assert_eq!(hex.len(), SIZE * 2);
+        for (index, slot) in output.iter_mut().enumerate() {
+            *slot = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).unwrap()
+        }
+        output
+    }
+
+    #[test]
+    fn genuine_browser_cose_public_keys_validate() {
+        assert!(valid_cose_es256_public_key(&decode_into::<77>(GENERATOR_KEY_HEX)));
+        assert!(valid_cose_es256_public_key(&decode_into::<77>(BROWSER_KEY_HEX)));
+    }
+
+    #[test]
+    fn tampered_or_malformed_cose_public_keys_fail_validation() {
+        let mut key = decode_into::<77>(BROWSER_KEY_HEX);
+        key[10] ^= 1;
+        assert!(!valid_cose_es256_public_key(&key));
+        let mut key = decode_into::<77>(BROWSER_KEY_HEX);
+        key[76] ^= 1;
+        assert!(!valid_cose_es256_public_key(&key));
+        let key = decode_into::<77>(BROWSER_KEY_HEX);
+        assert!(!valid_cose_es256_public_key(&key[..76]));
+        let mut padded = [0; 78];
+        padded[..77].copy_from_slice(&key);
+        padded[77] = 0;
+        assert!(!valid_cose_es256_public_key(&padded));
+        let mut algorithm = key;
+        algorithm[4] = 0x27;
+        assert!(!valid_cose_es256_public_key(&algorithm));
+        let mut curve = key;
+        curve[6] = 0x02;
+        assert!(!valid_cose_es256_public_key(&curve));
+        assert!(!valid_cose_es256_public_key(&[]));
+    }
+
+    #[test]
+    fn sha256_matches_known_answers() {
+        assert_eq!(
+            sha256(b""),
+            decode_into::<32>("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        );
+        assert_eq!(
+            sha256(b"abc"),
+            decode_into::<32>("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+    }
+
+    #[test]
+    fn ecdsa_assertions_verify_openssl_vectors() {
+        let key = decode_into::<77>(BROWSER_KEY_HEX);
+        let digest = decode_into::<32>(DIGEST_HEX);
+        let signature = decode_into::<70>(DER_SIGNATURE_HEX);
+        assert!(verify_cose_key(&key, &digest, &signature));
+        let mut corrupted_digest = digest;
+        corrupted_digest[0] ^= 1;
+        assert!(!verify_cose_key(&key, &corrupted_digest, &signature));
+        let mut corrupted_signature = signature;
+        corrupted_signature[69] ^= 1;
+        assert!(!verify_cose_key(&key, &digest, &corrupted_signature));
+        let mut raw_signature = [0; 64];
+        raw_signature[..32].copy_from_slice(&signature[4..36]);
+        raw_signature[32..].copy_from_slice(&signature[38..70]);
+        assert!(verify_cose_key(&key, &digest, &raw_signature));
+    }
 }

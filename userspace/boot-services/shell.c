@@ -2105,9 +2105,30 @@ static int commit_first_admin_account(
     if (response.status != 0) {
         if (response.status == 0x0001001aU
             && reset_first_admin_staging()) {
-            write_text("Old setup cleared. Create the passkey again.\n");
-            return 0;
+            write_text("Old setup cleared. Retrying the same passkey.\n");
+            response = call(
+                OP_LOGIN_BOOTSTRAP_USERNAME,
+                0,
+                0,
+                (u64)username,
+                username_length,
+                0,
+                0
+            );
+            if (response.status == 0) {
+                response = call(
+                    OP_LOGIN_BOOTSTRAP_CREDENTIAL,
+                    0,
+                    0,
+                    kind_id,
+                    (u64)material,
+                    material_length,
+                    0
+                );
+            }
         }
+    }
+    if (response.status != 0) {
         write_text("Credential rejected. status=");
         write_hex(response.status);
         write_text("\n");

@@ -291,6 +291,12 @@ void _start(void)
 
     call(OP_SERVICE_READY, LOGIN_ROLE, 0, 0, 0);
     write_text("GhostOS login service\n");
+    // Only claim the terminal is locked when an administrator already
+    // exists. On a first boot this line must stay silent so the host
+    // bridge keeps offering passkey creation instead of login.
+    while (!administrator_account_exists()) {
+        idle();
+    }
     write_text("The terminal is locked until login completes.\n");
 
     for (;;) {

@@ -81,9 +81,9 @@ pub mod monitor;
 pub mod tlb;
 #[allow(dead_code)]
 mod watchdog;
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
+#[cfg(any(
+    all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")),
+    test
 ))]
 mod webauthn;
 #[cfg(all(
@@ -248,6 +248,7 @@ static LOGIN_SESSION_IDENTITY: AtomicU64 = AtomicU64::new(0);
     any(target_os = "none", target_os = "uefi")
 ))]
 static LOGIN_REVOCATION_EPOCH: AtomicU64 = AtomicU64::new(1);
+static SESSION_STATE_LOCKED: AtomicBool = AtomicBool::new(false);
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
@@ -829,6 +830,29 @@ fn clear_login_failures() {
     any(target_os = "none", target_os = "uefi")
 ))]
 fn revoke_login_session() {
+    session_state_lock();
+    revoke_login_session_locked();
+    session_state_unlock();
+}
+
+pub(crate) fn session_state_lock() {
+    while SESSION_STATE_LOCKED
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        core::hint::spin_loop()
+    }
+}
+
+pub(crate) fn session_state_unlock() {
+    SESSION_STATE_LOCKED.store(false, Ordering::Release);
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+pub(crate) fn revoke_login_session_locked() {
     LOGIN_AUTHORIZED.store(false, Ordering::Release);
     LOGIN_REQUESTED.store(true, Ordering::Release);
     LOGIN_SESSION_EXPIRES.store(0, Ordering::Release);
@@ -849,6 +873,17 @@ fn revoke_login_session() {
     any(target_os = "none", target_os = "uefi")
 ))]
 fn login_session_active() -> bool {
+    session_state_lock();
+    let active = login_session_active_locked();
+    session_state_unlock();
+    active
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn login_session_active_locked() -> bool {
     if !LOGIN_AUTHORIZED.load(Ordering::Acquire) {
         return false
     }
@@ -856,16 +891,16 @@ fn login_session_active() -> bool {
     let expires_at_us = LOGIN_SESSION_EXPIRES.load(Ordering::Acquire);
     let identity = LOGIN_SESSION_IDENTITY.load(Ordering::Acquire);
     let epoch = LOGIN_REVOCATION_EPOCH.load(Ordering::Acquire);
-    if !login_session_matches(identity, expires_at_us, epoch, now_us)
-        || !shell::session_matches(identity, expires_at_us, epoch)
-    {
+    let login_ok = login_session_matches(identity, expires_at_us, epoch, now_us);
+    let shell_ok = shell::session_matches(identity, expires_at_us, epoch);
+    if !login_ok || !shell_ok {
         ghostos_observability::audit_event!(
             ghostos_observability::Level::Warn,
             EventField::unsigned(field::AUTH_ACTION, AUDIT_TIMEOUT),
             EventField::unsigned(field::IDENTITY, identity),
             EventField::status(Status::ACCESS_DENIED),
         );
-        revoke_login_session();
+        revoke_login_session_locked();
         return false
     }
     true
@@ -926,18 +961,23 @@ fn start_login_session(username: &[u8]) -> bool {
     let expires_at_us = now_us.saturating_add(LOGIN_SESSION_LIFETIME_US);
     let epoch = LOGIN_REVOCATION_EPOCH.load(Ordering::Acquire).max(1);
     let identity = login_identity(username);
-    if boot_services::set_shell_filesystem_rights(
+    session_state_lock();
+    let rights_result = boot_services::set_shell_filesystem_rights(
         ghostos_fsd::ProcessRights::from_bits(
             ghostos_fsd::ProcessRights::READ.bits()
                 | ghostos_fsd::ProcessRights::WRITE.bits()
                 | ghostos_fsd::ProcessRights::DELETE.bits()
                 | ghostos_fsd::ProcessRights::ADMIN.bits(),
         ),
-    )
-    .is_err()
-        || shell::authorize_session(identity, expires_at_us, epoch).is_err()
-    {
+    );
+    let authorized = if rights_result.is_err() {
+        Err(Status::ACCESS_DENIED)
+    } else {
+        shell::authorize_session(identity, expires_at_us, epoch)
+    };
+    if rights_result.is_err() || authorized.is_err() {
         let _ = boot_services::set_shell_filesystem_rights(ghostos_fsd::ProcessRights::NONE);
+        session_state_unlock();
         return false
     }
     LOGIN_SESSION_LAST_ACTIVITY.store(now_us, Ordering::Release);
@@ -952,6 +992,7 @@ fn start_login_session(username: &[u8]) -> bool {
         EventField::unsigned(field::CALLER, 14),
         EventField::status(Status::NORMAL),
     );
+    session_state_unlock();
     true
 }
 
@@ -1287,8 +1328,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             *value = slot.load(Ordering::Relaxed)
         }
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
-        if username_length != 0 {
-            let _ = start_login_session(&username[..username_length]);
+        if username_length != 0 && !start_login_session(&username[..username_length]) {
+            LOGIN_REQUESTED.store(true, Ordering::Release);
         }
         return syscall_success([1, 0, 0, 0])
     }

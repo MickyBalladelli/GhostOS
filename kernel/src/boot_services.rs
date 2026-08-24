@@ -1662,7 +1662,11 @@ fn first_admin_recovery_inner(action: u64) -> Result<[u64; 4], Status> {
         Err(error) => return Err(error.status()),
     }
     let mut transaction = daemon.filesystem_mut().transaction();
-    for path in [FIRST_ADMIN_USERNAME_PATH, FIRST_ADMIN_CREDENTIAL_PATH] {
+    for path in [
+        AUTHORIZATION_DATABASE_PATH,
+        FIRST_ADMIN_USERNAME_PATH,
+        FIRST_ADMIN_CREDENTIAL_PATH,
+    ] {
         match transaction.lookup(path) {
             Ok(metadata) if metadata.file_type == ghostos_ghostfs::FileType::Regular => {
                 transaction

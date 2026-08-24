@@ -858,12 +858,14 @@ fn session_authorized_at(now_us: u64) -> bool {
 }
 
 fn ensure_session(now_us: u64) -> bool {
+    crate::session_state_lock();
     let identity = SHELL_SESSION_IDENTITY.load(Ordering::Acquire);
     let expires_at_us = SHELL_SESSION_EXPIRES.load(Ordering::Acquire);
     let revocation_epoch = SHELL_SESSION_EPOCH.load(Ordering::Acquire);
     if session_authorized_at(now_us)
         && crate::login_session_matches(identity, expires_at_us, revocation_epoch, now_us)
     {
+        crate::session_state_unlock();
         return true
     }
     if session_authorized() {
@@ -871,6 +873,7 @@ fn ensure_session(now_us: u64) -> bool {
     } else {
         lock_shell_session()
     }
+    crate::session_state_unlock();
     false
 }
 
@@ -880,7 +883,7 @@ fn expire_session() {
         any(target_os = "none", target_os = "uefi")
     ))]
     {
-        crate::revoke_login_session();
+        crate::revoke_login_session_locked();
     }
     #[cfg(not(all(
         target_arch = "x86_64",
@@ -906,6 +909,13 @@ fn drop_session_authority(executor: &mut KernelExecutor) {
 }
 
 fn active_session_authority() -> Option<crate::CapabilityHandle> {
+    crate::session_state_lock();
+    let authority = active_session_authority_locked();
+    crate::session_state_unlock();
+    authority
+}
+
+fn active_session_authority_locked() -> Option<crate::CapabilityHandle> {
     if !session_authorized_at(crate::time::monotonic_now_us()) {
         return None
     }
