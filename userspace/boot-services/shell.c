@@ -985,6 +985,29 @@ static u64 read_credential_line_from(char *line, u64 capacity, int echo, int bri
             sleep_for(SHELL_POLL_DELAY_US);
             continue;
         }
+        if (bridge && count == 0 && byte == 0) {
+            u8 length_low;
+            u8 length_high;
+            while (!read_bridge_byte(&length_low)) {
+                sleep_for(SHELL_POLL_DELAY_US);
+            }
+            while (!read_bridge_byte(&length_high)) {
+                sleep_for(SHELL_POLL_DELAY_US);
+            }
+            u64 framed_length = (u64)length_low | ((u64)length_high << 8);
+            if (framed_length == 0 || framed_length >= capacity) {
+                return 0;
+            }
+            while (count < framed_length) {
+                while (!read_bridge_byte((u8 *)&line[count])) {
+                    sleep_for(SHELL_POLL_DELAY_US);
+                }
+                count++;
+            }
+            line[count] = 0;
+            write_text("\n");
+            return count;
+        }
         if (byte == '\r' || byte == '\n') {
             line[count] = 0;
             write_text("\n");
@@ -1021,50 +1044,6 @@ static u64 read_private_credential_line(char *line, u64 capacity)
 static u64 read_bridge_credential_line(char *line, u64 capacity)
 {
     return read_credential_line_from(line, capacity, 0, 1);
-}
-
-static u64 read_bridge_username(char *line, u64 capacity)
-{
-    u64 count = 0;
-    u8 byte;
-    while (!read_bridge_byte(&byte)) {
-        sleep_for(SHELL_POLL_DELAY_US);
-    }
-    if (byte == 0) {
-        u8 framed_length;
-        while (!read_bridge_byte(&framed_length)) {
-            sleep_for(SHELL_POLL_DELAY_US);
-        }
-        if (framed_length == 0 || (u64)framed_length >= capacity) {
-            return 0;
-        }
-        while (count < framed_length) {
-            while (!read_bridge_byte((u8 *)&line[count])) {
-                sleep_for(SHELL_POLL_DELAY_US);
-            }
-            count++;
-        }
-        line[count] = 0;
-        write_text("\n");
-        return count;
-    }
-    for (;;) {
-        if (byte == '\r' || byte == '\n') {
-            line[count] = 0;
-            write_text("\n");
-            return count;
-        }
-        if (byte == 8 || byte == 127) {
-            if (count != 0) {
-                count--;
-            }
-        } else if (byte >= 32 && byte < 127 && count + 1 < capacity) {
-            line[count++] = (char)byte;
-        }
-        while (!read_bridge_byte(&byte)) {
-            sleep_for(SHELL_POLL_DELAY_US);
-        }
-    }
 }
 
 static u64 read_bridge_material(u8 *material, u64 capacity)
@@ -2238,7 +2217,7 @@ static void run_first_run_wizard(void)
     write_text("Passkey public material arrives through the local bridge and stays hidden.\n");
     for (;;) {
         write_text("\n\x1b]GhostOSEnroll\x07");
-        username_length = read_bridge_username(username, sizeof(username));
+        username_length = read_bridge_credential_line(username, sizeof(username));
         if (username_length == 0 || username_length > 32) {
             write_text("Username must be 1-32 valid characters.\n");
             continue;

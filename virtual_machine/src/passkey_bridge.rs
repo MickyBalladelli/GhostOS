@@ -771,27 +771,27 @@ fn bridge_line(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn bridge_username_frame(username: &[u8]) -> Option<Vec<u8>> {
-    let length = u8::try_from(username.len()).ok()?;
+    let length = u16::try_from(username.len()).ok()?;
     if length == 0 || length > 32 {
         return None
     }
-    let mut frame = Vec::with_capacity(username.len() + 2);
+    let mut frame = Vec::with_capacity(username.len() + 3);
     frame.push(0);
-    frame.push(length);
+    frame.extend_from_slice(&length.to_le_bytes());
     frame.extend_from_slice(username);
     Some(frame)
 }
 
 fn bridge_assertion_frame(hex: &str) -> Option<Vec<u8>> {
-    let assertion = decode_hex(hex)?;
-    let length = u16::try_from(assertion.len()).ok()?;
-    if length == 0 || length > 512 {
+    decode_hex(hex)?;
+    let length = u16::try_from(hex.len()).ok()?;
+    if length == 0 || length > 1024 {
         return None
     }
-    let mut frame = Vec::with_capacity(assertion.len() + 3);
+    let mut frame = Vec::with_capacity(hex.len() + 3);
     frame.push(0);
     frame.extend_from_slice(&length.to_le_bytes());
-    frame.extend_from_slice(&assertion);
+    frame.extend_from_slice(hex.as_bytes());
     Some(frame)
 }
 
