@@ -581,7 +581,8 @@ impl PasskeyBridge {
                     .guest_text
                     .contains("Waiting for passkey public key from local browser:") =>
             {
-                passkey_material_frame(key)
+                decode_hex(key)
+                    .and_then(|material| bridge_binary_frame(&material, 96))
                     .map(|material| (material, InputFlow::EnrollConfirm))
             }
             InputFlow::EnrollConfirm
@@ -684,7 +685,7 @@ impl PasskeyBridge {
             let Some(username) = percent_decode(encoded_username) else {
                 return text_response("400 Bad Request", "Invalid username")
             };
-            if !valid_username(&username) || !valid_hex(key, 192) {
+            if !valid_username(&username) || key.len() != 154 || !valid_hex(key, 154) {
                 return text_response("400 Bad Request", "Invalid username or passkey")
             }
             self.guest_text.clear();
@@ -806,39 +807,38 @@ fn bridge_line(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn bridge_username_frame(username: &[u8]) -> Option<Vec<u8>> {
-    let length = u16::try_from(username.len()).ok()?;
-    if length == 0 || length > 32 {
+    if username.is_empty() || username.len() > 32 {
         return None
     }
-    let mut frame = Vec::with_capacity(username.len() + 3);
+    bridge_text_frame(username)
+}
+
+fn bridge_text_frame(text: &[u8]) -> Option<Vec<u8>> {
+    let length = u16::try_from(text.len()).ok()?;
+    if length == 0 {
+        return None
+    }
+    let mut frame = Vec::with_capacity(text.len() + 3);
     frame.push(0);
     frame.extend_from_slice(&length.to_le_bytes());
-    frame.extend_from_slice(username);
+    frame.extend_from_slice(text);
     Some(frame)
 }
 
 fn bridge_assertion_frame(hex: &str) -> Option<Vec<u8>> {
     let assertion = decode_hex(hex)?;
-    let length = u16::try_from(assertion.len()).ok()?;
-    if length == 0 || length > 512 {
-        return None
-    }
-    let mut frame = Vec::with_capacity(assertion.len() + 3);
-    frame.push(0);
-    frame.extend_from_slice(&length.to_le_bytes());
-    frame.extend_from_slice(&assertion);
-    Some(frame)
+    bridge_binary_frame(&assertion, 512)
 }
 
-fn passkey_material_frame(hex: &str) -> Option<Vec<u8>> {
-    let material = decode_hex(hex)?;
-    let length = u8::try_from(material.len()).ok()?;
-    if length == 0 || length > 96 {
+fn bridge_binary_frame(bytes: &[u8], maximum: usize) -> Option<Vec<u8>> {
+    let length = u16::try_from(bytes.len()).ok()?;
+    if length == 0 || bytes.len() > maximum {
         return None
     }
-    let mut frame = Vec::with_capacity(material.len() + 1);
-    frame.push(length);
-    frame.extend_from_slice(&material);
+    let mut frame = Vec::with_capacity(bytes.len() + 3);
+    frame.push(0);
+    frame.extend_from_slice(&length.to_le_bytes());
+    frame.extend_from_slice(bytes);
     Some(frame)
 }
 

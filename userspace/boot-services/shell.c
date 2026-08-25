@@ -109,7 +109,12 @@ static struct response call(u16 operation, u16 flags, u64 capability,
     request.arguments[1] = second;
     request.arguments[2] = third;
     request.arguments[4] = offset;
-    __asm__ volatile("int $0x80" : : "D"(&request), "S"(&response) : "rax", "memory");
+    __asm__ volatile(
+        "int $0x80"
+        :
+        : "D"(&request), "S"(&response)
+        : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "cc", "memory"
+    );
     return response;
 }
 
@@ -1046,25 +1051,6 @@ static u64 read_bridge_credential_line(char *line, u64 capacity)
     return read_credential_line_from(line, capacity, 0, 1);
 }
 
-static u64 read_bridge_material(u8 *material, u64 capacity)
-{
-    u8 material_length;
-    u64 count;
-    while (!read_bridge_byte(&material_length)) {
-        sleep_for(SHELL_POLL_DELAY_US);
-    }
-    if (material_length == 0 || material_length > capacity) {
-        return 0;
-    }
-    for (count = 0; count < material_length; count++) {
-        while (!read_bridge_byte(&material[count])) {
-            sleep_for(SHELL_POLL_DELAY_US);
-        }
-    }
-    write_text("\n");
-    return material_length;
-}
-
 static int hex_value(u8 byte)
 {
     if (byte >= '0' && byte <= '9') {
@@ -1100,6 +1086,23 @@ static u64 decode_hex_material(
         output[output_length++] = (u8)((high << 4) | low);
     }
     return output_length;
+}
+
+static int canonical_passkey_material(const u8 *material)
+{
+    return material[0] == 0xa5
+        && material[1] == 0x01
+        && material[2] == 0x02
+        && material[3] == 0x03
+        && material[4] == 0x26
+        && material[5] == 0x20
+        && material[6] == 0x01
+        && material[7] == 0x21
+        && material[8] == 0x58
+        && material[9] == 0x20
+        && material[42] == 0x22
+        && material[43] == 0x58
+        && material[44] == 0x20;
 }
 
 static void add_credential(const char *username, u8 *buffer)
@@ -1181,7 +1184,7 @@ static void add_credential(const char *username, u8 *buffer)
 
     char kind[256];
     char material[256];
-    u8 material_bytes[ACCOUNT_CREDENTIAL_CAPACITY];
+    u8 material_bytes[ACCOUNT_CREDENTIAL_CAPACITY] = {0};
     write_text("Credential type [PASSKEY/TPM/SSH]: ");
     u64 kind_length = read_credential_line(kind, sizeof(kind));
     write_text("Credential public material: ");
@@ -2206,7 +2209,7 @@ static void run_first_run_wizard(void)
     char kind[256];
     char material[256];
     char answer[256];
-    u8 material_bytes[ACCOUNT_CREDENTIAL_CAPACITY];
+    u8 material_bytes[ACCOUNT_CREDENTIAL_CAPACITY] = {0};
     u64 username_length;
     u64 material_length;
     u64 kind_id;
@@ -2235,12 +2238,19 @@ static void run_first_run_wizard(void)
         }
         write_text("Waiting for passkey public key from local browser: ");
         u64 stored_material_length;
-        if (bridge_transport_active) {
-            stored_material_length = read_bridge_material(
-                material_bytes,
+        if (bridge_transport_active && kind_id == 1) {
+            read_bridge_credential_line(
+                (char *)material_bytes,
                 sizeof(material_bytes)
             );
+            stored_material_length = canonical_passkey_material(material_bytes) ? 77 : 0;
             material_length = stored_material_length;
+        } else if (bridge_transport_active) {
+            material_length = read_bridge_credential_line(material, sizeof(material));
+            stored_material_length = material_length;
+            for (u64 index = 0; index < material_length && index < sizeof(material_bytes); index++) {
+                material_bytes[index] = (u8)material[index];
+            }
         } else {
             material_length = read_bridge_credential_line(material, sizeof(material));
             stored_material_length = material_length;

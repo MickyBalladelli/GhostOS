@@ -704,6 +704,11 @@ impl InstructionExecutor {
         let src = operand_at(ins, 1)?.clone();
         let a = read_operand(ins, state, mmu, &dst)?;
         let b = read_operand(ins, state, mmu, &src)?;
+        let carry = if carry == 0 {
+            0
+        } else {
+            u64::from(state.rflags & CF != 0)
+        };
         let r = if is_sub {
             alu_sub(state, a, b, ins.opsize, carry)
         } else {

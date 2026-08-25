@@ -1270,12 +1270,25 @@ fn create_first_admin_credential_inner(
     public_material: &[u8],
 ) -> Result<(), Status> {
     // First-run retries may replace incomplete staged credential material.
-    if !(1..=3).contains(&kind)
-        || public_material.is_empty()
-        || public_material.len() > FIRST_ADMIN_CREDENTIAL_CAPACITY
-        || (kind == 1 && !crate::webauthn::valid_cose_es256_public_key(public_material))
-    {
+    if !(1..=3).contains(&kind) {
+        crate::println!("Passkey setup rejected: invalid credential kind {kind}.");
         return Err(Status::INVALID_ARGUMENT)
+    }
+    if public_material.is_empty() || public_material.len() > FIRST_ADMIN_CREDENTIAL_CAPACITY {
+        crate::println!(
+            "Passkey setup rejected: invalid credential length {}.",
+            public_material.len()
+        );
+        return Err(Status::INVALID_ARGUMENT)
+    }
+    if kind == 1 {
+        if let Some(error) = crate::webauthn::cose_es256_public_key_error(public_material) {
+            crate::println!(
+                "Passkey setup rejected: {error} ({} bytes).",
+                public_material.len()
+            );
+            return Err(Status::INVALID_ARGUMENT)
+        }
     }
     if !PROVISIONING_REQUIRED.load(Ordering::Acquire) {
         return Err(Status::ACCESS_DENIED)

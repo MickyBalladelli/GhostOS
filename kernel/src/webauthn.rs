@@ -139,7 +139,11 @@ pub fn verify_local_assertion(
 }
 
 pub fn valid_cose_es256_public_key(key: &[u8]) -> bool {
-    cose_es256_public_point(key).is_some()
+    cose_es256_public_key_error(key).is_none()
+}
+
+pub(crate) fn cose_es256_public_key_error(key: &[u8]) -> Option<&'static str> {
+    validated_cose_es256_public_point(key).err()
 }
 
 fn parse_assertion(assertion: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
@@ -444,17 +448,26 @@ fn verify_cose_key(key: &[u8], digest: &[u8; 32], signature: &[u8]) -> bool {
 }
 
 fn cose_es256_public_point(key: &[u8]) -> Option<Point> {
-    let (x, y, algorithm, curve, key_type) = parse_cose_key(key)?;
+    validated_cose_es256_public_point(key).ok()
+}
+
+fn validated_cose_es256_public_point(key: &[u8]) -> Result<Point, &'static str> {
+    let (x, y, algorithm, curve, key_type) =
+        parse_cose_key(key).ok_or("invalid COSE CBOR")?;
     if algorithm != -7
         || curve != 1
         || key_type != 2
-        || ge(x, FIELD_MODULUS)
-        || ge(y, FIELD_MODULUS)
     {
-        return None
+        return Err("not an ES256 P-256 key")
+    }
+    if ge(x, FIELD_MODULUS) || ge(y, FIELD_MODULUS) {
+        return Err("coordinate outside P-256 field")
     }
     let public = Point { x, y, z: ONE };
-    on_curve(public).then_some(public)
+    if !on_curve(public) {
+        return Err("point rejected by P-256 curve check")
+    }
+    Ok(public)
 }
 
 fn parse_signature(signature: &[u8]) -> Option<(U256, U256)> {
