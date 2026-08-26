@@ -68,13 +68,21 @@ fn pending_authentication_marker_bytes(output: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
-fn authorized_prompt_offset(bytes: &[u8]) -> Option<usize> {
-    if bytes.starts_with(AUTHORIZED_PROMPT) {
+fn authorized_prompt_offset(bytes: &[u8], allow_bare: bool) -> Option<usize> {
+    if allow_bare && bytes.starts_with(AUTHORIZED_PROMPT) {
         return Some(0)
     }
     bytes.windows(1 + AUTHORIZED_PROMPT.len()).position(|window| {
         matches!(window[0], b'\n' | b'\r') && window[1..] == *AUTHORIZED_PROMPT
     }).map(|index| index + 1)
+}
+
+fn is_only_authorized_prompt(bytes: &[u8]) -> bool {
+    let mut index = 0;
+    while index < bytes.len() && matches!(bytes[index], b'\r' | b'\n') {
+        index += 1;
+    }
+    bytes.get(index..) == Some(AUTHORIZED_PROMPT)
 }
 
 fn compact_held_output(output: &mut Vec<u8>, pending_marker_bytes: usize) {
@@ -129,6 +137,7 @@ pub struct Serial16550 {
     host_output: Vec<u8>,
     authentication_banner: Vec<u8>,
     auth_waiting: bool,
+    prompt_shown: bool,
     spinner_frame: u8,
     spinner_drawn: bool,
     last_spinner: Instant,
@@ -161,6 +170,7 @@ impl Serial16550 {
             host_output: Vec::with_capacity(4096),
             authentication_banner: Vec::new(),
             auth_waiting: false,
+            prompt_shown: false,
             spinner_frame: 0,
             spinner_drawn: false,
             last_spinner: Instant::now(),
@@ -301,6 +311,18 @@ impl Serial16550 {
         let pending_marker_bytes = pending_authentication_marker_bytes(&self.host_output);
         let complete_end = self.host_output.len() - pending_marker_bytes;
         if !self.auth_waiting {
+            if self.prompt_shown && is_only_authorized_prompt(&self.host_output[..complete_end]) {
+                self.host_output.drain(..complete_end);
+                return 0
+            }
+            if authorized_prompt_offset(&self.host_output[..complete_end], true).is_some() {
+                self.prompt_shown = true;
+            } else if self.host_output[..complete_end]
+                .iter()
+                .any(|&byte| !matches!(byte, b'\r' | b'\n'))
+            {
+                self.prompt_shown = false;
+            }
             return complete_end
         }
         if self.panic_detected {
@@ -308,11 +330,16 @@ impl Serial16550 {
             return complete_end
         }
         let search_from = waiting_from.unwrap_or(0).min(complete_end);
-        if let Some(relative) = authorized_prompt_offset(&self.host_output[search_from..complete_end])
+        let allow_bare = !(self.prompt_shown && search_from == 0);
+        if let Some(relative) = authorized_prompt_offset(
+            &self.host_output[search_from..complete_end],
+            allow_bare,
+        )
         {
             let prompt_at = search_from + relative;
             self.host_output.drain(..prompt_at);
             self.auth_waiting = false;
+            self.prompt_shown = true;
             return self.host_output.len() - pending_marker_bytes
         }
         let hold_from = waiting_from.unwrap_or(0).min(complete_end);
@@ -634,6 +661,41 @@ mod tests {
         assert!(s.auth_waiting);
 
         s.host_output.extend_from_slice(b"$ ");
+        let writable = s.insert_authentication_banner();
+        assert!(!s.auth_waiting);
+        assert_eq!(&s.host_output[..writable], b"$ ");
+    }
+
+    #[test]
+    fn extra_authorized_prompt_is_not_reprinted() {
+        let mut s = Serial16550::new(0x3F8);
+        s.set_authentication_banner(b"Passkey URL\r\n");
+        s.host_output.extend_from_slice(b"$ ");
+        let writable = s.insert_authentication_banner();
+        assert_eq!(&s.host_output[..writable], b"$ ");
+        s.host_output.drain(..writable);
+
+        s.host_output.extend_from_slice(b"\n$ ");
+        let writable = s.insert_authentication_banner();
+        assert_eq!(writable, 0);
+        assert!(!s.auth_waiting);
+    }
+
+    #[test]
+    fn leftover_prompt_does_not_end_a_later_login_wait() {
+        let mut s = Serial16550::new(0x3F8);
+        s.set_authentication_banner(b"Passkey URL\r\n");
+        s.host_output.extend_from_slice(b"$ ");
+        let writable = s.insert_authentication_banner();
+        s.host_output.drain(..writable);
+
+        s.host_output.extend_from_slice(LOGIN_MARKER);
+        s.host_output.extend_from_slice(b"$ ");
+        let writable = s.insert_authentication_banner();
+        assert_eq!(writable, 0);
+        assert!(s.auth_waiting);
+
+        s.host_output.extend_from_slice(b"\n$ ");
         let writable = s.insert_authentication_banner();
         assert!(!s.auth_waiting);
         assert_eq!(&s.host_output[..writable], b"$ ");

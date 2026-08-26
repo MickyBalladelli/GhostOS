@@ -2402,6 +2402,9 @@ void _start(void)
         }
         idle_polls = 0;
         if (byte == '\r' || byte == '\n') {
+            if (line_length == 0) {
+                continue;
+            }
             write_text("\n");
             line[line_length] = 0;
             if (prompt_authorized) {

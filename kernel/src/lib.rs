@@ -993,7 +993,20 @@ fn start_login_session(username: &[u8]) -> bool {
         EventField::status(Status::NORMAL),
     );
     session_state_unlock();
+    drain_console_input();
     true
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
+fn drain_console_input() {
+    for _ in 0..4096 {
+        if console::read_byte().is_none() {
+            break
+        }
+    }
 }
 
 #[cfg(all(
@@ -1161,6 +1174,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         }
         let first_run = !LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire);
         let byte = if caller.raw() == 9 && first_run {
+            keyboard::read_boot_byte().or_else(usb_keyboard::read_boot_byte)
+        } else if LOGIN_REQUESTED.load(Ordering::Acquire) {
             keyboard::read_boot_byte().or_else(usb_keyboard::read_boot_byte)
         } else {
             keyboard::read_boot_byte().or_else(console::read_byte)
