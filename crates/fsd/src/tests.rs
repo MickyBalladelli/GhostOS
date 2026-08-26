@@ -482,6 +482,35 @@ fn list_root_twice_returns_bootstrap_directories() {
 }
 
 #[test]
+fn list_root_again_without_rewriting_path_still_lists_bootstrap_directories() {
+    let (mut daemon, process, authority) = daemon();
+    let mut listing = [0; 512];
+    listing[0] = b'/';
+    let first = daemon.dispatch(
+        Request::new(Operation::List, process)
+            .with_capability(authority)
+            .with_offset(0),
+        Some(&mut listing),
+    );
+    assert_eq!(first.status, Status::NORMAL);
+    assert!(first.values[0] >= 22);
+    let leftover = u16::from_le_bytes([listing[0], listing[1]]);
+    assert!(leftover > 0);
+    assert_ne!(listing[0], b'/');
+
+    let second = daemon.dispatch(
+        Request::new(Operation::List, process)
+            .with_capability(authority)
+            .with_offset(0),
+        Some(&mut listing),
+    );
+    assert_eq!(second.status, Status::NORMAL);
+    assert!(second.values[0] >= 22);
+    let name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
+    assert!(name_length > 0);
+}
+
+#[test]
 fn long_run_gc_bounds_work_and_releases_orphaned_capabilities() {
     let (mut daemon, process, authority) = boxed_daemon_with_capacity::<64>();
     let mut stale_file = None;

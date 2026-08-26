@@ -96,6 +96,7 @@ struct response {
     u64 values[4];
 };
 
+__attribute__((noinline))
 static struct response call(u16 operation, u16 flags, u64 capability,
                             u64 first, u64 second, u64 third, u64 offset)
 {
@@ -111,7 +112,7 @@ static struct response call(u16 operation, u16 flags, u64 capability,
     request.arguments[4] = offset;
     __asm__ volatile(
         "int $0x80"
-        :
+        : "+m"(request), "+m"(response)
         : "D"(&request), "S"(&response)
         : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "cc", "memory"
     );
@@ -354,13 +355,24 @@ static void watchdog_command(char *cursor)
 __attribute__((noinline))
 static void print_directory(const char *path, u8 *buffer)
 {
+    char prefix[256];
     u64 path_length = length(path);
     u64 continuation = 0;
+    u64 index;
+    if (path_length == 0 || path_length >= sizeof(prefix)) {
+        prefix[0] = '/';
+        prefix[1] = 0;
+        path_length = 1;
+    } else {
+        for (index = 0; index <= path_length; index++) {
+            prefix[index] = path[index];
+        }
+    }
     for (;;) {
-        u64 index;
+        volatile u8 *out = buffer;
         memset(buffer, 0, 4096);
         for (index = 0; index <= path_length; index++) {
-            buffer[index] = (u8)path[index];
+            out[index] = (u8)prefix[index];
         }
         struct response response = call(OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation);
         if (response.status != 0) {
@@ -1969,7 +1981,10 @@ static void execute_line(char *line, u8 *buffer)
         char argument[256];
         u64 argument_length = next_word(&cursor, argument);
         if (argument_length == 0) {
-            print_directory("/", buffer);
+            char root[2];
+            root[0] = '/';
+            root[1] = 0;
+            print_directory(root, buffer);
             return;
         }
         make_absolute_path(argument);

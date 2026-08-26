@@ -1818,10 +1818,14 @@ impl<
                     .iter()
                     .position(|byte| *byte == 0)
                     .unwrap_or(output.len());
-                let prefix = if &output[..prefix_end] == b"/" {
+                let prefix_bytes = &output[..prefix_end];
+                let prefix = if prefix_bytes.is_empty()
+                    || prefix_bytes == b"/"
+                    || prefix_bytes[0] != b'/'
+                {
                     Name::EMPTY
                 } else {
-                    Name::from_bytes(&output[..prefix_end], true)?
+                    Name::from_bytes(prefix_bytes, true)?
                 };
                 let bytes = self.list_current(
                     request.process,
