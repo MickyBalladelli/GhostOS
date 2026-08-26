@@ -1327,6 +1327,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             *value = slot.load(Ordering::Relaxed)
         }
+        LOGIN_REQUESTED.store(false, Ordering::Release);
         LOGIN_ADMINISTRATOR_EXISTS.store(true, Ordering::Release);
         if username_length != 0 && !start_login_session(&username[..username_length]) {
             LOGIN_REQUESTED.store(true, Ordering::Release);

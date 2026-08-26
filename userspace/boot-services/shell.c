@@ -257,8 +257,11 @@ static void write_prompt(int authorized, int first_run)
 static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
-    int authorized = response.status == 0 && response.values[3] != 0;
-    int first_run = response.status == 0 && response.values[1] == 0;
+    if (response.status != 0) {
+        return *prompt_authorized > 0 || *prompt_first_run > 0;
+    }
+    int authorized = response.values[3] != 0;
+    int first_run = response.values[1] == 0;
     if (*prompt_authorized != authorized || *prompt_first_run != first_run) {
         if (*prompt_authorized >= 0 || *prompt_first_run >= 0) {
             write_text("\n");
@@ -2373,13 +2376,11 @@ void _start(void)
         sleep_for(SHELL_POLL_DELAY_US);
     }
     if (first_run_mode()) {
-        write_text("\x1b]GhostOSAuthWait\x07");
         write_text("No administrator account exists.\n");
         write_text("GhostOS first-run setup mode\n");
         run_first_run_wizard();
         write_text("\nGhostOS user shell\n");
     } else {
-        write_text("\x1b]GhostOSAuthWait\x07");
         write_text("GhostOS user shell\n");
     }
     int prompt_authorized = -1;

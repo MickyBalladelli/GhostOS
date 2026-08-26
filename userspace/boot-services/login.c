@@ -144,6 +144,12 @@ static int administrator_account_exists(void)
     return response.status == STATUS_NORMAL && response.values[1] != 0;
 }
 
+static int login_session_active(void)
+{
+    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    return response.status == STATUS_NORMAL && response.values[3] != 0;
+}
+
 static u64 login_lock_until(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
@@ -180,6 +186,9 @@ static u64 read_line(char *line, u64 capacity, int echo, int progress)
     u8 byte;
     for (;;) {
         if (!read_byte(&byte)) {
+            if (login_session_active()) {
+                return 0;
+            }
             if (progress && ((progress_tick++ & 127) == 0)) {
                 write_auth_progress_frame(progress_step++);
             }
@@ -319,7 +328,6 @@ void _start(void)
     u8 challenge[TPM_CHALLENGE_BYTES];
 
     call(OP_SERVICE_READY, LOGIN_ROLE, 0, 0, 0);
-    write_text("\x1b]GhostOSAuthWait\x07");
     write_text("GhostOS login service\n");
     // Only claim the terminal is locked when an administrator already
     // exists. On a first boot this line must stay silent so the host
@@ -333,7 +341,7 @@ void _start(void)
         while (!administrator_account_exists()) {
             idle();
         }
-        while (!login_requested()) {
+        while (!login_requested() || login_session_active()) {
             idle();
         }
         u64 locked_until = login_lock_until();
@@ -342,10 +350,22 @@ void _start(void)
             wait_until(locked_until);
             continue;
         }
+        if (login_session_active()) {
+            continue;
+        }
         write_text("\x1b]GhostOSLogin\x07");
         u64 username_length = read_line(username, sizeof(username), 0, 0);
+        if (login_session_active()) {
+            clear_bytes(username, sizeof(username));
+            continue;
+        }
         write_text("\x1b]GhostOSAuthMethod\x07");
         u64 method_length = read_line(method, sizeof(method), 0, 0);
+        if (login_session_active()) {
+            clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
+            continue;
+        }
         int use_tpm = method_length == 3
             && (method[0] == 't' || method[0] == 'T')
             && (method[1] == 'p' || method[1] == 'P')
@@ -383,6 +403,11 @@ void _start(void)
         write_text("\x1b]GhostOSChallenge:");
         write_hex_bytes(challenge, sizeof(challenge));
         write_text("\x07");
+        if (login_session_active()) {
+            clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
+            continue;
+        }
         write_auth_progress();
         u64 credential_hex_length = read_line(
             credential_hex,
@@ -390,6 +415,13 @@ void _start(void)
             0,
             1
         );
+        if (login_session_active()) {
+            clear_bytes(username, sizeof(username));
+            clear_bytes(method, sizeof(method));
+            clear_bytes(credential_hex, sizeof(credential_hex));
+            clear_bytes(credential, sizeof(credential));
+            continue;
+        }
         u64 credential_length;
         u8 *credential_data = credential;
         if (!use_tpm && credential_hex_length >= 4

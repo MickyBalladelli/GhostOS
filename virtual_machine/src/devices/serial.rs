@@ -30,15 +30,13 @@ const OUTPUT_COMPACTION_THRESHOLD: usize = OUTPUT_LIMIT * 2;
 const GUEST_PANIC_MARKER: &[u8] = b"KERNEL PANIC";
 const ENROLLMENT_MARKER: &[u8] = b"\x1b]GhostOSEnroll\x07";
 const LOGIN_MARKER: &[u8] = b"\x1b]GhostOSLogin\x07";
-const AUTH_WAIT_MARKER: &[u8] = b"\x1b]GhostOSAuthWait\x07";
 const AUTHORIZED_PROMPT: &[u8] = b"$ ";
 const AUTH_SPINNER_FRAMES: &[u8] = b"|/-\\";
 const AUTH_SPINNER_INTERVAL: Duration = Duration::from_millis(80);
 const AUTH_HOLD_KEEP: usize = 32;
-const AUTHENTICATION_MARKERS: [(&[u8], &[u8]); 3] = [
+const AUTHENTICATION_MARKERS: [(&[u8], &[u8]); 2] = [
     (ENROLLMENT_MARKER, b"Administrator username: "),
     (LOGIN_MARKER, b"Username: "),
-    (AUTH_WAIT_MARKER, b""),
 ];
 
 pub(crate) fn write_host_console<W: Write>(
@@ -84,6 +82,30 @@ fn compact_held_output(output: &mut Vec<u8>, pending_marker_bytes: usize) {
     if output.len() > keep {
         let drop = output.len() - keep;
         output.drain(..drop);
+    }
+}
+
+fn drop_auth_progress_frames(output: &mut Vec<u8>) {
+    const PREFIX: &[u8] = b"GhostOS authentication:";
+    loop {
+        let start = output
+            .windows(PREFIX.len())
+            .position(|bytes| bytes == PREFIX)
+            .map(|index| {
+                if index > 0 && output[index - 1] == b'\r' {
+                    index - 1
+                } else {
+                    index
+                }
+            });
+        let Some(start) = start else { return };
+        let from = start + PREFIX.len();
+        let end = output[from..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map(|offset| from + offset + 1)
+            .unwrap_or(output.len());
+        output.drain(start..end);
     }
 }
 
@@ -275,6 +297,7 @@ impl Serial16550 {
         if waiting_from.is_some() {
             self.auth_waiting = true;
         }
+        drop_auth_progress_frames(&mut self.host_output);
         let pending_marker_bytes = pending_authentication_marker_bytes(&self.host_output);
         let complete_end = self.host_output.len() - pending_marker_bytes;
         if !self.auth_waiting {
@@ -284,7 +307,10 @@ impl Serial16550 {
             self.auth_waiting = false;
             return complete_end
         }
-        if let Some(prompt_at) = authorized_prompt_offset(&self.host_output[..complete_end]) {
+        let search_from = waiting_from.unwrap_or(0).min(complete_end);
+        if let Some(relative) = authorized_prompt_offset(&self.host_output[search_from..complete_end])
+        {
+            let prompt_at = search_from + relative;
             self.host_output.drain(..prompt_at);
             self.auth_waiting = false;
             return self.host_output.len() - pending_marker_bytes
@@ -597,20 +623,6 @@ mod tests {
     }
 
     #[test]
-    fn auth_wait_marker_is_silent_without_banner() {
-        let mut s = Serial16550::new(0x3F8);
-        s.host_output.extend_from_slice(b"boot\r\n");
-        s.host_output.extend_from_slice(AUTH_WAIT_MARKER);
-        s.host_output.extend_from_slice(b"GhostOS login service\r\n");
-
-        let writable = s.insert_authentication_banner();
-
-        assert_eq!(writable, s.host_output.len());
-        assert_eq!(s.host_output, b"boot\r\nGhostOS login service\r\n");
-        assert!(!s.auth_waiting);
-    }
-
-    #[test]
     fn login_marker_holds_output_until_prompt() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey URL\r\n");
@@ -623,6 +635,20 @@ mod tests {
 
         s.host_output.extend_from_slice(b"$ ");
         let writable = s.insert_authentication_banner();
+        assert!(!s.auth_waiting);
+        assert_eq!(&s.host_output[..writable], b"$ ");
+    }
+
+    #[test]
+    fn authentication_progress_frames_do_not_reprint_after_prompt() {
+        let mut s = Serial16550::new(0x3F8);
+        s.set_authentication_banner(b"Passkey URL\r\n");
+        s.host_output.extend_from_slice(b"$ \rGhostOS authentication: |");
+        s.host_output.extend_from_slice(b"\rGhostOS authentication: /");
+        s.host_output.extend_from_slice(b"\rGhostOS authentication: ready\n");
+
+        let writable = s.insert_authentication_banner();
+
         assert!(!s.auth_waiting);
         assert_eq!(&s.host_output[..writable], b"$ ");
     }
