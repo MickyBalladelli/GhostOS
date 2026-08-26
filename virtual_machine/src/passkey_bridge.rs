@@ -544,6 +544,7 @@ impl PasskeyBridge {
             self.mode = Mode::Success;
             self.error = None;
             self.login_in_progress = false;
+            self.input_flow = InputFlow::None;
         } else if new_text.contains("Login failed:") {
             self.mode = Mode::Login;
             self.challenge = None;
@@ -568,6 +569,9 @@ impl PasskeyBridge {
     }
 
     fn advance_input(&mut self, vm: &mut Vm) {
+        if matches!(self.mode, Mode::Success) {
+            return
+        }
         let next = match &self.input_flow {
             InputFlow::EnrollKind { key }
                 if self

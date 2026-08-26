@@ -1173,9 +1173,14 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
         let first_run = !LOGIN_ADMINISTRATOR_EXISTS.load(Ordering::Acquire);
+        if LOGIN_BRIDGE_ACTIVE.load(Ordering::Acquire) {
+            drain_console_input();
+        }
         let byte = if caller.raw() == 9 && first_run {
             keyboard::read_boot_byte().or_else(usb_keyboard::read_boot_byte)
-        } else if LOGIN_REQUESTED.load(Ordering::Acquire) {
+        } else if LOGIN_BRIDGE_ACTIVE.load(Ordering::Acquire)
+            || LOGIN_REQUESTED.load(Ordering::Acquire)
+        {
             keyboard::read_boot_byte().or_else(usb_keyboard::read_boot_byte)
         } else {
             keyboard::read_boot_byte().or_else(console::read_byte)
@@ -1222,11 +1227,14 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
         {
             return syscall_error(Status::INVALID_ARGUMENT)
         }
-        let byte = if LOGIN_BRIDGE_ACTIVE.load(Ordering::Acquire) {
-            console::read_byte()
-        } else if let Some(byte) = console::read_byte() {
-            LOGIN_BRIDGE_ACTIVE.store(true, Ordering::Release);
+        let serial_byte = console::read_byte();
+        let byte = if let Some(byte) = serial_byte {
+            if byte == 0 {
+                LOGIN_BRIDGE_ACTIVE.store(true, Ordering::Release);
+            }
             Some(byte)
+        } else if LOGIN_BRIDGE_ACTIVE.load(Ordering::Acquire) {
+            None
         } else if caller.raw() == 9 {
             keyboard::read_boot_byte().or_else(usb_keyboard::read_boot_byte)
         } else {

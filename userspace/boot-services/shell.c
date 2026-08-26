@@ -1928,6 +1928,9 @@ static void execute_line(char *line, u8 *buffer)
     char command[256];
     char path[256];
     char *cursor = line;
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '$') {
+        cursor++;
+    }
     if (next_word(&cursor, command) == 0) {
         return;
     }
