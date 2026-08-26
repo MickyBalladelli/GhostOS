@@ -175,6 +175,7 @@ pub struct TerminalSession {
     raw_mode: RawMode,
     transcript: RefCell<TerminalTranscript>,
     has_terminal: bool,
+    previous_input_was_cr: Cell<bool>,
     last_size: Cell<Option<(u16, u16)>>,
     last_size_check_ns: Cell<Option<u64>>,
     clock: SharedMonotonicClock,
@@ -210,6 +211,7 @@ impl TerminalSession {
             raw_mode,
             transcript: RefCell::new(TerminalTranscript::default()),
             has_terminal: is_tty,
+            previous_input_was_cr: Cell::new(false),
             last_size: Cell::new(None),
             last_size_check_ns: Cell::new(None),
             clock,
@@ -240,6 +242,7 @@ impl TerminalSession {
             raw_mode: RawMode::inactive(),
             transcript: RefCell::new(TerminalTranscript::default()),
             has_terminal: false,
+            previous_input_was_cr: Cell::new(false),
             last_size: Cell::new(None),
             last_size_check_ns: Cell::new(None),
             clock,
@@ -285,7 +288,12 @@ impl TerminalSession {
         for event in pending {
             match event {
                 InputEvent::Bytes(raw) => {
-                    let bytes = translate_input_bytes(&raw);
+                    let mut previous_input_was_cr = self.previous_input_was_cr.get();
+                    let bytes = translate_input_bytes_after_cr(
+                        &raw,
+                        &mut previous_input_was_cr,
+                    );
+                    self.previous_input_was_cr.set(previous_input_was_cr);
                     input.bytes.extend(&bytes);
                     self.update_diagnostics(|diagnostics| {
                         diagnostics.input_bytes += raw.len() as u64
@@ -397,10 +405,22 @@ fn spawn_input_reader(mut input: Box<dyn Read + Send>) -> Receiver<InputEvent> {
 /// This stays independent from stdin so the exact input policy can be tested
 /// without taking ownership of the process terminal.
 pub fn translate_input_bytes(bytes: &[u8]) -> Vec<u8> {
-    bytes
-        .iter()
-        .map(|byte| if *byte == 0x7F { 0x08 } else { *byte })
-        .collect()
+    let mut previous_input_was_cr = false;
+    translate_input_bytes_after_cr(bytes, &mut previous_input_was_cr)
+}
+
+fn translate_input_bytes_after_cr(bytes: &[u8], previous_input_was_cr: &mut bool) -> Vec<u8> {
+    let mut translated = Vec::with_capacity(bytes.len());
+    for &byte in bytes {
+        let byte = if byte == 0x7F { 0x08 } else { byte };
+        if byte == b'\n' && *previous_input_was_cr {
+            *previous_input_was_cr = false;
+            continue
+        }
+        translated.push(byte);
+        *previous_input_was_cr = byte == b'\r';
+    }
+    translated
 }
 
 struct RawMode {
