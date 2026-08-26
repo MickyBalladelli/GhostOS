@@ -18,7 +18,6 @@ pub mod migration;
 
 pub const GUEST_ABI_SCHEMA_VERSION: u16 = ghostos_abi::ABI_SCHEMA_VERSION;
 const INTERACTIVE_STEP_BUDGET: usize = 16 * 1024;
-const DEVICE_POLL_STEP_BUDGET: usize = 512;
 
 pub use cpu::{Cpu, CpuState, CpuMode, PrivilegeLevel, CpuError};
 pub use memory::{LargePageSize, MemoryError, MemoryStats, Mmu, PageFlags, PAGE_SIZE};
@@ -875,21 +874,19 @@ impl Vm {
 
     fn step_cpu(&mut self, max_instructions: usize) -> Result<usize, VmError> {
         let mut total_executed = 0;
-        let mut since_device_poll = 0;
         while total_executed < max_instructions && !self.cpu.state.halted {
             self.inject_replay_host_inputs()?;
             if let Some(error) = self.replay.borrow_mut().take_error() {
                 return Err(VmError::Replay(error))
             }
             let remaining = max_instructions - total_executed;
-            let quantum_remaining = DEVICE_POLL_STEP_BUDGET - since_device_poll;
             let executed = match self.execution.execute(
                 &mut self.cpu,
                 &mut self.mmu,
                 &mut self.interrupt_controller,
                 &mut self.ports,
                 &mut self.bios.context,
-                remaining.min(quantum_remaining),
+                remaining,
             ) {
                 Ok(executed) => executed,
                 Err(error) => {
@@ -907,17 +904,13 @@ impl Vm {
                 break
             }
             total_executed += executed;
-            since_device_poll += executed;
-            if since_device_poll >= DEVICE_POLL_STEP_BUDGET {
-                self.poll_after_cpu()?;
-                since_device_poll = 0;
-            }
+            self.poll_after_cpu()?;
             if self.power_state() != PowerState::Running {
                 break
             }
         }
 
-        if since_device_poll != 0 || total_executed == 0 {
+        if total_executed == 0 {
             self.poll_after_cpu()?;
         }
         Ok(total_executed)
