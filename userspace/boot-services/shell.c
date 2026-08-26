@@ -352,17 +352,15 @@ static void watchdog_command(char *cursor)
 }
 
 __attribute__((noinline))
-static void print_directory(char *path, u8 *buffer)
+static void print_directory(const char *path, u8 *buffer)
 {
     u64 path_length = length(path);
     u64 continuation = 0;
     for (;;) {
         u64 index;
+        memset(buffer, 0, 4096);
         for (index = 0; index <= path_length; index++) {
             buffer[index] = (u8)path[index];
-        }
-        for (index = path_length + 1; index < 4096; index++) {
-            buffer[index] = 0;
         }
         struct response response = call(OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation);
         if (response.status != 0) {
@@ -1971,17 +1969,11 @@ static void execute_line(char *line, u8 *buffer)
         char argument[256];
         u64 argument_length = next_word(&cursor, argument);
         if (argument_length == 0) {
-            path[0] = '/';
-            path[1] = 0;
-        } else {
-            u64 index = 0;
-            while (index <= argument_length) {
-                path[index] = argument[index];
-                index++;
-            }
-            make_absolute_path(path);
+            print_directory("/", buffer);
+            return;
         }
-        print_directory(path, buffer);
+        make_absolute_path(argument);
+        print_directory(argument, buffer);
         return;
     }
     if (equal_name(command, "LOGIN")) {
