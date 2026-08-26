@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 const REG_DATA: u16 = 0x00;
 const REG_IER: u16 = 0x01;
@@ -29,9 +30,15 @@ const OUTPUT_COMPACTION_THRESHOLD: usize = OUTPUT_LIMIT * 2;
 const GUEST_PANIC_MARKER: &[u8] = b"KERNEL PANIC";
 const ENROLLMENT_MARKER: &[u8] = b"\x1b]GhostOSEnroll\x07";
 const LOGIN_MARKER: &[u8] = b"\x1b]GhostOSLogin\x07";
-const AUTHENTICATION_MARKERS: [(&[u8], &[u8]); 2] = [
+const AUTH_WAIT_MARKER: &[u8] = b"\x1b]GhostOSAuthWait\x07";
+const AUTHORIZED_PROMPT: &[u8] = b"$ ";
+const AUTH_SPINNER_FRAMES: &[u8] = b"|/-\\";
+const AUTH_SPINNER_INTERVAL: Duration = Duration::from_millis(80);
+const AUTH_HOLD_KEEP: usize = 32;
+const AUTHENTICATION_MARKERS: [(&[u8], &[u8]); 3] = [
     (ENROLLMENT_MARKER, b"Administrator username: "),
     (LOGIN_MARKER, b"Username: "),
+    (AUTH_WAIT_MARKER, b""),
 ];
 
 pub(crate) fn write_host_console<W: Write>(
@@ -48,6 +55,36 @@ pub(crate) fn write_host_console<W: Write>(
         *previous_was_cr = byte == b'\r';
     }
     output.write_all(&translated)
+}
+
+fn pending_authentication_marker_bytes(output: &[u8]) -> usize {
+    AUTHENTICATION_MARKERS
+        .iter()
+        .flat_map(|(marker, _)| 1..marker.len())
+        .filter(|length| {
+            AUTHENTICATION_MARKERS.iter().any(|(marker, _)| {
+                *length < marker.len() && output.ends_with(&marker[..*length])
+            })
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn authorized_prompt_offset(bytes: &[u8]) -> Option<usize> {
+    if bytes.starts_with(AUTHORIZED_PROMPT) {
+        return Some(0)
+    }
+    bytes.windows(1 + AUTHORIZED_PROMPT.len()).position(|window| {
+        matches!(window[0], b'\n' | b'\r') && window[1..] == *AUTHORIZED_PROMPT
+    }).map(|index| index + 1)
+}
+
+fn compact_held_output(output: &mut Vec<u8>, pending_marker_bytes: usize) {
+    let keep = AUTH_HOLD_KEEP + pending_marker_bytes;
+    if output.len() > keep {
+        let drop = output.len() - keep;
+        output.drain(..drop);
+    }
 }
 
 /// Emulated 16550 UART. Output is redirected to `std::io::stdout` so a guest
@@ -69,6 +106,10 @@ pub struct Serial16550 {
     host_last_was_cr: bool,
     host_output: Vec<u8>,
     authentication_banner: Vec<u8>,
+    auth_waiting: bool,
+    spinner_frame: u8,
+    spinner_drawn: bool,
+    last_spinner: Instant,
     rx_buffer: VecDeque<u8>,
     pending_input: VecDeque<u8>,
     output: Vec<u8>,
@@ -97,6 +138,10 @@ impl Serial16550 {
             host_last_was_cr: false,
             host_output: Vec::with_capacity(4096),
             authentication_banner: Vec::new(),
+            auth_waiting: false,
+            spinner_frame: 0,
+            spinner_drawn: false,
+            last_spinner: Instant::now(),
             rx_buffer: VecDeque::new(),
             pending_input: VecDeque::new(),
             output: Vec::new(),
@@ -177,18 +222,32 @@ impl Serial16550 {
     /// Flush bytes waiting in the transmit FIFO.
     pub fn flush(&mut self) {
         self.flush_output();
-        if !self.host_output.is_empty() {
-            let writable = self.insert_authentication_banner();
-            let mut stdout = std::io::stdout().lock();
-            if writable != 0 {
-                let _ = stdout.write_all(&self.host_output[..writable]);
-                let _ = stdout.flush();
-                self.host_output.drain(..writable);
-            }
+        let writable = if self.host_output.is_empty() {
+            0
+        } else {
+            self.insert_authentication_banner()
+        };
+        if writable == 0 && !self.auth_waiting {
+            return
         }
+        let mut stdout = std::io::stdout().lock();
+        if writable != 0 {
+            if self.spinner_drawn {
+                let _ = stdout.write_all(b"\r\x1b[K");
+                self.spinner_drawn = false;
+            }
+            let _ = stdout.write_all(&self.host_output[..writable]);
+            self.host_output.drain(..writable);
+        }
+        if self.auth_waiting {
+            self.write_auth_spinner(&mut stdout);
+        }
+        let _ = stdout.flush();
     }
 
     fn insert_authentication_banner(&mut self) -> usize {
+        let passkey_web = !self.authentication_banner.is_empty();
+        let mut waiting_from = if self.auth_waiting { Some(0) } else { None };
         while let Some((marker_start, marker, fallback)) = AUTHENTICATION_MARKERS
             .iter()
             .filter_map(|(marker, fallback)| {
@@ -200,28 +259,53 @@ impl Serial16550 {
             .min_by_key(|(start, _, _)| *start)
         {
             let marker_end = marker_start + marker.len();
-            let replacement = if self.authentication_banner.is_empty() {
-                fallback
+            let replacement = if passkey_web {
+                if waiting_from.is_none() {
+                    waiting_from = Some(marker_start);
+                }
+                &[] as &[u8]
             } else {
-                self.authentication_banner.as_slice()
+                fallback
             };
             self.host_output.splice(
                 marker_start..marker_end,
                 replacement.iter().copied(),
             );
         }
-        let pending_marker_bytes = AUTHENTICATION_MARKERS
-            .iter()
-            .flat_map(|(marker, _)| 1..marker.len())
-            .filter(|length| {
-                AUTHENTICATION_MARKERS.iter().any(|(marker, _)| {
-                    *length < marker.len()
-                        && self.host_output.ends_with(&marker[..*length])
-                })
-            })
-            .max()
-            .unwrap_or(0);
-        self.host_output.len() - pending_marker_bytes
+        if waiting_from.is_some() {
+            self.auth_waiting = true;
+        }
+        let pending_marker_bytes = pending_authentication_marker_bytes(&self.host_output);
+        let complete_end = self.host_output.len() - pending_marker_bytes;
+        if !self.auth_waiting {
+            return complete_end
+        }
+        if self.panic_detected {
+            self.auth_waiting = false;
+            return complete_end
+        }
+        if let Some(prompt_at) = authorized_prompt_offset(&self.host_output[..complete_end]) {
+            self.host_output.drain(..prompt_at);
+            self.auth_waiting = false;
+            return self.host_output.len() - pending_marker_bytes
+        }
+        let hold_from = waiting_from.unwrap_or(0).min(complete_end);
+        if hold_from == 0 {
+            compact_held_output(&mut self.host_output, pending_marker_bytes);
+        }
+        hold_from
+    }
+
+    fn write_auth_spinner(&mut self, stdout: &mut impl Write) {
+        let now = Instant::now();
+        if self.spinner_drawn && now.duration_since(self.last_spinner) < AUTH_SPINNER_INTERVAL {
+            return
+        }
+        let frame = AUTH_SPINNER_FRAMES[self.spinner_frame as usize];
+        self.spinner_frame = (self.spinner_frame + 1) % AUTH_SPINNER_FRAMES.len() as u8;
+        self.last_spinner = now;
+        self.spinner_drawn = true;
+        let _ = stdout.write_all(&[b'\r', frame, 0x1b, b'[', b'K']);
     }
 
     fn signal_receive_irq(&mut self) {
@@ -457,20 +541,29 @@ mod tests {
     }
 
     #[test]
-    fn authentication_banner_is_inserted_immediately_before_prompt() {
+    fn authentication_banner_holds_setup_until_prompt() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey setup and login: http://localhost:1234/?code=test\r\n");
         s.host_output.extend_from_slice(
-            b"Ready\r\n\x1b]GhostOSEnroll\x07",
+            b"Ready\r\n\x1b]GhostOSEnroll\x07Do not type credentials in this terminal.\r\n",
         );
 
         let writable = s.insert_authentication_banner();
 
-        assert_eq!(writable, s.host_output.len());
+        assert_eq!(&s.host_output[..writable], b"Ready\r\n");
+        s.host_output.drain(..writable);
+        assert!(s.auth_waiting);
         assert_eq!(
             s.host_output,
-            b"Ready\r\nPasskey setup and login: http://localhost:1234/?code=test\r\n"
+            b"Do not type credentials in this terminal.\r\n"
         );
+
+        s.host_output.extend_from_slice(
+            b"Administrator account committed.\r\nGhostOS user shell\r\n$ ",
+        );
+        let writable = s.insert_authentication_banner();
+        assert!(!s.auth_waiting);
+        assert_eq!(&s.host_output[..writable], b"$ ");
     }
 
     #[test]
@@ -486,8 +579,9 @@ mod tests {
             .extend_from_slice(b"OSEnroll\x07");
 
         let writable = s.insert_authentication_banner();
-        assert_eq!(writable, s.host_output.len());
-        assert_eq!(s.host_output, b"Passkey URL\r\n");
+        assert_eq!(writable, 0);
+        assert!(s.auth_waiting);
+        assert!(s.host_output.is_empty());
     }
 
     #[test]
@@ -499,6 +593,38 @@ mod tests {
 
         assert_eq!(writable, s.host_output.len());
         assert_eq!(s.host_output, b"Administrator username: ");
+        assert!(!s.auth_waiting);
+    }
+
+    #[test]
+    fn auth_wait_marker_is_silent_without_banner() {
+        let mut s = Serial16550::new(0x3F8);
+        s.host_output.extend_from_slice(b"boot\r\n");
+        s.host_output.extend_from_slice(AUTH_WAIT_MARKER);
+        s.host_output.extend_from_slice(b"GhostOS login service\r\n");
+
+        let writable = s.insert_authentication_banner();
+
+        assert_eq!(writable, s.host_output.len());
+        assert_eq!(s.host_output, b"boot\r\nGhostOS login service\r\n");
+        assert!(!s.auth_waiting);
+    }
+
+    #[test]
+    fn login_marker_holds_output_until_prompt() {
+        let mut s = Serial16550::new(0x3F8);
+        s.set_authentication_banner(b"Passkey URL\r\n");
+        s.host_output.extend_from_slice(LOGIN_MARKER);
+        s.host_output.extend_from_slice(b"Username: micky\r\nLogin accepted.\r\n");
+
+        let writable = s.insert_authentication_banner();
+        assert_eq!(writable, 0);
+        assert!(s.auth_waiting);
+
+        s.host_output.extend_from_slice(b"$ ");
+        let writable = s.insert_authentication_banner();
+        assert!(!s.auth_waiting);
+        assert_eq!(&s.host_output[..writable], b"$ ");
     }
 
     #[test]

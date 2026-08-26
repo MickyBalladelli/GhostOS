@@ -319,6 +319,7 @@ void _start(void)
     u8 challenge[TPM_CHALLENGE_BYTES];
 
     call(OP_SERVICE_READY, LOGIN_ROLE, 0, 0, 0);
+    write_text("\x1b]GhostOSAuthWait\x07");
     write_text("GhostOS login service\n");
     // Only claim the terminal is locked when an administrator already
     // exists. On a first boot this line must stay silent so the host

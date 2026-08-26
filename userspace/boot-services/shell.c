@@ -2373,11 +2373,13 @@ void _start(void)
         sleep_for(SHELL_POLL_DELAY_US);
     }
     if (first_run_mode()) {
+        write_text("\x1b]GhostOSAuthWait\x07");
         write_text("No administrator account exists.\n");
         write_text("GhostOS first-run setup mode\n");
         run_first_run_wizard();
         write_text("\nGhostOS user shell\n");
     } else {
+        write_text("\x1b]GhostOSAuthWait\x07");
         write_text("GhostOS user shell\n");
     }
     int prompt_authorized = -1;
