@@ -18,6 +18,7 @@ use ghostos_vm::{
     run_ghostos_integration, DiskController, DiskFormat, DiskImage, DiskManager, DiskPersistence,
     DiskRole,
     DiskSpec, FirmwareMode, SystemDiskCreateOptions, SystemDiskInstall, SystemDiskProvisioner,
+    SystemServicePackage,
     GuestInputMode, HardwareAcceleration, NetworkBackendConfig, TerminalExit, TerminalSession,
     Vm, VmConfig,
     migration_checkpoint_tag, validate_migration_checkpoint, snapshot_digest, SnapshotAuthKey,
@@ -109,6 +110,11 @@ enum DiskCommand {
     Validate { path: PathBuf, json: bool },
     Repair { path: PathBuf, json: bool },
     Rollback { path: PathBuf, json: bool },
+    RefreshServices {
+        path: PathBuf,
+        service_packages: Vec<(u8, PathBuf)>,
+        json: bool,
+    },
     Provision {
         path: PathBuf,
         kernel: PathBuf,
@@ -551,7 +557,7 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
     let subcommand = values
         .first()
         .map(String::as_str)
-        .ok_or_else(|| "disk needs a command: list, inspect, validate, repair, rollback, provision, upgrade, lock, or recover-lock".to_string())?;
+        .ok_or_else(|| "disk needs a command: list, inspect, validate, repair, rollback, refresh-services, provision, upgrade, lock, or recover-lock".to_string())?;
     match subcommand {
         "list" => Ok(ParseResult::Disk(DiskCommand::List(parse_disk_options(&values[1..])?))),
         "inspect" => {
@@ -570,6 +576,7 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
             let (path, json) = command_path(values, "rollback")?;
             Ok(ParseResult::Disk(DiskCommand::Rollback { path, json }))
         }
+        "refresh-services" => parse_refresh_services_command(values),
         "lock" => parse_lock_command(values),
         "recover-lock" => parse_recover_lock_command(values),
         "provision" => parse_provision_command(&values[1..], false),
@@ -577,6 +584,37 @@ fn parse_disk_command(values: &[String]) -> Result<ParseResult, String> {
         "help" | "--help" | "-h" => Ok(ParseResult::Help),
         value => Err(format!("unknown disk command `{value}`")),
     }
+}
+
+fn parse_refresh_services_command(values: &[String]) -> Result<ParseResult, String> {
+    let mut args = values[1..].iter().peekable();
+    let path = PathBuf::from(next_ref(&mut args, "disk refresh-services PATH")?);
+    let mut service_packages = Vec::new();
+    let mut json = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--service" => {
+                let value = next_ref(&mut args, "--service")?;
+                let (role, path) = value
+                    .split_once('=')
+                    .ok_or_else(|| "--service needs ROLE=PATH".to_string())?;
+                let role = role
+                    .parse::<u8>()
+                    .map_err(|_| "service role must be a number from 1 through 14".to_string())?;
+                service_packages.push((role, PathBuf::from(path)));
+            }
+            "--json" => json = true,
+            value => return Err(format!("unknown disk refresh-services option `{value}`")),
+        }
+    }
+    if service_packages.is_empty() {
+        return Err("disk refresh-services needs at least one --service ROLE=PATH".to_string());
+    }
+    Ok(ParseResult::Disk(DiskCommand::RefreshServices {
+        path,
+        service_packages,
+        json,
+    }))
 }
 
 fn parse_lock_command(values: &[String]) -> Result<ParseResult, String> {
@@ -2343,6 +2381,32 @@ fn run_disk_command(command: DiskCommand) -> Result<(), String> {
             }
             Ok(())
         }
+        DiskCommand::RefreshServices {
+            path,
+            service_packages,
+            json,
+        } => {
+            let packages = service_packages
+                .into_iter()
+                .map(|(role, path)| SystemServicePackage { role, path })
+                .collect::<Vec<_>>();
+            let manifest = SystemDiskProvisioner::refresh_service_packages(&path, &packages)
+                .map_err(|error| format!("service refresh failed: {error}"))?;
+            if json {
+                println!(
+                    "{{\"status\":\"refreshed\",\"path\":{},\"generation\":{}}}",
+                    control::json_string(&canonical_display(&path)?),
+                    manifest.generation,
+                );
+            } else {
+                println!(
+                    "refreshed system services: path={} generation={}",
+                    canonical_display(&path)?,
+                    manifest.generation,
+                );
+            }
+            Ok(())
+        }
         DiskCommand::Provision {
             path,
             kernel,
@@ -2883,6 +2947,8 @@ Commands:
                               Repair supported redundant image metadata
   ghostos-vm disk rollback PATH [--json]
                               Restore the last safe system-disk image
+  ghostos-vm disk refresh-services PATH --service ROLE=PATH [OPTIONS]
+                              Refresh built-in services while preserving user data
   ghostos-vm disk provision PATH --kernel PATH [OPTIONS]
                               Create/install a system disk without booting
   ghostos-vm disk upgrade PATH --kernel PATH [OPTIONS]

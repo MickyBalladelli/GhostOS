@@ -10,7 +10,9 @@ use std::fs::{self, File};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use ghostos_ghostfs::{ServiceManifest, ServiceManifestEntry, SynFs};
+use ghostos_ghostfs::{
+    DirectoryEntry, FileType, ServiceManifest, ServiceManifestEntry, SynFs, SERVICE_MANIFEST_PATH,
+};
 
 pub const SYSTEM_DISK_FORMAT_VERSION: u32 = 1;
 pub const SYSTEM_DISK_ALIGNMENT: u64 = 1024 * 1024;
@@ -629,6 +631,118 @@ impl SystemDiskProvisioner {
         sync_parent_directory(path).map_err(StorageError::Io)?;
         Ok(manifest)
     }
+
+    /// Refresh selected services without replacing the system volume.
+    /// Stale external overrides are removed so the current kernel supplies its
+    /// built-in services. User files and non-selected service packages remain intact.
+    pub fn refresh_service_packages<P: AsRef<Path>>(
+        path: P,
+        packages: &[SystemServicePackage],
+    ) -> Result<SystemDiskManifest, StorageError> {
+        if packages.is_empty() {
+            return Self::validate(path);
+        }
+        let path = path.as_ref();
+        let artifacts = Self::load_boot_artifacts(path)?;
+        let mut images = Vec::new();
+        for package in packages {
+            if package.role == 0 || package.role > 14 {
+                return Err(StorageError::InvalidImage(
+                    "service role must be between 1 and 14".to_string(),
+                ));
+            }
+            if images.iter().any(|(role, _): &(u8, Vec<u8>)| *role == package.role) {
+                return Err(StorageError::InvalidImage(
+                    "service role was supplied more than once".to_string(),
+                ));
+            }
+            let image = fs::read(&package.path)?;
+            if image.is_empty() || image.len() > 19 * 4096 {
+                return Err(StorageError::InvalidImage(format!(
+                    "service package role {} must be between 1 and {} bytes",
+                    package.role,
+                    19 * 4096
+                )));
+            }
+            images.push((package.role, image));
+        }
+
+        let mut filesystem = Box::new(SynFs::<GHOSTFS_SYSTEM_BLOCKS>::new());
+        SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover_into(
+            &artifacts.system_volume,
+            filesystem.as_mut(),
+        )
+        .map_err(|_| StorageError::InvalidImage("GhostFS system volume is corrupt".to_string()))?;
+        let mut scratch = [0; 2048];
+        let existing = ServiceManifest::load(filesystem.as_ref(), &mut scratch)
+            .map_err(|_| StorageError::InvalidImage("service manifest is corrupt".to_string()))?;
+        let changed = existing
+            .entries()
+            .any(|entry| images.iter().any(|(role, _)| *role == entry.role));
+        if !changed {
+            return Ok(artifacts.manifest);
+        }
+
+        let mut source = Box::new(SynFs::<GHOSTFS_SYSTEM_BLOCKS>::new());
+        SynFs::<GHOSTFS_SYSTEM_BLOCKS>::recover_into(&artifacts.system_volume, source.as_mut())
+            .map_err(|_| StorageError::InvalidImage("GhostFS system volume is corrupt".to_string()))?;
+        let mut files = Vec::new();
+        collect_current_system_files(source.as_ref(), "/", &mut files)?;
+
+        let mut volume = artifacts.system_volume;
+        let mut filesystem = Box::new(SynFs::<GHOSTFS_SYSTEM_BLOCKS>::new());
+        let target_paths = images
+            .iter()
+            .filter_map(|(role, _)| {
+                existing
+                    .entries()
+                    .find(|entry| entry.role == *role)
+                    .map(|entry| entry.path().to_string())
+                    .or_else(|| Some(format!("/system/services/{role}.pkg")))
+            })
+            .collect::<Vec<_>>();
+        for (path, file_type, contents, mode) in files {
+            if path == SERVICE_MANIFEST_PATH || target_paths.iter().any(|target| target == &path) {
+                continue;
+            }
+            match file_type {
+                FileType::Directory => filesystem
+                    .create_directory(&path, false)
+                    .map_err(|error| StorageError::InvalidImage(format!("cannot copy system directory: {error:?}")))?,
+                FileType::Regular => filesystem
+                    .write(&path, &contents)
+                    .map_err(|error| StorageError::InvalidImage(format!("cannot copy system file: {error:?}")))?,
+                FileType::Symlink => filesystem
+                    .symlink(core::str::from_utf8(&contents).map_err(|_| {
+                        StorageError::InvalidImage("system symlink is not UTF-8".to_string())
+                    })?, &path)
+                    .map_err(|error| StorageError::InvalidImage(format!("cannot copy system link: {error:?}")))?,
+            };
+            filesystem
+                .set_mode(&path, mode)
+                .map_err(|error| StorageError::InvalidImage(format!("cannot copy system mode: {error:?}")))?;
+        }
+        let mut manifest = ServiceManifest::new();
+        for entry in existing.entries() {
+            if images.iter().any(|(role, _)| *role == entry.role) {
+                continue;
+            }
+            manifest
+                .push(entry)
+                .map_err(|_| StorageError::InvalidImage("invalid service manifest".to_string()))?;
+        }
+        let mut manifest_bytes = [0; 2048];
+        let manifest_length = manifest
+            .encode(&mut manifest_bytes)
+            .map_err(|_| StorageError::InvalidImage("cannot encode service manifest".to_string()))?;
+        filesystem
+            .write(SERVICE_MANIFEST_PATH, &manifest_bytes[..manifest_length])
+            .map_err(|_| StorageError::InvalidImage("cannot write service manifest".to_string()))?;
+        filesystem
+            .flush(&mut volume)
+            .map_err(|_| StorageError::InvalidImage("cannot commit GhostFS system volume".to_string()))?;
+        Self::update_system_volume(path, &volume)
+    }
 }
 
 fn default_settings() -> Vec<SystemSetting> {
@@ -774,6 +888,53 @@ fn required_disk_size(kernel: u64, initrd: u64, reserved: u64) -> Result<u64, St
     )?;
     let size = checked_add(end, reserved)?;
     Ok(size.max(SYSTEM_DISK_MIN_SIZE))
+}
+
+fn collect_current_system_files(
+    filesystem: &SynFs<GHOSTFS_SYSTEM_BLOCKS>,
+    directory: &str,
+    output: &mut Vec<(String, FileType, Vec<u8>, u16)>,
+) -> Result<(), StorageError> {
+    let mut entries = [DirectoryEntry::EMPTY; 64];
+    let count = filesystem
+        .list_directory(directory, &mut entries)
+        .map_err(|error| StorageError::InvalidImage(format!("cannot list system volume: {error:?}")))?;
+    for entry in &entries[..count] {
+        let path = if directory == "/" {
+            format!("/{name}", name = entry.name.as_str())
+        } else {
+            format!("{directory}/{name}", name = entry.name.as_str())
+        };
+        let contents = match entry.file_type {
+            FileType::Directory => {
+                output.push((path.clone(), entry.file_type, Vec::new(), entry.mode));
+                collect_current_system_files(filesystem, &path, output)?;
+                continue;
+            }
+            FileType::Regular => {
+                let size = usize::try_from(entry.size).map_err(|_| {
+                    StorageError::InvalidImage("system file is too large".to_string())
+                })?;
+                let mut contents = vec![0; size];
+                filesystem.read(&path, &mut contents).map_err(|error| {
+                    StorageError::InvalidImage(format!("cannot read system file: {error:?}"))
+                })?;
+                contents
+            }
+            FileType::Symlink => {
+                let size = usize::try_from(entry.size).map_err(|_| {
+                    StorageError::InvalidImage("system link is too large".to_string())
+                })?;
+                let mut contents = vec![0; size];
+                filesystem.read_link(&path, &mut contents).map_err(|error| {
+                    StorageError::InvalidImage(format!("cannot read system link: {error:?}"))
+                })?;
+                contents
+            }
+        };
+        output.push((path, entry.file_type, contents, entry.mode));
+    }
+    Ok(())
 }
 
 fn create_system_volume(

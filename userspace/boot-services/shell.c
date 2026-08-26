@@ -176,8 +176,30 @@ static void write_hex(u32 value)
 
 static void write_status(u32 status)
 {
-    write_text("status=");
-    write_hex(status);
+    u32 facility = (status >> 16) & 0xfff;
+    u32 code = (status >> 3) & 0x1fff;
+    write_text("Reason: ");
+    if (facility == 1 && code == 3) {
+        write_text("the request was not valid.");
+    } else if (facility == 1 && code == 4) {
+        write_text("the requested item was not found.");
+    } else if (facility == 1 && code == 5) {
+        write_text("the filesystem has no free space.");
+    } else if (facility == 3 && code == 2) {
+        write_text("that item already exists.");
+    } else if (facility == 3 && code == 5) {
+        write_text("the directory is not empty.");
+    } else if (facility == 3 && code == 6) {
+        write_text("the path is invalid. Check its spelling and format.");
+    } else if (facility == 3 && code == 7) {
+        write_text("the path does not name a directory.");
+    } else if (facility == 3 && code == 8) {
+        write_text("the filesystem is read-only.");
+    } else if (facility == 7 && code == 1) {
+        write_text("access was denied.");
+    } else {
+        write_text("the system rejected the request.");
+    }
     write_text("\n");
 }
 
@@ -362,6 +384,25 @@ static void type_file(char *path, u8 *buffer)
     }
     call(OP_GHOSTFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
     write_text("\n");
+}
+
+static void print_help(void)
+{
+    write_text("GhostOS commands:\n");
+    write_text("  HELP, ?, COMMANDS       Show this list\n");
+    write_text("  DIRECTORY [path]        List a directory\n");
+    write_text("  CREATE <path>           Create a file\n");
+    write_text("  TYPE|CAT <path>         Read a file\n");
+    write_text("  MKDIR <path>            Create a directory\n");
+    write_text("  RMDIR|RD <path>         Remove a directory\n");
+    write_text("  DELETE|DEL <path>       Delete a file\n");
+    write_text("  WHOAMI                  Show logged-in user\n");
+    write_text("  LOGIN                   Start login\n");
+    write_text("  LOGOUT                  Lock the shell\n");
+    write_text("  CREDENTIAL ...          Manage credentials\n");
+    write_text("  ACCOUNT ...             Manage accounts\n");
+    write_text("  WATCHDOG STATUS|ON|OFF  Watchdog diagnostics\n");
+    write_text("  SHUTDOWN                Power off\n");
 }
 
 static int valid_account_username(const u8 *username, u64 username_length)
@@ -2035,6 +2076,11 @@ static void execute_line(char *line, u8 *buffer)
             write_text("Use: ACCOUNT LIST, SHOW, CREATE, DELETE, ENABLE, DISABLE, or RENAME\n");
             return;
         }
+    }
+    if (equal_name(command, "HELP") || equal_name(command, "?")
+        || equal_name(command, "COMMANDS")) {
+        print_help();
+        return;
     }
     if (next_word(&cursor, path) == 0) {
         write_text("missing path\n");

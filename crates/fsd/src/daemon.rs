@@ -1817,7 +1817,11 @@ impl<
                     .iter()
                     .position(|byte| *byte == 0)
                     .unwrap_or(output.len());
-                let prefix = Name::from_bytes(&output[..prefix_end], true)?;
+                let prefix = if &output[..prefix_end] == b"/" {
+                    Name::EMPTY
+                } else {
+                    Name::from_bytes(&output[..prefix_end], true)?
+                };
                 let bytes = self.list_current(
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
@@ -2146,44 +2150,51 @@ impl<
         continuation: usize,
         output: &mut [u8],
     ) -> Result<(usize, usize), DaemonError> {
-        let path = if prefix.is_empty() { "/" } else { prefix };
+        let root = prefix.is_empty() || prefix == "/";
+        let path = if root { "/" } else { prefix };
         let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
-        let versioned = VersionedPath::parse(path).map_err(|_| DaemonError::InvalidPath)?;
-        let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
+        let mut wildcard = false;
         let mut wildcard_next = None;
-        let count = if pattern.has_magic() {
-            let mut matches = [None; MAX_DIRECTORY_ENTRIES];
-            let (count, next) = match snapshot.expand_paths_page(path, continuation, &mut matches) {
-                Ok(page) => page,
-                Err(SynFsError::BufferTooSmall { .. }) => {
-                    return Err(DaemonError::PartialMatch)
-                }
-                Err(error) => return Err(DaemonError::File(error)),
-            };
-            wildcard_next = next;
-            for (index, matched) in matches[..count].iter().flatten().enumerate() {
-                let selected = versioned_name(matched.as_str(), versioned.version)?;
-                let file = snapshot.lookup(selected.as_str())?;
-                entries[index] = DirectoryEntry {
-                    name: *matched,
-                    file_type: file.file_type,
-                    size: file.size,
-                    version: file.version,
-                    link_count: file.link_count,
-                    mode: file.mode,
-                };
-            }
-            if count == 0 {
-                return Err(DaemonError::NotFound)
-            }
-            count
-        } else {
+        let count = if root {
             snapshot.list_directory(path, &mut entries)?
+        } else {
+            let versioned = VersionedPath::parse(path).map_err(|_| DaemonError::InvalidPath)?;
+            let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
+            wildcard = pattern.has_magic();
+            if wildcard {
+                let mut matches = [None; MAX_DIRECTORY_ENTRIES];
+                let (count, next) = match snapshot.expand_paths_page(path, continuation, &mut matches) {
+                    Ok(page) => page,
+                    Err(SynFsError::BufferTooSmall { .. }) => {
+                        return Err(DaemonError::PartialMatch)
+                    }
+                    Err(error) => return Err(DaemonError::File(error)),
+                };
+                wildcard_next = next;
+                for (index, matched) in matches[..count].iter().flatten().enumerate() {
+                    let selected = versioned_name(matched.as_str(), versioned.version)?;
+                    let file = snapshot.lookup(selected.as_str())?;
+                    entries[index] = DirectoryEntry {
+                        name: *matched,
+                        file_type: file.file_type,
+                        size: file.size,
+                        version: file.version,
+                        link_count: file.link_count,
+                        mode: file.mode,
+                    };
+                }
+                if count == 0 {
+                    return Err(DaemonError::NotFound)
+                }
+                count
+            } else {
+                snapshot.list_directory(path, &mut entries)?
+            }
         };
         let mut written = 0;
         let mut next = 0;
         let mut stopped_for_buffer = false;
-        let entry_start = if pattern.has_magic() { 0 } else { continuation };
+        let entry_start = if wildcard { 0 } else { continuation };
         for (index, entry) in entries.iter().take(count).enumerate().skip(entry_start) {
             let name = entry.name.as_bytes();
             let required = 22usize
@@ -2193,7 +2204,7 @@ impl<
                 if written == 0 {
                     return Err(DaemonError::BufferTooSmall { required })
                 }
-                next = if pattern.has_magic() {
+                next = if wildcard {
                     continuation.saturating_add(index)
                 } else {
                     index
@@ -2214,7 +2225,7 @@ impl<
             written += required;
             next = index + 1;
         }
-        if pattern.has_magic() && !stopped_for_buffer {
+        if wildcard && !stopped_for_buffer {
             next = wildcard_next.unwrap_or(0);
         }
         if stopped_for_buffer || wildcard_next.is_some() || next < count {

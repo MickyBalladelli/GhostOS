@@ -100,6 +100,7 @@ static void write_bytes(const char *bytes, u64 count)
     }
 }
 
+__attribute__((noinline))
 static void write_text(const char *text)
 {
     write_bytes(text, length(text));
@@ -159,14 +160,35 @@ static void clear_bytes(void *bytes, u64 capacity)
     }
 }
 
-static u64 read_line(char *line, u64 capacity, int echo)
+static void write_auth_progress_frame(u64 step)
+{
+    static const char *const frames[] = {
+        "|",
+        "/",
+        "-",
+        "\\",
+    };
+    write_text("\rGhostOS authentication: ");
+    write_text(frames[step & 3]);
+}
+
+static u64 read_line(char *line, u64 capacity, int echo, int progress)
 {
     u64 count = 0;
+    u64 progress_tick = 0;
+    u64 progress_step = 0;
     u8 byte;
     for (;;) {
         if (!read_byte(&byte)) {
+            if (progress && ((progress_tick++ & 127) == 0)) {
+                write_auth_progress_frame(progress_step++);
+            }
             idle();
             continue;
+        }
+        if (progress) {
+            write_text("\rGhostOS authentication: ready\n");
+            progress = 0;
         }
         if (count == 0 && byte == 0) {
             u8 length_low;
@@ -213,9 +235,10 @@ static u64 read_line(char *line, u64 capacity, int echo)
     }
 }
 
-static u64 read_private_line(char *line, u64 capacity)
+static void write_auth_progress(void)
 {
-    return read_line(line, capacity, 0);
+    write_text("\n");
+    write_auth_progress_frame(0);
 }
 
 static int hex_digit(u8 byte)
@@ -319,9 +342,9 @@ void _start(void)
             continue;
         }
         write_text("\x1b]GhostOSLogin\x07");
-        u64 username_length = read_line(username, sizeof(username), 0);
-        write_text("\nCredential [passkey/tpm]: ");
-        u64 method_length = read_line(method, sizeof(method), 0);
+        u64 username_length = read_line(username, sizeof(username), 0, 0);
+        write_text("\x1b]GhostOSAuthMethod\x07");
+        u64 method_length = read_line(method, sizeof(method), 0, 0);
         int use_tpm = method_length == 3
             && (method[0] == 't' || method[0] == 'T')
             && (method[1] == 'p' || method[1] == 'P')
@@ -356,15 +379,15 @@ void _start(void)
             clear_bytes(method, sizeof(method));
             continue;
         }
-        write_text(use_tpm
-            ? "\nPresent your TPM-backed credential and paste the quote as hex.\nChallenge: "
-            : "\nOpen the local passkey URL shown by the VM host.\n"
-              "WebAuthn RP ID: localhost.\nChallenge: ");
+        write_text("\x1b]GhostOSChallenge:");
         write_hex_bytes(challenge, sizeof(challenge));
-        write_text(use_tpm ? "\nTPM quote: " : "\nWebAuthn assertion: ");
-        u64 credential_hex_length = read_private_line(
+        write_text("\x07");
+        write_auth_progress();
+        u64 credential_hex_length = read_line(
             credential_hex,
-            sizeof(credential_hex)
+            sizeof(credential_hex),
+            0,
+            1
         );
         u64 credential_length;
         u8 *credential_data = credential;

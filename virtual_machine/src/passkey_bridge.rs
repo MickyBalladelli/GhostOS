@@ -43,7 +43,7 @@ const PAGE: &str = r#"<!doctype html>
 </html>
 "#;
 
-const STYLE: &str = r#"*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07090c;color:#f4f7fb;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:min(92vw,440px);padding:42px;border:1px solid #252b35;border-radius:24px;background:linear-gradient(145deg,#12161d,#0b0e13);box-shadow:0 30px 80px #0009}.mark{display:block;width:72px;height:72px;object-fit:contain}.eyebrow{margin:28px 0 10px;color:#9ca6b5;font-size:12px;font-weight:700;letter-spacing:.16em}h1{margin:0;font-size:42px;letter-spacing:-.04em}.message{min-height:48px;margin:16px 0 28px;color:#bdc5d1;line-height:1.5}form{display:grid;gap:12px}label{font-size:13px;font-weight:700;color:#d8dee8}input{width:100%;border:1px solid #303846;border-radius:12px;background:#080b10;color:#fff;padding:14px 15px;font:inherit;outline:none}input:focus{border-color:#e7ff57;box-shadow:0 0 0 3px #e7ff5722}button{margin-top:8px;border:0;border-radius:12px;background:#e7ff57;color:#080a0d;padding:15px;font:inherit;font-weight:850;cursor:pointer}button:disabled{cursor:wait;opacity:.55}.error{min-height:24px;color:#ff8585;font-size:14px}.foot{margin:26px 0 0;padding-top:20px;border-top:1px solid #252b35;color:#7f8998;font-size:12px}@media(max-width:520px){main{padding:28px;border-radius:18px}h1{font-size:36px}}"#;
+const STYLE: &str = r#"*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07090c;color:#f4f7fb;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:min(92vw,440px);padding:42px;border:1px solid #252b35;border-radius:24px;background:linear-gradient(145deg,#12161d,#0b0e13);box-shadow:0 30px 80px #0009}.mark{display:block;width:72px;height:72px;object-fit:contain}.eyebrow{margin:28px 0 10px;color:#9ca6b5;font-size:12px;font-weight:700;letter-spacing:.16em}h1{margin:0;font-size:42px;letter-spacing:-.04em}.message{min-height:48px;margin:16px 0 28px;color:#bdc5d1;line-height:1.5}form{display:grid;gap:12px}form[hidden]{display:none}label{font-size:13px;font-weight:700;color:#d8dee8}input{width:100%;border:1px solid #303846;border-radius:12px;background:#080b10;color:#fff;padding:14px 15px;font:inherit;outline:none}input:focus{border-color:#e7ff57;box-shadow:0 0 0 3px #e7ff5722}button{margin-top:8px;border:0;border-radius:12px;background:#e7ff57;color:#080a0d;padding:15px;font:inherit;font-weight:850;cursor:pointer}button:disabled{cursor:wait;opacity:.55}.error{min-height:24px;color:#ff8585;font-size:14px}.foot{margin:26px 0 0;padding-top:20px;border-top:1px solid #252b35;color:#7f8998;font-size:12px}@media(max-width:520px){main{padding:28px;border-radius:18px}h1{font-size:36px}}"#;
 
 const SCRIPT: &str = r#"const code = new URLSearchParams(location.search).get('code') || ''
 const form = document.querySelector('#form')
@@ -282,8 +282,9 @@ async function login(name) {
 }
 
 function render(state) {
-  if (busy) return
   mode = state.mode
+  if (mode === 'waiting') form.hidden = true
+  if (busy) return
   error.textContent = state.error || ''
   if (mode === 'enroll') {
     title.textContent = 'Create administrator'
@@ -324,6 +325,7 @@ form.addEventListener('submit', async event => {
     return
   }
   busy = true
+  form.hidden = true
   action.disabled = true
   error.textContent = ''
   try {
@@ -593,7 +595,7 @@ impl PasskeyBridge {
                 Some((bridge_line(b"y"), InputFlow::None))
             }
             InputFlow::LoginKind
-                if self.guest_text.contains("Credential [passkey/tpm]:") =>
+                if self.guest_text.contains("\x1b]GhostOSAuthMethod\x07") =>
             {
                 Some((bridge_line(b""), InputFlow::None))
             }
@@ -966,7 +968,8 @@ fn hex_digit(byte: u8) -> Option<u8> {
 }
 
 fn last_challenge(text: &str) -> Option<String> {
-    let start = text.rfind("Challenge: ")? + "Challenge: ".len();
+    const CHALLENGE_MARKER: &str = "\x1b]GhostOSChallenge:";
+    let start = text.rfind(CHALLENGE_MARKER)? + CHALLENGE_MARKER.len();
     let challenge = text.get(start..start + 64)?;
     challenge.bytes().all(|byte| byte.is_ascii_hexdigit()).then(|| challenge.to_string())
 }

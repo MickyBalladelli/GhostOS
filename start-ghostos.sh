@@ -51,11 +51,24 @@ if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios ./userspace/boo
   ./scripts/build-bios-image.sh >/dev/null
 fi
 
+SERVICE_IMAGE_DIR=./target/x86_64-unknown-none/release/build
+SHELL_SERVICE_PATH=$(find "$SERVICE_IMAGE_DIR" -type f -name ghostos-shell.bin -print -quit)
+LOGIN_SERVICE_PATH=$(find "$SERVICE_IMAGE_DIR" -type f -name ghostos-login.bin -print -quit)
+if [ -z "$SHELL_SERVICE_PATH" ] || [ -z "$LOGIN_SERVICE_PATH" ]; then
+  echo "start-ghostos.sh: service packages are missing; rebuild the BIOS image" >&2
+  exit 1
+fi
+SERVICE_PACKAGE_ARGS=(
+  --service "9=$SHELL_SERVICE_PATH"
+  --service "14=$LOGIN_SERVICE_PATH"
+)
+
 if [ ! -x ./target/release/ghostos-vm ] || find ./virtual_machine ./Cargo.toml ./Cargo.lock -type f -newer ./target/release/ghostos-vm -print -quit | grep -q .; then
   echo "Building ghostos-vm (release)..." >&2
   cargo build -p ghostos-vm --release >/dev/null
 fi
 
+SYSTEM_DISK_CREATED=false
 if [ ! -f "$SYSTEM_DISK_PATH" ]; then
   echo "Provisioning GhostOS system disk: $SYSTEM_DISK_PATH" >&2
   ./target/release/ghostos-vm disk provision "$SYSTEM_DISK_PATH" \
@@ -64,19 +77,23 @@ if [ ! -f "$SYSTEM_DISK_PATH" ]; then
     --boot-args console=serial0 \
     --machine-id "$VM_NAME" \
     --network-id "$VM_NAME"
-elif ! ./target/release/ghostos-vm disk validate "$SYSTEM_DISK_PATH" >/dev/null 2>&1; then
-  echo "start-ghostos.sh: system disk is invalid: $SYSTEM_DISK_PATH" >&2
-  echo "start-ghostos.sh: move it aside, then start again to provision a new one" >&2
-  exit 1
+  SYSTEM_DISK_CREATED=true
+else
+  echo "$SYSTEM_DISK_PATH"
 fi
 
+SYSTEM_DISK_REFRESH_ALLOWED=true
 if [ "$FORCE_NEW" = true ]; then
   PERSISTENCE_ARGS=(--copy-on-write)
+  SYSTEM_DISK_REFRESH_ALLOWED=false
 else
   for LOCKED_DISK in "$SYSTEM_DISK_PATH" "$DATA_DISK_PATH"; do
     LOCK_STATUS=$(./target/release/ghostos-vm disk lock "$LOCKED_DISK" 2>/dev/null || true)
     case "$LOCK_STATUS" in
       "disk lock: active"*)
+        if [ "$LOCKED_DISK" = "$SYSTEM_DISK_PATH" ]; then
+          SYSTEM_DISK_REFRESH_ALLOWED=false
+        fi
         if [ "$VM_NAME" = default ]; then
           PERSISTENCE_ARGS=(--copy-on-write)
         else
@@ -89,6 +106,11 @@ else
         ;;
     esac
   done
+fi
+
+if [ "$SYSTEM_DISK_CREATED" = false ] && [ "$SYSTEM_DISK_REFRESH_ALLOWED" = true ]; then
+  ./target/release/ghostos-vm disk refresh-services "$SYSTEM_DISK_PATH" \
+    "${SERVICE_PACKAGE_ARGS[@]}"
 fi
 
 VM_COMMAND=(
