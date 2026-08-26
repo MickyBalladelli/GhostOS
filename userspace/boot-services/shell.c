@@ -127,6 +127,7 @@ static u64 length(const char *text)
     return count;
 }
 
+__attribute__((noinline))
 static int equal_name(const char *left, const char *right)
 {
     u64 index = 0;
@@ -145,6 +146,32 @@ static int equal_name(const char *left, const char *right)
         index++;
     }
     return left[index] == 0 && right[index] == 0;
+}
+
+__attribute__((noinline))
+static int command_named(const char *command, u64 command_length, const char *name, u64 name_length)
+{
+    return command_length == name_length && equal_name(command, name);
+}
+
+static void make_absolute_path(char *path)
+{
+    u64 path_length;
+    u64 index;
+    if (path[0] == '/') {
+        return;
+    }
+    path_length = length(path);
+    if (path_length >= 255) {
+        return;
+    }
+    index = path_length;
+    while (index != 0) {
+        path[index] = path[index - 1];
+        index--;
+    }
+    path[0] = '/';
+    path[path_length + 1] = 0;
 }
 
 static void write_bytes(const char *bytes, u64 count)
@@ -281,6 +308,7 @@ static void sleep_for(u64 duration_us)
     }
 }
 
+__attribute__((noinline))
 static u64 next_word(char **cursor, char *word)
 {
     u64 count = 0;
@@ -323,6 +351,7 @@ static void watchdog_command(char *cursor)
     write_text("s)\n");
 }
 
+__attribute__((noinline))
 static void print_directory(char *path, u8 *buffer)
 {
     u64 path_length = length(path);
@@ -1928,17 +1957,29 @@ static void execute_line(char *line, u8 *buffer)
     char command[256];
     char path[256];
     char *cursor = line;
+    u64 command_length;
     while (*cursor == ' ' || *cursor == '\t' || *cursor == '$') {
         cursor++;
     }
-    if (next_word(&cursor, command) == 0) {
+    command_length = next_word(&cursor, command);
+    if (command_length == 0) {
         return;
     }
-    if (equal_name(command, "DIRECTORY") || equal_name(command, "DIR")
-        || equal_name(command, "LS")) {
-        if (next_word(&cursor, path) == 0) {
+    if (command_named(command, command_length, "DIRECTORY", 9)
+        || command_named(command, command_length, "DIR", 3)
+        || command_named(command, command_length, "LS", 2)) {
+        char argument[256];
+        u64 argument_length = next_word(&cursor, argument);
+        if (argument_length == 0) {
             path[0] = '/';
             path[1] = 0;
+        } else {
+            u64 index = 0;
+            while (index <= argument_length) {
+                path[index] = argument[index];
+                index++;
+            }
+            make_absolute_path(path);
         }
         print_directory(path, buffer);
         return;

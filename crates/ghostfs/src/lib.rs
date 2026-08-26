@@ -657,8 +657,22 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         path: &str,
         entries: &mut [DirectoryEntry],
     ) -> Result<usize, Error> {
+        let (count, next) = self.list_directory_page(path, 0, entries)?;
+        next.map_or(Ok(count), |_| {
+            Err(Error::BufferTooSmall {
+                required: count.saturating_add(1),
+            })
+        })
+    }
+
+    pub fn list_directory_page(
+        &self,
+        path: &str,
+        skip: usize,
+        entries: &mut [DirectoryEntry],
+    ) -> Result<(usize, Option<usize>), Error> {
         if path == "/" {
-            return self.filesystem.list_directory_at(self.root, path, entries)
+            return self.filesystem.list_directory_at(self.root, path, skip, entries)
         }
         let directory = self
             .filesystem
@@ -666,8 +680,12 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         if directory.file_type != FileType::Directory {
             return Err(Error::NotDirectory)
         }
-        self.filesystem
-            .list_directory_at(self.root, directory.file.as_str(), entries)
+        self.filesystem.list_directory_at(
+            self.root,
+            directory.file.as_str(),
+            skip,
+            entries,
+        )
     }
 
     /// Expand a wildcard over names visible at the selected version.
@@ -1680,14 +1698,28 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     pub fn list_directory(&self, path: &str, entries: &mut [DirectoryEntry]) -> Result<usize, Error> {
+        let (count, next) = self.list_directory_page(path, 0, entries)?;
+        next.map_or(Ok(count), |_| {
+            Err(Error::BufferTooSmall {
+                required: count.saturating_add(1),
+            })
+        })
+    }
+
+    pub fn list_directory_page(
+        &self,
+        path: &str,
+        skip: usize,
+        entries: &mut [DirectoryEntry],
+    ) -> Result<(usize, Option<usize>), Error> {
         if path == "/" {
-            return self.list_directory_at(self.root, path, entries)
+            return self.list_directory_at(self.root, path, skip, entries)
         }
         let directory = self.lookup_following(path)?;
         if directory.file_type != FileType::Directory {
             return Err(Error::NotDirectory)
         }
-        self.list_directory_at(self.root, directory.file.as_str(), entries)
+        self.list_directory_at(self.root, directory.file.as_str(), skip, entries)
     }
 
     /// Expand a bounded wildcard over names visible at the selected version.
@@ -1802,11 +1834,13 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         &self,
         root: BlockId,
         path: &str,
+        skip: usize,
         entries: &mut [DirectoryEntry],
-    ) -> Result<usize, Error> {
+    ) -> Result<(usize, Option<usize>), Error> {
         if !self.is_directory_path_at(root, path)? {
             return Err(Error::NotDirectory);
         }
+        let mut seen = 0;
         let mut written = 0;
         let mut ordinal = 0;
         while let Some(record) = self.record_at(root, ordinal)? {
@@ -1828,10 +1862,12 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             if name.contains('/') {
                 continue;
             }
-            if entries.get(written).is_none() {
-                return Err(Error::BufferTooSmall {
-                    required: written.saturating_add(1),
-                });
+            if seen < skip {
+                seen = seen.saturating_add(1);
+                continue;
+            }
+            if written == entries.len() {
+                return Ok((written, Some(skip.saturating_add(written))));
             }
             entries[written] = DirectoryEntry {
                 name: FileName::new(name)?,
@@ -1842,8 +1878,9 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
                 mode: record.mode,
             };
             written += 1;
+            seen = seen.saturating_add(1);
         }
-        Ok(written)
+        Ok((written, None))
     }
 
     fn lookup_record(&self, path: &str) -> Result<FileRecord, Error> {

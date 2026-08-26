@@ -9,8 +9,8 @@ use ghostos_observability::{
 use ghostos_path_pattern::{Pattern, PatternError};
 use ghostos_status::{facility, IntoStatus, Severity, Status};
 use ghostos_ghostfs::{
-    CheckpointInfo, DirectoryEntry, Error as SynFsError, FileType, LinkEntry, SynFs,
-    SynFsDiagnostics, SynFsTransaction, TransactionCommit, VersionSelector, VersionedPath,
+    CheckpointInfo, DirectoryEntry, Error as SynFsError, FileName, FileType, FileVersion, LinkEntry,
+    SynFs, SynFsDiagnostics, SynFsTransaction, TransactionCommit, VersionSelector, VersionedPath,
 };
 
 use crate::namespace::{
@@ -29,6 +29,7 @@ pub const DEFAULT_MAX_SNAPSHOTS: usize = 16;
 pub const DEFAULT_MAX_MOUNTS: usize = 16;
 pub const DEFAULT_SCRATCH_BYTES: usize = MAX_IPC_BUFFER_BYTES;
 const MAX_DIRECTORY_ENTRIES: usize = 256;
+const LIST_PAGE_ENTRIES: usize = 16;
 const MAX_NAME_BYTES: usize = ghostos_ghostfs::MAX_PATH_BYTES;
 const ROOT_MOUNT_NAME: &str = "SYS$ROOT";
 const INTERNAL_MAPPING_CAPABILITY: u64 = 1 << 32;
@@ -2077,24 +2078,7 @@ impl<
         } else {
             self.check_mode_access(process, 0o777, FileRights::READ)?;
         }
-        let checkpoint = self.filesystem.create_checkpoint()?;
-        let listing = {
-            match self
-                .filesystem
-                .checkpoint_snapshot(checkpoint.id, rms_capability())
-            {
-                Ok(snapshot) => {
-                    Self::write_snapshot_listing(&snapshot, prefix, continuation, output)
-                }
-                Err(error) => Err(DaemonError::File(error)),
-            }
-        };
-        let released = self.filesystem.release_checkpoint(checkpoint.id);
-        match (listing, released) {
-            (Ok(bytes), Ok(())) => Ok(bytes),
-            (Err(error), _) => Err(error),
-            (_, Err(error)) => Err(error.into()),
-        }
+        Self::write_filesystem_listing(&self.filesystem, prefix, continuation, output)
     }
 
     fn list_snapshot(
@@ -2144,6 +2128,35 @@ impl<
         Ok(written + required)
     }
 
+    fn write_filesystem_listing<const BLOCKS: usize>(
+        filesystem: &SynFs<BLOCKS>,
+        prefix: &str,
+        continuation: usize,
+        output: &mut [u8],
+    ) -> Result<(usize, usize), DaemonError> {
+        let root = prefix.is_empty() || prefix == "/";
+        let path = if root { "/" } else { prefix };
+        let mut entries = [DirectoryEntry::EMPTY; LIST_PAGE_ENTRIES];
+        if !root {
+            let versioned = VersionedPath::parse(path).map_err(|_| DaemonError::InvalidPath)?;
+            let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
+            if pattern.has_magic() {
+                return Self::write_wildcard_listing(
+                    path,
+                    versioned.version,
+                    continuation,
+                    output,
+                    |pattern, skip, matches| filesystem.expand_paths_page(pattern, skip, matches),
+                    |name| filesystem.lookup(name),
+                )
+            }
+        }
+        let (count, more) = filesystem
+            .list_directory_page(path, continuation, &mut entries)
+            .map_err(DaemonError::File)?;
+        Self::encode_listing_page(&entries, count, continuation, more, output)
+    }
+
     fn write_snapshot_listing<const BLOCKS: usize>(
         snapshot: &ghostos_ghostfs::ReadOnlySnapshot<'_, BLOCKS>,
         prefix: &str,
@@ -2152,50 +2165,75 @@ impl<
     ) -> Result<(usize, usize), DaemonError> {
         let root = prefix.is_empty() || prefix == "/";
         let path = if root { "/" } else { prefix };
-        let mut entries = [DirectoryEntry::EMPTY; MAX_DIRECTORY_ENTRIES];
-        let mut wildcard = false;
-        let mut wildcard_next = None;
-        let count = if root {
-            snapshot.list_directory(path, &mut entries)?
-        } else {
+        let mut entries = [DirectoryEntry::EMPTY; LIST_PAGE_ENTRIES];
+        if !root {
             let versioned = VersionedPath::parse(path).map_err(|_| DaemonError::InvalidPath)?;
             let pattern = Pattern::parse(versioned.file.as_str()).map_err(pattern_error)?;
-            wildcard = pattern.has_magic();
-            if wildcard {
-                let mut matches = [None; MAX_DIRECTORY_ENTRIES];
-                let (count, next) = match snapshot.expand_paths_page(path, continuation, &mut matches) {
-                    Ok(page) => page,
-                    Err(SynFsError::BufferTooSmall { .. }) => {
-                        return Err(DaemonError::PartialMatch)
-                    }
-                    Err(error) => return Err(DaemonError::File(error)),
-                };
-                wildcard_next = next;
-                for (index, matched) in matches[..count].iter().flatten().enumerate() {
-                    let selected = versioned_name(matched.as_str(), versioned.version)?;
-                    let file = snapshot.lookup(selected.as_str())?;
-                    entries[index] = DirectoryEntry {
-                        name: *matched,
-                        file_type: file.file_type,
-                        size: file.size,
-                        version: file.version,
-                        link_count: file.link_count,
-                        mode: file.mode,
-                    };
-                }
-                if count == 0 {
-                    return Err(DaemonError::NotFound)
-                }
-                count
-            } else {
-                snapshot.list_directory(path, &mut entries)?
+            if pattern.has_magic() {
+                return Self::write_wildcard_listing(
+                    path,
+                    versioned.version,
+                    continuation,
+                    output,
+                    |pattern, skip, matches| snapshot.expand_paths_page(pattern, skip, matches),
+                    |name| snapshot.lookup(name),
+                )
             }
+        }
+        let (count, more) = snapshot
+            .list_directory_page(path, continuation, &mut entries)
+            .map_err(DaemonError::File)?;
+        Self::encode_listing_page(&entries, count, continuation, more, output)
+    }
+
+    fn write_wildcard_listing(
+        path: &str,
+        version: VersionSelector,
+        continuation: usize,
+        output: &mut [u8],
+        expand_page: impl Fn(
+            &str,
+            usize,
+            &mut [Option<FileName>; LIST_PAGE_ENTRIES],
+        ) -> Result<(usize, Option<usize>), SynFsError>,
+        lookup: impl Fn(&str) -> Result<FileVersion, SynFsError>,
+    ) -> Result<(usize, usize), DaemonError> {
+        let mut entries = [DirectoryEntry::EMPTY; LIST_PAGE_ENTRIES];
+        let mut matches = [None; LIST_PAGE_ENTRIES];
+        let (count, next) = match expand_page(path, continuation, &mut matches) {
+            Ok(page) => page,
+            Err(SynFsError::BufferTooSmall { .. }) => return Err(DaemonError::PartialMatch),
+            Err(error) => return Err(DaemonError::File(error)),
         };
+        for (index, matched) in matches[..count].iter().flatten().enumerate() {
+            let selected = versioned_name(matched.as_str(), version)?;
+            let file = lookup(selected.as_str())?;
+            entries[index] = DirectoryEntry {
+                name: *matched,
+                file_type: file.file_type,
+                size: file.size,
+                version: file.version,
+                link_count: file.link_count,
+                mode: file.mode,
+            };
+        }
+        if count == 0 {
+            return Err(DaemonError::NotFound)
+        }
+        Self::encode_listing_page(&entries, count, continuation, next, output)
+    }
+
+    fn encode_listing_page(
+        entries: &[DirectoryEntry],
+        count: usize,
+        continuation: usize,
+        more: Option<usize>,
+        output: &mut [u8],
+    ) -> Result<(usize, usize), DaemonError> {
         let mut written = 0;
-        let mut next = 0;
+        let mut next = continuation;
         let mut stopped_for_buffer = false;
-        let entry_start = if wildcard { 0 } else { continuation };
-        for (index, entry) in entries.iter().take(count).enumerate().skip(entry_start) {
+        for (index, entry) in entries.iter().take(count).enumerate() {
             let name = entry.name.as_bytes();
             let required = 22usize
                 .checked_add(name.len())
@@ -2204,11 +2242,7 @@ impl<
                 if written == 0 {
                     return Err(DaemonError::BufferTooSmall { required })
                 }
-                next = if wildcard {
-                    continuation.saturating_add(index)
-                } else {
-                    index
-                };
+                next = continuation.saturating_add(index);
                 stopped_for_buffer = true;
                 break
             }
@@ -2223,15 +2257,12 @@ impl<
             output[written + 20..written + 22].copy_from_slice(&entry.mode.to_le_bytes());
             output[written + 22..written + required].copy_from_slice(name);
             written += required;
-            next = index + 1;
+            next = continuation.saturating_add(index + 1);
         }
-        if wildcard && !stopped_for_buffer {
-            next = wildcard_next.unwrap_or(0);
-        }
-        if stopped_for_buffer || wildcard_next.is_some() || next < count {
+        if stopped_for_buffer {
             Ok((written, next))
         } else {
-            Ok((written, 0))
+            Ok((written, more.unwrap_or(0)))
         }
     }
 
