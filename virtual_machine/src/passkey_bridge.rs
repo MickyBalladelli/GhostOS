@@ -390,6 +390,7 @@ pub struct PasskeyBridge {
     clients: Vec<Client>,
     url: String,
     token: String,
+    authentication_banner: Vec<u8>,
     observed_output: usize,
     guest_text: String,
     mode: Mode,
@@ -407,11 +408,16 @@ impl PasskeyBridge {
         let port = listener.local_addr()?.port();
         let token = random_token();
         let url = format!("http://localhost:{port}/?code={token}");
+        let authentication_banner = format!(
+            "GhostOS authentication is open in your browser.\r\nIf it did not open: {url}\r\nDo not type credentials in this terminal.\r\n"
+        )
+        .into_bytes();
         Ok(Self {
             listener,
             clients: Vec::new(),
             url,
             token,
+            authentication_banner,
             observed_output: 0,
             guest_text: String::new(),
             mode: Mode::Waiting,
@@ -421,10 +427,6 @@ impl PasskeyBridge {
             administrator_committed: false,
             login_in_progress: false,
         })
-    }
-
-    pub fn url(&self) -> &str {
-        &self.url
     }
 
     pub fn open_in_browser(&self) {
@@ -437,13 +439,9 @@ impl PasskeyBridge {
 
     pub fn poll(&mut self, vm: &mut Vm) -> io::Result<()> {
         if let Some(serial) = vm.serial() {
-            serial.borrow_mut().set_authentication_banner(
-                format!(
-                    "GhostOS authentication is open in your browser.\r\nIf it did not open: {}\r\nDo not type credentials in this terminal.\r\n",
-                    self.url()
-                )
-                .as_bytes(),
-            );
+            serial
+                .borrow_mut()
+                .set_authentication_banner(&self.authentication_banner);
         }
         self.observe_guest(vm);
         self.accept_clients()?;

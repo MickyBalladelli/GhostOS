@@ -324,7 +324,6 @@ static void print_directory(char *path, u8 *buffer)
 {
     u64 path_length = length(path);
     u64 continuation = 0;
-    int printed = 0;
     for (;;) {
         u64 index;
         for (index = 0; index <= path_length; index++) {
@@ -346,18 +345,16 @@ static void print_directory(char *path, u8 *buffer)
                 write_text("filesystem returned a bad directory page\n");
                 return;
             }
-            write_bytes((const char *)&buffer[index + 22], name_length);
-            write_text("\n");
-            printed = 1;
+            if (name_length != 0) {
+                write_bytes((const char *)&buffer[index + 22], name_length);
+                write_text("\n");
+            }
             index += record_length;
         }
         continuation = response.values[1];
         if (continuation == 0) {
             break;
         }
-    }
-    if (!printed) {
-        write_text("(empty)\n");
     }
 }
 
@@ -1980,6 +1977,10 @@ static void execute_line(char *line, u8 *buffer)
         username[whoami.values[0]] = 0;
         write_text(username);
         write_text("\n");
+        return;
+    }
+    if (equal_name(command, "PWD")) {
+        write_text("/\n");
         return;
     }
     if (equal_name(command, "CREDENTIAL")) {
