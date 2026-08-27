@@ -12,9 +12,27 @@ pub(crate) const MAX_DRIVER_RESOURCES: usize = 16;
 pub(crate) const SERVICE_RESOURCE_MAGIC: u64 = 0x5359_4e4f_4452_5653;
 pub(crate) const SERVICE_RESOURCE_VERSION: u32 = 1;
 pub(crate) const SERVICE_RESOURCE_STATE_OFFSET: u64 = 8;
-pub(crate) const SERVICE_MMIO_BASE: u64 = crate::USER_SPACE_START + 0x20_000;
 pub(crate) const SERVICE_MMIO_STRIDE: u64 = 0x10_000;
+/// First byte after the Ring 3 code+stack mapping, rounded up to the MMIO stride
+/// so a 64 KiB stack cannot share page-table slots with driver BARs.
+pub(crate) const SERVICE_MMIO_BASE: u64 = {
+    let stack_end = crate::USER_SPACE_START
+        + (crate::SERVICE_CODE_PAGE_COUNT + crate::SERVICE_STACK_PAGE_COUNT) as u64
+            * crate::FRAME_SIZE;
+    let stride = SERVICE_MMIO_STRIDE;
+    ((stack_end + stride - 1) / stride) * stride
+};
 const PAGE_SIZE: u64 = crate::FRAME_SIZE;
+
+pub(crate) fn service_mmio_overlaps_image(virtual_address: u64, length: u64) -> bool {
+    let Some(end) = virtual_address.checked_add(length) else {
+        return true
+    };
+    let stack_end = crate::USER_SPACE_START
+        + (crate::SERVICE_CODE_PAGE_COUNT + crate::SERVICE_STACK_PAGE_COUNT) as u64
+            * crate::FRAME_SIZE;
+    length == 0 || virtual_address < stack_end && end > crate::USER_SPACE_START
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MmioMapping {

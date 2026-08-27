@@ -242,6 +242,10 @@ pub mod paging {
                     || mapping.physical.length > crate::driver_capabilities::SERVICE_MMIO_STRIDE
                     || mapping.virtual_address % crate::FRAME_SIZE != 0
                     || mapping.virtual_address < crate::driver_capabilities::SERVICE_MMIO_BASE
+                    || crate::driver_capabilities::service_mmio_overlaps_image(
+                        mapping.virtual_address,
+                        mapping.physical.length,
+                    )
                 {
                     return None
                 }

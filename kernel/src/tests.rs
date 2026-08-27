@@ -780,6 +780,24 @@ fn ring3_service_stack_is_64kib() {
 }
 
 #[test]
+fn ring3_mmio_window_starts_after_the_64kib_stack() {
+    let stack_end = crate::USER_SPACE_START
+        + (crate::SERVICE_CODE_PAGE_COUNT + crate::SERVICE_STACK_PAGE_COUNT) as u64
+            * crate::FRAME_SIZE;
+    let legacy_mmio = crate::USER_SPACE_START + 0x20_000;
+    assert!(
+        crate::driver_capabilities::service_mmio_overlaps_image(legacy_mmio, 0x1000),
+        "the pre-64KiB MMIO base at +0x20000 sits inside the stack"
+    );
+    assert!(crate::driver_capabilities::SERVICE_MMIO_BASE >= stack_end);
+    assert!(!crate::driver_capabilities::service_mmio_overlaps_image(
+        crate::driver_capabilities::SERVICE_MMIO_BASE,
+        crate::driver_capabilities::SERVICE_MMIO_STRIDE,
+    ));
+    assert_eq!(crate::driver_capabilities::SERVICE_MMIO_BASE % crate::driver_capabilities::SERVICE_MMIO_STRIDE, 0);
+}
+
+#[test]
 fn shell_success_keeps_normal_status() {
     let caller = address_space(9);
     let result = ghostos_runtime::Response {

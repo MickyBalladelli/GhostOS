@@ -65,6 +65,9 @@ enum {
     SHELL_POLL_DELAY_US = 100,
 };
 
+/* Writable cwd on the first stack page, after the role byte and resource manifest. */
+static const u64 WORKING_DIRECTORY = 0x0000008000013400ULL;
+
 static const char ACCOUNT_AUTHORIZATION_PATH[] = "/system/security/authorization";
 static int bridge_transport_active = 0;
 enum {
@@ -168,25 +171,96 @@ static int command_named(const char *command, u64 command_length, const char *na
 
 static void write_text(const char *text);
 
-static int make_absolute_path(char *path)
+static void copy_cstr(char *destination, const char *source)
 {
-    u64 path_length;
-    u64 index;
-    if (path[0] == '/') {
-        return 0;
+    u64 index = 0;
+    while (source[index] != 0) {
+        destination[index] = source[index];
+        index++;
     }
-    path_length = length(path);
+    destination[index] = 0;
+}
+
+static int canonicalize_path(char *path)
+{
+    char output[256];
+    u64 output_length = 1;
+    u64 index = 0;
+    if (path[0] != '/') {
+        return -1;
+    }
+    output[0] = '/';
+    while (path[index] != 0) {
+        u64 start;
+        u64 count;
+        if (path[index] == '/') {
+            index++;
+            continue;
+        }
+        start = index;
+        while (path[index] != 0 && path[index] != '/') {
+            index++;
+        }
+        count = index - start;
+        if (count == 1 && path[start] == '.') {
+            continue;
+        }
+        if (count == 2 && path[start] == '.' && path[start + 1] == '.') {
+            if (output_length == 1) {
+                return -1;
+            }
+            output_length--;
+            while (output_length > 1 && output[output_length - 1] != '/') {
+                output_length--;
+            }
+            if (output_length > 1) {
+                output_length--;
+            }
+            continue;
+        }
+        if (output_length > 1) {
+            if (output_length + 1 + count >= 255) {
+                return -1;
+            }
+            output[output_length++] = '/';
+        } else if (output_length + count >= 255) {
+            return -1;
+        }
+        while (count != 0) {
+            output[output_length++] = path[start++];
+            count--;
+        }
+    }
+    output[output_length] = 0;
+    copy_cstr(path, output);
+    return 0;
+}
+
+static int make_absolute_path(char *path, const char *directory)
+{
+    char joined[256];
+    u64 path_length = length(path);
+    u64 directory_length;
+    u64 index;
     if (path_length == 0 || path_length >= 255) {
         return -1;
     }
-    index = path_length;
-    while (index != 0) {
-        path[index] = path[index - 1];
-        index--;
+    if (path[0] == '/') {
+        return canonicalize_path(path);
     }
-    path[0] = '/';
-    path[path_length + 1] = 0;
-    return 0;
+    directory_length = length(directory);
+    if (directory_length + 1 + path_length >= 255) {
+        return -1;
+    }
+    copy_cstr(joined, directory);
+    if (directory_length > 1) {
+        joined[directory_length++] = '/';
+    }
+    for (index = 0; index <= path_length; index++) {
+        joined[directory_length + index] = path[index];
+    }
+    copy_cstr(path, joined);
+    return canonicalize_path(path);
 }
 
 static void write_bytes(const char *bytes, u64 count)
@@ -204,9 +278,9 @@ static void write_text(const char *text)
     write_bytes(text, length(text));
 }
 
-static int require_absolute_path(char *path)
+static int require_absolute_path(char *path, const char *directory)
 {
-    if (make_absolute_path(path) != 0) {
+    if (make_absolute_path(path, directory) != 0) {
         write_text("the path is invalid. Check its spelling and format.\n");
         return -1;
     }
@@ -379,17 +453,20 @@ __attribute__((noinline))
 static void print_directory(const char *path, u8 *buffer)
 {
     char prefix[256];
-    u64 path_length = length(path);
+    u64 path_length = 0;
     u64 continuation = 0;
     u64 index;
-    if (path_length == 0 || path_length >= sizeof(prefix)) {
+    if (path != 0) {
+        while (path_length < sizeof(prefix) - 1 && path[path_length] != 0) {
+            prefix[path_length] = path[path_length];
+            path_length++;
+        }
+    }
+    prefix[path_length] = 0;
+    if (path_length == 0) {
         prefix[0] = '/';
         prefix[1] = 0;
         path_length = 1;
-    } else {
-        for (index = 0; index <= path_length; index++) {
-            prefix[index] = path[index];
-        }
     }
     for (;;) {
         volatile u8 *out = buffer;
@@ -455,6 +532,8 @@ static void print_help(void)
     write_text("GhostOS commands:\n");
     write_text("  HELP, ?, COMMANDS       Show this list\n");
     write_text("  DIRECTORY|DIR|LS [path] List a directory\n");
+    write_text("  CD|CHDIR [path]         Change directory\n");
+    write_text("  PWD                     Print working directory\n");
     write_text("  CREATE <path>           Create a file\n");
     write_text("  TYPE|CAT <path>         Read a file\n");
     write_text("  MKDIR <path>            Create a directory\n");
@@ -1987,7 +2066,7 @@ static void rename_account(
 }
 
 __attribute__((noinline))
-static void execute_line(char *line, u8 *buffer)
+static void execute_line(char *line, u8 *buffer, char *directory)
 {
     char command[256];
     char path[256];
@@ -2006,13 +2085,8 @@ static void execute_line(char *line, u8 *buffer)
         char argument[256];
         u64 argument_length = next_word(&cursor, argument);
         if (argument_length == 0) {
-            char root[2];
-            root[0] = '/';
-            root[1] = 0;
-            print_directory(root, buffer);
-            return;
-        }
-        if (require_absolute_path(argument) != 0) {
+            copy_cstr(argument, directory);
+        } else if (require_absolute_path(argument, directory) != 0) {
             return;
         }
         print_directory(argument, buffer);
@@ -2060,8 +2134,37 @@ static void execute_line(char *line, u8 *buffer)
         write_text("\n");
         return;
     }
+    if (command_named(command, command_length, "CD", 2)
+        || command_named(command, command_length, "CHDIR", 5)) {
+        char argument[256];
+        u64 argument_length = next_word(&cursor, argument);
+        u64 path_length;
+        u64 index;
+        if (argument_length == 0) {
+            argument[0] = '/';
+            argument[1] = 0;
+        }
+        if (require_absolute_path(argument, directory) != 0) {
+            return;
+        }
+        path_length = length(argument);
+        memset(buffer, 0, 4096);
+        for (index = 0; index <= path_length; index++) {
+            buffer[index] = (u8)argument[index];
+        }
+        struct response listed = call_ex(
+            OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, 0, path_length
+        );
+        if (listed.status != STATUS_NORMAL) {
+            write_status(listed.status);
+            return;
+        }
+        copy_cstr(directory, argument);
+        return;
+    }
     if (equal_name(command, "PWD")) {
-        write_text("/\n");
+        write_text(directory);
+        write_text("\n");
         return;
     }
     if (equal_name(command, "CREDENTIAL")) {
@@ -2168,7 +2271,7 @@ static void execute_line(char *line, u8 *buffer)
         write_text("missing path\n");
         return;
     }
-    if (require_absolute_path(path) != 0) {
+    if (require_absolute_path(path, directory) != 0) {
         return;
     }
     u64 path_length = length(path);
@@ -2444,12 +2547,15 @@ __attribute__((section(".text._start"), noreturn))
 void _start(void)
 {
     char line[512];
+    char *directory = (char *)WORKING_DIRECTORY;
     u8 buffer[4096];
     u64 line_length = 0;
     u64 heartbeat = 0;
     u64 idle_polls = 0;
     u8 byte;
 
+    directory[0] = '/';
+    directory[1] = 0;
     while (!shell_dependencies_ready()) {
         sleep_for(SHELL_POLL_DELAY_US);
     }
@@ -2489,7 +2595,7 @@ void _start(void)
             write_text("\n");
             line[line_length] = 0;
             if (prompt_authorized) {
-                execute_line(line, buffer);
+                execute_line(line, buffer, directory);
             } else {
                 execute_locked_line(line);
             }

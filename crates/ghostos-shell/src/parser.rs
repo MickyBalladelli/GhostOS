@@ -440,6 +440,8 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
 
         if command_name.as_str().eq_ignore_ascii_case("DIR") {
             command_name = Text::new("DIRECTORY")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("CHDIR") {
+            command_name = Text::new("CD")?;
         } else if command_name.as_str().eq_ignore_ascii_case("CAT") {
             command_name = Text::new("TYPE")?;
         } else if command_name.as_str().eq_ignore_ascii_case("LN") {
@@ -857,6 +859,7 @@ mod tests {
             ("TYPE \"relative file\" /BINARY", TYPE_ROUTE),
             ("SET DEFAULT \"/data/work dir\"", SET_DEFAULT_ROUTE),
             ("CD /data", SET_DEFAULT_ROUTE),
+            ("CHDIR /data", SET_DEFAULT_ROUTE),
             ("SHOW DEFAULT", SHOW_DEFAULT_ROUTE),
             ("PWD", SHOW_DEFAULT_ROUTE),
             ("LINK /data/source /data/alias", LINK_ROUTE),
