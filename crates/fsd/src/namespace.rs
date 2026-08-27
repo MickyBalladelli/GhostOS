@@ -245,7 +245,7 @@ impl<const MAX_MOUNTS: usize> Namespace<MAX_MOUNTS> {
                 volume: SynFsVolume::Root,
                 generation,
             },
-            true,
+            false,
         )?;
         self.install(
             PACKAGE_STORE_PATH,

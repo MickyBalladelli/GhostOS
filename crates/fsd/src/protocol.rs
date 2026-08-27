@@ -4,6 +4,7 @@ use ghostos_status::{AuditContext, PublicError, Status};
 pub const REQUEST_LABEL: u64 = 0x5346_5300_0000_0000;
 pub const RESPONSE_LABEL: u64 = 0x5346_5301_0000_0000;
 pub const MAX_IPC_BUFFER_BYTES: usize = 64 * 1024;
+pub const LIST_PATH_REGION_BYTES: usize = ghostos_ghostfs::MAX_PATH_BYTES;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]

@@ -65,9 +65,14 @@ pub struct DeleteMetadata {
 }
 
 /// Bytes returned by `list_directory` use the bounded GhostFS directory wire
-/// format. The caller owns the shared buffer and can decode each record while
-/// following the returned continuation offset.
+/// format starting at [`LIST_OUTPUT_OFFSET`]. The path prefix before that
+/// offset remains intact while the caller follows the returned continuation.
 pub const DIRECTORY_RECORD_HEADER_BYTES: usize = 22;
+
+/// LIST keeps the requested path in this prefix of the shared buffer. The
+/// directory records start here and remain intact across continuation calls.
+pub const LIST_PATH_REGION_BYTES: usize = 192;
+pub const LIST_OUTPUT_OFFSET: usize = LIST_PATH_REGION_BYTES;
 
 /// Continuation ordinal for `SynFsList` lives in `arguments[4]` on both
 /// filesystem syscall layouts.
@@ -112,7 +117,11 @@ pub const fn decode_runtime_fs_buffer(arguments: &[u64; 6]) -> (u64, u64, u64, b
 /// Copy an absolute path into the LIST buffer and return the prefix length
 /// that must be placed in `arguments[5]`.
 pub fn seed_directory_path(buffer: &mut [u8], path: &[u8]) -> Result<u64, Error> {
-    if path.is_empty() || path[0] != b'/' || path.len() > buffer.len() {
+    if path.is_empty()
+        || path[0] != b'/'
+        || path.len() > LIST_PATH_REGION_BYTES
+        || buffer.len() <= LIST_PATH_REGION_BYTES
+    {
         return Err(Error::InvalidResponse)
     }
     buffer[..path.len()].copy_from_slice(path);
@@ -269,7 +278,10 @@ impl<S: SystemCall> Runtime<S> {
         continuation: u64,
         path_length: u64,
     ) -> Result<DirectoryPage, Error> {
-        if path_length > u64::from(path_and_output.length) {
+        if path_length == 0
+            || path_length > LIST_PATH_REGION_BYTES as u64
+            || path_and_output.length as usize <= LIST_PATH_REGION_BYTES
+        {
             return Err(Error::InvalidResponse)
         }
         let mut request = Request::new(Operation::SynFsList).with_buffer(path_and_output);
@@ -277,7 +289,9 @@ impl<S: SystemCall> Runtime<S> {
         request.arguments[LIST_PATH_LENGTH_ARGUMENT] = path_length;
         let response = self.execute(request)?;
         let bytes = usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)?;
-        if bytes > path_and_output.length as usize || response.values[1] > u64::from(u32::MAX) {
+        if bytes > path_and_output.length as usize - LIST_PATH_REGION_BYTES
+            || response.values[1] > u64::from(u32::MAX)
+        {
             return Err(Error::InvalidResponse)
         }
         Ok(DirectoryPage {
@@ -392,6 +406,15 @@ mod tests {
         }
     }
 
+    fn list_buffer(writable: bool) -> SharedBuffer {
+        SharedBuffer {
+            region: SharedRegionId::new(3).expect("valid region"),
+            offset: 8,
+            length: (LIST_PATH_REGION_BYTES + 64) as u32,
+            writable,
+        }
+    }
+
     #[test]
     fn link_metadata_marshals_handle_and_target_buffer() {
         let system = MockSystemCall {
@@ -482,7 +505,7 @@ mod tests {
         };
         let runtime = Runtime::new(system);
         let page = runtime
-            .list_directory(buffer(true), 5, 1)
+            .list_directory(list_buffer(true), 5, 1)
             .expect("directory page");
         assert_eq!(page.bytes, 32);
         assert_eq!(page.next, 7);
@@ -491,10 +514,10 @@ mod tests {
         assert_eq!(request.arguments[LIST_CONTINUATION_ARGUMENT], 5);
         assert_eq!(request.arguments[LIST_PATH_LENGTH_ARGUMENT], 1);
         let decoded = decode_runtime_fs_buffer(&request.arguments);
-        assert_eq!(decoded.2, 64);
+        assert_eq!(decoded.2, (LIST_PATH_REGION_BYTES + 64) as u64);
         assert!(decoded.3);
 
-        let mut seeded = [0u8; 8];
+        let mut seeded = [0u8; LIST_PATH_REGION_BYTES + 64];
         assert_eq!(seed_directory_path(&mut seeded, b"/").unwrap(), 1);
         assert_eq!(&seeded[..1], b"/");
         assert_eq!(seed_directory_path(&mut seeded, b"relative"), Err(Error::InvalidResponse));
@@ -515,7 +538,7 @@ mod tests {
             },
         };
         let runtime = Runtime::new(system);
-        assert_eq!(runtime.list_directory(buffer(true), 0, 1), Err(Error::InvalidResponse));
-        assert_eq!(runtime.list_directory(buffer(true), 0, 65), Err(Error::InvalidResponse));
+        assert_eq!(runtime.list_directory(list_buffer(true), 0, 1), Err(Error::InvalidResponse));
+        assert_eq!(runtime.list_directory(list_buffer(true), 0, 193), Err(Error::InvalidResponse));
     }
 }

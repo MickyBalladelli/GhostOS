@@ -1,6 +1,6 @@
 use super::{
     Daemon, DaemonError, Flags, Operation, ProcessId, ProcessRights, Request,
-    MAX_IPC_BUFFER_BYTES,
+    LIST_PATH_REGION_BYTES, MAX_IPC_BUFFER_BYTES,
 };
 use alloc::{boxed::Box, vec};
 use ghostos_ghostfs::{FileType, SynFs};
@@ -50,6 +50,11 @@ fn boxed_daemon_with_capacity<const BLOCKS: usize>(
 
 fn file_flags() -> Flags {
     Flags::READ.union(Flags::WRITE).union(Flags::DELETE)
+}
+
+fn seed_list_buffer(buffer: &mut [u8], path: &[u8]) {
+    buffer.fill(0);
+    buffer[..path.len()].copy_from_slice(path);
 }
 
 #[test]
@@ -374,40 +379,56 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
         daemon.close(process, file.capability).expect("close workflow file");
     }
 
-    let mut listing = [0; 28];
-    listing[..5].copy_from_slice(b"/data");
+    let mut listing = [0; LIST_PATH_REGION_BYTES + 28];
+    seed_list_buffer(&mut listing, b"/data");
     let response = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
-            .with_offset(0),
+            .with_offset(0)
+            .with_length(5),
         Some(&mut listing),
     );
     assert_eq!(response.status, Status::NORMAL);
     assert!(response.values[0] > 0);
     assert_eq!(response.values[1], 1);
-    let first_name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
-    assert_eq!(&listing[22..22 + first_name_length], b"first");
+    let first_name_length = u16::from_le_bytes([
+        listing[LIST_PATH_REGION_BYTES],
+        listing[LIST_PATH_REGION_BYTES + 1],
+    ]) as usize;
+    assert_eq!(
+        &listing[LIST_PATH_REGION_BYTES + 22..LIST_PATH_REGION_BYTES + 22 + first_name_length],
+        b"first"
+    );
 
-    listing.fill(0);
-    listing[..5].copy_from_slice(b"/data");
+    seed_list_buffer(&mut listing, b"/data");
     let response = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
-            .with_offset(1),
+            .with_offset(1)
+            .with_length(5),
         Some(&mut listing),
     );
     assert_eq!(response.status, Status::NORMAL);
     assert_eq!(response.values[1], 0);
-    let second_name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
-    assert_eq!(&listing[22..22 + second_name_length], b"second");
+    let second_name_length = u16::from_le_bytes([
+        listing[LIST_PATH_REGION_BYTES],
+        listing[LIST_PATH_REGION_BYTES + 1],
+    ]) as usize;
+    assert_eq!(
+        &listing[LIST_PATH_REGION_BYTES + 22
+            ..LIST_PATH_REGION_BYTES + 22 + second_name_length],
+        b"second"
+    );
 
     let limited = daemon
         .register_process(ProcessId::new(8).unwrap(), ProcessRights::WRITE)
         .expect("register limited process");
-    let mut denied_listing = [0; 64];
-    denied_listing[..5].copy_from_slice(b"/data");
+    let mut denied_listing = [0; LIST_PATH_REGION_BYTES + 64];
+    seed_list_buffer(&mut denied_listing, b"/data");
     let response = daemon.dispatch(
-        Request::new(Operation::List, ProcessId::new(8).unwrap()).with_capability(limited),
+        Request::new(Operation::List, ProcessId::new(8).unwrap())
+            .with_capability(limited)
+            .with_length(5),
         Some(&mut denied_listing),
     );
     assert_eq!(response.status, Status::ACCESS_DENIED);
@@ -456,36 +477,40 @@ fn dispatch_covers_shell_workflow_capabilities_buffers_pagination_and_statuses()
 #[test]
 fn list_root_twice_returns_bootstrap_directories() {
     let (mut daemon, process, authority) = daemon();
-    let mut listing = [0; 512];
-    listing[0] = b'/';
+    let mut listing = [0; LIST_PATH_REGION_BYTES + 320];
+    seed_list_buffer(&mut listing, b"/");
     let first = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
-            .with_offset(0),
+            .with_offset(0)
+            .with_length(1),
         Some(&mut listing),
     );
     assert_eq!(first.status, Status::NORMAL);
     assert!(first.values[0] > 0);
 
-    listing.fill(0);
-    listing[0] = b'/';
+    seed_list_buffer(&mut listing, b"/");
     let second = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
-            .with_offset(0),
+            .with_offset(0)
+            .with_length(1),
         Some(&mut listing),
     );
     assert_eq!(second.status, Status::NORMAL);
     assert!(second.values[0] > 0);
-    let name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
+    let name_length = u16::from_le_bytes([
+        listing[LIST_PATH_REGION_BYTES],
+        listing[LIST_PATH_REGION_BYTES + 1],
+    ]) as usize;
     assert!(name_length > 0);
 }
 
 #[test]
 fn list_root_again_without_rewriting_path_is_invalid_path() {
     let (mut daemon, process, authority) = daemon();
-    let mut listing = [0; 512];
-    listing[0] = b'/';
+    let mut listing = [0; LIST_PATH_REGION_BYTES + 320];
+    seed_list_buffer(&mut listing, b"/");
     let first = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
@@ -495,9 +520,12 @@ fn list_root_again_without_rewriting_path_is_invalid_path() {
     );
     assert_eq!(first.status, Status::NORMAL);
     assert!(first.values[0] >= 22);
-    let leftover = u16::from_le_bytes([listing[0], listing[1]]);
+    let leftover = u16::from_le_bytes([
+        listing[LIST_PATH_REGION_BYTES],
+        listing[LIST_PATH_REGION_BYTES + 1],
+    ]);
     assert!(leftover > 0);
-    assert_ne!(listing[0], b'/');
+    assert_eq!(listing[0], b'/');
 
     let second = daemon.dispatch(
         Request::new(Operation::List, process)
@@ -511,8 +539,8 @@ fn list_root_again_without_rewriting_path_is_invalid_path() {
 #[test]
 fn list_root_with_path_length_ignores_leftover_records() {
     let (mut daemon, process, authority) = daemon();
-    let mut listing = [0; 512];
-    listing[0] = b'/';
+    let mut listing = [0; LIST_PATH_REGION_BYTES + 320];
+    seed_list_buffer(&mut listing, b"/");
     let first = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
@@ -522,7 +550,7 @@ fn list_root_with_path_length_ignores_leftover_records() {
     );
     assert_eq!(first.status, Status::NORMAL);
     assert!(first.values[0] >= 22);
-    assert_ne!(listing[0], b'/');
+    assert_eq!(listing[0], b'/');
 
     listing[0] = b'/';
     let second = daemon.dispatch(
@@ -534,7 +562,10 @@ fn list_root_with_path_length_ignores_leftover_records() {
     );
     assert_eq!(second.status, Status::NORMAL);
     assert!(second.values[0] >= 22);
-    let name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
+    let name_length = u16::from_le_bytes([
+        listing[LIST_PATH_REGION_BYTES],
+        listing[LIST_PATH_REGION_BYTES + 1],
+    ]) as usize;
     assert!(name_length > 0);
 }
 
@@ -544,8 +575,8 @@ fn snapshot_list_leftover_without_path_length_is_invalid_path() {
     let snapshot = daemon
         .snapshot_create(process, authority)
         .expect("create snapshot");
-    let mut listing = [0; 512];
-    listing[0] = b'/';
+    let mut listing = [0; LIST_PATH_REGION_BYTES + 320];
+    seed_list_buffer(&mut listing, b"/");
     let first = daemon.dispatch(
         Request::new(Operation::SnapshotList, process)
             .with_capability(snapshot.capability)
@@ -555,7 +586,7 @@ fn snapshot_list_leftover_without_path_length_is_invalid_path() {
     );
     assert_eq!(first.status, Status::NORMAL);
     assert!(first.values[0] >= 22);
-    assert_ne!(listing[0], b'/');
+    assert_eq!(listing[0], b'/');
 
     let second = daemon.dispatch(
         Request::new(Operation::SnapshotList, process)
@@ -577,8 +608,8 @@ fn mkdir_absolute_name_is_listed_at_root() {
         Some(&mut path),
     );
     assert_eq!(created.status, Status::NORMAL);
-    let mut listing = [0; 512];
-    listing[0] = b'/';
+    let mut listing = [0; LIST_PATH_REGION_BYTES + 320];
+    seed_list_buffer(&mut listing, b"/");
     let listed = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
@@ -587,7 +618,8 @@ fn mkdir_absolute_name_is_listed_at_root() {
         Some(&mut listing),
     );
     assert_eq!(listed.status, Status::NORMAL);
-    let page = &listing[..listed.values[0] as usize];
+    let page = &listing[LIST_PATH_REGION_BYTES
+        ..LIST_PATH_REGION_BYTES + listed.values[0] as usize];
     let mut index = 0;
     let mut found = false;
     while index + 22 <= page.len() {

@@ -593,7 +593,10 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 .as_ref()
                 .map(|buffer| buffer.length as u64)
                 .unwrap_or(0);
-            if path_length > buffer_length {
+            if path_length == 0
+                || path_length > ghostos_fsd::LIST_PATH_REGION_BYTES as u64
+                || buffer_length <= ghostos_fsd::LIST_PATH_REGION_BYTES as u64
+            {
                 return Err(RuntimeDispatchError::InvalidRequest)
             }
         } else if operation == Operation::SynFsMap {
@@ -727,7 +730,9 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 let length = buffer
                     .map(|buffer| buffer.length as u64)
                     .ok_or(RuntimeDispatchError::InvalidBuffer)?;
-                if response.values[0] > length {
+                if response.values[0]
+                    > length.saturating_sub(ghostos_fsd::LIST_PATH_REGION_BYTES as u64)
+                {
                     return Err(RuntimeDispatchError::TransportFailure)
                 }
             }

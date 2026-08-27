@@ -66,37 +66,15 @@ fn provision_login_system_disk(system_disk: &Path, kernel_payload: &Path) {
 
 fn kernel_build_output(name: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let pinned = manifest.join("../build/bios").join(name);
-    if pinned.is_file() {
-        return pinned;
-    }
-    let mut candidates = Vec::new();
-    let build_root = manifest.join("../target");
-    for (triple, profile) in [
-        ("x86_64-unknown-none", "release"),
-        ("x86_64-unknown-none", "debug"),
-        ("", "release"),
-        ("", "debug"),
-    ] {
-        let build_dir = if triple.is_empty() {
-            build_root.join(profile).join("build")
-        } else {
-            build_root.join(triple).join(profile).join("build")
-        };
-        let Ok(entries) = fs::read_dir(&build_dir) else {
-            continue
-        };
-        for entry in entries.flatten() {
-            if !entry.file_name().to_string_lossy().starts_with("ghostos-kernel-") {
-                continue
-            }
-            let output = entry.path().join("out").join(name);
-            if output.is_file() {
-                candidates.push(output);
-            }
+    for relative in ["../build/kernel-ring3", "../build/bios"] {
+        let pinned = manifest.join(relative).join(name);
+        if pinned.is_file() {
+            return pinned;
         }
     }
-    newest_file(candidates).unwrap_or_else(|| panic!("could not find kernel build output {name:?}"))
+    panic!(
+        "could not find pinned kernel Ring 3 image {name:?}; build ghostos-kernel so build/kernel-ring3 is populated"
+    )
 }
 
 fn newest_file(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
@@ -117,6 +95,20 @@ fn newest_file(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
         }
     }
     newest.map(|(_, path)| path)
+}
+
+#[test]
+fn qemu_login_uses_pinned_ring3_images() {
+    let source = include_str!("qemu_login_e2e.rs");
+    let start = source
+        .find("fn kernel_build_output")
+        .expect("kernel_build_output");
+    let body = &source[start..source.find("fn newest_file").expect("newest_file")];
+    assert!(body.contains("build/kernel-ring3"));
+    assert!(
+        !body.contains("read_dir"),
+        "must not glob hashed Cargo OUT_DIR directories"
+    );
 }
 
 #[test]

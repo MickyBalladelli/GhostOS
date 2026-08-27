@@ -1,10 +1,9 @@
 [alias]
 kernel-x86 = "build -p ghostos-kernel --target x86_64-unknown-none"
 uefi = "build -p ghostos-uefi --target x86_64-unknown-uefi"
+ghostos-smoke = "test -p ghostos-abi -p ghostos-status -p ghostos-ghostfs -p ghostos-fsd -p ghostos-runtime -p ghostos-vm --lib"
 
 [env]
-CARGO_INCREMENTAL = { value = "0", force = false }
-CARGO_BUILD_JOBS = { value = "1", force = false }
 CARGO_TERM_COLOR = { value = "never", force = false }
 SOURCE_DATE_EPOCH = { value = "0", force = false }
 TZ = { value = "UTC", force = false }
@@ -17,4 +16,8 @@ rustflags = [
     "-Cno-redzone=yes",
     "-Crelocation-model=static",
     "-Clink-arg=-no-pie",
+    "-Cpanic=abort",
 ]
+
+[target.x86_64-unknown-uefi]
+rustflags = ["-Cpanic=abort"]

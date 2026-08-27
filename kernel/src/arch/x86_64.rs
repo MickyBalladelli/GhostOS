@@ -30,11 +30,11 @@ pub(crate) unsafe fn enable_supervisor_protections() {
 pub(crate) fn with_user_access<R>(operation: impl FnOnce() -> R) -> R {
     let smap = SMAP_ENABLED.load(Ordering::Acquire);
     if smap {
-        unsafe { asm!("stac", options(nomem, nostack, preserves_flags)) }
+        unsafe { asm!("stac", options(nostack, preserves_flags)) }
     }
     let result = operation();
     if smap {
-        unsafe { asm!("clac", options(nomem, nostack, preserves_flags)) }
+        unsafe { asm!("clac", options(nostack, preserves_flags)) }
     }
     result
 }
@@ -1192,21 +1192,15 @@ ghostos_isr_common:
     push r13
     push r14
     push r15
-    cmp qword ptr [rsp + 120], 128
-    jne 1f
+    /* InterruptFrame: [rsp]=r15 .. [rsp+112]=rax, [rsp+120]=vector, [rsp+128]=error.
+       Stash dispatch's iretq/jmp flag in the vector slot. Writing it over saved
+       RAX used to zero user RAX on every interrupt return, so a later
+       movl 0xc(%rax) in Ring 3 faulted at RIP 0x80000000fc. */
     mov rdi, [rsp + 120]
     mov rsi, [rsp + 128]
     mov rdx, rsp
     call interrupt_dispatch
-    mov [rsp + 112], rax
-    jmp 2f
-1:
-    mov rdi, [rsp + 120]
-    mov rsi, [rsp + 128]
-    mov rdx, rsp
-    call interrupt_dispatch
-    mov [rsp + 112], rax
-2:
+    mov [rsp + 120], rax
     pop r15
     pop r14
     pop r13
@@ -1222,15 +1216,16 @@ ghostos_isr_common:
     pop rcx
     pop rbx
     pop rax
+    cmp qword ptr [rsp], 0
+    jne 1f
     add rsp, 16
-    test rax, rax
-    jz 3f
+    iretq
+1:
+    add rsp, 16
     mov rcx, [rsp]
     mov rdx, [rsp + 24]
     mov rsp, rdx
     jmp rcx
-3:
-    iretq
 
 .section .rodata
 .align 8

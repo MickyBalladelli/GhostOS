@@ -6,18 +6,22 @@ fn workspace_root() -> PathBuf {
 }
 
 #[test]
-fn workspace_default_members_match_members_minus_uefi() {
+fn workspace_default_members_are_the_smoke_set() {
     let cargo = fs::read_to_string(workspace_root().join("Cargo.toml")).expect("Cargo.toml");
-    let members = toml_string_list(&cargo, "members");
     let defaults = toml_string_list(&cargo, "default-members");
-    let expected: Vec<_> = members
-        .iter()
-        .filter(|path| path.as_str() != "boot/uefi")
-        .cloned()
-        .collect();
+    let expected = [
+        "crates/abi",
+        "crates/status",
+        "crates/ghostfs",
+        "crates/fsd",
+        "crates/runtime",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
     assert_eq!(
         defaults, expected,
-        "default-members must equal members minus boot/uefi"
+        "default-members must stay focused on the GhostFS smoke set"
     );
 }
 
@@ -50,6 +54,87 @@ fn generated_inventory_and_soak_reports_are_gitignored() {
     assert!(gitignore.contains("generated-inventory.toml"));
     assert!(gitignore.contains("kernel/build/soak/"));
     assert!(gitignore.contains("virtual_machine/build/soak/"));
+    assert!(gitignore.contains("virtual_machine/Cargo.lock"));
+}
+
+#[test]
+fn default_members_are_listed_in_workspace_members() {
+    let cargo = fs::read_to_string(workspace_root().join("Cargo.toml")).expect("Cargo.toml");
+    let members = toml_string_list(&cargo, "members");
+    let defaults = toml_string_list(&cargo, "default-members");
+    for member in &defaults {
+        assert!(
+            members.contains(member),
+            "{member} is in default-members but not members"
+        );
+    }
+}
+
+#[test]
+fn kernel_release_is_not_size_optimized() {
+    let cargo = fs::read_to_string(workspace_root().join("Cargo.toml")).expect("Cargo.toml");
+    let kernel = cargo
+        .split("[profile.release.package.ghostos-kernel]")
+        .nth(1)
+        .expect("kernel release profile");
+    assert!(
+        !kernel.contains("opt-level = \"z\""),
+        "the kernel package must not be size-optimized"
+    );
+    assert!(
+        kernel.contains("opt-level = 2") || kernel.contains("opt-level = 3"),
+        "compile the kernel at opt-level 2 or 3"
+    );
+    assert!(
+        cargo.contains("lto = \"thin\""),
+        "host release builds should use thin LTO"
+    );
+}
+
+#[test]
+fn host_dev_profile_unwinds() {
+    let cargo = fs::read_to_string(workspace_root().join("Cargo.toml")).expect("Cargo.toml");
+    assert!(cargo.contains("[profile.dev]\npanic = \"unwind\""));
+}
+
+#[test]
+fn cargo_config_does_not_serialize_host_builds() {
+    let config =
+        fs::read_to_string(workspace_root().join(".cargo/config.toml")).expect("cargo config");
+    assert!(!config.contains("CARGO_BUILD_JOBS"));
+    assert!(!config.contains("CARGO_INCREMENTAL"));
+    let env = fs::read_to_string(workspace_root().join("scripts/reproducible-env.sh"))
+        .expect("reproducible env");
+    assert!(env.contains("CARGO_BUILD_JOBS=1"));
+    assert!(env.contains("CARGO_INCREMENTAL=0"));
+}
+
+#[test]
+fn bios_image_copies_pinned_ring3_images() {
+    let script = fs::read_to_string(workspace_root().join("scripts/build-bios-image.sh"))
+        .expect("bios image script");
+    assert!(!script.contains("ls -td"));
+    assert!(script.contains("build/kernel-ring3"));
+    let build = fs::read_to_string(workspace_root().join("kernel/build.rs")).expect("kernel build");
+    assert!(build.contains("build/kernel-ring3"));
+}
+
+#[test]
+fn login_and_service_use_the_shell_syscall_contract() {
+    for relative in [
+        "userspace/boot-services/login.c",
+        "userspace/boot-services/service.c",
+    ] {
+        let source = fs::read_to_string(workspace_root().join(relative)).expect(relative);
+        assert!(
+            source.contains(": \"+m\"(request), \"+m\"(response)"),
+            "{relative} must keep request/response as +m outputs"
+        );
+        assert!(
+            source.contains("\"rax\", \"rcx\", \"rdx\", \"r8\", \"r9\", \"r10\", \"r11\""),
+            "{relative} must clobber the syscall volatile registers"
+        );
+    }
 }
 
 #[test]

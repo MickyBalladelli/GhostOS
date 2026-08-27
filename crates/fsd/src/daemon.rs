@@ -20,7 +20,7 @@ use crate::namespace::{
 
 use crate::protocol::{
     Capability, Flags, LockMode, LockRange, Operation, ProcessId, ProtocolError, Request,
-    Response, MAX_IPC_BUFFER_BYTES,
+    Response, LIST_PATH_REGION_BYTES, MAX_IPC_BUFFER_BYTES,
 };
 
 pub const DEFAULT_MAX_PROCESSES: usize = 64;
@@ -1224,7 +1224,7 @@ impl<
             FileRights::WRITE.union(FileRights::ADMIN),
         )?;
         let path = Name::from_str(path)?;
-        if self.mount_is_read_only(path.as_str()) {
+        if self.path_is_read_only(path.as_str())? {
             return Err(DaemonError::ReadOnly);
         }
         self.check_parent_access(process, path.as_str(), FileRights::WRITE)?;
@@ -1813,8 +1813,7 @@ impl<
                 Ok(Response::success())
             }
             Operation::List => {
-                let output = output_buffer(buffer)?;
-                let prefix = list_prefix(output, request.length)?;
+                let (prefix, output) = list_buffers(buffer, request.length)?;
                 let bytes = self.list_current(
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
@@ -1843,8 +1842,7 @@ impl<
                 Ok(Response::success())
             }
             Operation::SnapshotList => {
-                let output = output_buffer(buffer)?;
-                let prefix = list_prefix(output, request.length)?;
+                let (prefix, output) = list_buffers(buffer, request.length)?;
                 let bytes = self.list_snapshot(
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
@@ -2134,7 +2132,9 @@ impl<
                     versioned.version,
                     continuation,
                     output,
-                    |pattern, skip, matches| filesystem.expand_paths_page(pattern, skip, matches),
+                    |pattern, skip, matches, cursors| {
+                        filesystem.expand_paths_page_with_cursors(pattern, skip, matches, cursors)
+                    },
                     |name| filesystem.lookup(name),
                 )
             }
@@ -2142,7 +2142,7 @@ impl<
         let (count, more) = filesystem
             .list_directory_page(path, continuation, &mut entries)
             .map_err(DaemonError::File)?;
-        Self::encode_listing_page(&entries, count, continuation, more, output)
+        Self::encode_listing_page(&entries, count, continuation, more, None, output)
     }
 
     fn write_snapshot_listing<const BLOCKS: usize>(
@@ -2163,7 +2163,9 @@ impl<
                     versioned.version,
                     continuation,
                     output,
-                    |pattern, skip, matches| snapshot.expand_paths_page(pattern, skip, matches),
+                    |pattern, skip, matches, cursors| {
+                        snapshot.expand_paths_page_with_cursors(pattern, skip, matches, cursors)
+                    },
                     |name| snapshot.lookup(name),
                 )
             }
@@ -2171,7 +2173,7 @@ impl<
         let (count, more) = snapshot
             .list_directory_page(path, continuation, &mut entries)
             .map_err(DaemonError::File)?;
-        Self::encode_listing_page(&entries, count, continuation, more, output)
+        Self::encode_listing_page(&entries, count, continuation, more, None, output)
     }
 
     fn write_wildcard_listing(
@@ -2183,12 +2185,14 @@ impl<
             &str,
             usize,
             &mut [Option<FileName>; LIST_PAGE_ENTRIES],
+            &mut [usize; LIST_PAGE_ENTRIES],
         ) -> Result<(usize, Option<usize>), SynFsError>,
         lookup: impl Fn(&str) -> Result<FileVersion, SynFsError>,
     ) -> Result<(usize, usize), DaemonError> {
         let mut entries = [DirectoryEntry::EMPTY; LIST_PAGE_ENTRIES];
         let mut matches = [None; LIST_PAGE_ENTRIES];
-        let (count, next) = match expand_page(path, continuation, &mut matches) {
+        let mut cursors = [0; LIST_PAGE_ENTRIES];
+        let (count, next) = match expand_page(path, continuation, &mut matches, &mut cursors) {
             Ok(page) => page,
             Err(SynFsError::BufferTooSmall { .. }) => return Err(DaemonError::PartialMatch),
             Err(error) => return Err(DaemonError::File(error)),
@@ -2205,10 +2209,10 @@ impl<
                 mode: file.mode,
             };
         }
-        if count == 0 {
+        if count == 0 && continuation == 0 {
             return Err(DaemonError::NotFound)
         }
-        Self::encode_listing_page(&entries, count, continuation, next, output)
+        Self::encode_listing_page(&entries, count, continuation, next, Some(&cursors), output)
     }
 
     fn encode_listing_page(
@@ -2216,6 +2220,7 @@ impl<
         count: usize,
         continuation: usize,
         more: Option<usize>,
+        entry_cursors: Option<&[usize]>,
         output: &mut [u8],
     ) -> Result<(usize, usize), DaemonError> {
         let mut written = 0;
@@ -2230,7 +2235,9 @@ impl<
                 if written == 0 {
                     return Err(DaemonError::BufferTooSmall { required })
                 }
-                next = continuation.saturating_add(index);
+                next = entry_cursors.map_or(continuation.saturating_add(index), |cursors| {
+                    cursors[index]
+                });
                 stopped_for_buffer = true;
                 break
             }
@@ -2598,27 +2605,28 @@ fn input_name(buffer: Option<&mut [u8]>) -> Result<Name, DaemonError> {
     Name::from_bytes(buffer, false)
 }
 
-fn list_prefix(output: &[u8], path_length: u64) -> Result<Name, DaemonError> {
-    let prefix_bytes = if path_length == 0 {
-        let end = output
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(output.len());
-        &output[..end]
-    } else {
-        let count = usize::try_from(path_length).map_err(|_| DaemonError::InvalidPath)?;
-        output.get(..count).ok_or(DaemonError::InvalidPath)?
-    };
-    let prefix_bytes = match prefix_bytes.iter().position(|byte| *byte == 0) {
-        Some(end) => &prefix_bytes[..end],
-        None => prefix_bytes,
-    };
+fn list_buffers(
+    buffer: Option<&mut [u8]>,
+    path_length: u64,
+) -> Result<(Name, &mut [u8]), DaemonError> {
+    let buffer = input_buffer(buffer)?;
+    let count = usize::try_from(path_length).map_err(|_| DaemonError::InvalidPath)?;
+    if count == 0
+        || count > LIST_PATH_REGION_BYTES
+        || buffer.len() <= LIST_PATH_REGION_BYTES
+    {
+        return Err(DaemonError::InvalidPath)
+    }
+    let prefix_bytes = buffer.get(..count).ok_or(DaemonError::InvalidPath)?;
     if prefix_bytes.is_empty() || prefix_bytes == b"/" {
-        Ok(Name::EMPTY)
+        Ok((Name::EMPTY, &mut buffer[LIST_PATH_REGION_BYTES..]))
     } else if prefix_bytes.first() != Some(&b'/') {
         Err(DaemonError::InvalidPath)
     } else {
-        Name::from_bytes(prefix_bytes, true)
+        Ok((
+            Name::from_bytes(prefix_bytes, true)?,
+            &mut buffer[LIST_PATH_REGION_BYTES..],
+        ))
     }
 }
 

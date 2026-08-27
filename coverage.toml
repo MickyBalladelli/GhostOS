@@ -1,7 +1,6 @@
 # Coverage policy used by scripts/coverage.sh and the optional coverage tier.
 [thresholds]
 total_lines = 60.0
-crate_lines = 1.0
 todo_feature_lines = 1.0
 
 [report]

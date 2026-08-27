@@ -700,73 +700,40 @@ impl<'a, const MAX_BLOCKS: usize> ReadOnlySnapshot<'a, MAX_BLOCKS> {
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
         let (count, next) = self.expand_paths_page(pattern, 0, output)?;
-        next.map_or(Ok(count), |next| {
+        next.map_or(Ok(count), |_| {
             Err(Error::BufferTooSmall {
-                required: next.saturating_add(1),
+                required: CAPACITY.saturating_add(1),
             })
         })
     }
 
-    /// Return one bounded, sorted wildcard page. Continuation is the stable
-    /// zero-based match ordinal, not an internal record position.
+    /// Return one bounded, sorted wildcard page. Continuation is a stable
+    /// record cursor into this immutable root. It points at the first record
+    /// that the next page must inspect.
     pub fn expand_paths_page<const CAPACITY: usize>(
         &self,
         pattern: &str,
         continuation: usize,
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<(usize, Option<usize>), Error> {
-        let versioned = VersionedPath::parse(pattern)?;
-        let pattern = Pattern::parse(versioned.file.as_str())
-            .map_err(|_| Error::InvalidPattern)?;
-        output.fill(None);
-        let mut matches = [None; MAX_WILDCARD_MATCHES];
-        let mut match_count = 0;
-        let mut ordinal = 0;
-        while let Some(record) = self.filesystem.record_at(self.root, ordinal)? {
-            ordinal = ordinal.saturating_add(1);
-            let selected = match versioned.version {
-                VersionSelector::Latest => {
-                    !record.deleted
-                        && self.filesystem.latest_record_at(self.root, record.key.file)?
-                            == Some(record)
-                }
-                VersionSelector::Exact(version) => {
-                    !record.deleted && record.key.version == version
-                }
-            };
-            if !selected || !pattern.matches(record.key.file.as_str()) {
-                continue
-            }
-            if matches[..match_count]
-                .iter()
-                .flatten()
-                .any(|path| *path == record.key.file)
-            {
-                continue
-            }
-            if match_count == matches.len() {
-                return Err(Error::BufferTooSmall {
-                    required: match_count.saturating_add(1),
-                })
-            }
-            let insert_at = matches[..match_count]
-                .iter()
-                .position(|path| path.is_some_and(|path| path > record.key.file))
-                .unwrap_or(match_count);
-            for index in (insert_at..match_count).rev() {
-                matches[index + 1] = matches[index];
-            }
-            matches[insert_at] = Some(record.key.file);
-            match_count += 1;
-        }
-        if continuation >= match_count {
-            return Ok((0, None))
-        }
-        let end = continuation.saturating_add(CAPACITY).min(match_count);
-        for (slot, path) in matches[continuation..end].iter().flatten().copied().enumerate() {
-            output[slot] = Some(path);
-        }
-        Ok((end - continuation, (end < match_count).then_some(end)))
+        expand_paths_page_at(self.filesystem, self.root, pattern, continuation, output, None)
+    }
+
+    pub fn expand_paths_page_with_cursors<const CAPACITY: usize>(
+        &self,
+        pattern: &str,
+        continuation: usize,
+        output: &mut [Option<FileName>; CAPACITY],
+        cursors: &mut [usize; CAPACITY],
+    ) -> Result<(usize, Option<usize>), Error> {
+        expand_paths_page_at(
+            self.filesystem,
+            self.root,
+            pattern,
+            continuation,
+            output,
+            Some(cursors),
+        )
     }
 
     /// Read a range from one file version without leaving the checkpoint tree.
@@ -1732,72 +1699,33 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<usize, Error> {
         let (count, next) = self.expand_paths_page(pattern, 0, output)?;
-        next.map_or(Ok(count), |next| {
+        next.map_or(Ok(count), |_| {
             Err(Error::BufferTooSmall {
-                required: next.saturating_add(1),
+                required: CAPACITY.saturating_add(1),
             })
         })
     }
 
-    /// Return one bounded, sorted wildcard page. Continuation is the stable
-    /// zero-based match ordinal, not an internal record position.
+    /// Return one bounded, sorted wildcard page. Continuation is a stable
+    /// record cursor into this immutable root. It points at the first record
+    /// that the next page must inspect.
     pub fn expand_paths_page<const CAPACITY: usize>(
         &self,
         pattern: &str,
         continuation: usize,
         output: &mut [Option<FileName>; CAPACITY],
     ) -> Result<(usize, Option<usize>), Error> {
-        let versioned = VersionedPath::parse(pattern)?;
-        let pattern = Pattern::parse(versioned.file.as_str())
-            .map_err(|_| Error::InvalidPattern)?;
-        output.fill(None);
-        let mut matches = [None; MAX_WILDCARD_MATCHES];
-        let mut match_count = 0;
-        let mut ordinal = 0;
-        while let Some(record) = self.record_at(self.root, ordinal)? {
-            ordinal = ordinal.saturating_add(1);
-            let selected = match versioned.version {
-                VersionSelector::Latest => {
-                    !record.deleted
-                        && self.latest_record_at(self.root, record.key.file)? == Some(record)
-                }
-                VersionSelector::Exact(version) => {
-                    !record.deleted && record.key.version == version
-                }
-            };
-            if !selected || !pattern.matches(record.key.file.as_str()) {
-                continue
-            }
-            if matches[..match_count]
-                .iter()
-                .flatten()
-                .any(|path| *path == record.key.file)
-            {
-                continue
-            }
-            if match_count == matches.len() {
-                return Err(Error::BufferTooSmall {
-                    required: match_count.saturating_add(1),
-                })
-            }
-            let insert_at = matches[..match_count]
-                .iter()
-                .position(|path| path.is_some_and(|path| path > record.key.file))
-                .unwrap_or(match_count);
-            for index in (insert_at..match_count).rev() {
-                matches[index + 1] = matches[index];
-            }
-            matches[insert_at] = Some(record.key.file);
-            match_count += 1;
-        }
-        if continuation >= match_count {
-            return Ok((0, None))
-        }
-        let end = continuation.saturating_add(CAPACITY).min(match_count);
-        for (slot, path) in matches[continuation..end].iter().flatten().copied().enumerate() {
-            output[slot] = Some(path);
-        }
-        Ok((end - continuation, (end < match_count).then_some(end)))
+        expand_paths_page_at(self, self.root, pattern, continuation, output, None)
+    }
+
+    pub fn expand_paths_page_with_cursors<const CAPACITY: usize>(
+        &self,
+        pattern: &str,
+        continuation: usize,
+        output: &mut [Option<FileName>; CAPACITY],
+        cursors: &mut [usize; CAPACITY],
+    ) -> Result<(usize, Option<usize>), Error> {
+        expand_paths_page_at(self, self.root, pattern, continuation, output, Some(cursors))
     }
 
     pub fn list_links(&self, path: &str, entries: &mut [LinkEntry]) -> Result<usize, Error> {
@@ -1830,6 +1758,35 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         Ok(written)
     }
 
+    fn for_each_latest_record_at<F>(&self, root: BlockId, mut visitor: F) -> Result<(), Error>
+    where
+        F: FnMut(FileRecord) -> Result<(), Error>,
+    {
+        let mut pending: Option<FileRecord> = None;
+        self.visit_records_at(root, &mut |record| {
+            if record.deleted {
+                return Ok(());
+            }
+            if let Some(previous) = pending {
+                if previous.key.file != record.key.file {
+                    visitor(previous)?;
+                    pending = Some(record);
+                    return Ok(());
+                }
+                if record.key.version > previous.key.version {
+                    pending = Some(record);
+                }
+                return Ok(());
+            }
+            pending = Some(record);
+            Ok(())
+        })?;
+        if let Some(record) = pending {
+            visitor(record)?;
+        }
+        Ok(())
+    }
+
     fn list_directory_at(
         &self,
         root: BlockId,
@@ -1842,45 +1799,35 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
         }
         let mut seen = 0;
         let mut written = 0;
-        let mut ordinal = 0;
-        while let Some(record) = self.record_at(root, ordinal)? {
-            ordinal = ordinal.saturating_add(1);
-            if record.deleted {
-                continue;
+        let mut next = None;
+        self.for_each_latest_record_at(root, |record| {
+            if next.is_some() {
+                return Ok(());
             }
-            let Some(name) = (if path == "/" {
-                Some(record.key.file.as_str().strip_prefix('/').unwrap_or(record.key.file.as_str()))
-            } else {
-                record
-                    .key.file
-                    .as_str()
-                    .strip_prefix(path)
-                    .and_then(|rest| rest.strip_prefix('/'))
-            }) else {
-                continue;
+            let Some(name) = immediate_child_name(path, record.key.file.as_str()) else {
+                return Ok(());
             };
-            if name.contains('/') {
-                continue;
-            }
             if seen < skip {
                 seen = seen.saturating_add(1);
-                continue;
+                return Ok(());
             }
             if written == entries.len() {
-                return Ok((written, Some(skip.saturating_add(written))));
+                next = Some(skip.saturating_add(written));
+                return Ok(());
             }
             entries[written] = DirectoryEntry {
                 name: FileName::new(name)?,
                 file_type: record.file_type,
                 size: record.size,
                 version: record.key.version,
-                link_count: self.link_count_at(root, record.object_id)?,
+                link_count: record.link_count.max(1),
                 mode: record.mode,
             };
             written += 1;
             seen = seen.saturating_add(1);
-        }
-        Ok((written, None))
+            Ok(())
+        })?;
+        Ok((written, next))
     }
 
     fn lookup_record(&self, path: &str) -> Result<FileRecord, Error> {
@@ -1921,16 +1868,12 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             return Ok(1);
         }
         let mut count = 0_u32;
-        let mut ordinal = 0;
-        while let Some(record) = self.record_at(root, ordinal)? {
-            ordinal = ordinal.saturating_add(1);
-            if record.object_id == object_id
-                && !record.deleted
-                && self.latest_record_at(root, record.key.file)? == Some(record)
-            {
+        self.for_each_latest_record_at(root, |record| {
+            if record.object_id == object_id {
                 count = count.saturating_add(1);
             }
-        }
+            Ok(())
+        })?;
         Ok(count)
     }
 
@@ -2574,19 +2517,41 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 
     fn latest_record_at(&self, root: BlockId, file: FileName) -> Result<Option<FileRecord>, Error> {
-        let mut ordinal = 0;
-        let mut latest = None;
-        while let Some(record) = self.record_at(root, ordinal)? {
-            ordinal = ordinal.saturating_add(1);
-            if record.key.file == file
-                && !record.deleted
-                && latest.map_or(true, |current: FileRecord| {
-                    current.key.version < record.key.version
-                })
-            {
-                latest = Some(record);
+        fn visit<const MAX_BLOCKS: usize>(
+            filesystem: &SynFs<MAX_BLOCKS>,
+            id: BlockId,
+            file: FileName,
+            latest: &mut Option<FileRecord>,
+        ) -> Result<(), Error> {
+            match filesystem.arena.get(id)? {
+                Block::Tree(TreeBlock::Leaf(leaf)) => {
+                    for record in &leaf.records[..leaf.len as usize] {
+                        if record.key.file == file
+                            && !record.deleted
+                            && latest.map_or(true, |current: FileRecord| {
+                                current.key.version < record.key.version
+                            })
+                        {
+                            *latest = Some(*record);
+                        }
+                    }
+                    Ok(())
+                }
+                Block::Tree(TreeBlock::Branch(branch)) => {
+                    for child in &branch.children[..=branch.len as usize] {
+                        visit(filesystem, *child, file, latest)?;
+                    }
+                    Ok(())
+                }
+                Block::Data(_) => Err(Error::Corrupt),
             }
         }
+
+        if !root.is_some() {
+            return Ok(None);
+        }
+        let mut latest = None;
+        visit(self, root, file, &mut latest)?;
         Ok(latest)
     }
 
@@ -2672,6 +2637,40 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
             .find(|checkpoint| checkpoint.info.id == id)
             .copied()
             .ok_or(Error::CheckpointNotFound)
+    }
+
+    fn visit_records_at<F>(&self, root: BlockId, visitor: &mut F) -> Result<(), Error>
+    where
+        F: FnMut(FileRecord) -> Result<(), Error>,
+    {
+        fn visit<const MAX_BLOCKS: usize, F>(
+            filesystem: &SynFs<MAX_BLOCKS>,
+            id: BlockId,
+            visitor: &mut F,
+        ) -> Result<(), Error>
+        where
+            F: FnMut(FileRecord) -> Result<(), Error>,
+        {
+            match filesystem.arena.get(id)? {
+                Block::Tree(TreeBlock::Leaf(leaf)) => {
+                    for record in &leaf.records[..leaf.len as usize] {
+                        visitor(*record)?
+                    }
+                }
+                Block::Tree(TreeBlock::Branch(branch)) => {
+                    for child in &branch.children[..=branch.len as usize] {
+                        visit(filesystem, *child, visitor)?
+                    }
+                }
+                Block::Data(_) => return Err(Error::Corrupt),
+            }
+            Ok(())
+        }
+
+        if root.is_some() {
+            visit(self, root, visitor)?
+        }
+        Ok(())
     }
 
     fn record_at(&self, root: BlockId, wanted: u32) -> Result<Option<FileRecord>, Error> {
@@ -2792,6 +2791,137 @@ impl<const MAX_BLOCKS: usize> SynFs<MAX_BLOCKS> {
     }
 }
 
+fn expand_paths_page_at<const MAX_BLOCKS: usize, const CAPACITY: usize>(
+    filesystem: &SynFs<MAX_BLOCKS>,
+    root: BlockId,
+    pattern: &str,
+    continuation: usize,
+    output: &mut [Option<FileName>; CAPACITY],
+    cursors: Option<&mut [usize; CAPACITY]>,
+) -> Result<(usize, Option<usize>), Error> {
+    let versioned = VersionedPath::parse(pattern)?;
+    let pattern = Pattern::parse(versioned.file.as_str()).map_err(|_| Error::InvalidPattern)?;
+    output.fill(None);
+    if CAPACITY == 0 {
+        return Err(Error::BufferTooSmall { required: 1 })
+    }
+    let mut cursors = cursors;
+
+    let mut written = 0;
+    let mut next = None;
+    let mut current_file = None;
+    let mut latest: Option<(FileRecord, u32)> = None;
+
+    let mut emit = |record: FileRecord, cursor: u32| -> bool {
+        if !pattern.matches(record.key.file.as_str()) {
+            return true
+        }
+        if written == CAPACITY {
+            next = Some(cursor as usize);
+            return false
+        }
+        output[written] = Some(record.key.file);
+        if let Some(cursors) = cursors.as_deref_mut() {
+            cursors[written] = cursor as usize;
+        }
+        written += 1;
+        true
+    };
+
+    let mut visit = |record: FileRecord, cursor: u32| -> Result<bool, Error> {
+        match versioned.version {
+            VersionSelector::Exact(version) => {
+                if record.key.version == version {
+                    Ok(emit(record, cursor))
+                } else {
+                    Ok(true)
+                }
+            }
+            VersionSelector::Latest => {
+                if current_file != Some(record.key.file) {
+                    if let Some(record) = latest.take()
+                        && !emit(record.0, record.1)
+                    {
+                        return Ok(false)
+                    }
+                    current_file = Some(record.key.file);
+                }
+                if pattern.matches(record.key.file.as_str())
+                    && latest.is_none_or(|current| current.0.key.version < record.key.version)
+                {
+                    latest = Some((record, cursor));
+                }
+                Ok(true)
+            }
+        }
+    };
+
+    visit_live_records_from(filesystem, root, continuation, &mut visit)?;
+    drop(visit);
+    if versioned.version == VersionSelector::Latest {
+        if let Some(record) = latest {
+            let _ = emit(record.0, record.1);
+        }
+    }
+    drop(emit);
+    Ok((written, next))
+}
+
+fn visit_live_records_from<const MAX_BLOCKS: usize, F>(
+    filesystem: &SynFs<MAX_BLOCKS>,
+    root: BlockId,
+    continuation: usize,
+    visitor: &mut F,
+) -> Result<(), Error>
+where
+    F: FnMut(FileRecord, u32) -> Result<bool, Error>,
+{
+    let continuation = u32::try_from(continuation).map_err(|_| Error::InvalidPath)?;
+    fn visit<const MAX_BLOCKS: usize, F>(
+        filesystem: &SynFs<MAX_BLOCKS>,
+        id: BlockId,
+        continuation: u32,
+        ordinal: &mut u32,
+        visitor: &mut F,
+    ) -> Result<bool, Error>
+    where
+        F: FnMut(FileRecord, u32) -> Result<bool, Error>,
+    {
+        match filesystem.arena.get(id)? {
+            Block::Tree(TreeBlock::Leaf(leaf)) => {
+                for record in &leaf.records[..leaf.len as usize] {
+                    if record.deleted {
+                        continue
+                    }
+                    let cursor = *ordinal;
+                    *ordinal = ordinal.saturating_add(1);
+                    if cursor < continuation {
+                        continue
+                    }
+                    if !visitor(*record, cursor)? {
+                        return Ok(false)
+                    }
+                }
+                Ok(true)
+            }
+            Block::Tree(TreeBlock::Branch(branch)) => {
+                for child in &branch.children[..=branch.len as usize] {
+                    if !visit(filesystem, *child, continuation, ordinal, visitor)? {
+                        return Ok(false)
+                    }
+                }
+                Ok(true)
+            }
+            Block::Data(_) => Err(Error::Corrupt),
+        }
+    }
+
+    if root.is_some() {
+        visit(filesystem, root, continuation, &mut 0, visitor)?;
+    }
+    Ok(())
+}
+
 impl<const MAX_BLOCKS: usize> Default for SynFs<MAX_BLOCKS> {
     fn default() -> Self {
         Self::new()
@@ -2810,6 +2940,19 @@ impl From<FileRecord> for FileVersion {
             link_count: record.link_count,
             mode: record.mode,
         }
+    }
+}
+
+fn immediate_child_name<'a>(path: &str, file: &'a str) -> Option<&'a str> {
+    let name = if path == "/" {
+        file.strip_prefix('/').unwrap_or(file)
+    } else {
+        file.strip_prefix(path).and_then(|rest| rest.strip_prefix('/'))?
+    };
+    if name.is_empty() || name.contains('/') {
+        None
+    } else {
+        Some(name)
     }
 }
 

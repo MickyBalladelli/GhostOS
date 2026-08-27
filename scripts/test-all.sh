@@ -68,7 +68,7 @@ run_tier() {
     else
         printf '{"schema":1,"state":"failed","tier":"%s","exit_code":%d,"reason":"command exited with status %d"}\n' "$tier" "$status" "$status" > "$output_dir/result.json"
     fi
-    if [[ "$tier" == vm ]]; then
+    if [[ "$tier" == workspace ]]; then
         for inventory_tier in fast-unit vm-integration cli; do
             python3 "$root_dir/scripts/record-vm-evidence.py" \
                 --evidence-dir "$evidence_dir" \
@@ -85,10 +85,7 @@ run_tier() {
 }
 
 run_tier host-unit cargo test
-run_tier unit cargo test -p ghostos-vm --lib
-run_tier integration cargo test -p ghostos-vm --tests
 run_tier workspace cargo test --workspace --all-targets
-run_tier vm cargo test -p ghostos-vm --all-targets
 run_tier vm-quality python3 "$root_dir/scripts/validate-vm-quality.py"
 benchmark_revision=$(git rev-parse HEAD 2>/dev/null || printf unknown)
 benchmark_command=(python3 "$root_dir/scripts/benchmark.py" \
@@ -98,7 +95,6 @@ if [[ -n "${GHOSTOS_BENCH_BASELINE:-}" ]]; then
 fi
 benchmark_command+=(-- cargo bench -p ghostos-vm --bench bounded)
 run_tier performance env GHOSTOS_BENCH_REVISION="$benchmark_revision" "${benchmark_command[@]}"
-run_tier recovery cargo test --workspace --all-targets
 
 python3 "$root_dir/scripts/validate-vm-evidence.py" "$evidence_dir" \
     --require-tier fast-unit \

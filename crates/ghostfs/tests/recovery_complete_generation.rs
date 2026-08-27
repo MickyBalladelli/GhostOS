@@ -376,6 +376,35 @@ fn wildcard_versions_are_sorted_bounded_and_selector_scoped() {
 }
 
 #[test]
+fn wildcard_pages_resume_from_record_cursors() {
+    let mut filesystem = SynFs::<BLOCKS>::new();
+    filesystem
+        .create_directory("/data", true)
+        .expect("create data directory");
+    for path in ["/data/alpha", "/data/beta", "/data/gamma"] {
+        filesystem.write(path, b"value").expect("create wildcard file");
+    }
+
+    let mut first = [None; 1];
+    let mut first_cursor = [0; 1];
+    let (count, next) = filesystem
+        .expand_paths_page_with_cursors("/data/*", 0, &mut first, &mut first_cursor)
+        .expect("first wildcard page");
+    assert_eq!(count, 1);
+    assert_eq!(first[0].unwrap().as_str(), "/data/alpha");
+    let next = next.expect("second wildcard page");
+    assert_eq!(first_cursor[0], 1);
+
+    let mut second = [None; 1];
+    let (count, next) = filesystem
+        .expand_paths_page("/data/*", next, &mut second)
+        .expect("second wildcard page");
+    assert_eq!(count, 1);
+    assert_eq!(second[0].unwrap().as_str(), "/data/beta");
+    assert!(next.is_some());
+}
+
+#[test]
 fn property_wildcard_version_selection_never_falls_back_to_latest() {
     use ghostos_test_support::property::{run_assert, Config};
 

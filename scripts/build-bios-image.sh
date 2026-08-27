@@ -31,9 +31,11 @@ cargo build --locked --release -p ghostos-kernel --bin ghostos-kernel \
 
 "$llvm_objcopy" -O binary "$target_dir/ghostos-kernel" "$build_dir/kernel.bin"
 
-kernel_out=$(ls -td "$project_root"/target/x86_64-unknown-none/release/build/ghostos-kernel-*/out 2>/dev/null | head -n 1)
-if [ -z "$kernel_out" ]; then
-    echo "kernel OUT_DIR is missing after the kernel build" >&2
+kernel_out="$project_root/build/kernel-ring3"
+if [ ! -f "$kernel_out/ghostos-shell.bin" ] \
+    || [ ! -f "$kernel_out/ghostos-login.bin" ] \
+    || [ ! -f "$kernel_out/ghostos-service.bin" ]; then
+    echo "pinned Ring 3 images are missing under build/kernel-ring3 after the kernel build" >&2
     exit 1
 fi
 cp "$kernel_out/ghostos-shell.bin" "$build_dir/ghostos-shell.bin"

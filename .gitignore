@@ -37,3 +37,4 @@ Thumbs.db
 virtual_machine/tests/generated-inventory.toml
 kernel/build/soak/
 virtual_machine/build/soak/
+virtual_machine/Cargo.lock

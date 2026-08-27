@@ -135,6 +135,7 @@ pub(crate) const SERVICE_CODE_PAGE_COUNT: usize = 19;
 /// Ring 3 boot-service stack pages (64 KiB). Keep `arch/x86_64.rs` paging in sync.
 #[allow(dead_code)]
 pub(crate) const SERVICE_STACK_PAGE_COUNT: usize = 16;
+const SHELL_LIST_SCRATCH_BYTES: usize = 4096;
 
 #[allow(dead_code)]
 pub(crate) fn service_image_fits(length: usize) -> bool {
@@ -1124,7 +1125,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 || length > ghostos_fsd::MAX_IPC_BUFFER_BYTES as u64
                 || !arch::paging::service_user_range(address, length, writable != 0)
                 || (operation != Operation::SynFsList && boot_buffer.path_length != 0)
-                || (operation == Operation::SynFsList && boot_buffer.path_length > length)
+                || (operation == Operation::SynFsList
+                    && (boot_buffer.path_length == 0
+                        || boot_buffer.path_length > ghostos_fsd::LIST_PATH_REGION_BYTES as u64
+                        || length <= ghostos_fsd::LIST_PATH_REGION_BYTES as u64))
             {
                 return syscall_error(Status::INVALID_ARGUMENT)
             }
@@ -1132,18 +1136,45 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 let bytes = unsafe {
                     core::slice::from_raw_parts_mut(address as *mut u8, length as usize)
                 };
-                boot_services::dispatch_shell_filesystem(
-                    operation,
-                    request.flags,
-                    request.capability,
-                    boot_buffer.continuation,
-                    if operation == Operation::SynFsList {
-                        boot_buffer.path_length
-                    } else {
-                        0
-                    },
-                    Some(bytes),
-                )
+                if operation == Operation::SynFsList {
+                    let path_length = boot_buffer.path_length as usize;
+                    let scratch_length = core::cmp::min(
+                        bytes.len(),
+                        SHELL_LIST_SCRATCH_BYTES,
+                    );
+                    let mut scratch = [0u8; SHELL_LIST_SCRATCH_BYTES];
+                    scratch[..path_length].copy_from_slice(&bytes[..path_length]);
+                    let response = boot_services::dispatch_shell_filesystem(
+                        operation,
+                        request.flags,
+                        request.capability,
+                        boot_buffer.continuation,
+                        boot_buffer.path_length,
+                        Some(&mut scratch[..scratch_length]),
+                    );
+                    if response.status == Status::NORMAL.raw() {
+                        let output_start = ghostos_fsd::LIST_PATH_REGION_BYTES;
+                        let output_length = response.values[0] as usize;
+                        let Some(output_end) = output_start.checked_add(output_length) else {
+                            return syscall_error(Status::INTERNAL)
+                        };
+                        if output_end > bytes.len() || output_end > scratch_length {
+                            return syscall_error(Status::INTERNAL)
+                        }
+                        bytes[output_start..output_end]
+                            .copy_from_slice(&scratch[output_start..output_end]);
+                    }
+                    response
+                } else {
+                    boot_services::dispatch_shell_filesystem(
+                        operation,
+                        request.flags,
+                        request.capability,
+                        boot_buffer.continuation,
+                        0,
+                        Some(bytes),
+                    )
+                }
             })
         }
     }

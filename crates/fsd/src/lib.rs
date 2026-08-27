@@ -26,5 +26,5 @@ pub use namespace::{
 };
 pub use protocol::{
     Capability, Flags, LockMode, LockRange, Operation, ProcessId, ProtocolError, Request, Response,
-    MAX_IPC_BUFFER_BYTES, REQUEST_LABEL, RESPONSE_LABEL,
+    LIST_PATH_REGION_BYTES, MAX_IPC_BUFFER_BYTES, REQUEST_LABEL, RESPONSE_LABEL,
 };

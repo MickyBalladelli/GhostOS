@@ -770,6 +770,32 @@ fn service_image_bound_rejects_oversized_ring3_blobs() {
 }
 
 #[test]
+fn write_service_image_halts_instead_of_asserting() {
+    let source = include_str!("arch/x86_64.rs");
+    let start = source
+        .find("pub unsafe fn write_service_image")
+        .expect("write_service_image");
+    let body = &source[start..];
+    let end = body
+        .find("\n    pub unsafe fn ")
+        .or_else(|| body.find("\n    /// Publish capability"))
+        .unwrap_or(body.len());
+    let body = &body[..end];
+    assert!(
+        body.contains("crate::fatal_kernel_halt(ghostos_status::Status::INVALID_ARGUMENT)"),
+        "oversized Ring 3 images must halt"
+    );
+    assert!(
+        body.contains("crate::fatal_kernel_halt(ghostos_status::Status::CORRUPT)"),
+        "missing entropy must halt"
+    );
+    assert!(
+        !body.contains("assert!"),
+        "write_service_image must not panic through assert"
+    );
+}
+
+#[test]
 fn ring3_service_stack_is_64kib() {
     assert_eq!(crate::SERVICE_CODE_PAGE_COUNT, 19);
     assert_eq!(crate::SERVICE_STACK_PAGE_COUNT, 16);
@@ -795,6 +821,19 @@ fn ring3_mmio_window_starts_after_the_64kib_stack() {
         crate::driver_capabilities::SERVICE_MMIO_STRIDE,
     ));
     assert_eq!(crate::driver_capabilities::SERVICE_MMIO_BASE % crate::driver_capabilities::SERVICE_MMIO_STRIDE, 0);
+}
+
+#[test]
+fn interrupt_return_preserves_user_rax() {
+    let source = include_str!("arch/x86_64.rs");
+    assert!(
+        !source.contains("mov [rsp + 112], rax"),
+        "dispatch's return flag must not overwrite saved user RAX"
+    );
+    assert!(
+        source.contains("mov [rsp + 120], rax"),
+        "stash the iretq/jmp flag in the vector slot instead of RAX"
+    );
 }
 
 #[test]

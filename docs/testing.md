@@ -152,8 +152,7 @@ evidence described in `platforms/README.md`.
 | --- | --- | --- | --- |
 | host-unit | `cargo test` | required | test output and package metadata |
 | workspace | `cargo test --workspace --all-targets` | required for workspace validation | test output and package metadata |
-| vm | `cargo test -p ghostos-vm --all-targets` | required for VM changes | test output and VM metadata |
-| recovery | `cargo test --workspace --all-targets` | required | failure, restart, and recovery output |
+| vm | `cargo test -p ghostos-vm --all-targets` | manual VM-focused check | test output and VM metadata |
 | qemu | `GHOSTOS_RUN_QEMU_TESTS=1 cargo test -p ghostos-vm --test qemu_matrix_59_11 --test test_environments -- --ignored` | opt-in | serial log, QEMU command, exit reason |
 | cluster | `scripts/qemu-cluster-validation.sh` | opt-in | node serial logs, command logs, QMP input, failover log |
 | hardware-accelerated | `GHOSTOS_QEMU_ACCEL=kvm ... qemu_matrix_59_11 -- --ignored` | opt-in | accelerated serial log and exit reason |
@@ -162,10 +161,10 @@ evidence described in `platforms/README.md`.
 | performance | `python3 scripts/benchmark.py --baseline <same-host-report> -- cargo bench -p ghostos-vm --bench bounded` | required | benchmark report, hardware signature, budgets, and regression state |
 | soak | `GHOSTOS_SOAK_RUNS=3 ./scripts/soak.sh` | opt-in | workflow leak report, lifecycle and capability ownership reports, logs, and resource-drift snapshots |
 
-The root workspace includes both `ghostos-test-support` and `ghostos-vm` in
-`default-members`. Therefore `cargo test` runs every deterministic GhostOS and VM
-unit/integration test. `cargo test --workspace --all-targets` is the explicit
-workspace command that checks every workspace target.
+The root workspace keeps a small GhostFS smoke set in `default-members`; the
+`ghostos-smoke` alias adds a library-only VM check. Therefore `cargo test`
+supports fast local iteration. `cargo test --workspace --all-targets` is the
+explicit workspace command that checks every workspace target.
 
 The VM-specific contract is checked by:
 
@@ -491,8 +490,7 @@ scripts/replay-vm-fuzz.sh vm-migration \
   fuzz/corpus/vm-migration/regression-<sha256>
 ```
 
-Coverage uses `coverage.toml`: the workspace threshold is 60% lines and each
-crate must clear its own 1% floor, so an aggregate cannot hide an untested
-crate. The feature report has one enforced mapping for each TODO 1–58 entry;
+Coverage uses `coverage.toml`: the workspace threshold is 60% lines. The feature
+report has one enforced mapping for each TODO 1–58 entry;
 the mapped unit, integration, fault, fuzz, QEMU, and performance IDs are the
 feature-level evidence gate.

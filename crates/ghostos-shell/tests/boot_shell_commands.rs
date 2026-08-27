@@ -55,3 +55,40 @@ fn boot_shell_ls_copies_cwd_before_listing() {
         "cwd must not live in _start next to the 4 KiB LIST buffer"
     );
 }
+
+#[test]
+fn boot_shell_repl_is_not_inlined_into_start() {
+    let source = include_str!("../../../userspace/boot-services/shell.c");
+    assert!(
+        source.contains("__attribute__((noinline, noreturn))\nstatic void shell_repl(char *directory)"),
+        "the input loop must be a separate function so _start does not keep call() in r15 across LOGIN_STATUS"
+    );
+    assert!(
+        source.contains("__attribute__((noinline))\nstatic int read_byte(u8 *byte)"),
+        "terminal reads must not be inlined into the REPL register allocator"
+    );
+    assert!(
+        source.contains("__attribute__((noinline))\nstatic int update_prompt(int *prompt_authorized, int *prompt_first_run)"),
+        "prompt updates must not reuse r15 for both call() and login flags"
+    );
+    assert!(source.contains("shell_repl(directory)"));
+}
+
+#[test]
+fn boot_shell_filesystem_commands_require_absolute_paths() {
+    let source = include_str!("../../../userspace/boot-services/shell.c");
+    assert!(source.contains("if (path_length == 0 || path_length >= 255)"));
+    let require = source
+        .find("if (require_absolute_path(path, directory) != 0)")
+        .expect("filesystem commands must go through require_absolute_path");
+    for command in ["CREATE", "TYPE", "MKDIR", "RMDIR", "DELETE"] {
+        let needle = format!("equal_name(command, \"{command}\")");
+        let at = source
+            .find(&needle)
+            .unwrap_or_else(|| panic!("missing {command}"));
+        assert!(
+            at > require,
+            "{command} must run after require_absolute_path"
+        );
+    }
+}

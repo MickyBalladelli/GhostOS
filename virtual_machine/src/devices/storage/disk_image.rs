@@ -1499,6 +1499,30 @@ mod tests {
     }
 
     #[test]
+    fn inspect_lock_accepts_legacy_synos_lock() {
+        let path = lock_test_path("synos-legacy");
+        create_lock_test_image(&path);
+        let image = fs::canonicalize(&path).unwrap();
+        let legacy = DiskImage::legacy_lock_path(&path);
+        let mut lock = File::create(&legacy).unwrap();
+        writeln!(
+            lock,
+            "version={LOCK_RECORD_VERSION}\nimage_identity={}\nowner_identity=test\npid=0\nstart_time=crashed\nhost_identity={}\nformat=raw",
+            image.display(),
+            host_identity(),
+        )
+        .unwrap();
+        lock.sync_all().unwrap();
+
+        let info = DiskImage::inspect_lock(&path).unwrap().unwrap();
+        assert_eq!(info.path, legacy);
+        assert!(info.stale);
+
+        let _ = fs::remove_file(&legacy);
+        remove_lock_test_image(&path);
+    }
+
+    #[test]
     fn crashed_owner_lock_is_recoverable() {
         let path = lock_test_path("crash");
         create_lock_test_image(&path);

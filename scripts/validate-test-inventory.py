@@ -32,7 +32,7 @@ if feature_ids != expected:
 if '"virtual_machine"' not in (root / "Cargo.toml").read_text():
     errors.append("virtual_machine is missing from the root workspace")
 if '"crates/test-support"' not in (root / "Cargo.toml").read_text():
-    errors.append("test-support is missing from root default-members")
+    errors.append("test-support is missing from the root workspace")
 for tier in ("unit", "integration", "qemu", "fault", "fuzz", "performance"):
     if f"[tiers.{tier}]" not in inventory:
         errors.append(f"missing inventory tier: {tier}")

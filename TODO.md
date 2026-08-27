@@ -21,7 +21,7 @@ The SynOS rename is largely complete in crate and binary names. Remaining SynOS 
   `kernel/src/boot_services.rs` logs `[fsprobe] boot: AHCI MOUNT FAILED` and then `unwrap_or_else(SynFs::new)`. Accounts, passkeys, and packages on the system disk disappear with no recovery prompt. Fail boot or enter an explicit recovery mode when a system volume was expected (`start-ghostos.sh` always provisions `system.raw`).
 
 - [x] Resolve Ring 3 service images by the kernel build that produced them.
-  `start-ghostos.sh` uses `find … -name ghostos-shell.bin -print -quit` under `target/x86_64-unknown-none/release/build`. The first match can be an old hash directory. Staleness is keyed only on `build/bios/kernel.bin` mtime. Pin images to the `ghostos-kernel` `OUT_DIR` that `kernel/build.rs` just built, and refresh services whenever boot-service sources change.
+  `start-ghostos.sh` uses `find … -name ghostos-shell.bin -print -quit` under `target/x86_64-unknown-none/release/build`. The first match can be an old hash directory. Staleness is keyed only on `build/bios/kernel.bin` mtime. Pin images to `build/kernel-ring3` from the `ghostos-kernel` build script (a stable copy of that build's `OUT_DIR`), and refresh services whenever boot-service sources change.
 
 - [x] Return `AuthError` for non-UTF-8 usernames instead of panicking.
   `crates/auth/src/identity.rs` uses `core::str::from_utf8(...).unwrap()` while checking reserved names. Invalid stored bytes should be `InvalidRecord`, not a `no_std` panic. `as_str()` still uses `expect` on the same invariant; keep one fallible conversion at the boundary.
@@ -31,6 +31,7 @@ The SynOS rename is largely complete in crate and binary names. Remaining SynOS 
 
 - [x] Repair the VM public-API inventory so quality gates are truthful.
   `python3 scripts/generate-vm-inventory.py --check` reports missing named tests (passkey, DHCP, system-disk refresh, and others). `scripts/validate-vm-quality.py` also flags stale `src/net/dhcp.rs`. `scripts/test-all.sh` runs this tier; keep `virtual_machine/tests/inventory.toml` in sync or stop claiming the gate is green.
+
 
 ---
 
@@ -85,26 +86,45 @@ The SynOS rename is largely complete in crate and binary names. Remaining SynOS 
 
 ## Speed
 
-- [ ] Index GhostFS directories instead of scanning every record per LIST.
+- [x] Index GhostFS directories instead of scanning every record per LIST.
   `crates/ghostfs/src/lib.rs` `list_directory_at` walks all records for each page. Each emitted entry calls `link_count_at`, which walks all records again. Large `/data` or `/packages` trees make `dir` quadratic. Keep a per-directory child list or cache link counts on the object.
 
-- [ ] Do not rescan the whole volume for every wildcard page.
+- [x] Do not rescan the whole volume for every wildcard page.
   `expand_paths_page` restarts from ordinal 0 on each continuation (`crates/ghostfs/src/lib.rs`, used by `crates/fsd/src/daemon.rs` `write_wildcard_listing`). Resume from a stable cursor.
 
-- [ ] Stop size-optimizing the entire kernel.
-  `[profile.release.package.ghostos-kernel] opt-level = "z"` plus workspace `lto = true` and `codegen-units = 1` shrinks `kernel.bin` but slows syscalls, interrupt dispatch, and every `start-ghostos.sh` rebuild. Keep `z` for cold paths or the image blob; compile `syscall.rs` / `arch/x86_64.rs` at `2` or `3`. Consider `lto = "thin"` for host tools.
+- [x] Stop size-optimizing the entire kernel.
+  `[profile.release.package.ghostos-kernel] opt-level = "z"` plus workspace `lto = true` and `codegen-units = 1` shrinks `kernel.bin` but slows syscalls, interrupt dispatch, and every `start-ghostos.sh` rebuild. Keep `z` for cold paths or the image blob; compile `syscall.rs` / `arch/x86_64.rs` at `2` or `3`. Consider `lto = "thin"` for host tools. Stable Cargo cannot set per-file opt-level, so the kernel package is `opt-level = 2` and workspace release LTO is `thin`.
 
-- [ ] Allow parallel and incremental host builds.
+- [x] Allow parallel and incremental host builds.
   `.cargo/config.toml` sets `CARGO_BUILD_JOBS = 1` and `CARGO_INCREMENTAL = 0` (force false, but defaults kill iteration). That is for reproducible images. Scope those env vars to `scripts/build-bios-image.sh` / `scripts/check-reproducible-image.sh`, not every `cargo test`.
 
-- [ ] Use `panic = "unwind"` on host crates in dev.
+- [x] Use `panic = "unwind"` on host crates in dev.
   Workspace `[profile.dev] panic = "abort"` applies to the VM and all host tests. Kernel/uefi still need abort. Split profiles so host backtraces work while `ghostos-kernel` stays abort.
 
-- [ ] Cut redundant test sweeps.
+- [x] Cut redundant test sweeps.
   `scripts/test-all.sh` runs `cargo test`, then `cargo test --workspace --all-targets`, then the workspace command again under a recovery tier. `scripts/coverage.sh` runs workspace `llvm-cov` and then per-package coverage. One deterministic host pass plus an explicit `--workspace` gate is enough.
 
-- [ ] Add a smoke default so `cargo test` is not 70 crates.
+- [x] Add a smoke default so `cargo test` is not 70 crates.
   Default members currently include kernel + VM + almost every crate. A `ghostos-smoke` alias (abi, status, ghostfs, fsd, runtime, a thin VM test) would make local iteration match how `dir` actually gets fixed.
 
-- [ ] Avoid rewriting the LIST path on every continuation page.
+- [x] Avoid rewriting the LIST path on every continuation page.
   `print_directory` memset+copy of `/` on each page is required by the current in-band path protocol. A split path/output buffer removes that copy and the leftover-record class of bugs at the same time as the LIST ABI fix above.
+
+---
+## Central identity and VM fleet
+
+- [ ] Define a central GhostOS directory contract for users, stable identity IDs, groups, roles, public credentials, credential labels, and revocation state. Keep private passkey material outside GhostOS.
+
+- [ ] Add authenticated VM enrollment with a node identity, directory trust anchor, and explicit join/revoke lifecycle. A VM must not join by copying another VM's authorization database.
+
+- [ ] Replace per-VM first-boot passkey creation with directory enrollment and login using a stable WebAuthn RP ID and origin. One user passkey should authenticate to every authorized VM without sharing private keys.
+
+- [ ] Add a signed, short-lived directory authentication token bound to the user, credential, directory, target VM, challenge, expiry, and policy generation. Reject replay, wrong audience, stale generation, and revoked credentials.
+
+- [ ] Map verified directory identity, groups, and roles to node-local kernel capabilities. The directory may authenticate and authorize identity claims; it must not directly mint unrestricted filesystem or kernel capabilities.
+
+- [ ] Add bounded offline directory-cache behavior with revocation epochs, expiry, network-partition handling, and a separate local break-glass credential for recovery.
+
+- [ ] Migrate the local `/system/security/authorization` bootstrap flow to coexist with central identity. Define first boot, directory unavailable, directory recovery, credential rotation, and last-local-admin behavior.
+
+- [ ] Add VM-fleet integration coverage for one passkey logging into multiple VMs, node removal, credential revocation, offline login expiry, replay rejection, and private-key non-persistence.

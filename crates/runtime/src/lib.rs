@@ -18,7 +18,8 @@ pub use ghostos_path_pattern::{Pattern, PatternError};
 pub use fs::{
     decode_boot_fs_buffer, decode_runtime_fs_buffer, seed_directory_path, BootFsBuffer,
     DirectoryPage, DirectoryRemovalMetadata, File, FileMapping, LinkMetadata, Metadata, OpenOptions,
-    PathBuffer, DIRECTORY_RECORD_HEADER_BYTES, LIST_CONTINUATION_ARGUMENT, LIST_PATH_LENGTH_ARGUMENT,
+    PathBuffer, DIRECTORY_RECORD_HEADER_BYTES, LIST_CONTINUATION_ARGUMENT, LIST_OUTPUT_OFFSET,
+    LIST_PATH_LENGTH_ARGUMENT, LIST_PATH_REGION_BYTES,
 };
 pub use ipc::{IpcAccess, IpcMapping};
 pub use pal::{

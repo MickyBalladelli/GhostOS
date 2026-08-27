@@ -114,6 +114,20 @@ fn main() {
     build_user_image(&sources.join("service.c"), &linker, &service, &tools);
     build_user_image(&sources.join("login.c"), &linker, &login, &tools);
     build_user_image(&sources.join("shell.c"), &linker, &shell, &tools);
+    let pinned = kernel.join("../build/kernel-ring3");
+    std::fs::create_dir_all(&pinned).unwrap_or_else(|error| {
+        panic!("could not create {}: {error}", pinned.display())
+    });
+    for (from, name) in [
+        (&service, "ghostos-service.bin"),
+        (&login, "ghostos-login.bin"),
+        (&shell, "ghostos-shell.bin"),
+    ] {
+        let to = pinned.join(name);
+        std::fs::copy(from, &to).unwrap_or_else(|error| {
+            panic!("could not pin {}: {error}", to.display())
+        });
+    }
     println!("cargo:rustc-env=GHOSTOS_SERVICE_IMAGE={}", service.display());
     println!("cargo:rustc-env=GHOSTOS_LOGIN_IMAGE={}", login.display());
     println!("cargo:rustc-env=GHOSTOS_SHELL_IMAGE={}", shell.display());

@@ -63,6 +63,7 @@ enum {
     OPEN_EXCLUSIVE = 1 << 9,
     FLAG_RECURSIVE = 1 << 8,
     SHELL_POLL_DELAY_US = 100,
+    LIST_PATH_REGION_BYTES = 192,
 };
 
 /* Writable cwd on the first stack page, after the role byte and resource manifest. */
@@ -328,6 +329,7 @@ static void write_status(u32 status)
     write_text("\n");
 }
 
+__attribute__((noinline))
 static int read_byte(u8 *byte)
 {
     struct response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
@@ -368,6 +370,7 @@ static int shell_dependencies_ready(void)
         && (response.values[1] & SHELL_REQUIRED_SERVICES) == SHELL_REQUIRED_SERVICES;
 }
 
+__attribute__((noinline))
 static void write_prompt(int authorized, int first_run)
 {
     if (authorized) {
@@ -379,6 +382,7 @@ static void write_prompt(int authorized, int first_run)
     }
 }
 
+__attribute__((noinline))
 static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
@@ -452,28 +456,21 @@ static void watchdog_command(char *cursor)
 __attribute__((noinline))
 static void print_directory(const char *path, u8 *buffer)
 {
-    char prefix[256];
-    u64 path_length = 0;
+    u64 path_length = length(path);
     u64 continuation = 0;
     u64 index;
-    if (path != 0) {
-        while (path_length < sizeof(prefix) - 1 && path[path_length] != 0) {
-            prefix[path_length] = path[path_length];
-            path_length++;
-        }
+    if (path_length == 0 || path_length > LIST_PATH_REGION_BYTES) {
+        write_text("the path is invalid. Check its spelling and format.\n");
+        return;
     }
-    prefix[path_length] = 0;
-    if (path_length == 0) {
-        prefix[0] = '/';
-        prefix[1] = 0;
-        path_length = 1;
+    memset(buffer, 0, 4096);
+    for (index = 0; index < path_length; index++) {
+        buffer[index] = (u8)path[index];
     }
     for (;;) {
-        volatile u8 *out = buffer;
-        memset(buffer, 0, 4096);
-        for (index = 0; index <= path_length; index++) {
-            out[index] = (u8)prefix[index];
-        }
+        volatile u8 *out = buffer + LIST_PATH_REGION_BYTES;
+        u64 output_capacity = 4096 - LIST_PATH_REGION_BYTES;
+        memset((void *)out, 0, output_capacity);
         struct response response = call_ex(
             OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation, path_length
         );
@@ -483,14 +480,14 @@ static void print_directory(const char *path, u8 *buffer)
         }
         index = 0;
         while (index + 22 <= response.values[0]) {
-            u16 name_length = (u16)buffer[index] | ((u16)buffer[index + 1] << 8);
+            u16 name_length = (u16)out[index] | ((u16)out[index + 1] << 8);
             u64 record_length = 22 + name_length;
             if (index + record_length > response.values[0]) {
                 write_text("filesystem returned a bad directory page\n");
                 return;
             }
             if (name_length != 0) {
-                write_bytes((const char *)&buffer[index + 22], name_length);
+                write_bytes((const char *)&out[index + 22], name_length);
                 write_text("\n");
             }
             index += record_length;
@@ -2149,7 +2146,7 @@ static void execute_line(char *line, u8 *buffer, char *directory)
         }
         path_length = length(argument);
         memset(buffer, 0, 4096);
-        for (index = 0; index <= path_length; index++) {
+        for (index = 0; index < path_length; index++) {
             buffer[index] = (u8)argument[index];
         }
         struct response listed = call_ex(
@@ -2281,6 +2278,7 @@ static void execute_line(char *line, u8 *buffer, char *directory)
                         0, (u64)path, path_length, 0, 0);
         if (response.status == STATUS_NORMAL) {
             call(OP_GHOSTFS_CLOSE, 0, response.values[0], 0, 0, 0, 0);
+            write_text("created\n");
         }
     } else if (equal_name(command, "TYPE") || equal_name(command, "CAT")) {
         type_file(path, buffer);
@@ -2543,17 +2541,63 @@ static void execute_locked_line(char *line)
     write_text("Terminal locked. Use the login prompt or SHUTDOWN.\n");
 }
 
-__attribute__((section(".text._start"), noreturn))
-void _start(void)
+__attribute__((noinline, noreturn))
+static void shell_repl(char *directory)
 {
     char line[512];
-    char *directory = (char *)WORKING_DIRECTORY;
     u8 buffer[4096];
     u64 line_length = 0;
     u64 heartbeat = 0;
     u64 idle_polls = 0;
-    u8 byte;
+    u8 key[8];
+    int prompt_authorized = -1;
+    int prompt_first_run = -1;
+    for (;;) {
+        if (!update_prompt(&prompt_authorized, &prompt_first_run)) {
+            line_length = 0;
+            sleep_for(SHELL_POLL_DELAY_US);
+            continue;
+        }
+        if (!read_byte(key)) {
+            sleep_for(SHELL_POLL_DELAY_US);
+            idle_polls++;
+            if (idle_polls == 256) {
+                call(OP_SERVICE_HEARTBEAT, 0, 0, SHELL_ROLE, ++heartbeat, 0, 0);
+                idle_polls = 0;
+            }
+            continue;
+        }
+        idle_polls = 0;
+        if (key[0] == '\r' || key[0] == '\n') {
+            if (line_length == 0) {
+                continue;
+            }
+            write_text("\n");
+            line[line_length] = 0;
+            if (prompt_authorized) {
+                execute_line(line, buffer, directory);
+            } else {
+                execute_locked_line(line);
+            }
+            line_length = 0;
+            prompt_authorized = -1;
+            prompt_first_run = -1;
+        } else if (key[0] == 8 || key[0] == 127) {
+            if (line_length != 0) {
+                line_length--;
+                write_text("\b \b");
+            }
+        } else if (key[0] >= 32 && key[0] < 127 && line_length < sizeof(line) - 1) {
+            line[line_length++] = (char)key[0];
+            write_bytes((const char *)key, 1);
+        }
+    }
+}
 
+__attribute__((section(".text._start"), noreturn))
+void _start(void)
+{
+    char *directory = (char *)WORKING_DIRECTORY;
     directory[0] = '/';
     directory[1] = 0;
     while (!shell_dependencies_ready()) {
@@ -2570,46 +2614,5 @@ void _start(void)
     } else {
         write_text("GhostOS user shell\n");
     }
-    int prompt_authorized = -1;
-    int prompt_first_run = -1;
-    for (;;) {
-        if (!update_prompt(&prompt_authorized, &prompt_first_run)) {
-            line_length = 0;
-            sleep_for(SHELL_POLL_DELAY_US);
-            continue;
-        }
-        if (!read_byte(&byte)) {
-            sleep_for(SHELL_POLL_DELAY_US);
-            idle_polls++;
-            if (idle_polls == 256) {
-                call(OP_SERVICE_HEARTBEAT, 0, 0, SHELL_ROLE, ++heartbeat, 0, 0);
-                idle_polls = 0;
-            }
-            continue;
-        }
-        idle_polls = 0;
-        if (byte == '\r' || byte == '\n') {
-            if (line_length == 0) {
-                continue;
-            }
-            write_text("\n");
-            line[line_length] = 0;
-            if (prompt_authorized) {
-                execute_line(line, buffer, directory);
-            } else {
-                execute_locked_line(line);
-            }
-            line_length = 0;
-            prompt_authorized = -1;
-            prompt_first_run = -1;
-        } else if (byte == 8 || byte == 127) {
-            if (line_length != 0) {
-                line_length--;
-                write_text("\b \b");
-            }
-        } else if (byte >= 32 && byte < 127 && line_length < sizeof(line) - 1) {
-            line[line_length++] = (char)byte;
-            write_bytes((const char *)&byte, 1);
-        }
-    }
+    shell_repl(directory);
 }
