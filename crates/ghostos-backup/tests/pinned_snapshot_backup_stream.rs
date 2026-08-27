@@ -1,3 +1,4 @@
+// Inventory: coverage_59_5.rs (legacy roadmap section 59).
 use ghostos_backup::{BackupError, BackupJob, BackupSink, BackupState};
 use ghostos_status::Status;
 use ghostos_ghostfs::{RmsMapHandle, SynFs};

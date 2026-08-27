@@ -1,3 +1,4 @@
+// Inventory: coverage_59_6.rs (legacy roadmap section 59).
 use ghostos_actors::{
     ActorEndpoint, ActorError, ActorId, ActorMessage, ActorSystem, ActorTransport, DsmMailbox,
 };

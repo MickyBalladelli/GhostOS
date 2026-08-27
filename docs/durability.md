@@ -95,4 +95,4 @@ generation. A torn map, object, or superblock makes that bank ineligible, so
 the previous complete generation remains the result. The disk-image failure
 and recovery coverage lives in
 [`crates/ghostfs/tests/persistence.rs`](../crates/ghostfs/tests/persistence.rs)
-and [`crates/ghostfs/tests/coverage_59_5.rs`](../crates/ghostfs/tests/coverage_59_5.rs).
+and [`crates/ghostfs/tests/recovery_complete_generation.rs`](../crates/ghostfs/tests/recovery_complete_generation.rs).

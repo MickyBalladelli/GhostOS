@@ -1,3 +1,4 @@
+// Inventory: coverage_59_8.rs (legacy roadmap section 59).
 use ghostos_compute::{
     Error, accelerator::{AcceleratorCapability, AcceleratorDevice, AcceleratorId, AcceleratorKind, AcceleratorOperation, AcceleratorQueue, AcceleratorRequest, ComputeApi, ComputeDispatch, DeviceLimits, KernelDescriptor, KernelFormat, KernelHandle},
     tensor::{DType, SharedTensor, TensorLayout, TensorRegion, TensorShape},

@@ -438,7 +438,11 @@ impl<const CAPACITY: usize> CommandRegistry<CAPACITY> {
             command_name.push_str(verb.as_str())?
         }
 
-        if command_name.as_str().eq_ignore_ascii_case("LN") {
+        if command_name.as_str().eq_ignore_ascii_case("DIR") {
+            command_name = Text::new("DIRECTORY")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("CAT") {
+            command_name = Text::new("TYPE")?;
+        } else if command_name.as_str().eq_ignore_ascii_case("LN") {
             command_name = Text::new("LINK")?;
         } else if command_name.as_str().eq_ignore_ascii_case("LINKS") {
             command_name = Text::new("SHOW-LINKS")?;
@@ -844,6 +848,8 @@ mod tests {
                 DIRECTORY_ROUTE,
             ),
             ("LS /data /CONTINUATION=32", DIRECTORY_ROUTE),
+            ("DIR /data", DIRECTORY_ROUTE),
+            ("CAT \"relative file\"", TYPE_ROUTE),
             ("MKDIR /data/new /NORECURSIVE", MKDIR_ROUTE),
             ("RMDIR /data/old", RMDIR_ROUTE),
             ("RD /data/old", RMDIR_ROUTE),

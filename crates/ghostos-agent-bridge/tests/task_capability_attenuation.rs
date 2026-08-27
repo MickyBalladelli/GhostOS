@@ -1,3 +1,4 @@
+// Inventory: coverage_59_8.rs (legacy roadmap section 59).
 use ghostos_agent_bridge::{AgentBridge, AgentTaskScope, Error};
 use ghostos_auth::{CapabilityKey, CryptographicCapability, TransportRights};
 use ghostos_fabric::NodeId;

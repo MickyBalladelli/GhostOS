@@ -57,8 +57,9 @@ pub mod paging {
     const ONE_GIB: u64 = 1024 * 1024 * 1024;
     /// Root, kernel paging levels, and the private user mapping levels.
     pub const PROCESS_TABLE_FRAME_COUNT: usize = 9;
-    pub const SERVICE_CODE_PAGE_COUNT: usize = 19;
-    pub const SERVICE_PAGE_COUNT: usize = SERVICE_CODE_PAGE_COUNT + 8;
+    pub const SERVICE_CODE_PAGE_COUNT: usize = crate::SERVICE_CODE_PAGE_COUNT;
+    pub const SERVICE_STACK_PAGE_COUNT: usize = crate::SERVICE_STACK_PAGE_COUNT;
+    pub const SERVICE_PAGE_COUNT: usize = SERVICE_CODE_PAGE_COUNT + SERVICE_STACK_PAGE_COUNT;
     pub const SERVICE_IMAGE_BYTES: usize = SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize;
     const SERVICE_STACK_GUARD_OFFSET: usize = SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize - 8;
     const USER_MAPPING_PML4_INDEX: usize = (crate::USER_SPACE_START >> 39) as usize;
@@ -321,7 +322,9 @@ pub mod paging {
         } else {
             SERVICE_IMAGE
         });
-        assert!(image.len() <= SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize);
+        if !crate::service_image_fits(image.len()) {
+            crate::fatal_kernel_halt(ghostos_status::Status::INVALID_ARGUMENT);
+        }
 
         unsafe {
             for page in pages {
@@ -338,9 +341,9 @@ pub mod paging {
                     chunk.len(),
                 );
             }
-            let guard = crate::random::next_u64()
-                .filter(|value| *value != 0)
-                .expect("entropy initialized before Ring 3 service images");
+            let Some(guard) = crate::random::next_u64().filter(|value| *value != 0) else {
+                crate::fatal_kernel_halt(ghostos_status::Status::CORRUPT);
+            };
             let page = SERVICE_STACK_GUARD_OFFSET / crate::FRAME_SIZE as usize;
             let offset = SERVICE_STACK_GUARD_OFFSET % crate::FRAME_SIZE as usize;
             ((pages[page] + physical_offset + offset as u64) as *mut u64).write(guard);

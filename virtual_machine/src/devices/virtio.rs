@@ -7,6 +7,9 @@
 
 use crate::devices::storage::DiskImage;
 use crate::devices::serial::write_host_console;
+use crate::devices::virtio_queue::{
+    Descriptor, VirtioQueue, DESC_WRITE, QUEUE_SIZE,
+};
 use crate::devices::{ApicTrigger, Device, DeviceError, LocalApic, PortDevice};
 use crate::memory::Mmu;
 use std::cell::RefCell;
@@ -45,12 +48,6 @@ const REG_ISR_STATUS: u16 = 0x13;
 const REG_CONFIG: u16 = 0x14;
 
 const STATUS_DRIVER_OK: u8 = 1 << 2;
-const DESC_NEXT: u16 = 1;
-const DESC_WRITE: u16 = 2;
-const DESC_INDIRECT: u16 = 4;
-const QUEUE_SIZE: u16 = 128;
-const DESC_SIZE: u64 = 16;
-const MAX_CHAIN: usize = 64;
 const MAX_DMA_BYTES: usize = 16 * 1024 * 1024;
 
 const BLK_T_IN: u32 = 0;
@@ -59,127 +56,6 @@ const BLK_T_FLUSH: u32 = 4;
 const BLK_S_OK: u8 = 0;
 const BLK_S_IOERR: u8 = 1;
 const BLK_S_UNSUPP: u8 = 2;
-
-#[derive(Clone, Copy)]
-struct Descriptor {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-}
-
-struct VirtioQueue {
-    pfn: u32,
-    avail_last: u16,
-    used_idx: u16,
-}
-
-impl VirtioQueue {
-    fn new() -> Self {
-        Self {
-            pfn: 0,
-            avail_last: 0,
-            used_idx: 0,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.pfn = 0;
-        self.avail_last = 0;
-        self.used_idx = 0;
-    }
-
-    fn enabled(&self) -> bool {
-        self.pfn != 0
-    }
-
-    fn desc_base(&self) -> u64 {
-        (self.pfn as u64) << 12
-    }
-
-    fn avail_base(&self) -> u64 {
-        self.desc_base() + QUEUE_SIZE as u64 * DESC_SIZE
-    }
-
-    fn used_base(&self) -> u64 {
-        let avail_end = self.avail_base() + 4 + QUEUE_SIZE as u64 * 2;
-        (avail_end + 3) & !3
-    }
-
-    fn next_available(&mut self, mmu: &Mmu) -> Option<u16> {
-        if !self.enabled() {
-            return None;
-        }
-        let avail_idx = read_u16(mmu, self.avail_base() + 2)?;
-        if self.avail_last == avail_idx {
-            return None;
-        }
-        if avail_idx.wrapping_sub(self.avail_last) > QUEUE_SIZE {
-            // A producer cannot publish more than one queue's worth of
-            // entries. Drop the stale window instead of replaying old heads.
-            self.avail_last = avail_idx;
-            return None;
-        }
-        let slot = self.avail_last as u64 & (QUEUE_SIZE as u64 - 1);
-        let head = read_u16(mmu, self.avail_base() + 4 + slot * 2)?;
-        self.avail_last = self.avail_last.wrapping_add(1);
-        Some(head)
-    }
-
-    fn chain(&self, mmu: &Mmu, head: u16) -> Result<Vec<Descriptor>, ()> {
-        if head >= QUEUE_SIZE {
-            return Err(());
-        }
-        let mut descriptors = Vec::new();
-        let mut index = head;
-        for _ in 0..MAX_CHAIN {
-            let addr = self
-                .desc_base()
-                .checked_add(index as u64 * DESC_SIZE)
-                .ok_or(())?;
-            let bytes = mmu.read_phys(addr, DESC_SIZE as usize).map_err(|_| ())?;
-            let descriptor = Descriptor {
-                addr: u64::from_le_bytes(bytes[0..8].try_into().map_err(|_| ())?),
-                len: u32::from_le_bytes(bytes[8..12].try_into().map_err(|_| ())?),
-                flags: u16::from_le_bytes(bytes[12..14].try_into().map_err(|_| ())?),
-                next: u16::from_le_bytes(bytes[14..16].try_into().map_err(|_| ())?),
-            };
-            if descriptor.flags & !(DESC_NEXT | DESC_WRITE | DESC_INDIRECT) != 0
-                || descriptor.flags & DESC_INDIRECT != 0
-            {
-                return Err(());
-            }
-            descriptors.push(descriptor);
-            if descriptor.flags & DESC_NEXT == 0 {
-                return Ok(descriptors);
-            }
-            index = descriptor.next;
-            if index >= QUEUE_SIZE {
-                return Err(());
-            }
-        }
-        Err(())
-    }
-
-    fn complete(&mut self, mmu: &mut Mmu, head: u16, len: u32) -> bool {
-        let slot = self.used_idx as u64 & (QUEUE_SIZE as u64 - 1);
-        let entry = self.used_base() + 4 + slot * 8;
-        let mut bytes = [0u8; 8];
-        bytes[0..2].copy_from_slice(&head.to_le_bytes());
-        bytes[4..8].copy_from_slice(&len.to_le_bytes());
-        if mmu.write_phys(entry, &bytes).is_err() {
-            return false;
-        }
-        self.used_idx = self.used_idx.wrapping_add(1);
-        mmu.write_phys(self.used_base() + 2, &self.used_idx.to_le_bytes())
-            .is_ok()
-    }
-}
-
-fn read_u16(mmu: &Mmu, addr: u64) -> Option<u16> {
-    let bytes = mmu.read_phys(addr, 2).ok()?;
-    Some(u16::from_le_bytes(bytes.try_into().ok()?))
-}
 
 struct VirtioTransport {
     guest_features: u32,
@@ -235,9 +111,7 @@ impl VirtioTransport {
         match off {
             REG_GUEST_FEATURES => self.guest_features = value,
             REG_QUEUE_PFN => {
-                self.queue.pfn = value;
-                self.queue.avail_last = 0;
-                self.queue.used_idx = 0;
+                self.queue.set_pfn(value);
             }
             REG_QUEUE_SEL => self.queue_sel = value as u16,
             REG_QUEUE_NOTIFY => self.pending = true,
@@ -822,6 +696,7 @@ fn scatter_write(mmu: &mut Mmu, descriptors: &[Descriptor], bytes: &[u8]) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::devices::virtio_queue::DESC_INDIRECT;
     use std::fs::File;
     use std::io::Write;
 

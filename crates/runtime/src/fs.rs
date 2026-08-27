@@ -69,6 +69,56 @@ pub struct DeleteMetadata {
 /// following the returned continuation offset.
 pub const DIRECTORY_RECORD_HEADER_BYTES: usize = 22;
 
+/// Continuation ordinal for `SynFsList` lives in `arguments[4]` on both
+/// filesystem syscall layouts.
+pub const LIST_CONTINUATION_ARGUMENT: usize = 4;
+/// Path prefix length for `SynFsList` lives in `arguments[5]` so leftover
+/// listing bytes are not reused as a path.
+pub const LIST_PATH_LENGTH_ARGUMENT: usize = 5;
+
+/// Boot-service filesystem requests: pointer in `[0]`, length in `[1]`,
+/// writable flag in `[2]`, continuation in `[4]`, LIST path length in `[5]`.
+/// Runtime requests pack a `SharedBuffer` into `[0..3]` via `Request::with_buffer`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BootFsBuffer {
+    pub address: u64,
+    pub length: u64,
+    pub writable: u64,
+    pub continuation: u64,
+    pub path_length: u64,
+}
+
+/// Decode the boot-service raw-pointer filesystem layout.
+pub const fn decode_boot_fs_buffer(arguments: &[u64; 6]) -> BootFsBuffer {
+    BootFsBuffer {
+        address: arguments[0],
+        length: arguments[1],
+        writable: arguments[2],
+        continuation: arguments[4],
+        path_length: arguments[5],
+    }
+}
+
+/// Decode the runtime `SharedBuffer` descriptor packed in `arguments[0..3]`.
+pub const fn decode_runtime_fs_buffer(arguments: &[u64; 6]) -> (u64, u64, u64, bool) {
+    (
+        arguments[0],
+        arguments[1],
+        arguments[2],
+        arguments[3] != 0,
+    )
+}
+
+/// Copy an absolute path into the LIST buffer and return the prefix length
+/// that must be placed in `arguments[5]`.
+pub fn seed_directory_path(buffer: &mut [u8], path: &[u8]) -> Result<u64, Error> {
+    if path.is_empty() || path[0] != b'/' || path.len() > buffer.len() {
+        return Err(Error::InvalidResponse)
+    }
+    buffer[..path.len()].copy_from_slice(path);
+    Ok(path.len() as u64)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PathBuffer {
     buffer: SharedBuffer,
@@ -217,9 +267,14 @@ impl<S: SystemCall> Runtime<S> {
         &self,
         path_and_output: SharedBuffer,
         continuation: u64,
+        path_length: u64,
     ) -> Result<DirectoryPage, Error> {
+        if path_length > u64::from(path_and_output.length) {
+            return Err(Error::InvalidResponse)
+        }
         let mut request = Request::new(Operation::SynFsList).with_buffer(path_and_output);
-        request.arguments[4] = continuation;
+        request.arguments[LIST_CONTINUATION_ARGUMENT] = continuation;
+        request.arguments[LIST_PATH_LENGTH_ARGUMENT] = path_length;
         let response = self.execute(request)?;
         let bytes = usize::try_from(response.values[0]).map_err(|_| Error::InvalidResponse)?;
         if bytes > path_and_output.length as usize || response.values[1] > u64::from(u32::MAX) {
@@ -427,13 +482,29 @@ mod tests {
         };
         let runtime = Runtime::new(system);
         let page = runtime
-            .list_directory(buffer(true), 5)
+            .list_directory(buffer(true), 5, 1)
             .expect("directory page");
         assert_eq!(page.bytes, 32);
         assert_eq!(page.next, 7);
         let request = runtime.system().request.get();
         assert_eq!(request.operation, Operation::SynFsList as u16);
-        assert_eq!(request.arguments[4], 5);
+        assert_eq!(request.arguments[LIST_CONTINUATION_ARGUMENT], 5);
+        assert_eq!(request.arguments[LIST_PATH_LENGTH_ARGUMENT], 1);
+        let decoded = decode_runtime_fs_buffer(&request.arguments);
+        assert_eq!(decoded.2, 64);
+        assert!(decoded.3);
+
+        let mut seeded = [0u8; 8];
+        assert_eq!(seed_directory_path(&mut seeded, b"/").unwrap(), 1);
+        assert_eq!(&seeded[..1], b"/");
+        assert_eq!(seed_directory_path(&mut seeded, b"relative"), Err(Error::InvalidResponse));
+
+        let boot = decode_boot_fs_buffer(&[0x8000_0000, 4096, 1, 0, 9, 1]);
+        assert_eq!(boot.address, 0x8000_0000);
+        assert_eq!(boot.length, 4096);
+        assert_eq!(boot.writable, 1);
+        assert_eq!(boot.continuation, 9);
+        assert_eq!(boot.path_length, 1);
 
         let system = MockSystemCall {
             request: Cell::new(Request::new(Operation::Yield)),
@@ -444,6 +515,7 @@ mod tests {
             },
         };
         let runtime = Runtime::new(system);
-        assert_eq!(runtime.list_directory(buffer(true), 0), Err(Error::InvalidResponse));
+        assert_eq!(runtime.list_directory(buffer(true), 0, 1), Err(Error::InvalidResponse));
+        assert_eq!(runtime.list_directory(buffer(true), 0, 65), Err(Error::InvalidResponse));
     }
 }

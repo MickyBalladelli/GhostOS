@@ -1,3 +1,4 @@
+// Inventory: coverage_59_7.rs (legacy roadmap section 59).
 use std::vec::Vec;
 
 use ghostos_status::Status;

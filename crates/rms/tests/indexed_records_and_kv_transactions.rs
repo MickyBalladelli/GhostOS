@@ -1,3 +1,4 @@
+// Inventory: coverage_59_5.rs (legacy roadmap section 59).
 use ghostos_rms::{
     Database, DatabaseError, DlmBinding, DlmLockMode, DlmLockRange, DlmRecordLocks,
     RecordDescriptor, RecordError, RecordFile, RecordFormat, RecordOrganization, RecordSelector,

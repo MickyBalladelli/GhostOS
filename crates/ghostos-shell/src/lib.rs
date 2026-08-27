@@ -4,6 +4,7 @@
 use ghostos_status::{IntoStatus, Severity, Status, facility};
 
 pub mod audit;
+pub mod boot_commands;
 pub mod cluster;
 pub mod diagnostics;
 pub mod editor;

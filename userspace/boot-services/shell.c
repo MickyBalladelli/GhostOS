@@ -3,6 +3,8 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
+#define STATUS_NORMAL 0x00010009U
+
 u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
 
 void *memset(void *destination, int value, u64 count)
@@ -255,40 +257,40 @@ static void write_status(u32 status)
 static int read_byte(u8 *byte)
 {
     struct response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
-    return response.status == 0 && response.values[0] == 1;
+    return response.status == STATUS_NORMAL && response.values[0] == 1;
 }
 
 static int read_bridge_byte(u8 *byte)
 {
     struct response response = call(OP_LOGIN_BRIDGE_READ, 0, 0, (u64)byte, 1, 0, 0);
-    if (response.status == 0 && response.values[0] == 1) {
+    if (response.status == STATUS_NORMAL && response.values[0] == 1) {
         bridge_transport_active = response.values[1] != 0;
     }
-    return response.status == 0 && response.values[0] == 1;
+    return response.status == STATUS_NORMAL && response.values[0] == 1;
 }
 
 static int login_authorized(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
-    return response.status == 0 && response.values[3] != 0;
+    return response.status == STATUS_NORMAL && response.values[3] != 0;
 }
 
 static int first_run_mode(void)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
-    return response.status == 0 && response.values[1] == 0;
+    return response.status == STATUS_NORMAL && response.values[1] == 0;
 }
 
 static int shell_ready(void)
 {
     struct response response = call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
-    return response.status == 0;
+    return response.status == STATUS_NORMAL;
 }
 
 static int shell_dependencies_ready(void)
 {
     struct response response = call(OP_SYSTEM_INFO, 0, 0, 0, 0, 0, 0);
-    return response.status == 0
+    return response.status == STATUS_NORMAL
         && (response.values[1] & SHELL_REQUIRED_SERVICES) == SHELL_REQUIRED_SERVICES;
 }
 
@@ -306,7 +308,7 @@ static void write_prompt(int authorized, int first_run)
 static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 {
     struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         return *prompt_authorized > 0 || *prompt_first_run > 0;
     }
     int authorized = response.values[3] != 0;
@@ -325,7 +327,7 @@ static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 static void sleep_for(u64 duration_us)
 {
     struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0, 0, 0);
-    if (clock.status == 0) {
+    if (clock.status == STATUS_NORMAL) {
         call(OP_SLEEP_UNTIL, 0, 0, clock.values[0] + duration_us, 0, 0, 0);
     }
 }
@@ -361,7 +363,7 @@ static void watchdog_command(char *cursor)
         return;
     }
     struct response response = call(OP_WATCHDOG_DIAGNOSTICS, 0, 0, mode, 0, 0, 0);
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         write_text("Watchdog request failed\n");
         write_status(response.status);
         return;
@@ -398,7 +400,7 @@ static void print_directory(const char *path, u8 *buffer)
         struct response response = call_ex(
             OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation, path_length
         );
-        if (response.status != 0) {
+        if (response.status != STATUS_NORMAL) {
             write_status(response.status);
             return;
         }
@@ -427,14 +429,14 @@ static void type_file(char *path, u8 *buffer)
 {
     u64 path_length = length(path);
     struct response opened = call(OP_GHOSTFS_OPEN, OPEN_READ, 0, (u64)path, path_length, 0, 0);
-    if (opened.status != 0) {
+    if (opened.status != STATUS_NORMAL) {
         write_status(opened.status);
         return;
     }
     u64 offset = 0;
     for (;;) {
         struct response read = call(OP_GHOSTFS_READ, 0, opened.values[0], (u64)buffer, 4096, 1, offset);
-        if (read.status != 0) {
+        if (read.status != STATUS_NORMAL) {
             write_status(read.status);
             break;
         }
@@ -452,7 +454,7 @@ static void print_help(void)
 {
     write_text("GhostOS commands:\n");
     write_text("  HELP, ?, COMMANDS       Show this list\n");
-    write_text("  DIRECTORY [path]        List a directory\n");
+    write_text("  DIRECTORY|DIR|LS [path] List a directory\n");
     write_text("  CREATE <path>           Create a file\n");
     write_text("  TYPE|CAT <path>         Read a file\n");
     write_text("  MKDIR <path>            Create a directory\n");
@@ -537,7 +539,7 @@ static int revoke_account_sessions(const char *username, u64 username_length)
         0,
         0
     );
-    return response.status == 0;
+    return response.status == STATUS_NORMAL;
 }
 
 static const char *account_credential_name(u8 kind)
@@ -836,7 +838,7 @@ static int read_account_database(u8 *buffer, u64 *database_bytes)
         0,
         0
     );
-    if (opened.status != 0) {
+    if (opened.status != STATUS_NORMAL) {
         return 0;
     }
 
@@ -850,7 +852,7 @@ static int read_account_database(u8 *buffer, u64 *database_bytes)
         0
     );
     call(OP_GHOSTFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
-    if (read.status != 0) {
+    if (read.status != STATUS_NORMAL) {
         return -1;
     }
     *database_bytes = read.values[0];
@@ -873,7 +875,7 @@ static int append_account_record(
         0,
         0
     );
-    if (opened.status != 0) {
+    if (opened.status != STATUS_NORMAL) {
         *failure_status = opened.status;
         return 0;
     }
@@ -888,7 +890,7 @@ static int append_account_record(
     );
     call(OP_GHOSTFS_CLOSE, 0, opened.values[0], 0, 0, 0, 0);
     *failure_status = written.status;
-    return written.status == 0 && written.values[0] == record_bytes;
+    return written.status == STATUS_NORMAL && written.values[0] == record_bytes;
 }
 
 static void list_accounts(u8 *buffer)
@@ -2018,7 +2020,7 @@ static void execute_line(char *line, u8 *buffer)
     }
     if (equal_name(command, "LOGIN")) {
         struct response login = call(OP_LOGIN_START, 0, 0, 0, 0, 0, 0);
-        if (login.status == 0) {
+        if (login.status == STATUS_NORMAL) {
             write_text("Starting login...\n");
         } else {
             write_text("Login request failed\n");
@@ -2037,7 +2039,7 @@ static void execute_line(char *line, u8 *buffer)
     if (equal_name(command, "LOGOUT")) {
         write_text("Logging out...\n");
         struct response logout = call(OP_LOGIN_LOGOUT, 0, 0, 0, 0, 0, 0);
-        if (logout.status != 0) {
+        if (logout.status != STATUS_NORMAL) {
             write_text("Logout request failed\n");
             write_status(logout.status);
         }
@@ -2048,7 +2050,7 @@ static void execute_line(char *line, u8 *buffer)
         struct response whoami = call(
             OP_LOGIN_WHOAMI, 0, 0, (u64)username, sizeof(username), 0, 0
         );
-        if (whoami.status != 0 || whoami.values[0] >= sizeof(username)) {
+        if (whoami.status != STATUS_NORMAL || whoami.values[0] >= sizeof(username)) {
             write_text("Whoami request failed\n");
             write_status(whoami.status);
             return;
@@ -2174,7 +2176,7 @@ static void execute_line(char *line, u8 *buffer)
     if (equal_name(command, "CREATE")) {
         response = call(OP_GHOSTFS_OPEN, OPEN_READ | OPEN_WRITE | OPEN_CREATE | OPEN_EXCLUSIVE,
                         0, (u64)path, path_length, 0, 0);
-        if (response.status == 0) {
+        if (response.status == STATUS_NORMAL) {
             call(OP_GHOSTFS_CLOSE, 0, response.values[0], 0, 0, 0, 0);
         }
     } else if (equal_name(command, "TYPE") || equal_name(command, "CAT")) {
@@ -2190,7 +2192,7 @@ static void execute_line(char *line, u8 *buffer)
         write_text("unknown filesystem command\n");
         return;
     }
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         write_status(response.status);
     }
 }
@@ -2240,7 +2242,7 @@ static int commit_first_admin_account(
         0,
         0
     );
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         write_text("Username rejected. status=");
         write_hex(response.status);
         write_text("\n");
@@ -2257,7 +2259,7 @@ static int commit_first_admin_account(
         material_length,
         0
     );
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         if (response.status == 0x00030018U
             && reset_first_admin_staging()) {
             write_text("Old setup cleared. Retrying the same passkey.\n");
@@ -2270,7 +2272,7 @@ static int commit_first_admin_account(
                 0,
                 0
             );
-            if (response.status == 0) {
+            if (response.status == STATUS_NORMAL) {
                 response = call(
                     OP_LOGIN_BOOTSTRAP_CREDENTIAL,
                     0,
@@ -2283,7 +2285,7 @@ static int commit_first_admin_account(
             }
         }
     }
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         write_text("Credential rejected. status=");
         write_hex(response.status);
         write_text("\n");
@@ -2292,7 +2294,7 @@ static int commit_first_admin_account(
     }
     write_text("Administrator credential saved.\n");
     response = call(OP_LOGIN_BOOTSTRAP_CONFIRM, 0, 0, 0, 0, 0, 0);
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         write_text("Confirmation rejected. status=");
         write_hex(response.status);
         write_text("\n");
@@ -2314,7 +2316,7 @@ static int reset_first_admin_staging(void)
         0,
         0
     );
-    if (response.status != 0) {
+    if (response.status != STATUS_NORMAL) {
         return 0;
     }
     response = call(
@@ -2326,7 +2328,7 @@ static int reset_first_admin_staging(void)
         0,
         0
     );
-    return response.status == 0
+    return response.status == STATUS_NORMAL
         && response.values[0] == 0
         && response.values[1] == 0;
 }

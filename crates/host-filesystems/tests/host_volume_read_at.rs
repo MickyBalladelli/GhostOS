@@ -1,3 +1,4 @@
+// Inventory: coverage_59_5.rs (legacy roadmap section 59).
 use ghostos_host_filesystems::{
     detect, scan_partitions, Error, FileSystemKind, Partition, PartitionKind, ReadAt,
 };

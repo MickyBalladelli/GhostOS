@@ -1,3 +1,4 @@
+// Inventory: coverage_59_5.rs (legacy roadmap section 59).
 use ghostos_storaged::{
     AdmissionInvitation, AdmissionError, AdmissionPolicy, AdmissionWorkflow, Certificate, ClusterId, ClusterMetadata,
     ClusterMetadataCatalog, ClusterMetadataError, NodeAttestation, NodeCapabilities,

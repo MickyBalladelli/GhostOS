@@ -1,3 +1,4 @@
+// Inventory: coverage_59_8.rs (legacy roadmap section 59).
 use ghostos_inference::{Error, protocol::{CompletionKind, CompletionResponse, GrpcCodec, ModelName, OpenAiCodec, OpenAiRequest}};
 
 #[test]

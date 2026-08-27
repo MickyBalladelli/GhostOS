@@ -29,7 +29,11 @@ automatically. Do not press Enter or type credentials in the terminal.
 
 The local page is bound to loopback, protected by the one-time code, and uses
 the browser's secure `localhost` WebAuthn context. Disable it with
-`--no-passkey-web` only when using the manual TPM or SSH setup path.
+`--no-passkey-web` only when using the manual TPM or SSH setup path:
+
+```sh
+./start-ghostos.sh --no-passkey-web
+```
 
 Expected responses after confirmation are:
 

@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_logd::{
     JournalStream, JournalWriter, LogDaemon, LogError, Opcom, PollReport, SynFsJournal,
     TerminalId, SECURITY_JOURNAL,

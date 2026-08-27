@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_init::{CrashReason, ProcessId};
 use ghostos_replay::{
     EVENT_BYTES, FlightRecorderRequest, ReplayBundle, ReplayBundleEventKind, ReplayError,

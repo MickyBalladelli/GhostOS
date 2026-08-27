@@ -240,6 +240,10 @@ path = "src/devices/virtio.rs"
 tests = ["vm.foundation.fault-device"]
 
 [[source]]
+path = "src/devices/virtio_queue.rs"
+tests = ["vm.foundation.fault-device"]
+
+[[source]]
 path = "src/devices/net/e1000.rs"
 tests = ["vm.foundation.fault-device", "vm.network.negative-fault-matrix"]
 
@@ -925,6 +929,11 @@ tests = ["vm.device.normal-io"]
 [[public_api]]
 name = "devices::virtio public surface"
 source = "src/devices/virtio.rs"
+tests = ["vm.device.normal-io"]
+
+[[public_api]]
+name = "devices::virtio_queue public surface"
+source = "src/devices/virtio_queue.rs"
 tests = ["vm.device.normal-io"]
 
 [[public_api]]

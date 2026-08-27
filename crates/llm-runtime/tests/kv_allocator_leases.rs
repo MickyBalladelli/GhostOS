@@ -1,3 +1,4 @@
+// Inventory: coverage_59_8.rs (legacy roadmap section 59).
 use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE};
 use ghostos_fabric::memory::{GlobalAddressSpace, LeaseTable, MemoryKind, MemoryPool, PoolId, Transport};
 use ghostos_llm::{Error, RequestId};

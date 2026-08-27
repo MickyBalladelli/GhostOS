@@ -1,3 +1,4 @@
+// Inventory: coverage_59_7.rs (legacy roadmap section 59).
 use ghostos_fabric::{
     Access, AddressRange, NodeId, PAGE_SIZE,
     cluster::{Heartbeat, HeartbeatMonitor, NodeState},

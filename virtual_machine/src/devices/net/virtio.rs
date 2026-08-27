@@ -1,5 +1,6 @@
 //! Legacy virtio-net device (single RX/TX virtqueue pair, 0.9.5 layout).
 
+use crate::devices::virtio_queue::{DESC_SIZE, QUEUE_SIZE};
 use crate::devices::{ApicTrigger, Device, DeviceError, LocalApic, PortDevice};
 use crate::memory::Mmu;
 use crate::net::{MacAddress, NetBackend, NetError, NetQueueState, PacketQueue, ETHERNET_FRAME_MAX};
@@ -28,8 +29,6 @@ const DEVICE_FEATURES: u32 = (1 << 5) | (1 << 16); // VIRTIO_NET_F_MAC | STATUS
 
 const QUEUE_RX: u16 = 0;
 const QUEUE_TX: u16 = 1;
-const QUEUE_SIZE: u16 = 128;
-const DESC_SIZE: u64 = 16;
 const HEADER_LEN: usize = 10; // virtio-net header written before each frame
 const MAX_RX_BACKLOG: usize = 128;
 
@@ -118,16 +117,15 @@ impl VirtioNet {
     }
 
     fn desc_base(&self) -> u64 {
-        (self.queue_pfn as u64) << 12
+        crate::devices::virtio_queue::desc_base(self.queue_pfn)
     }
 
     fn avail_base(&self) -> u64 {
-        self.desc_base() + QUEUE_SIZE as u64 * DESC_SIZE
+        crate::devices::virtio_queue::avail_base(self.queue_pfn)
     }
 
     fn used_base(&self) -> u64 {
-        let avail_end = self.avail_base() + 4 + QUEUE_SIZE as u64 * 2;
-        (avail_end + 3) & !3
+        crate::devices::virtio_queue::used_base(self.queue_pfn)
     }
 
     fn read_io(&mut self, port: u16) -> u64 {

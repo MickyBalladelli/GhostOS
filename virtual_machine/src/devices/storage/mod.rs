@@ -38,6 +38,15 @@ pub use system_disk::{
 };
 
 use crate::devices::DeviceError;
+
+/// Legacy IDENTIFY serial written to AHCI/NVMe guests.
+pub const VIRTUAL_DISK_SERIAL_LEGACY: &[u8] = b"SYNOSVM00001";
+/// GhostOS IDENTIFY serial accepted alongside the legacy SynOS value.
+pub const VIRTUAL_DISK_SERIAL_GHOSTOS: &[u8] = b"GHOSTVM00001";
+
+pub fn virtual_disk_serial_accepted(serial: &[u8]) -> bool {
+    serial == VIRTUAL_DISK_SERIAL_LEGACY || serial == VIRTUAL_DISK_SERIAL_GHOSTOS
+}
 use std::fmt;
 
 /// Errors produced by the storage stack.
@@ -109,5 +118,17 @@ impl From<std::io::Error> for StorageError {
 impl From<StorageError> for DeviceError {
     fn from(_: StorageError) -> Self {
         DeviceError::NotReady
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn virtual_disk_serial_accepts_ghostos_alias() {
+        assert!(virtual_disk_serial_accepted(VIRTUAL_DISK_SERIAL_LEGACY));
+        assert!(virtual_disk_serial_accepted(VIRTUAL_DISK_SERIAL_GHOSTOS));
+        assert!(!virtual_disk_serial_accepted(b"XXXXXXXXXXXX"));
     }
 }

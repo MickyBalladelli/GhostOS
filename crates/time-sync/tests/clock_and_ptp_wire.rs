@@ -1,3 +1,4 @@
+// Inventory: coverage_59_7.rs (legacy roadmap section 59).
 use ghostos_time_sync::{
     ClusterClock, EpochStamp, ManualClock, MonotonicClock, MonotonicEpochCounter, PtpDaemon,
     PtpMessage, PtpRole,

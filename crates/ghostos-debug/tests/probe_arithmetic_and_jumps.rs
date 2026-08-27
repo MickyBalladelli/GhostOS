@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_debug::{Error, coredump::{CoreDumpEngine, CoreDumpRequest, CoreDumpRuntime, FrozenPage}, gdb::{DebugAuthority, DebugOperation, DebugRuntime, DebugToken, DsmFault, GdbStub, RegisterFile, StopReason}, probes::{Instruction, ProbeProgram, ProbeRecorder, ProbeSample, ProbeVm, SampleField}};
 use ghostos_fabric::NodeId;
 use ghostos_init::{CrashReason, ProcessId};

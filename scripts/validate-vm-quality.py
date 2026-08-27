@@ -183,7 +183,7 @@ def validate_commands(errors: list[str]) -> None:
         if field not in test_runner:
             fail(errors, f"VM runner does not record {field}")
     mutation = (ROOT / "scripts/mutation.sh").read_text()
-    if "ghostos-vm" not in mutation or "cargo mutants" not in mutation:
+    if "ghostos-vm" not in mutation or "ghostos-netd" not in mutation or "cargo mutants" not in mutation:
         fail(errors, "VM mutation testing is not wired")
     fuzz_cargo = (ROOT / "fuzz/Cargo.toml").read_text()
     for target in (

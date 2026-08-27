@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE};
 use ghostos_legacy_pc_drivers::{PciAddress, PcieAerStatus};
 use ghostos_ras::{

@@ -1,3 +1,4 @@
+// Inventory: coverage_59_5.rs (legacy roadmap section 59).
 use ghostos_ghostfs::{
     BlockDevice, BlockIoError, BlockIoQueue, BlockIoResult, BlockOperation, BlockRequest,
     DeviceHealth, Error, PoolLayout, StorageClass, StorageDeviceId,

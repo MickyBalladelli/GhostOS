@@ -1,3 +1,9 @@
+//! Ring 0 operator/debugger shell.
+//!
+//! This is not the logged-in userspace prompt. First-boot and passkey login
+//! use `userspace/boot-services/shell.c` (`ghostos-shell.bin`). This module
+//! hosts the `ghostos-shell` Rust parser for in-kernel diagnostics (EDIT,
+//! network, cluster) after the kernel is running.
 use core::{fmt, mem::MaybeUninit};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use ghostos_shell::{

@@ -29,7 +29,7 @@ SCENARIOS: dict[str, dict[str, object]] = {
     },
     "shell": {
         "description": "shell command, job, and terminal workflow",
-        "command": ["cargo", "test", "-p", "ghostos-shell", "--test", "coverage_59_6", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-shell", "--test", "line_editor_utf8_and_history", "--", "--nocapture"],
     },
     "filesystem": {
         "description": "GhostFS persistence and restart workflow",
@@ -45,7 +45,7 @@ SCENARIOS: dict[str, dict[str, object]] = {
     },
     "cluster": {
         "description": "storage cluster membership and recovery workflow",
-        "command": ["cargo", "test", "-p", "ghostos-storaged", "--test", "coverage_59_5", "--", "--nocapture"],
+        "command": ["cargo", "test", "-p", "ghostos-storaged", "--test", "storage_queue_and_nvme", "--", "--nocapture"],
     },
     "vm": {
         "description": "VM translation cache and terminal teardown workflow",

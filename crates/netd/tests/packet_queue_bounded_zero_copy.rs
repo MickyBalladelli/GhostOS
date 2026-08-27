@@ -1,3 +1,4 @@
+// Inventory: coverage_59_7.rs (legacy roadmap section 59).
 use ghostos_netd::{
     CaptureDirection, CaptureKind, CapabilityKey, CapabilityRight, Direction, Firewall,
     FirewallDecision, FirewallError,

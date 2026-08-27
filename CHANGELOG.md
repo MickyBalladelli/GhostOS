@@ -42,6 +42,21 @@ the released text immutable.
   names and guest serial/VGA branding change. Compatibility: CPU, firmware,
   and device models are unchanged. Evidence: workspace compile after rename.
 
+- AHCI/NVMe IDENTIFY still writes serial `SYNOSVM00001`. Readers also accept
+  `GHOSTVM00001`. Impact: guest-visible serial is unchanged for new images.
+  Compatibility: both serials match `virtual_disk_serial_accepted`. Evidence:
+  `virtual_disk_serial_accepts_ghostos_alias`.
+
+- Ring 3 boot services compare syscall success to `Status::NORMAL` instead of
+  raw `0`. Impact: `dir` and other shell calls follow the same status encoding
+  as login. Compatibility: kernel no longer rewrites shell success to `0`.
+  Evidence: `shell_success_keeps_normal_status`.
+
+- Boot-service stacks are 64 KiB (16 pages) with the 19-page code image
+  unchanged. Impact: more shell locals fit before a stack overflow.
+  Compatibility: the 19-page / `.stack_guard` code layout is unchanged.
+  Evidence: `ring3_service_stack_is_64kib`.
+
 ### Snapshot and migration
 
 - Snapshot envelope magic `SYNOSIG1` and HMAC domains
@@ -50,6 +65,12 @@ the released text immutable.
   continue to verify. Compatibility: no wire-format bump. Evidence: magic
   strings retained in `snapshot.rs`, `migration.rs`, and `control.rs`.
   Migration: none; readers and writers still use the SynOS fourccs.
+
+- Authenticated snapshot envelopes still write `SYNOSIG1`. Readers also accept
+  `GHOSTSG1` with the same HMAC. Impact: existing `SYNOSIG1` files verify.
+  Compatibility: no format version bump. Evidence:
+  `authenticated_snapshot_accepts_ghostos_magic`. Migration: none; keep
+  writing `SYNOSIG1`.
 
 ### Disk formats
 
@@ -60,6 +81,11 @@ the released text immutable.
   delete stale `.synos.lock` files, then start the VM so it can create a
   `.ghostos.lock`. System-disk header `SYNOSDSK` and GhostFS volume magics
   stay as previously published fourccs.
+
+- System-disk headers still write `SYNOSDSK`. Readers also accept `GHOSTDSK`.
+  Impact: existing disks validate. Compatibility: format version remains `1`.
+  Evidence: `system_disk_header_accepts_ghostos_alias`. Migration: none; keep
+  writing `SYNOSDSK`.
 
 ### Tooling and documentation
 
@@ -77,8 +103,21 @@ the released text immutable.
   unchanged. Evidence: fuzz inventory validation.
 - Added a required release compatibility proof for upgrade and rollback paths.
   Impact: release tooling now rejects packages without two-way compatibility
-  evidence. Compatibility: guest, snapshot, disk, and package formats are
-  unchanged. Evidence: release compatibility validator.
+  evidence. Compatibility: guest, snapshot, and disk behavior unchanged.
+  Evidence: release compatibility proof validation.
+- Shared the legacy virtio 0.9 queue layout across blk/console/rng and
+  virtio-net. Impact: guest queue math is unchanged. Compatibility: single
+  virtio-net PFN behavior is preserved. Evidence:
+  `split_queue_layout_matches_legacy_0_9`.
+- `start-ghostos.sh` accepts `--no-passkey-web`. Impact: headless login can
+  skip the browser companion. Compatibility: the VM flag was already present.
+  Evidence: `start_ghostos_forwards_no_passkey_web`.
+- README is a short quickstart; essays live in `book/`. Impact: documentation
+  only. Compatibility: guest, snapshot, and disk behavior unchanged. Evidence:
+  documentation review.
+- Generated VM inventory and soak JSON are gitignored and regenerated in
+  validation. Impact: tooling only. Compatibility: guest behavior unchanged.
+  Evidence: `generated_inventory_and_soak_reports_are_gitignored`.
 - Added the stable user-space SDK compatibility policy and exposed the SDK
   contract to Rust and Swift clients. Impact: SDK releases now have an explicit
   source, wire, deprecation, and migration contract. Compatibility: existing

@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_observability::{
     AuditQuery, CodecError, CorrelationId, EventField, EventKind, FieldKind, JOURNAL_RECORD_SIZE,
     Alert, AlertLevel, AlertRegistry, AuditJournal, AuditJournalError, AuditKey, Level,

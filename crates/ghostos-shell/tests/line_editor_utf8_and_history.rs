@@ -1,3 +1,4 @@
+// Inventory: coverage_59_6.rs (legacy roadmap section 59).
 use ghostos_shell::{
     Error, Text,
     editor::{EditorAction, Key, LineEditor},

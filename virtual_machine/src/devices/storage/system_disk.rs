@@ -29,6 +29,7 @@ const HEADER_SIZE: usize = SECTOR_SIZE as usize;
 const HEADER_METADATA_OFFSET: usize = 0x1c0;
 const MANIFEST_MAGIC: &[u8; 8] = b"SYNMANIF";
 const HEADER_MAGIC: &[u8; 8] = b"SYNOSDSK";
+const HEADER_MAGIC_GHOSTOS: &[u8; 8] = b"GHOSTDSK";
 const SETTINGS_MAGIC: &[u8; 8] = b"SYNSET01";
 // Keep the first 64 KiB available for BIOS stage 2. The manifest slots live
 // in the boot metadata area, before the payloads, and are still redundant.
@@ -1649,7 +1650,7 @@ fn write_boot_record(
 fn validate_header(image: &mut DiskImage) -> Result<(), StorageError> {
     let mut header = [0u8; HEADER_SIZE];
     image.read_sector(0, &mut header)?;
-    if &header[HEADER_METADATA_OFFSET..HEADER_METADATA_OFFSET + 8] != HEADER_MAGIC
+    if !header_magic_accepted(&header[HEADER_METADATA_OFFSET..HEADER_METADATA_OFFSET + 8])
         || get_u32(&header, HEADER_METADATA_OFFSET + 8) != SYSTEM_DISK_FORMAT_VERSION
         || get_u64(&header, HEADER_METADATA_OFFSET + 12) != image.size()
         || get_u64(&header, HEADER_METADATA_OFFSET + 20) != MANIFEST_A_OFFSET
@@ -1660,6 +1661,10 @@ fn validate_header(image: &mut DiskImage) -> Result<(), StorageError> {
         ));
     }
     Ok(())
+}
+
+fn header_magic_accepted(magic: &[u8]) -> bool {
+    magic == HEADER_MAGIC || magic == HEADER_MAGIC_GHOSTOS
 }
 
 fn create_image_file(path: &Path, size: u64, format: DiskFormat) -> Result<(), StorageError> {
@@ -1952,5 +1957,12 @@ mod tests {
         fs::remove_file(&disk_path).ok();
         fs::remove_file(&kernel_path).ok();
         fs::remove_file(&service).ok();
+    }
+
+    #[test]
+    fn system_disk_header_accepts_ghostos_alias() {
+        assert!(header_magic_accepted(HEADER_MAGIC));
+        assert!(header_magic_accepted(HEADER_MAGIC_GHOSTOS));
+        assert!(!header_magic_accepted(b"XXXXXXXX"));
     }
 }

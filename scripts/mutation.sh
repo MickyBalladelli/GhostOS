@@ -9,7 +9,7 @@ if ! command -v cargo-mutants >/dev/null 2>&1; then
     exit 2
 fi
 
-packages=(ghostos-fsd ghostos-status ghostos-auth ghostos-ghostfs ghostos-http ghostos-vm)
+packages=(ghostos-fsd ghostos-status ghostos-auth ghostos-ghostfs ghostos-http ghostos-netd ghostos-vm)
 if [[ -n "${GHOSTOS_MUTATION_PACKAGE:-}" ]]; then
     packages=("$GHOSTOS_MUTATION_PACKAGE")
 fi

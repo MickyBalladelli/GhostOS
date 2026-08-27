@@ -128,6 +128,18 @@ pub use allocator::{
     AllocationError, EarlyFrameAllocator, QuotaAllocationError, ReclaimError,
     MAX_OWNED_FRAME_RANGES, FRAME_SIZE,
 };
+
+/// Ring 3 boot-service code pages. Keep `arch/x86_64.rs` paging in sync.
+#[allow(dead_code)]
+pub(crate) const SERVICE_CODE_PAGE_COUNT: usize = 19;
+/// Ring 3 boot-service stack pages (64 KiB). Keep `arch/x86_64.rs` paging in sync.
+#[allow(dead_code)]
+pub(crate) const SERVICE_STACK_PAGE_COUNT: usize = 16;
+
+#[allow(dead_code)]
+pub(crate) fn service_image_fits(length: usize) -> bool {
+    length <= SERVICE_CODE_PAGE_COUNT * FRAME_SIZE as usize
+}
 pub use address_space::{
     AddressSpace, AddressSpaceError, AddressSpaceTable, MemoryAccess, PageTableRoot,
     ProcessIsolationError,
@@ -1057,9 +1069,10 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 return syscall_error(Status::ACCESS_DENIED)
             }
             record_login_activity();
-            let address = request.arguments[0];
-            let length = request.arguments[1];
-            let writable = request.arguments[2];
+            let boot_buffer = ghostos_runtime::decode_boot_fs_buffer(&request.arguments);
+            let address = boot_buffer.address;
+            let length = boot_buffer.length;
+            let writable = boot_buffer.writable;
             if operation == Operation::SynFsClose {
                 if request.arguments[..4] != [0; 4] || request.arguments[4..] != [0; 2] {
                     return syscall_error(Status::INVALID_ARGUMENT)
@@ -1110,8 +1123,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 || length == 0
                 || length > ghostos_fsd::MAX_IPC_BUFFER_BYTES as u64
                 || !arch::paging::service_user_range(address, length, writable != 0)
-                || (operation != Operation::SynFsList && request.arguments[5] != 0)
-                || (operation == Operation::SynFsList && request.arguments[5] > length)
+                || (operation != Operation::SynFsList && boot_buffer.path_length != 0)
+                || (operation == Operation::SynFsList && boot_buffer.path_length > length)
             {
                 return syscall_error(Status::INVALID_ARGUMENT)
             }
@@ -1123,9 +1136,9 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                     operation,
                     request.flags,
                     request.capability,
-                    request.arguments[4],
+                    boot_buffer.continuation,
                     if operation == Operation::SynFsList {
-                        request.arguments[5]
+                        boot_buffer.path_length
                     } else {
                         0
                     },

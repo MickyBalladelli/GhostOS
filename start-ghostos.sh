@@ -10,23 +10,44 @@ DATA_DISK_ARGS=()
 PERSISTENCE_ARGS=()
 VM_NAME=default
 FORCE_NEW=false
+NO_PASSKEY_WEB=false
 
-if [ "${1:-}" = --new ]; then
-  FORCE_NEW=true
-  shift
-fi
-
-if [ "${1:-}" = --vm ]; then
-  if [ "$#" -lt 2 ]; then
-    echo "start-ghostos.sh: --vm needs a name" >&2
-    exit 2
-  fi
-  VM_NAME=$2
-  shift 2
-elif [ "${1:-}" != "" ] && [ "${1#-}" = "$1" ]; then
-  VM_NAME=$1
-  shift
-fi
+while [ "${1:-}" != "" ]; do
+  case "$1" in
+    --new)
+      FORCE_NEW=true
+      shift
+      ;;
+    --no-passkey-web)
+      NO_PASSKEY_WEB=true
+      shift
+      ;;
+    --passkey-web)
+      NO_PASSKEY_WEB=false
+      shift
+      ;;
+    --vm)
+      if [ "$#" -lt 2 ]; then
+        echo "start-ghostos.sh: --vm needs a name" >&2
+        exit 2
+      fi
+      VM_NAME=$2
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      break
+      ;;
+    *)
+      VM_NAME=$1
+      shift
+      break
+      ;;
+  esac
+done
 
 case "$VM_NAME" in
   default)
@@ -135,5 +156,9 @@ if [ "${#DATA_DISK_ARGS[@]}" -gt 0 ]; then
   VM_COMMAND+=("${DATA_DISK_ARGS[@]}")
 fi
 
-VM_COMMAND+=(--firmware bios --interactive --input ps2 "$@")
+VM_COMMAND+=(--firmware bios --interactive --input ps2)
+if [ "$NO_PASSKEY_WEB" = true ]; then
+  VM_COMMAND+=(--no-passkey-web)
+fi
+VM_COMMAND+=("$@")
 exec "${VM_COMMAND[@]}"

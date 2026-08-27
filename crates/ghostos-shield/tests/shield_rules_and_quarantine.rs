@@ -1,3 +1,4 @@
+// Inventory: coverage_59_10.rs (legacy roadmap section 59).
 use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE};
 use ghostos_fabric::dsm::{DsmHeader, DsmPacket, MessageKind};
 use ghostos_init::ProcessId;

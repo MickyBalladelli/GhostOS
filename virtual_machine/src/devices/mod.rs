@@ -12,6 +12,7 @@ pub mod net;
 mod pit;
 mod serial;
 mod power;
+mod virtio_queue;
 pub mod virtio;
 pub mod storage;
 
@@ -61,6 +62,7 @@ pub use storage::{
     SYSTEM_DISK_BOOT_RECORD_OFFSET, SYSTEM_DISK_BOOT_RECORD_SIZE, SYSTEM_DISK_MIN_SIZE,
     SYSTEM_DISK_PAYLOAD_OFFSET, SYSTEM_DISK_SETTINGS_SIZE,
     GHOSTFS_SYSTEM_BLOCKS, GHOSTFS_SYSTEM_VOLUME_SIZE,
+    VIRTUAL_DISK_SERIAL_GHOSTOS, VIRTUAL_DISK_SERIAL_LEGACY, virtual_disk_serial_accepted,
 };
 
 use std::cell::RefCell;

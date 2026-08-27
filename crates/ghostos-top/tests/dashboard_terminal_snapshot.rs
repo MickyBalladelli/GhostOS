@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_fabric::NodeId;
 use ghostos_top::{
     CapabilityKind, CapabilitySample, DashboardRenderer, NodeHealth, NodeSample, Poll,

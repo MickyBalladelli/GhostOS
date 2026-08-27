@@ -36,49 +36,49 @@ The SynOS rename is largely complete in crate and binary names. Remaining SynOS 
 
 ## Quality
 
-- [ ] Unify the three shells.
+- [x] Unify the three shells.
   `userspace/boot-services/shell.c` is the logged-in Ring 3 prompt (`ghostos-shell.bin`). `crates/ghostos-shell` is a separate Rust parser/editor with DIRECTORY/EDIT/network routes. `kernel/src/shell.rs` is a Ring 0 operator shell that uses the Rust crate. Command sets already drift (`dir` vs `DIRECTORY`, no `EDIT` in C). Pick one userspace shell and keep the kernel path as a debugger, or generate the C command table from the Rust crate.
 
-- [ ] Document or merge the two filesystem syscall layouts.
+- [x] Document or merge the two filesystem syscall layouts.
   Boot services (`kernel/src/lib.rs` `boot_init_dispatch`) pass a raw pointer, length, writable flag, and continuation in `arguments[0,1,2,4]`. Runtime (`crates/runtime/src/fs.rs`, `kernel/src/runtime.rs`) uses a `SharedBuffer` descriptor in `arguments[0..3]`. Same `SynFsList` opcode, different marshalling. Add a decode helper and a LIST pagination helper that seeds the path prefix so callers cannot forget the leftover-buffer protocol.
 
-- [ ] Replace `assert!` / `expect` in `write_service_image` with `fatal_kernel_halt`.
+- [x] Replace `assert!` / `expect` in `write_service_image` with `fatal_kernel_halt`.
   `kernel/src/arch/x86_64.rs` panics if the Ring 3 image exceeds `SERVICE_CODE_PAGE_COUNT` pages or if entropy is missing. Other boot failures already use `fatal_kernel_halt(Status::…)`. Keep the 19-page / `.stack_guard` at `0x8000012ff8` layout, but fail through the same halt path.
 
-- [ ] Stop special-casing shell success status to raw `0`.
+- [x] Stop special-casing shell success status to raw `0`.
   `kernel/src/syscall.rs` `ghostos_call_gate_dispatch` rewrites caller 9 success to `status: 0` even if `Status::NORMAL.raw()` is not zero. C services compare `status != 0`. If the status encoding changes, the shell will treat success as failure or the reverse. Return the same `Status` the rest of the kernel uses.
 
-- [ ] Probe or enlarge the Ring 3 service stack before adding more shell locals.
+- [x] Probe or enlarge the Ring 3 service stack before adding more shell locals.
   `SERVICE_PAGE_COUNT` is 19 code pages plus 8 stack pages (32 KiB). `_start` in `shell.c` keeps `line[512]` and `buffer[4096]` for the process lifetime; `execute_line` and account helpers add many 256-byte arrays. ELF apps get 1 MiB (`crates/app/src/loader.rs`). There is no stack probe. Either raise the boot-service stack or move the LIST buffer off the C stack.
 
-- [ ] Extract one virtio queue implementation.
+- [x] Extract one virtio queue implementation.
   `virtual_machine/src/devices/virtio.rs` and `virtual_machine/src/devices/net/virtio.rs` both implement 0.9 queues, descriptor walks, and PCI register layout. Share the ring code so blk/console/rng and virtio-net cannot diverge.
 
-- [ ] Add `--no-passkey-web` (or a serial-only mode) to `start-ghostos.sh`.
+- [x] Add `--no-passkey-web` (or a serial-only mode) to `start-ghostos.sh`.
   The VM defaults `passkey_web = true`. `virtual_machine/src/devices/serial.rs` strips enroll/login OSC markers and can hide prompts behind a spinner. Headless or scripted login then waits for a browser that never appears. Document the flag next to `docs/first-boot.md`.
 
-- [ ] Collapse workspace `members` and `default-members` to one source.
+- [x] Collapse workspace `members` and `default-members` to one source.
   Root `Cargo.toml` repeats ~66 crate paths. `default-members` omits `boot/uefi`, `tools/*`, and `examples/*`, so plain `cargo test` skips them. Generate both lists or use workspace defaults so they cannot drift.
 
-- [ ] Merge or clearly split tiny and overlapping crates.
+- [x] Merge or clearly split tiny and overlapping crates.
   Single-file crates (`admission`, `api-compat`, `ghostos-kvd`, `numa`, `path-pattern`, `policy`, `protocol`, `service-scale`) each add a test target and a lock node. `ghostos-kvd` overlaps `crates/rms` embedded KV. Three script engines (`ghostos-script`, `ghostos-embedded-script`, `ghostos-wasm-script`) could share one facade with features.
 
-- [ ] Rename `tests/coverage_59_*.rs` to behavior names.
+- [x] Rename `tests/coverage_59_*.rs` to behavior names.
   Dozens of integration files encode old roadmap section numbers, not what they test. They are hard to map to `docs/test-inventory.toml`. Keep the inventory IDs in comments if needed.
 
-- [ ] Stop committing generated VM inventory and soak reports.
+- [x] Stop committing generated VM inventory and soak reports.
   `virtual_machine/tests/generated-inventory.toml` is generated. Soak JSON under `kernel/build/soak` and `virtual_machine/build/soak` is evidence, not source. Regenerate inventory in validation; put reports in `GHOSTOS_EVIDENCE_DIR`.
 
-- [ ] Deduplicate README and the book.
+- [x] Deduplicate README and the book.
   `README.md` is over 1000 lines and restates boot, build, Docker, and shell material from `book/`. Keep a short quickstart in README and link to the book for essays.
 
-- [ ] Dual-read remaining SynOS magics instead of mixing brands.
+- [x] Dual-read remaining SynOS magics instead of mixing brands.
   Still present: `SYNOSDSK` (`virtual_machine/src/devices/storage/system_disk.rs`), `SYNOSIG1` (snapshots), `.synos.lock`, AHCI serial `SYNOSVM00001`, confidential labels `synos-kem` / `synos-ss`. Compatibility is documented in `docs/persistence-compatibility.md`. Either keep them as frozen aliases with a converter, or bump format versions in CHANGELOG with dual-read.
 
-- [ ] Drop or regenerate the leftover `virtual_machine/Cargo.lock`.
+- [x] Drop or regenerate the leftover `virtual_machine/Cargo.lock`.
   The VM is a workspace member (`edition = "2024"`) but still has a standalone lock and `edition = "2021"` in places. `scripts/build-and-test.sh` still `cd virtual_machine && cargo build --locked --release`. Build only from the workspace root.
 
-- [ ] Include `ghostos-netd` in mutation testing.
+- [x] Include `ghostos-netd` in mutation testing.
   `scripts/mutation.sh` covers fsd, status, auth, ghostfs, http, and the VM. Netd sits on the guest network boundary and is skipped.
 
 ---

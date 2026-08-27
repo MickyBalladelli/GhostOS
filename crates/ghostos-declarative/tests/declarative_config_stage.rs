@@ -1,3 +1,4 @@
+// Inventory: coverage_59_10.rs (legacy roadmap section 59).
 use ghostos_declarative::{
     AdmissionPolicy, ConfigurationArea, ConfigurationDiff, ConfigurationRuntime, DiscoveryPolicy,
     ParseError, ReconfigureError, ReconfigureManager, SignedConfiguration, SystemSpec,

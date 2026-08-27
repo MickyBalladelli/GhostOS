@@ -13,19 +13,19 @@ All bounded producer/consumer queues use one of four explicit contracts:
 | --- | --- | --- | --- | --- |
 | IPC clients → Ring 0 | `ghostos_ipc::Ring`, `kernel::ipc::Channel` | Fail fast: `RingError::Full` / `IpcError::Full`; IPC quota is refunded | Fail fast: `Empty` | `crates/ipc/src/tests.rs`, `kernel/src/tests.rs` |
 | Clients → device driver | `ghostos_platform_io::AsyncQueue`, `IoQueue`, `MediaQueue`, accelerator queue | Fail fast: `QueueFull` | `dispatch`/`poll` return `None` | `crates/platform-io/tests/model.rs` |
-| Filesystem → block backend | `ghostos_ghostfs::BlockIoQueue` | Fail fast: `BlockIoError::QueueFull` | `poll` returns `None`; cancellation frees a slot | `crates/ghostfs/tests/coverage_59_5.rs` |
-| NIC driver ↔ network stack | `ghostos_netd::PacketQueue` | Fail fast: `PacketError::Full`; dropped loan frees the slot | `PacketError::Empty` | `crates/netd/tests/coverage_59_7.rs` |
+| Filesystem → block backend | `ghostos_ghostfs::BlockIoQueue` | Fail fast: `BlockIoError::QueueFull` | `poll` returns `None`; cancellation frees a slot | `crates/ghostfs/tests/recovery_complete_generation.rs` |
+| NIC driver ↔ network stack | `ghostos_netd::PacketQueue` | Fail fast: `PacketError::Full`; dropped loan frees the slot | `PacketError::Empty` | `crates/netd/tests/packet_queue_bounded_zero_copy.rs` |
 | Socket client → network daemon | `ClientChannel` request/completion rings | Fail fast: completion-full is returned before consuming a request | Empty request ring means no work | `crates/netd/src/service.rs` |
-| Storage client → storage daemon | `StorageDaemon` pending/completion arrays | Fail fast: `StorageError::QueueFull`; completion failure is surfaced in the completion | `complete_next`/`poll_completion` are non-blocking | `crates/ghostos-storaged/tests/coverage_59_5.rs` |
-| Remote storage → NVMe transport | `ghostos_storaged::NvmeQueue` | Fail fast: `NvmeError::QueueFull` | `complete` returns `None` for unknown work | `crates/ghostos-storaged/tests/coverage_59_5.rs` |
-| Shell producers → workers | `ghostos_shell::JobQueue` | Fail fast: `Error::QueueFull`; completed slots require reap | No eligible job returns `Ok(None)`; expired leases retry | `crates/ghostos-shell/tests/coverage_59_6.rs` |
-| Context producers → embedding worker | `ghostos_agentd::ContextBus` | Fail fast: `AgentError::QueueFull`; same source coalesces/replaces | `poll` drains within its budget | `crates/ghostos-agentd/tests/coverage_59_8.rs` |
+| Storage client → storage daemon | `StorageDaemon` pending/completion arrays | Fail fast: `StorageError::QueueFull`; completion failure is surfaced in the completion | `complete_next`/`poll_completion` are non-blocking | `crates/ghostos-storaged/tests/storage_queue_and_nvme.rs` |
+| Remote storage → NVMe transport | `ghostos_storaged::NvmeQueue` | Fail fast: `NvmeError::QueueFull` | `complete` returns `None` for unknown work | `crates/ghostos-storaged/tests/storage_queue_and_nvme.rs` |
+| Shell producers → workers | `ghostos_shell::JobQueue` | Fail fast: `Error::QueueFull`; completed slots require reap | No eligible job returns `Ok(None)`; expired leases retry | `crates/ghostos-shell/tests/line_editor_utf8_and_history.rs` |
+| Context producers → embedding worker | `ghostos_agentd::ContextBus` | Fail fast: `AgentError::QueueFull`; same source coalesces/replaces | `poll` drains within its budget | `crates/ghostos-agentd/tests/semantic_bus_embed_and_expiry.rs` |
 | Read observer → prefetch worker | `PredictivePrefetcher` | Best-effort drop: `observe` stops at queue capacity and returns partial count | `pop` returns `None`; no retry is promised | `crates/llm-runtime/src/prefetch.rs` |
-| Kernel/device producers → trace consumer | `TraceRing` | Drop oldest and increment `dropped`; never blocks | `try_pop` returns `None` | `crates/observability/tests/coverage_59_9.rs` |
+| Kernel/device producers → trace consumer | `TraceRing` | Drop oldest and increment `dropped`; never blocks | `try_pop` returns `None` | `crates/observability/tests/audit_records_bounded_round_trip.rs` |
 | Audit producers → recovery journal | `AuditJournal` | Fail fast: `AuditJournalError::Capacity`; never overwrites evidence | Records are read/exported explicitly | `crates/observability/src/lib.rs` |
 | Metric producers → metric consumer | `MetricRegistry` | Fail fast with `MetricError::Capacity` and increment `dropped` | `samples`/`export` drain by copy | `crates/observability/src/lib.rs` |
 | Alert producers → alert consumer | `AlertRegistry` | Fail fast with `MetricError::Capacity` and increment `dropped` | `drain` removes entries | `crates/observability/src/lib.rs` |
-| Replay producers → replay consumer | `ReplayRing` | Drop oldest and increment `dropped`; never blocks | `try_pop` returns `None` | `crates/ghostos-replay/tests/coverage_59_9.rs` |
+| Replay producers → replay consumer | `ReplayRing` | Drop oldest and increment `dropped`; never blocks | `try_pop` returns `None` | `crates/ghostos-replay/tests/deterministic_replay_and_time_travel.rs` |
 
 ## VM device queues
 

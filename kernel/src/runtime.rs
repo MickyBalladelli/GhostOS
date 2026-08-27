@@ -649,10 +649,10 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsLinks
             | Operation::SynFsDelete
         );
-        let has_descriptor = request.arguments[0] != 0
-            || request.arguments[1] != 0
-            || request.arguments[2] != 0
-            || request.arguments[3] != 0;
+        let (region_raw, offset_raw, length_raw, writable) =
+            ghostos_runtime::decode_runtime_fs_buffer(&request.arguments);
+        let has_descriptor =
+            region_raw != 0 || offset_raw != 0 || length_raw != 0 || request.arguments[3] != 0;
         if !needs_buffer {
             if has_descriptor {
                 return Err(RuntimeDispatchError::InvalidBuffer)
@@ -660,12 +660,12 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             return Ok(None)
         }
         let region = SharedRegionId::new(
-            u32::try_from(request.arguments[0]).map_err(|_| RuntimeDispatchError::InvalidBuffer)?,
+            u32::try_from(region_raw).map_err(|_| RuntimeDispatchError::InvalidBuffer)?,
         )
         .ok_or(RuntimeDispatchError::InvalidBuffer)?;
-        let offset = u32::try_from(request.arguments[1])
+        let offset = u32::try_from(offset_raw)
             .map_err(|_| RuntimeDispatchError::InvalidBuffer)?;
-        let length = u32::try_from(request.arguments[2])
+        let length = u32::try_from(length_raw)
             .map_err(|_| RuntimeDispatchError::InvalidBuffer)?;
         if request.arguments[3] > 1
             || offset.checked_add(length).is_none()
@@ -673,7 +673,6 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         {
             return Err(RuntimeDispatchError::InvalidBuffer)
         }
-        let writable = request.arguments[3] != 0;
         let expected_writable = operation == Operation::SynFsRead
             || operation == Operation::SynFsList
             || operation == Operation::SynFsLinks;

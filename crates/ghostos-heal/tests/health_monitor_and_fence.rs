@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_heal::{
     HealthConfig, HealthFault, HealthMonitor, HealthState, HotSwapCoordinator, HotSwapError,
     HotSwapRequest, HotSwapRuntime, KernelPatchCoordinator, KernelPatchError, KernelPatchRequest,

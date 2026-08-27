@@ -12,6 +12,7 @@ use std::path::Path;
 
 const MAGIC: &[u8; 8] = b"SYNOVM01";
 const AUTH_MAGIC: &[u8; 8] = b"SYNOSIG1";
+const AUTH_MAGIC_GHOSTOS: &[u8; 8] = b"GHOSTSG1";
 const AUTH_ALGORITHM_HMAC_SHA256: u8 = 1;
 const AUTH_HEADER_BYTES: usize = 8 + 4 + 1 + 3 + 16 + 8;
 const AUTH_TAG_BYTES: usize = 32;
@@ -24,6 +25,10 @@ pub const SNAPSHOT_API_VERSION: ghostos_api_compat::ApiVersion = ghostos_api_com
 pub const MAX_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub const MAX_SNAPSHOT_MEMORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const MAX_ITEMS: usize = 16 * 1024 * 1024;
+
+fn auth_magic_accepted(magic: &[u8]) -> bool {
+    magic == AUTH_MAGIC || magic == AUTH_MAGIC_GHOSTOS
+}
 
 pub type SnapshotId = u64;
 
@@ -447,7 +452,7 @@ impl VmSnapshot {
             })
         }
         if bytes.len() < AUTH_HEADER_BYTES + AUTH_TAG_BYTES
-            || bytes.get(..AUTH_MAGIC.len()) != Some(AUTH_MAGIC)
+            || !auth_magic_accepted(bytes.get(..AUTH_MAGIC.len()).unwrap_or(&[]))
         {
             return Err(SnapshotError::AuthenticationRequired)
         }
@@ -1797,5 +1802,33 @@ mod tests {
             )
             .expect("resume from restored code");
         assert!(!vm.cpu.state.halted);
+    }
+
+    #[test]
+    fn snapshot_auth_magic_accepts_ghostos_alias() {
+        assert!(auth_magic_accepted(AUTH_MAGIC));
+        assert!(auth_magic_accepted(AUTH_MAGIC_GHOSTOS));
+        assert!(!auth_magic_accepted(b"XXXXXXXX"));
+    }
+
+    #[test]
+    fn authenticated_snapshot_accepts_ghostos_magic() {
+        let vm = Vm::with_config(crate::VmConfig {
+            memory_size: 4 * 1024 * 1024,
+            ..crate::VmConfig::default()
+        });
+        let snapshot = VmSnapshot::capture(&vm);
+        let key = SnapshotAuthKey::new([0x42; SNAPSHOT_AUTH_KEY_BYTES]);
+        let mut authenticated = snapshot
+            .to_authenticated_bytes(key)
+            .expect("authenticate snapshot");
+        authenticated[..8].copy_from_slice(AUTH_MAGIC_GHOSTOS);
+        let payload_end = authenticated.len() - AUTH_TAG_BYTES;
+        let tag = key.authenticate_parts(&[&authenticated[..payload_end]]);
+        authenticated[payload_end..].copy_from_slice(&tag);
+        assert_eq!(
+            VmSnapshot::from_authenticated_bytes(&authenticated, key).expect("verify ghostos magic"),
+            snapshot
+        );
     }
 }

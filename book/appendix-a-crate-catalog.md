@@ -7,6 +7,7 @@ This catalog is a navigation aid. Read the crate’s `Cargo.toml`, `README`, and
 | Package | What it owns |
 | --- | --- |
 | `ghostos-boot-protocol` | Versioned `BootInfo`, memory regions, framebuffer, and handoff types |
+| `ghostos-abi` | Shared syscall request/response layout and generated operation codes |
 | `ghostos-uefi` | UEFI application, PE/COFF loading, memory map, boot services exit, chainload |
 | `ghostos-kernel` | no_std Ring 0: allocator, tasks, scheduler, IPC, capabilities, DLM, page faults, console, power, runtime, shell entry |
 | `ghostos-status` | Shared condition/status encoding and OpenVMS-style success semantics |
@@ -103,5 +104,31 @@ This catalog is a navigation aid. Read the crate’s `Cargo.toml`, `README`, and
 | --- | --- |
 | `ghostos-vm` | x86_64 VM, firmware, devices, disks, snapshots, terminal, cluster fixtures |
 | `ghostos-hello-world` | Minimal cross-target example application |
+| `ghostos-cookbook` | Host examples for compiler, packaging, and service workflows |
 | `ghostos-test-support` | Deterministic fixtures, fake devices, fault injection, cleanup, golden data |
 | `ghostos-fuzz` | LibFuzzer targets for parser, filesystem, HTTP, script, VM decoder/device/image paths |
+
+## Tiny crates kept split
+
+These packages stay independent so a caller can take one contract without the
+others. Do not merge them because they look small.
+
+| Package | Why it is not folded into a neighbor |
+| --- | --- |
+| `ghostos-admission` | Control-plane work classes and recovery-reserve budgets. Not HTTP routing and not `ghostos-policy` object bindings. |
+| `ghostos-api-compat` | Version accept/warn/reject policy shared by every public boundary. Decoders still validate bytes. |
+| `ghostos-kvd` | Native bounded key-value cache with `SYNKVD01` state. `ghostos-rms` is sequential/indexed records plus an embedded KV used as a record store, not this cache. |
+| `ghostos-numa` | CPU/memory placement topology. Independent of scheduler policy in the kernel. |
+| `ghostos-path-pattern` | Bounded path and wildcard matching used by GhostFS, the shell, and fsd. |
+| `ghostos-policy` | Principal/object capability bindings. Distinct from `ghostos-admission` (load) and `ghostos-shield` (runtime protection). |
+| `ghostos-protocol` | Transport-neutral replay windows, traffic classes, and reconnect guards. HTTP/gRPC/SDK supply framing. |
+| `ghostos-service-scale` | Horizontal instance/session/idempotency state for Ring 3 services. |
+
+Script engines stay three crates with one role each:
+
+| Package | Role |
+| --- | --- |
+| `ghostos-script` | Native DCL-style scripts, conditions, pipelines, typed tools |
+| `ghostos-embedded-script` | Capability-scoped Rhai automation |
+| `ghostos-wasm-script` | Zero-trust Wasmi runtime with fuel and memory limits |
+

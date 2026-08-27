@@ -1,3 +1,4 @@
+// Inventory: coverage_59_10.rs (legacy roadmap section 59).
 use ghostos_confidential::{
     CapabilityRights, EncryptedDsmFrame, EnclaveManager, EnclavePlatform, Error, FabricTransport,
     MlKemKeypair, NonceReplayGuard,

@@ -18,6 +18,6 @@ audit records per transport: one for state and queue values, and one for packet
 drops, retries, and degraded mode. The split keeps every audit event within the
 four-field trace-event limit while preserving exact counters.
 
-Regression coverage is in `crates/observability/tests/coverage_59_9.rs` and
+Regression coverage is in `crates/observability/tests/audit_records_bounded_round_trip.rs` and
 `crates/ghostos-inspect/tests/health.rs`. Compile evidence is recorded in
 `TODO.md`; test execution remains pending.

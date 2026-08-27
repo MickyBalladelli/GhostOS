@@ -1,3 +1,4 @@
+// Inventory: coverage_59_7.rs (legacy roadmap section 59).
 use ghostos_client_sdk::{
     Client, ClientError, ClusterNode, ClusterState, FrameHeader, JobSpec, Method, NodeHealth,
     NodeId, ProtocolError, RpcStatus, RpcTransport, Rights, TransportRights,

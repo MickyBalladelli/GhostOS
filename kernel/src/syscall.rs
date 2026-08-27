@@ -303,14 +303,13 @@ pub extern "C" fn ghostos_call_gate_dispatch(
         }
         _ => 0,
     };
-    let wire_result = if caller.raw() == 9 && result.status == Status::NORMAL.raw() {
-        Response {
-            status: 0,
-            ..result
-        }
-    } else {
-        result
-    };
+    let wire_result = encode_user_response(caller, result);
     unsafe { crate::arch::write_user(response, wire_result) };
     sleep_us
+}
+
+/// Map a kernel `Response` onto the Ring 3 wire. Success stays `Status::NORMAL`
+/// for every caller, including the boot shell (address space 9).
+pub(crate) fn encode_user_response(_caller: AddressSpaceId, result: Response) -> Response {
+    result
 }

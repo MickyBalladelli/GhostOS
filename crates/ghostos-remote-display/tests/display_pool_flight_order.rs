@@ -1,3 +1,4 @@
+// Inventory: coverage_59_7.rs (legacy roadmap section 59).
 use ghostos_platform_io::{BufferAccess, BufferDescriptor};
 use ghostos_remote_display::{
     Av1RtpPacketizer, DisplayDaemon, DisplayError, DisplayGrant, DisplayRights, EncodedFrame,

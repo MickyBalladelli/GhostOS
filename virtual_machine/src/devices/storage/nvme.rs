@@ -591,7 +591,7 @@ impl Nvme {
         let mut c = [0u8; 4096];
         c[0..2].copy_from_slice(&NVME_VENDOR_ID.to_le_bytes());
         c[2..4].copy_from_slice(&NVME_VENDOR_ID.to_le_bytes());
-        let sn = b"SYNOSVM00001";
+        let sn = crate::devices::storage::VIRTUAL_DISK_SERIAL_LEGACY;
         c[4..4 + sn.len()].copy_from_slice(sn);
         let mn = b"GhostOS NVMe Virtual Disk";
         c[24..24 + mn.len()].copy_from_slice(mn);

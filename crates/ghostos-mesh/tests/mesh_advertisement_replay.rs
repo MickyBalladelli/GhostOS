@@ -1,3 +1,4 @@
+// Inventory: coverage_59_7.rs (legacy roadmap section 59).
 use ghostos_fabric::NodeId;
 use ghostos_auth::CapabilityKey;
 use ghostos_mesh::{

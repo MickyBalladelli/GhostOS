@@ -32,3 +32,8 @@ temp/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Generated inventory and soak evidence
+virtual_machine/tests/generated-inventory.toml
+kernel/build/soak/
+virtual_machine/build/soak/

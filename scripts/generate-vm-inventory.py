@@ -216,32 +216,21 @@ def render() -> tuple[str, list[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="fail if the committed inventory is stale")
+    parser.add_argument("--check", action="store_true", help="fail if generated inventory has missing coverage")
     args = parser.parse_args()
     generated, errors = render()
+    OUTPUT_PATH.write_text(generated)
 
-    if errors and args.check:
+    if errors:
         for error in errors:
             print(f"VM inventory error: {error}", file=sys.stderr)
         return 1
 
     if args.check:
-        current = OUTPUT_PATH.read_text() if OUTPUT_PATH.is_file() else ""
-        if current != generated:
-            print(
-                "VM generated inventory is stale; run python3 scripts/generate-vm-inventory.py",
-                file=sys.stderr,
-            )
-            return 1
         print("VM generated inventory is current")
         return 0
 
-    OUTPUT_PATH.write_text(generated)
     print(f"wrote {OUTPUT_PATH.relative_to(ROOT)}")
-    if errors:
-        for error in errors:
-            print(f"VM inventory error: {error}", file=sys.stderr)
-        return 1
     return 0
 
 

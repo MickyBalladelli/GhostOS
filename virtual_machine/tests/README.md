@@ -1,16 +1,16 @@
 # VM test tiers
 
 The VM tests use stable names from `inventory.toml`. Source modules, public API
-symbols, and device implementations are written to `generated-inventory.toml`.
-Regenerate that file after changing the public surface:
+symbols, and device implementations are regenerated to `generated-inventory.toml`
+during validation. That file is generated output; do not commit it.
 
 ```sh
 python3 scripts/generate-vm-inventory.py
 ```
 
-The generator preserves assignments for existing symbols. New public API and
-device entries have an empty `tests` list; add a stable test ID to that list
-before committing.
+The generator preserves assignments for existing symbols when a previous
+generated file is present. New public API and device entries take their tests
+from `inventory.toml`.
 
 The IDs point to executed records under
 `build/test-evidence/<run-id>/<tier>/<test-id>/evidence.json`. Each tier also

@@ -1,3 +1,4 @@
+// Inventory: coverage_59_9.rs (legacy roadmap section 59).
 use ghostos_shell::render::{OutputFormat, render};
 use ghostos_status::Status;
 use ghostos_system_model::command::{OutputText, OutputValue, StructuredOutput};

@@ -761,6 +761,38 @@ fn invariants_catalogue_and_model_state_are_redacted() {
 }
 
 #[test]
+fn service_image_bound_rejects_oversized_ring3_blobs() {
+    assert!(crate::service_image_fits(0));
+    assert!(crate::service_image_fits(crate::SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize));
+    assert!(!crate::service_image_fits(
+        crate::SERVICE_CODE_PAGE_COUNT * crate::FRAME_SIZE as usize + 1
+    ));
+}
+
+#[test]
+fn ring3_service_stack_is_64kib() {
+    assert_eq!(crate::SERVICE_CODE_PAGE_COUNT, 19);
+    assert_eq!(crate::SERVICE_STACK_PAGE_COUNT, 16);
+    assert_eq!(
+        crate::SERVICE_STACK_PAGE_COUNT * crate::FRAME_SIZE as usize,
+        64 * 1024
+    );
+}
+
+#[test]
+fn shell_success_keeps_normal_status() {
+    let caller = address_space(9);
+    let result = ghostos_runtime::Response {
+        status: Status::NORMAL.raw(),
+        flags: 0,
+        values: [1, 0, 0, 0],
+    };
+    let encoded = crate::syscall::encode_user_response(caller, result);
+    assert_eq!(encoded.status, Status::NORMAL.raw());
+    assert_ne!(encoded.status, 0);
+}
+
+#[test]
 fn runtime_rejects_unknown_operations_reserved_bits_and_bad_buffers() {
     let caller = address_space(9);
     let process = FsdProcessId::new(9).expect("valid process");

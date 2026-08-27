@@ -136,6 +136,10 @@ default-members = [
     "crates/ghostos-declarative",
     "crates/ghostos-rustd",
     "crates/test-support",
+    "tools/cargo-ghostos",
+    "tools/ghostos-compiler",
+    "examples/hello-world",
+    "examples/cookbook",
     "kernel",
     "virtual_machine",
 ]

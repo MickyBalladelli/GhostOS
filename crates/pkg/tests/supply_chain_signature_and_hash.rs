@@ -1,3 +1,4 @@
+// Inventory: coverage_59_10.rs (legacy roadmap section 59).
 use ghostos_pkg::{PackageBundle, PackageDaemon, PackageError, SigningKey, bundle_size, encode_bundle};
 use ghostos_ghostfs::SynFs;
 

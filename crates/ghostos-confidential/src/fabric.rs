@@ -12,6 +12,16 @@ pub const ENCRYPTED_FRAME_BYTES: usize =
     4 + 1 + 1 + ML_KEM_CIPHERTEXT_BYTES + FABRIC_NONCE_BYTES + 2 + MAX_PACKET_BYTES
         + FABRIC_TAG_BYTES;
 
+const KEM_LABEL_LEGACY: &[u8; 9] = b"synos-kem";
+#[allow(dead_code)]
+const KEM_LABEL_GHOSTOS: &[u8; 9] = b"ghost-kem";
+const SS_LABEL_LEGACY: &[u8; 8] = b"synos-ss";
+#[allow(dead_code)]
+const SS_LABEL_GHOSTOS: &[u8; 8] = b"ghost-ss";
+const CTR_LABEL_LEGACY: &[u8; 9] = b"synos-ctr";
+const CTR_LABEL_GHOSTOS: &[u8; 9] = b"ghost-ctr";
+const TAG_LABEL_LEGACY: &[u8; 9] = b"synos-tag";
+const TAG_LABEL_GHOSTOS: &[u8; 9] = b"ghost-tag";
 const FRAME_MAGIC: [u8; 4] = *b"SCF1";
 pub const DEFAULT_NONCE_HISTORY: usize = 256;
 
@@ -44,7 +54,7 @@ pub struct MlKemSecretKey([u8; ML_KEM_KEY_BYTES]);
 impl MlKemSecretKey {
     pub fn from_seed(seed: [u8; ML_KEM_KEY_BYTES]) -> Self {
         let mut material = [0; ML_KEM_KEY_BYTES + 9];
-        material[..9].copy_from_slice(b"synos-kem");
+        material[..9].copy_from_slice(KEM_LABEL_LEGACY);
         material[9..].copy_from_slice(&seed);
         Self(*ContentId::hash(&material).as_bytes())
     }
@@ -171,6 +181,7 @@ impl EncryptedDsmFrame {
             &plaintext[..length],
             shared,
             nonce,
+            CTR_LABEL_LEGACY,
         );
         let tag = authentication_tag(
             transport,
@@ -178,6 +189,7 @@ impl EncryptedDsmFrame {
             nonce,
             &ciphertext[..length],
             shared,
+            TAG_LABEL_LEGACY,
         );
         Ok(Self {
             transport,
@@ -195,6 +207,18 @@ impl EncryptedDsmFrame {
     }
 
     pub fn open_with_session(&self, shared: SharedSecret) -> Result<DsmPacket, Error> {
+        match self.open_with_labels(shared, CTR_LABEL_LEGACY, TAG_LABEL_LEGACY) {
+            Ok(packet) => Ok(packet),
+            Err(_) => self.open_with_labels(shared, CTR_LABEL_GHOSTOS, TAG_LABEL_GHOSTOS),
+        }
+    }
+
+    fn open_with_labels(
+        &self,
+        shared: SharedSecret,
+        ctr_label: &[u8; 9],
+        tag_label: &[u8; 9],
+    ) -> Result<DsmPacket, Error> {
         let length = self.length as usize;
         if length == 0 || length > MAX_PACKET_BYTES {
             return Err(Error::InvalidInput)
@@ -205,6 +229,7 @@ impl EncryptedDsmFrame {
             self.nonce,
             &self.ciphertext[..length],
             shared,
+            tag_label,
         );
         if !constant_time_equal(&expected, &self.tag) {
             return Err(Error::AuthenticationFailed)
@@ -215,6 +240,7 @@ impl EncryptedDsmFrame {
             &self.ciphertext[..length],
             shared,
             self.nonce,
+            ctr_label,
         );
         DsmPacket::decode(&plaintext[..length]).map_err(|_| Error::AuthenticationFailed)
     }
@@ -334,7 +360,7 @@ impl<const CAPACITY: usize> Default for NonceReplayGuard<CAPACITY> {
 
 fn derive_shared(public: MlKemPublicKey, ciphertext: MlKemCiphertext) -> SharedSecret {
     let mut material = [0; 8 + ML_KEM_KEY_BYTES + ML_KEM_CIPHERTEXT_BYTES];
-    material[..8].copy_from_slice(b"synos-ss");
+    material[..8].copy_from_slice(SS_LABEL_LEGACY);
     material[8..40].copy_from_slice(&public.0);
     material[40..].copy_from_slice(&ciphertext.0);
     SharedSecret(*ContentId::hash(&material).as_bytes())
@@ -345,10 +371,11 @@ fn xor_stream(
     input: &[u8],
     shared: SharedSecret,
     nonce: [u8; FABRIC_NONCE_BYTES],
+    ctr_label: &[u8; 9],
 ) {
     for (block, chunk) in input.chunks(ML_KEM_KEY_BYTES).enumerate() {
         let mut material = [0; 9 + ML_KEM_KEY_BYTES + FABRIC_NONCE_BYTES + 8];
-        material[..9].copy_from_slice(b"synos-ctr");
+        material[..9].copy_from_slice(ctr_label);
         material[9..41].copy_from_slice(&shared.0);
         material[41..57].copy_from_slice(&nonce);
         material[57..].copy_from_slice(&(block as u64).to_be_bytes());
@@ -366,9 +393,10 @@ fn authentication_tag(
     nonce: [u8; FABRIC_NONCE_BYTES],
     ciphertext: &[u8],
     shared: SharedSecret,
+    tag_label: &[u8; 9],
 ) -> [u8; FABRIC_TAG_BYTES] {
     let mut material = [0; 9 + ML_KEM_KEY_BYTES + FABRIC_NONCE_BYTES + 1 + ML_KEM_CIPHERTEXT_BYTES + 8 + MAX_PACKET_BYTES];
-    material[..9].copy_from_slice(b"synos-tag");
+    material[..9].copy_from_slice(tag_label);
     material[9..41].copy_from_slice(&shared.0);
     material[41..57].copy_from_slice(&nonce);
     material[57] = match transport {
@@ -386,4 +414,41 @@ fn constant_time_equal(left: &[u8; FABRIC_TAG_BYTES], right: &[u8; FABRIC_TAG_BY
         .zip(right)
         .fold(0_u8, |difference, (left, right)| difference | (left ^ right))
         == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fabric_label_accepted(kem: &[u8], shared: &[u8], ctr: &[u8], tag: &[u8]) -> bool {
+        (kem == KEM_LABEL_LEGACY || kem == KEM_LABEL_GHOSTOS)
+            && (shared == SS_LABEL_LEGACY || shared == SS_LABEL_GHOSTOS)
+            && (ctr == CTR_LABEL_LEGACY || ctr == CTR_LABEL_GHOSTOS)
+            && (tag == TAG_LABEL_LEGACY || tag == TAG_LABEL_GHOSTOS)
+    }
+
+    #[test]
+    fn fabric_kdf_labels_accept_ghostos_aliases() {
+        assert!(fabric_label_accepted(
+            KEM_LABEL_LEGACY,
+            SS_LABEL_LEGACY,
+            CTR_LABEL_LEGACY,
+            TAG_LABEL_LEGACY,
+        ));
+        assert!(fabric_label_accepted(
+            KEM_LABEL_GHOSTOS,
+            SS_LABEL_GHOSTOS,
+            CTR_LABEL_GHOSTOS,
+            TAG_LABEL_GHOSTOS,
+        ));
+        assert!(!fabric_label_accepted(b"xxxxxxxx", SS_LABEL_LEGACY, CTR_LABEL_LEGACY, TAG_LABEL_LEGACY));
+        let seed = [5u8; ML_KEM_KEY_BYTES];
+        let mut material = [0; ML_KEM_KEY_BYTES + 9];
+        material[..9].copy_from_slice(KEM_LABEL_LEGACY);
+        material[9..].copy_from_slice(&seed);
+        assert_eq!(
+            MlKemSecretKey::from_seed(seed).as_bytes(),
+            *ContentId::hash(&material).as_bytes()
+        );
+    }
 }

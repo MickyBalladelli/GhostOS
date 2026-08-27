@@ -1,3 +1,4 @@
+// Inventory: coverage_59_10.rs (legacy roadmap section 59).
 use ghostos_boot_protocol::{
     BOOT_INFO_MAGIC, BOOT_INFO_VERSION, BootInfo, BootMethod, FramebufferInfo, MemoryKind,
     MemoryRegion, FRAMEBUFFER_PIXEL_RGB,

@@ -482,7 +482,7 @@ impl Ahci {
         put(&mut id, 1, 16383);
         put(&mut id, 3, 16);
         put(&mut id, 6, 63);
-        let sn = b"SYNOSVM00001";
+        let sn = crate::devices::storage::VIRTUAL_DISK_SERIAL_LEGACY;
         id[20..20 + sn.len()].copy_from_slice(sn);
         let mn = b"GhostOS Virtual Disk";
         id[46..46 + mn.len()].copy_from_slice(mn);

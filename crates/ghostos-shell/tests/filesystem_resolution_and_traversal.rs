@@ -1,3 +1,4 @@
+// Inventory: coverage_59_5.rs (legacy roadmap section 59).
 use ghostos_shell::filesystem::{split_version_selector, Path, ShellSession};
 use ghostos_status::Status;
 

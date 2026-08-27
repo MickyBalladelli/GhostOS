@@ -1,3 +1,4 @@
+// Inventory: coverage_59_6.rs (legacy roadmap section 59).
 use ghostos_wasm_script::{
     CapabilityGrant, HOST_ACCESS_DENIED, HostCall, WasmHost, WasmLimits, WasmRuntime,
 };

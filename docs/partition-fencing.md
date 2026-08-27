@@ -20,9 +20,9 @@ or clock-skewed node from retaining ownership by claiming a future timestamp.
 
 Direct regressions:
 
-- `crates/fabric/tests/coverage_59_7.rs`
+- `crates/fabric/tests/cxl_discovery_qos_and_hot_remove.rs`
   - `partition_recovery_does_not_release_memory_before_fencing`
   - `future_peer_timestamp_cannot_extend_partition_recovery_deadline`
-- `crates/ghostos-storaged/tests/coverage_59_5.rs`
+- `crates/ghostos-storaged/tests/storage_queue_and_nvme.rs`
   - `partition_fences_before_storage_and_memory_release`
   - `clock_skew_is_detected_at_local_sample_time_before_recovery`
