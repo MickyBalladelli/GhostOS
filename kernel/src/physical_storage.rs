@@ -1,5 +1,11 @@
 //! Early AHCI system-volume mount used to bootstrap the Ring 3 storage stack.
 
+use crate::pci::PciInventory;
+
+pub(crate) fn missing_expected_system_volume(inventory: &PciInventory, mounted: bool) -> bool {
+    !mounted && inventory.iter().any(|device| device.is_ahci())
+}
+
 #[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
 mod platform {
     use core::mem::MaybeUninit;
@@ -236,4 +242,42 @@ pub fn mount(
 #[allow(dead_code)]
 pub const fn service_image(_role: u8) -> Option<&'static [u8]> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use ghostos_legacy_pc_drivers::{Bar, PciAddress, PciDevice};
+
+    use super::missing_expected_system_volume;
+    use crate::pci::PciInventory;
+
+    fn ahci_device() -> PciDevice {
+        PciDevice {
+            address: PciAddress::new(0, 31, 2).expect("valid PCI address"),
+            vendor_id: 0x8086,
+            device_id: 0x2922,
+            revision: 0,
+            programming_interface: 0x01,
+            subclass: 0x06,
+            class: 0x01,
+            header_type: 0,
+            bars: [Bar::Unused; 6],
+            interrupt_line: 0,
+            interrupt_pin: 0,
+        }
+    }
+
+    #[test]
+    fn missing_volume_is_ignored_without_ahci() {
+        assert!(!missing_expected_system_volume(&PciInventory::empty(), false));
+        assert!(!missing_expected_system_volume(&PciInventory::empty(), true));
+    }
+
+    #[test]
+    fn missing_volume_is_fatal_when_ahci_is_present() {
+        let mut inventory = PciInventory::empty();
+        inventory.push(ahci_device());
+        assert!(missing_expected_system_volume(&inventory, false));
+        assert!(!missing_expected_system_volume(&inventory, true));
+    }
 }

@@ -482,14 +482,15 @@ fn list_root_twice_returns_bootstrap_directories() {
 }
 
 #[test]
-fn list_root_again_without_rewriting_path_still_lists_bootstrap_directories() {
+fn list_root_again_without_rewriting_path_is_invalid_path() {
     let (mut daemon, process, authority) = daemon();
     let mut listing = [0; 512];
     listing[0] = b'/';
     let first = daemon.dispatch(
         Request::new(Operation::List, process)
             .with_capability(authority)
-            .with_offset(0),
+            .with_offset(0)
+            .with_length(1),
         Some(&mut listing),
     );
     assert_eq!(first.status, Status::NORMAL);
@@ -504,10 +505,104 @@ fn list_root_again_without_rewriting_path_still_lists_bootstrap_directories() {
             .with_offset(0),
         Some(&mut listing),
     );
+    assert_eq!(second.status, Status::INVALID_PATH);
+}
+
+#[test]
+fn list_root_with_path_length_ignores_leftover_records() {
+    let (mut daemon, process, authority) = daemon();
+    let mut listing = [0; 512];
+    listing[0] = b'/';
+    let first = daemon.dispatch(
+        Request::new(Operation::List, process)
+            .with_capability(authority)
+            .with_offset(0)
+            .with_length(1),
+        Some(&mut listing),
+    );
+    assert_eq!(first.status, Status::NORMAL);
+    assert!(first.values[0] >= 22);
+    assert_ne!(listing[0], b'/');
+
+    listing[0] = b'/';
+    let second = daemon.dispatch(
+        Request::new(Operation::List, process)
+            .with_capability(authority)
+            .with_offset(0)
+            .with_length(1),
+        Some(&mut listing),
+    );
     assert_eq!(second.status, Status::NORMAL);
     assert!(second.values[0] >= 22);
     let name_length = u16::from_le_bytes([listing[0], listing[1]]) as usize;
     assert!(name_length > 0);
+}
+
+#[test]
+fn snapshot_list_leftover_without_path_length_is_invalid_path() {
+    let (mut daemon, process, authority) = daemon();
+    let snapshot = daemon
+        .snapshot_create(process, authority)
+        .expect("create snapshot");
+    let mut listing = [0; 512];
+    listing[0] = b'/';
+    let first = daemon.dispatch(
+        Request::new(Operation::SnapshotList, process)
+            .with_capability(snapshot.capability)
+            .with_offset(0)
+            .with_length(1),
+        Some(&mut listing),
+    );
+    assert_eq!(first.status, Status::NORMAL);
+    assert!(first.values[0] >= 22);
+    assert_ne!(listing[0], b'/');
+
+    let second = daemon.dispatch(
+        Request::new(Operation::SnapshotList, process)
+            .with_capability(snapshot.capability)
+            .with_offset(0),
+        Some(&mut listing),
+    );
+    assert_eq!(second.status, Status::INVALID_PATH);
+}
+
+#[test]
+fn mkdir_absolute_name_is_listed_at_root() {
+    let (mut daemon, process, authority) = daemon();
+    let mut path = *b"/testdir";
+    let created = daemon.dispatch(
+        Request::new(Operation::Mkdir, process)
+            .with_capability(authority)
+            .with_flags(Flags::RECURSIVE),
+        Some(&mut path),
+    );
+    assert_eq!(created.status, Status::NORMAL);
+    let mut listing = [0; 512];
+    listing[0] = b'/';
+    let listed = daemon.dispatch(
+        Request::new(Operation::List, process)
+            .with_capability(authority)
+            .with_offset(0)
+            .with_length(1),
+        Some(&mut listing),
+    );
+    assert_eq!(listed.status, Status::NORMAL);
+    let page = &listing[..listed.values[0] as usize];
+    let mut index = 0;
+    let mut found = false;
+    while index + 22 <= page.len() {
+        let name_length = u16::from_le_bytes([page[index], page[index + 1]]) as usize;
+        let record = 22 + name_length;
+        if index + record > page.len() {
+            break;
+        }
+        if &page[index + 22..index + 22 + name_length] == b"testdir" {
+            found = true;
+            break;
+        }
+        index += record;
+    }
+    assert!(found, "absolute mkdir testdir missing from root listing");
 }
 
 #[test]

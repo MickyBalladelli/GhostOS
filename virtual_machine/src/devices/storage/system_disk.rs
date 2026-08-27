@@ -1908,4 +1908,49 @@ mod tests {
         fs::remove_file(&disk_path).ok();
         fs::remove_file(&kernel_path).ok();
     }
+
+    #[test]
+    fn refresh_service_packages_validates_when_no_roles_are_selected() {
+        let disk_path = test_path("refresh-empty.raw");
+        let kernel_path = test_path("refresh-empty-kernel.bin");
+        fs::write(&kernel_path, b"test kernel image").unwrap();
+        let installed = SystemDiskProvisioner::provision(
+            &disk_path,
+            &SystemDiskInstall::new(&kernel_path),
+        )
+        .unwrap();
+        let refreshed = SystemDiskProvisioner::refresh_service_packages(&disk_path, &[])
+            .unwrap();
+        assert_eq!(refreshed, installed);
+        fs::remove_file(&disk_path).ok();
+        fs::remove_file(&kernel_path).ok();
+    }
+
+    #[test]
+    fn refresh_service_packages_rejects_invalid_role() {
+        let disk_path = test_path("refresh-invalid-role.raw");
+        let kernel_path = test_path("refresh-invalid-kernel.bin");
+        let service = test_path("refresh-invalid-service.bin");
+        fs::write(&kernel_path, b"test kernel image").unwrap();
+        fs::write(&service, b"svc").unwrap();
+        SystemDiskProvisioner::provision(&disk_path, &SystemDiskInstall::new(&kernel_path))
+            .unwrap();
+        let error = SystemDiskProvisioner::refresh_service_packages(
+            &disk_path,
+            &[SystemServicePackage {
+                role: 0,
+                path: service.clone(),
+            }],
+        )
+        .unwrap_err();
+        match error {
+            StorageError::InvalidImage(message) => {
+                assert!(message.contains("service role must be between 1 and 14"));
+            }
+            other => panic!("unexpected refresh error: {other:?}"),
+        }
+        fs::remove_file(&disk_path).ok();
+        fs::remove_file(&kernel_path).ok();
+        fs::remove_file(&service).ok();
+    }
 }

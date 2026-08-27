@@ -65,10 +65,24 @@ fn provision_login_system_disk(system_disk: &Path, kernel_payload: &Path) {
 }
 
 fn kernel_build_output(name: &str) -> PathBuf {
-    let build_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target");
-    for profile in ["debug", "release"] {
-        let build_dir = build_root.join(profile).join("build");
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let pinned = manifest.join("../build/bios").join(name);
+    if pinned.is_file() {
+        return pinned;
+    }
+    let mut candidates = Vec::new();
+    let build_root = manifest.join("../target");
+    for (triple, profile) in [
+        ("x86_64-unknown-none", "release"),
+        ("x86_64-unknown-none", "debug"),
+        ("", "release"),
+        ("", "debug"),
+    ] {
+        let build_dir = if triple.is_empty() {
+            build_root.join(profile).join("build")
+        } else {
+            build_root.join(triple).join(profile).join("build")
+        };
         let Ok(entries) = fs::read_dir(&build_dir) else {
             continue
         };
@@ -78,11 +92,44 @@ fn kernel_build_output(name: &str) -> PathBuf {
             }
             let output = entry.path().join("out").join(name);
             if output.is_file() {
-                return output
+                candidates.push(output);
             }
         }
     }
-    panic!("could not find kernel build output {name:?}")
+    newest_file(candidates).unwrap_or_else(|| panic!("could not find kernel build output {name:?}"))
+}
+
+fn newest_file(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    let mut newest: Option<(SystemTime, PathBuf)> = None;
+    for path in paths {
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue
+        };
+        if !metadata.is_file() {
+            continue
+        }
+        let Ok(mtime) = metadata.modified() else {
+            continue
+        };
+        match &newest {
+            Some((best, _)) if *best > mtime => {}
+            _ => newest = Some((mtime, path)),
+        }
+    }
+    newest.map(|(_, path)| path)
+}
+
+#[test]
+fn newest_file_picks_the_later_mtime() {
+    let dir = temporary_path("pin-images");
+    fs::create_dir_all(&dir).expect("create pin-images directory");
+    let older = dir.join("older.bin");
+    let newer = dir.join("newer.bin");
+    fs::write(&older, b"old").expect("write older image");
+    std::thread::sleep(Duration::from_millis(20));
+    fs::write(&newer, b"new").expect("write newer image");
+    assert_eq!(newest_file([older, newer.clone()]), Some(newer.clone()));
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[cfg(unix)]
@@ -102,6 +149,9 @@ fn drive_login_workflow(session: &mut QemuLoginSession, private_key: &Path) -> R
 
     complete_login(session, "first login", setup_start, private_key, 1)?;
     assert_whoami(session, "first login")?;
+    assert_directory_lists_root(session, "first dir")?;
+    assert_directory_lists_root(session, "second dir")?;
+    assert_mkdir_visible_in_directory(session)?;
 
     let logout_start = session.serial_len();
     session.send_text("logout\n")?;
@@ -183,6 +233,49 @@ fn assert_whoami(session: &mut QemuLoginSession, label: &str) -> Result<(), Stri
     let log = session.wait_for_after("$ whoami\nadmin\n", search_from)?;
     if !log.contains("$ whoami\nadmin\n") {
         return Err(format!("{label}: WHOAMI did not return admin"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn assert_directory_lists_root(session: &mut QemuLoginSession, label: &str) -> Result<(), String> {
+    let search_from = session.serial_len();
+    session.send_text("dir\n")?;
+    let log = session.wait_for_after("$ dir\n", search_from)?;
+    let listed = &log[search_from..];
+    if listed.contains("the requested item was not found") {
+        return Err(format!("{label}: dir reported not found"));
+    }
+    if listed.contains("the path is invalid") {
+        return Err(format!("{label}: dir reported invalid path"));
+    }
+    if !["packages", "logs", "data", "tmp"]
+        .iter()
+        .any(|name| listed.contains(name))
+    {
+        return Err(format!(
+            "{label}: dir did not list a root directory; serial={listed:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn assert_mkdir_visible_in_directory(session: &mut QemuLoginSession) -> Result<(), String> {
+    let mkdir_from = session.serial_len();
+    session.send_text("mkdir testdir\n")?;
+    session.wait_for_after("$ mkdir testdir\n", mkdir_from)?;
+    let search_from = session.serial_len();
+    session.send_text("dir\n")?;
+    let log = session.wait_for_after("$ dir\n", search_from)?;
+    let listed = &log[search_from..];
+    if listed.contains("the requested item was not found")
+        || listed.contains("the path is invalid")
+        || !listed.contains("testdir")
+    {
+        return Err(format!(
+            "mkdir testdir was not visible in dir; serial={listed:?}"
+        ));
     }
     Ok(())
 }

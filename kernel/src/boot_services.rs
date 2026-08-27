@@ -448,7 +448,7 @@ pub fn start(physical_filesystem: Option<SynFs<FILESYSTEM_BLOCKS>>) -> Result<Bo
             }
         }
         None => {
-            crate::println!("[fsprobe] boot: AHCI MOUNT FAILED - running on transient bootstrap filesystem");
+            crate::println!("[fsprobe] boot: no physical system volume; using bootstrap filesystem");
         }
     }
 

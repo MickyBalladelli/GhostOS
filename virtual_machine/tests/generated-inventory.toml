@@ -13,6 +13,7 @@ symbols = [
     "const:CMDLINE_ADDR",
     "const:INITRD_ALIGNMENT",
     "const:KERNEL_LOAD_ADDR",
+    "const:KERNEL_STACK_SIZE",
     "const:KERNEL_STACK_TOP",
     "const:MULTIBOOT_BOOTLOADER_MAGIC",
     "const:MULTIBOOT_HEADER_MAGIC",
@@ -65,6 +66,7 @@ tests = ["vm.cluster.coherence-failover", "vm.cluster.deterministic-harness", "v
 [[source.public_api]]
 tests = ["vm.cluster.deterministic-harness", "vm.cluster.membership-heartbeat-epochs", "vm.cluster.shared-memory-faults", "vm.cluster.workload-recovery-evidence"]
 symbols = [
+    "const:WIRE_BYTES",
     "enum:ClusterError",
     "enum:ClusterFault",
     "enum:ClusterNetworkOutcome",
@@ -135,10 +137,12 @@ symbols = [
     "fn:VmCluster::receive",
     "fn:VmCluster::recover_last_fault",
     "fn:VmCluster::run_node",
+    "fn:VmCluster::scale_evidence",
     "fn:VmCluster::send",
     "fn:VmCluster::shared_memory",
     "fn:VmCluster::shared_memory_mut",
     "fn:VmCluster::status",
+    "fn:VmCluster::vm_network",
     "struct:ClusterEvidence",
     "struct:ClusterFaultRecord",
     "struct:ClusterHeartbeat",
@@ -148,6 +152,7 @@ symbols = [
     "struct:ClusterNode",
     "struct:ClusterNodeId",
     "struct:ClusterPacket",
+    "struct:ClusterScaleEvidence",
     "struct:ClusterStatus",
     "struct:CxlFabricFixture",
     "struct:SharedMemoryDevice",
@@ -600,6 +605,8 @@ symbols = [
     "use:DisplayState",
     "use:E1000",
     "use:E1000_MMIO_SIZE",
+    "use:GHOSTFS_SYSTEM_BLOCKS",
+    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:GUEST_AGENT_FEATURE_AGENT",
     "use:GUEST_AGENT_FEATURE_MEMORY_HOTPLUG",
     "use:GUEST_AGENT_FEATURE_POWER_EVENTS",
@@ -654,9 +661,9 @@ symbols = [
     "use:PowerState",
     "use:Ps2Controller",
     "use:PvClock",
-    "use:GHOSTFS_SYSTEM_BLOCKS",
-    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:SYSTEM_DISK_ALIGNMENT",
+    "use:SYSTEM_DISK_BOOT_RECORD_OFFSET",
+    "use:SYSTEM_DISK_BOOT_RECORD_SIZE",
     "use:SYSTEM_DISK_FORMAT_VERSION",
     "use:SYSTEM_DISK_MANIFEST_SIZE",
     "use:SYSTEM_DISK_MIN_SIZE",
@@ -672,6 +679,8 @@ symbols = [
     "use:SystemDiskManifest",
     "use:SystemDiskProvisioner",
     "use:SystemDiskRepairReport",
+    "use:SystemDiskRollbackReport",
+    "use:SystemServicePackage",
     "use:SystemSetting",
     "use:UefiGop",
     "use:VBE_MODES",
@@ -724,7 +733,7 @@ symbols = [
 
 [[source]]
 path = "src/devices/net/e1000.rs"
-tests = ["vm.foundation.fault-device"]
+tests = ["vm.foundation.fault-device", "vm.network.negative-fault-matrix"]
 
 [[source.public_api]]
 tests = ["vm.device.normal-io"]
@@ -735,12 +744,19 @@ symbols = [
     "const:E1000_PROG_IF",
     "const:E1000_SUBCLASS",
     "const:E1000_VENDOR_ID",
+    "fn:E1000::admin_up",
     "fn:E1000::attach_apic",
     "fn:E1000::attach_backend",
+    "fn:E1000::carrier_up",
     "fn:E1000::mac",
     "fn:E1000::new",
     "fn:E1000::poll",
+    "fn:E1000::queue_state",
+    "fn:E1000::receive_frame",
+    "fn:E1000::set_admin_up",
     "fn:E1000::set_irq_vector",
+    "fn:E1000::take_network_error",
+    "fn:E1000::transmit_frame",
     "struct:E1000",
 ]
 
@@ -777,7 +793,7 @@ symbols = [
 
 [[source]]
 path = "src/devices/net/virtio.rs"
-tests = ["vm.foundation.fault-device"]
+tests = ["vm.foundation.fault-device", "vm.network.negative-fault-matrix"]
 
 [[source.public_api]]
 tests = ["vm.device.normal-io"]
@@ -788,15 +804,20 @@ symbols = [
     "const:VIRTIO_NET_PROG_IF",
     "const:VIRTIO_NET_SUBCLASS",
     "const:VIRTIO_NET_VENDOR_ID",
+    "fn:VirtioNet::admin_up",
     "fn:VirtioNet::attach_apic",
     "fn:VirtioNet::attach_backend",
+    "fn:VirtioNet::carrier_up",
     "fn:VirtioNet::has_pending",
     "fn:VirtioNet::mac",
     "fn:VirtioNet::new",
     "fn:VirtioNet::on_notify",
     "fn:VirtioNet::poll",
+    "fn:VirtioNet::queue_state",
     "fn:VirtioNet::reset",
+    "fn:VirtioNet::set_admin_up",
     "fn:VirtioNet::set_irq_vector",
+    "fn:VirtioNet::take_network_error",
     "struct:VirtioNet",
 ]
 
@@ -869,6 +890,7 @@ symbols = [
     "fn:Serial16550::new",
     "fn:Serial16550::output",
     "fn:Serial16550::push_input",
+    "fn:Serial16550::set_authentication_banner",
     "fn:Serial16550::set_irq_vector",
     "fn:Serial16550::take_output",
     "struct:Serial16550",
@@ -1014,6 +1036,8 @@ symbols = [
     "use:DiskRepairReport",
     "use:DiskRole",
     "use:DiskSpec",
+    "use:GHOSTFS_SYSTEM_BLOCKS",
+    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:NVME_BAR0_SIZE",
     "use:NVME_CLASS",
     "use:NVME_DEVICE_ID",
@@ -1021,9 +1045,9 @@ symbols = [
     "use:NVME_SUBCLASS",
     "use:NVME_VENDOR_ID",
     "use:Nvme",
-    "use:GHOSTFS_SYSTEM_BLOCKS",
-    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:SYSTEM_DISK_ALIGNMENT",
+    "use:SYSTEM_DISK_BOOT_RECORD_OFFSET",
+    "use:SYSTEM_DISK_BOOT_RECORD_SIZE",
     "use:SYSTEM_DISK_FORMAT_VERSION",
     "use:SYSTEM_DISK_MANIFEST_SIZE",
     "use:SYSTEM_DISK_MIN_SIZE",
@@ -1037,6 +1061,8 @@ symbols = [
     "use:SystemDiskManifest",
     "use:SystemDiskProvisioner",
     "use:SystemDiskRepairReport",
+    "use:SystemDiskRollbackReport",
+    "use:SystemServicePackage",
     "use:SystemSetting",
 ]
 
@@ -1101,6 +1127,8 @@ symbols = [
     "const:GHOSTFS_SYSTEM_BLOCKS",
     "const:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "const:SYSTEM_DISK_ALIGNMENT",
+    "const:SYSTEM_DISK_BOOT_RECORD_OFFSET",
+    "const:SYSTEM_DISK_BOOT_RECORD_SIZE",
     "const:SYSTEM_DISK_FORMAT_VERSION",
     "const:SYSTEM_DISK_MANIFEST_SIZE",
     "const:SYSTEM_DISK_MIN_SIZE",
@@ -1117,6 +1145,7 @@ symbols = [
     "fn:SystemDiskInstall::with_initrd",
     "fn:SystemDiskInstall::with_machine_identity",
     "fn:SystemDiskInstall::with_network_identity",
+    "fn:SystemDiskInstall::with_service_package",
     "fn:SystemDiskInstall::with_setting",
     "fn:SystemDiskProvisioner::create",
     "fn:SystemDiskProvisioner::inspect",
@@ -1124,7 +1153,11 @@ symbols = [
     "fn:SystemDiskProvisioner::load_boot_artifacts",
     "fn:SystemDiskProvisioner::provision",
     "fn:SystemDiskProvisioner::provision_with_options",
+    "fn:SystemDiskProvisioner::refresh_service_packages",
     "fn:SystemDiskProvisioner::repair",
+    "fn:SystemDiskProvisioner::rollback",
+    "fn:SystemDiskProvisioner::update_system_volume",
+    "fn:SystemDiskProvisioner::upgrade",
     "fn:SystemDiskProvisioner::validate",
     "fn:SystemSetting::new",
     "struct:SystemDiskBootArtifacts",
@@ -1134,6 +1167,8 @@ symbols = [
     "struct:SystemDiskManifest",
     "struct:SystemDiskProvisioner",
     "struct:SystemDiskRepairReport",
+    "struct:SystemDiskRollbackReport",
+    "struct:SystemServicePackage",
     "struct:SystemSetting",
 ]
 
@@ -1200,6 +1235,23 @@ symbols = [
 ]
 
 [[source]]
+path = "src/driver_capabilities.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[source.public_api]]
+tests = ["vm.gates.inventory-contract"]
+symbols = [
+    "const:DRIVER_CAPABILITY_COUNT",
+    "enum:DriverCapabilityKind",
+    "fn:DriverCapabilityKind::name",
+    "fn:DriverCapabilityReport::discover",
+    "fn:DriverCapabilityReport::entries",
+    "fn:DriverCapabilityReport::iter",
+    "struct:DriverCapability",
+    "struct:DriverCapabilityReport",
+]
+
+[[source]]
 path = "src/execution.rs"
 tests = ["vm.execution.interpreter-translated-cpu-memory-equivalence", "vm.execution.interpreter-translated-device-effect-equivalence", "vm.execution.interpreter-translated-exception-equivalence", "vm.foundation.deterministic-fixtures"]
 
@@ -1208,6 +1260,8 @@ tests = ["vm.execution.interpreter-translated-cpu-memory-equivalence", "vm.execu
 symbols = [
     "fn:ExecutionEngine::block_profile",
     "fn:ExecutionEngine::cache_len",
+    "fn:ExecutionEngine::cache_policy_mut",
+    "fn:ExecutionEngine::cache_report",
     "fn:ExecutionEngine::clear_cache",
     "fn:ExecutionEngine::clear_profile_hook",
     "fn:ExecutionEngine::config",
@@ -1381,6 +1435,7 @@ symbols = [
     "enum:GuestInputMode",
     "fn:ascii_to_scancodes",
     "fn:serial_resize_sequence",
+    "fn:strip_terminal_resize_responses",
 ]
 
 [[source]]
@@ -1397,7 +1452,7 @@ symbols = [
 
 [[source]]
 path = "src/lib.rs"
-tests = ["vm.foundation.cleanup-golden", "vm.foundation.deterministic-fixtures"]
+tests = ["vm.foundation.cleanup-golden", "vm.foundation.deterministic-fixtures", "vm.network.negative-fault-matrix", "vm.network.snapshot-portability"]
 
 [[source.public_api]]
 tests = ["vm.config.bounded-boot-and-power-lifecycle", "vm.foundation.cleanup-golden", "vm.foundation.deterministic-fixtures"]
@@ -1406,6 +1461,7 @@ symbols = [
     "const:COM1_PORT",
     "const:COM2_PORT",
     "const:E1000_MMIO_BASE",
+    "const:GUEST_ABI_SCHEMA_VERSION",
     "const:NVME_MMIO_BASE",
     "const:PCIE_ECAM_SIZE",
     "const:PCI_CONFIG_PORT",
@@ -1428,8 +1484,10 @@ symbols = [
     "fn:Vm::cpu",
     "fn:Vm::cpu_mut",
     "fn:Vm::detach_disk",
+    "fn:Vm::dhcp_network",
     "fn:Vm::disks",
     "fn:Vm::display",
+    "fn:Vm::driver_capabilities",
     "fn:Vm::execution",
     "fn:Vm::execution_mut",
     "fn:Vm::flush_disks",
@@ -1444,6 +1502,9 @@ symbols = [
     "fn:Vm::memory_hotplug",
     "fn:Vm::mmu",
     "fn:Vm::mmu_mut",
+    "fn:Vm::network_admin_up",
+    "fn:Vm::network_link_up",
+    "fn:Vm::network_mac_addresses",
     "fn:Vm::new",
     "fn:Vm::nvme",
     "fn:Vm::pci",
@@ -1455,6 +1516,8 @@ symbols = [
     "fn:Vm::queue_mouse_motion",
     "fn:Vm::queue_mouse_packet",
     "fn:Vm::queue_serial_input",
+    "fn:Vm::queue_terminal_input",
+    "fn:Vm::receive_network_frame",
     "fn:Vm::replay_mode",
     "fn:Vm::replay_session",
     "fn:Vm::replay_trace",
@@ -1476,10 +1539,13 @@ symbols = [
     "fn:Vm::serial",
     "fn:Vm::set_efi_application",
     "fn:Vm::set_firmware_mode",
+    "fn:Vm::set_network_admin_up",
     "fn:Vm::snapshot",
     "fn:Vm::stop_replay",
     "fn:Vm::sync_disks",
+    "fn:Vm::take_network_error",
     "fn:Vm::take_power_notifications",
+    "fn:Vm::transmit_network_frame",
     "fn:Vm::try_with_config",
     "fn:Vm::try_with_config_and_clock",
     "fn:Vm::uefi",
@@ -1495,6 +1561,7 @@ symbols = [
     "mod:cluster",
     "mod:cpu",
     "mod:devices",
+    "mod:driver_capabilities",
     "mod:execution",
     "mod:firmware",
     "mod:hardware_acceleration",
@@ -1535,6 +1602,7 @@ symbols = [
     "use:ClusterNodeId",
     "use:ClusterNodeState",
     "use:ClusterPacket",
+    "use:ClusterScaleEvidence",
     "use:ClusterStatus",
     "use:ClusterWorkload",
     "use:Cpu",
@@ -1542,7 +1610,17 @@ symbols = [
     "use:CpuMode",
     "use:CpuState",
     "use:CxlFabricFixture",
+    "use:DHCP_SERVER_MAC",
+    "use:DRIVER_CAPABILITY_COUNT",
+    "use:DeterministicDhcpServer",
+    "use:DeterministicPort",
+    "use:DeterministicSegment",
+    "use:DeterministicVmNetwork",
     "use:Device",
+    "use:DhcpConfigError",
+    "use:DhcpLeaseInfo",
+    "use:DhcpReservation",
+    "use:DhcpServerConfig",
     "use:DiskController",
     "use:DiskFindingSeverity",
     "use:DiskFormat",
@@ -1558,12 +1636,17 @@ symbols = [
     "use:DiskRole",
     "use:DiskSpec",
     "use:DisplayState",
+    "use:DriverCapability",
+    "use:DriverCapabilityKind",
+    "use:DriverCapabilityReport",
     "use:E1000",
     "use:E1000_MMIO_SIZE",
     "use:ExecutionEngine",
     "use:ExecutionEngineConfig",
     "use:ExecutionStats",
     "use:FirmwareMode",
+    "use:GHOSTFS_SYSTEM_BLOCKS",
+    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:GUEST_AGENT_FEATURE_AGENT",
     "use:GUEST_AGENT_FEATURE_MEMORY_HOTPLUG",
     "use:GUEST_AGENT_FEATURE_POWER_EVENTS",
@@ -1590,6 +1673,7 @@ symbols = [
     "use:HardwareAccelerationSession",
     "use:HardwareAccelerationStatus",
     "use:HostMonotonicClock",
+    "use:HostNetworkBackend",
     "use:Hpet",
     "use:IA32_APIC_BASE_MSR",
     "use:IntegrationError",
@@ -1623,6 +1707,9 @@ symbols = [
     "use:NVME_SUBCLASS",
     "use:NVME_VENDOR_ID",
     "use:NetBackend",
+    "use:NetError",
+    "use:NetQueueState",
+    "use:NetworkBackendConfig",
     "use:Nvme",
     "use:PAGE_SIZE",
     "use:PCIE_ECAM_BASE_DEFAULT",
@@ -1658,9 +1745,9 @@ symbols = [
     "use:SNAPSHOT_AUTH_TAG_BYTES",
     "use:SNAPSHOT_FORMAT_VERSION",
     "use:SNAPSHOT_MIN_FORMAT_VERSION",
-    "use:GHOSTFS_SYSTEM_BLOCKS",
-    "use:GHOSTFS_SYSTEM_VOLUME_SIZE",
     "use:SYSTEM_DISK_ALIGNMENT",
+    "use:SYSTEM_DISK_BOOT_RECORD_OFFSET",
+    "use:SYSTEM_DISK_BOOT_RECORD_SIZE",
     "use:SYSTEM_DISK_FORMAT_VERSION",
     "use:SYSTEM_DISK_MANIFEST_SIZE",
     "use:SYSTEM_DISK_MIN_SIZE",
@@ -1690,6 +1777,8 @@ symbols = [
     "use:SystemDiskManifest",
     "use:SystemDiskProvisioner",
     "use:SystemDiskRepairReport",
+    "use:SystemDiskRollbackReport",
+    "use:SystemServicePackage",
     "use:SystemSetting",
     "use:TerminalError",
     "use:TerminalExit",
@@ -1749,6 +1838,7 @@ symbols = [
     "use:serial_resize_sequence",
     "use:shared_replay",
     "use:snapshot_digest",
+    "use:strip_terminal_resize_responses",
     "use:translate_input_bytes",
 ]
 
@@ -1883,11 +1973,24 @@ symbols = [
 
 [[source]]
 path = "src/net/backend.rs"
-tests = ["vm.network.loopback-routing-isolation-faults"]
+tests = ["vm.network.loopback-routing-isolation-faults", "vm.network.negative-fault-matrix"]
 
 [[source.public_api]]
 tests = ["vm.network.loopback-routing-isolation-faults"]
 symbols = [
+    "const:EMPTY",
+    "enum:NetworkBackendConfig",
+    "fn:DeterministicPort::mac",
+    "fn:DeterministicSegment::connect",
+    "fn:DeterministicSegment::disconnect",
+    "fn:DeterministicSegment::drop_next",
+    "fn:DeterministicSegment::link_up",
+    "fn:DeterministicSegment::new",
+    "fn:DeterministicSegment::queued_packets",
+    "fn:DeterministicSegment::set_link_up",
+    "fn:DeterministicSegment::set_max_queue",
+    "fn:HostNetworkBackend::bridged",
+    "fn:HostNetworkBackend::user_nat",
     "fn:LoopbackHub::clear",
     "fn:LoopbackHub::link_up",
     "fn:LoopbackHub::new",
@@ -1895,9 +1998,48 @@ symbols = [
     "fn:LoopbackHub::set_link_up",
     "fn:LoopbackPort::mac",
     "fn:LoopbackPort::new",
+    "struct:DeterministicPort",
+    "struct:DeterministicSegment",
+    "struct:HostNetworkBackend",
     "struct:LoopbackHub",
     "struct:LoopbackPort",
+    "struct:NetQueueState",
     "trait:NetBackend",
+]
+
+[[source]]
+path = "src/net/dhcp.rs"
+tests = ["vm.network.negative-fault-matrix", "vm.network.snapshot-portability", "vm.network.two-vm-dhcp-peer-traffic"]
+
+[[source.public_api]]
+tests = ["vm.network.negative-fault-matrix", "vm.network.two-vm-dhcp-peer-traffic"]
+symbols = [
+    "const:DHCP_CLIENT_PORT",
+    "const:DHCP_MAGIC_COOKIE",
+    "const:DHCP_SERVER_MAC",
+    "const:DHCP_SERVER_PORT",
+    "const:MAX_DHCP_SERVER_LEASES",
+    "const:MAX_DHCP_SERVER_PACKETS_PER_POLL",
+    "const:MAX_DHCP_SERVER_RESERVATIONS",
+    "enum:DhcpConfigError",
+    "fn:DeterministicDhcpServer::config",
+    "fn:DeterministicDhcpServer::lease_for",
+    "fn:DeterministicDhcpServer::leases",
+    "fn:DeterministicDhcpServer::new",
+    "fn:DeterministicDhcpServer::poll",
+    "fn:DeterministicVmNetwork::attach_vm",
+    "fn:DeterministicVmNetwork::dhcp_server",
+    "fn:DeterministicVmNetwork::dhcp_server_mut",
+    "fn:DeterministicVmNetwork::new",
+    "fn:DeterministicVmNetwork::poll",
+    "fn:DeterministicVmNetwork::segment",
+    "fn:DhcpServerConfig::add_reservation",
+    "fn:DhcpServerConfig::validate",
+    "struct:DeterministicDhcpServer",
+    "struct:DeterministicVmNetwork",
+    "struct:DhcpLeaseInfo",
+    "struct:DhcpReservation",
+    "struct:DhcpServerConfig",
 ]
 
 [[source]]
@@ -1910,11 +2052,11 @@ symbols = [
     "const:BROADCAST",
     "const:MAC_ADDRESS_LEN",
     "fn:MacAddress::from_bytes",
+    "fn:MacAddress::ghostos_default",
     "fn:MacAddress::is_broadcast",
     "fn:MacAddress::is_multicast",
     "fn:MacAddress::is_unicast",
     "fn:MacAddress::new",
-    "fn:MacAddress::ghostos_default",
     "fn:MacAddress::to_bytes",
     "fn:mac_matches",
     "struct:MacAddress",
@@ -1922,25 +2064,40 @@ symbols = [
 
 [[source]]
 path = "src/net/mod.rs"
-tests = ["vm.foundation.deterministic-fixtures", "vm.network.loopback-routing-isolation-faults"]
+tests = ["vm.foundation.deterministic-fixtures", "vm.network.loopback-routing-isolation-faults", "vm.network.negative-fault-matrix", "vm.network.snapshot-portability"]
 
 [[source.public_api]]
 tests = ["vm.foundation.deterministic-fixtures"]
 symbols = [
     "fn:align_up",
     "mod:backend",
+    "mod:dhcp",
     "mod:mac",
     "mod:packet",
+    "use:DHCP_SERVER_MAC",
+    "use:DeterministicDhcpServer",
+    "use:DeterministicPort",
+    "use:DeterministicSegment",
+    "use:DeterministicVmNetwork",
+    "use:DhcpConfigError",
+    "use:DhcpLeaseInfo",
+    "use:DhcpReservation",
+    "use:DhcpServerConfig",
     "use:ETHERNET_FRAME_MAX",
     "use:ETHERNET_FRAME_MIN",
     "use:ETHERNET_HEADER_LEN",
+    "use:HostNetworkBackend",
     "use:LoopbackHub",
     "use:LoopbackPort",
     "use:MAC_ADDRESS_LEN",
     "use:MacAddress",
     "use:NetBackend",
     "use:NetError",
+    "use:NetQueueState",
+    "use:NetworkBackendConfig",
     "use:PacketQueue",
+    "use:VM_DHCP_CLIENT_PORT",
+    "use:VM_DHCP_SERVER_PORT",
     "use:mac_matches",
 ]
 
@@ -1955,6 +2112,7 @@ symbols = [
     "const:ETHERNET_FRAME_MIN",
     "const:ETHERNET_HEADER_LEN",
     "enum:NetError",
+    "fn:NetError::code",
     "fn:NetError::pad_frame",
     "fn:PacketQueue::bytes",
     "fn:PacketQueue::clear",
@@ -1965,6 +2123,19 @@ symbols = [
     "fn:PacketQueue::pop",
     "fn:PacketQueue::push",
     "struct:PacketQueue",
+]
+
+[[source]]
+path = "src/passkey_bridge.rs"
+tests = ["vm.qemu.interactive-login-flow"]
+
+[[source.public_api]]
+tests = ["vm.qemu.interactive-login-flow"]
+symbols = [
+    "fn:PasskeyBridge::bind",
+    "fn:PasskeyBridge::open_in_browser",
+    "fn:PasskeyBridge::poll",
+    "struct:PasskeyBridge",
 ]
 
 [[source]]
@@ -2020,6 +2191,7 @@ tests = ["vm.foundation.cleanup-golden"]
 symbols = [
     "const:MAX_SNAPSHOT_BYTES",
     "const:MAX_SNAPSHOT_MEMORY_BYTES",
+    "const:SNAPSHOT_API_VERSION",
     "const:SNAPSHOT_AUTH_FORMAT_VERSION",
     "const:SNAPSHOT_AUTH_KEY_BYTES",
     "const:SNAPSHOT_AUTH_TAG_BYTES",

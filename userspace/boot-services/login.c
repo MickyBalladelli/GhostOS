@@ -66,6 +66,7 @@ struct response {
     u64 values[4];
 };
 
+__attribute__((noinline))
 static struct response call(u16 operation, u64 first, u64 second,
                             u64 third, u64 fourth)
 {
@@ -77,7 +78,12 @@ static struct response call(u16 operation, u64 first, u64 second,
     request.arguments[1] = second;
     request.arguments[2] = third;
     request.arguments[3] = fourth;
-    __asm__ volatile("int $0x80" : : "D"(&request), "S"(&response) : "rax", "memory");
+    __asm__ volatile(
+        "int $0x80"
+        : "+m"(request), "+m"(response)
+        : "D"(&request), "S"(&response)
+        : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "cc", "memory"
+    );
     return response;
 }
 

@@ -97,8 +97,9 @@ struct response {
 };
 
 __attribute__((noinline))
-static struct response call(u16 operation, u16 flags, u64 capability,
-                            u64 first, u64 second, u64 third, u64 offset)
+static struct response call_ex(u16 operation, u16 flags, u64 capability,
+                               u64 first, u64 second, u64 third, u64 offset,
+                               u64 extra)
 {
     struct request request = {0};
     struct response response = {0};
@@ -110,6 +111,7 @@ static struct response call(u16 operation, u16 flags, u64 capability,
     request.arguments[1] = second;
     request.arguments[2] = third;
     request.arguments[4] = offset;
+    request.arguments[5] = extra;
     __asm__ volatile(
         "int $0x80"
         : "+m"(request), "+m"(response)
@@ -117,6 +119,13 @@ static struct response call(u16 operation, u16 flags, u64 capability,
         : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "cc", "memory"
     );
     return response;
+}
+
+__attribute__((noinline))
+static struct response call(u16 operation, u16 flags, u64 capability,
+                            u64 first, u64 second, u64 third, u64 offset)
+{
+    return call_ex(operation, flags, capability, first, second, third, offset, 0);
 }
 
 static u64 length(const char *text)
@@ -155,16 +164,18 @@ static int command_named(const char *command, u64 command_length, const char *na
     return command_length == name_length && equal_name(command, name);
 }
 
-static void make_absolute_path(char *path)
+static void write_text(const char *text);
+
+static int make_absolute_path(char *path)
 {
     u64 path_length;
     u64 index;
     if (path[0] == '/') {
-        return;
+        return 0;
     }
     path_length = length(path);
-    if (path_length >= 255) {
-        return;
+    if (path_length == 0 || path_length >= 255) {
+        return -1;
     }
     index = path_length;
     while (index != 0) {
@@ -173,6 +184,7 @@ static void make_absolute_path(char *path)
     }
     path[0] = '/';
     path[path_length + 1] = 0;
+    return 0;
 }
 
 static void write_bytes(const char *bytes, u64 count)
@@ -188,6 +200,15 @@ static void write_bytes(const char *bytes, u64 count)
 static void write_text(const char *text)
 {
     write_bytes(text, length(text));
+}
+
+static int require_absolute_path(char *path)
+{
+    if (make_absolute_path(path) != 0) {
+        write_text("the path is invalid. Check its spelling and format.\n");
+        return -1;
+    }
+    return 0;
 }
 
 static void write_hex(u32 value)
@@ -374,7 +395,9 @@ static void print_directory(const char *path, u8 *buffer)
         for (index = 0; index <= path_length; index++) {
             out[index] = (u8)prefix[index];
         }
-        struct response response = call(OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation);
+        struct response response = call_ex(
+            OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation, path_length
+        );
         if (response.status != 0) {
             write_status(response.status);
             return;
@@ -1987,7 +2010,9 @@ static void execute_line(char *line, u8 *buffer)
             print_directory(root, buffer);
             return;
         }
-        make_absolute_path(argument);
+        if (require_absolute_path(argument) != 0) {
+            return;
+        }
         print_directory(argument, buffer);
         return;
     }
@@ -2139,6 +2164,9 @@ static void execute_line(char *line, u8 *buffer)
     }
     if (next_word(&cursor, path) == 0) {
         write_text("missing path\n");
+        return;
+    }
+    if (require_absolute_path(path) != 0) {
         return;
     }
     u64 path_length = length(path);

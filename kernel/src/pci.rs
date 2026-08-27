@@ -31,6 +31,13 @@ impl PciInventory {
     pub(crate) fn iter(&self) -> impl Iterator<Item = PciDevice> + '_ {
         self.devices[..self.count].iter().flatten().copied()
     }
+
+    #[cfg(test)]
+    pub(crate) fn push(&mut self, device: PciDevice) {
+        assert!(self.count < MAX_PCI_DEVICES);
+        self.devices[self.count] = Some(device);
+        self.count += 1;
+    }
 }
 
 /// Enumerate PCI devices before driver services start.

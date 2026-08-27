@@ -62,7 +62,7 @@ impl Username {
         for (slot, byte) in bytes.iter_mut().zip(source.iter().copied()) {
             *slot = byte.to_ascii_lowercase();
         }
-        if RESERVED_USERNAMES.contains(&core::str::from_utf8(&bytes[..source.len()]).unwrap()) {
+        if reserved_username(&bytes[..source.len()])? {
             return Err(AuthError::InvalidRecord)
         }
         Ok(Self {
@@ -78,6 +78,11 @@ impl Username {
     fn matches(&self, other: &str) -> bool {
         self.as_str().eq_ignore_ascii_case(other)
     }
+}
+
+fn reserved_username(bytes: &[u8]) -> Result<bool, AuthError> {
+    let name = core::str::from_utf8(bytes).map_err(|_| AuthError::InvalidRecord)?;
+    Ok(RESERVED_USERNAMES.contains(&name))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1384,4 +1389,23 @@ pub enum AuthError {
     UserNotFound,
     RightNotFound,
     VerificationFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reserved_username, AuthError, Username};
+
+    #[test]
+    fn reserved_username_rejects_non_utf8_bytes() {
+        assert_eq!(
+            reserved_username(&[0xff, 0xfe]),
+            Err(AuthError::InvalidRecord)
+        );
+    }
+
+    #[test]
+    fn username_new_rejects_reserved_ascii_names() {
+        assert_eq!(Username::new("root"), Err(AuthError::InvalidRecord));
+        assert!(Username::new("alice").is_ok());
+    }
 }

@@ -997,3 +997,15 @@ fn text_response(status: &'static str, body: &str) -> (&'static str, &'static st
 fn json_ok() -> (&'static str, &'static str, String) {
     ("200 OK", "application/json; charset=utf-8", "{}".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PasskeyBridge;
+
+    #[test]
+    fn bind_listens_on_localhost_without_opening_a_browser() {
+        let bridge = PasskeyBridge::bind().expect("bind local passkey bridge");
+        assert!(bridge.url.contains("http://localhost:"));
+        assert!(!bridge.authentication_banner.is_empty());
+    }
+}

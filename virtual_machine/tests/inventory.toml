@@ -806,6 +806,21 @@ name = "net::packet public surface"
 source = "src/net/packet.rs"
 tests = ["vm.gates.inventory-contract"]
 
+[[public_api]]
+name = "net::dhcp public surface"
+source = "src/net/dhcp.rs"
+tests = ["vm.network.two-vm-dhcp-peer-traffic", "vm.network.negative-fault-matrix"]
+
+[[public_api]]
+name = "driver_capabilities public surface"
+source = "src/driver_capabilities.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[public_api]]
+name = "passkey_bridge public surface"
+source = "src/passkey_bridge.rs"
+tests = ["vm.qemu.interactive-login-flow"]
+
 [[source]]
 path = "src/devices/guest.rs"
 tests = ["vm.gates.inventory-contract", "vm.device.failure"]
@@ -853,6 +868,14 @@ tests = ["vm.gates.inventory-contract", "vm.network.loopback-routing-isolation-f
 [[source]]
 path = "src/net/packet.rs"
 tests = ["vm.gates.inventory-contract", "vm.network.loopback-routing-isolation-faults"]
+
+[[source]]
+path = "src/driver_capabilities.rs"
+tests = ["vm.gates.inventory-contract"]
+
+[[source]]
+path = "src/passkey_bridge.rs"
+tests = ["vm.qemu.interactive-login-flow"]
 
 [[public_api]]
 name = "cpu::decoder public surface"

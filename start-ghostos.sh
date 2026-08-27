@@ -46,15 +46,18 @@ if [ ! -f "$DATA_DISK_PATH" ]; then
 fi
 
 KERNEL_PATH=./build/bios/kernel.bin
-if [ ! -f "$KERNEL_PATH" ] || find ./kernel ./crates ./boot/bios ./userspace/boot-services -type f -newer "$KERNEL_PATH" -print -quit | grep -q .; then
+SHELL_SERVICE_PATH=./build/bios/ghostos-shell.bin
+LOGIN_SERVICE_PATH=./build/bios/ghostos-login.bin
+if [ ! -f "$KERNEL_PATH" ] \
+   || [ ! -f "$SHELL_SERVICE_PATH" ] \
+   || [ ! -f "$LOGIN_SERVICE_PATH" ] \
+   || find ./kernel ./crates ./boot/bios ./userspace/boot-services -type f -newer "$KERNEL_PATH" -print -quit | grep -q . \
+   || find ./userspace/boot-services -type f \( -newer "$SHELL_SERVICE_PATH" -o -newer "$LOGIN_SERVICE_PATH" \) -print -quit | grep -q .; then
   echo "Building stale BIOS image..." >&2
   ./scripts/build-bios-image.sh >/dev/null
 fi
 
-SERVICE_IMAGE_DIR=./target/x86_64-unknown-none/release/build
-SHELL_SERVICE_PATH=$(find "$SERVICE_IMAGE_DIR" -type f -name ghostos-shell.bin -print -quit)
-LOGIN_SERVICE_PATH=$(find "$SERVICE_IMAGE_DIR" -type f -name ghostos-login.bin -print -quit)
-if [ -z "$SHELL_SERVICE_PATH" ] || [ -z "$LOGIN_SERVICE_PATH" ]; then
+if [ ! -f "$SHELL_SERVICE_PATH" ] || [ ! -f "$LOGIN_SERVICE_PATH" ]; then
   echo "start-ghostos.sh: service packages are missing; rebuild the BIOS image" >&2
   exit 1
 fi

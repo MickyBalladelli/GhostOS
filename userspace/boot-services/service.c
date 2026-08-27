@@ -68,6 +68,7 @@ struct service_resource_manifest {
     struct service_resource resources[16];
 };
 
+__attribute__((noinline))
 static struct response call(u16 operation, u64 first, u64 second)
 {
     struct request request = {0};
@@ -76,7 +77,12 @@ static struct response call(u16 operation, u64 first, u64 second)
     request.abi_version = ABI_VERSION;
     request.arguments[0] = first;
     request.arguments[1] = second;
-    __asm__ volatile("int $0x80" : : "D"(&request), "S"(&response) : "rax", "memory");
+    __asm__ volatile(
+        "int $0x80"
+        : "+m"(request), "+m"(response)
+        : "D"(&request), "S"(&response)
+        : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "cc", "memory"
+    );
     return response;
 }
 

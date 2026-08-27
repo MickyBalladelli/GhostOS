@@ -8,28 +8,28 @@ The SynOS rename is largely complete in crate and binary names. Remaining SynOS 
 
 ## Bug fixes
 
-- [ ] Give `login.c` and `service.c` the same syscall `call()` contract as `shell.c`.
+- [x] Give `login.c` and `service.c` the same syscall `call()` contract as `shell.c`.
   `userspace/boot-services/login.c` and `service.c` still run `int $0x80` with no `+m` outputs for `request`/`response` and only clobber `rax`. Clang can keep a zeroed `response` in registers after the kernel writes the stack slot. `shell.c` already lists `+m` and the volatile registers. Copy that pattern so login/bridge reads and service probes cannot observe stale status.
 
-- [ ] Make `CREATE`, `TYPE`/`CAT`, `MKDIR`, `RMDIR`, and `DELETE` use absolute paths.
+- [x] Make `CREATE`, `TYPE`/`CAT`, `MKDIR`, `RMDIR`, and `DELETE` use absolute paths.
   `userspace/boot-services/shell.c` `execute_line` only calls `make_absolute_path` for `DIRECTORY`/`DIR`/`LS`. GhostFS stores names as `/packages`, `/data`, … so `mkdir foo` and `type note` miss the objects `dir` just listed. Apply the same absolute-path step (and a real error when the path is too long; `make_absolute_path` currently returns without adding `/` if `path_length >= 255`).
 
-- [ ] Split LIST path from LIST output instead of treating leftover records as `/`.
+- [x] Split LIST path from LIST output instead of treating leftover records as `/`.
   `crates/fsd/src/daemon.rs` `Operation::List` now lists the root when the buffer prefix does not start with `/`. That hides the leftover-record footgun for the boot shell, but any other LIST caller that forgets to rewrite the path will silently list `/`. `Operation::SnapshotList` still parses the prefix strictly. Give LIST a dedicated path length or a path region that is not overwritten by the encoded page, and make SnapshotList match.
 
-- [ ] Stop falling through to a blank in-memory filesystem when AHCI mount fails.
+- [x] Stop falling through to a blank in-memory filesystem when AHCI mount fails.
   `kernel/src/boot_services.rs` logs `[fsprobe] boot: AHCI MOUNT FAILED` and then `unwrap_or_else(SynFs::new)`. Accounts, passkeys, and packages on the system disk disappear with no recovery prompt. Fail boot or enter an explicit recovery mode when a system volume was expected (`start-ghostos.sh` always provisions `system.raw`).
 
-- [ ] Resolve Ring 3 service images by the kernel build that produced them.
+- [x] Resolve Ring 3 service images by the kernel build that produced them.
   `start-ghostos.sh` uses `find … -name ghostos-shell.bin -print -quit` under `target/x86_64-unknown-none/release/build`. The first match can be an old hash directory. Staleness is keyed only on `build/bios/kernel.bin` mtime. Pin images to the `ghostos-kernel` `OUT_DIR` that `kernel/build.rs` just built, and refresh services whenever boot-service sources change.
 
-- [ ] Return `AuthError` for non-UTF-8 usernames instead of panicking.
+- [x] Return `AuthError` for non-UTF-8 usernames instead of panicking.
   `crates/auth/src/identity.rs` uses `core::str::from_utf8(...).unwrap()` while checking reserved names. Invalid stored bytes should be `InvalidRecord`, not a `no_std` panic. `as_str()` still uses `expect` on the same invariant; keep one fallible conversion at the boundary.
 
-- [ ] Add a guest LIST/`dir` test on the release kernel, not only host fsd tests.
+- [x] Add a guest LIST/`dir` test on the release kernel, not only host fsd tests.
   Host tests in `crates/fsd/src/tests.rs` and `crates/ghostfs/tests/list_root.rs` pass in debug. The guest shell is compiled `-O2` and the kernel is `lto = true` plus `opt-level = "z"`. The empty-`dir` / second-`dir` NotFound failure only showed up in QEMU. Drive serial through login and `dir` twice against `build/bios/kernel.bin`.
 
-- [ ] Repair the VM public-API inventory so quality gates are truthful.
+- [x] Repair the VM public-API inventory so quality gates are truthful.
   `python3 scripts/generate-vm-inventory.py --check` reports missing named tests (passkey, DHCP, system-disk refresh, and others). `scripts/validate-vm-quality.py` also flags stale `src/net/dhcp.rs`. `scripts/test-all.sh` runs this tier; keep `virtual_machine/tests/inventory.toml` in sync or stop claiming the gate is green.
 
 ---

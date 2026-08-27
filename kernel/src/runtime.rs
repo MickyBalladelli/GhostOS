@@ -582,11 +582,18 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             if request.arguments[4] != 0 || request.arguments[5] != 0 {
                 return Err(RuntimeDispatchError::InvalidRequest)
             }
-        } else if operation == Operation::SynFsRead
-            || operation == Operation::SynFsWrite
-            || operation == Operation::SynFsList
+        } else if operation == Operation::SynFsRead || operation == Operation::SynFsWrite
         {
             if request.arguments[5] != 0 {
+                return Err(RuntimeDispatchError::InvalidRequest)
+            }
+        } else if operation == Operation::SynFsList {
+            let path_length = request.arguments[5];
+            let buffer_length = buffer
+                .as_ref()
+                .map(|buffer| buffer.length as u64)
+                .unwrap_or(0);
+            if path_length > buffer_length {
                 return Err(RuntimeDispatchError::InvalidRequest)
             }
         } else if operation == Operation::SynFsMap {

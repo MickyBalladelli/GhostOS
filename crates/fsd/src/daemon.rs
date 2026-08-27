@@ -1814,19 +1814,7 @@ impl<
             }
             Operation::List => {
                 let output = output_buffer(buffer)?;
-                let prefix_end = output
-                    .iter()
-                    .position(|byte| *byte == 0)
-                    .unwrap_or(output.len());
-                let prefix_bytes = &output[..prefix_end];
-                let prefix = if prefix_bytes.is_empty()
-                    || prefix_bytes == b"/"
-                    || prefix_bytes[0] != b'/'
-                {
-                    Name::EMPTY
-                } else {
-                    Name::from_bytes(prefix_bytes, true)?
-                };
+                let prefix = list_prefix(output, request.length)?;
                 let bytes = self.list_current(
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
@@ -1856,11 +1844,7 @@ impl<
             }
             Operation::SnapshotList => {
                 let output = output_buffer(buffer)?;
-                let prefix_end = output
-                    .iter()
-                    .position(|byte| *byte == 0)
-                    .unwrap_or(output.len());
-                let prefix = Name::from_bytes(&output[..prefix_end], true)?;
+                let prefix = list_prefix(output, request.length)?;
                 let bytes = self.list_snapshot(
                     request.process,
                     request.capability.ok_or(DaemonError::InvalidCapability)?,
@@ -2612,6 +2596,30 @@ fn output_buffer(buffer: Option<&mut [u8]>) -> Result<&mut [u8], DaemonError> {
 fn input_name(buffer: Option<&mut [u8]>) -> Result<Name, DaemonError> {
     let buffer = input_buffer(buffer)?;
     Name::from_bytes(buffer, false)
+}
+
+fn list_prefix(output: &[u8], path_length: u64) -> Result<Name, DaemonError> {
+    let prefix_bytes = if path_length == 0 {
+        let end = output
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(output.len());
+        &output[..end]
+    } else {
+        let count = usize::try_from(path_length).map_err(|_| DaemonError::InvalidPath)?;
+        output.get(..count).ok_or(DaemonError::InvalidPath)?
+    };
+    let prefix_bytes = match prefix_bytes.iter().position(|byte| *byte == 0) {
+        Some(end) => &prefix_bytes[..end],
+        None => prefix_bytes,
+    };
+    if prefix_bytes.is_empty() || prefix_bytes == b"/" {
+        Ok(Name::EMPTY)
+    } else if prefix_bytes.first() != Some(&b'/') {
+        Err(DaemonError::InvalidPath)
+    } else {
+        Name::from_bytes(prefix_bytes, true)
+    }
 }
 
 fn validate_buffer(

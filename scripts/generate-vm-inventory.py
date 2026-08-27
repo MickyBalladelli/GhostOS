@@ -184,7 +184,9 @@ def render() -> tuple[str, list[str]]:
         api_groups: dict[tuple[str, ...], list[str]] = {}
         for kind, name in public_items(path):
             key = (relative, kind, name)
-            tests = existing_apis.get(key, []) if existing else api_tests.get(relative, [])
+            tests = existing_apis.get(key, []) if existing else []
+            if not tests:
+                tests = api_tests.get(relative, [])
             if not tests:
                 errors.append(f"public API has no named test: {relative}::{name}")
             api_groups.setdefault(tuple(tests), []).append(f"{kind}:{name}")
@@ -197,7 +199,9 @@ def render() -> tuple[str, list[str]]:
         device_groups: dict[tuple[str, ...], list[str]] = {}
         for name, interface in device_items(path):
             key = (relative, name, interface)
-            tests = existing_devices.get(key, []) if existing else device_tests.get(relative, [])
+            tests = existing_devices.get(key, []) if existing else []
+            if not tests:
+                tests = device_tests.get(relative, [])
             if not tests:
                 errors.append(f"device has no named test: {relative}::{name}")
             device_groups.setdefault(tuple(tests), []).append(f"{interface}:{name}")

@@ -453,6 +453,13 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     );
 
     let physical_filesystem = physical_storage::mount(&pci_inventory);
+    if physical_storage::missing_expected_system_volume(
+        &pci_inventory,
+        physical_filesystem.is_some(),
+    ) {
+        println!("AHCI adapter present but no mountable GhostOS system volume");
+        fatal_kernel_halt(Status::NOT_FOUND);
+    }
     boot_diagnostics::checkpoint(boot_diagnostics::BootStage::StorageReady);
     let boot_services = boot_services::start(physical_filesystem)
         .unwrap_or_else(|error| fatal_kernel_halt(error.status()));
@@ -1103,6 +1110,8 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                 || length == 0
                 || length > ghostos_fsd::MAX_IPC_BUFFER_BYTES as u64
                 || !arch::paging::service_user_range(address, length, writable != 0)
+                || (operation != Operation::SynFsList && request.arguments[5] != 0)
+                || (operation == Operation::SynFsList && request.arguments[5] > length)
             {
                 return syscall_error(Status::INVALID_ARGUMENT)
             }
@@ -1115,7 +1124,11 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                     request.flags,
                     request.capability,
                     request.arguments[4],
-                    0,
+                    if operation == Operation::SynFsList {
+                        request.arguments[5]
+                    } else {
+                        0
+                    },
                     Some(bytes),
                 )
             })
