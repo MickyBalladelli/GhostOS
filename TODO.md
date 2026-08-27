@@ -1,264 +1,110 @@
-# Rename SynOS → GhostOS
+# GhostOS improvement list
 
-This is the work list for renaming the project, product, crates, tools, and
-user-visible strings from **SynOS** to **GhostOS**. It is based on a full-tree
-scan of the workspace (Cargo members, kernel, VM, Apple client, boot, docs,
-scripts, ABI, and on-disk magics).
+Open work from a full-tree review of the kernel, Ring 3 boot services, GhostFS/fsd, VM, workspace, and test machinery. Items are independent unless noted. Do not mark an item done without a regression test that would have failed before the change.
 
-Do not treat this as a mechanical find-replace. On-disk magics, lock suffixes,
-Rust target triples, and RPC strings are compatibility surfaces. Change those
-only with an explicit format/ABI bump and a converter or dual-read window.
-
-Suggested identifier map (confirm before starting):
-
-| Kind | From | To |
-| --- | --- | --- |
-| Product / docs | SynOS | GhostOS |
-| Crate / package prefix | `synos-*` | `ghostos-*` |
-| Rust module prefix | `synos_` | `ghostos_` |
-| Env vars | `SYNOS_*` | `GHOSTOS_*` |
-| CLI binaries | `synos-vm`, `synos-loader`, `cargo-synos` | `ghostos-vm`, `ghostos-loader`, `cargo-ghostos` |
-| Custom targets | `x86_64-unknown-synos` | `x86_64-unknown-ghostos` |
-| Shell prompt / hostname | `SYNOS::ROOT`, hostname `synos` | `GHOSTOS::ROOT`, hostname `ghostos` |
-| Docker | `synos:latest`, `SYNOS_QEMU_ACCEL` | `ghostos:latest`, `GHOSTOS_QEMU_ACCEL` |
-
-Open product names (decide in task 0, then apply everywhere):
-
-- `syn-shell` / `syn-script` (no `synos-` prefix today)
-- `SynFS` / crate `synos-synfs` / magics `SYNFS001`, `SYNMNT01`
-- Banner text `SYNCHRONOUS NETWORK OPERATING SYSTEM`
+The SynOS rename is largely complete in crate and binary names. Remaining SynOS strings are on-disk or on-wire compatibility surfaces; do not blindly replace them.
 
 ---
 
-## 0. Decisions and inventory
+## Bug fixes
 
-## 1. Workspace crate and package names
+- [ ] Give `login.c` and `service.c` the same syscall `call()` contract as `shell.c`.
+  `userspace/boot-services/login.c` and `service.c` still run `int $0x80` with no `+m` outputs for `request`/`response` and only clobber `rax`. Clang can keep a zeroed `response` in registers after the kernel writes the stack slot. `shell.c` already lists `+m` and the volatile registers. Copy that pattern so login/bridge reads and service probes cannot observe stale status.
 
-Almost every Cargo package is `synos-*` even when the directory is not. Rename
-package `name`, path members, and `use synos_*` imports together.
+- [ ] Make `CREATE`, `TYPE`/`CAT`, `MKDIR`, `RMDIR`, and `DELETE` use absolute paths.
+  `userspace/boot-services/shell.c` `execute_line` only calls `make_absolute_path` for `DIRECTORY`/`DIR`/`LS`. GhostFS stores names as `/packages`, `/data`, … so `mkdir foo` and `type note` miss the objects `dir` just listed. Apply the same absolute-path step (and a real error when the path is too long; `make_absolute_path` currently returns without adding `/` if `path_length >= 255`).
 
-- [ ] Rename workspace members whose **directories** start with `synos-`:
-  `synos-backup`, `synos-storaged`, `synos-kvd`, `synos-inference`,
-  `synos-agent-bridge`, `synos-agentd`, `synos-embedded-script`,
-  `synos-wasm-script`, `synos-audit`, `synos-shield`, `synos-confidential`,
-  `synos-update`, `synos-heal`, `synos-top`, `synos-inspect`, `synos-debug`,
-  `synos-replay`, `synos-webterm`, `synos-remote-display`, `synos-mesh`,
-  `synos-declarative`, `synos-rustd`.
-- [ ] Rename crate **package names** that are `synos-*` while keeping or also
-  renaming directories: `synos-kernel`, `synos-vm`, `synos-uefi` / bin
-  `synos-loader`, `synos-abi`, `synos-boot-protocol`, `synos-runtime`,
-  `synos-status`, `synos-protocol`, `synos-synfs`, `synos-fsd`, `synos-auth`,
-  `synos-netd`, `synos-http`, `synos-init`, `synos-app`, `synos-actors`,
-  `synos-ipc`, `synos-client-sdk`, `synos-test-support`, `synos-posix-compat`,
-  and the rest of the workspace `Cargo.toml` members.
-- [ ] Rename `syn-shell` → `ghostos-shell` and `syn-script` → `ghostos-script` if
-  task 0 includes them.
-- [ ] Update root `Cargo.toml` `members` / `default-members`, every path
-  dependency, `.cargo/config.toml` aliases (`-p synos-kernel`, `-p synos-uefi`),
-  `Cargo.lock`, and `virtual_machine/Cargo.lock` if still present.
-- [ ] Rename `fuzz` package `synos-fuzz` and any `synos-vm-fuzz-*` temp names.
+- [ ] Split LIST path from LIST output instead of treating leftover records as `/`.
+  `crates/fsd/src/daemon.rs` `Operation::List` now lists the root when the buffer prefix does not start with `/`. That hides the leftover-record footgun for the boot shell, but any other LIST caller that forgets to rewrite the path will silently list `/`. `Operation::SnapshotList` still parses the prefix strictly. Give LIST a dedicated path length or a path region that is not overwritten by the encoded page, and make SnapshotList match.
 
-## 2. Binaries, tools, and scripts
+- [ ] Stop falling through to a blank in-memory filesystem when AHCI mount fails.
+  `kernel/src/boot_services.rs` logs `[fsprobe] boot: AHCI MOUNT FAILED` and then `unwrap_or_else(SynFs::new)`. Accounts, passkeys, and packages on the system disk disappear with no recovery prompt. Fail boot or enter an explicit recovery mode when a system volume was expected (`start-ghostos.sh` always provisions `system.raw`).
 
-- [ ] Rename `virtual_machine` binary `synos-vm` → `ghostos-vm`; update CLI help,
-  error prefixes (`synos-vm:`), and `start-synos.sh` → `start-ghostos.sh`.
-- [ ] Rename UEFI binary `synos-loader` → `ghostos-loader`; update
-  `scripts/check-reproducible-image.sh` and image layout docs.
-- [ ] Rename `tools/cargo-synos` → `tools/cargo-ghostos` (`cargo ghostos build …`).
-- [ ] Rename `tools/synos-compiler` → `tools/ghostos-compiler`.
-- [ ] Rename `scripts/install-synos.sh`, `scripts/recover-synos.sh`, and every
-  `scripts/*.sh` that hard-codes `-p synos-*` or `./target/release/synos-vm`.
-- [ ] Update `boot/grub/grub.cfg` (`/synos.img`, `synos_loop`, `synos_host`).
-- [ ] Update `Dockerfile`, `docker-compose.yml` (`synos`, `synos-cluster`,
-  `synos:latest`), and `scripts/docker-*.sh`.
+- [ ] Resolve Ring 3 service images by the kernel build that produced them.
+  `start-ghostos.sh` uses `find … -name ghostos-shell.bin -print -quit` under `target/x86_64-unknown-none/release/build`. The first match can be an old hash directory. Staleness is keyed only on `build/bios/kernel.bin` mtime. Pin images to the `ghostos-kernel` `OUT_DIR` that `kernel/build.rs` just built, and refresh services whenever boot-service sources change.
 
-## 3. Rust targets, PAL, and compiler
+- [ ] Return `AuthError` for non-UTF-8 usernames instead of panicking.
+  `crates/auth/src/identity.rs` uses `core::str::from_utf8(...).unwrap()` while checking reserved names. Invalid stored bytes should be `InvalidRecord`, not a `no_std` panic. `as_str()` still uses `expect` on the same invariant; keep one fallible conversion at the boundary.
 
-These names leak into user builds (`App.toml`, `cargo synos`, `cfg(target_os)`).
+- [ ] Add a guest LIST/`dir` test on the release kernel, not only host fsd tests.
+  Host tests in `crates/fsd/src/tests.rs` and `crates/ghostfs/tests/list_root.rs` pass in debug. The guest shell is compiled `-O2` and the kernel is `lto = true` plus `opt-level = "z"`. The empty-`dir` / second-`dir` NotFound failure only showed up in QEMU. Drive serial through login and `dir` twice against `build/bios/kernel.bin`.
 
-- [ ] Rename `targets/x86_64-unknown-synos.json` and
-  `targets/aarch64-unknown-synos.json`; update `os` / llvm target strings inside.
-- [ ] Rename `crates/runtime/src/sys/synos.rs` and `synos_runtime::sys::synos`.
-- [ ] Replace `cfg(target_os = "synos")` (see `examples/compiler-acceptance`).
-- [ ] Rename `SYNOS_TOOLCHAIN_ROOT`, `SYNOS_REGISTRY_ROOT`, `SYNOS_SOURCE_ROOT`,
-  `SYNOS_BUILD_ROOT`, `SYNOS_TEMP_ROOT` in runtime PAL and compiler.
-- [ ] Rename kernel embed env vars `SYNOS_SERVICE_IMAGE`, `SYNOS_LOGIN_IMAGE`,
-  `SYNOS_SHELL_IMAGE` (`kernel/src/arch/x86_64.rs`).
-- [ ] Update `examples/hello-world/App.toml` target triple.
-
-## 4. Kernel, boot, and shell branding
-
-- [ ] Change bootstrap string `SynOS kernel bootstrap` and shell banner
-  `SYNCHRONOUS NETWORK OPERATING SYSTEM`.
-- [ ] Change prompt brand (`SYNOS::ROOT`) and default hostname `synos`.
-- [ ] Rename `boot_synos_init` / service names such as `"synos-init"`.
-- [ ] Update `kernel/src/physical_storage.rs` “no mountable AHCI SynOS system
-  volume” and any operator-facing panic/help text.
-- [ ] Update BIOS/UEFI comments and boot-contract tests that mention SynOS
-  (`crates/test-support/tests/boot_contracts.rs`,
-  `virtual_machine/tests/firmware_boot_synos_10_4.rs` — rename the test file).
-
-## 5. Compatibility surfaces (do not blindly replace)
-
-Bump format version and dual-read, or keep old magics and only change docs.
-
-- [ ] System disk header `SYNOSDSK` (`virtual_machine/src/devices/storage/system_disk.rs`).
-- [ ] Snapshot auth magic `SYNOSIG1` (`virtual_machine/src/snapshot.rs`).
-- [ ] Migration HMAC domain `SYNOS-MIGRATION-HMAC-SHA256-V3`.
-- [ ] Monitor HMAC domain `SYNOS-MONITOR-HMAC-SHA256-V1`.
-- [ ] Disk lock suffix `.synos.lock` and recovery CLI text in README.
-- [ ] Migration replay dir `.synos-vm-migration-replay`.
-- [ ] Guest persistence ports/constants `SYNOS_PERSISTENCE_*`.
-- [ ] ABI file `abi/synos-abi.toml` (filename + any SynOS strings; RPC magic
-  `SYRP` is four bytes — changing it is a protocol break).
-- [ ] Confidential crypto labels `synos-kem`, `synos-ss`, `synos-ctr`, `synos-tag`.
-- [ ] Profile prefix `synos-profile-host-v1`.
-- [ ] POSIX header `crates/posix-compat/include/synos_posix.h`.
-- [ ] Inference proto `crates/synos-inference/proto/synos_inference.proto`.
-- [ ] Kernel shell store magic `SYNFS001` if SynFS is renamed.
-- [ ] Device serial strings `SYNOSVM00001` (AHCI/NVMe models).
-- [ ] Add `CHANGELOG.md` entries under Disk formats / Snapshot and migration /
-  Guest-visible for every wire change (`scripts/validate-changelog.py`).
-
-## 6. Apple client
-
-- [ ] Rename Swift package `SynOSControl` and products `SynOSClient`,
-  `SynOSControlUI`, `SynOSControl`.
-- [ ] Rename source trees
-  `clients/apple/Sources/SynOSClient`,
-  `SynOSControlUI`, `SynOSControlApp`.
-- [ ] Update `clients/apple/Package.swift`, README, and any generated ABI
-  (`GeneratedABI.swift`) after `abi/` rename.
-
-## 7. Docs, book, and operator copy
-
-Hundreds of hits live in `README.md`, `docs/`, `book/`, crate READMEs.
-
-- [ ] Rewrite `README.md` title, bootstrap description, `start-ghostos.sh`, and
-  disk-lock examples.
-- [ ] Rename `book/01-what-synos-is.md` and retitle the book.
-- [ ] Sweep `book/02-repository-map.md`, `appendix-a-crate-catalog.md`,
-  `17-build-test-release.md`, `15-operations-and-lifecycle.md`.
-- [ ] Sweep `docs/api.md`, `docs/testing.md`, `docs/native-compiler.md`,
-  `docs/compatibility-matrix.md`, `docs/persistence-compatibility.md`,
-  `docs/inventory-diagrams.md`, `docs/roadmap-metadata.toml`,
-  `docs/test-inventory.toml`, `docs/test-coverage.toml`, `docs/invariants.toml`.
-- [ ] Update `AGENTS.md` only if it mentions SynOS by name after the rename.
-- [ ] Update golden logs `crates/test-support/golden/*` that contain `SynOS` /
-  `SYNOS::`.
-
-## 8. Tests, fuzz, CI, and env vars
-
-- [ ] Replace `cargo test -p synos-*` in `scripts/test-all.sh`,
-  `scripts/test-vm-matrix.sh`, `scripts/mutation.sh`, `scripts/coverage.sh`,
-  `scripts/qemu-*.sh`, `scripts/full-validation.sh`.
-- [ ] Rename env vars: `SYNOS_FULL_VALIDATION`, `SYNOS_RUN_QEMU_TESTS`,
-  `SYNOS_QEMU_ACCEL`, `SYNOS_GUEST_MEMORY`, `SYNOS_CLUSTER_NODES`,
-  `SYNOS_TEST_RUN_ID`, `SYNOS_EVIDENCE_DIR`, `SYNOS_VM_CPUS`,
-  `SYNOS_BENCH_*`, `SYNOS_MUTATION_PACKAGE`, `SYNOS_LOCK_*`.
-- [ ] Rename fuzz corpus temp prefixes (`synos-vm-fuzz-image-*`,
-  `synos-vm-cluster-kernel-*`).
-- [ ] Update coverage IDs / file names that embed `synos` only if they are not
-  frozen evidence hashes; keep historical evidence filenames if they are
-  immutable artifacts.
-
-## 9. Verification
-
-- [ ] `rg -i 'synos|syn-os|SYNOS|SynOS'` on the tree excluding `archive/` (and
-  excluding kept magics if task 0 said keep them). Remaining hits should be
-  documented compatibility aliases only.
-- [ ] `cargo test` default workspace members.
-- [ ] `./scripts/build-bios-image.sh` and boot to a GhostOS prompt.
-- [ ] `cargo test -p ghostos-vm` (or new VM package name) including lock-recovery
-  strings.
-- [ ] Apple package `swift build` if the toolchain is present.
-- [ ] Docker compose config still builds after image/env rename.
-
-## 10. Out of tree / operator follow-up
-
-- [ ] Rename local checkout directory and any git remotes/org names.
-- [ ] Update Docker Hub / GHCR image names if published.
-- [ ] Warn operators: old `.synos.lock` files, system disks, snapshots, and
-  `x86_64-unknown-synos` toolchains will not match until converted.
+- [ ] Repair the VM public-API inventory so quality gates are truthful.
+  `python3 scripts/generate-vm-inventory.py --check` reports missing named tests (passkey, DHCP, system-disk refresh, and others). `scripts/validate-vm-quality.py` also flags stale `src/net/dhcp.rs`. `scripts/test-all.sh` runs this tier; keep `virtual_machine/tests/inventory.toml` in sync or stop claiming the gate is green.
 
 ---
 
-# Project simplification opportunities
+## Quality
 
-Suggestions from a full-tree review (803 files, 73 workspace members). Each item
-is independent; do them one at a time with `cargo test` between steps.
+- [ ] Unify the three shells.
+  `userspace/boot-services/shell.c` is the logged-in Ring 3 prompt (`ghostos-shell.bin`). `crates/ghostos-shell` is a separate Rust parser/editor with DIRECTORY/EDIT/network routes. `kernel/src/shell.rs` is a Ring 0 operator shell that uses the Rust crate. Command sets already drift (`dir` vs `DIRECTORY`, no `EDIT` in C). Pick one userspace shell and keep the kernel path as a debugger, or generate the C command table from the Rust crate.
 
-## 1. Workspace and crate structure
+- [ ] Document or merge the two filesystem syscall layouts.
+  Boot services (`kernel/src/lib.rs` `boot_init_dispatch`) pass a raw pointer, length, writable flag, and continuation in `arguments[0,1,2,4]`. Runtime (`crates/runtime/src/fs.rs`, `kernel/src/runtime.rs`) uses a `SharedBuffer` descriptor in `arguments[0..3]`. Same `SynFsList` opcode, different marshalling. Add a decode helper and a LIST pagination helper that seeds the path prefix so callers cannot forget the leftover-buffer protocol.
 
-- [ ] Merge the eight single-file crates — `admission`, `api-compat`,
-  `ghostos-kvd`, `numa`, `path-pattern`, `policy`, `protocol`,
-  `service-scale` (each is just `Cargo.toml` + one `lib.rs`) — into one
-  support crate (for example `ghostos-support`) or into their primary
-  consumers. Each removal drops one entry from `members` *and*
-  `default-members`, one Cargo.lock node, and one test target.
-- [ ] Stop duplicating the member list: root `Cargo.toml` repeats all ~68
-  members verbatim in `default-members`. If default-members must stay,
-  generate both lists from one source (build script or workspace inheritance)
-  so they cannot drift.
-- [ ] Consolidate the three scripting runtimes (`ghostos-script` native DCL,
-  `ghostos-embedded-script` Rhai, `ghostos-wasm-script` Wasmi). Keep the
-  engines, but consider one facade crate with cargo features instead of three
-  parallel crates, READMEs, and test suites.
-- [ ] Shrink the AI stack: `ghostos-agentd` is three files — fold it into
-  `ghostos-agent-bridge` or `ghostos-inference`; review whether `llm-runtime`
-  and `compute` can share their allocator/tensor plumbing.
-- [ ] Pick one KV story: `ghostos-rms` already ships an embedded key-value
-  database over GhostFS, and `ghostos-kvd` is a second KV layer on GhostFS.
-  Merge or clearly split their responsibilities.
-- [ ] Review the two virtio implementations in the VM
-  (`virtual_machine/src/devices/virtio.rs`, 885 lines vs
-  `virtual_machine/src/devices/net/virtio.rs`, 464 lines) and share the
-  queue/ring code.
-- [ ] Define one shell roadmap: `kernel/src/shell.rs` (Ring 0 console shell)
-  and the `ghostos-shell` crate (Ring 3 DCL shell) duplicate parser/editor
-  concepts. Long term, move console handling onto the Ring 3 shell.
-- [ ] Slim the Apple client surface: `clients/apple` has three products
-  (Client, ControlUI, ControlApp) where one library + one app binary may do.
+- [ ] Replace `assert!` / `expect` in `write_service_image` with `fatal_kernel_halt`.
+  `kernel/src/arch/x86_64.rs` panics if the Ring 3 image exceeds `SERVICE_CODE_PAGE_COUNT` pages or if entropy is missing. Other boot failures already use `fatal_kernel_halt(Status::…)`. Keep the 19-page / `.stack_guard` at `0x8000012ff8` layout, but fail through the same halt path.
 
-## 2. Tests
+- [ ] Stop special-casing shell success status to raw `0`.
+  `kernel/src/syscall.rs` `ghostos_call_gate_dispatch` rewrites caller 9 success to `status: 0` even if `Status::NORMAL.raw()` is not zero. C services compare `status != 0`. If the status encoding changes, the shell will treat success as failure or the reverse. Return the same `Status` the rest of the kernel uses.
 
-- [ ] Rename the 42 roadmap-named test files (`tests/coverage_59_5.rs` …
-  `coverage_59_10.rs`, `coverage_58_1.rs`) to descriptive names. The IDs tie
-  test files to roadmap metadata, make navigation hard, and invite collisions
-  when crates gain more tests.
-- [ ] Where a crate has several single-test `tests/*.rs` files, group related
-  coverage tests into one integration file per theme to cut compile time.
-- [ ] `virtual_machine/tests/generated-inventory.toml` is generated yet
-  tracked; regenerate it in CI/local validation instead of committing it.
+- [ ] Probe or enlarge the Ring 3 service stack before adding more shell locals.
+  `SERVICE_PAGE_COUNT` is 19 code pages plus 8 stack pages (32 KiB). `_start` in `shell.c` keeps `line[512]` and `buffer[4096]` for the process lifetime; `execute_line` and account helpers add many 256-byte arrays. ELF apps get 1 MiB (`crates/app/src/loader.rs`). There is no stack probe. Either raise the boot-service stack or move the LIST buffer off the C stack.
 
-## 3. Scripts and evidence machinery
+- [ ] Extract one virtio queue implementation.
+  `virtual_machine/src/devices/virtio.rs` and `virtual_machine/src/devices/net/virtio.rs` both implement 0.9 queues, descriptor walks, and PCI register layout. Share the ring code so blk/console/rng and virtio-net cannot diverge.
 
-- [ ] `scripts/` holds ~35 standalone Python validators/generators plus 27
-  shell scripts. Extract the shared helpers (inventory loading, evidence
-  paths, changelog access) into one Python package and expose a single CLI
-  with subcommands, keeping thin wrappers only where names are load-bearing.
-- [ ] Untracked build outputs are tracked: `kernel/build/soak/capabilities/
-  report.json` and `virtual_machine/build/soak/lifecycle/report.json` are
-  committed. Move evidence reports to an ignored evidence directory (the
-  `GHOSTOS_EVIDENCE_DIR` convention) and reference them by path in manifests.
-- [ ] Several docs are machine-checked registries (`docs/test-inventory.toml`,
-  `docs/test-coverage.toml`, `docs/invariants.toml`,
-  `docs/roadmap-metadata.toml`). Generate the derivable ones from source
-  metadata in one step rather than hand-maintaining four files validated by
-  four scripts.
+- [ ] Add `--no-passkey-web` (or a serial-only mode) to `start-ghostos.sh`.
+  The VM defaults `passkey_web = true`. `virtual_machine/src/devices/serial.rs` strips enroll/login OSC markers and can hide prompts behind a spinner. Headless or scripted login then waits for a browser that never appears. Document the flag next to `docs/first-boot.md`.
 
-## 4. Documentation
+- [ ] Collapse workspace `members` and `default-members` to one source.
+  Root `Cargo.toml` repeats ~66 crate paths. `default-members` omits `boot/uefi`, `tools/*`, and `examples/*`, so plain `cargo test` skips them. Generate both lists or use workspace defaults so they cannot drift.
 
-- [ ] Trim the 1050-line `README.md`: keep boot/build/test quickstart and
-  links; the feature essays largely duplicate `book/` chapters and `docs/`.
-- [ ] Fold `archive/TODO-*.md` into a single `archive/HISTORY.md` (or accept
-  them as-is) so only one live TODO exists at the root.
-- [ ] Crate-level READMEs repeat book content; keep one authoritative
-  description per subsystem in `book/` and link to it.
+- [ ] Merge or clearly split tiny and overlapping crates.
+  Single-file crates (`admission`, `api-compat`, `ghostos-kvd`, `numa`, `path-pattern`, `policy`, `protocol`, `service-scale`) each add a test target and a lock node. `ghostos-kvd` overlaps `crates/rms` embedded KV. Three script engines (`ghostos-script`, `ghostos-embedded-script`, `ghostos-wasm-script`) could share one facade with features.
 
-## 5. Verification for every simplification step
+- [ ] Rename `tests/coverage_59_*.rs` to behavior names.
+  Dozens of integration files encode old roadmap section numbers, not what they test. They are hard to map to `docs/test-inventory.toml`. Keep the inventory IDs in comments if needed.
 
-- [ ] `cargo test` (default members) passes.
-- [ ] `python3 scripts/validate-documentation.py` still passes after doc moves.
-- [ ] No compatibility-surface change (magics, wire formats, target triples)
-  is bundled into refactor commits.
+- [ ] Stop committing generated VM inventory and soak reports.
+  `virtual_machine/tests/generated-inventory.toml` is generated. Soak JSON under `kernel/build/soak` and `virtual_machine/build/soak` is evidence, not source. Regenerate inventory in validation; put reports in `GHOSTOS_EVIDENCE_DIR`.
+
+- [ ] Deduplicate README and the book.
+  `README.md` is over 1000 lines and restates boot, build, Docker, and shell material from `book/`. Keep a short quickstart in README and link to the book for essays.
+
+- [ ] Dual-read remaining SynOS magics instead of mixing brands.
+  Still present: `SYNOSDSK` (`virtual_machine/src/devices/storage/system_disk.rs`), `SYNOSIG1` (snapshots), `.synos.lock`, AHCI serial `SYNOSVM00001`, confidential labels `synos-kem` / `synos-ss`. Compatibility is documented in `docs/persistence-compatibility.md`. Either keep them as frozen aliases with a converter, or bump format versions in CHANGELOG with dual-read.
+
+- [ ] Drop or regenerate the leftover `virtual_machine/Cargo.lock`.
+  The VM is a workspace member (`edition = "2024"`) but still has a standalone lock and `edition = "2021"` in places. `scripts/build-and-test.sh` still `cd virtual_machine && cargo build --locked --release`. Build only from the workspace root.
+
+- [ ] Include `ghostos-netd` in mutation testing.
+  `scripts/mutation.sh` covers fsd, status, auth, ghostfs, http, and the VM. Netd sits on the guest network boundary and is skipped.
+
+---
+
+## Speed
+
+- [ ] Index GhostFS directories instead of scanning every record per LIST.
+  `crates/ghostfs/src/lib.rs` `list_directory_at` walks all records for each page. Each emitted entry calls `link_count_at`, which walks all records again. Large `/data` or `/packages` trees make `dir` quadratic. Keep a per-directory child list or cache link counts on the object.
+
+- [ ] Do not rescan the whole volume for every wildcard page.
+  `expand_paths_page` restarts from ordinal 0 on each continuation (`crates/ghostfs/src/lib.rs`, used by `crates/fsd/src/daemon.rs` `write_wildcard_listing`). Resume from a stable cursor.
+
+- [ ] Stop size-optimizing the entire kernel.
+  `[profile.release.package.ghostos-kernel] opt-level = "z"` plus workspace `lto = true` and `codegen-units = 1` shrinks `kernel.bin` but slows syscalls, interrupt dispatch, and every `start-ghostos.sh` rebuild. Keep `z` for cold paths or the image blob; compile `syscall.rs` / `arch/x86_64.rs` at `2` or `3`. Consider `lto = "thin"` for host tools.
+
+- [ ] Allow parallel and incremental host builds.
+  `.cargo/config.toml` sets `CARGO_BUILD_JOBS = 1` and `CARGO_INCREMENTAL = 0` (force false, but defaults kill iteration). That is for reproducible images. Scope those env vars to `scripts/build-bios-image.sh` / `scripts/check-reproducible-image.sh`, not every `cargo test`.
+
+- [ ] Use `panic = "unwind"` on host crates in dev.
+  Workspace `[profile.dev] panic = "abort"` applies to the VM and all host tests. Kernel/uefi still need abort. Split profiles so host backtraces work while `ghostos-kernel` stays abort.
+
+- [ ] Cut redundant test sweeps.
+  `scripts/test-all.sh` runs `cargo test`, then `cargo test --workspace --all-targets`, then the workspace command again under a recovery tier. `scripts/coverage.sh` runs workspace `llvm-cov` and then per-package coverage. One deterministic host pass plus an explicit `--workspace` gate is enough.
+
+- [ ] Add a smoke default so `cargo test` is not 70 crates.
+  Default members currently include kernel + VM + almost every crate. A `ghostos-smoke` alias (abi, status, ghostfs, fsd, runtime, a thin VM test) would make local iteration match how `dir` actually gets fixed.
+
+- [ ] Avoid rewriting the LIST path on every continuation page.
+  `print_directory` memset+copy of `/` on each page is required by the current in-band path protocol. A split path/output buffer removes that copy and the leftover-record class of bugs at the same time as the LIST ABI fix above.
