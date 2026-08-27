@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 
 pub mod identity;
+pub mod directory;
 pub mod federation;
 pub mod federation_control;
 pub mod lending;
@@ -19,6 +20,15 @@ pub use identity::{
     InitialCapability, PasswordVerifier, PublicCredentialData, Session, SessionCapabilities,
     UserRecord, Username,
     MAX_AUTH_RESPONSE_BYTES, MAX_CREDENTIAL_LABEL_BYTES, MAX_USERNAME_BYTES, RESERVED_USERNAMES,
+};
+pub use directory::{
+    Directory, DirectoryBootstrapMode, DirectoryBootstrapPolicy, DirectoryClaims, DirectoryError,
+    DirectoryNode, DirectoryOfflineCache, DirectorySession, DirectoryToken,
+    DirectoryTokenVerifier, DirectoryTrustAnchor, NodeJoinRequest, VerifiedDirectoryToken,
+    DEFAULT_DIRECTORY_CACHE_CAPACITY, DEFAULT_DIRECTORY_NONCE_CAPACITY,
+    DEFAULT_DIRECTORY_OFFLINE_LIFETIME_US, DEFAULT_DIRECTORY_ORIGIN, DEFAULT_DIRECTORY_RP_ID,
+    DIRECTORY_JOIN_WINDOW_US,
+    DIRECTORY_TOKEN_MAX_LIFETIME_US, MAX_DIRECTORY_NODES,
 };
 pub use federation::{
     accept_offer, ClusterId, DiscoveryAnnouncement, FederatedLease, FederatedResourceKind,

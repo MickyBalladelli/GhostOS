@@ -113,17 +113,17 @@ The SynOS rename is largely complete in crate and binary names. Remaining SynOS 
 ---
 ## Central identity and VM fleet
 
-- [ ] Define a central GhostOS directory contract for users, stable identity IDs, groups, roles, public credentials, credential labels, and revocation state. Keep private passkey material outside GhostOS.
+- [x] Define a central GhostOS directory contract for users, stable identity IDs, groups, roles, public credentials, credential labels, and revocation state. Keep private passkey material outside GhostOS.
 
-- [ ] Add authenticated VM enrollment with a node identity, directory trust anchor, and explicit join/revoke lifecycle. A VM must not join by copying another VM's authorization database.
+- [x] Add authenticated VM enrollment with a node identity, directory trust anchor, and explicit join/revoke lifecycle. A VM must not join by copying another VM's authorization database.
 
 - [ ] Replace per-VM first-boot passkey creation with directory enrollment and login using a stable WebAuthn RP ID and origin. One user passkey should authenticate to every authorized VM without sharing private keys.
 
-- [ ] Add a signed, short-lived directory authentication token bound to the user, credential, directory, target VM, challenge, expiry, and policy generation. Reject replay, wrong audience, stale generation, and revoked credentials.
+- [x] Add a signed, short-lived directory authentication token bound to the user, credential, directory, target VM, challenge, expiry, and policy generation. Reject replay, wrong audience, stale generation, and revoked credentials.
 
-- [ ] Map verified directory identity, groups, and roles to node-local kernel capabilities. The directory may authenticate and authorize identity claims; it must not directly mint unrestricted filesystem or kernel capabilities.
+- [x] Map verified directory identity, groups, and roles to node-local kernel capabilities. The directory may authenticate and authorize identity claims; it must not directly mint unrestricted filesystem or kernel capabilities.
 
-- [ ] Add bounded offline directory-cache behavior with revocation epochs, expiry, network-partition handling, and a separate local break-glass credential for recovery.
+- [x] Add bounded offline directory-cache behavior with revocation epochs, expiry, network-partition handling, and a separate local break-glass credential for recovery.
 
 - [ ] Migrate the local `/system/security/authorization` bootstrap flow to coexist with central identity. Define first boot, directory unavailable, directory recovery, credential rotation, and last-local-admin behavior.
 

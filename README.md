@@ -72,6 +72,7 @@ The test contract, tiers, evidence format, and feature inventory are in
 - [System book](book/README.md)
 - [First boot](docs/first-boot.md)
 - [Login methods](docs/login.md)
+- [Central identity and VM fleet](docs/central-identity.md)
 - [Account management](docs/account-management.md)
 - [Compatibility matrix](docs/compatibility-matrix.md)
 - [Hardware support](docs/hardware-support.md)
