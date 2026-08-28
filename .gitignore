@@ -3,6 +3,7 @@
 /Trash/
 temp/
 /target/
+userspace/boot-services/rust-shell/target/
 /fuzz/artifacts/
 /fuzz/target/
 /clients/apple/.build/

@@ -1731,6 +1731,7 @@ pub(crate) fn dispatch_shell_filesystem(
         ghostos_runtime::Operation::SynFsClose => Some(ghostos_fsd::Operation::Close),
         ghostos_runtime::Operation::SynFsRead => Some(ghostos_fsd::Operation::Read),
         ghostos_runtime::Operation::SynFsWrite => Some(ghostos_fsd::Operation::Write),
+        ghostos_runtime::Operation::SynFsMetadata => Some(ghostos_fsd::Operation::Metadata),
         ghostos_runtime::Operation::SynFsMap => Some(ghostos_fsd::Operation::Map),
         ghostos_runtime::Operation::SynFsUnmap => Some(ghostos_fsd::Operation::Unmap),
         ghostos_runtime::Operation::SynFsMkdir => Some(ghostos_fsd::Operation::Mkdir),

@@ -519,6 +519,14 @@ impl InstructionDecoder {
                 return Ok(());
             }
 
+            0x63 => {
+                ins.mnemonic = "MOVSXD";
+                let (reg, rm) =
+                    self.decode_modrm_operands(mmu, pos, rex, 32, addrsize, segment, false)?;
+                ins.operands = vec![Operand::Register(reg), rm];
+                return Ok(());
+            }
+
             0x70..=0x7F => {
                 ins.mnemonic = "JCC";
                 ins.condition = (op - 0x70) as u8;
@@ -1318,14 +1326,6 @@ impl InstructionDecoder {
                 return Ok(());
             }
 
-            0x63 => {
-                ins.mnemonic = "MOVSXD";
-                let (reg, rm) =
-                    self.decode_modrm_operands(mmu, pos, rex, 32, addrsize, segment, false)?;
-                ins.operands = vec![Operand::Register(reg), rm];
-                return Ok(());
-            }
-
             0x90..=0x9F => {
                 ins.mnemonic = "SETCC";
                 ins.condition = (op2 - 0x90) as u8;
@@ -1589,6 +1589,22 @@ mod tests {
                 assert_eq!(m.index, Some(7));
                 assert_eq!(m.scale, 4);
                 assert_eq!(m.displacement, 0x10);
+            }
+            _ => panic!("bad operands"),
+        }
+    }
+
+    #[test]
+    fn movsxd_reg_mem_sib() {
+        let i = dec(&[0x48, 0x63, 0x04, 0x81]).unwrap();
+        assert_eq!(i.mnemonic, "MOVSXD");
+        assert_eq!(i.opsize, 64);
+        assert_eq!(i.next_ip, 0x1004);
+        match &i.operands[..] {
+            [Operand::Register(0), Operand::Memory(m)] => {
+                assert_eq!(m.base, Some(1));
+                assert_eq!(m.index, Some(0));
+                assert_eq!(m.scale, 4);
             }
             _ => panic!("bad operands"),
         }

@@ -68,6 +68,50 @@ fn build_user_image(source: &Path, linker: &Path, output: &Path, tools: &Path) {
     )
 }
 
+fn build_rust_shell_image(manifest: &Path, output: &Path, tools: &Path) {
+    let target_directory = output
+        .parent()
+        .expect("Rust shell image has no output directory")
+        .join("rust-shell-target");
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let rustflags = format!(
+        "-C linker={} -C code-model=kernel -C no-redzone=yes -C relocation-model=pic -C panic=abort",
+        tools.join("rust-lld").display()
+    );
+    let mut build = Command::new(cargo);
+    build
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(manifest)
+        .arg("--target")
+        .arg("x86_64-unknown-none")
+        .arg("--release")
+        .env("CARGO_TARGET_DIR", &target_directory)
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env("RUSTFLAGS", rustflags);
+    run(&mut build, "Rust Ring 3 shell compilation");
+
+    let binary = target_directory
+        .join("x86_64-unknown-none")
+        .join("release")
+        .join("ghostos-boot-shell");
+    run(
+        Command::new(tools.join("llvm-objcopy"))
+            .args(["-O", "binary", "--remove-section=.stack_guard"])
+            .arg(binary)
+            .arg(output),
+        "Rust Ring 3 shell image conversion",
+    );
+    let length = std::fs::metadata(output)
+        .unwrap_or_else(|error| panic!("could not inspect {}: {error}", output.display()))
+        .len();
+    assert!(
+        length != 0 && length <= SERVICE_CODE_BYTES,
+        "{} is {length} bytes; maximum is {SERVICE_CODE_BYTES}",
+        output.display(),
+    )
+}
+
 fn rust_tools() -> PathBuf {
     let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     let output = Command::new(rustc)
@@ -111,9 +155,21 @@ fn main() {
     for source in ["service.c", "login.c", "shell.c", "linker.ld"] {
         println!("cargo:rerun-if-changed={}", sources.join(source).display());
     }
+    println!(
+        "cargo:rerun-if-changed={}",
+        sources.join("rust-shell").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        kernel.join("../crates").display()
+    );
     build_user_image(&sources.join("service.c"), &linker, &service, &tools);
     build_user_image(&sources.join("login.c"), &linker, &login, &tools);
-    build_user_image(&sources.join("shell.c"), &linker, &shell, &tools);
+    build_rust_shell_image(
+        &sources.join("rust-shell/Cargo.toml"),
+        &shell,
+        &tools,
+    );
     let pinned = kernel.join("../build/kernel-ring3");
     std::fs::create_dir_all(&pinned).unwrap_or_else(|error| {
         panic!("could not create {}: {error}", pinned.display())

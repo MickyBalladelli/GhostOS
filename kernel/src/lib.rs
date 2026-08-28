@@ -135,6 +135,10 @@ pub(crate) const SERVICE_CODE_PAGE_COUNT: usize = 19;
 /// Ring 3 boot-service stack pages (64 KiB). Keep `arch/x86_64.rs` paging in sync.
 #[allow(dead_code)]
 pub(crate) const SERVICE_STACK_PAGE_COUNT: usize = 16;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "none", target_os = "uefi")
+))]
 const SHELL_LIST_SCRATCH_BYTES: usize = 4096;
 
 #[allow(dead_code)]
@@ -1058,6 +1062,7 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
                     | Operation::SynFsClose
                     | Operation::SynFsRead
                     | Operation::SynFsWrite
+                    | Operation::SynFsMetadata
                     | Operation::SynFsMap
                     | Operation::SynFsUnmap
                     | Operation::SynFsMkdir
@@ -1076,6 +1081,19 @@ fn boot_init_dispatch(caller: AddressSpaceId, request: Request) -> Response {
             let writable = boot_buffer.writable;
             if operation == Operation::SynFsClose {
                 if request.arguments[..4] != [0; 4] || request.arguments[4..] != [0; 2] {
+                    return syscall_error(Status::INVALID_ARGUMENT)
+                }
+                return boot_services::dispatch_shell_filesystem(
+                    operation,
+                    request.flags,
+                    request.capability,
+                    0,
+                    0,
+                    None,
+                )
+            }
+            if operation == Operation::SynFsMetadata {
+                if request.flags != 0 || request.arguments != [0; 6] {
                     return syscall_error(Status::INVALID_ARGUMENT)
                 }
                 return boot_services::dispatch_shell_filesystem(

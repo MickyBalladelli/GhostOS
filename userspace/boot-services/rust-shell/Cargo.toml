@@ -1,0 +1,20 @@
+[package]
+name = "ghostos-boot-shell"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[dependencies]
+ghostos-abi = { path = "../../../crates/abi" }
+ghostos-shell = { path = "../../../crates/ghostos-shell" }
+ghostos-status = { path = "../../../crates/status" }
+ghostos-system-model = { path = "../../../crates/system-model" }
