@@ -52,7 +52,7 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/capability.rs`
 - [x] `kernel/src/console.rs`
 - [x] `kernel/src/contention.rs`
-- [ ] `kernel/src/cow.rs`
+- [x] `kernel/src/cow.rs` — C reference tracker, sharing and release, allocator-backed write faults, and page-copy callback.
 - [ ] `kernel/src/crash.rs`
 - [ ] `kernel/src/dlm.rs`
 - [ ] `kernel/src/dma.rs`

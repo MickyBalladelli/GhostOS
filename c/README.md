@@ -29,6 +29,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/boot_diagnostics.rs` | `src/boot_diagnostics.c` | `include/ghostos/boot_diagnostics.h` |
 | `kernel/src/boot_services.rs` (service registry and startup graph) | `src/boot_services.c` | `include/ghostos/boot_services.h` |
 | `kernel/src/contention.rs` | `src/contention.c` | `include/ghostos/contention.h` |
+| `kernel/src/cow.rs` | `src/cow.c` | `include/ghostos/cow.h` |
 | `kernel/src/capability.rs` | `src/capability.c` | `include/ghostos/capability.h` |
 | `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 
