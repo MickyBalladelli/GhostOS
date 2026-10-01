@@ -23,6 +23,20 @@ _Static_assert(sizeof(ghostos_runtime_process_slot) == 24, "runtime process slot
 _Static_assert(sizeof(ghostos_runtime_state) == 1544, "runtime state layout");
 
 typedef struct { uint64_t process, authority; } ghostos_runtime_identity;
+typedef struct {
+    uint32_t operation;
+    uint32_t flags;
+    uint64_t process;
+    uint64_t capability;
+    uint64_t offset;
+    uint64_t length;
+    uint32_t region;
+    uint32_t buffer_offset;
+    uint32_t buffer_length;
+    uint32_t writable;
+    uint32_t has_buffer;
+    uint32_t reserved;
+} ghostos_runtime_filesystem_request;
 
 typedef enum {
     GHOSTOS_RUNTIME_OK,
@@ -44,6 +58,9 @@ ghostos_runtime_result ghostos_runtime_unregister(ghostos_runtime_state *state, 
     size_t capacity);
 ghostos_runtime_result ghostos_runtime_lookup(const ghostos_runtime_state *state,
     uint32_t caller, ghostos_runtime_identity *identity, size_t capacity);
+ghostos_runtime_result ghostos_runtime_prepare_filesystem_request(
+    const ghostos_runtime_state *state, uint32_t caller, const ghostos_request *request,
+    size_t capacity, ghostos_runtime_filesystem_request *prepared);
 ghostos_runtime_result ghostos_runtime_validate_request(const ghostos_request *request);
 bool ghostos_runtime_operation_delegated(uint16_t operation);
 ghostos_runtime_result ghostos_runtime_validate_empty_request(const ghostos_request *request,

@@ -190,6 +190,47 @@ ghostos_runtime_result ghostos_runtime_validate_filesystem_request(const ghostos
     return GHOSTOS_RUNTIME_OK;
 }
 
+ghostos_runtime_result ghostos_runtime_prepare_filesystem_request(
+    const ghostos_runtime_state *state, uint32_t caller, const ghostos_request *request,
+    size_t capacity, ghostos_runtime_filesystem_request *prepared) {
+    if (!prepared) return GHOSTOS_RUNTIME_INVALID_REQUEST;
+    ghostos_runtime_identity identity = {0};
+    ghostos_runtime_result result = ghostos_runtime_lookup(state, caller, &identity, capacity);
+    if (result != GHOSTOS_RUNTIME_OK) return result;
+    uint32_t region, offset, length;
+    bool writable, has_buffer;
+    result = ghostos_runtime_validate_filesystem_request(request, &region, &offset, &length,
+        &writable, &has_buffer);
+    if (result != GHOSTOS_RUNTIME_OK) return result;
+    uint32_t fs_operation;
+    switch (request->operation) {
+        case GHOSTOS_OP_SYN_FS_OPEN: fs_operation = 1; break;
+        case GHOSTOS_OP_SYN_FS_CLOSE: fs_operation = 2; break;
+        case GHOSTOS_OP_SYN_FS_READ: fs_operation = 3; break;
+        case GHOSTOS_OP_SYN_FS_WRITE: fs_operation = 4; break;
+        case GHOSTOS_OP_SYN_FS_METADATA: fs_operation = 5; break;
+        case GHOSTOS_OP_SYN_FS_DELETE: fs_operation = 6; break;
+        case GHOSTOS_OP_SYN_FS_LIST: fs_operation = 8; break;
+        case GHOSTOS_OP_SYN_FS_MKDIR: fs_operation = 16; break;
+        case GHOSTOS_OP_SYN_FS_RMDIR: fs_operation = 17; break;
+        case GHOSTOS_OP_SYN_FS_LINK: fs_operation = 18; break;
+        case GHOSTOS_OP_SYN_FS_LINKS: fs_operation = 19; break;
+        case GHOSTOS_OP_SYN_FS_MAP: fs_operation = 25; break;
+        case GHOSTOS_OP_SYN_FS_UNMAP: fs_operation = 26; break;
+        default: return GHOSTOS_RUNTIME_INVALID_REQUEST;
+    }
+    bool ambient = request->operation == GHOSTOS_OP_SYN_FS_OPEN ||
+        request->operation == GHOSTOS_OP_SYN_FS_LIST || request->operation == GHOSTOS_OP_SYN_FS_MKDIR ||
+        request->operation == GHOSTOS_OP_SYN_FS_RMDIR || request->operation == GHOSTOS_OP_SYN_FS_LINKS ||
+        request->operation == GHOSTOS_OP_SYN_FS_DELETE;
+    *prepared = (ghostos_runtime_filesystem_request){
+        fs_operation, request->flags, identity.process,
+        ambient ? identity.authority : request->capability,
+        request->arguments[4], request->arguments[5], region, offset, length,
+        writable ? 1u : 0u, has_buffer ? 1u : 0u, 0};
+    return GHOSTOS_RUNTIME_OK;
+}
+
 ghostos_runtime_result ghostos_runtime_validate_filesystem_response(uint16_t operation,
     uint32_t response_status, const uint64_t values[4], bool has_buffer, uint32_t buffer_length) {
     if (!values) return GHOSTOS_RUNTIME_INVALID_REQUEST;
