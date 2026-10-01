@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the checked-in Rust and Swift GhostOS ABI bindings."""
+"""Generate the checked-in Rust, Swift, and C GhostOS ABI bindings."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import argparse
 import difflib
 import pathlib
 import tomllib
+
+from generate_c_abi import generate as generate_c
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -276,6 +278,7 @@ def main() -> int:
     args = parser.parse_args()
     schema = tomllib.loads(SCHEMA.read_text())
     outputs = {RUST_OUTPUT: generate_rust(schema), SWIFT_OUTPUT: generate_swift(schema)}
+    outputs.update(generate_c(schema))
     changed = False
     for path, content in outputs.items():
         current = path.read_text() if path.exists() else ""
