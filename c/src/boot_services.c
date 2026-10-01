@@ -130,3 +130,155 @@ bool ghostos_boot_services_start(ghostos_boot_service_spawn spawn, void *context
     }
     return true;
 }
+
+uint32_t ghostos_boot_service_filesystem_rights(uint32_t service_id)
+{
+    if (service_id == SERVICE_FILESYSTEM)
+        return GHOSTOS_FILESYSTEM_READ | GHOSTOS_FILESYSTEM_WRITE |
+               GHOSTOS_FILESYSTEM_DELETE | GHOSTOS_FILESYSTEM_ADMIN;
+    if (service_id == SERVICE_SHELL) return 0;
+    if (service_id == SERVICE_AUTHENTICATION || service_id == SERVICE_LOGIN)
+        return GHOSTOS_FILESYSTEM_READ;
+    return 0;
+}
+
+bool ghostos_boot_first_admin_required(const void *authorization_database,
+                                       size_t database_length)
+{
+    return authorization_database == NULL || database_length == 0;
+}
+
+bool ghostos_boot_first_admin_record_valid(const uint8_t *username,
+                                           size_t username_length,
+                                           const uint8_t *public_key,
+                                           size_t public_key_length)
+{
+    if (!username || !public_key || username_length == 0 || username_length > 32 ||
+        public_key_length < 1 || public_key_length > 96) return false;
+    for (size_t i = 0; i < username_length; ++i) {
+        uint8_t ch = username[i];
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+              (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' || ch == '$'))
+            return false;
+    }
+    return true;
+}
+
+static bool username_equal(const uint8_t *left, size_t left_length,
+                           const uint8_t *right, size_t right_length)
+{
+    if (left_length != right_length) return false;
+    for (size_t i = 0; i < left_length; ++i) {
+        uint8_t a = left[i], b = right[i];
+        if (a >= 'A' && a <= 'Z') a = (uint8_t)(a + ('a' - 'A'));
+        if (b >= 'A' && b <= 'Z') b = (uint8_t)(b + ('a' - 'A'));
+        if (a != b) return false;
+    }
+    return true;
+}
+
+static bool fingerprint_equal(const uint8_t left[32], const uint8_t right[32])
+{
+    uint8_t difference = 0;
+    for (size_t i = 0; i < 32; ++i) difference |= (uint8_t)(left[i] ^ right[i]);
+    return difference == 0;
+}
+
+bool ghostos_local_passkey_find(const ghostos_local_passkey_record *records,
+                                size_t record_count, const uint8_t *username,
+                                size_t username_length,
+                                const uint8_t key_fingerprint[32],
+                                uint32_t *sign_count)
+{
+    if (!records || !username || !key_fingerprint || !sign_count ||
+        username_length == 0 || username_length > 32) return false;
+    if (record_count > 128) return false;
+    for (size_t i = 0; i < record_count; ++i) {
+        const ghostos_local_passkey_record *record = &records[i];
+        if (record->username_length == 0 || record->username_length > 32) return false;
+        if (record->username_length == username_length &&
+            username_equal(record->username, record->username_length, username, username_length) &&
+            fingerprint_equal(record->key_fingerprint, key_fingerprint)) {
+            *sign_count = record->sign_count;
+            return true;
+        }
+    }
+    *sign_count = 0;
+    return true;
+}
+
+bool ghostos_local_passkey_record_use(ghostos_local_passkey_record *records,
+                                     size_t capacity, size_t *record_count,
+                                     const uint8_t *username,
+                                     size_t username_length,
+                                     const uint8_t key_fingerprint[32],
+                                     uint32_t sign_count)
+{
+    if (!records || !record_count || !username || !key_fingerprint ||
+        username_length == 0 || username_length > 32 || *record_count > capacity) return false;
+    if (capacity > 128) return false;
+    for (size_t i = 0; i < *record_count; ++i) {
+        ghostos_local_passkey_record *record = &records[i];
+        if (record->username_length == 0 || record->username_length > 32) return false;
+        if (record->username_length == username_length &&
+            username_equal(record->username, record->username_length, username, username_length) &&
+            fingerprint_equal(record->key_fingerprint, key_fingerprint)) {
+            if (sign_count < record->sign_count) return false;
+            record->sign_count = sign_count;
+            return true;
+        }
+    }
+    if (*record_count == capacity) return false;
+    ghostos_local_passkey_record *record = &records[(*record_count)++];
+    for (size_t i = 0; i < sizeof(*record); ++i) ((uint8_t *)record)[i] = 0;
+    record->username_length = (uint8_t)username_length;
+    for (size_t i = 0; i < username_length; ++i) record->username[i] = username[i];
+    for (size_t i = 0; i < 32; ++i) record->key_fingerprint[i] = key_fingerprint[i];
+    record->sign_count = sign_count;
+    return true;
+}
+
+bool ghostos_boot_shell_filesystem_dispatch(ghostos_shell_filesystem_dispatch dispatch,
+                                            void *context, uint32_t operation,
+                                            uint16_t flags, uint64_t capability,
+                                            uint64_t offset, uint64_t length,
+                                            void *buffer, uint64_t values[4])
+{
+    if (!dispatch || !values) return false;
+    for (size_t i = 0; i < 4; ++i) values[i] = 0;
+    return dispatch(context, 9, operation, flags, capability, offset, length,
+                    buffer, values);
+}
+
+bool ghostos_boot_shell_filesystem_bind(ghostos_shell_filesystem *filesystem,
+                                        ghostos_shell_filesystem_dispatch dispatch,
+                                        void *context, uint64_t authority)
+{
+    if (!filesystem || !dispatch || authority == 0) return false;
+    filesystem->dispatch = dispatch;
+    filesystem->context = context;
+    filesystem->shell_process_id = 9;
+    filesystem->authority = authority;
+    return true;
+}
+
+void ghostos_boot_shell_filesystem_unbind(ghostos_shell_filesystem *filesystem)
+{
+    if (!filesystem) return;
+    filesystem->authority = 0;
+}
+
+bool ghostos_boot_shell_filesystem_call(ghostos_shell_filesystem *filesystem,
+                                        uint32_t operation, uint16_t flags,
+                                        uint64_t capability, uint64_t offset,
+                                        uint64_t length, void *buffer,
+                                        uint64_t values[4])
+{
+    if (!filesystem || !filesystem->dispatch || !filesystem->authority || !values)
+        return false;
+    if (operation == 12 || operation == 17 || operation == 18 || operation == 20 ||
+        operation == 22) capability = filesystem->authority;
+    return filesystem->dispatch(filesystem->context, filesystem->shell_process_id,
+                                operation, flags, capability, offset, length,
+                                buffer, values);
+}

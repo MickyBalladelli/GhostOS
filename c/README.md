@@ -28,6 +28,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/arch/mod.rs` | `src/arch.c` | `include/ghostos/arch.h` |
 | `kernel/src/boot_diagnostics.rs` | `src/boot_diagnostics.c` | `include/ghostos/boot_diagnostics.h` |
 | `kernel/src/boot_services.rs` (service registry and startup graph) | `src/boot_services.c` | `include/ghostos/boot_services.h` |
+| `kernel/src/contention.rs` | `src/contention.c` | `include/ghostos/contention.h` |
 | `kernel/src/capability.rs` | `src/capability.c` | `include/ghostos/capability.h` |
 | `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 
@@ -59,7 +60,11 @@ The C boot service registry preserves all 13 service descriptors and their
 restart settings. Its startup planner uses the supervisor's stable, lowest-ID
 topological order, invokes a caller-provided spawn function, and records
 per-service startup order, dependency count, readiness, and any blocked
-dependency. The C kernel has not yet connected this callback to process launch.
+dependency. The service API also defines filesystem rights, first-admin input
+validation, bounded local passkey sign-counter records, and shell filesystem
+authority binding/dispatch. Persistent filesystem ownership, durable account
+and passkey records, and connection to actual kernel process launch still
+require the C kernel and filesystem daemon ports.
 
 `userspace/boot-services/service.c`, `login.c`, and `shell.c` now use the generated
 request/response types and operation IDs instead of private copies. The kernel
