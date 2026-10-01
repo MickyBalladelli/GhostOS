@@ -66,7 +66,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/litmus.rs` — C port includes deterministic seeded schedules, all six kernel ordering models, fault replay, and failure minimization. Rust callers remain active; behavior parity and caller cutover remain.
 - [ ] `kernel/src/main.rs` — C port owns the target `_start` entry symbol and forwards boot info to `kernel_entry`. Rust keeps only the compiler-required panic ABI hook, which forwards to kernel panic reporting; full panic-handler cutover remains.
 - [ ] `kernel/src/micro_silo.rs` — C port includes hardware protection selection, tenant-only authorization, bounded non-overlapping memory maps, borrowed-range cleanup, and address lookup. Rust callers remain active; behavior parity and caller cutover remain.
-- [ ] `kernel/src/monitor.rs`
+- [ ] `kernel/src/monitor.rs` — C port includes monitor view state, generation-1 process snapshots, switch-history CPU utilization, live kernel DLM lock summaries, empty DSM page stats, and all four text views. Rust scheduler and shell callers remain active; behavior parity and caller cutover remain.
 - [ ] `kernel/src/mouse.rs`
 - [ ] `kernel/src/mouse_stub.rs`
 - [ ] `kernel/src/page_fault.rs`
