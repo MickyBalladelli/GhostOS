@@ -70,6 +70,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/tlb.rs` (bounded TLB shootdown tracking and acknowledgement policy) | `src/tlb.c` | `include/ghostos/tlb.h` |
 | `kernel/src/usb_keyboard.rs` (PCI discovery and boot adapter; xHCI control, HID report decoding, terminal key sequences, and interface descriptor selection) | `src/usb_keyboard.c`, `src/usb_keyboard_controller.c` | `include/ghostos/usb_keyboard.h` |
 | `kernel/src/usb_keyboard_stub.rs` (non-x86 empty USB keyboard adapter) | `src/usb_keyboard_stub.c` | `include/ghostos/usb_keyboard_stub.h` |
+| `kernel/src/watchdog.rs` (service and CPU liveness tracking with one-shot stale reports) | `src/watchdog.c` | `include/ghostos/watchdog.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
@@ -92,7 +93,7 @@ user access, and user entry. Kernel integration supplies the validation and
 backend callbacks.
 
 The x86 interrupt entry calls a registered dispatcher with the saved frame.
-Kernel scheduling, watchdog, and page-fault policy must be supplied by that
+Kernel scheduling and page-fault policy must be supplied by that
 dispatcher when the C kernel is connected.
 
 The C boot service registry preserves all 13 service descriptors and their

@@ -93,6 +93,7 @@ pub mod monitor;
 #[allow(unsafe_code)]
 pub mod tlb;
 #[allow(dead_code)]
+#[allow(unsafe_code)]
 mod watchdog;
 #[cfg(any(
     all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")),
@@ -350,6 +351,7 @@ pub(crate) fn current_address_space() -> Option<AddressSpaceId> {
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
+    watchdog::init();
     let previous_boot_failure = boot_diagnostics::begin();
     if let Err(status) = validate_boot_info(boot_info) {
         fatal_kernel_halt(status)
