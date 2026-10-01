@@ -22,6 +22,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/allocator.rs` | `src/frame_allocator.c` | `include/ghostos/frame_allocator.h` |
 | `kernel/src/arch/aarch64.rs` | `src/arch_aarch64.c` | `include/ghostos/arch_aarch64.h` |
 | `kernel/src/arch/cpu.rs` | `src/cpu_topology.c` | `include/ghostos/cpu_topology.h` |
+| `kernel/src/arch/mod.rs` | `src/arch.c` | `include/ghostos/arch.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
@@ -37,6 +38,11 @@ The AArch64 kernel implementation is enabled for AArch64 ELF builds. The host
 build keeps inert architecture stubs so the portable foundation library builds
 on development machines. Exception callbacks must be installed before enabling
 the AArch64 vector table.
+
+The shared architecture wrapper in `src/arch.c` selects evidence at compile
+time and calls an explicit backend table for boot, interrupts, TLB invalidation,
+user access, and user entry. Kernel integration supplies the validation and
+backend callbacks.
 
 `userspace/boot-services/service.c`, `login.c`, and `shell.c` now use the generated
 request/response types and operation IDs instead of private copies. The kernel
