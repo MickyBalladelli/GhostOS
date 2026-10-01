@@ -1,5 +1,23 @@
 use crate::persona::ExecutionPersona;
 
+unsafe extern "C" {
+    fn ghostos_task_cpu_mask_contains(low: u64, high: u64, cpu: u8) -> bool;
+    fn ghostos_task_cpu_mask_union(left: u64, right: u64) -> u64;
+    fn ghostos_task_cpu_mask_difference(left: u64, right: u64) -> u64;
+    fn ghostos_task_cpu_mask_intersects(
+        left_low: u64,
+        left_high: u64,
+        right_low: u64,
+        right_high: u64,
+    ) -> bool;
+    fn ghostos_task_cpu_mask_from_cpu(cpu: u8, words: *mut u64);
+    fn ghostos_task_address_space_id_valid(raw: u32) -> bool;
+    fn ghostos_task_thread_id_from_parts(slot: usize, generation: u16) -> u32;
+    fn ghostos_task_thread_id_valid(raw: u32) -> bool;
+    fn ghostos_task_thread_slot(raw: u32) -> usize;
+    fn ghostos_task_thread_generation(raw: u32) -> u16;
+}
+
 pub const MAX_THREADS: usize = 64;
 pub const MAX_CPUS: usize = 128;
 
@@ -53,30 +71,39 @@ impl CpuMask {
         self.0[0] == 0 && self.0[1] == 0
     }
 
-    pub const fn contains(self, cpu: CpuId) -> bool {
-        let raw = cpu.raw() as usize;
-        self.0[raw / 64] & (1u64 << (raw % 64)) != 0
+    pub fn contains(self, cpu: CpuId) -> bool {
+        unsafe { ghostos_task_cpu_mask_contains(self.0[0], self.0[1], cpu.raw()) }
     }
 
-    pub const fn union(self, other: Self) -> Self {
-        Self([self.0[0] | other.0[0], self.0[1] | other.0[1]])
+    pub fn union(self, other: Self) -> Self {
+        Self([
+            unsafe { ghostos_task_cpu_mask_union(self.0[0], other.0[0]) },
+            unsafe { ghostos_task_cpu_mask_union(self.0[1], other.0[1]) },
+        ])
     }
 
-    pub const fn difference(self, other: Self) -> Self {
-        Self([self.0[0] & !other.0[0], self.0[1] & !other.0[1]])
+    pub fn difference(self, other: Self) -> Self {
+        Self([
+            unsafe { ghostos_task_cpu_mask_difference(self.0[0], other.0[0]) },
+            unsafe { ghostos_task_cpu_mask_difference(self.0[1], other.0[1]) },
+        ])
     }
 
-    pub const fn intersects(self, other: Self) -> bool {
-        self.0[0] & other.0[0] != 0 || self.0[1] & other.0[1] != 0
-    }
-
-    pub const fn from_cpu(cpu: CpuId) -> Self {
-        let raw = cpu.raw() as usize;
-        if raw < 64 {
-            Self([1u64 << raw, 0])
-        } else {
-            Self([0, 1u64 << (raw - 64)])
+    pub fn intersects(self, other: Self) -> bool {
+        unsafe {
+            ghostos_task_cpu_mask_intersects(
+                self.0[0],
+                self.0[1],
+                other.0[0],
+                other.0[1],
+            )
         }
+    }
+
+    pub fn from_cpu(cpu: CpuId) -> Self {
+        let mut words = [0; 2];
+        unsafe { ghostos_task_cpu_mask_from_cpu(cpu.raw(), words.as_mut_ptr()) };
+        Self(words)
     }
 }
 
@@ -87,8 +114,12 @@ pub struct AddressSpaceId(u32);
 impl AddressSpaceId {
     pub const KERNEL: Self = Self(0);
 
-    pub const fn new(raw: u32) -> Option<Self> {
-        if raw == 0 { None } else { Some(Self(raw)) }
+    pub fn new(raw: u32) -> Option<Self> {
+        if unsafe { ghostos_task_address_space_id_valid(raw) } {
+            Some(Self(raw))
+        } else {
+            None
+        }
     }
 
     pub const fn raw(self) -> u32 {
@@ -101,28 +132,28 @@ impl AddressSpaceId {
 pub struct ThreadId(u32);
 
 impl ThreadId {
-    pub(crate) const fn from_parts(slot: usize, generation: u16) -> Self {
-        Self(((generation as u32) << 16) | slot as u32)
+    pub(crate) fn from_parts(slot: usize, generation: u16) -> Self {
+        Self(unsafe { ghostos_task_thread_id_from_parts(slot, generation) })
     }
 
     pub const fn raw(self) -> u32 {
         self.0
     }
 
-    pub const fn new(raw: u32) -> Option<Self> {
-        if raw == 0 || raw >> 16 == 0 {
-            None
-        } else {
+    pub fn new(raw: u32) -> Option<Self> {
+        if unsafe { ghostos_task_thread_id_valid(raw) } {
             Some(Self(raw))
+        } else {
+            None
         }
     }
 
-    pub(crate) const fn slot(self) -> usize {
-        (self.0 & 0xffff) as usize
+    pub(crate) fn slot(self) -> usize {
+        unsafe { ghostos_task_thread_slot(self.0) }
     }
 
-    pub(crate) const fn generation(self) -> u16 {
-        (self.0 >> 16) as u16
+    pub(crate) fn generation(self) -> u16 {
+        unsafe { ghostos_task_thread_generation(self.0) }
     }
 }
 

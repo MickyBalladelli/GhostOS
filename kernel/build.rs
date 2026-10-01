@@ -79,7 +79,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
     };
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let target_flag = format!("--target={target}");
-    for source in ["address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "driver_capabilities", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persona", "physical_storage", "power", "process", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall"] {
+    for source in ["address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "driver_capabilities", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persona", "physical_storage", "power", "process", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task"] {
         let object = output.join(format!("ghostos-{source}.o"));
         let mut compile = Command::new(&clang);
         compile.args([
@@ -101,7 +101,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
         println!("cargo:rustc-link-arg={}", object.display());
         println!("cargo:rerun-if-changed={}", source_path.display());
     }
-    for header in ["address_space.h", "frame_allocator.h", "cow.h", "crash.h", "dlm.h", "capability.h", "contention.h", "dma.h", "driver_capabilities.h", "hot_allocator.h", "invariants.h", "ipc.h", "keyboard.h", "keyboard_stub.h", "kernel.h", "litmus.h", "main.h", "micro_silo.h", "monitor.h", "mouse.h", "mouse_stub.h", "page_fault.h", "partition.h", "pci.h", "persistence.h", "persona.h", "physical_storage.h", "power.h", "process.h", "quota.h", "random.h", "runtime.h", "saturation.h", "scheduler.h", "shell.h", "syscall.h"] {
+    for header in ["address_space.h", "frame_allocator.h", "cow.h", "crash.h", "dlm.h", "capability.h", "contention.h", "dma.h", "driver_capabilities.h", "hot_allocator.h", "invariants.h", "ipc.h", "keyboard.h", "keyboard_stub.h", "kernel.h", "litmus.h", "main.h", "micro_silo.h", "monitor.h", "mouse.h", "mouse_stub.h", "page_fault.h", "partition.h", "pci.h", "persistence.h", "persona.h", "physical_storage.h", "power.h", "process.h", "quota.h", "random.h", "runtime.h", "saturation.h", "scheduler.h", "shell.h", "syscall.h", "task.h"] {
         println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}")).display());
     }
 }
@@ -109,7 +109,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
 fn build_host_c(kernel: &Path, output: &Path, target: &str) {
     let target_flag = format!("--target={target}");
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
-    for module in ["quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall"] {
+    for module in ["quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task"] {
         let source = kernel.join(format!("../c/src/{module}.c"));
         let object = output.join(format!("ghostos-{module}-host.o"));
         run(

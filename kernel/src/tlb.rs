@@ -37,11 +37,11 @@ struct TlbShootdownRequest {
 impl TlbShootdownRequest {
     const EMPTY: Option<Self> = None;
 
-    const fn pending(self) -> CpuMask {
+    fn pending(self) -> CpuMask {
         self.targets.difference(self.acknowledged)
     }
 
-    const fn complete(self) -> bool {
+    fn complete(self) -> bool {
         self.pending().is_empty()
     }
 }

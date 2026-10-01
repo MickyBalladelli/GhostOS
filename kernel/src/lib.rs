@@ -85,6 +85,7 @@ pub mod syscall;
 #[allow(unsafe_code)]
 #[allow(dead_code)]
 mod shell;
+#[allow(unsafe_code)]
 pub mod task;
 #[allow(unsafe_code)]
 pub mod time;

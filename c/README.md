@@ -65,6 +65,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/scheduler.rs` (ready-thread selection, realtime ordering, and IPC priority inheritance) | `src/scheduler.c` | `include/ghostos/scheduler.h` |
 | `kernel/src/shell.rs` (VT input decoding and command-line expansion) | `src/shell.c` | `include/ghostos/shell.h` |
 | `kernel/src/syscall.rs` (user-range/request validation and scheduler sleep hints) | `src/syscall.c` | `include/ghostos/syscall.h` |
+| `kernel/src/task.rs` (CPU masks, address-space IDs, and generation-tagged thread IDs) | `src/task.c` | `include/ghostos/task.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
