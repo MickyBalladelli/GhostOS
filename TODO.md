@@ -61,7 +61,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/invariants.rs` — C port provides the stable six-entry invariant catalogue, redacted failure identifiers/codes, formatting, debug trap hook, and address-space, interrupt, and page-table checks. Rust kernel call sites remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/ipc.rs` — C port implements bounded lock-free MPMC channels, capability-checked send/receive and transfers, quotas, mapped endpoints, close/owner cleanup, partition and scheduler callbacks, diagnostics, and stuck reports. Rust kernel consumers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/keyboard.rs` — C port includes the PS/2 controller setup, Set 1 key decoding, modifiers, extended-key sequences, ACK filtering, and mouse-byte callback. Rust kernel and shell callers remain active; behavior parity and consumer cutover remain.
-- [ ] `kernel/src/keyboard_stub.rs`
+- [ ] `kernel/src/keyboard_stub.rs` — C stub initializes empty state and always reports no key, matching non-x86 kernel behavior. Rust callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/lib.rs`
 - [ ] `kernel/src/litmus.rs`
 - [ ] `kernel/src/main.rs`
