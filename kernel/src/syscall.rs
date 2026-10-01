@@ -1,7 +1,5 @@
 //! Kernel entry for the native GhostOS request ABI.
 
-use core::sync::atomic::{AtomicUsize, Ordering};
-
 use ghostos_runtime::{Request, Response};
 use ghostos_status::Status;
 
@@ -23,6 +21,18 @@ unsafe extern "C" {
         deadline: u64,
         now: u64,
     ) -> u64;
+    fn ghostos_syscall_install_dispatcher(handler: usize) -> bool;
+    fn ghostos_syscall_dispatcher() -> usize;
+    fn ghostos_syscall_validate_memory_map(
+        flags: u16,
+        reserved: u16,
+        arguments: *const u64,
+    ) -> bool;
+    fn ghostos_syscall_validate_memory_unmap(
+        flags: u16,
+        reserved: u16,
+        arguments: *const u64,
+    ) -> bool;
 }
 
 /// x86 user processes enter the kernel through this DPL 3 interrupt gate.
@@ -38,26 +48,20 @@ pub enum InstallError {
     AlreadyInstalled,
 }
 
-static DISPATCH_HANDLER: AtomicUsize = AtomicUsize::new(0);
-
 /// Connect the architecture entry point to the kernel runtime dispatcher.
 ///
 /// Installation is one-shot. Service startup owns the dispatcher and can
 /// register a small adapter around [`crate::runtime::Dispatcher`].
 pub fn install_dispatcher(handler: DispatchHandler) -> Result<(), InstallError> {
-    DISPATCH_HANDLER
-        .compare_exchange(
-            0,
-            handler as usize,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-        .map(|_| ())
-        .map_err(|_| InstallError::AlreadyInstalled)
+    if unsafe { ghostos_syscall_install_dispatcher(handler as usize) } {
+        Ok(())
+    } else {
+        Err(InstallError::AlreadyInstalled)
+    }
 }
 
 fn registered_dispatcher() -> Option<DispatchHandler> {
-    let raw = DISPATCH_HANDLER.load(Ordering::Acquire);
+    let raw = unsafe { ghostos_syscall_dispatcher() };
     if raw == 0 {
         None
     } else {
@@ -111,11 +115,13 @@ impl<
         caller: AddressSpaceId,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
-        if request.flags != 0
-            || request.reserved != 0
-            || request.arguments[3..] != [0; 3]
-            || request.arguments[2] > 1
-        {
+        if !unsafe {
+            ghostos_syscall_validate_memory_map(
+                request.flags,
+                request.reserved,
+                request.arguments.as_ptr(),
+            )
+        } {
             return Err(RuntimeDispatchError::InvalidRequest)
         }
         let authority = capability(request.capability)?;
@@ -151,10 +157,13 @@ impl<
         caller: AddressSpaceId,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
-        if request.flags != 0
-            || request.reserved != 0
-            || request.arguments[2..] != [0; 4]
-        {
+        if !unsafe {
+            ghostos_syscall_validate_memory_unmap(
+                request.flags,
+                request.reserved,
+                request.arguments.as_ptr(),
+            )
+        } {
             return Err(RuntimeDispatchError::InvalidRequest)
         }
         let authority = capability(request.capability)?;
