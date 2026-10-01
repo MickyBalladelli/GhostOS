@@ -57,8 +57,9 @@ static bool read_device(ghostos_pci_device_info *device) {
     return true;
 }
 
-size_t ghostos_pci_enumerate_x86(ghostos_pci_visit_fn visit, void *context) {
-    size_t found = 0;
+void ghostos_pci_enumerate_x86(ghostos_pci_inventory_info *inventory) {
+    if (!inventory) return;
+    *inventory = (ghostos_pci_inventory_info){0};
     for (uint16_t bus = 0; bus <= UINT8_MAX; ++bus) {
         for (uint8_t device = 0; device < 32; ++device) {
             ghostos_pci_device_info address = {.bus = (uint8_t)bus, .device = device};
@@ -69,18 +70,16 @@ size_t ghostos_pci_enumerate_x86(ghostos_pci_visit_fn visit, void *context) {
                 ghostos_pci_device_info current = {
                     .bus = (uint8_t)bus, .device = device, .function = function};
                 if (read_device(&current)) {
-                    ++found;
-                    if (visit) visit(context, &current);
+                    if (inventory->count < GHOSTOS_PCI_DEVICE_CAPACITY) {
+                        inventory->devices[inventory->count++] = current;
+                    }
                 }
             }
         }
     }
-    return found;
 }
 #else
-size_t ghostos_pci_enumerate_x86(ghostos_pci_visit_fn visit, void *context) {
-    (void)visit;
-    (void)context;
-    return 0;
+void ghostos_pci_enumerate_x86(ghostos_pci_inventory_info *inventory) {
+    if (inventory) *inventory = (ghostos_pci_inventory_info){0};
 }
 #endif

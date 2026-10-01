@@ -1,8 +1,9 @@
-use ghostos_boot_protocol::{
-    GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_DATA_PORT,
-    GHOSTOS_PERSISTENCE_FLUSH, GHOSTOS_PERSISTENCE_LENGTH_PORT, GHOSTOS_PERSISTENCE_LOAD,
-    GHOSTOS_PERSISTENCE_MAX_BYTES, GHOSTOS_PERSISTENCE_SAVE,
-};
+use ghostos_boot_protocol::GHOSTOS_PERSISTENCE_MAX_BYTES;
+
+unsafe extern "C" {
+    fn ghostos_persistence_load(bytes: *mut u8, capacity: usize, length: *mut usize) -> bool;
+    fn ghostos_persistence_save(bytes: *const u8, length: usize);
+}
 
 const PERSISTENCE_CONTAINER_MAGIC: [u8; 8] = *b"SYNREC01";
 const PERSISTENCE_CONTAINER_VERSION: u16 = 1;
@@ -42,13 +43,10 @@ impl PersistentStore {
         if bytes.len() > GHOSTOS_PERSISTENCE_MAX_BYTES {
             return None
         }
-        io_out8(GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_LOAD);
-        let length = io_in32(GHOSTOS_PERSISTENCE_LENGTH_PORT) as usize;
-        if length > bytes.len() {
+        let mut length = 0;
+        // SAFETY: C reads at most `bytes.len()` bytes and writes the returned length.
+        if !unsafe { ghostos_persistence_load(bytes.as_mut_ptr(), bytes.len(), &mut length) } {
             return None
-        }
-        for byte in &mut bytes[..length] {
-            *byte = io_in8(GHOSTOS_PERSISTENCE_DATA_PORT);
         }
         Some(length)
     }
@@ -57,12 +55,8 @@ impl PersistentStore {
         if bytes.len() > GHOSTOS_PERSISTENCE_MAX_BYTES {
             return
         }
-        io_out8(GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_SAVE);
-        io_out32(GHOSTOS_PERSISTENCE_LENGTH_PORT, bytes.len() as u32);
-        for byte in bytes {
-            io_out8(GHOSTOS_PERSISTENCE_DATA_PORT, *byte);
-        }
-        io_out8(GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_FLUSH);
+        // SAFETY: C reads exactly the provided byte slice and checks the protocol limit.
+        unsafe { ghostos_persistence_save(bytes.as_ptr(), bytes.len()) };
     }
 
     pub fn load_boot_diagnostic(&self, bytes: &mut [u8]) -> Option<usize> {
@@ -172,99 +166,3 @@ fn persistence_checksum(bytes: &[u8]) -> u32 {
     }
     checksum
 }
-
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
-fn io_out8(port: u16, value: u8) {
-    unsafe {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") port,
-            in("al") value,
-            options(nomem, nostack, preserves_flags),
-        )
-    }
-}
-
-#[cfg(not(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-)))]
-fn io_out8(_port: u16, _value: u8) {}
-
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
-#[allow(dead_code)]
-fn io_in32(port: u16) -> u32 {
-    let value: u32;
-    unsafe {
-        core::arch::asm!(
-            "in eax, dx",
-            in("dx") port,
-            out("eax") value,
-            options(nomem, nostack, preserves_flags),
-        )
-    }
-    value
-}
-
-#[cfg(not(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-)))]
-#[allow(dead_code)]
-fn io_in32(_port: u16) -> u32 {
-    0
-}
-
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
-#[allow(dead_code)]
-fn io_in8(port: u16) -> u8 {
-    let value: u8;
-    unsafe {
-        core::arch::asm!(
-            "in al, dx",
-            in("dx") port,
-            out("al") value,
-            options(nomem, nostack, preserves_flags),
-        )
-    }
-    value
-}
-
-#[cfg(not(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-)))]
-#[allow(dead_code)]
-fn io_in8(_port: u16) -> u8 {
-    0
-}
-
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-))]
-fn io_out32(port: u16, value: u32) {
-    unsafe {
-        core::arch::asm!(
-            "out dx, eax",
-            in("dx") port,
-            in("eax") value,
-            options(nomem, nostack, preserves_flags),
-        )
-    }
-}
-
-#[cfg(not(all(
-    target_arch = "x86_64",
-    any(target_os = "none", target_os = "uefi")
-)))]
-fn io_out32(_port: u16, _value: u32) {}

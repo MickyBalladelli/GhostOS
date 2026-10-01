@@ -53,6 +53,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/page_fault.rs` (handler dispatch, stack growth and COW fault policy) | `src/page_fault.c` | `include/ghostos/page_fault.h` |
 | `kernel/src/partition.rs` (CPU online, isolation, and housekeeping policy) | `src/partition.c` | `include/ghostos/partition.h` |
 | `kernel/src/pci.rs` (x86 PCI bus scan and bounded inventory capture) | `src/pci.c` | `include/ghostos/pci.h` |
+| `kernel/src/persistence.rs` (bounded port I/O and checksummed boot/crash record container) | `src/persistence.c` | `include/ghostos/persistence.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

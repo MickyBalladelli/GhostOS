@@ -71,8 +71,8 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/mouse_stub.rs` — non-x86 Rust API now calls a C stub that always returns an empty mouse state. Caller and target build parity remain.
 - [ ] `kernel/src/page_fault.rs` — C now owns x86 fault decoding, one-time handler install and dispatch, quota consume/refund ordering, stack-map-before-commit ordering, and COW write sequencing. Rust adapters retain the native capability, allocator, and address-space objects; moving those objects and full cutover remain.
 - [ ] `kernel/src/partition.rs` — active kernel methods call C for CPU mask queries, housekeeping policy, and online/isolate/release transitions. Host builds retain Rust-only fallback; scheduler still owns the partition state, so full state cutover remains.
-- [ ] `kernel/src/pci.rs` — x86 kernel discovery now uses the C CF8/CFC scanner and converts results into the existing Rust boot inventory. Inventory capacity and boot logging stay unchanged; full C inventory ownership remains.
-- [ ] `kernel/src/persistence.rs`
+- [ ] `kernel/src/pci.rs` — C owns the x86 CF8/CFC scan and bounded 64-device inventory. Rust adapts entries to the existing boot-facing iterator and logging; driver and storage consumers still use that adapter.
+- [ ] `kernel/src/persistence.rs` — C performs bounded x86 persistence-port load/save/flush. Rust retains record-container encoding and boot/crash record policy through the C storage adapter.
 - [ ] `kernel/src/persona.rs`
 - [ ] `kernel/src/physical_storage.rs`
 - [ ] `kernel/src/power.rs`

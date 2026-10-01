@@ -29,8 +29,11 @@ typedef struct {
     uint8_t interrupt_line, interrupt_pin;
 } ghostos_pci_device_info;
 
-typedef void (*ghostos_pci_visit_fn)(void *context, const ghostos_pci_device_info *device);
+typedef struct {
+    ghostos_pci_device_info devices[GHOSTOS_PCI_DEVICE_CAPACITY];
+    size_t count;
+} ghostos_pci_inventory_info;
 
-size_t ghostos_pci_enumerate_x86(ghostos_pci_visit_fn visit, void *context);
+void ghostos_pci_enumerate_x86(ghostos_pci_inventory_info *inventory);
 
 #endif
