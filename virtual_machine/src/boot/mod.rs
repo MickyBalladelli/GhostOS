@@ -7,6 +7,31 @@ use ghostos_boot_protocol::{
     BOOT_INFO_VERSION, FRAMEBUFFER_PIXEL_BGR, FRAMEBUFFER_PIXEL_RGB, MAX_MEMORY_REGIONS,
 };
 
+#[repr(C)]
+#[derive(Default)]
+struct CMultibootInfo {
+    flags: u32,
+    mem_lower: u32,
+    mem_upper: u32,
+    boot_device: u32,
+    cmdline: u32,
+    mods_count: u32,
+    mods_addr: u32,
+}
+
+unsafe extern "C" {
+    fn ghostos_vm_boot_find_multiboot_header(
+        kernel: *const u8,
+        length: usize,
+        offset: *mut u32,
+    ) -> bool;
+    fn ghostos_vm_boot_parse_multiboot(
+        header: *const u8,
+        length: usize,
+        info: *mut CMultibootInfo,
+    ) -> bool;
+}
+
 pub const KERNEL_LOAD_ADDR: u64 = 0x0010_0000;
 pub const BOOT_INFO_ADDR: u64 = 0x0000_7000;
 pub const CMDLINE_ADDR: u64 = 0x0000_8000;
@@ -436,28 +461,26 @@ pub struct MultibootInfo {
 }
 
 pub fn multiboot_header(kernel: &[u8]) -> Option<u32> {
-    let limit = kernel.len().min(8192);
-    (0..limit.saturating_sub(11)).step_by(4).find_map(|i| {
-        let magic = u32::from_le_bytes(kernel[i..i + 4].try_into().ok()?);
-        let flags = u32::from_le_bytes(kernel[i + 4..i + 8].try_into().ok()?);
-        let checksum = u32::from_le_bytes(kernel[i + 8..i + 12].try_into().ok()?);
-        (magic == MULTIBOOT_HEADER_MAGIC && magic.wrapping_add(flags).wrapping_add(checksum) == 0)
-            .then_some(i as u32)
-    })
+    let mut offset = 0;
+    unsafe {
+        ghostos_vm_boot_find_multiboot_header(kernel.as_ptr(), kernel.len(), &mut offset)
+            .then_some(offset)
+    }
 }
 
 pub fn parse_multiboot(header: &[u8]) -> Option<MultibootInfo> {
-    if header.len() < 28 {
+    let mut info = CMultibootInfo::default();
+    if !unsafe { ghostos_vm_boot_parse_multiboot(header.as_ptr(), header.len(), &mut info) } {
         return None;
     }
     Some(MultibootInfo {
-        flags: read_u32(header, 0)?,
-        mem_lower: read_u32(header, 4)?,
-        mem_upper: read_u32(header, 8)?,
-        boot_device: read_u32(header, 12)?,
-        cmdline: read_u32(header, 16)?,
-        mods_count: read_u32(header, 20)?,
-        mods_addr: read_u32(header, 24)?,
+        flags: info.flags,
+        mem_lower: info.mem_lower,
+        mem_upper: info.mem_upper,
+        boot_device: info.boot_device,
+        cmdline: info.cmdline,
+        mods_count: info.mods_count,
+        mods_addr: info.mods_addr,
     })
 }
 
@@ -778,12 +801,6 @@ fn multiboot_mmap(memory_size: u64) -> Vec<u8> {
 
 fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(
-        bytes.get(offset..offset + 4)?.try_into().ok()?,
-    ))
 }
 
 pub fn framebuffer_info(gop: &crate::devices::UefiGop) -> FramebufferInfo {
