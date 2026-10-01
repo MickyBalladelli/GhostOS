@@ -5,7 +5,7 @@ CFLAGS ?= -O2 -g
 CPPFLAGS += -Ic/include
 GHOSTOS_CFLAGS = -std=c11 -Wall -Wextra -Werror -pedantic
 BUILD_DIR ?= build/c
-SOURCES = c/src/status.c c/src/abi.c c/src/api_compat.c c/src/protocol.c c/src/boot_protocol.c c/src/address_space.c c/src/frame_allocator.c c/src/cow.c c/src/arch_aarch64.c c/src/arch_riscv64.c c/src/arch_x86_64.c c/src/arch_unsupported.c c/src/cpu_topology.c c/src/arch.c c/src/boot_diagnostics.c c/src/boot_services.c c/src/capability.c c/src/console.c c/src/contention.c c/src/crash.c c/src/dlm.c c/src/dma.c
+SOURCES = c/src/status.c c/src/abi.c c/src/api_compat.c c/src/protocol.c c/src/boot_protocol.c c/src/address_space.c c/src/frame_allocator.c c/src/cow.c c/src/arch_aarch64.c c/src/arch_riscv64.c c/src/arch_x86_64.c c/src/arch_unsupported.c c/src/cpu_topology.c c/src/arch.c c/src/boot_diagnostics.c c/src/boot_services.c c/src/capability.c c/src/console.c c/src/contention.c c/src/crash.c c/src/dlm.c c/src/dma.c c/src/driver_capabilities.c
 OBJECTS = $(patsubst c/src/%.c,$(BUILD_DIR)/%.o,$(SOURCES))
 HEADERS = $(wildcard c/include/ghostos/*.h)
 TEST_SUPPORT_OBJECTS = $(BUILD_DIR)/test_support/property.o
