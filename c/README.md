@@ -55,6 +55,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/pci.rs` (x86 PCI bus scan and bounded inventory capture) | `src/pci.c` | `include/ghostos/pci.h` |
 | `kernel/src/persistence.rs` (bounded port I/O and checksummed boot/crash record container) | `src/persistence.c` | `include/ghostos/persistence.h` |
 | `kernel/src/persona.rs` (fixed-capacity active and disabled execution rights) | `src/persona.c` | `include/ghostos/persona.h` |
+| `kernel/src/physical_storage.rs` (AHCI candidate selection and expected-volume policy) | `src/physical_storage.c` | `include/ghostos/physical_storage.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

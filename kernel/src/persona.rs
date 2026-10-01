@@ -116,9 +116,15 @@ impl ExecutionPersona {
     }
 
     pub fn add(&mut self, right: RightIdentifier) -> Result<(), PersonaError> {
+        let mut error = 0;
         // SAFETY: C mutates this uniquely borrowed persona.
-        let result = unsafe { ghostos_persona_add(&mut self.raw, right.raw(), core::ptr::null_mut()) };
-        result.then_some(()).ok_or(PersonaError::Full)
+        if unsafe { ghostos_persona_add(&mut self.raw, right.raw(), &mut error) } {
+            Ok(())
+        } else if error == 1 {
+            Err(PersonaError::Full)
+        } else {
+            Err(PersonaError::NotFound)
+        }
     }
 
     pub fn disable(&mut self, right: RightIdentifier) -> Result<(), PersonaError> {

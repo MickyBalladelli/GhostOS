@@ -2,12 +2,82 @@
 
 use crate::pci::PciInventory;
 
+const STORAGE_DEVICE_CAPACITY: usize = 64;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CStoragePciDevice {
+    bus: u8,
+    device: u8,
+    function: u8,
+    class_code: u8,
+    subclass: u8,
+    programming_interface: u8,
+    bar5_kind: u8,
+    bar5_address: u64,
+}
+
+impl CStoragePciDevice {
+    const EMPTY: Self = Self {
+        bus: 0,
+        device: 0,
+        function: 0,
+        class_code: 0,
+        subclass: 0,
+        programming_interface: 0,
+        bar5_kind: 0,
+        bar5_address: 0,
+    };
+}
+
+#[allow(unsafe_code)]
+unsafe extern "C" {
+    fn ghostos_physical_storage_missing_volume(
+        devices: *const CStoragePciDevice,
+        count: usize,
+        mounted: bool,
+    ) -> bool;
+    fn ghostos_physical_storage_next_ahci(
+        devices: *const CStoragePciDevice,
+        count: usize,
+        start: usize,
+    ) -> usize;
+}
+
+#[allow(unsafe_code)]
+fn storage_devices(inventory: &PciInventory) -> ([CStoragePciDevice; STORAGE_DEVICE_CAPACITY], usize) {
+    let mut devices = [CStoragePciDevice::EMPTY; STORAGE_DEVICE_CAPACITY];
+    let mut count = 0;
+    for device in inventory.iter().take(STORAGE_DEVICE_CAPACITY) {
+        let (bar5_kind, bar5_address) = match device.bars[5] {
+            ghostos_legacy_pc_drivers::Bar::Memory32 { address, .. } => (2, address as u64),
+            ghostos_legacy_pc_drivers::Bar::Memory64 { address, .. } => (3, address),
+            _ => (0, 0),
+        };
+        devices[count] = CStoragePciDevice {
+            bus: device.address.bus,
+            device: device.address.device,
+            function: device.address.function,
+            class_code: device.class,
+            subclass: device.subclass,
+            programming_interface: device.programming_interface,
+            bar5_kind,
+            bar5_address,
+        };
+        count += 1;
+    }
+    (devices, count)
+}
+
 pub(crate) fn missing_expected_system_volume(inventory: &PciInventory, mounted: bool) -> bool {
-    !mounted && inventory.iter().any(|device| device.is_ahci())
+    let (devices, count) = storage_devices(inventory);
+    // SAFETY: the C policy reads only the initialized entries within count.
+    unsafe { ghostos_physical_storage_missing_volume(devices.as_ptr(), count, mounted) }
 }
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")))]
 mod platform {
+    use super::{ghostos_physical_storage_next_ahci, storage_devices};
     use core::mem::MaybeUninit;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -51,18 +121,31 @@ mod platform {
     static SERVICE_LENGTHS: [AtomicUsize; 15] = [const { AtomicUsize::new(0) }; 15];
 
     pub fn mount(inventory: &PciInventory) -> Option<SynFs<SYSTEM_VOLUME_BLOCKS>> {
-        for device in inventory.iter().filter(|device| device.is_ahci()) {
-            let Some(registers) = device.bars[5].memory_address() else {
-                continue
+        let (devices, count) = storage_devices(inventory);
+        let mut start = 0;
+        loop {
+            // SAFETY: the C selector reads only initialized records in this array.
+            let index = unsafe {
+                ghostos_physical_storage_next_ahci(devices.as_ptr(), count, start)
             };
+            if index >= count {
+                break
+            }
+            start = index + 1;
+            let device = devices[index];
             let mut config = PortConfig;
-            let command = unsafe { config.read_u32(device.address, 0x04) };
-            unsafe { config.write_u32(device.address, 0x04, command | 0x6) };
-            let Some(filesystem) = (unsafe { mount_controller(registers as usize) }) else {
+            let address = ghostos_legacy_pc_drivers::pci::PciAddress::new(
+                device.bus,
+                device.device,
+                device.function,
+            )?;
+            let command = unsafe { config.read_u32(address, 0x04) };
+            unsafe { config.write_u32(address, 0x04, command | 0x6) };
+            let Some(filesystem) = (unsafe { mount_controller(device.bar5_address as usize) }) else {
                 continue
             };
             crate::println!("physical GhostFS mounted from AHCI {:02x}:{:02x}.{}",
-                device.address.bus, device.address.device, device.address.function);
+                device.bus, device.device, device.function);
             return Some(filesystem)
         }
         crate::println!("no mountable AHCI GhostOS system volume; using bootstrap filesystem");
