@@ -48,6 +48,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/main.rs` (boot entry and panic-handler bridge) | `src/main.c` | `include/ghostos/main.h` |
 | `kernel/src/micro_silo.rs` (hardware isolation policy, tenant-only visibility, and bounded memory ranges) | `src/micro_silo.c` | `include/ghostos/micro_silo.h` |
 | `kernel/src/monitor.rs` (process, CPU, DSM, and memory monitor views) | `src/monitor.c` | `include/ghostos/monitor.h` |
+| `kernel/src/mouse.rs` (PS/2 packet collection and signed motion state) | `src/mouse.c` | `include/ghostos/mouse.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
