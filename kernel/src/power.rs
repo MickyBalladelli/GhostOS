@@ -1,17 +1,47 @@
-use core::ptr::{read_volatile, write_volatile};
-
 use ghostos_boot_protocol::{BootInfo, MemoryKind};
 use ghostos_power::{
     AcpiError, AcpiMemory, AcpiPlatform, AddressSpace, FixedEvent, GenericAddress,
     PowerController, PowerIo, PowerState,
 };
 
-#[cfg(target_arch = "x86_64")]
-const VM_POWER_CONTROL_PORT: u16 = 0x604;
-#[cfg(target_arch = "x86_64")]
-const VM_REBOOT_VALUE: u16 = 1 << 13;
-#[cfg(target_arch = "x86_64")]
-const VM_SOFT_OFF_VALUE: u16 = (5 << 10) | (1 << 13);
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CMemoryRegion {
+    start: u64,
+    length: u64,
+    kind: u32,
+    attributes: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CPowerRegister {
+    address_space: u8,
+    bit_width: u8,
+    bit_offset: u8,
+    access_size: u8,
+    address: u64,
+}
+
+unsafe extern "C" {
+    fn ghostos_power_acpi_read(
+        regions: *const CMemoryRegion,
+        region_count: usize,
+        physical_offset: u64,
+        physical_address: u64,
+        destination: *mut u8,
+        length: usize,
+    ) -> bool;
+    #[cfg(test)]
+    fn ghostos_power_register_access_bytes(register: CPowerRegister, bytes: *mut u8) -> i32;
+    #[cfg(test)]
+    fn ghostos_power_extract_field(raw: u64, register: CPowerRegister) -> u64;
+    fn ghostos_power_register_read(register: CPowerRegister, value: *mut u64) -> i32;
+    fn ghostos_power_register_write(register: CPowerRegister, value: u64) -> i32;
+    fn ghostos_power_vm_shutdown();
+    fn ghostos_power_vm_reboot();
+    fn ghostos_power_reboot_fallback();
+}
 
 struct PhysicalAcpiMemory<'a> {
     boot_info: &'a BootInfo,
@@ -23,30 +53,34 @@ impl AcpiMemory for PhysicalAcpiMemory<'_> {
         physical_address: u64,
         destination: &mut [u8],
     ) -> Result<(), AcpiError> {
-        let end = physical_address
-            .checked_add(destination.len() as u64)
-            .ok_or(AcpiError::InvalidAddress)?;
-        let mapped = self.boot_info.regions().iter().any(|region| {
-            region.kind != MemoryKind::Usable
-                && physical_address >= region.start
-                && end <= region.end()
-        });
-        if !mapped {
-            return Err(AcpiError::InvalidAddress)
-        }
-        let virtual_address = physical_address
-            .checked_add(self.boot_info.physical_address_offset)
-            .ok_or(AcpiError::InvalidAddress)?;
-        let source = usize::try_from(virtual_address)
-            .map_err(|_| AcpiError::InvalidAddress)? as *const u8;
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                source,
+        let regions = self.boot_info.regions();
+        let c_regions: [CMemoryRegion; ghostos_boot_protocol::MAX_MEMORY_REGIONS] =
+            core::array::from_fn(|index| {
+                regions.get(index).map_or(
+                    CMemoryRegion { start: 0, length: 0, kind: MemoryKind::Usable as u32, attributes: 0 },
+                    |region| CMemoryRegion {
+                        start: region.start,
+                        length: region.length,
+                        kind: region.kind as u32,
+                        attributes: region.attributes,
+                    },
+                )
+            });
+        // SAFETY: C reads the copied region map and writes only the destination slice.
+        if unsafe {
+            ghostos_power_acpi_read(
+                c_regions.as_ptr(),
+                regions.len(),
+                self.boot_info.physical_address_offset,
+                physical_address,
                 destination.as_mut_ptr(),
                 destination.len(),
             )
+        } {
+            Ok(())
+        } else {
+            Err(AcpiError::InvalidAddress)
         }
-        Ok(())
     }
 }
 
@@ -146,15 +180,8 @@ pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
         request_vm_reboot()
     }
 
-    #[cfg(target_arch = "x86_64")]
     unsafe {
-        core::arch::asm!("cli", options(nomem, nostack));
-        let mut attempts = 100_000;
-        while attempts != 0 && in_u8(0x64) & 0x02 != 0 {
-            attempts -= 1;
-            core::hint::spin_loop()
-        }
-        out_u8(0x64, 0xfe)
+        ghostos_power_reboot_fallback()
     }
     crate::halt()
 }
@@ -162,30 +189,23 @@ pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
 struct PlatformIo;
 
 fn request_vm_reboot() {
-    #[cfg(target_arch = "x86_64")]
     unsafe {
-        out_u16(VM_POWER_CONTROL_PORT, VM_REBOOT_VALUE)
+        ghostos_power_vm_reboot()
     }
 }
 
 fn request_vm_shutdown() {
-    #[cfg(target_arch = "x86_64")]
     unsafe {
-        out_u16(VM_POWER_CONTROL_PORT, VM_SOFT_OFF_VALUE)
+        ghostos_power_vm_shutdown()
     }
 }
 
 impl PowerIo for PlatformIo {
     fn read(&mut self, register: GenericAddress) -> Result<u64, AcpiError> {
-        let bytes = access_bytes(register)?;
-        let raw = match register.address_space {
-            AddressSpace::SystemMemory => unsafe {
-                read_memory(register.address, bytes)?
-            },
-            AddressSpace::SystemIo => unsafe { read_io(register.address, bytes)? },
-            _ => return Err(AcpiError::Unsupported),
-        };
-        Ok(extract_field(raw, register))
+        let mut value = 0;
+        // SAFETY: C performs validated volatile access for the ACPI register.
+        map_io_error(unsafe { ghostos_power_register_read(c_register(register), &mut value) })?;
+        Ok(value)
     }
 
     fn write(
@@ -193,118 +213,46 @@ impl PowerIo for PlatformIo {
         register: GenericAddress,
         value: u64,
     ) -> Result<(), AcpiError> {
-        let bytes = access_bytes(register)?;
-        let shifted = value
-            .checked_shl(register.bit_offset as u32)
-            .ok_or(AcpiError::InvalidAddress)?;
-        match register.address_space {
-            AddressSpace::SystemMemory => unsafe {
-                write_memory(register.address, bytes, shifted)
-            },
-            AddressSpace::SystemIo => unsafe { write_io(register.address, bytes, shifted) },
-            _ => Err(AcpiError::Unsupported),
-        }
+        // SAFETY: C validates the address and performs the selected volatile write.
+        map_io_error(unsafe { ghostos_power_register_write(c_register(register), value) })
     }
 }
 
-fn access_bytes(register: GenericAddress) -> Result<u8, AcpiError> {
-    let bytes = match register.access_size {
-        1 => 1,
-        2 => 2,
-        3 => 4,
-        4 => 8,
-        0 => match register.bit_width.saturating_add(register.bit_offset) {
-            0..=8 => 1,
-            9..=16 => 2,
-            17..=32 => 4,
-            _ => 8,
-        },
-        _ => return Err(AcpiError::Unsupported),
+fn c_register(register: GenericAddress) -> CPowerRegister {
+    let address_space = match register.address_space {
+        AddressSpace::SystemMemory => 0,
+        AddressSpace::SystemIo => 1,
+        _ => 0xff,
     };
-    if register.address == 0 || register.address % bytes as u64 != 0 {
-        Err(AcpiError::InvalidAddress)
-    } else {
-        Ok(bytes)
+    CPowerRegister {
+        address_space,
+        bit_width: register.bit_width,
+        bit_offset: register.bit_offset,
+        access_size: register.access_size,
+        address: register.address,
     }
 }
 
+fn map_io_error(error: i32) -> Result<(), AcpiError> {
+    match error {
+        0 => Ok(()),
+        1 => Err(AcpiError::InvalidAddress),
+        _ => Err(AcpiError::Unsupported),
+    }
+}
+
+#[cfg(test)]
+fn access_bytes(register: GenericAddress) -> Result<u8, AcpiError> {
+    let mut bytes = 0;
+    // SAFETY: C helper only validates the register description and writes one byte.
+    map_io_error(unsafe { ghostos_power_register_access_bytes(c_register(register), &mut bytes) })?;
+    Ok(bytes)
+}
+
+#[cfg(test)]
 fn extract_field(raw: u64, register: GenericAddress) -> u64 {
-    let shifted = raw >> register.bit_offset;
-    if register.bit_width >= 64 {
-        shifted
-    } else {
-        shifted & ((1_u64 << register.bit_width) - 1)
-    }
-}
-
-unsafe fn read_memory(address: u64, bytes: u8) -> Result<u64, AcpiError> {
-    let pointer =
-        usize::try_from(address).map_err(|_| AcpiError::InvalidAddress)? as *const u8;
-    Ok(unsafe {
-        match bytes {
-            1 => read_volatile(pointer) as u64,
-            2 => read_volatile(pointer.cast::<u16>()) as u64,
-            4 => read_volatile(pointer.cast::<u32>()) as u64,
-            8 => read_volatile(pointer.cast::<u64>()),
-            _ => return Err(AcpiError::Unsupported),
-        }
-    })
-}
-
-unsafe fn write_memory(
-    address: u64,
-    bytes: u8,
-    value: u64,
-) -> Result<(), AcpiError> {
-    let pointer =
-        usize::try_from(address).map_err(|_| AcpiError::InvalidAddress)? as *mut u8;
-    unsafe {
-        match bytes {
-            1 => write_volatile(pointer, value as u8),
-            2 => write_volatile(pointer.cast::<u16>(), value as u16),
-            4 => write_volatile(pointer.cast::<u32>(), value as u32),
-            8 => write_volatile(pointer.cast::<u64>(), value),
-            _ => return Err(AcpiError::Unsupported),
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn read_io(address: u64, bytes: u8) -> Result<u64, AcpiError> {
-    let port = u16::try_from(address).map_err(|_| AcpiError::InvalidAddress)?;
-    Ok(unsafe {
-        match bytes {
-            1 => in_u8(port) as u64,
-            2 => in_u16(port) as u64,
-            4 => in_u32(port) as u64,
-            _ => return Err(AcpiError::Unsupported),
-        }
-    })
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-unsafe fn read_io(_address: u64, _bytes: u8) -> Result<u64, AcpiError> {
-    Err(AcpiError::Unsupported)
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn write_io(address: u64, bytes: u8, value: u64) -> Result<(), AcpiError> {
-    let port = u16::try_from(address).map_err(|_| AcpiError::InvalidAddress)?;
-    unsafe {
-        match bytes {
-            1 => out_u8(port, value as u8),
-            2 => out_u16(port, value as u16),
-            4 => out_u32(port, value as u32),
-            _ => return Err(AcpiError::Unsupported),
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-unsafe fn write_io(_address: u64, _bytes: u8, _value: u64) -> Result<(), AcpiError> {
-    Err(AcpiError::Unsupported)
+    // SAFETY: C helper extracts the validated ACPI field without accessing hardware.
+    unsafe { ghostos_power_extract_field(raw, c_register(register)) }
 }
 
 #[cfg(test)]
@@ -352,53 +300,5 @@ mod tests {
             ..register(8)
         };
         assert_eq!(extract_field(u64::MAX, wide), u64::MAX);
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn in_u8(port: u16) -> u8 {
-    let value;
-    unsafe {
-        core::arch::asm!("in al, dx", out("al") value, in("dx") port, options(nomem, nostack))
-    }
-    value
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn in_u16(port: u16) -> u16 {
-    let value;
-    unsafe {
-        core::arch::asm!("in ax, dx", out("ax") value, in("dx") port, options(nomem, nostack))
-    }
-    value
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn in_u32(port: u16) -> u32 {
-    let value;
-    unsafe {
-        core::arch::asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack))
-    }
-    value
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn out_u8(port: u16, value: u8) {
-    unsafe {
-        core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack))
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn out_u16(port: u16, value: u16) {
-    unsafe {
-        core::arch::asm!("out dx, ax", in("dx") port, in("ax") value, options(nomem, nostack))
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn out_u32(port: u16, value: u32) {
-    unsafe {
-        core::arch::asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack))
     }
 }
