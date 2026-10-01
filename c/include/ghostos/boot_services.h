@@ -91,6 +91,7 @@ typedef struct {
     ghostos_status (*transaction_delete)(void *context, void *transaction,
                                          const char *path);
     ghostos_status (*transaction_commit)(void *context, void *transaction);
+    void (*transaction_abort)(void *context, void *transaction);
     ghostos_status (*sync)(void *context);
     ghostos_status (*validate_passkey)(void *context, const uint8_t *key,
                                        size_t key_length);
@@ -113,6 +114,7 @@ typedef struct {
     bool first_admin_sync_pending;
     bool recovery_sync_pending;
     uint64_t shell_filesystem_capability;
+    uint32_t shell_filesystem_rights;
     uint8_t first_admin_username_length;
     uint8_t first_admin_username[GHOSTOS_BOOT_ADMIN_USERNAME_BYTES];
 } ghostos_boot_state;
@@ -184,6 +186,14 @@ bool ghostos_boot_local_passkey_keys(ghostos_boot_state *state,
                                                   [GHOSTOS_BOOT_ADMIN_CREDENTIAL_BYTES],
                                      uint8_t lengths[GHOSTOS_BOOT_PASSKEY_MAX_KEYS],
                                      size_t *key_count);
+ghostos_status ghostos_boot_local_passkey_sign_count(ghostos_boot_state *state,
+                                                      const uint8_t *username,
+                                                      size_t username_length,
+                                                      const uint8_t key_fingerprint[32],
+                                                      uint32_t *sign_count);
+ghostos_status ghostos_boot_local_passkey_record_sign_count(
+    ghostos_boot_state *state, const uint8_t *username, size_t username_length,
+    const uint8_t key_fingerprint[32], uint32_t sign_count);
 bool ghostos_local_passkey_find(const ghostos_local_passkey_record *records,
                                 size_t record_count, const uint8_t *username,
                                 size_t username_length,
