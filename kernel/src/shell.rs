@@ -1271,31 +1271,27 @@ fn expand_command(
     let Some(command) = registry.unique_suggestion(line).unwrap_or(None) else {
         return Ok(false)
     };
-    let Some((start, end)) = command_span(line) else {
-        return Ok(false)
-    };
-    let Some(first) = word_span(line, 0) else {
-        return Ok(false)
-    };
-    let is_help = line[first.0..first.1].eq_ignore_ascii_case("HELP");
-    if is_help && word_span(line, first.1).is_none() {
-        return Ok(false)
+    let command = command.as_str();
+    let mut output = [0; MAX_LINE_BYTES];
+    let mut output_length = 0;
+    match unsafe {
+        ghostos_shell_expand_command(
+            line.as_ptr(),
+            line.len() as u32,
+            command.as_ptr(),
+            command.len() as u32,
+            output.as_mut_ptr(),
+            output.len() as u32,
+            &mut output_length,
+        )
+    } {
+        0 => return Ok(false),
+        1 => {}
+        _ => return Err(Error::LineTooLong),
     }
-    let mut replacement = Text::<MAX_LINE_BYTES>::empty();
-    if is_help {
-        replacement.push_str("HELP ")?;
-    }
-    let command_bytes = command.as_str().as_bytes();
-    let mut index = 0;
-    while index < command_bytes.len() {
-        let byte = command_bytes[index];
-        replacement.push_char(if byte == b'-' { ' ' } else { byte as char })?;
-        index += 1;
-    }
-    if line[start..end].eq_ignore_ascii_case(replacement.as_str()) {
-        return Ok(false)
-    }
-    replace_span(editor, start, end, replacement.as_str())?;
+    let updated = core::str::from_utf8(&output[..output_length as usize])
+        .map_err(|_| Error::InvalidSyntax)?;
+    editor.replace_line(updated)?;
     redraw(editor, line_render);
     Ok(true)
 }

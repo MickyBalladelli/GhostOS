@@ -4,6 +4,7 @@
 #define VT_ESCAPE 1u
 #define VT_CSI 2u
 #define VT_SS3 3u
+#define SHELL_COMMAND_BUFFER_BYTES 512u
 
 static ghostos_vt_key key(uint32_t kind) { return (ghostos_vt_key){kind, 0}; }
 static ghostos_vt_key character(uint32_t value) { return (ghostos_vt_key){GHOSTOS_VT_KEY_CHARACTER, value}; }
@@ -229,9 +230,11 @@ uint32_t ghostos_shell_expand_command(const uint8_t *line, uint32_t line_length,
     }
     uint32_t span_start = start_word.start, span_end = end_word.end;
     uint32_t replacement_length = is_help ? 5u : 0u;
-    if (command_length > output_capacity || replacement_length > output_capacity - command_length)
+    if (command_length > SHELL_COMMAND_BUFFER_BYTES ||
+        replacement_length > SHELL_COMMAND_BUFFER_BYTES - command_length ||
+        command_length > output_capacity || replacement_length > output_capacity - command_length)
         return 2;
-    uint8_t replacement[512];
+    uint8_t replacement[SHELL_COMMAND_BUFFER_BYTES];
     if (replacement_length) {
         replacement[0] = 'H'; replacement[1] = 'E'; replacement[2] = 'L';
         replacement[3] = 'P'; replacement[4] = ' ';
