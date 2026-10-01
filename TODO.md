@@ -42,7 +42,7 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/address_space.rs`
 - [x] `kernel/src/allocator.rs`
 - [x] `kernel/src/arch/aarch64.rs`
-- [ ] `kernel/src/arch/cpu.rs`
+- [x] `kernel/src/arch/cpu.rs`
 - [ ] `kernel/src/arch/mod.rs`
 - [ ] `kernel/src/arch/riscv64.rs`
 - [ ] `kernel/src/arch/unsupported.rs`
