@@ -19,6 +19,8 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `crates/protocol/src/lib.rs` | `src/protocol.c` | `include/ghostos/protocol.h` |
 | `crates/boot-protocol/src/lib.rs` | `src/boot_protocol.c` | `include/ghostos/boot_protocol.h` |
 | `kernel/src/address_space.rs` | `src/address_space.c` | `include/ghostos/address_space.h` |
+| `kernel/src/allocator.rs` | `src/frame_allocator.c` | `include/ghostos/frame_allocator.h` |
+| `kernel/src/arch/aarch64.rs` | `src/arch_aarch64.c` | `include/ghostos/arch_aarch64.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
@@ -29,6 +31,11 @@ keeps its 16-byte alignment and native pointer-size region count. Compile-time
 assertions enforce the structure sizes and offsets. RPC frames are encoded field
 by field in network byte order, including the two reserved zero bytes. Do not
 send a C RPC header structure directly over a transport.
+
+The AArch64 kernel implementation is enabled for AArch64 ELF builds. The host
+build keeps inert architecture stubs so the portable foundation library builds
+on development machines. Exception callbacks must be installed before enabling
+the AArch64 vector table.
 
 `userspace/boot-services/service.c`, `login.c`, and `shell.c` now use the generated
 request/response types and operation IDs instead of private copies. The kernel
