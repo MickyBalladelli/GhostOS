@@ -3,6 +3,29 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU8, Ordering};
 use ghostos_legacy_pc_drivers::pci::{Bar, ConfigAccess, PortConfig, enumerate};
 
+#[repr(C)]
+struct CKeyboardState {
+    previous: [u8; 6],
+    caps_lock: u8,
+    pending: [u8; 6],
+    pending_start: usize,
+    pending_count: usize,
+}
+
+unsafe extern "C" {
+    fn ghostos_usb_keyboard_init(state: *mut CKeyboardState);
+    fn ghostos_usb_keyboard_process_report(state: *mut CKeyboardState, report: *const u8);
+    fn ghostos_usb_keyboard_take_byte(state: *mut CKeyboardState, byte: *mut u8) -> bool;
+    fn ghostos_usb_keyboard_find_descriptor(
+        bytes: *const u8,
+        length: usize,
+        interface_number: *mut u8,
+        endpoint: *mut u8,
+        packet_size: *mut u16,
+        interval: *mut u8,
+    ) -> bool;
+}
+
 const TRB_COUNT: usize = 256;
 const EVENT_COUNT: usize = 256;
 const CONTEXT_BYTES: usize = 4096;
@@ -132,11 +155,7 @@ struct Xhci {
 
 pub struct UsbKeyboard {
     controller: Xhci,
-    previous: [u8; 6],
-    caps_lock: bool,
-    pending: [u8; 6],
-    pending_start: usize,
-    pending_count: usize,
+    state: CKeyboardState,
 }
 
 static mut BOOT_KEYBOARD: MaybeUninit<UsbKeyboard> = MaybeUninit::uninit();
@@ -169,63 +188,32 @@ impl UsbKeyboard {
             controller.initialize()?;
             controller.attach_keyboard()?;
         }
-        Some(Self {
-            controller,
+        let mut state = CKeyboardState {
             previous: [0; 6],
-            caps_lock: false,
+            caps_lock: 0,
             pending: [0; 6],
             pending_start: 0,
             pending_count: 0,
+        };
+        unsafe { ghostos_usb_keyboard_init(&mut state) };
+        Some(Self {
+            controller,
+            state,
         })
     }
 
     pub fn read_byte(&mut self) -> Option<u8> {
-        if self.pending_count != 0 {
-            let byte = self.pending[self.pending_start];
-            self.pending_start = (self.pending_start + 1) % self.pending.len();
-            self.pending_count -= 1;
-            return Some(byte);
+        let mut byte = 0;
+        if unsafe { ghostos_usb_keyboard_take_byte(&mut self.state, &mut byte) } {
+            return Some(byte)
         }
 
         let report = unsafe { self.controller.poll_report()? };
-        let modifiers = report[0];
-        for usage in report[2..8].iter().copied().filter(|usage| *usage != 0) {
-            if self.previous.contains(&usage) {
-                continue;
-            }
-            if usage == 0x39 {
-                self.caps_lock = !self.caps_lock;
-                continue;
-            }
-            if let Some(sequence) = navigation_sequence(usage, modifiers & 0x22 != 0) {
-                self.queue_sequence(sequence);
-                continue;
-            }
-            if let Some(byte) = hid_usage(usage, modifiers, self.caps_lock) {
-                if self.pending_count < self.pending.len() {
-                    let index = (self.pending_start + self.pending_count) % self.pending.len();
-                    self.pending[index] = byte;
-                    self.pending_count += 1
-                }
-            }
-        }
-        self.previous.copy_from_slice(&report[2..8]);
-
-        if self.pending_count == 0 {
-            None
+        unsafe { ghostos_usb_keyboard_process_report(&mut self.state, report.as_ptr()) };
+        if unsafe { ghostos_usb_keyboard_take_byte(&mut self.state, &mut byte) } {
+            Some(byte)
         } else {
-            self.read_byte()
-        }
-    }
-
-    fn queue_sequence(&mut self, sequence: &[u8]) {
-        for byte in sequence.iter().copied() {
-            if self.pending_count == self.pending.len() {
-                return;
-            }
-            let index = (self.pending_start + self.pending_count) % self.pending.len();
-            self.pending[index] = byte;
-            self.pending_count += 1
+            None
         }
     }
 }
@@ -414,8 +402,23 @@ impl Xhci {
         let configuration_value = unsafe { CONTROL_BUFFER.0[5] };
         let fetched =
             unsafe { self.control_in(0x80, 6, 0x0200, 0, total_length.min(BUFFER_BYTES) as u16)? };
-        let (interface, endpoint, packet_size, interval) =
-            unsafe { find_keyboard_descriptor(fetched)? };
+        let mut interface = 0;
+        let mut endpoint = 0;
+        let mut packet_size = 0;
+        let mut interval = 0;
+        let found = unsafe {
+            ghostos_usb_keyboard_find_descriptor(
+                (&raw const CONTROL_BUFFER.0).cast::<u8>(),
+                fetched,
+                &mut interface,
+                &mut endpoint,
+                &mut packet_size,
+                &mut interval,
+            )
+        };
+        if !found {
+            return None;
+        }
 
         unsafe {
             self.control_out(0x00, 9, configuration_value as u16, 0)?;
@@ -669,95 +672,6 @@ fn setup_packet(request_type: u8, request: u8, value: u16, index: u16, length: u
         | (value as u64) << 16
         | (index as u64) << 32
         | (length as u64) << 48
-}
-
-unsafe fn find_keyboard_descriptor(length: usize) -> Option<(u8, u8, u16, u8)> {
-    let mut offset = 0;
-    let mut keyboard_interface = None;
-    while offset + 2 <= length {
-        let descriptor_length = unsafe { CONTROL_BUFFER.0[offset] } as usize;
-        let descriptor_type = unsafe { CONTROL_BUFFER.0[offset + 1] };
-        if descriptor_length < 2 || offset + descriptor_length > length {
-            break;
-        }
-        if descriptor_type == 4 && descriptor_length >= 9 {
-            let class = unsafe { CONTROL_BUFFER.0[offset + 5] };
-            let subclass = unsafe { CONTROL_BUFFER.0[offset + 6] };
-            let protocol = unsafe { CONTROL_BUFFER.0[offset + 7] };
-            keyboard_interface = if class == 3 && subclass == 1 && protocol == 1 {
-                Some(unsafe { CONTROL_BUFFER.0[offset + 2] })
-            } else {
-                None
-            }
-        } else if descriptor_type == 5 && descriptor_length >= 7 && keyboard_interface.is_some() {
-            let endpoint = unsafe { CONTROL_BUFFER.0[offset + 2] };
-            let attributes = unsafe { CONTROL_BUFFER.0[offset + 3] };
-            if endpoint & 0x80 != 0 && attributes & 3 == 3 {
-                let packet_size = unsafe {
-                    u16::from_le_bytes([CONTROL_BUFFER.0[offset + 4], CONTROL_BUFFER.0[offset + 5]])
-                } & 0x7ff;
-                let interval = unsafe { CONTROL_BUFFER.0[offset + 6] };
-                return Some((keyboard_interface?, endpoint, packet_size, interval));
-            }
-        }
-        offset += descriptor_length
-    }
-    None
-}
-
-fn hid_usage(usage: u8, modifiers: u8, caps_lock: bool) -> Option<u8> {
-    let shifted = modifiers & 0x22 != 0;
-    let controlled = modifiers & 0x11 != 0;
-    if (0x04..=0x1d).contains(&usage) {
-        let letter = b'a' + usage - 0x04;
-        if controlled {
-            return Some(letter & 0x1f);
-        }
-        return Some(if shifted ^ caps_lock {
-            letter.to_ascii_uppercase()
-        } else {
-            letter
-        });
-    }
-
-    match usage {
-        0x1e..=0x27 => {
-            let plain = b"1234567890"[(usage - 0x1e) as usize];
-            let upper = b"!@#$%^&*()"[(usage - 0x1e) as usize];
-            Some(if shifted { upper } else { plain })
-        }
-        0x28 => Some(b'\r'),
-        0x29 => Some(3),
-        0x2a => Some(8),
-        0x2b => Some(b'\t'),
-        0x2c => Some(b' '),
-        0x2d => Some(if shifted { b'_' } else { b'-' }),
-        0x2e => Some(if shifted { b'+' } else { b'=' }),
-        0x2f => Some(if shifted { b'{' } else { b'[' }),
-        0x30 => Some(if shifted { b'}' } else { b']' }),
-        0x31 => Some(if shifted { b'|' } else { b'\\' }),
-        0x33 => Some(if shifted { b':' } else { b';' }),
-        0x34 => Some(if shifted { b'"' } else { b'\'' }),
-        0x35 => Some(if shifted { b'~' } else { b'`' }),
-        0x36 => Some(if shifted { b'<' } else { b',' }),
-        0x37 => Some(if shifted { b'>' } else { b'.' }),
-        0x38 => Some(if shifted { b'?' } else { b'/' }),
-        0x4c => Some(127),
-        _ => None,
-    }
-}
-
-fn navigation_sequence(usage: u8, shifted: bool) -> Option<&'static [u8]> {
-    match usage {
-        0x4a => Some(b"\x1b[H"),
-        0x4c => Some(b"\x1b[3~"),
-        0x4d => Some(b"\x1b[F"),
-        0x4f => Some(if shifted { b"\x1b[1;2C" } else { b"\x1b[C" }),
-        0x50 => Some(if shifted { b"\x1b[1;2D" } else { b"\x1b[D" }),
-        0x51 => Some(if shifted { b"\x1b[1;2B" } else { b"\x1b[B" }),
-        0x52 => Some(if shifted { b"\x1b[1;2A" } else { b"\x1b[A" }),
-        _ => None,
-    }
 }
 
 fn completion_ok(code: u8) -> bool {
