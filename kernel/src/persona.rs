@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 pub const MAX_PERSONA_RIGHTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,23 +46,41 @@ pub enum PersonaError {
     NotFound,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct CExecutionPersona {
+    identity: u64,
+    active: [u64; MAX_PERSONA_RIGHTS],
+    disabled: [u64; MAX_PERSONA_RIGHTS],
+}
+
+unsafe extern "C" {
+    fn ghostos_persona_init(persona: *mut CExecutionPersona, identity: u64);
+    fn ghostos_persona_add(persona: *mut CExecutionPersona, right: u64, error: *mut u32) -> bool;
+    fn ghostos_persona_disable(persona: *mut CExecutionPersona, right: u64, error: *mut u32) -> bool;
+    fn ghostos_persona_enable(persona: *mut CExecutionPersona, right: u64, error: *mut u32) -> bool;
+    fn ghostos_persona_drop(persona: *mut CExecutionPersona, right: u64, error: *mut u32) -> bool;
+    fn ghostos_persona_has(persona: *const CExecutionPersona, right: u64) -> bool;
+    fn ghostos_persona_active_count(persona: *const CExecutionPersona) -> usize;
+    fn ghostos_persona_active_at(persona: *const CExecutionPersona, index: usize) -> u64;
+}
+
 /// Kernel-owned active rights for one execution context.
 ///
-/// Disabled rights may be restored. Dropped rights are removed permanently,
-/// which lets a process shed authority before running untrusted code.
+/// Disabled rights may be restored. Dropped rights are removed permanently.
 #[derive(Clone, Copy, Debug)]
 pub struct ExecutionPersona {
-    identity: IdentityId,
-    active: [Option<RightIdentifier>; MAX_PERSONA_RIGHTS],
-    disabled: [Option<RightIdentifier>; MAX_PERSONA_RIGHTS],
+    raw: CExecutionPersona,
 }
 
 impl ExecutionPersona {
     pub const fn anonymous() -> Self {
         Self {
-            identity: IdentityId::ANONYMOUS,
-            active: [None; MAX_PERSONA_RIGHTS],
-            disabled: [None; MAX_PERSONA_RIGHTS],
+            raw: CExecutionPersona {
+                identity: 0,
+                active: [0; MAX_PERSONA_RIGHTS],
+                disabled: [0; MAX_PERSONA_RIGHTS],
+            },
         }
     }
 
@@ -68,11 +88,9 @@ impl ExecutionPersona {
         if rights.len() > MAX_PERSONA_RIGHTS {
             return Err(PersonaError::Full)
         }
-        let mut persona = Self {
-            identity,
-            active: [None; MAX_PERSONA_RIGHTS],
-            disabled: [None; MAX_PERSONA_RIGHTS],
-        };
+        let mut persona = Self::anonymous();
+        // SAFETY: C initializes the plain repr(C) persona value.
+        unsafe { ghostos_persona_init(&mut persona.raw, identity.raw()) };
         for right in rights {
             persona.add(*right)?
         }
@@ -80,80 +98,76 @@ impl ExecutionPersona {
     }
 
     pub const fn identity(&self) -> IdentityId {
-        self.identity
+        IdentityId(self.raw.identity)
     }
 
     pub fn active_rights(&self) -> impl Iterator<Item = RightIdentifier> + '_ {
-        self.active.iter().flatten().copied()
+        ActiveRights { persona: self, index: 0, count: self.active_count(), marker: PhantomData }
+    }
+
+    fn active_count(&self) -> usize {
+        // SAFETY: C reads the initialized fixed-size persona arrays.
+        unsafe { ghostos_persona_active_count(&self.raw) }
     }
 
     pub fn has(&self, right: RightIdentifier) -> bool {
-        self.active.contains(&Some(right))
+        // SAFETY: C reads the initialized fixed-size persona arrays.
+        unsafe { ghostos_persona_has(&self.raw, right.raw()) }
     }
 
     pub fn add(&mut self, right: RightIdentifier) -> Result<(), PersonaError> {
-        if self.has(right) || self.disabled.contains(&Some(right)) {
-            return Ok(())
-        }
-        let slot = self
-            .active
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(PersonaError::Full)?;
-        *slot = Some(right);
-        Ok(())
+        // SAFETY: C mutates this uniquely borrowed persona.
+        let result = unsafe { ghostos_persona_add(&mut self.raw, right.raw(), core::ptr::null_mut()) };
+        result.then_some(()).ok_or(PersonaError::Full)
     }
 
     pub fn disable(&mut self, right: RightIdentifier) -> Result<(), PersonaError> {
-        let active = self
-            .active
-            .iter_mut()
-            .find(|entry| **entry == Some(right))
-            .ok_or(PersonaError::NotFound)?;
-        let disabled = self
-            .disabled
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(PersonaError::Full)?;
-        *active = None;
-        *disabled = Some(right);
-        Ok(())
+        self.mutate(right, ghostos_persona_disable)
     }
 
     pub fn enable(&mut self, right: RightIdentifier) -> Result<(), PersonaError> {
-        let disabled = self
-            .disabled
-            .iter_mut()
-            .find(|entry| **entry == Some(right))
-            .ok_or(PersonaError::NotFound)?;
-        let active = self
-            .active
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(PersonaError::Full)?;
-        *disabled = None;
-        *active = Some(right);
-        Ok(())
+        self.mutate(right, ghostos_persona_enable)
     }
 
     pub fn drop_right(&mut self, right: RightIdentifier) -> Result<(), PersonaError> {
-        if let Some(entry) = self
-            .active
-            .iter_mut()
-            .find(|entry| **entry == Some(right))
-        {
-            *entry = None;
-            return Ok(())
+        self.mutate(right, ghostos_persona_drop)
+    }
+
+    fn mutate(
+        &mut self,
+        right: RightIdentifier,
+        operation: unsafe extern "C" fn(*mut CExecutionPersona, u64, *mut u32) -> bool,
+    ) -> Result<(), PersonaError> {
+        let mut error = 0;
+        // SAFETY: C mutates this uniquely borrowed persona and writes a valid error code.
+        if unsafe { operation(&mut self.raw, right.raw(), &mut error) } {
+            Ok(())
+        } else if error == 1 {
+            Err(PersonaError::Full)
+        } else {
+            Err(PersonaError::NotFound)
         }
-        if let Some(entry) = self
-            .disabled
-            .iter_mut()
-            .find(|entry| **entry == Some(right))
-        {
-            *entry = None;
-            return Ok(())
+    }
+}
+
+struct ActiveRights<'a> {
+    persona: &'a ExecutionPersona,
+    index: usize,
+    count: usize,
+    marker: PhantomData<&'a ExecutionPersona>,
+}
+
+impl Iterator for ActiveRights<'_> {
+    type Item = RightIdentifier;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.count {
+            return None
         }
-        Err(PersonaError::NotFound)
+        // SAFETY: index is bounded by C's active-count result and the fixed array size.
+        let raw = unsafe { ghostos_persona_active_at(&self.persona.raw, self.index) };
+        self.index += 1;
+        RightIdentifier::new(raw)
     }
 }
 

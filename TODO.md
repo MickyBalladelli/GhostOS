@@ -73,7 +73,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/partition.rs` — active kernel methods call C for CPU mask queries, housekeeping policy, and online/isolate/release transitions. Host builds retain Rust-only fallback; scheduler still owns the partition state, so full state cutover remains.
 - [ ] `kernel/src/pci.rs` — C owns the x86 CF8/CFC scan and bounded 64-device inventory. Rust adapts entries to the existing boot-facing iterator and logging; driver and storage consumers still use that adapter.
 - [ ] `kernel/src/persistence.rs` — C performs bounded x86 persistence-port load/save/flush. Rust retains record-container encoding and boot/crash record policy through the C storage adapter.
-- [ ] `kernel/src/persona.rs`
+- [ ] `kernel/src/persona.rs` — C owns fixed-capacity active/disabled rights mutations. Rust keeps the typed identity/right API and iterator used by scheduler and authentication callers.
 - [ ] `kernel/src/physical_storage.rs`
 - [ ] `kernel/src/power.rs`
 - [ ] `kernel/src/process.rs`

@@ -56,6 +56,7 @@ pub mod mouse;
 pub mod mouse;
 #[allow(unsafe_code)]
 pub mod page_fault;
+#[allow(unsafe_code)]
 pub mod persona;
 #[allow(unsafe_code)]
 mod power;
