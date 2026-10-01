@@ -99,6 +99,7 @@ mod watchdog;
     all(target_arch = "x86_64", any(target_os = "none", target_os = "uefi")),
     test
 ))]
+#[allow(unsafe_code)]
 mod webauthn;
 #[cfg(all(
     target_arch = "x86_64",
