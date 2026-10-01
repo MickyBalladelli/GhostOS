@@ -69,8 +69,8 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/monitor.rs` — C port includes monitor view state, generation-1 process snapshots, switch-history CPU utilization, live kernel DLM lock summaries, empty DSM page stats, and all four text views. Rust scheduler and shell callers remain active; behavior parity and caller cutover remain.
 - [ ] `kernel/src/mouse.rs` — active x86 kernel wrapper now calls the C atomic three-byte PS/2 collector and decoder; non-x86 keeps `mouse_stub.rs`. Rust keyboard caller remains through the stable `ingest`/`state` API; target build and behavior parity remain.
 - [ ] `kernel/src/mouse_stub.rs` — non-x86 Rust API now calls a C stub that always returns an empty mouse state. Caller and target build parity remain.
-- [ ] `kernel/src/page_fault.rs` — C port includes x86 fault decoding, one-time handler install and dispatch, quota-aware dispatch/refund, stack-map-before-metadata growth, and COW write resolution. Rust capability/address-space consumers remain active; behavior parity and cutover remain.
-- [ ] `kernel/src/partition.rs`
+- [ ] `kernel/src/page_fault.rs` — C now owns x86 fault decoding, one-time handler install and dispatch, quota consume/refund ordering, stack-map-before-commit ordering, and COW write sequencing. Rust adapters retain the native capability, allocator, and address-space objects; moving those objects and full cutover remain.
+- [ ] `kernel/src/partition.rs` — active kernel methods call C for CPU mask queries, housekeeping policy, and online/isolate/release transitions. Host builds retain Rust-only fallback; scheduler still owns the partition state, so full state cutover remains.
 - [ ] `kernel/src/pci.rs`
 - [ ] `kernel/src/persistence.rs`
 - [ ] `kernel/src/persona.rs`

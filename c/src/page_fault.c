@@ -76,6 +76,21 @@ ghostos_stack_fault_result ghostos_page_fault_resolve_stack(
         GHOSTOS_STACK_FAULT_OK : GHOSTOS_STACK_FAULT_GROWTH;
 }
 
+ghostos_stack_fault_result ghostos_page_fault_resolve_stack_with_ops(
+    uint32_t address_space, ghostos_page_fault fault,
+    ghostos_page_fault_stack_inspect_fn inspect,
+    ghostos_page_fault_map_stack_fn map_page,
+    ghostos_page_fault_stack_commit_fn commit,
+    void *context, ghostos_stack_growth *growth) {
+    if (!address_space || !inspect || !map_page || !commit || !fault.user || fault.present || fault.reserved_bit)
+        return GHOSTOS_STACK_FAULT_INVALID;
+    uint64_t page = ghostos_page_fault_page_address(fault), candidate = 0;
+    ghostos_stack_fault_result result = inspect(context, address_space, page, &candidate);
+    if (result != GHOSTOS_STACK_FAULT_OK) return result;
+    if (!map_page(context, address_space, candidate)) return GHOSTOS_STACK_FAULT_MAPPING_FAILED;
+    return commit(context, address_space, page, growth);
+}
+
 ghostos_cow_fault_result_kind ghostos_page_fault_resolve_cow(
     ghostos_address_space *address_space, ghostos_cow_manager *cow,
     ghostos_early_frame_allocator *allocator, ghostos_cow_copy_page_fn copy_page,
@@ -102,5 +117,28 @@ ghostos_cow_fault_result_kind ghostos_page_fault_resolve_cow(
         .old_frame = write_result.old_frame,
         .new_frame = new_frame};
     if (write_result.kind == GHOSTOS_COW_WRITE_EXCLUSIVE) result->old_frame = 0;
+    return GHOSTOS_COW_FAULT_OK;
+}
+
+ghostos_cow_fault_result_kind ghostos_page_fault_resolve_cow_with_ops(
+    uint32_t address_space, ghostos_page_fault fault,
+    ghostos_page_fault_cow_lookup_fn lookup,
+    ghostos_page_fault_cow_write_fn write,
+    ghostos_page_fault_cow_replace_fn replace,
+    void *context, ghostos_cow_fault_result *result) {
+    if (!result) return GHOSTOS_COW_FAULT_INVALID;
+    *result = (ghostos_cow_fault_result){0};
+    if (!address_space || !lookup || !write || !replace || !fault.user || !fault.present ||
+        fault.reserved_bit || fault.access != GHOSTOS_ACCESS_WRITE) return GHOSTOS_COW_FAULT_INVALID;
+    uint64_t page = ghostos_page_fault_page_address(fault), frame = 0;
+    ghostos_cow_fault_result_kind status = lookup(context, address_space, page, &frame);
+    if (status != GHOSTOS_COW_FAULT_OK) return status;
+    status = write(context, address_space, frame, result);
+    if (status != GHOSTOS_COW_FAULT_OK) return status;
+    uint64_t new_frame = result->copied ? result->new_frame : frame;
+    status = replace(context, address_space, page, new_frame);
+    if (status != GHOSTOS_COW_FAULT_OK) return status;
+    result->new_frame = new_frame;
+    if (!result->copied) result->old_frame = 0;
     return GHOSTOS_COW_FAULT_OK;
 }

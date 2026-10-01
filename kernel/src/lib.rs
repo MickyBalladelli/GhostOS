@@ -66,6 +66,7 @@ mod persistence;
 mod pci;
 #[allow(unsafe_code)]
 mod physical_storage;
+#[allow(unsafe_code)]
 pub mod partition;
 pub mod process;
 pub mod scheduler;

@@ -35,6 +35,10 @@ typedef enum {
     GHOSTOS_STACK_FAULT_GROWTH,
     GHOSTOS_STACK_FAULT_MAPPING_FAILED
 } ghostos_stack_fault_result;
+typedef ghostos_stack_fault_result (*ghostos_page_fault_stack_inspect_fn)(
+    void *context, uint32_t address_space, uint64_t fault_page, uint64_t *candidate_page);
+typedef ghostos_stack_fault_result (*ghostos_page_fault_stack_commit_fn)(
+    void *context, uint32_t address_space, uint64_t fault_page, ghostos_stack_growth *growth);
 
 typedef enum {
     GHOSTOS_COW_FAULT_OK = 0,
@@ -48,6 +52,12 @@ typedef struct {
     uint64_t old_frame;
     uint64_t new_frame;
 } ghostos_cow_fault_result;
+typedef ghostos_cow_fault_result_kind (*ghostos_page_fault_cow_lookup_fn)(
+    void *context, uint32_t address_space, uint64_t page, uint64_t *frame);
+typedef ghostos_cow_fault_result_kind (*ghostos_page_fault_cow_write_fn)(
+    void *context, uint32_t address_space, uint64_t frame, ghostos_cow_fault_result *result);
+typedef ghostos_cow_fault_result_kind (*ghostos_page_fault_cow_replace_fn)(
+    void *context, uint32_t address_space, uint64_t page, uint64_t frame);
 
 typedef enum { GHOSTOS_PAGE_FAULT_QUOTA_ALLOWED, GHOSTOS_PAGE_FAULT_QUOTA_THROTTLED,
     GHOSTOS_PAGE_FAULT_QUOTA_REJECTED, GHOSTOS_PAGE_FAULT_QUOTA_INVALID } ghostos_page_fault_quota_result;
@@ -67,10 +77,22 @@ ghostos_page_fault_dispatch_result ghostos_page_fault_dispatch_for(
 ghostos_stack_fault_result ghostos_page_fault_resolve_stack(
     ghostos_address_space *address_space, ghostos_page_fault fault,
     ghostos_page_fault_map_stack_fn map_page, void *context, ghostos_stack_growth *growth);
+ghostos_stack_fault_result ghostos_page_fault_resolve_stack_with_ops(
+    uint32_t address_space, ghostos_page_fault fault,
+    ghostos_page_fault_stack_inspect_fn inspect,
+    ghostos_page_fault_map_stack_fn map_page,
+    ghostos_page_fault_stack_commit_fn commit,
+    void *context, ghostos_stack_growth *growth);
 ghostos_cow_fault_result_kind ghostos_page_fault_resolve_cow(
     ghostos_address_space *address_space, ghostos_cow_manager *cow,
     ghostos_early_frame_allocator *allocator, ghostos_cow_copy_page_fn copy_page,
     void *context, uint32_t owner, ghostos_page_fault fault,
     ghostos_cow_fault_result *result);
+ghostos_cow_fault_result_kind ghostos_page_fault_resolve_cow_with_ops(
+    uint32_t address_space, ghostos_page_fault fault,
+    ghostos_page_fault_cow_lookup_fn lookup,
+    ghostos_page_fault_cow_write_fn write,
+    ghostos_page_fault_cow_replace_fn replace,
+    void *context, ghostos_cow_fault_result *result);
 
 #endif
