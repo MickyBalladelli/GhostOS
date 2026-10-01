@@ -2,7 +2,13 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Instant;
+
+unsafe extern "C" {
+    fn ghostos_vm_clock_now_ns() -> u64;
+    fn ghostos_vm_clock_elapsed_ns(start_ns: u64) -> u64;
+    fn ghostos_vm_manual_clock_set(clock: *mut u64, now_ns: u64) -> bool;
+    fn ghostos_vm_manual_clock_advance(clock: *mut u64, elapsed_ns: u64) -> u64;
+}
 
 /// Source of monotonic nanoseconds for VM time.
 ///
@@ -17,13 +23,13 @@ pub type SharedMonotonicClock = Rc<dyn MonotonicClock>;
 
 /// Host-backed clock used by normal VM runs.
 pub struct HostMonotonicClock {
-    started: Instant,
+    started_ns: u64,
 }
 
 impl HostMonotonicClock {
     pub fn new() -> Self {
         Self {
-            started: Instant::now(),
+            started_ns: unsafe { ghostos_vm_clock_now_ns() },
         }
     }
 }
@@ -36,7 +42,7 @@ impl Default for HostMonotonicClock {
 
 impl MonotonicClock for HostMonotonicClock {
     fn now_ns(&self) -> u64 {
-        self.started.elapsed().as_nanos().min(u64::MAX as u128) as u64
+        unsafe { ghostos_vm_clock_elapsed_ns(self.started_ns) }
     }
 }
 
@@ -55,12 +61,14 @@ impl ManualMonotonicClock {
 
     /// Move time forward. Panics if a caller tries to move it backwards.
     pub fn set_now_ns(&self, now_ns: u64) {
-        assert!(now_ns >= self.now_ns.get(), "monotonic clock cannot move backwards");
-        self.now_ns.set(now_ns)
+        assert!(
+            unsafe { ghostos_vm_manual_clock_set(self.now_ns.as_ptr(), now_ns) },
+            "monotonic clock cannot move backwards"
+        )
     }
 
     pub fn advance_ns(&self, elapsed_ns: u64) {
-        self.now_ns.set(self.now_ns.get().saturating_add(elapsed_ns))
+        unsafe { ghostos_vm_manual_clock_advance(self.now_ns.as_ptr(), elapsed_ns) };
     }
 }
 

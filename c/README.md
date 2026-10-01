@@ -73,6 +73,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/watchdog.rs` (service and CPU liveness tracking with one-shot stale reports) | `src/watchdog.c` | `include/ghostos/watchdog.h` |
 | `kernel/src/webauthn.rs` (SHA-256 primitive used by local WebAuthn verification) | `src/webauthn.c` | `include/ghostos/webauthn.h` |
 | `virtual_machine/src/boot/mod.rs` (Multiboot header discovery and information decoding) | `src/vm_boot.c` | `include/ghostos/vm_boot.h` |
+| `virtual_machine/src/clock.rs` (host monotonic source and manual clock arithmetic) | `src/vm_clock.c` | `include/ghostos/vm_clock.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
