@@ -120,5 +120,12 @@ ghostos_dlm_contention_report ghostos_dlm_contention(const ghostos_dlm *manager,
 const ghostos_dlm_lock_entry *ghostos_dlm_lock(const ghostos_dlm *manager, size_t index);
 ghostos_dlm_lock_entry *ghostos_dlm_lock_mut(ghostos_dlm *manager, size_t index);
 ghostos_status ghostos_dlm_error_status(ghostos_dlm_error error);
+void ghostos_dlm_kernel_init(void);
+bool ghostos_dlm_kernel_lock_summary(size_t index, uint64_t *resource, uint32_t *owner_node, bool *granted);
+void ghostos_dlm_kernel_counters(uint64_t *acquisitions, uint64_t *queued,
+    uint64_t *promotions, uint64_t *releases, uint64_t *expirations,
+    uint64_t wait_histogram[GHOSTOS_LOCK_DURATION_BUCKETS],
+    uint64_t hold_histogram[GHOSTOS_LOCK_DURATION_BUCKETS],
+    uint64_t *max_wait, uint64_t *max_hold, size_t *active, uint64_t now_us);
 
 #endif

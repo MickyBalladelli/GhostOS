@@ -1,5 +1,51 @@
 #include "ghostos/dlm.h"
 
+static ghostos_dlm kernel_dlm;
+static ghostos_dlm_node_fence_table kernel_node_fences;
+static bool kernel_dlm_ready;
+
+void ghostos_dlm_kernel_init(void)
+{
+    if (kernel_dlm_ready) return;
+    (void)ghostos_dlm_init(&kernel_dlm, GHOSTOS_DLM_MAX_LOCKS);
+    (void)ghostos_dlm_node_fence_init(&kernel_node_fences, GHOSTOS_DLM_MAX_NODES);
+    kernel_dlm_ready = true;
+}
+
+bool ghostos_dlm_kernel_lock_summary(size_t index, uint64_t *resource,
+                                     uint32_t *owner_node, bool *granted)
+{
+    ghostos_dlm_kernel_init();
+    const ghostos_dlm_lock_entry *entry = ghostos_dlm_lock(&kernel_dlm, index);
+    if (!entry || !entry->occupied) return false;
+    if (resource) *resource = entry->resource;
+    if (owner_node) *owner_node = entry->owner.node;
+    if (granted) *granted = entry->granted;
+    return true;
+}
+
+void ghostos_dlm_kernel_counters(uint64_t *acquisitions, uint64_t *queued,
+    uint64_t *promotions, uint64_t *releases, uint64_t *expirations,
+    uint64_t wait_histogram[GHOSTOS_LOCK_DURATION_BUCKETS],
+    uint64_t hold_histogram[GHOSTOS_LOCK_DURATION_BUCKETS],
+    uint64_t *max_wait, uint64_t *max_hold, size_t *active, uint64_t now_us)
+{
+    ghostos_dlm_kernel_init();
+    ghostos_dlm_contention_report report = ghostos_dlm_contention(&kernel_dlm, now_us);
+    if (acquisitions) *acquisitions = report.acquisitions;
+    if (queued) *queued = report.queued_acquisitions;
+    if (promotions) *promotions = report.promotions;
+    if (releases) *releases = report.releases;
+    if (expirations) *expirations = report.expirations;
+    if (max_wait) *max_wait = report.max_wait_duration;
+    if (max_hold) *max_hold = report.max_hold_duration;
+    if (active) *active = report.active_locks;
+    if (wait_histogram) for (size_t i = 0; i < GHOSTOS_LOCK_DURATION_BUCKETS; ++i)
+        wait_histogram[i] = report.wait_duration_histogram[i];
+    if (hold_histogram) for (size_t i = 0; i < GHOSTOS_LOCK_DURATION_BUCKETS; ++i)
+        hold_histogram[i] = report.hold_duration_histogram[i];
+}
+
 static bool same_owner(ghostos_dlm_lock_owner a, ghostos_dlm_lock_owner b)
 {
     return a.node == b.node && a.address_space == b.address_space;
