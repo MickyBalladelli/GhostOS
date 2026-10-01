@@ -146,7 +146,8 @@ uint32_t ghostos_boot_service_filesystem_rights(uint32_t service_id)
 bool ghostos_boot_first_admin_required(const void *authorization_database,
                                        size_t database_length)
 {
-    return authorization_database == NULL || database_length == 0;
+    (void)database_length;
+    return authorization_database == NULL;
 }
 
 static bool username_equal(const uint8_t *left, size_t left_length,
@@ -243,23 +244,6 @@ bool ghostos_boot_shell_filesystem_dispatch(ghostos_shell_filesystem_dispatch di
 #define ACCOUNT_RECORD_HEADER_BYTES 36u
 #define PASSKEY_COUNTER_HEADER_BYTES 6u
 #define PASSKEY_COUNTER_ENTRY_BYTES 37u
-
-static void boot_bytes_copy(uint8_t *destination, const uint8_t *source, size_t length)
-{
-    for (size_t i = 0; i < length; ++i) destination[i] = source[i];
-}
-
-static void boot_bytes_zero(uint8_t *destination, size_t length)
-{
-    for (size_t i = 0; i < length; ++i) destination[i] = 0;
-}
-
-static bool boot_bytes_equal(const uint8_t *left, const uint8_t *right, size_t length)
-{
-    uint8_t difference = 0;
-    for (size_t i = 0; i < length; ++i) difference |= (uint8_t)(left[i] ^ right[i]);
-    return difference == 0;
-}
 
 static bool filesystem_ops_valid(const ghostos_boot_filesystem_ops *ops)
 {
