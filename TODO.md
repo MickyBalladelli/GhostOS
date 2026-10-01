@@ -64,7 +64,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/keyboard_stub.rs` — C stub initializes empty state and always reports no key, matching non-x86 kernel behavior. Rust callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/lib.rs` — C port adds the aggregate C kernel API, callback-driven boot coordinator, boot validation and stage reporting, dispatch boundary, service readiness, fatal/crash path, and login throttling/session/quote state. The Rust syscall dispatcher, hardware consumers, process/scheduler integration, and shell remain active; parity and consumer cutover remain.
 - [ ] `kernel/src/litmus.rs` — C port includes deterministic seeded schedules, all six kernel ordering models, fault replay, and failure minimization. Rust callers remain active; behavior parity and caller cutover remain.
-- [ ] `kernel/src/main.rs` — C port adds the boot-entry and panic-handler forwarding boundary. Rust retains the target entry symbol and panic ABI wrapper; kernel boot and panic handling remain Rust, so full entry cutover remains.
+- [ ] `kernel/src/main.rs` — C port owns the target `_start` entry symbol and forwards boot info to `kernel_entry`. Rust keeps only the compiler-required panic ABI hook, which forwards to kernel panic reporting; full panic-handler cutover remains.
 - [ ] `kernel/src/micro_silo.rs`
 - [ ] `kernel/src/monitor.rs`
 - [ ] `kernel/src/mouse.rs`

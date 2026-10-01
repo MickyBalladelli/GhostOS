@@ -86,6 +86,9 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
             target_flag.as_str(), "-std=c11", "-O2", "-ffreestanding", "-fno-builtin",
             "-fno-pic", "-fno-pie", "-Wall", "-Wextra", "-Werror", "-c",
         ]);
+        if source == "main" {
+            compile.arg("-DGHOSTOS_KERNEL_IMAGE=1");
+        }
         if target_arch == "x86_64" {
             compile.arg("-mno-red-zone");
         }
