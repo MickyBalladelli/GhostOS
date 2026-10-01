@@ -130,6 +130,11 @@ property harness in `test_support/property.c`, declared in
 `include/ghostos/test_property.h`. Its case seeds, xorshift entropy, little-endian
 byte generation, and status/boot input draws match the Rust implementation.
 
+`tests/kernel_contracts.c`, `tests/kernel_frame_contracts.c`, and
+`tests/kernel_ipc_contracts.c` port direct C-backed kernel contract cases from
+`kernel/src/tests.rs`. `make c-test-binaries` compiles these executables; it does
+not run them.
+
 Run `make c-test-support` to build `build/c/libghostos-test-support.a`. This is a
 separate hosted library for tests. It uses allocation, environment variables,
 and string formatting; it is not part of the freestanding production library.

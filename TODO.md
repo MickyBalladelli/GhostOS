@@ -85,7 +85,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/shell.rs` — C owns VT input control-sequence/resize/UTF-8 decoding and command-line expansion after Rust registry matching. Rust retains the command registry/interpreter, renderer, editor, operator execution, and subsystem adapters.
 - [ ] `kernel/src/syscall.rs` — C owns dispatcher registration, user pointer and request validation, memory map/unmap request-shape checks, and yield/sleep scheduler hints. Rust retains typed memory syscalls, architecture user-memory access, watchdog activity, and response writing.
 - [ ] `kernel/src/task.rs` — C owns CPU ID validation and mask operations, address-space ID validation, and generation-tagged thread ID packing and decoding. Rust retains public wrappers, execution and scheduling enums, thread/context records, and persona/page-table fields.
-- [ ] `kernel/src/tests.rs`
+- [ ] `kernel/src/tests.rs` — Added C kernel contract binaries covering boot validation, address-space isolation, capability generations/delegation (including generated attenuation cases), frame allocation, realtime scheduling, IPC bounds, invariants, syscall validation, runtime request validation, and service-image limits. Rust-only filesystem dispatch, quota/page-fault, scheduler lifecycle, architecture-source, shell, and deeper integration cases still need C ports and parity review.
 - [ ] `kernel/src/time.rs`
 - [ ] `kernel/src/tlb.rs`
 - [ ] `kernel/src/usb_keyboard.rs`
