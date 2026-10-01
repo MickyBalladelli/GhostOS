@@ -9,6 +9,9 @@ pub struct MouseState {
     pub sequence: u32,
 }
 
+const _: [(); 12] = [(); core::mem::size_of::<MouseState>()];
+const _: [(); 4] = [(); core::mem::align_of::<MouseState>()];
+
 unsafe extern "C" {
     fn ghostos_mouse_ingest(byte: u8);
     fn ghostos_mouse_state_read() -> MouseState;
