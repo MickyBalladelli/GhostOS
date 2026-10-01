@@ -110,6 +110,7 @@ typedef struct {
     ghostos_boot_filesystem_ops filesystem;
     void *filesystem_context;
     bool owns_filesystem;
+    bool filesystem_processes_registered;
     bool provisioning_required;
     bool first_admin_sync_pending;
     bool recovery_sync_pending;
@@ -229,5 +230,4 @@ bool ghostos_boot_shell_filesystem_call(ghostos_shell_filesystem *filesystem,
                                         uint64_t capability, uint64_t offset,
                                         uint64_t length, void *buffer,
                                         uint64_t values[4]);
-
 #endif

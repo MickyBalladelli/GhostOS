@@ -57,14 +57,14 @@ Kernel scheduling, watchdog, and page-fault policy must be supplied by that
 dispatcher when the C kernel is connected.
 
 The C boot service registry preserves all 13 service descriptors and their
-restart settings. Its startup planner uses the supervisor's stable, lowest-ID
-topological order, invokes a caller-provided spawn function, and records
-per-service startup order, dependency count, readiness, and any blocked
-dependency. The service API also defines filesystem rights, first-admin input
-validation, bounded local passkey sign-counter records, and shell filesystem
-authority binding/dispatch. Persistent filesystem ownership, durable account
-and passkey records, and connection to actual kernel process launch still
-require the C kernel and filesystem daemon ports.
+restart settings. Its startup planner uses stable, lowest-ID topological order,
+invokes a kernel launch callback, and records per-service startup diagnostics.
+The boot state owns a filesystem context through explicit adopt/release hooks,
+provides transactional first-admin provisioning and recovery, persists passkey
+records and monotonic sign counters, and enforces per-session shell filesystem
+rights through the filesystem daemon callbacks. The active kernel consumer is
+still Rust; it must be ported before this C boot runtime replaces the running
+system boot path.
 
 `userspace/boot-services/service.c`, `login.c`, and `shell.c` now use the generated
 request/response types and operation IDs instead of private copies. The kernel
