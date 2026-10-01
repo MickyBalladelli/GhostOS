@@ -21,7 +21,7 @@ cutover has occurred.
 - [x] Port protocol version negotiation, replay protection, authentication limits, backpressure, and reconnect policy to C.
 - [x] Port boot handoff structures, memory-region validation, and framebuffer validation to C.
 - [x] Port foundation contract test cases to C source (not executed).
-- [ ] Port the shared test-support property harness; C generated-input cases currently use a local deterministic generator.
+- [x] Port the shared test-support property harness, including Rust-compatible entropy, case seeds, replay controls, failure reports, generators, and queue/capability/lease models; connect the C generated-input cases to it.
 - [ ] Connect the C foundations to the kernel, VM, and services after those consumers are ported.
 - [ ] Establish behavior parity before checking off the module and full migration tasks.
 

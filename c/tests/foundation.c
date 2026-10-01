@@ -3,8 +3,39 @@
 #include "ghostos/boot_protocol.h"
 #include "ghostos/protocol.h"
 #include "ghostos/status.h"
+#include "ghostos/test_property.h"
 #include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+static void run_property(const char *name, size_t cases, ghostos_property_predicate check) {
+    ghostos_property_config config = ghostos_property_config_with_env(ghostos_property_config_new(0x593, cases));
+    ghostos_property_failure failure;
+    ghostos_property_result result = ghostos_property_run_assert(name, config, check, NULL, &failure);
+    if (result == GHOSTOS_PROPERTY_FAILED) {
+        char message[1024];
+        if (ghostos_property_failure_format(&failure, message, sizeof(message)) >= 0) fprintf(stderr, "%s\n", message);
+    } else if (result != GHOSTOS_PROPERTY_OK) {
+        fprintf(stderr, "property %s runner failed with error %d\n", name, (int)result);
+    }
+    ghostos_property_failure_dispose(&failure);
+    if (result != GHOSTOS_PROPERTY_OK) abort();
+}
+
+static bool status_round_trip_property(size_t case_index, uint64_t case_seed,
+                                      ghostos_test_entropy *entropy, void *context) {
+    (void)case_index;
+    (void)case_seed;
+    (void)context;
+    ghostos_severity severity = (ghostos_severity)(ghostos_test_entropy_next_u64(entropy) % 5);
+    uint16_t facility = (uint16_t)(ghostos_test_entropy_next_u64(entropy) % 0x1000);
+    uint16_t code = (uint16_t)(ghostos_test_entropy_next_u64(entropy) % 0x2000);
+    uint8_t flags = (uint8_t)(ghostos_test_entropy_next_u64(entropy) % 16);
+    ghostos_status status, decoded;
+    return ghostos_status_new(severity, facility, code, flags, &status) &&
+        ghostos_status_from_raw(status, &decoded) && status == decoded;
+}
 
 static void status_contract(void) {
     ghostos_status status;
@@ -40,13 +71,7 @@ static void status_contract(void) {
     assert(strcmp(ghostos_status_message(GHOSTOS_STATUS_READ_ONLY), "read-only mount") == 0);
     assert(ghostos_status_new(GHOSTOS_SEVERITY_ERROR, GHOSTOS_FACILITY_KERNEL, 0x1f, 0, &status));
     assert(strcmp(ghostos_status_message(status), "unknown status") == 0);
-    uint64_t entropy = UINT64_C(0x593);
-    for (unsigned i = 0; i < 256; ++i) {
-        entropy = entropy * UINT64_C(6364136223846793005) + 1;
-        assert(ghostos_status_new((uint8_t)(entropy % 5), (entropy >> 8) & 0xfff,
-            (entropy >> 20) & 0x1fff, (entropy >> 40) & 0xf, &status));
-        assert(ghostos_status_from_raw(status, &decoded) && status == decoded);
-    }
+    run_property("status.raw-round-trip", 256, status_round_trip_property);
 }
 
 static void abi_contract(void) {
@@ -177,6 +202,21 @@ static ghostos_memory_region region(uint64_t start, uint64_t length) {
     return (ghostos_memory_region){start, length, GHOSTOS_MEMORY_USABLE, 0};
 }
 
+static bool region_capacity_property(size_t case_index, uint64_t case_seed,
+                                     ghostos_test_entropy *entropy, void *context) {
+    (void)case_index;
+    (void)case_seed;
+    (void)context;
+    size_t count = (size_t)ghostos_test_entropy_next_u64(entropy) % (GHOSTOS_MAX_MEMORY_REGIONS * 2 + 1);
+    ghostos_boot_info info = ghostos_boot_info_empty(GHOSTOS_BOOT_BIOS);
+    for (size_t i = 0; i < count; ++i) {
+        bool accepted = ghostos_boot_info_push_region(&info, region(((uint64_t)i + 1) * 0x1000, 0x1000));
+        if (accepted != (i < GHOSTOS_MAX_MEMORY_REGIONS)) return false;
+    }
+    return info.memory_region_count == (count < GHOSTOS_MAX_MEMORY_REGIONS ? count : GHOSTOS_MAX_MEMORY_REGIONS) &&
+        ghostos_boot_info_is_valid(&info);
+}
+
 static void boot_contract(void) {
     ghostos_boot_info info = ghostos_boot_info_empty(GHOSTOS_BOOT_UEFI);
     assert(info.magic == GHOSTOS_BOOT_INFO_MAGIC && info.version == GHOSTOS_BOOT_INFO_VERSION);
@@ -215,16 +255,7 @@ static void boot_contract(void) {
     info.framebuffer.pixel_format = GHOSTOS_FRAMEBUFFER_PIXEL_BGR;
     info.framebuffer.size = 1;
     assert(!ghostos_boot_info_is_valid(&info));
-    uint64_t entropy = UINT64_C(0x593);
-    for (unsigned trial = 0; trial < 128; ++trial) {
-        entropy = entropy * UINT64_C(6364136223846793005) + 1;
-        size_t generated = entropy % (GHOSTOS_MAX_MEMORY_REGIONS * 2 + 1);
-        info = ghostos_boot_info_empty(GHOSTOS_BOOT_BIOS);
-        for (size_t i = 0; i < generated; ++i)
-            assert(ghostos_boot_info_push_region(&info, region((i + 1) * 0x1000, 0x1000)) == (i < GHOSTOS_MAX_MEMORY_REGIONS));
-        assert(info.memory_region_count == (generated < GHOSTOS_MAX_MEMORY_REGIONS ? generated : GHOSTOS_MAX_MEMORY_REGIONS));
-        assert(ghostos_boot_info_is_valid(&info));
-    }
+    run_property("boot-protocol.region-capacity", 128, region_capacity_property);
     info = ghostos_boot_info_empty(GHOSTOS_BOOT_UEFI);
     assert(ghostos_boot_info_push_region(&info, region(0x1000, 0x2000)));
     info.memory_regions[1] = info.memory_regions[0];

@@ -44,8 +44,39 @@ integer discriminants that Rust's type system made impossible to construct.
 
 `tests/foundation.c` ports the foundation contract cases, including the bounded
 generated status and boot-region cases. `make c-test-binaries` builds the test
-executable without running it. The C tests use their own deterministic generated
-inputs; the shared Rust test-support harness is still pending migration.
+executable without running it. The generated-input cases now use the shared
+property harness in `test_support/property.c`, declared in
+`include/ghostos/test_property.h`. Its case seeds, xorshift entropy, little-endian
+byte generation, and status/boot input draws match the Rust implementation.
+
+Run `make c-test-support` to build `build/c/libghostos-test-support.a`. This is a
+separate hosted library for tests. It uses allocation, environment variables,
+and string formatting; it is not part of the freestanding production library.
+Other test-support fixtures, crash helpers, and differential helpers still need
+their own ports.
+
+The property harness supports `run` callbacks returning an error message and
+`run_assert` predicates returning a boolean. It stops at the first failure and
+reports the property name, seed, case index, case seed, and replay command.
+Failure strings are copied and must be released with
+`ghostos_property_failure_dispose`. Byte/ASCII generators return heap-owned
+outputs. Queue and capability model storage has explicit dispose and clone
+functions; lease models can be copied by value.
+
+`ghostos_property_config_from_env` uses the Rust defaults: seed
+`0x53594e4f535f5445` and 256 cases. Environment controls are
+`GHOSTOS_PROPERTY_SEED` (decimal or `0x`/`0X` hexadecimal),
+`GHOSTOS_PROPERTY_CASES` (positive decimal), and `GHOSTOS_PROPERTY_CASE`
+(a decimal case index). Invalid controls retain the defaults. A replay runs
+exactly one indexed case, with the same case seed as a full run.
+
+The C foundation cases use `ghostos_property_config_with_env` to keep their
+original seed `0x593` and case counts (256 for status, 128 for boot regions)
+unless environment controls override them. Explicit `config_new` and
+`config_replay` constructors do not read the environment, matching Rust.
+For example, setting `GHOSTOS_PROPERTY_SEED=0x593 GHOSTOS_PROPERTY_CASE=17`
+selects case 17 for each generated-input property when the foundation binary
+is executed.
 
 No Rust source or build configuration is obsolete yet. Move it to `Trash/` only
 after the C consumers replace it and behavior preservation is established. The
