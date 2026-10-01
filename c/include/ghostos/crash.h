@@ -74,5 +74,8 @@ bool ghostos_crash_capture_and_persist(
     atomic_bool *in_progress, ghostos_crash_capsule *capsule,
     uint64_t fault_address, const uint64_t audit_ids[][2],
     size_t audit_count, ghostos_crash_persist_fn persist, void *context);
+bool ghostos_crash_capture_and_persist_once(
+    ghostos_crash_capsule *capsule, ghostos_crash_persist_fn persist, void *context);
+bool ghostos_crash_claim(void);
 
 #endif

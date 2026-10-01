@@ -14,6 +14,7 @@ pub mod capability;
 #[allow(unsafe_code)]
 mod console;
 pub mod contention;
+#[allow(unsafe_code)]
 pub mod crash;
 pub mod cow;
 pub mod dma;

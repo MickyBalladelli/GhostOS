@@ -1,6 +1,6 @@
 #include "ghostos/crash.h"
 
-#include <string.h>
+static atomic_bool crash_in_progress = ATOMIC_VAR_INIT(false);
 
 static const uint8_t capsule_magic[8] = {'S', 'Y', 'N', 'C', 'R', 'S', 'H', '1'};
 
@@ -13,7 +13,7 @@ typedef struct {
 static bool write_bytes(writer *out, const uint8_t *bytes, size_t count)
 {
     if (count > out->capacity - out->position) return false;
-    memcpy(out->bytes + out->position, bytes, count);
+    for (size_t i = 0; i < count; ++i) out->bytes[out->position + i] = bytes[i];
     out->position += count;
     return true;
 }
@@ -55,7 +55,9 @@ static uint64_t fnv1a(const char *text)
 
 void ghostos_crash_context_init(ghostos_crash_capability_context *context)
 {
-    if (context) memset(context, 0, sizeof(*context));
+    if (!context) return;
+    uint8_t *bytes = (uint8_t *)context;
+    for (size_t i = 0; i < sizeof(*context); ++i) bytes[i] = 0;
 }
 
 uint64_t ghostos_crash_redact_u64(uint64_t value)
@@ -138,13 +140,41 @@ bool ghostos_crash_capture_and_persist(
     capsule->registers.fault_address = fault_address;
     if (audit_count > GHOSTOS_CRASH_MAX_AUDIT_IDS) audit_count = GHOSTOS_CRASH_MAX_AUDIT_IDS;
     capsule->audit_count = (uint8_t)audit_count;
-    memset(capsule->audit_ids, 0, sizeof(capsule->audit_ids));
-    if (audit_ids && audit_count) memcpy(capsule->audit_ids, audit_ids,
-                                        audit_count * sizeof(capsule->audit_ids[0]));
+    for (size_t i = 0; i < GHOSTOS_CRASH_MAX_AUDIT_IDS; ++i) {
+        capsule->audit_ids[i][0] = 0;
+        capsule->audit_ids[i][1] = 0;
+    }
+    if (audit_ids)
+        for (size_t i = 0; i < audit_count; ++i) {
+            capsule->audit_ids[i][0] = audit_ids[i][0];
+            capsule->audit_ids[i][1] = audit_ids[i][1];
+        }
     uint8_t bytes[GHOSTOS_CRASH_MAX_CAPSULE_BYTES];
     size_t length = 0;
     return ghostos_crash_capsule_encode(capsule, bytes, sizeof(bytes), &length) &&
            persist(context, bytes, length);
+}
+
+bool ghostos_crash_capture_and_persist_once(
+    ghostos_crash_capsule *capsule, ghostos_crash_persist_fn persist, void *context)
+{
+    if (!capsule || !persist) return false;
+    bool expected = false;
+    if (!atomic_compare_exchange_strong_explicit(&crash_in_progress, &expected, true,
+                                                  memory_order_acq_rel,
+                                                  memory_order_relaxed)) return false;
+    uint8_t bytes[GHOSTOS_CRASH_MAX_CAPSULE_BYTES];
+    size_t length = 0;
+    return ghostos_crash_capsule_encode(capsule, bytes, sizeof(bytes), &length) &&
+           persist(context, bytes, length);
+}
+
+bool ghostos_crash_claim(void)
+{
+    bool expected = false;
+    return atomic_compare_exchange_strong_explicit(&crash_in_progress, &expected, true,
+                                                   memory_order_acq_rel,
+                                                   memory_order_relaxed);
 }
 
 ghostos_crash_build_identity ghostos_crash_build_identity_for(const char *package,

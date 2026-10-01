@@ -1,4 +1,6 @@
-use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
+#[cfg(not(any(target_os = "none", target_os = "uefi")))]
+use core::sync::atomic::AtomicBool;
 
 use ghostos_observability::{CorrelationId, SECURITY_AUDIT};
 use ghostos_status::Status;
@@ -7,6 +9,56 @@ use crate::capability::{CapabilityObject, CapabilitySpace};
 use crate::persistence::PersistentStore;
 use crate::scheduler::Scheduler;
 
+#[cfg(any(target_os = "none", target_os = "uefi"))]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct CCapabilityRecord { handle: u64, owner: u32, rights: u16, object_kind: u8 }
+#[cfg(any(target_os = "none", target_os = "uefi"))]
+#[repr(C)]
+struct CCapabilityContext {
+    active: u16,
+    capacity: u16,
+    records: [CCapabilityRecord; MAX_CAPABILITY_RECORDS],
+    record_count: u8,
+}
+#[cfg(any(target_os = "none", target_os = "uefi"))]
+#[repr(C)]
+struct CSchedulerState {
+    clock: u64,
+    current_thread: u32,
+    current_cpu: u8,
+    state_counts: [u16; 5],
+    current_instruction_pointer: u64,
+    current_stack_pointer: u64,
+}
+#[cfg(any(target_os = "none", target_os = "uefi"))]
+#[repr(C)]
+struct CBuildIdentity { package: u64, version: u64, target: u64 }
+#[cfg(any(target_os = "none", target_os = "uefi"))]
+#[repr(C)]
+struct CCrashCapsule {
+    reason: u16,
+    status: u64,
+    build: CBuildIdentity,
+    registers: RegisterState,
+    capabilities: CCapabilityContext,
+    scheduler: CSchedulerState,
+    audit_ids: [[u64; 2]; MAX_AUDIT_IDS],
+    audit_count: u8,
+}
+
+#[cfg(any(target_os = "none", target_os = "uefi"))]
+unsafe extern "C" {
+    fn ghostos_crash_claim() -> bool;
+    fn ghostos_crash_redact_u64(value: u64) -> u64;
+    fn ghostos_crash_redact_u32(value: u32) -> u32;
+    fn ghostos_crash_build_identity_for(package: *const u8, version: *const u8,
+                                        target: *const u8) -> CBuildIdentity;
+    fn ghostos_crash_capsule_encode(capsule: *const CCrashCapsule,
+                                    destination: *mut u8, capacity: usize,
+                                    length: *mut usize) -> bool;
+}
+
 pub const CAPSULE_MAGIC: [u8; 8] = *b"SYNCRSH1";
 pub const CAPSULE_VERSION: u16 = 1;
 pub const MAX_CAPABILITY_RECORDS: usize = 8;
@@ -14,6 +66,7 @@ pub const MAX_AUDIT_IDS: usize = 8;
 pub const MAX_CAPSULE_BYTES: usize = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct RegisterState {
     pub general: [u64; 16],
     pub instruction_pointer: u64,
@@ -130,6 +183,7 @@ pub const BUILD_IDENTITY: BuildIdentity = BuildIdentity {
     target: target_identity(),
 };
 
+#[cfg(not(any(target_os = "none", target_os = "uefi")))]
 static CRASH_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static CAPABILITY_CONTEXT_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 static CAPABILITY_ACTIVE: AtomicU16 = AtomicU16::new(0);
@@ -212,6 +266,10 @@ fn object_kind(object: CapabilityObject) -> u8 {
 }
 
 fn redact_u64(value: u64) -> u64 {
+    #[cfg(any(target_os = "none", target_os = "uefi"))]
+    { return unsafe { ghostos_crash_redact_u64(value) } }
+    #[cfg(not(any(target_os = "none", target_os = "uefi")))]
+    {
     let mut hash = 0xd6e8feb86659fd93;
     let mut shift = 0;
     while shift < 64 {
@@ -220,10 +278,16 @@ fn redact_u64(value: u64) -> u64 {
         shift += 8;
     }
     hash
+    }
 }
 
 fn redact_u32(value: u32) -> u32 {
+    #[cfg(any(target_os = "none", target_os = "uefi"))]
+    { return unsafe { ghostos_crash_redact_u32(value) } }
+    #[cfg(not(any(target_os = "none", target_os = "uefi")))]
+    {
     (redact_u64(value as u64) ^ (redact_u64(value as u64) >> 32)) as u32
+    }
 }
 
 pub fn capture_and_persist(
@@ -233,12 +297,13 @@ pub fn capture_and_persist(
     reason: u16,
     scheduler: Option<&Scheduler>,
 ) {
-    if CRASH_IN_PROGRESS
+    #[cfg(any(target_os = "none", target_os = "uefi"))]
+    let claimed = unsafe { ghostos_crash_claim() };
+    #[cfg(not(any(target_os = "none", target_os = "uefi")))]
+    let claimed = CRASH_IN_PROGRESS
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-        .is_err()
-    {
-        return
-    }
+        .is_ok();
+    if !claimed { return }
 
     registers.fault_address = fault_address;
     let scheduler = scheduler.map_or(SchedulerState::EMPTY, Scheduler::crash_snapshot);
@@ -281,6 +346,71 @@ pub struct CrashCapsule {
 
 impl CrashCapsule {
     pub fn encode(&self, destination: &mut [u8]) -> Option<usize> {
+        #[cfg(any(target_os = "none", target_os = "uefi"))]
+        {
+            let build = unsafe {
+                let package = concat!(env!("CARGO_PKG_NAME"), "\0");
+                let version = concat!(env!("CARGO_PKG_VERSION"), "\0");
+                let target = if cfg!(target_arch = "x86_64") {
+                    b"x86_64\0".as_ptr()
+                } else if cfg!(target_arch = "aarch64") {
+                    b"aarch64\0".as_ptr()
+                } else if cfg!(target_arch = "riscv64") {
+                    b"riscv64\0".as_ptr()
+                } else {
+                    b"unsupported\0".as_ptr()
+                };
+                ghostos_crash_build_identity_for(package.as_ptr(), version.as_ptr(), target)
+            };
+            let empty_record = CCapabilityRecord { handle: 0, owner: 0, rights: 0, object_kind: 0 };
+            let mut records = [empty_record; MAX_CAPABILITY_RECORDS];
+            for (destination, source) in records.iter_mut().zip(self.capabilities.records) {
+                *destination = CCapabilityRecord {
+                    handle: source.redacted_handle,
+                    owner: source.redacted_owner,
+                    rights: source.rights,
+                    object_kind: source.object_kind,
+                };
+            }
+            let raw_ids = self.audit_ids.map(|id| {
+                let raw = id.raw();
+                [raw as u64, (raw >> 64) as u64]
+            });
+            let c_capsule = CCrashCapsule {
+                reason: self.reason,
+                status: self.status,
+                build,
+                registers: self.registers,
+                capabilities: CCapabilityContext {
+                    active: self.capabilities.active,
+                    capacity: self.capabilities.capacity,
+                    records,
+                    record_count: self.capabilities.record_count,
+                },
+                scheduler: CSchedulerState {
+                    clock: self.scheduler.clock,
+                    current_thread: self.scheduler.current_thread,
+                    current_cpu: self.scheduler.current_cpu,
+                    state_counts: self.scheduler.state_counts,
+                    current_instruction_pointer: self.scheduler.current_instruction_pointer,
+                    current_stack_pointer: self.scheduler.current_stack_pointer,
+                },
+                audit_ids: raw_ids,
+                audit_count: self.audit_count,
+            };
+            let mut length = 0;
+            let success = unsafe {
+                ghostos_crash_capsule_encode(
+                    &c_capsule,
+                    destination.as_mut_ptr(),
+                    destination.len(),
+                    &mut length,
+                )
+            };
+            return success.then_some(length)
+        }
+        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
+        {
         let mut writer = Writer::new(destination);
         writer.bytes(&CAPSULE_MAGIC)?;
         writer.u16(CAPSULE_VERSION)?;
@@ -331,14 +461,17 @@ impl CrashCapsule {
         let length = writer.position();
         writer.patch_u16(length_offset, length as u16)?;
         Some(length)
+        }
     }
 }
 
+#[cfg(not(any(target_os = "none", target_os = "uefi")))]
 struct Writer<'a> {
     destination: &'a mut [u8],
     position: usize,
 }
 
+#[cfg(not(any(target_os = "none", target_os = "uefi")))]
 impl<'a> Writer<'a> {
     const fn new(destination: &'a mut [u8]) -> Self {
         Self {

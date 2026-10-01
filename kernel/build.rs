@@ -70,6 +70,38 @@ fn build_user_image(source: &Path, linker: &Path, output: &Path, tools: &Path) {
     )
 }
 
+fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
+    let target = match target_arch {
+        "x86_64" => "x86_64-unknown-none-elf",
+        "aarch64" => "aarch64-unknown-none-elf",
+        "riscv64" => "riscv64-unknown-none-elf",
+        _ => panic!("unsupported kernel architecture for C crash port: {target_arch}"),
+    };
+    let object = output.join("ghostos-crash.o");
+    let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
+    let mut compile = Command::new(clang);
+    let target_flag = format!("--target={target}");
+    compile.args([
+        target_flag.as_str(), "-std=c11", "-O2", "-ffreestanding", "-fno-builtin",
+        "-fno-pic", "-fno-pie", "-Wall", "-Wextra", "-Werror", "-c",
+    ]);
+    if target_arch == "x86_64" {
+        compile.arg("-mno-red-zone");
+    }
+    run(
+        compile
+            .arg("-I")
+            .arg(kernel.join("../c/include"))
+            .arg(kernel.join("../c/src/crash.c"))
+            .arg("-o")
+            .arg(&object),
+        "kernel C crash module compilation",
+    );
+    println!("cargo:rustc-link-arg={}", object.display());
+    println!("cargo:rerun-if-changed={}", kernel.join("../c/src/crash.c").display());
+    println!("cargo:rerun-if-changed={}", kernel.join("../c/include/ghostos/crash.h").display());
+}
+
 fn build_rust_shell_image(manifest: &Path, output: &Path, tools: &Path) {
     let target_directory = output
         .parent()
@@ -141,6 +173,11 @@ fn main() {
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if matches!(target_os.as_str(), "none" | "uefi") {
+        let kernel = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
+        let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output directory"));
+        build_crash_port(&kernel, &output, &target_arch);
+    }
     if target_arch != "x86_64" || !matches!(target_os.as_str(), "none" | "uefi") {
         return
     }
