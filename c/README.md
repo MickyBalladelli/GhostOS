@@ -66,6 +66,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/shell.rs` (VT input decoding and command-line expansion) | `src/shell.c` | `include/ghostos/shell.h` |
 | `kernel/src/syscall.rs` (user-range/request validation and scheduler sleep hints) | `src/syscall.c` | `include/ghostos/syscall.h` |
 | `kernel/src/task.rs` (CPU masks, address-space IDs, and generation-tagged thread IDs) | `src/task.c` | `include/ghostos/task.h` |
+| `kernel/src/time.rs` (atomic kernel clock and x86 RTC conversion) | `src/time.c` | `include/ghostos/time.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

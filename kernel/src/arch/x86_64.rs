@@ -434,7 +434,6 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
 
     const IDT_ENTRIES: usize = 256;
     const PIT_DIVISOR: u16 = 11_931;
-    const PIT_TICK_US: u64 = 10_000;
     const KERNEL_CODE_SELECTOR: u16 = 0x08;
     const KERNEL_DATA_SELECTOR: u16 = 0x10;
     const USER_CODE_SELECTOR: u16 = 0x18 | 3;
@@ -1040,8 +1039,8 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                 if vector == 32 {
                     let scheduler =
                         (&mut *core::ptr::addr_of_mut!(crate::SCHEDULER)).assume_init_mut();
-                    crate::time::advance_monotonic(PIT_TICK_US);
-                    if let Some(context_switch) = scheduler.tick_on(cpu, PIT_TICK_US) {
+                    let elapsed_us = crate::time::timer_tick();
+                    if let Some(context_switch) = scheduler.tick_on(cpu, elapsed_us) {
                         if let Some(previous) = context_switch.previous {
                             if let Ok(context) = scheduler.context_mut(previous) {
                                 save_context(frame, context);
