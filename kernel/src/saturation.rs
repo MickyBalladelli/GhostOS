@@ -18,6 +18,7 @@ const DEFERRED_QUEUE_CAPACITY: u32 = 64;
 const BULK_QUEUE_CAPACITY: u32 = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct SaturationConfig {
     pub ticks: u64,
     pub interrupts_per_tick: u32,
@@ -41,6 +42,7 @@ impl SaturationConfig {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct SaturationReport {
     pub interrupt_accepted: u32,
     pub interrupt_serviced: u32,
@@ -97,121 +99,34 @@ impl SaturationReport {
     }
 }
 
-#[derive(Clone, Copy)]
-struct PendingWork {
-    count: u32,
-    oldest_tick: u64,
-    accepted: u32,
-    serviced: u32,
-    dropped: u32,
-    max_latency_ticks: u64,
-    throttled: u32,
-}
-
-impl PendingWork {
-    const EMPTY: Self = Self {
-        count: 0,
-        oldest_tick: 0,
-        accepted: 0,
-        serviced: 0,
-        dropped: 0,
-        max_latency_ticks: 0,
-        throttled: 0,
-    };
-
-    fn arrive(&mut self, now: u64, amount: u32, capacity: u32) {
-        let room = capacity.saturating_sub(self.count);
-        let accepted = amount.min(room);
-        if accepted > 0 {
-            if self.count == 0 {
-                self.oldest_tick = now;
-            }
-            self.count += accepted;
-            self.accepted += accepted;
-        }
-        self.dropped += amount.saturating_sub(accepted);
-    }
-
-    fn service_one(&mut self, now: u64) -> bool {
-        if self.count == 0 {
-            return false;
-        }
-        self.max_latency_ticks = self
-            .max_latency_ticks
-            .max(now.saturating_sub(self.oldest_tick));
-        self.count -= 1;
-        self.serviced += 1;
-        // Pending work can share the oldest arrival tick; never hide its age.
-        if self.count == 0 {
-            self.oldest_tick = 0;
-        }
-        true
-    }
+unsafe extern "C" {
+    fn ghostos_saturation_prove(config: *const SaturationConfig, report: *mut SaturationReport);
 }
 
 pub fn prove_cpu_saturation(config: SaturationConfig) -> SaturationReport {
-    let mut interrupts = PendingWork::EMPTY;
-    let mut control = PendingWork::EMPTY;
-    let mut deferred = PendingWork::EMPTY;
-    let mut bulk = PendingWork::EMPTY;
-    let mut timer_due = 0;
-    let mut timer_serviced = 0;
-    let timer_period = if config.timer_period_ticks == 0 {
-        1
-    } else {
-        config.timer_period_ticks
-    };
-
-    let mut tick = 0;
-    while tick < config.ticks {
-        interrupts.arrive(tick, config.interrupts_per_tick, INTERRUPT_QUEUE_CAPACITY);
-        control.arrive(tick, config.control_per_tick, CONTROL_QUEUE_CAPACITY);
-        deferred.arrive(tick, config.deferred_per_tick, DEFERRED_QUEUE_CAPACITY);
-        bulk.arrive(tick, config.bulk_per_tick, BULK_QUEUE_CAPACITY);
-
-        if tick % timer_period == 0 {
-            timer_due += 1;
-        }
-
-        // This order mirrors the housekeeping path: interrupt entry, control
-        // dispatch, timer service, deferred work, then bulk work.
-        interrupts.service_one(tick);
-        control.service_one(tick);
-        if tick % timer_period == 0 {
-            timer_serviced += 1;
-        }
-        deferred.service_one(tick);
-
-        if tick % BULK_SERVICE_PERIOD_TICKS == 0 {
-            bulk.service_one(tick);
-        } else if bulk.count > 0 {
-            bulk.throttled = bulk.throttled.saturating_add(1);
-        }
-
-        tick += 1;
-    }
-
-    SaturationReport {
-        interrupt_accepted: interrupts.accepted,
-        interrupt_serviced: interrupts.serviced,
-        interrupt_dropped: interrupts.dropped,
-        interrupt_max_latency_ticks: interrupts.max_latency_ticks,
-        control_accepted: control.accepted,
-        control_serviced: control.serviced,
-        control_dropped: control.dropped,
-        control_max_latency_ticks: control.max_latency_ticks,
-        timer_due,
-        timer_serviced,
+    let mut report = SaturationReport {
+        interrupt_accepted: 0,
+        interrupt_serviced: 0,
+        interrupt_dropped: 0,
+        interrupt_max_latency_ticks: 0,
+        control_accepted: 0,
+        control_serviced: 0,
+        control_dropped: 0,
+        control_max_latency_ticks: 0,
+        timer_due: 0,
+        timer_serviced: 0,
         timer_max_latency_ticks: 0,
-        deferred_accepted: deferred.accepted,
-        deferred_serviced: deferred.serviced,
-        deferred_dropped: deferred.dropped,
-        deferred_max_latency_ticks: deferred.max_latency_ticks,
-        bulk_accepted: bulk.accepted,
-        bulk_serviced: bulk.serviced,
-        bulk_dropped: bulk.dropped,
-        bulk_throttled: bulk.throttled,
-    }
+        deferred_accepted: 0,
+        deferred_serviced: 0,
+        deferred_dropped: 0,
+        deferred_max_latency_ticks: 0,
+        bulk_accepted: 0,
+        bulk_serviced: 0,
+        bulk_dropped: 0,
+        bulk_throttled: 0,
+    };
+    unsafe { ghostos_saturation_prove(&config, &mut report) }
+    report
 }
 
 #[cfg(test)]
