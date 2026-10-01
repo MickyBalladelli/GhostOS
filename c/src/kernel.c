@@ -1,10 +1,21 @@
 #include "ghostos/kernel.h"
 
-static ghostos_status boot_failure(ghostos_kernel_runtime *runtime, ghostos_status status,
+static void boot_failure(ghostos_kernel_runtime *runtime, ghostos_status status,
     ghostos_kernel_boot_result result) {
+    (void)result;
     ghostos_boot_diagnostics_fail(&runtime->diagnostics,status);
+    ghostos_boot_diagnostic_fail(status);
     if (runtime->log_status) runtime->log_status(runtime->context,"kernel boot failed",status);
-    return (ghostos_status)result;
+}
+
+static uint64_t saturating_add_u64(uint64_t a,uint64_t b) { return UINT64_MAX-a<b?UINT64_MAX:a+b; }
+static void checkpoint(ghostos_kernel_runtime *runtime,ghostos_boot_stage stage) {
+    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,stage);
+    ghostos_boot_diagnostic_checkpoint(stage);
+}
+static void complete(ghostos_kernel_runtime *runtime) {
+    ghostos_boot_diagnostics_complete(&runtime->diagnostics);
+    ghostos_boot_diagnostic_complete();
 }
 
 bool ghostos_kernel_service_image_fits(size_t length) {
@@ -26,8 +37,25 @@ void ghostos_kernel_runtime_init(ghostos_kernel_runtime *runtime,
 ghostos_kernel_boot_result ghostos_kernel_boot(ghostos_kernel_runtime *runtime,
     const ghostos_boot_info *boot_info) {
     ghostos_boot_attempt reported={0}; bool has_reported=false;
-    ghostos_boot_diagnostics_begin(&runtime->diagnostics,runtime->has_previous_failure,
-        &runtime->diagnostics,&reported,&has_reported);
+    if (ghostos_boot_diagnostic_begin(&reported)) {
+        runtime->previous_failure=reported;
+        runtime->has_previous_failure=true;
+    }
+    if (runtime->boot_started) {
+        ghostos_boot_diagnostics previous=runtime->diagnostics;
+        ghostos_boot_diagnostics next;
+        ghostos_boot_diagnostics_begin(&previous,true,&next,&reported,&has_reported);
+        runtime->diagnostics=next;
+    } else {
+        runtime->diagnostics=ghostos_boot_diagnostics_initial(1);
+        if (runtime->has_previous_failure) {
+            runtime->diagnostics.last_failure=runtime->previous_failure;
+            runtime->diagnostics.has_last_failure=true;
+            reported=runtime->previous_failure;
+            has_reported=true;
+        }
+        runtime->boot_started=true;
+    }
     if (has_reported) { runtime->previous_failure=reported; runtime->has_previous_failure=true; }
     else runtime->has_previous_failure=false;
     if (ghostos_kernel_validate_boot_info(boot_info)!=GHOSTOS_STATUS_NORMAL) {
@@ -37,7 +65,7 @@ ghostos_kernel_boot_result ghostos_kernel_boot(ghostos_kernel_runtime *runtime,
     if (runtime->disable_interrupts) runtime->disable_interrupts(runtime->context);
     ghostos_arch_disable_interrupts(&runtime->architecture);
     if (runtime->console_initialize) runtime->console_initialize(runtime->context,boot_info->framebuffer);
-    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,GHOSTOS_BOOT_INFO_VALIDATED);
+    checkpoint(runtime,GHOSTOS_BOOT_INFO_VALIDATED);
 
     uint64_t tables[GHOSTOS_ARCH_TABLE_FRAME_COUNT]={0};
     if (!runtime->memory_initialize || !runtime->memory_initialize(runtime->context,boot_info,tables)) {
@@ -53,44 +81,48 @@ ghostos_kernel_boot_result ghostos_kernel_boot(ghostos_kernel_runtime *runtime,
         boot_failure(runtime,GHOSTOS_STATUS_INVALID_ARGUMENT,GHOSTOS_KERNEL_BOOT_ARCH_FAILED);
         return GHOSTOS_KERNEL_BOOT_ARCH_FAILED;
     }
-    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,GHOSTOS_BOOT_MEMORY_READY);
+    checkpoint(runtime,GHOSTOS_BOOT_MEMORY_READY);
     if ((runtime->time_initialize && !runtime->time_initialize(runtime->context)) ||
         (runtime->random_initialize && !runtime->random_initialize(runtime->context))) {
         boot_failure(runtime,GHOSTOS_STATUS_BUSY,GHOSTOS_KERNEL_BOOT_TIME_FAILED);
         return GHOSTOS_KERNEL_BOOT_TIME_FAILED;
     }
-    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,GHOSTOS_BOOT_ARCHITECTURE_READY);
+    checkpoint(runtime,GHOSTOS_BOOT_ARCHITECTURE_READY);
     if (runtime->hardware_initialize && !runtime->hardware_initialize(runtime->context,boot_info)) {
         boot_failure(runtime,GHOSTOS_STATUS_BUSY,GHOSTOS_KERNEL_BOOT_HARDWARE_FAILED);
         return GHOSTOS_KERNEL_BOOT_HARDWARE_FAILED;
     }
-    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,GHOSTOS_BOOT_HARDWARE_READY);
+    checkpoint(runtime,GHOSTOS_BOOT_HARDWARE_READY);
 
     bool ring3=runtime->ring3_supported ? runtime->ring3_supported(runtime->context) :
         ghostos_arch_ring3_supported(&runtime->architecture);
     if (!ring3) {
-        ghostos_boot_diagnostics_complete(&runtime->diagnostics);
+        complete(runtime);
         if (runtime->run_shell) (void)runtime->run_shell(runtime->context,boot_info);
         return GHOSTOS_KERNEL_BOOT_SHELL_FALLBACK;
     }
-    if (!runtime->storage_initialize || runtime->storage_initialize(runtime->context,boot_info)!=GHOSTOS_STATUS_NORMAL) {
-        boot_failure(runtime,GHOSTOS_STATUS_NOT_FOUND,GHOSTOS_KERNEL_BOOT_STORAGE_FAILED);
+    ghostos_status storage_status=runtime->storage_initialize ?
+        runtime->storage_initialize(runtime->context,boot_info) : GHOSTOS_STATUS_NO_SPACE;
+    if (storage_status!=GHOSTOS_STATUS_NORMAL) {
+        boot_failure(runtime,storage_status,GHOSTOS_KERNEL_BOOT_STORAGE_FAILED);
         return GHOSTOS_KERNEL_BOOT_STORAGE_FAILED;
     }
-    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,GHOSTOS_BOOT_STORAGE_READY);
+    checkpoint(runtime,GHOSTOS_BOOT_STORAGE_READY);
     ghostos_status status=runtime->services_initialize ?
         runtime->services_initialize(runtime->context,&runtime->provisioning_required) : GHOSTOS_STATUS_NO_SPACE;
     if (status!=GHOSTOS_STATUS_NORMAL) {
         boot_failure(runtime,status,GHOSTOS_KERNEL_BOOT_SERVICES_FAILED);
         return GHOSTOS_KERNEL_BOOT_SERVICES_FAILED;
     }
-    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,GHOSTOS_BOOT_SERVICES_READY);
-    if (!runtime->start_init || runtime->start_init(runtime->context,boot_info)!=GHOSTOS_STATUS_NORMAL) {
-        boot_failure(runtime,GHOSTOS_STATUS_BUSY,GHOSTOS_KERNEL_BOOT_HANDOFF_FAILED);
+    checkpoint(runtime,GHOSTOS_BOOT_SERVICES_READY);
+    ghostos_status handoff_status=runtime->start_init ?
+        runtime->start_init(runtime->context,boot_info) : GHOSTOS_STATUS_NO_SPACE;
+    if (handoff_status!=GHOSTOS_STATUS_NORMAL) {
+        boot_failure(runtime,handoff_status,GHOSTOS_KERNEL_BOOT_HANDOFF_FAILED);
         return GHOSTOS_KERNEL_BOOT_HANDOFF_FAILED;
     }
-    ghostos_boot_diagnostics_checkpoint(&runtime->diagnostics,GHOSTOS_BOOT_USER_HANDOFF);
-    ghostos_boot_diagnostics_complete(&runtime->diagnostics);
+    checkpoint(runtime,GHOSTOS_BOOT_USER_HANDOFF);
+    complete(runtime);
     runtime->scheduler_ready=true;
     return GHOSTOS_KERNEL_BOOT_OK;
 }
@@ -101,11 +133,12 @@ bool ghostos_kernel_current_address_space(const ghostos_kernel_runtime *runtime,
 }
 
 void ghostos_kernel_cpu_idle(ghostos_kernel_runtime *runtime, uint64_t now_us) {
-    if (!runtime || !runtime->scheduler_ready || !runtime->scheduler_idle_state) {
+    if (!runtime) for (;;) atomic_signal_fence(memory_order_seq_cst);
+    if (!runtime->scheduler_ready || !runtime->scheduler_idle_state) {
         ghostos_arch_halt(&runtime->architecture);
         return;
     }
-    uint8_t state=runtime->scheduler_idle_state(runtime->context,sat_add(now_us,1000),1000);
+    uint8_t state=runtime->scheduler_idle_state(runtime->context,saturating_add_u64(now_us,1000),1000);
     ghostos_arch_idle(&runtime->architecture,state);
 }
 
@@ -116,6 +149,7 @@ _Noreturn void ghostos_kernel_halt(ghostos_kernel_runtime *runtime) {
 void ghostos_kernel_capture_exception(ghostos_kernel_runtime *runtime,
     ghostos_crash_register_state registers, uint64_t fault_address, ghostos_status status, uint16_t reason) {
     ghostos_boot_diagnostics_fail(&runtime->diagnostics,status);
+    ghostos_boot_diagnostic_fail(status);
     ghostos_crash_capsule capsule={0};
     capsule.reason=reason; capsule.status=status;
     capsule.registers=registers; capsule.registers.fault_address=fault_address;
@@ -138,11 +172,20 @@ _Noreturn void ghostos_kernel_panic_report(ghostos_kernel_runtime *runtime) {
 
 bool ghostos_kernel_service_mark_ready(ghostos_kernel_runtime *runtime, uint8_t role) {
     if (!runtime || role>=32) return false;
+    uint32_t ready=atomic_load_explicit(&runtime->service_ready_mask,memory_order_acquire);
+    if (role==9 && (ready&((UINT32_C(1)<<7)|(UINT32_C(1)<<14)))!=((UINT32_C(1)<<7)|(UINT32_C(1)<<14))) return false;
     atomic_fetch_or_explicit(&runtime->service_ready_mask,UINT32_C(1)<<role,memory_order_release);
     return true;
 }
 uint32_t ghostos_kernel_service_ready_mask(const ghostos_kernel_runtime *runtime) {
     return runtime ? atomic_load_explicit(&runtime->service_ready_mask,memory_order_acquire) : 0;
+}
+const char *ghostos_kernel_service_name(uint8_t role) {
+    static const char *const names[15]={0,"ghostos-init","ghostos-fsd","ghostos-storaged",
+        "ghostos-netd","ghostos-logd","ghostos-auditd","ghostos-authd","ghostos-pkgd",
+        "ghostos-shell","ghostos-pcid","ghostos-ahcid","ghostos-nvmed","ghostos-ethernetd",
+        "ghostos-logind"};
+    return role<15?names[role]:0;
 }
 
 void ghostos_kernel_dispatch_request(ghostos_request request, uint32_t caller,
@@ -183,12 +226,13 @@ bool ghostos_kernel_login_valid_username(const uint8_t *username,size_t length) 
 
 static uint8_t ascii_lower(uint8_t c) { return c>='A'&&c<='Z' ? (uint8_t)(c-'A'+'a') : c; }
 uint64_t ghostos_kernel_login_identity(const uint8_t *username,size_t length) {
+    if (!username && length) return 0;
     uint64_t identity=UINT64_C(0xcbf29ce484222325);
     for (size_t i=0;i<length;i++) { identity^=ascii_lower(username[i]); identity*=UINT64_C(0x100000001b3); }
     return identity ? identity : 1;
 }
 void ghostos_kernel_login_set_username(ghostos_kernel_login *l,const uint8_t *username,size_t length) {
-    if (!username || length>GHOSTOS_KERNEL_LOGIN_USERNAME_CAPACITY) return;
+    if (!ghostos_kernel_login_valid_username(username,length)) return;
     for (size_t i=0;i<GHOSTOS_KERNEL_LOGIN_USERNAME_CAPACITY;i++)
         atomic_store_explicit(&l->username[i],i<length?ascii_lower(username[i]):0,memory_order_relaxed);
     atomic_store_explicit(&l->username_length,(unsigned)length,memory_order_release);
@@ -199,8 +243,9 @@ void ghostos_kernel_login_clear_username(ghostos_kernel_login *l) {
 }
 void ghostos_kernel_login_record_failure(ghostos_kernel_login *l,const ghostos_kernel_login_ops *ops,uint64_t now) {
     unsigned failures=atomic_load_explicit(&l->failed_attempts,memory_order_relaxed);
-    do { if (failures<UINT32_MAX) break; } while (!atomic_compare_exchange_weak_explicit(&l->failed_attempts,&failures,failures,memory_order_relaxed,memory_order_relaxed));
-    failures=atomic_fetch_add_explicit(&l->failed_attempts,1,memory_order_acq_rel)+1;
+    while (failures<UINT32_MAX && !atomic_compare_exchange_weak_explicit(&l->failed_attempts,
+            &failures,failures+1,memory_order_acq_rel,memory_order_relaxed)) {}
+    if (failures<UINT32_MAX) ++failures;
     unsigned shift=failures?failures-1:0; if (shift>6) shift=6;
     uint64_t delay=GHOSTOS_KERNEL_LOGIN_RATE_BASE_US<<shift;
     if (delay>GHOSTOS_KERNEL_LOGIN_RATE_MAX_US) delay=GHOSTOS_KERNEL_LOGIN_RATE_MAX_US;
@@ -277,7 +322,7 @@ bool ghostos_kernel_login_session_matches(const ghostos_kernel_login *l,uint64_t
         atomic_load_explicit(&l->identity,memory_order_acquire)==identity &&
         atomic_load_explicit(&l->session_expires_us,memory_order_acquire)==expires &&
         atomic_load_explicit(&l->revocation_epoch,memory_order_acquire)==epoch && now<expires &&
-        now>=last && now-last<GHOSTOS_KERNEL_LOGIN_IDLE_TIMEOUT_US;
+        (now>=last?now-last:0)<GHOSTOS_KERNEL_LOGIN_IDLE_TIMEOUT_US;
 }
 static bool session_active_locked(ghostos_kernel_login *l,const ghostos_kernel_login_ops *ops,uint64_t now) {
     if (!atomic_load_explicit(&l->authorized,memory_order_acquire)) return false;

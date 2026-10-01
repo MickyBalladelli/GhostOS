@@ -43,6 +43,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/ipc.rs` | `src/ipc.c` | `include/ghostos/ipc.h` |
 | `kernel/src/keyboard.rs` | `src/keyboard.c` | `include/ghostos/keyboard.h` |
 | `kernel/src/keyboard_stub.rs` | `src/keyboard_stub.c` | `include/ghostos/keyboard_stub.h` |
+| `kernel/src/lib.rs` (C kernel API umbrella, boot flow, request-dispatch boundary, login/session state, and fatal path) | `src/kernel.c` | `include/ghostos/kernel.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

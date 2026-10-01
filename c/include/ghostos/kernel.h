@@ -6,18 +6,14 @@
 #include "ghostos/arch.h"
 #include "ghostos/boot_diagnostics.h"
 #include "ghostos/boot_protocol.h"
-#include "ghostos/boot_services.h"
 #include "ghostos/capability.h"
 #include "ghostos/contention.h"
 #include "ghostos/crash.h"
-#include "ghostos/cow.h"
 #include "ghostos/dlm.h"
 #include "ghostos/dma.h"
 #include "ghostos/driver_capabilities.h"
-#include "ghostos/frame_allocator.h"
 #include "ghostos/hot_allocator.h"
 #include "ghostos/invariants.h"
-#include "ghostos/ipc.h"
 #include "ghostos/keyboard.h"
 #include "ghostos/keyboard_stub.h"
 
@@ -74,6 +70,7 @@ typedef struct {
     ghostos_boot_diagnostics diagnostics;
     bool has_previous_failure;
     ghostos_boot_attempt previous_failure;
+    bool boot_started;
     bool provisioning_required;
     bool scheduler_ready;
     atomic_uint service_ready_mask;
@@ -125,6 +122,7 @@ void ghostos_kernel_capture_exception(ghostos_kernel_runtime *runtime,
     ghostos_crash_register_state registers, uint64_t fault_address, ghostos_status status, uint16_t reason);
 bool ghostos_kernel_service_mark_ready(ghostos_kernel_runtime *runtime, uint8_t role);
 uint32_t ghostos_kernel_service_ready_mask(const ghostos_kernel_runtime *runtime);
+const char *ghostos_kernel_service_name(uint8_t role);
 void ghostos_kernel_dispatch_request(ghostos_request request, uint32_t caller,
     ghostos_response *response, void *context,
     void (*dispatch)(void *context, ghostos_request request, uint32_t caller, ghostos_response *response));
