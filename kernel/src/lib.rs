@@ -72,6 +72,7 @@ mod physical_storage;
 pub mod partition;
 #[allow(unsafe_code)]
 pub mod process;
+#[allow(unsafe_code)]
 pub mod scheduler;
 #[allow(unsafe_code)]
 pub mod runtime;

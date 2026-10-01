@@ -81,7 +81,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/random.rs` — C owns processor entropy detection, seed mixing, ChaCha20 blocks, counter allocation, and bounded output. Rust keeps the slice and `Option<u64>` API.
 - [ ] `kernel/src/runtime.rs` — C owns bounded filesystem process registration, runtime clock, ABI and filesystem request validation, buffer descriptor validation, response validation, and operation routing. Rust retains typed ABI translation and capability-protected IPC adapters.
 - [ ] `kernel/src/saturation.rs` — C owns the queue model and deterministic CPU saturation proof. Rust keeps the public config/report types and budget predicates.
-- [ ] `kernel/src/scheduler.rs`
+- [ ] `kernel/src/scheduler.rs` — C owns ready-thread selection, realtime priority/deadline ordering, and IPC priority inheritance. Rust retains thread/context state, capability checks, CPU topology, NUMA, power policy, and hardware transitions.
 - [ ] `kernel/src/shell.rs`
 - [ ] `kernel/src/syscall.rs`
 - [ ] `kernel/src/task.rs`

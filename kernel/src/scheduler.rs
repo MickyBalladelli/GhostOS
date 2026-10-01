@@ -15,6 +15,43 @@ use ghostos_power::{
     ThermalReading, WorkloadClass, WorkloadRequest,
 };
 use ghostos_status::{IntoStatus, Severity, Status, facility};
+use core::ffi::c_int;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CSchedulerThreadView {
+    id: u32,
+    state: u8,
+    policy: u8,
+    priority: u8,
+    inherited_priority: u8,
+    deadline: u64,
+    inherited_deadline: u64,
+    affinity: [u64; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CSchedulerWaitEdge {
+    owner_slot: u32,
+    waiter_slot: u32,
+}
+
+const _: [(); 40] = [(); core::mem::size_of::<CSchedulerThreadView>()];
+const _: [(); 8] = [(); core::mem::size_of::<CSchedulerWaitEdge>()];
+
+unsafe extern "C" {
+    fn ghostos_scheduler_effective_key(thread: *const CSchedulerThreadView,
+        priority: *mut u8, deadline: *mut u64);
+    fn ghostos_scheduler_pick_next(threads: *const CSchedulerThreadView, count: usize,
+        cpus: *const u64, cooperative_cursor: *mut usize) -> c_int;
+    fn ghostos_scheduler_pick_realtime(threads: *const CSchedulerThreadView, count: usize,
+        cpus: *const u64) -> c_int;
+    fn ghostos_scheduler_outranks(candidate: *const CSchedulerThreadView,
+        current: *const CSchedulerThreadView) -> bool;
+    fn ghostos_scheduler_recompute_inheritance(threads: *mut CSchedulerThreadView,
+        thread_count: usize, edges: *const CSchedulerWaitEdge, edge_count: usize);
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SchedulerError {
@@ -1066,83 +1103,66 @@ impl Scheduler {
     }
 
     fn pick_next(&mut self, cpus: CpuMask) -> Option<ThreadId> {
-        if let Some(realtime) = self.pick_realtime(cpus) {
-            return Some(realtime);
-        }
-
-        for offset in 1..=MAX_THREADS {
-            let slot = (self.cooperative_cursor + offset) % MAX_THREADS;
-            let thread = self.threads[slot];
-            if thread.state == ThreadState::Ready
-                && thread.policy == SchedulingPolicy::Cooperative
-                && thread.affinity.intersects(cpus)
-            {
-                self.cooperative_cursor = slot;
-                return Some(thread.id);
-            }
-        }
-        None
-    }
-
-    fn pick_realtime(&self, cpus: CpuMask) -> Option<ThreadId> {
-        self.threads
-            .iter()
-            .filter(|thread| {
-                thread.state == ThreadState::Ready
-                    && thread.affinity.intersects(cpus)
-                    && self.effective_key(thread).0 != 0
-            })
-            .min_by_key(|thread| match thread.policy {
-                SchedulingPolicy::Realtime { .. } | SchedulingPolicy::Cooperative => {
-                    let (priority, deadline) = self.effective_key(thread);
-                    (u8::MAX - priority, deadline, thread.id.raw())
-                }
-            })
+        let views = self.scheduler_views();
+        let cpus = cpus.raw_words();
+        let slot = unsafe {
+            ghostos_scheduler_pick_next(
+                views.as_ptr(), views.len(), cpus.as_ptr(), &mut self.cooperative_cursor,
+            )
+        };
+        usize::try_from(slot).ok().and_then(|slot| self.threads.get(slot))
+            .filter(|thread| thread.state != ThreadState::Vacant)
             .map(|thread| thread.id)
     }
 
+    fn pick_realtime(&self, cpus: CpuMask) -> Option<ThreadId> {
+        let views = self.scheduler_views();
+        let cpus = cpus.raw_words();
+        let slot = unsafe { ghostos_scheduler_pick_realtime(views.as_ptr(), views.len(), cpus.as_ptr()) };
+        usize::try_from(slot).ok().and_then(|slot| self.threads.get(slot)).map(|thread| thread.id)
+    }
+
     fn outranks(&self, candidate: ThreadId, current: ThreadId) -> bool {
-        let candidate = self.effective_key(&self.threads[candidate.slot()]);
-        let current = self.effective_key(&self.threads[current.slot()]);
-        candidate.0 > current.0 || (candidate.0 == current.0 && candidate.1 < current.1)
+        let views = self.scheduler_views();
+        unsafe {
+            ghostos_scheduler_outranks(
+                &views[candidate.slot()],
+                &views[current.slot()],
+            )
+        }
     }
 
     fn effective_key(&self, thread: &Thread) -> (u8, u64) {
-        let (base_priority, base_deadline) = match thread.policy {
-            SchedulingPolicy::Realtime { priority, deadline } => (priority, deadline),
-            SchedulingPolicy::Cooperative => (0, u64::MAX),
-        };
-        if thread.inherited_priority > base_priority {
-            (thread.inherited_priority, thread.inherited_deadline)
-        } else {
-            (base_priority, base_deadline)
-        }
+        let view = scheduler_view(thread);
+        let (mut priority, mut deadline) = (0, 0);
+        unsafe { ghostos_scheduler_effective_key(&view, &mut priority, &mut deadline) }
+        (priority, deadline)
     }
 
     fn recompute_inheritance(&mut self) {
-        for thread in &mut self.threads {
-            thread.inherited_priority = 0;
-            thread.inherited_deadline = u64::MAX;
+        let mut views = self.scheduler_views();
+        let mut edges = [CSchedulerWaitEdge { owner_slot: 0, waiter_slot: 0 }; MAX_THREADS];
+        let mut edge_count = 0;
+        for entry in self.ipc_waiters.iter().flatten() {
+            edges[edge_count] = CSchedulerWaitEdge {
+                owner_slot: entry.owner.slot() as u32,
+                waiter_slot: entry.waiter.slot() as u32,
+            };
+            edge_count += 1;
         }
-        for _ in 0..MAX_THREADS {
-            let mut changed = false;
-            for entry in self.ipc_waiters.iter().flatten().copied() {
-                let waiter = self.threads[entry.waiter.slot()];
-                let (priority, deadline) = self.effective_key(&waiter);
-                let owner = &mut self.threads[entry.owner.slot()];
-                if priority > owner.inherited_priority
-                    || (priority == owner.inherited_priority
-                        && deadline < owner.inherited_deadline)
-                {
-                    owner.inherited_priority = priority;
-                    owner.inherited_deadline = deadline;
-                    changed = true
-                }
-            }
-            if !changed {
-                break
-            }
+        unsafe {
+            ghostos_scheduler_recompute_inheritance(
+                views.as_mut_ptr(), views.len(), edges.as_ptr(), edge_count,
+            )
         }
+        for (thread, view) in self.threads.iter_mut().zip(views) {
+            thread.inherited_priority = view.inherited_priority;
+            thread.inherited_deadline = view.inherited_deadline;
+        }
+    }
+
+    fn scheduler_views(&self) -> [CSchedulerThreadView; MAX_THREADS] {
+        core::array::from_fn(|index| scheduler_view(&self.threads[index]))
     }
 
     fn authorize_system_control<const MAX_CAPABILITIES: usize>(
@@ -1159,6 +1179,29 @@ impl Scheduler {
 
 fn map_persona_error(_: PersonaError) -> SchedulerError {
     SchedulerError::AccessDenied
+}
+
+fn scheduler_view(thread: &Thread) -> CSchedulerThreadView {
+    let (policy, priority, deadline) = match thread.policy {
+        SchedulingPolicy::Cooperative => (0, 0, u64::MAX),
+        SchedulingPolicy::Realtime { priority, deadline } => (1, priority, deadline),
+    };
+    CSchedulerThreadView {
+        id: thread.id.raw(),
+        state: match thread.state {
+            ThreadState::Vacant => 0,
+            ThreadState::Ready => 1,
+            ThreadState::Running => 2,
+            ThreadState::Blocked => 3,
+            ThreadState::Sleeping => 4,
+        },
+        policy,
+        priority,
+        inherited_priority: thread.inherited_priority,
+        deadline,
+        inherited_deadline: thread.inherited_deadline,
+        affinity: thread.affinity.raw_words(),
+    }
 }
 
 fn map_partition_error(error: CorePartitionError) -> SchedulerError {

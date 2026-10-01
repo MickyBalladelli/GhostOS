@@ -62,6 +62,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/random.rs` (processor-seeded ChaCha20 kernel random source) | `src/random.c` | `include/ghostos/random.h` |
 | `kernel/src/runtime.rs` (runtime dispatch state, ABI and filesystem request validation, and response validation) | `src/runtime.c` | `include/ghostos/runtime.h` |
 | `kernel/src/saturation.rs` (bounded housekeeping saturation proof and progress report) | `src/saturation.c` | `include/ghostos/saturation.h` |
+| `kernel/src/scheduler.rs` (ready-thread selection, realtime ordering, and IPC priority inheritance) | `src/scheduler.c` | `include/ghostos/scheduler.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
