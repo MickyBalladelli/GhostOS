@@ -69,6 +69,24 @@ struct CRuntimeIdentity {
     authority: u64,
 }
 
+#[repr(C)]
+struct CRuntimeFilesystemRequest {
+    operation: u32,
+    flags: u32,
+    process: u64,
+    capability: u64,
+    offset: u64,
+    length: u64,
+    region: u32,
+    buffer_offset: u32,
+    buffer_length: u32,
+    writable: u32,
+    has_buffer: u32,
+    reserved: u32,
+}
+
+const _: [(); 64] = [(); core::mem::size_of::<CRuntimeFilesystemRequest>()];
+
 unsafe extern "C" {
     fn ghostos_runtime_clock(state: *const CRuntimeState) -> u64;
     fn ghostos_runtime_advance_clock(state: *mut CRuntimeState, elapsed: u64);
@@ -79,23 +97,16 @@ unsafe extern "C" {
         capacity: usize,
     ) -> c_uint;
     fn ghostos_runtime_unregister(state: *mut CRuntimeState, caller: u32, capacity: usize) -> c_uint;
-    fn ghostos_runtime_lookup(
+    fn ghostos_runtime_prepare_filesystem_request(
         state: *const CRuntimeState,
         caller: u32,
-        identity: *mut CRuntimeIdentity,
+        request: *const Request,
         capacity: usize,
+        prepared: *mut CRuntimeFilesystemRequest,
     ) -> c_uint;
     fn ghostos_runtime_validate_request(request: *const Request) -> c_uint;
     fn ghostos_runtime_operation_delegated(operation: u16) -> bool;
     fn ghostos_runtime_validate_empty_request(request: *const Request, capability_allowed: bool) -> c_uint;
-    fn ghostos_runtime_validate_filesystem_request(
-        request: *const Request,
-        region: *mut u32,
-        offset: *mut u32,
-        length: *mut u32,
-        writable: *mut bool,
-        has_buffer: *mut bool,
-    ) -> c_uint;
     fn ghostos_runtime_validate_filesystem_response(
         operation: u16,
         status: u32,
@@ -542,51 +553,36 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         operation: Operation,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
-        let mut c_identity = CRuntimeIdentity { process: 0, authority: 0 };
+        let mut prepared = CRuntimeFilesystemRequest {
+            operation: 0, flags: 0, process: 0, capability: 0, offset: 0, length: 0,
+            region: 0, buffer_offset: 0, buffer_length: 0, writable: 0, has_buffer: 0,
+            reserved: 0,
+        };
         c_runtime_error(unsafe {
-            ghostos_runtime_lookup(&self.state, caller.raw(), &mut c_identity, MAX_PROCESSES)
+            ghostos_runtime_prepare_filesystem_request(
+                &self.state, caller.raw(), &request, MAX_PROCESSES, &mut prepared,
+            )
         })?;
-        let slot = FilesystemIdentity {
-            process: ghostos_fsd::ProcessId::from_valid_raw(c_identity.process),
-            authority: FsdCapability::from_valid_raw(c_identity.authority),
+        let buffer = if prepared.has_buffer != 0 {
+            Some(SharedBuffer {
+                region: SharedRegionId::new(prepared.region).ok_or(RuntimeDispatchError::InvalidBuffer)?,
+                offset: prepared.buffer_offset,
+                length: prepared.buffer_length,
+                writable: prepared.writable != 0,
+            })
+        } else {
+            None
         };
-        let buffer = self.buffer(request)?;
-        let fs_operation = match operation {
-            Operation::SynFsOpen => FsdOperation::Open,
-            Operation::SynFsClose => FsdOperation::Close,
-            Operation::SynFsRead => FsdOperation::Read,
-            Operation::SynFsWrite => FsdOperation::Write,
-            Operation::SynFsMap => FsdOperation::Map,
-            Operation::SynFsUnmap => FsdOperation::Unmap,
-            Operation::SynFsMetadata => FsdOperation::Metadata,
-            Operation::SynFsList => FsdOperation::List,
-            Operation::SynFsMkdir => FsdOperation::Mkdir,
-            Operation::SynFsRmdir => FsdOperation::Rmdir,
-            Operation::SynFsLink => FsdOperation::Link,
-            Operation::SynFsLinks => FsdOperation::Links,
-            Operation::SynFsDelete => FsdOperation::Delete,
-            _ => return Err(RuntimeDispatchError::InvalidRequest),
-        };
-
-        let capability = match operation {
-            Operation::SynFsOpen
-            | Operation::SynFsList
-            | Operation::SynFsMkdir
-            | Operation::SynFsRmdir
-            | Operation::SynFsLinks
-            | Operation::SynFsDelete => {
-                slot.authority
-            }
-            _ => FsdCapability::from_raw(request.capability)
-                .ok_or(RuntimeDispatchError::InvalidCapability)?,
-        };
-        let flags = FsdFlags::from_bits(request.flags);
-
-        let fs_request = ghostos_fsd::Request::new(fs_operation, slot.process)
-            .with_flags(flags)
-            .with_capability(capability)
-            .with_offset(request.arguments[4])
-            .with_length(request.arguments[5]);
+        let fs_operation = FsdOperation::from_raw(prepared.operation as u16)
+            .ok_or(RuntimeDispatchError::InvalidRequest)?;
+        let fs_request = ghostos_fsd::Request::new(
+            fs_operation,
+            ghostos_fsd::ProcessId::from_valid_raw(prepared.process),
+        )
+            .with_flags(FsdFlags::from_bits(prepared.flags as u16))
+            .with_capability(FsdCapability::from_valid_raw(prepared.capability))
+            .with_offset(prepared.offset)
+            .with_length(prepared.length);
         let response = self.filesystem.transact(caller, fs_request, buffer);
         let response = Response {
             status: response.status.raw(),
@@ -594,24 +590,6 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             values: response.values,
         };
         self.validate_filesystem_response(operation, buffer, response)
-    }
-
-    fn buffer(&self, request: Request) -> Result<Option<SharedBuffer>, RuntimeDispatchError> {
-        let mut region = 0;
-        let mut offset = 0;
-        let mut length = 0;
-        let mut writable = false;
-        let mut has_buffer = false;
-        c_runtime_error(unsafe {
-            ghostos_runtime_validate_filesystem_request(
-                &request, &mut region, &mut offset, &mut length, &mut writable, &mut has_buffer,
-            )
-        })?;
-        if !has_buffer {
-            return Ok(None)
-        }
-        let region = SharedRegionId::new(region).ok_or(RuntimeDispatchError::InvalidBuffer)?;
-        Ok(Some(SharedBuffer { region, offset, length, writable }))
     }
 
     fn validate_filesystem_response(
