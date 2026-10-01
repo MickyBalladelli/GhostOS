@@ -92,3 +92,41 @@ bool ghostos_boot_process_for_service(uint32_t service_id, uint64_t *process_id)
     *process_id = service->process_id;
     return true;
 }
+
+bool ghostos_boot_services_start(ghostos_boot_service_spawn spawn, void *context,
+                                 ghostos_boot_startup_diagnostic *diagnostics,
+                                 size_t diagnostic_capacity)
+{
+    uint32_t order[GHOSTOS_BOOT_SERVICE_COUNT];
+    size_t order_count = 0;
+    bool started[GHOSTOS_BOOT_SERVICE_COUNT] = { false };
+    if (!spawn || !diagnostics || diagnostic_capacity < GHOSTOS_BOOT_SERVICE_COUNT ||
+        !ghostos_boot_service_startup_order(order, GHOSTOS_BOOT_SERVICE_COUNT,
+                                            &order_count)) return false;
+    for (size_t i = 0; i < GHOSTOS_BOOT_SERVICE_COUNT; ++i) {
+        diagnostics[i] = (ghostos_boot_startup_diagnostic){
+            services[i].id, services[i].process_id, 0,
+            services[i].dependency_count, 0, false, false
+        };
+    }
+    for (size_t position = 0; position < order_count; ++position) {
+        const ghostos_boot_service_spec *service = ghostos_boot_service_find(order[position]);
+        size_t service_index = index_for_id(order[position]);
+        uint64_t process_id = 0;
+        if (!service || service_index == GHOSTOS_BOOT_SERVICE_COUNT) return false;
+        for (size_t d = 0; d < service->dependency_count; ++d) {
+            size_t dependency_index = index_for_id(service->dependencies[d]);
+            if (dependency_index == GHOSTOS_BOOT_SERVICE_COUNT || !started[dependency_index]) {
+                diagnostics[service_index].blocked_on = service->dependencies[d];
+                diagnostics[service_index].has_blocked_on = true;
+                return false;
+            }
+        }
+        if (!spawn(context, service, &process_id) || process_id == 0) return false;
+        started[service_index] = true;
+        diagnostics[service_index].process_id = process_id;
+        diagnostics[service_index].startup_order = position + 1;
+        diagnostics[service_index].ready = true;
+    }
+    return true;
+}

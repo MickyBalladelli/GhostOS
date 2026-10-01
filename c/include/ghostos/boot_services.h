@@ -56,10 +56,17 @@ typedef struct {
     bool ready;
 } ghostos_boot_startup_diagnostic;
 
+typedef bool (*ghostos_boot_service_spawn)(void *context,
+                                          const ghostos_boot_service_spec *service,
+                                          uint64_t *process_id);
+
 const ghostos_boot_service_spec *ghostos_boot_service_specs(size_t *count);
 const ghostos_boot_service_spec *ghostos_boot_service_find(uint32_t service_id);
 bool ghostos_boot_service_startup_order(uint32_t *service_ids, size_t capacity,
                                         size_t *count);
 bool ghostos_boot_process_for_service(uint32_t service_id, uint64_t *process_id);
+bool ghostos_boot_services_start(ghostos_boot_service_spawn spawn, void *context,
+                                 ghostos_boot_startup_diagnostic *diagnostics,
+                                 size_t diagnostic_capacity);
 
 #endif

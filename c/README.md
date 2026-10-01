@@ -27,7 +27,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/arch/cpu.rs` | `src/cpu_topology.c` | `include/ghostos/cpu_topology.h` |
 | `kernel/src/arch/mod.rs` | `src/arch.c` | `include/ghostos/arch.h` |
 | `kernel/src/boot_diagnostics.rs` | `src/boot_diagnostics.c` | `include/ghostos/boot_diagnostics.h` |
-| `kernel/src/boot_services.rs` (service registry and dependency order) | `src/boot_services.c` | `include/ghostos/boot_services.h` |
+| `kernel/src/boot_services.rs` (service registry and startup graph) | `src/boot_services.c` | `include/ghostos/boot_services.h` |
 | `kernel/src/capability.rs` | `src/capability.c` | `include/ghostos/capability.h` |
 | `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 
@@ -54,6 +54,12 @@ backend callbacks.
 The x86 interrupt entry calls a registered dispatcher with the saved frame.
 Kernel scheduling, watchdog, and page-fault policy must be supplied by that
 dispatcher when the C kernel is connected.
+
+The C boot service registry preserves all 13 service descriptors and their
+restart settings. Its startup planner uses the supervisor's stable, lowest-ID
+topological order, invokes a caller-provided spawn function, and records
+per-service startup order, dependency count, readiness, and any blocked
+dependency. The C kernel has not yet connected this callback to process launch.
 
 `userspace/boot-services/service.c`, `login.c`, and `shell.c` now use the generated
 request/response types and operation IDs instead of private copies. The kernel
