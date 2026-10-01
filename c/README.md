@@ -59,6 +59,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/power.rs` (ACPI memory/register access and VM power fallbacks) | `src/power.c` | `include/ghostos/power.h` |
 | `kernel/src/process.rs` (bounded process table, identity generations, lifecycle status and transitions) | `src/process.c` | `include/ghostos/process.h` |
 | `kernel/src/quota.rs` (sharded token buckets and contention reports) | `src/quota.c` | `include/ghostos/quota.h` |
+| `kernel/src/random.rs` (processor-seeded ChaCha20 kernel random source) | `src/random.c` | `include/ghostos/random.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
