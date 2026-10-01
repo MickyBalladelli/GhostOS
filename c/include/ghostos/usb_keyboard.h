@@ -19,5 +19,7 @@ void ghostos_usb_keyboard_process_report(ghostos_usb_keyboard_state *state,
 bool ghostos_usb_keyboard_take_byte(ghostos_usb_keyboard_state *state, uint8_t *byte);
 bool ghostos_usb_keyboard_find_descriptor(const uint8_t *bytes, size_t length,
     uint8_t *interface_number, uint8_t *endpoint, uint16_t *packet_size, uint8_t *interval);
+bool ghostos_usb_keyboard_controller_init(uint64_t mmio);
+bool ghostos_usb_keyboard_controller_poll(uint8_t report[8]);
 
 #endif

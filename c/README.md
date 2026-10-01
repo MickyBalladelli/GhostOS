@@ -68,7 +68,8 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/task.rs` (CPU masks, address-space IDs, and generation-tagged thread IDs) | `src/task.c` | `include/ghostos/task.h` |
 | `kernel/src/time.rs` (atomic kernel clock and x86 RTC conversion) | `src/time.c` | `include/ghostos/time.h` |
 | `kernel/src/tlb.rs` (bounded TLB shootdown tracking and acknowledgement policy) | `src/tlb.c` | `include/ghostos/tlb.h` |
-| `kernel/src/usb_keyboard.rs` (HID report decoding, terminal key sequences, and interface descriptor selection) | `src/usb_keyboard.c` | `include/ghostos/usb_keyboard.h` |
+| `kernel/src/usb_keyboard.rs` (PCI discovery and boot adapter; xHCI control, HID report decoding, terminal key sequences, and interface descriptor selection) | `src/usb_keyboard.c`, `src/usb_keyboard_controller.c` | `include/ghostos/usb_keyboard.h` |
+| `kernel/src/usb_keyboard_stub.rs` (non-x86 empty USB keyboard adapter) | `src/usb_keyboard_stub.c` | `include/ghostos/usb_keyboard_stub.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

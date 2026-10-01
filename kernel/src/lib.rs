@@ -110,6 +110,7 @@ mod usb_keyboard;
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 )))]
+#[allow(unsafe_code)]
 #[path = "usb_keyboard_stub.rs"]
 mod usb_keyboard;
 
