@@ -1,3 +1,4 @@
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::address_space::{
@@ -15,6 +16,34 @@ pub use ghostos_fabric::PageFault;
 pub type PageFaultHandler = fn(PageFault) -> bool;
 
 static HANDLER: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" {
+    fn ghostos_page_fault_from_x86_error(virtual_address: u64, error: u64) -> PageFault;
+    fn ghostos_page_fault_install_handler(
+        handler: extern "C" fn(*const PageFault, *mut c_void) -> bool,
+        context: *mut c_void,
+    ) -> u32;
+    fn ghostos_page_fault_dispatch(fault: PageFault) -> bool;
+}
+
+#[allow(unsafe_code)]
+pub(crate) fn from_x86_error(virtual_address: u64, error: u64) -> PageFault {
+    unsafe { ghostos_page_fault_from_x86_error(virtual_address, error) }
+}
+
+extern "C" fn dispatch_bridge(fault: *const PageFault, _context: *mut c_void) -> bool {
+    if fault.is_null() {
+        return false
+    }
+    let raw = HANDLER.load(Ordering::Acquire);
+    if raw == 0 {
+        return false
+    }
+    // SAFETY: HANDLER contains only the registered PageFaultHandler pointer.
+    let handler: PageFaultHandler = unsafe { core::mem::transmute(raw) };
+    // SAFETY: the C dispatcher passes a pointer to its live fault value.
+    handler(unsafe { *fault })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PageFaultHandlerError {
@@ -158,22 +187,19 @@ impl IntoStatus for PageFaultDispatchError {
 pub fn install_page_fault_handler(
     handler: PageFaultHandler,
 ) -> Result<(), PageFaultHandlerError> {
-    HANDLER
+    if HANDLER
         .compare_exchange(0, handler as usize, Ordering::AcqRel, Ordering::Acquire)
-        .map(|_| ())
-        .map_err(|_| PageFaultHandlerError::AlreadyInstalled)
+        .is_err()
+    {
+        return Err(PageFaultHandlerError::AlreadyInstalled)
+    }
+    let installed = unsafe { ghostos_page_fault_install_handler(dispatch_bridge, core::ptr::null_mut()) };
+    if installed == 0 { Ok(()) } else { Err(PageFaultHandlerError::AlreadyInstalled) }
 }
 
 #[allow(dead_code)]
 pub(crate) fn dispatch(fault: PageFault) -> bool {
-    let raw = HANDLER.load(Ordering::Acquire);
-    if raw == 0 {
-        return false
-    }
-    // Safety: the only nonzero value stored in HANDLER comes from a value of
-    // the exact PageFaultHandler function-pointer type above.
-    let handler: PageFaultHandler = unsafe { core::mem::transmute(raw) };
-    handler(fault)
+    unsafe { ghostos_page_fault_dispatch(fault) }
 }
 
 /// Dispatch a fault on behalf of the capability that owns the pager lease.

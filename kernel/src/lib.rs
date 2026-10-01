@@ -45,12 +45,14 @@ mod keyboard;
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 ))]
+#[allow(unsafe_code)]
 pub mod mouse;
 #[cfg(not(all(
     target_arch = "x86_64",
     any(target_os = "none", target_os = "uefi")
 )))]
 #[path = "mouse_stub.rs"]
+#[allow(unsafe_code)]
 pub mod mouse;
 #[allow(unsafe_code)]
 pub mod page_fault;

@@ -1,3 +1,4 @@
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MouseState {
     pub buttons: u8,
@@ -6,11 +7,11 @@ pub struct MouseState {
     pub sequence: u32,
 }
 
-pub const fn state() -> MouseState {
-    MouseState {
-        buttons: 0,
-        delta_x: 0,
-        delta_y: 0,
-        sequence: 0,
-    }
+unsafe extern "C" {
+    fn ghostos_mouse_stub_state_read() -> MouseState;
+}
+
+#[allow(unsafe_code)]
+pub fn state() -> MouseState {
+    unsafe { ghostos_mouse_stub_state_read() }
 }

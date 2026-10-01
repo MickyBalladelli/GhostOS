@@ -985,7 +985,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering
                     options(nomem, nostack, preserves_flags)
                 );
             }
-            let fault = ghostos_fabric::PageFault::from_x86_error(fault_address, error_code);
+            let fault = crate::page_fault::from_x86_error(fault_address, error_code);
             if crate::page_fault::dispatch(fault) {
                 return 0
             }

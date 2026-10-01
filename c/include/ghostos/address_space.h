@@ -30,7 +30,10 @@ typedef enum { GHOSTOS_STACK_OK, GHOSTOS_STACK_NOT_GUARD, GHOSTOS_STACK_COLLISIO
 typedef struct { uint64_t base, size; } ghostos_mapping;
 typedef struct { uint64_t size, alignment, preferred_base; bool has_preferred_base, fixed; } ghostos_mapping_request;
 typedef struct { uint64_t address, file_size, memory_size; uint8_t permissions; } ghostos_runtime_segment;
+#ifndef GHOSTOS_PHYSICAL_RANGE_TYPE_DEFINED
+#define GHOSTOS_PHYSICAL_RANGE_TYPE_DEFINED
 typedef struct { uint64_t start, length; } ghostos_physical_range;
+#endif
 typedef struct { uint64_t frame; } ghostos_page_table_root;
 typedef struct { uint64_t page, new_stack_base, new_guard_base; bool has_new_guard_base; } ghostos_stack_growth;
 typedef struct { uint64_t entry, stack_pointer, tls_pointer, heap_base, heap_size; bool has_tls_pointer; } ghostos_process_context;

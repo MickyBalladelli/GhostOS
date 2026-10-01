@@ -133,6 +133,7 @@ impl AddressRange {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub enum Access {
     Read,
     Write,
@@ -140,6 +141,7 @@ pub enum Access {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct PageFault {
     pub virtual_address: u64,
     pub access: Access,

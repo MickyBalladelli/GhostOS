@@ -14,7 +14,10 @@ typedef enum { GHOSTOS_MEMORY_USABLE = 1, GHOSTOS_MEMORY_RESERVED = 2,
     GHOSTOS_MEMORY_BOOTLOADER = 5, GHOSTOS_MEMORY_KERNEL = 6,
     GHOSTOS_MEMORY_FRAMEBUFFER = 7 } ghostos_memory_kind;
 typedef struct { uint64_t start, length; uint32_t kind, attributes; } ghostos_memory_region;
+#ifndef GHOSTOS_PHYSICAL_RANGE_TYPE_DEFINED
+#define GHOSTOS_PHYSICAL_RANGE_TYPE_DEFINED
 typedef struct { uint64_t start, length; } ghostos_physical_range;
+#endif
 typedef enum { GHOSTOS_ALLOC_OK, GHOSTOS_ALLOC_EXHAUSTED } ghostos_allocation_error;
 typedef enum { GHOSTOS_RECLAIM_OK, GHOSTOS_RECLAIM_INVALID_RANGE, GHOSTOS_RECLAIM_NOT_OWNED,
     GHOSTOS_RECLAIM_CAPACITY, GHOSTOS_RECLAIM_ACCESS_DENIED } ghostos_reclaim_error;
