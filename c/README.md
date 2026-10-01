@@ -39,6 +39,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/dma.rs` (capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c` | `include/ghostos/dma.h` |
 | `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c` | `include/ghostos/driver_capabilities.h` |
 | `kernel/src/hot_allocator.rs` | `src/hot_allocator.c` | `include/ghostos/hot_allocator.h` |
+| `kernel/src/invariants.rs` | `src/invariants.c` | `include/ghostos/invariants.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
