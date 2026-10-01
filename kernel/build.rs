@@ -133,7 +133,15 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
         );
         println!("cargo:rustc-link-arg={}", object.display());
         println!("cargo:rerun-if-changed={}", source.display());
-        println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{module}.h")).display());
+        let header = if module == "usb_keyboard_controller" {
+            "usb_keyboard.h"
+        } else if module == "usb_keyboard_stub" {
+            "usb_keyboard_stub.h"
+        } else {
+            // These C modules use their own module header.
+            module
+        };
+        println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}.h")).display());
     }
 }
 
