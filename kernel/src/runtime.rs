@@ -60,6 +60,8 @@ struct CRuntimeState {
     processes: [CProcessSlot; MAX_FILESYSTEM_PROCESSES],
 }
 
+const _: [(); 1544] = [(); core::mem::size_of::<CRuntimeState>()];
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct CRuntimeIdentity {
@@ -85,6 +87,22 @@ unsafe extern "C" {
     ) -> c_uint;
     fn ghostos_runtime_validate_request(request: *const Request) -> c_uint;
     fn ghostos_runtime_operation_delegated(operation: u16) -> bool;
+    fn ghostos_runtime_validate_empty_request(request: *const Request, capability_allowed: bool) -> c_uint;
+    fn ghostos_runtime_validate_filesystem_request(
+        request: *const Request,
+        region: *mut u32,
+        offset: *mut u32,
+        length: *mut u32,
+        writable: *mut bool,
+        has_buffer: *mut bool,
+    ) -> c_uint;
+    fn ghostos_runtime_validate_filesystem_response(
+        operation: u16,
+        status: u32,
+        values: *const u64,
+        has_buffer: bool,
+        buffer_length: u32,
+    ) -> c_uint;
 }
 
 fn c_runtime_error(result: c_uint) -> Result<(), RuntimeDispatchError> {
@@ -94,6 +112,9 @@ fn c_runtime_error(result: c_uint) -> Result<(), RuntimeDispatchError> {
         2 => Err(RuntimeDispatchError::InvalidRequest),
         3 => Err(RuntimeDispatchError::ProcessNotRegistered),
         4 => Err(RuntimeDispatchError::Capacity),
+        5 => Err(RuntimeDispatchError::InvalidCapability),
+        6 => Err(RuntimeDispatchError::InvalidBuffer),
+        7 => Err(RuntimeDispatchError::TransportFailure),
         _ => Err(RuntimeDispatchError::TransportFailure),
     }
 }
@@ -473,7 +494,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
 
         match operation {
             Operation::ClockNow => {
-                self.require_empty_request(request, false)?;
+                c_runtime_error(unsafe { ghostos_runtime_validate_empty_request(&request, false) })?;
                 Ok(Response {
                     status: Status::NORMAL.raw(),
                     flags: 0,
@@ -481,7 +502,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 })
             }
             Operation::RealtimeNow => {
-                self.require_empty_request(request, false)?;
+                c_runtime_error(unsafe { ghostos_runtime_validate_empty_request(&request, false) })?;
                 let now_ns = crate::time::realtime_now_ns()
                     .ok_or(RuntimeDispatchError::TransportFailure)?;
                 Ok(Response {
@@ -491,7 +512,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 })
             }
             Operation::Yield => {
-                self.require_empty_request(request, false)?;
+                c_runtime_error(unsafe { ghostos_runtime_validate_empty_request(&request, false) })?;
                 Ok(Response {
                     status: Status::NORMAL.raw(),
                     flags: 0,
@@ -529,7 +550,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             process: ghostos_fsd::ProcessId::from_valid_raw(c_identity.process),
             authority: FsdCapability::from_valid_raw(c_identity.authority),
         };
-        let buffer = self.buffer(operation, request)?;
+        let buffer = self.buffer(request)?;
         let fs_operation = match operation {
             Operation::SynFsOpen => FsdOperation::Open,
             Operation::SynFsClose => FsdOperation::Close,
@@ -554,70 +575,12 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
             | Operation::SynFsRmdir
             | Operation::SynFsLinks
             | Operation::SynFsDelete => {
-                if request.capability != 0 {
-                    return Err(RuntimeDispatchError::InvalidRequest)
-                }
                 slot.authority
             }
             _ => FsdCapability::from_raw(request.capability)
                 .ok_or(RuntimeDispatchError::InvalidCapability)?,
         };
-        let flags = match operation {
-            Operation::SynFsOpen => {
-                if request.flags & !0x21f != 0 {
-                    return Err(RuntimeDispatchError::InvalidRequest)
-                }
-                FsdFlags::from_bits(request.flags)
-            }
-            Operation::SynFsMkdir => {
-                if request.flags & !(1 << 8) != 0 {
-                    return Err(RuntimeDispatchError::InvalidRequest)
-                }
-                FsdFlags::from_bits(request.flags)
-            }
-            Operation::SynFsMap => {
-                if request.flags & !FsdFlags::WRITE.bits() != 0 {
-                    return Err(RuntimeDispatchError::InvalidRequest)
-                }
-                FsdFlags::from_bits(request.flags)
-            }
-            _ if request.flags == 0 => FsdFlags::from_bits(0),
-            _ => return Err(RuntimeDispatchError::InvalidRequest),
-        };
-        if operation == Operation::SynFsOpen
-            || operation == Operation::SynFsMkdir
-            || operation == Operation::SynFsRmdir
-            || operation == Operation::SynFsLink
-            || operation == Operation::SynFsLinks
-            || operation == Operation::SynFsDelete
-        {
-            if request.arguments[4] != 0 || request.arguments[5] != 0 {
-                return Err(RuntimeDispatchError::InvalidRequest)
-            }
-        } else if operation == Operation::SynFsRead || operation == Operation::SynFsWrite
-        {
-            if request.arguments[5] != 0 {
-                return Err(RuntimeDispatchError::InvalidRequest)
-            }
-        } else if operation == Operation::SynFsList {
-            let path_length = request.arguments[5];
-            let buffer_length = buffer
-                .as_ref()
-                .map(|buffer| buffer.length as u64)
-                .unwrap_or(0);
-            if path_length == 0
-                || path_length > ghostos_fsd::LIST_PATH_REGION_BYTES as u64
-                || buffer_length <= ghostos_fsd::LIST_PATH_REGION_BYTES as u64
-            {
-                return Err(RuntimeDispatchError::InvalidRequest)
-            }
-        } else if operation == Operation::SynFsMap {
-            if request.arguments[5] == 0 || request.arguments[5] >> 48 != 0 {
-                return Err(RuntimeDispatchError::InvalidRequest)
-            }
-        } else if request.arguments != [0; 6] {
-            return Err(RuntimeDispatchError::InvalidRequest)
-        }
+        let flags = FsdFlags::from_bits(request.flags);
 
         let fs_request = ghostos_fsd::Request::new(fs_operation, slot.process)
             .with_flags(flags)
@@ -633,73 +596,22 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         self.validate_filesystem_response(operation, buffer, response)
     }
 
-    fn require_empty_request(
-        &self,
-        request: Request,
-        capability_allowed: bool,
-    ) -> Result<(), RuntimeDispatchError> {
-        if (!capability_allowed && request.capability != 0)
-            || request.flags != 0
-            || request.arguments != [0; 6]
-        {
-            return Err(RuntimeDispatchError::InvalidRequest)
-        }
-        Ok(())
-    }
-
-    fn buffer(
-        &self,
-        operation: Operation,
-        request: Request,
-    ) -> Result<Option<SharedBuffer>, RuntimeDispatchError> {
-        let needs_buffer = matches!(
-            operation,
-            Operation::SynFsOpen
-            | Operation::SynFsRead
-            | Operation::SynFsWrite
-            | Operation::SynFsList
-            | Operation::SynFsMkdir
-            | Operation::SynFsRmdir
-            | Operation::SynFsLink
-            | Operation::SynFsLinks
-            | Operation::SynFsDelete
-        );
-        let (region_raw, offset_raw, length_raw, writable) =
-            ghostos_runtime::decode_runtime_fs_buffer(&request.arguments);
-        let has_descriptor =
-            region_raw != 0 || offset_raw != 0 || length_raw != 0 || request.arguments[3] != 0;
-        if !needs_buffer {
-            if has_descriptor {
-                return Err(RuntimeDispatchError::InvalidBuffer)
-            }
+    fn buffer(&self, request: Request) -> Result<Option<SharedBuffer>, RuntimeDispatchError> {
+        let mut region = 0;
+        let mut offset = 0;
+        let mut length = 0;
+        let mut writable = false;
+        let mut has_buffer = false;
+        c_runtime_error(unsafe {
+            ghostos_runtime_validate_filesystem_request(
+                &request, &mut region, &mut offset, &mut length, &mut writable, &mut has_buffer,
+            )
+        })?;
+        if !has_buffer {
             return Ok(None)
         }
-        let region = SharedRegionId::new(
-            u32::try_from(region_raw).map_err(|_| RuntimeDispatchError::InvalidBuffer)?,
-        )
-        .ok_or(RuntimeDispatchError::InvalidBuffer)?;
-        let offset = u32::try_from(offset_raw)
-            .map_err(|_| RuntimeDispatchError::InvalidBuffer)?;
-        let length = u32::try_from(length_raw)
-            .map_err(|_| RuntimeDispatchError::InvalidBuffer)?;
-        if request.arguments[3] > 1
-            || offset.checked_add(length).is_none()
-            || length as usize > ghostos_fsd::MAX_IPC_BUFFER_BYTES
-        {
-            return Err(RuntimeDispatchError::InvalidBuffer)
-        }
-        let expected_writable = operation == Operation::SynFsRead
-            || operation == Operation::SynFsList
-            || operation == Operation::SynFsLinks;
-        if writable != expected_writable {
-            return Err(RuntimeDispatchError::InvalidBuffer)
-        }
-        Ok(Some(SharedBuffer {
-            region,
-            offset,
-            length,
-            writable,
-        }))
+        let region = SharedRegionId::new(region).ok_or(RuntimeDispatchError::InvalidBuffer)?;
+        Ok(Some(SharedBuffer { region, offset, length, writable }))
     }
 
     fn validate_filesystem_response(
@@ -708,75 +620,18 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         buffer: Option<SharedBuffer>,
         response: Response,
     ) -> Result<Response, RuntimeDispatchError> {
-        let Some(status) = Status::from_raw(response.status) else {
+        if Status::from_raw(response.status).is_none() {
             return Err(RuntimeDispatchError::TransportFailure)
-        };
-        if !status.is_success() {
-            return Ok(response)
         }
-        match operation {
-            Operation::SynFsOpen => {
-                if FsdCapability::from_raw(response.values[0]).is_none() {
-                    return Err(RuntimeDispatchError::InvalidCapability)
-                }
-            }
-            Operation::SynFsMap => {
-                if FsdCapability::from_raw(response.values[0]).is_none()
-                    || response.values[1] % 4096 != 0
-                    || response.values[2] == 0
-                    || response.values[2] % 4096 != 0
-                    || response.values[3] > 1
-                {
-                    return Err(RuntimeDispatchError::InvalidCapability)
-                }
-            }
-            Operation::SynFsRead | Operation::SynFsWrite => {
-                let length = buffer
-                    .map(|buffer| buffer.length as u64)
-                    .ok_or(RuntimeDispatchError::InvalidBuffer)?;
-                if response.values[0] > length {
-                    return Err(RuntimeDispatchError::TransportFailure)
-                }
-            }
-            Operation::SynFsList => {
-                let length = buffer
-                    .map(|buffer| buffer.length as u64)
-                    .ok_or(RuntimeDispatchError::InvalidBuffer)?;
-                if response.values[0]
-                    > length.saturating_sub(ghostos_fsd::LIST_PATH_REGION_BYTES as u64)
-                {
-                    return Err(RuntimeDispatchError::TransportFailure)
-                }
-            }
-            Operation::SynFsLinks => {
-                let length = buffer
-                    .map(|buffer| buffer.length as u64)
-                    .ok_or(RuntimeDispatchError::InvalidBuffer)?;
-                if response.values[0] > length {
-                    return Err(RuntimeDispatchError::TransportFailure)
-                }
-            }
-            Operation::SynFsClose
-            | Operation::SynFsUnmap
-            | Operation::SynFsMetadata
-            | Operation::SynFsMkdir
-            | Operation::SynFsLink => {}
-            Operation::SynFsRmdir => {
-                if response.values[3] > 1 {
-                    return Err(RuntimeDispatchError::TransportFailure)
-                }
-            }
-            Operation::SynFsDelete => {
-                if response.values[0] > u64::from(u32::MAX)
-                    || response.values[1] > 3
-                    || response.values[2] > u64::from(u32::MAX)
-                    || response.values[3] > 1
-                {
-                    return Err(RuntimeDispatchError::TransportFailure)
-                }
-            }
-            _ => return Err(RuntimeDispatchError::InvalidRequest),
-        }
+        c_runtime_error(unsafe {
+            ghostos_runtime_validate_filesystem_response(
+                operation as u16,
+                response.status,
+                response.values.as_ptr(),
+                buffer.is_some(),
+                buffer.map(|buffer| buffer.length).unwrap_or(0),
+            )
+        })?;
         Ok(response)
     }
 }
