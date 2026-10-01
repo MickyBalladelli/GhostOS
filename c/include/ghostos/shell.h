@@ -60,5 +60,8 @@ bool ghostos_vt_input_escape_pending(const ghostos_vt_input_state *state);
 ghostos_vt_key ghostos_vt_input_flush_escape(ghostos_vt_input_state *state);
 bool ghostos_vt_input_take_resize(ghostos_vt_input_state *state,
     uint32_t *columns, uint32_t *rows);
+uint32_t ghostos_shell_expand_command(const uint8_t *line, uint32_t line_length,
+    const uint8_t *command, uint32_t command_length, uint8_t *output,
+    uint32_t output_capacity, uint32_t *output_length);
 
 #endif

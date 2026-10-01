@@ -167,3 +167,88 @@ bool ghostos_vt_input_take_resize(ghostos_vt_input_state *state,
     state->has_resize = 0;
     return true;
 }
+
+typedef struct { uint32_t start, end; bool present; } word_range;
+
+static bool ascii_space(uint8_t value) {
+    return value == ' ' || (value >= '\t' && value <= '\r');
+}
+
+static word_range find_word(const uint8_t *line, uint32_t length, uint32_t offset) {
+    uint32_t start = offset < length ? offset : length;
+    while (start < length && ascii_space(line[start])) ++start;
+    if (start == length) return (word_range){0, 0, false};
+    uint32_t end = start;
+    while (end < length && !ascii_space(line[end])) ++end;
+    return (word_range){start, end, true};
+}
+
+static bool ascii_equal(const uint8_t *left, uint32_t left_length,
+    const uint8_t *right, uint32_t right_length) {
+    if (left_length != right_length) return false;
+    for (uint32_t index = 0; index < left_length; ++index) {
+        uint8_t a = left[index], b = right[index];
+        if (a >= 'a' && a <= 'z') a = (uint8_t)(a - ('a' - 'A'));
+        if (b >= 'a' && b <= 'z') b = (uint8_t)(b - ('a' - 'A'));
+        if (a != b) return false;
+    }
+    return true;
+}
+
+static bool word_is(const uint8_t *line, word_range range, const char *word, uint32_t length) {
+    return range.present && ascii_equal(line + range.start, range.end - range.start,
+        (const uint8_t *)word, length);
+}
+
+static bool help_target(const uint8_t *line, word_range range) {
+    return word_is(line, range, "SHOW", 4) || word_is(line, range, "SHO", 3) ||
+        word_is(line, range, "TOP", 3) || word_is(line, range, "SET", 3);
+}
+
+uint32_t ghostos_shell_expand_command(const uint8_t *line, uint32_t line_length,
+    const uint8_t *command, uint32_t command_length, uint8_t *output,
+    uint32_t output_capacity, uint32_t *output_length) {
+    if (!line || !command || !output || !output_length) return 0;
+    word_range first = find_word(line, line_length, 0);
+    if (!first.present) return 0;
+    bool is_help = word_is(line, first, "HELP", 4);
+    word_range start_word = first, end_word = first;
+    if (is_help) {
+        word_range second = find_word(line, line_length, first.end);
+        if (!second.present) return 0;
+        start_word = first;
+        end_word = second;
+        if (help_target(line, second)) {
+            word_range third = find_word(line, line_length, second.end);
+            if (third.present) end_word = third;
+        }
+    } else if (word_is(line, first, "SHOW", 4) || word_is(line, first, "SHO", 3) ||
+        word_is(line, first, "TOP", 3) || word_is(line, first, "SET", 3)) {
+        word_range second = find_word(line, line_length, first.end);
+        if (second.present) end_word = second;
+    }
+    uint32_t span_start = start_word.start, span_end = end_word.end;
+    uint32_t replacement_length = is_help ? 5u : 0u;
+    if (command_length > output_capacity || replacement_length > output_capacity - command_length)
+        return 2;
+    uint8_t replacement[512];
+    if (replacement_length) {
+        replacement[0] = 'H'; replacement[1] = 'E'; replacement[2] = 'L';
+        replacement[3] = 'P'; replacement[4] = ' ';
+    }
+    for (uint32_t index = 0; index < command_length; ++index) {
+        replacement[replacement_length + index] = command[index] == '-' ? ' ' : command[index];
+    }
+    replacement_length += command_length;
+    if (ascii_equal(line + span_start, span_end - span_start, replacement, replacement_length)) return 0;
+    uint32_t suffix_length = line_length - span_end;
+    if (span_start > output_capacity || replacement_length > output_capacity - span_start ||
+        suffix_length > output_capacity - span_start - replacement_length) return 2;
+    for (uint32_t index = 0; index < span_start; ++index) output[index] = line[index];
+    for (uint32_t index = 0; index < replacement_length; ++index)
+        output[span_start + index] = replacement[index];
+    for (uint32_t index = 0; index < suffix_length; ++index)
+        output[span_start + replacement_length + index] = line[span_end + index];
+    *output_length = span_start + replacement_length + suffix_length;
+    return 1;
+}
