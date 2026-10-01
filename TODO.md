@@ -83,7 +83,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/saturation.rs` — C owns the queue model and deterministic CPU saturation proof. Rust keeps the public config/report types and budget predicates.
 - [ ] `kernel/src/scheduler.rs` — C owns ready-thread selection, realtime priority/deadline ordering, and IPC priority inheritance. Rust retains thread/context state, capability checks, CPU topology, NUMA, power policy, and hardware transitions.
 - [ ] `kernel/src/shell.rs` — C owns VT input control-sequence/resize/UTF-8 decoding and command-line expansion after Rust registry matching. Rust retains the command registry/interpreter, renderer, editor, operator execution, and subsystem adapters.
-- [ ] `kernel/src/syscall.rs`
+- [ ] `kernel/src/syscall.rs` — C validates user pointer ranges and request shape, and computes yield/sleep scheduler hints. Rust retains dispatcher registration, memory syscalls, architecture user-memory access, watchdog activity, and response writing.
 - [ ] `kernel/src/task.rs`
 - [ ] `kernel/src/tests.rs`
 - [ ] `kernel/src/time.rs`

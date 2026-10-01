@@ -10,6 +10,21 @@ use crate::capability::{CapabilityHandle, CapabilitySpace, Rights};
 use crate::runtime::{RuntimeDispatchError, RuntimeOperationService};
 use crate::task::AddressSpaceId;
 
+unsafe extern "C" {
+    fn ghostos_syscall_valid_user_range(address: u64, length: u64, alignment: u64) -> bool;
+    fn ghostos_syscall_validate_request_shape(
+        operation: u16,
+        abi_version: u16,
+        reserved: u16,
+    ) -> bool;
+    fn ghostos_syscall_sleep_hint(
+        operation: u16,
+        status: u32,
+        deadline: u64,
+        now: u64,
+    ) -> u64;
+}
+
 /// x86 user processes enter the kernel through this DPL 3 interrupt gate.
 pub const CALL_GATE_VECTOR: u8 = 0x80;
 pub const SLEEP_EXPIRED: u64 = u64::MAX - 1;
@@ -227,22 +242,24 @@ fn map_error(error: AddressSpaceError) -> RuntimeDispatchError {
 }
 
 fn valid_user_range(address: usize, length: usize, alignment: usize) -> bool {
-    if address == 0 || address % alignment != 0 {
-        return false
-    }
-    let Ok(address) = u64::try_from(address) else {
-        return false
-    };
-    let Ok(length) = u64::try_from(length) else {
+    let (Ok(address), Ok(length), Ok(alignment)) = (
+        u64::try_from(address),
+        u64::try_from(length),
+        u64::try_from(alignment),
+    ) else {
         return false
     };
-    crate::is_user_range(address, length)
+    unsafe { ghostos_syscall_valid_user_range(address, length, alignment) }
 }
 
 pub fn validate_request_shape(request: &Request) -> bool {
-    request.abi_version == ghostos_abi::ABI_SCHEMA_VERSION
-        && request.reserved == 0
-        && ghostos_runtime::Operation::from_raw(request.operation).is_some()
+    unsafe {
+        ghostos_syscall_validate_request_shape(
+            request.operation,
+            request.abi_version,
+            request.reserved,
+        )
+    }
 }
 
 /// Common raw-pointer boundary used by the architecture entry stubs.
@@ -289,19 +306,13 @@ pub extern "C" fn ghostos_call_gate_dispatch(
     if (1..=14).contains(&caller.raw()) {
         crate::watchdog::service_activity(caller.raw() as usize, crate::time::monotonic_now_us());
     }
-    let sleep_us = match ghostos_runtime::Operation::from_raw(request.operation) {
-        Some(ghostos_runtime::Operation::SleepUntil) if result.status == Status::NORMAL.raw() => {
-            let remaining = request.arguments[0].saturating_sub(crate::time::monotonic_now_us());
-            if remaining == 0 {
-                SLEEP_EXPIRED
-            } else {
-                remaining
-            }
-        }
-        Some(ghostos_runtime::Operation::Yield) if result.status == Status::NORMAL.raw() => {
-            u64::MAX
-        }
-        _ => 0,
+    let sleep_us = unsafe {
+        ghostos_syscall_sleep_hint(
+            request.operation,
+            result.status,
+            request.arguments[0],
+            crate::time::monotonic_now_us(),
+        )
     };
     let wire_result = encode_user_response(caller, result);
     unsafe { crate::arch::write_user(response, wire_result) };
