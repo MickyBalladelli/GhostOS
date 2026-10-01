@@ -115,7 +115,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
 fn build_host_c(kernel: &Path, output: &Path, target: &str) {
     let target_flag = format!("--target={target}");
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
-    for module in ["quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
+    for module in ["monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
         let source = kernel.join(format!("../c/src/{module}.c"));
         let object = output.join(format!("ghostos-{module}-host.o"));
         run(
@@ -133,7 +133,9 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
         );
         println!("cargo:rustc-link-arg={}", object.display());
         println!("cargo:rerun-if-changed={}", source.display());
-        let header = if module == "usb_keyboard_controller" {
+        let header = if module == "monitor_host_stub" {
+            "monitor.h"
+        } else if module == "usb_keyboard_controller" {
             "usb_keyboard.h"
         } else if module == "usb_keyboard_stub" {
             "usb_keyboard_stub.h"

@@ -89,6 +89,7 @@ mod shell;
 pub mod task;
 #[allow(unsafe_code)]
 pub mod time;
+#[allow(unsafe_code)]
 pub mod monitor;
 #[allow(unsafe_code)]
 pub mod tlb;
