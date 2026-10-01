@@ -12,11 +12,6 @@ pub const TIMER_LATENCY_BUDGET_TICKS: u64 = 1;
 pub const DEFERRED_LATENCY_BUDGET_TICKS: u64 = 1;
 pub const BULK_SERVICE_PERIOD_TICKS: u64 = 4;
 
-const CONTROL_QUEUE_CAPACITY: u32 = 8;
-const INTERRUPT_QUEUE_CAPACITY: u32 = 8;
-const DEFERRED_QUEUE_CAPACITY: u32 = 64;
-const BULK_QUEUE_CAPACITY: u32 = 64;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct SaturationConfig {
@@ -64,6 +59,9 @@ pub struct SaturationReport {
     pub bulk_dropped: u32,
     pub bulk_throttled: u32,
 }
+
+const _: [(); 32] = [(); core::mem::size_of::<SaturationConfig>()];
+const _: [(); 104] = [(); core::mem::size_of::<SaturationReport>()];
 
 impl SaturationReport {
     pub const fn control_meets_budget(self) -> bool {

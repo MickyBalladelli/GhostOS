@@ -1,5 +1,7 @@
 #include "ghostos/saturation.h"
 
+#include <stdbool.h>
+
 #define CONTROL_QUEUE_CAPACITY 8u
 #define INTERRUPT_QUEUE_CAPACITY 8u
 #define DEFERRED_QUEUE_CAPACITY 64u
@@ -58,7 +60,7 @@ void ghostos_saturation_prove(const ghostos_saturation_config *config,
         if (tick % GHOSTOS_SATURATION_BULK_SERVICE_PERIOD_TICKS == 0) {
             service_one(&bulk, tick);
         } else if (bulk.count) {
-            ++bulk.throttled;
+            if (bulk.throttled != UINT32_MAX) ++bulk.throttled;
         }
         ++tick;
     }

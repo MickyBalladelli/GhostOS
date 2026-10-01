@@ -40,6 +40,9 @@ typedef struct {
     uint32_t bulk_throttled;
 } ghostos_saturation_report;
 
+_Static_assert(sizeof(ghostos_saturation_config) == 32, "saturation config layout");
+_Static_assert(sizeof(ghostos_saturation_report) == 104, "saturation report layout");
+
 void ghostos_saturation_prove(const ghostos_saturation_config *config,
     ghostos_saturation_report *report);
 

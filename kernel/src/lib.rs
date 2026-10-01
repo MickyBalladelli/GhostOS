@@ -75,6 +75,7 @@ pub mod process;
 pub mod scheduler;
 #[allow(unsafe_code)]
 pub mod runtime;
+#[allow(unsafe_code)]
 pub mod saturation;
 #[allow(unsafe_code)]
 pub mod random;
