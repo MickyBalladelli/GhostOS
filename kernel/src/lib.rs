@@ -21,6 +21,7 @@ pub mod dma;
 #[allow(unsafe_code)]
 #[allow(dead_code)]
 mod driver_capabilities;
+#[allow(unsafe_code)]
 pub mod dlm;
 pub mod ipc;
 pub mod invariants;
@@ -319,9 +320,8 @@ static LOGIN_TPM_CHALLENGE_READY: AtomicBool = AtomicBool::new(false);
 ))]
 static LOGIN_TPM_CHALLENGE: [AtomicU8; 32] = [const { AtomicU8::new(0) }; 32];
 #[allow(dead_code)]
-static DLM: DistributedLockManager = DistributedLockManager::new();
-#[allow(dead_code)]
-static NODE_FENCES: NodeFenceTable = NodeFenceTable::new();
+static DLM: dlm::KernelDlm = dlm::KernelDlm::new();
+static NODE_FENCES: dlm::KernelNodeFences = dlm::KernelNodeFences::new();
 
 #[allow(unsafe_code)]
 pub(crate) fn current_address_space() -> Option<AddressSpaceId> {
@@ -344,6 +344,7 @@ pub extern "C" fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     }
 
     arch::disable_interrupts();
+    DLM.initialize();
     console::init(boot_info.framebuffer);
     if let Some(failure) = previous_boot_failure {
         let status = ghostos_status::Status::from_raw(failure.status)

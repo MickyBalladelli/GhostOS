@@ -54,7 +54,7 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/contention.rs`
 - [x] `kernel/src/cow.rs` — C reference tracker, sharing and release, allocator-backed write faults, and page-copy callback.
 - [x] `kernel/src/crash.rs` — kernel builds and links the C capsule encoder and one-time crash guard; the kernel supplies register, capability, scheduler, audit, and persistence data.
-- [ ] `kernel/src/dlm.rs` — C fence tables, capability checked range locks, lease epochs, FIFO promotion, and contention reports are implemented; Rust kernel consumer cutover and behavior parity remain.
+- [ ] `kernel/src/dlm.rs` — C fence tables, capability checked range locks, lease epochs, FIFO promotion, and contention reports are implemented and built. Shell diagnostics read the C singleton, but kernel lock operations still use the Rust manager; complete consumer cutover and behavior parity remain.
 - [ ] `kernel/src/dma.rs`
 - [ ] `kernel/src/driver_capabilities.rs`
 - [ ] `kernel/src/hot_allocator.rs`

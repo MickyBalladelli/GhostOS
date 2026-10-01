@@ -528,6 +528,95 @@ pub struct DlmContentionReport {
     pub max_hold_duration: u64,
 }
 
+pub(crate) struct KernelDlm;
+pub(crate) struct KernelNodeFences;
+
+#[cfg(any(target_os = "none", target_os = "uefi"))]
+unsafe extern "C" {
+    fn ghostos_dlm_kernel_init();
+    fn ghostos_dlm_kernel_lock_summary(
+        index: usize, resource: *mut u64, owner_node: *mut u32,
+        address_space: *mut u32, mode: *mut u32, granted: *mut bool,
+        requested_at_us: *mut u64, granted_at_us: *mut u64,
+    ) -> bool;
+    fn ghostos_dlm_kernel_counters(
+        acquisitions: *mut u64, queued: *mut u64, promotions: *mut u64,
+        releases: *mut u64, expirations: *mut u64,
+        wait_histogram: *mut u64, hold_histogram: *mut u64,
+        max_wait: *mut u64, max_hold: *mut u64, active: *mut usize, now_us: u64,
+    );
+}
+
+impl KernelDlm {
+    pub(crate) const fn new() -> Self { Self }
+
+    pub(crate) fn initialize(&self) {
+        #[cfg(any(target_os = "none", target_os = "uefi"))]
+        unsafe { ghostos_dlm_kernel_init() }
+    }
+
+    pub(crate) fn lock_summary(&self, index: usize) -> Option<LockOwnership> {
+        #[cfg(any(target_os = "none", target_os = "uefi"))]
+        {
+            let (mut resource, mut node, mut address_space, mut mode) = (0, 0, 0, 0);
+            let (mut granted, mut requested, mut granted_at) = (false, 0, 0);
+            let found = unsafe { ghostos_dlm_kernel_lock_summary(
+                index, &mut resource, &mut node, &mut address_space, &mut mode,
+                &mut granted, &mut requested, &mut granted_at,
+            ) };
+            if !found { return None }
+            let node = NodeId::new(node).unwrap_or(NodeId(0));
+            let address_space = AddressSpaceId::new(address_space).unwrap_or(AddressSpaceId::KERNEL);
+            let mode = match mode {
+                1 => LockMode::ConcurrentRead,
+                2 => LockMode::ConcurrentWrite,
+                3 => LockMode::ProtectedRead,
+                4 => LockMode::ProtectedWrite,
+                5 => LockMode::Exclusive,
+                _ => LockMode::Null,
+            };
+            return Some(LockOwnership {
+                resource: ResourceId(resource),
+                owner: LockOwner { node, address_space },
+                mode, granted, requested_at_us: requested, granted_at_us: granted_at,
+            })
+        }
+        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
+        { let _ = index; None }
+    }
+
+    pub(crate) fn contention_report(&self, now_us: u64) -> DlmContentionReport {
+        self.initialize();
+        let (mut acquisitions, mut queued, mut promotions, mut releases, mut expirations) = (0,0,0,0,0);
+        let (mut max_wait, mut max_hold, mut active) = (0,0,0usize);
+        let mut wait_histogram = [0; LOCK_DURATION_BUCKETS];
+        let mut hold_histogram = [0; LOCK_DURATION_BUCKETS];
+        #[cfg(any(target_os = "none", target_os = "uefi"))]
+        unsafe { ghostos_dlm_kernel_counters(
+            &mut acquisitions, &mut queued, &mut promotions, &mut releases, &mut expirations,
+            wait_histogram.as_mut_ptr(), hold_histogram.as_mut_ptr(),
+            &mut max_wait, &mut max_hold, &mut active, now_us,
+        ) }
+        let mut active_owners = [None; 8];
+        let mut found = 0;
+        for slot in 0..DEFAULT_LOCK_CAPACITY {
+            if let Some(owner) = self.lock_summary(slot) {
+                if found < active_owners.len() { active_owners[found] = Some(owner); found += 1 }
+            }
+        }
+        DlmContentionReport {
+            active_locks: active, active_owners, acquisitions,
+            queued_acquisitions: queued, promotions, releases, expirations,
+            wait_duration_histogram: wait_histogram, hold_duration_histogram: hold_histogram,
+            max_wait_duration: max_wait, max_hold_duration: max_hold,
+        }
+    }
+}
+
+impl KernelNodeFences {
+    pub(crate) const fn new() -> Self { Self }
+}
+
 impl LockEntry {
     const VACANT: Self = Self {
         occupied: false,

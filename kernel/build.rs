@@ -77,29 +77,30 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
         "riscv64" => "riscv64-unknown-none-elf",
         _ => panic!("unsupported kernel architecture for C crash port: {target_arch}"),
     };
-    let object = output.join("ghostos-crash.o");
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
-    let mut compile = Command::new(clang);
     let target_flag = format!("--target={target}");
-    compile.args([
-        target_flag.as_str(), "-std=c11", "-O2", "-ffreestanding", "-fno-builtin",
-        "-fno-pic", "-fno-pie", "-Wall", "-Wextra", "-Werror", "-c",
-    ]);
-    if target_arch == "x86_64" {
-        compile.arg("-mno-red-zone");
+    for source in ["crash", "dlm", "capability", "contention"] {
+        let object = output.join(format!("ghostos-{source}.o"));
+        let mut compile = Command::new(&clang);
+        compile.args([
+            target_flag.as_str(), "-std=c11", "-O2", "-ffreestanding", "-fno-builtin",
+            "-fno-pic", "-fno-pie", "-Wall", "-Wextra", "-Werror", "-c",
+        ]);
+        if target_arch == "x86_64" {
+            compile.arg("-mno-red-zone");
+        }
+        let source_path = kernel.join(format!("../c/src/{source}.c"));
+        run(
+            compile.arg("-I").arg(kernel.join("../c/include"))
+                .arg(&source_path).arg("-o").arg(&object),
+            "kernel C foundation module compilation",
+        );
+        println!("cargo:rustc-link-arg={}", object.display());
+        println!("cargo:rerun-if-changed={}", source_path.display());
     }
-    run(
-        compile
-            .arg("-I")
-            .arg(kernel.join("../c/include"))
-            .arg(kernel.join("../c/src/crash.c"))
-            .arg("-o")
-            .arg(&object),
-        "kernel C crash module compilation",
-    );
-    println!("cargo:rustc-link-arg={}", object.display());
-    println!("cargo:rerun-if-changed={}", kernel.join("../c/src/crash.c").display());
-    println!("cargo:rerun-if-changed={}", kernel.join("../c/include/ghostos/crash.h").display());
+    for header in ["crash.h", "dlm.h", "capability.h", "contention.h"] {
+        println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}")).display());
+    }
 }
 
 fn build_rust_shell_image(manifest: &Path, output: &Path, tools: &Path) {

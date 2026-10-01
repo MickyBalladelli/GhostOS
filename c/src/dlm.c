@@ -2,25 +2,37 @@
 
 static ghostos_dlm kernel_dlm;
 static ghostos_dlm_node_fence_table kernel_node_fences;
-static bool kernel_dlm_ready;
+static atomic_uint kernel_dlm_init_state = ATOMIC_VAR_INIT(0);
 
 void ghostos_dlm_kernel_init(void)
 {
-    if (kernel_dlm_ready) return;
+    unsigned expected = 0;
+    if (!atomic_compare_exchange_strong_explicit(&kernel_dlm_init_state, &expected, 1,
+                                                  memory_order_acq_rel,
+                                                  memory_order_acquire)) {
+        while (atomic_load_explicit(&kernel_dlm_init_state, memory_order_acquire) == 1)
+            atomic_signal_fence(memory_order_seq_cst);
+        return;
+    }
     (void)ghostos_dlm_init(&kernel_dlm, GHOSTOS_DLM_MAX_LOCKS);
     (void)ghostos_dlm_node_fence_init(&kernel_node_fences, GHOSTOS_DLM_MAX_NODES);
-    kernel_dlm_ready = true;
+    atomic_store_explicit(&kernel_dlm_init_state, 2, memory_order_release);
 }
 
 bool ghostos_dlm_kernel_lock_summary(size_t index, uint64_t *resource,
-                                     uint32_t *owner_node, bool *granted)
+    uint32_t *owner_node, uint32_t *address_space, uint32_t *mode, bool *granted,
+    uint64_t *requested_at_us, uint64_t *granted_at_us)
 {
     ghostos_dlm_kernel_init();
     const ghostos_dlm_lock_entry *entry = ghostos_dlm_lock(&kernel_dlm, index);
     if (!entry || !entry->occupied) return false;
     if (resource) *resource = entry->resource;
     if (owner_node) *owner_node = entry->owner.node;
+    if (address_space) *address_space = entry->owner.address_space;
+    if (mode) *mode = (uint32_t)entry->mode;
     if (granted) *granted = entry->granted;
+    if (requested_at_us) *requested_at_us = entry->requested_at_us;
+    if (granted_at_us) *granted_at_us = entry->granted_at_us;
     return true;
 }
 
@@ -581,9 +593,9 @@ ghostos_dlm_error ghostos_dlm_convert_node(ghostos_dlm *manager,
 {
     ghostos_dlm_error error = ghostos_dlm_node_validate(fences, owner.node, node_epoch);
     if (error) return error;
-    size_t slot = valid_slot(manager, handle);
-    if (slot == SIZE_MAX) return GHOSTOS_DLM_INVALID_HANDLE;
-    if (manager->locks[slot].federated) return GHOSTOS_DLM_INVALID_EPOCH;
+    size_t slot = owned_slot(manager, owner, handle, &error);
+    if (error) return error;
+    if (manager->locks[slot].node_epoch != node_epoch) return GHOSTOS_DLM_STALE_EPOCH;
     error = convert_internal(manager, capabilities, authority, owner, node_epoch, true, handle, mode);
     if (error) return error;
     return GHOSTOS_DLM_OK;
@@ -624,12 +636,14 @@ ghostos_dlm_error ghostos_dlm_renew(ghostos_dlm *manager, ghostos_dlm_lock_owner
     ghostos_dlm_lock_handle handle, uint64_t expected_epoch, uint64_t now_us,
     uint64_t duration_us, uint64_t *new_epoch)
 {
+    if (!manager) return GHOSTOS_DLM_INVALID_HANDLE;
+    if (!duration_us) return GHOSTOS_DLM_INVALID_RANGE;
+    if (now_us > manager->observed_at_us) manager->observed_at_us = now_us;
     ghostos_dlm_error error;
     size_t slot = owned_slot(manager, owner, handle, &error);
     if (error) return error;
     ghostos_dlm_lock_entry *entry = &manager->locks[slot];
     if (entry->federated || entry->node_epoch) return GHOSTOS_DLM_INVALID_EPOCH;
-    if (now_us > manager->observed_at_us) manager->observed_at_us = now_us;
     return renew_slot(manager, slot, expected_epoch, now_us, duration_us, new_epoch);
 }
 
@@ -638,13 +652,15 @@ ghostos_dlm_error ghostos_dlm_renew_node(ghostos_dlm *manager, ghostos_dlm_lock_
     uint64_t now_us, uint64_t duration_us, const ghostos_dlm_node_fence_table *fences,
     uint64_t *new_epoch)
 {
+    if (!manager) return GHOSTOS_DLM_INVALID_HANDLE;
+    if (!duration_us) return GHOSTOS_DLM_INVALID_RANGE;
+    if (now_us > manager->observed_at_us) manager->observed_at_us = now_us;
     ghostos_dlm_error error = ghostos_dlm_node_validate(fences, owner.node, node_epoch);
     if (error) return error;
     size_t slot = owned_slot(manager, owner, handle, &error);
     if (error) return error;
     ghostos_dlm_lock_entry *entry = &manager->locks[slot];
     if (entry->node_epoch != node_epoch || entry->federated) return GHOSTOS_DLM_STALE_EPOCH;
-    if (now_us > manager->observed_at_us) manager->observed_at_us = now_us;
     return renew_slot(manager, slot, expected_epoch, now_us, duration_us, new_epoch);
 }
 
@@ -653,6 +669,9 @@ ghostos_dlm_error ghostos_dlm_renew_federated(ghostos_dlm *manager,
     uint64_t now_us, uint64_t duration_us, const ghostos_dlm_federation_fence_table *fences,
     uint64_t *new_epoch)
 {
+    if (!manager) return GHOSTOS_DLM_INVALID_HANDLE;
+    if (!duration_us) return GHOSTOS_DLM_INVALID_RANGE;
+    if (now_us > manager->observed_at_us) manager->observed_at_us = now_us;
     ghostos_dlm_error error;
     size_t slot = owned_slot(manager, owner, handle, &error);
     if (error) return error;
@@ -661,7 +680,6 @@ ghostos_dlm_error ghostos_dlm_renew_federated(ghostos_dlm *manager,
     error = ghostos_dlm_federation_validate(fences, entry->federation_low,
         entry->federation_high, entry->federation_epoch);
     if (error) return error;
-    if (now_us > manager->observed_at_us) manager->observed_at_us = now_us;
     return renew_slot(manager, slot, expected_epoch, now_us, duration_us, new_epoch);
 }
 

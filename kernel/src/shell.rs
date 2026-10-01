@@ -26,7 +26,7 @@ use crate::capability::{CapabilityObject, CapabilitySpace, Rights};
 use crate::monitor::{MonitorState, MonitorView, MAX_LOCKS};
 use crate::scheduler::Scheduler;
 use crate::task::{AddressSpaceId, CpuId, CpuMask, ThreadId};
-use crate::dlm::{DistributedLockManager, NodeFenceTable, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
+use crate::dlm::{KernelDlm, KernelNodeFences};
 
 const HELP_ROUTE: u16 = 1;
 const SHOW_SYSTEM_ROUTE: u16 = 2;
@@ -150,8 +150,8 @@ impl ShellSession {
 pub fn run(
     boot_info: &'static BootInfo,
     scheduler: &'static mut Scheduler,
-    dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
-    node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
+    dlm: &'static KernelDlm,
+    node_fences: &'static KernelNodeFences,
     scheduler_clock: u64,
     acpi: Option<AcpiPlatform>,
 ) -> ! {
@@ -177,8 +177,8 @@ pub fn run(
 pub(crate) unsafe fn initialize(
     boot_info: &'static BootInfo,
     scheduler: *mut Scheduler,
-    dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
-    node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
+    dlm: &'static KernelDlm,
+    node_fences: &'static KernelNodeFences,
     scheduler_clock: u64,
     acpi: Option<AcpiPlatform>,
 ) {
@@ -2309,7 +2309,7 @@ struct KernelExecutor {
     scheduler: *mut Scheduler,
     capabilities: CapabilitySpace,
     control_authority: crate::CapabilityHandle,
-    dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
+    dlm: &'static KernelDlm,
     network: KernelNetwork,
     firewall_policy_version: u64,
     firewall_rule_count: u64,
@@ -2319,8 +2319,8 @@ impl KernelExecutor {
     fn new(
         boot_info: &'static BootInfo,
         scheduler: *mut Scheduler,
-        dlm: &'static DistributedLockManager<DEFAULT_LOCK_CAPACITY>,
-        _node_fences: &'static NodeFenceTable<DEFAULT_NODE_FENCE_CAPACITY>,
+        dlm: &'static KernelDlm,
+        _node_fences: &'static KernelNodeFences,
         scheduler_clock: u64,
         acpi: Option<AcpiPlatform>,
     ) -> Self {

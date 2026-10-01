@@ -1,6 +1,6 @@
 use crate::scheduler::Scheduler;
 use crate::task::{AddressSpaceId, ThreadId, ThreadState, SchedulingPolicy};
-use crate::dlm::{DistributedLockManager, ResourceId, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
+use crate::dlm::{KernelDlm, ResourceId, DEFAULT_LOCK_CAPACITY, DEFAULT_NODE_FENCE_CAPACITY};
 
 pub const MAX_LOCKS: usize = DEFAULT_LOCK_CAPACITY;
 pub const MAX_NODES: usize = DEFAULT_NODE_FENCE_CAPACITY;
@@ -199,7 +199,7 @@ impl MonitorState {
         result
     }
 
-    pub fn get_lock_contentions(dlm: &DistributedLockManager<MAX_LOCKS>) -> [LockContention; 8] {
+    pub(crate) fn get_lock_contentions(dlm: &KernelDlm) -> [LockContention; 8] {
         let mut result: [LockContention; 8] = [LockContention {
             resource_id: None,
             granted: 0,
@@ -208,20 +208,13 @@ impl MonitorState {
         }; 8];
         
         for i in 0..MAX_LOCKS {
-            if let Some(entry) = dlm.lock(i) {
-                if entry.occupied {
-                    let granted_count = if entry.granted { 1 } else { 0 };
-                    let queued_count = if entry.granted { 0 } else { 1 };
-                    
-                    let owner = entry.owner.node.raw();
-                    
-                    result[i % 8] = LockContention {
-                        resource_id: Some(entry.resource),
-                        granted: granted_count,
-                        queued: queued_count,
-                        owner_node: owner,
-                    };
-                }
+            if let Some(entry) = dlm.lock_summary(i) {
+                result[i % 8] = LockContention {
+                    resource_id: Some(entry.resource),
+                    granted: u8::from(entry.granted),
+                    queued: u8::from(!entry.granted),
+                    owner_node: entry.owner.node.raw(),
+                };
             }
         }
         
@@ -277,7 +270,7 @@ impl MonitorState {
         }
     }
 
-    pub fn render_dsm(dlm: &DistributedLockManager<MAX_LOCKS>, output: &mut dyn core::fmt::Write) {
+    pub(crate) fn render_dsm(dlm: &KernelDlm, output: &mut dyn core::fmt::Write) {
         let _ = writeln!(output, "\x1b[1;33m=== DISTRIBUTED SHARED MEMORY (DSM) LOCKS ===\x1b[0m");
         let _ = writeln!(output, "{:<12} {:<8} {:<8} {:<10}", 
             "RESOURCE", "GRANTED", "QUEUED", "OWNER");
