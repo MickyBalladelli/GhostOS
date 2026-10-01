@@ -27,6 +27,9 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/arch/cpu.rs` | `src/cpu_topology.c` | `include/ghostos/cpu_topology.h` |
 | `kernel/src/arch/mod.rs` | `src/arch.c` | `include/ghostos/arch.h` |
 | `kernel/src/boot_diagnostics.rs` | `src/boot_diagnostics.c` | `include/ghostos/boot_diagnostics.h` |
+| `kernel/src/boot_services.rs` (service registry and dependency order) | `src/boot_services.c` | `include/ghostos/boot_services.h` |
+| `kernel/src/capability.rs` | `src/capability.c` | `include/ghostos/capability.h` |
+| `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

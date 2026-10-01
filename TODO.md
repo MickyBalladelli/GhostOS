@@ -48,9 +48,9 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/arch/unsupported.rs`
 - [x] `kernel/src/arch/x86_64.rs`
 - [x] `kernel/src/boot_diagnostics.rs`
-- [ ] `kernel/src/boot_services.rs`
-- [ ] `kernel/src/capability.rs`
-- [ ] `kernel/src/console.rs`
+- [ ] `kernel/src/boot_services.rs` — C now has the 13-service registry and stable dependency ordering; filesystem daemon ownership, first-admin provisioning, passkey records, shell filesystem authority, startup lifecycle, and diagnostics integration remain to port.
+- [x] `kernel/src/capability.rs`
+- [x] `kernel/src/console.rs`
 - [ ] `kernel/src/contention.rs`
 - [ ] `kernel/src/cow.rs`
 - [ ] `kernel/src/crash.rs`
