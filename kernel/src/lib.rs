@@ -90,6 +90,7 @@ pub mod task;
 #[allow(unsafe_code)]
 pub mod time;
 pub mod monitor;
+#[allow(unsafe_code)]
 pub mod tlb;
 #[allow(dead_code)]
 mod watchdog;

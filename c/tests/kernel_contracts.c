@@ -8,6 +8,7 @@
 #include "ghostos/status.h"
 #include "ghostos/syscall.h"
 #include "ghostos/task.h"
+#include "ghostos/tlb.h"
 #include "ghostos/test_property.h"
 
 #include <assert.h>
@@ -130,6 +131,45 @@ static void runtime_rejects_unknown_and_reserved_requests(void) {
     assert(ghostos_runtime_validate_request(&request) == GHOSTOS_RUNTIME_INVALID_REQUEST);
 }
 
+typedef struct { size_t invalidations, ipis; } tlb_test_counters;
+
+static void count_tlb_invalidation(void *context, uint64_t start, uint64_t length) {
+    tlb_test_counters *counters = context;
+    assert(start == 0x4000 && length == 0x2000);
+    ++counters->invalidations;
+}
+
+static void count_tlb_ipi(void *context, uint8_t cpu) {
+    tlb_test_counters *counters = context;
+    assert(cpu == 1);
+    ++counters->ipis;
+}
+
+static void tlb_tracks_targets_until_acknowledged(void) {
+    ghostos_tlb_state state;
+    const uint64_t targets[] = {3, 0};
+    const uint64_t missing_initiator_targets[] = {2, 0};
+    tlb_test_counters counters = {0};
+    uint64_t id = 0, pending[2] = {0};
+    bool complete = false;
+    ghostos_tlb_init(&state, 2);
+    assert(ghostos_tlb_begin(&state, 9, 0x4000, 0x2000, missing_initiator_targets,
+        0, count_tlb_invalidation, count_tlb_ipi, &counters, &id) == GHOSTOS_TLB_MISSING_INITIATOR);
+    assert(ghostos_tlb_begin(&state, 9, 0x4000, 0x2000, targets, 0,
+        count_tlb_invalidation, count_tlb_ipi, &counters, &id) == GHOSTOS_TLB_OK);
+    assert(id == 1 && counters.invalidations == 1 && counters.ipis == 1);
+    assert(ghostos_tlb_pending_targets(&state, id, pending));
+    assert(pending[0] == 2 && pending[1] == 0);
+    assert(ghostos_tlb_acknowledge(&state, id, 0, count_tlb_invalidation,
+        &counters, &complete) == GHOSTOS_TLB_ALREADY_ACKNOWLEDGED);
+    assert(ghostos_tlb_acknowledge(&state, id, 1, count_tlb_invalidation,
+        &counters, &complete) == GHOSTOS_TLB_OK);
+    assert(complete && ghostos_tlb_is_complete(&state, id));
+    assert(counters.invalidations == 2);
+    assert(ghostos_tlb_retire(&state, id) == GHOSTOS_TLB_OK);
+    assert(ghostos_tlb_retire(&state, id) == GHOSTOS_TLB_NOT_FOUND);
+}
+
 static bool delegated_rights_stay_attenuated(size_t case_index, uint64_t case_seed,
     ghostos_test_entropy *entropy, void *context) {
     (void)case_index;
@@ -163,6 +203,7 @@ int main(void) {
     invariants_are_stable_and_redacted();
     syscall_boundary_checks_match_kernel_ranges();
     runtime_rejects_unknown_and_reserved_requests();
+    tlb_tracks_targets_until_acknowledged();
     ghostos_property_failure failure;
     ghostos_property_config property = ghostos_property_config_new(0x593, 128);
     assert(ghostos_property_run_assert("kernel.capability-attenuation", property,
