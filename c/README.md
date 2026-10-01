@@ -22,6 +22,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/allocator.rs` | `src/frame_allocator.c` | `include/ghostos/frame_allocator.h` |
 | `kernel/src/arch/aarch64.rs` | `src/arch_aarch64.c` | `include/ghostos/arch_aarch64.h` |
 | `kernel/src/arch/riscv64.rs` | `src/arch_riscv64.c` | `include/ghostos/arch_riscv64.h` |
+| `kernel/src/arch/x86_64.rs` | `src/arch_x86_64.c` | `include/ghostos/arch_x86_64.h` |
 | `kernel/src/arch/unsupported.rs` | `src/arch_unsupported.c` | `include/ghostos/arch_unsupported.h` |
 | `kernel/src/arch/cpu.rs` | `src/cpu_topology.c` | `include/ghostos/cpu_topology.h` |
 | `kernel/src/arch/mod.rs` | `src/arch.c` | `include/ghostos/arch.h` |
@@ -45,6 +46,10 @@ The shared architecture wrapper in `src/arch.c` selects evidence at compile
 time and calls an explicit backend table for boot, interrupts, TLB invalidation,
 user access, and user entry. Kernel integration supplies the validation and
 backend callbacks.
+
+The x86 interrupt entry calls a registered dispatcher with the saved frame.
+Kernel scheduling, watchdog, and page-fault policy must be supplied by that
+dispatcher when the C kernel is connected.
 
 `userspace/boot-services/service.c`, `login.c`, and `shell.c` now use the generated
 request/response types and operation IDs instead of private copies. The kernel
