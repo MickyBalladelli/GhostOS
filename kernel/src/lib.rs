@@ -73,6 +73,7 @@ pub mod partition;
 #[allow(unsafe_code)]
 pub mod process;
 pub mod scheduler;
+#[allow(unsafe_code)]
 pub mod runtime;
 pub mod saturation;
 #[allow(unsafe_code)]

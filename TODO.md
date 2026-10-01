@@ -79,7 +79,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/process.rs` — C owns bounded process records, ID generations, status, cancellation, exec updates, exits, and fencing. Rust retains ELF loading and scheduler/capability/memory resource callbacks.
 - [ ] `kernel/src/quota.rs` — C owns sharded token buckets, memory accounting, refill/throttle policy, and ticket-lock contention reports. Rust keeps the public quota API and adapts results for capability and allocator callers.
 - [ ] `kernel/src/random.rs` — C owns processor entropy detection, seed mixing, ChaCha20 blocks, counter allocation, and bounded output. Rust keeps the slice and `Option<u64>` API.
-- [ ] `kernel/src/runtime.rs`
+- [ ] `kernel/src/runtime.rs` — C owns bounded filesystem process registration, the runtime clock, ABI request checks, and operation routing classification. Rust retains typed ABI translation, shared-buffer validation, and capability-protected IPC adapters.
 - [ ] `kernel/src/saturation.rs`
 - [ ] `kernel/src/scheduler.rs`
 - [ ] `kernel/src/shell.rs`

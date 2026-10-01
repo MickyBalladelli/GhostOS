@@ -12,6 +12,7 @@ use ghostos_fsd::{Capability as FsdCapability, Flags as FsdFlags, Operation as F
 use ghostos_ipc::{ChannelId, Envelope, SharedBuffer, SharedRegionId};
 use ghostos_runtime::{Operation, Request, Response};
 use ghostos_status::Status;
+use core::ffi::c_uint;
 
 pub const MAX_FILESYSTEM_PROCESSES: usize = 64;
 
@@ -41,6 +42,59 @@ impl RuntimeDispatchError {
             Self::Capacity => Status::NO_SPACE,
             Self::TransportFailure => Status::BUSY,
         }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CProcessSlot {
+    caller: u32,
+    used: u32,
+    process: u64,
+    authority: u64,
+}
+
+#[repr(C)]
+struct CRuntimeState {
+    clock: u64,
+    processes: [CProcessSlot; MAX_FILESYSTEM_PROCESSES],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CRuntimeIdentity {
+    process: u64,
+    authority: u64,
+}
+
+unsafe extern "C" {
+    fn ghostos_runtime_clock(state: *const CRuntimeState) -> u64;
+    fn ghostos_runtime_advance_clock(state: *mut CRuntimeState, elapsed: u64);
+    fn ghostos_runtime_register(
+        state: *mut CRuntimeState,
+        caller: u32,
+        identity: CRuntimeIdentity,
+        capacity: usize,
+    ) -> c_uint;
+    fn ghostos_runtime_unregister(state: *mut CRuntimeState, caller: u32, capacity: usize) -> c_uint;
+    fn ghostos_runtime_lookup(
+        state: *const CRuntimeState,
+        caller: u32,
+        identity: *mut CRuntimeIdentity,
+        capacity: usize,
+    ) -> c_uint;
+    fn ghostos_runtime_validate_request(request: *const Request) -> c_uint;
+    fn ghostos_runtime_operation_delegated(operation: u16) -> bool;
+}
+
+fn c_runtime_error(result: c_uint) -> Result<(), RuntimeDispatchError> {
+    match result {
+        0 => Ok(()),
+        1 => Err(RuntimeDispatchError::AbiMismatch),
+        2 => Err(RuntimeDispatchError::InvalidRequest),
+        3 => Err(RuntimeDispatchError::ProcessNotRegistered),
+        4 => Err(RuntimeDispatchError::Capacity),
+        _ => Err(RuntimeDispatchError::TransportFailure),
     }
 }
 
@@ -302,32 +356,20 @@ impl<
     }
 }
 
-#[derive(Clone, Copy)]
-struct ProcessSlot {
-    caller: Option<AddressSpaceId>,
-    identity: Option<FilesystemIdentity>,
-}
-
-impl ProcessSlot {
-    const EMPTY: Self = Self {
-        caller: None,
-        identity: None,
-    };
-}
-
 /// Runtime ABI dispatcher owned by the kernel.
 pub struct Dispatcher<T, const MAX_PROCESSES: usize = MAX_FILESYSTEM_PROCESSES> {
     filesystem: T,
-    processes: [ProcessSlot; MAX_PROCESSES],
-    clock: u64,
+    state: CRuntimeState,
 }
 
 impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> {
     pub const fn new(filesystem: T) -> Self {
         Self {
             filesystem,
-            processes: [ProcessSlot::EMPTY; MAX_PROCESSES],
-            clock: 0,
+            state: CRuntimeState {
+                clock: 0,
+                processes: [CProcessSlot { caller: 0, used: 0, process: 0, authority: 0 }; MAX_FILESYSTEM_PROCESSES],
+            },
         }
     }
 
@@ -339,12 +381,12 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         &mut self.filesystem
     }
 
-    pub const fn clock(&self) -> u64 {
-        self.clock
+    pub fn clock(&self) -> u64 {
+        unsafe { ghostos_runtime_clock(&self.state) }
     }
 
     pub fn advance_clock(&mut self, elapsed: u64) {
-        self.clock = self.clock.saturating_add(elapsed)
+        unsafe { ghostos_runtime_advance_clock(&mut self.state, elapsed) }
     }
 
     /// Associates a kernel address space with the daemon-issued process
@@ -354,35 +396,26 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         caller: AddressSpaceId,
         identity: FilesystemIdentity,
     ) -> Result<(), RuntimeDispatchError> {
-        if let Some(slot) = self
-            .processes
-            .iter_mut()
-            .find(|slot| slot.caller == Some(caller))
-        {
-            slot.identity = Some(identity);
-            return Ok(())
+        let result = unsafe {
+            ghostos_runtime_register(
+                &mut self.state,
+                caller.raw(),
+                CRuntimeIdentity { process: identity.process.raw(), authority: identity.authority.raw() },
+                MAX_PROCESSES,
+            )
+        };
+        match result {
+            4 => Err(RuntimeDispatchError::ProcessNotRegistered),
+            _ => c_runtime_error(result),
         }
-        let slot = self
-            .processes
-            .iter_mut()
-            .find(|slot| slot.caller.is_none())
-            .ok_or(RuntimeDispatchError::ProcessNotRegistered)?;
-        slot.caller = Some(caller);
-        slot.identity = Some(identity);
-        Ok(())
     }
 
     pub fn unregister_filesystem_process(
         &mut self,
         caller: AddressSpaceId,
     ) -> Result<(), RuntimeDispatchError> {
-        let slot = self
-            .processes
-            .iter_mut()
-            .find(|slot| slot.caller == Some(caller))
-            .ok_or(RuntimeDispatchError::ProcessNotRegistered)?;
-        *slot = ProcessSlot::EMPTY;
-        Ok(())
+        let result = unsafe { ghostos_runtime_unregister(&mut self.state, caller.raw(), MAX_PROCESSES) };
+        c_runtime_error(result)
     }
 
     /// Dispatch one native runtime request on behalf of `caller`.
@@ -405,9 +438,9 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         request: Request,
         operations: &mut O,
     ) -> Response {
-        if request.abi_version != ghostos_abi::ABI_SCHEMA_VERSION {
+        if let Err(error) = c_runtime_error(unsafe { ghostos_runtime_validate_request(&request) }) {
             return Response {
-                status: RuntimeDispatchError::AbiMismatch.status().raw(),
+                status: error.status().raw(),
                 flags: 0,
                 values: [0; 4],
             }
@@ -415,25 +448,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         let Some(operation) = Operation::from_raw(request.operation) else {
             return self.dispatch(caller, request);
         };
-        if !matches!(
-            operation,
-            Operation::ClockNow
-                | Operation::RealtimeNow
-                | Operation::Yield
-                | Operation::SynFsOpen
-                | Operation::SynFsClose
-                | Operation::SynFsRead
-                | Operation::SynFsWrite
-                | Operation::SynFsMap
-                | Operation::SynFsUnmap
-                | Operation::SynFsMetadata
-                | Operation::SynFsList
-                | Operation::SynFsMkdir
-                | Operation::SynFsRmdir
-                | Operation::SynFsLink
-                | Operation::SynFsLinks
-                | Operation::SynFsDelete
-        ) {
+        if unsafe { ghostos_runtime_operation_delegated(operation as u16) } {
             match operations.dispatch(caller, operation, request) {
                 Ok(response) => response,
                 Err(error) => Response {
@@ -452,14 +467,9 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         caller: AddressSpaceId,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
-        if request.abi_version != ghostos_abi::ABI_SCHEMA_VERSION {
-            return Err(RuntimeDispatchError::AbiMismatch)
-        }
+        c_runtime_error(unsafe { ghostos_runtime_validate_request(&request) })?;
         let operation = Operation::from_raw(request.operation)
             .ok_or(RuntimeDispatchError::InvalidRequest)?;
-        if request.reserved != 0 {
-            return Err(RuntimeDispatchError::InvalidRequest)
-        }
 
         match operation {
             Operation::ClockNow => {
@@ -467,7 +477,7 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
                 Ok(Response {
                     status: Status::NORMAL.raw(),
                     flags: 0,
-                    values: [self.clock, 0, 0, 0],
+                    values: [self.clock(), 0, 0, 0],
                 })
             }
             Operation::RealtimeNow => {
@@ -511,12 +521,14 @@ impl<T: FilesystemIpc, const MAX_PROCESSES: usize> Dispatcher<T, MAX_PROCESSES> 
         operation: Operation,
         request: Request,
     ) -> Result<Response, RuntimeDispatchError> {
-        let slot = self
-            .processes
-            .iter()
-            .find(|slot| slot.caller == Some(caller))
-            .and_then(|slot| slot.identity)
-            .ok_or(RuntimeDispatchError::ProcessNotRegistered)?;
+        let mut c_identity = CRuntimeIdentity { process: 0, authority: 0 };
+        c_runtime_error(unsafe {
+            ghostos_runtime_lookup(&self.state, caller.raw(), &mut c_identity, MAX_PROCESSES)
+        })?;
+        let slot = FilesystemIdentity {
+            process: ghostos_fsd::ProcessId::from_valid_raw(c_identity.process),
+            authority: FsdCapability::from_valid_raw(c_identity.authority),
+        };
         let buffer = self.buffer(operation, request)?;
         let fs_operation = match operation {
             Operation::SynFsOpen => FsdOperation::Open,
