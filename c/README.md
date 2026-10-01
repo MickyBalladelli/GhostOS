@@ -4,7 +4,7 @@ This directory contains the C replacements being built for the Rust project.
 The operating system and virtual machine still use Rust. The existing C boot
 services use the generated syscall ABI header and shared status constants.
 The C crash capsule encoder is linked into kernel builds. The other foundation
-library modules are not yet connected to the Rust kernel or VM consumers.
+library modules, including the DLM, are not yet connected to the Rust kernel or VM consumers.
 See `TODO.md` for migration status.
 
 Run `make c-library` at the repository root to build `build/c/libghostos.a`.
@@ -34,6 +34,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/capability.rs` | `src/capability.c` | `include/ghostos/capability.h` |
 | `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 | `kernel/src/crash.rs` (capsule encoding, build identity, one-time guard) | `src/crash.c` | `include/ghostos/crash.h` |
+| `kernel/src/dlm.rs` (node/federation fences, range lock manager) | `src/dlm.c` | `include/ghostos/dlm.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
