@@ -1605,6 +1605,15 @@ const _: [(); 32] = [(); core::mem::size_of::<CVtInputState>()];
 const _: [(); 8] = [(); core::mem::size_of::<CVtKey>()];
 
 unsafe extern "C" {
+    fn ghostos_shell_expand_command(
+        line: *const u8,
+        line_length: u32,
+        command: *const u8,
+        command_length: u32,
+        output: *mut u8,
+        output_capacity: u32,
+        output_length: *mut u32,
+    ) -> u32;
     fn ghostos_vt_input_advance(state: *mut CVtInputState, byte: u8) -> CVtKey;
     fn ghostos_vt_input_escape_pending(state: *const CVtInputState) -> bool;
     fn ghostos_vt_input_flush_escape(state: *mut CVtInputState) -> CVtKey;
