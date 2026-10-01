@@ -7,6 +7,11 @@ enum { ENABLE_FIRST_PORT=0xae, ENABLE_SECOND_PORT=0xa8, WRITE_AUXILIARY=0xd4,
 
 void ghostos_keyboard_init(ghostos_keyboard *k) { *k = (ghostos_keyboard){0}; }
 
+void ghostos_keyboard_create(ghostos_keyboard *k, const ghostos_keyboard_io *io) {
+    ghostos_keyboard_init(k);
+    ghostos_keyboard_initialize_controller(io);
+}
+
 static bool wait_for_input_buffer(const ghostos_keyboard_io *io) {
     if (!io || !io->read_port) return false;
     for (size_t i=0;i<100000;i++) {
@@ -164,3 +169,29 @@ bool ghostos_keyboard_read_boot_byte(const ghostos_keyboard_io *io, uint8_t *byt
     atomic_flag_clear_explicit(&boot_lock,memory_order_release);
     return result;
 }
+
+#if defined(__x86_64__)
+static uint8_t x86_read_port(void *context, uint16_t port) {
+    (void)context;
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+static void x86_write_port(void *context, uint16_t port, uint8_t value) {
+    (void)context;
+    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+static void x86_spin(void *context) { (void)context; __asm__ volatile ("pause"); }
+bool ghostos_keyboard_x86_io(ghostos_keyboard_io *io, void *context,
+    void (*mouse_byte)(void *context, uint8_t byte)) {
+    if (!io) return false;
+    *io = (ghostos_keyboard_io){context, x86_read_port, x86_write_port, x86_spin, mouse_byte};
+    return true;
+}
+#else
+bool ghostos_keyboard_x86_io(ghostos_keyboard_io *io, void *context,
+    void (*mouse_byte)(void *context, uint8_t byte)) {
+    (void)io; (void)context; (void)mouse_byte;
+    return false;
+}
+#endif

@@ -23,8 +23,11 @@ typedef struct {
 } ghostos_keyboard;
 
 void ghostos_keyboard_init(ghostos_keyboard *keyboard);
+void ghostos_keyboard_create(ghostos_keyboard *keyboard, const ghostos_keyboard_io *io);
 void ghostos_keyboard_initialize_controller(const ghostos_keyboard_io *io);
 bool ghostos_keyboard_read_byte(ghostos_keyboard *keyboard, const ghostos_keyboard_io *io, uint8_t *byte);
 bool ghostos_keyboard_read_boot_byte(const ghostos_keyboard_io *io, uint8_t *byte);
+bool ghostos_keyboard_x86_io(ghostos_keyboard_io *io, void *context,
+    void (*mouse_byte)(void *context, uint8_t byte));
 
 #endif
