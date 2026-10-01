@@ -72,6 +72,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `kernel/src/usb_keyboard_stub.rs` (non-x86 empty USB keyboard adapter) | `src/usb_keyboard_stub.c` | `include/ghostos/usb_keyboard_stub.h` |
 | `kernel/src/watchdog.rs` (service and CPU liveness tracking with one-shot stale reports) | `src/watchdog.c` | `include/ghostos/watchdog.h` |
 | `kernel/src/webauthn.rs` (SHA-256 primitive used by local WebAuthn verification) | `src/webauthn.c` | `include/ghostos/webauthn.h` |
+| `virtual_machine/src/boot/mod.rs` (Multiboot header discovery and information decoding) | `src/vm_boot.c` | `include/ghostos/vm_boot.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

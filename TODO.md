@@ -92,7 +92,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/usb_keyboard_stub.rs` — C stub initializes empty state and always returns no keyboard or byte; Rust retains the API wrapper. Non-x86 build and consumer parity remain.
 - [ ] `kernel/src/watchdog.rs` — C owns atomic service and CPU heartbeats, one-shot stale-fault latches, diagnostics state, and polling. Rust adapts CPU masks and keeps watchdog call sites; behavior parity and full consumer cutover remain.
 - [ ] `kernel/src/webauthn.rs` — C owns SHA-256; Rust still parses SYWB/client JSON/COSE and performs custom P-256 ES256 verification. Full crypto/parser port and behavior parity remain.
-- [ ] `virtual_machine/src/boot/mod.rs`
+- [ ] `virtual_machine/src/boot/mod.rs` — C owns Multiboot header discovery and Multiboot information decoding; Rust still owns ELF loading, memory layout, boot-info serialization, and CPU/MMU handoff. Full loader port and parity remain.
 - [ ] `virtual_machine/src/clock.rs`
 - [ ] `virtual_machine/src/cluster.rs`
 - [ ] `virtual_machine/src/control.rs`
