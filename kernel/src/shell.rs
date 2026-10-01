@@ -1577,202 +1577,90 @@ fn banner() {
     crate::println!()
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum VtInputState {
-    Ground,
-    Escape,
-    Csi,
-    Ss3,
-}
-
-struct VtInput {
-    state: VtInputState,
+#[repr(C)]
+struct CVtInputState {
+    state: u8,
     parameter: u16,
     modifier: u16,
     third_parameter: u16,
     separators: u8,
-    pending: Option<u8>,
-    pending_resize: Option<(usize, usize)>,
+    has_pending: u8,
+    pending_byte: u8,
+    has_resize: u8,
+    resize_columns: u32,
+    resize_rows: u32,
     utf8: [u8; 4],
-    utf8_len: usize,
-    utf8_expected: usize,
+    utf8_len: u32,
+    utf8_expected: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CVtKey {
+    kind: u32,
+    character: u32,
+}
+
+const _: [(); 32] = [(); core::mem::size_of::<CVtInputState>()];
+const _: [(); 8] = [(); core::mem::size_of::<CVtKey>()];
+
+unsafe extern "C" {
+    fn ghostos_vt_input_advance(state: *mut CVtInputState, byte: u8) -> CVtKey;
+    fn ghostos_vt_input_escape_pending(state: *const CVtInputState) -> bool;
+    fn ghostos_vt_input_flush_escape(state: *mut CVtInputState) -> CVtKey;
+    fn ghostos_vt_input_take_resize(state: *mut CVtInputState, columns: *mut u32, rows: *mut u32) -> bool;
+}
+
+struct VtInput {
+    state: CVtInputState,
 }
 
 impl VtInput {
     const fn new() -> Self {
         Self {
-            state: VtInputState::Ground,
-            parameter: 0,
-            modifier: 0,
-            third_parameter: 0,
-            separators: 0,
-            pending: None,
-            pending_resize: None,
-            utf8: [0; 4],
-            utf8_len: 0,
-            utf8_expected: 0,
+            state: CVtInputState {
+                state: 0, parameter: 0, modifier: 0, third_parameter: 0, separators: 0,
+                has_pending: 0, pending_byte: 0, has_resize: 0, resize_columns: 0,
+                resize_rows: 0, utf8: [0; 4], utf8_len: 0, utf8_expected: 0,
+            },
         }
     }
 
     fn advance(&mut self, byte: u8) -> Option<Key> {
-        if let Some(pending) = self.pending.take() {
-            if let Some(key) = self.advance_now(pending) {
-                self.pending = Some(byte);
-                return Some(key)
-            }
-        }
-        if self.state == VtInputState::Ground && self.utf8_expected != 0 {
-            if byte & 0xc0 != 0x80 || self.utf8_len == self.utf8.len() {
-                self.utf8_len = 0;
-                self.utf8_expected = 0;
-                return None
-            }
-            self.utf8[self.utf8_len] = byte;
-            self.utf8_len += 1;
-            if self.utf8_len == self.utf8_expected {
-                let character = core::str::from_utf8(&self.utf8[..self.utf8_len])
-                    .ok()
-                    .and_then(|text| text.chars().next());
-                self.utf8_len = 0;
-                self.utf8_expected = 0;
-                return character.map(Key::Character)
-            }
-            return None
-        }
-        self.advance_now(byte)
+        let key = unsafe { ghostos_vt_input_advance(&mut self.state, byte) };
+        map_vt_key(key)
     }
 
     fn escape_pending(&self) -> bool {
-        self.state == VtInputState::Escape
+        unsafe { ghostos_vt_input_escape_pending(&self.state) }
     }
 
     fn take_resize(&mut self) -> Option<(usize, usize)> {
-        self.pending_resize.take()
+        let (mut columns, mut rows) = (0, 0);
+        let available = unsafe {
+            ghostos_vt_input_take_resize(&mut self.state, &mut columns, &mut rows)
+        };
+        available.then_some((columns as usize, rows as usize))
     }
 
     fn flush_escape(&mut self) -> Option<Key> {
-        if !self.escape_pending() {
-            return None
-        }
-        self.state = VtInputState::Ground;
-        Some(Key::Escape)
+        map_vt_key(unsafe { ghostos_vt_input_flush_escape(&mut self.state) })
     }
+}
 
-    fn advance_now(&mut self, byte: u8) -> Option<Key> {
-        match self.state {
-            VtInputState::Ground => match byte {
-                0x1b => {
-                    self.state = VtInputState::Escape;
-                    None
-                }
-                b'\n' | b'\r' => Some(Key::Enter),
-                b'\t' => Some(Key::Tab),
-                8 | 127 => Some(Key::Backspace),
-                19 => Some(Key::Save),
-                24 => Some(Key::DiscardExit),
-                26 => Some(Key::SaveExit),
-                3 => Some(Key::Cancel),
-                0xc2..=0xdf => {
-                    self.utf8[0] = byte;
-                    self.utf8_len = 1;
-                    self.utf8_expected = 2;
-                    None
-                }
-                0xe0..=0xef => {
-                    self.utf8[0] = byte;
-                    self.utf8_len = 1;
-                    self.utf8_expected = 3;
-                    None
-                }
-                0xf0..=0xf4 => {
-                    self.utf8[0] = byte;
-                    self.utf8_len = 1;
-                    self.utf8_expected = 4;
-                    None
-                }
-                0x20..=0x7e => Some(Key::Character(byte as char)),
-                _ => None,
-            },
-            VtInputState::Escape => {
-                self.parameter = 0;
-                self.modifier = 0;
-                self.third_parameter = 0;
-                self.separators = 0;
-                match byte {
-                    b'[' => self.state = VtInputState::Csi,
-                    b'O' => self.state = VtInputState::Ss3,
-                    _ => {
-                        self.state = VtInputState::Ground;
-                        self.pending = Some(byte);
-                        return Some(Key::Escape)
-                    }
-                }
-                None
-            }
-            VtInputState::Csi => match byte {
-                b'0'..=b'9' => {
-                    let value = (byte - b'0') as u16;
-                    match self.separators {
-                        0 => {
-                            self.parameter = self.parameter.saturating_mul(10).saturating_add(value)
-                        }
-                        1 => {
-                            self.modifier = self.modifier.saturating_mul(10).saturating_add(value)
-                        }
-                        _ => {
-                            self.third_parameter = self
-                                .third_parameter
-                                .saturating_mul(10)
-                                .saturating_add(value)
-                        }
-                    }
-                    None
-                }
-                b';' => {
-                    self.separators = self.separators.saturating_add(1);
-                    None
-                }
-                _ => {
-                    self.state = VtInputState::Ground;
-                    self.navigation_key(byte)
-                }
-            },
-            VtInputState::Ss3 => {
-                self.state = VtInputState::Ground;
-                self.navigation_key(byte)
-            }
-        }
-    }
-
-    fn navigation_key(&mut self, byte: u8) -> Option<Key> {
-        let shifted = self.modifier == 2;
-        match byte {
-            b'A' => Some(if shifted { Key::ShiftUp } else { Key::Up }),
-            b'B' => Some(if shifted { Key::ShiftDown } else { Key::Down }),
-            b'C' => Some(if shifted { Key::ShiftRight } else { Key::Right }),
-            b'D' => Some(if shifted { Key::ShiftLeft } else { Key::Left }),
-            b'H' => Some(if shifted { Key::ShiftHome } else { Key::Home }),
-            b'F' => Some(if shifted { Key::ShiftEnd } else { Key::End }),
-            b't' if self.parameter == 8 && self.separators >= 2 => {
-                let rows = self.modifier as usize;
-                let columns = self.third_parameter as usize;
-                if rows == 0 || columns == 0 {
-                    None
-                } else {
-                    self.pending_resize = Some((columns, rows));
-                    Some(Key::Resize)
-                }
-            }
-            b'~' => match self.parameter {
-                1 | 7 => Some(if shifted { Key::ShiftHome } else { Key::Home }),
-                3 => Some(Key::Delete),
-                4 | 8 => Some(if shifted { Key::ShiftEnd } else { Key::End }),
-                5 => Some(Key::PageUp),
-                6 => Some(Key::PageDown),
-                _ => None,
-            },
-            _ => None,
-        }
+fn map_vt_key(key: CVtKey) -> Option<Key> {
+    use ghostos_shell::editor::Key as K;
+    match key.kind {
+        0 => None,
+        1 => char::from_u32(key.character).map(K::Character),
+        2 => Some(K::Left), 3 => Some(K::Right), 4 => Some(K::Up), 5 => Some(K::Down),
+        6 => Some(K::Home), 7 => Some(K::End), 8 => Some(K::ShiftLeft),
+        9 => Some(K::ShiftRight), 10 => Some(K::ShiftUp), 11 => Some(K::ShiftDown),
+        12 => Some(K::PageUp), 13 => Some(K::PageDown), 14 => Some(K::ShiftHome),
+        15 => Some(K::ShiftEnd), 16 => Some(K::Backspace), 17 => Some(K::Delete),
+        18 => Some(K::Tab), 19 => Some(K::Enter), 20 => Some(K::Escape),
+        21 => Some(K::Save), 22 => Some(K::SaveExit), 23 => Some(K::DiscardExit),
+        24 => Some(K::Cancel), 25 => Some(K::Resize), _ => None,
     }
 }
 
