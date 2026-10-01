@@ -69,6 +69,7 @@ mod pci;
 mod physical_storage;
 #[allow(unsafe_code)]
 pub mod partition;
+#[allow(unsafe_code)]
 pub mod process;
 pub mod scheduler;
 pub mod runtime;

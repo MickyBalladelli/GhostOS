@@ -1,7 +1,7 @@
 use ghostos_boot_protocol::{BootInfo, MemoryKind};
 use ghostos_power::{
-    AcpiError, AcpiMemory, AcpiPlatform, AddressSpace, FixedEvent, GenericAddress,
-    PowerController, PowerIo, PowerState,
+    AcpiError, AcpiMemory, AcpiPlatform, AddressSpace, GenericAddress,
+    ResetRegister, SleepTypes,
 };
 
 #[repr(C)]
@@ -23,6 +23,37 @@ struct CPowerRegister {
     address: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct COptionalRegister {
+    present: bool,
+    register_value: CPowerRegister,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CPowerPlatform {
+    pm1a_event: COptionalRegister,
+    pm1b_event: COptionalRegister,
+    pm1a_control: COptionalRegister,
+    pm1b_control: COptionalRegister,
+    pm1_event_bytes: u8,
+    smi_command_port: u32,
+    acpi_enable_value: u8,
+    reset_present: bool,
+    reset_register: CPowerRegister,
+    reset_value: u8,
+    reduced_hardware: bool,
+    sleep_control: COptionalRegister,
+    sleep_status: COptionalRegister,
+    suspend_present: bool,
+    soft_off_present: bool,
+    suspend_a: u8,
+    suspend_b: u8,
+    soft_off_a: u8,
+    soft_off_b: u8,
+}
+
 unsafe extern "C" {
     fn ghostos_power_acpi_read(
         regions: *const CMemoryRegion,
@@ -36,8 +67,10 @@ unsafe extern "C" {
     fn ghostos_power_register_access_bytes(register: CPowerRegister, bytes: *mut u8) -> i32;
     #[cfg(test)]
     fn ghostos_power_extract_field(raw: u64, register: CPowerRegister) -> u64;
-    fn ghostos_power_register_read(register: CPowerRegister, value: *mut u64) -> i32;
-    fn ghostos_power_register_write(register: CPowerRegister, value: u64) -> i32;
+    fn ghostos_power_enable_acpi(platform: *const CPowerPlatform, spin_limit: usize) -> i32;
+    fn ghostos_power_poll_events(platform: *const CPowerPlatform, events: *mut u16) -> i32;
+    fn ghostos_power_set_event(platform: *const CPowerPlatform, event: u8, enabled: bool) -> i32;
+    fn ghostos_power_request(platform: *const CPowerPlatform, state: u8) -> i32;
     fn ghostos_power_vm_shutdown();
     fn ghostos_power_vm_reboot();
     fn ghostos_power_reboot_fallback();
@@ -89,19 +122,16 @@ pub fn discover(boot_info: &'static BootInfo) -> Option<AcpiPlatform> {
 }
 
 pub fn enable(platform: &AcpiPlatform) -> Result<(), AcpiError> {
-    let mut controller = PowerController::new(*platform, PlatformIo);
-    controller.enable_acpi(1_000_000)?;
+    enable_acpi(platform)?;
     if platform.fixed.pm1a_event.is_some() {
-        controller.set_fixed_event_enabled(FixedEvent::PowerButton, true)
+        set_event(platform, 1, true)
     } else {
         Ok(())
     }
 }
 
 pub fn power_button_pressed(platform: &AcpiPlatform) -> bool {
-    PowerController::new(*platform, PlatformIo)
-        .poll_fixed_events()
-        .is_ok_and(|events| events.contains(FixedEvent::PowerButton))
+    poll_events(platform).is_ok_and(|events| events & (1 << 8) != 0)
 }
 
 pub fn battery_report(
@@ -114,24 +144,103 @@ pub fn battery_report(
     platform.battery_report(&PhysicalAcpiMemory { boot_info })
 }
 
+fn c_optional(register: Option<GenericAddress>) -> COptionalRegister {
+    COptionalRegister {
+        present: register.is_some(),
+        register_value: register.map_or(c_register(GenericAddress {
+            address_space: AddressSpace::Other(0xff),
+            bit_width: 0,
+            bit_offset: 0,
+            access_size: 0,
+            address: 0,
+        }), c_register),
+    }
+}
+
+fn c_sleep(sleep: Option<SleepTypes>) -> (bool, u8, u8) {
+    sleep.map_or((false, 0, 0), |sleep| (true, sleep.type_a, sleep.type_b))
+}
+
+fn c_platform(platform: &AcpiPlatform) -> CPowerPlatform {
+    let fixed = platform.fixed;
+    let (suspend_present, suspend_a, suspend_b) = c_sleep(platform.suspend);
+    let (soft_off_present, soft_off_a, soft_off_b) = c_sleep(platform.soft_off);
+    let (reset_present, reset_register, reset_value) = platform.fixed.reset.map_or(
+        (false, c_optional(None).register_value, 0),
+        |ResetRegister { register, value }| (true, c_register(register), value),
+    );
+    CPowerPlatform {
+        pm1a_event: c_optional(fixed.pm1a_event),
+        pm1b_event: c_optional(fixed.pm1b_event),
+        pm1a_control: c_optional(fixed.pm1a_control),
+        pm1b_control: c_optional(fixed.pm1b_control),
+        pm1_event_bytes: fixed.pm1_event_bytes,
+        smi_command_port: fixed.smi_command_port,
+        acpi_enable_value: fixed.acpi_enable_value,
+        reset_present,
+        reset_register,
+        reset_value,
+        reduced_hardware: fixed.reduced_hardware,
+        sleep_control: c_optional(fixed.sleep_control),
+        sleep_status: c_optional(fixed.sleep_status),
+        suspend_present,
+        soft_off_present,
+        suspend_a,
+        suspend_b,
+        soft_off_a,
+        soft_off_b,
+    }
+}
+
+fn enable_acpi(platform: &AcpiPlatform) -> Result<(), AcpiError> {
+    let raw = c_platform(platform);
+    // SAFETY: C reads the copied, repr(C) power platform record.
+    map_power_error(unsafe { ghostos_power_enable_acpi(&raw, 1_000_000) })
+}
+
+fn poll_events(platform: &AcpiPlatform) -> Result<u16, AcpiError> {
+    let raw = c_platform(platform);
+    let mut events = 0;
+    // SAFETY: C reads the copied platform record and writes one event mask.
+    map_power_error(unsafe { ghostos_power_poll_events(&raw, &mut events) })?;
+    Ok(events)
+}
+
+fn set_event(platform: &AcpiPlatform, event: u8, enabled: bool) -> Result<(), AcpiError> {
+    let raw = c_platform(platform);
+    // SAFETY: C reads the copied platform record and updates the requested event bit.
+    map_power_error(unsafe { ghostos_power_set_event(&raw, event, enabled) })
+}
+
+fn request(platform: &AcpiPlatform, state: u8) -> Result<(), AcpiError> {
+    let raw = c_platform(platform);
+    // SAFETY: C reads the copied platform record and issues the selected ACPI request.
+    map_power_error(unsafe { ghostos_power_request(&raw, state) })
+}
+
+fn map_power_error(error: i32) -> Result<(), AcpiError> {
+    match error {
+        0 => Ok(()),
+        1 => Err(AcpiError::InvalidAddress),
+        2 => Err(AcpiError::Unsupported),
+        3 => Err(AcpiError::TimedOut),
+        _ => Err(AcpiError::MalformedTable),
+    }
+}
+
 pub fn suspend(platform: Option<&AcpiPlatform>) -> Result<(), AcpiError> {
     let platform = platform.ok_or(AcpiError::Unsupported)?;
-    let mut controller = PowerController::new(*platform, PlatformIo);
-    controller.enable_acpi(1_000_000)?;
+    enable_acpi(platform)?;
     if !platform.fixed.reduced_hardware && platform.fixed.pm1a_event.is_some() {
-        let _ = controller.poll_fixed_events()?;
-        for event in [
-            FixedEvent::PowerButton,
-            FixedEvent::SleepButton,
-            FixedEvent::PcieWake,
-        ] {
-            controller.set_fixed_event_enabled(event, true)?
+        let _ = poll_events(platform)?;
+        for event in [1, 2, 8] {
+            set_event(platform, event, true)?
         }
     }
 
     crate::println!("Suspending GhostOS...");
     crate::arch::disable_interrupts();
-    let requested = controller.request(PowerState::Suspend);
+    let requested = request(platform, 0);
     let result = match requested {
         Ok(()) => resume(platform),
         Err(error) => Err(error),
@@ -144,10 +253,9 @@ pub fn suspend(platform: Option<&AcpiPlatform>) -> Result<(), AcpiError> {
 }
 
 pub fn resume(platform: &AcpiPlatform) -> Result<(), AcpiError> {
-    let mut controller = PowerController::new(*platform, PlatformIo);
-    controller.enable_acpi(1_000_000)?;
+    enable_acpi(platform)?;
     if platform.fixed.pm1a_event.is_some() {
-        let _ = controller.poll_fixed_events()?;
+        let _ = poll_events(platform)?;
     }
     Ok(())
 }
@@ -155,9 +263,8 @@ pub fn resume(platform: &AcpiPlatform) -> Result<(), AcpiError> {
 pub fn shutdown(platform: Option<&AcpiPlatform>) -> ! {
     crate::println!("Shutting down GhostOS...");
     let acpi_requested = if let Some(platform) = platform {
-        let mut controller = PowerController::new(*platform, PlatformIo);
-        let _ = controller.enable_acpi(1_000_000);
-        controller.request(PowerState::SoftOff).is_ok()
+        let _ = enable_acpi(platform);
+        request(platform, 1).is_ok()
     } else {
         false
     };
@@ -170,9 +277,8 @@ pub fn shutdown(platform: Option<&AcpiPlatform>) -> ! {
 pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
     crate::println!("Rebooting GhostOS...");
     let acpi_requested = if let Some(platform) = platform {
-        let mut controller = PowerController::new(*platform, PlatformIo);
-        let _ = controller.enable_acpi(1_000_000);
-        controller.request(PowerState::Reboot).is_ok()
+        let _ = enable_acpi(platform);
+        request(platform, 2).is_ok()
     } else {
         false
     };
@@ -186,8 +292,6 @@ pub fn reboot(platform: Option<&AcpiPlatform>) -> ! {
     crate::halt()
 }
 
-struct PlatformIo;
-
 fn request_vm_reboot() {
     unsafe {
         ghostos_power_vm_reboot()
@@ -197,24 +301,6 @@ fn request_vm_reboot() {
 fn request_vm_shutdown() {
     unsafe {
         ghostos_power_vm_shutdown()
-    }
-}
-
-impl PowerIo for PlatformIo {
-    fn read(&mut self, register: GenericAddress) -> Result<u64, AcpiError> {
-        let mut value = 0;
-        // SAFETY: C performs validated volatile access for the ACPI register.
-        map_io_error(unsafe { ghostos_power_register_read(c_register(register), &mut value) })?;
-        Ok(value)
-    }
-
-    fn write(
-        &mut self,
-        register: GenericAddress,
-        value: u64,
-    ) -> Result<(), AcpiError> {
-        // SAFETY: C validates the address and performs the selected volatile write.
-        map_io_error(unsafe { ghostos_power_register_write(c_register(register), value) })
     }
 }
 
@@ -233,6 +319,7 @@ fn c_register(register: GenericAddress) -> CPowerRegister {
     }
 }
 
+#[cfg(test)]
 fn map_io_error(error: i32) -> Result<(), AcpiError> {
     match error {
         0 => Ok(()),

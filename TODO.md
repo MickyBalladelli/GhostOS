@@ -75,8 +75,8 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/persistence.rs` — C performs bounded x86 persistence-port load/save/flush. Rust retains record-container encoding and boot/crash record policy through the C storage adapter.
 - [x] `kernel/src/persona.rs` — C owns fixed-capacity active/disabled rights state operations. Rust keeps typed identity/right wrappers and the iterator used by scheduler and authentication callers.
 - [ ] `kernel/src/physical_storage.rs` — C selects bounded AHCI candidates and owns missing-volume policy. Rust still owns the AHCI controller, GhostFS mount, and service-image handoff because those APIs remain Rust-only.
-- [ ] `kernel/src/power.rs` — C owns checked ACPI memory/register access and VM shutdown/reboot port fallbacks. Rust keeps ACPI table/policy handling and the `PowerIo` adapter to the existing power crate.
-- [ ] `kernel/src/process.rs`
+- [ ] `kernel/src/power.rs` — C owns checked ACPI memory/register access, ACPI enable/event/sleep/reset control, and VM shutdown/reboot fallbacks. Rust keeps ACPI table discovery and battery AML parsing through the existing power crate.
+- [ ] `kernel/src/process.rs` — C owns bounded process records, ID generations, status, cancellation, exec updates, exits, and fencing. Rust retains ELF loading and scheduler/capability/memory resource callbacks.
 - [ ] `kernel/src/quota.rs`
 - [ ] `kernel/src/random.rs`
 - [ ] `kernel/src/runtime.rs`

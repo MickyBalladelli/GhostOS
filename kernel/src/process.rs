@@ -403,34 +403,74 @@ impl IntoStatus for KernelProcessError {
     }
 }
 
+const C_PROCESS_CAPACITY: usize = 64;
+
+#[repr(C)]
 #[derive(Clone, Copy)]
-struct ProcessSlot {
-    process: Option<ProcessId>,
-    thread: Option<ThreadId>,
-    address_space: Option<AddressSpaceId>,
-    authority: Option<CapabilityHandle>,
-    mapping: Option<Mapping>,
-    limits: ProcessLimits,
-    usage: ProcessUsage,
-    exit: Option<ProcessExit>,
-    cancel_requested_at: Option<u64>,
+struct CProcessRecord {
+    process_id: u64,
+    thread_id: u32,
+    address_space: u32,
+    authority: u64,
+    mapping_present: bool,
+    mapping_base: u64,
+    mapping_size: u64,
+    limit_memory: u64,
+    limit_cpu_time: u64,
+    limit_deadline: u64,
+    limit_cancel_grace: u64,
+    usage_memory: u64,
+    usage_cpu_time: u64,
+    exit_present: bool,
+    exit_status: i32,
+    exit_kind: u8,
+    crash_kind: u8,
+    cancel_present: bool,
+    cancel_time: u64,
 }
 
-impl ProcessSlot {
+impl CProcessRecord {
     const EMPTY: Self = Self {
-        process: None,
-        thread: None,
-        address_space: None,
-        authority: None,
-        mapping: None,
-        limits: ProcessLimits::DEFAULT,
-        usage: ProcessUsage {
-            memory_bytes: 0,
-            cpu_time_us: 0,
-        },
-        exit: None,
-        cancel_requested_at: None,
+        process_id: 0,
+        thread_id: 0,
+        address_space: 0,
+        authority: 0,
+        mapping_present: false,
+        mapping_base: 0,
+        mapping_size: 0,
+        limit_memory: 0,
+        limit_cpu_time: 0,
+        limit_deadline: 0,
+        limit_cancel_grace: 0,
+        usage_memory: 0,
+        usage_cpu_time: 0,
+        exit_present: false,
+        exit_status: 0,
+        exit_kind: 0,
+        crash_kind: 0,
+        cancel_present: false,
+        cancel_time: 0,
     };
+}
+
+#[repr(C)]
+struct CProcessTable {
+    capacity: usize,
+    generations: [u32; C_PROCESS_CAPACITY],
+    slots: [CProcessRecord; C_PROCESS_CAPACITY],
+}
+
+unsafe extern "C" {
+    fn ghostos_process_table_init(table: *mut CProcessTable, capacity: usize);
+    fn ghostos_process_free_slot(table: *const CProcessTable) -> usize;
+    fn ghostos_process_new_identity(table: *mut CProcessTable, slot: usize, process: *mut u64, address_space: *mut u32) -> u32;
+    fn ghostos_process_find(table: *const CProcessTable, process: u64) -> usize;
+    fn ghostos_process_get(table: *const CProcessTable, slot: usize, out: *mut CProcessRecord) -> bool;
+    fn ghostos_process_publish(table: *mut CProcessTable, slot: usize, record: *const CProcessRecord) -> u32;
+    fn ghostos_process_exec(table: *mut CProcessTable, slot: usize, base: u64, size: u64, usage_memory: u64) -> u32;
+    fn ghostos_process_cancel(table: *mut CProcessTable, slot: usize, now_us: u64) -> u32;
+    fn ghostos_process_finish(table: *mut CProcessTable, slot: usize, status: i32, exit_kind: u8, crash_kind: u8) -> u32;
+    fn ghostos_process_clear(table: *mut CProcessTable, slot: usize);
 }
 
 /// Kernel implementation of [`ProcessBackend`].
@@ -448,9 +488,8 @@ pub struct KernelProcessBackend<
     capabilities: &'a mut CapabilitySpace<MAX_CAPABILITIES>,
     memory: M,
     caller: AddressSpaceId,
-    generations: [u32; CAPACITY],
+    processes: CProcessTable,
     address_spaces: AddressSpaceTable<CAPACITY>,
-    slots: [ProcessSlot; CAPACITY],
 }
 
 impl<
@@ -481,14 +520,23 @@ impl<
         if !address_space_authorized && !system_control_authorized {
             return Err(KernelProcessError::Capability)
         }
+        if CAPACITY > C_PROCESS_CAPACITY {
+            return Err(KernelProcessError::Capacity)
+        }
+        let mut processes = CProcessTable {
+            capacity: 0,
+            generations: [0; C_PROCESS_CAPACITY],
+            slots: [CProcessRecord::EMPTY; C_PROCESS_CAPACITY],
+        };
+        // SAFETY: C initializes the fixed-size table with the checked capacity.
+        unsafe { ghostos_process_table_init(&mut processes, CAPACITY) };
         Ok(Self {
             scheduler,
             capabilities,
             memory,
             caller,
-            generations: [0; CAPACITY],
+            processes,
             address_spaces: AddressSpaceTable::new(),
-            slots: [ProcessSlot::EMPTY; CAPACITY],
         })
     }
 
@@ -521,12 +569,9 @@ impl<
     /// interrupt returns through the architecture's saved user frame.
     pub fn enter(&self, process: ProcessId) -> Result<(), KernelProcessError> {
         let index = self.slot_index(process)?;
-        let thread = self.slots[index]
-            .thread
-            .ok_or(KernelProcessError::NotFound)?;
-        let address_space = self.slots[index]
-            .address_space
-            .ok_or(KernelProcessError::NotFound)?;
+        let record = self.record(index)?;
+        let thread = ThreadId::new(record.thread_id).ok_or(KernelProcessError::NotFound)?;
+        let address_space = AddressSpaceId::new(record.address_space).ok_or(KernelProcessError::NotFound)?;
         let context = self
             .scheduler
             .thread(thread)
@@ -543,18 +588,24 @@ impl<
     /// Return the kernel's lifecycle view of one process.
     pub fn status(&self, process: ProcessId) -> Result<ProcessStatus, KernelProcessError> {
         let index = self.slot_index(process)?;
-        let slot = self.slots[index];
-        let state = match (slot.exit, slot.cancel_requested_at) {
-            (Some(_), _) => ProcessState::Exited,
-            (None, Some(requested_at_us)) => ProcessState::Cancelling { requested_at_us },
-            (None, None) => ProcessState::Running,
+        let record = self.record(index)?;
+        let exit = record_exit(record)?;
+        let state = match (record.exit_present, record.cancel_present) {
+            (true, _) => ProcessState::Exited,
+            (false, true) => ProcessState::Cancelling { requested_at_us: record.cancel_time },
+            (false, false) => ProcessState::Running,
         };
         Ok(ProcessStatus {
             process,
             state,
-            limits: slot.limits,
-            usage: slot.usage,
-            exit: slot.exit,
+            limits: ProcessLimits {
+                memory_bytes: record.limit_memory,
+                cpu_time_us: record.limit_cpu_time,
+                deadline_us: record.limit_deadline,
+                cancel_grace_us: record.limit_cancel_grace,
+            },
+            usage: ProcessUsage { memory_bytes: record.usage_memory, cpu_time_us: record.usage_cpu_time },
+            exit,
         })
     }
 
@@ -587,26 +638,40 @@ impl<
     }
 
     fn free_slot(&self) -> Result<usize, KernelProcessError> {
-        self.slots
-            .iter()
-            .position(|slot| slot.process.is_none())
-            .ok_or(KernelProcessError::Capacity)
+        // SAFETY: C reads the initialized process table.
+        let slot = unsafe { ghostos_process_free_slot(&self.processes) };
+        (slot < self.processes.capacity).then_some(slot).ok_or(KernelProcessError::Capacity)
     }
 
     fn slot_index(&self, process: ProcessId) -> Result<usize, KernelProcessError> {
-        self.slots
-            .iter()
-            .position(|slot| slot.process == Some(process))
-            .ok_or(KernelProcessError::NotFound)
+        // SAFETY: C reads the initialized process table.
+        let slot = unsafe { ghostos_process_find(&self.processes, process.raw()) };
+        (slot < self.processes.capacity).then_some(slot).ok_or(KernelProcessError::NotFound)
     }
 
     fn new_identity(&mut self, slot: usize) -> Result<(ProcessId, AddressSpaceId), KernelProcessError> {
-        let generation = self.generations[slot].wrapping_add(1).max(1);
-        self.generations[slot] = generation;
-        let process_raw = ((generation as u64) << 32) | (slot as u64 + 1);
+        let mut process_raw = 0;
+        let mut address_space_raw = 0;
+        // SAFETY: C updates only the selected generation counter and writes both IDs.
+        let error = unsafe {
+            ghostos_process_new_identity(&mut self.processes, slot, &mut process_raw, &mut address_space_raw)
+        };
+        if error != 0 {
+            return Err(KernelProcessError::Capacity)
+        }
         let process = ProcessId::new(process_raw).ok_or(KernelProcessError::Capacity)?;
-        let address_space = AddressSpaceId::new(process_raw as u32).ok_or(KernelProcessError::Capacity)?;
+        let address_space = AddressSpaceId::new(address_space_raw).ok_or(KernelProcessError::Capacity)?;
         Ok((process, address_space))
+    }
+
+    fn record(&self, slot: usize) -> Result<CProcessRecord, KernelProcessError> {
+        let mut record = CProcessRecord::EMPTY;
+        // SAFETY: C copies one occupied process record into this output value.
+        if unsafe { ghostos_process_get(&self.processes, slot, &mut record) } {
+            Ok(record)
+        } else {
+            Err(KernelProcessError::NotFound)
+        }
     }
 
     fn load(
@@ -679,23 +744,21 @@ impl<
         fault_address: u64,
     ) -> Result<(), KernelProcessError> {
         let index = self.slot_index(process)?;
-        if self.slots[index].exit.is_some() {
+        let record = self.record(index)?;
+        if record.exit_present {
             return Err(KernelProcessError::InvalidTransition)
         }
-        let thread = self.slots[index].thread.ok_or(KernelProcessError::NotFound)?;
-        let address_space = self.slots[index]
-            .address_space
-            .ok_or(KernelProcessError::NotFound)?;
-        let authority = self.slots[index]
-            .authority
-            .ok_or(KernelProcessError::NotFound)?;
+        let thread = ThreadId::new(record.thread_id).ok_or(KernelProcessError::NotFound)?;
+        let address_space = AddressSpaceId::new(record.address_space).ok_or(KernelProcessError::NotFound)?;
+        let authority = CapabilityHandle::from_raw(record.authority).ok_or(KernelProcessError::NotFound)?;
         if let ExitReason::Crash(reason) = exit.reason {
             self.report_crash(index, reason, fault_address)?;
         }
         self.scheduler
             .stop(self.capabilities, self.caller, authority, thread)
             .map_err(|_| KernelProcessError::Scheduler)?;
-        if let Some(mapping) = self.slots[index].mapping {
+        if record.mapping_present {
+            let mapping = Mapping { base: record.mapping_base, size: record.mapping_size };
             self.memory.release(address_space, mapping)
         }
         self.address_spaces
@@ -705,10 +768,11 @@ impl<
         self.capabilities
             .delete(self.caller, authority)
             .map_err(|_| KernelProcessError::Capability)?;
-        self.slots[index].exit = Some(exit);
-        self.slots[index].mapping = None;
-        self.slots[index].cancel_requested_at = None;
-        Ok(())
+        let (exit_kind, crash_kind) = encode_exit(exit.reason);
+        // SAFETY: C commits the completed process transition after resource teardown.
+        map_c_process_error(unsafe {
+            ghostos_process_finish(&mut self.processes, index, exit.status, exit_kind, crash_kind)
+        })
     }
 
     fn report_crash(
@@ -717,7 +781,8 @@ impl<
         reason: CrashReason,
         fault_address: u64,
     ) -> Result<(), KernelProcessError> {
-        let thread = self.slots[index].thread.ok_or(KernelProcessError::NotFound)?;
+        let record = self.record(index)?;
+        let thread = ThreadId::new(record.thread_id).ok_or(KernelProcessError::NotFound)?;
         let context = self
             .scheduler
             .thread(thread)
@@ -816,24 +881,32 @@ impl<
                 return Err(error)
             }
         };
-        self.slots[index] = ProcessSlot {
-            process: Some(process),
-            thread: Some(thread),
-            address_space: Some(address_space),
-            authority: Some(process_authority),
-            mapping: Some(loaded.mapping),
-            limits: request.limits,
-            usage: ProcessUsage {
-                memory_bytes: loaded
-                    .mapping
-                    .size
-                    .saturating_add(DEFAULT_STACK_BYTES)
-                    .saturating_add(request.heap_bytes),
-                cpu_time_us: 0,
-            },
-            exit: None,
-            cancel_requested_at: None,
+        let usage_memory = loaded.mapping.size
+            .saturating_add(DEFAULT_STACK_BYTES)
+            .saturating_add(request.heap_bytes);
+        let record = CProcessRecord {
+            process_id: process.raw(),
+            thread_id: thread.raw(),
+            address_space: address_space.raw(),
+            authority: process_authority.raw(),
+            mapping_present: true,
+            mapping_base: loaded.mapping.base,
+            mapping_size: loaded.mapping.size,
+            limit_memory: request.limits.memory_bytes,
+            limit_cpu_time: request.limits.cpu_time_us,
+            limit_deadline: request.limits.deadline_us,
+            limit_cancel_grace: request.limits.cancel_grace_us,
+            usage_memory,
+            usage_cpu_time: 0,
+            exit_present: false,
+            exit_status: 0,
+            exit_kind: 0,
+            crash_kind: 0,
+            cancel_present: false,
+            cancel_time: 0,
         };
+        // SAFETY: C copies the initialized process record into the reserved slot.
+        map_c_process_error(unsafe { ghostos_process_publish(&mut self.processes, index, &record) })?;
         Ok(process)
     }
 
@@ -843,13 +916,12 @@ impl<
         request: NativeExecRequest<'_>,
     ) -> Result<(), Self::Error> {
         let index = self.slot_index(process)?;
-        if self.slots[index].exit.is_some() {
+        let record = self.record(index)?;
+        if record.exit_present {
             return Err(KernelProcessError::InvalidTransition)
         }
-        let address_space = self.slots[index]
-            .address_space
-            .ok_or(KernelProcessError::NotFound)?;
-        let thread = self.slots[index].thread.ok_or(KernelProcessError::NotFound)?;
+        let address_space = AddressSpaceId::new(record.address_space).ok_or(KernelProcessError::NotFound)?;
+        let thread = ThreadId::new(record.thread_id).ok_or(KernelProcessError::NotFound)?;
         let loaded = self.load(
             address_space,
             request.image,
@@ -878,38 +950,36 @@ impl<
             self.memory.release(address_space, loaded.mapping);
             return Err(KernelProcessError::Scheduler)
         }
-        if let Some(mapping) = self.slots[index].mapping {
+        if record.mapping_present {
+            let mapping = Mapping { base: record.mapping_base, size: record.mapping_size };
             self.memory.release(address_space, mapping)
         }
-        self.slots[index].mapping = Some(loaded.mapping);
-        self.slots[index].usage.memory_bytes = loaded
-            .mapping
-            .size
+        let usage_memory = loaded.mapping.size
             .saturating_add(DEFAULT_STACK_BYTES)
             .saturating_add(request.heap_bytes);
-        self.slots[index].cancel_requested_at = None;
-        Ok(())
+        // SAFETY: C updates mapping and cancellation state for the live process.
+        map_c_process_error(unsafe {
+            ghostos_process_exec(&mut self.processes, index, loaded.mapping.base, loaded.mapping.size, usage_memory)
+        })
     }
 
     fn wait(&mut self, process: ProcessId) -> Result<Option<ProcessExit>, Self::Error> {
         let index = self.slot_index(process)?;
-        Ok(self.slots[index].exit)
+        record_exit(self.record(index)?)
     }
 
     fn usage(&mut self, process: ProcessId) -> Result<ProcessUsage, Self::Error> {
         let index = self.slot_index(process)?;
-        Ok(self.slots[index].usage)
+        let record = self.record(index)?;
+        Ok(ProcessUsage { memory_bytes: record.usage_memory, cpu_time_us: record.usage_cpu_time })
     }
 
     fn request_cancel(&mut self, process: ProcessId) -> Result<(), Self::Error> {
         let index = self.slot_index(process)?;
-        if self.slots[index].exit.is_some() {
-            return Err(KernelProcessError::InvalidTransition)
-        }
-        if self.slots[index].cancel_requested_at.is_none() {
-            self.slots[index].cancel_requested_at = Some(self.scheduler.clock());
-        }
-        Ok(())
+        // SAFETY: C records the first cancellation request for the live process.
+        map_c_process_error(unsafe {
+            ghostos_process_cancel(&mut self.processes, index, self.scheduler.clock())
+        })
     }
 
     fn fence(&mut self, process: ProcessId) -> Result<(), Self::Error> {
@@ -921,7 +991,52 @@ impl<
             },
         )?;
         let index = self.slot_index(process)?;
-        self.slots[index] = ProcessSlot::EMPTY;
+        // SAFETY: C clears the fenced process record, keeping its generation counter.
+        unsafe { ghostos_process_clear(&mut self.processes, index) };
         Ok(())
     }
+}
+
+fn map_c_process_error(error: u32) -> Result<(), KernelProcessError> {
+    match error {
+        0 => Ok(()),
+        1 => Err(KernelProcessError::Capacity),
+        2 => Err(KernelProcessError::NotFound),
+        _ => Err(KernelProcessError::InvalidTransition),
+    }
+}
+
+fn encode_exit(reason: ExitReason) -> (u8, u8) {
+    match reason {
+        ExitReason::Clean => (1, 0),
+        ExitReason::Crash(reason) => {
+            let reason = match reason {
+                CrashReason::Panic => 1,
+                CrashReason::ProtectionFault => 2,
+                CrashReason::IllegalInstruction => 3,
+                CrashReason::Watchdog => 4,
+                CrashReason::UnexpectedExit => 5,
+            };
+            (2, reason)
+        }
+    }
+}
+
+fn record_exit(record: CProcessRecord) -> Result<Option<ProcessExit>, KernelProcessError> {
+    if !record.exit_present {
+        return Ok(None)
+    }
+    let reason = match record.exit_kind {
+        1 => ExitReason::Clean,
+        2 => ExitReason::Crash(match record.crash_kind {
+            1 => CrashReason::Panic,
+            2 => CrashReason::ProtectionFault,
+            3 => CrashReason::IllegalInstruction,
+            4 => CrashReason::Watchdog,
+            5 => CrashReason::UnexpectedExit,
+            _ => return Err(KernelProcessError::InvalidTransition),
+        }),
+        _ => return Err(KernelProcessError::InvalidTransition),
+    };
+    Ok(Some(ProcessExit { status: record.exit_status, reason }))
 }

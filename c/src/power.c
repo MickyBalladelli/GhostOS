@@ -145,6 +145,133 @@ ghostos_power_io_error ghostos_power_register_write(ghostos_power_register reg, 
     return GHOSTOS_POWER_IO_OK;
 }
 
+static ghostos_power_error io_error(ghostos_power_io_error error) {
+    return error == GHOSTOS_POWER_IO_INVALID_ADDRESS ? GHOSTOS_POWER_INVALID_ADDRESS :
+        error == GHOSTOS_POWER_IO_UNSUPPORTED ? GHOSTOS_POWER_UNSUPPORTED : GHOSTOS_POWER_OK;
+}
+
+ghostos_power_error ghostos_power_enable_acpi(const ghostos_power_platform *platform, size_t spins) {
+    if (!platform) return GHOSTOS_POWER_UNSUPPORTED;
+    if (platform->reduced_hardware) return GHOSTOS_POWER_OK;
+    if (!platform->pm1a_control.present) return GHOSTOS_POWER_UNSUPPORTED;
+    uint64_t value = 0;
+    ghostos_power_error error = io_error(ghostos_power_register_read(platform->pm1a_control.register_value, &value));
+    if (error) return error;
+    if (value & 1) return GHOSTOS_POWER_OK;
+    if (!platform->smi_command_port || !platform->acpi_enable_value) return GHOSTOS_POWER_UNSUPPORTED;
+    ghostos_power_register command = {1, 8, 0, 1, platform->smi_command_port};
+    error = io_error(ghostos_power_register_write(command, platform->acpi_enable_value));
+    if (error) return error;
+    for (;;) {
+        error = io_error(ghostos_power_register_read(platform->pm1a_control.register_value, &value));
+        if (error) return error;
+        if (value & 1) return GHOSTOS_POWER_OK;
+        if (!spins) return GHOSTOS_POWER_TIMED_OUT;
+        --spins;
+#if defined(__x86_64__)
+        __asm__ volatile("pause");
+#endif
+    }
+}
+
+static bool event_register(ghostos_power_register base, uint8_t half, ghostos_power_register *out) {
+    if (UINT64_MAX - base.address < half) return false;
+    base.address += half;
+    base.bit_width = (uint8_t)(half * 8);
+    *out = base;
+    return true;
+}
+
+ghostos_power_error ghostos_power_poll_events(const ghostos_power_platform *platform, uint16_t *events) {
+    if (!platform || !events) return GHOSTOS_POWER_UNSUPPORTED;
+    *events = 0;
+    uint8_t half = platform->pm1_event_bytes / 2;
+    if ((platform->pm1a_event.present || platform->pm1b_event.present) && !half) return GHOSTOS_POWER_MALFORMED;
+    const ghostos_power_optional_register blocks[2] = {platform->pm1a_event, platform->pm1b_event};
+    for (size_t index = 0; index < 2; ++index) {
+        if (!blocks[index].present) continue;
+        ghostos_power_register enable;
+        if (!event_register(blocks[index].register_value, half, &enable)) return GHOSTOS_POWER_MALFORMED;
+        ghostos_power_register status = blocks[index].register_value;
+        status.bit_width = (uint8_t)(half * 8);
+        uint64_t status_value = 0, enabled = 0;
+        ghostos_power_error error = io_error(ghostos_power_register_read(status, &status_value));
+        if (error) return error;
+        error = io_error(ghostos_power_register_read(enable, &enabled));
+        if (error) return error;
+        uint16_t active = (uint16_t)status_value & (uint16_t)enabled;
+        *events |= active;
+        if (active) {
+            error = io_error(ghostos_power_register_write(status, active));
+            if (error) return error;
+        }
+    }
+    return GHOSTOS_POWER_OK;
+}
+
+ghostos_power_error ghostos_power_set_event(const ghostos_power_platform *platform, uint8_t event, bool enabled) {
+    if (!platform) return GHOSTOS_POWER_UNSUPPORTED;
+    uint16_t mask;
+    switch (event) {
+        case GHOSTOS_POWER_EVENT_BUTTON: mask = UINT16_C(1) << 8; break;
+        case GHOSTOS_POWER_EVENT_SLEEP: mask = UINT16_C(1) << 9; break;
+        case GHOSTOS_POWER_EVENT_RTC: mask = UINT16_C(1) << 10; break;
+        case GHOSTOS_POWER_EVENT_PCIE: mask = UINT16_C(1) << 14; break;
+        case GHOSTOS_POWER_EVENT_WAKE: mask = UINT16_C(1) << 15; break;
+        default: return GHOSTOS_POWER_UNSUPPORTED;
+    }
+    uint8_t half = platform->pm1_event_bytes / 2;
+    if ((platform->pm1a_event.present || platform->pm1b_event.present) && !half) return GHOSTOS_POWER_MALFORMED;
+    const ghostos_power_optional_register blocks[2] = {platform->pm1a_event, platform->pm1b_event};
+    bool configured = false;
+    for (size_t index = 0; index < 2; ++index) {
+        if (!blocks[index].present) continue;
+        ghostos_power_register reg;
+        if (!event_register(blocks[index].register_value, half, &reg)) return GHOSTOS_POWER_MALFORMED;
+        uint64_t previous = 0;
+        ghostos_power_error error = io_error(ghostos_power_register_read(reg, &previous));
+        if (error) return error;
+        error = io_error(ghostos_power_register_write(reg, enabled ? previous | mask : previous & ~(uint64_t)mask));
+        if (error) return error;
+        configured = true;
+    }
+    return configured ? GHOSTOS_POWER_OK : GHOSTOS_POWER_UNSUPPORTED;
+}
+
+static ghostos_power_error write_sleep_control(ghostos_power_optional_register optional, uint8_t type) {
+    if (!optional.present) return GHOSTOS_POWER_UNSUPPORTED;
+    uint64_t previous = 0;
+    ghostos_power_error error = io_error(ghostos_power_register_read(optional.register_value, &previous));
+    if (error) return error;
+    uint64_t value = (previous & ~(UINT64_C(7) << 10)) | ((uint64_t)(type & 7) << 10) | (UINT64_C(1) << 13);
+    return io_error(ghostos_power_register_write(optional.register_value, value));
+}
+
+static ghostos_power_error write_sleep_state(const ghostos_power_platform *platform, uint8_t type_a, uint8_t type_b) {
+    if (platform->reduced_hardware) {
+        if (!platform->sleep_control.present) return GHOSTOS_POWER_UNSUPPORTED;
+        uint64_t value = ((uint64_t)(type_a & 7) << 2) | (UINT64_C(1) << 5);
+        return io_error(ghostos_power_register_write(platform->sleep_control.register_value, value));
+    }
+    ghostos_power_error error = write_sleep_control(platform->pm1a_control, type_a);
+    if (error) return error;
+    if (platform->pm1b_control.present) return write_sleep_control(platform->pm1b_control, type_b);
+    return GHOSTOS_POWER_OK;
+}
+
+ghostos_power_error ghostos_power_request(const ghostos_power_platform *platform, uint8_t state) {
+    if (!platform) return GHOSTOS_POWER_UNSUPPORTED;
+    if (state == 2) {
+        return platform->reset_present ? io_error(ghostos_power_register_write(platform->reset_register, platform->reset_value)) :
+            GHOSTOS_POWER_UNSUPPORTED;
+    }
+    bool present = state == 0 ? platform->suspend_present : state == 1 && platform->soft_off_present;
+    if (!present) return GHOSTOS_POWER_UNSUPPORTED;
+    uint8_t type_a = state == 0 ? platform->suspend_a : platform->soft_off_a;
+    uint8_t type_b = state == 0 ? platform->suspend_b : platform->soft_off_b;
+    return write_sleep_state(platform, type_a, type_b);
+}
+
 void ghostos_power_vm_shutdown(void) {
 #if defined(__x86_64__)
     out16(UINT16_C(0x0604), UINT16_C(0x3400));
