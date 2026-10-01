@@ -45,7 +45,7 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/arch/cpu.rs`
 - [x] `kernel/src/arch/mod.rs`
 - [x] `kernel/src/arch/riscv64.rs`
-- [ ] `kernel/src/arch/unsupported.rs`
+- [x] `kernel/src/arch/unsupported.rs`
 - [ ] `kernel/src/arch/x86_64.rs`
 - [ ] `kernel/src/boot_diagnostics.rs`
 - [ ] `kernel/src/boot_services.rs`
