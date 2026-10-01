@@ -79,7 +79,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
     };
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let target_flag = format!("--target={target}");
-    for source in ["crash", "dlm", "capability", "contention"] {
+    for source in ["crash", "dlm", "capability", "contention", "dma"] {
         let object = output.join(format!("ghostos-{source}.o"));
         let mut compile = Command::new(&clang);
         compile.args([
@@ -98,7 +98,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
         println!("cargo:rustc-link-arg={}", object.display());
         println!("cargo:rerun-if-changed={}", source_path.display());
     }
-    for header in ["crash.h", "dlm.h", "capability.h", "contention.h"] {
+    for header in ["crash.h", "dlm.h", "capability.h", "contention.h", "dma.h"] {
         println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}")).display());
     }
 }
