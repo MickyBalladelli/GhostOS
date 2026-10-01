@@ -79,7 +79,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
     };
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let target_flag = format!("--target={target}");
-    for source in ["address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "driver_capabilities", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persona", "physical_storage", "power", "process"] {
+    for source in ["address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "driver_capabilities", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persona", "physical_storage", "power", "process", "quota"] {
         let object = output.join(format!("ghostos-{source}.o"));
         let mut compile = Command::new(&clang);
         compile.args([
@@ -101,9 +101,32 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
         println!("cargo:rustc-link-arg={}", object.display());
         println!("cargo:rerun-if-changed={}", source_path.display());
     }
-    for header in ["address_space.h", "frame_allocator.h", "cow.h", "crash.h", "dlm.h", "capability.h", "contention.h", "dma.h", "driver_capabilities.h", "hot_allocator.h", "invariants.h", "ipc.h", "keyboard.h", "keyboard_stub.h", "kernel.h", "litmus.h", "main.h", "micro_silo.h", "monitor.h", "mouse.h", "mouse_stub.h", "page_fault.h", "partition.h", "pci.h", "persistence.h", "persona.h", "physical_storage.h", "power.h", "process.h"] {
+    for header in ["address_space.h", "frame_allocator.h", "cow.h", "crash.h", "dlm.h", "capability.h", "contention.h", "dma.h", "driver_capabilities.h", "hot_allocator.h", "invariants.h", "ipc.h", "keyboard.h", "keyboard_stub.h", "kernel.h", "litmus.h", "main.h", "micro_silo.h", "monitor.h", "mouse.h", "mouse_stub.h", "page_fault.h", "partition.h", "pci.h", "persistence.h", "persona.h", "physical_storage.h", "power.h", "process.h", "quota.h"] {
         println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}")).display());
     }
+}
+
+fn build_host_quota(kernel: &Path, output: &Path, target: &str) {
+    let source = kernel.join("../c/src/quota.c");
+    let object = output.join("ghostos-quota-host.o");
+    let target_flag = format!("--target={target}");
+    let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
+    run(
+        Command::new(clang)
+            .args([
+                target_flag.as_str(), "-std=c11", "-O2", "-ffreestanding", "-fno-builtin",
+                "-Wall", "-Wextra", "-Werror", "-c",
+            ])
+            .arg("-I")
+            .arg(kernel.join("../c/include"))
+            .arg(&source)
+            .arg("-o")
+            .arg(&object),
+        "host quota module compilation",
+    );
+    println!("cargo:rustc-link-arg={}", object.display());
+    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-changed={}", kernel.join("../c/include/ghostos/quota.h").display());
 }
 
 fn build_rust_shell_image(manifest: &Path, output: &Path, tools: &Path) {
@@ -177,18 +200,19 @@ fn main() {
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let kernel = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output directory"));
     if matches!(target_os.as_str(), "none" | "uefi") {
-        let kernel = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
-        let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output directory"));
         build_crash_port(&kernel, &output, &target_arch);
+    } else {
+        let target = env::var("TARGET").expect("Rust target triple");
+        build_host_quota(&kernel, &output, &target);
     }
     if target_arch != "x86_64" || !matches!(target_os.as_str(), "none" | "uefi") {
         return
     }
 
-    let kernel = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let sources = kernel.join("../userspace/boot-services");
-    let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output directory"));
     let tools = rust_tools();
     let service = output.join("ghostos-service.bin");
     let login = output.join("ghostos-login.bin");

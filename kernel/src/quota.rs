@@ -1,8 +1,14 @@
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::cell::UnsafeCell;
 
-use crate::contention::{LockShardReport, ShardedTicketLock};
+use crate::contention::{LockShardReport, LOCK_DURATION_BUCKETS};
 
-const MICROS_PER_SECOND: u64 = 1_000_000;
+const QUOTA_SHARDS: usize = 3;
+const DEFAULT_POLICY: QuotaPolicy = QuotaPolicy {
+    ipc: BucketConfig { capacity: 1_024, refill_per_second: 4_096 },
+    page_fault: BucketConfig { capacity: 128, refill_per_second: 128 },
+    memory: BucketConfig { capacity: 256 * 1024 * 1024, refill_per_second: 512 * 1024 * 1024 },
+    max_memory_bytes: 1024 * 1024 * 1024,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BucketConfig {
@@ -15,10 +21,7 @@ impl BucketConfig {
         if capacity == 0 || refill_per_second == 0 {
             None
         } else {
-            Some(Self {
-                capacity,
-                refill_per_second,
-            })
+            Some(Self { capacity, refill_per_second })
         }
     }
 }
@@ -41,43 +44,19 @@ impl QuotaPolicy {
         if max_memory_bytes == 0 {
             None
         } else {
-            Some(Self {
-                ipc,
-                page_fault,
-                memory,
-                max_memory_bytes,
-            })
+            Some(Self { ipc, page_fault, memory, max_memory_bytes })
         }
     }
 
-    pub const fn is_valid(self) -> bool {
-        self.ipc.capacity > 0
-            && self.ipc.refill_per_second > 0
-            && self.page_fault.capacity > 0
-            && self.page_fault.refill_per_second > 0
-            && self.memory.capacity > 0
-            && self.memory.refill_per_second > 0
-            && self.max_memory_bytes > 0
+    pub fn is_valid(self) -> bool {
+        // SAFETY: C validates a small by-value policy record.
+        unsafe { ghostos_quota_policy_valid(c_policy(self)) }
     }
 }
 
 impl Default for QuotaPolicy {
     fn default() -> Self {
-        Self {
-            ipc: BucketConfig {
-                capacity: 1_024,
-                refill_per_second: 4_096,
-            },
-            page_fault: BucketConfig {
-                capacity: 128,
-                refill_per_second: 128,
-            },
-            memory: BucketConfig {
-                capacity: 256 * 1024 * 1024,
-                refill_per_second: 512 * 1024 * 1024,
-            },
-            max_memory_bytes: 1024 * 1024 * 1024,
-        }
+        DEFAULT_POLICY
     }
 }
 
@@ -113,212 +92,219 @@ pub struct QuotaUsage {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QuotaContentionReport {
-    pub resources: [LockShardReport; 3],
+    pub resources: [LockShardReport; QUOTA_SHARDS],
 }
 
-struct BucketState {
-    tokens: AtomicU64,
-    last_refill_us: AtomicU64,
-    remainder: AtomicU64,
-}
-
-impl BucketState {
-    const fn new(tokens: u64) -> Self {
-        Self {
-            tokens: AtomicU64::new(tokens),
-            last_refill_us: AtomicU64::new(0),
-            remainder: AtomicU64::new(0),
-        }
-    }
-
-    fn load(&self) -> BucketValues {
-        BucketValues {
-            tokens: self.tokens.load(Ordering::Relaxed),
-            last_refill_us: self.last_refill_us.load(Ordering::Relaxed),
-            remainder: self.remainder.load(Ordering::Relaxed),
-        }
-    }
-
-    fn store(&self, values: BucketValues) {
-        self.tokens.store(values.tokens, Ordering::Relaxed);
-        self.last_refill_us
-            .store(values.last_refill_us, Ordering::Relaxed);
-        self.remainder.store(values.remainder, Ordering::Relaxed);
-    }
-}
-
+#[repr(C)]
 #[derive(Clone, Copy)]
-struct BucketValues {
+struct CBucketConfig {
+    capacity: u64,
+    refill_per_second: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CQuotaPolicy {
+    resources: [CBucketConfig; QUOTA_SHARDS],
+    max_memory_bytes: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CBucketState {
     tokens: u64,
     last_refill_us: u64,
     remainder: u64,
 }
 
-/// A fixed-size quota state suitable for kernel capability descriptors.
-///
-/// Each resource has its own fair ticket lock. IPC pressure therefore cannot
-/// stall page-fault or memory accounting, while the read-only usage path stays
-/// wait-free through an atomic counter.
-pub struct CapabilityQuota {
-    policy: QuotaPolicy,
-    locks: ShardedTicketLock<3>,
-    clock: AtomicU64,
-    ipc: BucketState,
-    page_fault: BucketState,
-    memory: BucketState,
-    memory_in_use: AtomicU64,
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CLockState {
+    next_ticket: u64,
+    serving_ticket: u64,
+    owner: u64,
+    acquisitions: u64,
+    contended_acquisitions: u64,
+    spins: u64,
+    releases: u64,
+    duration_histogram: [u64; LOCK_DURATION_BUCKETS],
+    max_duration: u64,
 }
+
+impl CLockState {
+    const EMPTY: Self = Self {
+        next_ticket: 0,
+        serving_ticket: 0,
+        owner: 0,
+        acquisitions: 0,
+        contended_acquisitions: 0,
+        spins: 0,
+        releases: 0,
+        duration_histogram: [0; LOCK_DURATION_BUCKETS],
+        max_duration: 0,
+    };
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CQuotaState {
+    policy: CQuotaPolicy,
+    locks: [CLockState; QUOTA_SHARDS],
+    clock: u64,
+    buckets: [CBucketState; QUOTA_SHARDS],
+    memory_in_use: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CQuotaLockReport {
+    active_owner: u64,
+    acquisitions: u64,
+    contended_acquisitions: u64,
+    spins: u64,
+    releases: u64,
+    duration_histogram: [u64; LOCK_DURATION_BUCKETS],
+    max_duration: u64,
+}
+
+impl CQuotaLockReport {
+    const EMPTY: Self = Self {
+        active_owner: 0,
+        acquisitions: 0,
+        contended_acquisitions: 0,
+        spins: 0,
+        releases: 0,
+        duration_histogram: [0; LOCK_DURATION_BUCKETS],
+        max_duration: 0,
+    };
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CQuotaResult {
+    retry_after_us: u64,
+    decision: u32,
+}
+
+unsafe extern "C" {
+    fn ghostos_quota_policy_valid(policy: CQuotaPolicy) -> bool;
+    fn ghostos_quota_configure(quota: *mut CQuotaState, policy: CQuotaPolicy);
+    fn ghostos_quota_get_policy(quota: *const CQuotaState) -> CQuotaPolicy;
+    fn ghostos_quota_consume(quota: *mut CQuotaState, resource: u32, now_us: u64, amount: u64) -> CQuotaResult;
+    fn ghostos_quota_refund(quota: *mut CQuotaState, resource: u32, amount: u64);
+    fn ghostos_quota_release_memory(quota: *mut CQuotaState, amount: u64);
+    fn ghostos_quota_memory_in_use(quota: *const CQuotaState) -> u64;
+    fn ghostos_quota_lock_reports(quota: *const CQuotaState, reports: *mut CQuotaLockReport);
+}
+
+fn c_policy(policy: QuotaPolicy) -> CQuotaPolicy {
+    CQuotaPolicy {
+        resources: [policy.ipc, policy.page_fault, policy.memory].map(|bucket| CBucketConfig {
+            capacity: bucket.capacity,
+            refill_per_second: bucket.refill_per_second,
+        }),
+        max_memory_bytes: policy.max_memory_bytes,
+    }
+}
+
+fn rust_policy(policy: CQuotaPolicy) -> QuotaPolicy {
+    let bucket = |bucket: CBucketConfig| BucketConfig {
+        capacity: bucket.capacity,
+        refill_per_second: bucket.refill_per_second,
+    };
+    QuotaPolicy {
+        ipc: bucket(policy.resources[0]),
+        page_fault: bucket(policy.resources[1]),
+        memory: bucket(policy.resources[2]),
+        max_memory_bytes: policy.max_memory_bytes,
+    }
+}
+
+/// Fixed-size quota state with independent, fair C ticket locks per resource.
+pub struct CapabilityQuota {
+    raw: UnsafeCell<CQuotaState>,
+}
+
+// SAFETY: C serializes mutable bucket and lock state by resource ticket lock;
+// policy changes require an exclusive Rust borrow.
+unsafe impl Sync for CapabilityQuota {}
 
 impl CapabilityQuota {
     pub const fn new() -> Self {
-        let policy = QuotaPolicy {
-            ipc: BucketConfig {
-                capacity: 1_024,
-                refill_per_second: 4_096,
-            },
-            page_fault: BucketConfig {
-                capacity: 128,
-                refill_per_second: 128,
-            },
-            memory: BucketConfig {
-                capacity: 256 * 1024 * 1024,
-                refill_per_second: 512 * 1024 * 1024,
-            },
-            max_memory_bytes: 1024 * 1024 * 1024,
-        };
+        let policy = DEFAULT_POLICY;
         Self {
-            policy,
-            locks: ShardedTicketLock::new(),
-            clock: AtomicU64::new(0),
-            ipc: BucketState::new(policy.ipc.capacity),
-            page_fault: BucketState::new(policy.page_fault.capacity),
-            memory: BucketState::new(policy.memory.capacity),
-            memory_in_use: AtomicU64::new(0),
+            raw: UnsafeCell::new(CQuotaState {
+                policy: CQuotaPolicy {
+                    resources: [
+                        CBucketConfig { capacity: policy.ipc.capacity, refill_per_second: policy.ipc.refill_per_second },
+                        CBucketConfig { capacity: policy.page_fault.capacity, refill_per_second: policy.page_fault.refill_per_second },
+                        CBucketConfig { capacity: policy.memory.capacity, refill_per_second: policy.memory.refill_per_second },
+                    ],
+                    max_memory_bytes: policy.max_memory_bytes,
+                },
+                locks: [CLockState::EMPTY; QUOTA_SHARDS],
+                clock: 0,
+                buckets: [
+                    CBucketState { tokens: policy.ipc.capacity, last_refill_us: 0, remainder: 0 },
+                    CBucketState { tokens: policy.page_fault.capacity, last_refill_us: 0, remainder: 0 },
+                    CBucketState { tokens: policy.memory.capacity, last_refill_us: 0, remainder: 0 },
+                ],
+                memory_in_use: 0,
+            }),
         }
     }
 
     pub fn configure(&mut self, policy: QuotaPolicy) {
-        self.policy = policy;
-        self.ipc.store(BucketValues {
-            tokens: policy.ipc.capacity,
-            last_refill_us: 0,
-            remainder: 0,
-        });
-        self.page_fault.store(BucketValues {
-            tokens: policy.page_fault.capacity,
-            last_refill_us: 0,
-            remainder: 0,
-        });
-        self.memory.store(BucketValues {
-            tokens: policy.memory.capacity,
-            last_refill_us: 0,
-            remainder: 0,
-        });
-        self.memory_in_use.store(0, Ordering::Relaxed);
+        // SAFETY: caller has exclusive access to this quota while C resets it.
+        unsafe { ghostos_quota_configure(self.raw.get(), c_policy(policy)) }
     }
 
     pub fn policy(&self) -> QuotaPolicy {
-        self.policy
+        // SAFETY: C copies the stable policy from this quota.
+        rust_policy(unsafe { ghostos_quota_get_policy(self.raw.get()) })
     }
 
-    pub fn consume(
-        &self,
-        resource: QuotaResource,
-        now_us: u64,
-        amount: u64,
-    ) -> QuotaDecision {
-        if amount == 0 {
-            return QuotaDecision::Allowed
+    pub fn consume(&self, resource: QuotaResource, now_us: u64, amount: u64) -> QuotaDecision {
+        // SAFETY: C synchronizes access to quota state with the resource ticket lock.
+        let result = unsafe { ghostos_quota_consume(self.raw.get(), resource.index() as u32, now_us, amount) };
+        match result.decision {
+            0 => QuotaDecision::Allowed,
+            1 => QuotaDecision::Throttled { retry_after_us: result.retry_after_us },
+            _ => QuotaDecision::Rejected,
         }
-        self.clock.fetch_max(now_us, Ordering::Relaxed);
-        let guard = self.locks.lock(resource.index(), now_us);
-        let decision = match resource {
-            QuotaResource::IpcMessages => {
-                acquire(self.policy.ipc, &self.ipc, now_us, amount)
-            }
-            QuotaResource::PageFaults => {
-                acquire(self.policy.page_fault, &self.page_fault, now_us, amount)
-            }
-            QuotaResource::MemoryBytes => {
-                let memory_in_use = self.memory_in_use.load(Ordering::Relaxed);
-                if amount > self.policy.max_memory_bytes
-                    || memory_in_use > self.policy.max_memory_bytes - amount
-                {
-                    QuotaDecision::Rejected
-                } else {
-                    let decision = acquire(self.policy.memory, &self.memory, now_us, amount);
-                    if decision == QuotaDecision::Allowed {
-                        self.memory_in_use
-                            .store(memory_in_use.saturating_add(amount), Ordering::Relaxed);
-                    }
-                    decision
-                }
-            }
-        };
-        guard.unlock(self.clock.load(Ordering::Relaxed));
-        decision
     }
 
     pub fn refund(&self, resource: QuotaResource, amount: u64) {
-        if amount == 0 {
-            return
-        }
-        let guard = self.locks.lock(resource.index(), self.clock.load(Ordering::Relaxed));
-        match resource {
-            QuotaResource::IpcMessages => {
-                let mut values = self.ipc.load();
-                values.tokens = values
-                    .tokens
-                    .saturating_add(amount)
-                    .min(self.policy.ipc.capacity);
-                self.ipc.store(values);
-            }
-            QuotaResource::PageFaults => {
-                let mut values = self.page_fault.load();
-                values.tokens = values
-                    .tokens
-                    .saturating_add(amount)
-                    .min(self.policy.page_fault.capacity);
-                self.page_fault.store(values)
-            }
-            QuotaResource::MemoryBytes => {
-                let mut values = self.memory.load();
-                values.tokens = values
-                    .tokens
-                    .saturating_add(amount)
-                    .min(self.policy.memory.capacity);
-                self.memory.store(values);
-                let in_use = self.memory_in_use.load(Ordering::Relaxed);
-                self.memory_in_use
-                    .store(in_use.saturating_sub(amount), Ordering::Relaxed);
-            }
-        }
-        guard.unlock(self.clock.load(Ordering::Relaxed))
+        // SAFETY: C synchronizes the refund with the resource ticket lock.
+        unsafe { ghostos_quota_refund(self.raw.get(), resource.index() as u32, amount) }
     }
 
     pub fn release_memory(&self, amount: u64) {
-        if amount == 0 {
-            return
-        }
-        let guard = self
-            .locks
-            .lock(QuotaResource::MemoryBytes.index(), self.clock.load(Ordering::Relaxed));
-        let in_use = self.memory_in_use.load(Ordering::Relaxed);
-        self.memory_in_use
-            .store(in_use.saturating_sub(amount), Ordering::Relaxed);
-        guard.unlock(self.clock.load(Ordering::Relaxed))
+        // SAFETY: C synchronizes the memory release with the memory ticket lock.
+        unsafe { ghostos_quota_release_memory(self.raw.get(), amount) }
     }
 
     pub fn usage(&self) -> QuotaUsage {
-        QuotaUsage {
-            memory_in_use: self.memory_in_use.load(Ordering::Relaxed),
-            max_memory_bytes: self.policy.max_memory_bytes,
-        }
+        let policy = self.policy();
+        // SAFETY: C atomically reads the memory-use counter.
+        let memory_in_use = unsafe { ghostos_quota_memory_in_use(self.raw.get()) };
+        QuotaUsage { memory_in_use, max_memory_bytes: policy.max_memory_bytes }
     }
 
     pub fn contention_report(&self) -> QuotaContentionReport {
+        let mut reports = [CQuotaLockReport::EMPTY; QUOTA_SHARDS];
+        // SAFETY: C fills the three-element output array from atomic lock metrics.
+        unsafe { ghostos_quota_lock_reports(self.raw.get(), reports.as_mut_ptr()) };
         QuotaContentionReport {
-            resources: self.locks.reports(),
+            resources: reports.map(|report| LockShardReport {
+                active_owner: report.active_owner,
+                acquisitions: report.acquisitions,
+                contended_acquisitions: report.contended_acquisitions,
+                spins: report.spins,
+                releases: report.releases,
+                duration_histogram: report.duration_histogram,
+                max_duration: report.max_duration,
+            }),
         }
     }
 }
@@ -327,48 +313,4 @@ impl Default for CapabilityQuota {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn acquire(
-    config: BucketConfig,
-    state: &BucketState,
-    now_us: u64,
-    amount: u64,
-) -> QuotaDecision {
-    if amount > config.capacity {
-        return QuotaDecision::Rejected
-    }
-    let mut values = state.load();
-    refill(config, &mut values, now_us);
-    let decision = if values.tokens >= amount {
-        values.tokens -= amount;
-        QuotaDecision::Allowed
-    } else {
-        let missing = amount - values.tokens;
-        let numerator = missing.saturating_mul(MICROS_PER_SECOND);
-        let retry_after_us = numerator
-            .saturating_add(config.refill_per_second - 1)
-            .checked_div(config.refill_per_second)
-            .unwrap_or(u64::MAX)
-            .max(1);
-        QuotaDecision::Throttled { retry_after_us }
-    };
-    state.store(values);
-    decision
-}
-
-fn refill(config: BucketConfig, state: &mut BucketValues, now_us: u64) {
-    if now_us < state.last_refill_us {
-        state.last_refill_us = now_us;
-        state.remainder = 0;
-        return
-    }
-    let elapsed = now_us - state.last_refill_us;
-    let produced = elapsed
-        .saturating_mul(config.refill_per_second)
-        .saturating_add(state.remainder);
-    let added = produced / MICROS_PER_SECOND;
-    state.remainder = produced % MICROS_PER_SECOND;
-    state.tokens = state.tokens.saturating_add(added).min(config.capacity);
-    state.last_refill_us = now_us;
 }

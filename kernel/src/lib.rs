@@ -27,6 +27,7 @@ pub mod ipc;
 pub mod invariants;
 pub mod litmus;
 pub mod micro_silo;
+#[allow(unsafe_code)]
 pub mod quota;
 #[cfg(all(
     target_arch = "x86_64",
