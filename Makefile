@@ -5,7 +5,7 @@ CFLAGS ?= -O2 -g
 CPPFLAGS += -Ic/include
 GHOSTOS_CFLAGS = -std=c11 -Wall -Wextra -Werror -pedantic
 BUILD_DIR ?= build/c
-SOURCES = c/src/status.c c/src/abi.c c/src/api_compat.c c/src/protocol.c c/src/boot_protocol.c
+SOURCES = c/src/status.c c/src/abi.c c/src/api_compat.c c/src/protocol.c c/src/boot_protocol.c c/src/address_space.c
 OBJECTS = $(patsubst c/src/%.c,$(BUILD_DIR)/%.o,$(SOURCES))
 HEADERS = $(wildcard c/include/ghostos/*.h)
 TEST_SUPPORT_OBJECTS = $(BUILD_DIR)/test_support/property.o

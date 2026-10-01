@@ -1,9 +1,11 @@
+#include "ghostos/abi.h"
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
-#define STATUS_NORMAL 0x00010009U
+#define STATUS_NORMAL GHOSTOS_STATUS_NORMAL
 
 u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
 
@@ -25,19 +27,19 @@ void __stack_chk_fail(void)
 }
 
 enum {
-    ABI_VERSION = 1,
-    OP_CLOCK_NOW = 2,
-    OP_SLEEP_UNTIL = 47,
-    OP_SERVICE_READY = 42,
-    OP_SERVICE_HEARTBEAT = 43,
-    OP_TERMINAL_READ = 24,
-    OP_TERMINAL_WRITE = 25,
-    OP_LOGIN_COMPLETE = 50,
-    OP_LOGIN_STATUS = 51,
-    OP_LOGIN_CHALLENGE = 53,
-    OP_LOGIN_TPM_CHALLENGE = 54,
-    OP_LOGIN_TPM_COMPLETE = 55,
-    OP_LOGIN_BRIDGE_READ = 65,
+    ABI_VERSION = GHOSTOS_ABI_SCHEMA_VERSION,
+    OP_CLOCK_NOW = GHOSTOS_OP_CLOCK_NOW,
+    OP_SLEEP_UNTIL = GHOSTOS_OP_SLEEP_UNTIL,
+    OP_SERVICE_READY = GHOSTOS_OP_SERVICE_READY,
+    OP_SERVICE_HEARTBEAT = GHOSTOS_OP_SERVICE_HEARTBEAT,
+    OP_TERMINAL_READ = GHOSTOS_OP_TERMINAL_READ,
+    OP_TERMINAL_WRITE = GHOSTOS_OP_TERMINAL_WRITE,
+    OP_LOGIN_COMPLETE = GHOSTOS_OP_LOGIN_COMPLETE,
+    OP_LOGIN_STATUS = GHOSTOS_OP_LOGIN_STATUS,
+    OP_LOGIN_CHALLENGE = GHOSTOS_OP_LOGIN_CHALLENGE,
+    OP_LOGIN_TPM_CHALLENGE = GHOSTOS_OP_LOGIN_TPM_CHALLENGE,
+    OP_LOGIN_TPM_COMPLETE = GHOSTOS_OP_LOGIN_TPM_COMPLETE,
+    OP_LOGIN_BRIDGE_READ = GHOSTOS_OP_LOGIN_BRIDGE_READ,
     LOGIN_ROLE = 14,
 };
 
@@ -51,27 +53,12 @@ enum {
     TPM_MAX_QUOTE_BYTES = 512,
 };
 
-struct request {
-    u16 operation;
-    u16 abi_version;
-    u16 flags;
-    u16 reserved;
-    u64 capability;
-    u64 arguments[6];
-};
-
-struct response {
-    u32 status;
-    u32 flags;
-    u64 values[4];
-};
-
 __attribute__((noinline))
-static struct response call(u16 operation, u64 first, u64 second,
+static ghostos_response call(u16 operation, u64 first, u64 second,
                             u64 third, u64 fourth)
 {
-    struct request request = {0};
-    struct response response = {0};
+    ghostos_request request = {0};
+    ghostos_response response = {0};
     request.operation = operation;
     request.abi_version = ABI_VERSION;
     request.arguments[0] = first;
@@ -114,13 +101,13 @@ static void write_text(const char *text)
 
 static int read_byte(u8 *byte)
 {
-    struct response response = call(OP_LOGIN_BRIDGE_READ, (u64)byte, 1, 0, 0);
+    ghostos_response response = call(OP_LOGIN_BRIDGE_READ, (u64)byte, 1, 0, 0);
     return response.status == STATUS_NORMAL && response.values[0] == 1;
 }
 
 static void idle(void)
 {
-    struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0);
+    ghostos_response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0);
     if (clock.status == STATUS_NORMAL) {
         call(OP_SERVICE_HEARTBEAT, LOGIN_ROLE, 1, 0, 0);
         call(OP_SLEEP_UNTIL, clock.values[0] + 1000, 0, 0, 0);
@@ -130,7 +117,7 @@ static void idle(void)
 static void wait_until(u64 deadline)
 {
     for (;;) {
-        struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0);
+        ghostos_response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0);
         if (clock.status != STATUS_NORMAL || clock.values[0] >= deadline) {
             return;
         }
@@ -140,25 +127,25 @@ static void wait_until(u64 deadline)
 
 static int login_requested(void)
 {
-    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    ghostos_response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
     return response.status == STATUS_NORMAL && response.values[0] != 0;
 }
 
 static int administrator_account_exists(void)
 {
-    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    ghostos_response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
     return response.status == STATUS_NORMAL && response.values[1] != 0;
 }
 
 static int login_session_active(void)
 {
-    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    ghostos_response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
     return response.status == STATUS_NORMAL && response.values[3] != 0;
 }
 
 static u64 login_lock_until(void)
 {
-    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
+    ghostos_response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0);
     return response.status == STATUS_NORMAL ? response.values[2] : 0;
 }
 
@@ -393,7 +380,7 @@ void _start(void)
         u16 challenge_operation = use_tpm
             ? OP_LOGIN_TPM_CHALLENGE
             : OP_LOGIN_CHALLENGE;
-        struct response challenge_response = call(
+        ghostos_response challenge_response = call(
             challenge_operation,
             (u64)challenge,
             sizeof(challenge),
@@ -480,7 +467,7 @@ void _start(void)
         u16 complete_operation = use_tpm
             ? OP_LOGIN_TPM_COMPLETE
             : OP_LOGIN_COMPLETE;
-        struct response completed = call(
+        ghostos_response completed = call(
             complete_operation,
             (u64)username,
             username_length,

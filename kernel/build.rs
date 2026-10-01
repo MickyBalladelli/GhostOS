@@ -37,6 +37,8 @@ fn build_user_image(source: &Path, linker: &Path, output: &Path, tools: &Path) {
                 "-Werror",
                 "-c",
             ])
+            .arg("-I")
+            .arg(source.parent().expect("service source directory").join("../../c/include"))
             .arg(source)
             .arg("-o")
             .arg(&object),
@@ -155,6 +157,10 @@ fn main() {
     for source in ["service.c", "login.c", "shell.c", "linker.ld"] {
         println!("cargo:rerun-if-changed={}", sources.join(source).display());
     }
+    println!(
+        "cargo:rerun-if-changed={}",
+        kernel.join("../c/include/ghostos").display()
+    );
     println!(
         "cargo:rerun-if-changed={}",
         sources.join("rust-shell").display()

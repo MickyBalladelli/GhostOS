@@ -1,9 +1,11 @@
+#include "ghostos/abi.h"
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
-#define STATUS_NORMAL 0x00010009U
+#define STATUS_NORMAL GHOSTOS_STATUS_NORMAL
 
 u64 __stack_chk_guard __attribute__((section(".stack_guard"))) = 0;
 
@@ -25,34 +27,34 @@ void __stack_chk_fail(void)
 }
 
 enum {
-    ABI_VERSION = 1,
-    OP_CLOCK_NOW = 2,
-    OP_SERVICE_READY = 42,
-    OP_SERVICE_HEARTBEAT = 43,
-    OP_SYSTEM_INFO = 44,
-    OP_GHOSTFS_OPEN = 12,
-    OP_GHOSTFS_CLOSE = 13,
-    OP_GHOSTFS_READ = 14,
-    OP_GHOSTFS_WRITE = 15,
-    OP_GHOSTFS_MKDIR = 17,
-    OP_GHOSTFS_RMDIR = 18,
-    OP_GHOSTFS_LIST = 20,
-    OP_GHOSTFS_DELETE = 22,
-    OP_TERMINAL_READ = 24,
-    OP_TERMINAL_WRITE = 25,
-    OP_LOGIN_STATUS = 51,
-    OP_LOGIN_START = 52,
-    OP_LOGIN_BOOTSTRAP_USERNAME = 58,
-    OP_LOGIN_BOOTSTRAP_CREDENTIAL = 59,
-    OP_LOGIN_BOOTSTRAP_CONFIRM = 60,
-    OP_LOGIN_BOOTSTRAP_RECOVERY = 61,
-    OP_LOGIN_REVOKE_IDENTITY = 62,
-    OP_SHUTDOWN = 63,
-    OP_WATCHDOG_DIAGNOSTICS = 64,
-    OP_LOGIN_BRIDGE_READ = 65,
-    OP_LOGIN_LOGOUT = 56,
-    OP_LOGIN_WHOAMI = 57,
-    OP_SLEEP_UNTIL = 47,
+    ABI_VERSION = GHOSTOS_ABI_SCHEMA_VERSION,
+    OP_CLOCK_NOW = GHOSTOS_OP_CLOCK_NOW,
+    OP_SERVICE_READY = GHOSTOS_OP_SERVICE_READY,
+    OP_SERVICE_HEARTBEAT = GHOSTOS_OP_SERVICE_HEARTBEAT,
+    OP_SYSTEM_INFO = GHOSTOS_OP_SYSTEM_INFO,
+    OP_GHOSTFS_OPEN = GHOSTOS_OP_SYN_FS_OPEN,
+    OP_GHOSTFS_CLOSE = GHOSTOS_OP_SYN_FS_CLOSE,
+    OP_GHOSTFS_READ = GHOSTOS_OP_SYN_FS_READ,
+    OP_GHOSTFS_WRITE = GHOSTOS_OP_SYN_FS_WRITE,
+    OP_GHOSTFS_MKDIR = GHOSTOS_OP_SYN_FS_MKDIR,
+    OP_GHOSTFS_RMDIR = GHOSTOS_OP_SYN_FS_RMDIR,
+    OP_GHOSTFS_LIST = GHOSTOS_OP_SYN_FS_LIST,
+    OP_GHOSTFS_DELETE = GHOSTOS_OP_SYN_FS_DELETE,
+    OP_TERMINAL_READ = GHOSTOS_OP_TERMINAL_READ,
+    OP_TERMINAL_WRITE = GHOSTOS_OP_TERMINAL_WRITE,
+    OP_LOGIN_STATUS = GHOSTOS_OP_LOGIN_STATUS,
+    OP_LOGIN_START = GHOSTOS_OP_LOGIN_START,
+    OP_LOGIN_BOOTSTRAP_USERNAME = GHOSTOS_OP_LOGIN_BOOTSTRAP_USERNAME,
+    OP_LOGIN_BOOTSTRAP_CREDENTIAL = GHOSTOS_OP_LOGIN_BOOTSTRAP_CREDENTIAL,
+    OP_LOGIN_BOOTSTRAP_CONFIRM = GHOSTOS_OP_LOGIN_BOOTSTRAP_CONFIRM,
+    OP_LOGIN_BOOTSTRAP_RECOVERY = GHOSTOS_OP_LOGIN_BOOTSTRAP_RECOVERY,
+    OP_LOGIN_REVOKE_IDENTITY = GHOSTOS_OP_LOGIN_REVOKE_IDENTITY,
+    OP_SHUTDOWN = GHOSTOS_OP_SHUTDOWN,
+    OP_WATCHDOG_DIAGNOSTICS = GHOSTOS_OP_WATCHDOG_DIAGNOSTICS,
+    OP_LOGIN_BRIDGE_READ = GHOSTOS_OP_LOGIN_BRIDGE_READ,
+    OP_LOGIN_LOGOUT = GHOSTOS_OP_LOGIN_LOGOUT,
+    OP_LOGIN_WHOAMI = GHOSTOS_OP_LOGIN_WHOAMI,
+    OP_SLEEP_UNTIL = GHOSTOS_OP_SLEEP_UNTIL,
     SHELL_ROLE = 9,
     SHELL_REQUIRED_SERVICES = (1u << 2) | (1u << 3) | (1u << 4)
         | (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8)
@@ -87,28 +89,13 @@ enum {
     ACCOUNT_RECORD_EXPIRED_OFFSET = 12,
 };
 
-struct request {
-    u16 operation;
-    u16 abi_version;
-    u16 flags;
-    u16 reserved;
-    u64 capability;
-    u64 arguments[6];
-};
-
-struct response {
-    u32 status;
-    u32 flags;
-    u64 values[4];
-};
-
 __attribute__((noinline))
-static struct response call_ex(u16 operation, u16 flags, u64 capability,
+static ghostos_response call_ex(u16 operation, u16 flags, u64 capability,
                                u64 first, u64 second, u64 third, u64 offset,
                                u64 extra)
 {
-    struct request request = {0};
-    struct response response = {0};
+    ghostos_request request = {0};
+    ghostos_response response = {0};
     request.operation = operation;
     request.abi_version = ABI_VERSION;
     request.flags = flags;
@@ -128,7 +115,7 @@ static struct response call_ex(u16 operation, u16 flags, u64 capability,
 }
 
 __attribute__((noinline))
-static struct response call(u16 operation, u16 flags, u64 capability,
+static ghostos_response call(u16 operation, u16 flags, u64 capability,
                             u64 first, u64 second, u64 third, u64 offset)
 {
     return call_ex(operation, flags, capability, first, second, third, offset, 0);
@@ -332,13 +319,13 @@ static void write_status(u32 status)
 __attribute__((noinline))
 static int read_byte(u8 *byte)
 {
-    struct response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
+    ghostos_response response = call(OP_TERMINAL_READ, 0, 0, (u64)byte, 1, 0, 0);
     return response.status == STATUS_NORMAL && response.values[0] == 1;
 }
 
 static int read_bridge_byte(u8 *byte)
 {
-    struct response response = call(OP_LOGIN_BRIDGE_READ, 0, 0, (u64)byte, 1, 0, 0);
+    ghostos_response response = call(OP_LOGIN_BRIDGE_READ, 0, 0, (u64)byte, 1, 0, 0);
     if (response.status == STATUS_NORMAL && response.values[0] == 1) {
         bridge_transport_active = response.values[1] != 0;
     }
@@ -347,25 +334,25 @@ static int read_bridge_byte(u8 *byte)
 
 static int login_authorized(void)
 {
-    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
+    ghostos_response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
     return response.status == STATUS_NORMAL && response.values[3] != 0;
 }
 
 static int first_run_mode(void)
 {
-    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
+    ghostos_response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
     return response.status == STATUS_NORMAL && response.values[1] == 0;
 }
 
 static int shell_ready(void)
 {
-    struct response response = call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
+    ghostos_response response = call(OP_SERVICE_READY, 0, 0, SHELL_ROLE, 0, 0, 0);
     return response.status == STATUS_NORMAL;
 }
 
 static int shell_dependencies_ready(void)
 {
-    struct response response = call(OP_SYSTEM_INFO, 0, 0, 0, 0, 0, 0);
+    ghostos_response response = call(OP_SYSTEM_INFO, 0, 0, 0, 0, 0, 0);
     return response.status == STATUS_NORMAL
         && (response.values[1] & SHELL_REQUIRED_SERVICES) == SHELL_REQUIRED_SERVICES;
 }
@@ -385,7 +372,7 @@ static void write_prompt(int authorized, int first_run)
 __attribute__((noinline))
 static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 {
-    struct response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
+    ghostos_response response = call(OP_LOGIN_STATUS, 0, 0, 0, 0, 0, 0);
     if (response.status != STATUS_NORMAL) {
         return *prompt_authorized > 0 || *prompt_first_run > 0;
     }
@@ -404,7 +391,7 @@ static int update_prompt(int *prompt_authorized, int *prompt_first_run)
 
 static void sleep_for(u64 duration_us)
 {
-    struct response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0, 0, 0);
+    ghostos_response clock = call(OP_CLOCK_NOW, 0, 0, 0, 0, 0, 0);
     if (clock.status == STATUS_NORMAL) {
         call(OP_SLEEP_UNTIL, 0, 0, clock.values[0] + duration_us, 0, 0, 0);
     }
@@ -440,7 +427,7 @@ static void watchdog_command(char *cursor)
         write_text("Use: WATCHDOG STATUS|ON|OFF\n");
         return;
     }
-    struct response response = call(OP_WATCHDOG_DIAGNOSTICS, 0, 0, mode, 0, 0, 0);
+    ghostos_response response = call(OP_WATCHDOG_DIAGNOSTICS, 0, 0, mode, 0, 0, 0);
     if (response.status != STATUS_NORMAL) {
         write_text("Watchdog request failed\n");
         write_status(response.status);
@@ -471,7 +458,7 @@ static void print_directory(const char *path, u8 *buffer)
         volatile u8 *out = buffer + LIST_PATH_REGION_BYTES;
         u64 output_capacity = 4096 - LIST_PATH_REGION_BYTES;
         memset((void *)out, 0, output_capacity);
-        struct response response = call_ex(
+        ghostos_response response = call_ex(
             OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, continuation, path_length
         );
         if (response.status != STATUS_NORMAL) {
@@ -502,14 +489,14 @@ static void print_directory(const char *path, u8 *buffer)
 static void type_file(char *path, u8 *buffer)
 {
     u64 path_length = length(path);
-    struct response opened = call(OP_GHOSTFS_OPEN, OPEN_READ, 0, (u64)path, path_length, 0, 0);
+    ghostos_response opened = call(OP_GHOSTFS_OPEN, OPEN_READ, 0, (u64)path, path_length, 0, 0);
     if (opened.status != STATUS_NORMAL) {
         write_status(opened.status);
         return;
     }
     u64 offset = 0;
     for (;;) {
-        struct response read = call(OP_GHOSTFS_READ, 0, opened.values[0], (u64)buffer, 4096, 1, offset);
+        ghostos_response read = call(OP_GHOSTFS_READ, 0, opened.values[0], (u64)buffer, 4096, 1, offset);
         if (read.status != STATUS_NORMAL) {
             write_status(read.status);
             break;
@@ -606,7 +593,7 @@ static int revoke_account_sessions(const char *username, u64 username_length)
 {
     u8 normalized[ACCOUNT_USERNAME_CAPACITY] = {0};
     normalize_account_username(username, username_length, normalized);
-    struct response response = call(
+    ghostos_response response = call(
         OP_LOGIN_REVOKE_IDENTITY,
         0,
         0,
@@ -905,7 +892,7 @@ static int account_record_is_latest(
 
 static int read_account_database(u8 *buffer, u64 *database_bytes)
 {
-    struct response opened = call(
+    ghostos_response opened = call(
         OP_GHOSTFS_OPEN,
         OPEN_READ,
         0,
@@ -918,7 +905,7 @@ static int read_account_database(u8 *buffer, u64 *database_bytes)
         return 0;
     }
 
-    struct response read = call(
+    ghostos_response read = call(
         OP_GHOSTFS_READ,
         0,
         opened.values[0],
@@ -942,7 +929,7 @@ static int append_account_record(
     u32 *failure_status
 )
 {
-    struct response opened = call(
+    ghostos_response opened = call(
         OP_GHOSTFS_OPEN,
         OPEN_READ | OPEN_WRITE,
         0,
@@ -955,7 +942,7 @@ static int append_account_record(
         *failure_status = opened.status;
         return 0;
     }
-    struct response written = call(
+    ghostos_response written = call(
         OP_GHOSTFS_WRITE,
         0,
         opened.values[0],
@@ -2090,7 +2077,7 @@ static void execute_line(char *line, u8 *buffer, char *directory)
         return;
     }
     if (equal_name(command, "LOGIN")) {
-        struct response login = call(OP_LOGIN_START, 0, 0, 0, 0, 0, 0);
+        ghostos_response login = call(OP_LOGIN_START, 0, 0, 0, 0, 0, 0);
         if (login.status == STATUS_NORMAL) {
             write_text("Starting login...\n");
         } else {
@@ -2109,7 +2096,7 @@ static void execute_line(char *line, u8 *buffer, char *directory)
     }
     if (equal_name(command, "LOGOUT")) {
         write_text("Logging out...\n");
-        struct response logout = call(OP_LOGIN_LOGOUT, 0, 0, 0, 0, 0, 0);
+        ghostos_response logout = call(OP_LOGIN_LOGOUT, 0, 0, 0, 0, 0, 0);
         if (logout.status != STATUS_NORMAL) {
             write_text("Logout request failed\n");
             write_status(logout.status);
@@ -2118,7 +2105,7 @@ static void execute_line(char *line, u8 *buffer, char *directory)
     }
     if (equal_name(command, "WHOAMI")) {
         char username[33];
-        struct response whoami = call(
+        ghostos_response whoami = call(
             OP_LOGIN_WHOAMI, 0, 0, (u64)username, sizeof(username), 0, 0
         );
         if (whoami.status != STATUS_NORMAL || whoami.values[0] >= sizeof(username)) {
@@ -2149,7 +2136,7 @@ static void execute_line(char *line, u8 *buffer, char *directory)
         for (index = 0; index < path_length; index++) {
             buffer[index] = (u8)argument[index];
         }
-        struct response listed = call_ex(
+        ghostos_response listed = call_ex(
             OP_GHOSTFS_LIST, 0, 0, (u64)buffer, 4096, 1, 0, path_length
         );
         if (listed.status != STATUS_NORMAL) {
@@ -2272,7 +2259,7 @@ static void execute_line(char *line, u8 *buffer, char *directory)
         return;
     }
     u64 path_length = length(path);
-    struct response response;
+    ghostos_response response;
     if (equal_name(command, "CREATE")) {
         response = call(OP_GHOSTFS_OPEN, OPEN_READ | OPEN_WRITE | OPEN_CREATE | OPEN_EXCLUSIVE,
                         0, (u64)path, path_length, 0, 0);
@@ -2334,7 +2321,7 @@ static int commit_first_admin_account(
     u64 material_length
 )
 {
-    struct response response = call(
+    ghostos_response response = call(
         OP_LOGIN_BOOTSTRAP_USERNAME,
         0,
         0,
@@ -2408,7 +2395,7 @@ static int commit_first_admin_account(
 
 static int reset_first_admin_staging(void)
 {
-    struct response response = call(
+    ghostos_response response = call(
         OP_LOGIN_BOOTSTRAP_RECOVERY,
         0,
         0,

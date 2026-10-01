@@ -1,8 +1,10 @@
 # C migration
 
 This directory contains the C replacements being built for the Rust project.
-The operating system and virtual machine still use Rust. The foundation library
-is not yet connected to those consumers. See `TODO.md` for migration status.
+The operating system and virtual machine still use Rust. The existing C boot
+services use the generated syscall ABI header and shared status constants.
+The foundation library is not yet connected to the Rust kernel or VM consumers.
+See `TODO.md` for migration status.
 
 Run `make c-library` at the repository root to build `build/c/libghostos.a`.
 The library uses C11 and the standard freestanding integer, boolean, and size
@@ -16,6 +18,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `crates/api-compat/src/lib.rs` | `src/api_compat.c` | `include/ghostos/api_compat.h` |
 | `crates/protocol/src/lib.rs` | `src/protocol.c` | `include/ghostos/protocol.h` |
 | `crates/boot-protocol/src/lib.rs` | `src/boot_protocol.c` | `include/ghostos/boot_protocol.h` |
+| `kernel/src/address_space.rs` | `src/address_space.c` | `include/ghostos/address_space.h` |
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,
@@ -26,6 +29,13 @@ keeps its 16-byte alignment and native pointer-size region count. Compile-time
 assertions enforce the structure sizes and offsets. RPC frames are encoded field
 by field in network byte order, including the two reserved zero bytes. Do not
 send a C RPC header structure directly over a transport.
+
+`userspace/boot-services/service.c`, `login.c`, and `shell.c` now use the generated
+request/response types and operation IDs instead of private copies. The kernel
+build adds the shared include directory and rebuilds the C service images when
+the headers change. These consumers use header definitions and need no C library
+link yet. The kernel currently builds the C service/login images and the Rust
+Ring 3 shell; the C shell source is not the active shell image.
 
 Other Rust structures did not promise a C layout. Their C replacements use
 explicit tags for optional/error values, and split 128-bit correlation IDs into

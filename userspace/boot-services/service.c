@@ -1,3 +1,5 @@
+#include "ghostos/abi.h"
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -23,32 +25,17 @@ void __stack_chk_fail(void)
 }
 
 enum {
-    ABI_VERSION = 1,
-    OP_CLOCK_NOW = 2,
-    OP_RANDOM_GET = 23,
-    OP_SERVICE_READY = 42,
-    OP_SERVICE_HEARTBEAT = 43,
-    OP_REALTIME_NOW = 46,
-    OP_SLEEP_UNTIL = 47,
+    ABI_VERSION = GHOSTOS_ABI_SCHEMA_VERSION,
+    OP_CLOCK_NOW = GHOSTOS_OP_CLOCK_NOW,
+    OP_RANDOM_GET = GHOSTOS_OP_RANDOM_GET,
+    OP_SERVICE_READY = GHOSTOS_OP_SERVICE_READY,
+    OP_SERVICE_HEARTBEAT = GHOSTOS_OP_SERVICE_HEARTBEAT,
+    OP_REALTIME_NOW = GHOSTOS_OP_REALTIME_NOW,
+    OP_SLEEP_UNTIL = GHOSTOS_OP_SLEEP_UNTIL,
     SERVICE_STATE = 0x0000008000013000ULL,
     SERVICE_RESOURCE_STATE = SERVICE_STATE + 8,
     SERVICE_RESOURCE_MAGIC = 0x53594e4f44525653ULL,
     SERVICE_RESOURCE_VERSION = 1,
-};
-
-struct request {
-    u16 operation;
-    u16 abi_version;
-    u16 flags;
-    u16 reserved;
-    u64 capability;
-    u64 arguments[6];
-};
-
-struct response {
-    u32 status;
-    u32 flags;
-    u64 values[4];
 };
 
 struct service_resource {
@@ -69,10 +56,10 @@ struct service_resource_manifest {
 };
 
 __attribute__((noinline))
-static struct response call(u16 operation, u64 first, u64 second)
+static ghostos_response call(u16 operation, u64 first, u64 second)
 {
-    struct request request = {0};
-    struct response response = {0};
+    ghostos_request request = {0};
+    ghostos_response response = {0};
     request.operation = operation;
     request.abi_version = ABI_VERSION;
     request.arguments[0] = first;
@@ -106,7 +93,7 @@ void _start(void)
     call(OP_REALTIME_NOW, 0, 0);
     call(OP_RANDOM_GET, (u64)&random_probe, sizeof(random_probe));
     for (;;) {
-        struct response clock = call(OP_CLOCK_NOW, 0, 0);
+        ghostos_response clock = call(OP_CLOCK_NOW, 0, 0);
         call(OP_SLEEP_UNTIL, clock.values[0] + 10000, 0);
         heartbeat++;
         if (resources != 0 && resources->count != 0) {
