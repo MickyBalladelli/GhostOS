@@ -388,13 +388,24 @@ non-host platform coverage remain open.
 execution loops, the instruction-boundary list, wrapping backward-loop targets,
 source-range validation, code/translation version observation, saturating hot
 execution counts and promotion decisions, and 64-sample retune timing. Callbacks
-borrow host state only during a dispatch; C retains no pointers or allocations.
+borrow host state only during a dispatch, without retaining those context
+pointers. Separate native cache/profile owners have explicit allocation,
+clear, and free lifecycles. Cache payload ownership transfers on successful
+insertion and transfers back on removal/eviction; a Rust destructor callback
+releases retained decoded blocks on replacement, clear, and free. Context keys
+include RIP, mode, privilege, and CR3. Growing chained hash tables preserve
+payload/profile addresses; FIFO keys remain separate to preserve stale keys
+across reset and repeated insertion keys. Capacity zero means one entry,
+eviction skips stale keys and precedes admission, and stale rejection removes
+all matching FIFO keys. Profile/instruction-count namespaces are separate;
+profile default-start behavior and ordered checked/wrapping counter updates
+match the original source.
 Translation preserves first-error versus partial-block behavior and final
 wrapping source length. Execution preserves code-validation-before-translation
 ordering, mode/boundary exits, zero-progress cache clearing, and execution-error
 notification suppression. Rust callbacks still own CPU/MMU/device operations,
 replay cleanup and interrupt-shadow restoration, decoded instructions/errors,
-cache/profile maps, accounting, admission/eviction, and profile hooks. The
-callback ABI permits unwinding so existing Rust overflow/allocation panics can
+cache-policy admission/events, public types, profile hooks, and error adapters.
+The callback ABI permits unwinding so existing Rust overflow/allocation panics can
 propagate across the C dispatcher. Host builds pass; no tests were run, and
 behavior parity, non-host coverage, and full Rust removal remain open.

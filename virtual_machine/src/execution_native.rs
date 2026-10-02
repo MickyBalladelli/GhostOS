@@ -217,3 +217,57 @@ extern "C" {
     fn ghostos_vm_execution_cache_evict(cache: *mut c_void, key: *const CacheKey, capacity: usize) -> *mut c_void;
     fn ghostos_vm_execution_cache_insert(cache: *mut c_void, key: *const CacheKey, payload: *mut c_void) -> bool;
 }
+
+/// Owns two native maps. Mutation requires an exclusive owner borrow, including
+/// calls that create entries; lookups never create or relocate borrowed values.
+pub(super) struct Profiles(std::ptr::NonNull<c_void>);
+impl Profiles {
+    pub(super) fn new() -> Self {
+        Self(std::ptr::NonNull::new(unsafe { ghostos_vm_execution_profiles_new() })
+            .expect("allocate native execution profiles"))
+    }
+    pub(super) fn get(&self, rip: u64) -> Option<&BlockProfile> {
+        unsafe { ghostos_vm_execution_profiles_get(self.0.as_ptr(), rip, 0, false).as_ref() }
+    }
+    pub(super) fn execution(&mut self, rip: u64, initial_start: u64) {
+        profile_result(unsafe { ghostos_vm_execution_profiles_execution(self.0.as_ptr(), rip, initial_start, cfg!(debug_assertions)) });
+    }
+    pub(super) fn compiled(&mut self, rip: u64) {
+        unsafe { ghostos_vm_execution_profiles_compiled(self.0.as_ptr(), rip); }
+    }
+    pub(super) fn record(&mut self, rip: u64, block_start: u64, compiled: bool) {
+        profile_result(unsafe { ghostos_vm_execution_profiles_record(self.0.as_ptr(), rip, block_start, compiled, cfg!(debug_assertions)) });
+    }
+    pub(super) fn count(&self, rip: u64) -> u64 {
+        unsafe { ghostos_vm_execution_profiles_counter(self.0.as_ptr(), rip, false).as_ref() }.copied().unwrap_or(0)
+    }
+    pub(super) fn clear(&mut self) { unsafe { ghostos_vm_execution_profiles_clear(self.0.as_ptr()); } }
+}
+impl Drop for Profiles {
+    fn drop(&mut self) { unsafe { ghostos_vm_execution_profiles_free(self.0.as_ptr()); } }
+}
+extern "C" {
+    fn ghostos_vm_execution_profiles_new() -> *mut c_void;
+    fn ghostos_vm_execution_profiles_free(profiles: *mut c_void);
+    fn ghostos_vm_execution_profiles_clear(profiles: *mut c_void);
+    fn ghostos_vm_execution_profiles_get(profiles: *mut c_void, rip: u64, initial_start: u64, create: bool) -> *mut BlockProfile;
+    fn ghostos_vm_execution_profiles_counter(profiles: *mut c_void, rip: u64, create: bool) -> *mut u64;
+}
+
+fn profile_result(result: u32) {
+    match result {
+        0 => {},
+        1 => panic!("allocate native execution profile/counter"),
+        2 => panic!("attempt to add with overflow"),
+        _ => unreachable!("native execution profile result"),
+    }
+}
+pub(super) fn increment(counter: &mut u64) {
+    assert!(unsafe { ghostos_vm_execution_increment(counter, cfg!(debug_assertions)) }, "attempt to add with overflow");
+}
+extern "C" {
+    fn ghostos_vm_execution_increment(counter: *mut u64, checked: bool) -> bool;
+    fn ghostos_vm_execution_profiles_execution(profiles: *mut c_void, rip: u64, initial_start: u64, checked: bool) -> u32;
+    fn ghostos_vm_execution_profiles_compiled(profiles: *mut c_void, rip: u64);
+    fn ghostos_vm_execution_profiles_record(profiles: *mut c_void, rip: u64, block_start: u64, compiled: bool, checked: bool) -> u32;
+}

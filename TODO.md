@@ -243,6 +243,23 @@ errors/instructions. No tests were executed; behavior parity, platform coverage,
 and full cutover remain open. Logs are in `temp/c-library-execution.log` and
 `temp/vm-build-execution.log`.
 
+Execution-cache build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C hash-table cache storage,
+FIFO key tracking/eviction, profile and instruction-count maps, and counter
+updates. Cache keys preserve RIP, CPU mode, privilege, and CR3. Hash-table
+resizing preserves borrowed payload/profile addresses. Successful insertion
+transfers boxed-block ownership to C; removal/eviction transfers it back;
+replacement, clearing, and drop destroy each retained block once. Reset keeps
+stale FIFO keys and cache-policy accounting as before, while clear-cache clears
+both cache and FIFO. Capacity zero still means one entry, stale rejection
+removes every matching FIFO key, and eviction still precedes admission.
+Profile namespaces/default-start behavior and ordered checked/wrapping counter
+updates are preserved in source. Rust still owns decoded blocks, CPU/MMU/device
+callbacks, cache-policy integration, profile hooks, public types, and error
+adapters. No tests were executed; parity, platform coverage, and complete Rust
+removal remain open. Logs are in `temp/c-library-execution-cache.log` and
+`temp/vm-build-execution-cache.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -332,7 +349,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/virtio.rs` — C owns active legacy transport registers, block request parsing and sector transfer sequencing, console capture/newline handling, RNG filling, queue completion, and interrupt decisions in `c/src/vm_virtio.c`. Rust retains disk, MMU, entropy, host console, and APIC callbacks. Full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/devices/virtio_queue.rs` — C owns split-ring address calculation, avail-ring consumption, descriptor-chain validation, and used-ring completion. Production controllers call C directly; the Rust wrapper remains only for existing test source. Full Rust removal and end-to-end behavior parity remain.
 - [ ] `virtual_machine/src/driver_capabilities.rs` — C owns the active ten-entry discovery report, availability and fallback selection, and static report text in `c/src/vm_driver_capabilities.c`. Rust retains public enum/array/string adapters and the const kind-name API. The three existing report cases have C contract source; full Rust removal and behavior parity remain.
-- [ ] `virtual_machine/src/execution.rs` — C owns active translation/dispatch loops, instruction boundaries and backward-loop classification, source-range validation, observed-version updates, saturating hot-block promotion, and cache-retune timing. Rust retains cache/profile storage and accounting, cache admission/eviction, CPU/MMU/device callbacks, decoded-instruction ownership, and error translation. Build checks passed; behavior parity and full cutover remain.
+- [ ] `virtual_machine/src/execution.rs` — C owns active translation/dispatch loops, instruction boundaries and backward-loop classification, source-range validation, observed-version updates, saturating hot-block promotion, cache-retune timing, context-keyed cache hash tables and FIFO eviction, block-payload ownership, profile/instruction-count maps, and ordered checked/wrapping counter updates. Rust retains cache-policy admission/events, CPU/MMU/device callbacks, decoded-instruction allocation, public types and profile hooks, and error adapters. Build checks passed; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/firmware/bios.rs` — C owns active BIOS ROM generation, POST IVT/BDA templates, INT 13h disk register services and CHS/EDD transfers, INT 15h memory sizing/E820 encoding, and INT 16h keyboard responses in `c/src/vm_bios.c`. Rust retains context ownership, CPU/MMU adapters, video/UEFI dispatch, and MBR boot handoff. Existing EDD packet offsets/count handling and CHS ignored-write-error behavior are preserved; full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/firmware/mod.rs`
 - [ ] `virtual_machine/src/firmware/uefi.rs`

@@ -274,3 +274,123 @@ bool ghostos_vm_execution_cache_insert(ghostos_vm_execution_cache *cache, const 
     cache->last = order;
     return true;
 }
+
+typedef struct profile_entry {
+    uint64_t rip, count;
+    ghostos_vm_execution_profile profile;
+    struct profile_entry *next;
+} profile_entry;
+typedef struct {
+    profile_entry **buckets;
+    size_t bucket_count, length;
+} profile_table;
+struct ghostos_vm_execution_profiles { profile_table profiles, counts; };
+
+static bool profile_table_new(profile_table *table) {
+    table->bucket_count = 64;
+    table->length = 0;
+    table->buckets = calloc(table->bucket_count, sizeof(*table->buckets));
+    return table->buckets != NULL;
+}
+static void profile_table_clear(profile_table *table) {
+    for (size_t i = 0; i < table->bucket_count; ++i) {
+        profile_entry *entry = table->buckets[i];
+        table->buckets[i] = NULL;
+        while (entry != NULL) {
+            profile_entry *next = entry->next;
+            free(entry);
+            entry = next;
+        }
+    }
+    table->length = 0;
+}
+static bool profile_table_grow(profile_table *table) {
+    if (table->bucket_count > SIZE_MAX / 2 / sizeof(profile_entry *)) return false;
+    size_t count = table->bucket_count * 2;
+    profile_entry **buckets = calloc(count, sizeof(*buckets));
+    if (buckets == NULL) return false;
+    for (size_t i = 0; i < table->bucket_count; ++i) {
+        profile_entry *entry = table->buckets[i];
+        while (entry != NULL) {
+            profile_entry *next = entry->next;
+            size_t bucket = (size_t)mix_key(entry->rip) & (count - 1);
+            entry->next = buckets[bucket];
+            buckets[bucket] = entry;
+            entry = next;
+        }
+    }
+    free(table->buckets);
+    table->buckets = buckets;
+    table->bucket_count = count;
+    return true;
+}
+static profile_entry *profile_lookup(profile_table *table, uint64_t rip, uint64_t start, bool create) {
+    size_t bucket = (size_t)mix_key(rip) & (table->bucket_count - 1);
+    profile_entry *entry = table->buckets[bucket];
+    while (entry != NULL && entry->rip != rip) entry = entry->next;
+    if (entry != NULL || !create) return entry;
+    entry = calloc(1, sizeof(*entry));
+    if (entry == NULL) return NULL;
+    if (table->length >= table->bucket_count && !profile_table_grow(table)) { free(entry); return NULL; }
+    bucket = (size_t)mix_key(rip) & (table->bucket_count - 1);
+    entry->rip = rip;
+    entry->profile.start = start;
+    entry->next = table->buckets[bucket];
+    table->buckets[bucket] = entry;
+    ++table->length;
+    return entry;
+}
+
+ghostos_vm_execution_profiles *ghostos_vm_execution_profiles_new(void) {
+    ghostos_vm_execution_profiles *profiles = calloc(1, sizeof(*profiles));
+    if (profiles == NULL) return NULL;
+    if (!profile_table_new(&profiles->profiles)) { free(profiles); return NULL; }
+    if (!profile_table_new(&profiles->counts)) {
+        free(profiles->profiles.buckets); free(profiles); return NULL;
+    }
+    return profiles;
+}
+void ghostos_vm_execution_profiles_clear(ghostos_vm_execution_profiles *profiles) {
+    profile_table_clear(&profiles->profiles);
+    profile_table_clear(&profiles->counts);
+}
+void ghostos_vm_execution_profiles_free(ghostos_vm_execution_profiles *profiles) {
+    if (profiles == NULL) return;
+    ghostos_vm_execution_profiles_clear(profiles);
+    free(profiles->profiles.buckets);
+    free(profiles->counts.buckets);
+    free(profiles);
+}
+ghostos_vm_execution_profile *ghostos_vm_execution_profiles_get(ghostos_vm_execution_profiles *profiles, uint64_t rip, uint64_t initial_start, bool create) {
+    profile_entry *entry = profile_lookup(&profiles->profiles, rip, initial_start, create);
+    return entry == NULL ? NULL : &entry->profile;
+}
+uint64_t *ghostos_vm_execution_profiles_counter(ghostos_vm_execution_profiles *profiles, uint64_t rip, bool create) {
+    profile_entry *entry = profile_lookup(&profiles->counts, rip, 0, create);
+    return entry == NULL ? NULL : &entry->count;
+}
+
+bool ghostos_vm_execution_increment(uint64_t *counter, bool checked) {
+    if (checked && *counter == UINT64_MAX) return false;
+    ++*counter;
+    return true;
+}
+uint32_t ghostos_vm_execution_profiles_execution(ghostos_vm_execution_profiles *profiles, uint64_t rip, uint64_t initial_start, bool checked) {
+    ghostos_vm_execution_profile *profile = ghostos_vm_execution_profiles_get(profiles, rip, initial_start, true);
+    if (profile == NULL) return 1;
+    return ghostos_vm_execution_increment(&profile->executions, checked) ? 0 : 2;
+}
+void ghostos_vm_execution_profiles_compiled(ghostos_vm_execution_profiles *profiles, uint64_t rip) {
+    ghostos_vm_execution_profile *profile = ghostos_vm_execution_profiles_get(profiles, rip, 0, false);
+    if (profile != NULL) profile->compiled = true;
+}
+uint32_t ghostos_vm_execution_profiles_record(ghostos_vm_execution_profiles *profiles, uint64_t rip, uint64_t block_start, bool compiled, bool checked) {
+    uint64_t *count = ghostos_vm_execution_profiles_counter(profiles, rip, true);
+    if (count == NULL) return 1;
+    if (!ghostos_vm_execution_increment(count, checked)) return 2;
+    ghostos_vm_execution_profile *profile = ghostos_vm_execution_profiles_get(profiles, block_start, block_start, true);
+    if (profile == NULL) return 1;
+    if (!ghostos_vm_execution_increment(&profile->instructions, checked)) return 2;
+    profile->compiled |= compiled;
+    return 0;
+}

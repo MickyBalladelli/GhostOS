@@ -59,4 +59,26 @@ void ghostos_vm_execution_cache_forget_order(ghostos_vm_execution_cache *, const
 void *ghostos_vm_execution_cache_evict(ghostos_vm_execution_cache *, const ghostos_vm_execution_key *, size_t capacity);
 /* False means allocation failed, and ownership stays with the caller. */
 bool ghostos_vm_execution_cache_insert(ghostos_vm_execution_cache *, const ghostos_vm_execution_key *, void *payload);
+
+/* Borrowed profile/counter pointers remain stable across table growth. The
+ * caller must not keep them across clear/free or mutate through a shared
+ * borrow. Profile and instruction-address namespaces are separate. */
+typedef struct {
+    uint64_t start, executions, instructions;
+    bool compiled;
+} ghostos_vm_execution_profile;
+typedef struct ghostos_vm_execution_profiles ghostos_vm_execution_profiles;
+ghostos_vm_execution_profiles *ghostos_vm_execution_profiles_new(void);
+void ghostos_vm_execution_profiles_free(ghostos_vm_execution_profiles *);
+void ghostos_vm_execution_profiles_clear(ghostos_vm_execution_profiles *);
+ghostos_vm_execution_profile *ghostos_vm_execution_profiles_get(ghostos_vm_execution_profiles *, uint64_t rip, uint64_t initial_start, bool create);
+uint64_t *ghostos_vm_execution_profiles_counter(ghostos_vm_execution_profiles *, uint64_t rip, bool create);
+
+/* Checked counters leave the overflowing field unchanged. Earlier successful
+ * increments remain committed, matching the original Rust update order. */
+bool ghostos_vm_execution_increment(uint64_t *counter, bool checked);
+/* Profile updates: 0 success, 1 allocation failure, 2 checked overflow. */
+uint32_t ghostos_vm_execution_profiles_execution(ghostos_vm_execution_profiles *, uint64_t rip, uint64_t initial_start, bool checked);
+void ghostos_vm_execution_profiles_compiled(ghostos_vm_execution_profiles *, uint64_t rip);
+uint32_t ghostos_vm_execution_profiles_record(ghostos_vm_execution_profiles *, uint64_t rip, uint64_t block_start, bool compiled, bool checked);
 #endif

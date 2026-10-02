@@ -15,7 +15,6 @@ use ghostos_observability::{
     record_profile_sample, CacheEvent, CacheKind, CachePolicyReport, CachePolicyRegistry,
     ProfileDomain, ProfileSample,
 };
-use std::collections::HashMap;
 use std::rc::Rc;
 
 #[path = "execution_native.rs"]
@@ -65,6 +64,7 @@ pub struct ExecutionStats {
 }
 
 /// Profile for one translated block.
+#[repr(C)]
 #[derive(Clone, Debug, Default)]
 pub struct BlockProfile {
     pub start: u64,
@@ -113,8 +113,7 @@ impl TranslationBlock {
 pub struct ExecutionEngine {
     config: ExecutionEngineConfig,
     cache: native::Cache,
-    profiles: HashMap<u64, BlockProfile>,
-    instruction_counts: HashMap<u64, u64>,
+    profiles: native::Profiles,
     stats: ExecutionStats,
     cache_policy: CachePolicyRegistry<1>,
     observed_code_version: u64,
@@ -139,8 +138,7 @@ impl ExecutionEngine {
         Self {
             config,
             cache: native::Cache::new(),
-            profiles: HashMap::new(),
-            instruction_counts: HashMap::new(),
+            profiles: native::Profiles::new(),
             stats: ExecutionStats::default(),
             cache_policy,
             observed_code_version: 0,
@@ -177,11 +175,11 @@ impl ExecutionEngine {
     }
 
     pub fn block_profile(&self, rip: u64) -> Option<&BlockProfile> {
-        self.profiles.get(&rip)
+        self.profiles.get(rip)
     }
 
     pub fn instruction_count(&self, rip: u64) -> u64 {
-        self.instruction_counts.get(&rip).copied().unwrap_or(0)
+        self.profiles.count(rip)
     }
 
     /// Install a callback invoked after each engine dispatch. The callback
@@ -201,7 +199,6 @@ impl ExecutionEngine {
     pub fn reset(&mut self) {
         self.cache.clear(false);
         self.profiles.clear();
-        self.instruction_counts.clear();
         self.stats = ExecutionStats::default();
         self.observed_code_version = 0;
         self.observed_translation_version = 0;
@@ -267,7 +264,7 @@ impl ExecutionEngine {
                 .is_some_and(|block| block.source_is_valid(mmu));
         if cached_block_is_valid {
             if let Some(block) = self.cache.get_mut(&key) {
-                self.stats.cache_hits += 1;
+                native::increment(&mut self.stats.cache_hits);
                 let _ = self.cache_policy.observe(
                     CacheKind::VmTranslationBlocks,
                     CACHE_WORKLOAD,
@@ -275,17 +272,14 @@ impl ExecutionEngine {
                 );
                 let promote = native::promote(self.config.enable_jit, block, self.config.hot_threshold);
                 if self.config.enable_profiling {
-                    let profile = self.profiles.entry(key.rip).or_default();
-                    profile.executions += 1;
+                    self.profiles.execution(key.rip, 0);
                 }
                 if promote {
                     block.compiled = true;
                     if self.config.enable_profiling {
-                        if let Some(profile) = self.profiles.get_mut(&key.rip) {
-                            profile.compiled = true;
-                        }
+                        self.profiles.compiled(key.rip);
                     }
-                    self.stats.compiled_blocks += 1;
+                    native::increment(&mut self.stats.compiled_blocks);
                 }
                 let block = block.clone();
                 self.retune_cache_if_due();
@@ -310,7 +304,7 @@ impl ExecutionEngine {
             self.cache.forget_order(&key);
         }
 
-        self.stats.cache_misses += 1;
+        native::increment(&mut self.stats.cache_misses);
         let _ = self.cache_policy.observe(
             CacheKind::VmTranslationBlocks,
             CACHE_WORKLOAD,
@@ -327,15 +321,9 @@ impl ExecutionEngine {
             source_start: key.rip,
             source_bytes: Rc::from(source_bytes.into_boxed_slice()),
         };
-        self.stats.translated_blocks += 1;
+        native::increment(&mut self.stats.translated_blocks);
         if self.config.enable_profiling {
-            self.profiles.entry(key.rip).or_insert_with(|| BlockProfile {
-                start: key.rip,
-                ..BlockProfile::default()
-            });
-            if let Some(profile) = self.profiles.get_mut(&key.rip) {
-                profile.executions += 1;
-            }
+            self.profiles.execution(key.rip, key.rip);
         }
         self.insert_block(key, block.clone());
         Ok(block)
@@ -352,7 +340,7 @@ impl ExecutionEngine {
 
     fn insert_block(&mut self, key: BlockKey, block: TranslationBlock) {
         if let Some(old_block) = self.cache.evict(&key, self.config.cache_capacity) {
-            self.stats.cache_evictions += 1;
+            native::increment(&mut self.stats.cache_evictions);
             let _ = self.cache_policy.observe(
                 CacheKind::VmTranslationBlocks,
                 CACHE_WORKLOAD,
@@ -377,15 +365,9 @@ impl ExecutionEngine {
     }
 
     fn record_instruction(&mut self, rip: u64, block_start: u64, compiled: bool) {
-        self.stats.instructions += 1;
+        native::increment(&mut self.stats.instructions);
         if self.config.enable_profiling {
-            *self.instruction_counts.entry(rip).or_default() += 1;
-            let profile = self.profiles.entry(block_start).or_insert_with(|| BlockProfile {
-                start: block_start,
-                ..BlockProfile::default()
-            });
-            profile.instructions += 1;
-            profile.compiled |= compiled;
+            self.profiles.record(rip, block_start, compiled);
         }
     }
 
