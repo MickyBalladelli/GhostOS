@@ -1,9 +1,42 @@
 use super::{DeviceError, LocalApic, PortDevice};
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
+#[repr(C)]
+struct CInterruptController {
+    _private: [u8; 0],
+}
+
+unsafe extern "C" {
+    fn ghostos_vm_interrupt_controller_new() -> *mut CInterruptController;
+    fn ghostos_vm_interrupt_controller_free(controller: *mut CInterruptController);
+    fn ghostos_vm_idt_gate_decode(raw: *const u8, out: *mut IdtGate) -> bool;
+    fn ghostos_vm_idt_gate_present(gate: *const IdtGate) -> bool;
+    fn ghostos_vm_idt_gate_dpl(gate: *const IdtGate) -> u8;
+    fn ghostos_vm_interrupt_controller_init(controller: *mut CInterruptController);
+    fn ghostos_vm_interrupt_controller_set_idt(controller: *mut CInterruptController, base: u64, limit: u16);
+    fn ghostos_vm_interrupt_controller_idt_entry(
+        controller: *const CInterruptController,
+        vector: u8,
+        address: *mut u64,
+    ) -> bool;
+    fn ghostos_vm_interrupt_controller_map_irq(controller: *mut CInterruptController, irq: u8, vector: u8);
+    fn ghostos_vm_interrupt_controller_handle_irq(controller: *const CInterruptController, irq: u8, vector: *mut u8) -> bool;
+    fn ghostos_vm_interrupt_controller_remap_pic(controller: *mut CInterruptController);
+    fn ghostos_vm_interrupt_controller_reset(controller: *mut CInterruptController);
+    fn ghostos_vm_interrupt_controller_is_mapped(controller: *const CInterruptController) -> bool;
+    fn ghostos_vm_interrupt_controller_idt_limit(controller: *const CInterruptController) -> u16;
+    fn ghostos_vm_interrupt_controller_idt_base(controller: *const CInterruptController) -> u64;
+    fn ghostos_vm_interrupt_controller_route_at(
+        controller: *const CInterruptController,
+        index: u16,
+        irq: *mut u8,
+        vector: *mut u64,
+    ) -> bool;
+}
+
 /// A decoded IDT gate descriptor (16 bytes in guest memory).
+#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct IdtGate {
     /// 16-bit selector.
@@ -19,35 +52,22 @@ pub struct IdtGate {
 impl IdtGate {
     /// Decode a 16-byte IDT descriptor.
     pub fn decode(raw: &[u8; 16]) -> Self {
-        let offset_lo = u16::from_le_bytes([raw[0], raw[1]]) as u64;
-        let selector = u16::from_le_bytes([raw[2], raw[3]]);
-        let ist = raw[4] & 0x07;
-        let type_attr = raw[5];
-        let offset_mid = u16::from_le_bytes([raw[6], raw[7]]) as u64;
-        let offset_hi = u32::from_le_bytes([raw[8], raw[9], raw[10], raw[11]]) as u64;
-        let offset = offset_lo | (offset_mid << 16) | (offset_hi << 32);
-        Self {
-            selector,
-            type_attr,
-            offset,
-            ist,
-        }
+        let mut gate = Self { selector: 0, type_attr: 0, offset: 0, ist: 0 };
+        unsafe { ghostos_vm_idt_gate_decode(raw.as_ptr(), &mut gate) };
+        gate
     }
 
     pub fn present(&self) -> bool {
-        self.type_attr & (1 << 7) != 0
+        unsafe { ghostos_vm_idt_gate_present(self) }
     }
 
     pub fn dpl(&self) -> u8 {
-        (self.type_attr >> 5) & 0x03
+        unsafe { ghostos_vm_idt_gate_dpl(self) }
     }
 }
 
 pub struct InterruptController {
-    idt_base: u64,
-    idt_limit: u16,
-    irq_routing: BTreeMap<u8, u64>,
-    pic_mapped: bool,
+    state: *mut CInterruptController,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,47 +81,59 @@ pub struct InterruptControllerState {
 impl InterruptController {
     pub fn new() -> Self {
         Self {
-            idt_base: 0,
-            idt_limit: 0,
-            irq_routing: BTreeMap::new(),
-            pic_mapped: false,
+            state: unsafe { ghostos_vm_interrupt_controller_new() },
         }
     }
 
     pub fn init(&mut self) {
-        self.idt_base = 0x1000;
-        self.idt_limit = 0;
-        self.pic_mapped = false;
+        unsafe { ghostos_vm_interrupt_controller_init(self.state) }
     }
 
     pub(crate) fn snapshot_state(&self) -> InterruptControllerState {
         InterruptControllerState {
-            idt_base: self.idt_base,
-            idt_limit: self.idt_limit,
-            irq_routing: self.irq_routing.iter().map(|(&irq, &vector)| (irq, vector)).collect(),
-            pic_mapped: self.pic_mapped,
+            idt_base: unsafe { ghostos_vm_interrupt_controller_idt_base(self.state) },
+            idt_limit: unsafe { ghostos_vm_interrupt_controller_idt_limit(self.state) },
+            irq_routing: (0..256)
+                .filter_map(|index| {
+                    let mut irq = 0;
+                    let mut vector = 0;
+                    unsafe {
+                        ghostos_vm_interrupt_controller_route_at(
+                            self.state, index, &mut irq, &mut vector,
+                        )
+                    }
+                    .then_some((irq, vector))
+                })
+                .collect(),
+            pic_mapped: unsafe { ghostos_vm_interrupt_controller_is_mapped(self.state) },
         }
     }
 
     pub(crate) fn restore_state(&mut self, state: &InterruptControllerState) {
-        self.idt_base = state.idt_base;
-        self.idt_limit = state.idt_limit;
-        self.irq_routing = state.irq_routing.iter().copied().collect();
-        self.pic_mapped = state.pic_mapped;
+        unsafe {
+            ghostos_vm_interrupt_controller_set_idt(self.state, state.idt_base, state.idt_limit);
+            ghostos_vm_interrupt_controller_reset(self.state);
+            for &(irq, vector) in &state.irq_routing {
+                ghostos_vm_interrupt_controller_map_irq(self.state, irq, vector as u8);
+            }
+            if state.pic_mapped {
+                ghostos_vm_interrupt_controller_remap_pic(self.state);
+            }
+        }
     }
 
     pub fn set_idt(&mut self, base: u64, limit: u16) {
-        self.idt_base = base;
-        self.idt_limit = limit;
+        unsafe { ghostos_vm_interrupt_controller_set_idt(self.state, base, limit) }
     }
 
     /// Physical address of the IDT entry for `vector`, or `None` when the IDT
     /// has not been installed yet.
     pub fn idt_entry_address(&self, vector: u8) -> Option<u64> {
-        if self.idt_base == 0 || (vector as u32 * 16 + 16) > (self.idt_limit as u32 + 1) {
-            return None;
+        let mut address = 0;
+        unsafe {
+            ghostos_vm_interrupt_controller_idt_entry(self.state, vector, &mut address)
+                .then_some(address)
         }
-        Some(self.idt_base + (vector as u64) * 16)
     }
 
     pub fn get_idt_entry(&self, vector: u8) -> u64 {
@@ -109,24 +141,33 @@ impl InterruptController {
     }
 
     pub fn map_irq(&mut self, irq: u8, vector: u8) {
-        self.irq_routing.insert(irq, vector as u64);
+        unsafe { ghostos_vm_interrupt_controller_map_irq(self.state, irq, vector) }
     }
 
     pub fn handle_irq(&mut self, irq: u8) -> Option<u8> {
-        self.irq_routing.get(&irq).copied().map(|v| v as u8)
+        let mut vector = 0;
+        unsafe {
+            ghostos_vm_interrupt_controller_handle_irq(self.state, irq, &mut vector)
+                .then_some(vector)
+        }
     }
 
     pub fn remap_pic(&mut self) {
-        self.pic_mapped = true;
+        unsafe { ghostos_vm_interrupt_controller_remap_pic(self.state) }
     }
 
     pub fn reset(&mut self) {
-        self.irq_routing.clear();
-        self.pic_mapped = false;
+        unsafe { ghostos_vm_interrupt_controller_reset(self.state) }
     }
 
     pub fn is_mapped(&self) -> bool {
-        self.pic_mapped
+        unsafe { ghostos_vm_interrupt_controller_is_mapped(self.state) }
+    }
+}
+
+impl Drop for InterruptController {
+    fn drop(&mut self) {
+        unsafe { ghostos_vm_interrupt_controller_free(self.state) }
     }
 }
 

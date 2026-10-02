@@ -4,7 +4,7 @@
 struct ghostos_vm_interrupt_controller {
     uint64_t idt_base;
     uint16_t idt_limit;
-    uint8_t irq_vectors[256];
+    uint64_t irq_vectors[256];
     bool irq_present[256];
     bool pic_mapped;
 };
@@ -53,11 +53,12 @@ void ghostos_vm_interrupt_controller_set_idt(ghostos_vm_interrupt_controller *co
     controller->idt_limit = limit;
 }
 
-uint64_t ghostos_vm_interrupt_controller_idt_entry(const ghostos_vm_interrupt_controller *controller,
-    uint8_t vector) {
+bool ghostos_vm_interrupt_controller_idt_entry(const ghostos_vm_interrupt_controller *controller,
+    uint8_t vector, uint64_t *address) {
     if (!controller || controller->idt_base == 0 ||
-        ((uint32_t)vector * 16u + 16u) > ((uint32_t)controller->idt_limit + 1u)) return 0;
-    return controller->idt_base + (uint64_t)vector * 16u;
+        !address || ((uint32_t)vector * 16u + 16u) > ((uint32_t)controller->idt_limit + 1u)) return false;
+    *address = controller->idt_base + (uint64_t)vector * 16u;
+    return true;
 }
 
 void ghostos_vm_interrupt_controller_map_irq(ghostos_vm_interrupt_controller *controller,
@@ -70,7 +71,7 @@ void ghostos_vm_interrupt_controller_map_irq(ghostos_vm_interrupt_controller *co
 bool ghostos_vm_interrupt_controller_handle_irq(const ghostos_vm_interrupt_controller *controller,
     uint8_t irq, uint8_t *vector) {
     if (!controller || !vector || !controller->irq_present[irq]) return false;
-    *vector = controller->irq_vectors[irq];
+    *vector = (uint8_t)controller->irq_vectors[irq];
     return true;
 }
 

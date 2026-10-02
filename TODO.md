@@ -112,7 +112,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/guest.rs`
 - [ ] `virtual_machine/src/devices/hpet.rs` — C owns the active HPET counter, register state, comparator scheduling, periodic reloads, reset, and interrupt routing in `c/src/vm_hpet.c`. Rust retains device-trait/shared-owner adapters and APIC ownership. The seven retained HPET tests and standalone C device contracts pass; removing the remaining Rust adapter awaits VM-wide cutover. Existing register aliases and timing behavior are preserved rather than claiming hardware-spec conformance.
 - [ ] `virtual_machine/src/devices/input.rs`
-- [ ] `virtual_machine/src/devices/interrupt_controller.rs`
+- [ ] `virtual_machine/src/devices/interrupt_controller.rs` — C owns IDT gate decoding and interrupt-controller state, routing, snapshots, and reset. Rust keeps the legacy PIC adapter that acknowledges through the `LocalApic` API; full cutover remains.
 - [ ] `virtual_machine/src/devices/mod.rs`
 - [ ] `virtual_machine/src/devices/net/e1000.rs`
 - [ ] `virtual_machine/src/devices/net/mod.rs`

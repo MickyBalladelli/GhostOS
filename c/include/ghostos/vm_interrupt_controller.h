@@ -21,8 +21,8 @@ uint8_t ghostos_vm_idt_gate_dpl(const ghostos_vm_idt_gate *gate);
 void ghostos_vm_interrupt_controller_init(ghostos_vm_interrupt_controller *controller);
 void ghostos_vm_interrupt_controller_set_idt(ghostos_vm_interrupt_controller *controller,
     uint64_t base, uint16_t limit);
-uint64_t ghostos_vm_interrupt_controller_idt_entry(const ghostos_vm_interrupt_controller *controller,
-    uint8_t vector);
+bool ghostos_vm_interrupt_controller_idt_entry(const ghostos_vm_interrupt_controller *controller,
+    uint8_t vector, uint64_t *address);
 void ghostos_vm_interrupt_controller_map_irq(ghostos_vm_interrupt_controller *controller,
     uint8_t irq, uint8_t vector);
 bool ghostos_vm_interrupt_controller_handle_irq(const ghostos_vm_interrupt_controller *controller,
