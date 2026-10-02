@@ -1,6 +1,7 @@
-use std::collections::VecDeque;
+#[path = "control_native.rs"]
+mod native;
+
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ghostos_vm::{
     DiskController, DiskPersistence, DiskRole, PowerState, SnapshotFeatures, SnapshotSchema, Vm,
@@ -13,10 +14,6 @@ pub const MAX_MONITOR_REQUEST_BYTES: usize = 4096;
 pub const MAX_MONITOR_RESPONSE_BYTES: usize = 64 * 1024;
 pub const MAX_MONITOR_CLIENTS: usize = 8;
 pub const MONITOR_CONNECTION_LIFETIME_SECS: u64 = 10;
-const MONITOR_AUTH_WINDOW_SECS: u64 = 5 * 60;
-const MONITOR_NONCE_BYTES: usize = 32;
-const MONITOR_TAG_BYTES: usize = 32;
-const MAX_SEEN_NONCES: usize = 1024;
 
 pub enum MonitorRequestFrame {
     Pending,
@@ -28,67 +25,17 @@ pub enum MonitorRequestFrame {
 }
 
 pub struct MonitorRequestBuffer {
-    bytes: Vec<u8>,
+    native: native::Buffer,
 }
 
 impl MonitorRequestBuffer {
-    pub fn new() -> Self {
-        Self { bytes: Vec::new() }
-    }
-
-    pub fn push(&mut self, bytes: &[u8]) -> MonitorRequestFrame {
-        if self.bytes.len().saturating_add(bytes.len()) > MAX_MONITOR_REQUEST_BYTES {
-            return MonitorRequestFrame::Rejected {
-                code: "request-too-large",
-                message: format!(
-                    "monitor request exceeds the {MAX_MONITOR_REQUEST_BYTES} byte limit"
-                ),
-            }
-        }
-        self.bytes.extend_from_slice(bytes);
-        self.frame(false)
-    }
-
-    pub fn end_of_stream(&self) -> MonitorRequestFrame {
-        self.frame(true)
-    }
-
-    fn frame(&self, eof: bool) -> MonitorRequestFrame {
-        let Some(newline) = self.bytes.iter().position(|byte| *byte == b'\n') else {
-            return if eof {
-                MonitorRequestFrame::Rejected {
-                    code: "partial-command",
-                    message: "monitor connection closed before a complete command line".to_string(),
-                }
-            } else {
-                MonitorRequestFrame::Pending
-            }
-        };
-        if self.bytes[newline + 1..]
-            .iter()
-            .any(|byte| !byte.is_ascii_whitespace())
-        {
-            return MonitorRequestFrame::Rejected {
-                code: "multiple-commands",
-                message: "monitor connection accepts exactly one command".to_string(),
-            }
-        }
-        let mut command = &self.bytes[..newline];
-        if command.last() == Some(&b'\r') {
-            command = &command[..command.len() - 1]
-        }
-        match std::str::from_utf8(command) {
-            Ok(command) => MonitorRequestFrame::Complete(command.to_string()),
-            Err(_) => MonitorRequestFrame::Rejected {
-                code: "invalid-encoding",
-                message: "monitor command is not valid UTF-8".to_string(),
-            },
-        }
-    }
+    pub fn new() -> Self { Self { native: native::Buffer::new() } }
+    pub fn push(&mut self, bytes: &[u8]) -> MonitorRequestFrame { self.native.push(bytes) }
+    pub fn end_of_stream(&self) -> MonitorRequestFrame { self.native.end_of_stream() }
 }
 
 pub fn bounded_response(response: String) -> Vec<u8> {
-    if response.len() <= MAX_MONITOR_RESPONSE_BYTES {
+    if native::response_fits(response.len()) {
         return response.into_bytes()
     }
     failure_response(
@@ -157,29 +104,7 @@ impl MonitorPermissions {
     }
 
     pub fn parse(value: &str) -> Result<Self, String> {
-        let mut permissions = Self::empty();
-        for name in value.split(',').map(str::trim).filter(|name| !name.is_empty()) {
-            if name == "all" {
-                return Ok(Self(u8::MAX))
-            }
-            let permission = match name {
-                "status" => MonitorPermission::Status,
-                "device" | "devices" => MonitorPermission::Device,
-                "disk" | "disks" => MonitorPermission::Disk,
-                "migration" => MonitorPermission::Migration,
-                "save" | "snapshot-save" => MonitorPermission::Save,
-                "quit" | "stop" => MonitorPermission::Quit,
-                "sensitive" | "diagnostics" => MonitorPermission::Sensitive,
-                _ => return Err(format!(
-                    "invalid monitor permission `{name}`; use status, device, disk, migration, save, quit, sensitive, or all"
-                )),
-            };
-            permissions.insert(permission)
-        }
-        if permissions == Self::empty() {
-            return Err("monitor permission list cannot be empty".to_string())
-        }
-        Ok(permissions)
+        native::permissions(value)
     }
 }
 
@@ -192,7 +117,7 @@ pub struct MonitorRequestError {
 pub struct MonitorAuthenticator {
     key: ghostos_vm::SnapshotAuthKey,
     permissions: MonitorPermissions,
-    seen_nonces: VecDeque<[u8; MONITOR_NONCE_BYTES]>,
+    seen_nonces: native::Nonces,
 }
 
 impl MonitorAuthenticator {
@@ -200,119 +125,12 @@ impl MonitorAuthenticator {
         Self {
             key,
             permissions,
-            seen_nonces: VecDeque::new(),
+            seen_nonces: native::Nonces::new(),
         }
     }
 
     pub fn authenticate(&mut self, request: &str) -> Result<MonitorCommand, MonitorRequestError> {
-        let (scheme, rest) = take_word(request).ok_or_else(|| auth_error("authentication-required", "monitor request needs authentication"))?;
-        if scheme != "auth" {
-            return Err(auth_error("authentication-required", "monitor request must start with `auth`"))
-        }
-        let (timestamp, rest) = take_word(rest).ok_or_else(|| auth_error("invalid-authentication", "authenticated request needs a timestamp"))?;
-        let (nonce, rest) = take_word(rest).ok_or_else(|| auth_error("invalid-authentication", "authenticated request needs a nonce"))?;
-        let (tag, command) = take_word(rest).ok_or_else(|| auth_error("invalid-authentication", "authenticated request needs a tag and command"))?;
-        let command = command.trim();
-        if command.is_empty() {
-            return Err(auth_error("invalid-authentication", "authenticated request needs a command"))
-        }
-
-        let timestamp = timestamp.parse::<u64>()
-            .map_err(|_| auth_error("invalid-authentication", "monitor timestamp is invalid"))?;
-        validate_timestamp(timestamp)?;
-        let nonce = decode_hex::<MONITOR_NONCE_BYTES>(nonce, "monitor nonce")?;
-        let tag = decode_hex::<MONITOR_TAG_BYTES>(tag, "monitor authentication tag")?;
-        if self.seen_nonces.contains(&nonce) {
-            return Err(auth_error("authentication-replay", "monitor nonce was already used"))
-        }
-        let timestamp_bytes = timestamp.to_le_bytes();
-        self.key
-            .verify_parts(&[MONITOR_AUTH_DOMAIN, &timestamp_bytes, &nonce, command.as_bytes()], &tag)
-            .map_err(|_| auth_error("authentication-failed", "monitor authentication failed"))?;
-
-        let parsed = MonitorCommand::parse(command).map_err(|message| MonitorRequestError {
-            code: "invalid-command",
-            command: Some(command.to_string()),
-            message,
-        })?;
-        let permission = parsed.permission();
-        if !self.permissions.allows(permission) {
-            return Err(MonitorRequestError {
-                code: "permission-denied",
-                command: Some(parsed.name().to_string()),
-                message: format!("monitor client lacks `{}` permission", permission.name()),
-            })
-        }
-        if parsed.requests_sensitive_data()
-            && !self.permissions.allows(MonitorPermission::Sensitive)
-        {
-            return Err(MonitorRequestError {
-                code: "permission-denied",
-                command: Some(parsed.name().to_string()),
-                message: "monitor client lacks `sensitive` permission".to_string(),
-            })
-        }
-        if self.seen_nonces.len() == MAX_SEEN_NONCES {
-            self.seen_nonces.pop_front();
-        }
-        self.seen_nonces.push_back(nonce);
-        Ok(parsed)
-    }
-
-}
-
-fn validate_timestamp(timestamp: u64) -> Result<(), MonitorRequestError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| auth_error("authentication-failed", "host clock is before the Unix epoch"))?
-        .as_secs();
-    if now.abs_diff(timestamp) > MONITOR_AUTH_WINDOW_SECS {
-        return Err(auth_error("authentication-expired", "monitor request timestamp is outside the five-minute window"))
-    }
-    Ok(())
-}
-
-fn take_word(value: &str) -> Option<(&str, &str)> {
-    let value = value.trim_start();
-    if value.is_empty() {
-        return None
-    }
-    match value.find(char::is_whitespace) {
-        Some(index) => Some((&value[..index], &value[index..])),
-        None => Some((value, "")),
-    }
-}
-
-fn decode_hex<const N: usize>(value: &str, name: &str) -> Result<[u8; N], MonitorRequestError> {
-    if value.len() != N * 2 {
-        return Err(auth_error("invalid-authentication", &format!("{name} must be {} hexadecimal characters", N * 2)))
-    }
-    let mut output = [0; N];
-    for (index, byte) in output.iter_mut().enumerate() {
-        let high = hex_value(value.as_bytes()[index * 2]);
-        let low = hex_value(value.as_bytes()[index * 2 + 1]);
-        let (Some(high), Some(low)) = (high, low) else {
-            return Err(auth_error("invalid-authentication", &format!("{name} is not hexadecimal")))
-        };
-        *byte = (high << 4) | low;
-    }
-    Ok(output)
-}
-
-fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn auth_error(code: &'static str, message: &str) -> MonitorRequestError {
-    MonitorRequestError {
-        code,
-        command: None,
-        message: message.to_string(),
+        self.seen_nonces.authenticate(self.key, self.permissions, request)
     }
 }
 
@@ -339,40 +157,7 @@ pub enum MonitorTopic {
 
 impl MonitorCommand {
     pub fn parse(input: &str) -> Result<Self, String> {
-        let input = input.trim();
-        if input.len() > MAX_MONITOR_COMMAND_BYTES {
-            return Err(format!(
-                "monitor command exceeds the {MAX_MONITOR_COMMAND_BYTES} byte limit"
-            ))
-        }
-        match input {
-            "help" | "?" => Ok(Self::Help),
-            "quit" | "exit" => Ok(Self::Quit),
-            "status" | "info status" => Ok(Self::info(MonitorTopic::Status, false)),
-            "info status --show-sensitive" => Ok(Self::info(MonitorTopic::Status, true)),
-            "devices" | "info devices" => Ok(Self::info(MonitorTopic::Devices, false)),
-            "disks" | "info disks" => Ok(Self::info(MonitorTopic::Disks, false)),
-            "info disks --show-sensitive" => Ok(Self::info(MonitorTopic::Disks, true)),
-            "snapshots" | "info snapshots" => Ok(Self::info(MonitorTopic::Snapshots, false)),
-            "migration" | "info migration" => Ok(Self::info(MonitorTopic::Migration, false)),
-            "registers" | "info registers" => Ok(Self::info(MonitorTopic::Registers, true)),
-            _ => {
-                if let Some(path) = input.strip_prefix("save ").map(str::trim) {
-                    if path.is_empty() {
-                        return Err("save needs a snapshot PATH".to_string())
-                    }
-                    return Ok(Self::SaveSnapshot(PathBuf::from(path)))
-                }
-                Err("unknown monitor command".to_string())
-            }
-        }
-    }
-
-    const fn info(topic: MonitorTopic, disclose_sensitive: bool) -> Self {
-        Self::Info {
-            topic,
-            disclose_sensitive,
-        }
+        native::parse(input)
     }
 
     pub const fn permission(&self) -> MonitorPermission {
@@ -415,43 +200,13 @@ impl MonitorCommand {
     }
 }
 
-pub fn help_response() -> String {
-    let commands = [
-        "help",
-        "info status",
-        "info status --show-sensitive",
-        "info devices",
-        "info disks",
-        "info disks --show-sensitive",
-        "info snapshots",
-        "info migration",
-        "info registers",
-        "save PATH",
-        "quit",
-    ];
-    let values = commands
-        .iter()
-        .map(|command| json_string(command))
-        .collect::<Vec<_>>()
-        .join(",");
-    envelope("help", &format!("{{\"commands\":[{values}]}}"))
-}
+pub fn help_response() -> String { native::help() }
 
 pub fn failure_response(command: Option<&str>, code: &str, message: &str) -> String {
-    format!(
-        "{{\"ok\":false,\"command\":{},\"error\":{{\"code\":{},\"message\":{}}}}}\n",
-        command.map(json_string).unwrap_or_else(|| "null".to_string()),
-        json_string(code),
-        json_string(message),
-    )
+    native::failure(command, code, message)
 }
 
-pub fn action_response(command: &str, action: &str) -> String {
-    envelope(
-        command,
-        &format!("{{\"action\":{},\"completed\":true}}", json_string(action)),
-    )
-}
+pub fn action_response(command: &str, action: &str) -> String { native::action(command, action) }
 
 pub fn info_response(vm: &Vm, topic: MonitorTopic, disclose_sensitive: bool) -> String {
     match topic {
@@ -640,28 +395,11 @@ fn registers_response(vm: &Vm) -> String {
 }
 
 fn envelope(command: &str, data: &str) -> String {
-    format!(
-        "{{\"ok\":true,\"command\":{},\"data\":{data}}}\n",
-        json_string(command),
-    )
+    native::envelope(command, data)
 }
 
 pub(crate) fn json_string(value: &str) -> String {
-    let mut output = String::with_capacity(value.len() + 2);
-    output.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            value if value <= '\u{1f}' => output.push_str(&format!("\\u{:04x}", value as u32)),
-            value => output.push(value),
-        }
-    }
-    output.push('"');
-    output
+    native::json_string(value)
 }
 
 fn format_name(format: ghostos_vm::DiskFormat) -> &'static str {
