@@ -73,6 +73,12 @@ SHA-256/HMAC implementations. No behavior-parity checks were executed.
 Snapshot parsing and the full project cutover remain open. Build logs are
 in `temp/c-library-migration.log` and `temp/vm-build-migration.log`.
 
+DHCP build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with the active C DHCP configuration,
+lease-policy, and reply encoder. Rust segment integration remains. No new
+behavior-parity results are claimed. Build logs are in
+`temp/c-library-dhcp.log` and `temp/vm-build-dhcp.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -174,7 +180,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/memory/mod.rs`
 - [ ] `virtual_machine/src/migration.rs` — C owns bounded frame decoding, little-endian wire fields, exact/trailing length checks, authentication-domain assembly, constant-time tag comparison, and authentication-before-identity-before-snapshot validation in `c/src/vm_migration.c`. Rust retains snapshot/schema callbacks, owned payloads, and public errors. Full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/net/backend.rs` — C owns packet-length validation, UDP host-frame encoding/decoding, and deterministic segment recipient filtering. Rust still owns host sockets, raw-interface transport, loopback, and segment state.
-- [ ] `virtual_machine/src/net/dhcp.rs` — C owns DHCP frame/request parsing, IPv4 address/integer conversion, Internet checksum, and bounded DHCP option writing. Rust still owns lease policy and reply construction.
+- [ ] `virtual_machine/src/net/dhcp.rs` — C owns active configuration validation, bounded reservation and lease tables, deterministic allocation, renewal/release/expiry policy, DHCP request parsing, OFFER/ACK/NAK reply encoding, IPv4/UDP checksums, and bounded option writing in `c/src/vm_dhcp.c`. Rust retains segment ownership and receive/transmit polling, public config/lease adapters, and existing fixture test source. Legacy explicit-request reservation behavior is preserved; full C cutover and behavior parity remain.
 - [x] `virtual_machine/src/net/mac.rs` — C owns byte conversion, broadcast/unicast/multicast classification, destination filtering, and lowercase formatting in `c/src/vm_mac.c`. Rust keeps the public type and const constructors for API compatibility.
 - [ ] `virtual_machine/src/net/mod.rs` — C owns the alignment helper; Rust module exports and networking submodules remain.
 - [x] `virtual_machine/src/net/packet.rs` — C owns bounded packet queue storage, byte and packet accounting, queue operations, Ethernet minimum-frame padding, and error display strings in `c/src/vm_packet.c`. The VM build links this host-allocator module; Rust keeps the public `Vec` and error-code wrappers.

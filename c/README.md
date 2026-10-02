@@ -32,7 +32,7 @@ Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 | `virtual_machine/src/devices/net/virtio.rs` | `src/vm_virtio_net.c` | `include/ghostos/vm_virtio_net.h` |
 | `virtual_machine/src/devices/virtio_queue.rs` | `src/vm_virtio_queue.c` | `include/ghostos/vm_virtio_queue.h` |
 | `virtual_machine/src/net/backend.rs` (packet validation, UDP host-frame encoding/decoding, and deterministic segment recipient filtering), `src/net/dhcp.rs` (IPv4 integer conversion and Internet checksum), and `src/net/mod.rs` (`align_up` helper) | `src/vm_net.c` | `include/ghostos/vm_net.h` |
-| `virtual_machine/src/net/dhcp.rs` (request parsing and bounded DHCP option writing) | `src/vm_dhcp.c` | `include/ghostos/vm_dhcp.h` |
+| `virtual_machine/src/net/dhcp.rs` (configuration validation, lease policy/storage, request parsing, reply encoding, and bounded DHCP options) | `src/vm_dhcp.c` | `include/ghostos/vm_dhcp.h` |
 
 The VM packet queue uses the host allocator and is compiled into the VM's C
 archive by `virtual_machine/build.rs` and the root C archive. Kernel consumers
