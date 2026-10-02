@@ -1,59 +1,79 @@
 //! 16550-compatible serial port emulation (port-mapped I/O).
+//! C owns UART, queue, capture, and authentication state. Rust connects host
+//! console I/O and the shared local APIC.
 
 use super::{DeviceError, PortDevice};
 use super::{ApicTrigger, LocalApic};
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::ffi::c_void;
 use std::io::{self, Write};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-unsafe extern "C" {
-    fn ghostos_vm_serial_translate_newlines(
-        input: *const u8,
-        input_length: usize,
-        previous_was_cr: bool,
-        output: *mut u8,
-        output_capacity: usize,
-        output_length: *mut usize,
-        output_previous_was_cr: *mut bool,
-    ) -> bool;
-    fn ghostos_vm_serial_observe_panic_marker(
-        byte: u8,
-        progress: *mut usize,
-        detected: *mut bool,
-    );
+#[cfg(test)]
+const REG_DATA: u16 = 0;
+#[cfg(test)]
+const REG_IER: u16 = 1;
+#[cfg(test)]
+const REG_LCR: u16 = 3;
+#[cfg(test)]
+const REG_LSR: u16 = 5;
+#[cfg(test)]
+const LSR_DATA_READY: u8 = 1;
+#[cfg(test)]
+const LSR_OVERRUN: u8 = 2;
+#[cfg(test)]
+const FIFO_SIZE: usize = 16;
+#[cfg(test)]
+const ENROLLMENT_MARKER: &[u8] = b"\x1b]GhostOSEnroll\x07";
+#[cfg(test)]
+const LOGIN_MARKER: &[u8] = b"\x1b]GhostOSLogin\x07";
+
+#[repr(C)]
+struct CSerial {
+    _private: [u8; 0],
 }
 
-const REG_DATA: u16 = 0x00;
-const REG_IER: u16 = 0x01;
-const REG_IIR: u16 = 0x02;
-const REG_FCR: u16 = 0x02;
-const REG_LCR: u16 = 0x03;
-const REG_MCR: u16 = 0x04;
-const REG_LSR: u16 = 0x05;
-const REG_MSR: u16 = 0x06;
-const REG_SCR: u16 = 0x07;
+type ConsoleWrite = unsafe extern "C" fn(*mut c_void, *const u8, usize);
+type ConsoleFlush = unsafe extern "C" fn(*mut c_void);
+type ConsoleTime = unsafe extern "C" fn(*mut c_void) -> u64;
 
-const LCR_DLAB: u8 = 0x80;
-const LSR_DATA_READY: u8 = 0x01;
-const LSR_OVERRUN: u8 = 0x02;
-const LSR_THR_EMPTY: u8 = 0x20;
-const LSR_TRANSMIT_EMPTY: u8 = 0x40;
-
-const FIFO_SIZE: usize = 16;
-const OUTPUT_LIMIT: usize = 1024 * 1024;
-const OUTPUT_COMPACTION_THRESHOLD: usize = OUTPUT_LIMIT * 2;
-const ENROLLMENT_MARKER: &[u8] = b"\x1b]GhostOSEnroll\x07";
-const LOGIN_MARKER: &[u8] = b"\x1b]GhostOSLogin\x07";
-const AUTHORIZED_PROMPT: &[u8] = b"$ ";
-const AUTH_SPINNER_FRAMES: &[u8] = b"|/-\\";
-const AUTH_SPINNER_INTERVAL: Duration = Duration::from_millis(80);
-const AUTH_HOLD_KEEP: usize = 32;
-const AUTHENTICATION_MARKERS: [(&[u8], &[u8]); 2] = [
-    (ENROLLMENT_MARKER, b"Administrator username: "),
-    (LOGIN_MARKER, b"Username: "),
-];
+unsafe extern "C" {
+    fn ghostos_vm_serial_translate_newlines(input: *const u8, input_length: usize,
+        previous_was_cr: bool, output: *mut u8, output_capacity: usize,
+        output_length: *mut usize, output_previous_was_cr: *mut bool) -> bool;
+    fn ghostos_vm_serial_new(base: u16, now_ns: u64) -> *mut CSerial;
+    fn ghostos_vm_serial_free(serial: *mut CSerial);
+    fn ghostos_vm_serial_reset(serial: *mut CSerial, now_ns: u64);
+    fn ghostos_vm_serial_base(serial: *const CSerial) -> u16;
+    fn ghostos_vm_serial_push_input(serial: *mut CSerial, bytes: *const u8, length: usize) -> bool;
+    fn ghostos_vm_serial_push_input_lossless(serial: *mut CSerial, bytes: *const u8,
+        length: usize, interrupt: *mut bool) -> bool;
+    fn ghostos_vm_serial_input_pending(serial: *const CSerial) -> bool;
+    fn ghostos_vm_serial_set_banner(serial: *mut CSerial, bytes: *const u8, length: usize) -> bool;
+    fn ghostos_vm_serial_guest_panicked(serial: *const CSerial) -> bool;
+    fn ghostos_vm_serial_output(serial: *const CSerial, length: *mut usize) -> *const u8;
+    fn ghostos_vm_serial_clear_output(serial: *mut CSerial);
+    fn ghostos_vm_serial_read(serial: *mut CSerial, port: u16, size: u8, value: *mut u64) -> u8;
+    fn ghostos_vm_serial_write(serial: *mut CSerial, port: u16, value: u64, size: u8,
+        interrupt: *mut bool) -> u8;
+    fn ghostos_vm_serial_flush(serial: *mut CSerial, write: ConsoleWrite,
+        flush: ConsoleFlush, now: ConsoleTime, context: *mut c_void) -> bool;
+    #[cfg(test)]
+    fn ghostos_vm_serial_host_output(serial: *const CSerial, length: *mut usize) -> *const u8;
+    #[cfg(test)]
+    fn ghostos_vm_serial_append_host_output(serial: *mut CSerial, bytes: *const u8, length: usize) -> bool;
+    #[cfg(test)]
+    fn ghostos_vm_serial_consume_host_output(serial: *mut CSerial, length: usize);
+    #[cfg(test)]
+    fn ghostos_vm_serial_prepare_host_output(serial: *mut CSerial, writable: *mut usize) -> bool;
+    #[cfg(test)]
+    fn ghostos_vm_serial_auth_waiting(serial: *const CSerial) -> bool;
+    #[cfg(test)]
+    fn ghostos_vm_serial_tx_count(serial: *const CSerial) -> usize;
+    #[cfg(test)]
+    fn ghostos_vm_serial_rx_count(serial: *const CSerial) -> usize;
+}
 
 pub(crate) fn write_host_console<W: Write>(
     output: &mut W,
@@ -84,140 +104,54 @@ pub(crate) fn write_host_console<W: Write>(
     output.write_all(&translated)
 }
 
-fn pending_authentication_marker_bytes(output: &[u8]) -> usize {
-    AUTHENTICATION_MARKERS
-        .iter()
-        .flat_map(|(marker, _)| 1..marker.len())
-        .filter(|length| {
-            AUTHENTICATION_MARKERS.iter().any(|(marker, _)| {
-                *length < marker.len() && output.ends_with(&marker[..*length])
-            })
-        })
-        .max()
-        .unwrap_or(0)
+struct HostConsole<'a> {
+    stdout: &'a std::io::Stdout,
+    output: Option<std::io::StdoutLock<'a>>,
+    start: Instant,
 }
 
-fn authorized_prompt_offset(bytes: &[u8], allow_bare: bool) -> Option<usize> {
-    if allow_bare && bytes.starts_with(AUTHORIZED_PROMPT) {
-        return Some(0)
-    }
-    bytes.windows(1 + AUTHORIZED_PROMPT.len()).position(|window| {
-        matches!(window[0], b'\n' | b'\r') && window[1..] == *AUTHORIZED_PROMPT
-    }).map(|index| index + 1)
+unsafe extern "C" fn console_write(context: *mut c_void, bytes: *const u8, length: usize) {
+    // C calls synchronously with valid live buffers and exclusive context.
+    let console = unsafe { &mut *context.cast::<HostConsole<'_>>() };
+    let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
+    let stdout = console.stdout;
+    let output = console.output.get_or_insert_with(|| stdout.lock());
+    let _ = output.write_all(bytes);
 }
 
-fn is_only_authorized_prompt(bytes: &[u8]) -> bool {
-    let mut index = 0;
-    while index < bytes.len() && matches!(bytes[index], b'\r' | b'\n') {
-        index += 1;
-    }
-    bytes.get(index..) == Some(AUTHORIZED_PROMPT)
+unsafe extern "C" fn console_flush(context: *mut c_void) {
+    let console = unsafe { &mut *context.cast::<HostConsole<'_>>() };
+    let stdout = console.stdout;
+    let output = console.output.get_or_insert_with(|| stdout.lock());
+    let _ = output.flush();
 }
 
-fn compact_held_output(output: &mut Vec<u8>, pending_marker_bytes: usize) {
-    let keep = AUTH_HOLD_KEEP + pending_marker_bytes;
-    if output.len() > keep {
-        let drop = output.len() - keep;
-        output.drain(..drop);
-    }
+unsafe extern "C" fn console_time(context: *mut c_void) -> u64 {
+    let console = unsafe { &mut *context.cast::<HostConsole<'_>>() };
+    let stdout = console.stdout;
+    let _ = console.output.get_or_insert_with(|| stdout.lock());
+    console.start.elapsed().as_nanos().min(u64::MAX as u128) as u64
 }
 
-fn drop_auth_progress_frames(output: &mut Vec<u8>) {
-    const PREFIX: &[u8] = b"GhostOS authentication:";
-    loop {
-        let start = output
-            .windows(PREFIX.len())
-            .position(|bytes| bytes == PREFIX)
-            .map(|index| {
-                if index > 0 && output[index - 1] == b'\r' {
-                    index - 1
-                } else {
-                    index
-                }
-            });
-        let Some(start) = start else { return };
-        let from = start + PREFIX.len();
-        let end = output[from..]
-            .iter()
-            .position(|&byte| byte == b'\n')
-            .map(|offset| from + offset + 1)
-            .unwrap_or(output.len());
-        output.drain(start..end);
-    }
-}
-
-/// Emulated 16550 UART. Output is redirected to `std::io::stdout` so a guest
-/// kernel can print debug messages.
+/// C-owned 16550 UART with host console and shared APIC adapters.
 pub struct Serial16550 {
-    base: u16,
-    dlab: bool,
-    divisor_low: u8,
-    divisor_high: u8,
-    ier: u8,
-    fcr: u8,
-    lcr: u8,
-    mcr: u8,
-    lsr: u8,
-    msr: u8,
-    scratch: u8,
-    tx_buffer: [u8; FIFO_SIZE],
-    tx_count: usize,
-    host_last_was_cr: bool,
-    host_output: Vec<u8>,
-    authentication_banner: Vec<u8>,
-    auth_waiting: bool,
-    prompt_shown: bool,
-    spinner_frame: u8,
-    spinner_drawn: bool,
-    last_spinner: Instant,
-    rx_buffer: VecDeque<u8>,
-    pending_input: VecDeque<u8>,
-    output: Vec<u8>,
-    panic_marker_progress: usize,
-    panic_detected: bool,
+    state: *mut CSerial,
+    start: Instant,
     apic: Option<Rc<RefCell<LocalApic>>>,
     irq_vector: u8,
 }
 
 impl Serial16550 {
     pub fn new(base: u16) -> Self {
-        Self {
-            base,
-            dlab: false,
-            divisor_low: 0x0C,
-            divisor_high: 0x00,
-            ier: 0,
-            fcr: 0,
-            lcr: 0x03,
-            mcr: 0,
-            lsr: LSR_THR_EMPTY | LSR_TRANSMIT_EMPTY,
-            msr: 0,
-            scratch: 0,
-            tx_buffer: [0; FIFO_SIZE],
-            tx_count: 0,
-            host_last_was_cr: false,
-            host_output: Vec::with_capacity(4096),
-            authentication_banner: Vec::new(),
-            auth_waiting: false,
-            prompt_shown: false,
-            spinner_frame: 0,
-            spinner_drawn: false,
-            last_spinner: Instant::now(),
-            rx_buffer: VecDeque::new(),
-            pending_input: VecDeque::new(),
-            output: Vec::new(),
-            panic_marker_progress: 0,
-            panic_detected: false,
-            apic: None,
-            irq_vector: 0x24,
-        }
+        let state = unsafe { ghostos_vm_serial_new(base, 0) };
+        assert!(!state.is_null(), "could not allocate serial controller");
+        Self { state, start: Instant::now(), apic: None, irq_vector: 0x24 }
     }
 
     pub fn base(&self) -> u16 {
-        self.base
+        unsafe { ghostos_vm_serial_base(self.state) }
     }
 
-    /// Connect the UART's receive interrupt to the local APIC.
     pub fn attach_apic(&mut self, apic: Rc<RefCell<LocalApic>>) {
         self.apic = Some(apic)
     }
@@ -226,323 +160,125 @@ impl Serial16550 {
         self.irq_vector = vector
     }
 
-    /// Put host input into the UART receive FIFO.
-    pub fn push_input(&mut self, bytes: &[u8]) {
-        self.refill_rx_buffer();
-        let was_empty = self.rx_buffer.is_empty();
-        for &byte in bytes {
-            if self.rx_buffer.len() >= FIFO_SIZE {
-                self.lsr |= LSR_OVERRUN;
-                break;
-            }
-            self.rx_buffer.push_back(byte);
+    fn signal_receive_irq(&self) {
+        if let Some(apic) = &self.apic {
+            apic.borrow_mut().signal(self.irq_vector, ApicTrigger::Edge)
         }
-        if was_empty && !self.rx_buffer.is_empty() {
+    }
+
+    pub fn push_input(&mut self, bytes: &[u8]) {
+        if unsafe { ghostos_vm_serial_push_input(self.state, bytes.as_ptr(), bytes.len()) } {
             self.signal_receive_irq()
         }
     }
 
-    /// Queue host input without losing bytes when a paste is larger than the
-    /// emulated UART FIFO. The guest still sees a 16550-sized FIFO; excess
-    /// input waits here until the guest reads it.
+    /// Retain excess paste bytes until the guest consumes the receive FIFO.
     pub(crate) fn push_input_lossless(&mut self, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return
-        }
-        let was_empty = self.rx_buffer.is_empty();
-        self.pending_input.extend(bytes.iter().copied());
-        self.refill_rx_buffer();
-        if was_empty && !self.rx_buffer.is_empty() {
-            self.signal_receive_irq()
-        }
+        let mut interrupt = false;
+        let queued = unsafe {
+            ghostos_vm_serial_push_input_lossless(self.state, bytes.as_ptr(), bytes.len(), &mut interrupt)
+        };
+        assert!(queued, "could not allocate pending serial input");
+        if interrupt { self.signal_receive_irq() }
     }
 
     pub fn input_pending(&self) -> bool {
-        !self.rx_buffer.is_empty() || !self.pending_input.is_empty()
+        unsafe { ghostos_vm_serial_input_pending(self.state) }
     }
 
     pub fn set_authentication_banner(&mut self, banner: &[u8]) {
-        if self.authentication_banner != banner {
-            self.authentication_banner.clear();
-            self.authentication_banner.extend_from_slice(banner);
-        }
+        assert!(unsafe { ghostos_vm_serial_set_banner(self.state, banner.as_ptr(), banner.len()) },
+            "could not allocate serial authentication banner")
     }
 
     pub fn output(&self) -> &[u8] {
-        &self.output
+        let mut length = 0;
+        let bytes = unsafe { ghostos_vm_serial_output(self.state, &mut length) };
+        if length == 0 { &[] } else { unsafe { std::slice::from_raw_parts(bytes, length) } }
     }
 
     pub fn guest_panicked(&self) -> bool {
-        self.panic_detected
+        unsafe { ghostos_vm_serial_guest_panicked(self.state) }
     }
 
     pub fn take_output(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.output)
+        let output = self.output().to_vec();
+        unsafe { ghostos_vm_serial_clear_output(self.state) };
+        output
     }
 
-    /// Flush bytes waiting in the transmit FIFO.
     pub fn flush(&mut self) {
-        self.flush_output();
-        let writable = if self.host_output.is_empty() {
-            0
-        } else {
-            self.insert_authentication_banner()
+        let stdout = std::io::stdout();
+        let mut console = HostConsole { stdout: &stdout, output: None, start: self.start };
+        let flushed = unsafe {
+            ghostos_vm_serial_flush(self.state, console_write, console_flush, console_time,
+                (&mut console as *mut HostConsole<'_>).cast())
         };
-        if writable == 0 && !self.auth_waiting {
-            return
-        }
-        let mut stdout = std::io::stdout().lock();
-        if writable != 0 {
-            if self.spinner_drawn {
-                let _ = stdout.write_all(b"\r\x1b[K");
-                self.spinner_drawn = false;
-            }
-            let _ = stdout.write_all(&self.host_output[..writable]);
-            self.host_output.drain(..writable);
-        }
-        if self.auth_waiting {
-            self.write_auth_spinner(&mut stdout);
-        }
-        let _ = stdout.flush();
+        assert!(flushed, "could not allocate serial host output")
     }
 
+    #[cfg(test)]
+    fn tx_count(&self) -> usize { unsafe { ghostos_vm_serial_tx_count(self.state) } }
+    #[cfg(test)]
+    fn rx_count(&self) -> usize { unsafe { ghostos_vm_serial_rx_count(self.state) } }
+    #[cfg(test)]
+    fn auth_waiting(&self) -> bool { unsafe { ghostos_vm_serial_auth_waiting(self.state) } }
+    #[cfg(test)]
+    fn append_host_output(&mut self, bytes: &[u8]) {
+        assert!(unsafe { ghostos_vm_serial_append_host_output(self.state, bytes.as_ptr(), bytes.len()) })
+    }
+    #[cfg(test)]
+    fn consume_host_output(&mut self, length: usize) {
+        unsafe { ghostos_vm_serial_consume_host_output(self.state, length) }
+    }
+    #[cfg(test)]
+    fn host_output(&self) -> &[u8] {
+        let mut length = 0;
+        let bytes = unsafe { ghostos_vm_serial_host_output(self.state, &mut length) };
+        if length == 0 { &[] } else { unsafe { std::slice::from_raw_parts(bytes, length) } }
+    }
+    #[cfg(test)]
     fn insert_authentication_banner(&mut self) -> usize {
-        let passkey_web = !self.authentication_banner.is_empty();
-        let mut waiting_from = if self.auth_waiting { Some(0) } else { None };
-        while let Some((marker_start, marker, fallback)) = AUTHENTICATION_MARKERS
-            .iter()
-            .filter_map(|(marker, fallback)| {
-                self.host_output
-                    .windows(marker.len())
-                    .position(|bytes| bytes == *marker)
-                    .map(|start| (start, *marker, *fallback))
-            })
-            .min_by_key(|(start, _, _)| *start)
-        {
-            let marker_end = marker_start + marker.len();
-            let replacement = if passkey_web {
-                if waiting_from.is_none() {
-                    waiting_from = Some(marker_start);
-                }
-                &[] as &[u8]
-            } else {
-                fallback
-            };
-            self.host_output.splice(
-                marker_start..marker_end,
-                replacement.iter().copied(),
-            );
-        }
-        if waiting_from.is_some() {
-            self.auth_waiting = true;
-        }
-        drop_auth_progress_frames(&mut self.host_output);
-        let pending_marker_bytes = pending_authentication_marker_bytes(&self.host_output);
-        let complete_end = self.host_output.len() - pending_marker_bytes;
-        if !self.auth_waiting {
-            if self.prompt_shown && is_only_authorized_prompt(&self.host_output[..complete_end]) {
-                self.host_output.drain(..complete_end);
-                return 0
-            }
-            if authorized_prompt_offset(&self.host_output[..complete_end], true).is_some() {
-                self.prompt_shown = true;
-            } else if self.host_output[..complete_end]
-                .iter()
-                .any(|&byte| !matches!(byte, b'\r' | b'\n'))
-            {
-                self.prompt_shown = false;
-            }
-            return complete_end
-        }
-        if self.panic_detected {
-            self.auth_waiting = false;
-            return complete_end
-        }
-        let search_from = waiting_from.unwrap_or(0).min(complete_end);
-        let allow_bare = !(self.prompt_shown && search_from == 0);
-        if let Some(relative) = authorized_prompt_offset(
-            &self.host_output[search_from..complete_end],
-            allow_bare,
-        )
-        {
-            let prompt_at = search_from + relative;
-            self.host_output.drain(..prompt_at);
-            self.auth_waiting = false;
-            self.prompt_shown = true;
-            return self.host_output.len() - pending_marker_bytes
-        }
-        let hold_from = waiting_from.unwrap_or(0).min(complete_end);
-        if hold_from == 0 {
-            compact_held_output(&mut self.host_output, pending_marker_bytes);
-        }
-        hold_from
+        let mut writable = 0;
+        assert!(unsafe { ghostos_vm_serial_prepare_host_output(self.state, &mut writable) });
+        writable
     }
+}
 
-    fn write_auth_spinner(&mut self, stdout: &mut impl Write) {
-        let now = Instant::now();
-        if self.spinner_drawn && now.duration_since(self.last_spinner) < AUTH_SPINNER_INTERVAL {
-            return
-        }
-        let frame = AUTH_SPINNER_FRAMES[self.spinner_frame as usize];
-        self.spinner_frame = (self.spinner_frame + 1) % AUTH_SPINNER_FRAMES.len() as u8;
-        self.last_spinner = now;
-        self.spinner_drawn = true;
-        let _ = stdout.write_all(&[b'\r', frame, 0x1b, b'[', b'K']);
+impl Drop for Serial16550 {
+    fn drop(&mut self) {
+        unsafe { ghostos_vm_serial_free(self.state) }
     }
+}
 
-    fn signal_receive_irq(&mut self) {
-        if self.ier & 0x01 == 0 {
-            return
-        }
-        if let Some(apic) = &self.apic {
-            apic.borrow_mut().signal(self.irq_vector, ApicTrigger::Edge);
-        }
-    }
-
-    fn flush_output(&mut self) {
-        if self.tx_count == 0 {
-            return
-        }
-
-        let tx_count = self.tx_count;
-        let _ = write_host_console(
-            &mut self.host_output,
-            &self.tx_buffer[..tx_count],
-            &mut self.host_last_was_cr,
-        );
-        if self.output.len() > OUTPUT_COMPACTION_THRESHOLD {
-            let excess = self.output.len() - OUTPUT_LIMIT;
-            self.output.drain(..excess);
-        }
-        self.tx_count = 0;
-    }
-
-    fn observe_panic_marker(&mut self, byte: u8) {
-        unsafe {
-            ghostos_vm_serial_observe_panic_marker(
-                byte,
-                &mut self.panic_marker_progress,
-                &mut self.panic_detected,
-            )
-        }
-    }
-
-    fn refill_rx_buffer(&mut self) {
-        while self.rx_buffer.len() < FIFO_SIZE {
-            let Some(byte) = self.pending_input.pop_front() else {
-                break
-            };
-            self.rx_buffer.push_back(byte)
-        }
+fn port_result(code: u8) -> Result<(), DeviceError> {
+    match code {
+        0 => Ok(()),
+        1 => Err(DeviceError::UnsupportedSize),
+        _ => panic!("could not allocate serial output"),
     }
 }
 
 impl PortDevice for Serial16550 {
     fn read(&mut self, port: u16, size: u8) -> Result<u64, DeviceError> {
-        if size != 1 {
-            return Err(DeviceError::UnsupportedSize);
-        }
-        let off = (port - self.base) & 0x07;
-        let reg = match off {
-            REG_DATA => {
-                if self.dlab {
-                    self.divisor_low
-                } else {
-                    let byte = self.rx_buffer.pop_front().unwrap_or(0);
-                    self.refill_rx_buffer();
-                    byte
-                }
-            }
-            REG_IER => {
-                if self.dlab {
-                    self.divisor_high
-                } else {
-                    self.ier
-                }
-            }
-            REG_IIR => {
-                if !self.rx_buffer.is_empty() && self.ier & 0x01 != 0 {
-                    0x04
-                } else {
-                    0x01
-                }
-            }
-            REG_LCR => self.lcr,
-            REG_MCR => self.mcr,
-            REG_LSR => {
-                if self.rx_buffer.is_empty() {
-                    self.lsr & !LSR_DATA_READY
-                } else {
-                    self.lsr | LSR_DATA_READY
-                }
-            }
-            REG_MSR => self.msr,
-            REG_SCR => self.scratch,
-            _ => 0xFF,
-        };
-        Ok(reg as u64)
+        let mut value = 0;
+        port_result(unsafe { ghostos_vm_serial_read(self.state, port, size, &mut value) })?;
+        Ok(value)
     }
 
     fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
-        if size != 1 {
-            return Err(DeviceError::UnsupportedSize);
-        }
-        let v = value as u8;
-        let off = (port - self.base) & 0x07;
-        match off {
-            REG_DATA => {
-                if self.dlab {
-                    self.divisor_low = v;
-                }
-            }
-            REG_IER => {
-                if self.dlab {
-                    self.divisor_high = v;
-                } else {
-                    self.ier = v;
-                    if v & 0x01 != 0 && !self.rx_buffer.is_empty() {
-                        self.signal_receive_irq()
-                    }
-                }
-            }
-            REG_FCR => {
-                self.fcr = v;
-                if v & 0x02 != 0 {
-                    self.rx_buffer.clear();
-                }
-                if v & 0x04 != 0 {
-                    self.tx_count = 0;
-                }
-            }
-            REG_LCR => {
-                self.lcr = v;
-                self.dlab = v & LCR_DLAB != 0;
-            }
-            REG_MCR => self.mcr = v,
-            REG_SCR => self.scratch = v,
-            _ => {}
-        }
-
-        // If a byte is written to the data register while DLAB is clear, treat
-        // it as a character to transmit on the host console.
-        if off == REG_DATA && !self.dlab {
-            if self.tx_count >= FIFO_SIZE {
-                self.flush_output();
-            }
-            self.tx_buffer[self.tx_count] = v;
-            self.tx_count += 1;
-            self.output.push(v);
-            self.observe_panic_marker(v);
-            if matches!(v, b'\n' | b'\r') {
-                self.flush_output();
-            }
-        }
-
+        let mut interrupt = false;
+        let code = unsafe { ghostos_vm_serial_write(self.state, port, value, size, &mut interrupt) };
+        port_result(code)?;
+        if interrupt { self.signal_receive_irq() }
         Ok(())
     }
 
     fn reset(&mut self) {
-        *self = Self::new(self.base);
+        unsafe { ghostos_vm_serial_reset(self.state, 0) };
+        self.start = Instant::now();
+        self.apic = None;
+        self.irq_vector = 0x24;
     }
 }
 
@@ -570,23 +306,22 @@ mod tests {
         let mut s = Serial16550::new(base);
         // Default without DLAB: data register is TX path.
         assert!(s.write(base + REG_DATA, b'A' as u64, 1).is_ok());
-        assert_eq!(s.tx_count, 1);
+        assert_eq!(s.tx_count(), 1);
 
         // Set DLAB.
         s.write(base + REG_LCR, 0x80, 1).unwrap();
-        assert!(s.dlab);
         assert!(s.read(base + REG_LCR, 1).unwrap() & 0x80 != 0);
 
         // Divisor registers map onto 0/1 while DLAB is set.
         s.write(base + REG_DATA, 0x01, 1).unwrap();
         s.write(base + REG_IER, 0x00, 1).unwrap();
-        assert_eq!(s.divisor_low, 0x01);
+        assert_eq!(s.read(base + REG_DATA, 1).unwrap(), 0x01);
 
         // Clear DLAB and confirm data register goes back to TX.
         s.write(base + REG_LCR, 0x03, 1).unwrap();
-        assert!(!s.dlab);
+        assert_eq!(s.read(base + REG_LCR, 1).unwrap() & 0x80, 0);
         s.write(base + REG_DATA, b'B' as u64, 1).unwrap();
-        assert_eq!(s.tx_count, 2);
+        assert_eq!(s.tx_count(), 2);
     }
 
     #[test]
@@ -613,7 +348,7 @@ mod tests {
         let mut s = Serial16550::new(base);
         s.write(base + REG_DATA, b'\r' as u64, 1).unwrap();
 
-        assert_eq!(s.tx_count, 0);
+        assert_eq!(s.tx_count(), 0);
         assert_eq!(s.output(), b"\r");
     }
 
@@ -621,122 +356,121 @@ mod tests {
     fn authentication_banner_holds_setup_until_prompt() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey setup and login: http://localhost:1234/?code=test\r\n");
-        s.host_output.extend_from_slice(
+        s.append_host_output(
             b"Ready\r\n\x1b]GhostOSEnroll\x07Do not type credentials in this terminal.\r\n",
         );
 
         let writable = s.insert_authentication_banner();
 
-        assert_eq!(&s.host_output[..writable], b"Ready\r\n");
-        s.host_output.drain(..writable);
-        assert!(s.auth_waiting);
+        assert_eq!(&s.host_output()[..writable], b"Ready\r\n");
+        s.consume_host_output(writable);
+        assert!(s.auth_waiting());
         assert_eq!(
-            s.host_output,
+            s.host_output(),
             b"Do not type credentials in this terminal.\r\n"
         );
 
-        s.host_output.extend_from_slice(
+        s.append_host_output(
             b"Administrator account committed.\r\nGhostOS user shell\r\n$ ",
         );
         let writable = s.insert_authentication_banner();
-        assert!(!s.auth_waiting);
-        assert_eq!(&s.host_output[..writable], b"$ ");
+        assert!(!s.auth_waiting());
+        assert_eq!(&s.host_output()[..writable], b"$ ");
     }
 
     #[test]
     fn partial_authentication_marker_waits_for_next_flush() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey URL\r\n");
-        s.host_output.extend_from_slice(b"Ready\r\n\x1b]Ghost");
+        s.append_host_output(b"Ready\r\n\x1b]Ghost");
 
         let writable = s.insert_authentication_banner();
-        assert_eq!(&s.host_output[..writable], b"Ready\r\n");
-        s.host_output.drain(..writable);
-        s.host_output
-            .extend_from_slice(b"OSEnroll\x07");
+        assert_eq!(&s.host_output()[..writable], b"Ready\r\n");
+        s.consume_host_output(writable);
+        s.append_host_output(b"OSEnroll\x07");
 
         let writable = s.insert_authentication_banner();
         assert_eq!(writable, 0);
-        assert!(s.auth_waiting);
-        assert!(s.host_output.is_empty());
+        assert!(s.auth_waiting());
+        assert!(s.host_output().is_empty());
     }
 
     #[test]
     fn authentication_marker_becomes_manual_prompt_without_banner() {
         let mut s = Serial16550::new(0x3F8);
-        s.host_output.extend_from_slice(ENROLLMENT_MARKER);
+        s.append_host_output(ENROLLMENT_MARKER);
 
         let writable = s.insert_authentication_banner();
 
-        assert_eq!(writable, s.host_output.len());
-        assert_eq!(s.host_output, b"Administrator username: ");
-        assert!(!s.auth_waiting);
+        assert_eq!(writable, s.host_output().len());
+        assert_eq!(s.host_output(), b"Administrator username: ");
+        assert!(!s.auth_waiting());
     }
 
     #[test]
     fn login_marker_holds_output_until_prompt() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey URL\r\n");
-        s.host_output.extend_from_slice(LOGIN_MARKER);
-        s.host_output.extend_from_slice(b"Username: micky\r\nLogin accepted.\r\n");
+        s.append_host_output(LOGIN_MARKER);
+        s.append_host_output(b"Username: micky\r\nLogin accepted.\r\n");
 
         let writable = s.insert_authentication_banner();
         assert_eq!(writable, 0);
-        assert!(s.auth_waiting);
+        assert!(s.auth_waiting());
 
-        s.host_output.extend_from_slice(b"$ ");
+        s.append_host_output(b"$ ");
         let writable = s.insert_authentication_banner();
-        assert!(!s.auth_waiting);
-        assert_eq!(&s.host_output[..writable], b"$ ");
+        assert!(!s.auth_waiting());
+        assert_eq!(&s.host_output()[..writable], b"$ ");
     }
 
     #[test]
     fn extra_authorized_prompt_is_not_reprinted() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey URL\r\n");
-        s.host_output.extend_from_slice(b"$ ");
+        s.append_host_output(b"$ ");
         let writable = s.insert_authentication_banner();
-        assert_eq!(&s.host_output[..writable], b"$ ");
-        s.host_output.drain(..writable);
+        assert_eq!(&s.host_output()[..writable], b"$ ");
+        s.consume_host_output(writable);
 
-        s.host_output.extend_from_slice(b"\n$ ");
+        s.append_host_output(b"\n$ ");
         let writable = s.insert_authentication_banner();
         assert_eq!(writable, 0);
-        assert!(!s.auth_waiting);
+        assert!(!s.auth_waiting());
     }
 
     #[test]
     fn leftover_prompt_does_not_end_a_later_login_wait() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey URL\r\n");
-        s.host_output.extend_from_slice(b"$ ");
+        s.append_host_output(b"$ ");
         let writable = s.insert_authentication_banner();
-        s.host_output.drain(..writable);
+        s.consume_host_output(writable);
 
-        s.host_output.extend_from_slice(LOGIN_MARKER);
-        s.host_output.extend_from_slice(b"$ ");
+        s.append_host_output(LOGIN_MARKER);
+        s.append_host_output(b"$ ");
         let writable = s.insert_authentication_banner();
         assert_eq!(writable, 0);
-        assert!(s.auth_waiting);
+        assert!(s.auth_waiting());
 
-        s.host_output.extend_from_slice(b"\n$ ");
+        s.append_host_output(b"\n$ ");
         let writable = s.insert_authentication_banner();
-        assert!(!s.auth_waiting);
-        assert_eq!(&s.host_output[..writable], b"$ ");
+        assert!(!s.auth_waiting());
+        assert_eq!(&s.host_output()[..writable], b"$ ");
     }
 
     #[test]
     fn authentication_progress_frames_do_not_reprint_after_prompt() {
         let mut s = Serial16550::new(0x3F8);
         s.set_authentication_banner(b"Passkey URL\r\n");
-        s.host_output.extend_from_slice(b"$ \rGhostOS authentication: |");
-        s.host_output.extend_from_slice(b"\rGhostOS authentication: /");
-        s.host_output.extend_from_slice(b"\rGhostOS authentication: ready\n");
+        s.append_host_output(b"$ \rGhostOS authentication: |");
+        s.append_host_output(b"\rGhostOS authentication: /");
+        s.append_host_output(b"\rGhostOS authentication: ready\n");
 
         let writable = s.insert_authentication_banner();
 
-        assert!(!s.auth_waiting);
-        assert_eq!(&s.host_output[..writable], b"$ ");
+        assert!(!s.auth_waiting());
+        assert_eq!(&s.host_output()[..writable], b"$ ");
     }
 
     #[test]
@@ -747,7 +481,7 @@ mod tests {
         s.attach_apic(apic.clone());
         s.write(base + REG_IER, 1, 1).unwrap();
         s.push_input(&[0xAA; FIFO_SIZE + 1]);
-        assert_eq!(s.rx_buffer.len(), FIFO_SIZE);
+        assert_eq!(s.rx_count(), FIFO_SIZE);
         assert_ne!(s.read(base + REG_LSR, 1).unwrap() as u8 & LSR_OVERRUN, 0);
         assert_eq!(apic.borrow_mut().pending_vector(), Some(0x24));
         s.reset();

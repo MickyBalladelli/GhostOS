@@ -26,7 +26,6 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `virtual_machine/src/devices/power.rs` | `src/vm_power.c` | `include/ghostos/vm_power.h` |
 | `virtual_machine/src/devices/interrupt_controller.rs` | `src/vm_interrupt_controller.c` | `include/ghostos/vm_interrupt_controller.h` |
 | `virtual_machine/src/devices/virtio_queue.rs` | `src/vm_virtio_queue.c` | `include/ghostos/vm_virtio_queue.h` |
-| `virtual_machine/src/devices/serial.rs` (host newline conversion and panic-marker matching) | `src/vm_serial.c` | `include/ghostos/vm_serial.h` |
 | `virtual_machine/src/net/backend.rs` (packet validation, UDP host-frame encoding/decoding, and deterministic segment recipient filtering), `src/net/dhcp.rs` (IPv4 integer conversion and Internet checksum), and `src/net/mod.rs` (`align_up` helper) | `src/vm_net.c` | `include/ghostos/vm_net.h` |
 | `virtual_machine/src/net/dhcp.rs` (request parsing and bounded DHCP option writing) | `src/vm_dhcp.c` | `include/ghostos/vm_dhcp.h` |
 
@@ -95,6 +94,8 @@ foundation library.
 | `virtual_machine/src/devices/input.rs` (active PS/2 commands, output/pending queues, mouse packets, and IRQ decisions) | `src/vm_ps2.c` | `include/ghostos/vm_ps2.h` |
 | `virtual_machine/src/devices/guest.rs` (active mailbox queues/registers, hotplug state, and pvclock state/encoding) | `src/vm_guest.c` | `include/ghostos/vm_guest.h` |
 | `virtual_machine/src/driver_capabilities.rs` (active availability/fallback decisions and report text) | `src/vm_driver_capabilities.c` | `include/ghostos/vm_driver_capabilities.h` |
+| `virtual_machine/src/devices/serial.rs` (active UART, input/output queues, authentication prompts, and spinner policy) | `src/vm_serial.c` | `include/ghostos/vm_serial.h` |
+| `virtual_machine/src/devices/storage/persistence.rs` (active filesystem persistence ports and tail-region format) | `src/vm_persistence.c` | `include/ghostos/vm_persistence.h` |
 
 `make c-vm-test-binaries` builds `build/c/vm-device-contracts` without executing
 it. This standalone C binary checks APIC priority, level-triggered delivery,
@@ -121,6 +122,23 @@ PS/2 adapter preserves the existing retry when shared APIC borrowing is busy.
 The pvclock invokes the host/replay wall-time callback after its two system-time
 page writes, then writes the wall-clock page in the original little-endian
 format. Device reset semantics and guest-visible errors remain unchanged.
+
+The serial controller also owns its host-output buffer and authentication
+presentation in C. Console writes, flushes, and monotonic timestamps are
+synchronous host callbacks. The active Rust adapter connects stdout and the
+shared APIC; C decides receive IRQs and the 80 ms authentication spinner policy.
+Raw guest output and translated host output remain separate buffers. The
+fourteen retained Rust serial cases have C equivalents in
+`c/tests/vm_serial_contracts.c`; `make c-vm-test-binaries` also builds that
+standalone binary. These newly ported serial checks have not been executed.
+
+The VM persistence port retains its 64 KiB tail region, 512-byte header sector,
+60 KiB payload bound, SYNOPS01 magic, version 1, little-endian fields, and FNV-1a
+checksum. The C implementation performs sector I/O and final sync through the
+DiskImage adapter's callbacks. Invalid magic/version/length/checksum loads an
+empty state; a failed read/write/sync preserves the existing command-transition
+behavior. A checked C result represents the original out-of-bounds word-read
+slice panic, which the Rust adapter still raises without a C buffer overread.
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

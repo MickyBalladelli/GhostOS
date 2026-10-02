@@ -1,238 +1,162 @@
+//! C-owned persistence port and SYNOPS01 disk-region encoding.
+
 use super::{DiskImage, StorageError};
 use crate::devices::{DeviceError, PortDevice};
 use std::cell::RefCell;
+use std::ffi::c_void;
 use std::rc::Rc;
-use ghostos_boot_protocol::{
-    GHOSTOS_PERSISTENCE_COMMAND_PORT, GHOSTOS_PERSISTENCE_DATA_PORT,
-    GHOSTOS_PERSISTENCE_LENGTH_PORT, GHOSTOS_PERSISTENCE_LOAD, GHOSTOS_PERSISTENCE_MAX_BYTES,
-    GHOSTOS_PERSISTENCE_FLUSH, GHOSTOS_PERSISTENCE_SAVE,
-};
 
-const SECTOR_SIZE: usize = 512;
-const REGION_BYTES: usize = 64 * 1024;
-const HEADER_BYTES: usize = SECTOR_SIZE;
-const REGION_SECTORS: u64 = (REGION_BYTES / SECTOR_SIZE) as u64;
-const MAGIC: &[u8; 8] = b"SYNOPS01";
-const VERSION: u32 = 1;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Idle,
-    Read,
-    Write,
+#[repr(C)]
+struct CState {
+    _private: [u8; 0],
 }
 
-/// Private VM port used by the shell's tiny filesystem until a real guest
-/// filesystem driver is available. State is stored in the tail of a
-/// persistent disk image, outside the controller's normal guest sectors.
+#[repr(C)]
+struct CIo {
+    attached: bool,
+    read_sector: unsafe extern "C" fn(*mut c_void, u64, *mut u8) -> bool,
+    write_sector: unsafe extern "C" fn(*mut c_void, u64, *const u8) -> bool,
+    sync: unsafe extern "C" fn(*mut c_void) -> bool,
+    context: *mut c_void,
+}
+
+const _: () = {
+    assert!(std::mem::size_of::<CIo>() == 40);
+    assert!(std::mem::offset_of!(CIo, read_sector) == 8);
+    assert!(std::mem::offset_of!(CIo, context) == 32);
+};
+
+unsafe extern "C" {
+    fn ghostos_vm_persistence_new() -> *mut CState;
+    fn ghostos_vm_persistence_free(state: *mut CState);
+    fn ghostos_vm_persistence_attach(state: *mut CState, sectors: u64, io: *const CIo) -> u8;
+    fn ghostos_vm_persistence_read(state: *mut CState, port: u16, size: u8, value: *mut u64) -> u8;
+    fn ghostos_vm_persistence_write(state: *mut CState, port: u16, value: u64, size: u8,
+        io: *const CIo) -> u8;
+    fn ghostos_vm_persistence_reset(state: *mut CState, io: *const CIo);
+}
+
+struct DiskContext<'a> {
+    image: Option<&'a mut DiskImage>,
+    error: Option<StorageError>,
+}
+
+impl DiskContext<'_> {
+    fn io(&mut self) -> CIo {
+        CIo {
+            attached: self.image.is_some(), read_sector, write_sector, sync: sync_image,
+            context: (self as *mut Self).cast(),
+        }
+    }
+
+    fn finish(&mut self, result: Result<(), StorageError>) -> bool {
+        match result {
+            Ok(()) => true,
+            Err(error) => { self.error = Some(error); false }
+        }
+    }
+}
+
+// C invokes each callback synchronously with a live 512-byte sector and an
+// exclusive disk context. No callback pointer or buffer is retained.
+unsafe extern "C" fn read_sector(context: *mut c_void, sector: u64, bytes: *mut u8) -> bool {
+    let context = unsafe { &mut *context.cast::<DiskContext<'_>>() };
+    let Some(image) = context.image.as_mut() else { return false };
+    let bytes = unsafe { &mut *bytes.cast::<[u8; 512]>() };
+    let result = image.read_sector(sector, bytes);
+    context.finish(result)
+}
+
+unsafe extern "C" fn write_sector(context: *mut c_void, sector: u64, bytes: *const u8) -> bool {
+    let context = unsafe { &mut *context.cast::<DiskContext<'_>>() };
+    let Some(image) = context.image.as_mut() else { return false };
+    let bytes = unsafe { &*bytes.cast::<[u8; 512]>() };
+    let result = image.write_sector(sector, bytes);
+    context.finish(result)
+}
+
+unsafe extern "C" fn sync_image(context: *mut c_void) -> bool {
+    let context = unsafe { &mut *context.cast::<DiskContext<'_>>() };
+    let Some(image) = context.image.as_mut() else { return false };
+    let result = image.sync();
+    context.finish(result)
+}
+
+/// VM filesystem persistence stored in the tail of a disk image.
 pub struct SynosPersistencePort {
+    state: *mut CState,
     image: Option<DiskImage>,
-    base_sector: u64,
-    bytes: [u8; GHOSTOS_PERSISTENCE_MAX_BYTES],
-    length: usize,
-    cursor: usize,
-    expected_length: usize,
-    mode: Mode,
 }
 
 impl SynosPersistencePort {
     pub fn new() -> Self {
-        Self {
-            image: None,
-            base_sector: 0,
-            bytes: [0; GHOSTOS_PERSISTENCE_MAX_BYTES],
-            length: 0,
-            cursor: 0,
-            expected_length: 0,
-            mode: Mode::Idle,
-        }
+        let state = unsafe { ghostos_vm_persistence_new() };
+        assert!(!state.is_null(), "could not allocate persistence port");
+        Self { state, image: None }
     }
 
     pub fn attach_image(&mut self, mut image: DiskImage) -> Result<(), StorageError> {
-        if image.sector_count() < REGION_SECTORS {
-            return Err(StorageError::InvalidImage(
-                "disk is too small for GhostOS persistence metadata".to_string(),
-            ));
+        let sectors = image.sector_count();
+        {
+            let mut context = DiskContext { image: Some(&mut image), error: None };
+            let io = context.io();
+            let code = unsafe { ghostos_vm_persistence_attach(self.state, sectors, &io) };
+            match code {
+                0 => {},
+                1 => return Err(StorageError::InvalidImage(
+                    "disk is too small for GhostOS persistence metadata".to_string(),
+                )),
+                _ => return Err(context.error.take().expect("C persistence I/O error")),
+            }
         }
-        self.base_sector = image.sector_count() - REGION_SECTORS;
-        self.length = 0;
-        self.cursor = 0;
-        self.mode = Mode::Idle;
-        self.load_region(&mut image)?;
         self.image = Some(image);
         Ok(())
     }
 
     pub fn sync(&mut self) -> Result<(), StorageError> {
-        if let Some(image) = self.image.as_mut() {
-            image.sync()
-        } else {
-            Ok(())
-        }
+        if let Some(image) = self.image.as_mut() { image.sync() } else { Ok(()) }
     }
 
-    pub fn has_image(&self) -> bool {
-        self.image.is_some()
-    }
-
-    fn load_region(&mut self, image: &mut DiskImage) -> Result<(), StorageError> {
-        self.length = 0;
-        self.bytes.fill(0);
-        let mut region = [0u8; REGION_BYTES];
-        for (index, sector) in region.chunks_exact_mut(SECTOR_SIZE).enumerate() {
-            let Ok(sector) = <&mut [u8; SECTOR_SIZE]>::try_from(sector) else {
-                return Err(StorageError::InvalidImage("invalid persistence sector".to_string()))
-            };
-            image.read_sector(self.base_sector + index as u64, sector)?;
-        }
-        if &region[..8] != MAGIC
-            || u32::from_le_bytes([region[8], region[9], region[10], region[11]]) != VERSION
-        {
-            return Ok(())
-        }
-        let length = u32::from_le_bytes([region[12], region[13], region[14], region[15]]) as usize;
-        let stored_checksum = u32::from_le_bytes([region[16], region[17], region[18], region[19]]);
-        if length > GHOSTOS_PERSISTENCE_MAX_BYTES {
-            return Ok(())
-        }
-        let payload = &region[HEADER_BYTES..HEADER_BYTES + length];
-        if checksum(payload) != stored_checksum {
-            return Ok(())
-        }
-        self.bytes[..length].copy_from_slice(payload);
-        self.length = length;
-        Ok(())
-    }
-
-    fn load_from_disk(&mut self) -> Result<(), StorageError> {
-        let Some(mut image) = self.image.take() else {
-            return Ok(())
-        };
-        let result = self.load_region(&mut image);
-        self.image = Some(image);
-        result
-    }
-
-    fn persist(&mut self) -> Result<(), StorageError> {
-        let Some(image) = self.image.as_mut() else {
-            return Ok(())
-        };
-        let mut region = [0u8; REGION_BYTES];
-        region[..8].copy_from_slice(MAGIC);
-        region[8..12].copy_from_slice(&VERSION.to_le_bytes());
-        region[12..16].copy_from_slice(&(self.length as u32).to_le_bytes());
-        region[16..20].copy_from_slice(&checksum(&self.bytes[..self.length]).to_le_bytes());
-        region[HEADER_BYTES..HEADER_BYTES + self.length]
-            .copy_from_slice(&self.bytes[..self.length]);
-        for (index, sector) in region.chunks_exact(SECTOR_SIZE).enumerate() {
-            let Ok(sector) = <&[u8; SECTOR_SIZE]>::try_from(sector) else {
-                return Err(StorageError::InvalidImage("invalid persistence sector".to_string()))
-            };
-            image.write_sector(self.base_sector + index as u64, sector)?;
-        }
-        image.sync()
-    }
-
-    fn begin_write(&mut self) {
-        self.mode = Mode::Write;
-        self.cursor = 0;
-        self.expected_length = 0;
-        self.length = 0;
-        self.bytes.fill(0);
-    }
-
-    fn write_length(&mut self, value: u32) -> Result<(), DeviceError> {
-        let length = value as usize;
-        if length > GHOSTOS_PERSISTENCE_MAX_BYTES {
-            return Err(DeviceError::InvalidAddress)
-        }
-        self.mode = Mode::Write;
-        self.bytes.fill(0);
-        self.expected_length = length;
-        self.length = length;
-        self.cursor = 0;
-        Ok(())
-    }
-
-    fn write_data(&mut self, value: u32) -> Result<(), DeviceError> {
-        if self.cursor >= self.expected_length {
-            return Err(DeviceError::InvalidAddress)
-        }
-        let count = (self.expected_length - self.cursor).min(4);
-        self.bytes[self.cursor..self.cursor + count]
-            .copy_from_slice(&value.to_le_bytes()[..count]);
-        self.cursor = self.cursor.saturating_add(4);
-        Ok(())
-    }
-
-    fn write_data_byte(&mut self, value: u8) -> Result<(), DeviceError> {
-        if self.cursor >= self.expected_length {
-            return Err(DeviceError::InvalidAddress)
-        }
-        self.bytes[self.cursor] = value;
-        self.cursor += 1;
-        Ok(())
-    }
+    pub fn has_image(&self) -> bool { self.image.is_some() }
 }
 
 impl Default for SynosPersistencePort {
-    fn default() -> Self {
-        Self::new()
+    fn default() -> Self { Self::new() }
+}
+
+impl Drop for SynosPersistencePort {
+    fn drop(&mut self) {
+        unsafe { ghostos_vm_persistence_free(self.state) }
+    }
+}
+
+fn port_result(code: u8) -> Result<(), DeviceError> {
+    match code {
+        0 => Ok(()),
+        1 => Err(DeviceError::UnsupportedSize),
+        2 => Err(DeviceError::InvalidAddress),
+        3 => Err(DeviceError::NotReady),
+        _ => panic!("persistence read cursor out of bounds"),
     }
 }
 
 impl PortDevice for SynosPersistencePort {
     fn read(&mut self, port: u16, size: u8) -> Result<u64, DeviceError> {
-        match port {
-            GHOSTOS_PERSISTENCE_LENGTH_PORT if size == 4 => Ok(self.length as u64),
-            GHOSTOS_PERSISTENCE_DATA_PORT if size == 1 && self.mode == Mode::Read => {
-                let value = self.bytes.get(self.cursor).copied().unwrap_or(0);
-                self.cursor = self.cursor.saturating_add(1);
-                Ok(value as u64)
-            }
-            GHOSTOS_PERSISTENCE_DATA_PORT if size == 4 && self.mode == Mode::Read => {
-                let mut word = [0u8; 4];
-                let remaining = self.length.saturating_sub(self.cursor);
-                let count = remaining.min(4);
-                word[..count].copy_from_slice(&self.bytes[self.cursor..self.cursor + count]);
-                self.cursor = self.cursor.saturating_add(4);
-                Ok(u32::from_le_bytes(word) as u64)
-            }
-            _ => Ok(0),
-        }
+        let mut value = 0;
+        port_result(unsafe { ghostos_vm_persistence_read(self.state, port, size, &mut value) })?;
+        Ok(value)
     }
 
     fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
-        match port {
-            GHOSTOS_PERSISTENCE_COMMAND_PORT if size == 1 => match value as u8 {
-                GHOSTOS_PERSISTENCE_LOAD => {
-                    self.load_from_disk().map_err(|_| DeviceError::NotReady)?;
-                    self.mode = Mode::Read;
-                    self.cursor = 0;
-                    Ok(())
-                }
-                GHOSTOS_PERSISTENCE_SAVE => {
-                    self.begin_write();
-                    Ok(())
-                }
-                GHOSTOS_PERSISTENCE_FLUSH => {
-                    self.persist().map_err(|_| DeviceError::NotReady)?;
-                    self.mode = Mode::Idle;
-                    Ok(())
-                }
-                _ => Err(DeviceError::InvalidAddress),
-            },
-            GHOSTOS_PERSISTENCE_LENGTH_PORT if size == 4 => self.write_length(value as u32),
-            GHOSTOS_PERSISTENCE_DATA_PORT if size == 1 => self.write_data_byte(value as u8),
-            GHOSTOS_PERSISTENCE_DATA_PORT if size == 4 => self.write_data(value as u32),
-            _ => Err(DeviceError::UnsupportedSize),
-        }
+        let mut context = DiskContext { image: self.image.as_mut(), error: None };
+        let io = context.io();
+        port_result(unsafe { ghostos_vm_persistence_write(self.state, port, value, size, &io) })
     }
 
     fn reset(&mut self) {
-        let _ = self.persist();
-        self.mode = Mode::Idle;
-        self.cursor = 0;
+        let mut context = DiskContext { image: self.image.as_mut(), error: None };
+        let io = context.io();
+        unsafe { ghostos_vm_persistence_reset(self.state, &io) }
     }
 }
 
@@ -248,13 +172,4 @@ impl PortDevice for Rc<RefCell<SynosPersistencePort>> {
     fn reset(&mut self) {
         self.borrow_mut().reset();
     }
-}
-
-fn checksum(bytes: &[u8]) -> u32 {
-    let mut hash = 0x811c_9dc5u32;
-    for byte in bytes {
-        hash ^= *byte as u32;
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    hash
 }
