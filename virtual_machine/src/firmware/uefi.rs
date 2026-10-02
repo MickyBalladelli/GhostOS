@@ -40,6 +40,9 @@ use crate::replay::SharedReplay;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[path = "uefi_native.rs"]
+mod native;
+
 // ---------------------------------------------------------------------------
 // Firmware call vector and guest memory layout
 // ---------------------------------------------------------------------------
@@ -59,9 +62,6 @@ pub const UEFI_MEMORY_MAP_SIZE: usize = 32 * 1024;
 pub const UEFI_IMAGE_BASE: u64 = 0x0200_0000;
 /// Load address for chainloaded (secondary) images.
 pub const UEFI_CHILD_IMAGE_BASE: u64 = 0x0600_0000;
-
-/// Reserved firmware real-estate that starts at 1 MiB.
-const UEFI_FIRMWARE_START: u64 = 0x100000;
 
 /// Token handles (non-null, unique pointer values).
 const DEVICE_HANDLE: u64 = 0x0122_0000;
@@ -162,8 +162,6 @@ const ACPI_10_GUID: [u8; 16] = [
 const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5459_5353_2049_4249;
 const EFI_BOOT_SIGNATURE: u64 = 0x4259_5353_2049_4249;
 const EFI_RUNTIME_SIGNATURE: u64 = 0x5259_5353_2049_4249;
-const EFI_TABLE_REVISION: u32 = 0x0002_000F;
-const EFI_TABLE_HEADER_SIZE: u32 = 24;
 
 // ---------------------------------------------------------------------------
 // Memory-map descriptor and PE image model
@@ -172,20 +170,6 @@ const EFI_TABLE_HEADER_SIZE: u32 = 24;
 /// 48-byte EFI memory descriptor (UEFI >= 2.3 common descriptor stride).
 const MEMORY_DESCRIPTOR_SIZE: usize = 48;
 
-const MEM_TYPE_RESERVED: u32 = 0;
-const MEM_TYPE_LOADER_CODE: u32 = 1;
-const MEM_TYPE_LOADER_DATA: u32 = 2;
-const MEM_TYPE_CONVENTIONAL: u32 = 7;
-
-fn mem_desc(ty: u32, start: u64, len: u64, attr: u64) -> [u8; MEMORY_DESCRIPTOR_SIZE] {
-    let mut d = [0u8; MEMORY_DESCRIPTOR_SIZE];
-    d[0..4].copy_from_slice(&ty.to_le_bytes());
-    d[8..16].copy_from_slice(&start.to_le_bytes());
-    d[16..24].copy_from_slice(&start.to_le_bytes());
-    d[24..32].copy_from_slice(&(len / 4096).to_le_bytes());
-    d[32..40].copy_from_slice(&attr.to_le_bytes());
-    d
-}
 
 struct PeSection {
     virtual_address: u32,
@@ -607,174 +591,20 @@ impl UefiContext {
 
     /// Parse a PE32+ image (the format of EFI applications).
     fn load_pe(&self, bytes: &[u8]) -> Result<PeImage, UefiError> {
-        if bytes.len() < 0x40 || &bytes[0..2] != b"MZ" {
-            return Err(UefiError::InvalidImage);
-        }
-        let read_u16 = |offset: usize| -> Result<u16, UefiError> {
-            let end = offset.checked_add(2).ok_or(UefiError::InvalidImage)?;
-            let raw = bytes.get(offset..end).ok_or(UefiError::InvalidImage)?;
-            Ok(u16::from_le_bytes(
-                raw.try_into().map_err(|_| UefiError::InvalidImage)?,
-            ))
-        };
-        let read_u32 = |offset: usize| -> Result<u32, UefiError> {
-            let end = offset.checked_add(4).ok_or(UefiError::InvalidImage)?;
-            let raw = bytes.get(offset..end).ok_or(UefiError::InvalidImage)?;
-            Ok(u32::from_le_bytes(
-                raw.try_into().map_err(|_| UefiError::InvalidImage)?,
-            ))
-        };
-        let read_u64 = |offset: usize| -> Result<u64, UefiError> {
-            let end = offset.checked_add(8).ok_or(UefiError::InvalidImage)?;
-            let raw = bytes.get(offset..end).ok_or(UefiError::InvalidImage)?;
-            Ok(u64::from_le_bytes(
-                raw.try_into().map_err(|_| UefiError::InvalidImage)?,
-            ))
-        };
-        let e_lfanew = usize::try_from(read_u32(0x3C)?).map_err(|_| UefiError::InvalidImage)?;
-        let pe_end = e_lfanew.checked_add(24).ok_or(UefiError::InvalidImage)?;
-        if pe_end > bytes.len() || bytes.get(e_lfanew..e_lfanew + 4) != Some(b"PE\0\0") {
-            return Err(UefiError::InvalidImage);
-        }
-        let coff = e_lfanew.checked_add(4).ok_or(UefiError::InvalidImage)?;
-        let machine = read_u16(coff)?;
-        if machine != 0x8664 {
-            return Err(UefiError::Unsupported);
-        }
-        let num_sections = read_u16(coff.checked_add(2).ok_or(UefiError::InvalidImage)?)? as usize;
-        let size_opt =
-            read_u16(coff.checked_add(16).ok_or(UefiError::InvalidImage)?)? as usize;
-        let opt = coff.checked_add(20).ok_or(UefiError::InvalidImage)?;
-        let opt_end = opt.checked_add(size_opt).ok_or(UefiError::InvalidImage)?;
-        if size_opt < 112 || opt_end > bytes.len() {
-            return Err(UefiError::InvalidImage);
-        }
-        let magic = read_u16(opt)?;
-        if magic != 0x20B {
-            // PE32+ only.
-            return Err(UefiError::Unsupported);
-        }
-        let entry_rva = read_u32(opt.checked_add(16).ok_or(UefiError::InvalidImage)?)?;
-        let image_base = read_u64(opt.checked_add(24).ok_or(UefiError::InvalidImage)?)?;
-        let size_of_image = read_u32(opt.checked_add(56).ok_or(UefiError::InvalidImage)?)?;
-        if size_of_image == 0 || entry_rva >= size_of_image {
-            return Err(UefiError::InvalidImage);
-        }
-        let num_dirs = read_u32(opt.checked_add(108).ok_or(UefiError::InvalidImage)?)? as usize;
-        let (reloc_rva, reloc_size) = if num_dirs > 5 {
-            if size_opt < 112 + 6 * 8 {
-                return Err(UefiError::InvalidImage);
-            }
-            let d = opt.checked_add(112 + 5 * 8).ok_or(UefiError::InvalidImage)?;
-            let reloc = (read_u32(d)?, read_u32(d.checked_add(4).ok_or(UefiError::InvalidImage)?)?);
-            if reloc.1 > 0
-                && reloc.0.checked_add(reloc.1).filter(|end| *end <= size_of_image).is_none()
-            {
-                return Err(UefiError::InvalidImage);
-            }
-            reloc
-        } else {
-            (0, 0)
-        };
-
-        let sections_start = opt_end;
-        let mut sections = Vec::new();
-        for i in 0..num_sections {
-            let s = sections_start
-                .checked_add(i.checked_mul(40).ok_or(UefiError::InvalidImage)?)
-                .ok_or(UefiError::InvalidImage)?;
-            let section_end = s.checked_add(40).ok_or(UefiError::InvalidImage)?;
-            if section_end > bytes.len() {
-                return Err(UefiError::InvalidImage);
-            }
-            let virtual_address = read_u32(s.checked_add(12).ok_or(UefiError::InvalidImage)?)?;
-            let raw_size = read_u32(s.checked_add(16).ok_or(UefiError::InvalidImage)?)? as usize;
-            let raw_ptr = read_u32(s.checked_add(20).ok_or(UefiError::InvalidImage)?)? as usize;
-            if virtual_address
-                .checked_add(raw_size as u32)
-                .filter(|end| *end <= size_of_image)
-                .is_none()
-            {
-                return Err(UefiError::InvalidImage);
-            }
-            let raw_data = if raw_size == 0 {
-                Vec::new()
-            } else {
-                let raw_end = raw_ptr
-                    .checked_add(raw_size)
-                    .filter(|end| *end <= bytes.len())
-                    .ok_or(UefiError::InvalidImage)?;
-                bytes[raw_ptr..raw_end].to_vec()
-            };
-            sections.push(PeSection {
-                virtual_address,
-                raw_data,
-            });
-        }
-        Ok(PeImage {
-            image_base,
-            entry_rva,
-            size_of_image,
-            reloc_rva,
-            reloc_size,
-            sections,
-        })
+        native::parse(bytes)
     }
 
-    /// Map the parsed PE into guest RAM at `requested`, applying base
-    /// relocations if the image is loaded somewhere other than its preferred
-    /// base. Returns the final load base.
+    /// Map the parsed PE into guest RAM and apply base relocations.
     fn map_pe_image(
         &self,
         mmu: &mut Mmu,
         image: &PeImage,
         requested: u64,
     ) -> Result<u64, UefiError> {
-        let end = requested
-            .checked_add(image.size_of_image as u64)
-            .ok_or(UefiError::OutOfMemory)?;
-        if requested % 4096 != 0 || end > self.memory_size as u64 {
-            return Err(UefiError::OutOfMemory);
-        }
-        if self
-            .images
-            .iter()
-            .any(|loaded| requested < loaded.base + loaded.size && loaded.base < end)
-        {
-            return Err(UefiError::OutOfMemory);
-        }
-
-        // Zero-fill the whole image region, then lay sections.
-        let zeros = [0u8; 4096];
-        let mut zeroed = 0u64;
-        while zeroed < image.size_of_image as u64 {
-            let count = (image.size_of_image as u64 - zeroed).min(zeros.len() as u64) as usize;
-            let address = requested
-                .checked_add(zeroed)
-                .ok_or(UefiError::OutOfMemory)?;
-            mmu.write_phys(address, &zeros[..count])
-                .map_err(|_| UefiError::LoadFailed)?;
-            zeroed += count as u64;
-        }
-        for sec in &image.sections {
-            if sec.raw_data.is_empty() {
-                continue;
-            }
-            let dst = requested + sec.virtual_address as u64;
-            mmu.write_phys(dst, &sec.raw_data)
-                .map_err(|_| UefiError::LoadFailed)?;
-        }
-
-        let delta = requested as i128 - image.image_base as i128;
-        if delta != 0 {
-            if image.reloc_size == 0 {
-                return Err(UefiError::InvalidImage);
-            }
-            self.apply_relocations(mmu, requested, delta, image.reloc_rva, image.reloc_size)?;
-        }
-        Ok(requested)
+        native::map(mmu, image, requested, self.memory_size as u64, &self.images)
     }
 
+    #[cfg(test)]
     fn apply_relocations(
         &self,
         mmu: &mut Mmu,
@@ -783,39 +613,7 @@ impl UefiContext {
         reloc_rva: u32,
         reloc_size: u32,
     ) -> Result<(), UefiError> {
-        let mut off = 0u64;
-        while off + 8 <= reloc_size as u64 {
-            let block_addr = base + reloc_rva as u64 + off;
-            let page_rva = mmu.read_u32(block_addr).unwrap_or(0) as u64;
-            let block_size = mmu.read_u32(block_addr + 4).unwrap_or(0) as u64;
-            if block_size < 8 || block_size > reloc_size as u64 - off {
-                return Err(UefiError::InvalidImage);
-            }
-            let count = (block_size - 8) / 2;
-            for i in 0..count {
-                let entry = mmu.read_u16(block_addr + 8 + i * 2).unwrap_or(0) as u64;
-                let ty = (entry >> 12) & 0xF;
-                let page_off = entry & 0xFFF;
-                let target = base + page_rva + page_off;
-                match ty {
-                    // DIR64
-                    10 => {
-                        let v = mmu.read_u64(target).unwrap_or(0);
-                        let v = (v as i128).wrapping_add(delta) as u64;
-                        let _ = mmu.write_u64(target, v);
-                    }
-                    // HIGHLOW
-                    3 => {
-                        let v = mmu.read_u32(target).unwrap_or(0);
-                        let v = (v as i64).wrapping_add(delta as i64) as u32;
-                        let _ = mmu.write_u32(target, v);
-                    }
-                    _ => {}
-                }
-            }
-            off += block_size;
-        }
-        Ok(())
+        native::relocate(mmu, base, delta, reloc_rva, reloc_size)
     }
 
     /// Write an EFI_LOADED_IMAGE_PROTOCOL instance for a new image and return
@@ -1061,44 +859,7 @@ impl UefiContext {
     }
 
     fn build_memory_map(&self) -> Vec<[u8; MEMORY_DESCRIPTOR_SIZE]> {
-        let mem = self.memory_size as u64;
-        let mut map = Vec::new();
-        // Low conventional memory.
-        map.push(mem_desc(MEM_TYPE_CONVENTIONAL, 0x000000, 0x0A0000, 0xF));
-        // Reserved: VGA/BIOS hole.
-        map.push(mem_desc(MEM_TYPE_RESERVED, 0x0A0000, 0x060000, 0x0));
-        // UEFI real estate: stack, tables, memory-map buffer.
-        map.push(mem_desc(
-            MEM_TYPE_LOADER_CODE,
-            UEFI_FIRMWARE_START,
-            UEFI_IMAGE_BASE - UEFI_FIRMWARE_START,
-            0xF,
-        ));
-        // Loaded EFI applications (or free RAM if none loaded yet).
-        let mut cursor = UEFI_IMAGE_BASE;
-        let mut images = self.images.iter().collect::<Vec<_>>();
-        images.sort_by_key(|image| image.base);
-        for image in images {
-            if image.base > cursor {
-                map.push(mem_desc(
-                    MEM_TYPE_CONVENTIONAL,
-                    cursor,
-                    image.base - cursor,
-                    0xF,
-                ));
-            }
-            map.push(mem_desc(
-                MEM_TYPE_LOADER_DATA,
-                image.base,
-                image.size,
-                0xF,
-            ));
-            cursor = cursor.max(image.base.saturating_add(image.size));
-        }
-        if cursor < mem {
-            map.push(mem_desc(MEM_TYPE_CONVENTIONAL, cursor, mem - cursor, 0xF));
-        }
-        map
+        native::memory_map(self.memory_size as u64, &self.images)
     }
 
     fn bs_exit_boot_services(&mut self, cpu: &mut CpuState) {
@@ -1508,37 +1269,17 @@ fn file_device_path(path: &str) -> Vec<u8> {
 
 /// Emit the 8-byte service stub: `mov eax, imm32; int 0xE0; ret`.
 fn service_stub(id: u64) -> [u8; 8] {
-    let mut s = [0u8; 8];
-    s[0] = 0xB8;
-    s[1..5].copy_from_slice(&(id as u32).to_le_bytes());
-    s[5] = 0xCD;
-    s[6] = UEFI_CALL_VECTOR;
-    s[7] = 0xC3;
-    s
+    native::service_stub(id)
 }
 
-/// Write a 24-byte EFI table header (signature/revision/header-size).
+/// Write the native EFI table header.
 fn write_table_header(mmu: &mut Mmu, addr: u64, signature: u64) {
-    let mut hdr = [0u8; EFI_TABLE_HEADER_SIZE as usize];
-    hdr[0..8].copy_from_slice(&signature.to_le_bytes());
-    hdr[8..12].copy_from_slice(&EFI_TABLE_REVISION.to_le_bytes());
-    hdr[12..16].copy_from_slice(&EFI_TABLE_HEADER_SIZE.to_le_bytes());
-    wmem(mmu, addr, &hdr);
+    wmem(mmu, addr, &native::table_header(signature));
 }
 
-/// ACPI 2.0 RSDP: 36 bytes with `RSD PTR ` signature and valid checksums.
+/// Write the VM's existing ACPI RSDP bytes.
 fn build_rsdp(mmu: &mut Mmu, addr: u64) {
-    let mut b = [0u8; 36];
-    b[0..8].copy_from_slice(b"RSD PTR ");
-    b[8] = 2; // ACPI version 2.0
-    b[15] = 36; // Length includes the extended portion
-    // Revision 2 RSDP: RSDT/XSDT addresses are at offset 16 (u32) and 24 (u64).
-    // We leave them zero; OSes walk the UEFI config table instead.
-    let sum1: u8 = b[0..20].iter().fold(0u8, |a, &x| a.wrapping_add(x));
-    b[9] = (0u8.wrapping_sub(sum1)) & 0xFF; // checksum of first 20 bytes
-    let sum2: u8 = b.iter().fold(0u8, |a, &x| a.wrapping_add(x));
-    b[32] = (0u8.wrapping_sub(sum2)) & 0xFF; // extended checksum
-    wmem(mmu, addr, &b);
+    wmem(mmu, addr, &native::rsdp());
 }
 
 fn utf16_bytes(s: &str) -> Vec<u8> {
