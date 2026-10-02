@@ -143,7 +143,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/migration.rs`
 - [ ] `virtual_machine/src/net/backend.rs`
 - [ ] `virtual_machine/src/net/dhcp.rs`
-- [ ] `virtual_machine/src/net/mac.rs`
+- [x] `virtual_machine/src/net/mac.rs` — C owns byte conversion, broadcast/unicast/multicast classification, destination filtering, and lowercase formatting in `c/src/vm_mac.c`. Rust keeps the public type and const constructors for API compatibility.
 - [ ] `virtual_machine/src/net/mod.rs`
 - [ ] `virtual_machine/src/net/packet.rs`
 - [ ] `virtual_machine/src/passkey_bridge.rs`
