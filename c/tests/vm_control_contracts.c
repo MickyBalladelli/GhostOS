@@ -44,7 +44,14 @@ static void command_and_response_limits_are_enforced(void) {
     ghostos_monitor_command result;
     assert(ghostos_monitor_parse(command, sizeof(command), &result) == 1);
     assert(!ghostos_monitor_response_fits(GHOSTOS_MONITOR_RESPONSE_LIMIT + 1));
-    /* The Rust adapter still assembles the response-too-large error envelope. */
+    const char code[] = "response-too-large";
+    const char message[] = "monitor response exceeds the 65536 byte limit";
+    uint8_t response[256];
+    size_t length = ghostos_monitor_failure(false, NULL, 0, (const uint8_t *)code, sizeof(code) - 1,
+        (const uint8_t *)message, sizeof(message) - 1, response, sizeof(response) - 1);
+    assert(length < sizeof(response) && ghostos_monitor_response_fits(length));
+    response[length] = 0;
+    assert(strstr((const char *)response, code));
 }
 
 int main(void) {

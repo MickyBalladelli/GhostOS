@@ -354,3 +354,18 @@ const constructors/getters, traits, tagged-message/status translation, and Rust
 build tooling remain. All five original cases have C source in
 `c/tests/time_sync_contracts.c`, checked for syntax only. Behavior parity and
 non-host platform builds remain unverified.
+
+`vm_control.h` / `vm_control.c` own the active VM monitor protocol: bounded
+request buffering/framing, strict UTF-8 checks, Unicode-aware command and
+permission parsing, authentication sequencing, timestamp/hex validation,
+FIFO replay nonces, permissions, JSON escaping, response-size policy, and
+help/action/error/envelope encoding. Zero initialization creates a request
+buffer; the nonce cache has an explicit allocator/free lifecycle. C callbacks
+borrow the host clock and authentication key only during a request. Nonces
+are remembered only after HMAC, command parsing, and both permission checks
+succeed. HMAC still uses the original domain, little-endian timestamp, nonce,
+and trimmed command, with the existing C constant-time tag verification.
+Rust retains VM diagnostic data/redaction assembly, sockets/execution, host
+clock/key callbacks, owned strings/paths/errors, and const command APIs.
+The first five existing cases are in `c/tests/vm_control_contracts.c`; two VM
+inspection/redaction fixtures and behavior parity remain open.

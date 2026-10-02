@@ -198,6 +198,21 @@ platform build coverage, Rust adapters/build removal, and full migration remain
 open. Logs are in `temp/c-library-time-sync.log`,
 `temp/time-sync-consumers-build.log`, and `temp/time-sync-contract-syntax.log`.
 
+Monitor-control build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C monitor protocol/authentication.
+C preserves request-overflow-before-append, trailing-command-before-UTF-8 error
+ordering, Rust-compatible Unicode trimming and ASCII tail whitespace, exact
+aliases, timestamp-before-hex-before-replay-before-HMAC-before-command-before-
+permission checks, and nonce insertion only after full authorization. The
+HMAC callback retains the existing domain, little-endian timestamp, nonce,
+trimmed command, and constant-time tag comparison. JSON replies preserve key
+order, escaping, and newline termination. The first five existing cases have
+C source in `c/tests/vm_control_contracts.c`, checked for syntax only. No tests
+were executed. Two VM diagnostic/redaction fixtures, platform coverage,
+behavior parity, and full Rust removal remain open. Logs are in
+`temp/c-library-control.log`, `temp/vm-build-control.log`, and
+`temp/control-contract-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -260,7 +275,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/boot/mod.rs` — C owns Multiboot header discovery and Multiboot information decoding; Rust still owns ELF loading, memory layout, boot-info serialization, and CPU/MMU handoff. Full loader port and parity remain.
 - [ ] `virtual_machine/src/clock.rs` — C owns host/manual clock state, lifecycle, and time arithmetic; Rust retains the trait/shared-clock API wrapper. VM build compiles the implementation; behavior parity remains to verify.
 - [ ] `virtual_machine/src/cluster.rs` — C adds the bounded deterministic network, shared-memory fixture, node membership and heartbeat state, fault recovery, VM run callbacks, and scale evidence in `c/src/vm_cluster.c`. The Rust CXL fixture and serial-output evidence still need C fabric and VM integrations; the C cluster is not yet the active VM consumer.
-- [ ] `virtual_machine/src/control.rs`
+- [ ] `virtual_machine/src/control.rs` — C owns active bounded request buffering/framing and UTF-8 checks, Unicode-aware command/permission parsing, authentication field/number/hex decoding, timestamp-window validation, callback-ordered signature checks, 1024-entry FIFO nonce tracking, command/sensitive permission enforcement, JSON escaping, response-size policy, and help/action/error/envelope encoding. Rust retains host time/key/string/path/error adapters, const command APIs, VM diagnostic data assembly/redaction, and socket execution. The first five existing cases have C contract source; two VM diagnostic fixtures, behavior parity, and full cutover remain.
 - [ ] `virtual_machine/src/cpu/decoder.rs`
 - [ ] `virtual_machine/src/cpu/executor.rs`
 - [ ] `virtual_machine/src/cpu/mod.rs`
