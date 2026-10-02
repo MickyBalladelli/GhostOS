@@ -24,6 +24,15 @@ unsafe extern "C" {
         packet_offset: *mut usize,
         packet_length: *mut usize,
     ) -> bool;
+    fn ghostos_vm_net_validate_packet(packet_length: usize) -> u32;
+}
+
+fn validate_packet(packet: &[u8]) -> Result<(), NetError> {
+    match unsafe { ghostos_vm_net_validate_packet(packet.len()) } {
+        0 => Ok(()),
+        1 => Err(NetError::Truncated),
+        _ => Err(NetError::PacketTooLarge),
+    }
 }
 
 /// Host-facing network selection for a VM.
@@ -227,12 +236,7 @@ impl NetBackend for HostNetworkBackend {
         if !self.link_up() {
             return Err(NetError::LinkDown);
         }
-        if packet.len() < ETHERNET_HEADER_LEN {
-            return Err(NetError::Truncated);
-        }
-        if packet.len() > ETHERNET_FRAME_MAX {
-            return Err(NetError::PacketTooLarge);
-        }
+        validate_packet(packet)?;
         match &self.transport {
             HostTransport::Udp(socket) => Self::transmit_udp(socket, packet)?,
             #[cfg(target_os = "linux")]

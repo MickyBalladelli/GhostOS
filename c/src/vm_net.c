@@ -4,7 +4,7 @@
 
 static const uint8_t host_frame_magic[] = { 'S', 'N', 'E', 'T' };
 enum { ethernet_header_length = 14, ethernet_minimum_frame = 60,
-    ethernet_maximum_frame = 1514 };
+    ethernet_maximum_frame = 1518 };
 
 uint64_t ghostos_vm_net_align_up(uint64_t value, uint64_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
@@ -35,4 +35,10 @@ bool ghostos_vm_net_host_frame_decode(const uint8_t *frame, size_t frame_length,
     *packet_offset = sizeof(host_frame_magic);
     *packet_length = frame_length - sizeof(host_frame_magic);
     return true;
+}
+
+uint32_t ghostos_vm_net_validate_packet(size_t packet_length) {
+    if (packet_length < ethernet_header_length) return 1;
+    if (packet_length > ethernet_maximum_frame) return 2;
+    return 0;
 }
