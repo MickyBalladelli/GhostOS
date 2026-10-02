@@ -8,6 +8,11 @@ use std::fmt;
 use std::rc::Rc;
 
 unsafe extern "C" {
+    fn ghostos_vm_dhcp_decode_request(
+        frame: *const u8,
+        frame_length: usize,
+        request: *mut CDhcpRequest,
+    ) -> bool;
     fn ghostos_vm_dhcp_write_option(
         output: *mut u8,
         output_capacity: usize,
@@ -20,6 +25,21 @@ unsafe extern "C" {
     fn ghostos_vm_net_ipv4_to_number(address: *const u8) -> u32;
     fn ghostos_vm_net_ipv4_from_number(value: u32, address: *mut u8);
     fn ghostos_vm_net_checksum(bytes: *const u8, length: usize) -> u16;
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct CDhcpRequest {
+    source_mac: [u8; 6],
+    mac: [u8; 6],
+    xid: u32,
+    flags: u16,
+    ciaddr: [u8; 4],
+    message_type: u8,
+    requested_ip_present: u8,
+    requested_ip: [u8; 4],
+    server_id_present: u8,
+    server_id: [u8; 4],
 }
 
 pub const DHCP_SERVER_MAC: MacAddress = MacAddress::ghostos_default(0xD0);
@@ -453,82 +473,20 @@ impl DeterministicDhcpServer {
 }
 
 fn decode_request(frame: &[u8]) -> Option<DhcpRequest> {
-    if frame.len() < ETHERNET_HEADER_LEN + 20 + 8 + 240 {
+    let mut decoded = CDhcpRequest::default();
+    if !unsafe { ghostos_vm_dhcp_decode_request(frame.as_ptr(), frame.len(), &mut decoded) } {
         return None;
     }
-    if frame[12..14] != [0x08, 0x00] {
-        return None;
-    }
-    let ip = ETHERNET_HEADER_LEN;
-    if frame[ip] >> 4 != 4 || frame[ip] & 0x0F < 5 {
-        return None;
-    }
-    let ip_header_len = (frame[ip] as usize & 0x0F) * 4;
-    if frame.len() < ip + ip_header_len + 8 {
-        return None;
-    }
-    if frame[ip + 9] != 17 {
-        return None;
-    }
-    let total_len = u16::from_be_bytes([frame[ip + 2], frame[ip + 3]]) as usize;
-    if total_len < ip_header_len + 8 || ip + total_len > frame.len() {
-        return None;
-    }
-    let udp = ip + ip_header_len;
-    if u16::from_be_bytes([frame[udp], frame[udp + 1]]) != DHCP_CLIENT_PORT
-        || u16::from_be_bytes([frame[udp + 2], frame[udp + 3]]) != DHCP_SERVER_PORT
-    {
-        return None;
-    }
-    let udp_len = u16::from_be_bytes([frame[udp + 4], frame[udp + 5]]) as usize;
-    if udp_len < 8 + 240 || udp + udp_len > ip + total_len {
-        return None;
-    }
-    let payload = &frame[udp + 8..udp + udp_len];
-    if payload[0] != 1
-        || payload[1] != 1
-        || payload[2] != 6
-        || u32::from_be_bytes([payload[236], payload[237], payload[238], payload[239]])
-            != DHCP_MAGIC_COOKIE
-    {
-        return None;
-    }
-    let mut request = DhcpRequest {
-        source_mac: MacAddress::from_bytes(&frame[6..12])?,
-        mac: MacAddress::from_bytes(&payload[28..34])?,
-        xid: u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]),
-        flags: u16::from_be_bytes([payload[10], payload[11]]),
-        ciaddr: [payload[12], payload[13], payload[14], payload[15]],
-        message_type: 0,
-        requested_ip: None,
-        server_id: None,
-    };
-    let mut cursor = 240;
-    while cursor < payload.len() {
-        let code = payload[cursor];
-        cursor += 1;
-        if code == DHCP_OPTION_END {
-            break;
-        }
-        if code == 0 {
-            continue;
-        }
-        let length = *payload.get(cursor)? as usize;
-        cursor += 1;
-        let value = payload.get(cursor..cursor.checked_add(length)?)?;
-        cursor += length;
-        match code {
-            DHCP_OPTION_MESSAGE_TYPE if value.len() == 1 => request.message_type = value[0],
-            DHCP_OPTION_REQUESTED_IP if value.len() == 4 => {
-                request.requested_ip = Some([value[0], value[1], value[2], value[3]])
-            }
-            DHCP_OPTION_SERVER_ID if value.len() == 4 => {
-                request.server_id = Some([value[0], value[1], value[2], value[3]])
-            }
-            _ => {}
-        }
-    }
-    (request.message_type != 0).then_some(request)
+    Some(DhcpRequest {
+        source_mac: MacAddress(decoded.source_mac),
+        mac: MacAddress(decoded.mac),
+        xid: decoded.xid,
+        flags: decoded.flags,
+        ciaddr: decoded.ciaddr,
+        message_type: decoded.message_type,
+        requested_ip: (decoded.requested_ip_present != 0).then_some(decoded.requested_ip),
+        server_id: (decoded.server_id_present != 0).then_some(decoded.server_id),
+    })
 }
 
 fn encode_reply(
