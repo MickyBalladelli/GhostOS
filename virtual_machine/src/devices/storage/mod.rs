@@ -7,6 +7,7 @@
 pub mod ahci;
 pub mod disk_image;
 pub mod management;
+mod native_io;
 pub mod nvme;
 pub mod persistence;
 pub mod system_disk;
