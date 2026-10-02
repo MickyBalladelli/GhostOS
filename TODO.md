@@ -168,6 +168,20 @@ fixtures, behavior parity, and full Rust removal remain open. Logs are in
 `temp/c-library-disk-management.log`, `temp/vm-build-disk-management.log`, and
 `temp/disk-management-contract-syntax.log`.
 
+Admission build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-admission -p ghostos-backup -p ghostos-inspect
+-p ghostos-pkg -p ghostos-storaged` passed with the active freestanding,
+allocation-free C controller. Slot storage stays caller-owned and movable;
+no pointers are retained. Compile-time C/Rust layout checks cover the shared
+controller, policy, lease, tenant, outcome, and report types on 64-bit targets.
+Tenant-before-class-before-global error ordering, recovery class-limit bypass,
+global queued-count consumption, first-free slots, and saturating counters
+and sequence IDs are preserved in source. All three existing cases are in
+`c/tests/admission_contracts.c`, checked for compilation syntax only. No tests
+were executed; behavior parity, Rust adapter/build removal, and full migration
+remain open. Logs are in `temp/c-library-admission.log`,
+`temp/admission-consumers-build.log`, and `temp/admission-contract-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -284,7 +298,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `boot/uefi/` — UEFI bootloader.
 - [ ] `crates/abi/` — ABI definitions and generated ABI bindings.
 - [ ] `crates/actors/` — actor runtime.
-- [ ] `crates/admission/` — admission control.
+- [ ] `crates/admission/` — C owns active fixed-capacity controller state, ordered tenant/class/global budget checks, recovery reserves, bounded ancestor charging, tenant-policy validation/cycle rejection, first-free lease allocation and exact lease validation, queue/drop/retry decisions, saturating counters/sequences, and reports. Backup, inspection, package, and storage consumers use allocation-free Rust type adapters. All three existing cases have C source; const API wrappers, Rust build/adapters, behavior parity, and full removal remain.
 - [ ] `crates/api-compat/` — API compatibility.
 - [ ] `crates/app/` — application loading, manifests, and supervision.
 - [ ] `crates/auth/` — authentication.

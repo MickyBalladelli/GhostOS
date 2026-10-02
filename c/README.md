@@ -324,3 +324,17 @@ checksum recomputation/write/sync, and exact lowercase format-name parsing to
 offsets 36 and 40, checks type and original/current agreement before capacity,
 and distinguishes invalid capacity errors from an ineligible footer. The host
 still owns lock publication/recovery, image lifetime, and directory syncing.
+
+The freestanding `admission.h` / `admission.c` controller ports
+`crates/admission/src/lib.rs`. C owns fixed-capacity admission and tenant state,
+recovery budgets, hierarchy validation/charging, lease allocation/completion,
+load shedding, saturating counters/sequences, and reports. The caller supplies
+controller and lease-slot storage; C retains no pointers and allocates no
+memory. Each mutation uses the same slot array/capacity as initialization.
+Class/priority values use the documented byte discriminants. Invalid policy
+and lease errors retain their separate codes; admit/retry reject invalid enum
+inputs before indexing state. Backup, inspection, package, and storage callers
+use the existing Rust API through `crates/admission/src/native.rs`. Const enum
+names/policy constructors and public Rust types remain compatibility adapters.
+The three original cases are in `c/tests/admission_contracts.c`; the explicit
+Makefile target only builds them. Behavior parity remains unverified.
