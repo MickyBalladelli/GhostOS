@@ -100,6 +100,16 @@ Final build logs are in `temp/c-library-final-ports.log` and
 `temp/vm-build-final-ports.log`; syntax logs are in
 `temp/display-contract-syntax.log` and `temp/io-contract-syntax.log`.
 
+Storage-controller build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C NVMe and AHCI controllers.
+C now owns registers, queues/command slots, identification, DMA processing,
+completion records, reset state, and interrupt decisions. Rust retains disk
+images, MMU/APIC adapters, and resource attachment APIs. The four existing
+controller cases have C source in `c/tests/vm_storage_contracts.c`, checked
+for compilation syntax only. Behavior parity and full cutover remain open.
+Build logs are in `temp/c-library-storage.log` and `temp/vm-build-storage.log`;
+the syntax log is `temp/storage-contract-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -179,11 +189,11 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/pit.rs` — C owns the active three-channel counter state, control/read-back protocols, reload/read sequencing, host-time advancement, and terminal-count pulses in `c/src/vm_pit.c`. Rust retains the port-device/shared-APIC adapter and existing tests. Existing zero-reload, latch-consumption, and mode behavior is preserved; behavior parity remains unverified.
 - [x] `virtual_machine/src/devices/power.rs` — C validates power-control port accesses and decodes ACPI sleep-enable writes into shutdown/reboot state. Rust keeps shared state and notification queue integration.
 - [ ] `virtual_machine/src/devices/serial.rs` — C owns the active UART registers and divisor aliases, transmit/receive FIFOs, lossless paste queue, raw capture and compaction, newline conversion, panic detection, authentication-marker replacement/holding, prompt suppression, and spinner state/timing in `c/src/vm_serial.c`. Rust retains shared-APIC delivery, host console/clock callbacks, and public slice/vector adapters. All fourteen existing serial cases have standalone C contract source; full Rust removal and behavior parity remain.
-- [ ] `virtual_machine/src/devices/storage/ahci.rs`
+- [ ] `virtual_machine/src/devices/storage/ahci.rs` — C owns the active single-port register state, command slots, ATA identification, PRD transfers, FIS completion, and interrupt decisions. Rust retains disk images and MMU/APIC adapters; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/devices/storage/disk_image.rs`
 - [ ] `virtual_machine/src/devices/storage/management.rs`
 - [ ] `virtual_machine/src/devices/storage/mod.rs`
-- [ ] `virtual_machine/src/devices/storage/nvme.rs`
+- [ ] `virtual_machine/src/devices/storage/nvme.rs` — C owns the active register state, admin/I/O queues, identification/features, read/write/flush commands, completion encoding, and DMA processing. Rust retains namespace images and MMU/APIC adapters; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/devices/storage/persistence.rs` — C owns active persistence-port modes, length/cursor handling, command transitions, tail-region loading/writing, SYNOPS01 little-endian headers, FNV-1a checksums, and zero-filled sector serialization in `c/src/vm_persistence.c`. Rust retains the DiskImage owner and sector/sync/error callbacks. The legacy port-error behavior and failed-I/O transitions are preserved; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/devices/storage/system_disk.rs`
 - [ ] `virtual_machine/src/devices/virtio.rs` — C owns active legacy transport registers, block request parsing and sector transfer sequencing, console capture/newline handling, RNG filling, queue completion, and interrupt decisions in `c/src/vm_virtio.c`. Rust retains disk, MMU, entropy, host console, and APIC callbacks. Full C cutover and behavior parity remain.

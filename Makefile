@@ -31,7 +31,10 @@ c-test-binaries: $(BUILD_DIR)/foundation-tests $(BUILD_DIR)/kernel-contracts $(B
 
 c-test-support: $(BUILD_DIR)/libghostos-test-support.a
 
-c-vm-test-binaries: $(BUILD_DIR)/vm-device-contracts $(BUILD_DIR)/vm-serial-contracts $(BUILD_DIR)/vm-io-contracts
+c-vm-test-binaries: $(BUILD_DIR)/vm-device-contracts $(BUILD_DIR)/vm-serial-contracts $(BUILD_DIR)/vm-io-contracts $(BUILD_DIR)/vm-storage-contracts
+
+$(BUILD_DIR)/vm-storage-contracts: c/tests/vm_storage_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
 
 $(BUILD_DIR)/vm-io-contracts: c/tests/vm_io_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
