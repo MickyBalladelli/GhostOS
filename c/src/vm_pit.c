@@ -1,7 +1,11 @@
 #include "ghostos/vm_pit.h"
+#include <stddef.h>
 
 _Static_assert(sizeof(ghostos_vm_pit_channel) == 18, "PIT channel ABI");
+_Static_assert(_Alignof(ghostos_vm_pit_channel) == 2, "PIT channel alignment");
 _Static_assert(sizeof(ghostos_vm_pit) == 72, "PIT state ABI");
+_Static_assert(_Alignof(ghostos_vm_pit) == 8, "PIT state alignment");
+_Static_assert(offsetof(ghostos_vm_pit, last_ns) == 56, "PIT timestamp offset");
 
 void ghostos_vm_pit_init(ghostos_vm_pit *pit) {
     *pit = (ghostos_vm_pit){0};

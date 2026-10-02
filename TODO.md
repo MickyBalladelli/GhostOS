@@ -41,6 +41,12 @@ build into `build/c/libghostos.a`. See `c/README.md` for the source mapping and
 interface conventions. Rust module checklist entries remain open until consumer
 cutover and behavior parity are complete.
 
+Migration build check on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with the active C PIT and guest-input ports.
+The existing eight PIT cases also have C contract source in
+`c/tests/vm_device_contracts.c`; these checks were not executed. The VM still
+requires Rust adapters, and the full migration remains incomplete.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
