@@ -141,7 +141,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/main.rs`
 - [ ] `virtual_machine/src/memory/mod.rs`
 - [ ] `virtual_machine/src/migration.rs`
-- [ ] `virtual_machine/src/net/backend.rs`
+- [ ] `virtual_machine/src/net/backend.rs` — C owns UDP host-frame encoding and decoding. Rust still owns host sockets, raw-interface transport, loopback, and deterministic segment state.
 - [ ] `virtual_machine/src/net/dhcp.rs`
 - [x] `virtual_machine/src/net/mac.rs` — C owns byte conversion, broadcast/unicast/multicast classification, destination filtering, and lowercase formatting in `c/src/vm_mac.c`. Rust keeps the public type and const constructors for API compatibility.
 - [ ] `virtual_machine/src/net/mod.rs` — C owns the alignment helper; Rust module exports and networking submodules remain.

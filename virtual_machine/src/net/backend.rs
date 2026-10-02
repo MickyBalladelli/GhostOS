@@ -10,7 +10,21 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::rc::Rc;
 
-const HOST_FRAME_MAGIC: [u8; 4] = *b"SNET";
+unsafe extern "C" {
+    fn ghostos_vm_net_host_frame_encode(
+        packet: *const u8,
+        packet_length: usize,
+        output: *mut u8,
+        output_capacity: usize,
+        output_length: *mut usize,
+    ) -> bool;
+    fn ghostos_vm_net_host_frame_decode(
+        frame: *const u8,
+        frame_length: usize,
+        packet_offset: *mut usize,
+        packet_length: *mut usize,
+    ) -> bool;
+}
 
 /// Host-facing network selection for a VM.
 ///
@@ -172,9 +186,22 @@ impl HostNetworkBackend {
     }
 
     fn transmit_udp(socket: &UdpSocket, packet: &[u8]) -> Result<(), NetError> {
-        let mut frame = Vec::with_capacity(HOST_FRAME_MAGIC.len() + packet.len());
-        frame.extend_from_slice(&HOST_FRAME_MAGIC);
-        frame.extend_from_slice(&pad_frame(packet));
+        let mut frame_length = 0;
+        if !unsafe {
+            ghostos_vm_net_host_frame_encode(
+                packet.as_ptr(), packet.len(), std::ptr::null_mut(), 0, &mut frame_length,
+            )
+        } {
+            return Err(NetError::BackendUnavailable);
+        }
+        let mut frame = vec![0; frame_length];
+        if !unsafe {
+            ghostos_vm_net_host_frame_encode(
+                packet.as_ptr(), packet.len(), frame.as_mut_ptr(), frame.len(), &mut frame_length,
+            )
+        } {
+            return Err(NetError::BackendUnavailable);
+        }
         socket.send(&frame).map_err(|error| match error.kind() {
             io::ErrorKind::WouldBlock => NetError::QueueFull,
             _ => NetError::BackendUnavailable,
@@ -238,13 +265,19 @@ impl NetBackend for HostNetworkBackend {
         }
         let packet = match &self.transport {
             HostTransport::Udp(socket) => {
-                let mut frame = [0u8; HOST_FRAME_MAGIC.len() + ETHERNET_FRAME_MAX];
+                let mut frame = [0u8; 4 + ETHERNET_FRAME_MAX];
                 match socket.recv(&mut frame) {
-                    Ok(length) if length >= HOST_FRAME_MAGIC.len() => {
-                        if frame[..HOST_FRAME_MAGIC.len()] != HOST_FRAME_MAGIC {
+                    Ok(length) if length >= 4 => {
+                        let mut packet_offset = 0;
+                        let mut packet_length = 0;
+                        if !unsafe {
+                            ghostos_vm_net_host_frame_decode(
+                                frame.as_ptr(), length, &mut packet_offset, &mut packet_length,
+                            )
+                        } {
                             return Ok(None);
                         }
-                        frame[HOST_FRAME_MAGIC.len()..length].to_vec()
+                        frame[packet_offset..packet_offset + packet_length].to_vec()
                     }
                     Ok(_) => return Ok(None),
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),

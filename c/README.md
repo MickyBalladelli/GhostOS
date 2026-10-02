@@ -27,7 +27,7 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `virtual_machine/src/devices/interrupt_controller.rs` | `src/vm_interrupt_controller.c` | `include/ghostos/vm_interrupt_controller.h` |
 | `virtual_machine/src/devices/virtio_queue.rs` | `src/vm_virtio_queue.c` | `include/ghostos/vm_virtio_queue.h` |
 | `virtual_machine/src/devices/serial.rs` (host newline conversion and panic-marker matching) | `src/vm_serial.c` | `include/ghostos/vm_serial.h` |
-| `virtual_machine/src/net/mod.rs` (`align_up` helper) | `src/vm_net.c` | `include/ghostos/vm_net.h` |
+| `virtual_machine/src/net/backend.rs` (UDP host-frame encoding and decoding) and `src/net/mod.rs` (`align_up` helper) | `src/vm_net.c` | `include/ghostos/vm_net.h` |
 
 The VM packet queue uses the host allocator and is compiled into the VM's C
 archive by `virtual_machine/build.rs`; it is not part of the freestanding kernel
