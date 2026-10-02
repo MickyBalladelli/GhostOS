@@ -5,12 +5,100 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::sync::mpsc::{self, Receiver};
 use crate::{HostMonotonicClock, SharedMonotonicClock};
 use std::rc::Rc;
-use std::time::Duration;
 
 #[path = "terminal_platform.rs"]
 mod terminal_platform;
 
-const TERMINAL_SIZE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+#[repr(C)]
+#[derive(Default)]
+struct CTerminalCounters {
+    polls: u64,
+    input_bytes: u64,
+    output_bytes: u64,
+    output_flushes: u64,
+    eof_events: u64,
+    resize_events: u64,
+}
+
+#[repr(C)]
+struct CTerminalInput {
+    bytes: *const u8,
+    length: usize,
+    rows: u16,
+    columns: u16,
+    resize: bool,
+}
+
+impl Default for CTerminalInput {
+    fn default() -> Self {
+        Self { bytes: std::ptr::null(), length: 0, rows: 0, columns: 0, resize: false }
+    }
+}
+
+#[repr(C)]
+struct CTerminalEvent {
+    raw: *const u8,
+    raw_length: usize,
+    bytes: *const u8,
+    length: usize,
+    rows: u16,
+    columns: u16,
+    kind: u8,
+}
+
+impl Default for CTerminalEvent {
+    fn default() -> Self {
+        Self { raw: std::ptr::null(), raw_length: 0, bytes: std::ptr::null(), length: 0, rows: 0, columns: 0, kind: 0 }
+    }
+}
+
+type CTerminal = std::ffi::c_void;
+
+const _: () = assert!(std::mem::size_of::<CTerminalCounters>() == 48);
+const _: () = assert!(std::mem::offset_of!(CTerminalInput, rows) == std::mem::size_of::<*const u8>() + std::mem::size_of::<usize>());
+const _: () = assert!(std::mem::offset_of!(CTerminalEvent, rows) == 2 * (std::mem::size_of::<*const u8>() + std::mem::size_of::<usize>()));
+
+unsafe extern "C" {
+    fn ghostos_vm_terminal_new() -> *mut CTerminal;
+    fn ghostos_vm_terminal_free(terminal: *mut CTerminal);
+    fn ghostos_vm_terminal_poll_begin(terminal: *mut CTerminal, now: u64, has_terminal: bool) -> bool;
+    fn ghostos_vm_terminal_resize(terminal: *mut CTerminal, rows: u16, columns: u16) -> bool;
+    fn ghostos_vm_terminal_accept_input(terminal: *mut CTerminal, bytes: *const u8, length: usize) -> bool;
+    fn ghostos_vm_terminal_accept_eof(terminal: *mut CTerminal) -> bool;
+    fn ghostos_vm_terminal_poll_input(terminal: *const CTerminal, input: *mut CTerminalInput);
+    fn ghostos_vm_terminal_counters_get(terminal: *const CTerminal, counters: *mut CTerminalCounters);
+    fn ghostos_vm_terminal_output_written(terminal: *mut CTerminal, count: usize);
+    fn ghostos_vm_terminal_output_flushed(terminal: *mut CTerminal);
+    fn ghostos_vm_terminal_event_count(terminal: *const CTerminal) -> usize;
+    fn ghostos_vm_terminal_event_get(terminal: *const CTerminal, index: usize, event: *mut CTerminalEvent) -> bool;
+    fn ghostos_vm_terminal_replay_event(event: *const CTerminalEvent, input: *mut CTerminalInput) -> bool;
+    fn ghostos_vm_terminal_translate(bytes: *const u8, length: usize, previous_cr: *mut bool, output: *mut u8, capacity: usize, output_length: *mut usize) -> bool;
+}
+
+struct CTerminalState(std::ptr::NonNull<CTerminal>);
+
+impl CTerminalState {
+    fn new() -> Self {
+        Self(std::ptr::NonNull::new(unsafe { ghostos_vm_terminal_new() }).expect("C terminal allocation"))
+    }
+
+    fn pointer(&self) -> *mut CTerminal { self.0.as_ptr() }
+}
+
+impl Drop for CTerminalState {
+    fn drop(&mut self) { unsafe { ghostos_vm_terminal_free(self.pointer()) } }
+}
+
+unsafe fn terminal_bytes(bytes: *const u8, length: usize) -> Vec<u8> {
+    if length == 0 { Vec::new() } else { unsafe { std::slice::from_raw_parts(bytes, length).to_vec() } }
+}
+
+unsafe fn terminal_input(input: &CTerminalInput) -> TerminalInput {
+    TerminalInput {
+        bytes: unsafe { terminal_bytes(input.bytes, input.length) },
+        resize: input.resize.then_some(TerminalResize { rows: input.rows, columns: input.columns }),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalOperation {
@@ -141,24 +229,31 @@ impl TerminalTranscript {
     /// Replay terminal policy events in deterministic order. The result is
     /// independent of wall clock, host terminal size, and process input.
     pub fn replay(&self) -> Vec<TerminalInput> {
-        self.events
-            .iter()
-            .map(|event| match event {
-                TerminalTranscriptEvent::Input { bytes, .. }
-                | TerminalTranscriptEvent::Eof { bytes } => TerminalInput {
-                    bytes: bytes.clone(),
-                    resize: None,
-                },
-                TerminalTranscriptEvent::Resize(resize) => TerminalInput {
-                    bytes: Vec::new(),
-                    resize: Some(*resize),
-                },
-            })
-            .collect()
-    }
-
-    fn record(&mut self, event: TerminalTranscriptEvent) {
-        self.events.push(event)
+        self.events.iter().map(|event| {
+            let mut wire = CTerminalEvent::default();
+            match event {
+                TerminalTranscriptEvent::Input { raw, bytes } => {
+                    wire.kind = 1;
+                    wire.raw = raw.as_ptr();
+                    wire.raw_length = raw.len();
+                    wire.bytes = bytes.as_ptr();
+                    wire.length = bytes.len();
+                }
+                TerminalTranscriptEvent::Eof { bytes } => {
+                    wire.kind = 2;
+                    wire.bytes = bytes.as_ptr();
+                    wire.length = bytes.len();
+                }
+                TerminalTranscriptEvent::Resize(resize) => {
+                    wire.kind = 3;
+                    wire.rows = resize.rows;
+                    wire.columns = resize.columns;
+                }
+            }
+            let mut input = CTerminalInput::default();
+            assert!(unsafe { ghostos_vm_terminal_replay_event(&wire, &mut input) });
+            unsafe { terminal_input(&input) }
+        }).collect()
     }
 }
 
@@ -173,13 +268,10 @@ pub struct TerminalSession {
     events: Receiver<InputEvent>,
     output: RefCell<Box<dyn Write + Send>>,
     raw_mode: RawMode,
-    transcript: RefCell<TerminalTranscript>,
+    state: RefCell<CTerminalState>,
     has_terminal: bool,
-    previous_input_was_cr: Cell<bool>,
-    last_size: Cell<Option<(u16, u16)>>,
-    last_size_check_ns: Cell<Option<u64>>,
     clock: SharedMonotonicClock,
-    diagnostics: Cell<TerminalSessionDiagnostics>,
+    last_failure: Cell<Option<TerminalFailure>>,
 }
 
 impl TerminalSession {
@@ -209,13 +301,10 @@ impl TerminalSession {
             events,
             output: RefCell::new(Box::new(io::stdout())),
             raw_mode,
-            transcript: RefCell::new(TerminalTranscript::default()),
+            state: RefCell::new(CTerminalState::new()),
             has_terminal: is_tty,
-            previous_input_was_cr: Cell::new(false),
-            last_size: Cell::new(None),
-            last_size_check_ns: Cell::new(None),
             clock,
-            diagnostics: Cell::new(TerminalSessionDiagnostics::default()),
+            last_failure: Cell::new(None),
         })
     }
 
@@ -240,13 +329,10 @@ impl TerminalSession {
             events: spawn_input_reader(Box::new(input)),
             output: RefCell::new(Box::new(output)),
             raw_mode: RawMode::inactive(),
-            transcript: RefCell::new(TerminalTranscript::default()),
+            state: RefCell::new(CTerminalState::new()),
             has_terminal: false,
-            previous_input_was_cr: Cell::new(false),
-            last_size: Cell::new(None),
-            last_size_check_ns: Cell::new(None),
             clock,
-            diagnostics: Cell::new(TerminalSessionDiagnostics::default()),
+            last_failure: Cell::new(None),
         }
     }
 
@@ -257,58 +343,25 @@ impl TerminalSession {
 
     /// Drain available input at a caller-provided VM time.
     pub fn poll_at(&self, now_ns: u64) -> Result<TerminalInput, TerminalError> {
-        self.update_diagnostics(|diagnostics| diagnostics.polls += 1);
-        let mut input = TerminalInput::default();
+        let state = self.state.borrow_mut();
+        let check_size = unsafe { ghostos_vm_terminal_poll_begin(state.pointer(), now_ns, self.has_terminal) };
         let mut pending = Vec::new();
-
         while let Ok(event) = self.events.try_recv() {
             pending.push(event)
         }
-
-        let size_check_due = self.last_size.get().is_none()
-            || self
-                .last_size_check_ns
-                .get()
-                .is_none_or(|last| now_ns.saturating_sub(last) >= TERMINAL_SIZE_POLL_INTERVAL.as_nanos() as u64);
-        if self.has_terminal && size_check_due {
-            self.last_size_check_ns.set(Some(now_ns));
+        if check_size {
             if let Some((rows, columns)) = terminal_platform::size() {
-                let resize = TerminalResize { rows, columns };
-                if self.last_size.get() != Some((rows, columns)) {
-                    input.resize = Some(resize);
-                    self.last_size.set(Some((rows, columns)));
-                    self.transcript
-                        .borrow_mut()
-                        .record(TerminalTranscriptEvent::Resize(resize));
-                    self.update_diagnostics(|diagnostics| diagnostics.resize_events += 1);
-                }
+                assert!(unsafe { ghostos_vm_terminal_resize(state.pointer(), rows, columns) }, "C terminal transcript allocation");
             }
         }
-
         for event in pending {
             match event {
                 InputEvent::Bytes(raw) => {
-                    let mut previous_input_was_cr = self.previous_input_was_cr.get();
-                    let bytes = translate_input_bytes_after_cr(
-                        &raw,
-                        &mut previous_input_was_cr,
-                    );
-                    self.previous_input_was_cr.set(previous_input_was_cr);
-                    input.bytes.extend(&bytes);
-                    self.update_diagnostics(|diagnostics| {
-                        diagnostics.input_bytes += raw.len() as u64
-                    });
-                    self.transcript
-                        .borrow_mut()
-                        .record(TerminalTranscriptEvent::Input { raw, bytes });
+                    assert!(unsafe { ghostos_vm_terminal_accept_input(state.pointer(), raw.as_ptr(), raw.len()) },
+                        "C terminal input allocation");
                 }
                 InputEvent::Eof => {
-                    self.update_diagnostics(|diagnostics| diagnostics.eof_events += 1);
-                    let bytes = vec![0x04];
-                    input.bytes.extend(&bytes);
-                    self.transcript
-                        .borrow_mut()
-                        .record(TerminalTranscriptEvent::Eof { bytes });
+                    assert!(unsafe { ghostos_vm_terminal_accept_eof(state.pointer()) }, "C terminal EOF allocation");
                     if let Err(error) = self.raw_mode.restore() {
                         return Err(self.record_failure(error))
                     }
@@ -318,16 +371,43 @@ impl TerminalSession {
                 }
             }
         }
-
-        Ok(input)
+        let mut input = CTerminalInput::default();
+        unsafe { ghostos_vm_terminal_poll_input(state.pointer(), &mut input) };
+        Ok(unsafe { terminal_input(&input) })
     }
 
     pub fn transcript(&self) -> TerminalTranscript {
-        self.transcript.borrow().clone()
+        let state = self.state.borrow();
+        let count = unsafe { ghostos_vm_terminal_event_count(state.pointer()) };
+        let mut events = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut event = CTerminalEvent::default();
+            assert!(unsafe { ghostos_vm_terminal_event_get(state.pointer(), index, &mut event) });
+            events.push(match event.kind {
+                1 => TerminalTranscriptEvent::Input {
+                    raw: unsafe { terminal_bytes(event.raw, event.raw_length) },
+                    bytes: unsafe { terminal_bytes(event.bytes, event.length) },
+                },
+                2 => TerminalTranscriptEvent::Eof { bytes: unsafe { terminal_bytes(event.bytes, event.length) } },
+                3 => TerminalTranscriptEvent::Resize(TerminalResize { rows: event.rows, columns: event.columns }),
+                _ => panic!("C terminal event kind"),
+            });
+        }
+        TerminalTranscript { events }
     }
 
     pub fn diagnostics(&self) -> TerminalSessionDiagnostics {
-        self.diagnostics.get()
+        let mut counters = CTerminalCounters::default();
+        unsafe { ghostos_vm_terminal_counters_get(self.state.borrow().pointer(), &mut counters) };
+        TerminalSessionDiagnostics {
+            polls: counters.polls,
+            input_bytes: counters.input_bytes,
+            output_bytes: counters.output_bytes,
+            output_flushes: counters.output_flushes,
+            eof_events: counters.eof_events,
+            resize_events: counters.resize_events,
+            last_failure: self.last_failure.get(),
+        }
     }
 
     pub fn flush_output(&self) -> Result<(), TerminalError> {
@@ -337,7 +417,7 @@ impl TerminalSession {
             .map_err(|error| TerminalError::from_io(TerminalOperation::FlushOutput, error));
         match result {
             Ok(()) => {
-                self.update_diagnostics(|diagnostics| diagnostics.output_flushes += 1);
+                unsafe { ghostos_vm_terminal_output_flushed(self.state.borrow_mut().pointer()) };
                 Ok(())
             }
             Err(error) => Err(self.record_failure(error)),
@@ -351,25 +431,15 @@ impl TerminalSession {
             .map_err(|error| TerminalError::from_io(TerminalOperation::WriteOutput, error));
         match result {
             Ok(()) => {
-                self.update_diagnostics(|diagnostics| {
-                    diagnostics.output_bytes += bytes.len() as u64
-                });
+                unsafe { ghostos_vm_terminal_output_written(self.state.borrow_mut().pointer(), bytes.len()) };
                 Ok(())
             }
             Err(error) => Err(self.record_failure(error)),
         }
     }
 
-    fn update_diagnostics(&self, update: impl FnOnce(&mut TerminalSessionDiagnostics)) {
-        let mut diagnostics = self.diagnostics.get();
-        update(&mut diagnostics);
-        self.diagnostics.set(diagnostics)
-    }
-
     fn record_failure(&self, error: TerminalError) -> TerminalError {
-        self.update_diagnostics(|diagnostics| {
-            diagnostics.last_failure = Some(error.diagnostic())
-        });
+        self.last_failure.set(Some(error.diagnostic()));
         error
     }
 }
@@ -405,21 +475,14 @@ fn spawn_input_reader(mut input: Box<dyn Read + Send>) -> Receiver<InputEvent> {
 /// This stays independent from stdin so the exact input policy can be tested
 /// without taking ownership of the process terminal.
 pub fn translate_input_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut previous_input_was_cr = false;
-    translate_input_bytes_after_cr(bytes, &mut previous_input_was_cr)
-}
-
-fn translate_input_bytes_after_cr(bytes: &[u8], previous_input_was_cr: &mut bool) -> Vec<u8> {
-    let mut translated = Vec::with_capacity(bytes.len());
-    for &byte in bytes {
-        let byte = if byte == 0x7F { 0x08 } else { byte };
-        if byte == b'\n' && *previous_input_was_cr {
-            *previous_input_was_cr = false;
-            continue
-        }
-        translated.push(byte);
-        *previous_input_was_cr = byte == b'\r';
-    }
+    let mut previous_cr = false;
+    let mut translated = vec![0; bytes.len()];
+    let mut length = 0;
+    assert!(unsafe {
+        ghostos_vm_terminal_translate(bytes.as_ptr(), bytes.len(), &mut previous_cr,
+            translated.as_mut_ptr(), translated.len(), &mut length)
+    });
+    translated.truncate(length);
     translated
 }
 

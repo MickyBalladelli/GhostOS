@@ -4,6 +4,7 @@
 #include "ghostos/vm_pit.h"
 #include "ghostos/vm_ps2.h"
 #include "ghostos/vm_driver_capabilities.h"
+#include "ghostos/vm_display.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -248,6 +249,46 @@ static void driver_report_contract(void) {
     assert(strcmp(entries[9].selected, "shared-monotonic-clock") == 0);
 }
 
+/* The two retained Rust display cases, using the native C state and ports. */
+static void display_contract(void) {
+    ghostos_vm_display *display = ghostos_vm_display_new();
+    assert(display);
+    uint64_t value;
+    assert(ghostos_vm_display_write(display, false, GHOSTOS_VM_VGA_TEXT_BASE, 2, 0x0741) == 0);
+    assert(ghostos_vm_display_read(display, false, GHOSTOS_VM_VGA_TEXT_BASE, 2, &value) == 0);
+    assert(value == 0x0741);
+    uint8_t character, attribute;
+    assert(ghostos_vm_display_cell(display, 0, 0, &character, &attribute));
+    assert(character == 'A' && attribute == 7);
+    assert(ghostos_vm_display_write(display, true, GHOSTOS_VM_VESA_LFB_BASE + 3, 4, 0xaabbccdd) == 0);
+    assert(ghostos_vm_display_read(display, true, GHOSTOS_VM_VESA_LFB_BASE + 3, 4, &value) == 0);
+    assert(value == 0xaabbccdd);
+    assert(ghostos_vm_display_read(display, true,
+        GHOSTOS_VM_VESA_LFB_BASE + GHOSTOS_VM_VESA_FB_SIZE - 1, 2, &value) == GHOSTOS_VM_DISPLAY_ADDRESS);
+    assert(ghostos_vm_display_write(display, false, GHOSTOS_VM_VGA_TEXT_BASE, 3, 0) == GHOSTOS_VM_DISPLAY_SIZE);
+
+    ghostos_vm_display_reset(display);
+    ghostos_vm_display_port_write(display, 0x3d4, 15);
+    ghostos_vm_display_port_write(display, 0x3d5, 81);
+    ghostos_vm_display_port_write(display, 0x3d4, 14);
+    ghostos_vm_display_port_write(display, 0x3d5, 0);
+    ghostos_vm_display_info info;
+    ghostos_vm_display_info_get(display, &info);
+    assert(info.cursor_x == 1 && info.cursor_y == 1);
+    ghostos_vm_display_port_write(display, 0x3c8, 2);
+    ghostos_vm_display_port_write(display, 0x3c9, 1);
+    ghostos_vm_display_port_write(display, 0x3c9, 2);
+    ghostos_vm_display_port_write(display, 0x3c9, 3);
+    ghostos_vm_display_port_write(display, 0x3c7, 2);
+    assert(ghostos_vm_display_port_read(display, 0x3c9) == 1);
+    assert(ghostos_vm_display_port_read(display, 0x3c9) == 2);
+    assert(ghostos_vm_display_port_read(display, 0x3c9) == 3);
+    ghostos_vm_display_reset(display);
+    ghostos_vm_display_info_get(display, &info);
+    assert(info.mode == 0 && info.cursor_x == 0 && info.cursor_y == 0);
+    ghostos_vm_display_free(display);
+}
+
 int main(void) {
     priority_and_trigger_contract();
     timer_and_clock_contract();
@@ -255,6 +296,7 @@ int main(void) {
     pit_contract();
     ps2_contract();
     driver_report_contract();
+    display_contract();
     puts("C VM device contracts passed");
     return 0;
 }

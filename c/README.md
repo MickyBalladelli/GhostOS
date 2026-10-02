@@ -22,6 +22,11 @@ Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 | `crates/api-compat/src/lib.rs` | `src/api_compat.c` | `include/ghostos/api_compat.h` |
 | `crates/protocol/src/lib.rs` | `src/protocol.c` | `include/ghostos/protocol.h` |
 | `crates/boot-protocol/src/lib.rs` | `src/boot_protocol.c` | `include/ghostos/boot_protocol.h` |
+| `virtual_machine/src/replay.rs` (active session state, owned events, replay policy, DMA and file/header codecs) | `src/vm_replay.c` | `include/ghostos/vm_replay.h` |
+| `virtual_machine/src/devices/display.rs` (active VGA/VESA state, rendering, snapshots, PPM, and BIOS video dispatch) | `src/vm_display.c` | `include/ghostos/vm_display.h` |
+| `virtual_machine/src/devices/net/e1000.rs` (active registers, RX queue, descriptor processing, errors, and IRQ decisions) | `src/vm_e1000.c` | `include/ghostos/vm_e1000.h` |
+| `virtual_machine/src/terminal.rs` (active input policy, resize timing, transcripts, EOF, and counters) | `src/vm_terminal.c` | `include/ghostos/vm_terminal.h` |
+| `virtual_machine/src/terminal_platform.rs` (Unix/Windows terminal modes, restoration, signal guards, and size queries) | `src/vm_terminal_platform.c` | `include/ghostos/vm_terminal_platform.h` |
 | `virtual_machine/src/firmware/bios.rs` (ROM, POST tables, disk/memory/keyboard services) | `src/vm_bios.c` | `include/ghostos/vm_bios.h` |
 | `virtual_machine/src/migration.rs` (frame decoding, tag assembly, validation sequencing) | `src/vm_migration.c` | `include/ghostos/vm_migration.h` |
 | `virtual_machine/src/snapshot.rs` (SHA-256, multipart HMAC, authentication comparisons) | `src/vm_snapshot_auth.c` | `include/ghostos/vm_snapshot_auth.h` |
@@ -247,8 +252,42 @@ No Rust source or build configuration is obsolete yet. Move it to `Trash/` only
 after the C consumers replace it and behavior preservation is established. The
 new `build/c/` output belongs to the active C build.
 
-`vm_replay.h` / `vm_replay.c` implement the active SYNVMRP1 replay file and
-event header codecs. Decoded events borrow no storage; callers own payloads.
-The parser bounds file size, event count, and payload size and validates event
-kind and sequence. Reserved header bytes remain ignored for compatibility.
-Rust still owns recording/replay sessions, DMA codecs, and filesystem I/O.
+`vm_replay.h` / `vm_replay.c` own the active ordered replay session and its
+payload storage, including recording, capacity checks, mode/cursor transitions,
+first-divergence reports, host-input resize validation, and authoritative DMA
+replay. SYNVMRP1 codecs retain little-endian layout and reserved-byte acceptance.
+Rejected replay imports leave the existing session intact. Kind mismatches do
+not consume an event; input mismatches consume it before reporting failure.
+DMA encode/decode errors retain the previous error latch, matching Rust.
+Session event views remain borrowed until reset/import/destruction; Rust copies
+them into public typed trace snapshots. Filesystem I/O remains in the adapter.
+
+The display port owns text, framebuffer, palette, cursor, and rendered pixel
+storage. Pixels borrow C memory until the next mutation or destruction. It also
+encodes legacy byte-as-character text snapshots as UTF-8 and P6 PPM output.
+The BIOS video port retains the current LFB mode mask, 15-bit pitch arithmetic,
+and text-scroll fill sequencing. Valid VBE mode-info requests still report the
+legacy four-byte-to-two-byte copy panic through the Rust adapter; C never copies
+past a buffer. Shared ownership, MMU callbacks, GOP types, and file writes remain
+in Rust. The two existing display cases have C source in
+`c/tests/vm_device_contracts.c`, checked for syntax only.
+
+The e1000 port retains its 128-packet/3036-byte pending queue, bounded 4096-entry
+rings, TX head traversal, RX tail-plus-one indexing, interrupt masks, and ignored
+status-write failures. It shares the virtio-net host callback layout while
+retaining e1000-specific behavior, including carrier-up without a backend.
+Rust supplies synchronous MMU, backend, and APIC callbacks. The two existing
+e1000 cases have C source in `c/tests/vm_io_contracts.c`.
+
+Terminal C state owns input translation across chunks, the 250 ms size-poll
+policy, EOF Ctrl-D bytes, poll buffers, transcript storage, and counters. Rust
+supplies input threads, streams, clocks, and typed failure/trace views. Native
+terminal C code saves and restores Unix termios, installs the original twelve
+signal handlers, and permits one raw session. Windows code preserves console
+mode setup, failed-output rollback, and output-before-input restoration.
+Numeric native errors are translated by Rust without terminal data in messages.
+Only the AArch64 macOS host build has been checked; Linux/Windows and PTY parity
+remain unverified. Policy portions of four retained terminal cases also have C
+source in `c/tests/vm_io_contracts.c`, checked for syntax only. The explicit
+`make c-vm-test-binaries` target includes `build/c/vm-io-contracts` without
+executing it.

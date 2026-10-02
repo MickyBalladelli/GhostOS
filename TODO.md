@@ -10,7 +10,7 @@
 
 ## Migration progress
 
-The complete migration is in progress. About 238,588 Rust source lines need to
+The complete migration is in progress. About 235,559 Rust source lines need to
 be ported. The OS, VM, and service consumers still run Rust; no complete project
 cutover has occurred. Every Rust source area is listed below, including the VM,
 kernel, bootloader, services, tooling, examples, tests, and fuzz targets.
@@ -91,6 +91,15 @@ header codecs. Reserved-byte acceptance, error ordering, and little-endian
 layout are preserved in source. Behavior parity remains unverified. Build
 logs are in `temp/c-library-replay.log` and `temp/vm-build-replay.log`.
 
+Replay-session/display/terminal/e1000 build checks on 2026-10-02:
+`make c-library` and `cargo build -p ghostos-vm` passed together with
+these active C consumers on AArch64 macOS. The two existing display cases,
+two e1000 cases, and policy portions of four terminal cases have C source
+checked for compilation syntax only. No behavior-parity execution is claimed.
+Final build logs are in `temp/c-library-final-ports.log` and
+`temp/vm-build-final-ports.log`; syntax logs are in
+`temp/display-contract-syntax.log` and `temp/io-contract-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -158,13 +167,13 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/cpu/executor.rs`
 - [ ] `virtual_machine/src/cpu/mod.rs`
 - [ ] `virtual_machine/src/devices/apic.rs` — C owns the active xAPIC register state, MSR handling, interrupt priority/trigger tracking, EOI, IPI routing, and countdown timer in `c/src/vm_apic.c`. Rust retains device-trait/shared-owner adapters and the existing field-by-field snapshot format. The VM builds and the 16 retained APIC tests plus standalone C device contracts pass; removing the remaining Rust adapter awaits VM-wide cutover.
-- [ ] `virtual_machine/src/devices/display.rs`
+- [ ] `virtual_machine/src/devices/display.rs` — C owns active VGA text/framebuffer memory, register and palette state, cursor control, text/VESA rendering, UTF-8 text snapshots, PPM encoding, and INT 10h dispatch. Rust retains shared-owner/device adapters, GOP type translation, MMU callbacks, filesystem writes, and legacy panic translation. The two existing display cases have C contract source. Existing VBE mode-info width panic, LFB mode-mask, and 15-bit pitch behavior are preserved; full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/devices/guest.rs` — C owns active guest-agent byte/event queues, mailbox registers, memory-hotplug request/notification state and validation, and pvclock MSR state, version sequencing, and little-endian page encoding in `c/src/vm_guest.c`. Rust retains shared-APIC ownership, MMU writes, and host/replay wall-time callbacks. Register error behavior, saturating arithmetic, and system-page-before-wall-time ordering are preserved; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/devices/hpet.rs` — C owns the active HPET counter, register state, comparator scheduling, periodic reloads, reset, and interrupt routing in `c/src/vm_hpet.c`. Rust retains device-trait/shared-owner adapters and APIC ownership. The seven retained HPET tests and standalone C device contracts pass; removing the remaining Rust adapter awaits VM-wide cutover. Existing register aliases and timing behavior are preserved rather than claiming hardware-spec conformance.
 - [ ] `virtual_machine/src/devices/input.rs` — C owns the active i8042 controller command state, bounded output ring, lossless pending-keyboard queue, keyboard/mouse command replies, mouse packet conversion, and interrupt decisions in `c/src/vm_ps2.c`. Rust retains shared-APIC ownership and deferred IRQ borrowing. The three existing PS/2 cases have C contract source; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/devices/interrupt_controller.rs` — C owns IDT gate decoding and interrupt-controller state, routing, snapshots, and reset. Rust keeps the legacy PIC adapter that acknowledges through the `LocalApic` API; full cutover remains.
 - [ ] `virtual_machine/src/devices/mod.rs`
-- [ ] `virtual_machine/src/devices/net/e1000.rs`
+- [ ] `virtual_machine/src/devices/net/e1000.rs` — C owns active MMIO register state, RX backlog, backend error tracking, TX/RX descriptor traversal, DMA completion, reset, and interrupt decisions. Rust retains backend, MMU, and APIC callbacks and public device adapters. The two existing e1000 cases have C contract source; existing RX indexing, queue limits, ignored status-write failures, and debug overflow behavior are preserved. Full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/devices/net/mod.rs`
 - [ ] `virtual_machine/src/devices/net/virtio.rs` — C owns active register state, RX backlog, backend error tracking, direct-index RX/TX descriptor traversal, DMA completion, and interrupt decisions in `c/src/vm_virtio_net.c`. Rust retains MMU, backend, and APIC callbacks and public device adapters. Shared-PFN and existing interrupt behavior are preserved; full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/devices/pit.rs` — C owns the active three-channel counter state, control/read-back protocols, reload/read sequencing, host-time advancement, and terminal-count pulses in `c/src/vm_pit.c`. Rust retains the port-device/shared-APIC adapter and existing tests. Existing zero-reload, latch-consumption, and mode behavior is preserved; behavior parity remains unverified.
@@ -197,10 +206,10 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/net/mod.rs` — C owns the alignment helper; Rust module exports and networking submodules remain.
 - [x] `virtual_machine/src/net/packet.rs` — C owns bounded packet queue storage, byte and packet accounting, queue operations, Ethernet minimum-frame padding, and error display strings in `c/src/vm_packet.c`. The VM build links this host-allocator module; Rust keeps the public `Vec` and error-code wrappers.
 - [ ] `virtual_machine/src/passkey_bridge.rs`
-- [ ] `virtual_machine/src/replay.rs` — C owns active SYNVMRP1 file/header encoding and bounded event decoding, including kind, sequence, payload, version, and count validation. Rust retains session state, DMA payload codecs, filesystem I/O, and owned event storage. Full C cutover and behavior parity remain.
+- [ ] `virtual_machine/src/replay.rs` — C owns active SYNVMRP1 file/header codecs, trace and file-size validation, session-owned records and payloads, mode/cursor/capacity transitions, error latching, instruction/clock/timer/interrupt/host-input replay, and DMA payload encoding/decoding. Rust retains typed trace snapshots, filesystem I/O, error formatting, and shared-owner adapters. Full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/snapshot.rs` — Active SHA-256, streaming multipart HMAC-SHA256, and fixed-length authentication comparisons use `c/src/vm_snapshot_auth.c`. Rust retains key wrappers, snapshot serialization/deserialization, restoration, diff/checkpoint storage, and schema policy; the complete snapshot port and behavior parity remain.
-- [ ] `virtual_machine/src/terminal.rs`
-- [ ] `virtual_machine/src/terminal_platform.rs`
+- [ ] `virtual_machine/src/terminal.rs` — C owns active CR/LF and DEL input policy, resize polling and change detection, poll buffers, transcript storage/replay, EOF byte generation, and diagnostics counters. Rust retains supplied streams, reader threads, native error-kind adapters, shared clock ownership, and typed transcript snapshots. Policy portions of four existing terminal cases have C contract source. Stream/thread and PTY fixture ports, full C cutover, and behavior parity remain.
+- [ ] `virtual_machine/src/terminal_platform.rs` — C owns native Unix terminal handles, saved/raw termios, signal registration/restoration, single-session guarding, and terminal-size queries; Windows console modes/rollback/restoration and portable fallbacks also have C source. Rust retains the RAII and I/O-error adapter. The AArch64 macOS host builds; Linux/Windows builds, PTY behavior parity, and full C cutover remain.
 
 Each entry names a project area containing Rust source files. Port every `.rs` file in each listed tree, including nested source, test, benchmark, example, and build-script files. These are all in-scope port targets, not optional cleanup.
 
