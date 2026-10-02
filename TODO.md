@@ -61,6 +61,12 @@ ports. All fourteen existing serial cases have C source in
 `c/tests/vm_serial_contracts.c`, checked for compilation syntax only. Full C
 cutover and behavior-parity verification remain open.
 
+Virtio build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C block, console, RNG, and
+Virtio-net controllers. Production queue processing now stays in C. Rust
+host adapters and existing test source remain; behavior parity and full
+project cutover are still open. Build logs are in `temp/`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -136,7 +142,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/mod.rs`
 - [ ] `virtual_machine/src/devices/net/e1000.rs`
 - [ ] `virtual_machine/src/devices/net/mod.rs`
-- [ ] `virtual_machine/src/devices/net/virtio.rs`
+- [ ] `virtual_machine/src/devices/net/virtio.rs` — C owns active register state, RX backlog, backend error tracking, direct-index RX/TX descriptor traversal, DMA completion, and interrupt decisions in `c/src/vm_virtio_net.c`. Rust retains MMU, backend, and APIC callbacks and public device adapters. Shared-PFN and existing interrupt behavior are preserved; full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/devices/pit.rs` — C owns the active three-channel counter state, control/read-back protocols, reload/read sequencing, host-time advancement, and terminal-count pulses in `c/src/vm_pit.c`. Rust retains the port-device/shared-APIC adapter and existing tests. Existing zero-reload, latch-consumption, and mode behavior is preserved; behavior parity remains unverified.
 - [x] `virtual_machine/src/devices/power.rs` — C validates power-control port accesses and decodes ACPI sleep-enable writes into shutdown/reboot state. Rust keeps shared state and notification queue integration.
 - [ ] `virtual_machine/src/devices/serial.rs` — C owns the active UART registers and divisor aliases, transmit/receive FIFOs, lossless paste queue, raw capture and compaction, newline conversion, panic detection, authentication-marker replacement/holding, prompt suppression, and spinner state/timing in `c/src/vm_serial.c`. Rust retains shared-APIC delivery, host console/clock callbacks, and public slice/vector adapters. All fourteen existing serial cases have standalone C contract source; full Rust removal and behavior parity remain.
@@ -147,8 +153,8 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/storage/nvme.rs`
 - [ ] `virtual_machine/src/devices/storage/persistence.rs` — C owns active persistence-port modes, length/cursor handling, command transitions, tail-region loading/writing, SYNOPS01 little-endian headers, FNV-1a checksums, and zero-filled sector serialization in `c/src/vm_persistence.c`. Rust retains the DiskImage owner and sector/sync/error callbacks. The legacy port-error behavior and failed-I/O transitions are preserved; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/devices/storage/system_disk.rs`
-- [ ] `virtual_machine/src/devices/virtio.rs`
-- [ ] `virtual_machine/src/devices/virtio_queue.rs` — C owns split-ring address calculation, avail-ring consumption, descriptor-chain validation, and used-ring completion. Rust keeps the MMU read/write callbacks and public wrapper; end-to-end behavior parity remains.
+- [ ] `virtual_machine/src/devices/virtio.rs` — C owns active legacy transport registers, block request parsing and sector transfer sequencing, console capture/newline handling, RNG filling, queue completion, and interrupt decisions in `c/src/vm_virtio.c`. Rust retains disk, MMU, entropy, host console, and APIC callbacks. Full C cutover and behavior parity remain.
+- [ ] `virtual_machine/src/devices/virtio_queue.rs` — C owns split-ring address calculation, avail-ring consumption, descriptor-chain validation, and used-ring completion. Production controllers call C directly; the Rust wrapper remains only for existing test source. Full Rust removal and end-to-end behavior parity remain.
 - [ ] `virtual_machine/src/driver_capabilities.rs` — C owns the active ten-entry discovery report, availability and fallback selection, and static report text in `c/src/vm_driver_capabilities.c`. Rust retains public enum/array/string adapters and the const kind-name API. The three existing report cases have C contract source; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/execution.rs`
 - [ ] `virtual_machine/src/firmware/bios.rs`

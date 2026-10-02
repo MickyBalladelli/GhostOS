@@ -1,10 +1,10 @@
-//! Legacy virtio-net device (single RX/TX virtqueue pair, 0.9.5 layout).
+//! Legacy virtio-net device backed by the C controller.
 
-use crate::devices::virtio_queue::{DESC_SIZE, QUEUE_SIZE};
 use crate::devices::{ApicTrigger, Device, DeviceError, LocalApic, PortDevice};
 use crate::memory::Mmu;
-use crate::net::{MacAddress, NetBackend, NetError, NetQueueState, PacketQueue, ETHERNET_FRAME_MAX};
+use crate::net::{MacAddress, NetBackend, NetError, NetQueueState};
 use std::cell::RefCell;
+use std::ffi::c_void;
 use std::rc::Rc;
 
 pub const VIRTIO_NET_VENDOR_ID: u16 = 0x1AF4;
@@ -14,349 +14,167 @@ pub const VIRTIO_NET_SUBCLASS: u8 = 0x00;
 pub const VIRTIO_NET_PROG_IF: u8 = 0x00;
 pub const VIRTIO_NET_PCI_BAR0_SIZE: u64 = 0x100;
 
-const REG_DEVICE_FEATURES: u16 = 0x00;
-const REG_GUEST_FEATURES: u16 = 0x04;
-const REG_QUEUE_PFN: u16 = 0x08;
-const REG_QUEUE_SIZE: u16 = 0x0C;
-const REG_QUEUE_SEL: u16 = 0x0E;
+#[cfg(test)]
+const REG_DEVICE_FEATURES: u16 = 0;
+#[cfg(test)]
+const REG_GUEST_FEATURES: u16 = 4;
+#[cfg(test)]
+const REG_QUEUE_PFN: u16 = 8;
+#[cfg(test)]
+const REG_QUEUE_SEL: u16 = 0x0e;
+#[cfg(test)]
 const REG_QUEUE_NOTIFY: u16 = 0x10;
+#[cfg(test)]
 const REG_STATUS: u16 = 0x12;
-const REG_ISR_STATUS: u16 = 0x13;
+#[cfg(test)]
 const REG_CONFIG: u16 = 0x14;
-const REG_CONFIG_STATUS: u16 = 0x1a;
-
-const DEVICE_FEATURES: u32 = (1 << 5) | (1 << 16); // VIRTIO_NET_F_MAC | STATUS
-
-const QUEUE_RX: u16 = 0;
+#[cfg(test)]
+const DEVICE_FEATURES: u32 = (1 << 5) | (1 << 16);
+#[cfg(test)]
 const QUEUE_TX: u16 = 1;
-const HEADER_LEN: usize = 10; // virtio-net header written before each frame
-const MAX_RX_BACKLOG: usize = 128;
+
+#[repr(C)]
+struct CIo {
+    read_memory: unsafe extern "C" fn(*mut c_void, u64, *mut u8, usize) -> bool,
+    write_memory: unsafe extern "C" fn(*mut c_void, u64, *const u8, usize) -> bool,
+    receive: unsafe extern "C" fn(*mut c_void, *mut *const u8, *mut usize) -> i32,
+    transmit: unsafe extern "C" fn(*mut c_void, *const u8, usize) -> i32,
+    interrupt: unsafe extern "C" fn(*mut c_void),
+    context: *mut c_void,
+}
+
+unsafe extern "C" {
+    fn ghostos_vm_virtio_net_new(mac: *const u8) -> *mut c_void;
+    fn ghostos_vm_virtio_net_free(net: *mut c_void);
+    fn ghostos_vm_virtio_net_reset(net: *mut c_void);
+    fn ghostos_vm_virtio_net_clear_rx(net: *mut c_void);
+    fn ghostos_vm_virtio_net_pending(net: *const c_void) -> bool;
+    fn ghostos_vm_virtio_net_notify(net: *mut c_void);
+    fn ghostos_vm_virtio_net_take_error(net: *mut c_void) -> i32;
+    fn ghostos_vm_virtio_net_read(net: *mut c_void, port: u16, carrier: bool) -> u64;
+    fn ghostos_vm_virtio_net_write(net: *mut c_void, port: u16, value: u32);
+    fn ghostos_vm_virtio_net_poll(net: *mut c_void, io: *const CIo) -> bool;
+}
+
+struct PollContext<'a> {
+    mmu: &'a mut Mmu,
+    backend: &'a mut Option<Box<dyn NetBackend>>,
+    apic: &'a Option<Rc<RefCell<LocalApic>>>,
+    vector: u8,
+    received: Vec<u8>,
+}
+
+unsafe extern "C" fn read_memory(raw: *mut c_void, addr: u64, out: *mut u8, len: usize) -> bool {
+    let context = unsafe { &mut *raw.cast::<PollContext<'_>>() };
+    match context.mmu.read_phys(addr, len) {
+        Ok(bytes) => {
+            if len != 0 { unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, len) }; }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+unsafe extern "C" fn write_memory(raw: *mut c_void, addr: u64, bytes: *const u8, len: usize) -> bool {
+    let context = unsafe { &mut *raw.cast::<PollContext<'_>>() };
+    let bytes = if len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(bytes, len) } };
+    context.mmu.write_phys(addr, bytes).is_ok()
+}
+
+unsafe extern "C" fn receive(raw: *mut c_void, packet: *mut *const u8, len: *mut usize) -> i32 {
+    let context = unsafe { &mut *raw.cast::<PollContext<'_>>() };
+    let Some(backend) = context.backend.as_mut() else { return -6 };
+    match backend.receive() {
+        Ok(Some(bytes)) => {
+            context.received = bytes;
+            unsafe { *packet = context.received.as_ptr(); *len = context.received.len(); }
+            1
+        }
+        Ok(None) => 0,
+        Err(error) => -(error as i32 + 1),
+    }
+}
+
+unsafe extern "C" fn transmit(raw: *mut c_void, packet: *const u8, len: usize) -> i32 {
+    let context = unsafe { &mut *raw.cast::<PollContext<'_>>() };
+    let Some(backend) = context.backend.as_mut() else { return 5 };
+    let packet = if len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(packet, len) } };
+    backend.transmit(packet).map_or_else(|error| error as i32, |_| -1)
+}
+
+unsafe extern "C" fn interrupt(raw: *mut c_void) {
+    let context = unsafe { &mut *raw.cast::<PollContext<'_>>() };
+    if context.vector != 0 {
+        if let Some(apic) = context.apic {
+            apic.borrow_mut().signal(context.vector, ApicTrigger::Edge);
+        }
+    }
+}
 
 pub struct VirtioNet {
+    state: *mut c_void,
     mac: MacAddress,
-    guest_features: u32,
-    queue_sel: u16,
-    queue_pfn: u32,
-    status: u8,
-    queue_enabled: [bool; 2],
-    avail_last: [u16; 2],
-    used_count: [u16; 2],
-    interrupt_status: u8,
-    pending_rx: PacketQueue,
-    poll_pending: bool,
     apic: Option<Rc<RefCell<LocalApic>>>,
     irq_vector: u8,
     backend: Option<Box<dyn NetBackend>>,
-    last_network_error: Option<NetError>,
 }
 
 impl VirtioNet {
     pub fn new(mac: MacAddress) -> Self {
-        Self {
-            mac,
-            guest_features: 0,
-            queue_sel: 0,
-            queue_pfn: 0,
-            status: 0,
-            queue_enabled: [false; 2],
-            avail_last: [0; 2],
-            used_count: [0; 2],
-            interrupt_status: 0,
-            pending_rx: PacketQueue::new(MAX_RX_BACKLOG, ETHERNET_FRAME_MAX * 2),
-            poll_pending: false,
-            apic: None,
-            irq_vector: 0,
-            backend: None,
-            last_network_error: None,
-        }
+        let state = unsafe { ghostos_vm_virtio_net_new(mac.to_bytes().as_ptr()) };
+        assert!(!state.is_null(), "C virtio-net allocation failed");
+        Self { state, mac, apic: None, irq_vector: 0, backend: None }
     }
 
-    pub fn attach_apic(&mut self, apic: Rc<RefCell<LocalApic>>) {
-        self.apic = Some(apic);
-    }
-
-    pub fn set_irq_vector(&mut self, vector: u8) {
-        self.irq_vector = vector;
-    }
-
+    pub fn attach_apic(&mut self, apic: Rc<RefCell<LocalApic>>) { self.apic = Some(apic); }
+    pub fn set_irq_vector(&mut self, vector: u8) { self.irq_vector = vector; }
     pub fn attach_backend(&mut self, backend: Box<dyn NetBackend>) {
-        self.pending_rx.clear();
+        unsafe { ghostos_vm_virtio_net_clear_rx(self.state) };
         self.backend = Some(backend);
     }
-
-    pub fn mac(&self) -> MacAddress {
-        self.mac
-    }
-
-    pub fn carrier_up(&self) -> bool {
-        self.backend.as_ref().is_some_and(|backend| backend.link_up())
-    }
-
-    pub fn admin_up(&self) -> bool {
-        self.backend.as_ref().is_none_or(|backend| backend.admin_up())
-    }
-
+    pub fn mac(&self) -> MacAddress { self.mac }
+    pub fn carrier_up(&self) -> bool { self.backend.as_ref().is_some_and(|backend| backend.link_up()) }
+    pub fn admin_up(&self) -> bool { self.backend.as_ref().is_none_or(|backend| backend.admin_up()) }
     pub fn queue_state(&self) -> NetQueueState {
-        self.backend
-            .as_ref()
-            .map_or(NetQueueState::EMPTY, |backend| backend.queue_state())
+        self.backend.as_ref().map_or(NetQueueState::EMPTY, |backend| backend.queue_state())
     }
-
     pub fn set_admin_up(&mut self, up: bool) {
-        if let Some(backend) = &mut self.backend {
-            backend.set_admin_up(up);
-        }
+        if let Some(backend) = &mut self.backend { backend.set_admin_up(up); }
     }
-
     pub fn take_network_error(&mut self) -> Option<NetError> {
-        self.last_network_error.take()
+        match unsafe { ghostos_vm_virtio_net_take_error(self.state) } {
+            0 => Some(NetError::PacketTooLarge),
+            1 => Some(NetError::Truncated),
+            2 => Some(NetError::QueueFull),
+            3 => Some(NetError::LinkDown),
+            4 => Some(NetError::AdminDown),
+            5 => Some(NetError::BackendUnavailable),
+            _ => None,
+        }
     }
-
-    pub fn has_pending(&self) -> bool {
-        self.poll_pending || !self.pending_rx.is_empty()
-    }
-
-    fn desc_base(&self) -> u64 {
-        crate::devices::virtio_queue::desc_base(self.queue_pfn)
-    }
-
-    fn avail_base(&self) -> u64 {
-        crate::devices::virtio_queue::avail_base(self.queue_pfn)
-    }
-
-    fn used_base(&self) -> u64 {
-        crate::devices::virtio_queue::used_base(self.queue_pfn)
-    }
-
+    pub fn has_pending(&self) -> bool { unsafe { ghostos_vm_virtio_net_pending(self.state) } }
     fn read_io(&mut self, port: u16) -> u64 {
-        let off = (port & (VIRTIO_NET_PCI_BAR0_SIZE as u16 - 1)) as u16;
-        match off {
-            REG_DEVICE_FEATURES => DEVICE_FEATURES as u64,
-            REG_GUEST_FEATURES => self.guest_features as u64,
-            REG_QUEUE_PFN => self.queue_pfn as u64,
-            REG_QUEUE_SIZE => QUEUE_SIZE as u64,
-            REG_QUEUE_SEL => self.queue_sel as u64,
-            REG_STATUS => self.status as u64,
-            REG_ISR_STATUS => {
-                let status = self.interrupt_status;
-                self.interrupt_status = 0;
-                status as u64
-            }
-            REG_CONFIG..=0x19 => {
-                let index = (off - REG_CONFIG) as usize;
-                self.mac.to_bytes()[index] as u64
-            }
-            REG_CONFIG_STATUS => self
-                .backend
-                .as_ref()
-                .is_some_and(|backend| backend.link_up()) as u64,
-            _ => 0,
-        }
+        let carrier = port & 0xff == 0x1a && self.carrier_up();
+        unsafe { ghostos_vm_virtio_net_read(self.state, port, carrier) }
     }
-
     fn write_io(&mut self, port: u16, value: u32) {
-        let off = (port & (VIRTIO_NET_PCI_BAR0_SIZE as u16 - 1)) as u16;
-        match off {
-            REG_GUEST_FEATURES => self.guest_features = value,
-            REG_QUEUE_PFN => {
-                self.queue_pfn = value;
-                let q = self.queue_sel as usize;
-                self.queue_enabled[q] = value != 0;
-                self.avail_last[q] = 0;
-                self.used_count[q] = 0;
-            }
-            REG_QUEUE_SEL => self.queue_sel = (value & 1) as u16,
-            REG_QUEUE_NOTIFY => {
-                self.poll_pending = true;
-            }
-            REG_STATUS => {
-                self.status = value as u8;
-                if self.status == 0 {
-                    self.queue_pfn = 0;
-                    self.queue_enabled = [false; 2];
-                    self.avail_last = [0; 2];
-                    self.used_count = [0; 2];
-                    self.interrupt_status = 0;
-                    self.poll_pending = false;
-                }
-            }
-            _ => {}
-        }
+        unsafe { ghostos_vm_virtio_net_write(self.state, port, value) };
     }
-
-    pub fn on_notify(&mut self, _q: u16) {
-        self.poll_pending = true;
-    }
-
+    pub fn on_notify(&mut self, _q: u16) { unsafe { ghostos_vm_virtio_net_notify(self.state) }; }
     pub fn poll(&mut self, mmu: &mut Mmu) {
-        if let Some(backend) = &mut self.backend {
-            loop {
-                match backend.receive() {
-                    Ok(Some(packet)) => {
-                        if !self.pending_rx.push(packet) {
-                            self.last_network_error = Some(NetError::QueueFull);
-                            break;
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(error) => {
-                        self.last_network_error = Some(error);
-                        break;
-                    }
-                }
-            }
-        } else {
-            self.last_network_error = Some(NetError::BackendUnavailable);
-        }
-        if self.poll_pending || !self.pending_rx.is_empty() {
-            self.poll_tx(mmu);
-            self.poll_rx(mmu);
-        }
-        self.poll_pending = false;
+        let mut context = PollContext {
+            mmu, backend: &mut self.backend, apic: &self.apic,
+            vector: self.irq_vector, received: Vec::new(),
+        };
+        let io = CIo { read_memory, write_memory, receive, transmit, interrupt,
+            context: (&mut context as *mut PollContext<'_>).cast() };
+        assert!(unsafe { ghostos_vm_virtio_net_poll(self.state, &io) }, "C virtio-net allocation failed");
     }
+    pub fn reset(&mut self) { unsafe { ghostos_vm_virtio_net_reset(self.state) }; }
+}
 
-    fn dma_read(mmu: &Mmu, addr: u64, buf: &mut [u8]) -> bool {
-        match mmu.read_phys(addr, buf.len()) {
-            Ok(bytes) => {
-                buf.copy_from_slice(&bytes);
-                true
-            }
-            Err(_) => false,
-        }
-    }
-
-    fn dma_write(mmu: &mut Mmu, addr: u64, buf: &[u8]) -> bool {
-        mmu.write_phys(addr, buf).is_ok()
-    }
-
-    fn update_avail(&mut self, mmu: &Mmu, q: u16) {
-        let mut buf = [0u8; 2];
-        if Self::dma_read(mmu, self.avail_base() + 2, &mut buf) {
-            self.avail_last[q as usize] = u16::from_le_bytes(buf);
-        }
-    }
-
-    fn poll_tx(&mut self, mmu: &mut Mmu) {
-        let q = QUEUE_TX as usize;
-        if !self.queue_enabled[q] {
-            return;
-        }
-        self.update_avail(mmu, QUEUE_TX);
-        let base = self.desc_base();
-        while self.avail_last[q] != self.used_count[q] {
-            let idx = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
-            let mut desc = [0u8; 16];
-            let Some(desc_addr) = base.checked_add(idx * DESC_SIZE) else { break };
-            if !Self::dma_read(mmu, desc_addr, &mut desc) {
-                break;
-            }
-            let Ok(addr_bytes) = desc[0..8].try_into() else { break };
-            let Ok(len_bytes) = desc[8..12].try_into() else { break };
-            let addr = u64::from_le_bytes(addr_bytes);
-            let len = u32::from_le_bytes(len_bytes) as usize;
-            if len == 0 {
-                break;
-            }
-            let mut packet = vec![0u8; len];
-            if !Self::dma_read(mmu, addr, &mut packet) {
-                break;
-            }
-            if let Some(backend) = &mut self.backend {
-                if let Err(error) = backend.transmit(&packet) {
-                    self.last_network_error = Some(error);
-                }
-            } else {
-                self.last_network_error = Some(NetError::BackendUnavailable);
-            }
-            let used_slot = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
-            let Some(used_off) = self
-                .used_base()
-                .checked_add(4)
-                .and_then(|addr| addr.checked_add(used_slot * 8)) else { break };
-            let mut entry = [0u8; 8];
-            entry[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
-            entry[4..8].copy_from_slice(&(len as u32).to_le_bytes());
-            if !Self::dma_write(mmu, used_off, &entry) {
-                break;
-            }
-            self.used_count[q] = self.used_count[q].wrapping_add(1);
-            let _ = Self::dma_write(mmu, self.used_base() + 2, &self.used_count[q].to_le_bytes());
-        }
-        self.check_interrupt();
-    }
-
-    fn poll_rx(&mut self, mmu: &mut Mmu) {
-        let q = QUEUE_RX as usize;
-        if !self.queue_enabled[q] || self.pending_rx.is_empty() {
-            return;
-        }
-        self.update_avail(mmu, QUEUE_RX);
-        let base = self.desc_base();
-        let used = self.used_base();
-        let mut delivered = 0u16;
-        while self.avail_last[q] != self.used_count[q] {
-            if self.pending_rx.is_empty() {
-                break;
-            }
-            let idx = self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1);
-            let mut desc = [0u8; 16];
-            let Some(desc_addr) = base.checked_add(idx * DESC_SIZE) else { break };
-            if !Self::dma_read(mmu, desc_addr, &mut desc) {
-                break;
-            }
-            let Ok(addr_bytes) = desc[0..8].try_into() else { break };
-            let Ok(len_bytes) = desc[8..12].try_into() else { break };
-            let addr = u64::from_le_bytes(addr_bytes);
-            let len = u32::from_le_bytes(len_bytes) as usize;
-            let Some(packet) = self.pending_rx.pop() else { break };
-            if packet.len() + HEADER_LEN > len {
-                break;
-            }
-            let mut frame = vec![0u8; HEADER_LEN + packet.len()];
-            frame[HEADER_LEN..].copy_from_slice(&packet);
-            if !Self::dma_write(mmu, addr, &frame) {
-                break;
-            }
-            let mut entry = [0u8; 8];
-            entry[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
-            entry[4..8].copy_from_slice(&(frame.len() as u32).to_le_bytes());
-            let Some(used_off) = used
-                .checked_add(4)
-                .and_then(|addr| addr.checked_add((self.used_count[q] as u64 & (QUEUE_SIZE as u64 - 1)) * 8)) else { break };
-            if !Self::dma_write(mmu, used_off, &entry) {
-                break;
-            }
-            self.used_count[q] = self.used_count[q].wrapping_add(1);
-            delivered += 1;
-        }
-        if delivered > 0 {
-            let idx_buf = (self.used_count[q] as u32).to_le_bytes();
-            let _ = Self::dma_write(mmu, used + 2, &idx_buf[..2]);
-            self.check_interrupt();
-        }
-    }
-
-    fn check_interrupt(&mut self) {
-        self.interrupt_status |= 1;
-        if self.irq_vector != 0 {
-            if let Some(apic) = &self.apic {
-                apic.borrow_mut().signal(self.irq_vector, ApicTrigger::Edge);
-            }
-        }
-    }
-
-    pub fn reset(&mut self) {
-        let apic = self.apic.take();
-        let v = self.irq_vector;
-        let backend = self.backend.take();
-        let mac = self.mac;
-        *self = Self::new(mac);
-        self.apic = apic;
-        self.irq_vector = v;
-        if let Some(b) = backend {
-            self.attach_backend(b);
-        }
-    }
+impl Drop for VirtioNet {
+    fn drop(&mut self) { unsafe { ghostos_vm_virtio_net_free(self.state) }; }
 }
 
 impl PortDevice for VirtioNet {
@@ -439,14 +257,14 @@ mod tests {
         net.write_io(REG_QUEUE_SEL, QUEUE_TX as u32);
         net.write_io(REG_QUEUE_PFN, 4);
         net.write_io(REG_STATUS, 4);
-        assert!(net.queue_enabled[QUEUE_TX as usize]);
-        assert_eq!(net.status, 4);
+        assert_eq!(net.read_io(REG_QUEUE_PFN), 4);
+        assert_eq!(net.read_io(REG_STATUS), 4);
         net.write_io(REG_QUEUE_NOTIFY, 0);
         assert!(net.has_pending());
 
         net.reset();
-        assert_eq!(net.status, 0);
-        assert!(!net.queue_enabled.iter().any(|enabled| *enabled));
+        assert_eq!(net.read_io(REG_STATUS), 0);
+        assert_eq!(net.read_io(REG_QUEUE_PFN), 0);
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub mod net;
 mod pit;
 mod serial;
 mod power;
+#[cfg(test)]
 mod virtio_queue;
 pub mod virtio;
 pub mod storage;

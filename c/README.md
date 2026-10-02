@@ -11,7 +11,8 @@ See `TODO.md` for migration status.
 
 Run `make c-library` at the repository root to build `build/c/libghostos.a`.
 The library uses C11 and the standard freestanding integer, boolean, and size
-types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
+types. Foundation modules do not allocate memory or require a hosted C library.
+Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 `CPPFLAGS`, `CFLAGS`, and `BUILD_DIR` may be set for cross-compilation.
 
 | Rust source | C implementation | Public header |
@@ -25,13 +26,15 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `virtual_machine/src/net/packet.rs` | `src/vm_packet.c` | `include/ghostos/vm_packet.h` |
 | `virtual_machine/src/devices/power.rs` | `src/vm_power.c` | `include/ghostos/vm_power.h` |
 | `virtual_machine/src/devices/interrupt_controller.rs` | `src/vm_interrupt_controller.c` | `include/ghostos/vm_interrupt_controller.h` |
+| `virtual_machine/src/devices/virtio.rs` | `src/vm_virtio.c` | `include/ghostos/vm_virtio.h` |
+| `virtual_machine/src/devices/net/virtio.rs` | `src/vm_virtio_net.c` | `include/ghostos/vm_virtio_net.h` |
 | `virtual_machine/src/devices/virtio_queue.rs` | `src/vm_virtio_queue.c` | `include/ghostos/vm_virtio_queue.h` |
 | `virtual_machine/src/net/backend.rs` (packet validation, UDP host-frame encoding/decoding, and deterministic segment recipient filtering), `src/net/dhcp.rs` (IPv4 integer conversion and Internet checksum), and `src/net/mod.rs` (`align_up` helper) | `src/vm_net.c` | `include/ghostos/vm_net.h` |
 | `virtual_machine/src/net/dhcp.rs` (request parsing and bounded DHCP option writing) | `src/vm_dhcp.c` | `include/ghostos/vm_dhcp.h` |
 
 The VM packet queue uses the host allocator and is compiled into the VM's C
-archive by `virtual_machine/build.rs`; it is not part of the freestanding kernel
-foundation library.
+archive by `virtual_machine/build.rs` and the root C archive. Kernel consumers
+use only the freestanding foundation objects.
 | `kernel/src/address_space.rs` | `src/address_space.c` | `include/ghostos/address_space.h` |
 | `kernel/src/allocator.rs` | `src/frame_allocator.c` | `include/ghostos/frame_allocator.h` |
 | `kernel/src/arch/aarch64.rs` | `src/arch_aarch64.c` | `include/ghostos/arch_aarch64.h` |
