@@ -70,7 +70,8 @@ static void push_output(ghostos_vm_ps2 *ps2, uint8_t value, bool auxiliary,
 
 static void refill_keyboard(ghostos_vm_ps2 *ps2, ghostos_vm_ps2_irq irq, void *context) {
     while (ps2->output_length < GHOSTOS_VM_PS2_OUTPUT_CAPACITY && ps2->pending_length) {
-        uint8_t byte = ps2->pending_keyboard[ps2->pending_head++];
+        uint8_t byte = ps2->pending_keyboard[ps2->pending_head];
+        ps2->pending_head = (ps2->pending_head + 1) % ps2->pending_capacity;
         --ps2->pending_length;
         push_output(ps2, byte, false, irq, context);
     }
@@ -100,18 +101,24 @@ bool ghostos_vm_ps2_keyboard_lossless(ghostos_vm_ps2 *ps2, const uint8_t *bytes,
         }
         uint8_t *replacement = malloc(capacity);
         if (!replacement) return false;
-        if (ps2->pending_length)
-            memcpy(replacement, ps2->pending_keyboard + ps2->pending_head, ps2->pending_length);
+        if (ps2->pending_length) {
+            size_t first = ps2->pending_capacity - ps2->pending_head;
+            if (first > ps2->pending_length) first = ps2->pending_length;
+            memcpy(replacement, ps2->pending_keyboard + ps2->pending_head, first);
+            memcpy(replacement + first, ps2->pending_keyboard, ps2->pending_length - first);
+        }
         free(ps2->pending_keyboard);
         ps2->pending_keyboard = replacement;
         ps2->pending_capacity = capacity;
         ps2->pending_head = 0;
-    } else if (length > ps2->pending_capacity - ps2->pending_head - ps2->pending_length) {
-        memmove(ps2->pending_keyboard, ps2->pending_keyboard + ps2->pending_head,
-            ps2->pending_length);
-        ps2->pending_head = 0;
     }
-    memcpy(ps2->pending_keyboard + ps2->pending_head + ps2->pending_length, bytes, length);
+    size_t tail_space = ps2->pending_capacity - ps2->pending_head;
+    size_t tail = ps2->pending_length >= tail_space ? ps2->pending_length - tail_space :
+        ps2->pending_head + ps2->pending_length;
+    size_t first = ps2->pending_capacity - tail;
+    if (first > length) first = length;
+    memcpy(ps2->pending_keyboard + tail, bytes, first);
+    memcpy(ps2->pending_keyboard, bytes + first, length - first);
     ps2->pending_length = needed;
     refill_keyboard(ps2, irq, context);
     return true;

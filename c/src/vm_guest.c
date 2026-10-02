@@ -29,16 +29,24 @@ static bool append(byte_queue *queue, const void *bytes, size_t length) {
         }
         uint8_t *replacement = malloc(capacity);
         if (!replacement) return false;
-        if (queue->length) memcpy(replacement, queue->data + queue->head, queue->length);
+        if (queue->length) {
+            size_t first = queue->capacity - queue->head;
+            if (first > queue->length) first = queue->length;
+            memcpy(replacement, queue->data + queue->head, first);
+            memcpy(replacement + first, queue->data, queue->length - first);
+        }
         free(queue->data);
         queue->data = replacement;
         queue->capacity = capacity;
         queue->head = 0;
-    } else if (length > queue->capacity - queue->head - queue->length) {
-        memmove(queue->data, queue->data + queue->head, queue->length);
-        queue->head = 0;
     }
-    memcpy(queue->data + queue->head + queue->length, bytes, length);
+    size_t tail_space = queue->capacity - queue->head;
+    size_t tail = queue->length >= tail_space ? queue->length - tail_space :
+        queue->head + queue->length;
+    size_t first = queue->capacity - tail;
+    if (first > length) first = length;
+    memcpy(queue->data + tail, bytes, first);
+    memcpy(queue->data, (const uint8_t *)bytes + first, length - first);
     queue->length = needed;
     return true;
 }
@@ -46,8 +54,12 @@ static bool append(byte_queue *queue, const void *bytes, size_t length) {
 static size_t take(byte_queue *queue, void *output, size_t capacity) {
     size_t length = capacity < queue->length ? capacity : queue->length;
     if (!length) return 0;
-    memcpy(output, queue->data + queue->head, length);
-    queue->head += length;
+    size_t first = queue->capacity - queue->head;
+    if (first > length) first = length;
+    memcpy(output, queue->data + queue->head, first);
+    memcpy((uint8_t *)output + first, queue->data, length - first);
+    size_t head_space = queue->capacity - queue->head;
+    queue->head = length >= head_space ? length - head_space : queue->head + length;
     queue->length -= length;
     if (!queue->length) queue->head = 0;
     return length;
@@ -139,8 +151,15 @@ uint8_t ghostos_vm_guest_agent_write(ghostos_vm_guest_agent *agent,
     return 0;
 }
 
+_Static_assert(sizeof(ghostos_vm_guest_event) == 24, "guest event ABI");
+_Static_assert(offsetof(ghostos_vm_guest_event, base) == 8, "guest event base offset");
 _Static_assert(sizeof(ghostos_vm_memory_hotplug) == 48, "hotplug ABI");
+_Static_assert(_Alignof(ghostos_vm_memory_hotplug) == 8, "hotplug alignment");
+_Static_assert(offsetof(ghostos_vm_memory_hotplug, has_pending) == 40, "hotplug pending offset");
 _Static_assert(sizeof(ghostos_vm_pvclock) == 24, "pvclock ABI");
+_Static_assert(_Alignof(ghostos_vm_pvclock) == 8, "pvclock alignment");
+_Static_assert(offsetof(ghostos_vm_pvclock, version) == 16, "pvclock version offset");
+_Static_assert(offsetof(ghostos_vm_pvclock, has_system_time_page) == 20, "pvclock flag offset");
 
 void ghostos_vm_memory_hotplug_init(ghostos_vm_memory_hotplug *state,
     uint64_t current, uint64_t maximum) {
@@ -233,7 +252,8 @@ static void write_le(uint8_t *output, uint64_t value, unsigned length) {
 }
 
 void ghostos_vm_pvclock_update(ghostos_vm_pvclock *state, uint64_t monotonic_ns,
-    uint64_t wall_clock_ns, ghostos_vm_guest_memory_write write_memory, void *context) {
+    ghostos_vm_guest_wall_time wall_time, ghostos_vm_guest_memory_write write_memory,
+    void *context) {
     if (state->has_system_time_page) {
         state->version = (state->version + 1u) | 1u;
         uint8_t info[32] = {0};
@@ -247,6 +267,7 @@ void ghostos_vm_pvclock_update(ghostos_vm_pvclock *state, uint64_t monotonic_ns,
         write_memory(context, state->system_time_page, info, 4);
     }
     if (state->has_wall_clock_page) {
+        uint64_t wall_clock_ns = wall_time(context);
         uint8_t info[12] = {0};
         write_le(info + 4, (uint32_t)(wall_clock_ns / UINT64_C(1000000000)), 4);
         write_le(info + 8, wall_clock_ns % UINT64_C(1000000000), 4);

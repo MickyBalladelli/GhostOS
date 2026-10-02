@@ -1,6 +1,7 @@
 # Full Rust to C migration
 
 - [ ] Port the entire project from Rust to C. The end state contains no Rust source, Rust build tooling, Cargo configuration, or Rust-only project workflows. Preserve public behavior, supported platforms, syscall and RPC ABI, on-disk formats, and documented contracts.
+- [ ] Everything needs to be ported, there is no middle state with half rust and half C. Everything is ported to C.
 - [ ] Replace the root Cargo workspace and every nested Cargo package, lockfile, Cargo configuration, and Rust toolchain pin with the C build system. Preserve dependency management, cross-compilation targets, and release settings.
 - [ ] Port all Rust project tooling and its behavior: `tools/cargo-ghostos`, `tools/ghostos-compiler`, and `crates/ghostos-rustd`.
 - [ ] Port all Rust tests, benchmarks, property/model tests, and fuzz infrastructure, including `kernel/benches`, `virtual_machine/benches`, and every target under `fuzz/fuzz_targets`.
@@ -46,6 +47,13 @@ Migration build check on 2026-10-02: `make c-library` and
 The existing eight PIT cases also have C contract source in
 `c/tests/vm_device_contracts.c`; these checks were not executed. The VM still
 requires Rust adapters, and the full migration remains incomplete.
+
+Further build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C PS/2, driver-report, and
+guest-integration ports. The three existing PS/2 cases and three driver-report
+cases were ported to C contract source and checked for compilation syntax only.
+No new behavior-parity results are claimed; remaining Rust adapters still
+prevent a full C cutover.
 
 ## Rust source modules to port
 
@@ -115,9 +123,9 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/cpu/mod.rs`
 - [ ] `virtual_machine/src/devices/apic.rs` — C owns the active xAPIC register state, MSR handling, interrupt priority/trigger tracking, EOI, IPI routing, and countdown timer in `c/src/vm_apic.c`. Rust retains device-trait/shared-owner adapters and the existing field-by-field snapshot format. The VM builds and the 16 retained APIC tests plus standalone C device contracts pass; removing the remaining Rust adapter awaits VM-wide cutover.
 - [ ] `virtual_machine/src/devices/display.rs`
-- [ ] `virtual_machine/src/devices/guest.rs`
+- [ ] `virtual_machine/src/devices/guest.rs` — C owns active guest-agent byte/event queues, mailbox registers, memory-hotplug request/notification state and validation, and pvclock MSR state, version sequencing, and little-endian page encoding in `c/src/vm_guest.c`. Rust retains shared-APIC ownership, MMU writes, and host/replay wall-time callbacks. Register error behavior, saturating arithmetic, and system-page-before-wall-time ordering are preserved; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/devices/hpet.rs` — C owns the active HPET counter, register state, comparator scheduling, periodic reloads, reset, and interrupt routing in `c/src/vm_hpet.c`. Rust retains device-trait/shared-owner adapters and APIC ownership. The seven retained HPET tests and standalone C device contracts pass; removing the remaining Rust adapter awaits VM-wide cutover. Existing register aliases and timing behavior are preserved rather than claiming hardware-spec conformance.
-- [ ] `virtual_machine/src/devices/input.rs`
+- [ ] `virtual_machine/src/devices/input.rs` — C owns the active i8042 controller command state, bounded output ring, lossless pending-keyboard queue, keyboard/mouse command replies, mouse packet conversion, and interrupt decisions in `c/src/vm_ps2.c`. Rust retains shared-APIC ownership and deferred IRQ borrowing. The three existing PS/2 cases have C contract source; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/devices/interrupt_controller.rs` — C owns IDT gate decoding and interrupt-controller state, routing, snapshots, and reset. Rust keeps the legacy PIC adapter that acknowledges through the `LocalApic` API; full cutover remains.
 - [ ] `virtual_machine/src/devices/mod.rs`
 - [ ] `virtual_machine/src/devices/net/e1000.rs`
@@ -135,7 +143,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/storage/system_disk.rs`
 - [ ] `virtual_machine/src/devices/virtio.rs`
 - [ ] `virtual_machine/src/devices/virtio_queue.rs` — C owns split-ring address calculation, avail-ring consumption, descriptor-chain validation, and used-ring completion. Rust keeps the MMU read/write callbacks and public wrapper; end-to-end behavior parity remains.
-- [ ] `virtual_machine/src/driver_capabilities.rs`
+- [ ] `virtual_machine/src/driver_capabilities.rs` — C owns the active ten-entry discovery report, availability and fallback selection, and static report text in `c/src/vm_driver_capabilities.c`. Rust retains public enum/array/string adapters and the const kind-name API. The three existing report cases have C contract source; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/execution.rs`
 - [ ] `virtual_machine/src/firmware/bios.rs`
 - [ ] `virtual_machine/src/firmware/mod.rs`

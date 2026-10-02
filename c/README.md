@@ -92,11 +92,16 @@ foundation library.
 | `virtual_machine/src/devices/hpet.rs` (active HPET state, comparator scheduling, and IRQ routing) | `src/vm_hpet.c` | `include/ghostos/vm_hpet.h` |
 | `virtual_machine/src/devices/pit.rs` (active counters, port protocols, and timer pulses; Rust routes APIC delivery) | `src/vm_pit.c` | `include/ghostos/vm_pit.h` |
 | `virtual_machine/src/input.rs` (resize encoding/filtering and ASCII to PS/2 conversion) | `src/vm_input.c` | `include/ghostos/vm_input.h` |
+| `virtual_machine/src/devices/input.rs` (active PS/2 commands, output/pending queues, mouse packets, and IRQ decisions) | `src/vm_ps2.c` | `include/ghostos/vm_ps2.h` |
+| `virtual_machine/src/devices/guest.rs` (active mailbox queues/registers, hotplug state, and pvclock state/encoding) | `src/vm_guest.c` | `include/ghostos/vm_guest.h` |
+| `virtual_machine/src/driver_capabilities.rs` (active availability/fallback decisions and report text) | `src/vm_driver_capabilities.c` | `include/ghostos/vm_driver_capabilities.h` |
 
 `make c-vm-test-binaries` builds `build/c/vm-device-contracts` without executing
 it. This standalone C binary checks APIC priority, level-triggered delivery,
 masking, NMI routing, countdown timers, shared manual-clock behavior, and HPET
-interrupt delivery into the C APIC. It does not boot an OS or replace the VM
+interrupt delivery into the C APIC. It also contains the ported PIT, PS/2, and
+driver-report cases; the newly added PS/2 and driver cases have not been executed.
+It does not boot an OS or replace the VM
 executable. The active VM still requires Cargo and the remaining Rust modules.
 
 The APIC and HPET structures are native C/Rust ABI state, not disk formats.
@@ -105,6 +110,17 @@ APIC snapshots retain the existing field order and optional host timestamp;
 restoring a snapshot re-seeds the host clock as before. The device ports preserve
 the existing VM register decoding and timing semantics, including their current
 limitations; these checks do not establish hardware-spec conformance.
+
+The PS/2 controller and guest mailbox use host allocation for pending queues.
+PS/2 direct injection keeps the original drop-oldest 64-byte output policy;
+lossless injection retains excess keyboard bytes until guest data-port reads
+make room. Guest mailbox queues retain their existing unbounded host-memory
+policy. Allocation failures surface through the Rust adapters rather than
+silently discarding lossless input. C IRQ callbacks run synchronously; the
+PS/2 adapter preserves the existing retry when shared APIC borrowing is busy.
+The pvclock invokes the host/replay wall-time callback after its two system-time
+page writes, then writes the wall-clock page in the original little-endian
+format. Device reset semantics and guest-visible errors remain unchanged.
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

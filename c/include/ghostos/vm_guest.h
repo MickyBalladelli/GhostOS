@@ -61,12 +61,14 @@ typedef struct {
 
 typedef void (*ghostos_vm_guest_memory_write)(void *context, uint64_t address,
     const uint8_t *bytes, size_t length);
+typedef uint64_t (*ghostos_vm_guest_wall_time)(void *context);
 void ghostos_vm_pvclock_reset(ghostos_vm_pvclock *state);
 void ghostos_vm_pvclock_write_msr(ghostos_vm_pvclock *state, uint32_t msr, uint64_t value);
 bool ghostos_vm_pvclock_configured(const ghostos_vm_pvclock *state);
 /* Callback is synchronous, never retained. Host/replay supplies wall time.
  * Memory-write failures are ignored, matching the existing device model. */
 void ghostos_vm_pvclock_update(ghostos_vm_pvclock *state, uint64_t monotonic_ns,
-    uint64_t wall_clock_ns, ghostos_vm_guest_memory_write write_memory, void *context);
+    ghostos_vm_guest_wall_time wall_time, ghostos_vm_guest_memory_write write_memory,
+    void *context);
 
 #endif

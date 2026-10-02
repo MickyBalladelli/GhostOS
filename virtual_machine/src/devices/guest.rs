@@ -5,7 +5,7 @@ use super::{ApicTrigger, Device, DeviceError, LocalApic};
 use crate::memory::Mmu;
 use crate::replay::SharedReplay;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::ffi::c_void;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,58 +34,108 @@ pub enum GuestEvent {
     MemoryAdded { base: u64, size: u64 },
 }
 
-impl GuestEvent {
-    fn kind(&self) -> u32 {
-        match self {
-            Self::Shutdown => 1,
-            Self::Reboot => 2,
-            Self::MemoryAdded { .. } => 3,
-        }
-    }
+#[repr(C)]
+struct CAgent {
+    _private: [u8; 0],
+}
 
-    fn data(&self) -> u64 {
-        match self {
-            Self::MemoryAdded { base, .. } => *base,
-            _ => 0,
-        }
-    }
+#[repr(C)]
+struct CEvent {
+    kind: u32,
+    base: u64,
+    size: u64,
+}
 
-    fn size(&self) -> u64 {
-        match self {
-            Self::MemoryAdded { size, .. } => *size,
-            _ => 0,
-        }
+#[derive(Default)]
+#[repr(C)]
+struct CHotplug {
+    current: u64,
+    maximum: u64,
+    pending_base: u64,
+    pending_size: u64,
+    request: u64,
+    has_pending: bool,
+    has_request: bool,
+}
+
+#[derive(Default)]
+#[repr(C)]
+struct CPvClock {
+    system_time_page: u64,
+    wall_clock_page: u64,
+    version: u32,
+    has_system_time_page: bool,
+    has_wall_clock_page: bool,
+}
+
+const _: () = {
+    assert!(std::mem::size_of::<CEvent>() == 24);
+    assert!(std::mem::offset_of!(CEvent, base) == 8);
+    assert!(std::mem::size_of::<CHotplug>() == 48);
+    assert!(std::mem::align_of::<CHotplug>() == 8);
+    assert!(std::mem::offset_of!(CHotplug, has_pending) == 40);
+    assert!(std::mem::size_of::<CPvClock>() == 24);
+    assert!(std::mem::align_of::<CPvClock>() == 8);
+    assert!(std::mem::offset_of!(CPvClock, version) == 16);
+    assert!(std::mem::offset_of!(CPvClock, has_system_time_page) == 20);
+};
+
+type MemoryWrite = unsafe extern "C" fn(*mut c_void, u64, *const u8, usize);
+type WallTime = unsafe extern "C" fn(*mut c_void) -> u64;
+
+unsafe extern "C" {
+    fn ghostos_vm_guest_agent_new() -> *mut CAgent;
+    fn ghostos_vm_guest_agent_free(agent: *mut CAgent);
+    fn ghostos_vm_guest_agent_clear(agent: *mut CAgent);
+    fn ghostos_vm_guest_agent_send(agent: *mut CAgent, bytes: *const u8, length: usize) -> bool;
+    fn ghostos_vm_guest_agent_output_length(agent: *const CAgent) -> usize;
+    fn ghostos_vm_guest_agent_take_output(agent: *mut CAgent, output: *mut u8, capacity: usize) -> usize;
+    fn ghostos_vm_guest_agent_notify(agent: *mut CAgent, event: *const CEvent) -> bool;
+    fn ghostos_vm_guest_agent_pending_events(agent: *const CAgent) -> usize;
+    fn ghostos_vm_guest_agent_read(agent: *mut CAgent, address: u64, size: u8, value: *mut u64) -> u8;
+    fn ghostos_vm_guest_agent_write(agent: *mut CAgent, address: u64, value: u64, size: u8) -> u8;
+    fn ghostos_vm_memory_hotplug_init(state: *mut CHotplug, current: u64, maximum: u64);
+    fn ghostos_vm_memory_hotplug_add(state: *mut CHotplug, base: u64, size: u64) -> bool;
+    fn ghostos_vm_memory_hotplug_take_request(state: *mut CHotplug, request: *mut u64) -> bool;
+    fn ghostos_vm_memory_hotplug_clear_pending(state: *mut CHotplug);
+    fn ghostos_vm_memory_hotplug_reset(state: *mut CHotplug);
+    fn ghostos_vm_memory_hotplug_read(state: *const CHotplug, address: u64, size: u8, value: *mut u64) -> u8;
+    fn ghostos_vm_memory_hotplug_write(state: *mut CHotplug, address: u64, value: u64, size: u8) -> u8;
+    fn ghostos_vm_pvclock_reset(state: *mut CPvClock);
+    fn ghostos_vm_pvclock_write_msr(state: *mut CPvClock, msr: u32, value: u64);
+    fn ghostos_vm_pvclock_configured(state: *const CPvClock) -> bool;
+    fn ghostos_vm_pvclock_update(state: *mut CPvClock, monotonic_ns: u64, wall_time: WallTime,
+        write: MemoryWrite, context: *mut c_void);
+}
+
+fn device_result(code: u8) -> Result<(), DeviceError> {
+    match code {
+        0 => Ok(()),
+        1 => Err(DeviceError::UnsupportedSize),
+        2 => Err(DeviceError::InvalidAddress),
+        3 => panic!("could not allocate guest mailbox queue"),
+        _ => Err(DeviceError::AccessDenied),
     }
 }
 
 struct GuestAgentState {
-    host_to_guest: VecDeque<u8>,
-    guest_to_host: VecDeque<u8>,
-    events: VecDeque<GuestEvent>,
-    active_event: Option<GuestEvent>,
+    device: *mut CAgent,
     apic: Option<Rc<RefCell<LocalApic>>>,
     irq_vector: u8,
 }
 
-/// A small, stable mailbox for a guest agent. The guest sees it at
-/// `GUEST_AGENT_MMIO_BASE`; host code uses the queue methods instead of
-/// reaching into device internals.
+/// Stable C-owned guest mailbox with the VM's shared APIC adapter.
 pub struct GuestAgent {
     state: RefCell<GuestAgentState>,
 }
 
 impl GuestAgent {
     pub fn new() -> Self {
-        Self {
-            state: RefCell::new(GuestAgentState {
-                host_to_guest: VecDeque::new(),
-                guest_to_host: VecDeque::new(),
-                events: VecDeque::new(),
-                active_event: None,
-                apic: None,
-                irq_vector: GUEST_AGENT_IRQ_VECTOR,
-            }),
-        }
+        let device = unsafe { ghostos_vm_guest_agent_new() };
+        assert!(!device.is_null(), "could not allocate guest mailbox");
+        Self { state: RefCell::new(GuestAgentState {
+            device, apic: None, irq_vector: GUEST_AGENT_IRQ_VECTOR,
+        }) }
     }
 
     pub fn attach_apic(&self, apic: Rc<RefCell<LocalApic>>) {
@@ -97,128 +147,76 @@ impl GuestAgent {
     }
 
     pub fn send_to_guest(&self, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return
-        }
-        let mut state = self.state.borrow_mut();
-        state.host_to_guest.extend(bytes.iter().copied());
+        if bytes.is_empty() { return }
+        let state = self.state.borrow_mut();
+        let queued = unsafe { ghostos_vm_guest_agent_send(state.device, bytes.as_ptr(), bytes.len()) };
+        assert!(queued, "could not allocate guest mailbox input");
         signal_irq(&state.apic, state.irq_vector)
     }
 
     pub fn take_from_guest(&self) -> Vec<u8> {
-        self.state.borrow_mut().guest_to_host.drain(..).collect()
+        let state = self.state.borrow_mut();
+        let length = unsafe { ghostos_vm_guest_agent_output_length(state.device) };
+        let mut output = vec![0; length];
+        let taken = unsafe {
+            ghostos_vm_guest_agent_take_output(state.device, output.as_mut_ptr(), output.len())
+        };
+        output.truncate(taken);
+        output
     }
 
     pub fn guest_to_host_pending(&self) -> bool {
-        !self.state.borrow().guest_to_host.is_empty()
+        unsafe { ghostos_vm_guest_agent_output_length(self.state.borrow().device) != 0 }
     }
 
     pub fn notify(&self, event: GuestEvent) {
-        let mut state = self.state.borrow_mut();
-        state.events.push_back(event);
+        let event = match event {
+            GuestEvent::Shutdown => CEvent { kind: 1, base: 0, size: 0 },
+            GuestEvent::Reboot => CEvent { kind: 2, base: 0, size: 0 },
+            GuestEvent::MemoryAdded { base, size } => CEvent { kind: 3, base, size },
+        };
+        let state = self.state.borrow_mut();
+        let queued = unsafe { ghostos_vm_guest_agent_notify(state.device, &event) };
+        assert!(queued, "could not allocate guest mailbox event");
         signal_irq(&state.apic, state.irq_vector)
     }
 
     pub fn pending_events(&self) -> usize {
-        self.state.borrow().events.len()
+        unsafe { ghostos_vm_guest_agent_pending_events(self.state.borrow().device) }
     }
 
     pub fn clear(&self) {
-        let mut state = self.state.borrow_mut();
-        state.host_to_guest.clear();
-        state.guest_to_host.clear();
-        state.events.clear();
-        state.active_event = None;
+        unsafe { ghostos_vm_guest_agent_clear(self.state.borrow_mut().device) }
     }
+}
 
-    fn status(&self) -> u32 {
-        let state = self.state.borrow();
-        let mut status = 0;
-        if !state.host_to_guest.is_empty() {
-            status |= 1;
-        }
-        if !state.guest_to_host.is_empty() {
-            status |= 1 << 1;
-        }
-        if !state.events.is_empty() || state.active_event.is_some() {
-            status |= 1 << 2;
-        }
-        status
+impl Drop for GuestAgent {
+    fn drop(&mut self) {
+        unsafe { ghostos_vm_guest_agent_free(self.state.get_mut().device) }
     }
 }
 
 impl Default for GuestAgent {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl Device for GuestAgent {
     fn read(&self, addr: u64, size: u8) -> Result<u64, DeviceError> {
-        let offset = addr.saturating_sub(GUEST_AGENT_MMIO_BASE);
-        match offset {
-            0x00 if size == 4 => Ok(GUEST_AGENT_MAGIC as u64),
-            0x04 if size == 4 => Ok(GUEST_AGENT_VERSION as u64),
-            0x08 if size == 8 => Ok((GUEST_AGENT_FEATURE_AGENT
-                | GUEST_AGENT_FEATURE_PV_CLOCK
-                | GUEST_AGENT_FEATURE_POWER_EVENTS
-                | GUEST_AGENT_FEATURE_MEMORY_HOTPLUG) as u64),
-            0x0C if size == 4 => Ok(self.status() as u64),
-            0x10 if size == 1 => Ok(self
-                .state
-                .borrow_mut()
-                .host_to_guest
-                .pop_front()
-                .unwrap_or(0) as u64),
-            0x18 if size == 4 => {
-                let mut state = self.state.borrow_mut();
-                state.active_event = state.events.pop_front();
-                Ok(state.active_event.as_ref().map(GuestEvent::kind).unwrap_or(0) as u64)
-            }
-            0x20 if size == 8 => Ok(self
-                .state
-                .borrow()
-                .active_event
-                .as_ref()
-                .map(GuestEvent::data)
-                .unwrap_or(0)),
-            0x28 if size == 8 => Ok(self
-                .state
-                .borrow()
-                .active_event
-                .as_ref()
-                .map(GuestEvent::size)
-                .unwrap_or(0)),
-            _ => Err(DeviceError::UnsupportedSize),
-        }
+        let mut value = 0;
+        let code = unsafe {
+            ghostos_vm_guest_agent_read(self.state.borrow_mut().device, addr, size, &mut value)
+        };
+        device_result(code)?;
+        Ok(value)
     }
 
     fn write(&mut self, addr: u64, value: u64, size: u8) -> Result<(), DeviceError> {
-        let offset = addr.saturating_sub(GUEST_AGENT_MMIO_BASE);
-        match offset {
-            0x14 if size == 1 => {
-                self.state.borrow_mut().guest_to_host.push_back(value as u8);
-                Ok(())
-            }
-            0x1C if size == 4 => {
-                if value as u32 != 0 {
-                    self.state.borrow_mut().active_event = None;
-                }
-                Ok(())
-            }
-            0x2C if size == 4 => {
-                if value & 1 != 0 {
-                    self.clear();
-                }
-                Ok(())
-            }
-            _ => Err(DeviceError::UnsupportedSize),
-        }
+        device_result(unsafe {
+            ghostos_vm_guest_agent_write(self.state.borrow_mut().device, addr, value, size)
+        })
     }
 
-    fn reset(&mut self) {
-        self.clear()
-    }
+    fn reset(&mut self) { self.clear() }
 }
 
 impl Device for Rc<RefCell<GuestAgent>> {
@@ -236,31 +234,23 @@ impl Device for Rc<RefCell<GuestAgent>> {
 }
 
 struct MemoryHotplugState {
-    current: u64,
-    maximum: u64,
-    pending: Option<(u64, u64)>,
-    request: Option<u64>,
+    device: CHotplug,
     apic: Option<Rc<RefCell<LocalApic>>>,
     irq_vector: u8,
 }
 
-/// Guest-visible memory hot-plug control and notification registers.
+/// C-owned guest memory hot-plug registers and request state.
 pub struct MemoryHotplugDevice {
     state: RefCell<MemoryHotplugState>,
 }
 
 impl MemoryHotplugDevice {
     pub fn new(current: u64, maximum: u64) -> Self {
-        Self {
-            state: RefCell::new(MemoryHotplugState {
-                current,
-                maximum: maximum.max(current),
-                pending: None,
-                request: None,
-                apic: None,
-                irq_vector: MEMORY_HOTPLUG_IRQ_VECTOR,
-            }),
-        }
+        let mut device = CHotplug::default();
+        unsafe { ghostos_vm_memory_hotplug_init(&mut device, current, maximum) };
+        Self { state: RefCell::new(MemoryHotplugState {
+            device, apic: None, irq_vector: MEMORY_HOTPLUG_IRQ_VECTOR,
+        }) }
     }
 
     pub fn attach_apic(&self, apic: Rc<RefCell<LocalApic>>) {
@@ -268,73 +258,47 @@ impl MemoryHotplugDevice {
     }
 
     pub fn current_memory(&self) -> u64 {
-        self.state.borrow().current
+        self.state.borrow().device.current
     }
 
     pub fn add_region(&self, base: u64, size: u64) {
         let mut state = self.state.borrow_mut();
-        if size == 0 || state.current.saturating_add(size) > state.maximum {
-            return
+        if unsafe { ghostos_vm_memory_hotplug_add(&mut state.device, base, size) } {
+            signal_irq(&state.apic, state.irq_vector)
         }
-        state.current = state.current.saturating_add(size);
-        state.pending = Some((base, size));
-        signal_irq(&state.apic, state.irq_vector)
     }
 
     pub fn take_request(&self) -> Option<u64> {
-        self.state.borrow_mut().request.take()
+        let mut request = 0;
+        let pending = unsafe {
+            ghostos_vm_memory_hotplug_take_request(&mut self.state.borrow_mut().device, &mut request)
+        };
+        pending.then_some(request)
     }
 
     pub fn clear_pending(&self) {
-        self.state.borrow_mut().pending = None
+        unsafe { ghostos_vm_memory_hotplug_clear_pending(&mut self.state.borrow_mut().device) }
     }
 }
 
 impl Device for MemoryHotplugDevice {
     fn read(&self, addr: u64, size: u8) -> Result<u64, DeviceError> {
-        if size != 8 {
-            return Err(DeviceError::UnsupportedSize)
-        }
-        let offset = addr.saturating_sub(MEMORY_HOTPLUG_MMIO_BASE);
-        let state = self.state.borrow();
-        let value = match offset {
-            0x00 => state.current,
-            0x08 => state.maximum,
-            0x10 => state.pending.map(|(base, _)| base).unwrap_or(0),
-            0x18 => state.pending.map(|(_, size)| size).unwrap_or(0),
-            0x20 => u64::from(state.pending.is_some()),
-            _ => return Err(DeviceError::InvalidAddress),
+        let mut value = 0;
+        let code = unsafe {
+            ghostos_vm_memory_hotplug_read(&self.state.borrow().device, addr, size, &mut value)
         };
+        device_result(code)?;
         Ok(value)
     }
 
     fn write(&mut self, addr: u64, value: u64, size: u8) -> Result<(), DeviceError> {
-        if size != 8 {
-            return Err(DeviceError::UnsupportedSize)
-        }
-        let offset = addr.saturating_sub(MEMORY_HOTPLUG_MMIO_BASE);
-        let mut state = self.state.borrow_mut();
-        match offset {
-            0x28 => {
-                if value & 1 != 0 {
-                    state.pending = None;
-                }
-            }
-            0x30 => {
-                if value == 0 || value % 4096 != 0 || state.current.saturating_add(value) > state.maximum {
-                    return Err(DeviceError::AccessDenied)
-                }
-                state.request = Some(value);
-            }
-            _ => return Err(DeviceError::InvalidAddress),
-        }
-        Ok(())
+        device_result(unsafe {
+            ghostos_vm_memory_hotplug_write(&mut self.state.borrow_mut().device, addr, value, size)
+        })
     }
 
     fn reset(&mut self) {
-        let mut state = self.state.borrow_mut();
-        state.pending = None;
-        state.request = None;
+        unsafe { ghostos_vm_memory_hotplug_reset(&mut self.state.borrow_mut().device) }
     }
 }
 
@@ -352,24 +316,39 @@ impl Device for Rc<RefCell<MemoryHotplugDevice>> {
     }
 }
 
-/// KVM-compatible pvclock MSR state. The guest supplies the physical address
-/// of its shared time page with WRMSR; the VM refreshes that page every run
-/// loop iteration.
+/// C-owned KVM-compatible pvclock state and shared time-page encoding.
+/// Rust supplies host/replay wall time and MMU writes.
 pub struct PvClock {
-    system_time_page: Option<u64>,
-    wall_clock_page: Option<u64>,
-    version: u32,
+    state: CPvClock,
     replay: Option<SharedReplay>,
+}
+
+struct ClockUpdateContext<'a> {
+    mmu: &'a mut Mmu,
+    replay: &'a Option<SharedReplay>,
+}
+
+unsafe extern "C" fn write_clock_memory(context: *mut c_void, address: u64,
+    bytes: *const u8, length: usize) {
+    // C calls synchronously with live stack buffers and the exclusive MMU.
+    let context = unsafe { &mut *context.cast::<ClockUpdateContext<'_>>() };
+    let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
+    let _ = context.mmu.write_phys(address, bytes);
+}
+
+unsafe extern "C" fn clock_wall_time(context: *mut c_void) -> u64 {
+    let context = unsafe { &mut *context.cast::<ClockUpdateContext<'_>>() };
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let host_ns = now.as_nanos().min(u64::MAX as u128) as u64;
+    context.replay.as_ref().map(|replay| {
+        replay.borrow_mut().instruction_input(0, 0x5056_434C_4F43_4B54, 8, host_ns)
+            .unwrap_or(host_ns)
+    }).unwrap_or(host_ns)
 }
 
 impl PvClock {
     pub fn new() -> Self {
-        Self {
-            system_time_page: None,
-            wall_clock_page: None,
-            version: 0,
-            replay: None,
-        }
+        Self { state: CPvClock::default(), replay: None }
     }
 
     pub fn attach_replay(&mut self, replay: SharedReplay) {
@@ -377,73 +356,28 @@ impl PvClock {
     }
 
     pub fn write_msr(&mut self, msr: u32, value: u64) {
-        let enabled = value & 1 != 0;
-        let page = value & !0xFFF;
-        match msr {
-            KVM_SYSTEM_TIME_NEW => self.system_time_page = enabled.then_some(page),
-            KVM_WALL_CLOCK_NEW => self.wall_clock_page = enabled.then_some(page),
-            _ => {}
-        }
+        unsafe { ghostos_vm_pvclock_write_msr(&mut self.state, msr, value) }
     }
 
     pub fn configured(&self) -> bool {
-        self.system_time_page.is_some() || self.wall_clock_page.is_some()
+        unsafe { ghostos_vm_pvclock_configured(&self.state) }
     }
 
     pub fn reset(&mut self) {
-        let replay = self.replay.clone();
-        self.system_time_page = None;
-        self.wall_clock_page = None;
-        self.version = 0;
-        self.replay = replay;
+        unsafe { ghostos_vm_pvclock_reset(&mut self.state) }
     }
 
     pub fn update(&mut self, mmu: &mut Mmu, monotonic_ns: u64) {
-        if let Some(page) = self.system_time_page {
-            self.version = self.version.wrapping_add(1) | 1;
-            let mut info = [0u8; 32];
-            info[0..4].copy_from_slice(&self.version.to_le_bytes());
-            info[16..24].copy_from_slice(&monotonic_ns.to_le_bytes());
-            info[24..28].copy_from_slice(&1u32.to_le_bytes());
-            info[29] = 1;
-            let _ = mmu.write_phys(page, &info);
-            self.version = self.version.wrapping_add(1) & !1;
-            let _ = mmu.write_phys(page, &self.version.to_le_bytes());
-        }
-
-        if let Some(page) = self.wall_clock_page {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default();
-            let wall_clock_ns = self
-                .replay
-                .as_ref()
-                .map(|replay| {
-                    replay
-                        .borrow_mut()
-                        .instruction_input(
-                            0,
-                            0x5056_434C_4F43_4B54,
-                            8,
-                            now.as_nanos().min(u64::MAX as u128) as u64,
-                        )
-                        .unwrap_or(now.as_nanos().min(u64::MAX as u128) as u64)
-                })
-                .unwrap_or(now.as_nanos().min(u64::MAX as u128) as u64);
-            let seconds = wall_clock_ns / 1_000_000_000;
-            let nanos = (wall_clock_ns % 1_000_000_000) as u32;
-            let mut wall_clock = [0u8; 12];
-            wall_clock[4..8].copy_from_slice(&(seconds as u32).to_le_bytes());
-            wall_clock[8..12].copy_from_slice(&nanos.to_le_bytes());
-            let _ = mmu.write_phys(page, &wall_clock);
+        let mut context = ClockUpdateContext { mmu, replay: &self.replay };
+        unsafe {
+            ghostos_vm_pvclock_update(&mut self.state, monotonic_ns, clock_wall_time,
+                write_clock_memory, (&mut context as *mut ClockUpdateContext<'_>).cast())
         }
     }
 }
 
 impl Default for PvClock {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 fn signal_irq(apic: &Option<Rc<RefCell<LocalApic>>>, vector: u8) {

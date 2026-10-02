@@ -2,6 +2,9 @@
 
 #include <stddef.h>
 
+_Static_assert(sizeof(ghostos_vm_driver_capability) == 40, "VM driver report ABI");
+_Static_assert(offsetof(ghostos_vm_driver_capability, feature) == 8, "VM driver feature offset");
+
 const char *ghostos_vm_driver_kind_name(uint32_t kind) {
     static const char *const names[] = {
         "acceleration", "storage", "nic-offload", "gpu", "firmware", "platform-timer"

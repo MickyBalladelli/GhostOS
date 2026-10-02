@@ -62,6 +62,11 @@ struct CCapability {
     semantics: *const std::ffi::c_char,
 }
 
+const _: () = {
+    assert!(std::mem::size_of::<CCapability>() == 40);
+    assert!(std::mem::offset_of!(CCapability, feature) == 8);
+};
+
 unsafe extern "C" {
     fn ghostos_vm_driver_discover(uefi: bool, network: u32, requested_native: bool,
         native_execution: bool, output: *mut CCapability) -> bool;
