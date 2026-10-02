@@ -182,6 +182,22 @@ were executed; behavior parity, Rust adapter/build removal, and full migration
 remain open. Logs are in `temp/c-library-admission.log`,
 `temp/admission-consumers-build.log`, and `temp/admission-contract-syntax.log`.
 
+Time-sync build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-time-sync -p ghostos-app -p ghostos-fabric
+-p ghostos-netd -p ghostos-shell -p ghostos-storaged -p ghostos-top
+-p ghostos-rustd -p ghostos-test-support` passed with active freestanding C
+time synchronization. Compile-time shared-layout checks cover timestamps,
+messages, pending exchanges, clocks, daemons, epoch counters, and atomic manual
+clock storage on 64-bit targets. Source preserves packet validation/error
+ordering, permissive encoded timestamps, trailing/reserved-byte acceptance,
+sequence wrap skipping zero, saturating correction arithmetic, truncation
+toward zero, and pending-state consumption before response timestamp failure.
+All five retained cases have C source in `c/tests/time_sync_contracts.c`,
+checked for compilation syntax only. No tests were executed. Behavior parity,
+platform build coverage, Rust adapters/build removal, and full migration remain
+open. Logs are in `temp/c-library-time-sync.log`,
+`temp/time-sync-consumers-build.log`, and `temp/time-sync-contract-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -358,7 +374,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/status/` — status types and reporting.
 - [ ] `crates/system-model/` — system models.
 - [ ] `crates/test-support/` — test support and crash harnesses; replace with C test support.
-- [ ] `crates/time-sync/` — time synchronization and PTP wire support.
+- [ ] `crates/time-sync/` — C owns active atomic manual-clock reads/max/saturating advance, timestamp conversion, SPTP packet encoding/decoding, master/slave exchanges and pending state, clock discipline/frequency adjustment and monotonic correction, and epoch issuance/observation. All eight dependent crates call C through allocation-free Rust adapters. Portable signed-magnitude wide arithmetic preserves i128 intermediates without compiler extensions. All five existing cases have C source; const constructors/getters, traits, enum/status adapters, Rust tooling/removal, and behavior parity remain open.
 - [ ] `examples/compiler-acceptance/` — compiler acceptance example, including its proc-macro subcrate and build script.
 - [ ] `examples/cookbook/` — cookbook binaries and examples.
 - [ ] `examples/hello-world/` — hello-world application.

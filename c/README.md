@@ -338,3 +338,19 @@ use the existing Rust API through `crates/admission/src/native.rs`. Const enum
 names/policy constructors and public Rust types remain compatibility adapters.
 The three original cases are in `c/tests/admission_contracts.c`; the explicit
 Makefile target only builds them. Behavior parity remains unverified.
+
+`time_sync.h` / `time_sync.c` own the active time-sync runtime: atomic manual
+clocks, timestamp conversion, SPTP wire codecs, master/slave exchanges, pending
+state, clock discipline and monotonic correction, and epoch fencing. Zero
+initialization creates a cluster clock; daemon/epoch constructors validate node
+IDs. All state is caller-owned and movable, with no allocations or retained
+pointers. Portable two-word signed-magnitude arithmetic preserves the original
+Rust i128 calculation range and truncation rules without compiler extensions.
+Encoding retains direct-timestamp truncation/acceptance, while decoding checks
+nanosecond bounds. Delay-response validation consumes pending state at the
+same point as the Rust implementation, including on timestamp overflow.
+Eight consumer crates use the public Rust API through allocation-free adapters;
+const constructors/getters, traits, tagged-message/status translation, and Rust
+build tooling remain. All five original cases have C source in
+`c/tests/time_sync_contracts.c`, checked for syntax only. Behavior parity and
+non-host platform builds remain unverified.
