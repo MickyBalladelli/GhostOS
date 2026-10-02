@@ -92,3 +92,52 @@ void ghostos_vm_acceleration_status_get(uint32_t requested, uint32_t active,
     out->feature_count = out->native_handle ? 5 : 4;
     out->limitation_count = out->native_handle ? 3 : 1;
 }
+
+static const char *backend_name(uint32_t value) {
+    static const char *const names[] = {"software", "auto", "kvm", "haxm", "hvf", "whpx"};
+    return value < 6 ? names[value] : "";
+}
+static const char *feature_name(uint32_t value) {
+    static const char *const names[] = {"portable-cpu-execution", "guest-device-emulation",
+        "deterministic-replay", "snapshot-restore", "native-host-handle"};
+    return value < 5 ? names[value] : "";
+}
+static const char *limitation_name(uint32_t value) {
+    static const char *const names[] = {"native-execution-not-integrated",
+        "native-memory-and-device-virtualization-not-integrated", "native-handle-reopened-on-snapshot-restore"};
+    return value < 3 ? names[value] : "";
+}
+static const char *fallback_name(uint32_t value) {
+    static const char *const names[] = {"none", "no-native-backend", "native-execution-unavailable"};
+    return value < 3 ? names[value] : "";
+}
+static bool text(ghostos_vm_acceleration_write_fn write, void *context, const char *value) {
+    return write(context, (const uint8_t *)value, strlen(value));
+}
+bool ghostos_vm_acceleration_format(const ghostos_vm_acceleration_report *r,
+    ghostos_vm_acceleration_write_fn write, void *context) {
+    if (!text(write, context, "requested=") || !text(write, context, backend_name(r->requested))
+        || !text(write, context, " host=") || !text(write, context, backend_name(r->active))
+        || !text(write, context, " execution=") || !text(write, context, backend_name(r->execution))
+        || !text(write, context, " fallback=") || !text(write, context, fallback_name(r->fallback))
+        || !text(write, context, " supported=")) return false;
+    for (size_t i = 0; i < r->feature_count; ++i) {
+        if (i && !text(write, context, ",")) return false;
+        if (!text(write, context, feature_name(r->features[i]))) return false;
+    }
+    if (!text(write, context, " limitations=")) return false;
+    for (size_t i = 0; i < r->limitation_count; ++i) {
+        if (i && !text(write, context, ",")) return false;
+        if (!text(write, context, limitation_name(r->limitations[i]))) return false;
+    }
+    if (r->attempt_count && !text(write, context, " attempts=")) return false;
+    for (size_t i = 0; i < r->attempt_count; ++i) {
+        const ghostos_vm_acceleration_attempt *a = &r->attempts[i];
+        if (i && !text(write, context, ",")) return false;
+        if (!text(write, context, backend_name(a->backend)) || !text(write, context, ":")
+            || !text(write, context, a->available ? "available(" : "unavailable(")
+            || !write(context, a->reason, a->reason_length) || !text(write, context, ")")) return false;
+    }
+    return text(write, context, " (") && write(context, r->description, r->description_length)
+        && text(write, context, ")");
+}

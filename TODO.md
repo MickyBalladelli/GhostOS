@@ -132,6 +132,18 @@ and error ordering are preserved in source. Behavior parity and full cutover
 remain open. Logs are in `temp/c-library-host-net.log` and
 `temp/vm-build-host-net.log`.
 
+Acceleration build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed on AArch64 macOS with active C backend
+selection, platform probing order, HAXM path fallback, KVM API version policy,
+native-handle rejection/close ordering, capability/fallback reporting, and
+status formatting. The Linux KVM ioctl has C source; Linux/Windows builds
+remain unverified. Rust retains file existence/open/ownership adapters,
+typed handles/errors, attempt snapshots, and public const enum-name APIs.
+Acquiring a native handle still leaves software guest execution active,
+matching the existing behavior. No behavior-parity execution is claimed.
+Logs are in `temp/c-library-acceleration.log` and
+`temp/vm-build-acceleration.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -225,7 +237,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/firmware/bios.rs` — C owns active BIOS ROM generation, POST IVT/BDA templates, INT 13h disk register services and CHS/EDD transfers, INT 15h memory sizing/E820 encoding, and INT 16h keyboard responses in `c/src/vm_bios.c`. Rust retains context ownership, CPU/MMU adapters, video/UEFI dispatch, and MBR boot handoff. Existing EDD packet offsets/count handling and CHS ignored-write-error behavior are preserved; full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/firmware/mod.rs`
 - [ ] `virtual_machine/src/firmware/uefi.rs`
-- [ ] `virtual_machine/src/hardware_acceleration.rs`
+- [ ] `virtual_machine/src/hardware_acceleration.rs` — C owns active backend negotiation, platform/path probing order, KVM version checking/ioctl, rejected-handle cleanup decisions, fallback/capability policy, and status formatting. Rust retains native file ownership/probe adapters, typed handles/errors and attempt snapshots, and public const name APIs. Software guest execution remains active; full cutover and behavior parity remain.
 - [ ] `virtual_machine/src/input.rs` — C owns terminal-resize encoding, complete resize-response filtering, and ASCII/control-byte to PS/2 make/break conversion in `c/src/vm_input.c`. Active VM callers use Rust vector/type adapters; behavior parity remains unverified.
 - [ ] `virtual_machine/src/integration.rs`
 - [ ] `virtual_machine/src/lib.rs`

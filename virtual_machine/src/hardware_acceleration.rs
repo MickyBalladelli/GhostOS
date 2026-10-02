@@ -12,7 +12,6 @@ use std::path::Path;
 
 /// Host execution backend requested for a VM.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u32)]
 pub enum HardwareAcceleration {
     /// Keep using the portable Rust CPU executor.
     #[default]
@@ -285,40 +284,24 @@ pub struct HardwareAccelerationStatus {
 
 impl fmt::Display for HardwareAccelerationStatus {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "requested={} host={} execution={} fallback={} supported=",
-            self.requested, self.active, self.execution_backend, self.fallback_behavior,
-        )?;
-        for (index, feature) in self.supported_features.iter().enumerate() {
-            if index > 0 {
-                formatter.write_str(",")?;
-            }
-            write!(formatter, "{feature}")?;
-        }
-        formatter.write_str(" limitations=")?;
-        for (index, limitation) in self.limitations.iter().enumerate() {
-            if index > 0 {
-                formatter.write_str(",")?;
-            }
-            write!(formatter, "{limitation}")?;
-        }
-        if !self.attempts.is_empty() {
-            formatter.write_str(" attempts=")?;
-            for (index, attempt) in self.attempts.iter().enumerate() {
-                if index > 0 {
-                    formatter.write_str(",")?;
-                }
-                write!(
-                    formatter,
-                    "{}:{}({})",
-                    attempt.backend,
-                    if attempt.available { "available" } else { "unavailable" },
-                    attempt.reason,
-                )?;
-            }
-        }
-        write!(formatter, " ({})", self.description)
+        let features: Vec<u32> = self.supported_features.iter().map(|feature| *feature as u32).collect();
+        let limitations: Vec<u32> = self.limitations.iter().map(|limitation| *limitation as u32).collect();
+        let attempts: Vec<CAttempt> = self.attempts.iter().map(|attempt| CAttempt {
+            backend: attempt.backend as u32, available: attempt.available,
+            reason: attempt.reason.as_ptr(), reason_length: attempt.reason.len(),
+        }).collect();
+        let report = CReport {
+            requested: self.requested as u32, active: self.active as u32,
+            execution: self.execution_backend as u32, fallback: self.fallback_behavior as u32,
+            features: features.as_ptr(), feature_count: features.len(),
+            limitations: limitations.as_ptr(), limitation_count: limitations.len(),
+            attempts: attempts.as_ptr(), attempt_count: attempts.len(),
+            description: self.description.as_ptr(), description_length: self.description.len(),
+        };
+        let mut context = FormatContext { formatter };
+        if unsafe { ghostos_vm_acceleration_format(&report, format_write, (&mut context as *mut FormatContext<'_, '_>).cast()) } {
+            Ok(())
+        } else { Err(fmt::Error) }
     }
 }
 
@@ -458,4 +441,28 @@ unsafe extern "C" fn probe_attempt(raw: *mut c_void, backend: u32, available: bo
     let reason = if available { unsafe { native_text(ghostos_vm_acceleration_reason(0)) }.to_string() }
         else { probe_error(context, backend, reason).to_string() };
     context.attempts.push(HardwareAccelerationAttempt { backend, available, reason });
+}
+
+#[repr(C)]
+struct CAttempt { backend: u32, available: bool, reason: *const u8, reason_length: usize }
+#[repr(C)]
+struct CReport {
+    requested: u32, active: u32, execution: u32, fallback: u32,
+    features: *const u32, feature_count: usize,
+    limitations: *const u32, limitation_count: usize,
+    attempts: *const CAttempt, attempt_count: usize,
+    description: *const u8, description_length: usize,
+}
+unsafe extern "C" {
+    fn ghostos_vm_acceleration_format(report: *const CReport,
+        write: unsafe extern "C" fn(*mut c_void, *const u8, usize) -> bool, context: *mut c_void) -> bool;
+}
+struct FormatContext<'a, 'b> { formatter: &'a mut fmt::Formatter<'b> }
+unsafe extern "C" fn format_write(raw: *mut c_void, bytes: *const u8, length: usize) -> bool {
+    let context = unsafe { &mut *raw.cast::<FormatContext<'_, '_>>() };
+    let bytes = if length == 0 { &[] } else { unsafe { std::slice::from_raw_parts(bytes, length) } };
+    match std::str::from_utf8(bytes) {
+        Ok(text) => context.formatter.write_str(text).is_ok(),
+        Err(_) => false,
+    }
 }

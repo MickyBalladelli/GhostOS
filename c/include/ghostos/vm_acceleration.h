@@ -43,4 +43,26 @@ const char *ghostos_vm_acceleration_description(bool native_handle);
 const char *ghostos_vm_acceleration_path(uint32_t path);
 int32_t ghostos_vm_acceleration_kvm_version(int32_t fd);
 
+typedef struct {
+    uint32_t backend;
+    bool available;
+    const uint8_t *reason;
+    size_t reason_length;
+} ghostos_vm_acceleration_attempt;
+typedef struct {
+    uint32_t requested, active, execution, fallback;
+    const uint32_t *features;
+    size_t feature_count;
+    const uint32_t *limitations;
+    size_t limitation_count;
+    const ghostos_vm_acceleration_attempt *attempts;
+    size_t attempt_count;
+    const uint8_t *description;
+    size_t description_length;
+} ghostos_vm_acceleration_report;
+typedef bool (*ghostos_vm_acceleration_write_fn)(void *, const uint8_t *, size_t);
+/* Report views and writer are borrowed only for the duration of this call. */
+bool ghostos_vm_acceleration_format(const ghostos_vm_acceleration_report *report,
+    ghostos_vm_acceleration_write_fn write, void *context);
+
 #endif
