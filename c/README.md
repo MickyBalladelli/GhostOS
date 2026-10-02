@@ -21,6 +21,12 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `crates/api-compat/src/lib.rs` | `src/api_compat.c` | `include/ghostos/api_compat.h` |
 | `crates/protocol/src/lib.rs` | `src/protocol.c` | `include/ghostos/protocol.h` |
 | `crates/boot-protocol/src/lib.rs` | `src/boot_protocol.c` | `include/ghostos/boot_protocol.h` |
+| `virtual_machine/src/net/mac.rs` | `src/vm_mac.c` | `include/ghostos/vm_mac.h` |
+| `virtual_machine/src/net/packet.rs` | `src/vm_packet.c` | `include/ghostos/vm_packet.h` |
+
+The VM packet queue uses the host allocator and is compiled into the VM's C
+archive by `virtual_machine/build.rs`; it is not part of the freestanding kernel
+foundation library.
 | `kernel/src/address_space.rs` | `src/address_space.c` | `include/ghostos/address_space.h` |
 | `kernel/src/allocator.rs` | `src/frame_allocator.c` | `include/ghostos/frame_allocator.h` |
 | `kernel/src/arch/aarch64.rs` | `src/arch_aarch64.c` | `include/ghostos/arch_aarch64.h` |

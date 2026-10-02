@@ -145,7 +145,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/net/dhcp.rs`
 - [x] `virtual_machine/src/net/mac.rs` — C owns byte conversion, broadcast/unicast/multicast classification, destination filtering, and lowercase formatting in `c/src/vm_mac.c`. Rust keeps the public type and const constructors for API compatibility.
 - [ ] `virtual_machine/src/net/mod.rs`
-- [ ] `virtual_machine/src/net/packet.rs`
+- [x] `virtual_machine/src/net/packet.rs` — C owns bounded packet queue storage, byte and packet accounting, queue operations, Ethernet minimum-frame padding, and error display strings in `c/src/vm_packet.c`. The VM build links this host-allocator module; Rust keeps the public `Vec` and error-code wrappers.
 - [ ] `virtual_machine/src/passkey_bridge.rs`
 - [ ] `virtual_machine/src/replay.rs`
 - [ ] `virtual_machine/src/snapshot.rs`
