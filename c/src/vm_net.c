@@ -69,3 +69,18 @@ uint16_t ghostos_vm_net_checksum(const uint8_t *bytes, size_t length) {
     while (sum >> 16) sum = (sum & 0xFFFFu) + (sum >> 16);
     return (uint16_t)~sum;
 }
+
+bool ghostos_vm_net_segment_accepts(const uint8_t *destination, size_t length,
+    const ghostos_vm_mac_address *port_mac, bool connected, bool admin_up) {
+    if (!destination || length < GHOSTOS_VM_MAC_ADDRESS_LEN || !port_mac ||
+        !connected || !admin_up) return false;
+    ghostos_vm_mac_address address;
+    if (!ghostos_vm_mac_from_bytes(destination, GHOSTOS_VM_MAC_ADDRESS_LEN, &address))
+        return false;
+    if (ghostos_vm_mac_is_broadcast(&address) || ghostos_vm_mac_is_multicast(&address))
+        return true;
+    for (size_t index = 0; index < GHOSTOS_VM_MAC_ADDRESS_LEN; ++index) {
+        if (address.bytes[index] != port_mac->bytes[index]) return false;
+    }
+    return true;
+}

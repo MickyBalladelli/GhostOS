@@ -11,7 +11,7 @@ fn main() {
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let target_flag = format!("--target={target}");
     let mut objects = Vec::new();
-    for module in ["vm_boot", "vm_clock", "vm_apic", "vm_hpet", "vm_mac", "vm_packet", "vm_power", "vm_interrupt_controller", "vm_virtio_queue", "vm_serial", "vm_net"] {
+    for module in ["vm_boot", "vm_clock", "vm_apic", "vm_hpet", "vm_mac", "vm_packet", "vm_power", "vm_interrupt_controller", "vm_virtio_queue", "vm_serial", "vm_net", "vm_dhcp"] {
         let source = manifest.join(format!("../c/src/{module}.c"));
         let object = output.join(format!("ghostos-{module}.o"));
         let status = Command::new(&clang)

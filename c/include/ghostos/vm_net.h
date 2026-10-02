@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "ghostos/vm_mac.h"
+
 uint64_t ghostos_vm_net_align_up(uint64_t value, uint64_t alignment);
 bool ghostos_vm_net_host_frame_encode(const uint8_t *packet, size_t packet_length,
     uint8_t *output, size_t output_capacity, size_t *output_length);
@@ -14,5 +16,7 @@ uint32_t ghostos_vm_net_validate_packet(size_t packet_length);
 uint32_t ghostos_vm_net_ipv4_to_number(const uint8_t address[4]);
 void ghostos_vm_net_ipv4_from_number(uint32_t value, uint8_t address[4]);
 uint16_t ghostos_vm_net_checksum(const uint8_t *bytes, size_t length);
+bool ghostos_vm_net_segment_accepts(const uint8_t *destination, size_t length,
+    const ghostos_vm_mac_address *port_mac, bool connected, bool admin_up);
 
 #endif

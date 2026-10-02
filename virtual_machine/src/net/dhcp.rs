@@ -8,6 +8,15 @@ use std::fmt;
 use std::rc::Rc;
 
 unsafe extern "C" {
+    fn ghostos_vm_dhcp_write_option(
+        output: *mut u8,
+        output_capacity: usize,
+        cursor: usize,
+        code: u8,
+        value: *const u8,
+        value_length: usize,
+        output_cursor: *mut usize,
+    ) -> bool;
     fn ghostos_vm_net_ipv4_to_number(address: *const u8) -> u32;
     fn ghostos_vm_net_ipv4_from_number(value: u32, address: *mut u8);
     fn ghostos_vm_net_checksum(bytes: *const u8, length: usize) -> u16;
@@ -593,10 +602,14 @@ fn encode_reply(
 }
 
 fn write_option(output: &mut [u8], cursor: usize, code: u8, value: &[u8]) -> usize {
-    output[cursor] = code;
-    output[cursor + 1] = value.len() as u8;
-    output[cursor + 2..cursor + 2 + value.len()].copy_from_slice(value);
-    cursor + 2 + value.len()
+    let mut output_cursor = 0;
+    assert!(unsafe {
+        ghostos_vm_dhcp_write_option(
+            output.as_mut_ptr(), output.len(), cursor, code, value.as_ptr(), value.len(),
+            &mut output_cursor,
+        )
+    });
+    output_cursor
 }
 
 fn checksum(bytes: &[u8]) -> u16 {

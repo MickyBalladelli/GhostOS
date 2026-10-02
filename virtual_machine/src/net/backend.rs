@@ -25,6 +25,13 @@ unsafe extern "C" {
         packet_length: *mut usize,
     ) -> bool;
     fn ghostos_vm_net_validate_packet(packet_length: usize) -> u32;
+    fn ghostos_vm_net_segment_accepts(
+        destination: *const u8,
+        length: usize,
+        port_mac: *const MacAddress,
+        connected: bool,
+        admin_up: bool,
+    ) -> bool;
 }
 
 fn validate_packet(packet: &[u8]) -> Result<(), NetError> {
@@ -609,18 +616,17 @@ impl DeterministicSegment {
         if !source.admin_up {
             return Err(NetError::AdminDown);
         }
-        let destination = MacAddress::from_bytes(&packet[..6]).ok_or(NetError::Truncated)?;
         let recipients: Vec<usize> = self
             .ports
             .iter()
             .enumerate()
             .filter(|(index, port)| {
                 *index != from
-                    && port.connected
-                    && port.admin_up
-                    && (destination.is_broadcast()
-                        || destination.is_multicast()
-                        || port.mac == destination)
+                    && unsafe {
+                        ghostos_vm_net_segment_accepts(
+                            packet.as_ptr(), packet.len(), &port.mac, port.connected, port.admin_up,
+                        )
+                    }
             })
             .map(|(index, _)| index)
             .collect();
