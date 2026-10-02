@@ -15,7 +15,6 @@ use std::rc::Rc;
 const FILE_HEADER_BYTES: usize = 20;
 const EVENT_HEADER_BYTES: usize = 56;
 const MAX_REPLAY_FILE_BYTES: u64 = 128 * 1024 * 1024;
-const MAX_EVENT_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const DEFAULT_MAX_EVENTS: usize = 1_000_000;
 
 #[repr(C)]
@@ -30,11 +29,71 @@ struct CReplayEvent {
     kind: u8,
 }
 
+#[repr(C)]
+struct CReplayView {
+    event: CReplayEvent,
+    payload: *const u8,
+}
+
+impl Default for CReplayView {
+    fn default() -> Self {
+        Self { event: CReplayEvent::default(), payload: std::ptr::null() }
+    }
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct CReplayError {
+    sequence: u64,
+    code: u32,
+    mode: u32,
+    expected: u8,
+    actual: u8,
+    kind: u8,
+}
+
+#[repr(C)]
+struct CReplayDmaWrite {
+    address: u64,
+    bytes: *const u8,
+    length: usize,
+}
+
+type CSession = std::ffi::c_void;
+type DmaSink = unsafe extern "C" fn(*mut std::ffi::c_void, u64, *const u8, usize);
+
+const _: () = assert!(std::mem::size_of::<CReplayEvent>() == 56);
+const _: () = assert!(std::mem::offset_of!(CReplayEvent, kind) == 48);
+const _: () = assert!(std::mem::size_of::<CReplayError>() == 24);
+
 unsafe extern "C" {
     fn ghostos_vm_replay_file_decode(bytes: *const u8, length: usize, count: *mut u64) -> u32;
     fn ghostos_vm_replay_file_encode(bytes: *mut u8, count: u64);
     fn ghostos_vm_replay_event_decode(bytes: *const u8, length: usize, sequence: u64, event: *mut CReplayEvent) -> u32;
     fn ghostos_vm_replay_event_encode(bytes: *mut u8, event: *const CReplayEvent) -> u32;
+    fn ghostos_vm_replay_validate(events: *const CReplayView, count: usize) -> u32;
+    fn ghostos_vm_replay_file_size(events: *const CReplayView, count: usize, size: *mut u64) -> u32;
+    fn ghostos_vm_replay_session_new(max_events: usize) -> *mut CSession;
+    fn ghostos_vm_replay_session_free(session: *mut CSession);
+    fn ghostos_vm_replay_mode_get(session: *const CSession) -> u32;
+    fn ghostos_vm_replay_position(session: *const CSession) -> usize;
+    fn ghostos_vm_replay_pending(session: *const CSession) -> usize;
+    fn ghostos_vm_replay_length(session: *const CSession) -> usize;
+    fn ghostos_vm_replay_begin_recording(session: *mut CSession);
+    fn ghostos_vm_replay_begin(session: *mut CSession, events: *const CReplayView, count: usize) -> u32;
+    fn ghostos_vm_replay_stop(session: *mut CSession);
+    fn ghostos_vm_replay_take_error(session: *mut CSession, error: *mut CReplayError) -> bool;
+    fn ghostos_vm_replay_error_get(session: *const CSession, error: *mut CReplayError);
+    fn ghostos_vm_replay_peek_kind(session: *const CSession) -> u8;
+    fn ghostos_vm_replay_event_get(session: *const CSession, index: usize, view: *mut CReplayView) -> bool;
+    fn ghostos_vm_replay_next(session: *mut CSession, expected: u8, view: *mut CReplayView) -> u32;
+    fn ghostos_vm_replay_instruction_input(session: *mut CSession, ip: u64, address: u64, size: u8, value: u64, output: *mut u64) -> u32;
+    fn ghostos_vm_replay_clock(session: *mut CSession, now: u64, output: *mut u64) -> u32;
+    fn ghostos_vm_replay_timer(session: *mut CSession, now: u64, vector: u64) -> u32;
+    fn ghostos_vm_replay_interrupt(session: *mut CSession, vector: u8) -> u32;
+    fn ghostos_vm_replay_host_input(session: *mut CSession, channel: u64, has_rows: bool, rows: u16, has_columns: bool, columns: u16, bytes: *const u8, length: usize) -> u32;
+    fn ghostos_vm_replay_next_host_input(session: *mut CSession, present: *mut bool, view: *mut CReplayView, has_resize: *mut bool, rows: *mut u16, columns: *mut u16) -> u32;
+    fn ghostos_vm_replay_device_completion(session: *mut CSession, writes: *const CReplayDmaWrite, count: usize, sink: DmaSink, context: *mut std::ffi::c_void) -> u32;
 }
 
 fn wire_result(result: u32) -> Result<(), ReplayError> {
@@ -44,6 +103,73 @@ fn wire_result(result: u32) -> Result<(), ReplayError> {
         3 => Err(ReplayError::PayloadTooLarge),
         _ => Err(ReplayError::Corrupt),
     }
+}
+
+fn replay_mode(mode: u32) -> ReplayMode {
+    match mode {
+        1 => ReplayMode::Recording,
+        2 => ReplayMode::Replaying,
+        _ => ReplayMode::Disabled,
+    }
+}
+
+fn replay_error(error: CReplayError) -> ReplayError {
+    match error.code {
+        4 => ReplayError::WrongMode(replay_mode(error.mode)),
+        5 => ReplayError::EndOfTrace {
+            expected: ReplayEventKind::from_raw(error.expected).expect("C replay kind"),
+            sequence: error.sequence,
+        },
+        6 => ReplayError::UnexpectedKind {
+            expected: ReplayEventKind::from_raw(error.expected).expect("C replay kind"),
+            actual: ReplayEventKind::from_raw(error.actual).expect("C replay kind"),
+            sequence: error.sequence,
+        },
+        7 => ReplayError::InputMismatch {
+            kind: ReplayEventKind::from_raw(error.kind).expect("C replay kind"),
+            sequence: error.sequence,
+        },
+        code => wire_result(code).expect_err("C replay error"),
+    }
+}
+
+fn event_views(events: &[ReplayEvent]) -> Vec<CReplayView> {
+    events.iter().map(|event| CReplayView {
+        event: CReplayEvent {
+            sequence: event.sequence,
+            a: event.a,
+            b: event.b,
+            c: event.c,
+            d: event.d,
+            payload_length: event.data.len() as u64,
+            kind: event.kind as u8,
+        },
+        payload: event.data.as_ptr(),
+    }).collect()
+}
+
+// C owns these bytes. Copy them before a recording/replay reset or destruction.
+unsafe fn copy_payload(view: &CReplayView) -> Vec<u8> {
+    if view.event.payload_length == 0 { return Vec::new() }
+    unsafe { std::slice::from_raw_parts(view.payload, view.event.payload_length as usize).to_vec() }
+}
+
+unsafe fn copy_event(view: &CReplayView) -> ReplayEvent {
+    ReplayEvent {
+        sequence: view.event.sequence,
+        kind: ReplayEventKind::from_raw(view.event.kind).expect("C replay kind"),
+        a: view.event.a,
+        b: view.event.b,
+        c: view.event.c,
+        d: view.event.d,
+        data: unsafe { copy_payload(view) },
+    }
+}
+
+unsafe extern "C" fn collect_dma(context: *mut std::ffi::c_void, address: u64, bytes: *const u8, length: usize) {
+    let writes = unsafe { &mut *context.cast::<Vec<ReplayDmaWrite>>() };
+    let bytes = unsafe { std::slice::from_raw_parts(bytes, length).to_vec() };
+    writes.push(ReplayDmaWrite { address, bytes });
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -206,11 +332,13 @@ pub fn shared_replay() -> SharedReplay {
 
 /// Ordered replay controller shared by the VM, MMU, and port bus.
 pub struct ReplaySession {
-    mode: ReplayMode,
-    events: Vec<ReplayEvent>,
-    cursor: usize,
-    max_events: usize,
-    last_error: Option<ReplayError>,
+    session: std::ptr::NonNull<CSession>,
+}
+
+impl Drop for ReplaySession {
+    fn drop(&mut self) {
+        unsafe { ghostos_vm_replay_session_free(self.session.as_ptr()) }
+    }
 }
 
 impl ReplaySession {
@@ -219,91 +347,70 @@ impl ReplaySession {
     }
 
     pub fn with_max_events(max_events: usize) -> Self {
-        Self {
-            mode: ReplayMode::Disabled,
-            events: Vec::new(),
-            cursor: 0,
-            max_events: max_events.max(1),
-            last_error: None,
-        }
+        let session = unsafe { ghostos_vm_replay_session_new(max_events) };
+        Self { session: std::ptr::NonNull::new(session).expect("C replay session allocation") }
+    }
+
+    fn result(&self, code: u32) -> Result<(), ReplayError> {
+        if code < 4 { return wire_result(code) }
+        let mut error = CReplayError::default();
+        unsafe { ghostos_vm_replay_error_get(self.session.as_ptr(), &mut error) };
+        Err(replay_error(error))
     }
 
     pub fn mode(&self) -> ReplayMode {
-        self.mode
+        replay_mode(unsafe { ghostos_vm_replay_mode_get(self.session.as_ptr()) })
     }
 
     pub fn position(&self) -> usize {
-        self.cursor
+        unsafe { ghostos_vm_replay_position(self.session.as_ptr()) }
     }
 
     pub fn pending(&self) -> usize {
-        self.events.len().saturating_sub(self.cursor)
+        unsafe { ghostos_vm_replay_pending(self.session.as_ptr()) }
     }
 
     pub fn begin_recording(&mut self) {
-        self.events.clear();
-        self.cursor = 0;
-        self.last_error = None;
-        self.mode = ReplayMode::Recording;
+        unsafe { ghostos_vm_replay_begin_recording(self.session.as_ptr()) }
     }
 
     pub fn begin_replay(&mut self, trace: ReplayTrace) -> Result<(), ReplayError> {
-        validate_events(&trace.events)?;
-        if trace.events.len() > self.max_events {
-            return Err(ReplayError::Capacity)
-        }
-        self.events = trace.events;
-        self.cursor = 0;
-        self.last_error = None;
-        self.mode = ReplayMode::Replaying;
-        Ok(())
+        let views = event_views(&trace.events);
+        wire_result(unsafe { ghostos_vm_replay_begin(self.session.as_ptr(), views.as_ptr(), views.len()) })
     }
 
     pub fn stop(&mut self) {
-        self.mode = ReplayMode::Disabled;
-        self.cursor = 0;
-        self.last_error = None;
+        unsafe { ghostos_vm_replay_stop(self.session.as_ptr()) }
     }
 
     pub fn trace(&self) -> ReplayTrace {
-        ReplayTrace {
-            events: self.events.clone(),
+        let count = unsafe { ghostos_vm_replay_length(self.session.as_ptr()) };
+        let mut events = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut view = CReplayView::default();
+            assert!(unsafe { ghostos_vm_replay_event_get(self.session.as_ptr(), index, &mut view) });
+            events.push(unsafe { copy_event(&view) });
         }
+        ReplayTrace { events }
     }
 
     pub fn take_error(&mut self) -> Option<ReplayError> {
-        self.last_error.take()
+        let mut error = CReplayError::default();
+        unsafe { ghostos_vm_replay_take_error(self.session.as_ptr(), &mut error) }
+            .then(|| replay_error(error))
     }
 
     pub fn peek_kind(&self) -> Option<ReplayEventKind> {
-        (self.mode == ReplayMode::Replaying)
-            .then(|| self.events.get(self.cursor).map(|event| event.kind))
-            .flatten()
+        ReplayEventKind::from_raw(unsafe { ghostos_vm_replay_peek_kind(self.session.as_ptr()) })
     }
 
     pub fn next(&mut self, expected: ReplayEventKind) -> Result<ReplayEvent, ReplayError> {
-        if self.mode != ReplayMode::Replaying {
-            return self.fail(ReplayError::WrongMode(self.mode))
-        }
-        let Some(event) = self.events.get(self.cursor).cloned() else {
-            return self.fail(ReplayError::EndOfTrace {
-                expected,
-                sequence: self.cursor as u64,
-            })
-        };
-        if event.kind != expected {
-            return self.fail(ReplayError::UnexpectedKind {
-                expected,
-                actual: event.kind,
-                sequence: event.sequence,
-            })
-        }
-        self.cursor += 1;
-        Ok(event)
+        let mut view = CReplayView::default();
+        let code = unsafe { ghostos_vm_replay_next(self.session.as_ptr(), expected as u8, &mut view) };
+        self.result(code)?;
+        Ok(unsafe { copy_event(&view) })
     }
 
-    /// Record an external device read, or return the recorded value during
-    /// replay. `a`, `b`, and `c` identify the instruction, address, and size.
     pub fn instruction_input(
         &mut self,
         instruction_ip: u64,
@@ -311,75 +418,28 @@ impl ReplaySession {
         size: u8,
         value: u64,
     ) -> Result<u64, ReplayError> {
-        match self.mode {
-            ReplayMode::Disabled => Ok(value),
-            ReplayMode::Recording => {
-                self.record_event(ReplayEventKind::InstructionInput, instruction_ip, address, size as u64, value, Vec::new())?;
-                Ok(value)
-            }
-            ReplayMode::Replaying => {
-                let event = self.next(ReplayEventKind::InstructionInput)?;
-                if event.a != instruction_ip || event.b != address || event.c != size as u64 {
-                    return self.fail(ReplayError::InputMismatch {
-                        kind: event.kind,
-                        sequence: event.sequence,
-                    })
-                }
-                Ok(event.d)
-            }
-        }
+        let mut output = 0;
+        let code = unsafe {
+            ghostos_vm_replay_instruction_input(self.session.as_ptr(), instruction_ip, address, size, value, &mut output)
+        };
+        self.result(code)?;
+        Ok(output)
     }
 
     pub fn clock(&mut self, now_ns: u64) -> Result<u64, ReplayError> {
-        match self.mode {
-            ReplayMode::Disabled => Ok(now_ns),
-            ReplayMode::Recording => {
-                self.record_event(ReplayEventKind::Clock, now_ns, 0, 0, 0, Vec::new())?;
-                Ok(now_ns)
-            }
-            ReplayMode::Replaying => Ok(self.next(ReplayEventKind::Clock)?.a),
-        }
+        let mut output = 0;
+        let code = unsafe { ghostos_vm_replay_clock(self.session.as_ptr(), now_ns, &mut output) };
+        self.result(code)?;
+        Ok(output)
     }
 
     pub fn timer(&mut self, now_ns: u64, pending_vector: Option<u8>) -> Result<(), ReplayError> {
         let vector = pending_vector.map(u64::from).unwrap_or(u64::MAX);
-        match self.mode {
-            ReplayMode::Disabled => Ok(()),
-            ReplayMode::Recording => {
-                self.record_event(ReplayEventKind::Timer, now_ns, vector, 0, 0, Vec::new())?;
-                Ok(())
-            }
-            ReplayMode::Replaying => {
-                let event = self.next(ReplayEventKind::Timer)?;
-                if event.a != now_ns || event.b != vector {
-                    return self.fail(ReplayError::InputMismatch {
-                        kind: event.kind,
-                        sequence: event.sequence,
-                    })
-                }
-                Ok(())
-            }
-        }
+        self.result(unsafe { ghostos_vm_replay_timer(self.session.as_ptr(), now_ns, vector) })
     }
 
     pub fn interrupt(&mut self, vector: u8) -> Result<(), ReplayError> {
-        match self.mode {
-            ReplayMode::Disabled => Ok(()),
-            ReplayMode::Recording => {
-                self.record_event(ReplayEventKind::Interrupt, vector as u64, 0, 0, 0, Vec::new())?;
-                Ok(())
-            }
-            ReplayMode::Replaying => {
-                let event = self.next(ReplayEventKind::Interrupt)?;
-                if event.a != vector as u64 {
-                    return self.fail(ReplayError::InputMismatch {
-                        kind: event.kind,
-                        sequence: event.sequence,
-                    })
-                }
-                Ok(())
-            }
-        }
+        self.result(unsafe { ghostos_vm_replay_interrupt(self.session.as_ptr(), vector) })
     }
 
     pub fn host_input(
@@ -389,67 +449,28 @@ impl ReplaySession {
         columns: Option<u16>,
         bytes: &[u8],
     ) -> Result<(), ReplayError> {
-        let packed_resize = match (rows, columns) {
-            (Some(rows), Some(columns)) => u64::from(rows) << 32 | u64::from(columns),
-            (None, None) => 0,
-            _ => return self.fail(ReplayError::InputMismatch {
-                kind: ReplayEventKind::HostInput,
-                sequence: self.events.len() as u64,
-            }),
-        };
-        match self.mode {
-            ReplayMode::Disabled => Ok(()),
-            ReplayMode::Recording => {
-                self.record_event(
-                    ReplayEventKind::HostInput,
-                    channel,
-                    packed_resize,
-                    0,
-                    bytes.len() as u64,
-                    bytes.to_vec(),
-                )?;
-                Ok(())
-            }
-            ReplayMode::Replaying => {
-                let event = self.next(ReplayEventKind::HostInput)?;
-                if event.a != channel
-                    || event.b != packed_resize
-                    || event.d != bytes.len() as u64
-                    || event.data != bytes
-                {
-                    return self.fail(ReplayError::InputMismatch {
-                        kind: event.kind,
-                        sequence: event.sequence,
-                    })
-                }
-                Ok(())
-            }
-        }
+        self.result(unsafe {
+            ghostos_vm_replay_host_input(self.session.as_ptr(), channel, rows.is_some(), rows.unwrap_or(0),
+                columns.is_some(), columns.unwrap_or(0), bytes.as_ptr(), bytes.len())
+        })
     }
 
     pub fn next_host_input(&mut self) -> Result<Option<ReplayHostInput>, ReplayError> {
-        if self.mode != ReplayMode::Replaying || self.peek_kind() != Some(ReplayEventKind::HostInput) {
-            return Ok(None)
-        }
-        let event = self.next(ReplayEventKind::HostInput)?;
-        let (rows, columns) = if event.b == 0 {
-            (None, None)
-        } else {
-            let rows = (event.b >> 32) as u16;
-            let columns = event.b as u16;
-            if rows == 0 || columns == 0 {
-                return self.fail(ReplayError::Corrupt)
-            }
-            (Some(rows), Some(columns))
+        let mut present = false;
+        let mut view = CReplayView::default();
+        let mut has_resize = false;
+        let mut rows = 0;
+        let mut columns = 0;
+        let code = unsafe {
+            ghostos_vm_replay_next_host_input(self.session.as_ptr(), &mut present, &mut view,
+                &mut has_resize, &mut rows, &mut columns)
         };
-        if event.d != event.data.len() as u64 {
-            return self.fail(ReplayError::Corrupt)
-        }
-        Ok(Some(ReplayHostInput {
-            channel: event.a,
-            rows,
-            columns,
-            bytes: event.data,
+        self.result(code)?;
+        Ok(present.then(|| ReplayHostInput {
+            channel: view.event.a,
+            rows: has_resize.then_some(rows),
+            columns: has_resize.then_some(columns),
+            bytes: unsafe { copy_payload(&view) },
         }))
     }
 
@@ -457,66 +478,16 @@ impl ReplaySession {
         &mut self,
         writes: &[ReplayDmaWrite],
     ) -> Result<Vec<ReplayDmaWrite>, ReplayError> {
-        match self.mode {
-            ReplayMode::Disabled => Ok(Vec::new()),
-            ReplayMode::Recording => {
-                let payload = encode_dma_writes(writes)?;
-                let total_bytes = writes
-                    .iter()
-                    .try_fold(0u64, |total, write| total.checked_add(write.bytes.len() as u64))
-                    .ok_or(ReplayError::PayloadTooLarge)?;
-                self.record_event(
-                    ReplayEventKind::DeviceCompletion,
-                    writes.len() as u64,
-                    total_bytes,
-                    0,
-                    0,
-                    payload,
-                )?;
-                Ok(Vec::new())
-            }
-            ReplayMode::Replaying => {
-                let event = self.next(ReplayEventKind::DeviceCompletion)?;
-                // Host-backed devices may complete with different bytes or
-                // timing on replay. The recorded DMA writes are authoritative.
-                decode_dma_writes(&event.data)
-            }
-        }
-    }
-
-    fn record_event(
-        &mut self,
-        kind: ReplayEventKind,
-        a: u64,
-        b: u64,
-        c: u64,
-        d: u64,
-        data: Vec<u8>,
-    ) -> Result<(), ReplayError> {
-        if self.mode != ReplayMode::Recording {
-            return self.fail(ReplayError::WrongMode(self.mode))
-        }
-        if self.events.len() >= self.max_events {
-            return self.fail(ReplayError::Capacity)
-        }
-        if data.len() > MAX_EVENT_PAYLOAD_BYTES {
-            return self.fail(ReplayError::PayloadTooLarge)
-        }
-        self.events.push(ReplayEvent {
-            sequence: self.events.len() as u64,
-            kind,
-            a,
-            b,
-            c,
-            d,
-            data,
-        });
-        Ok(())
-    }
-
-    fn fail<T>(&mut self, error: ReplayError) -> Result<T, ReplayError> {
-        self.last_error = Some(error.clone());
-        Err(error)
+        let views: Vec<_> = writes.iter().map(|write| CReplayDmaWrite {
+            address: write.address, bytes: write.bytes.as_ptr(), length: write.bytes.len(),
+        }).collect();
+        let mut output = Vec::new();
+        let code = unsafe {
+            ghostos_vm_replay_device_completion(self.session.as_ptr(), views.as_ptr(), views.len(),
+                collect_dma, (&mut output as *mut Vec<ReplayDmaWrite>).cast())
+        };
+        self.result(code)?;
+        Ok(output)
     }
 }
 
@@ -526,83 +497,15 @@ impl Default for ReplaySession {
     }
 }
 
-fn encode_dma_writes(writes: &[ReplayDmaWrite]) -> Result<Vec<u8>, ReplayError> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&(writes.len() as u32).to_le_bytes());
-    for write in writes {
-        let length = u32::try_from(write.bytes.len()).map_err(|_| ReplayError::PayloadTooLarge)?;
-        payload.extend_from_slice(&write.address.to_le_bytes());
-        payload.extend_from_slice(&length.to_le_bytes());
-        payload.extend_from_slice(&write.bytes);
-        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
-            return Err(ReplayError::PayloadTooLarge)
-        }
-    }
-    Ok(payload)
-}
-
-fn decode_dma_writes(input: &[u8]) -> Result<Vec<ReplayDmaWrite>, ReplayError> {
-    if input.len() < 4 {
-        return Err(ReplayError::Corrupt)
-    }
-    let count = u32::from_le_bytes(
-        input[..4].try_into().map_err(|_| ReplayError::Corrupt)?,
-    ) as usize;
-    let mut offset = 4usize;
-    let mut writes = Vec::with_capacity(count.min(1024));
-    for _ in 0..count {
-        let header_end = offset.checked_add(12).ok_or(ReplayError::Corrupt)?;
-        if header_end > input.len() {
-            return Err(ReplayError::Corrupt)
-        }
-        let address = u64::from_le_bytes(
-            input[offset..offset + 8]
-                .try_into()
-                .map_err(|_| ReplayError::Corrupt)?,
-        );
-        let length = u32::from_le_bytes(
-            input[offset + 8..header_end]
-                .try_into()
-                .map_err(|_| ReplayError::Corrupt)?,
-        ) as usize;
-        offset = header_end;
-        let end = offset.checked_add(length).ok_or(ReplayError::Corrupt)?;
-        if end > input.len() {
-            return Err(ReplayError::Corrupt)
-        }
-        writes.push(ReplayDmaWrite {
-            address,
-            bytes: input[offset..end].to_vec(),
-        });
-        offset = end;
-    }
-    if offset != input.len() {
-        return Err(ReplayError::Corrupt)
-    }
-    Ok(writes)
-}
-
 fn validate_events(events: &[ReplayEvent]) -> Result<(), ReplayError> {
-    for (index, event) in events.iter().enumerate() {
-        if event.sequence != index as u64 || event.data.len() > MAX_EVENT_PAYLOAD_BYTES {
-            return Err(ReplayError::Corrupt)
-        }
-    }
-    Ok(())
+    let views = event_views(events);
+    wire_result(unsafe { ghostos_vm_replay_validate(views.as_ptr(), views.len()) })
 }
 
 fn save_events(events: &[ReplayEvent], path: &Path) -> Result<(), ReplayError> {
-    validate_events(events)?;
-    let mut file_bytes = FILE_HEADER_BYTES as u64;
-    for event in events {
-        file_bytes = file_bytes
-            .checked_add(EVENT_HEADER_BYTES as u64)
-            .and_then(|size| size.checked_add(event.data.len() as u64))
-            .ok_or(ReplayError::Capacity)?;
-        if file_bytes > MAX_REPLAY_FILE_BYTES {
-            return Err(ReplayError::Capacity)
-        }
-    }
+    let views = event_views(events);
+    let mut file_bytes = 0;
+    wire_result(unsafe { ghostos_vm_replay_file_size(views.as_ptr(), views.len(), &mut file_bytes) })?;
     let mut file = File::create(path).map_err(io_error)?;
     let mut header = [0u8; FILE_HEADER_BYTES];
     unsafe { ghostos_vm_replay_file_encode(header.as_mut_ptr(), events.len() as u64) };
