@@ -20,7 +20,7 @@ unsafe extern "C" {
         vector: u8,
         address: *mut u64,
     ) -> bool;
-    fn ghostos_vm_interrupt_controller_map_irq(controller: *mut CInterruptController, irq: u8, vector: u8);
+    fn ghostos_vm_interrupt_controller_map_irq(controller: *mut CInterruptController, irq: u8, vector: u64);
     fn ghostos_vm_interrupt_controller_handle_irq(controller: *const CInterruptController, irq: u8, vector: *mut u8) -> bool;
     fn ghostos_vm_interrupt_controller_remap_pic(controller: *mut CInterruptController);
     fn ghostos_vm_interrupt_controller_reset(controller: *mut CInterruptController);
@@ -114,7 +114,7 @@ impl InterruptController {
             ghostos_vm_interrupt_controller_set_idt(self.state, state.idt_base, state.idt_limit);
             ghostos_vm_interrupt_controller_reset(self.state);
             for &(irq, vector) in &state.irq_routing {
-                ghostos_vm_interrupt_controller_map_irq(self.state, irq, vector as u8);
+                ghostos_vm_interrupt_controller_map_irq(self.state, irq, vector);
             }
             if state.pic_mapped {
                 ghostos_vm_interrupt_controller_remap_pic(self.state);
@@ -141,7 +141,7 @@ impl InterruptController {
     }
 
     pub fn map_irq(&mut self, irq: u8, vector: u8) {
-        unsafe { ghostos_vm_interrupt_controller_map_irq(self.state, irq, vector) }
+        unsafe { ghostos_vm_interrupt_controller_map_irq(self.state, irq, u64::from(vector)) }
     }
 
     pub fn handle_irq(&mut self, irq: u8) -> Option<u8> {

@@ -62,7 +62,7 @@ bool ghostos_vm_interrupt_controller_idt_entry(const ghostos_vm_interrupt_contro
 }
 
 void ghostos_vm_interrupt_controller_map_irq(ghostos_vm_interrupt_controller *controller,
-    uint8_t irq, uint8_t vector) {
+    uint8_t irq, uint64_t vector) {
     if (!controller) return;
     controller->irq_vectors[irq] = vector;
     controller->irq_present[irq] = true;
