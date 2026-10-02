@@ -146,3 +146,74 @@ extern "C-unwind" {
     fn ghostos_vm_execution_retune(hits: u64, misses: u64) -> bool;
     fn ghostos_vm_execution_loop(start: u64, last: *const Instruction, relative: bool, displacement: u64) -> bool;
 }
+
+#[repr(C)]
+struct CacheKey { rip: u64, cr3: u64, mode: u32, privilege: u32 }
+impl From<BlockKey> for CacheKey {
+    fn from(key: BlockKey) -> Self {
+        Self { rip: key.rip, cr3: key.cr3, mode: key.mode as u32, privilege: key.privilege as u32 }
+    }
+}
+
+/// Owns the native hash table and FIFO, including the boxed block payloads.
+/// Returned references borrow this owner, so no native mutation can invalidate
+/// a live Rust reference. Removal transfers the box back to Rust exactly once.
+pub(super) struct Cache(std::ptr::NonNull<c_void>);
+unsafe extern "C" fn destroy_block(payload: *mut c_void) {
+    drop(Box::from_raw(payload as *mut TranslationBlock));
+}
+impl Cache {
+    pub(super) fn new() -> Self {
+        Self(std::ptr::NonNull::new(unsafe { ghostos_vm_execution_cache_new(destroy_block) })
+            .expect("allocate native translation cache"))
+    }
+    pub(super) fn len(&self) -> usize {
+        unsafe { ghostos_vm_execution_cache_length(self.0.as_ptr()) }
+    }
+    pub(super) fn get(&self, key: &BlockKey) -> Option<&TranslationBlock> {
+        let pointer = unsafe { ghostos_vm_execution_cache_get(self.0.as_ptr(), &CacheKey::from(*key)) };
+        unsafe { (pointer as *const TranslationBlock).as_ref() }
+    }
+    pub(super) fn get_mut(&mut self, key: &BlockKey) -> Option<&mut TranslationBlock> {
+        let pointer = unsafe { ghostos_vm_execution_cache_get(self.0.as_ptr(), &CacheKey::from(*key)) };
+        unsafe { (pointer as *mut TranslationBlock).as_mut() }
+    }
+    fn take(pointer: *mut c_void) -> Option<Box<TranslationBlock>> {
+        if pointer.is_null() { None } else { Some(unsafe { Box::from_raw(pointer as *mut TranslationBlock) }) }
+    }
+    pub(super) fn remove(&mut self, key: &BlockKey) -> Option<Box<TranslationBlock>> {
+        Self::take(unsafe { ghostos_vm_execution_cache_remove(self.0.as_ptr(), &CacheKey::from(*key)) })
+    }
+    pub(super) fn forget_order(&mut self, key: &BlockKey) {
+        unsafe { ghostos_vm_execution_cache_forget_order(self.0.as_ptr(), &CacheKey::from(*key)); }
+    }
+    pub(super) fn evict(&mut self, key: &BlockKey, capacity: usize) -> Option<Box<TranslationBlock>> {
+        Self::take(unsafe { ghostos_vm_execution_cache_evict(self.0.as_ptr(), &CacheKey::from(*key), capacity) })
+    }
+    pub(super) fn insert(&mut self, key: BlockKey, block: TranslationBlock) {
+        let pointer = Box::into_raw(Box::new(block));
+        let success = unsafe { ghostos_vm_execution_cache_insert(self.0.as_ptr(), &CacheKey::from(key), pointer as *mut c_void) };
+        if !success {
+            // On native allocation failure the cache has not taken ownership.
+            drop(unsafe { Box::from_raw(pointer) });
+            panic!("allocate native translation cache entry");
+        }
+    }
+    pub(super) fn clear(&mut self, clear_order: bool) {
+        unsafe { ghostos_vm_execution_cache_clear(self.0.as_ptr(), clear_order); }
+    }
+}
+impl Drop for Cache {
+    fn drop(&mut self) { unsafe { ghostos_vm_execution_cache_free(self.0.as_ptr()); } }
+}
+extern "C" {
+    fn ghostos_vm_execution_cache_new(destroy: unsafe extern "C" fn(*mut c_void)) -> *mut c_void;
+    fn ghostos_vm_execution_cache_free(cache: *mut c_void);
+    fn ghostos_vm_execution_cache_clear(cache: *mut c_void, clear_order: bool);
+    fn ghostos_vm_execution_cache_length(cache: *const c_void) -> usize;
+    fn ghostos_vm_execution_cache_get(cache: *const c_void, key: *const CacheKey) -> *mut c_void;
+    fn ghostos_vm_execution_cache_remove(cache: *mut c_void, key: *const CacheKey) -> *mut c_void;
+    fn ghostos_vm_execution_cache_forget_order(cache: *mut c_void, key: *const CacheKey);
+    fn ghostos_vm_execution_cache_evict(cache: *mut c_void, key: *const CacheKey, capacity: usize) -> *mut c_void;
+    fn ghostos_vm_execution_cache_insert(cache: *mut c_void, key: *const CacheKey, payload: *mut c_void) -> bool;
+}

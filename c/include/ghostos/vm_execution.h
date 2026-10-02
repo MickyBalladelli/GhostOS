@@ -37,4 +37,26 @@ bool ghostos_vm_execution_retune(uint64_t hits, uint64_t misses);
 /* On failure, the callback context holds the original host error. */
 bool ghostos_vm_execution_run(const ghostos_vm_execution_host *, void *, size_t count, size_t maximum, size_t *executed, bool *clear_cache);
 bool ghostos_vm_execution_translate(const ghostos_vm_translation_host *, void *, uint64_t start, size_t maximum);
+
+/* Cache keys include execution context, not just the instruction address. */
+typedef struct {
+    uint64_t rip, cr3;
+    uint32_t mode, privilege;
+} ghostos_vm_execution_key;
+typedef struct ghostos_vm_execution_cache ghostos_vm_execution_cache;
+/* Successful insertion transfers payload ownership. Remove/evict transfer it
+ * back. Destroy is called on replacement, clear, and final free. */
+ghostos_vm_execution_cache *ghostos_vm_execution_cache_new(void (*destroy)(void *));
+void ghostos_vm_execution_cache_free(ghostos_vm_execution_cache *);
+void ghostos_vm_execution_cache_clear(ghostos_vm_execution_cache *, bool clear_order);
+size_t ghostos_vm_execution_cache_length(const ghostos_vm_execution_cache *);
+void *ghostos_vm_execution_cache_get(const ghostos_vm_execution_cache *, const ghostos_vm_execution_key *);
+void *ghostos_vm_execution_cache_remove(ghostos_vm_execution_cache *, const ghostos_vm_execution_key *);
+void ghostos_vm_execution_cache_forget_order(ghostos_vm_execution_cache *, const ghostos_vm_execution_key *);
+/* Capacity zero behaves as capacity one. At most one live entry is evicted,
+ * skipping stale FIFO keys. Admission is deliberately left to the caller
+ * after eviction, preserving the existing eviction-before-admission order. */
+void *ghostos_vm_execution_cache_evict(ghostos_vm_execution_cache *, const ghostos_vm_execution_key *, size_t capacity);
+/* False means allocation failed, and ownership stays with the caller. */
+bool ghostos_vm_execution_cache_insert(ghostos_vm_execution_cache *, const ghostos_vm_execution_key *, void *payload);
 #endif

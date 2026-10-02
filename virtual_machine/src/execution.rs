@@ -15,7 +15,7 @@ use ghostos_observability::{
     record_profile_sample, CacheEvent, CacheKind, CachePolicyReport, CachePolicyRegistry,
     ProfileDomain, ProfileSample,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 #[path = "execution_native.rs"]
@@ -112,8 +112,7 @@ impl TranslationBlock {
 /// Dynamic translation and execution engine used by [`crate::Vm`].
 pub struct ExecutionEngine {
     config: ExecutionEngineConfig,
-    cache: HashMap<BlockKey, TranslationBlock>,
-    cache_order: VecDeque<BlockKey>,
+    cache: native::Cache,
     profiles: HashMap<u64, BlockProfile>,
     instruction_counts: HashMap<u64, u64>,
     stats: ExecutionStats,
@@ -139,8 +138,7 @@ impl ExecutionEngine {
             .expect("built-in VM cache policy is valid");
         Self {
             config,
-            cache: HashMap::new(),
-            cache_order: VecDeque::new(),
+            cache: native::Cache::new(),
             profiles: HashMap::new(),
             instruction_counts: HashMap::new(),
             stats: ExecutionStats::default(),
@@ -201,7 +199,7 @@ impl ExecutionEngine {
 
     /// Drop translated code and counters. Guest RAM is left untouched.
     pub fn reset(&mut self) {
-        self.cache.clear();
+        self.cache.clear(false);
         self.profiles.clear();
         self.instruction_counts.clear();
         self.stats = ExecutionStats::default();
@@ -210,8 +208,7 @@ impl ExecutionEngine {
     }
 
     pub fn clear_cache(&mut self) {
-        self.cache.clear();
-        self.cache_order.clear();
+        self.cache.clear(true);
         let _ = self
             .cache_policy
             .clear_bytes(CacheKind::VmTranslationBlocks, CACHE_WORKLOAD);
@@ -310,7 +307,7 @@ impl ExecutionEngine {
                     },
                 );
             }
-            self.cache_order.retain(|cached_key| *cached_key != key);
+            self.cache.forget_order(&key);
         }
 
         self.stats.cache_misses += 1;
@@ -354,22 +351,16 @@ impl ExecutionEngine {
     }
 
     fn insert_block(&mut self, key: BlockKey, block: TranslationBlock) {
-        let capacity = self.config.cache_capacity.max(1);
-        if self.cache.len() >= capacity && !self.cache.contains_key(&key) {
-            while let Some(old_key) = self.cache_order.pop_front() {
-                if let Some(old_block) = self.cache.remove(&old_key) {
-                    self.stats.cache_evictions += 1;
-                    let _ = self.cache_policy.observe(
-                        CacheKind::VmTranslationBlocks,
-                        CACHE_WORKLOAD,
-                        CacheEvent::Eviction {
-                            bytes: old_block.cache_bytes(),
-                            cost_us: 0,
-                        },
-                    );
-                    break
-                }
-            }
+        if let Some(old_block) = self.cache.evict(&key, self.config.cache_capacity) {
+            self.stats.cache_evictions += 1;
+            let _ = self.cache_policy.observe(
+                CacheKind::VmTranslationBlocks,
+                CACHE_WORKLOAD,
+                CacheEvent::Eviction {
+                    bytes: old_block.cache_bytes(),
+                    cost_us: 0,
+                },
+            );
         }
         if !self
             .cache_policy
@@ -383,7 +374,6 @@ impl ExecutionEngine {
             return
         }
         self.cache.insert(key, block);
-        self.cache_order.push_back(key);
     }
 
     fn record_instruction(&mut self, rip: u64, block_start: u64, compiled: bool) {

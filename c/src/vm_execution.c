@@ -97,3 +97,180 @@ bool ghostos_vm_execution_translate(const ghostos_vm_translation_host *host, voi
     }
     return host->finish(context, start, (size_t)(ip - start));
 }
+
+/* Separate chaining keeps payload addresses stable when the table grows.
+ * FIFO keys are independent nodes: reset historically leaves stale keys and
+ * repeated insertions may leave duplicates. Neither behavior is normalized. */
+#include <stdlib.h>
+
+typedef struct cache_entry {
+    ghostos_vm_execution_key key;
+    void *payload;
+    struct cache_entry *next;
+} cache_entry;
+typedef struct cache_order {
+    ghostos_vm_execution_key key;
+    struct cache_order *next;
+} cache_order;
+struct ghostos_vm_execution_cache {
+    cache_entry **buckets;
+    size_t bucket_count, length;
+    cache_order *first, *last;
+    void (*destroy)(void *);
+};
+
+static bool same_key(const ghostos_vm_execution_key *a, const ghostos_vm_execution_key *b) {
+    return a->rip == b->rip && a->cr3 == b->cr3 && a->mode == b->mode && a->privilege == b->privilege;
+}
+static uint64_t mix_key(uint64_t value) {
+    value ^= value >> 30;
+    value *= UINT64_C(0xbf58476d1ce4e5b9);
+    value ^= value >> 27;
+    value *= UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31);
+}
+static size_t key_bucket(const ghostos_vm_execution_key *key, size_t count) {
+    uint64_t hash = mix_key(key->rip) ^ mix_key(key->cr3) ^
+        mix_key(((uint64_t)key->mode << 32) | key->privilege);
+    return (size_t)hash & (count - 1);
+}
+static cache_entry **entry_slot(ghostos_vm_execution_cache *cache, const ghostos_vm_execution_key *key) {
+    cache_entry **slot = &cache->buckets[key_bucket(key, cache->bucket_count)];
+    while (*slot != NULL && !same_key(&(*slot)->key, key)) slot = &(*slot)->next;
+    return slot;
+}
+static bool grow_cache(ghostos_vm_execution_cache *cache) {
+    if (cache->bucket_count > SIZE_MAX / 2 / sizeof(cache_entry *)) return false;
+    size_t count = cache->bucket_count * 2;
+    cache_entry **buckets = calloc(count, sizeof(*buckets));
+    if (buckets == NULL) return false;
+    for (size_t i = 0; i < cache->bucket_count; ++i) {
+        cache_entry *entry = cache->buckets[i];
+        while (entry != NULL) {
+            cache_entry *next = entry->next;
+            size_t bucket = key_bucket(&entry->key, count);
+            entry->next = buckets[bucket];
+            buckets[bucket] = entry;
+            entry = next;
+        }
+    }
+    free(cache->buckets);
+    cache->buckets = buckets;
+    cache->bucket_count = count;
+    return true;
+}
+
+ghostos_vm_execution_cache *ghostos_vm_execution_cache_new(void (*destroy)(void *)) {
+    ghostos_vm_execution_cache *cache = calloc(1, sizeof(*cache));
+    if (cache == NULL) return NULL;
+    cache->bucket_count = 64;
+    cache->buckets = calloc(cache->bucket_count, sizeof(*cache->buckets));
+    if (cache->buckets == NULL) { free(cache); return NULL; }
+    cache->destroy = destroy;
+    return cache;
+}
+
+void ghostos_vm_execution_cache_clear(ghostos_vm_execution_cache *cache, bool clear_order) {
+    for (size_t i = 0; i < cache->bucket_count; ++i) {
+        cache_entry *entry = cache->buckets[i];
+        cache->buckets[i] = NULL;
+        while (entry != NULL) {
+            cache_entry *next = entry->next;
+            cache->destroy(entry->payload);
+            free(entry);
+            entry = next;
+        }
+    }
+    cache->length = 0;
+    if (clear_order) {
+        while (cache->first != NULL) {
+            cache_order *next = cache->first->next;
+            free(cache->first);
+            cache->first = next;
+        }
+        cache->last = NULL;
+    }
+}
+
+void ghostos_vm_execution_cache_free(ghostos_vm_execution_cache *cache) {
+    if (cache == NULL) return;
+    ghostos_vm_execution_cache_clear(cache, true);
+    free(cache->buckets);
+    free(cache);
+}
+
+size_t ghostos_vm_execution_cache_length(const ghostos_vm_execution_cache *cache) { return cache->length; }
+
+void *ghostos_vm_execution_cache_get(const ghostos_vm_execution_cache *cache, const ghostos_vm_execution_key *key) {
+    const cache_entry *entry = cache->buckets[key_bucket(key, cache->bucket_count)];
+    while (entry != NULL && !same_key(&entry->key, key)) entry = entry->next;
+    return entry == NULL ? NULL : entry->payload;
+}
+
+void *ghostos_vm_execution_cache_remove(ghostos_vm_execution_cache *cache, const ghostos_vm_execution_key *key) {
+    cache_entry **slot = entry_slot(cache, key);
+    if (*slot == NULL) return NULL;
+    cache_entry *entry = *slot;
+    *slot = entry->next;
+    void *payload = entry->payload;
+    free(entry);
+    --cache->length;
+    return payload;
+}
+
+void ghostos_vm_execution_cache_forget_order(ghostos_vm_execution_cache *cache, const ghostos_vm_execution_key *key) {
+    cache_order **slot = &cache->first;
+    cache->last = NULL;
+    while (*slot != NULL) {
+        cache_order *order = *slot;
+        if (same_key(&order->key, key)) {
+            *slot = order->next;
+            free(order);
+        } else {
+            cache->last = order;
+            slot = &order->next;
+        }
+    }
+}
+
+void *ghostos_vm_execution_cache_evict(ghostos_vm_execution_cache *cache, const ghostos_vm_execution_key *key, size_t capacity) {
+    if (capacity == 0) capacity = 1;
+    if (cache->length < capacity || ghostos_vm_execution_cache_get(cache, key) != NULL) return NULL;
+    while (cache->first != NULL) {
+        cache_order *order = cache->first;
+        cache->first = order->next;
+        if (cache->first == NULL) cache->last = NULL;
+        void *payload = ghostos_vm_execution_cache_remove(cache, &order->key);
+        free(order);
+        if (payload != NULL) return payload;
+    }
+    return NULL;
+}
+
+bool ghostos_vm_execution_cache_insert(ghostos_vm_execution_cache *cache, const ghostos_vm_execution_key *key, void *payload) {
+    cache_order *order = malloc(sizeof(*order));
+    if (order == NULL) return false;
+    cache_entry **slot = entry_slot(cache, key);
+    cache_entry *entry = *slot;
+    if (entry == NULL) {
+        entry = malloc(sizeof(*entry));
+        if (entry == NULL) { free(order); return false; }
+        if (cache->length >= cache->bucket_count && !grow_cache(cache)) {
+            free(entry); free(order); return false;
+        }
+        slot = entry_slot(cache, key);
+        entry->key = *key;
+        entry->next = NULL;
+        *slot = entry;
+        ++cache->length;
+    } else {
+        cache->destroy(entry->payload);
+    }
+    entry->payload = payload;
+    order->key = *key;
+    order->next = NULL;
+    if (cache->last == NULL) cache->first = order;
+    else cache->last->next = order;
+    cache->last = order;
+    return true;
+}
