@@ -305,3 +305,15 @@ filesystem, shell, and runtime callers retain their existing interface.
 `c/tests/path_pattern_contracts.c` contains the seven original contract and
 property cases using the C property harness. Its explicit Makefile target
 builds the cases without executing them. Behavior parity remains unverified.
+
+`vm_disk_management.h` / `vm_disk_management.c` own active VM disk-spec
+validation, format/capacity policy, controller and guest identity strings,
+clone selection and retry/copy/cleanup sequencing, and sorted attachment
+bookkeeping. The manager retains opaque host payloads and immutable ID slices;
+remove transfers payload ownership to the caller, and free invokes a supplied
+destructor for every remaining payload. Rust boxes keep the current DiskInfo
+reference API stable. Canonical paths, Unicode whitespace checks, native file
+operations, clone-name formatting, clocks, and image lifetime use host adapters.
+The two original disk-management cases have policy portions in
+`c/tests/vm_disk_management_contracts.c`; filesystem ownership/cleanup fixtures
+and behavior parity remain unverified.

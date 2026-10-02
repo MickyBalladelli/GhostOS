@@ -154,6 +154,18 @@ were executed. Rust adapters, build tooling, and behavior parity remain open.
 Build logs are in `temp/c-library-path-pattern.log` and
 `temp/path-pattern-consumers-build.log`.
 
+Disk-management build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C attachment management.
+Path canonicalization stays lazy and ordered; Unicode blank-ID checks and
+native path equality remain in host adapters. Duplicate-ID/location precedence,
+format-before-capacity validation, stable ID ordering, read-only clone bypass,
+and copy-error-before-cleanup behavior are preserved in source. Policy portions
+of the two existing cases are in `c/tests/vm_disk_management_contracts.c`,
+checked for compilation syntax only. No tests were executed. Native filesystem
+fixtures, behavior parity, and full Rust removal remain open. Logs are in
+`temp/c-library-disk-management.log`, `temp/vm-build-disk-management.log`, and
+`temp/disk-management-contract-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -235,7 +247,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/serial.rs` — C owns the active UART registers and divisor aliases, transmit/receive FIFOs, lossless paste queue, raw capture and compaction, newline conversion, panic detection, authentication-marker replacement/holding, prompt suppression, and spinner state/timing in `c/src/vm_serial.c`. Rust retains shared-APIC delivery, host console/clock callbacks, and public slice/vector adapters. All fourteen existing serial cases have standalone C contract source; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/devices/storage/ahci.rs` — C owns the active single-port register state, command slots, ATA identification, PRD transfers, FIS completion, and interrupt decisions. Rust retains disk images and MMU/APIC adapters; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/devices/storage/disk_image.rs`
-- [ ] `virtual_machine/src/devices/storage/management.rs`
+- [ ] `virtual_machine/src/devices/storage/management.rs` — C owns active ordered specification checks, duplicate IDs/system roles/controller locations/writable-source rejection, image format/capacity validation, controller/guest identity text, clone selection and 32-attempt reserve/copy/cleanup sequencing, and stable sorted attachment storage/lookup/removal. Rust retains public types, native file/path/clock callbacks, image ownership, and typed errors. Policy portions of both existing cases have C source; native filesystem fixtures, behavior parity, and full cutover remain.
 - [ ] `virtual_machine/src/devices/storage/mod.rs`
 - [ ] `virtual_machine/src/devices/storage/nvme.rs` — C owns the active register state, admin/I/O queues, identification/features, read/write/flush commands, completion encoding, and DMA processing. Rust retains namespace images and MMU/APIC adapters; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/devices/storage/persistence.rs` — C owns active persistence-port modes, length/cursor handling, command transitions, tail-region loading/writing, SYNOPS01 little-endian headers, FNV-1a checksums, and zero-filled sector serialization in `c/src/vm_persistence.c`. Rust retains the DiskImage owner and sector/sync/error callbacks. The legacy port-error behavior and failed-I/O transitions are preserved; full Rust removal and behavior parity remain.
