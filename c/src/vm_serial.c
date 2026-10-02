@@ -1,5 +1,22 @@
 #include "ghostos/vm_serial.h"
 
+static const uint8_t panic_marker[] = "KERNEL PANIC";
+
+void ghostos_vm_serial_observe_panic_marker(uint8_t byte, size_t *progress,
+    bool *detected) {
+    if (!progress || !detected || *detected) return;
+    if (*progress >= sizeof(panic_marker) - 1) {
+        *progress = 0;
+        return;
+    }
+    if (byte == panic_marker[*progress]) {
+        ++*progress;
+        if (*progress == sizeof(panic_marker) - 1) *detected = true;
+    } else {
+        *progress = byte == panic_marker[0] ? 1 : 0;
+    }
+}
+
 bool ghostos_vm_serial_translate_newlines(const uint8_t *input, size_t input_length,
     bool previous_was_cr, uint8_t *output, size_t output_capacity,
     size_t *output_length, bool *output_previous_was_cr) {

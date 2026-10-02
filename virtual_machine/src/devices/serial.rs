@@ -18,6 +18,11 @@ unsafe extern "C" {
         output_length: *mut usize,
         output_previous_was_cr: *mut bool,
     ) -> bool;
+    fn ghostos_vm_serial_observe_panic_marker(
+        byte: u8,
+        progress: *mut usize,
+        detected: *mut bool,
+    );
 }
 
 const REG_DATA: u16 = 0x00;
@@ -39,7 +44,6 @@ const LSR_TRANSMIT_EMPTY: u8 = 0x40;
 const FIFO_SIZE: usize = 16;
 const OUTPUT_LIMIT: usize = 1024 * 1024;
 const OUTPUT_COMPACTION_THRESHOLD: usize = OUTPUT_LIMIT * 2;
-const GUEST_PANIC_MARKER: &[u8] = b"KERNEL PANIC";
 const ENROLLMENT_MARKER: &[u8] = b"\x1b]GhostOSEnroll\x07";
 const LOGIN_MARKER: &[u8] = b"\x1b]GhostOSLogin\x07";
 const AUTHORIZED_PROMPT: &[u8] = b"$ ";
@@ -414,17 +418,12 @@ impl Serial16550 {
     }
 
     fn observe_panic_marker(&mut self, byte: u8) {
-        if self.panic_detected {
-            return
-        }
-
-        if byte == GUEST_PANIC_MARKER[self.panic_marker_progress] {
-            self.panic_marker_progress += 1;
-            if self.panic_marker_progress == GUEST_PANIC_MARKER.len() {
-                self.panic_detected = true;
-            }
-        } else {
-            self.panic_marker_progress = usize::from(byte == GUEST_PANIC_MARKER[0]);
+        unsafe {
+            ghostos_vm_serial_observe_panic_marker(
+                byte,
+                &mut self.panic_marker_progress,
+                &mut self.panic_detected,
+            )
         }
     }
 
