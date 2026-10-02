@@ -1,6 +1,7 @@
 #include "ghostos/vm_e1000.h"
 #include "ghostos/vm_terminal.h"
 #include "ghostos/vm_input.h"
+#include "ghostos/vm_segment.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -144,11 +145,51 @@ static void terminal_translation(void) {
     assert(length == sizeof(expected) && memcmp(output, expected, length) == 0);
 }
 
+/* Port of shared_segment_delivers_unicast_and_broadcast. */
+static void shared_segment_delivery(void) {
+    ghostos_vm_segment *s = ghostos_vm_segment_new(3, false);
+    assert(s);
+    const ghostos_vm_mac_address macs[] = {{{0x52,0x54,0,0x12,0x34,0x60}},
+        {{0x52,0x54,0,0x12,0x34,0x61}}, {{0x52,0x54,0,0x12,0x34,0x62}}};
+    size_t ports[3];
+    for (size_t i = 0; i < 3; ++i) assert(ghostos_vm_segment_connect(s, &macs[i], &ports[i]) == -1);
+    uint8_t packet[14] = {0}, output[1518]; size_t length;
+    memcpy(packet, macs[1].bytes, 6); memcpy(packet + 6, macs[0].bytes, 6);
+    assert(ghostos_vm_segment_transmit(s, ports[0], packet, sizeof(packet)) == -1);
+    assert(ghostos_vm_segment_receive(s, ports[1], output, &length) == 1);
+    assert(ghostos_vm_segment_receive(s, ports[2], output, &length) == 0);
+    memset(packet, 0xff, 6);
+    assert(ghostos_vm_segment_transmit(s, ports[0], packet, sizeof(packet)) == -1);
+    assert(ghostos_vm_segment_receive(s, ports[1], output, &length) == 1);
+    assert(ghostos_vm_segment_receive(s, ports[2], output, &length) == 1);
+    ghostos_vm_segment_free(s);
+}
+
+/* Port of administrative_state_is_distinct_from_carrier_state. */
+static void shared_segment_admin(void) {
+    ghostos_vm_segment *s = ghostos_vm_segment_new(1, false);
+    assert(s);
+    const ghostos_vm_mac_address mac = {{0x52,0x54,0,0x12,0x34,0x63}};
+    size_t port;
+    assert(ghostos_vm_segment_connect(s, &mac, &port) == -1);
+    assert(ghostos_vm_segment_link(s));
+    ghostos_vm_segment_set_admin(s, port, false);
+    assert(ghostos_vm_segment_link(s));
+    assert(!ghostos_vm_segment_admin(s, port));
+    uint8_t packet[14] = {0}; memset(packet, 0xff, 6); memcpy(packet + 6, mac.bytes, 6);
+    assert(ghostos_vm_segment_transmit(s, port, packet, sizeof(packet)) == 4);
+    ghostos_vm_segment_set_link(s, false);
+    assert(!ghostos_vm_segment_link(s));
+    ghostos_vm_segment_free(s);
+}
+
 int main(void) {
     e1000_registers();
     e1000_rings();
     terminal_policy();
     terminal_translation();
+    shared_segment_delivery();
+    shared_segment_admin();
     puts("C VM I/O contracts passed");
     return 0;
 }

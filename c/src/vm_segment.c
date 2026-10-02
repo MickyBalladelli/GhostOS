@@ -83,9 +83,6 @@ int32_t ghostos_vm_segment_connect(ghostos_vm_segment *s, const ghostos_vm_mac_a
     s->ports[*index] = (port){.mac = *mac, .connected = true, .admin = true};
     return -1;
 }
-void ghostos_vm_segment_loopback_port(ghostos_vm_segment *s, size_t index, const ghostos_vm_mac_address *mac) {
-    if (s->loopback && index < 2) s->ports[index].mac = *mac;
-}
 bool ghostos_vm_segment_admin(const ghostos_vm_segment *s, size_t index) {
     return index < s->count && s->ports[index].admin;
 }
@@ -144,6 +141,26 @@ int32_t ghostos_vm_segment_receive(ghostos_vm_segment *s, size_t index, uint8_t 
     while (p->head) {
         frame *f = p->head;
         bool accepted = f->length >= 14 && ghostos_vm_mac_matches(f->bytes, 6, &p->mac, p->promiscuous);
+        if (accepted) { *length = f->length; memcpy(output, f->bytes, f->length); }
+        pop(p);
+        if (accepted) return 1;
+    }
+    return 0;
+}
+int32_t ghostos_vm_loopback_transmit(ghostos_vm_segment *s, size_t index, bool admin, const uint8_t *bytes, size_t length) {
+    if (!admin) return 4;
+    return ghostos_vm_segment_transmit(s, index, bytes, length);
+}
+int32_t ghostos_vm_loopback_receive(ghostos_vm_segment *s, size_t index, const ghostos_vm_mac_address *mac,
+    bool admin, bool promiscuous, uint8_t output[1518], size_t *length) {
+    *length = 0;
+    if (!admin) return -5;
+    if (!s->up) return -4;
+    if (index >= s->count) return -6;
+    port *p = &s->ports[index];
+    while (p->head) {
+        frame *f = p->head;
+        bool accepted = f->length >= 14 && ghostos_vm_mac_matches(f->bytes, 6, mac, promiscuous);
         if (accepted) { *length = f->length; memcpy(output, f->bytes, f->length); }
         pop(p);
         if (accepted) return 1;

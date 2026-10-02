@@ -5,7 +5,7 @@ use crate::net::mac::{mac_matches, MacAddress};
 use crate::net::packet::{pad_frame, NetError, ETHERNET_FRAME_MAX, ETHERNET_HEADER_LEN};
 use crate::net::dhcp::DeterministicVmNetwork;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::ffi::c_void;
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::rc::Rc;
@@ -25,13 +25,7 @@ unsafe extern "C" {
         packet_length: *mut usize,
     ) -> bool;
     fn ghostos_vm_net_validate_packet(packet_length: usize) -> u32;
-    fn ghostos_vm_net_segment_accepts(
-        destination: *const u8,
-        length: usize,
-        port_mac: *const MacAddress,
-        connected: bool,
-        admin_up: bool,
-    ) -> bool;
+
 }
 
 fn validate_packet(packet: &[u8]) -> Result<(), NetError> {
@@ -357,60 +351,72 @@ impl NetQueueState {
     };
 }
 
-pub struct LoopbackHub {
-    queues: [VecDeque<Vec<u8>>; 2],
-    up: bool,
-    tx_packets: usize,
+unsafe extern "C" {
+    fn ghostos_vm_segment_new(ports: usize, loopback: bool) -> *mut c_void;
+    fn ghostos_vm_segment_free(segment: *mut c_void);
+    fn ghostos_vm_segment_set_link(segment: *mut c_void, up: bool);
+    fn ghostos_vm_segment_link(segment: *const c_void) -> bool;
+    fn ghostos_vm_segment_set_limit(segment: *mut c_void, limit: usize);
+    fn ghostos_vm_segment_drop_next(segment: *mut c_void, count: usize);
+    fn ghostos_vm_segment_clear(segment: *mut c_void);
+    fn ghostos_vm_segment_disconnect(segment: *mut c_void, mac: *const MacAddress) -> bool;
+    fn ghostos_vm_segment_connect(segment: *mut c_void, mac: *const MacAddress, port: *mut usize) -> i32;
+    fn ghostos_vm_segment_admin(segment: *const c_void, port: usize) -> bool;
+    fn ghostos_vm_segment_set_admin(segment: *mut c_void, port: usize, up: bool);
+    fn ghostos_vm_segment_set_promiscuous(segment: *mut c_void, port: usize, enabled: bool);
+    fn ghostos_vm_segment_queued(segment: *const c_void, port: usize) -> usize;
+    fn ghostos_vm_segment_transmitted(segment: *const c_void) -> usize;
+    fn ghostos_vm_segment_transmit(segment: *mut c_void, port: usize, packet: *const u8, length: usize) -> i32;
+    fn ghostos_vm_segment_receive(segment: *mut c_void, port: usize, output: *mut u8, length: *mut usize) -> i32;
+    fn ghostos_vm_loopback_transmit(segment: *mut c_void, port: usize, admin: bool, packet: *const u8, length: usize) -> i32;
+    fn ghostos_vm_loopback_receive(segment: *mut c_void, port: usize, mac: *const MacAddress,
+        admin: bool, promiscuous: bool, output: *mut u8, length: *mut usize) -> i32;
 }
+
+fn native_error(code: i32) -> NetError {
+    match code {
+        0 => NetError::PacketTooLarge,
+        1 => NetError::Truncated,
+        2 => NetError::QueueFull,
+        3 => NetError::LinkDown,
+        4 => NetError::AdminDown,
+        5 => NetError::BackendUnavailable,
+        _ => panic!("network segment native allocation failed"),
+    }
+}
+fn native_transmitted(result: i32) -> Result<(), NetError> {
+    if result == -1 { Ok(()) } else { Err(native_error(result)) }
+}
+fn native_received(result: i32, bytes: &[u8], length: usize) -> Result<Option<Vec<u8>>, NetError> {
+    match result {
+        0 => Ok(None),
+        1 => Ok(Some(bytes[..length].to_vec())),
+        error => Err(native_error(-error - 1)),
+    }
+}
+
+/// Two-port hub; queues, delivery, carrier, and counters are owned by C.
+pub struct LoopbackHub { state: *mut c_void }
 
 impl LoopbackHub {
     pub fn new() -> Self {
-        Self {
-            queues: [VecDeque::new(), VecDeque::new()],
-            up: true,
-            tx_packets: 0,
-        }
+        let state = unsafe { ghostos_vm_segment_new(2, true) };
+        assert!(!state.is_null(), "loopback native allocation failed");
+        Self { state }
     }
-
-    /// Enable or disable delivery for both ports.
-    pub fn set_link_up(&mut self, up: bool) {
-        self.up = up
-    }
-
-    pub fn link_up(&self) -> bool {
-        self.up
-    }
-
-    /// Return the number of frames waiting for a port.
-    pub fn queued_packets(&self, port: usize) -> usize {
-        self.queues.get(port).map_or(0, VecDeque::len)
-    }
-
-    pub fn clear(&mut self) {
-        for queue in &mut self.queues {
-            queue.clear()
-        }
-    }
-
-    fn deliver(&mut self, from: usize, packet: &[u8]) -> Result<(), NetError> {
-        if packet.len() > ETHERNET_FRAME_MAX {
-            return Err(NetError::PacketTooLarge);
-        }
-        let to = 1 - from;
-        if self.queues[to].len() >= 256 {
-            return Err(NetError::QueueFull);
-        }
-        self.queues[to].push_back(pad_frame(packet));
-        self.tx_packets = self.tx_packets.saturating_add(1);
-        Ok(())
-    }
+    pub fn set_link_up(&mut self, up: bool) { unsafe { ghostos_vm_segment_set_link(self.state, up) }; }
+    pub fn link_up(&self) -> bool { unsafe { ghostos_vm_segment_link(self.state) } }
+    pub fn queued_packets(&self, port: usize) -> usize { unsafe { ghostos_vm_segment_queued(self.state, port) } }
+    pub fn clear(&mut self) { unsafe { ghostos_vm_segment_clear(self.state) }; }
 }
-
-impl Default for LoopbackHub {
-    fn default() -> Self {
-        Self::new()
-    }
+// As with the previous owned queues, moving a hub is safe. Shared ports still
+// use Rc<RefCell<_>> and cannot cross threads.
+unsafe impl Send for LoopbackHub {}
+unsafe impl Sync for LoopbackHub {}
+impl Drop for LoopbackHub {
+    fn drop(&mut self) { unsafe { ghostos_vm_segment_free(self.state) }; }
 }
+impl Default for LoopbackHub { fn default() -> Self { Self::new() } }
 
 pub struct LoopbackPort {
     hub: Rc<RefCell<LoopbackHub>>,
@@ -419,235 +425,65 @@ pub struct LoopbackPort {
     promiscuous: bool,
     admin_up: bool,
 }
-
 impl LoopbackPort {
     pub fn new(hub: Rc<RefCell<LoopbackHub>>, index: usize, mac: MacAddress) -> Self {
         assert!(index < 2, "loopback hub has exactly two ports");
-        Self {
-            hub,
-            index,
-            mac,
-            promiscuous: false,
-            admin_up: true,
-        }
+        Self { hub, index, mac, promiscuous: false, admin_up: true }
     }
-
-    pub fn mac(&self) -> MacAddress {
-        self.mac
-    }
+    pub fn mac(&self) -> MacAddress { self.mac }
 }
-
 impl NetBackend for LoopbackPort {
     fn transmit(&mut self, packet: &[u8]) -> Result<(), NetError> {
-        if !self.admin_up {
-            return Err(NetError::AdminDown);
-        }
-        if !self.hub.borrow().up {
-            return Err(NetError::LinkDown);
-        }
-        if packet.len() < ETHERNET_HEADER_LEN {
-            return Err(NetError::Truncated);
-        }
-        self.hub.borrow_mut().deliver(self.index, packet)
+        if !self.admin_up { return Err(NetError::AdminDown); }
+        if !self.hub.borrow().link_up() { return Err(NetError::LinkDown); }
+        if packet.len() < ETHERNET_HEADER_LEN { return Err(NetError::Truncated); }
+        native_transmitted(unsafe { ghostos_vm_loopback_transmit(self.hub.borrow_mut().state,
+            self.index, self.admin_up, packet.as_ptr(), packet.len()) })
     }
-
     fn receive(&mut self) -> Result<Option<Vec<u8>>, NetError> {
-        if !self.admin_up {
-            return Err(NetError::AdminDown);
-        }
-        if !self.hub.borrow().up {
-            return Err(NetError::LinkDown);
-        }
-        let mut hub = self.hub.borrow_mut();
-        while let Some(packet) = hub.queues[self.index].pop_front() {
-            if packet.len() >= ETHERNET_HEADER_LEN
-                && mac_matches(&packet[..6], &self.mac, self.promiscuous)
-            {
-                return Ok(Some(packet));
-            }
-        }
-        Ok(None)
+        if !self.admin_up { return Err(NetError::AdminDown); }
+        if !self.hub.borrow().link_up() { return Err(NetError::LinkDown); }
+        let mut bytes = [0; ETHERNET_FRAME_MAX]; let mut length = 0;
+        let result = unsafe { ghostos_vm_loopback_receive(self.hub.borrow_mut().state,
+            self.index, &self.mac, self.admin_up, self.promiscuous, bytes.as_mut_ptr(), &mut length) };
+        native_received(result, &bytes, length)
     }
-
-    fn link_up(&self) -> bool {
-        self.hub.borrow().up
-    }
-
-    fn admin_up(&self) -> bool {
-        self.admin_up
-    }
-
-    fn set_admin_up(&mut self, up: bool) {
-        self.admin_up = up;
-    }
-
+    fn link_up(&self) -> bool { self.hub.borrow().link_up() }
+    fn admin_up(&self) -> bool { self.admin_up }
+    fn set_admin_up(&mut self, up: bool) { self.admin_up = up; }
     fn queue_state(&self) -> NetQueueState {
         let hub = self.hub.borrow();
-        NetQueueState {
-            rx_packets: hub.queues[self.index].len(),
-            tx_packets: hub.tx_packets,
-        }
+        NetQueueState { rx_packets: hub.queued_packets(self.index),
+            tx_packets: unsafe { ghostos_vm_segment_transmitted(hub.state) } }
     }
-
-    fn set_promiscuous(&mut self, enabled: bool) {
-        self.promiscuous = enabled;
-    }
+    fn set_promiscuous(&mut self, enabled: bool) { self.promiscuous = enabled; }
 }
 
-struct SegmentPort {
-    mac: MacAddress,
-    queue: VecDeque<Vec<u8>>,
-    admin_up: bool,
-    promiscuous: bool,
-    connected: bool,
-}
-
-/// Deterministic, bounded shared L2 segment for VM integration tests.
-///
-/// The segment has one physical carrier shared by all ports. Frames are
-/// delivered to every other port for broadcast/multicast and to the matching
-/// port for unicast. A segment with no peer accepts transmission and drops
-/// the frame, matching an unattached cable without inventing a peer.
-pub struct DeterministicSegment {
-    ports: Vec<SegmentPort>,
-    up: bool,
-    max_queue: usize,
-    tx_packets: usize,
-    drop_next: usize,
-}
-
+/// Bounded shared segment; C retains port identities and all packet state.
+pub struct DeterministicSegment { state: *mut c_void }
 impl DeterministicSegment {
     pub fn new(max_ports: usize) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
-            ports: Vec::with_capacity(max_ports),
-            up: true,
-            max_queue: 256,
-            tx_packets: 0,
-            drop_next: 0,
-        }))
+        let state = unsafe { ghostos_vm_segment_new(max_ports, false) };
+        assert!(!state.is_null(), "segment native allocation failed");
+        Rc::new(RefCell::new(Self { state }))
     }
-
-    pub fn set_link_up(&mut self, up: bool) {
-        self.up = up;
-        if !up {
-            for port in &mut self.ports {
-                port.queue.clear();
-            }
-        }
+    pub fn set_link_up(&mut self, up: bool) { unsafe { ghostos_vm_segment_set_link(self.state, up) }; }
+    pub fn link_up(&self) -> bool { unsafe { ghostos_vm_segment_link(self.state) } }
+    pub fn set_max_queue(&mut self, max_queue: usize) { unsafe { ghostos_vm_segment_set_limit(self.state, max_queue) }; }
+    pub fn drop_next(&mut self, count: usize) { unsafe { ghostos_vm_segment_drop_next(self.state, count) }; }
+    pub fn disconnect(&mut self, mac: MacAddress) -> bool { unsafe { ghostos_vm_segment_disconnect(self.state, &mac) } }
+    pub fn connect(segment: Rc<RefCell<Self>>, mac: MacAddress) -> Result<DeterministicPort, NetError> {
+        let mut index = 0;
+        let result = unsafe { ghostos_vm_segment_connect(segment.borrow_mut().state, &mac, &mut index) };
+        native_transmitted(result)?;
+        Ok(DeterministicPort { segment, index, mac })
     }
-
-    pub fn link_up(&self) -> bool {
-        self.up
-    }
-
-    /// Bound the per-port queue for saturation and backpressure tests.
-    pub fn set_max_queue(&mut self, max_queue: usize) {
-        self.max_queue = max_queue;
-        for port in &mut self.ports {
-            while port.queue.len() > max_queue {
-                port.queue.pop_front();
-            }
-        }
-    }
-
-    /// Drop the next `count` frames after validation, without making loss
-    /// look like a backend failure.
-    pub fn drop_next(&mut self, count: usize) {
-        self.drop_next = count;
-    }
-
-    /// Disconnect one port while keeping its slot and MAC identity stable.
-    pub fn disconnect(&mut self, mac: MacAddress) -> bool {
-        let Some(port) = self.ports.iter_mut().find(|port| port.mac == mac) else {
-            return false;
-        };
-        port.connected = false;
-        port.queue.clear();
-        true
-    }
-
-    pub fn connect(
-        segment: Rc<RefCell<Self>>,
-        mac: MacAddress,
-    ) -> Result<DeterministicPort, NetError> {
-        let mut segment_ref = segment.borrow_mut();
-        if segment_ref.ports.iter().any(|port| port.mac == mac) {
-            return Err(NetError::BackendUnavailable);
-        }
-        let index = segment_ref.ports.len();
-        if index == segment_ref.ports.capacity() {
-            return Err(NetError::BackendUnavailable);
-        }
-        segment_ref.ports.push(SegmentPort {
-            mac,
-            queue: VecDeque::new(),
-            admin_up: true,
-            promiscuous: false,
-            connected: true,
-        });
-        drop(segment_ref);
-        Ok(DeterministicPort {
-            segment,
-            index,
-            mac,
-        })
-    }
-
-    pub fn queued_packets(&self, port: usize) -> usize {
-        self.ports.get(port).map_or(0, |port| port.queue.len())
-    }
-
-    fn transmit(&mut self, from: usize, packet: &[u8]) -> Result<(), NetError> {
-        if !self.up {
-            return Err(NetError::LinkDown);
-        }
-        if packet.len() < ETHERNET_HEADER_LEN {
-            return Err(NetError::Truncated);
-        }
-        if packet.len() > ETHERNET_FRAME_MAX {
-            return Err(NetError::PacketTooLarge);
-        }
-        let Some(source) = self.ports.get(from) else {
-            return Err(NetError::BackendUnavailable);
-        };
-        if !source.connected {
-            return Err(NetError::BackendUnavailable);
-        }
-        if !source.admin_up {
-            return Err(NetError::AdminDown);
-        }
-        let recipients: Vec<usize> = self
-            .ports
-            .iter()
-            .enumerate()
-            .filter(|(index, port)| {
-                *index != from
-                    && unsafe {
-                        ghostos_vm_net_segment_accepts(
-                            packet.as_ptr(), packet.len(), &port.mac, port.connected, port.admin_up,
-                        )
-                    }
-            })
-            .map(|(index, _)| index)
-            .collect();
-        if recipients
-            .iter()
-            .any(|index| self.ports[*index].queue.len() >= self.max_queue)
-        {
-            return Err(NetError::QueueFull);
-        }
-        if self.drop_next > 0 {
-            self.drop_next -= 1;
-            self.tx_packets = self.tx_packets.saturating_add(1);
-            return Ok(())
-        }
-        let frame = pad_frame(packet);
-        for index in recipients {
-            self.ports[index].queue.push_back(frame.clone());
-        }
-        self.tx_packets = self.tx_packets.saturating_add(1);
-        Ok(())
-    }
+    pub fn queued_packets(&self, port: usize) -> usize { unsafe { ghostos_vm_segment_queued(self.state, port) } }
+}
+unsafe impl Send for DeterministicSegment {}
+unsafe impl Sync for DeterministicSegment {}
+impl Drop for DeterministicSegment {
+    fn drop(&mut self) { unsafe { ghostos_vm_segment_free(self.state) }; }
 }
 
 pub struct DeterministicPort {
@@ -655,77 +491,27 @@ pub struct DeterministicPort {
     index: usize,
     mac: MacAddress,
 }
-
-impl DeterministicPort {
-    pub fn mac(&self) -> MacAddress {
-        self.mac
-    }
-}
-
+impl DeterministicPort { pub fn mac(&self) -> MacAddress { self.mac } }
 impl NetBackend for DeterministicPort {
     fn transmit(&mut self, packet: &[u8]) -> Result<(), NetError> {
-        self.segment.borrow_mut().transmit(self.index, packet)
+        native_transmitted(unsafe { ghostos_vm_segment_transmit(self.segment.borrow_mut().state,
+            self.index, packet.as_ptr(), packet.len()) })
     }
-
     fn receive(&mut self) -> Result<Option<Vec<u8>>, NetError> {
-        let mut segment = self.segment.borrow_mut();
-        if !segment.up {
-            return Err(NetError::LinkDown);
-        }
-        let port = segment
-            .ports
-            .get_mut(self.index)
-            .ok_or(NetError::BackendUnavailable)?;
-        if !port.connected {
-            return Err(NetError::BackendUnavailable);
-        }
-        if !port.admin_up {
-            return Err(NetError::AdminDown);
-        }
-        while let Some(packet) = port.queue.pop_front() {
-            if packet.len() >= ETHERNET_HEADER_LEN
-                && mac_matches(&packet[..6], &self.mac, port.promiscuous)
-            {
-                return Ok(Some(packet));
-            }
-        }
-        Ok(None)
+        let mut bytes = [0; ETHERNET_FRAME_MAX]; let mut length = 0;
+        let result = unsafe { ghostos_vm_segment_receive(self.segment.borrow_mut().state,
+            self.index, bytes.as_mut_ptr(), &mut length) };
+        native_received(result, &bytes, length)
     }
-
-    fn link_up(&self) -> bool {
-        self.segment.borrow().up
-    }
-
-    fn admin_up(&self) -> bool {
-        self.segment
-            .borrow()
-            .ports
-            .get(self.index)
-            .is_some_and(|port| port.admin_up)
-    }
-
-    fn set_admin_up(&mut self, up: bool) {
-        if let Some(port) = self.segment.borrow_mut().ports.get_mut(self.index) {
-            port.admin_up = up;
-            if !up {
-                port.queue.clear();
-            }
-        }
-    }
-
+    fn link_up(&self) -> bool { self.segment.borrow().link_up() }
+    fn admin_up(&self) -> bool { unsafe { ghostos_vm_segment_admin(self.segment.borrow().state, self.index) } }
+    fn set_admin_up(&mut self, up: bool) { unsafe { ghostos_vm_segment_set_admin(self.segment.borrow_mut().state, self.index, up) }; }
     fn queue_state(&self) -> NetQueueState {
         let segment = self.segment.borrow();
-        NetQueueState {
-            rx_packets: segment.queued_packets(self.index),
-            tx_packets: segment.tx_packets,
-        }
+        NetQueueState { rx_packets: segment.queued_packets(self.index),
+            tx_packets: unsafe { ghostos_vm_segment_transmitted(segment.state) } }
     }
-
-    fn set_promiscuous(&mut self, enabled: bool) {
-        if let Some(port) = self.segment.borrow_mut().ports.get_mut(self.index) {
-            port.promiscuous = enabled;
-        }
-    }
+    fn set_promiscuous(&mut self, enabled: bool) { unsafe { ghostos_vm_segment_set_promiscuous(self.segment.borrow_mut().state, self.index, enabled) }; }
 }
 
 #[cfg(test)]

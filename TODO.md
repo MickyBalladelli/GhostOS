@@ -110,6 +110,17 @@ for compilation syntax only. Behavior parity and full cutover remain open.
 Build logs are in `temp/c-library-storage.log` and `temp/vm-build-storage.log`;
 the syntax log is `temp/storage-contract-syntax.log`.
 
+Network-segment build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C shared Ethernet segments and
+two-port loopback hubs. C owns packet queues, carrier state, segment port
+identity/admin state, delivery/filtering, queue limits, loss injection,
+disconnects, and transmission counters. Rust retains shared-owner/backend
+adapters and independent loopback-handle settings. The two existing shared
+segment cases have C source in `c/tests/vm_io_contracts.c`, checked for
+compilation syntax only. Host UDP/raw transports, behavior parity, and full
+cutover remain open. Logs are in `temp/c-library-segment.log`,
+`temp/vm-build-segment.log`, and `temp/segment-contract-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -210,7 +221,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/main.rs`
 - [ ] `virtual_machine/src/memory/mod.rs`
 - [ ] `virtual_machine/src/migration.rs` — C owns bounded frame decoding, little-endian wire fields, exact/trailing length checks, authentication-domain assembly, constant-time tag comparison, and authentication-before-identity-before-snapshot validation in `c/src/vm_migration.c`. Rust retains snapshot/schema callbacks, owned payloads, and public errors. Full C cutover and behavior parity remain.
-- [ ] `virtual_machine/src/net/backend.rs` — C owns packet-length validation, UDP host-frame encoding/decoding, and deterministic segment recipient filtering. Rust still owns host sockets, raw-interface transport, loopback, and segment state.
+- [ ] `virtual_machine/src/net/backend.rs` — C owns active shared-segment and loopback queues, packet delivery/filtering, segment port identity/admin state, carrier, limits, loss injection, disconnects, and counters, plus packet-length validation and UDP host-frame codecs. Rust retains shared-owner/backend adapters, independent loopback-handle settings, host sockets, and raw-interface transport. The two existing segment cases have C contract source; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/net/dhcp.rs` — C owns active configuration validation, bounded reservation and lease tables, deterministic allocation, renewal/release/expiry policy, DHCP request parsing, OFFER/ACK/NAK reply encoding, IPv4/UDP checksums, and bounded option writing in `c/src/vm_dhcp.c`. Rust retains segment ownership and receive/transmit polling, public config/lease adapters, and existing fixture test source. Legacy explicit-request reservation behavior is preserved; full C cutover and behavior parity remain.
 - [x] `virtual_machine/src/net/mac.rs` — C owns byte conversion, broadcast/unicast/multicast classification, destination filtering, and lowercase formatting in `c/src/vm_mac.c`. Rust keeps the public type and const constructors for API compatibility.
 - [ ] `virtual_machine/src/net/mod.rs` — C owns the alignment helper; Rust module exports and networking submodules remain.
