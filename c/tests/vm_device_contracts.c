@@ -2,9 +2,12 @@
 #include "ghostos/vm_hpet.h"
 #include "ghostos/vm_clock.h"
 #include "ghostos/vm_pit.h"
+#include "ghostos/vm_ps2.h"
+#include "ghostos/vm_driver_capabilities.h"
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 static void timer_irq(void *context, uint8_t vector, bool level) {
     ghostos_vm_apic_signal(context, vector, level);
@@ -177,11 +180,81 @@ static void pit_contract(void) {
     assert(pit.channels[0].reload == 0x2010);
 }
 
+static uint64_t ps2_read(ghostos_vm_ps2 *ps2, uint16_t port) {
+    uint64_t value = 0;
+    assert(ghostos_vm_ps2_read(ps2, port, 1, &value, NULL, NULL) == 0);
+    return value;
+}
+
+static void ps2_write(ghostos_vm_ps2 *ps2, uint16_t port, uint8_t value) {
+    assert(ghostos_vm_ps2_write(ps2, port, value, 1, NULL, NULL) == 0);
+}
+
+/* The three existing Rust PS/2 cases, using the native C port API. */
+static void ps2_contract(void) {
+    ghostos_vm_ps2 *ps2 = ghostos_vm_ps2_new();
+    assert(ps2);
+    uint8_t byte = 0x1e;
+    ghostos_vm_ps2_keyboard(ps2, &byte, 1, NULL, NULL);
+    assert((ps2_read(ps2, 0x64) & 1) == 1);
+    assert(ps2_read(ps2, 0x60) == 0x1e);
+    assert((ps2_read(ps2, 0x64) & 1) == 0);
+
+    ghostos_vm_ps2_reset(ps2);
+    ps2_write(ps2, 0x64, 0xa8);
+    ps2_write(ps2, 0x64, 0xd4);
+    ps2_write(ps2, 0x60, 0xf4);
+    while (ghostos_vm_ps2_input_pending(ps2)) (void)ps2_read(ps2, 0x60);
+    uint8_t packet[3] = {8, 1, 0};
+    ghostos_vm_ps2_mouse_packet(ps2, packet, NULL, NULL);
+    assert(ps2_read(ps2, 0x60) == 8);
+
+    ghostos_vm_ps2_reset(ps2);
+    ps2_write(ps2, 0x64, 0xad);
+    uint8_t bytes[] = {0x1c, 0xf0, 0x1c};
+    ghostos_vm_ps2_keyboard(ps2, bytes, sizeof(bytes), NULL, NULL);
+    assert(!ghostos_vm_ps2_input_pending(ps2));
+    ps2_write(ps2, 0x64, 0xae);
+    for (unsigned i = 0; i < 256; ++i) ghostos_vm_ps2_keyboard(ps2, &byte, 1, NULL, NULL);
+    unsigned count = 0;
+    while (ghostos_vm_ps2_input_pending(ps2)) {
+        (void)ps2_read(ps2, 0x60);
+        ++count;
+    }
+    assert(count <= 64);
+    assert((ps2_read(ps2, 0x64) & 1) == 0);
+    ghostos_vm_ps2_free(ps2);
+}
+
+/* The three existing Rust driver-report cases, including report text. */
+static void driver_report_contract(void) {
+    ghostos_vm_driver_capability entries[GHOSTOS_VM_DRIVER_CAPABILITY_COUNT];
+    assert(ghostos_vm_driver_discover(false, 0, true, false, entries));
+    assert(!entries[0].available);
+    assert(strcmp(entries[0].selected, "portable-cpu-execution") == 0);
+    assert(strcmp(entries[0].fallback, "portable-cpu-execution") == 0);
+    assert(strstr(entries[0].semantics, "equivalent"));
+    assert(ghostos_vm_driver_discover(false, 0, false, false, entries));
+    const unsigned optional[] = {2, 3, 4, 6};
+    for (size_t i = 0; i < sizeof(optional) / sizeof(optional[0]); ++i) {
+        const ghostos_vm_driver_capability *entry = &entries[optional[i]];
+        assert(!entry->available);
+        assert(strcmp(entry->selected, entry->fallback) == 0);
+        assert(entry->semantics[0]);
+    }
+    assert(ghostos_vm_driver_discover(true, 0, false, false, entries));
+    assert(entries[8].available);
+    assert(strcmp(entries[8].selected, "uefi-runtime-services") == 0);
+    assert(strcmp(entries[9].selected, "shared-monotonic-clock") == 0);
+}
+
 int main(void) {
     priority_and_trigger_contract();
     timer_and_clock_contract();
     hpet_irq_contract();
     pit_contract();
+    ps2_contract();
+    driver_report_contract();
     puts("C VM device contracts passed");
     return 0;
 }
