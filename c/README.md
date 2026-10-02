@@ -317,3 +317,10 @@ operations, clone-name formatting, clocks, and image lifetime use host adapters.
 The two original disk-management cases have policy portions in
 `c/tests/vm_disk_management_contracts.c`; filesystem ownership/cleanup fixtures
 and behavior parity remain unverified.
+
+The active disk-image adapter also delegates fixed-VHD repair eligibility,
+checksum recomputation/write/sync, and exact lowercase format-name parsing to
+`vm_disk_image.c`. It retains the historical 32-bit size fields at footer
+offsets 36 and 40, checks type and original/current agreement before capacity,
+and distinguishes invalid capacity errors from an ineligible footer. The host
+still owns lock publication/recovery, image lifetime, and directory syncing.
