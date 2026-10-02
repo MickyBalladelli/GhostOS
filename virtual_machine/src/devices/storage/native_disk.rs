@@ -30,6 +30,10 @@ unsafe extern "C" {
     pub(super) fn ghostos_vm_disk_image_read(image: *mut c_void, io: *const CIo, lba: u64, out: *mut u8, error: *mut CError) -> bool;
     pub(super) fn ghostos_vm_disk_image_write(image: *mut c_void, io: *const CIo, lba: u64, bytes: *const u8, error: *mut CError) -> bool;
     pub(super) fn ghostos_vm_disk_image_flush(io: *const CIo, durable: bool, error: *mut CError) -> bool;
+    pub(super) fn ghostos_vm_disk_vhd_repairable(io: *const CIo, repairable: *mut bool, error: *mut CError) -> bool;
+    pub(super) fn ghostos_vm_disk_vhd_repair_checksum(io: *const CIo, error: *mut CError) -> bool;
+    pub(super) fn ghostos_vm_disk_format_name(format: u32) -> *const c_char;
+    pub(super) fn ghostos_vm_disk_parse_format(bytes: *const u8, length: usize) -> u32;
     fn ghostos_vm_disk_error_message(code: u32) -> *const c_char;
 }
 

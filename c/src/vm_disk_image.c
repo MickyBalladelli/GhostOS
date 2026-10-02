@@ -47,6 +47,54 @@ static bool validate_l2(const ghostos_vm_disk_file_io *io, uint64_t offset, uint
     }
     return true;
 }
+static uint32_t vhd_checksum(const uint8_t footer[512]) {
+    uint32_t sum = 0;
+    for (size_t i = 0; i < 512; ++i) if (i < 52 || i >= 56) sum += footer[i];
+    return ~sum;
+}
+
+bool ghostos_vm_disk_vhd_repairable(const ghostos_vm_disk_file_io *io,
+    bool *repairable, ghostos_vm_disk_error *e) {
+    memset(e, 0, sizeof(*e));
+    *repairable = false;
+    uint64_t file_length;
+    if (!length(io, &file_length, e)) return false;
+    if (file_length < 1024) return true;
+    uint8_t footer[512];
+    if (!seek(io, 1, (uint64_t)-512, e) || !read(io, footer, sizeof(footer), e)) return false;
+    if (memcmp(footer, "conectix", 8)) return true;
+    uint64_t size = be32(footer + 40);
+    if (be32(footer + 48) != 2 || be32(footer + 36) != size) return true;
+    if (!capacity(size, 1, e)) return false;
+    if (size + 512 != file_length) return true;
+    *repairable = vhd_checksum(footer) != be32(footer + 52);
+    return true;
+}
+
+bool ghostos_vm_disk_vhd_repair_checksum(const ghostos_vm_disk_file_io *io,
+    ghostos_vm_disk_error *e) {
+    memset(e, 0, sizeof(*e));
+    uint8_t footer[512];
+    if (!seek(io, 1, (uint64_t)-512, e) || !read(io, footer, sizeof(footer), e)) return false;
+    uint32_t checksum = vhd_checksum(footer);
+    for (size_t i = 0; i < 4; ++i) footer[52 + i] = (uint8_t)(checksum >> (24 - i * 8));
+    if (!seek(io, 1, (uint64_t)-512, e) || !write(io, footer, sizeof(footer), e)) return false;
+    return io->sync(io->context) || fail(e, 1);
+}
+
+const char *ghostos_vm_disk_format_name(uint32_t format) {
+    static const char *const names[] = {"raw", "vhd", "qcow2"};
+    return format < 3 ? names[format] : NULL;
+}
+
+uint32_t ghostos_vm_disk_parse_format(const uint8_t *bytes, size_t size) {
+    for (uint32_t format = 0; format < 3; ++format) {
+        const char *name = ghostos_vm_disk_format_name(format);
+        if (size == strlen(name) && !memcmp(bytes, name, size)) return format;
+    }
+    return UINT32_MAX;
+}
+
 static bool open_vhd(ghostos_vm_disk_image *d, const ghostos_vm_disk_file_io *io, ghostos_vm_disk_error *e) {
     uint64_t file_length;
     if (!length(io, &file_length, e)) return false;
@@ -59,9 +107,7 @@ static bool open_vhd(ghostos_vm_disk_image *d, const ghostos_vm_disk_file_io *io
     d->size = current;
     if (!capacity(d->size, 1, e)) return false;
     if (file_length != d->size + 512) { e->value = file_length; e->other = d->size; return fail(e, 15); }
-    uint32_t sum = 0;
-    for (size_t i = 0; i < 512; ++i) if (i < 52 || i >= 56) sum += footer[i];
-    if (~sum != be32(footer + 52)) return fail(e, 16);
+    if (vhd_checksum(footer) != be32(footer + 52)) return fail(e, 16);
     return seek(io, 0, 0, e);
 }
 static bool open_qcow(ghostos_vm_disk_image *d, const ghostos_vm_disk_file_io *io, ghostos_vm_disk_error *e) {

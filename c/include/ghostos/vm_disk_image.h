@@ -34,6 +34,16 @@ bool ghostos_vm_disk_image_read(ghostos_vm_disk_image *image, const ghostos_vm_d
 bool ghostos_vm_disk_image_write(ghostos_vm_disk_image *image, const ghostos_vm_disk_file_io *io,
     uint64_t lba, const uint8_t bytes[512], ghostos_vm_disk_error *error);
 bool ghostos_vm_disk_image_flush(const ghostos_vm_disk_file_io *io, bool durable, ghostos_vm_disk_error *error);
+/* Safe fixed-VHD repair eligibility retains the historical 32-bit size fields
+ * at offsets 36 and 40. Invalid sector capacity is an error, not ineligibility.
+ * Repair writes only checksum bytes and syncs; the host syncs the directory. */
+bool ghostos_vm_disk_vhd_repairable(const ghostos_vm_disk_file_io *io,
+    bool *repairable, ghostos_vm_disk_error *error);
+bool ghostos_vm_disk_vhd_repair_checksum(const ghostos_vm_disk_file_io *io,
+    ghostos_vm_disk_error *error);
+const char *ghostos_vm_disk_format_name(uint32_t format);
+/* UINT32_MAX means unrecognized, names are exact lowercase byte strings. */
+uint32_t ghostos_vm_disk_parse_format(const uint8_t *bytes, size_t length);
 const char *ghostos_vm_disk_error_message(uint32_t code);
 
 #endif

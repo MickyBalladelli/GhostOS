@@ -14,7 +14,9 @@ use crate::devices::storage::StorageError;
 use super::native_disk::*;
 use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
+#[cfg(test)]
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_os = "linux"))]
@@ -38,6 +40,7 @@ pub enum DiskFormat {
 pub const SECTOR_SIZE: u64 = 512;
 
 /// Magic numbers of the supported image formats.
+#[cfg(test)]
 const VHD_MAGIC: &[u8; 8] = b"conectix";
 #[cfg(test)]
 const QCOW2_MAGIC: &[u8; 4] = b"QFI\xfb";
@@ -609,20 +612,18 @@ fn lock_file_exclusive(file: &File, nonblocking: bool) -> std::io::Result<()> {
 }
 
 fn parse_format(value: &str) -> Option<DiskFormat> {
-    match value {
-        "raw" => Some(DiskFormat::Raw),
-        "vhd" => Some(DiskFormat::Vhd),
-        "qcow2" => Some(DiskFormat::Qcow2),
+    match unsafe { ghostos_vm_disk_parse_format(value.as_ptr(), value.len()) } {
+        0 => Some(DiskFormat::Raw),
+        1 => Some(DiskFormat::Vhd),
+        2 => Some(DiskFormat::Qcow2),
         _ => None,
     }
 }
 
 fn format_name(format: DiskFormat) -> &'static str {
-    match format {
-        DiskFormat::Raw => "raw",
-        DiskFormat::Vhd => "vhd",
-        DiskFormat::Qcow2 => "qcow2",
-    }
+    let code = match format { DiskFormat::Raw => 0, DiskFormat::Vhd => 1, DiskFormat::Qcow2 => 2 };
+    unsafe { std::ffi::CStr::from_ptr(ghostos_vm_disk_format_name(code)) }
+        .to_str().expect("C disk format name is UTF-8")
 }
 
 fn owner_identity() -> String {
@@ -681,73 +682,24 @@ fn process_start_time(pid: u32) -> Option<String> {
     }
 }
 
-fn validate_sector_capacity(size: u64, format: &str) -> Result<(), StorageError> {
-    if size == 0 || size % SECTOR_SIZE != 0 {
-        return Err(StorageError::InvalidImage(format!(
-            "{format} capacity {size} is not a non-zero sector multiple"
-        )));
-    }
-    Ok(())
-}
-
 fn vhd_footer_is_repairable<P: AsRef<Path>>(path: P) -> Result<bool, StorageError> {
     let mut file = File::open(path)?;
-    let file_len = file.metadata()?.len();
-    if file_len < 1024 {
-        return Ok(false);
+    let mut context = Context::new(&mut file);
+    let mut error = CError::default();
+    let mut repairable = false;
+    if !unsafe { ghostos_vm_disk_vhd_repairable(&context.io(), &mut repairable, &mut error) } {
+        return Err(context.error(error));
     }
-    file.seek(SeekFrom::End(-512))?;
-    let mut footer = [0u8; 512];
-    file.read_exact(&mut footer)?;
-    if &footer[..8] != VHD_MAGIC {
-        return Ok(false);
-    }
-
-    let disk_size = read_be_u32(&footer, 40, "VHD current size")? as u64;
-    let original_size = read_be_u32(&footer, 36, "VHD original size")? as u64;
-    let disk_type = read_be_u32(&footer, 48, "VHD disk type")?;
-    if disk_type != 2 || original_size != disk_size {
-        return Ok(false);
-    }
-    validate_sector_capacity(disk_size, "VHD")?;
-    if disk_size.checked_add(512) != Some(file_len) {
-        return Ok(false);
-    }
-    let stored_checksum = read_be_u32(&footer, 52, "VHD checksum")?;
-    let sum: u32 = footer
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !(52..56).contains(index))
-        .map(|(_, value)| *value as u32)
-        .sum();
-    Ok(!sum != stored_checksum)
-}
-
-fn read_be_u32(bytes: &[u8], offset: usize, field: &str) -> Result<u32, StorageError> {
-    let value = bytes
-        .get(offset..offset + 4)
-        .ok_or_else(|| StorageError::InvalidImage(format!("{field} is truncated")))?;
-    let value: [u8; 4] = value
-        .try_into()
-        .map_err(|_| StorageError::InvalidImage(format!("{field} is truncated")))?;
-    Ok(u32::from_be_bytes(value))
+    Ok(repairable)
 }
 
 fn repair_vhd_footer_checksum<P: AsRef<Path>>(path: P) -> Result<(), StorageError> {
     let mut file = OpenOptions::new().read(true).write(true).open(&path)?;
-    file.seek(SeekFrom::End(-512))?;
-    let mut footer = [0u8; 512];
-    file.read_exact(&mut footer)?;
-    let sum: u32 = footer
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !(52..56).contains(index))
-        .map(|(_, value)| *value as u32)
-        .sum();
-    footer[52..56].copy_from_slice(&(!sum).to_be_bytes());
-    file.seek(SeekFrom::End(-512))?;
-    file.write_all(&footer)?;
-    file.sync_all()?;
+    let mut context = Context::new(&mut file);
+    let mut error = CError::default();
+    if !unsafe { ghostos_vm_disk_vhd_repair_checksum(&context.io(), &mut error) } {
+        return Err(context.error(error));
+    }
     sync_parent_directory(path.as_ref())?;
     Ok(())
 }
