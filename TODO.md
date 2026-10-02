@@ -128,7 +128,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/storage/persistence.rs`
 - [ ] `virtual_machine/src/devices/storage/system_disk.rs`
 - [ ] `virtual_machine/src/devices/virtio.rs`
-- [ ] `virtual_machine/src/devices/virtio_queue.rs`
+- [ ] `virtual_machine/src/devices/virtio_queue.rs` — C owns split-ring address calculation, avail-ring consumption, descriptor-chain validation, and used-ring completion. Rust keeps the MMU read/write callbacks and public wrapper; end-to-end behavior parity remains.
 - [ ] `virtual_machine/src/driver_capabilities.rs`
 - [ ] `virtual_machine/src/execution.rs`
 - [ ] `virtual_machine/src/firmware/bios.rs`

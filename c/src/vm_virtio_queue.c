@@ -44,8 +44,9 @@ bool ghostos_vm_virtio_descriptor_chain(uint32_t pfn, uint16_t head,
     ghostos_vm_virtio_read_fn read, void *context,
     ghostos_vm_virtio_descriptor output[GHOSTOS_VM_VIRTIO_MAX_CHAIN],
     size_t *count) {
-    if (pfn == 0 || head >= GHOSTOS_VM_VIRTIO_QUEUE_SIZE || !read || !output || !count)
+    if (head >= GHOSTOS_VM_VIRTIO_QUEUE_SIZE || !read || !output || !count)
         return false;
+    *count = 0;
     uint16_t index = head;
     for (size_t i = 0; i < GHOSTOS_VM_VIRTIO_MAX_CHAIN; ++i) {
         uint64_t address = ghostos_vm_virtio_desc_base(pfn) +
@@ -77,7 +78,7 @@ bool ghostos_vm_virtio_descriptor_chain(uint32_t pfn, uint16_t head,
 bool ghostos_vm_virtio_complete(uint32_t pfn, uint16_t *used_idx,
     uint16_t head, uint32_t length, ghostos_vm_virtio_write_fn write,
     void *context) {
-    if (pfn == 0 || !used_idx || !write) return false;
+    if (!used_idx || !write) return false;
     uint64_t slot = *used_idx & (GHOSTOS_VM_VIRTIO_QUEUE_SIZE - 1u);
     uint64_t entry = ghostos_vm_virtio_used_base(pfn) + 4u + slot * 8u;
     uint8_t bytes[8] = {
