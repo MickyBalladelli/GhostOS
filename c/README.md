@@ -246,3 +246,9 @@ is executed.
 No Rust source or build configuration is obsolete yet. Move it to `Trash/` only
 after the C consumers replace it and behavior preservation is established. The
 new `build/c/` output belongs to the active C build.
+
+`vm_replay.h` / `vm_replay.c` implement the active SYNVMRP1 replay file and
+event header codecs. Decoded events borrow no storage; callers own payloads.
+The parser bounds file size, event count, and payload size and validates event
+kind and sequence. Reserved header bytes remain ignored for compatibility.
+Rust still owns recording/replay sessions, DMA codecs, and filesystem I/O.

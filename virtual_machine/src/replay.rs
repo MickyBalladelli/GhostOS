@@ -12,13 +12,39 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::rc::Rc;
 
-const REPLAY_MAGIC: &[u8; 8] = b"SYNVMRP1";
-const REPLAY_FORMAT_VERSION: u16 = 1;
 const FILE_HEADER_BYTES: usize = 20;
 const EVENT_HEADER_BYTES: usize = 56;
 const MAX_REPLAY_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_EVENT_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const DEFAULT_MAX_EVENTS: usize = 1_000_000;
+
+#[repr(C)]
+#[derive(Default)]
+struct CReplayEvent {
+    sequence: u64,
+    a: u64,
+    b: u64,
+    c: u64,
+    d: u64,
+    payload_length: u64,
+    kind: u8,
+}
+
+unsafe extern "C" {
+    fn ghostos_vm_replay_file_decode(bytes: *const u8, length: usize, count: *mut u64) -> u32;
+    fn ghostos_vm_replay_file_encode(bytes: *mut u8, count: u64);
+    fn ghostos_vm_replay_event_decode(bytes: *const u8, length: usize, sequence: u64, event: *mut CReplayEvent) -> u32;
+    fn ghostos_vm_replay_event_encode(bytes: *mut u8, event: *const CReplayEvent) -> u32;
+}
+
+fn wire_result(result: u32) -> Result<(), ReplayError> {
+    match result {
+        0 => Ok(()),
+        2 => Err(ReplayError::Capacity),
+        3 => Err(ReplayError::PayloadTooLarge),
+        _ => Err(ReplayError::Corrupt),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReplayMode {
@@ -578,19 +604,22 @@ fn save_events(events: &[ReplayEvent], path: &Path) -> Result<(), ReplayError> {
         }
     }
     let mut file = File::create(path).map_err(io_error)?;
-    file.write_all(REPLAY_MAGIC).map_err(io_error)?;
-    file.write_all(&REPLAY_FORMAT_VERSION.to_le_bytes()).map_err(io_error)?;
-    file.write_all(&0u16.to_le_bytes()).map_err(io_error)?;
-    file.write_all(&(events.len() as u64).to_le_bytes()).map_err(io_error)?;
+    let mut header = [0u8; FILE_HEADER_BYTES];
+    unsafe { ghostos_vm_replay_file_encode(header.as_mut_ptr(), events.len() as u64) };
+    file.write_all(&header).map_err(io_error)?;
     for event in events {
-        file.write_all(&[event.kind as u8]).map_err(io_error)?;
-        file.write_all(&[0; 7]).map_err(io_error)?;
-        file.write_all(&event.sequence.to_le_bytes()).map_err(io_error)?;
-        file.write_all(&event.a.to_le_bytes()).map_err(io_error)?;
-        file.write_all(&event.b.to_le_bytes()).map_err(io_error)?;
-        file.write_all(&event.c.to_le_bytes()).map_err(io_error)?;
-        file.write_all(&event.d.to_le_bytes()).map_err(io_error)?;
-        file.write_all(&(event.data.len() as u64).to_le_bytes()).map_err(io_error)?;
+        let wire = CReplayEvent {
+            sequence: event.sequence,
+            a: event.a,
+            b: event.b,
+            c: event.c,
+            d: event.d,
+            payload_length: event.data.len() as u64,
+            kind: event.kind as u8,
+        };
+        let mut header = [0u8; EVENT_HEADER_BYTES];
+        wire_result(unsafe { ghostos_vm_replay_event_encode(header.as_mut_ptr(), &wire) })?;
+        file.write_all(&header).map_err(io_error)?;
         file.write_all(&event.data).map_err(io_error)?;
     }
     file.sync_all().map_err(io_error)
@@ -604,73 +633,25 @@ fn load_events(path: &Path) -> Result<Vec<ReplayEvent>, ReplayError> {
     let mut file = File::open(path).map_err(io_error)?;
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.read_to_end(&mut bytes).map_err(io_error)?;
-    if &bytes[..8] != REPLAY_MAGIC {
-        return Err(ReplayError::Corrupt)
-    }
-    if u16::from_le_bytes(
-        bytes[8..10].try_into().map_err(|_| ReplayError::Corrupt)?,
-    ) != REPLAY_FORMAT_VERSION {
-        return Err(ReplayError::Corrupt)
-    }
-    let count = u64::from_le_bytes(
-        bytes[12..20].try_into().map_err(|_| ReplayError::Corrupt)?,
-    );
-    if count > DEFAULT_MAX_EVENTS as u64 {
-        return Err(ReplayError::Capacity)
-    }
+    let mut count = 0;
+    wire_result(unsafe { ghostos_vm_replay_file_decode(bytes.as_ptr(), bytes.len(), &mut count) })?;
     let mut offset = FILE_HEADER_BYTES;
     let mut events = Vec::with_capacity(count as usize);
     for sequence in 0..count {
-        let end = offset.checked_add(EVENT_HEADER_BYTES).ok_or(ReplayError::Corrupt)?;
-        if end > bytes.len() {
-            return Err(ReplayError::Corrupt)
-        }
-        let kind = ReplayEventKind::from_raw(bytes[offset]).ok_or(ReplayError::Corrupt)?;
-        let event_sequence = u64::from_le_bytes(
-            bytes[offset + 8..offset + 16]
-                .try_into()
-                .map_err(|_| ReplayError::Corrupt)?,
-        );
-        if event_sequence != sequence {
-            return Err(ReplayError::Corrupt)
-        }
-        let data_len = u64::from_le_bytes(
-            bytes[offset + 48..offset + 56]
-                .try_into()
-                .map_err(|_| ReplayError::Corrupt)?,
-        );
-        let data_len = usize::try_from(data_len).map_err(|_| ReplayError::Corrupt)?;
-        if data_len > MAX_EVENT_PAYLOAD_BYTES {
-            return Err(ReplayError::PayloadTooLarge)
-        }
-        let data_start = end;
-        let data_end = data_start.checked_add(data_len).ok_or(ReplayError::Corrupt)?;
-        if data_end > bytes.len() {
-            return Err(ReplayError::Corrupt)
-        }
+        let mut wire = CReplayEvent::default();
+        let remaining = bytes.get(offset..).ok_or(ReplayError::Corrupt)?;
+        wire_result(unsafe {
+            ghostos_vm_replay_event_decode(remaining.as_ptr(), remaining.len(), sequence, &mut wire)
+        })?;
+        let data_start = offset + EVENT_HEADER_BYTES;
+        let data_end = data_start + wire.payload_length as usize;
         events.push(ReplayEvent {
-            sequence: event_sequence,
-            kind,
-            a: u64::from_le_bytes(
-                bytes[offset + 16..offset + 24]
-                    .try_into()
-                    .map_err(|_| ReplayError::Corrupt)?,
-            ),
-            b: u64::from_le_bytes(
-                bytes[offset + 24..offset + 32]
-                    .try_into()
-                    .map_err(|_| ReplayError::Corrupt)?,
-            ),
-            c: u64::from_le_bytes(
-                bytes[offset + 32..offset + 40]
-                    .try_into()
-                    .map_err(|_| ReplayError::Corrupt)?,
-            ),
-            d: u64::from_le_bytes(
-                bytes[offset + 40..offset + 48]
-                    .try_into()
-                    .map_err(|_| ReplayError::Corrupt)?,
-            ),
+            sequence: wire.sequence,
+            kind: ReplayEventKind::from_raw(wire.kind).ok_or(ReplayError::Corrupt)?,
+            a: wire.a,
+            b: wire.b,
+            c: wire.c,
+            d: wire.d,
             data: bytes[data_start..data_end].to_vec(),
         });
         offset = data_end;

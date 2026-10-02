@@ -85,6 +85,12 @@ legacy disk, memory-map, and keyboard services. CPU/MMU integration and
 boot handoff still use Rust. Behavior parity remains unverified. Build
 logs are in `temp/c-library-bios.log` and `temp/vm-build-bios.log`.
 
+Replay wire build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C replay file and event
+header codecs. Reserved-byte acceptance, error ordering, and little-endian
+layout are preserved in source. Behavior parity remains unverified. Build
+logs are in `temp/c-library-replay.log` and `temp/vm-build-replay.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -191,7 +197,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/net/mod.rs` — C owns the alignment helper; Rust module exports and networking submodules remain.
 - [x] `virtual_machine/src/net/packet.rs` — C owns bounded packet queue storage, byte and packet accounting, queue operations, Ethernet minimum-frame padding, and error display strings in `c/src/vm_packet.c`. The VM build links this host-allocator module; Rust keeps the public `Vec` and error-code wrappers.
 - [ ] `virtual_machine/src/passkey_bridge.rs`
-- [ ] `virtual_machine/src/replay.rs`
+- [ ] `virtual_machine/src/replay.rs` — C owns active SYNVMRP1 file/header encoding and bounded event decoding, including kind, sequence, payload, version, and count validation. Rust retains session state, DMA payload codecs, filesystem I/O, and owned event storage. Full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/snapshot.rs` — Active SHA-256, streaming multipart HMAC-SHA256, and fixed-length authentication comparisons use `c/src/vm_snapshot_auth.c`. Rust retains key wrappers, snapshot serialization/deserialization, restoration, diff/checkpoint storage, and schema policy; the complete snapshot port and behavior parity remain.
 - [ ] `virtual_machine/src/terminal.rs`
 - [ ] `virtual_machine/src/terminal_platform.rs`
