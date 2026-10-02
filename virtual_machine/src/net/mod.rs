@@ -9,6 +9,10 @@ pub mod dhcp;
 pub mod mac;
 pub mod packet;
 
+unsafe extern "C" {
+    fn ghostos_vm_net_align_up(value: u64, alignment: u64) -> u64;
+}
+
 pub use backend::{
     DeterministicPort, DeterministicSegment, HostNetworkBackend, LoopbackHub, LoopbackPort,
     NetBackend, NetQueueState, NetworkBackendConfig,
@@ -24,5 +28,5 @@ pub use packet::{NetError, PacketQueue, ETHERNET_FRAME_MAX, ETHERNET_FRAME_MIN, 
 
 /// Round `value` up to a multiple of `alignment` (power of two).
 pub fn align_up(value: u64, alignment: u64) -> u64 {
-    (value + alignment - 1) & !(alignment - 1)
+    unsafe { ghostos_vm_net_align_up(value, alignment) }
 }
