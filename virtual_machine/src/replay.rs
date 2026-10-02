@@ -335,6 +335,10 @@ pub struct ReplaySession {
     session: std::ptr::NonNull<CSession>,
 }
 
+// The C allocation has no shared globals. Mutation requires exclusive access.
+unsafe impl Send for ReplaySession {}
+unsafe impl Sync for ReplaySession {}
+
 impl Drop for ReplaySession {
     fn drop(&mut self) {
         unsafe { ghostos_vm_replay_session_free(self.session.as_ptr()) }
@@ -478,6 +482,7 @@ impl ReplaySession {
         &mut self,
         writes: &[ReplayDmaWrite],
     ) -> Result<Vec<ReplayDmaWrite>, ReplayError> {
+        let writes = if self.mode() == ReplayMode::Recording { writes } else { &[] };
         let views: Vec<_> = writes.iter().map(|write| CReplayDmaWrite {
             address: write.address, bytes: write.bytes.as_ptr(), length: write.bytes.len(),
         }).collect();
