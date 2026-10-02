@@ -51,24 +51,25 @@ pub struct DriverCapability {
     pub semantics: &'static str,
 }
 
-impl DriverCapability {
-    const fn new(
-        kind: DriverCapabilityKind,
-        feature: &'static str,
-        available: bool,
-        selected: &'static str,
-        fallback: &'static str,
-        semantics: &'static str,
-    ) -> Self {
-        Self {
-            kind,
-            feature,
-            available,
-            selected,
-            fallback,
-            semantics,
-        }
-    }
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct CCapability {
+    kind: u32,
+    available: bool,
+    feature: *const std::ffi::c_char,
+    selected: *const std::ffi::c_char,
+    fallback: *const std::ffi::c_char,
+    semantics: *const std::ffi::c_char,
+}
+
+unsafe extern "C" {
+    fn ghostos_vm_driver_discover(uefi: bool, network: u32, requested_native: bool,
+        native_execution: bool, output: *mut CCapability) -> bool;
+}
+
+// The C report only returns immutable static UTF-8 string literals.
+fn report_text(text: *const std::ffi::c_char) -> &'static str {
+    unsafe { std::ffi::CStr::from_ptr(text) }.to_str().expect("C driver report UTF-8")
 }
 
 /// Complete, fixed-size capability report for one VM.
@@ -86,119 +87,35 @@ impl DriverCapabilityReport {
         network: &NetworkBackendConfig,
         acceleration: &HardwareAccelerationStatus,
     ) -> Self {
-        let native_acceleration = acceleration.execution_backend.is_native();
-        let network_path = match network {
-            NetworkBackendConfig::Deterministic | NetworkBackendConfig::DeterministicShared { .. } => {
-                "deterministic-software-ethernet"
-            }
-            NetworkBackendConfig::UserNat { .. } => "userspace-nat-ethernet",
-            NetworkBackendConfig::Bridged { .. } => "host-bridged-ethernet",
+        let network = match network {
+            NetworkBackendConfig::Deterministic | NetworkBackendConfig::DeterministicShared { .. } => 0,
+            NetworkBackendConfig::UserNat { .. } => 1,
+            NetworkBackendConfig::Bridged { .. } => 2,
         };
-        let firmware_path = match firmware {
-            FirmwareMode::Bios => "legacy-bios-services",
-            FirmwareMode::Uefi => "uefi-boot-services",
+        let mut output = std::mem::MaybeUninit::<[CCapability; DRIVER_CAPABILITY_COUNT]>::uninit();
+        let discovered = unsafe {
+            ghostos_vm_driver_discover(firmware == FirmwareMode::Uefi, network,
+                acceleration.requested.is_native(), acceleration.execution_backend.is_native(),
+                output.as_mut_ptr().cast())
         };
-
-        Self {
-            entries: [
-                DriverCapability::new(
-                    DriverCapabilityKind::Acceleration,
-                    "native-guest-execution",
-                    !acceleration.requested.is_native() || native_acceleration,
-                    if native_acceleration {
-                        "native-guest-execution"
-                    } else {
-                        "portable-cpu-execution"
-                    },
-                    if acceleration.requested.is_native() && !native_acceleration {
-                        "portable-cpu-execution"
-                    } else {
-                        "none"
-                    },
-                    "instruction results, interrupts, device effects, replay, and snapshots stay equivalent",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::Storage,
-                    "controller-flush",
-                    true,
-                    "controller-flush",
-                    "ordered-image-flush",
-                    "flush completion keeps the existing durability boundary",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::Storage,
-                    "storage-discard",
-                    false,
-                    "unsupported-status",
-                    "unsupported-status",
-                    "a missing discard operation is rejected explicitly; readable data is not changed",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::Storage,
-                    "async-storage-queue",
-                    false,
-                    "bounded-synchronous-image-io",
-                    "bounded-synchronous-image-io",
-                    "request ordering and completion status remain deterministic",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::NicOffload,
-                    "hardware-offloads",
-                    false,
-                    "software-packet-processing",
-                    "software-packet-processing",
-                    "wire bytes, checksum behavior, delivery order, and queue limits remain unchanged",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::NicOffload,
-                    "network-backend",
-                    true,
-                    network_path,
-                    "deterministic-software-ethernet",
-                    "packet framing and guest-visible link state remain explicit",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::Gpu,
-                    "host-gpu-acceleration",
-                    false,
-                    "software-vga-vesa-rendering",
-                    "software-vga-vesa-rendering",
-                    "text and framebuffer pixels are rendered by the VM device model",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::Firmware,
-                    "firmware-services",
-                    true,
-                    firmware_path,
-                    "guest-visible-unsupported-status",
-                    "unsupported firmware calls return their stable firmware status code",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::Firmware,
-                    "uefi-runtime-services",
-                    firmware == FirmwareMode::Uefi,
-                    if firmware == FirmwareMode::Uefi {
-                        "uefi-runtime-services"
-                    } else {
-                        "legacy-bios-services"
-                    },
-                    if firmware == FirmwareMode::Uefi {
-                        "none"
-                    } else {
-                        "legacy-bios-services"
-                    },
-                    "time, variables, and reset use the selected firmware contract",
-                ),
-                DriverCapability::new(
-                    DriverCapabilityKind::Timer,
-                    "platform-timer-source",
-                    true,
-                    "shared-monotonic-clock",
-                    "shared-monotonic-clock",
-                    "APIC, PIT, HPET, pvclock, and scheduling observe one monotonic time source",
-                ),
-            ],
-        }
+        assert!(discovered, "invalid C driver discovery inputs");
+        let entries = unsafe { output.assume_init() }.map(|entry| DriverCapability {
+            kind: match entry.kind {
+                0 => DriverCapabilityKind::Acceleration,
+                1 => DriverCapabilityKind::Storage,
+                2 => DriverCapabilityKind::NicOffload,
+                3 => DriverCapabilityKind::Gpu,
+                4 => DriverCapabilityKind::Firmware,
+                5 => DriverCapabilityKind::Timer,
+                _ => panic!("invalid C driver capability kind"),
+            },
+            feature: report_text(entry.feature),
+            available: entry.available,
+            selected: report_text(entry.selected),
+            fallback: report_text(entry.fallback),
+            semantics: report_text(entry.semantics),
+        });
+        Self { entries }
     }
 
     pub const fn entries(&self) -> &[DriverCapability; DRIVER_CAPABILITY_COUNT] {
