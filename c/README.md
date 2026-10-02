@@ -22,6 +22,8 @@ Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 | `crates/api-compat/src/lib.rs` | `src/api_compat.c` | `include/ghostos/api_compat.h` |
 | `crates/protocol/src/lib.rs` | `src/protocol.c` | `include/ghostos/protocol.h` |
 | `crates/boot-protocol/src/lib.rs` | `src/boot_protocol.c` | `include/ghostos/boot_protocol.h` |
+| `virtual_machine/src/migration.rs` (frame decoding, tag assembly, validation sequencing) | `src/vm_migration.c` | `include/ghostos/vm_migration.h` |
+| `virtual_machine/src/snapshot.rs` (SHA-256, multipart HMAC, authentication comparisons) | `src/vm_snapshot_auth.c` | `include/ghostos/vm_snapshot_auth.h` |
 | `virtual_machine/src/net/mac.rs` | `src/vm_mac.c` | `include/ghostos/vm_mac.h` |
 | `virtual_machine/src/net/packet.rs` | `src/vm_packet.c` | `include/ghostos/vm_packet.h` |
 | `virtual_machine/src/devices/power.rs` | `src/vm_power.c` | `include/ghostos/vm_power.h` |
