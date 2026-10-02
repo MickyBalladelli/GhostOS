@@ -201,3 +201,39 @@ void ghostos_vm_uefi_rsdp(uint8_t output[36]) {
     for (size_t i = 0; i < 36; ++i) sum = (uint8_t)(sum + output[i]);
     output[32] = (uint8_t)(0u - sum);
 }
+
+#define EFI_INVALID_PARAMETER UINT64_C(0x8000000000000002)
+#define EFI_BUFFER_TOO_SMALL UINT64_C(0x8000000000000005)
+#define EFI_NOT_READY UINT64_C(0x8000000000000006)
+uint64_t ghostos_vm_uefi_get_memory_map(const ghostos_vm_uefi_map_args *args, const uint8_t *descriptors,
+    size_t count, size_t *map_key, const ghostos_vm_uefi_io *io) {
+    if (args->map_size == 0 || args->map_key == 0 || args->descriptor_size == 0) return EFI_INVALID_PARAMETER;
+    /* UefiContext has at most eight registered images (twenty descriptors). */
+    if (count > SIZE_MAX / 48) return EFI_INVALID_PARAMETER;
+    uint64_t needed = (uint64_t)(count * 48);
+    uint64_t capacity = read_value(io, args->map_size, 8);
+    if (capacity < needed) {
+        (void)io->write_value(io->context, args->map_size, 8, needed);
+        (void)io->write_value(io->context, args->descriptor_size, 8, 48);
+        return EFI_BUFFER_TOO_SMALL;
+    }
+    if (args->buffer == 0) return EFI_INVALID_PARAMETER;
+    for (size_t i = 0; i < count; ++i) {
+        uint64_t offset = (uint64_t)i * 48;
+        if (offset > UINT64_MAX - args->buffer) return EFI_INVALID_PARAMETER;
+        if (!io->write_phys(io->context, args->buffer + offset, descriptors + i * 48, 48)) return EFI_INVALID_PARAMETER;
+    }
+    (void)io->write_value(io->context, args->map_size, 8, needed);
+    ++*map_key;
+    (void)io->write_value(io->context, args->map_key, 8, (uint64_t)*map_key);
+    (void)io->write_value(io->context, args->descriptor_size, 8, 48);
+    if (args->descriptor_version != 0) (void)io->write_value(io->context, args->descriptor_version, 4, 1);
+    return 0;
+}
+uint64_t ghostos_vm_uefi_exit_boot_services(bool *active, bool valid_handle, size_t map_key, uint64_t supplied_key) {
+    if (!*active || !valid_handle) return EFI_INVALID_PARAMETER;
+    if (supplied_key != (uint64_t)map_key) return EFI_NOT_READY;
+    *active = false;
+    return 0;
+}
+bool ghostos_vm_uefi_is_boot_service(uint64_t id) { return id <= 13; }

@@ -45,4 +45,14 @@ void ghostos_vm_uefi_service_stub(uint64_t id, uint8_t output[8]);
 void ghostos_vm_uefi_table_header(uint64_t signature, uint8_t output[24]);
 /* Preserve the VM's existing RSDP byte layout, including legacy field offsets. */
 void ghostos_vm_uefi_rsdp(uint8_t output[36]);
+
+typedef struct {
+    uint64_t map_size, buffer, map_key, descriptor_size, descriptor_version;
+} ghostos_vm_uefi_map_args;
+/* These return the original 64-bit EFI status codes. Descriptor physical
+ * writes are checked; metadata value-write errors deliberately stay ignored. */
+uint64_t ghostos_vm_uefi_get_memory_map(const ghostos_vm_uefi_map_args *, const uint8_t *descriptors,
+    size_t count, size_t *map_key, const ghostos_vm_uefi_io *);
+uint64_t ghostos_vm_uefi_exit_boot_services(bool *active, bool valid_handle, size_t map_key, uint64_t supplied_key);
+bool ghostos_vm_uefi_is_boot_service(uint64_t id);
 #endif

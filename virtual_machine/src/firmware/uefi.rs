@@ -807,55 +807,13 @@ impl UefiContext {
     // ------------------------------------------------------------------
 
     fn bs_get_memory_map(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) {
-        let map_size_ptr = cpu.rcx;
-        let map_buf = cpu.rdx;
-        let map_key_ptr = cpu.r8;
-        let desc_size_ptr = cpu.r9;
-        let desc_ver_ptr = stack_arg(mmu, cpu, 5);
-
-        if map_size_ptr == 0 || map_key_ptr == 0 || desc_size_ptr == 0 {
-            cpu.rax = EFI_INVALID_PARAMETER;
-            return;
-        }
-
-        let descriptors = self.build_memory_map();
-        let needed = (descriptors.len() * MEMORY_DESCRIPTOR_SIZE) as u64;
-        let capacity = mmu.read_u64(map_size_ptr).unwrap_or(0);
-
-        if capacity < needed {
-            let _ = mmu.write_u64(map_size_ptr, needed);
-            if desc_size_ptr != 0 {
-                let _ = mmu.write_u64(desc_size_ptr, MEMORY_DESCRIPTOR_SIZE as u64);
-            }
-            cpu.rax = EFI_BUFFER_TOO_SMALL;
-            return;
-        }
-        if map_buf == 0 {
-            cpu.rax = EFI_INVALID_PARAMETER;
-            return;
-        }
-
-        for (i, desc) in descriptors.iter().enumerate() {
-            let Some(addr) = (i as u64)
-                .checked_mul(MEMORY_DESCRIPTOR_SIZE as u64)
-                .and_then(|offset| map_buf.checked_add(offset))
-            else {
-                cpu.rax = EFI_INVALID_PARAMETER;
-                return
-            };
-            if mmu.write_phys(addr, desc).is_err() {
-                cpu.rax = EFI_INVALID_PARAMETER;
-                return
-            }
-        }
-        let _ = mmu.write_u64(map_size_ptr, needed);
-        self.map_key = self.map_key.wrapping_add(1);
-        let _ = mmu.write_u64(map_key_ptr, self.map_key as u64);
-        let _ = mmu.write_u64(desc_size_ptr, MEMORY_DESCRIPTOR_SIZE as u64);
-        if desc_ver_ptr != 0 {
-            let _ = mmu.write_u32(desc_ver_ptr, 1);
-        }
-        cpu.rax = EFI_SUCCESS;
+        let args = native::MapArgs { map_size: cpu.rcx, buffer: cpu.rdx,
+            map_key: cpu.r8, descriptor_size: cpu.r9, descriptor_version: stack_arg(mmu, cpu, 5) };
+        // Keep descriptor allocation after the original required-pointer check.
+        let descriptors = if args.map_size == 0 || args.map_key == 0 || args.descriptor_size == 0 {
+            Vec::new()
+        } else { self.build_memory_map() };
+        cpu.rax = native::get_memory_map(mmu, &args, &descriptors, &mut self.map_key);
     }
 
     fn build_memory_map(&self) -> Vec<[u8; MEMORY_DESCRIPTOR_SIZE]> {
@@ -863,20 +821,9 @@ impl UefiContext {
     }
 
     fn bs_exit_boot_services(&mut self, cpu: &mut CpuState) {
-        if !self.boot_services_active
-            || !self.images.iter().any(|image| image.handle == cpu.rcx)
-        {
-            cpu.rax = EFI_INVALID_PARAMETER;
-            return;
-        }
-        let key = cpu.rdx;
-        if key == self.map_key as u64 {
-            self.boot_services_active = false;
-            self.state = UefiState::ExitBootServices;
-            cpu.rax = EFI_SUCCESS;
-        } else {
-            cpu.rax = EFI_NOT_READY;
-        }
+        let valid_handle = self.boot_services_active && self.images.iter().any(|image| image.handle == cpu.rcx);
+        cpu.rax = native::exit_boot_services(&mut self.boot_services_active, valid_handle, self.map_key, cpu.rdx);
+        if cpu.rax == EFI_SUCCESS { self.state = UefiState::ExitBootServices; }
     }
 
     // ------------------------------------------------------------------
@@ -1221,23 +1168,7 @@ impl UefiContext {
 // ---------------------------------------------------------------------------
 
 fn is_boot_service(id: u64) -> bool {
-    matches!(
-        id,
-        SERVICE_OUTPUT_STRING
-            | SERVICE_CLEAR_SCREEN
-            | SERVICE_RESET_OUTPUT
-            | SERVICE_READ_KEYSTROKE
-            | SERVICE_RESET_INPUT
-            | SERVICE_GET_MEMORY_MAP
-            | SERVICE_EXIT_BOOT_SERVICES
-            | SERVICE_LOCATE_PROTOCOL
-            | SERVICE_HANDLE_PROTOCOL
-            | SERVICE_LOCATE_HANDLE_BUFFER
-            | SERVICE_FREE_POOL
-            | SERVICE_LOAD_IMAGE
-            | SERVICE_START_IMAGE
-            | SERVICE_UNLOAD_IMAGE
-    )
+    native::is_boot_service(id)
 }
 
 fn civil_date_from_days(days_since_epoch: i64) -> (u16, u32, u32) {

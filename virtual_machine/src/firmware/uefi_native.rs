@@ -138,3 +138,27 @@ extern "C-unwind" {
     #[cfg(test)]
     fn ghostos_vm_uefi_relocate(base: u64, delta: u64, rva: u32, size: u32, checked: bool, io: *const Io) -> u32;
 }
+
+#[repr(C)]
+pub(super) struct MapArgs {
+    pub(super) map_size: u64,
+    pub(super) buffer: u64,
+    pub(super) map_key: u64,
+    pub(super) descriptor_size: u64,
+    pub(super) descriptor_version: u64,
+}
+pub(super) fn get_memory_map(mmu: &mut Mmu, args: &MapArgs, descriptors: &[[u8; MEMORY_DESCRIPTOR_SIZE]], map_key: &mut usize) -> u64 {
+    let io = Io::new(mmu);
+    unsafe { ghostos_vm_uefi_get_memory_map(args, descriptors.as_ptr().cast(), descriptors.len(), map_key, &io) }
+}
+pub(super) fn exit_boot_services(active: &mut bool, valid_handle: bool, map_key: usize, supplied_key: u64) -> u64 {
+    unsafe { ghostos_vm_uefi_exit_boot_services(active, valid_handle, map_key, supplied_key) }
+}
+pub(super) fn is_boot_service(id: u64) -> bool { unsafe { ghostos_vm_uefi_is_boot_service(id) } }
+extern "C-unwind" {
+    fn ghostos_vm_uefi_get_memory_map(args: *const MapArgs, descriptors: *const u8, count: usize, map_key: *mut usize, io: *const Io) -> u64;
+}
+extern "C" {
+    fn ghostos_vm_uefi_exit_boot_services(active: *mut bool, valid_handle: bool, map_key: usize, supplied_key: u64) -> u64;
+    fn ghostos_vm_uefi_is_boot_service(id: u64) -> bool;
+}
