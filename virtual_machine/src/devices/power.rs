@@ -5,9 +5,14 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-pub const POWER_CONTROL_PORT: u16 = 0x604;
-const SLP_EN: u16 = 1 << 13;
+unsafe extern "C" {
+    fn ghostos_vm_power_access_valid(port: u16, size: u8) -> bool;
+    fn ghostos_vm_power_state_from_write(value: u16) -> u32;
+}
 
+pub const POWER_CONTROL_PORT: u16 = 0x604;
+
+#[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerState {
     Running,
@@ -42,15 +47,10 @@ impl PowerControl {
     }
 
     fn write_value(&mut self, value: u16) {
-        if value & SLP_EN == 0 {
-            return
-        }
-
-        let sleep_type = (value >> 10) & 0x07;
-        let state = if sleep_type == 5 {
-            PowerState::Shutdown
-        } else {
-            PowerState::Reboot
+        let state = match unsafe { ghostos_vm_power_state_from_write(value) } {
+            1 => PowerState::Shutdown,
+            2 => PowerState::Reboot,
+            _ => return,
         };
         *self.state.borrow_mut() = state;
         let notification = match state {
@@ -66,14 +66,14 @@ impl PowerControl {
 
 impl PortDevice for PowerControl {
     fn read(&mut self, port: u16, size: u8) -> Result<u64, DeviceError> {
-        if port != POWER_CONTROL_PORT || !matches!(size, 2 | 4) {
+        if !unsafe { ghostos_vm_power_access_valid(port, size) } {
             return Err(DeviceError::UnsupportedSize)
         }
         Ok(0)
     }
 
     fn write(&mut self, port: u16, value: u64, size: u8) -> Result<(), DeviceError> {
-        if port != POWER_CONTROL_PORT || !matches!(size, 2 | 4) {
+        if !unsafe { ghostos_vm_power_access_valid(port, size) } {
             return Err(DeviceError::UnsupportedSize)
         }
         self.write_value(value as u16);
@@ -96,11 +96,11 @@ mod tests {
         let mut power = PowerControl::new(state.clone());
         power.attach_notifications(events.clone());
 
-        power.write(POWER_CONTROL_PORT, (5 << 10) | SLP_EN as u64, 2).unwrap();
+        power.write(POWER_CONTROL_PORT, (5 << 10) | (1 << 13), 2).unwrap();
         assert_eq!(*state.borrow(), PowerState::Shutdown);
         assert_eq!(events.borrow_mut().pop_front(), Some(PowerNotification::Shutdown));
 
-        power.write(POWER_CONTROL_PORT, (0 << 10) | SLP_EN as u64, 4).unwrap();
+        power.write(POWER_CONTROL_PORT, (0 << 10) | (1 << 13), 4).unwrap();
         assert_eq!(*state.borrow(), PowerState::Reboot);
         assert_eq!(events.borrow_mut().pop_front(), Some(PowerNotification::Reboot));
 
