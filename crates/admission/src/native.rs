@@ -62,8 +62,8 @@ unsafe extern "C" {
     fn ghostos_admission_get_report(state: *const State, report: *mut AdmissionReport);
     fn ghostos_admission_configure_tenant(state: *mut State, capacity: usize, policy: *const TenantPolicy) -> u32;
     fn ghostos_admission_admit(state: *mut State, slots: *mut Slot, capacity: usize,
-        tenant: u64, class: u8, priority: u8, outcome: *mut Outcome);
-    fn ghostos_admission_record_retry(state: *mut State, class: u8, priority: u8, outcome: *mut Outcome);
+        tenant: u64, class: u8, priority: u8, outcome: *mut Outcome) -> u32;
+    fn ghostos_admission_record_retry(state: *mut State, class: u8, priority: u8, outcome: *mut Outcome) -> u32;
     fn ghostos_admission_finish(state: *mut State, slots: *mut Slot,
         capacity: usize, lease: *const AdmissionLease) -> u32;
 }
@@ -120,7 +120,8 @@ pub(super) fn admit(state: &mut State, slots: &mut [Slot], tenant: u64,
     // Initialized controllers preserve the free-slot invariant. All C mutations
     // use these exclusive borrows; class and priority are valid Rust enum values.
     unsafe {
-        ghostos_admission_admit(state, slots.as_mut_ptr(), slots.len(), tenant, class as u8, priority as u8, output.as_mut_ptr());
+        result(ghostos_admission_admit(state, slots.as_mut_ptr(), slots.len(), tenant, class as u8, priority as u8, output.as_mut_ptr()))
+            .expect("admission policy capacity invariant");
         outcome(output.assume_init(), class, priority)
     }
 }
@@ -128,7 +129,8 @@ pub(super) fn admit(state: &mut State, slots: &mut [Slot], tenant: u64,
 pub(super) fn record_retry(state: &mut State, class: WorkClass, priority: AdmissionPriority) -> AdmissionOutcome {
     let mut output = MaybeUninit::uninit();
     unsafe {
-        ghostos_admission_record_retry(state, class as u8, priority as u8, output.as_mut_ptr());
+        result(ghostos_admission_record_retry(state, class as u8, priority as u8, output.as_mut_ptr()))
+            .expect("valid admission class and priority");
         outcome(output.assume_init(), class, priority)
     }
 }
@@ -136,3 +138,15 @@ pub(super) fn record_retry(state: &mut State, class: WorkClass, priority: Admiss
 pub(super) fn finish(state: &mut State, slots: &mut [Slot], lease: AdmissionLease) -> Result<(), AdmissionError> {
     result(unsafe { ghostos_admission_finish(state, slots.as_mut_ptr(), slots.len(), &lease) })
 }
+
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(core::mem::size_of::<AdmissionPolicy>() == 18);
+    assert!(core::mem::size_of::<AdmissionLease>() == 32);
+    assert!(core::mem::size_of::<Slot>() == 40);
+    assert!(core::mem::size_of::<TenantPolicy>() == 24);
+    assert!(core::mem::size_of::<State>() == 1192);
+    assert!(core::mem::offset_of!(State, tenants) == 168);
+    assert!(core::mem::size_of::<Outcome>() == 64);
+    assert!(core::mem::size_of::<AdmissionReport>() == 148);
+};

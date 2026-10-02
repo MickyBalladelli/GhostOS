@@ -37,9 +37,10 @@ uint32_t ghostos_admission_init(ghostos_admission_controller *state,
     if (!capacity || !policy->active_capacity || policy->active_capacity > capacity ||
         policy->recovery_reserve > policy->active_capacity || capacity > SIZE_MAX / sizeof(*slots)) return 1;
     for (size_t i = 0; i < GHOSTOS_ADMISSION_CLASSES; ++i) if (!policy->class_limits[i]) return 1;
+    ghostos_admission_policy configured = *policy;
     memset(state, 0, sizeof(*state));
     memset(slots, 0, capacity * sizeof(*slots));
-    state->policy = *policy;
+    state->policy = configured;
     state->next_sequence = 1;
     return 0;
 }
@@ -127,16 +128,17 @@ static void outcome(const ghostos_admission_controller *state, uint64_t seq,
     if (lease) result->lease = *lease;
 }
 
-void ghostos_admission_admit(ghostos_admission_controller *state,
+uint32_t ghostos_admission_admit(ghostos_admission_controller *state,
     ghostos_admission_slot *slots, size_t capacity, uint64_t tenant,
     uint8_t class_id, uint8_t priority, ghostos_admission_outcome *result) {
+    if (class_id >= GHOSTOS_ADMISSION_CLASSES || priority > 3) return 1;
     uint8_t reason = block_reason(state, tenant, class_id, priority);
     if (!reason) {
-        if (state->queued) --state->queued;
         size_t slot = 0;
         while (slot < capacity && slots[slot].occupied) ++slot;
         /* A valid policy always leaves a slot when active capacity is available. */
-        if (slot == capacity) return;
+        if (slot == capacity) return 1;
+        if (state->queued) --state->queued;
         uint64_t seq = sequence(state);
         ghostos_admission_lease lease = {.slot = (uint16_t)slot, .sequence = seq,
             .class_id = class_id, .priority = priority, .tenant = tenant};
@@ -147,7 +149,7 @@ void ghostos_admission_admit(ghostos_admission_controller *state,
         adjust_usage(state, tenant, priority, true);
         increment32(&state->stats[class_id].admitted);
         outcome(state, seq, class_id, priority, 1, reason, &lease, result);
-        return;
+        return 0;
     }
     uint64_t seq = sequence(state);
     uint8_t action;
@@ -163,18 +165,21 @@ void ghostos_admission_admit(ghostos_admission_controller *state,
         action = 4;
     }
     outcome(state, seq, class_id, priority, action, reason, NULL, result);
+    return 0;
 }
 
-void ghostos_admission_record_retry(ghostos_admission_controller *state,
+uint32_t ghostos_admission_record_retry(ghostos_admission_controller *state,
     uint8_t class_id, uint8_t priority, ghostos_admission_outcome *result) {
+    if (class_id >= GHOSTOS_ADMISSION_CLASSES || priority > 3) return 1;
     uint64_t seq = sequence(state);
     increment32(&state->stats[class_id].retried);
     outcome(state, seq, class_id, priority, 4, 4, NULL, result);
+    return 0;
 }
 
 uint32_t ghostos_admission_finish(ghostos_admission_controller *state,
     ghostos_admission_slot *slots, size_t capacity, const ghostos_admission_lease *lease) {
-    if (lease->slot >= capacity) return 2;
+    if (lease->slot >= capacity || lease->class_id >= GHOSTOS_ADMISSION_CLASSES || lease->priority > 3) return 2;
     ghostos_admission_slot *slot = &slots[lease->slot];
     const ghostos_admission_lease *current = &slot->lease;
     if (!slot->occupied || current->slot != lease->slot || current->sequence != lease->sequence ||
@@ -193,3 +198,14 @@ const char *ghostos_admission_class_name(uint8_t class_id) {
         "snapshot", "backup", "package-distribution", "remote-diagnostics"};
     return class_id < GHOSTOS_ADMISSION_CLASSES ? names[class_id] : NULL;
 }
+
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(ghostos_admission_policy) == 18, "admission policy ABI");
+_Static_assert(sizeof(ghostos_admission_lease) == 32, "admission lease ABI");
+_Static_assert(sizeof(ghostos_admission_slot) == 40, "admission slot ABI");
+_Static_assert(sizeof(ghostos_admission_tenant_policy) == 24, "admission tenant ABI");
+_Static_assert(sizeof(ghostos_admission_controller) == 1192, "admission controller ABI");
+_Static_assert(offsetof(ghostos_admission_controller, tenants) == 168, "admission tenants ABI");
+_Static_assert(sizeof(ghostos_admission_outcome) == 64, "admission outcome ABI");
+_Static_assert(sizeof(ghostos_admission_report) == 148, "admission report ABI");
+#endif

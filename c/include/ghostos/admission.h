@@ -71,10 +71,10 @@ void ghostos_admission_get_report(const ghostos_admission_controller *state,
     ghostos_admission_report *report);
 uint32_t ghostos_admission_configure_tenant(ghostos_admission_controller *state,
     size_t capacity, const ghostos_admission_tenant_policy *policy);
-void ghostos_admission_admit(ghostos_admission_controller *state,
+uint32_t ghostos_admission_admit(ghostos_admission_controller *state,
     ghostos_admission_slot *slots, size_t capacity, uint64_t tenant,
     uint8_t class_id, uint8_t priority, ghostos_admission_outcome *outcome);
-void ghostos_admission_record_retry(ghostos_admission_controller *state,
+uint32_t ghostos_admission_record_retry(ghostos_admission_controller *state,
     uint8_t class_id, uint8_t priority, ghostos_admission_outcome *outcome);
 uint32_t ghostos_admission_finish(ghostos_admission_controller *state,
     ghostos_admission_slot *slots, size_t capacity, const ghostos_admission_lease *lease);
