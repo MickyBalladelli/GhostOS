@@ -8,6 +8,18 @@ use std::io::{self, Write};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+unsafe extern "C" {
+    fn ghostos_vm_serial_translate_newlines(
+        input: *const u8,
+        input_length: usize,
+        previous_was_cr: bool,
+        output: *mut u8,
+        output_capacity: usize,
+        output_length: *mut usize,
+        output_previous_was_cr: *mut bool,
+    ) -> bool;
+}
+
 const REG_DATA: u16 = 0x00;
 const REG_IER: u16 = 0x01;
 const REG_IIR: u16 = 0x02;
@@ -44,14 +56,27 @@ pub(crate) fn write_host_console<W: Write>(
     bytes: &[u8],
     previous_was_cr: &mut bool,
 ) -> io::Result<()> {
-    let mut translated = Vec::with_capacity(bytes.len());
-    for &byte in bytes {
-        if byte == b'\n' && !*previous_was_cr {
-            translated.push(b'\r');
-        }
-        translated.push(byte);
-        *previous_was_cr = byte == b'\r';
+    let mut translated_length = 0;
+    let mut output_previous_was_cr = *previous_was_cr;
+    let sized = unsafe {
+        ghostos_vm_serial_translate_newlines(
+            bytes.as_ptr(), bytes.len(), *previous_was_cr, std::ptr::null_mut(), 0,
+            &mut translated_length, &mut output_previous_was_cr,
+        )
+    };
+    if !sized {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "serial newline conversion failed"))
     }
+    let mut translated = vec![0; translated_length];
+    if !unsafe {
+        ghostos_vm_serial_translate_newlines(
+            bytes.as_ptr(), bytes.len(), *previous_was_cr, translated.as_mut_ptr(),
+            translated.len(), &mut translated_length, &mut output_previous_was_cr,
+        )
+    } {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "serial newline conversion failed"))
+    }
+    *previous_was_cr = output_previous_was_cr;
     output.write_all(&translated)
 }
 

@@ -119,7 +119,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/net/virtio.rs`
 - [ ] `virtual_machine/src/devices/pit.rs`
 - [x] `virtual_machine/src/devices/power.rs` — C validates power-control port accesses and decodes ACPI sleep-enable writes into shutdown/reboot state. Rust keeps shared state and notification queue integration.
-- [ ] `virtual_machine/src/devices/serial.rs`
+- [ ] `virtual_machine/src/devices/serial.rs` — C owns host-console newline conversion. Rust still owns UART registers, FIFOs, authentication prompts, buffering, APIC callbacks, and host I/O.
 - [ ] `virtual_machine/src/devices/storage/ahci.rs`
 - [ ] `virtual_machine/src/devices/storage/disk_image.rs`
 - [ ] `virtual_machine/src/devices/storage/management.rs`
