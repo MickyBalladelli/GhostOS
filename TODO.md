@@ -260,6 +260,26 @@ adapters. No tests were executed; parity, platform coverage, and complete Rust
 removal remain open. Logs are in `temp/c-library-execution-cache.log` and
 `temp/vm-build-execution-cache.log`.
 
+UEFI-loader build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C PE32+ parsing, section/range
+validation, guest image zero-fill/mapping, DIR64/HIGHLOW relocations, stable
+memory-map ordering and 48-byte descriptors, GetMemoryMap/ExitBootServices
+handshake policy, boot-service classification, and firmware stub/header/RSDP
+encoding. Parsing preserves unsupported-versus-invalid error precedence,
+zero-length raw-section pointer acceptance, raw-size-based image bounds, and
+relocation-directory bounds. Relocations keep virtual reads with zero on error,
+ignored value-write errors, ignored unknown types, modulo-width deltas, and
+checked-debug/wrapping-release address arithmetic. Mapping keeps physical
+writes, overlap checks, and zero-fill/section writes before missing-relocation
+rejection. GetMemoryMap keeps physical-descriptor write failures, ignored
+metadata writes, native-width wrapping map keys, and original pointer/status
+ordering. Existing RSDP field offsets are preserved, not repaired as part of
+the port. Rust retains context/image ownership, guest/MMU callbacks, table
+assembly, CPU handoff, console/protocol/image-registration/runtime services,
+and existing test fixtures. No tests were executed; platform coverage, parity,
+and full Rust removal remain open. Logs are in `temp/c-library-uefi.log` and
+`temp/vm-build-uefi.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -352,7 +372,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/execution.rs` — C owns active translation/dispatch loops, instruction boundaries and backward-loop classification, source-range validation, observed-version updates, saturating hot-block promotion, cache-retune timing, context-keyed cache hash tables and FIFO eviction, block-payload ownership, profile/instruction-count maps, and ordered checked/wrapping counter updates. Rust retains cache-policy admission/events, CPU/MMU/device callbacks, decoded-instruction allocation, public types and profile hooks, and error adapters. Build checks passed; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/firmware/bios.rs` — C owns active BIOS ROM generation, POST IVT/BDA templates, INT 13h disk register services and CHS/EDD transfers, INT 15h memory sizing/E820 encoding, and INT 16h keyboard responses in `c/src/vm_bios.c`. Rust retains context ownership, CPU/MMU adapters, video/UEFI dispatch, and MBR boot handoff. Existing EDD packet offsets/count handling and CHS ignored-write-error behavior are preserved; full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/firmware/mod.rs`
-- [ ] `virtual_machine/src/firmware/uefi.rs`
+- [ ] `virtual_machine/src/firmware/uefi.rs` — C owns active PE32+ header/section validation, guest image mapping/zero-fill, DIR64/HIGHLOW relocation traversal, stable image-based memory-map encoding, GetMemoryMap/ExitBootServices policy, boot-service classification, and firmware stub/header/RSDP bytes. Rust retains context/image ownership, guest/MMU callbacks, firmware table assembly, CPU handoff, console/protocol/image-registration/runtime services, and existing test fixtures. Host builds pass; parity and full cutover remain.
 - [ ] `virtual_machine/src/hardware_acceleration.rs` — C owns active backend negotiation, platform/path probing order, KVM version checking/ioctl, rejected-handle cleanup decisions, fallback/capability policy, and status formatting. Rust retains native file ownership/probe adapters, typed handles/errors and attempt snapshots, and public const name APIs. Software guest execution remains active; full cutover and behavior parity remain.
 - [ ] `virtual_machine/src/input.rs` — C owns terminal-resize encoding, complete resize-response filtering, and ASCII/control-byte to PS/2 make/break conversion in `c/src/vm_input.c`. Active VM callers use Rust vector/type adapters; behavior parity remains unverified.
 - [ ] `virtual_machine/src/integration.rs`

@@ -409,3 +409,24 @@ cache-policy admission/events, public types, profile hooks, and error adapters.
 The callback ABI permits unwinding so existing Rust overflow/allocation panics can
 propagate across the C dispatcher. Host builds pass; no tests were run, and
 behavior parity, non-host coverage, and full Rust removal remain open.
+
+`vm_uefi.h` / `vm_uefi.c` own active PE32+ parsing/section validation, guest
+image mapping and zero-fill, relocation traversal, stable memory-map encoding,
+GetMemoryMap/ExitBootServices status and map-key policy, boot-service
+classification, and service-stub/table-header/RSDP encoding. PE parsing returns
+borrowed raw-section offsets; Rust adapters copy them into owned decoded-image
+buffers. Zero-length sections retain unchecked raw pointers. Relocations use
+virtual value reads/writes (failed reads become zero, failed writes are ignored)
+while image mapping and descriptor writes use physical guest writes. Unknown
+relocation types, odd/trailing relocation bytes, modulo-width deltas, and
+checked-debug/wrapping-release address calculations retain existing behavior.
+Memory-map ordering is stable for equal image bases and saturates image ends;
+firmware reserves and descriptor virtual/physical addresses match the original.
+GetMemoryMap preserves pointer/status order, partial descriptor writes on error,
+ignored metadata-write errors, and native-width wrapping map keys. RSDP bytes
+retain the existing legacy field offsets. Native functions borrow all buffers
+and MMU callbacks synchronously and allocate nothing. Rust still owns context,
+images, guest callbacks, table assembly, CPU handoff, console/protocol/runtime
+services, profile-independent replay/clock access, and error adapters. Host
+library/VM builds pass; no tests were run, and platform coverage, behavior
+parity, and complete Rust removal remain open.
