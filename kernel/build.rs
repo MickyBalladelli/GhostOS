@@ -115,6 +115,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
 fn build_host_c(kernel: &Path, output: &Path, target: &str) {
     let target_flag = format!("--target={target}");
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
+    let mut objects = Vec::new();
     for module in ["monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
         let source = kernel.join(format!("../c/src/{module}.c"));
         let object = output.join(format!("ghostos-{module}-host.o"));
@@ -131,7 +132,7 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
                 .arg(&object),
             "host C kernel module compilation",
         );
-        println!("cargo:rustc-link-arg={}", object.display());
+        objects.push(object);
         println!("cargo:rerun-if-changed={}", source.display());
         let header = if module == "monitor_host_stub" {
             "monitor.h"
@@ -145,6 +146,16 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
         };
         println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}.h")).display());
     }
+    // Native library metadata follows the kernel rlib into VM executables.
+    // Link arguments alone apply only to targets in this Cargo package.
+    let archive = output.join("libghostos_kernel_host.a");
+    let ar = env::var_os("AR").unwrap_or_else(|| "ar".into());
+    run(
+        Command::new(ar).arg("rcs").arg(&archive).args(&objects),
+        "host C kernel archive",
+    );
+    println!("cargo:rustc-link-search=native={}", output.display());
+    println!("cargo:rustc-link-lib=static=ghostos_kernel_host");
 }
 
 fn build_rust_shell_image(manifest: &Path, output: &Path, tools: &Path) {

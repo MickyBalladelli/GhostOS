@@ -4,8 +4,9 @@ This directory contains the C replacements being built for the Rust project.
 The operating system and virtual machine still use Rust. The existing C boot
 services use the generated syscall ABI header and shared status constants.
 The C crash capsule encoder, DLM diagnostics, and DMA manager are linked into
-kernel builds. The other foundation library modules are not yet connected to
-the Rust kernel or VM consumers.
+kernel builds. C also owns the active VM xAPIC and HPET devices behind Rust
+ownership and device-trait adapters. Many other foundation library modules
+still need consumer integration.
 See `TODO.md` for migration status.
 
 Run `make c-library` at the repository root to build `build/c/libghostos.a`.
@@ -75,6 +76,21 @@ types. It does not allocate memory or require a hosted C library. `CC`, `AR`,
 | `virtual_machine/src/boot/mod.rs` (Multiboot header discovery and information decoding) | `src/vm_boot.c` | `include/ghostos/vm_boot.h` |
 | `virtual_machine/src/clock.rs` (host monotonic source and manual clock arithmetic) | `src/vm_clock.c` | `include/ghostos/vm_clock.h` |
 | `virtual_machine/src/cluster.rs` (bounded deterministic network, shared-memory fixture, membership, heartbeats, faults, and scale evidence) | `src/vm_cluster.c` | `include/ghostos/vm_cluster.h` |
+| `virtual_machine/src/devices/apic.rs` (active xAPIC state, interrupts, IPI routing, and timer) | `src/vm_apic.c` | `include/ghostos/vm_apic.h` |
+| `virtual_machine/src/devices/hpet.rs` (active HPET state, comparator scheduling, and IRQ routing) | `src/vm_hpet.c` | `include/ghostos/vm_hpet.h` |
+
+`make c-vm-test-binaries` builds `build/c/vm-device-contracts` without executing
+it. This standalone C binary checks APIC priority, level-triggered delivery,
+masking, NMI routing, countdown timers, shared manual-clock behavior, and HPET
+interrupt delivery into the C APIC. It does not boot an OS or replace the VM
+executable. The active VM still requires Cargo and the remaining Rust modules.
+
+The APIC and HPET structures are native C/Rust ABI state, not disk formats.
+VM adapters use `repr(C)` and check the C structure size before initialization.
+APIC snapshots retain the existing field order and optional host timestamp;
+restoring a snapshot re-seeds the host clock as before. The device ports preserve
+the existing VM register decoding and timing semantics, including their current
+limitations; these checks do not establish hardware-spec conformance.
 
 The ABI files are generated from `abi/ghostos-abi.toml`. Run
 `python3 tools/generate_abi.py` to regenerate C, Rust, and Swift bindings together,

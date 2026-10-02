@@ -9,7 +9,7 @@
 
 ## Migration progress
 
-The complete migration is in progress. About 239,827 Rust source lines need to
+The complete migration is in progress. About 238,588 Rust source lines need to
 be ported. The OS, VM, and service consumers still run Rust; no complete project
 cutover has occurred. Every Rust source area is listed below, including the VM,
 kernel, bootloader, services, tooling, examples, tests, and fuzz targets.
@@ -27,6 +27,14 @@ kernel, bootloader, services, tooling, examples, tests, and fuzz targets.
 - [x] Connect the existing C boot service, login service, and C shell source to generated syscall ABI types, operation IDs, and status constants; add shared-header dependencies to the kernel build.
 - [ ] Port the kernel, virtual machine, and every remaining service consumer to C. The active Ring 3 shell is still Rust; the C shell source is not yet the active shell image.
 - [ ] Establish behavior parity before checking off the module and full migration tasks.
+
+VM verification on 2026-10-01: `make c-library`, `make c-vm-test-binaries`,
+`build/c/vm-device-contracts`, and `cargo build -p ghostos-vm` passed on the
+AArch64 macOS host. `cargo test -p ghostos-vm` passed 274 tests with 17 opt-in
+QEMU tests ignored. The full VM remains a mixed Rust/C executable, not a
+standalone C VM. The host kernel C modules now propagate as a static library
+dependency into the VM; their previous package-local link arguments caused
+undefined quota, scheduler, and task symbols in the VM executable.
 
 The status, ABI, compatibility, protocol, and boot-protocol C implementations
 build into `build/c/libghostos.a`. See `c/README.md` for the source mapping and
@@ -99,10 +107,10 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/cpu/decoder.rs`
 - [ ] `virtual_machine/src/cpu/executor.rs`
 - [ ] `virtual_machine/src/cpu/mod.rs`
-- [ ] `virtual_machine/src/devices/apic.rs`
+- [ ] `virtual_machine/src/devices/apic.rs` — C owns the active xAPIC register state, MSR handling, interrupt priority/trigger tracking, EOI, IPI routing, and countdown timer in `c/src/vm_apic.c`. Rust retains device-trait/shared-owner adapters and the existing field-by-field snapshot format. The VM builds and the 16 retained APIC tests plus standalone C device contracts pass; removing the remaining Rust adapter awaits VM-wide cutover.
 - [ ] `virtual_machine/src/devices/display.rs`
 - [ ] `virtual_machine/src/devices/guest.rs`
-- [ ] `virtual_machine/src/devices/hpet.rs`
+- [ ] `virtual_machine/src/devices/hpet.rs` — C owns the active HPET counter, register state, comparator scheduling, periodic reloads, reset, and interrupt routing in `c/src/vm_hpet.c`. Rust retains device-trait/shared-owner adapters and APIC ownership. The seven retained HPET tests and standalone C device contracts pass; removing the remaining Rust adapter awaits VM-wide cutover. Existing register aliases and timing behavior are preserved rather than claiming hardware-spec conformance.
 - [ ] `virtual_machine/src/devices/input.rs`
 - [ ] `virtual_machine/src/devices/interrupt_controller.rs`
 - [ ] `virtual_machine/src/devices/mod.rs`
@@ -227,7 +235,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] Every Rust compiler/build-script dependency in project scripts, Makefiles, CI or release workflows, packaging, boot image creation, and documentation.
 - [ ] Any Rust-only generated source, build output, or configuration not listed as a source module; inventory it before moving it to `Trash/`.
 
-Inventory: 545 Rust source files and 75 Cargo manifests were found. The root
+Inventory: 546 Rust source files and 75 Cargo manifests were found. The root
 workspace lists 71 members; the other manifests include the fuzz package and
 nested example/proc-macro packages. Port every file in these trees before
 claiming the project has no Rust left.
