@@ -42,6 +42,8 @@ struct CDhcpRequest {
     server_id: [u8; 4],
 }
 
+const _: [(); 36] = [(); std::mem::size_of::<CDhcpRequest>()];
+
 pub const DHCP_SERVER_MAC: MacAddress = MacAddress::ghostos_default(0xD0);
 pub const DHCP_SERVER_PORT: u16 = 67;
 pub const DHCP_CLIENT_PORT: u16 = 68;
@@ -57,6 +59,7 @@ const DHCP_ACK: u8 = 5;
 const DHCP_NAK: u8 = 6;
 const DHCP_RELEASE: u8 = 7;
 const DHCP_OPTION_MESSAGE_TYPE: u8 = 53;
+#[cfg(test)]
 const DHCP_OPTION_REQUESTED_IP: u8 = 50;
 const DHCP_OPTION_SERVER_ID: u8 = 54;
 const DHCP_OPTION_SUBNET_MASK: u8 = 1;
