@@ -101,7 +101,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/watchdog.rs` — C owns atomic service and CPU heartbeats, one-shot stale-fault latches, diagnostics state, and polling. Rust adapts CPU masks and keeps watchdog call sites; behavior parity and full consumer cutover remain.
 - [ ] `kernel/src/webauthn.rs` — C owns SHA-256; Rust still parses SYWB/client JSON/COSE and performs custom P-256 ES256 verification. Full crypto/parser port and behavior parity remain.
 - [ ] `virtual_machine/src/boot/mod.rs` — C owns Multiboot header discovery and Multiboot information decoding; Rust still owns ELF loading, memory layout, boot-info serialization, and CPU/MMU handoff. Full loader port and parity remain.
-- [ ] `virtual_machine/src/clock.rs` — C supplies the host monotonic source and manual clock set/advance arithmetic; Rust retains trait/shared-clock wrappers. VM build and behavior parity remain.
+- [ ] `virtual_machine/src/clock.rs` — C owns host/manual clock state, lifecycle, and time arithmetic; Rust retains the trait/shared-clock API wrapper. VM build compiles the implementation; behavior parity remains to verify.
 - [ ] `virtual_machine/src/cluster.rs` — C adds the bounded deterministic network, shared-memory fixture, node membership and heartbeat state, fault recovery, VM run callbacks, and scale evidence in `c/src/vm_cluster.c`. The Rust CXL fixture and serial-output evidence still need C fabric and VM integrations; the C cluster is not yet the active VM consumer.
 - [ ] `virtual_machine/src/control.rs`
 - [ ] `virtual_machine/src/cpu/decoder.rs`

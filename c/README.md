@@ -84,7 +84,7 @@ foundation library.
 | `kernel/src/watchdog.rs` (service and CPU liveness tracking with one-shot stale reports) | `src/watchdog.c` | `include/ghostos/watchdog.h` |
 | `kernel/src/webauthn.rs` (SHA-256 primitive used by local WebAuthn verification) | `src/webauthn.c` | `include/ghostos/webauthn.h` |
 | `virtual_machine/src/boot/mod.rs` (Multiboot header discovery and information decoding) | `src/vm_boot.c` | `include/ghostos/vm_boot.h` |
-| `virtual_machine/src/clock.rs` (host monotonic source and manual clock arithmetic) | `src/vm_clock.c` | `include/ghostos/vm_clock.h` |
+| `virtual_machine/src/clock.rs` (host/manual clock state and time arithmetic) | `src/vm_clock.c` | `include/ghostos/vm_clock.h` |
 | `virtual_machine/src/cluster.rs` (bounded deterministic network, shared-memory fixture, membership, heartbeats, faults, and scale evidence) | `src/vm_cluster.c` | `include/ghostos/vm_cluster.h` |
 | `virtual_machine/src/devices/apic.rs` (active xAPIC state, interrupts, IPI routing, and timer) | `src/vm_apic.c` | `include/ghostos/vm_apic.h` |
 | `virtual_machine/src/devices/hpet.rs` (active HPET state, comparator scheduling, and IRQ routing) | `src/vm_hpet.c` | `include/ghostos/vm_hpet.h` |
