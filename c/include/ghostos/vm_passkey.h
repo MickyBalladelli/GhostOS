@@ -28,6 +28,9 @@ bool ghostos_passkey_decode_hex(const uint8_t *input, size_t length, uint8_t *ou
  * Zero means invalid/short output; otherwise returns bytes written. */
 size_t ghostos_passkey_frame(const uint8_t *input, size_t length, uint32_t mode,
     size_t maximum, uint8_t *output, size_t capacity);
+/* Flow values: none=0, enroll kind=1, enroll material=2, enroll confirm=3,
+ * login kind=4. Returns the ready flow action, or zero. */
+uint32_t ghostos_passkey_next_input(uint32_t mode, uint32_t flow, const uint8_t *text, size_t length);
 bool ghostos_passkey_enrollment_pending(const uint8_t *text, size_t length);
 bool ghostos_passkey_login_pending(const uint8_t *text, size_t length);
 bool ghostos_passkey_succeeded(const uint8_t *text, size_t length);

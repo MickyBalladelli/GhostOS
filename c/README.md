@@ -369,3 +369,17 @@ Rust retains VM diagnostic data/redaction assembly, sockets/execution, host
 clock/key callbacks, owned strings/paths/errors, and const command APIs.
 The first five existing cases are in `c/tests/vm_control_contracts.c`; two VM
 inspection/redaction fixtures and behavior parity remain open.
+
+`vm_passkey.h` / `vm_passkey.c` own active passkey bridge protocol helpers:
+bounded HTTP parsing, header/token/body offsets, Unicode whitespace, query
+lookup, percent/hex decoding, username policy, CR and length-prefixed serial
+frames, banner/challenge selection, observed guest-state transitions, and
+prompt-driven input readiness. Frame functions support a null-output size query
+before allocation. HTTP parsing retains the historical checked-add and wrapped
+slice failure decisions; native adapters preserve their panic behavior.
+`vm_passkey_assets.c` stores the original HTML, CSS, and browser script as
+immutable byte arrays, verified byte-for-byte against their original source.
+Rust still owns sockets/timeouts, browser launch, token entropy, request
+routing/replies, the icon asset reference, VM/serial handoff, and owned buffers.
+The original localhost-bind test remains Rust and unrun; behavior parity and
+non-host platform coverage remain open.

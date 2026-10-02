@@ -213,6 +213,22 @@ behavior parity, and full Rust removal remain open. Logs are in
 `temp/c-library-control.log`, `temp/vm-build-control.log`, and
 `temp/control-contract-syntax.log`.
 
+Passkey-bridge build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C bridge protocol/state helpers.
+The page (980 bytes), stylesheet (1,366 bytes), and script (10,806 bytes) match
+the original Rust source byte-for-byte. HTTP parsing preserves first parseable
+Content-Length, first token header, native-size decimal parsing, Unicode
+whitespace, and the existing checked-overflow/wrapped-slice panic paths.
+Percent decoding preserves literal incomplete percent escapes and decoded
+UTF-8 validation. Guest-banner ordering, commit-only enrollment completion,
+challenge retention/clearing, prompt-driven progression, and serial frame
+layout are preserved in source. The single existing localhost-bind fixture
+remains Rust; no tests were executed and no bridge/listener was started.
+Host I/O, request routing/replies, token entropy, platform coverage, behavior
+parity, and full Rust removal remain open. Logs are in
+`temp/c-library-passkey.log`, `temp/vm-build-passkey.log`, and
+`temp/passkey-assets-source-check.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -318,7 +334,7 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `virtual_machine/src/net/mac.rs` — C owns byte conversion, broadcast/unicast/multicast classification, destination filtering, and lowercase formatting in `c/src/vm_mac.c`. Rust keeps the public type and const constructors for API compatibility.
 - [ ] `virtual_machine/src/net/mod.rs` — C owns the alignment helper; Rust module exports and networking submodules remain.
 - [x] `virtual_machine/src/net/packet.rs` — C owns bounded packet queue storage, byte and packet accounting, queue operations, Ethernet minimum-frame padding, and error display strings in `c/src/vm_packet.c`. The VM build links this host-allocator module; Rust keeps the public `Vec` and error-code wrappers.
-- [ ] `virtual_machine/src/passkey_bridge.rs`
+- [ ] `virtual_machine/src/passkey_bridge.rs` — C owns active HTML/CSS/JavaScript asset storage, bounded HTTP request-shape parsing with borrowed offsets, Unicode-aware header/word trimming, content-length and token-header policy, query lookup, percent/hex decoding, username checks, CR/binary serial framing, banner/challenge detection, observation-driven enrollment/login state transitions, and prompt-driven input readiness. Rust retains sockets/timeouts, browser launch, token entropy, request-route/VM handoff and reply assembly, owned buffers, and the existing localhost-bind fixture. Browser asset bytes were checked against the original source; behavior parity and full cutover remain.
 - [ ] `virtual_machine/src/replay.rs` — C owns active SYNVMRP1 file/header codecs, trace and file-size validation, session-owned records and payloads, mode/cursor/capacity transitions, error latching, instruction/clock/timer/interrupt/host-input replay, and DMA payload encoding/decoding. Rust retains typed trace snapshots, filesystem I/O, error formatting, and shared-owner adapters. Full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/snapshot.rs` — Active SHA-256, streaming multipart HMAC-SHA256, and fixed-length authentication comparisons use `c/src/vm_snapshot_auth.c`. Rust retains key wrappers, snapshot serialization/deserialization, restoration, diff/checkpoint storage, and schema policy; the complete snapshot port and behavior parity remain.
 - [ ] `virtual_machine/src/terminal.rs` — C owns active CR/LF and DEL input policy, resize polling and change detection, poll buffers, transcript storage/replay, EOF byte generation, and diagnostics counters. Rust retains supplied streams, reader threads, native error-kind adapters, shared clock ownership, and typed transcript snapshots. Policy portions of four existing terminal cases have C contract source. Stream/thread and PTY fixture ports, full C cutover, and behavior parity remain.

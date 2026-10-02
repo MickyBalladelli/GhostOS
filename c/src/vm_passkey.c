@@ -59,9 +59,7 @@ static bool word(const uint8_t *input, size_t length, size_t *cursor, size_t *st
     *size = *cursor - *start;
     return true;
 }
-static bool equal(const uint8_t *input, size_t length, const char *text) {
-    return length == strlen(text) && (!length || !memcmp(input, text, length));
-}
+
 
 static size_t find(const uint8_t *bytes, size_t length, const uint8_t *needle, size_t size, bool last) {
     if (size > length) return SIZE_MAX;
@@ -200,14 +198,26 @@ bool ghostos_passkey_decode_hex(const uint8_t *input, size_t length, uint8_t *ou
 size_t ghostos_passkey_frame(const uint8_t *input, size_t length, uint32_t mode,
     size_t maximum, uint8_t *output, size_t capacity) {
     if (mode == 0) {
-        if (length == SIZE_MAX || capacity <= length) return 0;
+        if (length == SIZE_MAX) return 0;
+        if (!output) return length + 1;
+        if (capacity <= length) return 0;
         if (length) memcpy(output, input, length);
         output[length] = '\r'; return length + 1;
     }
     size_t limit = mode == 1 ? 32 : maximum;
-    if (!length || length > UINT16_MAX || length > limit || capacity < length + 3) return 0;
+    if (!length || length > UINT16_MAX || length > limit) return 0;
+    if (!output) return length + 3;
+    if (capacity < length + 3) return 0;
     output[0] = 0; output[1] = (uint8_t)length; output[2] = (uint8_t)(length >> 8);
     memcpy(output + 3, input, length); return length + 3;
+}
+uint32_t ghostos_passkey_next_input(uint32_t mode, uint32_t flow, const uint8_t *text, size_t length) {
+    if (mode == 4) return 0;
+    const char *prompt = flow == 1 ? "Credential type [PASSKEY/TPM/SSH] (PASSKEY):" :
+        flow == 2 ? "Waiting for passkey public key from local browser:" :
+        flow == 3 ? "Create this administrator account? [y/N]:" :
+        flow == 4 ? "\x1b]GhostOSAuthMethod\x07" : NULL;
+    return prompt && contains(text, length, prompt) ? flow : 0;
 }
 bool ghostos_passkey_enrollment_pending(const uint8_t *text, size_t length) {
     if (contains(text, length, "Administrator account committed.")) return false;
