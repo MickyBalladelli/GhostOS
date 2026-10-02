@@ -7,37 +7,53 @@ use crate::memory::Mmu;
 use crate::replay::SharedReplay;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::ffi::c_void;
 
 pub const BIOS_ROM_BASE: u64 = 0xF0000;
 pub const BIOS_ROM_SIZE: usize = 0x10000;
 pub const BIOS_ENTRY_LINEAR: u64 = 0xFE05B;
+#[cfg(test)]
 const BIOS_ENTRY_OFFSET: usize = 0xE05B;
 pub const RESET_VECTOR_LINEAR: u64 = 0xFFFF0;
+#[cfg(test)]
 const RESET_VECTOR_ROM_OFFSET: usize = 0xFFF0;
 pub const MBR_LOAD_ADDR: u64 = 0x7C00;
-const CHS_HEADS: u64 = 16;
-const CHS_SECTORS: u64 = 63;
 
+#[repr(C)]
+struct CRegisters {
+    rax: u64, rbx: u64, rcx: u64, rdx: u64, rsi: u64, rdi: u64, rflags: u64,
+    ds: u16, es: u16,
+}
+#[repr(C)]
+struct CIo {
+    read: unsafe extern "C" fn(*mut c_void, u64, *mut u8, usize) -> bool,
+    write: unsafe extern "C" fn(*mut c_void, u64, *const u8, usize) -> bool,
+    context: *mut c_void,
+}
+unsafe extern "C" {
+    fn ghostos_vm_bios_rom(output: *mut u8);
+    fn ghostos_vm_bios_post_tables(ivt: *mut u8, bda: *mut u8);
+    fn ghostos_vm_bios_service(vector: u8, registers: *mut CRegisters, image: *const u8,
+        image_length: usize, memory_size: u64, io: *const CIo);
+}
+unsafe extern "C" fn read_memory(raw: *mut c_void, addr: u64, out: *mut u8, len: usize) -> bool {
+    let mmu = unsafe { &mut *raw.cast::<Mmu>() };
+    match mmu.read_phys(addr, len) {
+        Ok(bytes) => {
+            if len != 0 { unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, len) }; }
+            true
+        }
+        Err(_) => false,
+    }
+}
+unsafe extern "C" fn write_memory(raw: *mut c_void, addr: u64, data: *const u8, len: usize) -> bool {
+    let mmu = unsafe { &mut *raw.cast::<Mmu>() };
+    let bytes = if len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(data, len) } };
+    mmu.write_phys(addr, bytes).is_ok()
+}
 fn bios_rom() -> Vec<u8> {
-    let mut rom = vec![0u8; BIOS_ROM_SIZE];
-    let stub: [u8; 13] = [
-        0xFA, 0x66, 0x31, 0xC0, 0x8E, 0xD8, 0x8E, 0xC0, 0x8E, 0xD0, 0x66, 0xBC, 0x00,
-    ];
-    rom[BIOS_ENTRY_OFFSET] = 0xFA;
-    // mov sp, 0x7C00 requires 4 bytes: 66 BC 00 7C
-    rom[BIOS_ENTRY_OFFSET..BIOS_ENTRY_OFFSET + 12]
-        .copy_from_slice(&[0xFA, 0x66, 0x31, 0xC0, 0x8E, 0xD8, 0x8E, 0xC0, 0x8E, 0xD0, 0x66, 0xBC]);
-    rom[BIOS_ENTRY_OFFSET + 12] = 0x00;
-    rom[BIOS_ENTRY_OFFSET + 13] = 0x7C;
-    rom[BIOS_ENTRY_OFFSET + 14] = 0xFB; // sti
-    rom[BIOS_ENTRY_OFFSET + 15] = 0xCD; // int 0x19
-    rom[BIOS_ENTRY_OFFSET + 16] = 0x19;
-    rom[BIOS_ENTRY_OFFSET + 17] = 0xF4; // hlt
-    let _ = stub;
-    rom[RESET_VECTOR_ROM_OFFSET..RESET_VECTOR_ROM_OFFSET + 5]
-        .copy_from_slice(&[0xEA, 0x5B, 0xE0, 0x00, 0xF0]);
-    rom[0xFFFE] = 0x55;
-    rom[0xFFFF] = 0xAA;
+    let mut rom = vec![0; BIOS_ROM_SIZE];
+    unsafe { ghostos_vm_bios_rom(rom.as_mut_ptr()) };
     rom
 }
 
@@ -159,9 +175,7 @@ impl BiosContext {
         }
         match int_num {
             0x10 => self.video_service(cpu, mmu),
-            0x13 => self.disk_service(cpu, mmu),
-            0x15 => self.system_service(cpu, mmu),
-            0x16 => self.keyboard_service(cpu),
+            0x13 | 0x15 | 0x16 => self.legacy_service(int_num, cpu, mmu),
             0x19 => self.bootstrap_service(cpu, mmu),
             _ => Ok(()),
         }
@@ -172,199 +186,17 @@ impl BiosContext {
         Ok(())
     }
 
-    // INT 13h — disk
-    fn disk_service(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) -> Result<(), BiosError> {
-        clear_cf(cpu);
-        let ah = ((cpu.rax >> 8) & 0xFF) as u8;
-        match ah {
-            0x00 | 0x01 | 0x0E => set_ah(cpu, 0),
-            0x02 => self.int13_read_chs(cpu, mmu),
-            0x08 => {
-                set_ah(cpu, 0);
-                cpu.rdx = (cpu.rdx & !0xFF00) | (((CHS_HEADS - 1) as u64) << 8);
-                cpu.rcx = (cpu.rcx & !0xFFFF) | (CHS_SECTORS - 1) as u64;
-                cpu.rdx = (cpu.rdx & !0xFF) | 0x01;
-            }
-            0x15 => {
-                set_ah(cpu, 3);
-                let sectors = self
-                    .boot_image
-                    .as_ref()
-                    .map(|i| (i.len() / 512) as u64)
-                    .unwrap_or(0);
-                cpu.rcx = (cpu.rcx & !0xFFFF) | (sectors & 0xFFFF);
-                cpu.rdx = (cpu.rdx & !0xFFFF) | ((sectors >> 16) & 0xFFFF);
-            }
-            0x41 => self.int13_edd_check(cpu),
-            0x42 => self.int13_edd_read(cpu, mmu),
-            _ => {
-                set_cf(cpu);
-                set_ah(cpu, 0x01);
-            }
-        }
-        Ok(())
-    }
-
-    fn int13_read_chs(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) {
-        let Some(image) = &self.boot_image else {
-            set_cf(cpu);
-            set_ah(cpu, 0x80);
-            return;
-        };
-        let count = (cpu.rax & 0xFF) as u64;
-        let ch = ((cpu.rcx >> 8) & 0xFF) as u64;
-        let cl = (cpu.rcx & 0xFF) as u64;
-        let dh = ((cpu.rdx >> 8) & 0xFF) as u64;
-        let cyl = ch | ((cl & 0xC0) << 2);
-        let sect = cl & 0x3F;
-        let lba = if sect == 0 {
-            (cyl * CHS_HEADS + dh) * CHS_SECTORS
-        } else {
-            (cyl * CHS_HEADS + dh) * CHS_SECTORS + (sect - 1)
-        };
-        let available = (image.len() / 512) as u64;
-        let to_read = count.min(available.saturating_sub(lba));
-        if to_read == 0 {
-            set_cf(cpu);
-            set_ah(cpu, 0x02);
-            return;
-        }
-        let offset = (lba * 512) as usize;
-        let bytes = &image[offset..offset + (to_read as usize) * 512];
-        let dest = ((cpu.es.selector as u64) << 4) + (cpu.rbx & 0xFFFF);
-        let _ = mmu.write_phys(dest, bytes);
-        clear_cf(cpu);
-        set_ah(cpu, 0);
-    }
-
-    fn int13_edd_check(&self, cpu: &mut CpuState) {
-        let dl = (cpu.rdx & 0xFF) as u8;
-        if dl & 0x80 == 0 {
-            set_cf(cpu);
-            set_ah(cpu, 0x01);
-            return;
-        }
-        clear_cf(cpu);
-        set_ah(cpu, 0x30);
-        cpu.rbx = (cpu.rbx & !0xFFFF) | 0xAA55;
-        cpu.rcx = (cpu.rcx & !0xFFFF) | 0x0003;
-    }
-
-    fn int13_edd_read(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) {
-        let dap_addr = ((cpu.ds.selector as u64) << 4) + (cpu.rsi & 0xFFFF);
-        let Some(image) = &self.boot_image else {
-            set_cf(cpu);
-            set_ah(cpu, 0x80);
-            return;
-        };
-        let Ok(header) = mmu.read_phys(dap_addr, 16) else {
-            set_cf(cpu);
-            set_ah(cpu, 0x01);
-            return
-        };
-        if header[0] < 0x10 {
-            set_cf(cpu);
-            set_ah(cpu, 0x01);
-            return;
-        }
-        let count = header[2] as u64;
-        let seg = u16::from_le_bytes([header[4], header[5]]);
-        let off = u16::from_le_bytes([header[6], header[7]]);
-        let lba = u64::from_le_bytes([
-            header[8], header[9], header[10], header[11],
-            header[12], header[13], header[14], header[15],
-        ]);
-        let dest = ((seg as u64) << 4) + off as u64;
-        let available = (image.len() / 512) as u64;
-        let to_read = count.min(available.saturating_sub(lba));
-        if to_read == 0 {
-            set_cf(cpu);
-            set_ah(cpu, 0x02);
-            return;
-        }
-        let offset = (lba * 512) as usize;
-        let bytes = &image[offset..offset + (to_read as usize) * 512];
-        if mmu.write_phys(dest, bytes).is_err() {
-            set_cf(cpu);
-            set_ah(cpu, 0x09);
-            return
-        }
-        clear_cf(cpu);
-        set_ah(cpu, 0);
-    }
-
-    // INT 15h — system services
-    fn system_service(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) -> Result<(), BiosError> {
-        clear_cf(cpu);
-        let ah = ((cpu.rax >> 8) & 0xFF) as u8;
-        match ah {
-            0x20 | 0x86 | 0xC0 => set_ah(cpu, 0),
-            0x88 => {
-                let above = self.memory_size.saturating_sub(0x100000);
-                let kb = (above / 1024).min(0xFFFF) as u64;
-                cpu.rax = (cpu.rax & !0xFFFF) | (kb & 0xFFFF);
-                clear_cf(cpu);
-            }
-            0xE8 | 0xE9 => self.int15_e820(cpu, mmu),
-            _ => {
-                set_cf(cpu);
-                set_ah(cpu, 0x86);
-            }
-        }
-        Ok(())
-    }
-
-    fn int15_e820(&mut self, cpu: &mut CpuState, mmu: &mut Mmu) {
-        if cpu.rdx & 0xFFFF_FFFF != 0x534D_4150 {
-            set_cf(cpu);
-            set_ah(cpu, 0x86);
-            return;
-        }
-        let dest = ((cpu.es.selector as u64) << 4) + (cpu.rdi & 0xFFFF);
-        let ecx = (cpu.rcx & 0xFFFF_FFFF) as usize;
-        if ecx < 20 {
-            set_cf(cpu);
-            set_ah(cpu, 0x86);
-            return;
-        }
-        let ebx = (cpu.rbx & 0xFFFF_FFFF) as usize;
-        let mem = self.memory_size as u64;
-        let entries: [(u64, u64, u32); 3] = [
-            (0, mem.min(0xE0000), 1),
-            (0xE0000, 0x20000, 2),
-            (0x100000, mem.saturating_sub(0x100000), 1),
-        ];
-        if ebx >= entries.len() {
-            cpu.rbx = 0;
-            set_ah(cpu, 0);
-            return;
-        }
-        let (base, len, ty) = entries[ebx];
-        let mut buf = [0u8; 24];
-        buf[0..8].copy_from_slice(&base.to_le_bytes());
-        buf[8..16].copy_from_slice(&len.to_le_bytes());
-        buf[16..20].copy_from_slice(&ty.to_le_bytes());
-        buf[20..24].copy_from_slice(&1u32.to_le_bytes());
-        if mmu.write_phys(dest, &buf[..ecx.min(24)]).is_err() {
-            set_cf(cpu);
-            set_ah(cpu, 0x86);
-            return
-        }
-        cpu.rbx = ((ebx + 1) as u64) & 0xFFFF_FFFF;
-        set_ah(cpu, 0);
-        clear_cf(cpu);
-    }
-
-    // INT 16h — keyboard
-    fn keyboard_service(&mut self, cpu: &mut CpuState) -> Result<(), BiosError> {
-        match ((cpu.rax >> 8) & 0xFF) as u8 {
-            0x00 => {
-                cpu.rax &= !0xFFFF;
-                cpu.rflags |= 1 << 6; // ZF
-            }
-            0x01 => cpu.rflags |= 1 << 6,
-            _ => cpu.rax &= !0xFF,
-        }
+    fn legacy_service(&mut self, vector: u8, cpu: &mut CpuState, mmu: &mut Mmu) -> Result<(), BiosError> {
+        let mut registers = CRegisters { rax: cpu.rax, rbx: cpu.rbx, rcx: cpu.rcx,
+            rdx: cpu.rdx, rsi: cpu.rsi, rdi: cpu.rdi, rflags: cpu.rflags,
+            ds: cpu.ds.selector, es: cpu.es.selector };
+        let (image, length) = self.boot_image.as_ref()
+            .map_or((std::ptr::null(), 0), |image| (image.as_ptr(), image.len()));
+        let io = CIo { read: read_memory, write: write_memory, context: (mmu as *mut Mmu).cast() };
+        unsafe { ghostos_vm_bios_service(vector, &mut registers, image, length, self.memory_size as u64, &io) };
+        cpu.rax = registers.rax; cpu.rbx = registers.rbx; cpu.rcx = registers.rcx;
+        cpu.rdx = registers.rdx; cpu.rsi = registers.rsi; cpu.rdi = registers.rdi;
+        cpu.rflags = registers.rflags;
         Ok(())
     }
 
@@ -428,18 +260,6 @@ pub enum BiosError {
     NotImplemented,
 }
 
-fn clear_cf(cpu: &mut CpuState) {
-    cpu.rflags &= !1;
-}
-
-fn set_cf(cpu: &mut CpuState) {
-    cpu.rflags |= 1;
-}
-
-fn set_ah(cpu: &mut CpuState, v: u8) {
-    cpu.rax = (cpu.rax & !0xFF00) | ((v as u64) << 8);
-}
-
 pub struct Bios {
     pub context: BiosContext,
     pub reset_vector: u64,
@@ -484,24 +304,9 @@ impl Bios {
         let rom = bios_rom();
         let _ = mmu.write_phys(BIOS_ROM_BASE, &rom);
         let mut ivt = [0u8; 0x400];
-        for slot in (0..0x400usize).step_by(4) {
-            ivt[slot] = 0x53;
-            ivt[slot + 1] = 0xFF;
-            ivt[slot + 2] = 0x00;
-            ivt[slot + 3] = 0xF0;
-        }
-        let _ = mmu.write_phys(0, &ivt);
         let mut bda = [0u8; 256];
-        bda[0x80] = 0x03;
-        bda[0x81] = 0xF8;
-        bda[0x10] = 0x21;
-        bda[0x13] = 0x80;
-        bda[0x14] = 0x02;
-        bda[0x49] = 0x03;
-        bda[0x4A] = 80;
-        bda[0x4B] = 0;
-        bda[0x4C] = 0xA0;
-        bda[0x4D] = 0x0F;
+        unsafe { ghostos_vm_bios_post_tables(ivt.as_mut_ptr(), bda.as_mut_ptr()) };
+        let _ = mmu.write_phys(0, &ivt);
         let _ = mmu.write_phys(0x0400, &bda);
         cpu.rax = 0x0003;
         self.context.video_service(cpu, mmu)?;

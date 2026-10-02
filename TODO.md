@@ -79,6 +79,12 @@ lease-policy, and reply encoder. Rust segment integration remains. No new
 behavior-parity results are claimed. Build logs are in
 `temp/c-library-dhcp.log` and `temp/vm-build-dhcp.log`.
 
+BIOS build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-vm` passed with active C ROM/POST templates and
+legacy disk, memory-map, and keyboard services. CPU/MMU integration and
+boot handoff still use Rust. Behavior parity remains unverified. Build
+logs are in `temp/c-library-bios.log` and `temp/vm-build-bios.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -169,7 +175,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/virtio_queue.rs` — C owns split-ring address calculation, avail-ring consumption, descriptor-chain validation, and used-ring completion. Production controllers call C directly; the Rust wrapper remains only for existing test source. Full Rust removal and end-to-end behavior parity remain.
 - [ ] `virtual_machine/src/driver_capabilities.rs` — C owns the active ten-entry discovery report, availability and fallback selection, and static report text in `c/src/vm_driver_capabilities.c`. Rust retains public enum/array/string adapters and the const kind-name API. The three existing report cases have C contract source; full Rust removal and behavior parity remain.
 - [ ] `virtual_machine/src/execution.rs`
-- [ ] `virtual_machine/src/firmware/bios.rs`
+- [ ] `virtual_machine/src/firmware/bios.rs` — C owns active BIOS ROM generation, POST IVT/BDA templates, INT 13h disk register services and CHS/EDD transfers, INT 15h memory sizing/E820 encoding, and INT 16h keyboard responses in `c/src/vm_bios.c`. Rust retains context ownership, CPU/MMU adapters, video/UEFI dispatch, and MBR boot handoff. Existing EDD packet offsets/count handling and CHS ignored-write-error behavior are preserved; full C cutover and behavior parity remain.
 - [ ] `virtual_machine/src/firmware/mod.rs`
 - [ ] `virtual_machine/src/firmware/uefi.rs`
 - [ ] `virtual_machine/src/hardware_acceleration.rs`
