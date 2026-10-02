@@ -1,8 +1,8 @@
 //! Packet backends: the pluggable [`NetBackend`] trait, isolated loopback,
 //! and deterministic shared Ethernet segments.
 
-use crate::net::mac::{mac_matches, MacAddress};
-use crate::net::packet::{pad_frame, NetError, ETHERNET_FRAME_MAX, ETHERNET_HEADER_LEN};
+use crate::net::mac::MacAddress;
+use crate::net::packet::{NetError, ETHERNET_FRAME_MAX, ETHERNET_HEADER_LEN};
 use crate::net::dhcp::DeterministicVmNetwork;
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -10,30 +10,22 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::rc::Rc;
 
-unsafe extern "C" {
-    fn ghostos_vm_net_host_frame_encode(
-        packet: *const u8,
-        packet_length: usize,
-        output: *mut u8,
-        output_capacity: usize,
-        output_length: *mut usize,
-    ) -> bool;
-    fn ghostos_vm_net_host_frame_decode(
-        frame: *const u8,
-        frame_length: usize,
-        packet_offset: *mut usize,
-        packet_length: *mut usize,
-    ) -> bool;
-    fn ghostos_vm_net_validate_packet(packet_length: usize) -> u32;
-
+#[repr(C)]
+struct CHostIo {
+    link_up: unsafe extern "C" fn(*mut c_void) -> bool,
+    send: unsafe extern "C" fn(*mut c_void, *const u8, usize) -> i32,
+    receive: unsafe extern "C" fn(*mut c_void, *mut u8, usize, *mut usize) -> i32,
+    context: *mut c_void,
 }
-
-fn validate_packet(packet: &[u8]) -> Result<(), NetError> {
-    match unsafe { ghostos_vm_net_validate_packet(packet.len()) } {
-        0 => Ok(()),
-        1 => Err(NetError::Truncated),
-        _ => Err(NetError::PacketTooLarge),
-    }
+unsafe extern "C" {
+    fn ghostos_vm_host_net_new(mac: *const MacAddress, udp: bool) -> *mut c_void;
+    fn ghostos_vm_host_net_free(state: *mut c_void);
+    fn ghostos_vm_host_net_admin(state: *const c_void) -> bool;
+    fn ghostos_vm_host_net_set_admin(state: *mut c_void, up: bool);
+    fn ghostos_vm_host_net_set_promiscuous(state: *mut c_void, enabled: bool);
+    fn ghostos_vm_host_net_transmitted(state: *const c_void) -> usize;
+    fn ghostos_vm_host_net_transmit(state: *mut c_void, io: *const CHostIo, bytes: *const u8, length: usize) -> i32;
+    fn ghostos_vm_host_net_receive(state: *mut c_void, io: *const CHostIo, bytes: *mut u8, length: *mut usize) -> i32;
 }
 
 /// Host-facing network selection for a VM.
@@ -81,11 +73,7 @@ pub trait NetBackend {
 /// Host transport used by user-mode/NAT and bridged VM networking.
 pub struct HostNetworkBackend {
     transport: HostTransport,
-    mac: MacAddress,
-    admin_up: bool,
-    promiscuous: bool,
-    tx_packets: usize,
-    rx_packets: usize,
+    state: *mut c_void,
 }
 
 enum HostTransport {
@@ -103,14 +91,7 @@ impl HostNetworkBackend {
         let socket = UdpSocket::bind(bind)?;
         socket.connect(peer)?;
         socket.set_nonblocking(true)?;
-        Ok(Self {
-            transport: HostTransport::Udp(socket),
-            mac,
-            admin_up: true,
-            promiscuous: false,
-            tx_packets: 0,
-            rx_packets: 0,
-        })
+        Ok(Self::from_transport(HostTransport::Udp(socket), mac))
     }
 
     /// Open a host Ethernet interface for bridged networking.
@@ -153,17 +134,7 @@ impl HostNetworkBackend {
             return Err(error);
         }
 
-        Ok(Self {
-            transport: HostTransport::Raw {
-                fd,
-                interface: interface.to_string(),
-            },
-            mac,
-            admin_up: true,
-            promiscuous: false,
-            tx_packets: 0,
-            rx_packets: 0,
-        })
+        Ok(Self::from_transport(HostTransport::Raw { fd, interface: interface.to_string() }, mac))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -174,56 +145,87 @@ impl HostNetworkBackend {
         ))
     }
 
-    fn transport_link_up(&self) -> bool {
-        match &self.transport {
-            HostTransport::Udp(_) => true,
+    fn from_transport(transport: HostTransport, mac: MacAddress) -> Self {
+        let state = unsafe { ghostos_vm_host_net_new(&mac, matches!(&transport, HostTransport::Udp(_))) };
+        assert!(!state.is_null(), "host network native allocation failed");
+        Self { transport, state }
+    }
+}
+
+impl HostTransport {
+    fn link_up(&self) -> bool {
+        match self {
+            Self::Udp(_) => true,
             #[cfg(target_os = "linux")]
-            HostTransport::Raw { interface, .. } => {
-                let carrier = std::fs::read_to_string(format!(
-                    "/sys/class/net/{interface}/carrier"
-                ));
-                carrier
+            Self::Raw { interface, .. } => {
+                std::fs::read_to_string(format!("/sys/class/net/{interface}/carrier"))
                     .map(|state| state.trim() == "1")
                     .unwrap_or_else(|_| {
-                        std::fs::read_to_string(format!(
-                            "/sys/class/net/{interface}/operstate"
-                        ))
-                        .map(|state| state.trim() != "down")
-                        .unwrap_or(false)
+                        std::fs::read_to_string(format!("/sys/class/net/{interface}/operstate"))
+                            .map(|state| state.trim() != "down").unwrap_or(false)
                     })
             }
         }
     }
-
-    fn transmit_udp(socket: &UdpSocket, packet: &[u8]) -> Result<(), NetError> {
-        let mut frame_length = 0;
-        if !unsafe {
-            ghostos_vm_net_host_frame_encode(
-                packet.as_ptr(), packet.len(), std::ptr::null_mut(), 0, &mut frame_length,
-            )
-        } {
-            return Err(NetError::BackendUnavailable);
-        }
-        let mut frame = vec![0; frame_length];
-        if !unsafe {
-            ghostos_vm_net_host_frame_encode(
-                packet.as_ptr(), packet.len(), frame.as_mut_ptr(), frame.len(), &mut frame_length,
-            )
-        } {
-            return Err(NetError::BackendUnavailable);
-        }
-        socket.send(&frame).map_err(|error| match error.kind() {
-            io::ErrorKind::WouldBlock => NetError::QueueFull,
-            _ => NetError::BackendUnavailable,
-        })?;
-        Ok(())
+    fn io(&mut self) -> CHostIo {
+        CHostIo { link_up: host_link, send: host_send, receive: host_receive,
+            context: (self as *mut HostTransport).cast() }
     }
 }
 
+unsafe extern "C" fn host_link(raw: *mut c_void) -> bool {
+    unsafe { &*raw.cast::<HostTransport>() }.link_up()
+}
+unsafe extern "C" fn host_send(raw: *mut c_void, bytes: *const u8, length: usize) -> i32 {
+    let transport = unsafe { &*raw.cast::<HostTransport>() };
+    let frame = unsafe { std::slice::from_raw_parts(bytes, length) };
+    let result = match transport {
+        HostTransport::Udp(socket) => socket.send(frame).map(|_| ()),
+        #[cfg(target_os = "linux")]
+        HostTransport::Raw { fd, .. } => {
+            let sent = unsafe { libc::send(*fd, frame.as_ptr().cast(), frame.len(), libc::MSG_DONTWAIT) };
+            if sent < 0 { Err(io::Error::last_os_error()) }
+            else if sent as usize != frame.len() { return NetError::BackendUnavailable as i32; }
+            else { Ok(()) }
+        }
+    };
+    result.map_or_else(|error| if error.kind() == io::ErrorKind::WouldBlock {
+        NetError::QueueFull as i32
+    } else { NetError::BackendUnavailable as i32 }, |_| -1)
+}
+unsafe extern "C" fn host_receive(raw: *mut c_void, bytes: *mut u8, capacity: usize, length: *mut usize) -> i32 {
+    let transport = unsafe { &*raw.cast::<HostTransport>() };
+    let frame = unsafe { std::slice::from_raw_parts_mut(bytes, capacity) };
+    let result = match transport {
+        HostTransport::Udp(socket) => socket.recv(frame),
+        #[cfg(target_os = "linux")]
+        HostTransport::Raw { fd, .. } => {
+            let received = unsafe { libc::recv(*fd, frame.as_mut_ptr().cast(), frame.len(), libc::MSG_DONTWAIT) };
+            if received < 0 { Err(io::Error::last_os_error()) } else { Ok(received as usize) }
+        }
+    };
+    match result {
+        Ok(received) => { unsafe { *length = received }; 1 }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => 0,
+        Err(_) => -1,
+    }
+}
+
+// Only owning mutable operations change the C state; transport handles retain
+// the same Send/Sync semantics as the previous Rust backend.
+unsafe impl Send for HostNetworkBackend {}
+unsafe impl Sync for HostNetworkBackend {}
+
 impl Drop for HostNetworkBackend {
     fn drop(&mut self) {
+        unsafe { ghostos_vm_host_net_free(self.state) };
+    }
+}
+
+impl Drop for HostTransport {
+    fn drop(&mut self) {
         #[cfg(target_os = "linux")]
-        if let HostTransport::Raw { fd, .. } = &self.transport {
+        if let Self::Raw { fd, .. } = self {
             unsafe { libc::close(*fd) };
         }
     }
@@ -231,111 +233,20 @@ impl Drop for HostNetworkBackend {
 
 impl NetBackend for HostNetworkBackend {
     fn transmit(&mut self, packet: &[u8]) -> Result<(), NetError> {
-        if !self.admin_up {
-            return Err(NetError::AdminDown);
-        }
-        if !self.link_up() {
-            return Err(NetError::LinkDown);
-        }
-        validate_packet(packet)?;
-        match &self.transport {
-            HostTransport::Udp(socket) => Self::transmit_udp(socket, packet)?,
-            #[cfg(target_os = "linux")]
-            HostTransport::Raw { fd, .. } => {
-                let frame = pad_frame(packet);
-                let sent = unsafe {
-                    libc::send(fd, frame.as_ptr().cast(), frame.len(), libc::MSG_DONTWAIT)
-                };
-                if sent < 0 {
-                    return Err(match io::Error::last_os_error().kind() {
-                        io::ErrorKind::WouldBlock => NetError::QueueFull,
-                        _ => NetError::BackendUnavailable,
-                    });
-                }
-                if sent as usize != frame.len() {
-                    return Err(NetError::BackendUnavailable);
-                }
-            }
-        }
-        self.tx_packets = self.tx_packets.saturating_add(1);
-        Ok(())
+        native_transmitted(unsafe { ghostos_vm_host_net_transmit(self.state, &self.transport.io(), packet.as_ptr(), packet.len()) })
     }
-
     fn receive(&mut self) -> Result<Option<Vec<u8>>, NetError> {
-        if !self.admin_up {
-            return Err(NetError::AdminDown);
-        }
-        if !self.link_up() {
-            return Err(NetError::LinkDown);
-        }
-        let packet = match &self.transport {
-            HostTransport::Udp(socket) => {
-                let mut frame = [0u8; 4 + ETHERNET_FRAME_MAX];
-                match socket.recv(&mut frame) {
-                    Ok(length) if length >= 4 => {
-                        let mut packet_offset = 0;
-                        let mut packet_length = 0;
-                        if !unsafe {
-                            ghostos_vm_net_host_frame_decode(
-                                frame.as_ptr(), length, &mut packet_offset, &mut packet_length,
-                            )
-                        } {
-                            return Ok(None);
-                        }
-                        frame[packet_offset..packet_offset + packet_length].to_vec()
-                    }
-                    Ok(_) => return Ok(None),
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-                    Err(_) => return Err(NetError::BackendUnavailable),
-                }
-            }
-            #[cfg(target_os = "linux")]
-            HostTransport::Raw { fd, .. } => {
-                let mut frame = [0u8; ETHERNET_FRAME_MAX];
-                let length = unsafe {
-                    libc::recv(fd, frame.as_mut_ptr().cast(), frame.len(), libc::MSG_DONTWAIT)
-                };
-                if length < 0 {
-                    if io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock {
-                        return Ok(None);
-                    }
-                    return Err(NetError::BackendUnavailable);
-                }
-                frame[..length as usize].to_vec()
-            }
-        };
-        if packet.len() < ETHERNET_HEADER_LEN {
-            return Ok(None);
-        }
-        if !mac_matches(&packet[..6], &self.mac, self.promiscuous) {
-            return Ok(None);
-        }
-        self.rx_packets = self.rx_packets.saturating_add(1);
-        Ok(Some(packet))
+        let mut bytes = [0; ETHERNET_FRAME_MAX]; let mut length = 0;
+        let result = unsafe { ghostos_vm_host_net_receive(self.state, &self.transport.io(), bytes.as_mut_ptr(), &mut length) };
+        native_received(result, &bytes, length)
     }
-
-    fn link_up(&self) -> bool {
-        self.transport_link_up()
-    }
-
-    fn admin_up(&self) -> bool {
-        self.admin_up
-    }
-
-    fn set_admin_up(&mut self, up: bool) {
-        self.admin_up = up;
-    }
-
+    fn link_up(&self) -> bool { self.transport.link_up() }
+    fn admin_up(&self) -> bool { unsafe { ghostos_vm_host_net_admin(self.state) } }
+    fn set_admin_up(&mut self, up: bool) { unsafe { ghostos_vm_host_net_set_admin(self.state, up) }; }
     fn queue_state(&self) -> NetQueueState {
-        NetQueueState {
-            rx_packets: 0,
-            tx_packets: self.tx_packets,
-        }
+        NetQueueState { rx_packets: 0, tx_packets: unsafe { ghostos_vm_host_net_transmitted(self.state) } }
     }
-
-    fn set_promiscuous(&mut self, enabled: bool) {
-        self.promiscuous = enabled;
-    }
+    fn set_promiscuous(&mut self, enabled: bool) { unsafe { ghostos_vm_host_net_set_promiscuous(self.state, enabled) }; }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

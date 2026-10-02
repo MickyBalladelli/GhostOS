@@ -28,6 +28,7 @@ Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 | `virtual_machine/src/devices/storage/nvme.rs` (active registers, admin/I/O queues, commands, identification, DMA, and completions) | `src/vm_nvme.c` | `include/ghostos/vm_nvme.h`, `include/ghostos/vm_storage_io.h` |
 | `virtual_machine/src/devices/storage/ahci.rs` (active registers, ATA commands, identification, PRD DMA, FIS, and IRQ decisions) | `src/vm_ahci.c` | `include/ghostos/vm_ahci.h`, `include/ghostos/vm_storage_io.h` |
 | `virtual_machine/src/net/backend.rs` (active shared-segment/loopback queues, delivery, port state, limits, loss, and counters) | `src/vm_segment.c` | `include/ghostos/vm_segment.h` |
+| `virtual_machine/src/net/backend.rs` (active host-backend admin/promiscuous state, packet framing, receive filtering, and counters) | `src/vm_host_net.c` | `include/ghostos/vm_host_net.h` |
 | `virtual_machine/src/terminal.rs` (active input policy, resize timing, transcripts, EOF, and counters) | `src/vm_terminal.c` | `include/ghostos/vm_terminal.h` |
 | `virtual_machine/src/terminal_platform.rs` (Unix/Windows terminal modes, restoration, signal guards, and size queries) | `src/vm_terminal_platform.c` | `include/ghostos/vm_terminal_platform.h` |
 | `virtual_machine/src/firmware/bios.rs` (ROM, POST tables, disk/memory/keyboard services) | `src/vm_bios.c` | `include/ghostos/vm_bios.h` |
