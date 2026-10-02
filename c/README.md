@@ -90,6 +90,8 @@ foundation library.
 | `virtual_machine/src/cluster.rs` (bounded deterministic network, shared-memory fixture, membership, heartbeats, faults, and scale evidence) | `src/vm_cluster.c` | `include/ghostos/vm_cluster.h` |
 | `virtual_machine/src/devices/apic.rs` (active xAPIC state, interrupts, IPI routing, and timer) | `src/vm_apic.c` | `include/ghostos/vm_apic.h` |
 | `virtual_machine/src/devices/hpet.rs` (active HPET state, comparator scheduling, and IRQ routing) | `src/vm_hpet.c` | `include/ghostos/vm_hpet.h` |
+| `virtual_machine/src/devices/pit.rs` (active counters, port protocols, and timer pulses; Rust routes APIC delivery) | `src/vm_pit.c` | `include/ghostos/vm_pit.h` |
+| `virtual_machine/src/input.rs` (resize encoding/filtering and ASCII to PS/2 conversion) | `src/vm_input.c` | `include/ghostos/vm_input.h` |
 
 `make c-vm-test-binaries` builds `build/c/vm-device-contracts` without executing
 it. This standalone C binary checks APIC priority, level-triggered delivery,

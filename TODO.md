@@ -117,7 +117,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/devices/net/e1000.rs`
 - [ ] `virtual_machine/src/devices/net/mod.rs`
 - [ ] `virtual_machine/src/devices/net/virtio.rs`
-- [ ] `virtual_machine/src/devices/pit.rs`
+- [ ] `virtual_machine/src/devices/pit.rs` — C owns the active three-channel counter state, control/read-back protocols, reload/read sequencing, host-time advancement, and terminal-count pulses in `c/src/vm_pit.c`. Rust retains the port-device/shared-APIC adapter and existing tests. Existing zero-reload, latch-consumption, and mode behavior is preserved; behavior parity remains unverified.
 - [x] `virtual_machine/src/devices/power.rs` — C validates power-control port accesses and decodes ACPI sleep-enable writes into shutdown/reboot state. Rust keeps shared state and notification queue integration.
 - [ ] `virtual_machine/src/devices/serial.rs` — C owns host-console newline conversion and guest panic-marker matching. Rust still owns UART registers, FIFOs, authentication prompts, buffering, APIC callbacks, and host I/O.
 - [ ] `virtual_machine/src/devices/storage/ahci.rs`
@@ -135,7 +135,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `virtual_machine/src/firmware/mod.rs`
 - [ ] `virtual_machine/src/firmware/uefi.rs`
 - [ ] `virtual_machine/src/hardware_acceleration.rs`
-- [ ] `virtual_machine/src/input.rs`
+- [ ] `virtual_machine/src/input.rs` — C owns terminal-resize encoding, complete resize-response filtering, and ASCII/control-byte to PS/2 make/break conversion in `c/src/vm_input.c`. Active VM callers use Rust vector/type adapters; behavior parity remains unverified.
 - [ ] `virtual_machine/src/integration.rs`
 - [ ] `virtual_machine/src/lib.rs`
 - [ ] `virtual_machine/src/main.rs`

@@ -1,6 +1,7 @@
 #include "ghostos/vm_apic.h"
 #include "ghostos/vm_hpet.h"
 #include "ghostos/vm_clock.h"
+#include "ghostos/vm_pit.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -112,10 +113,75 @@ static void hpet_irq_contract(void) {
     assert(h.counter == 100);
 }
 
+static uint64_t pit_ns_for_ticks(uint64_t ticks) {
+    return ticks * UINT64_C(1000000000) / GHOSTOS_VM_PIT_FREQUENCY_HZ + 1;
+}
+
+static void pit_program(ghostos_vm_pit *pit, uint8_t control, uint16_t reload) {
+    assert(ghostos_vm_pit_write(pit, 0x43, control, 1) == 0);
+    assert(ghostos_vm_pit_write(pit, 0x40, reload & 0xff, 1) == 0);
+    assert(ghostos_vm_pit_write(pit, 0x40, reload >> 8, 1) == 0);
+}
+
+/* Ported from the eight retained Rust PIT cases. The Rc dispatch case is
+ * covered by the C port API here; Rust still checks its shared adapter. */
+static void pit_contract(void) {
+    ghostos_vm_pit pit;
+    ghostos_vm_pit_init(&pit);
+    pit_program(&pit, 0x36, 0x1234);
+    assert(pit.channels[0].reload == 0x1234 && pit.channels[0].count == 0x1234);
+    assert(pit.channels[0].running && !pit.channels[0].null_count);
+
+    ghostos_vm_pit_init(&pit);
+    pit_program(&pit, 0x34, 10);
+    assert(!ghostos_vm_pit_advance(&pit, 0));
+    assert(ghostos_vm_pit_advance(&pit, pit_ns_for_ticks(10)));
+    assert(pit.channels[0].count == 10 && pit.channels[0].running);
+    assert(!ghostos_vm_pit_advance(&pit, pit_ns_for_ticks(15)));
+    assert(pit.channels[0].count == 5 && pit.channels[0].running);
+
+    ghostos_vm_pit_init(&pit);
+    pit_program(&pit, 0x30, 5);
+    assert(!ghostos_vm_pit_advance(&pit, 0));
+    assert(ghostos_vm_pit_advance(&pit, pit_ns_for_ticks(5)));
+    assert(!pit.channels[0].running && pit.channels[0].output);
+
+    ghostos_vm_pit_init(&pit);
+    pit_program(&pit, 0x34, 0x1234);
+    assert(ghostos_vm_pit_write(&pit, 0x43, 0, 1) == 0);
+    uint64_t value = 0;
+    assert(ghostos_vm_pit_read(&pit, 0x40, 1, &value) == 0 && value == 0x34);
+    assert(ghostos_vm_pit_read(&pit, 0x40, 1, &value) == 0 && value == 0x12);
+
+    ghostos_vm_pit_init(&pit);
+    assert(ghostos_vm_pit_write(&pit, 0x43, 0x30, 1) == 0);
+    assert(ghostos_vm_pit_write(&pit, 0x43, 0xc2, 1) == 0);
+    assert(ghostos_vm_pit_read(&pit, 0x40, 1, &value) == 0);
+    assert(((value >> 1) & 7) == 0 && ((value >> 4) & 3) == 3);
+    assert(value & 0x40);
+
+    ghostos_vm_apic apic;
+    ghostos_vm_apic_init(&apic, 0);
+    ghostos_vm_pit_init(&pit);
+    pit_program(&pit, 0x34, 15);
+    assert(!ghostos_vm_pit_advance(&pit, 0));
+    if (ghostos_vm_pit_advance(&pit, pit_ns_for_ticks(15)))
+        ghostos_vm_apic_signal(&apic, 0x20, false);
+    assert(ghostos_vm_apic_pending(&apic) == 0x20);
+    assert(pit.channels[0].running);
+
+    assert(ghostos_vm_pit_write(&pit, 0x43, 0x10, 2) == 1);
+    assert(ghostos_vm_pit_write(&pit, 0x43, 0x10, 4) == 1);
+    ghostos_vm_pit_init(&pit);
+    pit_program(&pit, 0x34, 0x2010);
+    assert(pit.channels[0].reload == 0x2010);
+}
+
 int main(void) {
     priority_and_trigger_contract();
     timer_and_clock_contract();
     hpet_irq_contract();
+    pit_contract();
     puts("C VM device contracts passed");
     return 0;
 }
