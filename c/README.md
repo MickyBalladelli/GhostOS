@@ -296,3 +296,12 @@ remain unverified. Policy portions of four retained terminal cases also have C
 source in `c/tests/vm_io_contracts.c`, checked for syntax only. The explicit
 `make c-vm-test-binaries` target includes `build/c/vm-io-contracts` without
 executing it.
+
+The shared path matcher is in `path_pattern.h` / `path_pattern.c`. It is
+freestanding and allocation-free, and ports `crates/path-pattern/src/lib.rs`
+parsing, validation errors, classes, escapes, and UTF-8-width wildcard matching.
+The Rust API borrows strings and calls C for all active matching operations;
+filesystem, shell, and runtime callers retain their existing interface.
+`c/tests/path_pattern_contracts.c` contains the seven original contract and
+property cases using the C property harness. Its explicit Makefile target
+builds the cases without executing them. Behavior parity remains unverified.

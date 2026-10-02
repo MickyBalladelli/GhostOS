@@ -144,6 +144,16 @@ matching the existing behavior. No behavior-parity execution is claimed.
 Logs are in `temp/c-library-acceleration.log` and
 `temp/vm-build-acceleration.log`.
 
+Path-pattern build checks on 2026-10-02: `make c-library` and
+`cargo build -p ghostos-path-pattern -p ghostos-fsd -p ghostos-ghostfs
+-p ghostos-shell -p ghostos-runtime` passed with the active freestanding C
+matcher. Existing validation/error ordering, byte-based classes, escaped
+literals, and UTF-8 wildcard consumption are preserved in source. The seven
+existing cases have C source in `c/tests/path_pattern_contracts.c`; no tests
+were executed. Rust adapters, build tooling, and behavior parity remain open.
+Build logs are in `temp/c-library-path-pattern.log` and
+`temp/path-pattern-consumers-build.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -306,7 +316,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/netd/` — network daemon.
 - [ ] `crates/numa/` — NUMA support.
 - [ ] `crates/observability/` — profiling, telemetry, SLOs, and scaling.
-- [ ] `crates/path-pattern/` — path pattern matching.
+- [ ] `crates/path-pattern/` — Active parsing, wildcard/class matching, UTF-8-width consumption, and unescaping now run in `c/src/path_pattern.c`. Filesystem, shell, and runtime consumers use a Rust type/FFI adapter. All seven existing contract/property cases have C source. Rust adapter/build-tool removal and behavior parity remain open.
 - [ ] `crates/pkg/` — package management and signatures.
 - [ ] `crates/platform-io/` — platform I/O abstraction.
 - [ ] `crates/policy/` — policy engine.
