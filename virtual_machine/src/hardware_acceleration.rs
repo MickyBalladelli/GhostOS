@@ -6,11 +6,13 @@
 //! retained, so a caller never silently changes correctness semantics.
 
 use std::fmt;
+use std::ffi::{c_void, CStr};
 use std::fs::File;
 use std::path::Path;
 
 /// Host execution backend requested for a VM.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
 pub enum HardwareAcceleration {
     /// Keep using the portable Rust CPU executor.
     #[default]
@@ -87,69 +89,30 @@ impl HardwareAccelerationSession {
     /// The handle is not connected to guest execution; inspect [`Self::status`]
     /// for the actual execution backend and fallback.
     pub fn open(requested: HardwareAcceleration) -> Result<Self, HardwareAccelerationError> {
-        if requested == HardwareAcceleration::Software {
-            return Ok(Self {
-                requested,
-                handle: None,
-                attempts: Vec::new(),
-            });
+        let mut context = ProbeContext { device: None, error: None, attempts: Vec::new() };
+        let io = CProbeIo { exists: probe_exists, open: probe_open, api_version: probe_version,
+            close: probe_close, attempt: probe_attempt, context: (&mut context as *mut ProbeContext).cast() };
+        let host = if cfg!(target_os = "linux") { 1 } else if cfg!(target_os = "macos") { 2 }
+            else if cfg!(target_os = "windows") { 3 } else { 0 };
+        let mut session = CSession::default();
+        if !unsafe { ghostos_vm_acceleration_open(requested as u32, host, &io, &mut session) } {
+            return Err(probe_error(&mut context, from_native(session.error_backend), session.error_reason));
         }
-
-        if requested == HardwareAcceleration::Auto {
-            let mut attempts = Vec::new();
-            for &backend in native_backend_order() {
-                match Self::open_native(backend) {
-                    Ok(mut session) => {
-                        attempts.push(HardwareAccelerationAttempt::available(backend));
-                        session.requested = requested;
-                        session.attempts = attempts;
-                        return Ok(session);
-                    }
-                    Err(error) => {
-                        attempts.push(HardwareAccelerationAttempt::unavailable(
-                            backend,
-                            error.to_string(),
-                        ));
-                    }
-                }
-            }
-            return Ok(Self {
-                requested,
-                handle: None,
-                attempts,
-            });
-        }
-
-        let mut session = Self::open_native(requested)?;
-        session.attempts.push(HardwareAccelerationAttempt::available(requested));
-        Ok(session)
-    }
-
-    fn open_native(backend: HardwareAcceleration) -> Result<Self, HardwareAccelerationError> {
-        let handle = match backend {
-            HardwareAcceleration::Software | HardwareAcceleration::Auto => unreachable!(),
-            HardwareAcceleration::Kvm => open_kvm()?,
-            HardwareAcceleration::Haxm => open_haxm()?,
-            HardwareAcceleration::Hvf => {
-                if cfg!(target_os = "macos") {
-                    HardwareAccelerationHandle::Hvf
-                } else {
-                    return Err(unsupported(backend, "HVF requires macOS"));
-                }
-            }
-            HardwareAcceleration::Whpx => {
-                if cfg!(target_os = "windows") {
-                    HardwareAccelerationHandle::Whpx
-                } else {
-                    return Err(unsupported(backend, "WHPX requires Windows"));
-                }
-            }
+        let handle = match from_native(session.active) {
+            HardwareAcceleration::Software => None,
+            HardwareAcceleration::Kvm => Some(HardwareAccelerationHandle::Kvm {
+                device: context.device.take().expect("C selected an opened KVM handle"),
+                api_version: session.api_version,
+            }),
+            HardwareAcceleration::Haxm => Some(HardwareAccelerationHandle::Haxm {
+                device: context.device.take().expect("C selected an opened HAXM handle"),
+                path: native_path(session.path),
+            }),
+            HardwareAcceleration::Hvf => Some(HardwareAccelerationHandle::Hvf),
+            HardwareAcceleration::Whpx => Some(HardwareAccelerationHandle::Whpx),
+            HardwareAcceleration::Auto => unreachable!(),
         };
-        Ok(Self {
-            requested: backend,
-            handle: Some(handle),
-            attempts: Vec::new(),
-        })
+        Ok(Self { requested, handle, attempts: context.attempts })
     }
 
     pub const fn requested(&self) -> HardwareAcceleration {
@@ -173,11 +136,13 @@ impl HardwareAccelerationSession {
 
     pub fn status(&self) -> HardwareAccelerationStatus {
         let active = self.active_backend();
-        let native_handle = active != HardwareAcceleration::Software;
-        let fallback_behavior = match (self.requested, native_handle) {
-            (HardwareAcceleration::Software, _) => HardwareAccelerationFallback::None,
-            (_, false) => HardwareAccelerationFallback::NoNativeBackend,
-            (_, true) => HardwareAccelerationFallback::NativeExecutionUnavailable,
+        let mut status = CStatus::default();
+        unsafe { ghostos_vm_acceleration_status_get(self.requested as u32, active as u32, &mut status) };
+        let fallback_behavior = match status.fallback {
+            0 => HardwareAccelerationFallback::None,
+            1 => HardwareAccelerationFallback::NoNativeBackend,
+            2 => HardwareAccelerationFallback::NativeExecutionUnavailable,
+            _ => unreachable!(),
         };
         HardwareAccelerationStatus {
             requested: self.requested,
@@ -185,22 +150,18 @@ impl HardwareAccelerationSession {
             execution_backend: HardwareAcceleration::Software,
             fallback: !matches!(fallback_behavior, HardwareAccelerationFallback::None),
             fallback_behavior,
-            supported_features: if native_handle {
+            supported_features: if status.feature_count == 5 {
                 NATIVE_HANDLE_FEATURES
             } else {
                 SOFTWARE_FEATURES
             },
-            limitations: if native_handle {
+            limitations: if status.limitation_count == 3 {
                 NATIVE_HANDLE_LIMITATIONS
             } else {
                 SOFTWARE_LIMITATIONS
             },
             attempts: self.attempts.clone(),
-            description: if native_handle {
-                "native host handle acquired; portable software execution remains active"
-            } else {
-                "portable software execution"
-            },
+            description: unsafe { native_text(ghostos_vm_acceleration_description(status.native_handle)) },
         }
     }
 }
@@ -304,24 +265,6 @@ pub struct HardwareAccelerationAttempt {
     pub reason: String,
 }
 
-impl HardwareAccelerationAttempt {
-    fn available(backend: HardwareAcceleration) -> Self {
-        Self {
-            backend,
-            available: true,
-            reason: "host accelerator handle acquired".to_string(),
-        }
-    }
-
-    fn unavailable(backend: HardwareAcceleration, reason: String) -> Self {
-        Self {
-            backend,
-            available: false,
-            reason,
-        }
-    }
-}
-
 /// Stable, printable accelerator state for monitors and CLI output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HardwareAccelerationStatus {
@@ -419,91 +362,100 @@ pub enum HardwareAccelerationError {
     },
 }
 
-fn unsupported(backend: HardwareAcceleration, reason: &str) -> HardwareAccelerationError {
-    HardwareAccelerationError::Unavailable {
-        backend,
-        reason: reason.to_string(),
-    }
+#[repr(C)]
+struct CProbeIo {
+    exists: unsafe extern "C" fn(*mut c_void, u32) -> bool,
+    open: unsafe extern "C" fn(*mut c_void, u32) -> bool,
+    api_version: unsafe extern "C" fn(*mut c_void) -> i32,
+    close: unsafe extern "C" fn(*mut c_void),
+    attempt: unsafe extern "C" fn(*mut c_void, u32, bool, u32),
+    context: *mut c_void,
 }
-
-fn native_backend_order() -> &'static [HardwareAcceleration] {
+#[repr(C)]
+#[derive(Default)]
+struct CSession {
+    requested: u32,
+    active: u32,
+    error_backend: u32,
+    error_reason: u32,
+    api_version: i32,
+    path: u32,
+}
+#[repr(C)]
+#[derive(Default)]
+struct CStatus {
+    fallback: u32,
+    feature_count: u32,
+    limitation_count: u32,
+    native_handle: bool,
+}
+unsafe extern "C" {
+    fn ghostos_vm_acceleration_open(requested: u32, host: u32, io: *const CProbeIo, session: *mut CSession) -> bool;
+    fn ghostos_vm_acceleration_status_get(requested: u32, active: u32, status: *mut CStatus);
+    fn ghostos_vm_acceleration_reason(reason: u32) -> *const std::ffi::c_char;
+    fn ghostos_vm_acceleration_description(native: bool) -> *const std::ffi::c_char;
+    fn ghostos_vm_acceleration_path(path: u32) -> *const std::ffi::c_char;
     #[cfg(target_os = "linux")]
-    {
-        &[HardwareAcceleration::Kvm, HardwareAcceleration::Haxm]
-    }
-    #[cfg(target_os = "macos")]
-    {
-        &[HardwareAcceleration::Hvf, HardwareAcceleration::Haxm]
-    }
-    #[cfg(target_os = "windows")]
-    {
-        &[HardwareAcceleration::Whpx, HardwareAcceleration::Haxm]
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        &[]
-    }
+    fn ghostos_vm_acceleration_kvm_version(fd: i32) -> i32;
 }
 
-fn open_kvm() -> Result<HardwareAccelerationHandle, HardwareAccelerationError> {
+// These pointers refer only to process-lifetime C string literals.
+unsafe fn native_text(pointer: *const std::ffi::c_char) -> &'static str {
+    unsafe { CStr::from_ptr(pointer) }.to_str().expect("C accelerator text is UTF-8")
+}
+fn native_path(path: u32) -> &'static str { unsafe { native_text(ghostos_vm_acceleration_path(path)) } }
+fn from_native(value: u32) -> HardwareAcceleration {
+    match value {
+        0 => HardwareAcceleration::Software,
+        1 => HardwareAcceleration::Auto,
+        2 => HardwareAcceleration::Kvm,
+        3 => HardwareAcceleration::Haxm,
+        4 => HardwareAcceleration::Hvf,
+        5 => HardwareAcceleration::Whpx,
+        _ => unreachable!(),
+    }
+}
+struct ProbeContext {
+    device: Option<File>,
+    error: Option<std::io::Error>,
+    attempts: Vec<HardwareAccelerationAttempt>,
+}
+fn probe_error(context: &mut ProbeContext, backend: HardwareAcceleration, reason: u32) -> HardwareAccelerationError {
+    if reason == 6 {
+        HardwareAccelerationError::Io { backend, source: context.error.take().expect("failed C probe retained its I/O error") }
+    } else {
+        HardwareAccelerationError::Unavailable { backend,
+            reason: unsafe { native_text(ghostos_vm_acceleration_reason(reason)) }.to_string() }
+    }
+}
+unsafe extern "C" fn probe_exists(_raw: *mut c_void, path: u32) -> bool {
+    Path::new(native_path(path)).exists()
+}
+unsafe extern "C" fn probe_open(raw: *mut c_void, path: u32) -> bool {
+    let context = unsafe { &mut *raw.cast::<ProbeContext>() };
+    match File::options().read(true).write(true).open(native_path(path)) {
+        Ok(device) => { context.device = Some(device); true }
+        Err(error) => { context.error = Some(error); false }
+    }
+}
+unsafe extern "C" fn probe_version(raw: *mut c_void) -> i32 {
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsRawFd;
-
-        let device = File::options()
-            .read(true)
-            .write(true)
-            .open("/dev/kvm")
-            .map_err(|source| HardwareAccelerationError::Io {
-                backend: HardwareAcceleration::Kvm,
-                source,
-            })?;
-        let api_version = unsafe { kvm_get_api_version(device.as_raw_fd()) };
-        if api_version < 12 {
-            return Err(unsupported(
-                HardwareAcceleration::Kvm,
-                "KVM API version is too old",
-            ));
-        }
-        return Ok(HardwareAccelerationHandle::Kvm {
-            device,
-            api_version,
-        });
+        let context = unsafe { &mut *raw.cast::<ProbeContext>() };
+        unsafe { ghostos_vm_acceleration_kvm_version(context.device.as_ref().expect("opened KVM handle").as_raw_fd()) }
     }
     #[cfg(not(target_os = "linux"))]
-    {
-        Err(unsupported(
-            HardwareAcceleration::Kvm,
-            "KVM requires Linux and /dev/kvm",
-        ))
-    }
+    { let _ = raw; -1 }
 }
-
-fn open_haxm() -> Result<HardwareAccelerationHandle, HardwareAccelerationError> {
-    for path in ["/dev/HAXM", "/dev/haxm"] {
-        if Path::new(path).exists() {
-            if let Ok(device) = File::options().read(true).write(true).open(path) {
-                return Ok(HardwareAccelerationHandle::Haxm { device, path });
-            }
-        }
-    }
-    Err(unsupported(
-        HardwareAcceleration::Haxm,
-        "HAXM device node was not found",
-    ))
+unsafe extern "C" fn probe_close(raw: *mut c_void) {
+    let context = unsafe { &mut *raw.cast::<ProbeContext>() };
+    context.device = None;
 }
-
-#[cfg(target_os = "linux")]
-const KVM_GET_API_VERSION: std::os::raw::c_ulong = 0xAE00;
-
-#[cfg(target_os = "linux")]
-unsafe fn kvm_get_api_version(fd: std::os::raw::c_int) -> std::os::raw::c_int {
-    extern "C" {
-        fn ioctl(
-            fd: std::os::raw::c_int,
-            request: std::os::raw::c_ulong,
-            ...
-        ) -> std::os::raw::c_int;
-    }
-    unsafe { ioctl(fd, KVM_GET_API_VERSION) }
+unsafe extern "C" fn probe_attempt(raw: *mut c_void, backend: u32, available: bool, reason: u32) {
+    let context = unsafe { &mut *raw.cast::<ProbeContext>() };
+    let backend = from_native(backend);
+    let reason = if available { unsafe { native_text(ghostos_vm_acceleration_reason(0)) }.to_string() }
+        else { probe_error(context, backend, reason).to_string() };
+    context.attempts.push(HardwareAccelerationAttempt { backend, available, reason });
 }
