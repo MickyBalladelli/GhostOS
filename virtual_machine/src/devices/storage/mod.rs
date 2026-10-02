@@ -9,6 +9,7 @@ pub mod disk_image;
 pub mod management;
 mod native_io;
 mod native_disk;
+mod native_management;
 pub mod nvme;
 pub mod persistence;
 pub mod system_disk;
