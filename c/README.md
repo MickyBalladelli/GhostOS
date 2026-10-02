@@ -383,3 +383,18 @@ Rust still owns sockets/timeouts, browser launch, token entropy, request
 routing/replies, the icon asset reference, VM/serial handoff, and owned buffers.
 The original localhost-bind test remains Rust and unrun; behavior parity and
 non-host platform coverage remain open.
+
+`vm_execution.h` / `vm_execution.c` own active decoded-block translation and
+execution loops, the instruction-boundary list, wrapping backward-loop targets,
+source-range validation, code/translation version observation, saturating hot
+execution counts and promotion decisions, and 64-sample retune timing. Callbacks
+borrow host state only during a dispatch; C retains no pointers or allocations.
+Translation preserves first-error versus partial-block behavior and final
+wrapping source length. Execution preserves code-validation-before-translation
+ordering, mode/boundary exits, zero-progress cache clearing, and execution-error
+notification suppression. Rust callbacks still own CPU/MMU/device operations,
+replay cleanup and interrupt-shadow restoration, decoded instructions/errors,
+cache/profile maps, accounting, admission/eviction, and profile hooks. The
+callback ABI permits unwinding so existing Rust overflow/allocation panics can
+propagate across the C dispatcher. Host builds pass; no tests were run, and
+behavior parity, non-host coverage, and full Rust removal remain open.

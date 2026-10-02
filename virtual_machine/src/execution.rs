@@ -18,6 +18,9 @@ use ghostos_observability::{
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
+#[path = "execution_native.rs"]
+mod native;
+
 const DEFAULT_BLOCK_SIZE: usize = 32;
 const DEFAULT_HOT_THRESHOLD: u64 = 1_024;
 const DEFAULT_CACHE_CAPACITY: usize = 4_096;
@@ -98,14 +101,10 @@ impl TranslationBlock {
     }
 
     fn instruction_source_is_valid(&self, instruction: &DecodedInstruction, mmu: &Mmu) -> bool {
-        let Some(offset) = instruction.ip.checked_sub(self.source_start) else {
+        let Some(range) = native::source_range(self.source_start, self.source_bytes.len(), instruction.ip, instruction.next_ip) else {
             return false
         };
-        let offset = offset as usize;
-        let length = instruction.next_ip.saturating_sub(instruction.ip) as usize;
-        let Some(source) = self.source_bytes.get(offset..offset.saturating_add(length)) else {
-            return false
-        };
+        let source = &self.source_bytes[range];
         mmu.bytes_equal(instruction.ip, source)
     }
 }
@@ -246,73 +245,15 @@ impl ExecutionEngine {
             cr3: cpu.state.cr3,
         };
         let block = self.get_block(key, cpu, mmu, code_changed || translation_changed)?;
-        let block_len = block.instructions.len().min(max_instructions);
-        let mut executed = 0usize;
-        let initial_code_version = mmu.code_version();
-        let initial_translation_version = mmu.translation_version();
-
-        for instruction in block.instructions.iter().take(block_len) {
-            if cpu.state.halted || cpu.state.rip != instruction.ip {
-                break;
-            }
-            if mmu.code_version() != initial_code_version
-                && !block.instruction_source_is_valid(instruction, mmu)
-            {
-                break;
-            }
-            if mmu.translation_version() != initial_translation_version {
-                break;
-            }
-
-            let mode = cpu.state.mode;
-            let previous_interrupt_shadow = cpu.state.interrupt_shadow;
-            cpu.prepare_instruction();
-            mmu.set_replay_instruction_ip(Some(instruction.ip));
-            ports.set_replay_instruction_ip(Some(instruction.ip));
-            bios.set_replay_instruction_ip(Some(instruction.ip));
-            let result = cpu.execute_decoded(instruction, mmu, intc, ports, bios);
-            mmu.set_replay_instruction_ip(None);
-            ports.set_replay_instruction_ip(None);
-            bios.set_replay_instruction_ip(None);
-            if matches!(result, Err(CpuError::UnsupportedInstruction)) {
-                cpu.state.interrupt_shadow = previous_interrupt_shadow;
-            }
-            result?;
-            executed += 1;
-            self.record_instruction(instruction.ip, key.rip, block.compiled);
-
-            if cpu.state.mode != mode
-                || is_block_boundary(instruction)
-            {
-                break;
-            }
-        }
-
-        if executed == 0 && !cpu.state.halted {
-            self.clear_cache();
-        }
-        self.notify_profile_hook();
-        Ok(executed)
+        native::run(self, cpu, mmu, intc, ports, bios, &block, key.rip, max_instructions)
     }
 
     fn invalidate_if_guest_code_changed(&mut self, mmu: &Mmu) -> bool {
-        let version = mmu.code_version();
-        if version != self.observed_code_version {
-            self.observed_code_version = version;
-            true
-        } else {
-            false
-        }
+        native::observe_version(&mut self.observed_code_version, mmu.code_version())
     }
 
     fn invalidate_if_guest_translation_changed(&mut self, mmu: &Mmu) -> bool {
-        let version = mmu.translation_version();
-        if version != self.observed_translation_version {
-            self.observed_translation_version = version;
-            true
-        } else {
-            false
-        }
+        native::observe_version(&mut self.observed_translation_version, mmu.translation_version())
     }
 
     fn get_block(
@@ -335,16 +276,12 @@ impl ExecutionEngine {
                     CACHE_WORKLOAD,
                     CacheEvent::Hit,
                 );
-                block.hot_executions = block.hot_executions.saturating_add(1);
+                let promote = native::promote(self.config.enable_jit, block, self.config.hot_threshold);
                 if self.config.enable_profiling {
                     let profile = self.profiles.entry(key.rip).or_default();
                     profile.executions += 1;
                 }
-                if self.config.enable_jit
-                    && block.loop_block
-                    && !block.compiled
-                    && block.hot_executions >= self.config.hot_threshold
-                {
+                if promote {
                     block.compiled = true;
                     if self.config.enable_profiling {
                         if let Some(profile) = self.profiles.get_mut(&key.rip) {
@@ -384,7 +321,7 @@ impl ExecutionEngine {
         );
         self.retune_cache_if_due();
         let (instructions, source_bytes) = self.translate_block(key.rip, cpu, mmu)?;
-        let loop_block = is_loop_block(key.rip, &instructions);
+        let loop_block = native::loop_block(key.rip, &instructions);
         let block = TranslationBlock {
             loop_block,
             instructions: Rc::from(instructions.into_boxed_slice()),
@@ -413,28 +350,7 @@ impl ExecutionEngine {
         cpu: &Cpu,
         mmu: &mut Mmu,
     ) -> Result<(Vec<DecodedInstruction>, Vec<u8>), CpuError> {
-        let limit = self.config.max_block_instructions.max(1);
-        let mut ip = rip;
-        let mut instructions = Vec::with_capacity(limit);
-        for _ in 0..limit {
-            let instruction = match cpu.decode_instruction(ip, mmu) {
-                Ok(instruction) => instruction,
-                Err(error) if instructions.is_empty() => return Err(error),
-                Err(_) => break,
-            };
-            ip = instruction.next_ip;
-            let boundary = is_block_boundary(&instruction);
-            instructions.push(instruction);
-            if boundary {
-                break;
-            }
-        }
-        let source_len = ip.wrapping_sub(rip) as usize;
-        let source_bytes = mmu
-            .read_bytes(rip, source_len)
-            .map_err(|_| CpuError::MemoryAccessError)?;
-        mmu.mark_code_range(rip, source_len);
-        Ok((instructions, source_bytes))
+        native::translate(cpu, mmu, rip, self.config.max_block_instructions)
     }
 
     fn insert_block(&mut self, key: BlockKey, block: TranslationBlock) {
@@ -484,8 +400,7 @@ impl ExecutionEngine {
     }
 
     fn retune_cache_if_due(&mut self) {
-        let samples = self.stats.cache_hits.saturating_add(self.stats.cache_misses);
-        if samples != 0 && samples % 64 == 0 {
+        if native::retune(self.stats.cache_hits, self.stats.cache_misses) {
             let _ = self
                 .cache_policy
                 .retune(CacheKind::VmTranslationBlocks, CACHE_WORKLOAD);
@@ -510,61 +425,5 @@ impl ExecutionEngine {
 impl Default for ExecutionEngine {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn is_block_boundary(instruction: &DecodedInstruction) -> bool {
-    matches!(
-        instruction.mnemonic,
-        "JMP"
-            | "JCC"
-            | "CALL"
-            | "CALLF"
-            | "RET"
-            | "RETF"
-            | "INT"
-            | "INT3"
-            | "IRET"
-            | "HLT"
-            | "SYSCALL"
-            | "SYSRET"
-            | "SYSENTER"
-            | "SYSEXIT"
-            | "LOOP"
-            | "LOOPE"
-            | "LOOPNE"
-            | "JRCXZ"
-            | "WRMSR"
-            | "RDMSR"
-            | "IN"
-            | "OUT"
-            | "INSB"
-            | "INSW"
-            | "INSD"
-            | "INSQ"
-            | "OUTSB"
-            | "OUTSW"
-            | "OUTSD"
-            | "OUTSQ"
-            | "STI"
-            | "CLI"
-    )
-}
-
-fn is_loop_block(start: u64, instructions: &[DecodedInstruction]) -> bool {
-    let Some(last) = instructions.last() else {
-        return false;
-    };
-    if !matches!(
-        last.mnemonic,
-        "JMP" | "JCC" | "LOOP" | "LOOPE" | "LOOPNE" | "JRCXZ"
-    ) {
-        return false;
-    }
-    match last.operands.first() {
-        Some(Operand::Relative(relative)) => {
-            last.next_ip.wrapping_add(*relative as i64 as u64) <= start
-        }
-        _ => false,
     }
 }
