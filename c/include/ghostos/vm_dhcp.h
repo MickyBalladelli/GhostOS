@@ -23,6 +23,21 @@ typedef struct {
     uint32_t lease_time_secs;
 } ghostos_vm_dhcp_config;
 typedef struct { uint8_t mac[6], address[4]; } ghostos_vm_dhcp_reservation;
+typedef struct ghostos_vm_dhcp_server ghostos_vm_dhcp_server;
+typedef struct {
+    uint8_t mac[6], address[4];
+    uint64_t expires_at_ms;
+} ghostos_vm_dhcp_lease;
+ghostos_vm_dhcp_server *ghostos_vm_dhcp_server_new(const ghostos_vm_dhcp_config *config,
+    const ghostos_vm_dhcp_reservation *reservations, size_t count);
+void ghostos_vm_dhcp_server_free(ghostos_vm_dhcp_server *server);
+void ghostos_vm_dhcp_server_expire(ghostos_vm_dhcp_server *server, uint64_t now_ms);
+size_t ghostos_vm_dhcp_server_leases(const ghostos_vm_dhcp_server *server,
+    ghostos_vm_dhcp_lease *leases, size_t capacity);
+/* Zero means no reply, otherwise OFFER/ACK/NAK (2/5/6). Call expire once at
+ * poll start, matching the existing server's lease visibility between polls. */
+uint8_t ghostos_vm_dhcp_server_handle(ghostos_vm_dhcp_server *server,
+    const ghostos_vm_dhcp_request *request, uint64_t now_ms, uint8_t address[4]);
 /* 0 success; 1 invalid pool, 2 pool too large, 3 lease duration,
  * 4 reservation count, 5 duplicate reservation, 6 reservation outside pool. */
 uint32_t ghostos_vm_dhcp_validate_config(const ghostos_vm_dhcp_config *config,

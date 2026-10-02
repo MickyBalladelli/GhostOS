@@ -183,3 +183,143 @@ bool ghostos_vm_dhcp_decode_request(const uint8_t *frame, size_t frame_length,
     *request = decoded;
     return true;
 }
+
+/* The bounded lease table preserves insertion order for inspection. */
+#include <stdlib.h>
+struct ghostos_vm_dhcp_server {
+    ghostos_vm_dhcp_config config;
+    ghostos_vm_dhcp_reservation reservations[32];
+    size_t reservation_count, lease_count;
+    ghostos_vm_dhcp_lease leases[256];
+};
+
+ghostos_vm_dhcp_server *ghostos_vm_dhcp_server_new(const ghostos_vm_dhcp_config *config,
+    const ghostos_vm_dhcp_reservation *reservations, size_t count) {
+    if (ghostos_vm_dhcp_validate_config(config, reservations, count)) return NULL;
+    ghostos_vm_dhcp_server *server = calloc(1, sizeof(*server));
+    if (!server) return NULL;
+    server->config = *config;
+    server->reservation_count = count;
+    if (count) memcpy(server->reservations, reservations, count * sizeof(*reservations));
+    return server;
+}
+
+void ghostos_vm_dhcp_server_free(ghostos_vm_dhcp_server *server) { free(server); }
+
+void ghostos_vm_dhcp_server_expire(ghostos_vm_dhcp_server *server, uint64_t now_ms) {
+    size_t retained = 0;
+    for (size_t i = 0; i < server->lease_count; ++i)
+        if (server->leases[i].expires_at_ms > now_ms) server->leases[retained++] = server->leases[i];
+    server->lease_count = retained;
+}
+
+size_t ghostos_vm_dhcp_server_leases(const ghostos_vm_dhcp_server *server,
+    ghostos_vm_dhcp_lease *leases, size_t capacity) {
+    size_t count = capacity < server->lease_count ? capacity : server->lease_count;
+    if (count) memcpy(leases, server->leases, count * sizeof(*leases));
+    return server->lease_count;
+}
+
+static bool in_pool(const ghostos_vm_dhcp_server *server, const uint8_t address[4]) {
+    uint32_t value = ghostos_vm_net_ipv4_to_number(address);
+    return value >= ghostos_vm_net_ipv4_to_number(server->config.pool_start) &&
+        value <= ghostos_vm_net_ipv4_to_number(server->config.pool_end);
+}
+
+static bool available(const ghostos_vm_dhcp_server *server, const uint8_t address[4],
+    const uint8_t mac[6], uint64_t now_ms) {
+    for (size_t i = 0; i < server->lease_count; ++i) {
+        const ghostos_vm_dhcp_lease *lease = &server->leases[i];
+        if (!memcmp(lease->address, address, 4) && memcmp(lease->mac, mac, 6) &&
+            lease->expires_at_ms > now_ms) return false;
+    }
+    return true;
+}
+
+static const uint8_t *reservation(const ghostos_vm_dhcp_server *server, const uint8_t mac[6]) {
+    for (size_t i = 0; i < server->reservation_count; ++i)
+        if (!memcmp(server->reservations[i].mac, mac, 6)) return server->reservations[i].address;
+    return NULL;
+}
+
+static bool choose(const ghostos_vm_dhcp_server *server, const uint8_t mac[6],
+    const uint8_t *requested, uint64_t now_ms, uint8_t address[4]) {
+    const uint8_t *reserved = reservation(server, mac);
+    if (reserved) {
+        memcpy(address, reserved, 4);
+        return available(server, address, mac, now_ms);
+    }
+    for (size_t i = 0; i < server->lease_count; ++i)
+        if (!memcmp(server->leases[i].mac, mac, 6) && server->leases[i].expires_at_ms > now_ms) {
+            memcpy(address, server->leases[i].address, 4);
+            return true;
+        }
+    /* Preserve the legacy explicit-request policy, including reservations
+     * for another MAC; automatic pool scanning excludes reserved addresses. */
+    if (requested && in_pool(server, requested) && available(server, requested, mac, now_ms)) {
+        memcpy(address, requested, 4);
+        return true;
+    }
+    uint32_t start = ghostos_vm_net_ipv4_to_number(server->config.pool_start);
+    uint32_t end = ghostos_vm_net_ipv4_to_number(server->config.pool_end);
+    for (uint32_t value = start; value <= end; ++value) {
+        ghostos_vm_net_ipv4_from_number(value, address);
+        bool reserved_address = false;
+        for (size_t i = 0; i < server->reservation_count; ++i)
+            if (!memcmp(server->reservations[i].address, address, 4)) { reserved_address = true; break; }
+        if (!reserved_address && available(server, address, mac, now_ms)) return true;
+    }
+    return false;
+}
+
+static void set_lease(ghostos_vm_dhcp_server *server, const uint8_t mac[6],
+    const uint8_t address[4], uint64_t now_ms) {
+    uint64_t duration = (uint64_t)server->config.lease_time_secs * 1000;
+    uint64_t expiry = now_ms > UINT64_MAX - duration ? UINT64_MAX : now_ms + duration;
+    size_t index = 0;
+    while (index < server->lease_count && memcmp(server->leases[index].mac, mac, 6)) ++index;
+    if (index == server->lease_count) {
+        if (index == 256) return;
+        ++server->lease_count;
+    }
+    ghostos_vm_dhcp_lease *lease = &server->leases[index];
+    memcpy(lease->mac, mac, 6);
+    memcpy(lease->address, address, 4);
+    lease->expires_at_ms = expiry;
+}
+
+uint8_t ghostos_vm_dhcp_server_handle(ghostos_vm_dhcp_server *server,
+    const ghostos_vm_dhcp_request *request, uint64_t now_ms, uint8_t address[4]) {
+    memset(address, 0, 4);
+    if (memcmp(request->source_mac, request->mac, 6) ||
+        (request->server_id_present && memcmp(request->server_id, server->config.server_ip, 4))) return 0;
+    const uint8_t *requested = request->requested_ip_present ? request->requested_ip : NULL;
+    if (request->message_type == 1) {
+        if (!choose(server, request->mac, requested, now_ms, address)) return 0;
+        set_lease(server, request->mac, address, now_ms);
+        return 2;
+    }
+    if (request->message_type == 3) {
+        if (!requested && ghostos_vm_net_ipv4_to_number(request->ciaddr)) requested = request->ciaddr;
+        const uint8_t *reserved = reservation(server, request->mac);
+        bool chosen;
+        if (reserved) {
+            chosen = (!requested || !memcmp(requested, reserved, 4)) &&
+                available(server, reserved, request->mac, now_ms);
+            if (chosen) memcpy(address, reserved, 4);
+        } else if (requested) {
+            chosen = in_pool(server, requested) && available(server, requested, request->mac, now_ms);
+            if (chosen) memcpy(address, requested, 4);
+        } else chosen = choose(server, request->mac, NULL, now_ms, address);
+        if (!chosen) { memset(address, 0, 4); return 6; }
+        set_lease(server, request->mac, address, now_ms);
+        return 5;
+    }
+    if (request->message_type == 7) {
+        size_t retained = 0;
+        for (size_t i = 0; i < server->lease_count; ++i)
+            if (memcmp(server->leases[i].mac, request->mac, 6)) server->leases[retained++] = server->leases[i];
+        server->lease_count = retained;
+    }
+    return 0;
+}
