@@ -7,6 +7,12 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
+unsafe extern "C" {
+    fn ghostos_vm_net_ipv4_to_number(address: *const u8) -> u32;
+    fn ghostos_vm_net_ipv4_from_number(value: u32, address: *mut u8);
+    fn ghostos_vm_net_checksum(bytes: *const u8, length: usize) -> u16;
+}
+
 pub const DHCP_SERVER_MAC: MacAddress = MacAddress::ghostos_default(0xD0);
 pub const DHCP_SERVER_PORT: u16 = 67;
 pub const DHCP_CLIENT_PORT: u16 = 68;
@@ -594,19 +600,7 @@ fn write_option(output: &mut [u8], cursor: usize, code: u8, value: &[u8]) -> usi
 }
 
 fn checksum(bytes: &[u8]) -> u16 {
-    let mut sum = 0u32;
-    let mut index = 0;
-    while index + 1 < bytes.len() {
-        sum += u16::from_be_bytes([bytes[index], bytes[index + 1]]) as u32;
-        index += 2;
-    }
-    if index < bytes.len() {
-        sum += (bytes[index] as u32) << 8;
-    }
-    while sum >> 16 != 0 {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-    !sum as u16
+    unsafe { ghostos_vm_net_checksum(bytes.as_ptr(), bytes.len()) }
 }
 
 fn nonzero(address: [u8; 4]) -> Option<[u8; 4]> {
@@ -614,11 +608,13 @@ fn nonzero(address: [u8; 4]) -> Option<[u8; 4]> {
 }
 
 fn ipv4_number(address: [u8; 4]) -> u32 {
-    u32::from_be_bytes(address)
+    unsafe { ghostos_vm_net_ipv4_to_number(address.as_ptr()) }
 }
 
 fn ipv4_bytes(address: u32) -> [u8; 4] {
-    address.to_be_bytes()
+    let mut bytes = [0; 4];
+    unsafe { ghostos_vm_net_ipv4_from_number(address, bytes.as_mut_ptr()) }
+    bytes
 }
 
 #[cfg(test)]

@@ -42,3 +42,30 @@ uint32_t ghostos_vm_net_validate_packet(size_t packet_length) {
     if (packet_length > ethernet_maximum_frame) return 2;
     return 0;
 }
+
+uint32_t ghostos_vm_net_ipv4_to_number(const uint8_t address[4]) {
+    if (!address) return 0;
+    return ((uint32_t)address[0] << 24) | ((uint32_t)address[1] << 16) |
+        ((uint32_t)address[2] << 8) | (uint32_t)address[3];
+}
+
+void ghostos_vm_net_ipv4_from_number(uint32_t value, uint8_t address[4]) {
+    if (!address) return;
+    address[0] = (uint8_t)(value >> 24);
+    address[1] = (uint8_t)(value >> 16);
+    address[2] = (uint8_t)(value >> 8);
+    address[3] = (uint8_t)value;
+}
+
+uint16_t ghostos_vm_net_checksum(const uint8_t *bytes, size_t length) {
+    if (!bytes && length != 0) return 0;
+    uint32_t sum = 0;
+    size_t index = 0;
+    while (index + 1 < length) {
+        sum += ((uint32_t)bytes[index] << 8) | bytes[index + 1];
+        index += 2;
+    }
+    if (index < length) sum += (uint32_t)bytes[index] << 8;
+    while (sum >> 16) sum = (sum & 0xFFFFu) + (sum >> 16);
+    return (uint16_t)~sum;
+}
