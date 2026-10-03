@@ -40,6 +40,9 @@ typedef struct {
     bool *marked;
     uint32_t *pending;
     size_t gc_capacity;
+    /* Consistency scratch: one zero-or-object-owner entry per arena block. */
+    uint64_t *data_owners;
+    size_t owner_capacity;
 } ghostos_volume_mutation;
 /* Validate configured storage and build initial reader views without mutation. */
 int ghostos_volume_mutation_init(ghostos_volume_mutation *volume, ghostos_volume_reader *reader);

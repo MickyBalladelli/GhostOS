@@ -2,6 +2,7 @@
 #include "ghostos/volume_superblock.h"
 #include "ghostos/volume_type_map.h"
 #include "ghostos/volume_tree_reader.h"
+#include "ghostos/volume_validate.h"
 static uint64_t load_le(const uint8_t *bytes) {
     uint64_t value = 0;
     size_t i;
@@ -13,6 +14,7 @@ static int candidate(ghostos_volume_mutation *destination, ghostos_volume_reader
     ghostos_volume_mutation loaded = *destination;
     ghostos_volume_reader view;
     ghostos_volume_checkpoint checkpoints[16];
+    ghostos_volume_pin_slot pins[16] = {{0}};
     ghostos_volume_tree_reader_buffers buffers = {
         loaded.records, loaded.record_capacity, loaded.files, loaded.file_capacity,
         loaded.blocks, loaded.block_capacity, loaded.pending, loaded.marked, loaded.gc_capacity
@@ -45,6 +47,16 @@ static int candidate(ghostos_volume_mutation *destination, ghostos_volume_reader
         for (byte = 0; byte < GHOSTOS_VOLUME_BLOCK; ++byte)
             loaded.tree.blocks[i * GHOSTOS_VOLUME_BLOCK + byte] = raw[byte];
     }
+    for (i = 0; i < count; ++i) pins[i] = (ghostos_volume_pin_slot){
+        .occupied = true, .id = checkpoints[i].id,
+        .generation = checkpoints[i].generation, .root = checkpoints[i].root
+    };
+    loaded.pins = pins;
+    loaded.pin_capacity = count;
+    status = ghostos_volume_validate(&loaded, load_le(image + 48));
+    loaded.pins = destination->pins;
+    loaded.pin_capacity = destination->pin_capacity;
+    if (status) return status;
     status = ghostos_volume_tree_reader_init(&loaded.tree, root, &buffers, &view, &loaded.record_count);
     if (status) return status == 6 ? 5 : 1;
     status = ghostos_volume_mutation_init(&loaded, &view);

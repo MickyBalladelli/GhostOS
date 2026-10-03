@@ -1,6 +1,7 @@
 #include "ghostos/volume_storage.h"
 #include "ghostos/volume_superblock.h"
 #include "ghostos/volume_type_map.h"
+#include "ghostos/volume_validate.h"
 int ghostos_volume_storage_flush(const ghostos_volume_mutation *mutation,
     ghostos_volume *banks, uint64_t next_checkpoint,
     const ghostos_volume_storage_io *io, uint8_t *map, size_t map_capacity,
@@ -9,6 +10,7 @@ int ghostos_volume_storage_flush(const ghostos_volume_mutation *mutation,
     size_t i, count = 0;
     uint64_t checksum, next, base;
     uint8_t bank;
+    int validation;
     const ghostos_volume_tree *tree;
     if (!mutation || !banks || !io || !io->write_block || !io->flush || !sequence ||
         banks->active > 1 || !next_checkpoint || !mutation->next_object ||
@@ -22,6 +24,8 @@ int ghostos_volume_storage_flush(const ghostos_volume_mutation *mutation,
         header_capacity < GHOSTOS_VOLUME_SUPERBLOCK || !tree->payload ||
         tree->payload_capacity < GHOSTOS_VOLUME_DATA) return 5;
     if (banks->sequence == UINT64_MAX) return 2;
+    validation = ghostos_volume_validate(mutation, next_checkpoint);
+    if (validation) return validation;
     next = banks->sequence + 1;
     bank = (uint8_t)(1u - banks->active);
     base = (uint64_t)bank * (tree->block_count + 2u);

@@ -10,7 +10,8 @@
    Failed writes/flushes do not update bank state or sequence output; the
    inactive on-device bank may be partially overwritten. This flushes an
    already-published in-memory mutation, not an atomic mutation transaction.
-   Callers must validate full filesystem consistency before flushing. */
+   Reachable live/checkpoint consistency is checked before flushing. Supply
+   data_owners consistency scratch in the mutation backend. */
 typedef struct {
     void *context;
     int (*write_block)(void *context, uint64_t block, const uint8_t *bytes);
