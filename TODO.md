@@ -1010,3 +1010,13 @@ c-library` passed, and strict freestanding syntax checks passed for
 `c/src/probes.c` on x86-64, AArch64, and RISC-V. No Rust sources were edited
 and Cargo was not used. GDB framing, coredumps, and remote sessions remain.
 Logs: `temp/c-library-probes-build.log` and `temp/probe-contract-build.log`.
+
+GDB framing progress on 2026-10-03: `c/src/gdb.c` buffers partial remote
+packets, checks the checksum, reads memory as hex, and returns `E03` when a
+write is not permitted. A split `m0,4` packet produces `+$01020304#0a`, and
+`M0,1:ff` under a read-only permit produces `+$E03#a8`.
+`build/c/gdb-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/gdb.c` on x86-64, AArch64, and
+RISC-V. No Rust sources were edited and Cargo was not used. Register
+commands, coredumps, and remote sessions remain. Logs:
+`temp/c-library-gdb-build.log` and `temp/gdb-contract-build.log`.
