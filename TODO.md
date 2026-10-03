@@ -1276,3 +1276,12 @@ freestanding syntax checks passed for `c/src/heartbeat.c` on x86-64, AArch64,
 and RISC-V. No Rust sources were edited and Cargo was not used. Partition
 recovery remains. Logs: `temp/c-library-heartbeat-build.log`,
 `temp/heartbeat-contract-build.log`.
+
+Partition-recovery progress on 2026-10-03: `c/src/fabric_recover.c` refuses to
+release memory while node 2 is unfenced. After the fence, one lease is released,
+the coherence page is recovered, and address 4096 resolves to mirror node 1.
+`build/c/fabric-recover-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/fabric_recover.c` on x86-64,
+AArch64, and RISC-V. No Rust sources were edited and Cargo was not used. HDM
+register programming remains. Logs: `temp/c-library-fabric-recover-build.log`,
+`temp/fabric-recover-contract-build.log`.
