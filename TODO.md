@@ -1127,3 +1127,14 @@ on x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not
 used. Configuration parsing remains. Logs:
 `temp/c-library-reconfigure-build.log` and
 `temp/reconfigure-contract-build.log`.
+
+Configuration-parser progress on 2026-10-03: `c/src/config_parser.c` reads
+the system schema and revision. Hexadecimal `0x1` is schema 1. Schema 99 is
+unsupported after the file is read, an unknown key fails while reading, a
+repeated schema is a duplicate, a missing schema is reported after the file,
+and revision 0 is invalid. Comments are ignored. `build/c/config-parser-contracts`
+passed. `make c-library` passed, and strict freestanding syntax checks passed
+for `c/src/config_parser.c` on x86-64, AArch64, and RISC-V. No Rust sources
+were edited and Cargo was not used. Service, network, and cluster sections
+remain. Logs: `temp/c-library-config-parser-build.log` and
+`temp/config-parser-contract-build.log`.
