@@ -1197,3 +1197,14 @@ freestanding syntax checks passed for `c/src/inference.c` on x86-64, AArch64,
 and RISC-V. No Rust sources were edited and Cargo was not used. Service
 scheduling remains. Logs: `temp/c-library-inference-build.log`,
 `temp/inference-contract-build.log`.
+
+Inference-schedule progress on 2026-10-03: `c/src/inference_schedule.c`
+registers a model, reserves an execution slot, and checks a token checkpoint.
+A repeated model name is a duplicate even when the token size is also zero. An
+active execution blocks unregister, a generation mismatch is not found, and a
+checkpoint behind the cache is stale. `build/c/inference-schedule-contracts`
+passed. `make c-library` passed, and strict freestanding syntax checks passed
+for `c/src/inference_schedule.c` on x86-64, AArch64, and RISC-V. No Rust
+sources were edited and Cargo was not used. Cache and journal commits remain.
+Logs: `temp/c-library-inference-schedule-build.log`,
+`temp/inference-schedule-contract-build.log`.
