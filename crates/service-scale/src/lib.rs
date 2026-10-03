@@ -1,5 +1,5 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 //! Bounded control-plane state for horizontally scaled Ring 3 services.
 //!
@@ -7,6 +7,9 @@
 //! request has one stable id and one idempotency key, so a retry after a
 //! drain, restart, or handoff returns the original receipt instead of running
 //! a side effect twice. Sessions move only after in-flight work reaches zero.
+
+#[allow(unsafe_code)]
+mod native;
 
 pub const MAX_SCALE_INSTANCES: usize = 32;
 pub const MAX_SCALE_SESSIONS: usize = 128;
@@ -287,36 +290,7 @@ impl<
     }
 
     pub fn join(&mut self, instance: InstanceId, generation: u64) -> Result<JoinReceipt, ScaleError> {
-        if generation == 0 {
-            return Err(ScaleError::StaleGeneration)
-        }
-        if let Some(index) = self.instance_index(instance) {
-            let record = self.instances[index].ok_or(ScaleError::NotFound)?;
-            if !matches!(record.state, InstanceState::Restarting)
-                || generation <= record.generation
-                || record.sessions != 0
-                || record.in_flight != 0
-            {
-                return Err(ScaleError::Duplicate)
-            }
-            self.instances[index] = Some(InstanceRecord {
-                id: instance,
-                generation,
-                state: InstanceState::Joining,
-                sessions: 0,
-                in_flight: 0,
-            });
-            return Ok(JoinReceipt {
-                instance,
-                generation,
-                state: InstanceState::Joining,
-            })
-        }
-        let slot = self
-            .instances
-            .iter()
-            .position(Option::is_none)
-            .ok_or(ScaleError::Capacity)?;
+        let slot = native::membership(&self.instances, instance, generation, 0)?;
         self.instances[slot] = Some(InstanceRecord {
             id: instance,
             generation,
@@ -332,11 +306,8 @@ impl<
     }
 
     pub fn ready(&mut self, instance: InstanceId, generation: u64) -> Result<(), ScaleError> {
-        let index = self.checked_instance(instance, generation)?;
+        let index = native::membership(&self.instances, instance, generation, 1)?;
         let record = self.instances[index].ok_or(ScaleError::NotFound)?;
-        if !matches!(record.state, InstanceState::Joining | InstanceState::Ready) {
-            return Err(ScaleError::InvalidState)
-        }
         self.instances[index] = Some(InstanceRecord {
             state: InstanceState::Ready,
             ..record
@@ -349,11 +320,8 @@ impl<
         instance: InstanceId,
         generation: u64,
     ) -> Result<DrainReport, ScaleError> {
-        let index = self.checked_instance(instance, generation)?;
+        let index = native::membership(&self.instances, instance, generation, 2)?;
         let record = self.instances[index].ok_or(ScaleError::NotFound)?;
-        if !matches!(record.state, InstanceState::Ready) {
-            return Err(ScaleError::InvalidState)
-        }
         self.instances[index] = Some(InstanceRecord {
             state: InstanceState::Draining,
             ..record
@@ -367,14 +335,8 @@ impl<
     }
 
     pub fn restart(&mut self, instance: InstanceId, generation: u64) -> Result<(), ScaleError> {
-        let index = self.checked_instance(instance, generation)?;
+        let index = native::membership(&self.instances, instance, generation, 3)?;
         let record = self.instances[index].ok_or(ScaleError::NotFound)?;
-        if !matches!(record.state, InstanceState::Draining)
-            || record.sessions != 0
-            || record.in_flight != 0
-        {
-            return Err(ScaleError::InFlight)
-        }
         self.instances[index] = Some(InstanceRecord {
             state: InstanceState::Restarting,
             ..record
@@ -748,19 +710,7 @@ impl<
     pub fn target_for(&self, session: SessionId) -> Result<InstanceId, ScaleError> {
         let session_index = self.session_index(session).ok_or(ScaleError::NotFound)?;
         let owner = self.sessions[session_index].ok_or(ScaleError::NotFound)?.owner;
-        let mut selected = None;
-        let mut selected_load = u32::MAX;
-        for record in self.instances.iter().flatten().copied() {
-            if record.id == owner || !matches!(record.state, InstanceState::Ready) {
-                continue
-            }
-            let load = record.sessions as u32 + record.in_flight as u32;
-            if load < selected_load {
-                selected = Some(record.id);
-                selected_load = load;
-            }
-        }
-        selected.ok_or(ScaleError::NoTarget)
+        native::target(&self.instances, owner)
     }
 
     pub fn rebalance_session(
@@ -892,22 +842,11 @@ impl<
     }
 
     fn checked_instance(&self, instance: InstanceId, generation: u64) -> Result<usize, ScaleError> {
-        let index = self.instance_index(instance).ok_or(ScaleError::NotFound)?;
-        let record = self.instances[index].ok_or(ScaleError::NotFound)?;
-        if record.generation != generation {
-            Err(ScaleError::StaleGeneration)
-        } else {
-            Ok(index)
-        }
+        native::membership(&self.instances, instance, generation, 4)
     }
 
     fn checked_ready_instance(&self, instance: InstanceId, generation: u64) -> Result<usize, ScaleError> {
-        let index = self.checked_instance(instance, generation)?;
-        if !matches!(self.instances[index].ok_or(ScaleError::NotFound)?.state, InstanceState::Ready) {
-            Err(ScaleError::InvalidState)
-        } else {
-            Ok(index)
-        }
+        native::membership(&self.instances, instance, generation, 5)
     }
 }
 
@@ -922,12 +861,7 @@ fn same_handoff<const SNAPSHOT: usize>(handoff: HandoffRecord<SNAPSHOT>, token: 
 }
 
 fn digest(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325;
-    for byte in bytes {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
+    native::digest(bytes)
 }
 
 pub type HttpScale = ServiceScale<8, 256, 512, 512, 1024>;

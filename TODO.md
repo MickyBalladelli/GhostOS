@@ -551,7 +551,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. C now also owns dirty-page tables, flush-state transitions, clean-slot cleanup, recovery reset/generation updates, and AER isolation decisions. Rust retains typed/const APIs, trace emission, controller/journal calls, last-reading/generation storage, marker conversion, and storage actions. The existing three RAS fixtures and a flush-state regression have C source. Behavior parity and full removal remain.
 - [ ] `crates/rms/` — record management and storage.
 - [ ] `crates/runtime/` — core runtime.
-- [ ] `crates/service-scale/` — service scaling.
+- [ ] `crates/service-scale/` — Active membership validation/slot selection, generation/readiness fences, least-load target selection, and snapshot hashing now use C. Rust retains typed tables/commits, session/handoff/request/effect transitions, counters, snapshots, and public APIs. Full cutover and behavior parity remain.
 - [ ] `crates/status/` — status types and reporting.
 - [ ] `crates/system-model/` — system models.
 - [ ] `crates/test-support/` — test support and crash harnesses; replace with C test support.
@@ -755,3 +755,23 @@ the temporary Clang/LLVM wrapper. Logs are
 `temp/power-policy-x86-build.log`, `temp/power-policy-aarch64-build.log`, and
 `temp/power-policy-riscv-build.log`. Full Rust removal and executed behavior
 parity remain open.
+
+Service-scale progress on 2026-10-03: `c/src/service_scale.c` now owns join/rejoin,
+ready, drain, restart, checked-generation and readiness decisions over checked-
+layout instance views. First-free allocation, duplicate/error precedence,
+restart counter checks, and generation fences are preserved. C selects the
+first least-loaded ready target excluding the current owner and computes the
+wrapping FNV snapshot digest. Rust commits typed records only after decisions
+succeed and retains session, handoff, request/effect state and counters.
+The adapter creates a temporary stack view proportional to instance capacity.
+
+The C archive and host/x86/AArch64/RISC-V service-scale library builds passed.
+Strict freestanding C syntax checks passed for all three targets. RISC-V used
+the temporary Clang/LLVM wrapper. Logs: `temp/c-library-service-scale-build.log`,
+`temp/service-scale-native-build.log`, `temp/service-scale-x86-build.log`,
+`temp/service-scale-aarch64-build.log`, `temp/service-scale-riscv-build.log`.
+Full Rust removal and executed behavior parity remain open.
+
+All six direct service-scale consumers (HTTP, web terminal, storage, package,
+observability, and compiler daemon) also built successfully; existing kernel
+warnings remain. Log: `temp/service-scale-consumer-build.log`.

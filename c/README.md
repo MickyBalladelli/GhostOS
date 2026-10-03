@@ -69,6 +69,7 @@ use only the freestanding foundation objects.
 | `kernel/src/crash.rs` (capsule encoding, build identity, one-time guard) | `src/crash.c` | `include/ghostos/crash.h` |
 | `kernel/src/dlm.rs` (node/federation fences, range lock manager) | `src/dlm.c` | `include/ghostos/dlm.h` |
 | `crates/ras/` (active hardware telemetry, poison quarantine/admission, and budget/workload policy) | `src/ras.c` | `include/ghostos/ras.h` |
+| `crates/service-scale/` (membership decisions, target selection, snapshot digest) | `src/service_scale.c` | `include/ghostos/service_scale.h` |
 | `crates/posix-compat/` (descriptor metadata and pseudo-path parsing) | `src/posix_compat.c` | `include/ghostos/posix_compat.h` |
 | `crates/power/` (thermal/event queues, cluster selection, frequency, idle, device sleep decisions) | `src/thermal.c`, `src/power_policy.c` | `include/ghostos/thermal.h`, `include/ghostos/power_policy.h` |
 | `kernel/src/dma.rs` (active caller-owned mapping tables, staged allocation, capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c`, `src/dma_state.c` | `include/ghostos/dma.h` |
@@ -532,3 +533,10 @@ tie selection. Debug overflow is returned to the Rust panic adapter; release
 scores wrap. Frequency calculations saturate each original intermediate.
 Idle and device sleep decisions preserve boundary comparisons and saturated
 time differences. Rust owns configuration/state and invokes hardware traits.
+
+Service scaling consumers link `service_scale.c` through the crate build script.
+Checked-layout instance views preserve membership error ordering and generation
+fences. The native target selector preserves first-best ties, and digest uses
+unsigned wrapping FNV arithmetic. Typed records, commits, session handoffs,
+request/effect ledgers, counters, and public APIs remain in Rust. Temporary
+instance views use stack space proportional to generic instance capacity.
