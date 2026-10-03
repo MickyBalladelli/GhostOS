@@ -1,5 +1,6 @@
 #include "ghostos/config_parser.h"
 #include <stdbool.h>
+#include <stdint.h>
 static bool space(uint8_t byte) { return byte == ' ' || byte == '\t' || byte == '\r'; }
 static void trim(const uint8_t **bytes, size_t *length) {
     while (*length && space((*bytes)[0])) { *bytes += 1; *length -= 1; }
