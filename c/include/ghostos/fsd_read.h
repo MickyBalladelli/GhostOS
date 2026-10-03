@@ -40,8 +40,8 @@ typedef struct {
     uint32_t generation;
     uint64_t file;
     uint64_t owner, record;
-    const uint8_t *path;
-    size_t path_length;
+    uint8_t path[GHOSTOS_VOLUME_NAME];
+    uint16_t path_length;
 } ghostos_fsd_read_lock;
 typedef struct {
     const ghostos_volume_reader *reader;

@@ -1,15 +1,8 @@
 #include "ghostos/fsd_handles.h"
-static bool same_path(const uint8_t *left, size_t left_length,
-    const uint8_t *right, size_t right_length) {
-    size_t i;
-    if (left_length != right_length) return false;
-    for (i = 0; i < left_length; ++i) if (left[i] != right[i]) return false;
-    return true;
-}
 int ghostos_fsd_read(const ghostos_fsd_read_state *state,
     uint64_t process, uint64_t capability, uint64_t offset,
     uint8_t *output, size_t output_capacity, size_t *read, size_t *required) {
-    size_t index, i;
+    size_t index;
     const ghostos_fsd_read_file *file;
     const ghostos_volume_record *metadata;
     int status;
@@ -28,12 +21,9 @@ int ghostos_fsd_read(const ghostos_fsd_read_state *state,
     status = ghostos_fsd_mode_access(state->processes, state->process_count,
         process, metadata->mode, GHOSTOS_FSD_RIGHT_READ);
     if (status) return status;
-    for (i = 0; i < state->lock_count; ++i) {
-        const ghostos_fsd_read_lock *lock = &state->locks[i];
-        if (lock->occupied && lock->owner != process && lock->mode == 1 &&
-            (lock->whole || lock->record == offset) &&
-            same_path(lock->path, lock->path_length, file->path, file->path_length)) return GHOSTOS_FSD_READ_LOCK_BUSY;
-    }
+    status = ghostos_fsd_check_io_lock(state->locks, state->lock_count,
+        process, file->path, file->path_length, false, offset, 0);
+    if (status) return status;
     return ghostos_volume_reader_read_at(state->reader, file->path,
         file->path_length, offset, output, output_capacity, read);
 }

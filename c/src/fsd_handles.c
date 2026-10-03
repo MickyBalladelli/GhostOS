@@ -19,7 +19,7 @@ static int process_index(const ghostos_fsd_read_process *processes, size_t count
 int ghostos_fsd_handles_init(ghostos_fsd_handles *handles) {
     size_t i;
     if (!handles || handles->process_count > UINT32_MAX ||
-        handles->file_count > UINT32_MAX || handles->lock_count > UINT32_MAX ||
+        handles->file_count >= 0x80000000ull || handles->lock_count > UINT32_MAX ||
         handles->snapshot_count > UINT32_MAX || handles->mapping_count >= 0x80000000ull ||
         (handles->process_count && !handles->processes) ||
         (handles->file_count && !handles->files) ||
@@ -184,7 +184,9 @@ ghostos_fsd_read_state ghostos_fsd_handles_read_state(const ghostos_fsd_handles 
     return state;
 }
 ghostos_status ghostos_fsd_handles_status(int result) {
-    if (result == GHOSTOS_FSD_HANDLES_PROCESS_FULL || result == GHOSTOS_FSD_HANDLES_FILE_FULL)
+    if (result == GHOSTOS_FSD_HANDLES_PROCESS_FULL || result == GHOSTOS_FSD_HANDLES_FILE_FULL ||
+        result == GHOSTOS_FSD_HANDLES_LOCK_FULL || result == GHOSTOS_FSD_HANDLES_SNAPSHOT_FULL)
         return GHOSTOS_STATUS_NO_SPACE;
+    if (result == GHOSTOS_FSD_HANDLES_READ_ONLY) return GHOSTOS_STATUS_READ_ONLY;
     return ghostos_fsd_read_status(result);
 }

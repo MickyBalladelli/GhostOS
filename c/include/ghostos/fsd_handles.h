@@ -8,7 +8,12 @@
 enum {
     GHOSTOS_FSD_HANDLES_PROCESS_FULL = 15,
     GHOSTOS_FSD_HANDLES_FILE_FULL = 16,
-    GHOSTOS_FSD_HANDLES_INVALID_ARGUMENT = 17
+    GHOSTOS_FSD_HANDLES_INVALID_ARGUMENT = 17,
+    GHOSTOS_FSD_HANDLES_INVALID_REQUEST = 18,
+    GHOSTOS_FSD_HANDLES_READ_ONLY = 19,
+    GHOSTOS_FSD_HANDLES_LOCK_FULL = 20,
+    GHOSTOS_FSD_HANDLES_SNAPSHOT_FULL = 21,
+    GHOSTOS_FSD_HANDLES_INVALID_LOCK = 22
 };
 enum {
     GHOSTOS_FSD_RIGHT_READ = 1,
@@ -30,6 +35,7 @@ typedef struct {
     uint64_t owner, checkpoint, checkpoint_generation;
 } ghostos_fsd_checkpoint_slot;
 typedef int (*ghostos_fsd_checkpoint_release_fn)(void *context, uint64_t checkpoint);
+typedef int (*ghostos_fsd_checkpoint_create_fn)(void *context, uint64_t *checkpoint, uint64_t *generation);
 typedef struct {
     ghostos_fsd_read_process *processes;
     size_t process_count;
@@ -42,6 +48,7 @@ typedef struct {
     ghostos_fsd_checkpoint_slot *snapshots;
     size_t snapshot_count;
     ghostos_fsd_checkpoint_release_fn release_checkpoint;
+    ghostos_fsd_checkpoint_create_fn create_checkpoint;
     void *context;
 } ghostos_fsd_handles;
 int ghostos_fsd_handles_init(ghostos_fsd_handles *handles);
@@ -71,6 +78,32 @@ int ghostos_fsd_mode_access(const ghostos_fsd_read_process *processes, size_t co
 int ghostos_fsd_close_file(ghostos_fsd_handles *handles,
     uint64_t process, uint64_t capability);
 int ghostos_fsd_unregister_process(ghostos_fsd_handles *handles, uint64_t process);
+/* Shared=0, exclusive=1. Locks hold their own copied path. Same-owner locks
+   do not conflict. Lock allocation checks file rights, then conflicts, then
+   free capacity; it does not perform an additional filesystem mode check. */
+int ghostos_fsd_check_io_lock(const ghostos_fsd_read_lock *locks, size_t count,
+    uint64_t process, const uint8_t *path, size_t path_length,
+    bool whole, uint64_t record, uint8_t mode);
+int ghostos_fsd_lock_file(ghostos_fsd_handles *handles, uint64_t process,
+    uint64_t file, bool whole, uint64_t record, uint8_t mode, uint64_t *capability);
+int ghostos_fsd_unlock_file(ghostos_fsd_handles *handles,
+    uint64_t process, uint64_t capability);
+/* Mapping offsets/lengths are 4096-byte aligned, length is nonzero and at most
+   UINT32_MAX << 16. Offset may equal EOF and the mapping may extend past EOF,
+   preserving daemon admission; offset + length must not overflow.
+   Mapping tokens reserve low-word bit 31 and cannot be used as file tokens. */
+int ghostos_fsd_map_file(ghostos_fsd_handles *handles, const ghostos_volume_reader *reader,
+    uint64_t process, uint64_t file, uint64_t offset, uint64_t length,
+    bool writable, uint64_t *capability);
+int ghostos_fsd_unmap_file(ghostos_fsd_handles *handles,
+    uint64_t process, uint64_t capability);
+/* Callbacks return local volume result codes. Creation checks admin authority
+   and capacity before creating a checkpoint; callback failure leaves the slot
+   free. Explicit release retains the slot if the callback fails. */
+int ghostos_fsd_create_snapshot(ghostos_fsd_handles *handles, uint64_t process,
+    uint64_t authority, uint64_t *capability, uint64_t *generation);
+int ghostos_fsd_release_snapshot(ghostos_fsd_handles *handles,
+    uint64_t process, uint64_t capability);
 ghostos_fsd_read_state ghostos_fsd_handles_read_state(const ghostos_fsd_handles *handles,
     const ghostos_volume_reader *reader);
 ghostos_status ghostos_fsd_handles_status(int result);
