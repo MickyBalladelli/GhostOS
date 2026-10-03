@@ -8,7 +8,6 @@
 use ghostos_observability::{field, EventField, EventKind};
 
 const BITMAP_WORDS: usize = 4;
-const MAX_POOL_SLOTS: usize = BITMAP_WORDS * u64::BITS as usize;
 const PROBE_BUCKETS: usize = 8;
 const KIND_COUNT: usize = 4;
 
@@ -99,6 +98,7 @@ impl HotAllocation {
 /// Counters needed to compare locality, allocator tail work, and reclamation
 /// behavior under a mixed workload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct HotAllocatorStats {
     pub allocations: u64,
     pub allocation_failures: u64,
@@ -160,6 +160,7 @@ pub struct HotAllocatorReport {
     pub stats: HotAllocatorStats,
 }
 
+#[repr(C)]
 #[derive(Clone, Copy)]
 struct Pool {
     capacity: u16,
@@ -168,90 +169,13 @@ struct Pool {
 }
 
 impl Pool {
-    fn new(capacity: usize) -> Self {
-        let mut free = [0; BITMAP_WORDS];
-        let full_words = capacity / u64::BITS as usize;
-        let remainder = capacity % u64::BITS as usize;
-        let mut word = 0;
-        while word < full_words {
-            free[word] = u64::MAX;
-            word += 1;
-        }
-        if remainder != 0 {
-            free[full_words] = (1u64 << remainder) - 1;
-        }
-        Self {
-            capacity: capacity as u16,
-            used: 0,
-            free,
-        }
-    }
-
-    fn take(&mut self) -> Option<u16> {
-        let mut word = 0;
-        while word < BITMAP_WORDS {
-            let available = self.free[word];
-            if available != 0 {
-                let bit = available.trailing_zeros() as usize;
-                self.free[word] &= !(1u64 << bit);
-                self.used += 1;
-                return Some((word * u64::BITS as usize + bit) as u16)
-            }
-            word += 1;
-        }
-        None
-    }
-
-    fn release(&mut self, slot: u16) -> Result<(), HotReclaimError> {
-        if slot >= self.capacity || slot as usize >= MAX_POOL_SLOTS {
-            return Err(HotReclaimError::InvalidSlot)
-        }
-        let word = slot as usize / u64::BITS as usize;
-        let bit = slot as usize % u64::BITS as usize;
-        let mask = 1u64 << bit;
-        if self.free[word] & mask != 0 {
-            return Err(HotReclaimError::AlreadyFree)
-        }
-        self.free[word] |= mask;
-        self.used -= 1;
-        Ok(())
-    }
-
-    fn free_count(self) -> u16 {
-        self.capacity - self.used
-    }
-
-    fn largest_free_run(self) -> u16 {
-        let mut largest = 0;
-        let mut current = 0;
-        let mut slot = 0;
-        while slot < self.capacity as usize {
-            let word = slot / u64::BITS as usize;
-            let bit = slot % u64::BITS as usize;
-            if self.free[word] & (1u64 << bit) != 0 {
-                current += 1;
-                largest = largest.max(current);
-            } else {
-                current = 0;
-            }
-            slot += 1;
-        }
-        largest
-    }
+    const EMPTY: Self = Self { capacity: 0, used: 0, free: [0; BITMAP_WORDS] };
 }
 
+#[repr(C)]
 #[derive(Clone, Copy)]
 struct PoolSet<const CPUS: usize, const NODES: usize> {
     pools: [[Pool; CPUS]; NODES],
-}
-
-impl<const CPUS: usize, const NODES: usize> PoolSet<CPUS, NODES> {
-    fn new(capacity: usize) -> Self {
-        let pool = Pool::new(capacity);
-        Self {
-            pools: [[pool; CPUS]; NODES],
-        }
-    }
 }
 
 /// Per-CPU, NUMA-aware object pools with bounded remote fallback.
@@ -275,29 +199,21 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
         per_cpu_capacity: usize,
         max_cross_node_fallbacks: usize,
     ) -> Result<Self, HotAllocatorConfigError> {
-        if CPUS == 0 {
-            return Err(HotAllocatorConfigError::NoCpus)
+        match unsafe {
+            ghostos_hot_validate(cpu_to_node.as_ptr(), CPUS, NODES, node_count,
+                per_cpu_capacity, max_cross_node_fallbacks)
+        } {
+            0 => {},
+            1 => return Err(HotAllocatorConfigError::NoCpus),
+            2 => return Err(HotAllocatorConfigError::NoNodes),
+            3 => return Err(HotAllocatorConfigError::InvalidNode),
+            4 => return Err(HotAllocatorConfigError::InvalidCapacity),
+            5 => return Err(HotAllocatorConfigError::InvalidFallbackLimit),
+            _ => unreachable!("invalid native hot allocator configuration result"),
         }
-        if node_count == 0 || NODES == 0 {
-            return Err(HotAllocatorConfigError::NoNodes)
-        }
-        if node_count > NODES {
-            return Err(HotAllocatorConfigError::InvalidNode)
-        }
-        if per_cpu_capacity == 0 || per_cpu_capacity > MAX_POOL_SLOTS {
-            return Err(HotAllocatorConfigError::InvalidCapacity)
-        }
-        if max_cross_node_fallbacks > node_count - 1 {
-            return Err(HotAllocatorConfigError::InvalidFallbackLimit)
-        }
-        if cpu_to_node
-            .iter()
-            .any(|node| *node as usize >= node_count)
-        {
-            return Err(HotAllocatorConfigError::InvalidNode)
-        }
-
-        let set = PoolSet::new(per_cpu_capacity);
+        let mut pool = Pool::EMPTY;
+        unsafe { ghostos_hot_pool_init(&mut pool, per_cpu_capacity) };
+        let set = PoolSet { pools: [[pool; CPUS]; NODES] };
         Ok(Self {
             cpu_to_node,
             node_count: node_count as u8,
@@ -312,79 +228,15 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
         kind: HotObjectKind,
         cpu: usize,
     ) -> Result<HotAllocation, HotAllocationError> {
-        if cpu >= CPUS {
-            return Err(HotAllocationError::InvalidCpu)
+        let mut allocation = NativeAllocation::EMPTY;
+        let mut view = self.native_view();
+        match unsafe { ghostos_hot_view_allocate(&mut view, kind.index() as u32, cpu, &mut allocation) } {
+            0 => Ok(allocation.to_public(kind)),
+            1 => Err(HotAllocationError::InvalidCpu),
+            2 => Err(HotAllocationError::Exhausted),
+            3 => panic!("attempt to calculate the remainder with a divisor of zero"),
+            _ => unreachable!("invalid native hot allocation result"),
         }
-        let node = self.cpu_to_node[cpu] as usize;
-        let kind_index = kind.index();
-        let mut probes = 1u16;
-
-        if let Some(slot) = self.pools[kind_index].pools[node][cpu].take() {
-            self.record_allocation(kind_index, HotAllocationPlacement::LocalCpu, probes);
-            return Ok(HotAllocation {
-                kind,
-                node: node as u8,
-                cpu: cpu as u16,
-                slot,
-                placement: HotAllocationPlacement::LocalCpu,
-            })
-        }
-
-        let mut distance = 1;
-        while distance < CPUS {
-            let candidate = (cpu + distance) % CPUS;
-            probes = probes.saturating_add(1);
-            if self.cpu_to_node[candidate] as usize == node {
-                if let Some(slot) = self.pools[kind_index].pools[node][candidate].take() {
-                    self.record_allocation(
-                        kind_index,
-                        HotAllocationPlacement::LocalNode,
-                        probes,
-                    );
-                    return Ok(HotAllocation {
-                        kind,
-                        node: node as u8,
-                        cpu: candidate as u16,
-                        slot,
-                        placement: HotAllocationPlacement::LocalNode,
-                    })
-                }
-            }
-            distance += 1;
-        }
-
-        let mut fallback = 0;
-        while fallback < self.max_cross_node_fallbacks as usize {
-            let remote_node = (node + fallback + 1) % self.node_count as usize;
-            let mut remote_cpu = 0;
-            while remote_cpu < CPUS {
-                probes = probes.saturating_add(1);
-                if self.cpu_to_node[remote_cpu] as usize == remote_node {
-                    if let Some(slot) =
-                        self.pools[kind_index].pools[remote_node][remote_cpu].take()
-                    {
-                        self.record_allocation(
-                            kind_index,
-                            HotAllocationPlacement::RemoteNode,
-                            probes,
-                        );
-                        return Ok(HotAllocation {
-                            kind,
-                            node: remote_node as u8,
-                            cpu: remote_cpu as u16,
-                            slot,
-                            placement: HotAllocationPlacement::RemoteNode,
-                        })
-                    }
-                }
-                remote_cpu += 1;
-            }
-            fallback += 1;
-        }
-
-        self.stats[kind_index].allocation_failures =
-            self.stats[kind_index].allocation_failures.saturating_add(1);
-        Err(HotAllocationError::Exhausted)
     }
 
     pub fn reclaim(&mut self, allocation: HotAllocation) -> Result<(), HotReclaimError> {
@@ -396,30 +248,17 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
         current_cpu: usize,
         allocation: HotAllocation,
     ) -> Result<(), HotReclaimError> {
-        if current_cpu >= CPUS {
-            return Err(HotReclaimError::InvalidCpu)
+        let mut view = self.native_view();
+        match unsafe {
+            ghostos_hot_view_reclaim_on(&mut view, current_cpu, NativeAllocation::from(allocation))
+        } {
+            0 => Ok(()),
+            1 => Err(HotReclaimError::InvalidCpu),
+            2 => Err(HotReclaimError::InvalidNode),
+            3 => Err(HotReclaimError::InvalidSlot),
+            4 => Err(HotReclaimError::AlreadyFree),
+            _ => unreachable!("invalid native hot reclaim result"),
         }
-        let owner_cpu = allocation.cpu as usize;
-        let owner_node = allocation.node as usize;
-        if owner_cpu >= CPUS {
-            return self.record_reclaim_error(allocation.kind, HotReclaimError::InvalidCpu)
-        }
-        if owner_node >= self.node_count as usize
-            || self.cpu_to_node[owner_cpu] as usize != owner_node
-        {
-            return self.record_reclaim_error(allocation.kind, HotReclaimError::InvalidNode)
-        }
-        let result = self.pools[allocation.kind.index()].pools[owner_node][owner_cpu]
-            .release(allocation.slot);
-        if let Err(error) = result {
-            return self.record_reclaim_error(allocation.kind, error)
-        }
-        let stats = &mut self.stats[allocation.kind.index()];
-        stats.reclaims = stats.reclaims.saturating_add(1);
-        if current_cpu != owner_cpu {
-            stats.remote_reclaims = stats.remote_reclaims.saturating_add(1);
-        }
-        Ok(())
     }
 
     /// Account bytes touched through a remote-node allocation. Object pools
@@ -429,9 +268,8 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
         if bytes == 0 {
             return
         }
-        self.stats[kind.index()].remote_memory_bytes = self.stats[kind.index()]
-            .remote_memory_bytes
-            .saturating_add(bytes);
+        let mut view = self.native_view();
+        unsafe { ghostos_hot_view_record_remote_memory(&mut view, kind.index() as u32, bytes) };
         ghostos_observability::trace!(
             EventKind::RemoteMemory,
             EventField::unsigned(field::NUMA_KIND, 2),
@@ -440,40 +278,21 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
     }
 
     pub fn report(&self, kind: HotObjectKind) -> HotAllocatorReport {
-        let mut capacity = 0u32;
-        let mut in_use = 0u32;
-        let mut free = 0u32;
-        let mut largest_free_run = 0u32;
-        let pools = &self.pools[kind.index()].pools;
-        let mut node = 0;
-        while node < NODES {
-            let mut cpu = 0;
-            while cpu < CPUS {
-                if self.cpu_to_node[cpu] as usize == node {
-                    let pool = pools[node][cpu];
-                    capacity += pool.capacity as u32;
-                    in_use += pool.used as u32;
-                    free += pool.free_count() as u32;
-                    largest_free_run += pool.largest_free_run() as u32;
-                }
-                cpu += 1;
-            }
-            node += 1;
-        }
-        let fragmented = free.saturating_sub(largest_free_run);
-        let fragmentation_per_mille = if free == 0 {
-            0
-        } else {
-            ((fragmented as u64 * 1_000) / free as u64) as u16
+        let view = NativeView {
+            cpu_count: CPUS, node_capacity: NODES, cpu_stride: CPUS, node_stride: NODES,
+            node_count: self.node_count, max_cross_node_fallbacks: self.max_cross_node_fallbacks,
+            cpu_to_node: self.cpu_to_node.as_ptr(),
+            pools: self.pools.as_ptr().cast::<Pool>().cast_mut(),
+            stats: self.stats.as_ptr().cast_mut(), checked: cfg!(debug_assertions),
         };
+        let mut report = NativeReport::EMPTY;
+        if !unsafe { ghostos_hot_view_report(&view, kind.index() as u32, &mut report) } {
+            panic!("attempt to add with overflow")
+        }
         HotAllocatorReport {
-            kind,
-            capacity,
-            in_use,
-            free,
-            largest_free_run,
-            fragmentation_per_mille,
-            stats: self.stats[kind.index()],
+            kind, capacity: report.capacity, in_use: report.in_use, free: report.free,
+            largest_free_run: report.largest_free_run,
+            fragmentation_per_mille: report.fragmentation_per_mille, stats: report.stats,
         }
     }
 
@@ -493,38 +312,106 @@ impl<const CPUS: usize, const NODES: usize> HotObjectAllocator<CPUS, NODES> {
         self.max_cross_node_fallbacks as usize
     }
 
-    fn record_allocation(
-        &mut self,
-        kind: usize,
-        placement: HotAllocationPlacement,
-        probes: u16,
-    ) {
-        let stats = &mut self.stats[kind];
-        stats.allocations = stats.allocations.saturating_add(1);
-        stats.total_probe_steps = stats.total_probe_steps.saturating_add(probes as u64);
-        stats.max_probe_steps = stats.max_probe_steps.max(probes);
-        let bucket = probes.saturating_sub(1).min((PROBE_BUCKETS - 1) as u16) as usize;
-        stats.probe_buckets[bucket] = stats.probe_buckets[bucket].saturating_add(1);
-        match placement {
-            HotAllocationPlacement::LocalCpu => {
-                stats.local_cpu_allocations = stats.local_cpu_allocations.saturating_add(1)
-            }
-            HotAllocationPlacement::LocalNode => {
-                stats.local_node_allocations = stats.local_node_allocations.saturating_add(1)
-            }
-            HotAllocationPlacement::RemoteNode => {
-                stats.remote_node_allocations = stats.remote_node_allocations.saturating_add(1)
-            }
+    fn native_view(&mut self) -> NativeView {
+        NativeView {
+            cpu_count: CPUS, node_capacity: NODES, cpu_stride: CPUS, node_stride: NODES,
+            node_count: self.node_count, max_cross_node_fallbacks: self.max_cross_node_fallbacks,
+            cpu_to_node: self.cpu_to_node.as_ptr(),
+            pools: self.pools.as_mut_ptr().cast(), stats: self.stats.as_mut_ptr(),
+            checked: cfg!(debug_assertions),
         }
     }
+}
 
-    fn record_reclaim_error(
-        &mut self,
-        kind: HotObjectKind,
-        error: HotReclaimError,
-    ) -> Result<(), HotReclaimError> {
-        self.stats[kind.index()].invalid_reclaims =
-            self.stats[kind.index()].invalid_reclaims.saturating_add(1);
-        Err(error)
+#[repr(C)]
+struct NativeView {
+    cpu_count: usize,
+    node_capacity: usize,
+    cpu_stride: usize,
+    node_stride: usize,
+    node_count: u8,
+    max_cross_node_fallbacks: u8,
+    cpu_to_node: *const u8,
+    pools: *mut Pool,
+    stats: *mut HotAllocatorStats,
+    checked: bool,
+}
+
+#[repr(C)]
+struct NativeAllocation {
+    kind: u32,
+    node: u8,
+    cpu: u16,
+    slot: u16,
+    placement: u32,
+}
+
+impl NativeAllocation {
+    const EMPTY: Self = Self { kind: 0, node: 0, cpu: 0, slot: 0, placement: 0 };
+
+    fn to_public(self, kind: HotObjectKind) -> HotAllocation {
+        HotAllocation {
+            kind, node: self.node, cpu: self.cpu, slot: self.slot,
+            placement: match self.placement {
+                0 => HotAllocationPlacement::LocalCpu,
+                1 => HotAllocationPlacement::LocalNode,
+                2 => HotAllocationPlacement::RemoteNode,
+                _ => unreachable!("invalid native hot allocation placement"),
+            },
+        }
     }
+}
+
+impl From<HotAllocation> for NativeAllocation {
+    fn from(allocation: HotAllocation) -> Self {
+        Self {
+            kind: allocation.kind.index() as u32, node: allocation.node,
+            cpu: allocation.cpu, slot: allocation.slot,
+            placement: match allocation.placement {
+                HotAllocationPlacement::LocalCpu => 0,
+                HotAllocationPlacement::LocalNode => 1,
+                HotAllocationPlacement::RemoteNode => 2,
+            },
+        }
+    }
+}
+
+#[repr(C)]
+struct NativeReport {
+    kind: u32,
+    capacity: u32,
+    in_use: u32,
+    free: u32,
+    largest_free_run: u32,
+    fragmentation_per_mille: u16,
+    stats: HotAllocatorStats,
+}
+
+impl NativeReport {
+    const EMPTY: Self = Self {
+        kind: 0, capacity: 0, in_use: 0, free: 0, largest_free_run: 0,
+        fragmentation_per_mille: 0, stats: HotAllocatorStats::new(),
+    };
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<Pool>() == 40);
+    assert!(core::mem::offset_of!(Pool, free) == 8);
+    assert!(core::mem::size_of::<HotAllocatorStats>() == 152);
+    assert!(core::mem::offset_of!(HotAllocatorStats, probe_buckets) == 64);
+    assert!(core::mem::size_of::<NativeAllocation>() == 16);
+    assert!(core::mem::size_of::<NativeReport>() == 176);
+    assert!(core::mem::size_of::<NativeView>() == 72);
+};
+
+unsafe extern "C" {
+    fn ghostos_hot_pool_init(pool: *mut Pool, capacity: usize);
+    fn ghostos_hot_validate(map: *const u8, cpus: usize, nodes: usize,
+        node_count: usize, capacity: usize, fallbacks: usize) -> u32;
+    fn ghostos_hot_view_allocate(view: *mut NativeView, kind: u32,
+        cpu: usize, allocation: *mut NativeAllocation) -> u32;
+    fn ghostos_hot_view_reclaim_on(view: *mut NativeView, cpu: usize,
+        allocation: NativeAllocation) -> u32;
+    fn ghostos_hot_view_record_remote_memory(view: *mut NativeView, kind: u32, bytes: u64);
+    fn ghostos_hot_view_report(view: *const NativeView, kind: u32, report: *mut NativeReport) -> bool;
 }

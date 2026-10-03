@@ -7,6 +7,7 @@ mod allocator;
 mod boot_services;
 pub mod boot_diagnostics;
 pub mod address_space;
+#[allow(unsafe_code)]
 pub mod hot_allocator;
 #[allow(unsafe_code)]
 mod arch;

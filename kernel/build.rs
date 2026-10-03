@@ -119,7 +119,7 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
     let target_flag = format!("--target={target}");
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let mut objects = Vec::new();
-    for module in ["partition", "dma_state", "micro_silo", "invariants", "monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
+    for module in ["hot_allocator", "partition", "dma_state", "micro_silo", "invariants", "monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
         let source = kernel.join(format!("../c/src/{module}.c"));
         let object = output.join(format!("ghostos-{module}-host.o"));
         run(
