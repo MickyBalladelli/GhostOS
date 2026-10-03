@@ -39,3 +39,18 @@ int ghostos_volume_device_flush(ghostos_volume *volume, uint64_t generation, uin
     if (interrupted) return 4;
     return 0;
 }
+int ghostos_volume_device_discard(size_t block_count, uint64_t *log, size_t log_capacity, size_t *log_count, int fail_at,
+    bool fail_flush, bool interrupted, bool fail_release) {
+    size_t total = 2u * (block_count + 2u), index, writes = 0;
+    *log_count = 0;
+    for (index = 0; index < total; ++index) {
+        if (fail_at == (int)writes) return 3;
+        if (append(log, log_capacity, log_count, (uint64_t)index)) return 3;
+        writes += 1;
+    }
+    if (fail_flush) return 3;
+    if (append(log, log_capacity, log_count, UINT64_MAX)) return 3;
+    if (interrupted) return 4;
+    if (fail_release) return 3;
+    return append(log, log_capacity, log_count, UINT64_MAX - 1u);
+}
