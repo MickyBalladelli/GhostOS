@@ -24,7 +24,8 @@ typedef struct {
 } ghostos_volume_tree_frame;
 /* Mutable raw block arena and caller-owned traversal/payload scratch.
    Kinds: empty=0, leaf=1, branch=2, data=3. IDs index blocks at ID - 1.
-   Frames bound traversal depth; no recursion or allocation is used.
+   Frames bound traversal depth; no recursion or heap allocation is used.
+   Scratch buffers and frame arrays must not overlap the block arena or kinds.
    payload has at least GHOSTOS_VOLUME_DATA bytes. Operations are serialized.
    Results: 0 success, 1 corrupt, 2 scratch too small, 3 arena full,
    4 already exists, 5 not found. Output root changes only on success.
@@ -37,6 +38,9 @@ typedef struct {
     ghostos_volume_tree_frame *frames;
     size_t frame_capacity;
 } ghostos_volume_tree;
+/* Node codecs retain all 192 name bytes, validate UTF-8 in the named prefix,
+   and accept NUL bytes as the native disk decoder does. Tree header/payload
+   reserved and trailing bytes retain the existing decoder acceptance. */
 int ghostos_volume_tree_decode(const uint8_t *block, size_t capacity,
     uint8_t *payload, size_t payload_capacity, ghostos_volume_tree_node *node);
 int ghostos_volume_tree_encode(const ghostos_volume_tree_node *node,

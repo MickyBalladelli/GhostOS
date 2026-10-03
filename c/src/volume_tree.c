@@ -183,7 +183,7 @@ static int insert_leaf(ghostos_volume_tree *tree, const ghostos_volume_tree_node
         ghostos_volume_tree_key existing = key_of(&leaf->entries.records[position]);
         int order = compare(&existing, &key);
         if (!order) return 4;
-        if (order > 0) break;
+        if (order >= 0) break;
         position += 1;
     }
     for (i = 0; i < position; ++i) records[i] = leaf->entries.records[i];
