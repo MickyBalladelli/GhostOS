@@ -504,7 +504,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/client-sdk/` — client SDK and wire protocol.
 - [ ] `crates/compute/` — tensor and accelerator compute.
 - [ ] `crates/durability/` — C owns active bounded trace recording and durable-write ordering/recovery verification, with a matching six-layer contract table and interruption callback API. Rust retains public enums, const contract tables, injector traits, and the typed event view (with parallel C records). Rust build/adapters, behavior parity, and full removal remain.
-- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. Cluster memory, CXL, and DSM remain. Rust sources were not changed.
+- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. C CXL discovery in `c/src/cxl.c` records a Type-3 endpoint, drains it before removal, and refills a bandwidth budget. DSM remains. Rust sources were not changed.
 - [ ] `crates/fsd/` — filesystem daemon.
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
 - [ ] `crates/ghostos-agent-bridge/` — C owns task-scope validation, parent and lifetime limits, expiry arithmetic, reusable grant slots, nonce and revocation wrap, consume checks, run-right unions, active-grant counts, and commit/discard decisions. Rust retains signature and lease verification, script execution, and GhostFS sandbox calls. Existing attenuation tests were executed.
@@ -1238,3 +1238,12 @@ AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
 Cluster memory, CXL, and DSM remain. Logs:
 `temp/c-library-fabric-lease-build.log`,
 `temp/fabric-lease-contract-build.log`.
+
+CXL progress on 2026-10-03: `c/src/cxl.c` records serial 7 as a Type-3 endpoint
+and rejects a zero decoder count. Removal waits until the device is draining,
+and a second drain request is busy. A 100-byte budget allows the first burst,
+throttles the next byte for 10000 microseconds, and allows one byte after one
+second. `build/c/cxl-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/cxl.c` on x86-64, AArch64, and
+RISC-V. No Rust sources were edited and Cargo was not used. DSM remains. Logs:
+`temp/c-library-cxl-build.log`, `temp/cxl-contract-build.log`.
