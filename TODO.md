@@ -511,7 +511,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-agentd/` — agent daemon.
 - [ ] `crates/ghostos-audit/` — C owns advisory identifier checks, advisory and obsolescence slot selection, out-of-date version ordering, finding de-duplication, and scan-budget validation. Rust retains feed insertion records, withdrawn-match filtering, package iteration, and batch scheduling. No existing audit tests were present; C contract checks cover the slot rules.
 - [ ] `crates/ghostos-backup/` — backup and recovery.
-- [ ] `crates/ghostos-confidential/` — C enclave binding in `c/src/enclave.c` rejects a zero measurement, checks page-aligned ranges, selects the first free node slot, and reports whether a range is protected. Attestation quotes, capabilities, and encrypted fabric frames remain. Rust sources were not changed.
+- [ ] `crates/ghostos-confidential/` — C enclave binding in `c/src/enclave.c` rejects a zero measurement, checks page-aligned ranges, selects the first free node slot, and reports whether a range is protected. C capabilities in `c/src/confidential_capability.c` issue, validate, and revoke caller-owned records, including expiry-before-authorization and epoch wrap. Attestation quotes and encrypted fabric frames remain. Rust sources were not changed.
 - [ ] `crates/ghostos-debug/` — C probe programs in `c/src/probes.c` verify forward-only jumps, execute bounded arithmetic, and record emitted values in a ring. C GDB framing in `c/src/gdb.c` buffers partial packets, checks checksums, reads memory, and rejects writes without permission. C coredumps in `c/src/coredump.c` validate `/cores` paths and encode `SYNCORE1` metadata and page records. C remote sessions in `c/src/remote_debug.c` check the capability wire header, target, nonce, and operation rights. Signature authorization remains outside C. Rust sources were not changed.
 - [ ] `crates/ghostos-declarative/` — declarative configuration.
 - [ ] `crates/ghostos-embedded-script/` — C owns script limits, capability names, operation masks, duplicate resources, source size, and request admission. Rust retains the Rhai engine and request storage. Existing capability tests were executed.
@@ -1052,3 +1052,14 @@ freestanding syntax checks passed for `c/src/enclave.c` on x86-64, AArch64,
 and RISC-V. No Rust sources were edited and Cargo was not used. Attestation
 quotes, capability provisioning, and encrypted frames remain. Logs:
 `temp/c-library-enclave-build.log` and `temp/enclave-contract-build.log`.
+
+Confidential-capability progress on 2026-10-03: `c/src/confidential_capability.c`
+issues caller-owned records, rejects an empty subject before allocation, and
+checks expiry before other authorization failures. Revoking every record
+advances the epoch from 1 to 2 and makes the old record unauthorized.
+`build/c/confidential-capability-contracts` passed. `make c-library` passed,
+and strict freestanding syntax checks passed for
+`c/src/confidential_capability.c` on x86-64, AArch64, and RISC-V. No Rust
+sources were edited and Cargo was not used. Attestation quotes and encrypted
+frames remain. Logs: `temp/c-library-confidential-capability-build.log` and
+`temp/confidential-capability-contract-build.log`.
