@@ -1,5 +1,4 @@
 #![no_std]
-#![forbid(unsafe_code)]
 
 pub const MAX_NUMA_NODES: usize = 64;
 pub const MAX_NUMA_CPUS: usize = 128;
@@ -23,12 +22,6 @@ pub enum PlacementKind {
     NetworkInterrupt = 5,
 }
 
-impl PlacementKind {
-    const fn index(self) -> usize {
-        self as usize - 1
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum PlacementLocality {
@@ -45,6 +38,7 @@ impl PlacementLocality {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct NumaTopology {
     cpu_to_node: [u8; MAX_NUMA_CPUS],
     cpu_count: u16,
@@ -63,31 +57,18 @@ impl NumaTopology {
     }
 
     pub fn new(cpu_to_node: &[u8]) -> Result<Self, NumaTopologyError> {
-        if cpu_to_node.is_empty() {
-            return Err(NumaTopologyError::NoCpus)
+        let mut topology = Self::uma();
+        // C borrows the mapping and initializes only this caller-owned topology.
+        let code = unsafe {
+            ghostos_numa_topology_init(&mut topology, cpu_to_node.as_ptr(), cpu_to_node.len())
+        };
+        match code {
+            0 => Ok(topology),
+            1 => Err(NumaTopologyError::NoCpus),
+            2 => Err(NumaTopologyError::TooManyCpus),
+            3 => Err(NumaTopologyError::InvalidNode),
+            _ => Err(NumaTopologyError::TooManyNodes),
         }
-        if cpu_to_node.len() > MAX_NUMA_CPUS {
-            return Err(NumaTopologyError::TooManyCpus)
-        }
-        let mut mapping = [0; MAX_NUMA_CPUS];
-        let mut node_mask = 0u64;
-        for (index, node) in cpu_to_node.iter().copied().enumerate() {
-            if node as usize >= MAX_NUMA_NODES {
-                return Err(NumaTopologyError::InvalidNode)
-            }
-            mapping[index] = node;
-            node_mask |= 1u64 << node;
-        }
-        let node_count = node_mask.count_ones() as usize;
-        if node_count > MAX_NUMA_NODES {
-            return Err(NumaTopologyError::TooManyNodes)
-        }
-        Ok(Self {
-            cpu_to_node: mapping,
-            cpu_count: cpu_to_node.len() as u16,
-            node_count: node_count as u8,
-            node_mask,
-        })
     }
 
     pub const fn cpu_count(self) -> usize {
@@ -151,6 +132,7 @@ impl Default for NumaTopology {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct NumaDecision {
     pub kind: PlacementKind,
     pub requested_node: u8,
@@ -184,6 +166,7 @@ impl Default for NumaDecision {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+#[repr(C)]
 pub struct NumaCounters {
     pub decisions: u64,
     pub local_cpu: u64,
@@ -195,6 +178,7 @@ pub struct NumaCounters {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct NumaReport {
     pub topology: NumaTopology,
     pub counters: NumaCounters,
@@ -203,6 +187,7 @@ pub struct NumaReport {
 /// Bounded placement state shared by process, memory, queue, storage, and
 /// interrupt owners. Missing topology is deliberately represented as UMA.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct NumaPlacement {
     topology: NumaTopology,
     cursors: [u16; NUMA_KIND_COUNT],
@@ -246,8 +231,8 @@ impl NumaPlacement {
     }
 
     pub fn set_topology(&mut self, topology: NumaTopology) {
-        self.topology = topology;
-        self.cursors = [0; NUMA_KIND_COUNT];
+        // C resets cursors while retaining this placement's counters.
+        unsafe { ghostos_numa_set_topology(self, &topology) }
     }
 
     pub fn place(
@@ -256,63 +241,47 @@ impl NumaPlacement {
         preferred_cpu: Option<u16>,
         preferred_node: Option<u8>,
     ) -> NumaDecision {
-        let requested_node = preferred_node
-            .or_else(|| preferred_cpu.and_then(|cpu| self.topology.node_for_cpu(cpu as usize)))
-            .unwrap_or(0);
-        let selected_node = if self.topology.has_node(requested_node) {
-            requested_node
-        } else {
-            self.next_node(kind)
-        };
-        let cpu = preferred_cpu
-            .filter(|cpu| self.topology.node_for_cpu(*cpu as usize) == Some(selected_node))
-            .or_else(|| self.topology.first_cpu_on_node(selected_node))
-            .unwrap_or(0);
-        let locality = if self.topology.is_uma() {
-            PlacementLocality::UmaFallback
-        } else if requested_node != selected_node {
-            PlacementLocality::RemoteNode
-        } else if preferred_cpu == Some(cpu) {
-            PlacementLocality::LocalCpu
-        } else {
-            PlacementLocality::LocalNode
-        };
-        self.counters.decisions = self.counters.decisions.saturating_add(1);
-        match locality {
-            PlacementLocality::LocalCpu => self.counters.local_cpu = self.counters.local_cpu.saturating_add(1),
-            PlacementLocality::LocalNode => self.counters.local_node = self.counters.local_node.saturating_add(1),
-            PlacementLocality::RemoteNode => self.counters.remote_node = self.counters.remote_node.saturating_add(1),
-            PlacementLocality::UmaFallback => self.counters.uma_fallback = self.counters.uma_fallback.saturating_add(1),
+        let mut decision = NumaDecision::uma(kind);
+        // Both objects have checked C layouts; valid Rust enum values bound kind.
+        unsafe {
+            ghostos_numa_place(self, kind as u8, preferred_cpu.is_some(),
+                preferred_cpu.unwrap_or(0), preferred_node.is_some(),
+                preferred_node.unwrap_or(0), &mut decision)
         }
-        NumaDecision {
-            kind,
-            requested_node,
-            selected_node,
-            cpu,
-            locality,
-            sequence: self.counters.decisions,
-        }
+        decision
     }
 
     pub fn record_memory_access(&mut self, local_node: u8, allocation_node: u8, bytes: u64) {
-        if !self.topology.is_uma() && local_node != allocation_node {
-            self.counters.remote_memory_accesses =
-                self.counters.remote_memory_accesses.saturating_add(1);
-            self.counters.remote_memory_bytes =
-                self.counters.remote_memory_bytes.saturating_add(bytes);
-        }
+        // C mutates only caller-owned counters and retains no pointers.
+        unsafe { ghostos_numa_record_memory(self, local_node, allocation_node, bytes) }
     }
+}
 
-    fn next_node(&mut self, kind: PlacementKind) -> u8 {
-        let count = self.topology.node_count().max(1);
-        let cursor = &mut self.cursors[kind.index()];
-        let node = self
-            .topology
-            .node_at(*cursor as usize % count)
-            .unwrap_or(0);
-        *cursor = cursor.wrapping_add(1);
-        node
-    }
+const _: () = {
+    assert!(core::mem::size_of::<NumaTopology>() == 144);
+    assert!(core::mem::offset_of!(NumaTopology, cpu_count) == 128);
+    assert!(core::mem::offset_of!(NumaTopology, node_count) == 130);
+    assert!(core::mem::offset_of!(NumaTopology, node_mask) == 136);
+    assert!(core::mem::size_of::<NumaDecision>() == 16);
+    assert!(core::mem::offset_of!(NumaDecision, cpu) == 4);
+    assert!(core::mem::offset_of!(NumaDecision, locality) == 6);
+    assert!(core::mem::offset_of!(NumaDecision, sequence) == 8);
+    assert!(core::mem::size_of::<NumaCounters>() == 56);
+    assert!(core::mem::size_of::<NumaReport>() == 200);
+    assert!(core::mem::size_of::<NumaPlacement>() == 216);
+    assert!(core::mem::offset_of!(NumaPlacement, cursors) == 144);
+    assert!(core::mem::offset_of!(NumaPlacement, counters) == 160);
+};
+
+unsafe extern "C" {
+    fn ghostos_numa_topology_init(topology: *mut NumaTopology,
+        mapping: *const u8, count: usize) -> u32;
+    fn ghostos_numa_set_topology(placement: *mut NumaPlacement, topology: *const NumaTopology);
+    fn ghostos_numa_place(placement: *mut NumaPlacement, kind: u8,
+        has_cpu: bool, preferred_cpu: u16, has_node: bool, preferred_node: u8,
+        decision: *mut NumaDecision);
+    fn ghostos_numa_record_memory(placement: *mut NumaPlacement,
+        local_node: u8, allocation_node: u8, bytes: u64);
 }
 
 impl Default for NumaPlacement {
