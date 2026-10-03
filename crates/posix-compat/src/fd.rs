@@ -9,16 +9,6 @@ pub(crate) enum AccessMode {
     ReadWrite,
 }
 
-impl AccessMode {
-    pub const fn readable(self) -> bool {
-        matches!(self, Self::ReadOnly | Self::ReadWrite)
-    }
-
-    pub const fn writable(self) -> bool {
-        matches!(self, Self::WriteOnly | Self::ReadWrite)
-    }
-}
-
 /// One process-local descriptor entry.
 ///
 /// The filesystem capability is intentionally not shared between entries.
@@ -30,23 +20,24 @@ impl AccessMode {
 pub(crate) struct Entry {
     pub file: File,
     pub offset: u64,
-    pub access: AccessMode,
     pub append: bool,
 }
 
 pub(crate) struct FdTable<const CAPACITY: usize> {
-    entries: [Option<Entry>; CAPACITY],
+    files: [Option<File>; CAPACITY],
+    entries: [NativeEntry; CAPACITY],
 }
 
 impl<const CAPACITY: usize> FdTable<CAPACITY> {
     pub const fn new() -> Self {
         Self {
-            entries: [None; CAPACITY],
+            files: [None; CAPACITY],
+            entries: [NativeEntry::EMPTY; CAPACITY],
         }
     }
 
     pub fn has_free_slot(&self) -> bool {
-        self.entries.iter().any(Option::is_none)
+        unsafe { ghostos_posix_fd_has_free(self.entries.as_ptr(), CAPACITY) }
     }
 
     pub fn insert(
@@ -55,66 +46,73 @@ impl<const CAPACITY: usize> FdTable<CAPACITY> {
         access: AccessMode,
         append: bool,
     ) -> Result<i32, Error> {
-        let slot = self
-            .entries
-            .iter()
-            .position(Option::is_none)
-            .ok_or(Error::TooManyFiles)?;
-        let fd = slot
-            .checked_add(3)
-            .and_then(|fd| i32::try_from(fd).ok())
-            .ok_or(Error::TooManyFiles)?;
-        self.entries[slot] = Some(Entry {
-            file,
-            offset: 0,
-            access,
-            append,
-        });
+        let mut fd = 0;
+        if !unsafe { ghostos_posix_fd_insert(self.entries.as_mut_ptr(), CAPACITY, access as u8, append, &mut fd) } {
+            return Err(Error::TooManyFiles)
+        }
+        self.files[(fd - 3) as usize] = Some(file);
         Ok(fd)
     }
 
     pub fn get(&self, fd: i32) -> Result<Entry, Error> {
-        self.entries
-            .get(Self::slot(fd)?)
-            .and_then(|entry| *entry)
-            .ok_or(Error::BadFileDescriptor)
+        self.get_with_access(fd, 0)
     }
 
     pub fn get_readable(&self, fd: i32) -> Result<Entry, Error> {
-        let entry = self.get(fd)?;
-        if !entry.access.readable() {
-            return Err(Error::PermissionDenied)
-        }
-        Ok(entry)
+        self.get_with_access(fd, 1)
     }
 
     pub fn get_writable(&self, fd: i32) -> Result<Entry, Error> {
-        let entry = self.get(fd)?;
-        if !entry.access.writable() {
-            return Err(Error::PermissionDenied)
+        self.get_with_access(fd, 2)
+    }
+
+    fn get_with_access(&self, fd: i32, required: u8) -> Result<Entry, Error> {
+        let mut native = NativeEntry::EMPTY;
+        match unsafe { ghostos_posix_fd_get(self.entries.as_ptr(), CAPACITY, fd, required, &mut native) } {
+            0 => {},
+            1 => return Err(Error::BadFileDescriptor),
+            2 => return Err(Error::PermissionDenied),
+            _ => unreachable!("native POSIX descriptor result"),
         }
-        Ok(entry)
+        let file = self.files[(fd - 3) as usize].ok_or(Error::BadFileDescriptor)?;
+        Ok(native.to_public(file))
     }
 
     pub fn update_offset(&mut self, fd: i32, offset: u64) -> Result<(), Error> {
-        let entry = self
-            .entries
-            .get_mut(Self::slot(fd)?)
-            .and_then(Option::as_mut)
-            .ok_or(Error::BadFileDescriptor)?;
-        entry.offset = offset;
-        Ok(())
+        if unsafe { ghostos_posix_fd_offset(self.entries.as_mut_ptr(), CAPACITY, fd, offset) } {
+            Ok(())
+        } else { Err(Error::BadFileDescriptor) }
     }
 
     pub fn remove(&mut self, fd: i32) -> Result<Entry, Error> {
-        self.entries
-            .get_mut(Self::slot(fd)?)
-            .and_then(Option::take)
-            .ok_or(Error::BadFileDescriptor)
+        let mut native = NativeEntry::EMPTY;
+        if !unsafe { ghostos_posix_fd_remove(self.entries.as_mut_ptr(), CAPACITY, fd, &mut native) } {
+            return Err(Error::BadFileDescriptor)
+        }
+        let file = self.files[(fd - 3) as usize].take().ok_or(Error::BadFileDescriptor)?;
+        Ok(native.to_public(file))
     }
+}
 
-    fn slot(fd: i32) -> Result<usize, Error> {
-        let fd = usize::try_from(fd).map_err(|_| Error::BadFileDescriptor)?;
-        fd.checked_sub(3).ok_or(Error::BadFileDescriptor)
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeEntry { offset: u64, access: u8, append: bool, occupied: bool }
+impl NativeEntry {
+    const EMPTY: Self = Self { offset: 0, access: 0, append: false, occupied: false };
+    fn to_public(self, file: File) -> Entry {
+        Entry { file, offset: self.offset, append: self.append }
     }
+}
+const _: () = {
+    assert!(core::mem::size_of::<NativeEntry>() == 16);
+    assert!(core::mem::offset_of!(NativeEntry, occupied) == 10);
+};
+unsafe extern "C" {
+    fn ghostos_posix_fd_has_free(entries: *const NativeEntry, capacity: usize) -> bool;
+    fn ghostos_posix_fd_insert(entries: *mut NativeEntry, capacity: usize,
+        access: u8, append: bool, fd: *mut i32) -> bool;
+    fn ghostos_posix_fd_get(entries: *const NativeEntry, capacity: usize,
+        fd: i32, required: u8, entry: *mut NativeEntry) -> i32;
+    fn ghostos_posix_fd_offset(entries: *mut NativeEntry, capacity: usize, fd: i32, offset: u64) -> bool;
+    fn ghostos_posix_fd_remove(entries: *mut NativeEntry, capacity: usize, fd: i32, entry: *mut NativeEntry) -> bool;
 }

@@ -1,6 +1,7 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
+#[allow(unsafe_code)]
 mod fd;
 mod container;
 mod pseudo;
