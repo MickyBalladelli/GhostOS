@@ -363,13 +363,14 @@ pub fn handle_aer<C, const EVENTS: usize, const POISON: usize>(
 where
     C: PciSegmentController,
 {
-    if !status.has_error() {
+    let action = native::aer_action(status);
+    if action == 0 {
         return Ok(None);
     }
     diagnostics
         .telemetry
         .record_aer(timestamp_us, node, address, status);
-    if status.requires_isolation() {
+    if action == 2 {
         controller
             .isolate_segment(address.bus)
             .map_err(RasError::Controller)?;
@@ -562,68 +563,36 @@ pub struct FlushProgress {
 }
 
 pub struct PersistentPool<const CAPACITY: usize = DEFAULT_DIRTY_PAGE_CAPACITY> {
-    pages: [Option<DirtyPage>; CAPACITY],
+    pages: [native::DirtyPage; CAPACITY],
     generation: u64,
 }
 
 impl<const CAPACITY: usize> PersistentPool<CAPACITY> {
     pub const fn new() -> Self {
         Self {
-            pages: [None; CAPACITY],
+            pages: [native::DirtyPage::EMPTY; CAPACITY],
             generation: 1,
         }
     }
 
     pub fn mark_dirty(&mut self, pool: PoolId, page: u64) -> Result<u64, RasError> {
-        if page % PAGE_SIZE != 0 {
-            return Err(RasError::InvalidArgument);
+        match native::mark_dirty(&mut self.pages, self.generation, pool, page) {
+            0 => Ok(self.generation),
+            1 => Err(RasError::InvalidArgument),
+            2 => Err(RasError::Capacity),
+            _ => unreachable!("native RAS dirty result"),
         }
-        if let Some(entry) = self
-            .pages
-            .iter_mut()
-            .flatten()
-            .find(|entry| entry.pool == pool && entry.page == page)
-        {
-            entry.state = DirtyPageState::Dirty;
-            entry.generation = self.generation;
-            return Ok(self.generation);
-        }
-        if self.pages.iter().all(Option::is_some) {
-            self.pages
-                .iter_mut()
-                .filter(|entry| entry.is_some_and(|page| page.state == DirtyPageState::Clean))
-                .for_each(|entry| *entry = None);
-        }
-        let slot = self
-            .pages
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(RasError::Capacity)?;
-        *slot = Some(DirtyPage {
-            pool,
-            page,
-            generation: self.generation,
-            state: DirtyPageState::Dirty,
-        });
-        Ok(self.generation)
     }
 
     pub fn flush_next<M: PersistentMemory>(
         &mut self,
         memory: &mut M,
     ) -> Result<Option<FlushProgress>, RasError> {
-        let index = self
-            .pages
-            .iter()
-            .position(|entry| entry.is_some_and(|page| page.state == DirtyPageState::Dirty));
-        let Some(index) = index else { return Ok(None) };
-        let page = self.pages[index].ok_or(RasError::NotFound)?;
-        self.pages[index].ok_or(RasError::NotFound)?.state = DirtyPageState::Flushing;
-        if memory.flush_page(page.pool, page.page).is_err() {
-            self.pages[index].ok_or(RasError::NotFound)?.state = DirtyPageState::Failed;
-            return Err(RasError::FlushFailed);
-        }
-        self.pages[index].ok_or(RasError::NotFound)?.state = DirtyPageState::Clean;
+        let Some(index) = native::flush_begin(&mut self.pages) else { return Ok(None) };
+        let page = self.pages[index].to_public().ok_or(RasError::NotFound)?;
+        let success = memory.flush_page(page.pool, page.page).is_ok();
+        native::flush_finish(&mut self.pages, index, success);
+        if !success { return Err(RasError::FlushFailed) }
         Ok(Some(FlushProgress {
             pool: page.pool,
             page: page.page,
@@ -634,19 +603,11 @@ impl<const CAPACITY: usize> PersistentPool<CAPACITY> {
 
     pub fn flush_all<M: PersistentMemory>(&mut self, memory: &mut M) -> Result<usize, RasError> {
         let mut flushed = 0;
-        while self
-            .pages
-            .iter()
-            .any(|entry| entry.is_some_and(|page| page.state == DirtyPageState::Dirty))
-        {
-            self.flush_next(memory)?;
+        while self.flush_next(memory)?.is_some() {
             flushed += 1;
         }
         memory.barrier().map_err(RasError::Controller)?;
-        self.pages
-            .iter_mut()
-            .filter(|entry| entry.is_some_and(|page| page.state == DirtyPageState::Clean))
-            .for_each(|entry| *entry = None);
+        native::clear_clean(&mut self.pages);
         Ok(flushed)
     }
 
@@ -661,14 +622,14 @@ impl<const CAPACITY: usize> PersistentPool<CAPACITY> {
     {
         let marker = RecoveryMarker {
             generation: self.generation,
-            pages: self.pages,
+            pages: core::array::from_fn(|index| self.pages[index].to_public()),
         };
         journal
             .write_marker(&marker)
             .map_err(RasError::Controller)?;
         let flushed = self.flush_all(memory)?;
         journal.clear_marker().map_err(RasError::Controller)?;
-        self.generation = self.generation.wrapping_add(1).max(1);
+        self.generation = native::next_generation(self.generation);
         Ok(flushed)
     }
 
@@ -679,16 +640,13 @@ impl<const CAPACITY: usize> PersistentPool<CAPACITY> {
         let Some(marker) = journal.load_marker().map_err(RasError::Controller)? else {
             return Ok(false);
         };
-        self.pages = marker.pages;
-        for page in self.pages.iter_mut().flatten() {
-            page.state = DirtyPageState::Dirty
-        }
-        self.generation = marker.generation.wrapping_add(1).max(1);
+        self.pages = marker.pages.map(native::DirtyPage::from_public);
+        self.generation = native::recover_pages(&mut self.pages, marker.generation);
         Ok(true)
     }
 
     pub fn pages(&self) -> impl Iterator<Item = DirtyPage> + '_ {
-        self.pages.iter().flatten().copied()
+        self.pages.iter().filter_map(|page| page.to_public())
     }
 }
 

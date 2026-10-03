@@ -117,3 +117,52 @@ size_t ghostos_ras_workload_next(const ghostos_ras_workload *slots, size_t capac
 void ghostos_ras_workload_evicted(ghostos_ras_workload *slots, size_t index) {
     slots[index].active = false;
 }
+
+_Static_assert(sizeof(ghostos_ras_dirty_page) == 32, "RAS dirty page ABI");
+_Static_assert(offsetof(ghostos_ras_dirty_page, occupied) == 24, "RAS dirty occupancy ABI");
+void ghostos_ras_clear_clean(ghostos_ras_dirty_page *slots, size_t capacity) {
+    for (size_t i = 0; i < capacity; ++i)
+        if (slots[i].occupied && slots[i].state == 2) slots[i] = (ghostos_ras_dirty_page){0};
+}
+int ghostos_ras_mark_dirty(ghostos_ras_dirty_page *slots, size_t capacity,
+    uint64_t generation, uint32_t pool, uint64_t page) {
+    if (page % GHOSTOS_RAS_PAGE_SIZE) return 1;
+    bool full = true;
+    for (size_t i = 0; i < capacity; ++i) {
+        if (!slots[i].occupied) { full = false; continue; }
+        if (slots[i].pool != pool || slots[i].page != page) continue;
+        slots[i].state = 0; slots[i].generation = generation;
+        return 0;
+    }
+    if (full) ghostos_ras_clear_clean(slots, capacity);
+    for (size_t i = 0; i < capacity; ++i) {
+        if (slots[i].occupied) continue;
+        slots[i] = (ghostos_ras_dirty_page){pool, 0, page, generation, true};
+        return 0;
+    }
+    return 2;
+}
+size_t ghostos_ras_flush_begin(ghostos_ras_dirty_page *slots, size_t capacity) {
+    for (size_t i = 0; i < capacity; ++i) {
+        if (!slots[i].occupied || slots[i].state != 0) continue;
+        slots[i].state = 1;
+        return i;
+    }
+    return capacity;
+}
+void ghostos_ras_flush_finish(ghostos_ras_dirty_page *slots, size_t index, bool success) {
+    slots[index].state = success ? 2 : 3;
+}
+uint64_t ghostos_ras_next_generation(uint64_t generation) {
+    ++generation;
+    return generation ? generation : 1;
+}
+uint64_t ghostos_ras_recover_pages(ghostos_ras_dirty_page *slots, size_t capacity, uint64_t generation) {
+    for (size_t i = 0; i < capacity; ++i) if (slots[i].occupied) slots[i].state = 0;
+    return ghostos_ras_next_generation(generation);
+}
+
+uint8_t ghostos_ras_aer_action(uint32_t correctable, uint32_t non_fatal, uint32_t fatal) {
+    if (non_fatal || fatal) return 2;
+    return correctable ? 1 : 0;
+}

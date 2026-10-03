@@ -56,4 +56,16 @@ ghostos_ras_budget_plan ghostos_ras_budget_decide(ghostos_ras_budget_policy poli
 /* Select without mutation; commit after controller approval. Capacity means no selection. */
 size_t ghostos_ras_workload_next(const ghostos_ras_workload *slots, size_t capacity, size_t start);
 void ghostos_ras_workload_evicted(ghostos_ras_workload *slots, size_t index);
+typedef struct { uint32_t pool, state; uint64_t page, generation; bool occupied; } ghostos_ras_dirty_page;
+/* Mark: 0 success, 1 unaligned, 2 full. State: 0 dirty, 1 flushing, 2 clean, 3 failed. */
+int ghostos_ras_mark_dirty(ghostos_ras_dirty_page *slots, size_t capacity,
+    uint64_t generation, uint32_t pool, uint64_t page);
+/* Select and mark flushing; capacity means no dirty page. */
+size_t ghostos_ras_flush_begin(ghostos_ras_dirty_page *slots, size_t capacity);
+void ghostos_ras_flush_finish(ghostos_ras_dirty_page *slots, size_t index, bool success);
+void ghostos_ras_clear_clean(ghostos_ras_dirty_page *slots, size_t capacity);
+uint64_t ghostos_ras_next_generation(uint64_t generation);
+uint64_t ghostos_ras_recover_pages(ghostos_ras_dirty_page *slots, size_t capacity, uint64_t generation);
+/* 0 no error, 1 report corrected error, 2 report and isolate. */
+uint8_t ghostos_ras_aer_action(uint32_t correctable, uint32_t non_fatal, uint32_t fatal);
 #endif

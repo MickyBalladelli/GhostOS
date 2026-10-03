@@ -174,3 +174,64 @@ unsafe extern "C" {
     fn ghostos_ras_workload_next(slots: *const Workload, capacity: usize, start: usize) -> usize;
     fn ghostos_ras_workload_evicted(slots: *mut Workload, index: usize);
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct DirtyPage { pool: u32, state: u32, page: u64, generation: u64, occupied: bool }
+impl DirtyPage {
+    pub(crate) const EMPTY: Self = Self { pool: 0, state: 0, page: 0, generation: 0, occupied: false };
+    pub(crate) fn from_public(page: Option<crate::DirtyPage>) -> Self {
+        let Some(page) = page else { return Self::EMPTY };
+        Self { pool: page.pool.raw(), page: page.page, generation: page.generation, occupied: true,
+            state: match page.state { crate::DirtyPageState::Dirty => 0, crate::DirtyPageState::Flushing => 1,
+                crate::DirtyPageState::Clean => 2, crate::DirtyPageState::Failed => 3 } }
+    }
+    pub(crate) fn to_public(self) -> Option<crate::DirtyPage> {
+        if !self.occupied { return None }
+        Some(crate::DirtyPage { pool: ghostos_fabric::memory::PoolId::new(self.pool).expect("native RAS pool"),
+            page: self.page, generation: self.generation, state: match self.state {
+                0 => crate::DirtyPageState::Dirty, 1 => crate::DirtyPageState::Flushing,
+                2 => crate::DirtyPageState::Clean, 3 => crate::DirtyPageState::Failed,
+                _ => unreachable!("native RAS dirty state"),
+            } })
+    }
+}
+pub(crate) fn mark_dirty(slots: &mut [DirtyPage], generation: u64, pool: ghostos_fabric::memory::PoolId, page: u64) -> i32 {
+    unsafe { ghostos_ras_mark_dirty(slots.as_mut_ptr(), slots.len(), generation, pool.raw(), page) }
+}
+pub(crate) fn flush_begin(slots: &mut [DirtyPage]) -> Option<usize> {
+    let index = unsafe { ghostos_ras_flush_begin(slots.as_mut_ptr(), slots.len()) };
+    (index < slots.len()).then_some(index)
+}
+pub(crate) fn flush_finish(slots: &mut [DirtyPage], index: usize, success: bool) {
+    assert!(index < slots.len());
+    unsafe { ghostos_ras_flush_finish(slots.as_mut_ptr(), index, success) }
+}
+pub(crate) fn clear_clean(slots: &mut [DirtyPage]) {
+    unsafe { ghostos_ras_clear_clean(slots.as_mut_ptr(), slots.len()) }
+}
+pub(crate) fn next_generation(generation: u64) -> u64 {
+    unsafe { ghostos_ras_next_generation(generation) }
+}
+pub(crate) fn recover_pages(slots: &mut [DirtyPage], generation: u64) -> u64 {
+    unsafe { ghostos_ras_recover_pages(slots.as_mut_ptr(), slots.len(), generation) }
+}
+const _: () = {
+    assert!(core::mem::size_of::<DirtyPage>() == 32);
+    assert!(core::mem::offset_of!(DirtyPage, occupied) == 24);
+};
+unsafe extern "C" {
+    fn ghostos_ras_mark_dirty(slots: *mut DirtyPage, capacity: usize, generation: u64, pool: u32, page: u64) -> i32;
+    fn ghostos_ras_flush_begin(slots: *mut DirtyPage, capacity: usize) -> usize;
+    fn ghostos_ras_flush_finish(slots: *mut DirtyPage, index: usize, success: bool);
+    fn ghostos_ras_clear_clean(slots: *mut DirtyPage, capacity: usize);
+    fn ghostos_ras_next_generation(generation: u64) -> u64;
+    fn ghostos_ras_recover_pages(slots: *mut DirtyPage, capacity: usize, generation: u64) -> u64;
+}
+
+pub(crate) fn aer_action(status: ghostos_legacy_pc_drivers::PcieAerStatus) -> u8 {
+    unsafe { ghostos_ras_aer_action(status.correctable, status.non_fatal, status.fatal) }
+}
+unsafe extern "C" {
+    fn ghostos_ras_aer_action(correctable: u32, non_fatal: u32, fatal: u32) -> u8;
+}
