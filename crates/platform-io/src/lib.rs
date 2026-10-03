@@ -1,5 +1,4 @@
 #![no_std]
-#![forbid(unsafe_code)]
 
 use ghostos_status::{IntoStatus, Severity, Status, facility};
 pub use ghostos_numa::{
@@ -47,18 +46,6 @@ impl IntoStatus for Error {
 pub struct RequestToken(u64);
 
 impl RequestToken {
-    const fn from_parts(slot: usize, generation: u32) -> Self {
-        Self(((generation as u64) << 32) | slot as u64)
-    }
-
-    const fn slot(self) -> usize {
-        self.0 as u32 as usize
-    }
-
-    const fn generation(self) -> u32 {
-        (self.0 >> 32) as u32
-    }
-
     pub const fn raw(self) -> u64 {
         self.0
     }
@@ -76,29 +63,32 @@ pub struct Completion<T: Copy> {
     pub result: T,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SlotState {
-    Vacant,
-    Queued,
-    Dispatched,
-    Completed,
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SlotMetadata {
+    generation: u32,
+    state: u32,
+}
+
+impl SlotMetadata {
+    const EMPTY: Self = Self { generation: 0, state: 0 };
+}
+
+#[repr(C)]
+struct QueueCursors {
+    submit: usize,
+    dispatch: usize,
+    completion: usize,
 }
 
 #[derive(Clone, Copy)]
 struct Slot<Request: Copy, Response: Copy> {
-    generation: u32,
-    state: SlotState,
     request: Option<Request>,
     result: Option<Response>,
 }
 
 impl<Request: Copy, Response: Copy> Slot<Request, Response> {
-    const EMPTY: Self = Self {
-        generation: 0,
-        state: SlotState::Vacant,
-        request: None,
-        result: None,
-    };
+    const EMPTY: Self = Self { request: None, result: None };
 }
 
 /// Fixed-capacity asynchronous request/completion queue.
@@ -108,9 +98,8 @@ impl<Request: Copy, Response: Copy> Slot<Request, Response> {
 pub struct AsyncQueue<Request: Copy, Response: Copy, const CAPACITY: usize = DEFAULT_QUEUE_CAPACITY>
 {
     slots: [Slot<Request, Response>; CAPACITY],
-    submit_cursor: usize,
-    dispatch_cursor: usize,
-    completion_cursor: usize,
+    metadata: [SlotMetadata; CAPACITY],
+    cursors: QueueCursors,
     numa: NumaPlacement,
     placement: NumaDecision,
 }
@@ -119,9 +108,8 @@ impl<Request: Copy, Response: Copy, const CAPACITY: usize> AsyncQueue<Request, R
     pub const fn new() -> Self {
         Self {
             slots: [Slot::EMPTY; CAPACITY],
-            submit_cursor: 0,
-            dispatch_cursor: 0,
-            completion_cursor: 0,
+            metadata: [SlotMetadata::EMPTY; CAPACITY],
+            cursors: QueueCursors { submit: 0, dispatch: 0, completion: 0 },
             numa: NumaPlacement::uma(),
             placement: NumaDecision::uma(PlacementKind::Queue),
         }
@@ -158,103 +146,68 @@ impl<Request: Copy, Response: Copy, const CAPACITY: usize> AsyncQueue<Request, R
     }
 
     pub fn submit(&mut self, request: Request) -> Result<RequestToken, Error> {
-        let slot_index = self
-            .find_from(self.submit_cursor, SlotState::Vacant)
-            .ok_or(Error::QueueFull)?;
-        let slot = &mut self.slots[slot_index];
-        slot.generation = slot.generation.wrapping_add(1).max(1);
-        slot.state = SlotState::Queued;
-        slot.request = Some(request);
-        slot.result = None;
-        self.submit_cursor = Self::next(slot_index);
-        Ok(RequestToken::from_parts(slot_index, slot.generation))
+        let mut index = 0;
+        let mut token = 0;
+        // C borrows only checked metadata records; payloads remain Rust-owned.
+        io_result(unsafe {
+            ghostos_io_submit(self.metadata.as_mut_ptr(), CAPACITY,
+                &mut self.cursors, &mut index, &mut token)
+        })?;
+        self.slots[index].request = Some(request);
+        self.slots[index].result = None;
+        Ok(RequestToken(token))
     }
 
     pub fn dispatch(&mut self) -> Option<Submission<Request>> {
-        let slot_index = self.find_from(self.dispatch_cursor, SlotState::Queued)?;
-        let slot = &mut self.slots[slot_index];
-        let request = slot.request?;
-        slot.state = SlotState::Dispatched;
-        self.dispatch_cursor = Self::next(slot_index);
-        Some(Submission {
-            token: RequestToken::from_parts(slot_index, slot.generation),
-            request,
-        })
+        let mut index = 0;
+        let mut token = 0;
+        // Queued slots always have a request published by submit.
+        if !unsafe {
+            ghostos_io_dispatch(self.metadata.as_mut_ptr(), CAPACITY,
+                &mut self.cursors, &mut index, &mut token)
+        } {
+            return None
+        }
+        Some(Submission { token: RequestToken(token), request: self.slots[index].request? })
     }
 
     pub fn complete(&mut self, token: RequestToken, result: Response) -> Result<(), Error> {
-        let slot = self.slot_mut(token)?;
-        if slot.state != SlotState::Dispatched {
-            return Err(Error::RequestNotDispatched);
-        }
-        slot.state = SlotState::Completed;
-        slot.result = Some(result);
+        // C validates the token and dispatched state before the payload is written.
+        io_result(unsafe {
+            ghostos_io_complete(self.metadata.as_mut_ptr(), CAPACITY, token.raw())
+        })?;
+        self.slots[token.raw() as u32 as usize].result = Some(result);
         Ok(())
     }
 
     pub fn poll(&mut self) -> Option<Completion<Response>> {
-        let slot_index = self.find_from(self.completion_cursor, SlotState::Completed)?;
-        let slot = &mut self.slots[slot_index];
-        let Some(result) = slot.result else {
-            slot.state = SlotState::Vacant;
-            slot.request = None;
-            self.completion_cursor = Self::next(slot_index);
+        let mut index = 0;
+        let mut token = 0;
+        // C releases only a completed slot and advances the completion cursor.
+        if !unsafe {
+            ghostos_io_poll(self.metadata.as_mut_ptr(), CAPACITY,
+                &mut self.cursors, &mut index, &mut token)
+        } {
             return None
-        };
-        let completion = Completion {
-            token: RequestToken::from_parts(slot_index, slot.generation),
-            result,
-        };
-        slot.state = SlotState::Vacant;
+        }
+        let slot = &mut self.slots[index];
         slot.request = None;
-        slot.result = None;
-        self.completion_cursor = Self::next(slot_index);
-        Some(completion)
+        let result = slot.result.take()?;
+        Some(Completion { token: RequestToken(token), result })
     }
 
     pub fn cancel(&mut self, token: RequestToken) -> Result<(), Error> {
-        let slot = self.slot_mut(token)?;
-        if slot.state != SlotState::Queued {
-            return Err(Error::CannotCancel);
-        }
-        slot.state = SlotState::Vacant;
-        slot.request = None;
+        // C rejects stale tokens and every state except queued before mutation.
+        io_result(unsafe {
+            ghostos_io_cancel(self.metadata.as_mut_ptr(), CAPACITY, token.raw())
+        })?;
+        self.slots[token.raw() as u32 as usize].request = None;
         Ok(())
     }
 
     pub fn pending(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|slot| slot.state != SlotState::Vacant)
-            .count()
-    }
-
-    fn slot_mut(&mut self, token: RequestToken) -> Result<&mut Slot<Request, Response>, Error> {
-        let slot = self
-            .slots
-            .get_mut(token.slot())
-            .ok_or(Error::InvalidToken)?;
-        if slot.state == SlotState::Vacant || slot.generation != token.generation() {
-            return Err(Error::InvalidToken);
-        }
-        Ok(slot)
-    }
-
-    fn find_from(&self, start: usize, state: SlotState) -> Option<usize> {
-        if CAPACITY == 0 {
-            return None;
-        }
-        (0..CAPACITY)
-            .map(|offset| (start + offset) % CAPACITY)
-            .find(|index| self.slots[*index].state == state)
-    }
-
-    const fn next(index: usize) -> usize {
-        if CAPACITY == 0 {
-            0
-        } else {
-            (index + 1) % CAPACITY
-        }
+        // C reads metadata only and retains no pointer.
+        unsafe { ghostos_io_pending(self.metadata.as_ptr(), CAPACITY) }
     }
 }
 
@@ -267,6 +220,7 @@ impl<Request: Copy, Response: Copy, const CAPACITY: usize> Default
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum BufferAccess {
     ReadOnly,
     WriteOnly,
@@ -285,6 +239,7 @@ impl BufferAccess {
 
 /// Capability-mapped shared memory. Payload bytes never enter the I/O message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct BufferDescriptor {
     pub region: u32,
     pub offset: u64,
@@ -294,12 +249,8 @@ pub struct BufferDescriptor {
 
 impl BufferDescriptor {
     pub fn validate(self) -> Result<Self, Error> {
-        if self.region == 0 || self.length == 0 {
-            return Err(Error::EmptyBuffer);
-        }
-        self.offset
-            .checked_add(self.length as u64)
-            .ok_or(Error::EmptyBuffer)?;
+        // C reads this checked C-layout descriptor without retaining it.
+        io_result(unsafe { ghostos_io_buffer_validate(&self) })?;
         Ok(self)
     }
 }
@@ -322,29 +273,15 @@ pub struct IoRequest {
 
 impl IoRequest {
     pub fn validate(self) -> Result<Self, Error> {
-        if self.device == 0 {
-            return Err(Error::InvalidDevice);
-        }
-        match self.operation {
-            IoOperation::Read => {
-                let buffer = self.buffer.ok_or(Error::EmptyBuffer)?.validate()?;
-                if !buffer.access.writable() {
-                    return Err(Error::InvalidBufferAccess);
-                }
-            }
-            IoOperation::Write => {
-                let buffer = self.buffer.ok_or(Error::EmptyBuffer)?.validate()?;
-                if !buffer.access.readable() {
-                    return Err(Error::InvalidBufferAccess);
-                }
-            }
-            IoOperation::Control { .. } => {
-                if let Some(buffer) = self.buffer {
-                    buffer.validate()?;
-                }
-            }
-            IoOperation::Flush => {}
-        }
+        let operation = match self.operation {
+            IoOperation::Read => 0,
+            IoOperation::Write => 1,
+            IoOperation::Flush => 2,
+            IoOperation::Control { .. } => 3,
+        };
+        let buffer = self.buffer.as_ref().map_or(core::ptr::null(), |buffer| buffer as *const _);
+        // The optional descriptor lives through this call; C retains no pointers.
+        io_result(unsafe { ghostos_io_request_validate(self.device, operation, buffer) })?;
         Ok(self)
     }
 }
@@ -387,16 +324,23 @@ pub enum MediaFormat {
 
 impl MediaFormat {
     pub fn validate(self) -> Result<Self, Error> {
+        let (video, _, first, second) = self.c_parts();
+        io_result(unsafe { ghostos_media_format_validate(video, first, second) })?;
+        Ok(self)
+    }
+
+    fn c_parts(self) -> (bool, u8, u32, u32) {
         match self {
-            Self::Audio {
-                sample_rate,
-                channels,
-                ..
-            } if sample_rate == 0 || channels == 0 => Err(Error::InvalidFormat),
-            Self::Video { width, height, .. } if width == 0 || height == 0 => {
-                Err(Error::InvalidFormat)
+            Self::Audio { sample_rate, channels, .. } => (false, 0, sample_rate, channels as u32),
+            Self::Video { encoding, width, height } => {
+                let encoding = match encoding {
+                    VideoEncoding::Rgba8888 => 0,
+                    VideoEncoding::Bgra8888 => 1,
+                    VideoEncoding::Nv12 => 2,
+                    VideoEncoding::Yuv420 => 3,
+                };
+                (true, encoding, width, height)
             }
-            _ => Ok(self),
         }
     }
 }
@@ -421,40 +365,21 @@ pub struct MediaPacket {
 
 impl MediaPacket {
     pub fn validate(self) -> Result<Self, Error> {
-        self.format.validate()?;
-        if self.stream == 0 {
-            return Err(Error::InvalidDevice);
-        }
-        let expected_planes = match self.format {
-            MediaFormat::Audio { .. } => 1,
-            MediaFormat::Video {
-                encoding: VideoEncoding::Rgba8888 | VideoEncoding::Bgra8888,
-                ..
-            } => 1,
-            MediaFormat::Video {
-                encoding: VideoEncoding::Nv12,
-                ..
-            } => 2,
-            MediaFormat::Video {
-                encoding: VideoEncoding::Yuv420,
-                ..
-            } => 3,
+        let (video, encoding, first, second) = self.format.c_parts();
+        let operation = match self.operation {
+            MediaOperation::Present => 0,
+            MediaOperation::Capture => 1,
+            MediaOperation::Encode => 2,
+            MediaOperation::Decode => 3,
         };
-        if self.planes[..expected_planes].iter().any(Option::is_none)
-            || self.planes[expected_planes..].iter().any(Option::is_some)
-        {
-            return Err(Error::InvalidPlaneCount);
-        }
-        for plane in self.planes.iter().flatten() {
-            let plane = plane.validate()?;
-            let valid_access = match self.operation {
-                MediaOperation::Present | MediaOperation::Encode => plane.access.readable(),
-                MediaOperation::Capture | MediaOperation::Decode => plane.access.writable(),
-            };
-            if !valid_access {
-                return Err(Error::InvalidBufferAccess);
-            }
-        }
+        let empty = BufferDescriptor { region: 0, offset: 0, length: 0, access: BufferAccess::ReadOnly };
+        let planes = self.planes.map(|plane| plane.unwrap_or(empty));
+        let present = self.planes.map(|plane| plane.is_some());
+        // C reads four descriptors and presence flags in index order.
+        io_result(unsafe {
+            ghostos_media_packet_validate(self.stream, operation, video, encoding,
+                first, second, planes.as_ptr(), present.as_ptr())
+        })?;
         Ok(self)
     }
 }
@@ -574,4 +499,49 @@ impl<const CAPACITY: usize> Default for MediaQueue<CAPACITY> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn io_result(code: u32) -> Result<(), Error> {
+    match code {
+        0 => Ok(()),
+        1 => Err(Error::CannotCancel),
+        2 => Err(Error::EmptyBuffer),
+        3 => Err(Error::InvalidBufferAccess),
+        4 => Err(Error::InvalidDevice),
+        5 => Err(Error::InvalidFormat),
+        6 => Err(Error::InvalidPlaneCount),
+        7 => Err(Error::InvalidToken),
+        8 => Err(Error::QueueFull),
+        _ => Err(Error::RequestNotDispatched),
+    }
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<SlotMetadata>() == 8);
+    assert!(core::mem::offset_of!(SlotMetadata, state) == 4);
+    assert!(core::mem::size_of::<QueueCursors>() == 3 * core::mem::size_of::<usize>());
+    assert!(core::mem::offset_of!(QueueCursors, dispatch) == core::mem::size_of::<usize>());
+    assert!(core::mem::offset_of!(QueueCursors, completion) == 2 * core::mem::size_of::<usize>());
+    assert!(core::mem::size_of::<BufferDescriptor>() == 24);
+    assert!(core::mem::offset_of!(BufferDescriptor, offset) == 8);
+    assert!(core::mem::offset_of!(BufferDescriptor, length) == 16);
+    assert!(core::mem::offset_of!(BufferDescriptor, access) == 20);
+};
+
+unsafe extern "C" {
+    fn ghostos_io_submit(slots: *mut SlotMetadata, capacity: usize,
+        cursors: *mut QueueCursors, index: *mut usize, token: *mut u64) -> u32;
+    fn ghostos_io_dispatch(slots: *mut SlotMetadata, capacity: usize,
+        cursors: *mut QueueCursors, index: *mut usize, token: *mut u64) -> bool;
+    fn ghostos_io_complete(slots: *mut SlotMetadata, capacity: usize, token: u64) -> u32;
+    fn ghostos_io_poll(slots: *mut SlotMetadata, capacity: usize,
+        cursors: *mut QueueCursors, index: *mut usize, token: *mut u64) -> bool;
+    fn ghostos_io_cancel(slots: *mut SlotMetadata, capacity: usize, token: u64) -> u32;
+    fn ghostos_io_pending(slots: *const SlotMetadata, capacity: usize) -> usize;
+    fn ghostos_io_buffer_validate(buffer: *const BufferDescriptor) -> u32;
+    fn ghostos_io_request_validate(device: u32, operation: u8, buffer: *const BufferDescriptor) -> u32;
+    fn ghostos_media_format_validate(video: bool, first: u32, second: u32) -> u32;
+    fn ghostos_media_packet_validate(stream: u32, operation: u8, video: bool,
+        encoding: u8, first: u32, second: u32, planes: *const BufferDescriptor,
+        present: *const bool) -> u32;
 }

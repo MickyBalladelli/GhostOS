@@ -81,6 +81,36 @@ bool ghostos_api_migrate_to_current(ghostos_api_contract contract, ghostos_api_v
     return false;
 }
 
+_Static_assert(sizeof(ghostos_api_version) == 4, "API version size");
+_Static_assert(offsetof(ghostos_api_version, minor) == 2, "API minor offset");
+_Static_assert(sizeof(ghostos_api_version_range) == 8, "API range size");
+_Static_assert(offsetof(ghostos_api_version_range, maximum) == 4, "API maximum offset");
+
+static bool code_equal(const char *a, const char *b) {
+    while (*a != '\0' && *a == *b) { ++a; ++b; }
+    return *a == *b;
+}
+
+uint32_t ghostos_api_check_policy(ghostos_api_version current,
+    ghostos_api_version_range supported, ghostos_api_version offered) {
+    ghostos_api_contract contract = {.current = current, .supported = supported};
+    ghostos_compatibility result = ghostos_api_contract_check(contract, offered);
+    if (result.kind == GHOSTOS_COMPAT_ACCEPTED) return GHOSTOS_POLICY_ACCEPTED;
+    if (result.kind == GHOSTOS_COMPAT_DEPRECATED) return GHOSTOS_POLICY_DEPRECATED;
+    if (code_equal(result.error.code, GHOSTOS_COMPAT_INVALID_RANGE)) return GHOSTOS_POLICY_INVALID_RANGE;
+    if (code_equal(result.error.code, GHOSTOS_COMPAT_TOO_OLD)) return GHOSTOS_POLICY_TOO_OLD;
+    return GHOSTOS_POLICY_TOO_NEW;
+}
+
+bool ghostos_api_migration_policy(ghostos_api_version current,
+    ghostos_api_version offered, bool has_migration,
+    ghostos_api_version from, ghostos_api_version to) {
+    ghostos_api_contract contract = {.current = current, .has_migration = has_migration,
+        .migration = {.from = from, .to = to}};
+    ghostos_api_migration migration;
+    return ghostos_api_migrate_to_current(contract, offered, &migration, NULL);
+}
+
 /* Freestanding formatting avoids making the kernel port depend on stdio. */
 typedef struct { char *out; size_t capacity, length; } writer;
 static void put(writer *w, char value) {

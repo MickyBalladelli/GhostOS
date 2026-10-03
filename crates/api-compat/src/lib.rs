@@ -1,5 +1,4 @@
 #![no_std]
-#![forbid(unsafe_code)]
 
 //! Version policy shared by every public GhostOS boundary.
 //!
@@ -19,6 +18,7 @@ pub const COMPATIBILITY_ERROR_MIGRATION_REQUIRED: &str = "GHOSTOS-COMPAT-004";
 pub const DEPRECATION_WARNING_LEGACY: &str = "GHOSTOS-COMPAT-DEP-001";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(C)]
 pub struct ApiVersion {
     pub major: u16,
     pub minor: u16,
@@ -80,6 +80,7 @@ impl ApiKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct VersionRange {
     pub minimum: ApiVersion,
     pub maximum: ApiVersion,
@@ -122,62 +123,55 @@ impl ApiContract {
     }
 
     pub fn check(self, offered: ApiVersion) -> Result<Compatibility, CompatibilityError> {
-        if !self.supported.is_valid() {
-            return Err(CompatibilityError::new(
-                self.kind,
-                COMPATIBILITY_ERROR_INVALID_RANGE,
-                offered,
-                self.supported,
-            ));
-        }
-        if offered.is_before(self.supported.minimum) {
-            return Err(CompatibilityError::new(
-                self.kind,
-                COMPATIBILITY_ERROR_TOO_OLD,
-                offered,
-                self.supported,
-            ));
-        }
-        if offered.is_after(self.supported.maximum) {
-            return Err(CompatibilityError::new(
-                self.kind,
-                COMPATIBILITY_ERROR_TOO_NEW,
-                offered,
-                self.supported,
-            ));
-        }
-        if offered.is_before(self.current) {
-            return Ok(Compatibility::Deprecated(DeprecationWarning {
+        // C receives only checked value layouts and retains no pointers.
+        let code = unsafe { ghostos_api_check_policy(self.current, self.supported, offered) };
+        let error = match code {
+            0 => return Ok(Compatibility::Accepted),
+            1 => return Ok(Compatibility::Deprecated(DeprecationWarning {
                 code: DEPRECATION_WARNING_LEGACY,
                 kind: self.kind,
                 version: offered,
                 replacement: self.current,
-            }));
-        }
-        Ok(Compatibility::Accepted)
+            })),
+            2 => COMPATIBILITY_ERROR_INVALID_RANGE,
+            3 => COMPATIBILITY_ERROR_TOO_OLD,
+            _ => COMPATIBILITY_ERROR_TOO_NEW,
+        };
+        Err(CompatibilityError::new(self.kind, error, offered, self.supported))
     }
 
     pub fn migrate_to_current(
         self,
         offered: ApiVersion,
     ) -> Result<Migration, CompatibilityError> {
-        match self.migration {
-            Some(migration)
-                if !migration.from.is_before(offered)
-                    && !migration.from.is_after(offered)
-                    && !migration.to.is_before(self.current)
-                    && !migration.to.is_after(self.current) =>
-            {
-                Ok(migration)
+        let (from, to) = self.migration.map_or((ApiVersion::new(0, 0), ApiVersion::new(0, 0)),
+            |migration| (migration.from, migration.to));
+        // Migration strings stay in Rust; C decides exact version compatibility.
+        let accepted = unsafe {
+            ghostos_api_migration_policy(self.current, offered, self.migration.is_some(), from, to)
+        };
+        if accepted {
+            if let Some(migration) = self.migration {
+                return Ok(migration)
             }
-            _ => Err(CompatibilityError::new(
-                self.kind,
-                COMPATIBILITY_ERROR_MIGRATION_REQUIRED,
-                offered,
-                self.supported,
-            )),
         }
+        Err(CompatibilityError::new(self.kind, COMPATIBILITY_ERROR_MIGRATION_REQUIRED,
+            offered, self.supported))
     }
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<ApiVersion>() == 4);
+    assert!(core::mem::offset_of!(ApiVersion, minor) == 2);
+    assert!(core::mem::size_of::<VersionRange>() == 8);
+    assert!(core::mem::offset_of!(VersionRange, maximum) == 4);
+};
+
+unsafe extern "C" {
+    fn ghostos_api_check_policy(current: ApiVersion, supported: VersionRange,
+        offered: ApiVersion) -> u32;
+    fn ghostos_api_migration_policy(current: ApiVersion, offered: ApiVersion,
+        has_migration: bool, from: ApiVersion, to: ApiVersion) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

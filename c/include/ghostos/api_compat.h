@@ -62,6 +62,17 @@ bool ghostos_api_contract_accepts(ghostos_api_contract contract, ghostos_api_ver
 ghostos_compatibility ghostos_api_contract_check(ghostos_api_contract contract, ghostos_api_version offered);
 bool ghostos_api_migrate_to_current(ghostos_api_contract contract, ghostos_api_version offered,
                                    ghostos_api_migration *out, ghostos_compatibility_error *error);
+/* Allocation-free policy bridge for typed host adapters. String metadata stays
+ * with the caller; the C contract policy determines these stable result tags. */
+enum ghostos_compat_policy_result {
+    GHOSTOS_POLICY_ACCEPTED, GHOSTOS_POLICY_DEPRECATED,
+    GHOSTOS_POLICY_INVALID_RANGE, GHOSTOS_POLICY_TOO_OLD, GHOSTOS_POLICY_TOO_NEW
+};
+uint32_t ghostos_api_check_policy(ghostos_api_version current,
+    ghostos_api_version_range supported, ghostos_api_version offered);
+bool ghostos_api_migration_policy(ghostos_api_version current,
+    ghostos_api_version offered, bool has_migration,
+    ghostos_api_version from, ghostos_api_version to);
 /* Formatting returns required characters excluding NUL; truncated output is NUL terminated. */
 size_t ghostos_api_version_format(ghostos_api_version version, char *out, size_t capacity);
 size_t ghostos_compatibility_error_format(ghostos_compatibility_error error, char *out, size_t capacity);
