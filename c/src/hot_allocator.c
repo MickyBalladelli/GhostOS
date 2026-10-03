@@ -91,7 +91,7 @@ ghostos_hot_allocation_error ghostos_hot_view_allocate(ghostos_hot_allocator_vie
             return GHOSTOS_HOT_ALLOC_OK;
         }
     }
-    if (a->max_cross_node_fallbacks && !a->node_count) return (ghostos_hot_allocation_error)3;
+    if (a->max_cross_node_fallbacks && !a->node_count) return GHOSTOS_HOT_ZERO_NODE_COUNT;
     for (size_t fallback = 0; fallback < a->max_cross_node_fallbacks; ++fallback) {
         size_t remote_node = (node + fallback + 1) % a->node_count;
         for (size_t remote_cpu = 0; remote_cpu < a->cpu_count; ++remote_cpu) {
