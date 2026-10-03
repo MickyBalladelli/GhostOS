@@ -103,3 +103,46 @@ bool ghostos_blind_micro_silo_contains_memory(const ghostos_blind_micro_silo *si
     }
     return false;
 }
+
+_Static_assert(sizeof(ghostos_silo_memory_range) == 24, "silo range ABI");
+_Static_assert(offsetof(ghostos_silo_memory_range, occupied) == 17, "silo occupancy ABI");
+_Static_assert(sizeof(ghostos_silo_hardware_isolation) == 8, "silo hardware ABI");
+
+int ghostos_silo_ranges_map(ghostos_silo_memory_range *ranges, size_t capacity,
+    ghostos_silo_memory_range range, bool checked) {
+    for (size_t i = 0; i < capacity; ++i) {
+        if (!ranges[i].occupied) continue;
+        if (checked && UINT64_MAX - range.start < range.length) return -1;
+        if (ranges[i].start >= range.start + range.length) continue;
+        if (checked && UINT64_MAX - ranges[i].start < ranges[i].length) return -1;
+        if (range.start < ranges[i].start + ranges[i].length) return 1;
+    }
+    for (size_t i = 0; i < capacity; ++i) {
+        if (ranges[i].occupied) continue;
+        range.occupied = true;
+        ranges[i] = range;
+        return 0;
+    }
+    return 2;
+}
+
+size_t ghostos_silo_ranges_unmap_borrowed(ghostos_silo_memory_range *ranges, size_t capacity) {
+    size_t count = 0;
+    for (size_t i = 0; i < capacity; ++i) {
+        if (ranges[i].occupied && ranges[i].borrowed) {
+            ranges[i] = (ghostos_silo_memory_range){0};
+            ++count;
+        }
+    }
+    return count;
+}
+
+int ghostos_silo_ranges_contains(const ghostos_silo_memory_range *ranges,
+    size_t capacity, uint64_t address, bool checked) {
+    for (size_t i = 0; i < capacity; ++i) {
+        if (!ranges[i].occupied || address < ranges[i].start) continue;
+        if (checked && UINT64_MAX - ranges[i].start < ranges[i].length) return -1;
+        if (address < ranges[i].start + ranges[i].length) return 1;
+    }
+    return 0;
+}

@@ -34,6 +34,7 @@ pub fn command(target: &str) -> Command {
 }
 
 pub fn configure_compiler(command: &mut Command, target: &str) {
+    println!("cargo:rerun-if-env-changed=CLANG");
     if target == "riscv64gc-unknown-none-elf" {
         // Rust's target specification uses RV64IMAFDC and the lp64d ABI. Clang
         // takes the base architecture in its triple and the ISA in -march.

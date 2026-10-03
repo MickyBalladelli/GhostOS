@@ -17,6 +17,7 @@ Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 
 | Rust source | C implementation | Public header |
 | --- | --- | --- |
+| `crates/policy/src/lib.rs` (active snapshot storage, fingerprints, and all read-only simulations) | `src/policy.c` | `include/ghostos/policy.h` |
 | `crates/numa/src/lib.rs` (active topology construction, placement, cursors, and locality counters) | `src/numa.c` | `include/ghostos/numa.h` |
 | `crates/platform-io/src/lib.rs` (active queue metadata, token/state transitions, and I/O/media validation; generic payloads stay caller-owned) | `src/platform_io.c` | `include/ghostos/platform_io.h` |
 | `crates/durability/src/lib.rs` (active bounded trace recording, ordering/recovery verification, and C layer contracts) | `src/durability.c` | `include/ghostos/durability.h` |
@@ -70,9 +71,9 @@ use only the freestanding foundation objects.
 | `kernel/src/dma.rs` (capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c` | `include/ghostos/dma.h` |
 | `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c` | `include/ghostos/driver_capabilities.h` |
 | `kernel/src/hot_allocator.rs` | `src/hot_allocator.c` | `include/ghostos/hot_allocator.h` |
-| `kernel/src/invariants.rs` | `src/invariants.c` | `include/ghostos/invariants.h` |
+| `kernel/src/invariants.rs` (active address-space/page-table checks and failure formatting; const APIs/panic policy stay in Rust) | `src/invariants.c` | `include/ghostos/invariants.h` |
 | `kernel/src/ipc.rs` | `src/ipc.c` | `include/ghostos/ipc.h` |
-| `kernel/src/keyboard.rs` | `src/keyboard.c` | `include/ghostos/keyboard.h` |
+| `kernel/src/keyboard.rs` (active x86 controller, port I/O, decoding, and boot singleton) | `src/keyboard.c` | `include/ghostos/keyboard.h` |
 | `kernel/src/keyboard_stub.rs` | `src/keyboard_stub.c` | `include/ghostos/keyboard_stub.h` |
 | `kernel/src/lib.rs` (C kernel API umbrella, boot flow, request-dispatch boundary, login/session state, and fatal path) | `src/kernel.c` | `include/ghostos/kernel.h` |
 | `kernel/src/litmus.rs` (deterministic seeded schedules, replayable faults, and failure minimization) | `src/litmus.c` | `include/ghostos/litmus.h` |
@@ -433,3 +434,24 @@ images, guest callbacks, table assembly, CPU handoff, console/protocol/runtime
 services, profile-independent replay/clock access, and error adapters. Host
 library/VM builds pass; no tests were run, and platform coverage, behavior
 parity, and complete Rust removal remain open.
+
+The shared policy engine stores fixed-capacity C records in caller-owned arrays;
+its borrowed snapshot views are retained only for the duration of a call.
+Simulation preserves the original read-only epoch/fingerprint contract and
+bounded, ordered affected lists. Rust adapters convert public records/reports
+and preserve the const constructors and debug views.
+
+Admission and time-sync use `ghostos/memory.h` for freestanding zero/copy/equality
+operations. Their C sources no longer require hosted string headers.
+The remaining Rust adapter build scripts use `tools/c_archive.rs` to select
+archive format and translate the bare-metal RV64GC target spelling for Clang.
+Explicit `AR`/`CLANG` overrides remain available. The macOS Apple Clang frontend
+supports RISC-V syntax/IR but lacks its machine-code backend; target verification
+used a temporary LLVM `llc` wrapper. A normal RISC-V build needs a compiler with
+that backend. These adapters/build workflows still await complete C cutover.
+
+The active micro-silo adapter uses caller-owned C range tables with arbitrary
+capacity, including zero. Hardware policy, overlap checks, borrowed cleanup,
+and lookup run in C. The adapter retains public const operations and converts
+ordered overflow reports into Rust debug panics. Standalone bounded silo APIs
+remain available with their existing validation rules.

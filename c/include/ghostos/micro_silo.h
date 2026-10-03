@@ -84,4 +84,12 @@ size_t ghostos_blind_micro_silo_unmap_borrowed_memory(ghostos_blind_micro_silo *
 bool ghostos_blind_micro_silo_contains_memory(const ghostos_blind_micro_silo *silo,
     uint64_t address);
 
+/* Caller-owned storage preserves zero and arbitrary generic capacities.
+ * -1 reports Rust debug overflow, 0 success, 1 conflict, 2 capacity. */
+int ghostos_silo_ranges_map(ghostos_silo_memory_range *ranges, size_t capacity,
+    ghostos_silo_memory_range range, bool checked);
+size_t ghostos_silo_ranges_unmap_borrowed(ghostos_silo_memory_range *ranges, size_t capacity);
+int ghostos_silo_ranges_contains(const ghostos_silo_memory_range *ranges,
+    size_t capacity, uint64_t address, bool checked);
+
 #endif

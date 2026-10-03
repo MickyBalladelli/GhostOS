@@ -334,6 +334,51 @@ migration remain open. Logs are in
 `temp/ported-foundation-contract-syntax.log`, and
 `temp/c-ports-{x86_64,aarch64,riscv64}-syntax.log`.
 
+Policy/kernel consumer build checks on 2026-10-03: `make c-library` and
+host builds of policy, authentication, package management, netd, storaged,
+update, and VM passed. The policy C implementation owns every snapshot mutation
+and all five simulations. Source retains principal-before-object lookup,
+duplicate/replace-before-capacity decisions, inactive binding rights checks,
+kind/staleness/zero-revision error ordering, direct-child inclusion even when
+inactive, active-only bound-principal propagation, insertion-order de-duplication,
+and the original whole-word FNV fingerprint mixing and optional-field omission.
+C simulations retain the epoch/fingerprint and never mutate the snapshot.
+Rust keeps the existing public report and lazy Option-record debug views;
+report conversion uses an additional 8,632-byte temporary C report. All three
+retained fixtures have C source in `c/tests/policy_contracts.c`, checked for
+syntax only. The x86 keyboard now uses the previously built C decoder/controller
+and C-owned boot singleton. Invariant checks/formatting call C, while Rust
+const interfaces and panic behavior remain.
+
+The x86-64 kernel image, including its Ring 3 boot shell, and the AArch64 kernel
+library built successfully. Those target builds exposed and resolved two
+migration blockers: hosted `string.h` in admission/time-sync, and BSD archive
+indexes from macOS `ar` that lost native symbols during ELF Rust linking.
+The two modules now use freestanding byte helpers. The temporary Rust adapter
+build scripts select GNU LLVM archives for ELF targets, COFF for MSVC targets,
+and retain native Apple archives and explicit `AR` overrides. Shared build
+support tracks `AR`/`CLANG` changes. Rust's bare-metal RISC-V target name is
+mapped to Clang's base triple with RV64GC/lp64d settings; kernel C objects use
+the same ISA/ABI. The RISC-V kernel library also built with
+`CLANG="$PWD/temp/clang-riscv64-verify.py"`: Apple Clang has no RISC-V codegen
+backend, so that verification wrapper emits LLVM IR and uses the installed
+Rust LLVM `llc`. The inspected policy object has the double-float/RVC ELF flags.
+This is a configured compiler verification, not proof that Apple Clang alone
+can produce RISC-V objects. Default Windows/MSVC builds remain unverified.
+
+Changed C modules passed freestanding syntax/layout checks for x86-64,
+AArch64, and RISC-V. Policy, admission, and time-sync contract sources passed
+syntax checks only. No tests were executed; hardware/behavior parity and full
+Rust removal remain open. Logs are in
+`temp/c-library-policy-kernel-final.log`,
+`temp/policy-kernel-consumers-final-build.log`,
+`temp/kernel-keyboard-invariants-x86_64-build.log`,
+`temp/kernel-invariants-aarch64-build.log`,
+`temp/kernel-invariants-riscv64-build.log`,
+`temp/policy-foundation-contract-syntax.log`, and
+`temp/policy-kernel-{x86_64,aarch64,riscv64}-syntax.log`.
+The RISC-V verification wrapper and its LLVM IR/object artifacts are in `temp/`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -359,14 +404,14 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/dma.rs` — C port adds capability checked buffer/device authorization, bounded IOVA allocation, IOMMU map/unmap callbacks, and fixed-capacity records. Rust kernel callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/driver_capabilities.rs` — C port builds driver resource manifests, creates DMA/MMIO capabilities, and assigns validated MMIO mappings from the PCI inventory. Rust kernel callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/hot_allocator.rs` — C port implements bounded per-CPU/per-node object pools, local and remote fallback, reclaim validation, placement/probe counters, and fragmentation reports. Rust kernel callers remain active; behavior parity and consumer cutover remain.
-- [ ] `kernel/src/invariants.rs` — C port provides the stable six-entry invariant catalogue, redacted failure identifiers/codes, formatting, debug trap hook, and address-space, interrupt, and page-table checks. Rust kernel call sites remain active; behavior parity and consumer cutover remain.
+- [ ] `kernel/src/invariants.rs` — Active address-space checks, page-table-transition checks, and redacted failure formatting now call C in host and target kernels. Host native-library metadata includes the C module for VM consumers. Rust keeps the public const catalogue/IDs/failure constructors, const interrupt check, and debug panic policy to preserve const APIs and host unwinding. x86 image, AArch64 library, and RISC-V library builds pass; behavior parity and full cutover remain.
 - [ ] `kernel/src/ipc.rs` — C port implements bounded lock-free MPMC channels, capability-checked send/receive and transfers, quotas, mapped endpoints, close/owner cleanup, partition and scheduler callbacks, diagnostics, and stuck reports. Rust kernel consumers remain active; behavior parity and consumer cutover remain.
-- [ ] `kernel/src/keyboard.rs` — C port includes the PS/2 controller setup, Set 1 key decoding, modifiers, extended-key sequences, ACK filtering, and mouse-byte callback. Rust kernel and shell callers remain active; behavior parity and consumer cutover remain.
+- [ ] `kernel/src/keyboard.rs` — Active x86 kernel and shell keyboard callers now use C controller setup, native port I/O, Set 1 decoding, modifier state, four-byte navigation queues, ACK filtering, mouse-byte delivery, and the serialized C boot singleton. Rust retains checked-layout instance/callback-table wrappers and the mouse API callback. The x86 kernel and boot shell build; hardware behavior parity, Rust wrapper removal, and full cutover remain.
 - [ ] `kernel/src/keyboard_stub.rs` — C stub initializes empty state and always reports no key, matching non-x86 kernel behavior. Rust callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/lib.rs` — C port adds the aggregate C kernel API, callback-driven boot coordinator, boot validation and stage reporting, dispatch boundary, service readiness, fatal/crash path, and login throttling/session/quote state. The Rust syscall dispatcher, hardware consumers, process/scheduler integration, and shell remain active; parity and consumer cutover remain.
 - [ ] `kernel/src/litmus.rs` — C port includes deterministic seeded schedules, all six kernel ordering models, fault replay, and failure minimization. Rust callers remain active; behavior parity and caller cutover remain.
 - [ ] `kernel/src/main.rs` — C port owns the target `_start` entry symbol and forwards boot info to `kernel_entry`. Rust keeps only the compiler-required panic ABI hook, which forwards to kernel panic reporting; full panic-handler cutover remains.
-- [ ] `kernel/src/micro_silo.rs` — C port includes hardware protection selection, tenant-only authorization, bounded non-overlapping memory maps, borrowed-range cleanup, and address lookup. Rust callers remain active; behavior parity and caller cutover remain.
+- [ ] `kernel/src/micro_silo.rs` — Active callers use C hardware protection, non-overlapping memory maps, borrowed-range cleanup, and address lookup. Caller-owned tables preserve zero and arbitrary capacities, kernel address-space acceptance, directly constructed ranges, and debug overflow ordering. Public const APIs remain Rust; behavior parity and full cutover remain.
 - [ ] `kernel/src/monitor.rs` — C owns process snapshots, switch-history CPU utilization, lock-summary aggregation, DSM page stats, and all four text renderers. The Rust module now only marshals scheduler/DLM data across the C ABI and retains the view state; shell integration remains Rust, and behavior parity still needs verification.
 - [ ] `kernel/src/mouse.rs` — the Rust file is an ABI wrapper; C owns PS/2 packet collection, complete-packet publication, decoding, and sequence tracking. The C reader now sees the prior complete packet while a new packet is incomplete. Non-x86 keeps `mouse_stub.rs`; target build and behavior parity remain to verify.
 - [x] `kernel/src/mouse_stub.rs` — the Rust API wrapper calls the C non-x86 stub, which always returns an empty mouse state. The `MouseState` size/alignment match is compile-time checked; the AArch64 kernel target builds.
@@ -499,7 +544,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/path-pattern/` — Active parsing, wildcard/class matching, UTF-8-width consumption, and unescaping now run in `c/src/path_pattern.c`. Filesystem, shell, and runtime consumers use a Rust type/FFI adapter. All seven existing contract/property cases have C source. Rust adapter/build-tool removal and behavior parity remain open.
 - [ ] `crates/pkg/` — package management and signatures.
 - [ ] `crates/platform-io/` — C owns active asynchronous queue metadata, round-robin cursors, generation-tagged token validation, submit/dispatch/complete/poll/cancel state transitions, pending counts, and I/O/media buffer/format/plane/access validation. Rust retains generic request/response payloads, public wrappers, NUMA logging, const helpers, and status conversion. All four existing queue model cases have C source; behavior parity, Rust build/adapters, and full removal remain.
-- [ ] `crates/policy/` — policy engine.
+- [ ] `crates/policy/` — C owns active caller-owned principal/object/binding storage, insertion and replacement, snapshot fingerprints, and all five read-only change simulations. Authentication, package, network, storage, update, and VM consumers build with checked-layout Rust adapters. Stable affected-entry ordering/de-duplication and source error precedence are retained; all three existing fixtures have C source. Rust public types/const constructors/report conversion/debug views, build adapters, behavior parity, and full removal remain.
 - [ ] `crates/posix-compat/` — POSIX compatibility.
 - [ ] `crates/power/` — power management.
 - [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
@@ -532,3 +577,13 @@ Inventory: 546 Rust source files and 75 Cargo manifests were found. The root
 workspace lists 71 members; the other manifests include the fuzz package and
 nested example/proc-macro packages. Port every file in these trees before
 claiming the project has no Rust left.
+
+Micro-silo consumer progress on 2026-10-03: hardware protection and runtime
+memory-table operations now call C. The caller-owned C API preserves generic
+capacities without the standalone API's 16-slot cap, and reports arithmetic
+overflow so the Rust adapter retains debug panic behavior. Const constructors,
+accessors, and authorization remain Rust. `make c-library` and host kernel
+library build passed. Build logs are in `temp/c-library-micro-silo.log` and
+`temp/kernel-micro-silo-build.log`. The x86 freestanding kernel library also
+built (`temp/kernel-micro-silo-x86-build.log`). Behavior parity and complete migration
+remain open.

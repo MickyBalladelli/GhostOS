@@ -46,17 +46,23 @@ impl HardwareIsolation {
     };
 
     pub fn protection(self) -> Result<MemoryProtection, SiloError> {
-        if self.cxl_ide_available && !self.cxl_ide_enabled {
-            return Err(SiloError::CxlIdeRequired);
+        let hardware = NativeHardware {
+            confidential_cpu: self.confidential_cpu as u32,
+            cxl_ide_available: self.cxl_ide_available,
+            cxl_ide_enabled: self.cxl_ide_enabled,
+            memory_encryption_enabled: self.memory_encryption_enabled,
+        };
+        let mut protection = 0;
+        match unsafe { ghostos_silo_hardware_protection(hardware, &mut protection) } {
+            0 => Ok(if protection == 1 {
+                MemoryProtection::HardwareEncrypted
+            } else {
+                MemoryProtection::KernelIsolated
+            }),
+            3 => Err(SiloError::CxlIdeRequired),
+            5 => Err(SiloError::MemoryEncryptionRequired),
+            _ => unreachable!("invalid native silo hardware result"),
         }
-        if self.confidential_cpu != ConfidentialCpu::None && !self.memory_encryption_enabled {
-            return Err(SiloError::MemoryEncryptionRequired);
-        }
-        Ok(if self.cxl_ide_enabled && self.memory_encryption_enabled {
-            MemoryProtection::HardwareEncrypted
-        } else {
-            MemoryProtection::KernelIsolated
-        })
     }
 }
 
@@ -85,10 +91,6 @@ impl SiloMemoryRange {
             })
         }
     }
-
-    const fn overlaps(self, other: Self) -> bool {
-        self.start < other.start + other.length && other.start < self.start + self.length
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,7 +110,7 @@ pub enum SiloError {
 pub struct BlindMicroSilo<const RANGES: usize = MAX_SILO_MEMORY_RANGES> {
     address_space: AddressSpaceId,
     protection: MemoryProtection,
-    ranges: [Option<SiloMemoryRange>; RANGES],
+    ranges: [NativeRange; RANGES],
 }
 
 impl<const RANGES: usize> BlindMicroSilo<RANGES> {
@@ -119,7 +121,7 @@ impl<const RANGES: usize> BlindMicroSilo<RANGES> {
         Ok(Self {
             address_space,
             protection: hardware.protection()?,
-            ranges: [None; RANGES],
+            ranges: [NativeRange::EMPTY; RANGES],
         })
     }
 
@@ -148,38 +150,67 @@ impl<const RANGES: usize> BlindMicroSilo<RANGES> {
     }
 
     pub fn map_memory(&mut self, range: SiloMemoryRange) -> Result<(), SiloError> {
-        if self
-            .ranges
-            .iter()
-            .flatten()
-            .any(|mapped| mapped.overlaps(range))
-        {
-            return Err(SiloError::RangeConflict);
+        let native = NativeRange {
+            start: range.start,
+            length: range.length,
+            borrowed: range.borrowed,
+            occupied: true,
+        };
+        match unsafe {
+            ghostos_silo_ranges_map(self.ranges.as_mut_ptr(), RANGES, native, cfg!(debug_assertions))
+        } {
+            0 => Ok(()),
+            1 => Err(SiloError::RangeConflict),
+            2 => Err(SiloError::Capacity),
+            -1 => panic!("attempt to add with overflow"),
+            _ => unreachable!("invalid native silo map result"),
         }
-        let slot = self
-            .ranges
-            .iter_mut()
-            .find(|mapped| mapped.is_none())
-            .ok_or(SiloError::Capacity)?;
-        *slot = Some(range);
-        Ok(())
     }
 
     pub fn unmap_borrowed_memory(&mut self) -> usize {
-        let mut unmapped = 0;
-        for range in &mut self.ranges {
-            if range.is_some_and(|range| range.borrowed) {
-                *range = None;
-                unmapped += 1
-            }
-        }
-        unmapped
+        unsafe { ghostos_silo_ranges_unmap_borrowed(self.ranges.as_mut_ptr(), RANGES) }
     }
 
     pub fn contains_memory(&self, address: u64) -> bool {
-        self.ranges
-            .iter()
-            .flatten()
-            .any(|range| address >= range.start && address < range.start + range.length)
+        match unsafe {
+            ghostos_silo_ranges_contains(self.ranges.as_ptr(), RANGES, address, cfg!(debug_assertions))
+        } {
+            -1 => panic!("attempt to add with overflow"),
+            result => result != 0,
+        }
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeRange {
+    start: u64,
+    length: u64,
+    borrowed: bool,
+    occupied: bool,
+}
+
+impl NativeRange {
+    const EMPTY: Self = Self { start: 0, length: 0, borrowed: false, occupied: false };
+}
+
+#[repr(C)]
+struct NativeHardware {
+    confidential_cpu: u32,
+    cxl_ide_available: bool,
+    cxl_ide_enabled: bool,
+    memory_encryption_enabled: bool,
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<NativeRange>() == 24);
+    assert!(core::mem::offset_of!(NativeRange, occupied) == 17);
+    assert!(core::mem::size_of::<NativeHardware>() == 8);
+};
+
+unsafe extern "C" {
+    fn ghostos_silo_hardware_protection(hardware: NativeHardware, protection: *mut u32) -> i32;
+    fn ghostos_silo_ranges_map(ranges: *mut NativeRange, capacity: usize, range: NativeRange, checked: bool) -> i32;
+    fn ghostos_silo_ranges_unmap_borrowed(ranges: *mut NativeRange, capacity: usize) -> usize;
+    fn ghostos_silo_ranges_contains(ranges: *const NativeRange, capacity: usize, address: u64, checked: bool) -> i32;
 }

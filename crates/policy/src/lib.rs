@@ -339,10 +339,22 @@ impl<const P: usize, const O: usize, const B: usize> core::fmt::Debug for Policy
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("PolicySnapshot")
             .field("epoch", &self.epoch)
-            .field("principals", &self.principals.map(|entry| entry.record()))
-            .field("objects", &self.objects.map(|entry| entry.record()))
-            .field("bindings", &self.bindings.map(|entry| entry.record()))
+            .field("principals", &RecordDebug(self.principals.iter().copied().map(PrincipalSlot::record)))
+            .field("objects", &RecordDebug(self.objects.iter().copied().map(ObjectSlot::record)))
+            .field("bindings", &RecordDebug(self.bindings.iter().copied().map(BindingSlot::record)))
             .finish()
+    }
+}
+
+struct RecordDebug<I>(I);
+
+impl<I> core::fmt::Debug for RecordDebug<I>
+where
+    I: Iterator + Clone,
+    I::Item: core::fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_list().entries(self.0.clone()).finish()
     }
 }
 

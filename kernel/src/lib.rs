@@ -27,6 +27,7 @@ pub mod ipc;
 #[allow(unsafe_code)]
 pub mod invariants;
 pub mod litmus;
+#[allow(unsafe_code)]
 pub mod micro_silo;
 #[allow(unsafe_code)]
 pub mod quota;
