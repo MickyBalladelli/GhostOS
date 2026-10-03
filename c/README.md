@@ -70,7 +70,7 @@ use only the freestanding foundation objects.
 | `kernel/src/dlm.rs` (node/federation fences, range lock manager) | `src/dlm.c` | `include/ghostos/dlm.h` |
 | `crates/ras/` (active hardware telemetry, poison quarantine/admission, and budget/workload policy) | `src/ras.c` | `include/ghostos/ras.h` |
 | `crates/posix-compat/` (descriptor metadata and pseudo-path parsing) | `src/posix_compat.c` | `include/ghostos/posix_compat.h` |
-| `crates/power/` (thermal action decisions and event queue bookkeeping) | `src/thermal.c` | `include/ghostos/thermal.h` |
+| `crates/power/` (thermal/event queues, cluster selection, frequency, idle, device sleep decisions) | `src/thermal.c`, `src/power_policy.c` | `include/ghostos/thermal.h`, `include/ghostos/power_policy.h` |
 | `kernel/src/dma.rs` (active caller-owned mapping tables, staged allocation, capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c`, `src/dma_state.c` | `include/ghostos/dma.h` |
 | `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c`, `src/driver_resources.c` | `include/ghostos/driver_capabilities.h` |
 | `kernel/src/hot_allocator.rs` | `src/hot_allocator.c` | `include/ghostos/hot_allocator.h` |
@@ -525,3 +525,10 @@ and event classification. Native queue metadata supports arbitrary capacities,
 zero capacity, oldest-first partial drains, and saturating drop counts. Rust
 retains typed event storage and sensor/actuator traits; C/Rust layout assertions
 protect the shared trip and queue state.
+
+Power policy consumers also link `power_policy.c`. Caller-built checked-layout
+cluster views preserve eligibility, preferred-cluster fallback, and first-best
+tie selection. Debug overflow is returned to the Rust panic adapter; release
+scores wrap. Frequency calculations saturate each original intermediate.
+Idle and device sleep decisions preserve boundary comparisons and saturated
+time differences. Rust owns configuration/state and invokes hardware traits.
