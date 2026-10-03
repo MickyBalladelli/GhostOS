@@ -1,5 +1,4 @@
 #![no_std]
-#![forbid(unsafe_code)]
 
 pub const MAX_POLICY_PRINCIPALS: usize = 64;
 pub const MAX_POLICY_OBJECTS: usize = 128;
@@ -228,16 +227,16 @@ impl SimulationReport {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct PolicySnapshot<
     const PRINCIPALS: usize = MAX_POLICY_PRINCIPALS,
     const OBJECTS: usize = MAX_POLICY_OBJECTS,
     const BINDINGS: usize = MAX_POLICY_BINDINGS,
 > {
     epoch: u64,
-    principals: [Option<PrincipalRecord>; PRINCIPALS],
-    objects: [Option<ObjectRecord>; OBJECTS],
-    bindings: [Option<Binding>; BINDINGS],
+    principals: [PrincipalSlot; PRINCIPALS],
+    objects: [ObjectSlot; OBJECTS],
+    bindings: [BindingSlot; BINDINGS],
 }
 
 impl<const PRINCIPALS: usize, const OBJECTS: usize, const BINDINGS: usize>
@@ -246,9 +245,9 @@ impl<const PRINCIPALS: usize, const OBJECTS: usize, const BINDINGS: usize>
     pub const fn new(epoch: u64) -> Self {
         Self {
             epoch,
-            principals: [None; PRINCIPALS],
-            objects: [None; OBJECTS],
-            bindings: [None; BINDINGS],
+            principals: [PrincipalSlot::EMPTY; PRINCIPALS],
+            objects: [ObjectSlot::EMPTY; OBJECTS],
+            bindings: [BindingSlot::EMPTY; BINDINGS],
         }
     }
 
@@ -257,327 +256,319 @@ impl<const PRINCIPALS: usize, const OBJECTS: usize, const BINDINGS: usize>
     }
 
     pub fn add_principal(&mut self, principal: PrincipalId) -> Result<(), SimulationError> {
-        if self.principals.iter().flatten().any(|entry| entry.id == principal) {
-            return Ok(())
-        }
-        let slot = self
-            .principals
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(SimulationError::Capacity)?;
-        *slot = Some(PrincipalRecord { id: principal, active: true });
-        Ok(())
+        // C operates only on this bounded, caller-owned slot array.
+        policy_result(unsafe {
+            ghostos_policy_add_principal(self.principals.as_mut_ptr(), PRINCIPALS, principal)
+        })
     }
 
     pub fn add_object(&mut self, object: ObjectRecord) -> Result<(), SimulationError> {
-        if self.objects.iter().flatten().any(|entry| entry.id == object.id) {
-            return Err(SimulationError::InvalidChange)
-        }
-        let slot = self
-            .objects
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(SimulationError::Capacity)?;
-        *slot = Some(object);
-        Ok(())
+        policy_result(unsafe {
+            ghostos_policy_add_object(self.objects.as_mut_ptr(), OBJECTS, ObjectSlot::from_record(object))
+        })
     }
 
     pub fn bind(&mut self, binding: Binding) -> Result<(), SimulationError> {
-        self.require_principal(binding.principal)?;
-        self.require_object(binding.object)?;
-        if let Some(existing) = self.bindings.iter_mut().flatten().find(|entry| {
-            entry.principal == binding.principal && entry.object == binding.object
-        }) {
-            *existing = binding;
-            return Ok(())
-        }
-        let slot = self
-            .bindings
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(SimulationError::Capacity)?;
-        *slot = Some(binding);
-        Ok(())
+        let mut view = self.view();
+        // bind reads only principal/object arrays; the binding array is passed
+        // separately for mutation, without a second pointer alias in the view.
+        view.bindings = core::ptr::null();
+        view.binding_capacity = 0;
+        policy_result(unsafe {
+            ghostos_policy_bind(&view, self.bindings.as_mut_ptr(), BINDINGS,
+                BindingSlot::from_record(binding))
+        })
     }
 
     pub fn simulate(&self, change: PolicyChange) -> Result<SimulationReport, SimulationError> {
-        let before_fingerprint = self.fingerprint();
+        let view = self.view();
+        let native_change = NativeChange::from_change(change);
+        let mut native = NativeReport::EMPTY;
+        // The C snapshot view contains read-only pointers. C writes only the
+        // supplied report and retains no pointers into this movable snapshot.
+        policy_result(unsafe { ghostos_policy_simulate(&view, &native_change, &mut native) })?;
         let mut report = SimulationReport {
             change,
-            before_epoch: self.epoch,
-            after_epoch: self.epoch,
-            before_fingerprint,
-            after_fingerprint: before_fingerprint,
-            changed: false,
+            before_epoch: native.before_epoch,
+            after_epoch: native.after_epoch,
+            before_fingerprint: native.before_fingerprint,
+            after_fingerprint: native.after_fingerprint,
+            changed: native.changed,
             principals: [None; MAX_SIMULATION_AFFECTED],
-            principal_count: 0,
+            principal_count: native.principal_count,
             objects: [None; MAX_SIMULATION_AFFECTED],
-            object_count: 0,
+            object_count: native.object_count,
         };
-        match change {
-            PolicyChange::Capability(change) => self.simulate_capability(change, &mut report)?,
-            PolicyChange::Firewall(change) => self.simulate_firewall(change, &mut report)?,
-            PolicyChange::PackageActivation(change) => {
-                self.simulate_package(change, &mut report)?
-            }
-            PolicyChange::ClusterMembership(change) => {
-                self.simulate_membership(change, &mut report)?
-            }
-            PolicyChange::UpdateRollout(change) => self.simulate_update(change, &mut report)?,
+        for index in 0..native.principal_count {
+            let entry = native.principals[index];
+            report.principals[index] = Some(AffectedPrincipal {
+                id: entry.id, reason: change_kind(entry.reason),
+            });
+        }
+        for index in 0..native.object_count {
+            let entry = native.objects[index];
+            report.objects[index] = Some(AffectedObject {
+                id: entry.id, kind: object_kind(entry.kind), reason: change_kind(entry.reason),
+            });
         }
         Ok(report)
     }
 
-    fn simulate_capability(
-        &self,
-        change: CapabilityChange,
-        report: &mut SimulationReport,
-    ) -> Result<(), SimulationError> {
-        self.require_principal(change.principal)?;
-        let object = self.require_object(change.object)?;
-        let current = self
-            .binding(change.principal, change.object)
-            .map_or(0, |binding| binding.rights);
-        if current != change.before_rights {
-            return Err(SimulationError::StaleSnapshot)
-        }
-        if change.before_rights != change.after_rights {
-            report.changed = true;
-            report.add_principal(AffectedPrincipal { id: change.principal, reason: ChangeKind::Capability })?;
-            report.add_object(AffectedObject { id: object.id, kind: object.kind, reason: ChangeKind::Capability })?;
-        }
-        Ok(())
-    }
-
-    fn simulate_firewall(
-        &self,
-        change: FirewallChange,
-        report: &mut SimulationReport,
-    ) -> Result<(), SimulationError> {
-        let rule = self.require_kind(change.rule, ObjectKind::FirewallRule)?;
-        let applies_to = self.require_kind(change.applies_to, ObjectKind::Network)?;
-        if rule.revision != change.before_revision {
-            return Err(SimulationError::StaleSnapshot)
-        }
-        if change.before_revision == change.after_revision {
-            return Ok(())
-        }
-        report.changed = true;
-        report.add_object(AffectedObject { id: rule.id, kind: rule.kind, reason: ChangeKind::Firewall })?;
-        report.add_object(AffectedObject { id: applies_to.id, kind: applies_to.kind, reason: ChangeKind::Firewall })?;
-        self.add_bound_principals(change.applies_to, ChangeKind::Firewall, report)?;
-        Ok(())
-    }
-
-    fn simulate_package(
-        &self,
-        change: PackageActivationChange,
-        report: &mut SimulationReport,
-    ) -> Result<(), SimulationError> {
-        let package = self.require_kind(change.package, ObjectKind::Package)?;
-        if change.after_revision == 0 {
-            return Err(SimulationError::InvalidChange)
-        }
-        if package.revision != change.before_revision {
-            return Err(SimulationError::StaleSnapshot)
-        }
-        if change.before_revision == change.after_revision && package.active == change.activate {
-            return Ok(())
-        }
-        report.changed = true;
-        report.add_object(AffectedObject { id: package.id, kind: package.kind, reason: ChangeKind::PackageActivation })?;
-        self.add_descendants(change.package, ChangeKind::PackageActivation, report)?;
-        self.add_bound_principals(change.package, ChangeKind::PackageActivation, report)?;
-        Ok(())
-    }
-
-    fn simulate_membership(
-        &self,
-        change: ClusterMembershipChange,
-        report: &mut SimulationReport,
-    ) -> Result<(), SimulationError> {
-        self.require_kind(change.cluster, ObjectKind::Cluster)?;
-        let member = self.require_kind(change.member, ObjectKind::ClusterMember)?;
-        if member.active != change.before_active {
-            return Err(SimulationError::StaleSnapshot)
-        }
-        if change.before_active == change.after_active {
-            return Ok(())
-        }
-        report.changed = true;
-        report.add_object(AffectedObject { id: change.cluster, kind: ObjectKind::Cluster, reason: ChangeKind::ClusterMembership })?;
-        report.add_object(AffectedObject { id: member.id, kind: member.kind, reason: ChangeKind::ClusterMembership })?;
-        self.add_bound_principals(change.member, ChangeKind::ClusterMembership, report)?;
-        Ok(())
-    }
-
-    fn simulate_update(
-        &self,
-        change: UpdateRolloutChange,
-        report: &mut SimulationReport,
-    ) -> Result<(), SimulationError> {
-        let update = self.require_kind(change.update, ObjectKind::Update)?;
-        if update.revision != change.from_revision {
-            return Err(SimulationError::StaleSnapshot)
-        }
-        if change.from_revision == change.to_revision {
-            return Ok(())
-        }
-        if change.to_revision == 0 {
-            return Err(SimulationError::InvalidChange)
-        }
-        report.changed = true;
-        report.add_object(AffectedObject { id: change.update, kind: ObjectKind::Update, reason: ChangeKind::UpdateRollout })?;
-        for object in self.objects.iter().flatten() {
-            if object.active && object.revision == change.from_revision && object.id != change.update {
-                report.add_object(AffectedObject { id: object.id, kind: object.kind, reason: ChangeKind::UpdateRollout })?;
-                self.add_bound_principals(object.id, ChangeKind::UpdateRollout, report)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn add_bound_principals(
-        &self,
-        object: ObjectId,
-        reason: ChangeKind,
-        report: &mut SimulationReport,
-    ) -> Result<(), SimulationError> {
-        for binding in self.bindings.iter().flatten() {
-            if binding.object == object && binding.active {
-                report.add_principal(AffectedPrincipal { id: binding.principal, reason })?;
-            }
-        }
-        Ok(())
-    }
-
-    fn add_descendants(
-        &self,
-        parent: ObjectId,
-        reason: ChangeKind,
-        report: &mut SimulationReport,
-    ) -> Result<(), SimulationError> {
-        for object in self.objects.iter().flatten() {
-            if object.parent == Some(parent) {
-                report.add_object(AffectedObject { id: object.id, kind: object.kind, reason })?;
-                self.add_bound_principals(object.id, reason, report)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn require_principal(&self, id: PrincipalId) -> Result<PrincipalRecord, SimulationError> {
-        self.principals
-            .iter()
-            .flatten()
-            .find(|principal| principal.id == id)
-            .copied()
-            .ok_or(SimulationError::UnknownPrincipal)
-    }
-
-    fn require_object(&self, id: ObjectId) -> Result<ObjectRecord, SimulationError> {
-        self.objects
-            .iter()
-            .flatten()
-            .find(|object| object.id == id)
-            .copied()
-            .ok_or(SimulationError::UnknownObject)
-    }
-
-    fn require_kind(&self, id: ObjectId, kind: ObjectKind) -> Result<ObjectRecord, SimulationError> {
-        let object = self.require_object(id)?;
-        if object.kind != kind {
-            return Err(SimulationError::InvalidObjectKind)
-        }
-        Ok(object)
-    }
-
+    #[cfg(test)]
     fn binding(&self, principal: PrincipalId, object: ObjectId) -> Option<Binding> {
-        self.bindings
-            .iter()
-            .flatten()
-            .find(|binding| binding.principal == principal && binding.object == object)
-            .copied()
+        let mut binding = BindingSlot::EMPTY;
+        if unsafe { ghostos_policy_find_binding(&self.view(), principal, object, &mut binding) } {
+            binding.record()
+        } else {
+            None
+        }
     }
 
-    fn fingerprint(&self) -> u64 {
-        let mut hash = 0xcbf29ce484222325;
-        hash = mix(hash, self.epoch);
-        for principal in self.principals.iter().flatten() {
-            for byte in principal.id.as_bytes() {
-                hash = mix(hash, byte as u64)
-            }
-            hash = mix(hash, principal.active as u64);
+    fn view(&self) -> SnapshotView {
+        SnapshotView {
+            epoch: self.epoch,
+            principals: self.principals.as_ptr(), principal_capacity: PRINCIPALS,
+            objects: self.objects.as_ptr(), object_capacity: OBJECTS,
+            bindings: self.bindings.as_ptr(), binding_capacity: BINDINGS,
         }
-        for object in self.objects.iter().flatten() {
-            for byte in object.id.as_bytes() {
-                hash = mix(hash, byte as u64)
-            }
-            hash = mix(hash, object.kind as u64);
-            if let Some(owner) = object.owner {
-                for byte in owner.as_bytes() {
-                    hash = mix(hash, byte as u64)
-                }
-            }
-            if let Some(parent) = object.parent {
-                for byte in parent.as_bytes() {
-                    hash = mix(hash, byte as u64)
-                }
-            }
-            hash = mix(hash, object.revision);
-            hash = mix(hash, object.active as u64);
-        }
-        for binding in self.bindings.iter().flatten() {
-            for byte in binding.principal.as_bytes() {
-                hash = mix(hash, byte as u64)
-            }
-            for byte in binding.object.as_bytes() {
-                hash = mix(hash, byte as u64)
-            }
-            hash = mix(hash, binding.rights);
-            hash = mix(hash, binding.active as u64);
-        }
-        hash
     }
 }
 
-impl SimulationReport {
-    fn add_principal(&mut self, affected: AffectedPrincipal) -> Result<(), SimulationError> {
-        if self.principals[..self.principal_count]
-            .iter()
-            .flatten()
-            .any(|entry| entry.id == affected.id)
-        {
-            return Ok(())
-        }
-        if self.principal_count == MAX_SIMULATION_AFFECTED {
-            return Err(SimulationError::TooManyAffected)
-        }
-        self.principals[self.principal_count] = Some(affected);
-        self.principal_count += 1;
-        Ok(())
-    }
-
-    fn add_object(&mut self, affected: AffectedObject) -> Result<(), SimulationError> {
-        if self.objects[..self.object_count]
-            .iter()
-            .flatten()
-            .any(|entry| entry.id == affected.id)
-        {
-            return Ok(())
-        }
-        if self.object_count == MAX_SIMULATION_AFFECTED {
-            return Err(SimulationError::TooManyAffected)
-        }
-        self.objects[self.object_count] = Some(affected);
-        self.object_count += 1;
-        Ok(())
+// Preserve the original Option-record debug view rather than exposing C slots.
+impl<const P: usize, const O: usize, const B: usize> core::fmt::Debug for PolicySnapshot<P, O, B> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("PolicySnapshot")
+            .field("epoch", &self.epoch)
+            .field("principals", &self.principals.map(|entry| entry.record()))
+            .field("objects", &self.objects.map(|entry| entry.record()))
+            .field("bindings", &self.bindings.map(|entry| entry.record()))
+            .finish()
     }
 }
 
-fn mix(mut hash: u64, value: u64) -> u64 {
-    hash ^= value;
-    hash.wrapping_mul(0x100000001b3)
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct PrincipalSlot {
+    id: PrincipalId,
+    active: bool,
+    present: bool,
+}
+
+impl PrincipalSlot {
+    const EMPTY: Self = Self { id: PrincipalId::from_u64(0), active: false, present: false };
+
+    fn record(self) -> Option<PrincipalRecord> {
+        self.present.then_some(PrincipalRecord { id: self.id, active: self.active })
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ObjectSlot {
+    id: ObjectId,
+    owner: PrincipalId,
+    parent: ObjectId,
+    revision: u64,
+    kind: u8,
+    active: bool,
+    has_owner: bool,
+    has_parent: bool,
+    present: bool,
+}
+
+impl ObjectSlot {
+    const EMPTY: Self = Self {
+        id: ObjectId::from_u64(0), owner: PrincipalId::from_u64(0), parent: ObjectId::from_u64(0),
+        revision: 0, kind: 0, active: false, has_owner: false, has_parent: false, present: false,
+    };
+
+    fn from_record(record: ObjectRecord) -> Self {
+        Self {
+            id: record.id, owner: record.owner.unwrap_or(PrincipalId::from_u64(0)),
+            parent: record.parent.unwrap_or(ObjectId::from_u64(0)), revision: record.revision,
+            kind: record.kind as u8, active: record.active, has_owner: record.owner.is_some(),
+            has_parent: record.parent.is_some(), present: true,
+        }
+    }
+
+    fn record(self) -> Option<ObjectRecord> {
+        if !self.present { return None }
+        Some(ObjectRecord {
+            id: self.id, kind: object_kind(self.kind), revision: self.revision, active: self.active,
+            owner: self.has_owner.then_some(self.owner), parent: self.has_parent.then_some(self.parent),
+        })
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct BindingSlot {
+    principal: PrincipalId,
+    object: ObjectId,
+    rights: u64,
+    active: bool,
+    present: bool,
+}
+
+impl BindingSlot {
+    const EMPTY: Self = Self { principal: PrincipalId::from_u64(0), object: ObjectId::from_u64(0),
+        rights: 0, active: false, present: false };
+
+    fn from_record(record: Binding) -> Self {
+        Self { principal: record.principal, object: record.object, rights: record.rights,
+            active: record.active, present: true }
+    }
+
+    fn record(self) -> Option<Binding> {
+        self.present.then_some(Binding { principal: self.principal, object: self.object,
+            rights: self.rights, active: self.active })
+    }
+}
+
+#[repr(C)]
+struct SnapshotView {
+    epoch: u64,
+    principals: *const PrincipalSlot,
+    principal_capacity: usize,
+    objects: *const ObjectSlot,
+    object_capacity: usize,
+    bindings: *const BindingSlot,
+    binding_capacity: usize,
+}
+
+#[repr(C)]
+struct NativeChange {
+    principal: PrincipalId,
+    object: ObjectId,
+    related: ObjectId,
+    before: u64,
+    after: u64,
+    kind: u8,
+    before_active: bool,
+    after_active: bool,
+}
+
+impl NativeChange {
+    fn from_change(change: PolicyChange) -> Self {
+        let mut native = Self { principal: PrincipalId::from_u64(0), object: ObjectId::from_u64(0),
+            related: ObjectId::from_u64(0), before: 0, after: 0, kind: change.kind() as u8,
+            before_active: false, after_active: false };
+        match change {
+            PolicyChange::Capability(value) => {
+                native.principal = value.principal;
+                native.object = value.object;
+                native.before = value.before_rights;
+                native.after = value.after_rights;
+            }
+            PolicyChange::Firewall(value) => {
+                native.object = value.rule;
+                native.related = value.applies_to;
+                native.before = value.before_revision;
+                native.after = value.after_revision;
+            }
+            PolicyChange::PackageActivation(value) => {
+                native.object = value.package;
+                native.before = value.before_revision;
+                native.after = value.after_revision;
+                native.after_active = value.activate;
+            }
+            PolicyChange::ClusterMembership(value) => {
+                native.object = value.cluster;
+                native.related = value.member;
+                native.before_active = value.before_active;
+                native.after_active = value.after_active;
+            }
+            PolicyChange::UpdateRollout(value) => {
+                native.object = value.update;
+                native.before = value.from_revision;
+                native.after = value.to_revision;
+            }
+        }
+        native
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeAffectedPrincipal { id: PrincipalId, reason: u8 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeAffectedObject { id: ObjectId, kind: u8, reason: u8 }
+
+#[repr(C)]
+struct NativeReport {
+    before_epoch: u64,
+    after_epoch: u64,
+    before_fingerprint: u64,
+    after_fingerprint: u64,
+    changed: bool,
+    principals: [NativeAffectedPrincipal; MAX_SIMULATION_AFFECTED],
+    principal_count: usize,
+    objects: [NativeAffectedObject; MAX_SIMULATION_AFFECTED],
+    object_count: usize,
+}
+
+impl NativeReport {
+    const EMPTY: Self = Self {
+        before_epoch: 0, after_epoch: 0, before_fingerprint: 0, after_fingerprint: 0, changed: false,
+        principals: [NativeAffectedPrincipal { id: PrincipalId::from_u64(0), reason: 0 }; MAX_SIMULATION_AFFECTED],
+        principal_count: 0,
+        objects: [NativeAffectedObject { id: ObjectId::from_u64(0), kind: 0, reason: 0 }; MAX_SIMULATION_AFFECTED],
+        object_count: 0,
+    };
+}
+
+fn object_kind(kind: u8) -> ObjectKind {
+    match kind {
+        1 => ObjectKind::Capability,
+        2 => ObjectKind::FirewallRule,
+        3 => ObjectKind::Network,
+        4 => ObjectKind::Package,
+        5 => ObjectKind::PackageProcess,
+        6 => ObjectKind::Cluster,
+        7 => ObjectKind::ClusterMember,
+        8 => ObjectKind::Update,
+        9 => ObjectKind::System,
+        _ => panic!("invalid C policy object kind"),
+    }
+}
+
+fn change_kind(kind: u8) -> ChangeKind {
+    match kind {
+        0 => ChangeKind::Capability,
+        1 => ChangeKind::Firewall,
+        2 => ChangeKind::PackageActivation,
+        3 => ChangeKind::ClusterMembership,
+        4 => ChangeKind::UpdateRollout,
+        _ => panic!("invalid C policy change kind"),
+    }
+}
+
+fn policy_result(code: u32) -> Result<(), SimulationError> {
+    Err(match code {
+        0 => return Ok(()),
+        1 => SimulationError::Capacity,
+        2 => SimulationError::UnknownPrincipal,
+        3 => SimulationError::UnknownObject,
+        4 => SimulationError::InvalidObjectKind,
+        5 => SimulationError::InvalidChange,
+        6 => SimulationError::StaleSnapshot,
+        7 => SimulationError::TooManyAffected,
+        _ => panic!("invalid C policy result"),
+    })
+}
+
+unsafe extern "C" {
+    fn ghostos_policy_add_principal(slots: *mut PrincipalSlot, capacity: usize, id: PrincipalId) -> u32;
+    fn ghostos_policy_add_object(slots: *mut ObjectSlot, capacity: usize, object: ObjectSlot) -> u32;
+    fn ghostos_policy_bind(snapshot: *const SnapshotView, slots: *mut BindingSlot,
+        capacity: usize, binding: BindingSlot) -> u32;
+    fn ghostos_policy_simulate(snapshot: *const SnapshotView, change: *const NativeChange,
+        report: *mut NativeReport) -> u32;
+    #[cfg(test)]
+    fn ghostos_policy_find_binding(snapshot: *const SnapshotView, principal: PrincipalId,
+        object: ObjectId, out: *mut BindingSlot) -> bool;
 }
 
 #[cfg(test)]
