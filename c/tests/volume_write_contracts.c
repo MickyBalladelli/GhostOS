@@ -41,7 +41,7 @@ static void second_log_write_keeps_the_object(void) {
     assert(!ghostos_volume_write(records, 4, log, sizeof log, new_bytes, 3, &generation, &next_object));
     assert(records[3].version == 2 && records[3].object_id == 1 && records[3].data == new_bytes);
     assert(records[3].checksum == fnv(new_bytes, 3) && next_object == 2 && generation == 3);
-    records[2].version = UINT32_MAX;
+    records[3].version = UINT32_MAX;
     assert(ghostos_volume_write(records, 4, log, sizeof log, old_bytes, 3, &generation, &next_object) == 6);
     assert(generation == 3);
 }
