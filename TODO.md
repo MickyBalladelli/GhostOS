@@ -1168,3 +1168,12 @@ freestanding syntax checks passed for `c/src/config_cluster.c` on x86-64,
 AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
 Capability sections remain. Logs: `temp/c-library-config-cluster-build.log`,
 `temp/config-cluster-contract-build.log`.
+
+Capability-parser progress on 2026-10-03: `c/src/config_capability.c` reads a
+capability policy. The init policy on `SYS$BOOT` keeps file kind and rights
+value 5 for read and execute. A policy whose service was not declared is
+invalid. `build/c/config-capability-contracts` passed. `make c-library` passed,
+and strict freestanding syntax checks passed for `c/src/config_capability.c` on
+x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not
+used. Configuration diff remains. Logs: `temp/c-library-config-capability-build.log`,
+`temp/config-capability-contract-build.log`.

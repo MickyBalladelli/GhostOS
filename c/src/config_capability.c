@@ -71,11 +71,11 @@ static int right_bit(const uint8_t *bytes, size_t length, uint16_t *bit) {
     else return 2;
     return 0;
 }
-static int add_right(uint16_t *rights, const uint8_t *item, size_t length) {
+static int add_right(uint16_t *rights, const uint8_t *item, size_t length, bool list) {
     uint16_t bit = 0;
     int status;
     trim(&item, &length);
-    if (!length) return 13;
+    if (!length) return list ? 13 : 2;
     status = right_bit(item, length, &bit);
     if (status) return status;
     *rights = (uint16_t)(*rights | bit);
@@ -92,7 +92,7 @@ static int parse_rights(const uint8_t *bytes, size_t length, uint16_t *rights) {
             size_t end = cursor;
             int status;
             while (end + 1 < length && bytes[end] != ',') end += 1;
-            status = add_right(&value, bytes + cursor, end - cursor);
+            status = add_right(&value, bytes + cursor, end - cursor, true);
             if (status) return status;
             if (bytes[end] != ',') break;
             cursor = end + 1;
@@ -107,7 +107,7 @@ static int parse_rights(const uint8_t *bytes, size_t length, uint16_t *rights) {
             size_t end = cursor;
             int status;
             while (end < text_length && text[end] != '|') end += 1;
-            status = add_right(&value, text + cursor, end - cursor);
+            status = add_right(&value, text + cursor, end - cursor, false);
             if (status) return status;
             if (end == text_length) break;
             cursor = end + 1;
@@ -184,7 +184,8 @@ int ghostos_config_parse_capabilities(const uint8_t *source, size_t length, cons
             if (equals == line_length) return 2;
             key = line; key_length = equals; trim(&key, &key_length);
             value = line + equals + 1; value_length = line_length - equals - 1; trim(&value, &value_length);
-            if (!key_length || !active) return !active ? 3 : 2;
+            if (!key_length) return 2;
+            if (!active) return 3;
             if (text_is(key, key_length, "service")) {
                 if (has_service) return 4;
                 status = quoted(value, value_length, GHOSTOS_CONFIG_CAPABILITY_SERVICE, &text, &text_length);
