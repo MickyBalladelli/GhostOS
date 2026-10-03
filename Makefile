@@ -277,5 +277,8 @@ $(BUILD_DIR)/volume-directory-contracts: c/tests/volume_directory_contracts.c $(
 $(BUILD_DIR)/volume-write-contracts: c/tests/volume_write_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
 
+$(BUILD_DIR)/volume-symlink-contracts: c/tests/volume_symlink_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
+
 $(BUILD_DIR)/volume-checkpoint-contracts: c/tests/volume_checkpoint_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
