@@ -1138,3 +1138,13 @@ for `c/src/config_parser.c` on x86-64, AArch64, and RISC-V. No Rust sources
 were edited and Cargo was not used. Service, network, and cluster sections
 remain. Logs: `temp/c-library-config-parser-build.log` and
 `temp/config-parser-contract-build.log`.
+
+Service-parser progress on 2026-10-03: `c/src/config_parser.c` now reads
+`[[service]]` records. The init service keeps image `0x44`, kind system,
+restart on-failure, and the default enabled state. A zero image is invalid
+before a duplicate name would be reported. `build/c/config-service-contracts`
+passed. `make c-library` passed, and strict freestanding syntax checks passed
+for `c/src/config_parser.c` on x86-64, AArch64, and RISC-V. No Rust sources
+were edited and Cargo was not used. Network and cluster sections remain.
+Logs: `temp/c-library-config-service-build.log` and
+`temp/config-service-contract-build.log`.
