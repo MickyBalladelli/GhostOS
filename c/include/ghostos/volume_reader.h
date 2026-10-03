@@ -12,6 +12,7 @@
    Data checksums and chain validity are checked lazily by read operations;
    unrelated corrupt data does not prevent opening the view. */
 typedef struct {
+    const ghostos_volume_record *records;
     const ghostos_volume_range_file *files;
     size_t file_count;
     const ghostos_volume_range_block *blocks;
@@ -23,6 +24,8 @@ int ghostos_volume_reader_init(ghostos_volume_reader *reader,
     ghostos_volume_range_file *files, size_t file_capacity,
     ghostos_volume_range_block *blocks, size_t block_capacity);
 /* Read results and output semantics match volume_range.h. */
+int ghostos_volume_reader_lookup_following(const ghostos_volume_reader *reader,
+    const uint8_t *path, size_t path_length, const ghostos_volume_record **record);
 int ghostos_volume_reader_read(const ghostos_volume_reader *reader,
     const uint8_t *path, size_t path_length, uint8_t *output,
     size_t output_capacity, size_t *read, size_t *required);

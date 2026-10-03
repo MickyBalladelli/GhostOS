@@ -597,3 +597,14 @@ as payload blocks. Checksums and chain validation remain in the read path.
 This reader does not perform daemon capability, mode, or lock authorization.
 The contiguous snapshot live read keeps `ghostos_volume_read`; the block-backed
 read uses `ghostos_volume_read_blocks` so both APIs can link together.
+
+`fsd_read.h` adds the C daemon read boundary over process registrations, open
+file slots, and lock views. `ghostos_fsd_read` checks the 64 KiB buffer limit,
+file token slot/generation/owner/READ rights, symlink-followed metadata, process
+mode access, and other-owner exclusive locks before reading the block view.
+Admin bypasses mode bits but still needs a READ file handle and obeys locks.
+Process 1 uses owner permissions; other processes use other permissions.
+Lock matching uses the stored open path and the starting record offset.
+`ghostos_fsd_read_status` maps local results to the existing protocol status
+values. Table ownership, registration/open operations, serialized service
+dispatch, tracing, and the running daemon cutover remain outside this layer.

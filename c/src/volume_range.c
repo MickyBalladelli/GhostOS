@@ -212,6 +212,13 @@ static int resolve_file(const ghostos_volume_range_file *files, size_t file_coun
     return 9;
 }
 
+int ghostos_volume_lookup_following(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, size_t *index) {
+    size_t resolved;
+    int status = resolve_file(files, file_count, blocks, block_count, path, path_length, &resolved);
+    if (status) return status;
+    *index = resolved;
+    return 0;
+}
 int ghostos_volume_read_at(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint64_t offset, uint8_t *output, size_t output_capacity, size_t *read) {
     size_t index;
     int status = resolve_file(files, file_count, blocks, block_count, path, path_length, &index);

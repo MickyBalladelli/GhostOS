@@ -43,10 +43,20 @@ int ghostos_volume_reader_init(ghostos_volume_reader *reader,
         blocks[i].next = kinds[i] == 3 ? (uint32_t)load_le(raw, 4) : 0;
         blocks[i].checksum = kinds[i] == 3 ? load_le(raw + 8, 8) : 0;
     }
+    reader->records = records;
     reader->files = files;
     reader->file_count = record_count;
     reader->blocks = blocks;
     reader->block_count = block_count;
+    return 0;
+}
+int ghostos_volume_reader_lookup_following(const ghostos_volume_reader *reader,
+    const uint8_t *path, size_t path_length, const ghostos_volume_record **record) {
+    size_t index;
+    int status = ghostos_volume_lookup_following(reader->files, reader->file_count,
+        reader->blocks, reader->block_count, path, path_length, &index);
+    if (status) return status;
+    *record = &reader->records[index];
     return 0;
 }
 int ghostos_volume_reader_read(const ghostos_volume_reader *reader,
