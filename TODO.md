@@ -504,7 +504,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/client-sdk/` — client SDK and wire protocol.
 - [ ] `crates/compute/` — tensor and accelerator compute.
 - [ ] `crates/durability/` — C owns active bounded trace recording and durable-write ordering/recovery verification, with a matching six-layer contract table and interruption callback API. Rust retains public enums, const contract tables, injector traits, and the typed event view (with parallel C records). Rust build/adapters, behavior parity, and full removal remain.
-- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. C CXL discovery in `c/src/cxl.c` records a Type-3 endpoint, drains it before removal, and refills a bandwidth budget. C DSM framing in `c/src/dsm.c` encodes ethertype `0x88b5`, rejects an unaligned page, and reassembles three page fragments. C coherence in `c/src/coherence.c` invalidates other sharers before a writable mapping and drops the lease when the owner fails. C heartbeats in `c/src/heartbeat.c` keep the 16-byte wire order, ignore an older sequence, and fail a node after two missed periods. C partition recovery in `c/src/fabric_recover.c` leaves leases and page ownership in place until the failed node is fenced, then releases them and resolves the page through its mirror. HDM register programming remains. Rust sources were not changed.
+- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. C CXL discovery in `c/src/cxl.c` records a Type-3 endpoint, drains it before removal, and refills a bandwidth budget. C DSM framing in `c/src/dsm.c` encodes ethertype `0x88b5`, rejects an unaligned page, and reassembles three page fragments. C coherence in `c/src/coherence.c` invalidates other sharers before a writable mapping and drops the lease when the owner fails. C heartbeats in `c/src/heartbeat.c` keep the 16-byte wire order, ignore an older sequence, and fail a node after two missed periods. C partition recovery in `c/src/fabric_recover.c` leaves leases and page ownership in place until the failed node is fenced, then releases them and resolves the page through its mirror. C HDM programming in `c/src/hdm.c` checks 256 MiB alignment, refuses a committed decoder, and writes the base, size, and commit bit before polling. Rust sources were not changed.
 - [ ] `crates/fsd/` — filesystem daemon.
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
 - [ ] `crates/ghostos-agent-bridge/` — C owns task-scope validation, parent and lifetime limits, expiry arithmetic, reusable grant slots, nonce and revocation wrap, consume checks, run-right unions, active-grant counts, and commit/discard decisions. Rust retains signature and lease verification, script execution, and GhostFS sandbox calls. Existing attenuation tests were executed.
@@ -1285,3 +1285,11 @@ freestanding syntax checks passed for `c/src/fabric_recover.c` on x86-64,
 AArch64, and RISC-V. No Rust sources were edited and Cargo was not used. HDM
 register programming remains. Logs: `temp/c-library-fabric-recover-build.log`,
 `temp/fabric-recover-contract-build.log`.
+
+HDM progress on 2026-10-03: `c/src/hdm.c` rejects a window that is not a
+multiple of 256 MiB and leaves a committed decoder unchanged. A free decoder
+receives the base, size, interleave, and commit bit, then the poll fails when
+the committed bit never appears. `build/c/hdm-contracts` passed. `make c-library`
+passed, and strict freestanding syntax checks passed for `c/src/hdm.c` on
+x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
+Logs: `temp/c-library-hdm-build.log`, `temp/hdm-contract-build.log`.
