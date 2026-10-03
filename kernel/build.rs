@@ -79,7 +79,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
     };
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let target_flag = format!("--target={target}");
-    for source in ["address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "dma_state", "driver_capabilities", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persona", "physical_storage", "power", "process", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
+    for source in ["address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "dma_state", "driver_capabilities", "driver_resources", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persona", "physical_storage", "power", "process", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
         let object = output.join(format!("ghostos-{source}.o"));
         let mut compile = Command::new(&clang);
         compile.args([
@@ -119,7 +119,7 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
     let target_flag = format!("--target={target}");
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let mut objects = Vec::new();
-    for module in ["hot_allocator", "partition", "dma_state", "micro_silo", "invariants", "monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
+    for module in ["driver_resources", "hot_allocator", "partition", "dma_state", "micro_silo", "invariants", "monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
         let source = kernel.join(format!("../c/src/{module}.c"));
         let object = output.join(format!("ghostos-{module}-host.o"));
         run(
@@ -137,7 +137,9 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
         );
         objects.push(object);
         println!("cargo:rerun-if-changed={}", source.display());
-        let header = if module == "dma_state" {
+        let header = if module == "driver_resources" {
+            "driver_capabilities.h"
+        } else if module == "dma_state" {
             "dma.h"
         } else if module == "monitor_host_stub" {
             "monitor.h"

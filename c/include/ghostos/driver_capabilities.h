@@ -62,4 +62,20 @@ bool ghostos_service_mmio_overlaps_image(uint64_t virtual_address, uint64_t leng
 ghostos_grant_error ghostos_driver_grant_resources(ghostos_capability_space *capabilities,
     uint32_t owner, uint8_t role, ghostos_pci_inventory inventory, ghostos_driver_grant *out);
 
+/* Selection preserves capacity-before-range validation and performs no grants. */
+typedef struct {
+    uint32_t kind, device;
+    ghostos_physical_range physical;
+    uint64_t virtual_address;
+    bool has_mmio;
+} ghostos_driver_candidate;
+typedef enum {
+    GHOSTOS_DRIVER_SKIP, GHOSTOS_DRIVER_READY, GHOSTOS_DRIVER_CAPACITY
+} ghostos_driver_selection;
+ghostos_driver_selection ghostos_driver_select(uint8_t role,
+    const ghostos_pci_device *device, uint32_t resource_count, size_t mapping_count,
+    ghostos_driver_candidate *candidate);
+void ghostos_driver_append_resource(ghostos_service_resource_manifest *manifest,
+    const ghostos_driver_candidate *candidate, uint64_t dma_capability, uint64_t mmio_capability);
+
 #endif
