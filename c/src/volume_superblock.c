@@ -87,6 +87,21 @@ int ghostos_volume_superblock_decode(const uint8_t *block, size_t capacity, uint
     *root = stored_root;
     return 0;
 }
+int ghostos_volume_superblock_set_limits(uint8_t *block, size_t capacity,
+    uint64_t expected_blocks, uint64_t max_bytes, uint64_t max_files, uint64_t max_blocks) {
+    uint16_t version;
+    uint64_t sequence, generation;
+    uint32_t root;
+    if (capacity < GHOSTOS_VOLUME_SUPERBLOCK) return 2;
+    if (ghostos_volume_superblock_decode(block, capacity, expected_blocks,
+        &version, &sequence, &generation, &root) ||
+        (max_blocks != UINT64_MAX && max_blocks > expected_blocks)) return 1;
+    store_le64(block + 464, max_bytes);
+    store_le64(block + 472, max_files);
+    store_le64(block + 480, max_blocks);
+    store_le64(block + 4088, checksum(block, 4088));
+    return 0;
+}
 static int checkpoint_records(const uint8_t *block, uint64_t expected_blocks, uint64_t generation, uint64_t next_checkpoint,
     uint32_t count, ghostos_volume_checkpoint *checkpoints, size_t checkpoints_capacity, size_t *written) {
     uint32_t i, j;

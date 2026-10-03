@@ -19,4 +19,6 @@ int ghostos_volume_superblock_set_checkpoints(uint8_t *block, size_t capacity, u
     const ghostos_volume_checkpoint *checkpoints, size_t count);
 int ghostos_volume_superblock_checkpoints(const uint8_t *block, size_t capacity, uint64_t expected_blocks,
     ghostos_volume_checkpoint *checkpoints, size_t checkpoints_capacity, size_t *count);
+int ghostos_volume_superblock_set_limits(uint8_t *block, size_t capacity,
+    uint64_t expected_blocks, uint64_t max_bytes, uint64_t max_files, uint64_t max_blocks);
 #endif
