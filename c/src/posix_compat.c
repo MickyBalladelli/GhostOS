@@ -43,3 +43,46 @@ bool ghostos_posix_fd_remove(ghostos_posix_fd *entries, size_t capacity, int32_t
     entries[index] = (ghostos_posix_fd){0};
     return true;
 }
+
+static bool mount_matches(const uint8_t *path, size_t length, const char *mount, size_t size) {
+    if (length < size) return false;
+    for (size_t i = 0; i < size; ++i) if (path[i] != (uint8_t)mount[i]) return false;
+    return length == size || path[size] == '/';
+}
+int ghostos_posix_pseudo_parse(const uint8_t *path, size_t length,
+    uint8_t logical[GHOSTOS_POSIX_PSEUDO_NAME_BYTES], uint8_t *logical_length, uint8_t *kind) {
+    const char *prefix;
+    size_t mount, prefix_size;
+    if (mount_matches(path, length, "/proc", 5)) { *kind = 0; mount = 5; prefix = "PROC_"; prefix_size = 5; }
+    else if (mount_matches(path, length, "/sys", 4)) { *kind = 1; mount = 4; prefix = "SYS_"; prefix_size = 4; }
+    else if (mount_matches(path, length, "/dev", 4)) { *kind = 2; mount = 4; prefix = "DEV_"; prefix_size = 4; }
+    else return 1;
+    for (size_t i = 0; i < length; ++i) if (!path[i] || path[i] == '\\') return 2;
+    const uint8_t *suffix;
+    size_t suffix_size;
+    if (length == mount) { suffix = (const uint8_t *)"ROOT"; suffix_size = 4; }
+    else { suffix = path + mount + 1; suffix_size = length - mount - 1; }
+    if (!suffix_size) return 2;
+    size_t start = 0;
+    for (size_t i = 0; i <= suffix_size; ++i) {
+        if (i < suffix_size && suffix[i] != '/') continue;
+        size_t part = i - start;
+        if (!part || (part == 1 && suffix[start] == '.') ||
+            (part == 2 && suffix[start] == '.' && suffix[start + 1] == '.')) return 2;
+        start = i + 1;
+    }
+    for (size_t i = 0; i < GHOSTOS_POSIX_PSEUDO_NAME_BYTES; ++i) logical[i] = 0;
+    for (size_t i = 0; i < prefix_size; ++i) logical[i] = (uint8_t)prefix[i];
+    size_t used = prefix_size;
+    for (size_t i = 0; i < suffix_size; ++i) {
+        uint8_t byte = suffix[i];
+        if (byte == '/') byte = '_';
+        else if (byte >= 'a' && byte <= 'z') byte -= 'a' - 'A';
+        else if (!((byte >= 'A' && byte <= 'Z') || (byte >= '0' && byte <= '9') ||
+            byte == '_' || byte == '-' || byte == '.')) return 2;
+        if (used == GHOSTOS_POSIX_PSEUDO_NAME_BYTES) return 3;
+        logical[used++] = byte;
+    }
+    *logical_length = (uint8_t)used;
+    return 0;
+}

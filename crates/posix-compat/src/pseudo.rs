@@ -19,54 +19,14 @@ pub struct PseudoPath {
 
 impl PseudoPath {
     pub fn parse(path: &[u8]) -> Result<Self, PseudoPathError> {
-        let (prefix, mount_length, kind) = if path == b"/proc" || path.starts_with(b"/proc/") {
-            (b"PROC_" as &[u8], b"/proc".len(), PseudoResourceKind::Proc)
-        } else if path == b"/sys" || path.starts_with(b"/sys/") {
-            (b"SYS_" as &[u8], b"/sys".len(), PseudoResourceKind::Sys)
-        } else if path == b"/dev" || path.starts_with(b"/dev/") {
-            (b"DEV_" as &[u8], b"/dev".len(), PseudoResourceKind::Dev)
-        } else {
-            return Err(PseudoPathError::NotPseudoPath);
+        let (logical, logical_length, kind) = crate::native::pseudo_parse(path)?;
+        let kind = match kind {
+            0 => PseudoResourceKind::Proc,
+            1 => PseudoResourceKind::Sys,
+            2 => PseudoResourceKind::Dev,
+            _ => unreachable!("native POSIX pseudo kind"),
         };
-        if path.contains(&0) || path.contains(&b'\\') {
-            return Err(PseudoPathError::InvalidPath);
-        }
-
-        let suffix = if path.len() == mount_length {
-            b"ROOT" as &[u8]
-        } else {
-            &path[mount_length + 1..]
-        };
-        if suffix.is_empty()
-            || suffix == b"/"
-            || suffix.split(|byte| *byte == b'/').any(|part| part.is_empty() || part == b".")
-            || suffix.split(|byte| *byte == b'/').any(|part| part == b"..")
-        {
-            return Err(PseudoPathError::InvalidPath);
-        }
-        let mut logical = [0; MAX_PSEUDO_PATH_BYTES];
-        let mut length = 0usize;
-        for byte in prefix.iter().chain(suffix.iter()) {
-            let mapped = match byte {
-                b'/' => b'_',
-                b'a'..=b'z' => byte.to_ascii_uppercase(),
-                b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-' | b'.' => *byte,
-                _ => return Err(PseudoPathError::InvalidPath),
-            };
-            if length == logical.len() {
-                return Err(PseudoPathError::TooLong);
-            }
-            logical[length] = mapped;
-            length += 1;
-        }
-        let logical_name = core::str::from_utf8(&logical[..length])
-            .map_err(|_| PseudoPathError::InvalidPath)?;
-        LogicalName::new(logical_name).map_err(|_| PseudoPathError::InvalidPath)?;
-        Ok(Self {
-            kind,
-            logical,
-            logical_length: length as u8,
-        })
+        Ok(Self { kind, logical, logical_length })
     }
 
     pub const fn kind(self) -> PseudoResourceKind {

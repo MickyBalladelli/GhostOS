@@ -5,6 +5,8 @@
 mod fd;
 mod container;
 mod pseudo;
+#[allow(unsafe_code)]
+mod native;
 mod syscall;
 
 use fd::{AccessMode, FdTable};
