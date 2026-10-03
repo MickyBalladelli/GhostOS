@@ -1,5 +1,4 @@
 #![no_std]
-#![forbid(unsafe_code)]
 
 //! Shared wire-boundary policy for GhostOS transports.
 //!
@@ -37,6 +36,7 @@ impl TrafficClass {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct ProtocolLimits {
     pub max_message_bytes: usize,
     pub max_inflight_bytes: usize,
@@ -64,6 +64,7 @@ impl ProtocolLimits {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
 pub struct VersionRange {
     pub minimum: u16,
     pub maximum: u16,
@@ -123,295 +124,194 @@ pub enum ProtocolError {
     ReconnectExhausted,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ReplayWindow {
-    highest: u64,
+#[repr(C)]
+struct GuardState {
+    class: TrafficClass,
+    limits: ProtocolLimits,
+    local_versions: VersionRange,
+    negotiated_version: u16,
+    highest_sequence: u64,
     seen: u64,
-    initialized: bool,
-}
-
-impl ReplayWindow {
-    const fn new() -> Self {
-        Self {
-            highest: 0,
-            seen: 0,
-            initialized: false,
-        }
-    }
-
-    fn accept(&mut self, sequence: u64) -> Result<(), ProtocolError> {
-        if sequence == 0 {
-            return Err(ProtocolError::InvalidSequence)
-        }
-        if !self.initialized {
-            self.initialized = true;
-            self.highest = sequence;
-            self.seen = 1;
-            return Ok(())
-        }
-        if sequence > self.highest {
-            let shift = sequence - self.highest;
-            self.seen = if shift >= REPLAY_WINDOW_BITS as u64 {
-                1
-            } else {
-                (self.seen << shift) | 1
-            };
-            self.highest = sequence;
-            return Ok(())
-        }
-        let offset = self.highest - sequence;
-        if offset >= REPLAY_WINDOW_BITS as u64 {
-            return Err(ProtocolError::SequenceTooOld)
-        }
-        let bit = 1u64 << offset;
-        if self.seen & bit != 0 {
-            return Err(ProtocolError::Replay)
-        }
-        self.seen |= bit;
-        Ok(())
-    }
-
-    const fn highest(self) -> Option<u64> {
-        if self.initialized {
-            Some(self.highest)
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct AuthTracker {
-    failures: u8,
-    locked: bool,
-}
-
-impl AuthTracker {
-    const fn new() -> Self {
-        Self {
-            failures: 0,
-            locked: false,
-        }
-    }
-
-    fn record(&mut self, success: bool, limit: u8) -> Result<(), ProtocolError> {
-        if self.locked {
-            return Err(ProtocolError::AuthenticationLocked)
-        }
-        if success {
-            self.failures = 0;
-            return Ok(())
-        }
-        self.failures = self.failures.saturating_add(1);
-        if self.failures >= limit {
-            self.locked = true;
-            Err(ProtocolError::AuthenticationLocked)
-        } else {
-            Err(ProtocolError::AuthenticationFailed)
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Backpressure {
-    bytes: usize,
-    messages: u16,
-}
-
-impl Backpressure {
-    const fn new() -> Self {
-        Self {
-            bytes: 0,
-            messages: 0,
-        }
-    }
-
-    fn reserve(&mut self, bytes: usize, limits: ProtocolLimits) -> Result<(), ProtocolError> {
-        let next_bytes = self
-            .bytes
-            .checked_add(bytes)
-            .ok_or(ProtocolError::Backpressure)?;
-        let next_messages = self
-            .messages
-            .checked_add(1)
-            .ok_or(ProtocolError::Backpressure)?;
-        if next_bytes > limits.max_inflight_bytes
-            || next_messages > limits.max_inflight_messages
-        {
-            return Err(ProtocolError::Backpressure)
-        }
-        self.bytes = next_bytes;
-        self.messages = next_messages;
-        Ok(())
-    }
-
-    fn release(&mut self, bytes: usize) -> Result<(), ProtocolError> {
-        if self.messages == 0 || bytes > self.bytes {
-            return Err(ProtocolError::InvalidRelease)
-        }
-        self.bytes -= bytes;
-        self.messages -= 1;
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ReconnectState {
-    attempts: u8,
+    replay_initialized: bool,
+    auth_failures: u8,
+    auth_locked: bool,
+    inflight_bytes: usize,
+    inflight_messages: u16,
+    reconnect_attempts: u8,
     next_retry_at_us: u64,
-    exhausted: bool,
+    reconnect_exhausted: bool,
 }
 
-impl ReconnectState {
-    const fn new() -> Self {
-        Self {
-            attempts: 0,
-            next_retry_at_us: 0,
-            exhausted: false,
-        }
-    }
+#[repr(C)]
+struct NativeError {
+    kind: u32,
+    limit: usize,
+    actual: usize,
+}
 
-    fn disconnected(
-        &mut self,
-        now_us: u64,
-        base_delay_us: u64,
-    ) -> Result<u64, ProtocolError> {
-        if self.attempts >= 8 {
-            self.exhausted = true;
-            return Err(ProtocolError::ReconnectExhausted)
-        }
-        let shift = self.attempts as u32;
-        let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
-        let delay = base_delay_us.saturating_mul(multiplier);
-        self.attempts += 1;
-        self.next_retry_at_us = now_us.saturating_add(delay);
-        Ok(self.next_retry_at_us)
-    }
-
-    const fn due(self, now_us: u64) -> bool {
-        self.attempts != 0 && !self.exhausted && now_us >= self.next_retry_at_us
-    }
-
-    const fn reset(&mut self) {
-        self.attempts = 0;
-        self.next_retry_at_us = 0;
-        self.exhausted = false;
+impl NativeError {
+    fn result(self) -> Result<(), ProtocolError> {
+        Err(match self.kind {
+            0 => return Ok(()),
+            1 => ProtocolError::InvalidVersionRange,
+            2 => ProtocolError::NoCommonVersion,
+            3 => ProtocolError::WrongTrafficClass,
+            4 => ProtocolError::NotNegotiated,
+            5 => ProtocolError::MessageTooLarge { limit: self.limit, actual: self.actual },
+            6 => ProtocolError::InvalidSequence,
+            7 => ProtocolError::Replay,
+            8 => ProtocolError::SequenceTooOld,
+            9 => ProtocolError::AuthenticationFailed,
+            10 => ProtocolError::AuthenticationLocked,
+            11 => ProtocolError::Backpressure,
+            12 => ProtocolError::InvalidRelease,
+            13 => ProtocolError::ReconnectExhausted,
+            _ => panic!("invalid C protocol result"),
+        })
     }
 }
 
 /// State shared by all six network-facing protocol boundaries.
 pub struct ProtocolGuard {
-    class: TrafficClass,
-    limits: ProtocolLimits,
-    local_versions: VersionRange,
-    negotiated_version: Option<u16>,
-    replay: ReplayWindow,
-    auth: AuthTracker,
-    backpressure: Backpressure,
-    reconnect: ReconnectState,
+    state: GuardState,
 }
 
 impl ProtocolGuard {
     pub fn new(class: TrafficClass, local_versions: VersionRange) -> Result<Self, ProtocolError> {
-        if local_versions.minimum == 0 || local_versions.minimum > local_versions.maximum {
-            return Err(ProtocolError::InvalidVersionRange)
-        }
-        Ok(Self {
+        let mut state = GuardState {
             class,
             limits: class.limits(),
             local_versions,
-            negotiated_version: None,
-            replay: ReplayWindow::new(),
-            auth: AuthTracker::new(),
-            backpressure: Backpressure::new(),
-            reconnect: ReconnectState::new(),
-        })
+            negotiated_version: 0,
+            highest_sequence: 0,
+            seen: 0,
+            replay_initialized: false,
+            auth_failures: 0,
+            auth_locked: false,
+            inflight_bytes: 0,
+            inflight_messages: 0,
+            reconnect_attempts: 0,
+            next_retry_at_us: 0,
+            reconnect_exhausted: false,
+        };
+        // C initializes checked caller-owned state; no pointers are retained.
+        unsafe { ghostos_protocol_guard_new(class as u8, local_versions, &mut state) }.result()?;
+        Ok(Self { state })
     }
 
     pub const fn class(&self) -> TrafficClass {
-        self.class
+        self.state.class
     }
 
     pub fn require_class(&self, class: TrafficClass) -> Result<(), ProtocolError> {
-        if self.class == class {
-            Ok(())
-        } else {
-            Err(ProtocolError::WrongTrafficClass)
-        }
+        unsafe { ghostos_protocol_require_class(&self.state, class as u8) }.result()
     }
 
     pub const fn limits(&self) -> ProtocolLimits {
-        self.limits
+        self.state.limits
     }
 
     pub const fn negotiated_version(&self) -> Option<u16> {
-        self.negotiated_version
+        if self.state.negotiated_version == 0 { None } else { Some(self.state.negotiated_version) }
     }
 
     pub fn negotiate(&mut self, peer_versions: VersionRange) -> Result<u16, ProtocolError> {
-        let selected = negotiate_versions(self.local_versions, peer_versions)?;
-        self.negotiated_version = Some(selected);
+        let mut selected = 0;
+        unsafe { ghostos_protocol_negotiate(&mut self.state, peer_versions, &mut selected) }.result()?;
         Ok(selected)
     }
 
     pub fn validate_message(&self, bytes: usize) -> Result<(), ProtocolError> {
-        if self.negotiated_version.is_none() {
-            return Err(ProtocolError::NotNegotiated)
-        }
-        if bytes > self.limits.max_message_bytes {
-            return Err(ProtocolError::MessageTooLarge {
-                limit: self.limits.max_message_bytes,
-                actual: bytes,
-            })
-        }
-        Ok(())
+        unsafe { ghostos_protocol_validate_message(&self.state, bytes) }.result()
     }
 
     pub fn accept_sequence(&mut self, sequence: u64) -> Result<(), ProtocolError> {
-        self.replay.accept(sequence)
+        unsafe { ghostos_protocol_accept_sequence(&mut self.state, sequence) }.result()
     }
 
     pub const fn highest_sequence(&self) -> Option<u64> {
-        self.replay.highest()
+        if self.state.replay_initialized { Some(self.state.highest_sequence) } else { None }
     }
 
     pub fn authenticate(&mut self, success: bool) -> Result<(), ProtocolError> {
-        self.auth.record(success, self.limits.max_auth_failures)
+        unsafe { ghostos_protocol_authenticate(&mut self.state, success) }.result()
     }
 
     pub const fn auth_failures_locked(&self) -> bool {
-        self.auth.locked
+        self.state.auth_locked
     }
 
     pub fn reserve_message(&mut self, bytes: usize) -> Result<(), ProtocolError> {
-        self.validate_message(bytes)?;
-        self.backpressure.reserve(bytes, self.limits)
+        unsafe { ghostos_protocol_reserve_message(&mut self.state, bytes) }.result()
     }
 
     pub fn release_message(&mut self, bytes: usize) -> Result<(), ProtocolError> {
-        self.backpressure.release(bytes)
+        unsafe { ghostos_protocol_release_message(&mut self.state, bytes) }.result()
     }
 
     pub const fn inflight(&self) -> (usize, u16) {
-        (self.backpressure.bytes, self.backpressure.messages)
+        (self.state.inflight_bytes, self.state.inflight_messages)
     }
 
     pub fn disconnected(&mut self, now_us: u64) -> Result<u64, ProtocolError> {
-        self.reconnect
-            .disconnected(now_us, self.limits.reconnect_base_delay_us)
+        let mut retry_at = 0;
+        unsafe { ghostos_protocol_disconnected(&mut self.state, now_us, &mut retry_at) }.result()?;
+        Ok(retry_at)
     }
 
     pub const fn reconnect_due(&self, now_us: u64) -> bool {
-        self.reconnect.due(now_us)
+        self.state.reconnect_attempts != 0 && !self.state.reconnect_exhausted &&
+            now_us >= self.state.next_retry_at_us
     }
 
     pub const fn reconnect_attempts(&self) -> u8 {
-        self.reconnect.attempts
+        self.state.reconnect_attempts
     }
 
     pub const fn reconnected(&mut self) {
-        self.reconnect.reset()
+        self.state.reconnect_attempts = 0;
+        self.state.next_retry_at_us = 0;
+        self.state.reconnect_exhausted = false;
     }
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<ProtocolLimits>() == 32);
+    assert!(core::mem::offset_of!(ProtocolLimits, max_inflight_bytes) == 8);
+    assert!(core::mem::offset_of!(ProtocolLimits, max_inflight_messages) == 16);
+    assert!(core::mem::offset_of!(ProtocolLimits, max_auth_failures) == 18);
+    assert!(core::mem::offset_of!(ProtocolLimits, reconnect_base_delay_us) == 24);
+    assert!(core::mem::size_of::<VersionRange>() == 4);
+    assert!(core::mem::offset_of!(VersionRange, maximum) == 2);
+    assert!(core::mem::size_of::<NativeError>() == 24);
+    assert!(core::mem::offset_of!(NativeError, limit) == 8);
+    assert!(core::mem::offset_of!(NativeError, actual) == 16);
+    assert!(core::mem::size_of::<GuardState>() == 104);
+    assert!(core::mem::offset_of!(GuardState, limits) == 8);
+    assert!(core::mem::offset_of!(GuardState, local_versions) == 40);
+    assert!(core::mem::offset_of!(GuardState, negotiated_version) == 44);
+    assert!(core::mem::offset_of!(GuardState, highest_sequence) == 48);
+    assert!(core::mem::offset_of!(GuardState, seen) == 56);
+    assert!(core::mem::offset_of!(GuardState, replay_initialized) == 64);
+    assert!(core::mem::offset_of!(GuardState, auth_failures) == 65);
+    assert!(core::mem::offset_of!(GuardState, auth_locked) == 66);
+    assert!(core::mem::offset_of!(GuardState, inflight_bytes) == 72);
+    assert!(core::mem::offset_of!(GuardState, inflight_messages) == 80);
+    assert!(core::mem::offset_of!(GuardState, reconnect_attempts) == 82);
+    assert!(core::mem::offset_of!(GuardState, next_retry_at_us) == 88);
+    assert!(core::mem::offset_of!(GuardState, reconnect_exhausted) == 96);
+};
+
+unsafe extern "C" {
+    fn ghostos_protocol_guard_new(class: u8, local: VersionRange, out: *mut GuardState) -> NativeError;
+    fn ghostos_protocol_require_class(guard: *const GuardState, class: u8) -> NativeError;
+    fn ghostos_protocol_negotiate(guard: *mut GuardState, peer: VersionRange, selected: *mut u16) -> NativeError;
+    fn ghostos_protocol_validate_message(guard: *const GuardState, bytes: usize) -> NativeError;
+    fn ghostos_protocol_accept_sequence(guard: *mut GuardState, sequence: u64) -> NativeError;
+    fn ghostos_protocol_authenticate(guard: *mut GuardState, success: bool) -> NativeError;
+    fn ghostos_protocol_reserve_message(guard: *mut GuardState, bytes: usize) -> NativeError;
+    fn ghostos_protocol_release_message(guard: *mut GuardState, bytes: usize) -> NativeError;
+    fn ghostos_protocol_disconnected(guard: *mut GuardState, now_us: u64, retry_at: *mut u64) -> NativeError;
 }
 
 #[cfg(test)]

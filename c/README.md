@@ -17,11 +17,13 @@ Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 
 | Rust source | C implementation | Public header |
 | --- | --- | --- |
+| `crates/numa/src/lib.rs` (active topology construction, placement, cursors, and locality counters) | `src/numa.c` | `include/ghostos/numa.h` |
+| `crates/platform-io/src/lib.rs` (active queue metadata, token/state transitions, and I/O/media validation; generic payloads stay caller-owned) | `src/platform_io.c` | `include/ghostos/platform_io.h` |
 | `crates/durability/src/lib.rs` (active bounded trace recording, ordering/recovery verification, and C layer contracts) | `src/durability.c` | `include/ghostos/durability.h` |
 | `crates/status/src/lib.rs` | `src/status.c` | `include/ghostos/status.h` |
 | `crates/abi/src/generated.rs` | `src/abi.c` | `include/ghostos/abi.h` |
-| `crates/api-compat/src/lib.rs` | `src/api_compat.c` | `include/ghostos/api_compat.h` |
-| `crates/protocol/src/lib.rs` | `src/protocol.c` | `include/ghostos/protocol.h` |
+| `crates/api-compat/src/lib.rs` (active version-check and migration policy, plus C contracts/formatting) | `src/api_compat.c` | `include/ghostos/api_compat.h` |
+| `crates/protocol/src/lib.rs` (active transport guard state and policy behind Rust adapters) | `src/protocol.c` | `include/ghostos/protocol.h` |
 | `crates/boot-protocol/src/lib.rs` | `src/boot_protocol.c` | `include/ghostos/boot_protocol.h` |
 | `virtual_machine/src/replay.rs` (active session state, owned events, replay policy, DMA and file/header codecs) | `src/vm_replay.c` | `include/ghostos/vm_replay.h` |
 | `virtual_machine/src/devices/display.rs` (active VGA/VESA state, rendering, snapshots, PPM, and BIOS video dispatch) | `src/vm_display.c` | `include/ghostos/vm_display.h` |

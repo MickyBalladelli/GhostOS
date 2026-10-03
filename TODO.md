@@ -295,6 +295,45 @@ remain. No tests were executed; behavior parity and full migration remain open.
 Build logs are in `temp/c-library-durability.log` and
 `temp/durability-consumers-build.log`.
 
+NUMA/platform-I/O build checks on 2026-10-03: `make c-library` and
+host builds of NUMA, platform I/O, kernel, VM, netd, storaged, compute, and
+remote display passed. Compute and remote display also built in release mode.
+C NUMA preserves sparse-node ordering, explicit-node preference, valid-CPU
+retention, UMA-before-remote locality selection, wrapping per-kind fallback
+cursors, counter retention on topology changes, and saturating counters.
+C queue metadata preserves first matching slot from each cursor, generation
+wrap skipping zero, stale-token-before-state errors, completed slots consuming
+capacity until polling, and zero-capacity behavior. Generic payloads stay
+Rust-owned. I/O/media validation preserves device/format/plane/buffer/access
+error ordering, optional control buffers, and flush ignoring supplied buffers.
+Both NUMA cases and all four platform-I/O queue model cases have C source and
+passed syntax checks only. Logs are in `temp/c-library-numa.log`,
+`temp/numa-consumers-build.log`, `temp/c-library-platform-io.log`,
+`temp/platform-io-consumers-build.log`,
+`temp/platform-io-direct-consumers-build.log`, and
+`temp/platform-io-release-build.log`.
+
+Compatibility/protocol consumer build checks on 2026-10-03: `make c-library`
+and builds of API compatibility, protocol, client SDK, package, shell,
+declarative configuration, HTTP, fabric, mesh, web terminal, and VM passed.
+Existing C foundations now serve active Rust callers. Compatibility keeps
+invalid-range-before-version rejection, legacy warnings, and migration exact
+version matching independently of the supported range. Protocol keeps
+negotiation-before-size errors, replay-window updates, locked-auth persistence,
+checked inflight accounting, eight reconnect attempts, and saturating retry
+arithmetic. Shared C/Rust sizes and field offsets are compile-time checked.
+The four changed C modules passed freestanding syntax/layout checks for
+x86-64, AArch64, and RISC-V; these are not full target OS builds. Existing
+foundation and new NUMA/platform-I/O contract source passed syntax checks.
+No tests were executed; behavior parity, Rust adapter/build removal, and full
+migration remain open. Logs are in
+`temp/c-library-api-compat-consumers.log`,
+`temp/api-compat-consumers-build.log`,
+`temp/c-library-protocol-consumers.log`,
+`temp/protocol-consumers-build.log`,
+`temp/ported-foundation-contract-syntax.log`, and
+`temp/c-ports-{x86_64,aarch64,riscv64}-syntax.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -412,7 +451,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/abi/` — ABI definitions and generated ABI bindings.
 - [ ] `crates/actors/` — actor runtime.
 - [ ] `crates/admission/` — C owns active fixed-capacity controller state, ordered tenant/class/global budget checks, recovery reserves, bounded ancestor charging, tenant-policy validation/cycle rejection, first-free lease allocation and exact lease validation, queue/drop/retry decisions, saturating counters/sequences, and reports. Backup, inspection, package, and storage consumers use allocation-free Rust type adapters. All three existing cases have C source; const API wrappers, Rust build/adapters, behavior parity, and full removal remain.
-- [ ] `crates/api-compat/` — API compatibility.
+- [ ] `crates/api-compat/` — Active contract checks and exact-version migration decisions call the existing C compatibility implementation through a value-only bridge. Public Rust const contracts, version helpers, migration strings, formatting, and result/error wrappers remain. Consumer builds pass; behavior parity and complete Rust removal remain.
 - [ ] `crates/app/` — application loading, manifests, and supervision.
 - [ ] `crates/auth/` — authentication.
 - [ ] `crates/balancerd/` — balancing daemon.
@@ -455,15 +494,15 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/llm-runtime/` — LLM inference runtime and KV cache.
 - [ ] `crates/logd/` — logging daemon.
 - [ ] `crates/netd/` — network daemon.
-- [ ] `crates/numa/` — NUMA support.
+- [ ] `crates/numa/` — C owns active bounded topology construction, sparse node lookup, per-kind fallback cursors, CPU/node selection, topology replacement, locality decisions, and saturating remote-memory counters in `c/src/numa.c`. Kernel scheduling, networking, storage, and platform I/O consumers use checked-layout Rust adapters. Both existing cases have C source; Rust const constructors/getters, build/adapters, behavior parity, and full removal remain.
 - [ ] `crates/observability/` — profiling, telemetry, SLOs, and scaling.
 - [ ] `crates/path-pattern/` — Active parsing, wildcard/class matching, UTF-8-width consumption, and unescaping now run in `c/src/path_pattern.c`. Filesystem, shell, and runtime consumers use a Rust type/FFI adapter. All seven existing contract/property cases have C source. Rust adapter/build-tool removal and behavior parity remain open.
 - [ ] `crates/pkg/` — package management and signatures.
-- [ ] `crates/platform-io/` — platform I/O abstraction.
+- [ ] `crates/platform-io/` — C owns active asynchronous queue metadata, round-robin cursors, generation-tagged token validation, submit/dispatch/complete/poll/cancel state transitions, pending counts, and I/O/media buffer/format/plane/access validation. Rust retains generic request/response payloads, public wrappers, NUMA logging, const helpers, and status conversion. All four existing queue model cases have C source; behavior parity, Rust build/adapters, and full removal remain.
 - [ ] `crates/policy/` — policy engine.
 - [ ] `crates/posix-compat/` — POSIX compatibility.
 - [ ] `crates/power/` — power management.
-- [ ] `crates/protocol/` — shared protocol definitions.
+- [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
 - [ ] `crates/ras/` — reliability, availability, and serviceability.
 - [ ] `crates/rms/` — record management and storage.
 - [ ] `crates/runtime/` — core runtime.

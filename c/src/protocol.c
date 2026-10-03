@@ -1,5 +1,31 @@
 #include "ghostos/protocol.h"
 
+_Static_assert(sizeof(ghostos_protocol_error_kind) == 4, "error tag size");
+_Static_assert(sizeof(ghostos_protocol_error) == 24, "error size");
+_Static_assert(offsetof(ghostos_protocol_error, limit) == 8, "error limit offset");
+_Static_assert(offsetof(ghostos_protocol_error, actual) == 16, "error actual offset");
+_Static_assert(sizeof(ghostos_protocol_limits) == 32, "limits size");
+_Static_assert(offsetof(ghostos_protocol_limits, max_inflight_bytes) == 8, "inflight limit offset");
+_Static_assert(offsetof(ghostos_protocol_limits, max_inflight_messages) == 16, "message limit offset");
+_Static_assert(offsetof(ghostos_protocol_limits, max_auth_failures) == 18, "auth limit offset");
+_Static_assert(offsetof(ghostos_protocol_limits, reconnect_base_delay_us) == 24, "retry delay offset");
+_Static_assert(sizeof(ghostos_protocol_version_range) == 4, "version range size");
+_Static_assert(offsetof(ghostos_protocol_version_range, maximum) == 2, "maximum offset");
+_Static_assert(sizeof(ghostos_protocol_guard) == 104, "guard size");
+_Static_assert(offsetof(ghostos_protocol_guard, limits) == 8, "limits offset");
+_Static_assert(offsetof(ghostos_protocol_guard, local_versions) == 40, "local_versions offset");
+_Static_assert(offsetof(ghostos_protocol_guard, negotiated_version) == 44, "negotiated_version offset");
+_Static_assert(offsetof(ghostos_protocol_guard, highest_sequence) == 48, "highest_sequence offset");
+_Static_assert(offsetof(ghostos_protocol_guard, seen) == 56, "seen offset");
+_Static_assert(offsetof(ghostos_protocol_guard, replay_initialized) == 64, "replay_initialized offset");
+_Static_assert(offsetof(ghostos_protocol_guard, auth_failures) == 65, "auth_failures offset");
+_Static_assert(offsetof(ghostos_protocol_guard, auth_locked) == 66, "auth_locked offset");
+_Static_assert(offsetof(ghostos_protocol_guard, inflight_bytes) == 72, "inflight_bytes offset");
+_Static_assert(offsetof(ghostos_protocol_guard, inflight_messages) == 80, "inflight_messages offset");
+_Static_assert(offsetof(ghostos_protocol_guard, reconnect_attempts) == 82, "reconnect_attempts offset");
+_Static_assert(offsetof(ghostos_protocol_guard, next_retry_at_us) == 88, "next_retry_at_us offset");
+_Static_assert(offsetof(ghostos_protocol_guard, reconnect_exhausted) == 96, "reconnect_exhausted offset");
+
 static ghostos_protocol_error result(ghostos_protocol_error_kind kind) {
     return (ghostos_protocol_error){kind, 0, 0};
 }
