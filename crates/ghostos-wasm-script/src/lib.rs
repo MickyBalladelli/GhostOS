@@ -1,5 +1,8 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+#[allow(unsafe_code)]
+mod native;
 
 extern crate alloc;
 
@@ -37,14 +40,16 @@ impl WasmLimits {
         max_tables: 2,
     };
 
-    pub const fn is_valid(self) -> bool {
-        self.fuel > 0
-            && self.max_module_bytes > 0
-            && self.max_memory_bytes > 0
-            && self.max_table_elements > 0
-            && self.max_instances > 0
-            && self.max_memories > 0
-            && self.max_tables > 0
+    pub fn is_valid(self) -> bool {
+        crate::native::limits(
+            self.fuel,
+            self.max_module_bytes,
+            self.max_memory_bytes,
+            self.max_table_elements,
+            self.max_instances,
+            self.max_memories,
+            self.max_tables,
+        )
     }
 }
 
@@ -93,40 +98,56 @@ struct CapabilitySet {
 
 impl CapabilitySet {
     fn new(grants: &[CapabilityGrant]) -> Result<Self, Error> {
-        if grants.len() > MAX_WASM_CAPABILITIES {
-            return Err(Error::CapabilityCapacity);
+        let code = if grants.len() > MAX_WASM_CAPABILITIES {
+            crate::native::grants(&[], &[], grants.len(), MAX_WASM_CAPABILITIES)
+        } else {
+            let mut handles = [0; MAX_WASM_CAPABILITIES];
+            let mut operations = [0; MAX_WASM_CAPABILITIES];
+            for (index, grant) in grants.iter().enumerate() {
+                handles[index] = grant.handle;
+                operations[index] = grant.operations;
+            }
+            crate::native::grants(&handles[..grants.len()], &operations[..grants.len()], grants.len(), MAX_WASM_CAPABILITIES)
+        };
+        match code {
+            0 => {}
+            1 => return Err(Error::CapabilityCapacity),
+            2 => return Err(Error::InvalidCapability),
+            _ => return Err(Error::DuplicateCapability),
         }
         let mut result = Self {
             grants: [None; MAX_WASM_CAPABILITIES],
         };
         for (index, grant) in grants.iter().copied().enumerate() {
-            if grant.handle == 0 || grant.operations == 0 {
-                return Err(Error::InvalidCapability);
-            }
-            if result
-                .grants
-                .iter()
-                .flatten()
-                .any(|existing| existing.handle == grant.handle)
-            {
-                return Err(Error::DuplicateCapability);
-            }
             result.grants[index] = Some(grant)
         }
         Ok(result)
     }
 
+    fn views(&self) -> ([u64; MAX_WASM_CAPABILITIES], [u64; MAX_WASM_CAPABILITIES], [bool; MAX_WASM_CAPABILITIES]) {
+        let mut handles = [0; MAX_WASM_CAPABILITIES];
+        let mut operations = [0; MAX_WASM_CAPABILITIES];
+        let mut occupied = [false; MAX_WASM_CAPABILITIES];
+        for (index, grant) in self.grants.iter().enumerate() {
+            if let Some(grant) = grant {
+                handles[index] = grant.handle;
+                operations[index] = grant.operations;
+                occupied[index] = true;
+            }
+        }
+        (handles, operations, occupied)
+    }
+
     fn find(&self, handle: u64) -> Option<CapabilityGrant> {
-        self.grants
-            .iter()
-            .flatten()
-            .find(|grant| grant.handle == handle)
-            .copied()
+        let (handles, operations, occupied) = self.views();
+        crate::native::find(&handles, &operations, &occupied, handle).map(|operations| {
+            self.grants.iter().flatten().find(|grant| grant.handle == handle).copied()
+                .unwrap_or(CapabilityGrant { handle, operations })
+        })
     }
 
     fn allows(&self, handle: u64, operation: u8) -> bool {
-        self.find(handle)
-            .is_some_and(|grant| grant.allows(operation))
+        self.find(handle).is_some_and(|grant| crate::native::allows(grant.operations, operation))
     }
 }
 
@@ -187,11 +208,10 @@ impl WasmRuntime {
         capabilities: &[CapabilityGrant],
         host: H,
     ) -> Result<WasmOutcome<H>, Error> {
-        if entry.is_empty() {
-            return Err(Error::InvalidEntry);
-        }
-        if wasm.len() > self.limits.max_module_bytes {
-            return Err(Error::ModuleTooLarge);
+        match crate::native::module(wasm.len(), self.limits.max_module_bytes, entry.len()) {
+            1 => return Err(Error::InvalidEntry),
+            2 => return Err(Error::ModuleTooLarge),
+            _ => {}
         }
         let capabilities = CapabilitySet::new(capabilities)?;
         let module = Module::new(&self.engine, wasm).map_err(Error::Compile)?;
@@ -219,10 +239,9 @@ impl WasmRuntime {
                 "ghostos",
                 "capability_check",
                 |caller: Caller<'_, StoreState<H>>, handle: i64, operation: i32| -> i32 {
-                    let Ok(operation) = u8::try_from(operation) else {
-                        return 0;
-                    };
-                    i32::from(caller.data().capabilities.allows(handle as u64, operation))
+                    let operation_ok = u8::try_from(operation).ok();
+                    i32::from(crate::native::check(operation_ok.is_some(), operation_ok
+                        .is_some_and(|operation| caller.data().capabilities.allows(handle as u64, operation))) != 0)
                 },
             )
             .map_err(Error::Link)?;
@@ -238,19 +257,27 @@ impl WasmRuntime {
                  arg2: i64,
                  arg3: i64|
                  -> i64 {
-                    let handle = handle as u64;
-                    let Ok(operation) = u8::try_from(operation) else {
-                        caller.data_mut().denied_calls += 1;
-                        return HOST_INVALID_OPERATION;
-                    };
-                    let Some(capability) = caller.data().capabilities.find(handle) else {
-                        caller.data_mut().denied_calls += 1;
-                        return HOST_ACCESS_DENIED;
-                    };
-                    if !capability.allows(operation) {
-                        caller.data_mut().denied_calls += 1;
-                        return HOST_ACCESS_DENIED;
+                    let operation_ok = u8::try_from(operation).ok();
+                    let capability = operation_ok.and_then(|operation| {
+                        let _ = operation;
+                        caller.data().capabilities.find(handle as u64)
+                    });
+                    match crate::native::invoke(
+                        operation_ok.is_some(),
+                        capability.is_some(),
+                        operation_ok.is_some_and(|operation| capability.is_some_and(|grant| crate::native::allows(grant.operations, operation))),
+                    ) {
+                        1 => {
+                            caller.data_mut().denied_calls += 1;
+                            return HOST_INVALID_OPERATION;
+                        }
+                        2 => {
+                            caller.data_mut().denied_calls += 1;
+                            return HOST_ACCESS_DENIED;
+                        }
+                        _ => {}
                     }
+                    let (capability, operation) = (capability.unwrap(), operation_ok.unwrap());
                     caller.data_mut().host.invoke(HostCall {
                         capability,
                         operation,
@@ -273,7 +300,7 @@ impl WasmRuntime {
         let state = store.into_data();
         Ok(WasmOutcome {
             value,
-            fuel_consumed: self.limits.fuel.saturating_sub(fuel_remaining),
+            fuel_consumed: crate::native::fuel_consumed(self.limits.fuel, fuel_remaining),
             denied_calls: state.denied_calls,
             host: state.host,
         })

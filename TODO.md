@@ -529,7 +529,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-storaged/` — storage daemon, protocol, and tiering.
 - [ ] `crates/ghostos-top/` — system dashboard and telemetry.
 - [ ] `crates/ghostos-update/` — update, rollout, and hot-swap.
-- [ ] `crates/ghostos-wasm-script/` — WebAssembly scripting.
+- [ ] `crates/ghostos-wasm-script/` — C owns limit validation, entry and module-size checks, grant capacity, invalid and duplicate handles, operation masks, host invoke decisions, and fuel consumption. Rust retains the WebAssembly engine, store, and host callback. Existing runtime tests were executed.
 - [ ] `crates/ghostos-webterm/` — web terminal and SSH.
 - [ ] `crates/host-filesystems/` — FAT32, NTFS, and ext4 host filesystem support.
 - [ ] `crates/http/` — HTTP implementation.
@@ -972,3 +972,18 @@ Logs: `temp/c-library-logd-build.log`, `temp/logd-test.log`,
 `temp/logd-contract-build.log`, `temp/logd-x86-build.log`,
 `temp/logd-aarch64-build.log`, and `temp/logd-riscv64-build.log`. Journal
 storage, full Rust removal, and broader behavior parity remain open.
+
+Wasm-script progress on 2026-10-03: `c/src/wasm_script.c` now owns limit
+validation, entry and module-size checks, grant capacity, invalid and
+duplicate handles, operation masks, host invoke decisions, and saturating
+fuel consumption. An empty entry is still rejected before the module-size
+check, and an invalid operation is still rejected before capability lookup.
+Rust retains the WebAssembly engine, store, linker, and host callback. Both
+existing runtime tests passed, as did `build/c/wasm-script-contracts`.
+`make c-library` and host/x86/AArch64/RISC-V Wasm-script library builds
+passed. RISC-V used the temporary Clang/LLVM wrapper. Strict freestanding
+syntax checks passed for `c/src/wasm_script.c` on all three targets. Logs:
+`temp/c-library-wasm-script-build.log`, `temp/wasm-script-test.log`,
+`temp/wasm-script-contract-build.log`, `temp/wasm-script-x86-build.log`,
+`temp/wasm-script-aarch64-build.log`, and `temp/wasm-script-riscv64-build.log`.
+Full Rust removal and broader behavior parity remain open.
