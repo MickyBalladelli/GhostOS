@@ -41,6 +41,7 @@ static int install(ghostos_fsd_namespace *namespace, ghostos_fsd_mount *mounts, 
     if (!slot_generation) slot_generation = 1;
     mounts[slot].occupied = true;
     mounts[slot].read_only = read_only;
+    mounts[slot].host = false;
     mounts[slot].generation = slot_generation;
     mounts[slot].id = namespace->next_mount_id;
     mounts[slot].volume = volume;
@@ -58,9 +59,13 @@ void ghostos_fsd_namespace_init(ghostos_fsd_namespace *namespace, ghostos_fsd_mo
     for (i = 0; i < capacity; ++i) {
         mounts[i].occupied = false;
         mounts[i].read_only = false;
+        mounts[i].host = false;
         mounts[i].generation = 0;
         mounts[i].id = 0;
         mounts[i].volume = 0;
+        mounts[i].filesystem = 0;
+        mounts[i].partition_start = 0;
+        mounts[i].partition_length = 0;
         mounts[i].path_length = 0;
     }
 }
@@ -106,6 +111,38 @@ int ghostos_fsd_namespace_unmount(ghostos_fsd_mount *mounts, size_t capacity, ui
     if (index >= capacity || !mounts[index].occupied || mounts[index].generation != generation) return 7;
     if (index < 5) return 9;
     mounts[index].occupied = false;
+    return 0;
+}
+int ghostos_fsd_namespace_mount_host(ghostos_fsd_namespace *namespace, ghostos_fsd_mount *mounts, size_t capacity,
+    uint64_t authority, const uint8_t *path, size_t path_length, uint8_t filesystem, uint64_t partition_start,
+    uint64_t partition_length, uint64_t *capability) {
+    size_t slot = 0, i;
+    bool found = false;
+    uint32_t generation;
+    int status;
+    if (!namespace->active) return 2;
+    if (authority != namespace->authority) return 8;
+    if (!partition_length || partition_start > UINT64_MAX - partition_length) return 5;
+    status = path_ok(path, path_length);
+    if (status) return status;
+    for (i = 0; i < capacity; ++i) if (mounts[i].occupied && same_bytes(mounts[i].path, mounts[i].path_length, path, path_length)) return 11;
+    for (i = 0; i < capacity; ++i) if (!mounts[i].occupied) { slot = i; found = true; break; }
+    if (!found) return 3;
+    generation = mounts[slot].generation + 1;
+    if (!generation) generation = 1;
+    mounts[slot].occupied = true;
+    mounts[slot].read_only = true;
+    mounts[slot].host = true;
+    mounts[slot].generation = generation;
+    mounts[slot].id = namespace->next_mount_id;
+    mounts[slot].volume = 0;
+    mounts[slot].filesystem = filesystem;
+    mounts[slot].partition_start = partition_start;
+    mounts[slot].partition_length = partition_length;
+    mounts[slot].path_length = (uint8_t)path_length;
+    for (i = 0; i < path_length; ++i) mounts[slot].path[i] = path[i];
+    namespace->next_mount_id = namespace->next_mount_id == UINT32_MAX ? 1 : namespace->next_mount_id + 1;
+    *capability = ((uint64_t)generation << 32) | (slot + 1);
     return 0;
 }
 int ghostos_fsd_remove_directory(const ghostos_fsd_namespace *namespace, const ghostos_fsd_mount *mounts, size_t capacity,
