@@ -28,75 +28,58 @@ impl CorePartition {
     }
 
     pub fn online(self) -> CpuMask {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         {
             let mut words = [0; 2];
             unsafe { ghostos_core_partition_get_online(&self, words.as_mut_ptr()) };
             return CpuMask::from_words(words[0], words[1])
         }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        self.online
+
     }
 
     pub fn isolated(self) -> CpuMask {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         {
             let mut words = [0; 2];
             unsafe { ghostos_core_partition_get_isolated(&self, words.as_mut_ptr()) };
             return CpuMask::from_words(words[0], words[1])
         }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        self.isolated
+
     }
 
     pub fn housekeeping(self) -> CpuMask {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         {
             let mut words = [0; 2];
             unsafe { ghostos_core_partition_get_housekeeping(&self, words.as_mut_ptr()) };
             return CpuMask::from_words(words[0], words[1])
         }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        self.online.difference(self.isolated)
+
     }
 
     pub fn is_online(self, cpu: CpuId) -> bool {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         { return unsafe { ghostos_core_partition_is_online(&self, cpu.raw()) } }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        self.online.contains(cpu)
+
     }
 
     pub fn is_isolated(self, cpu: CpuId) -> bool {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         { return unsafe { ghostos_core_partition_is_isolated(&self, cpu.raw()) } }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        self.isolated.contains(cpu)
+
     }
 
     pub fn accepts_kernel_work(self, cpu: CpuId) -> bool {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         { return unsafe { ghostos_core_partition_accepts_kernel_work(&self, cpu.raw()) } }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        self.housekeeping().contains(cpu)
+
     }
 
     pub fn accepts_timer(self, cpu: CpuId) -> bool {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         { return unsafe { ghostos_core_partition_accepts_timer(&self, cpu.raw()) } }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        { self.accepts_kernel_work(cpu) }
+
     }
 
     pub fn accepts_ipc(self, cpu: CpuId) -> bool {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         { return unsafe { ghostos_core_partition_accepts_ipc(&self, cpu.raw()) } }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        { self.accepts_kernel_work(cpu) }
+
     }
 
     pub fn set_online(&mut self, online: CpuMask) -> Result<(), CorePartitionError> {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         {
             let words = online.raw_words();
             return match unsafe { ghostos_core_partition_set_online(self, words.as_ptr()) } {
@@ -105,21 +88,10 @@ impl CorePartition {
                 _ => Err(CorePartitionError::OfflineCore),
             }
         }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        {
-        if online.is_empty() {
-            return Err(CorePartitionError::EmptyMask)
-        }
-        if !self.isolated.difference(online).is_empty() {
-            return Err(CorePartitionError::OfflineCore)
-        }
-        self.online = online;
-        Ok(())
-        }
+
     }
 
     pub fn isolate(&mut self, cpus: CpuMask) -> Result<(), CorePartitionError> {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         {
             let words = cpus.raw_words();
             return match unsafe { ghostos_core_partition_isolate(self, words.as_ptr()) } {
@@ -129,37 +101,18 @@ impl CorePartition {
                 _ => Err(CorePartitionError::NoHousekeepingCore),
             }
         }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        {
-        if cpus.is_empty() {
-            return Err(CorePartitionError::EmptyMask)
-        }
-        if !cpus.difference(self.online).is_empty() {
-            return Err(CorePartitionError::OfflineCore)
-        }
-        let housekeeping = self.online.difference(self.isolated.union(cpus));
-        if housekeeping.is_empty() {
-            return Err(CorePartitionError::NoHousekeepingCore)
-        }
-        self.isolated = self.isolated.union(cpus);
-        Ok(())
-        }
+
     }
 
     pub fn release(&mut self, cpus: CpuMask) {
-        #[cfg(any(target_os = "none", target_os = "uefi"))]
         {
             let words = cpus.raw_words();
             unsafe { ghostos_core_partition_release(self, words.as_ptr()) };
         }
-        #[cfg(not(any(target_os = "none", target_os = "uefi")))]
-        {
-            self.isolated = self.isolated.difference(cpus)
-        }
+
     }
 }
 
-#[cfg(any(target_os = "none", target_os = "uefi"))]
 unsafe extern "C" {
     fn ghostos_core_partition_get_online(partition: *const CorePartition, words: *mut u64);
     fn ghostos_core_partition_get_isolated(partition: *const CorePartition, words: *mut u64);
@@ -173,6 +126,11 @@ unsafe extern "C" {
     fn ghostos_core_partition_isolate(partition: *mut CorePartition, cpus: *const u64) -> u32;
     fn ghostos_core_partition_release(partition: *mut CorePartition, cpus: *const u64);
 }
+
+const _: () = {
+    assert!(core::mem::size_of::<CorePartition>() == 32);
+    assert!(core::mem::offset_of!(CorePartition, isolated) == 16);
+};
 
 impl Default for CorePartition {
     fn default() -> Self {

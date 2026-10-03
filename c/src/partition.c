@@ -1,4 +1,8 @@
 #include "ghostos/partition.h"
+#include <stddef.h>
+
+_Static_assert(sizeof(ghostos_core_partition) == 32, "partition ABI");
+_Static_assert(offsetof(ghostos_core_partition, isolated) == 16, "partition mask ABI");
 
 static bool empty(const uint64_t words[2]) {
     return !words[0] && !words[1];

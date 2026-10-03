@@ -26,17 +26,6 @@ impl DmaPermissions {
     pub const fn bits(self) -> u8 {
         self.0
     }
-
-    fn required_rights(self) -> Option<Rights> {
-        let mut rights = Rights::NONE;
-        if self.contains(Self::DEVICE_READ) {
-            rights = rights.union(Rights::DMA_READ)
-        }
-        if self.contains(Self::DEVICE_WRITE) {
-            rights = rights.union(Rights::DMA_WRITE)
-        }
-        if rights.is_empty() { None } else { Some(rights) }
-    }
 }
 
 pub trait Iommu {
@@ -74,26 +63,16 @@ pub enum DmaError {
     MappingNotFound,
 }
 
-#[derive(Clone, Copy)]
-struct DmaRecord {
-    mapping: DmaMapping,
-    owner: AddressSpaceId,
-    device_authority: CapabilityHandle,
-    buffer_authority: CapabilityHandle,
-}
-
 pub struct DmaManager<const CAPACITY: usize = MAX_DMA_MAPPINGS> {
-    next_id: u64,
-    next_iova: u64,
-    mappings: [Option<DmaRecord>; CAPACITY],
+    state: NativeState,
+    mappings: [NativeRecord; CAPACITY],
 }
 
 impl<const CAPACITY: usize> DmaManager<CAPACITY> {
     pub const fn new() -> Self {
         Self {
-            next_id: 1,
-            next_iova: FIRST_IOVA,
-            mappings: [None; CAPACITY],
+            state: NativeState { next_id: 1, next_iova: FIRST_IOVA },
+            mappings: [NativeRecord::EMPTY; CAPACITY],
         }
     }
 
@@ -111,10 +90,11 @@ impl<const CAPACITY: usize> DmaManager<CAPACITY> {
         permissions: DmaPermissions,
         iommu: &mut impl Iommu,
     ) -> Result<DmaMapping, DmaError> {
-        validate_range(offset, length)?;
-        let required = permissions
-            .required_rights()
-            .ok_or(DmaError::InvalidPermissions)?;
+        let mut required_bits = 0;
+        native_result(unsafe {
+            ghostos_dma_request(offset, length, permissions.bits(), &mut required_bits)
+        })?;
+        let required = native_rights(required_bits);
         capabilities
             .authorize(
                 caller,
@@ -126,45 +106,23 @@ impl<const CAPACITY: usize> DmaManager<CAPACITY> {
         let buffer = capabilities
             .inspect(caller, buffer_authority)
             .map_err(|_| DmaError::InvalidCapability)?;
-        if !buffer.rights.contains(Rights::MAP.union(required)) {
-            return Err(DmaError::AccessDenied)
-        }
-        let backing = buffer.backing.ok_or(DmaError::InvalidCapability)?;
-        if backing.start % DMA_PAGE_SIZE != 0 {
-            return Err(DmaError::InvalidCapability)
-        }
-        let physical_start = backing
-            .start
-            .checked_add(offset)
-            .ok_or(DmaError::InvalidRange)?;
-        let physical = PhysicalRange::new(physical_start, length)
-            .filter(|range| backing.contains(*range))
-            .ok_or(DmaError::AccessDenied)?;
-        let slot = self
-            .mappings
-            .iter()
-            .position(Option::is_none)
-            .ok_or(DmaError::Capacity)?;
-        let iova = align_up(self.next_iova)?;
-        let next = iova.checked_add(length).ok_or(DmaError::IovaExhausted)?;
-        if !iommu.map(device, iova, physical, permissions) {
+        let mut physical = NativeRange::EMPTY;
+        native_result(unsafe {
+            ghostos_dma_buffer(buffer.rights.bits(), required_bits, buffer.backing.is_some(),
+                buffer.backing.map_or(NativeRange::EMPTY, NativeRange::from), offset, length,
+                &mut physical)
+        })?;
+        let mut plan = NativePlan::EMPTY;
+        native_result(unsafe {
+            ghostos_dma_prepare_map(&self.state, self.mappings.as_ptr(), CAPACITY, caller.raw(),
+                device_authority.raw(), buffer_authority.raw(), device.raw(), physical,
+                permissions.bits(), &mut plan)
+        })?;
+        let mapping = plan.record.mapping.to_public();
+        if !iommu.map(device, mapping.iova, mapping.physical, permissions) {
             return Err(DmaError::IommuRejected)
         }
-        let mapping = DmaMapping {
-            id: self.next_id,
-            device,
-            iova,
-            physical,
-            permissions,
-        };
-        self.next_id = self.next_id.wrapping_add(1).max(1);
-        self.next_iova = next;
-        self.mappings[slot] = Some(DmaRecord {
-            mapping,
-            owner: caller,
-            device_authority,
-            buffer_authority,
-        });
+        unsafe { ghostos_dma_commit_map(&mut self.state, self.mappings.as_mut_ptr(), &plan) };
         Ok(mapping)
     }
 
@@ -177,28 +135,19 @@ impl<const CAPACITY: usize> DmaManager<CAPACITY> {
         id: u64,
         iommu: &mut impl Iommu,
     ) -> Result<DmaMapping, DmaError> {
-        let slot = self
-            .mappings
-            .iter()
-            .position(|record| record.is_some_and(|record| record.mapping.id == id))
-            .ok_or(DmaError::MappingNotFound)?;
-        let record = self.mappings[slot].ok_or(DmaError::MappingNotFound)?;
-        if record.owner != caller
-            || record.device_authority != device_authority
-            || record.buffer_authority != buffer_authority
-        {
-            return Err(DmaError::AccessDenied)
-        }
-        let required = record
-            .mapping
-            .permissions
-            .required_rights()
-            .ok_or(DmaError::InvalidPermissions)?;
+        let mut plan = NativePlan::EMPTY;
+        let mut required_bits = 0;
+        native_result(unsafe {
+            ghostos_dma_prepare_unmap(self.mappings.as_ptr(), CAPACITY, caller.raw(),
+                device_authority.raw(), buffer_authority.raw(), id, &mut plan, &mut required_bits)
+        })?;
+        let mapping = plan.record.mapping.to_public();
+        let required = native_rights(required_bits);
         capabilities
             .authorize(
                 caller,
                 device_authority,
-                CapabilityObject::DmaDevice(record.mapping.device),
+                CapabilityObject::DmaDevice(mapping.device),
                 required,
             )
             .map_err(|_| DmaError::InvalidCapability)?;
@@ -206,22 +155,20 @@ impl<const CAPACITY: usize> DmaManager<CAPACITY> {
             .inspect(caller, buffer_authority)
             .map_err(|_| DmaError::InvalidCapability)?;
         if !iommu.unmap(
-            record.mapping.device,
-            record.mapping.iova,
-            record.mapping.physical.length,
+            mapping.device,
+            mapping.iova,
+            mapping.physical.length,
         ) {
             return Err(DmaError::IommuRejected)
         }
-        self.mappings[slot] = None;
-        Ok(record.mapping)
+        unsafe { ghostos_dma_commit_unmap(self.mappings.as_mut_ptr(), &plan) };
+        Ok(mapping)
     }
 
     pub fn mapping(&self, id: u64) -> Option<DmaMapping> {
-        self.mappings
-            .iter()
-            .flatten()
-            .find(|record| record.mapping.id == id)
-            .map(|record| record.mapping)
+        let mut mapping = NativeMapping::EMPTY;
+        unsafe { ghostos_dma_records_get(self.mappings.as_ptr(), CAPACITY, id, &mut mapping) }
+            .then(|| mapping.to_public())
     }
 }
 
@@ -231,21 +178,112 @@ impl<const CAPACITY: usize> Default for DmaManager<CAPACITY> {
     }
 }
 
-fn validate_range(offset: u64, length: u64) -> Result<(), DmaError> {
-    if offset % DMA_PAGE_SIZE != 0
-        || length == 0
-        || length % DMA_PAGE_SIZE != 0
-        || offset.checked_add(length).is_none()
-    {
-        Err(DmaError::InvalidRange)
-    } else {
-        Ok(())
+#[repr(C)]
+struct NativeState { next_id: u64, next_iova: u64 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeRange { start: u64, length: u64 }
+
+impl NativeRange {
+    const EMPTY: Self = Self { start: 0, length: 0 };
+}
+
+impl From<PhysicalRange> for NativeRange {
+    fn from(range: PhysicalRange) -> Self {
+        Self { start: range.start, length: range.length }
     }
 }
 
-fn align_up(value: u64) -> Result<u64, DmaError> {
-    value
-        .checked_add(DMA_PAGE_SIZE - 1)
-        .map(|value| value & !(DMA_PAGE_SIZE - 1))
-        .ok_or(DmaError::IovaExhausted)
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeMapping {
+    id: u64,
+    device: u32,
+    iova: u64,
+    physical: NativeRange,
+    permissions: u8,
+}
+
+impl NativeMapping {
+    const EMPTY: Self = Self { id: 0, device: 0, iova: 0, physical: NativeRange::EMPTY, permissions: 0 };
+
+    fn to_public(self) -> DmaMapping {
+        DmaMapping {
+            id: self.id,
+            device: DmaDeviceId::new(self.device).expect("native DMA device"),
+            iova: self.iova,
+            physical: PhysicalRange { start: self.physical.start, length: self.physical.length },
+            permissions: DmaPermissions(self.permissions),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeRecord {
+    mapping: NativeMapping,
+    owner: u32,
+    device_authority: u64,
+    buffer_authority: u64,
+    occupied: bool,
+}
+
+impl NativeRecord {
+    const EMPTY: Self = Self {
+        mapping: NativeMapping::EMPTY, owner: 0, device_authority: 0,
+        buffer_authority: 0, occupied: false,
+    };
+}
+
+#[repr(C)]
+struct NativePlan { record: NativeRecord, slot: usize, next_iova: u64 }
+
+impl NativePlan {
+    const EMPTY: Self = Self { record: NativeRecord::EMPTY, slot: 0, next_iova: 0 };
+}
+
+fn native_rights(bits: u16) -> Rights {
+    Rights::from_bits(bits).expect("native DMA rights")
+}
+
+fn native_result(result: i32) -> Result<(), DmaError> {
+    Err(match result {
+        0 => return Ok(()),
+        1 => DmaError::InvalidRange,
+        2 => DmaError::InvalidPermissions,
+        3 => DmaError::InvalidCapability,
+        4 => DmaError::AccessDenied,
+        5 => DmaError::Capacity,
+        6 => DmaError::IovaExhausted,
+        7 => DmaError::IommuRejected,
+        8 => DmaError::MappingNotFound,
+        _ => unreachable!("invalid native DMA result"),
+    })
+}
+
+const _: () = {
+    assert!(DMA_PAGE_SIZE == 4096);
+    assert!(core::mem::size_of::<NativeState>() == 16);
+    assert!(core::mem::size_of::<NativeMapping>() == 48);
+    assert!(core::mem::offset_of!(NativeMapping, physical) == 24);
+    assert!(core::mem::size_of::<NativeRecord>() == 80);
+    assert!(core::mem::offset_of!(NativeRecord, occupied) == 72);
+    assert!(core::mem::size_of::<NativePlan>() == 96);
+};
+
+unsafe extern "C" {
+    fn ghostos_dma_request(offset: u64, length: u64, permissions: u8, rights: *mut u16) -> i32;
+    fn ghostos_dma_buffer(rights: u16, required: u16, has_backing: bool, backing: NativeRange,
+        offset: u64, length: u64, physical: *mut NativeRange) -> i32;
+    fn ghostos_dma_prepare_map(state: *const NativeState, records: *const NativeRecord,
+        capacity: usize, caller: u32, device_authority: u64, buffer_authority: u64,
+        device: u32, physical: NativeRange, permissions: u8, plan: *mut NativePlan) -> i32;
+    fn ghostos_dma_commit_map(state: *mut NativeState, records: *mut NativeRecord, plan: *const NativePlan);
+    fn ghostos_dma_prepare_unmap(records: *const NativeRecord, capacity: usize, caller: u32,
+        device_authority: u64, buffer_authority: u64, id: u64, plan: *mut NativePlan,
+        rights: *mut u16) -> i32;
+    fn ghostos_dma_commit_unmap(records: *mut NativeRecord, plan: *const NativePlan);
+    fn ghostos_dma_records_get(records: *const NativeRecord, capacity: usize, id: u64,
+        mapping: *mut NativeMapping) -> bool;
 }

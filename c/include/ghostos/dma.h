@@ -61,4 +61,33 @@ ghostos_dma_error ghostos_dma_unmap(ghostos_dma_manager *manager,
     uint64_t id, ghostos_iommu iommu, ghostos_dma_mapping *out);
 bool ghostos_dma_mapping_get(const ghostos_dma_manager *manager, uint64_t id, ghostos_dma_mapping *out);
 
+/* Staged operations for caller-owned tables. Prepare never changes state;
+ * callers commit only after capability checks and IOMMU approval. */
+typedef struct {
+    uint64_t next_id, next_iova;
+} ghostos_dma_state;
+typedef struct {
+    ghostos_dma_record record;
+    size_t slot;
+    uint64_t next_iova;
+} ghostos_dma_plan;
+
+ghostos_dma_error ghostos_dma_request(uint64_t offset, uint64_t length,
+    uint8_t permissions, uint16_t *rights);
+ghostos_dma_error ghostos_dma_buffer(uint16_t rights, uint16_t required,
+    bool has_backing, ghostos_capability_range backing, uint64_t offset,
+    uint64_t length, ghostos_capability_range *physical);
+ghostos_dma_error ghostos_dma_prepare_map(const ghostos_dma_state *state,
+    const ghostos_dma_record *records, size_t capacity, uint32_t caller,
+    uint64_t device_authority, uint64_t buffer_authority, uint32_t device,
+    ghostos_capability_range physical, uint8_t permissions, ghostos_dma_plan *plan);
+void ghostos_dma_commit_map(ghostos_dma_state *state, ghostos_dma_record *records,
+    const ghostos_dma_plan *plan);
+ghostos_dma_error ghostos_dma_prepare_unmap(const ghostos_dma_record *records,
+    size_t capacity, uint32_t caller, uint64_t device_authority,
+    uint64_t buffer_authority, uint64_t id, ghostos_dma_plan *plan, uint16_t *rights);
+void ghostos_dma_commit_unmap(ghostos_dma_record *records, const ghostos_dma_plan *plan);
+bool ghostos_dma_records_get(const ghostos_dma_record *records, size_t capacity,
+    uint64_t id, ghostos_dma_mapping *mapping);
+
 #endif

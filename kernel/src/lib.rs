@@ -17,6 +17,7 @@ pub mod contention;
 #[allow(unsafe_code)]
 pub mod crash;
 pub mod cow;
+#[allow(unsafe_code)]
 pub mod dma;
 #[allow(unsafe_code)]
 #[allow(dead_code)]
