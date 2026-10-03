@@ -1302,3 +1302,14 @@ passed, and strict freestanding syntax checks passed for `c/src/fsd_lock.c` on
 x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
 Directory and namespace operations remain. Logs:
 `temp/c-library-fsd-lock-build.log`, `temp/fsd-lock-contract-build.log`.
+
+Namespace progress on 2026-10-03: `c/src/fsd_namespace.c` activates `/`,
+`/packages`, `/logs`, `/data`, and `/tmp`. `/data/file` resolves to the data
+mount, `/packages/pkg` is read only, and `/dat` stays on the root. Removing
+`/data` is denied because it is a mount root, and a process with only delete
+rights cannot remove `/data/empty`. `build/c/fsd-namespace-contracts` passed.
+`make c-library` passed, and strict freestanding syntax checks passed for
+`c/src/fsd_namespace.c` on x86-64, AArch64, and RISC-V. No Rust sources were
+edited and Cargo was not used. Host partition mounts remain. Logs:
+`temp/c-library-fsd-namespace-build.log`,
+`temp/fsd-namespace-contract-build.log`.
