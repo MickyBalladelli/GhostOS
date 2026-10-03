@@ -537,7 +537,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ipc/` — inter-process communication.
 - [ ] `crates/legacy-pc-drivers/` — legacy PC block, PCI, storage, USB, and Ethernet drivers.
 - [ ] `crates/llm-runtime/` — LLM inference runtime and KV cache.
-- [ ] `crates/logd/` — logging daemon.
+- [ ] `crates/logd/` — C owns operator subscribe, unsubscribe, delivery filtering, operator-event selection, dropped-counter deltas, and remaining record budget. Rust retains journal writes, trace pops, and delivery callbacks. Existing daemon tests were executed.
 - [ ] `crates/netd/` — network daemon.
 - [ ] `crates/numa/` — C owns active bounded topology construction, sparse node lookup, per-kind fallback cursors, CPU/node selection, topology replacement, locality decisions, and saturating remote-memory counters in `c/src/numa.c`. Kernel scheduling, networking, storage, and platform I/O consumers use checked-layout Rust adapters. Both existing cases have C source; Rust const constructors/getters, build/adapters, behavior parity, and full removal remain.
 - [ ] `crates/observability/` — profiling, telemetry, SLOs, and scaling.
@@ -957,3 +957,18 @@ targets. Logs: `temp/c-library-audit-build.log`, `temp/audit-test.log`,
 `temp/audit-x86-build.log`, `temp/audit-aarch64-build.log`, and
 `temp/audit-riscv64-build.log`. Patch workflow, full Rust removal, and broader
 behavior parity remain open.
+
+Log-daemon progress on 2026-10-03: `c/src/logd.c` now owns operator subscribe
+and unsubscribe, level filtering, operator-event selection, saturating
+dropped-counter deltas, and remaining record budget. An existing terminal is
+still updated before a free slot is considered. Info events still stay off
+the operator path unless their kind is operator, and a failed journal append
+still happens before rotation. Rust retains journal writes, trace pops, and
+delivery callbacks. All three existing log tests passed, as did
+`build/c/logd-contracts`. `make c-library` and host/x86/AArch64/RISC-V log
+library builds passed. RISC-V used the temporary Clang/LLVM wrapper. Strict
+freestanding syntax checks passed for `c/src/logd.c` on all three targets.
+Logs: `temp/c-library-logd-build.log`, `temp/logd-test.log`,
+`temp/logd-contract-build.log`, `temp/logd-x86-build.log`,
+`temp/logd-aarch64-build.log`, and `temp/logd-riscv64-build.log`. Journal
+storage, full Rust removal, and broader behavior parity remain open.

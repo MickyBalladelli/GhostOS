@@ -1,5 +1,8 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+#[allow(unsafe_code)]
+mod native;
 
 use ghostos_observability::{
     AuditJournal, AuditKey, AuditQuery, EventKind, JOURNAL_RECORD_SIZE, Level,
@@ -430,34 +433,25 @@ impl<const SUBSCRIBERS: usize> Opcom<SUBSCRIBERS> {
         terminal: TerminalId,
         minimum_level: Level,
     ) -> Result<(), LogError> {
-        if let Some(subscription) = self
-            .subscriptions
-            .iter_mut()
-            .flatten()
-            .find(|entry| entry.terminal == terminal)
-        {
-            subscription.minimum_level = minimum_level;
-            return Ok(());
+        let views = self.subscription_views();
+        match crate::native::subscribe(&views, terminal.raw(), minimum_level as u8) {
+            Ok((true, index)) => {
+                if let Some(subscription) = self.subscriptions[index].as_mut() {
+                    subscription.minimum_level = minimum_level;
+                }
+            }
+            Ok((false, index)) => {
+                self.subscriptions[index] = Some(Subscription { terminal, minimum_level });
+            }
+            Err(()) => return Err(LogError::SubscriberCapacity),
         }
-        let slot = self
-            .subscriptions
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(LogError::SubscriberCapacity)?;
-        *slot = Some(Subscription {
-            terminal,
-            minimum_level,
-        });
         Ok(())
     }
 
     pub fn unsubscribe(&mut self, terminal: TerminalId) -> Result<(), LogError> {
-        let slot = self
-            .subscriptions
-            .iter_mut()
-            .find(|entry| entry.is_some_and(|subscription| subscription.terminal == terminal))
-            .ok_or(LogError::UnknownSubscriber)?;
-        *slot = None;
+        let index = crate::native::unsubscribe(&self.subscription_views(), terminal.raw())
+            .map_err(|_| LogError::UnknownSubscriber)?;
+        self.subscriptions[index] = None;
         Ok(())
     }
 
@@ -468,12 +462,23 @@ impl<const SUBSCRIBERS: usize> Opcom<SUBSCRIBERS> {
     ) -> usize {
         let mut delivered = 0;
         for subscription in self.subscriptions.iter().flatten() {
-            if event.level >= subscription.minimum_level {
+            if crate::native::deliver(event.level as u8, subscription.minimum_level as u8) {
                 deliver(subscription.terminal, event);
                 delivered += 1
             }
         }
         delivered
+    }
+
+    fn subscription_views(&self) -> [crate::native::Subscription; SUBSCRIBERS] {
+        self.subscriptions.map(|subscription| match subscription {
+            Some(subscription) => crate::native::Subscription {
+                terminal: subscription.terminal.raw(),
+                minimum_level: subscription.minimum_level as u8,
+                occupied: true,
+            },
+            None => crate::native::Subscription { terminal: 0, minimum_level: 0, occupied: false },
+        })
     }
 }
 
@@ -624,7 +629,7 @@ impl LogDaemon {
             report.batches += 1;
             report.system_records = trace_count;
             for event in &trace_batch[..trace_count] {
-                if event.level >= Level::Error || event.kind == EventKind::Operator {
+                if crate::native::operator(event.level as u8, event.kind as u8) {
                     report.operator_deliveries += opcom.broadcast(*event, &mut deliver)
                 }
             }
@@ -633,7 +638,7 @@ impl LogDaemon {
             report.interrupts_moderated += 1
         }
         let audit_decision = self.controller.plan(
-            audit.pending().min(record_budget.saturating_sub(report.system_records)),
+            audit.pending().min(crate::native::remaining(record_budget, report.system_records)),
             JOURNAL_RECORD_SIZE,
             now_us,
             interactive_pending,
@@ -656,8 +661,8 @@ impl LogDaemon {
         report.versions_rotated = writer.rotate(rotation_budget)?;
         let trace_dropped = trace.dropped();
         let audit_dropped = audit.dropped();
-        report.trace_records_dropped = trace_dropped.saturating_sub(self.last_trace_dropped);
-        report.audit_records_dropped = audit_dropped.saturating_sub(self.last_audit_dropped);
+        report.trace_records_dropped = crate::native::dropped_delta(trace_dropped, self.last_trace_dropped);
+        report.audit_records_dropped = crate::native::dropped_delta(audit_dropped, self.last_audit_dropped);
         self.last_trace_dropped = trace_dropped;
         self.last_audit_dropped = audit_dropped;
         Ok(report)
