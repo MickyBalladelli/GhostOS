@@ -65,4 +65,28 @@ bool ghostos_hot_cpu_node(const ghostos_hot_allocator *allocator, size_t cpu, ui
 size_t ghostos_hot_node_count(const ghostos_hot_allocator *allocator);
 size_t ghostos_hot_max_cross_node_fallbacks(const ghostos_hot_allocator *allocator);
 
+/* Borrowed, contiguous kind/node/CPU storage for generic kernel consumers. */
+typedef struct {
+    size_t cpu_count, node_capacity, cpu_stride, node_stride;
+    uint8_t node_count, max_cross_node_fallbacks;
+    const uint8_t *cpu_to_node;
+    ghostos_hot_pool *pools;
+    ghostos_hot_allocator_stats *stats;
+    bool checked;
+} ghostos_hot_allocator_view;
+void ghostos_hot_pool_init(ghostos_hot_pool *pool, size_t capacity);
+ghostos_hot_config_error ghostos_hot_validate(const uint8_t *cpu_to_node,
+    size_t cpu_count, size_t node_capacity, size_t node_count,
+    size_t capacity, size_t fallbacks);
+/* Allocation result 3 reports a zero-divisor caused by the legacy u8 node count. */
+ghostos_hot_allocation_error ghostos_hot_view_allocate(ghostos_hot_allocator_view *view,
+    ghostos_hot_object_kind kind, size_t cpu, ghostos_hot_allocation *out);
+ghostos_hot_reclaim_error ghostos_hot_view_reclaim_on(ghostos_hot_allocator_view *view,
+    size_t current_cpu, ghostos_hot_allocation allocation);
+void ghostos_hot_view_record_remote_memory(ghostos_hot_allocator_view *view,
+    ghostos_hot_object_kind kind, uint64_t bytes);
+/* False also reports checked u32 report-counter overflow. */
+bool ghostos_hot_view_report(const ghostos_hot_allocator_view *view,
+    ghostos_hot_object_kind kind, ghostos_hot_allocator_report *out);
+
 #endif
