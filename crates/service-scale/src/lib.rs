@@ -379,9 +379,7 @@ impl<
     pub fn close_session(&mut self, session: SessionId) -> Result<(), ScaleError> {
         let session_index = self.session_index(session).ok_or(ScaleError::NotFound)?;
         let record = self.sessions[session_index].ok_or(ScaleError::NotFound)?;
-        if record.in_flight != 0 || !matches!(record.state, SessionState::Active) {
-            return Err(ScaleError::InFlight)
-        }
+        native::close(record.state, record.in_flight)?;
         let instance_index = self
             .instance_index(record.owner)
             .ok_or(ScaleError::NotFound)?;
@@ -553,17 +551,8 @@ impl<
         }
         let session_index = self.session_index(session).ok_or(ScaleError::NotFound)?;
         let record = self.sessions[session_index].ok_or(ScaleError::NotFound)?;
-        if record.generation != source_generation
-            || record.in_flight != 0
-            || !matches!(record.state, SessionState::Active)
-            || sequence <= record.sequence
-        {
-            return Err(if record.in_flight != 0 {
-                ScaleError::InFlight
-            } else {
-                ScaleError::InvalidState
-            })
-        }
+        native::prepare(record.state, record.in_flight, record.generation,
+            source_generation, record.sequence, sequence)?;
         self.checked_instance(record.owner, source_generation)?;
         let target_index = self
             .instance_index(target)
@@ -851,12 +840,7 @@ impl<
 }
 
 fn same_handoff<const SNAPSHOT: usize>(handoff: HandoffRecord<SNAPSHOT>, token: HandoffToken) -> bool {
-    handoff.source == token.source
-        && handoff.target == token.target
-        && handoff.source_generation == token.source_generation
-        && handoff.target_generation == token.target_generation
-        && handoff.sequence == token.sequence
-        && handoff.digest == token.snapshot_digest
+    native::same_handoff(&handoff, token)
         && digest(&handoff.bytes[..handoff.length]) == token.snapshot_digest
 }
 

@@ -540,3 +540,8 @@ fences. The native target selector preserves first-best ties, and digest uses
 unsigned wrapping FNV arithmetic. Typed records, commits, session handoffs,
 request/effect ledgers, counters, and public APIs remain in Rust. Temporary
 instance views use stack space proportional to generic instance capacity.
+
+Service scaling also calls C for session-close and handoff-preparation checks
+and checked-layout token field matching. In-flight error precedence and lazy
+snapshot digest/slice evaluation stay intact. Rust retains typed commits,
+copying, counters, and request/effect transitions.

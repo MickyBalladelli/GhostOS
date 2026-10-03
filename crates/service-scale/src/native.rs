@@ -49,3 +49,36 @@ unsafe extern "C" {
     fn ghostos_scale_target(instances: *const Instance, count: usize, owner: u32, target: *mut u32) -> i32;
     fn ghostos_scale_digest(bytes: *const u8, length: usize) -> u64;
 }
+
+fn session_state(state: crate::SessionState) -> u8 {
+    match state { crate::SessionState::Active => 0, crate::SessionState::HandoffPrepared => 1,
+        crate::SessionState::HandoffAccepted => 2, crate::SessionState::Closed => 3 }
+}
+pub(crate) fn close(state: crate::SessionState, in_flight: u16) -> Result<(), ScaleError> {
+    result(unsafe { ghostos_scale_session_close(session_state(state), in_flight) })
+}
+pub(crate) fn prepare(state: crate::SessionState, in_flight: u16, generation: u64,
+    requested_generation: u64, sequence: u64, requested_sequence: u64) -> Result<(), ScaleError> {
+    result(unsafe { ghostos_scale_prepare(session_state(state), in_flight, generation,
+        requested_generation, sequence, requested_sequence) })
+}
+#[repr(C)]
+struct Handoff { source_generation: u64, target_generation: u64, sequence: u64,
+    digest: u64, source: u32, target: u32 }
+pub(crate) fn same_handoff<const N: usize>(stored: &crate::HandoffRecord<N>, token: crate::HandoffToken) -> bool {
+    let stored = Handoff { source_generation: stored.source_generation, target_generation: stored.target_generation,
+        sequence: stored.sequence, digest: stored.digest, source: stored.source.raw(), target: stored.target.raw() };
+    let token = Handoff { source_generation: token.source_generation, target_generation: token.target_generation,
+        sequence: token.sequence, digest: token.snapshot_digest, source: token.source.raw(), target: token.target.raw() };
+    unsafe { ghostos_scale_same_handoff(&stored, &token) }
+}
+const _: () = {
+    assert!(core::mem::size_of::<Handoff>() == 40);
+    assert!(core::mem::offset_of!(Handoff, source) == 32);
+};
+unsafe extern "C" {
+    fn ghostos_scale_session_close(state: u8, in_flight: u16) -> i32;
+    fn ghostos_scale_prepare(state: u8, in_flight: u16, generation: u64,
+        requested_generation: u64, sequence: u64, requested_sequence: u64) -> i32;
+    fn ghostos_scale_same_handoff(stored: *const Handoff, token: *const Handoff) -> bool;
+}

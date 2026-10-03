@@ -19,4 +19,13 @@ int ghostos_scale_membership(const ghostos_scale_instance *instances, size_t cou
 int ghostos_scale_target(const ghostos_scale_instance *instances, size_t count,
     uint32_t owner, uint32_t *target);
 uint64_t ghostos_scale_digest(const uint8_t *bytes, size_t length);
+/* Session state: active=0, prepared=1, accepted=2, closed=3. */
+int ghostos_scale_session_close(uint8_t state, uint16_t in_flight);
+int ghostos_scale_prepare(uint8_t state, uint16_t in_flight, uint64_t generation,
+    uint64_t requested_generation, uint64_t sequence, uint64_t requested_sequence);
+typedef struct {
+    uint64_t source_generation, target_generation, sequence, digest;
+    uint32_t source, target;
+} ghostos_scale_handoff;
+bool ghostos_scale_same_handoff(const ghostos_scale_handoff *stored, const ghostos_scale_handoff *token);
 #endif

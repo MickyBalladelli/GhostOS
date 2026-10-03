@@ -44,3 +44,21 @@ uint64_t ghostos_scale_digest(const uint8_t *bytes, size_t length) {
     }
     return hash;
 }
+
+int ghostos_scale_session_close(uint8_t state, uint16_t in_flight) {
+    return in_flight || state != 0 ? 6 : 0;
+}
+int ghostos_scale_prepare(uint8_t state, uint16_t in_flight, uint64_t generation,
+    uint64_t requested_generation, uint64_t sequence, uint64_t requested_sequence) {
+    if (generation != requested_generation || in_flight || state != 0 || requested_sequence <= sequence)
+        return in_flight ? 6 : 4;
+    return 0;
+}
+_Static_assert(sizeof(ghostos_scale_handoff) == 40, "scale handoff ABI");
+_Static_assert(offsetof(ghostos_scale_handoff, source) == 32, "scale source ABI");
+bool ghostos_scale_same_handoff(const ghostos_scale_handoff *stored, const ghostos_scale_handoff *token) {
+    return stored->source == token->source && stored->target == token->target &&
+        stored->source_generation == token->source_generation &&
+        stored->target_generation == token->target_generation &&
+        stored->sequence == token->sequence && stored->digest == token->digest;
+}
