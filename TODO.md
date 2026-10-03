@@ -1186,3 +1186,14 @@ passed, and strict freestanding syntax checks passed for `c/src/config_diff.c`
 on x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not
 used. Logs: `temp/c-library-config-diff-build.log`,
 `temp/config-diff-contract-build.log`.
+
+Inference-protocol progress on 2026-10-03: `c/src/inference.c` checks model
+names, decodes an OpenAI completion request, and encodes a finished chat
+completion. The tiny request keeps max tokens 4 and streaming. A zero token
+limit is invalid, an unknown path is unsupported, and a gRPC frame with a
+nonzero flag or a mismatched length is rejected.
+`build/c/inference-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/inference.c` on x86-64, AArch64,
+and RISC-V. No Rust sources were edited and Cargo was not used. Service
+scheduling remains. Logs: `temp/c-library-inference-build.log`,
+`temp/inference-contract-build.log`.
