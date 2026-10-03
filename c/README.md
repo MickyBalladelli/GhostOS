@@ -68,7 +68,7 @@ use only the freestanding foundation objects.
 | `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 | `kernel/src/crash.rs` (capsule encoding, build identity, one-time guard) | `src/crash.c` | `include/ghostos/crash.h` |
 | `kernel/src/dlm.rs` (node/federation fences, range lock manager) | `src/dlm.c` | `include/ghostos/dlm.h` |
-| `crates/ras/` (active hardware telemetry and poisoned-memory quarantine/admission) | `src/ras.c` | `include/ghostos/ras.h` |
+| `crates/ras/` (active hardware telemetry, poison quarantine/admission, and budget/workload policy) | `src/ras.c` | `include/ghostos/ras.h` |
 | `kernel/src/dma.rs` (active caller-owned mapping tables, staged allocation, capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c`, `src/dma_state.c` | `include/ghostos/dma.h` |
 | `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c`, `src/driver_resources.c` | `include/ghostos/driver_capabilities.h` |
 | `kernel/src/hot_allocator.rs` | `src/hot_allocator.c` | `include/ghostos/hot_allocator.h` |
@@ -495,3 +495,9 @@ capacities. C owns ring placement, sequence IDs, saturating counters, node-scope
 overlap validation, and quarantine insertion. Rust retains typed const APIs,
 trace emission, and debug overflow panic conversion. Budget arbitration,
 controller effects, and persistent-pool recovery remain Rust.
+
+RAS budget consumers also use C for signed saturated predictions, threshold
+selection, workload tables, eviction selection, and post-approval commits.
+Rust retains controller calls and last-reading storage. Throttling precedes
+eviction, and each successful eviction commits separately, preserving partial
+failure and host unwind behavior. Public policy validation remains const Rust.

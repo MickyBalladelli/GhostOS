@@ -432,13 +432,6 @@ impl WorkloadId {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Workload {
-    id: WorkloadId,
-    priority: WorkloadPriority,
-    active: bool,
-}
-
 pub trait WorkloadController {
     fn evict(&mut self, workload: WorkloadId) -> Result<(), Status>;
     fn throttle(&mut self, percent: u8) -> Result<(), Status>;
@@ -454,7 +447,7 @@ pub enum BudgetDecision {
 
 pub struct BudgetArbiter<const CAPACITY: usize = DEFAULT_WORKLOAD_CAPACITY> {
     policy: BudgetPolicy,
-    workloads: [Option<Workload>; CAPACITY],
+    workloads: [native::Workload; CAPACITY],
     last_reading: Option<BudgetReading>,
 }
 
@@ -462,41 +455,22 @@ impl<const CAPACITY: usize> BudgetArbiter<CAPACITY> {
     pub fn new(policy: BudgetPolicy) -> Result<Self, RasError> {
         Ok(Self {
             policy: policy.validate()?,
-            workloads: [None; CAPACITY],
+            workloads: [native::Workload::EMPTY; CAPACITY],
             last_reading: None,
         })
     }
 
     pub fn register(&mut self, id: WorkloadId, priority: WorkloadPriority) -> Result<(), RasError> {
-        if self
-            .workloads
-            .iter()
-            .flatten()
-            .any(|workload| workload.id == id)
-        {
-            return Err(RasError::AlreadyTracked);
+        match native::register(&mut self.workloads, id, priority) {
+            0 => Ok(()),
+            1 => Err(RasError::AlreadyTracked),
+            2 => Err(RasError::Capacity),
+            _ => unreachable!("native RAS registration result"),
         }
-        let slot = self
-            .workloads
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(RasError::Capacity)?;
-        *slot = Some(Workload {
-            id,
-            priority,
-            active: true,
-        });
-        Ok(())
     }
 
     pub fn unregister(&mut self, id: WorkloadId) -> Result<(), RasError> {
-        let slot = self
-            .workloads
-            .iter_mut()
-            .find(|entry| entry.is_some_and(|workload| workload.id == id))
-            .ok_or(RasError::NotFound)?;
-        *slot = None;
-        Ok(())
+        if native::unregister(&mut self.workloads, id) { Ok(()) } else { Err(RasError::NotFound) }
     }
 
     pub fn observe<C: WorkloadController>(
@@ -504,58 +478,32 @@ impl<const CAPACITY: usize> BudgetArbiter<CAPACITY> {
         reading: BudgetReading,
         controller: &mut C,
     ) -> Result<BudgetDecision, RasError> {
-        let predicted_thermal = predict(
-            reading.thermal_millicelsius,
-            reading.thermal_rate_millicelsius_per_s,
-            self.policy.prediction_horizon_us,
-        );
-        let predicted_power = predict(
-            reading.power_milliwatts,
-            reading.power_rate_milliwatts_per_s,
-            self.policy.prediction_horizon_us,
-        );
-        let critical = reading.thermal_millicelsius >= self.policy.thermal_critical_millicelsius
-            || reading.power_milliwatts >= self.policy.power_critical_milliwatts;
-        let predicted_critical = predicted_thermal >= self.policy.thermal_critical_millicelsius
-            || predicted_power >= self.policy.power_critical_milliwatts;
-        let over_soft = reading.thermal_millicelsius >= self.policy.thermal_soft_millicelsius
-            || reading.power_milliwatts >= self.policy.power_soft_milliwatts
-            || predicted_thermal >= self.policy.thermal_soft_millicelsius
-            || predicted_power >= self.policy.power_soft_milliwatts;
+        let plan = native::budget_decide(self.policy, reading);
         self.last_reading = Some(reading);
-        if !over_soft {
+        if plan.mode == 0 {
             controller.throttle(0).map_err(RasError::Controller)?;
             return Ok(BudgetDecision::Normal);
         }
-
-        let throttle_percent = if critical {
-            90
-        } else if predicted_critical {
-            75
-        } else {
-            40
-        };
+        let throttle_percent = plan.throttle_percent;
         controller
             .throttle(throttle_percent)
             .map_err(RasError::Controller)?;
         let mut evicted = 0;
-        if predicted_critical || critical {
-            for workload in self.workloads.iter_mut().flatten() {
-                if workload.active && workload.priority < WorkloadPriority::Critical {
-                    controller
-                        .evict(workload.id)
-                        .map_err(RasError::Controller)?;
-                    workload.active = false;
-                    evicted += 1;
-                }
+        if plan.mode >= 2 {
+            let mut start = 0;
+            while let Some(index) = native::next_workload(&self.workloads, start) {
+                controller.evict(self.workloads[index].id()).map_err(RasError::Controller)?;
+                native::evicted(&mut self.workloads, index);
+                evicted += 1;
+                start = index + 1;
             }
         }
-        Ok(if critical {
+        Ok(if plan.mode == 3 {
             BudgetDecision::Critical {
                 count: evicted,
                 throttle_percent,
             }
-        } else if predicted_critical {
+        } else if plan.mode == 2 {
             BudgetDecision::Evict {
                 count: evicted,
                 throttle_percent,
@@ -569,16 +517,6 @@ impl<const CAPACITY: usize> BudgetArbiter<CAPACITY> {
 
     pub const fn last_reading(&self) -> Option<BudgetReading> {
         self.last_reading
-    }
-}
-
-fn predict(value: u32, rate_per_s: i32, horizon_us: u64) -> u32 {
-    let delta =
-        (rate_per_s as i64).saturating_mul(horizon_us.min(u64::from(u32::MAX)) as i64) / 1_000_000;
-    if delta.is_negative() {
-        value.saturating_sub(delta.unsigned_abs().min(u32::MAX as u64) as u32)
-    } else {
-        value.saturating_add(delta.min(u32::MAX as i64) as u32)
     }
 }
 

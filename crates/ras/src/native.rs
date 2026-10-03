@@ -121,3 +121,56 @@ unsafe extern "C" {
     fn ghostos_ras_admit(slots: *const Poison, capacity: usize,
         node: u32, start: u64, length: u64, checked: bool) -> i32;
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Workload { id: u64, priority: u8, active: bool, occupied: bool }
+impl Workload {
+    pub(crate) const EMPTY: Self = Self { id: 0, priority: 0, active: false, occupied: false };
+    pub(crate) fn id(self) -> crate::WorkloadId {
+        crate::WorkloadId::new(self.id).expect("native RAS workload")
+    }
+}
+#[repr(C)]
+struct BudgetPolicy { thermal_soft: u32, thermal_critical: u32, power_soft: u32, power_critical: u32, horizon_us: u64 }
+#[repr(C)]
+struct BudgetReading { timestamp_us: u64, thermal: u32, power: u32, thermal_rate: i32, power_rate: i32 }
+#[repr(C)]
+pub(crate) struct BudgetPlan { pub(crate) mode: u32, pub(crate) throttle_percent: u8 }
+
+pub(crate) fn budget_decide(policy: crate::BudgetPolicy, reading: crate::BudgetReading) -> BudgetPlan {
+    let p = BudgetPolicy { thermal_soft: policy.thermal_soft_millicelsius,
+        thermal_critical: policy.thermal_critical_millicelsius, power_soft: policy.power_soft_milliwatts,
+        power_critical: policy.power_critical_milliwatts, horizon_us: policy.prediction_horizon_us };
+    let r = BudgetReading { timestamp_us: reading.timestamp_us, thermal: reading.thermal_millicelsius,
+        power: reading.power_milliwatts, thermal_rate: reading.thermal_rate_millicelsius_per_s,
+        power_rate: reading.power_rate_milliwatts_per_s };
+    unsafe { ghostos_ras_budget_decide(p, r) }
+}
+pub(crate) fn register(slots: &mut [Workload], id: crate::WorkloadId, priority: crate::WorkloadPriority) -> i32 {
+    unsafe { ghostos_ras_workload_register(slots.as_mut_ptr(), slots.len(), id.raw(), priority as u8) }
+}
+pub(crate) fn unregister(slots: &mut [Workload], id: crate::WorkloadId) -> bool {
+    unsafe { ghostos_ras_workload_unregister(slots.as_mut_ptr(), slots.len(), id.raw()) }
+}
+pub(crate) fn next_workload(slots: &[Workload], start: usize) -> Option<usize> {
+    let index = unsafe { ghostos_ras_workload_next(slots.as_ptr(), slots.len(), start) };
+    (index < slots.len()).then_some(index)
+}
+pub(crate) fn evicted(slots: &mut [Workload], index: usize) {
+    assert!(index < slots.len());
+    unsafe { ghostos_ras_workload_evicted(slots.as_mut_ptr(), index) }
+}
+const _: () = {
+    assert!(core::mem::size_of::<Workload>() == 16);
+    assert!(core::mem::size_of::<BudgetPolicy>() == 24);
+    assert!(core::mem::size_of::<BudgetReading>() == 24);
+    assert!(core::mem::size_of::<BudgetPlan>() == 8);
+};
+unsafe extern "C" {
+    fn ghostos_ras_workload_register(slots: *mut Workload, capacity: usize, id: u64, priority: u8) -> i32;
+    fn ghostos_ras_workload_unregister(slots: *mut Workload, capacity: usize, id: u64) -> bool;
+    fn ghostos_ras_budget_decide(policy: BudgetPolicy, reading: BudgetReading) -> BudgetPlan;
+    fn ghostos_ras_workload_next(slots: *const Workload, capacity: usize, start: usize) -> usize;
+    fn ghostos_ras_workload_evicted(slots: *mut Workload, index: usize);
+}

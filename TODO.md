@@ -548,7 +548,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/posix-compat/` — POSIX compatibility.
 - [ ] `crates/power/` — power management.
 - [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
-- [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. Rust retains typed/const APIs, trace emission, controller calls, budget arbitration, persistent-pool recovery, and storage actions. Behavior parity and full removal remain.
+- [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. Rust retains typed/const APIs, trace emission, controller calls, last-reading storage, persistent-pool recovery, and storage actions. Behavior parity and full removal remain.
 - [ ] `crates/rms/` — record management and storage.
 - [ ] `crates/runtime/` — core runtime.
 - [ ] `crates/service-scale/` — service scaling.
@@ -662,3 +662,21 @@ verification wrapper. C syntax checks passed on all three targets. Logs are
 `temp/ras-x86-build.log`, `temp/ras-aarch64-build.log`,
 `temp/ras-riscv64-build.log`, and `temp/ras-target-syntax.log`.
 Behavior parity and the complete migration remain open.
+
+RAS budget consumer progress on 2026-10-03: C now owns saturated thermal/power
+prediction, threshold and throttle decisions, workload tables, eviction selection,
+and post-approval state updates. The prediction horizon remains capped at
+u32::MAX, signed division truncates toward zero, and positive/negative predictions
+clamp exactly as before. Slot ordering, duplicate detection for inactive records,
+zero-capacity tables, and critical-workload exclusion remain intact. Rust stores
+the last reading before controller calls; throttle failures and partial eviction
+failures retain the original state ordering. Controller trait calls stay outside
+C, preserving host unwinding.
+
+`make c-library` and host/x86/AArch64/RISC-V RAS library builds passed. RISC-V
+used the temporary Clang/LLVM verification wrapper. C syntax checks passed for
+all three targets. Logs are `temp/c-library-ras-budget-build.log`,
+`temp/ras-budget-native-build.log`, `temp/ras-budget-x86-build.log`,
+`temp/ras-budget-aarch64-build.log`, `temp/ras-budget-riscv64-build.log`, and
+`temp/ras-budget-target-syntax.log`. Persistent-memory recovery and full
+migration remain open; no behavior-parity execution is claimed.

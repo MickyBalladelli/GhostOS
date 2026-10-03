@@ -37,4 +37,23 @@ int ghostos_ras_quarantine(ghostos_ras_poison *slots, size_t capacity,
     ghostos_ras_poison poison, bool checked);
 int ghostos_ras_admit(const ghostos_ras_poison *slots, size_t capacity,
     uint32_t node, uint64_t start, uint64_t length, bool checked);
+typedef struct {
+    uint32_t thermal_soft, thermal_critical, power_soft, power_critical;
+    uint64_t horizon_us;
+} ghostos_ras_budget_policy;
+typedef struct {
+    uint64_t timestamp_us;
+    uint32_t thermal, power;
+    int32_t thermal_rate, power_rate;
+} ghostos_ras_budget_reading;
+typedef struct { uint32_t mode; uint8_t throttle_percent; } ghostos_ras_budget_plan;
+typedef struct { uint64_t id; uint8_t priority; bool active, occupied; } ghostos_ras_workload;
+/* Register: 0 success, 1 duplicate, 2 full. Unregister: false means missing. */
+int ghostos_ras_workload_register(ghostos_ras_workload *slots, size_t capacity, uint64_t id, uint8_t priority);
+bool ghostos_ras_workload_unregister(ghostos_ras_workload *slots, size_t capacity, uint64_t id);
+ghostos_ras_budget_plan ghostos_ras_budget_decide(ghostos_ras_budget_policy policy,
+    ghostos_ras_budget_reading reading);
+/* Select without mutation; commit after controller approval. Capacity means no selection. */
+size_t ghostos_ras_workload_next(const ghostos_ras_workload *slots, size_t capacity, size_t start);
+void ghostos_ras_workload_evicted(ghostos_ras_workload *slots, size_t index);
 #endif
