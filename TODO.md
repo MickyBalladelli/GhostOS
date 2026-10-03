@@ -507,7 +507,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/fabric/` — cluster fabric, memory, CXL, and DSM.
 - [ ] `crates/fsd/` — filesystem daemon.
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
-- [ ] `crates/ghostos-agent-bridge/` — agent bridge.
+- [ ] `crates/ghostos-agent-bridge/` — C owns task-scope validation, parent and lifetime limits, expiry arithmetic, reusable grant slots, nonce and revocation wrap, consume checks, run-right unions, active-grant counts, and commit/discard decisions. Rust retains signature and lease verification, script execution, and GhostFS sandbox calls. Existing attenuation tests were executed.
 - [ ] `crates/ghostos-agentd/` — agent daemon.
 - [ ] `crates/ghostos-audit/` — audit subsystem.
 - [ ] `crates/ghostos-backup/` — backup and recovery.

@@ -1,5 +1,8 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+#[allow(unsafe_code)]
+mod native;
 
 use ghostos_script::{
     CowSandbox, LogicalNameControl, SandboxCommandHandler, SandboxDecision, SandboxExecutor,
@@ -37,22 +40,20 @@ pub struct AgentTaskScope {
 }
 
 impl AgentTaskScope {
-    pub const fn new(
+    pub fn new(
         resource: u64,
         rights: Rights,
         transports: TransportRights,
         max_lifetime_us: u64,
     ) -> Result<Self, Error> {
-        if resource == 0 || rights.is_empty() || transports.bits() == 0 || max_lifetime_us == 0 {
-            Err(Error::InvalidScope)
-        } else {
-            Ok(Self {
-                resource,
-                rights,
-                transports,
-                max_lifetime_us,
-            })
-        }
+        crate::native::scope(resource, rights.bits(), transports.bits(), max_lifetime_us)
+            .map_err(|_| Error::InvalidScope)?;
+        Ok(Self {
+            resource,
+            rights,
+            transports,
+            max_lifetime_us,
+        })
     }
 }
 
@@ -98,16 +99,24 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
         lifetime_us: u64,
         now_us: u64,
     ) -> Result<CryptographicCapability, Error> {
-        if parent.issuer != self.issuer
-            || parent.resource != scope.resource
-            || parent.revocation_epoch != self.revocation_epoch
-            || !parent.effective_rights().contains(scope.rights)
-            || !parent.effective_transports().contains(scope.transports)
-            || lifetime_us == 0
-            || lifetime_us > scope.max_lifetime_us
-        {
-            return Err(Error::ScopeViolation);
-        }
+        crate::native::parent(
+            parent.issuer.raw(),
+            self.issuer.raw(),
+            parent.resource,
+            scope.resource,
+            parent.revocation_epoch,
+            self.revocation_epoch,
+        )
+        .map_err(|_| Error::ScopeViolation)?;
+        crate::native::covers(parent.effective_rights().bits(), scope.rights.bits())
+            .map_err(|_| Error::ScopeViolation)?;
+        crate::native::transport_lifetime(
+            parent.effective_transports().bits(),
+            scope.transports.bits(),
+            lifetime_us,
+            scope.max_lifetime_us,
+        )
+        .map_err(|_| Error::ScopeViolation)?;
         parent
             .verify(
                 self.key,
@@ -119,19 +128,15 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
             )
             .map_err(Error::Token)?;
 
-        let expires_at_us = now_us
-            .checked_add(lifetime_us)
-            .ok_or(Error::ScopeViolation)?;
-        if expires_at_us > parent.effective_expiry() {
+        let expires_at_us = crate::native::add_time(now_us, lifetime_us)
+            .map_err(|_| Error::ScopeViolation)?;
+        if !crate::native::within_expiry(expires_at_us, parent.effective_expiry()) {
             return Err(Error::ScopeViolation);
         }
 
-        let grant_slot = self
-            .grants
-            .iter()
-            .position(|entry| entry.is_none_or(|grant| grant.expires_at_us <= now_us))
-            .ok_or(Error::Capacity)?;
-        self.next_nonce = self.next_nonce.wrapping_add(1).max(1);
+        let views = self.grant_views();
+        let grant_slot = crate::native::slot(&views, now_us).map_err(|_| Error::Capacity)?;
+        self.next_nonce = crate::native::next_id(self.next_nonce);
         let token = CryptographicCapability::issue(
             self.key,
             self.issuer,
@@ -190,9 +195,7 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
         transport: TransportRights,
         now_us: u64,
     ) -> Result<(), Error> {
-        if required.is_empty() {
-            return Err(Error::InvalidScope);
-        }
+        crate::native::required(required.bits()).map_err(|_| Error::InvalidScope)?;
         let slot = self
             .grants
             .iter()
@@ -205,12 +208,15 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
             })
             .ok_or(Error::AlreadyConsumed)?;
         let grant = self.grants[slot].ok_or(Error::AlreadyConsumed)?;
-        if now_us >= grant.expires_at_us
-            || !grant.rights.contains(required)
-            || !grant.transports.contains(transport)
-        {
-            return Err(Error::AccessDenied);
-        }
+        crate::native::grant_access(
+            now_us,
+            grant.expires_at_us,
+            grant.rights.bits(),
+            required.bits(),
+            grant.transports.bits(),
+            transport.bits(),
+        )
+        .map_err(|_| Error::AccessDenied)?;
         token
             .verify(
                 self.key,
@@ -243,7 +249,7 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
     }
 
     pub fn revoke_all(&mut self) {
-        self.revocation_epoch = self.revocation_epoch.wrapping_add(1).max(1);
+        self.revocation_epoch = crate::native::next_id(self.revocation_epoch);
         self.grants.fill(None)
     }
 
@@ -252,11 +258,20 @@ impl<const GRANTS: usize> SingleUseCapabilityIssuer<GRANTS> {
     }
 
     pub fn active_grants(&self, now_us: u64) -> usize {
-        self.grants
-            .iter()
-            .flatten()
-            .filter(|grant| grant.expires_at_us > now_us)
-            .count()
+        crate::native::active(&self.grant_views(), now_us)
+    }
+
+    fn grant_views(&self) -> [crate::native::Grant; GRANTS] {
+        self.grants.map(|grant| match grant {
+            Some(grant) => crate::native::Grant {
+                expires_at_us: grant.expires_at_us,
+                occupied: true,
+            },
+            None => crate::native::Grant {
+                expires_at_us: 0,
+                occupied: false,
+            },
+        })
     }
 }
 
@@ -353,7 +368,13 @@ impl<const MAX_BLOCKS: usize> PreparedRun<'_, MAX_BLOCKS> {
         if mode == RunMode::Commit && !self.commit_authorized {
             return Err(Error::CommitNotAuthorized);
         }
-        let decision = if mode == RunMode::Commit && self.status.is_success() {
+        let commit = crate::native::finish(
+            mode == RunMode::Commit,
+            self.commit_authorized,
+            self.status.is_success(),
+        )
+        .map_err(|_| Error::CommitNotAuthorized)?;
+        let decision = if commit {
             SandboxDecision::Commit
         } else {
             SandboxDecision::Discard
@@ -465,10 +486,11 @@ impl<const GRANTS: usize> AgentBridge<GRANTS> {
         LogicalNames: LogicalNameControl,
     {
         let script = Script::<STATEMENTS>::compile(request.source).map_err(Error::Script)?;
-        let mut required = request.task_rights.union(Rights::EXECUTE);
-        if request.mode == RunMode::Commit {
-            required = required.union(Rights::WRITE)
-        }
+        let required = Rights::from_bits(crate::native::run_rights(
+            request.task_rights.bits(),
+            request.mode == RunMode::Commit,
+        ))
+        .expect("run rights stay inside the rights mask");
         self.capabilities.consume(
             request.authority,
             request.subject,
