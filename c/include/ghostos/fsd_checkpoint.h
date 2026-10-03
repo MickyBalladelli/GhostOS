@@ -11,6 +11,7 @@ typedef struct {
     size_t capacity;
     uint64_t *next_id;
     const uint64_t *generation;
+    const uint32_t *root;
 } ghostos_fsd_checkpoint_backend;
 int ghostos_fsd_checkpoint_create(void *context, uint64_t *checkpoint, uint64_t *generation);
 int ghostos_fsd_checkpoint_release(void *context, uint64_t checkpoint);

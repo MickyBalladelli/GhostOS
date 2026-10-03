@@ -3,6 +3,7 @@ int ghostos_fsd_checkpoint_create(void *context, uint64_t *checkpoint, uint64_t 
     ghostos_fsd_checkpoint_backend *backend = context;
     uint64_t id, current;
     int status;
+    size_t i;
     if (!backend || !backend->next_id || !backend->generation ||
         (backend->capacity && !backend->pins)) return GHOSTOS_FSD_HANDLES_INVALID_ARGUMENT;
     current = *backend->generation;
@@ -10,6 +11,13 @@ int ghostos_fsd_checkpoint_create(void *context, uint64_t *checkpoint, uint64_t 
     if (status == 1) return GHOSTOS_FSD_HANDLES_SNAPSHOT_FULL;
     if (status == 2) return GHOSTOS_FSD_HANDLES_VERSION_OVERFLOW;
     if (status) return GHOSTOS_FSD_HANDLES_INVALID_ARGUMENT;
+    if (backend->root) {
+        for (i = 0; i < backend->capacity; ++i)
+            if (backend->pins[i].occupied && backend->pins[i].id == id) {
+                backend->pins[i].root = *backend->root;
+                break;
+            }
+    }
     *checkpoint = id;
     *generation = current;
     return 0;

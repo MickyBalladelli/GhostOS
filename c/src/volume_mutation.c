@@ -24,6 +24,8 @@ int ghostos_volume_mutation_init(ghostos_volume_mutation *volume, ghostos_volume
         (volume->tree.block_count && !volume->blocks) ||
         !volume->tree.payload || volume->tree.payload_capacity < GHOSTOS_VOLUME_DATA ||
         (volume->tree.frame_capacity && !volume->tree.frames)) return GHOSTOS_VOLUME_MUTATION_SCRATCH;
+    if ((volume->pin_capacity && !volume->pins) || volume->gc_capacity < volume->tree.block_count ||
+        (volume->tree.block_count && (!volume->marked || !volume->pending))) return GHOSTOS_VOLUME_MUTATION_SCRATCH;
     for (i = 0; i < volume->record_count; ++i) if (!volume->records[i].name_length) return 5;
     if (volume->root && (!volume->tree.kinds[volume->root - 1] || volume->tree.kinds[volume->root - 1] > 2)) return 5;
     return rebuild(volume, reader);
@@ -66,7 +68,7 @@ static int tree_result(int status) {
     if (status == 5) return 1;
     return status;
 }
-int ghostos_volume_mutation_write_empty(ghostos_volume_mutation *volume,
+static int write_empty_uncommitted(ghostos_volume_mutation *volume,
     ghostos_volume_reader *reader, const uint8_t *path, size_t length) {
     const ghostos_volume_record *found;
     ghostos_volume_record record = {0};
@@ -130,4 +132,15 @@ int ghostos_volume_mutation_write_empty(ghostos_volume_mutation *volume,
     volume->root = root;
     volume->generation = record.created_at;
     return rebuild(volume, reader);
+}
+int ghostos_volume_mutation_write_empty(ghostos_volume_mutation *volume,
+    ghostos_volume_reader *reader, const uint8_t *path, size_t length) {
+    size_t live, freed;
+    int status = write_empty_uncommitted(volume, reader, path, length);
+    if (status == GHOSTOS_VOLUME_MUTATION_ARENA_FULL) {
+        (void)ghostos_volume_mutation_collect(volume, &live, &freed);
+        return write_empty_uncommitted(volume, reader, path, length);
+    }
+    if (status) (void)ghostos_volume_mutation_collect(volume, &live, &freed);
+    return status;
 }

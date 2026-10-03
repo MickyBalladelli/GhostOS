@@ -15,3 +15,11 @@ ghostos_status ghostos_fsd_storage_status(int result) {
     if (result == GHOSTOS_FSD_STORAGE_NO_SPACE) return GHOSTOS_STATUS_NO_SPACE;
     return ghostos_fsd_open_status(result);
 }
+ghostos_fsd_checkpoint_backend ghostos_fsd_storage_checkpoints(
+    ghostos_volume_mutation *volume, uint64_t *next_id) {
+    ghostos_fsd_checkpoint_backend backend = {
+        .pins = volume->pins, .capacity = volume->pin_capacity,
+        .next_id = next_id, .generation = &volume->generation, .root = &volume->root
+    };
+    return backend;
+}

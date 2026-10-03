@@ -32,6 +32,7 @@ int ghostos_volume_pin(ghostos_volume_pin_slot *pins, size_t capacity, uint64_t 
         pins[i].occupied = true;
         pins[i].id = *next_id;
         pins[i].generation = generation;
+        pins[i].root = 0;
         *id = *next_id;
         *next_id += 1;
         return 0;

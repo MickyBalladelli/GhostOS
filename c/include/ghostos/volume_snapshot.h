@@ -17,6 +17,7 @@ typedef struct {
 typedef struct {
     bool occupied;
     uint64_t id, generation;
+    uint32_t root;
 } ghostos_volume_pin_slot;
 int ghostos_volume_pin(ghostos_volume_pin_slot *pins, size_t capacity, uint64_t *next_id, uint64_t generation, uint64_t *id);
 int ghostos_volume_unpin(ghostos_volume_pin_slot *pins, size_t capacity, uint64_t id);

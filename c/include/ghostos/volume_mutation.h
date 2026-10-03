@@ -3,6 +3,7 @@
 #include "ghostos/volume_tree.h"
 #include "ghostos/volume_reader.h"
 #include "ghostos/volume_quota.h"
+#include "ghostos/volume_snapshot.h"
 /* Serialized C empty-write backend. records[0..record_count] must be the
    complete active root's decoded records, including retained/deleted versions.
    The cache is caller-owned and must match root; it is not a checkpoint cache.
@@ -34,9 +35,21 @@ typedef struct {
     size_t file_capacity;
     ghostos_volume_range_block *blocks;
     size_t block_capacity;
+    ghostos_volume_pin_slot *pins;
+    size_t pin_capacity;
+    bool *marked;
+    uint32_t *pending;
+    size_t gc_capacity;
 } ghostos_volume_mutation;
 /* Validate configured storage and build initial reader views without mutation. */
 int ghostos_volume_mutation_init(ghostos_volume_mutation *volume, ghostos_volume_reader *reader);
 int ghostos_volume_mutation_write_empty(ghostos_volume_mutation *volume,
     ghostos_volume_reader *reader, const uint8_t *path, size_t path_length);
+/* Trace the active root, pinned roots, all branch children, and live record
+   data chains. Deleted records do not retain data. Caller GC arrays have at
+   least block_count entries. Reclaims unreachable nodes and zeros freed raw
+   blocks. Corrupt reachable payloads stop collection before any sweep.
+   live/freed change only on successful collection. */
+int ghostos_volume_mutation_collect(ghostos_volume_mutation *volume,
+    size_t *live, size_t *freed);
 #endif
