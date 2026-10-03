@@ -1,5 +1,9 @@
 #include "ghostos/invariants.h"
 
+_Static_assert(sizeof(ghostos_invariant_id) == 4, "invariant tag size");
+_Static_assert(sizeof(ghostos_invariant_failure) == 8, "invariant failure size");
+_Static_assert(offsetof(ghostos_invariant_failure, code) == 4, "failure code offset");
+
 const ghostos_invariant_definition ghostos_invariant_catalogue[GHOSTOS_INVARIANT_CATALOGUE_COUNT] = {
     {"address_space.ownership", "address_spaces", "A capability owner and every address-space object name a valid address space.", "identifier-only", 1001, GHOSTOS_INVARIANT_ADDRESS_SPACE_OWNERSHIP},
     {"capability.derivation", "capabilities", "Live capability generations, rights, backing ranges, and derivation links are consistent.", "identifier-only", 1002, GHOSTOS_INVARIANT_CAPABILITY_DERIVATION},

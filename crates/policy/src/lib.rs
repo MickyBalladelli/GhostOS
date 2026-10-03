@@ -559,6 +559,65 @@ fn policy_result(code: u32) -> Result<(), SimulationError> {
     })
 }
 
+const _: () = {
+    assert!(core::mem::size_of::<PrincipalId>() == 32);
+    assert!(core::mem::size_of::<ObjectId>() == 32);
+    assert!(core::mem::size_of::<PrincipalSlot>() == 34);
+    assert!(core::mem::offset_of!(PrincipalSlot, id) == 0);
+    assert!(core::mem::offset_of!(PrincipalSlot, active) == 32);
+    assert!(core::mem::offset_of!(PrincipalSlot, present) == 33);
+    assert!(core::mem::size_of::<ObjectSlot>() == 112);
+    assert!(core::mem::offset_of!(ObjectSlot, id) == 0);
+    assert!(core::mem::offset_of!(ObjectSlot, owner) == 32);
+    assert!(core::mem::offset_of!(ObjectSlot, parent) == 64);
+    assert!(core::mem::offset_of!(ObjectSlot, revision) == 96);
+    assert!(core::mem::offset_of!(ObjectSlot, kind) == 104);
+    assert!(core::mem::offset_of!(ObjectSlot, active) == 105);
+    assert!(core::mem::offset_of!(ObjectSlot, has_owner) == 106);
+    assert!(core::mem::offset_of!(ObjectSlot, has_parent) == 107);
+    assert!(core::mem::offset_of!(ObjectSlot, present) == 108);
+    assert!(core::mem::size_of::<BindingSlot>() == 80);
+    assert!(core::mem::offset_of!(BindingSlot, principal) == 0);
+    assert!(core::mem::offset_of!(BindingSlot, object) == 32);
+    assert!(core::mem::offset_of!(BindingSlot, rights) == 64);
+    assert!(core::mem::offset_of!(BindingSlot, active) == 72);
+    assert!(core::mem::offset_of!(BindingSlot, present) == 73);
+    assert!(core::mem::size_of::<SnapshotView>() == 56);
+    assert!(core::mem::offset_of!(SnapshotView, epoch) == 0);
+    assert!(core::mem::offset_of!(SnapshotView, principals) == 8);
+    assert!(core::mem::offset_of!(SnapshotView, principal_capacity) == 16);
+    assert!(core::mem::offset_of!(SnapshotView, objects) == 24);
+    assert!(core::mem::offset_of!(SnapshotView, object_capacity) == 32);
+    assert!(core::mem::offset_of!(SnapshotView, bindings) == 40);
+    assert!(core::mem::offset_of!(SnapshotView, binding_capacity) == 48);
+    assert!(core::mem::size_of::<NativeChange>() == 120);
+    assert!(core::mem::offset_of!(NativeChange, principal) == 0);
+    assert!(core::mem::offset_of!(NativeChange, object) == 32);
+    assert!(core::mem::offset_of!(NativeChange, related) == 64);
+    assert!(core::mem::offset_of!(NativeChange, before) == 96);
+    assert!(core::mem::offset_of!(NativeChange, after) == 104);
+    assert!(core::mem::offset_of!(NativeChange, kind) == 112);
+    assert!(core::mem::offset_of!(NativeChange, before_active) == 113);
+    assert!(core::mem::offset_of!(NativeChange, after_active) == 114);
+    assert!(core::mem::size_of::<NativeAffectedPrincipal>() == 33);
+    assert!(core::mem::offset_of!(NativeAffectedPrincipal, id) == 0);
+    assert!(core::mem::offset_of!(NativeAffectedPrincipal, reason) == 32);
+    assert!(core::mem::size_of::<NativeAffectedObject>() == 34);
+    assert!(core::mem::offset_of!(NativeAffectedObject, id) == 0);
+    assert!(core::mem::offset_of!(NativeAffectedObject, kind) == 32);
+    assert!(core::mem::offset_of!(NativeAffectedObject, reason) == 33);
+    assert!(core::mem::size_of::<NativeReport>() == 8632);
+    assert!(core::mem::offset_of!(NativeReport, before_epoch) == 0);
+    assert!(core::mem::offset_of!(NativeReport, after_epoch) == 8);
+    assert!(core::mem::offset_of!(NativeReport, before_fingerprint) == 16);
+    assert!(core::mem::offset_of!(NativeReport, after_fingerprint) == 24);
+    assert!(core::mem::offset_of!(NativeReport, changed) == 32);
+    assert!(core::mem::offset_of!(NativeReport, principals) == 33);
+    assert!(core::mem::offset_of!(NativeReport, principal_count) == 4264);
+    assert!(core::mem::offset_of!(NativeReport, objects) == 4272);
+    assert!(core::mem::offset_of!(NativeReport, object_count) == 8624);
+};
+
 unsafe extern "C" {
     fn ghostos_policy_add_principal(slots: *mut PrincipalSlot, capacity: usize, id: PrincipalId) -> u32;
     fn ghostos_policy_add_object(slots: *mut ObjectSlot, capacity: usize, object: ObjectSlot) -> u32;

@@ -2,6 +2,21 @@
 
 #include <stdatomic.h>
 
+_Static_assert(sizeof(ghostos_keyboard) == 11, "keyboard size");
+_Static_assert(_Alignof(ghostos_keyboard) == 1, "keyboard alignment");
+_Static_assert(offsetof(ghostos_keyboard, right_shift) == 1, "right shift offset");
+_Static_assert(offsetof(ghostos_keyboard, control) == 2, "control offset");
+_Static_assert(offsetof(ghostos_keyboard, caps_lock) == 3, "caps lock offset");
+_Static_assert(offsetof(ghostos_keyboard, extended) == 4, "extended offset");
+_Static_assert(offsetof(ghostos_keyboard, pending) == 5, "pending offset");
+_Static_assert(offsetof(ghostos_keyboard, pending_start) == 9, "pending start offset");
+_Static_assert(offsetof(ghostos_keyboard, pending_count) == 10, "pending count offset");
+_Static_assert(sizeof(ghostos_keyboard_io) == 40, "keyboard I/O size");
+_Static_assert(offsetof(ghostos_keyboard_io, read_port) == 8, "read port offset");
+_Static_assert(offsetof(ghostos_keyboard_io, write_port) == 16, "write port offset");
+_Static_assert(offsetof(ghostos_keyboard_io, spin) == 24, "spin offset");
+_Static_assert(offsetof(ghostos_keyboard_io, mouse_byte) == 32, "mouse byte offset");
+
 enum { ENABLE_FIRST_PORT=0xae, ENABLE_SECOND_PORT=0xa8, WRITE_AUXILIARY=0xd4,
     ENABLE_SCANNING=0xf4, SET_DEFAULTS=0xf6, OUTPUT_FULL=1, INPUT_FULL=1u<<1, AUXILIARY_DATA=1u<<5 };
 

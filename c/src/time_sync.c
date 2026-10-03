@@ -1,5 +1,5 @@
 #include "ghostos/time_sync.h"
-#include <string.h>
+#include "ghostos/memory.h"
 
 #define SECOND UINT64_C(1000000000)
 /* Portable signed magnitude arithmetic covers Rust's i128 intermediates.
@@ -107,8 +107,8 @@ uint32_t ghostos_ptp_encode(const ghostos_ptp_message *message, uint8_t *output,
     if (capacity < 64) return 4;
     if (!message->source || !message->target) return 1;
     if (!valid_kind(message->kind)) return 3;
-    memset(output, 0, 64);
-    memcpy(output, "SPTP", 4);
+    ghostos_memory_zero(output, 64);
+    ghostos_memory_copy(output, "SPTP", 4);
     output[4] = 2; output[5] = message->kind;
     put(output + 8, message->sequence, 2); put(output + 10, message->source, 4);
     put(output + 14, message->target, 4); put(output + 18, (uint64_t)message->correction, 8);
@@ -119,7 +119,7 @@ uint32_t ghostos_ptp_encode(const ghostos_ptp_message *message, uint8_t *output,
     return 0;
 }
 uint32_t ghostos_ptp_decode(const uint8_t *bytes, size_t length, ghostos_ptp_message *out) {
-    if (length < 64 || memcmp(bytes, "SPTP", 4) || bytes[4] != 2 || bytes[6] || bytes[7] || !valid_kind(bytes[5])) return 3;
+    if (length < 64 || !ghostos_memory_equal(bytes, "SPTP", 4) || bytes[4] != 2 || bytes[6] || bytes[7] || !valid_kind(bytes[5])) return 3;
     ghostos_ptp_message message = {.kind = bytes[5], .sequence = (uint16_t)get(bytes + 8, 2),
         .source = (uint32_t)get(bytes + 10, 4), .target = (uint32_t)get(bytes + 14, 4)};
     if (!message.source || !message.target) return 3;
@@ -175,7 +175,7 @@ uint32_t ghostos_epoch_observe(ghostos_epoch_counter *counter, const ghostos_epo
 uint32_t ghostos_ptp_daemon_init(ghostos_ptp_daemon *daemon, uint32_t node, uint8_t role) {
     if (!node) return 1;
     if (role > 1) return 5;
-    memset(daemon, 0, sizeof(*daemon));
+    ghostos_memory_zero(daemon, sizeof(*daemon));
     daemon->node = node; daemon->role = role; daemon->next_sequence = 1;
     return ghostos_epoch_init(&daemon->epoch, node, 0);
 }

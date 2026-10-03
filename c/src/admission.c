@@ -1,5 +1,5 @@
 #include "ghostos/admission.h"
-#include <string.h>
+#include "ghostos/memory.h"
 
 static uint16_t increment16(uint16_t value) { return value == UINT16_MAX ? value : (uint16_t)(value + 1); }
 static uint16_t decrement16(uint16_t value) { return value ? (uint16_t)(value - 1) : 0; }
@@ -38,8 +38,8 @@ uint32_t ghostos_admission_init(ghostos_admission_controller *state,
         policy->recovery_reserve > policy->active_capacity || capacity > SIZE_MAX / sizeof(*slots)) return 1;
     for (size_t i = 0; i < GHOSTOS_ADMISSION_CLASSES; ++i) if (!policy->class_limits[i]) return 1;
     ghostos_admission_policy configured = *policy;
-    memset(state, 0, sizeof(*state));
-    memset(slots, 0, capacity * sizeof(*slots));
+    ghostos_memory_zero(state, sizeof(*state));
+    ghostos_memory_zero(slots, capacity * sizeof(*slots));
     state->policy = configured;
     state->next_sequence = 1;
     return 0;
@@ -50,7 +50,7 @@ void ghostos_admission_get_report(const ghostos_admission_controller *state,
     *report = (ghostos_admission_report){.version = GHOSTOS_ADMISSION_VERSION,
         .policy = state->policy, .active = state->active,
         .recovery_active = state->recovery_active, .queued = state->queued};
-    memcpy(report->classes, state->stats, sizeof(report->classes));
+    ghostos_memory_copy(report->classes, state->stats, sizeof(report->classes));
 }
 
 uint32_t ghostos_admission_configure_tenant(ghostos_admission_controller *state,

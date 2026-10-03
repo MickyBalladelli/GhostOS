@@ -113,7 +113,14 @@ impl InvariantFailure {
 
 impl fmt::Display for InvariantFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "invariant={} code={}", self.identifier(), self.code)
+        let native = NativeFailure { invariant: self.invariant as u32, code: self.code };
+        let mut buffer = [0u8; 64];
+        // All six identifiers plus the maximum u16 code fit this fixed buffer.
+        if !unsafe { ghostos_invariant_format_failure(native, buffer.as_mut_ptr(), buffer.len()) } {
+            return Err(fmt::Error)
+        }
+        let text = core::ffi::CStr::from_bytes_until_nul(&buffer).map_err(|_| fmt::Error)?;
+        formatter.write_str(text.to_str().map_err(|_| fmt::Error)?)
     }
 }
 
@@ -129,7 +136,7 @@ pub fn debug_assert_valid(_result: Result<(), InvariantFailure>) {
 }
 
 pub fn check_address_space(id: AddressSpaceId) -> Result<(), InvariantFailure> {
-    if id == AddressSpaceId::KERNEL || id.raw() != 0 {
+    if unsafe { ghostos_invariant_check_address_space(id.raw()) } {
         Ok(())
     } else {
         Err(InvariantFailure::new(InvariantId::AddressSpaceOwnership))
@@ -153,13 +160,31 @@ pub fn check_page_table_transition<const TABLES: usize>(
     frames: &[u64; TABLES],
     physical_offset: u64,
 ) -> Result<(), InvariantFailure> {
-    for (index, frame) in frames.iter().enumerate() {
-        if *frame == 0 || *frame % 4096 != 0 || frame.checked_add(physical_offset).is_none() {
-            return Err(InvariantFailure::new(InvariantId::PageTableTransition))
-        }
-        if frames[..index].contains(frame) {
-            return Err(InvariantFailure::new(InvariantId::PageTableTransition))
-        }
+    // C reads only the bounded frame slice. This check has one fixed failure ID.
+    if unsafe {
+        ghostos_invariant_check_page_table_transition(frames.as_ptr(), TABLES,
+            physical_offset, core::ptr::null_mut())
+    } {
+        Ok(())
+    } else {
+        Err(InvariantFailure::new(InvariantId::PageTableTransition))
     }
-    Ok(())
+}
+
+#[repr(C)]
+struct NativeFailure {
+    invariant: u32,
+    code: u16,
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<NativeFailure>() == 8);
+    assert!(core::mem::offset_of!(NativeFailure, code) == 4);
+};
+
+unsafe extern "C" {
+    fn ghostos_invariant_check_address_space(id: u32) -> bool;
+    fn ghostos_invariant_check_page_table_transition(frames: *const u64, count: usize,
+        physical_offset: u64, failure: *mut NativeFailure) -> bool;
+    fn ghostos_invariant_format_failure(failure: NativeFailure, buffer: *mut u8, capacity: usize) -> bool;
 }

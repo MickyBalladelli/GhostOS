@@ -23,6 +23,7 @@ fn main() {
     assert!(status.success(), "admission archive failed");
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", headers.join("ghostos/admission.h").display());
+    println!("cargo:rerun-if-changed={}", headers.join("ghostos/memory.h").display());
     println!("cargo:rustc-link-search=native={}", output.display());
     println!("cargo:rustc-link-lib=static=ghostos_admission");
 }

@@ -24,6 +24,7 @@ mod driver_capabilities;
 #[allow(unsafe_code)]
 pub mod dlm;
 pub mod ipc;
+#[allow(unsafe_code)]
 pub mod invariants;
 pub mod litmus;
 pub mod micro_silo;
