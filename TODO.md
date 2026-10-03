@@ -549,7 +549,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/power/` — Active thermal action/event decisions, generic event queue bookkeeping, cluster selection, frequency arithmetic, CPU idle selection, and device sleep decisions now use C. Rust retains typed storage, configuration validation, CPU/result conversion, metrics, const APIs, sensors/actuators, ACPI, and hot-plug orchestration. Full cutover and behavior parity remain.
 - [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
 - [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. C now also owns dirty-page tables, flush-state transitions, clean-slot cleanup, recovery reset/generation updates, and AER isolation decisions. Rust retains typed/const APIs, trace emission, controller/journal calls, last-reading/generation storage, marker conversion, and storage actions. The existing three RAS fixtures and a flush-state regression have C source. Behavior parity and full removal remain.
-- [ ] `crates/rms/` — record management and storage.
+- [ ] `crates/rms/` — C owns lock-path validation, FNV resource ids, namespace checks, hexadecimal key paths, transaction slot reservation, and record-count overflow. Rust retains DLM acquire/release, GhostFS record and database I/O, and UTF-8 acceptance of the encoded path. Existing record and database tests were executed.
 - [ ] `crates/runtime/` — core runtime.
 - [ ] `crates/service-scale/` — Active membership validation/slot selection, generation/readiness fences, least-load target selection, session-close/handoff-preparation checks, handoff token matching, snapshot hashing, request deduplication/routing classification, effect reservation checks, completion/failure fences, checked/saturating counter arithmetic, snapshot aggregation, table lookup, and free-slot selection now use C. Rust retains typed tables/commits, session/handoff/request/effect commits, counter storage, and public APIs. Full cutover and behavior parity remain.
 - [ ] `crates/status/` — status types and reporting.
@@ -909,3 +909,17 @@ syntax checks passed for `c/src/heal.c` on all three targets. Logs:
 `temp/heal-x86-build.log`, `temp/heal-aarch64-build.log`, and
 `temp/heal-riscv64-build.log`. Hot-swap, kernel patch orchestration, full Rust
 removal, and broader behavior parity remain open.
+
+Record-management progress on 2026-10-03: `c/src/rms.c` now owns lock-path
+validation, FNV-1a resource ids, namespace character checks, hexadecimal key
+paths, transaction slot reservation, and checked record-count changes. Empty
+keys still fail before length arithmetic, and a zero hash still becomes
+resource id 1. Rust retains DLM acquire/release, GhostFS reads and writes, and
+UTF-8 acceptance of the encoded path. The three existing RMS tests passed, as
+did `build/c/rms-contracts`. `make c-library` and host/x86/AArch64/RISC-V RMS
+library builds passed. RISC-V used the temporary Clang/LLVM wrapper. Strict
+freestanding syntax checks passed for `c/src/rms.c` on all three targets.
+Logs: `temp/c-library-rms-build.log`, `temp/rms-test.log`,
+`temp/rms-contract-build.log`, `temp/rms-x86-build.log`,
+`temp/rms-aarch64-build.log`, and `temp/rms-riscv64-build.log`. Full Rust
+removal and broader behavior parity remain open.

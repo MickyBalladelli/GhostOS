@@ -138,11 +138,8 @@ impl<'fs, 'path, const MAX_BLOCKS: usize> RecordFile<'fs, 'path, MAX_BLOCKS> {
         image_scratch: &mut [u8],
     ) -> Result<RecordFileInfo, RecordError> {
         let image = self.load_image(file_scratch)?;
-        let record_count = image
-            .info()
-            .record_count
-            .checked_add(1)
-            .ok_or(RecordError::CountOverflow)?;
+        let record_count = crate::native::add_count(image.info().record_count)
+            .map_err(|_| RecordError::CountOverflow)?;
         let mut builder = RecordImageBuilder::new(self.descriptor, record_count, image_scratch)?;
         for existing in image.records() {
             builder.push(existing?)?;
@@ -198,11 +195,8 @@ impl<'fs, 'path, const MAX_BLOCKS: usize> RecordFile<'fs, 'path, MAX_BLOCKS> {
     ) -> Result<RecordFileInfo, RecordError> {
         let image = self.load_image(file_scratch)?;
         let selected = selected_position(&image, selector)?;
-        let record_count = image
-            .info()
-            .record_count
-            .checked_sub(1)
-            .ok_or(RecordError::CountOverflow)?;
+        let record_count = crate::native::sub_count(image.info().record_count)
+            .map_err(|_| RecordError::CountOverflow)?;
         let mut builder = RecordImageBuilder::new(self.descriptor, record_count, image_scratch)?;
         for (position, existing) in image.records().enumerate() {
             let existing = existing?;

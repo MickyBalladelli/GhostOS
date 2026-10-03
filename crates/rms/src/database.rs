@@ -5,7 +5,6 @@ use ghostos_ghostfs::{
 };
 
 pub const MAX_DATABASE_NAMESPACE_BYTES: usize = 48;
-const DATABASE_ROOT: &[u8] = b"/.ghostos/data/";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Namespace {
@@ -16,12 +15,7 @@ struct Namespace {
 impl Namespace {
     fn new(value: &str) -> Result<Self, DatabaseError> {
         let source = value.as_bytes();
-        if source.is_empty()
-            || source.len() > MAX_DATABASE_NAMESPACE_BYTES
-            || !source
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        {
+        if crate::native::namespace(source).is_err() {
             return Err(DatabaseError::InvalidNamespace);
         }
         let mut bytes = [0; MAX_DATABASE_NAMESPACE_BYTES];
@@ -175,11 +169,8 @@ impl<'data, const MAX_BLOCKS: usize, const OPERATIONS: usize>
     }
 
     fn push(&mut self, operation: DatabaseOperation<'data>) -> Result<(), DatabaseError> {
-        let slot = self
-            .operations
-            .get_mut(self.len)
-            .ok_or(DatabaseError::Capacity)?;
-        *slot = Some(operation);
+        let index = crate::native::reserve(self.len, OPERATIONS).map_err(|_| DatabaseError::Capacity)?;
+        self.operations[index] = Some(operation);
         self.len += 1;
         Ok(())
     }
@@ -227,36 +218,10 @@ fn key_path<'a>(
     key: &[u8],
     destination: &'a mut [u8; MAX_PATH_BYTES],
 ) -> Result<&'a str, DatabaseError> {
-    if key.is_empty() {
-        return Err(DatabaseError::EmptyKey);
-    }
-    let required = key
-        .len()
-        .checked_mul(2)
-        .and_then(|key_bytes| {
-            DATABASE_ROOT
-                .len()
-                .checked_add(namespace.len as usize)?
-                .checked_add(1)?
-                .checked_add(key_bytes)
-        })
-        .ok_or(DatabaseError::KeyTooLong)?;
-    if required > destination.len() {
-        return Err(DatabaseError::KeyTooLong);
-    }
-    let mut cursor = 0;
-    destination[..DATABASE_ROOT.len()].copy_from_slice(DATABASE_ROOT);
-    cursor += DATABASE_ROOT.len();
-    let namespace = namespace.as_bytes();
-    destination[cursor..cursor + namespace.len()].copy_from_slice(namespace);
-    cursor += namespace.len();
-    destination[cursor] = b'/';
-    cursor += 1;
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for byte in key {
-        destination[cursor] = HEX[(byte >> 4) as usize];
-        destination[cursor + 1] = HEX[(byte & 0x0f) as usize];
-        cursor += 2;
-    }
-    str::from_utf8(&destination[..cursor]).map_err(|_| DatabaseError::KeyTooLong)
+    let written = match crate::native::key_path(namespace.as_bytes(), key, destination) {
+        Ok(written) => written,
+        Err(1) => return Err(DatabaseError::EmptyKey),
+        Err(_) => return Err(DatabaseError::KeyTooLong),
+    };
+    str::from_utf8(&destination[..written]).map_err(|_| DatabaseError::KeyTooLong)
 }

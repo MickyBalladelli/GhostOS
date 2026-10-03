@@ -89,14 +89,14 @@ impl<B: DlmBinding> DlmRecordLocks<B> {
         mode: DlmLockMode,
         wait: bool,
     ) -> Result<RecordLockGuard<'_, B>, RecordLockError<B::Error>> {
-        if path.is_empty() || path.as_bytes().contains(&0) {
+        if crate::native::lock_path(path.as_bytes()).is_err() {
             return Err(RecordLockError::InvalidPath);
         }
         let handle = self
             .binding
             .acquire(
                 DlmResource {
-                    id: resource_id(path),
+                    id: crate::native::resource_id(path.as_bytes()),
                 },
                 range,
                 mode,
@@ -130,11 +130,3 @@ impl<B: DlmBinding> Drop for RecordLockGuard<'_, B> {
     }
 }
 
-fn resource_id(path: &str) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in path.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash.max(1)
-}
