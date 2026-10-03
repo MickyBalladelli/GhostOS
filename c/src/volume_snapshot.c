@@ -24,7 +24,7 @@ static int select_file(const ghostos_volume_file *files, size_t count, const uin
     }
     return found ? 0 : 3;
 }
-int ghostos_volume_pin(ghostos_volume_pin *pins, size_t capacity, uint64_t *next_id, uint64_t generation, uint64_t *id) {
+int ghostos_volume_pin(ghostos_volume_pin_slot *pins, size_t capacity, uint64_t *next_id, uint64_t generation, uint64_t *id) {
     size_t i;
     if (!*next_id) return 2;
     if (*next_id == UINT64_MAX) return 2;
@@ -38,7 +38,7 @@ int ghostos_volume_pin(ghostos_volume_pin *pins, size_t capacity, uint64_t *next
     }
     return 1;
 }
-int ghostos_volume_unpin(ghostos_volume_pin *pins, size_t capacity, uint64_t id) {
+int ghostos_volume_unpin(ghostos_volume_pin_slot *pins, size_t capacity, uint64_t id) {
     size_t i;
     for (i = 0; i < capacity; ++i) if (pins[i].occupied && pins[i].id == id) { pins[i].occupied = false; return 0; }
     return 3;
@@ -49,7 +49,7 @@ int ghostos_volume_read(const ghostos_volume_file *files, size_t count, const ui
     if (status) return status;
     return copy_selected(selected, output, output_capacity, read);
 }
-int ghostos_volume_snapshot_read(const ghostos_volume_pin *pins, size_t pin_count, const ghostos_volume_file *files, size_t file_count, uint64_t id, const uint8_t *name, size_t name_length, uint8_t *output, size_t output_capacity, size_t *read) {
+int ghostos_volume_snapshot_read(const ghostos_volume_pin_slot *pins, size_t pin_count, const ghostos_volume_file *files, size_t file_count, uint64_t id, const uint8_t *name, size_t name_length, uint8_t *output, size_t output_capacity, size_t *read) {
     const ghostos_volume_file *selected = 0;
     size_t i;
     bool found = false;

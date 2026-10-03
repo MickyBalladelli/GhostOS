@@ -17,9 +17,9 @@ typedef struct {
 typedef struct {
     bool occupied;
     uint64_t id, generation;
-} ghostos_volume_pin;
-int ghostos_volume_pin(ghostos_volume_pin *pins, size_t capacity, uint64_t *next_id, uint64_t generation, uint64_t *id);
-int ghostos_volume_unpin(ghostos_volume_pin *pins, size_t capacity, uint64_t id);
+} ghostos_volume_pin_slot;
+int ghostos_volume_pin(ghostos_volume_pin_slot *pins, size_t capacity, uint64_t *next_id, uint64_t generation, uint64_t *id);
+int ghostos_volume_unpin(ghostos_volume_pin_slot *pins, size_t capacity, uint64_t id);
 int ghostos_volume_read(const ghostos_volume_file *files, size_t count, const uint8_t *name, size_t name_length, uint8_t *output, size_t output_capacity, size_t *read);
-int ghostos_volume_snapshot_read(const ghostos_volume_pin *pins, size_t pin_count, const ghostos_volume_file *files, size_t file_count, uint64_t id, const uint8_t *name, size_t name_length, uint8_t *output, size_t output_capacity, size_t *read);
+int ghostos_volume_snapshot_read(const ghostos_volume_pin_slot *pins, size_t pin_count, const ghostos_volume_file *files, size_t file_count, uint64_t id, const uint8_t *name, size_t name_length, uint8_t *output, size_t output_capacity, size_t *read);
 #endif

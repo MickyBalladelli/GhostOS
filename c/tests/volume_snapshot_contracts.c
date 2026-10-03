@@ -6,7 +6,7 @@ static void pinned_log_stays_old_after_the_live_write(void) {
     const uint8_t old_bytes[] = {'o', 'l', 'd'};
     const uint8_t new_bytes[] = {'n', 'e', 'w'};
     ghostos_volume_file files[2];
-    ghostos_volume_pin pins[1];
+    ghostos_volume_pin_slot pins[1];
     uint8_t output[3];
     uint64_t next_id = 1, id = 0;
     size_t read = 0;
