@@ -170,3 +170,31 @@ unsafe extern "C" {
     fn ghostos_scale_snapshot_read(instances: *const Instance, instance_count: usize,
         effects: *const Effect, effect_count: usize, checked: bool, snapshot: *mut Snapshot) -> bool;
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Slot { id: u64, occupied: bool }
+fn find<T: Copy, const N: usize>(records: &[Option<T>; N],
+    id: u64, free_slot: bool, key: impl Fn(T) -> u64) -> Option<usize> {
+    let slots = records.map(|record| match record {
+        Some(record) => Slot { id: key(record), occupied: true },
+        None => Slot { id: 0, occupied: false },
+    });
+    let mut index = 0;
+    unsafe { ghostos_scale_find(slots.as_ptr(), N, id, free_slot, &mut index) }.then_some(index)
+}
+pub(crate) fn lookup<T: Copy, const N: usize>(records: &[Option<T>; N],
+    id: u64, key: impl Fn(T) -> u64) -> Option<usize> {
+    find(records, id, false, key)
+}
+pub(crate) fn free<T: Copy, const N: usize>(records: &[Option<T>; N]) -> Result<usize, ScaleError> {
+    find(records, 0, true, |_| 0).ok_or(ScaleError::Capacity)
+}
+const _: () = {
+    assert!(core::mem::size_of::<Slot>() == 16);
+    assert!(core::mem::offset_of!(Slot, occupied) == 8);
+};
+unsafe extern "C" {
+    fn ghostos_scale_find(slots: *const Slot, count: usize, id: u64,
+        free_slot: bool, index: *mut usize) -> bool;
+}

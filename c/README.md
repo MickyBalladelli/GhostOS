@@ -562,3 +562,8 @@ Service-scale snapshots aggregate native instance/effect views in C, retaining
 instance-counter totals and slot order. Debug overflow returns to the Rust
 panic adapter; release sums wrap. Rust converts the snapshot to its public
 type and keeps the service kind and typed table storage.
+
+Service-scale table lookup and free-slot selection use native slot views with
+explicit occupancy. First-match/free order, occupied closed/completed records,
+and error/commit ordering stay intact. Rust retains typed payloads and converts
+selected indices to records; views use stack space proportional to capacity.

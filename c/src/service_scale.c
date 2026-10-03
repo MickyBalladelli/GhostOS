@@ -133,3 +133,16 @@ bool ghostos_scale_snapshot_read(const ghostos_scale_instance *instances, size_t
         if (effects[i].occupied && !snapshot_add(&snapshot->completed_effects, 1, checked)) return false;
     return true;
 }
+
+_Static_assert(sizeof(ghostos_scale_slot) == 16, "scale slot ABI");
+_Static_assert(offsetof(ghostos_scale_slot, occupied) == 8, "scale slot occupancy ABI");
+bool ghostos_scale_find(const ghostos_scale_slot *slots, size_t count,
+    uint64_t id, bool free_slot, size_t *index) {
+    for (size_t i = 0; i < count; ++i) {
+        if (free_slot ? !slots[i].occupied : slots[i].occupied && slots[i].id == id) {
+            *index = i;
+            return true;
+        }
+    }
+    return false;
+}

@@ -49,4 +49,7 @@ typedef struct {
 } ghostos_scale_snapshot;
 bool ghostos_scale_snapshot_read(const ghostos_scale_instance *instances, size_t instance_count,
     const ghostos_scale_effect *effects, size_t effect_count, bool checked, ghostos_scale_snapshot *snapshot);
+typedef struct { uint64_t id; bool occupied; } ghostos_scale_slot;
+bool ghostos_scale_find(const ghostos_scale_slot *slots, size_t count,
+    uint64_t id, bool free_slot, size_t *index);
 #endif

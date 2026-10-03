@@ -354,11 +354,7 @@ impl<
             return Err(ScaleError::Duplicate)
         }
         let instance_index = self.checked_ready_instance(instance, generation)?;
-        let slot = self
-            .sessions
-            .iter()
-            .position(Option::is_none)
-            .ok_or(ScaleError::Capacity)?;
+        let slot = native::free(&self.sessions)?;
         self.sessions[slot] = Some(SessionRecord {
             id: session,
             owner: instance,
@@ -425,11 +421,7 @@ impl<
             session_record.owner,
             session_record.generation,
         )?;
-        let request_index = self
-            .requests
-            .iter()
-            .position(Option::is_none)
-            .ok_or(ScaleError::Capacity)?;
+        let request_index = native::free(&self.requests)?;
         let record = RequestRecord {
             id: request,
             session,
@@ -462,11 +454,7 @@ impl<
         if self.effect_receipt(record.effect).is_some() {
             return Err(ScaleError::Conflict)
         }
-        let effect_index = self
-            .effects
-            .iter()
-            .position(Option::is_none)
-            .ok_or(ScaleError::Capacity)?;
+        let effect_index = native::free(&self.effects)?;
         let receipt = EffectReceipt {
             request,
             effect: record.effect,
@@ -744,23 +732,20 @@ impl<
     }
 
     fn effect_receipt(&self, effect: u64) -> Option<EffectReceipt> {
-        self.effects
-            .iter()
-            .flatten()
-            .find(|record| record.effect == effect)
-            .map(|record| record.receipt)
+        native::lookup(&self.effects, effect, |record| record.effect)
+            .and_then(|index| self.effects[index].map(|record| record.receipt))
     }
 
     fn instance_index(&self, instance: InstanceId) -> Option<usize> {
-        self.instances.iter().position(|record| record.is_some_and(|record| record.id == instance))
+        native::lookup(&self.instances, u64::from(instance.raw()), |record| u64::from(record.id.raw()))
     }
 
     fn session_index(&self, session: SessionId) -> Option<usize> {
-        self.sessions.iter().position(|record| record.is_some_and(|record| record.id == session))
+        native::lookup(&self.sessions, session.raw(), |record| record.id.raw())
     }
 
     fn request_index(&self, request: RequestId) -> Option<usize> {
-        self.requests.iter().position(|record| record.is_some_and(|record| record.id == request))
+        native::lookup(&self.requests, request.raw(), |record| record.id.raw())
     }
 
     fn checked_instance(&self, instance: InstanceId, generation: u64) -> Result<usize, ScaleError> {
