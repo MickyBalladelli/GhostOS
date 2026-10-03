@@ -188,5 +188,7 @@ ghostos_status ghostos_fsd_handles_status(int result) {
         result == GHOSTOS_FSD_HANDLES_LOCK_FULL || result == GHOSTOS_FSD_HANDLES_SNAPSHOT_FULL)
         return GHOSTOS_STATUS_NO_SPACE;
     if (result == GHOSTOS_FSD_HANDLES_READ_ONLY) return GHOSTOS_STATUS_READ_ONLY;
+    if (result == GHOSTOS_FSD_HANDLES_VERSION_OVERFLOW)
+        return GHOSTOS_STATUS_BITS(GHOSTOS_SEVERITY_FATAL, GHOSTOS_FACILITY_FILESYSTEM, 3u, 0u);
     return ghostos_fsd_read_status(result);
 }

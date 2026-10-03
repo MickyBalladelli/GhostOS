@@ -606,5 +606,32 @@ Admin bypasses mode bits but still needs a READ file handle and obeys locks.
 Process 1 uses owner permissions; other processes use other permissions.
 Lock matching uses the stored open path and the starting record offset.
 `ghostos_fsd_read_status` maps local results to the existing protocol status
-values. Table ownership, registration/open operations, serialized service
-dispatch, tracing, and the running daemon cutover remain outside this layer.
+values. The read boundary uses the shared handle and mode validators in
+`fsd_handles.c` and the lock conflict checker in `fsd_resources.c`.
+
+`fsd_handles.h` manages caller-owned process, file, mapping, lock, and snapshot
+tables. Initialize fresh tables with `ghostos_fsd_handles_init`, then register
+processes and validate authority before installing an already-authorized file
+handle. Registration updates rights in place; slot reuse increments generation
+and skips zero. Installation copies the resolved file name. Close invalidates
+only mappings and locks tied to that exact file token. Process teardown clears
+all owner slots and releases their checkpoints before removing registration.
+`ghostos_fsd_handles_read_state` connects these tables to the existing C read
+boundary. Callers serialize operations and keep all borrowed storage alive.
+
+`fsd_resources.c` allocates and releases file locks, file mapping capabilities,
+and snapshots. Locks copy their paths and preserve shared/exclusive, whole-file,
+record-offset, and same-owner rules. Mapping tokens use a separate low-word bit;
+admission checks alignment, file rights, mount policy, resolved metadata, modes,
+locks, and capacity in the original order. Admission permits a mapping beyond
+EOF when its start is at or before EOF; it does not install hardware pages.
+Explicit snapshot release keeps the handle if the checkpoint release fails;
+process teardown ignores release failure and clears the owner slot.
+
+`fsd_checkpoint.h` connects snapshot callbacks to the C volume pin table. Set
+`create_checkpoint = ghostos_fsd_checkpoint_create`,
+`release_checkpoint = ghostos_fsd_checkpoint_release`, and `context` to a
+`ghostos_fsd_checkpoint_backend` holding pins, next ID, and current generation.
+Capacity and version-overflow results retain their filesystem status values.
+The full open/create/truncate path, namespace selection, service dispatch,
+tracing, and active service cutover remain unfinished.

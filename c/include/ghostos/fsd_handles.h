@@ -3,7 +3,8 @@
 #include "ghostos/fsd_read.h"
 /* Caller-owned daemon tables, serialized by the caller. Local read results
    retain their values; 15 process table full, 16 file table full,
-   17 invalid table configuration. Capacities may be zero.
+   Further result codes are defined below. Capacities may be zero. File and
+   mapping capacities must be below 2^31 to keep mapping tokens separate.
    Init is for fresh daemon startup only; it does not release existing slots. */
 enum {
     GHOSTOS_FSD_HANDLES_PROCESS_FULL = 15,
@@ -13,7 +14,8 @@ enum {
     GHOSTOS_FSD_HANDLES_READ_ONLY = 19,
     GHOSTOS_FSD_HANDLES_LOCK_FULL = 20,
     GHOSTOS_FSD_HANDLES_SNAPSHOT_FULL = 21,
-    GHOSTOS_FSD_HANDLES_INVALID_LOCK = 22
+    GHOSTOS_FSD_HANDLES_INVALID_LOCK = 22,
+    GHOSTOS_FSD_HANDLES_VERSION_OVERFLOW = 23
 };
 enum {
     GHOSTOS_FSD_RIGHT_READ = 1,
@@ -97,7 +99,7 @@ int ghostos_fsd_map_file(ghostos_fsd_handles *handles, const ghostos_volume_read
     bool writable, uint64_t *capability);
 int ghostos_fsd_unmap_file(ghostos_fsd_handles *handles,
     uint64_t process, uint64_t capability);
-/* Callbacks return local volume result codes. Creation checks admin authority
+/* Callbacks return these local handle/read result codes. Creation checks admin authority
    and capacity before creating a checkpoint; callback failure leaves the slot
    free. Explicit release retains the slot if the callback fails. */
 int ghostos_fsd_create_snapshot(ghostos_fsd_handles *handles, uint64_t process,
