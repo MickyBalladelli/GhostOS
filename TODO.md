@@ -1084,3 +1084,13 @@ A changed signature is rejected. `build/c/attestation-contracts` passed.
 `c/src/attestation.c` on x86-64, AArch64, and RISC-V. No Rust sources were
 edited and Cargo was not used. Logs: `temp/c-library-attestation-build.log`
 and `temp/attestation-contract-build.log`.
+
+Backup progress on 2026-10-03: `c/src/backup.c` streams a `SYNBACK1`
+volume header, one file record, and a `SYNBEND1` trailer. A zero byte budget
+is rejected before the job changes. The streamed bytes include `old` and do
+not include `new`, and the finished job reports one file.
+`build/c/backup-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/backup.c` on x86-64, AArch64,
+and RISC-V. No Rust sources were edited and Cargo was not used. Filesystem
+checkpoints and encrypted chunk recovery remain. Logs:
+`temp/c-library-backup-build.log` and `temp/backup-contract-build.log`.
