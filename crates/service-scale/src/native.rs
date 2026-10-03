@@ -119,3 +119,30 @@ unsafe extern "C" {
         effects: *const Effect, effect_count: usize, request: u64, session: u64,
         effect: u64, decision: *mut u8, index: *mut usize) -> i32;
 }
+
+pub(crate) fn finish(record: crate::RequestRecord, owner: crate::InstanceId, generation: u64) -> Result<(), ScaleError> {
+    let state = match record.state { crate::RequestState::InFlight => 0,
+        crate::RequestState::Failed => 1, crate::RequestState::Completed => 2 };
+    result(unsafe { ghostos_scale_request_finish(record.owner.raw(), record.generation, state, owner.raw(), generation) })
+}
+fn increment(value: u64, maximum: u64) -> Result<u64, ScaleError> {
+    let mut next = 0;
+    if unsafe { ghostos_scale_increment(value, maximum, &mut next) } {
+        Ok(next)
+    } else { Err(ScaleError::Capacity) }
+}
+pub(crate) fn increment_count(value: u16) -> Result<u16, ScaleError> {
+    increment(value.into(), u16::MAX.into()).map(|value| value as u16)
+}
+pub(crate) fn increment_attempt(value: u32) -> Result<u32, ScaleError> {
+    increment(value.into(), u32::MAX.into()).map(|value| value as u32)
+}
+pub(crate) fn decrement(value: u16) -> u16 {
+    unsafe { ghostos_scale_decrement(value) }
+}
+unsafe extern "C" {
+    fn ghostos_scale_request_finish(owner: u32, generation: u64, state: u8,
+        requested_owner: u32, requested_generation: u64) -> i32;
+    fn ghostos_scale_increment(value: u64, maximum: u64, next: *mut u64) -> bool;
+    fn ghostos_scale_decrement(value: u16) -> u16;
+}

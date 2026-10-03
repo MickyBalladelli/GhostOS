@@ -97,3 +97,15 @@ int ghostos_scale_route(const ghostos_scale_request *requests, size_t request_co
     *decision = 0;
     return 0;
 }
+
+int ghostos_scale_request_finish(uint32_t owner, uint64_t generation, uint8_t state,
+    uint32_t requested_owner, uint64_t requested_generation) {
+    if (owner != requested_owner || generation != requested_generation) return 5;
+    return state == 0 ? 0 : 4;
+}
+bool ghostos_scale_increment(uint64_t value, uint64_t maximum, uint64_t *next) {
+    if (value >= maximum) return false;
+    *next = value + 1;
+    return true;
+}
+uint16_t ghostos_scale_decrement(uint16_t value) { return value ? value - 1 : 0; }

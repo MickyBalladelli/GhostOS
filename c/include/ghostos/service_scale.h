@@ -40,4 +40,8 @@ typedef struct { uint64_t effect; bool occupied; } ghostos_scale_effect;
 int ghostos_scale_route(const ghostos_scale_request *requests, size_t request_count,
     const ghostos_scale_effect *effects, size_t effect_count, uint64_t request,
     uint64_t session, uint64_t effect, uint8_t *decision, size_t *index);
+int ghostos_scale_request_finish(uint32_t owner, uint64_t generation, uint8_t state,
+    uint32_t requested_owner, uint64_t requested_generation);
+bool ghostos_scale_increment(uint64_t value, uint64_t maximum, uint64_t *next);
+uint16_t ghostos_scale_decrement(uint16_t value);
 #endif

@@ -370,7 +370,7 @@ impl<
         });
         let record = self.instances[instance_index].ok_or(ScaleError::NotFound)?;
         self.instances[instance_index] = Some(InstanceRecord {
-            sessions: record.sessions.checked_add(1).ok_or(ScaleError::Capacity)?,
+            sessions: native::increment_count(record.sessions)?,
             ..record
         });
         Ok(())
@@ -385,7 +385,7 @@ impl<
             .ok_or(ScaleError::NotFound)?;
         let instance = self.instances[instance_index].ok_or(ScaleError::NotFound)?;
         self.instances[instance_index] = Some(InstanceRecord {
-            sessions: instance.sessions.saturating_sub(1),
+            sessions: native::decrement(instance.sessions),
             ..instance
         });
         self.sessions[session_index] = Some(SessionRecord {
@@ -458,12 +458,7 @@ impl<
     ) -> Result<EffectReceipt, ScaleError> {
         let request_index = self.request_index(request).ok_or(ScaleError::NotFound)?;
         let record = self.requests[request_index].ok_or(ScaleError::NotFound)?;
-        if record.owner != instance || record.generation != generation {
-            return Err(ScaleError::StaleGeneration)
-        }
-        if !matches!(record.state, RequestState::InFlight) {
-            return Err(ScaleError::InvalidState)
-        }
+        native::finish(record, instance, generation)?;
         if self.effect_receipt(record.effect).is_some() {
             return Err(ScaleError::Conflict)
         }
@@ -499,12 +494,7 @@ impl<
     ) -> Result<(), ScaleError> {
         let request_index = self.request_index(request).ok_or(ScaleError::NotFound)?;
         let record = self.requests[request_index].ok_or(ScaleError::NotFound)?;
-        if record.owner != instance || record.generation != generation {
-            return Err(ScaleError::StaleGeneration)
-        }
-        if !matches!(record.state, RequestState::InFlight) {
-            return Err(ScaleError::InvalidState)
-        }
+        native::finish(record, instance, generation)?;
         self.requests[request_index] = Some(RequestRecord {
             state: RequestState::Failed,
             ..record
@@ -632,11 +622,11 @@ impl<
         let source = self.instances[source_index].ok_or(ScaleError::NotFound)?;
         let target = self.instances[target_index].ok_or(ScaleError::NotFound)?;
         self.instances[source_index] = Some(InstanceRecord {
-            sessions: source.sessions.saturating_sub(1),
+            sessions: native::decrement(source.sessions),
             ..source
         });
         self.instances[target_index] = Some(InstanceRecord {
-            sessions: target.sessions.checked_add(1).ok_or(ScaleError::Capacity)?,
+            sessions: native::increment_count(target.sessions)?,
             ..target
         });
         self.sessions[session_index] = Some(SessionRecord {
@@ -728,7 +718,7 @@ impl<
         let session_index = self.session_index(record.session).ok_or(ScaleError::NotFound)?;
         let session = self.sessions[session_index].ok_or(ScaleError::NotFound)?;
         let instance_index = self.checked_ready_instance(session.owner, session.generation)?;
-        let attempt = record.attempt.checked_add(1).ok_or(ScaleError::Capacity)?;
+        let attempt = native::increment_attempt(record.attempt)?;
         let updated = RequestRecord {
             owner: session.owner,
             generation: session.generation,
@@ -749,11 +739,11 @@ impl<
         let instance = self.instances[instance_index].ok_or(ScaleError::NotFound)?;
         let session = self.sessions[session_index].ok_or(ScaleError::NotFound)?;
         self.instances[instance_index] = Some(InstanceRecord {
-            in_flight: instance.in_flight.checked_add(1).ok_or(ScaleError::Capacity)?,
+            in_flight: native::increment_count(instance.in_flight)?,
             ..instance
         });
         self.sessions[session_index] = Some(SessionRecord {
-            in_flight: session.in_flight.checked_add(1).ok_or(ScaleError::Capacity)?,
+            in_flight: native::increment_count(session.in_flight)?,
             ..session
         });
         Ok(())
@@ -765,11 +755,11 @@ impl<
         let instance_record = self.instances[instance_index].ok_or(ScaleError::NotFound)?;
         let session_record = self.sessions[session_index].ok_or(ScaleError::NotFound)?;
         self.instances[instance_index] = Some(InstanceRecord {
-            in_flight: instance_record.in_flight.saturating_sub(1),
+            in_flight: native::decrement(instance_record.in_flight),
             ..instance_record
         });
         self.sessions[session_index] = Some(SessionRecord {
-            in_flight: session_record.in_flight.saturating_sub(1),
+            in_flight: native::decrement(session_record.in_flight),
             ..session_record
         });
         Ok(())

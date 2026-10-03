@@ -551,3 +551,9 @@ native duplicate/conflict decisions, receipt source selection, retry routing,
 and reservation counts. Request-ID precedence and error ordering remain
 unchanged. Rust owns receipt conversion, commits, session checks, and counters.
 The adapter uses stack space proportional to generic ledger capacities.
+
+Service-scale request completion/failure fences and checked/saturating counter
+arithmetic also run in C. Rust preserves the original individual commit points,
+including partial updates on capacity errors, and retains typed tables and
+snapshot aggregation. Retry attempts keep their checked 32-bit limit; session
+and in-flight counters keep checked 16-bit increments and saturated decrements.

@@ -551,7 +551,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. C now also owns dirty-page tables, flush-state transitions, clean-slot cleanup, recovery reset/generation updates, and AER isolation decisions. Rust retains typed/const APIs, trace emission, controller/journal calls, last-reading/generation storage, marker conversion, and storage actions. The existing three RAS fixtures and a flush-state regression have C source. Behavior parity and full removal remain.
 - [ ] `crates/rms/` — record management and storage.
 - [ ] `crates/runtime/` — core runtime.
-- [ ] `crates/service-scale/` — Active membership validation/slot selection, generation/readiness fences, least-load target selection, session-close/handoff-preparation checks, handoff token matching, snapshot hashing, request deduplication/routing classification, and effect reservation checks now use C. Rust retains typed tables/commits, session/handoff/request/effect transitions, counters, snapshots, and public APIs. Full cutover and behavior parity remain.
+- [ ] `crates/service-scale/` — Active membership validation/slot selection, generation/readiness fences, least-load target selection, session-close/handoff-preparation checks, handoff token matching, snapshot hashing, request deduplication/routing classification, effect reservation checks, completion/failure fences, and checked/saturating counter arithmetic now use C. Rust retains typed tables/commits, session/handoff/request/effect transitions, counters, snapshots, and public APIs. Full cutover and behavior parity remain.
 - [ ] `crates/status/` — status types and reporting.
 - [ ] `crates/system-model/` — system models.
 - [ ] `crates/test-support/` — test support and crash harnesses; replace with C test support.
@@ -811,3 +811,25 @@ Full Rust removal and executed behavior parity remain open.
 
 All six direct service-scale consumers also built successfully. Existing
 kernel warnings remain. Log: `temp/scale-route-consumer-build.log`.
+
+Service-scale counter progress on 2026-10-03: C now validates completion and
+failure ownership/generation before request-state checks. It also owns checked
+session/in-flight increments, checked retry-attempt increments, and saturated
+session/in-flight decrements. Rust still commits typed records at each original
+point. In particular, an open session is stored before its instance counter
+increment; the instance in-flight increment precedes the session increment;
+and handoff source decrement precedes target increment. Capacity failures keep
+the original partial-update behavior rather than introducing transactional
+changes during migration. Typed state storage, ledgers, snapshot aggregation,
+and public APIs remain Rust.
+
+The C archive and host/x86/AArch64/RISC-V scaling library builds passed.
+Strict freestanding syntax checks passed for all three targets. RISC-V used
+the temporary Clang/LLVM wrapper. Logs:
+`temp/c-library-scale-counters-build.log`, `temp/scale-counters-native-build.log`,
+`temp/scale-counters-x86-build.log`, `temp/scale-counters-aarch64-build.log`,
+`temp/scale-counters-riscv-build.log`. Full removal and executed behavior parity
+remain open.
+
+All six direct service-scale consumers built successfully; existing kernel
+warnings remain. Log: `temp/scale-counters-consumer-build.log`.
