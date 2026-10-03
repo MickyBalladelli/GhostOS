@@ -180,6 +180,7 @@ struct CCluster {
     fault_count: usize,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CClusterError {
@@ -200,6 +201,7 @@ enum CClusterError {
     VmError,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CClusterNodeState {
@@ -209,6 +211,7 @@ enum CClusterNodeState {
     Stopped,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CClusterNetworkResult {
@@ -1390,14 +1393,6 @@ impl VmCluster {
             .collect();
     }
 
-    fn c_node(&self, id: ClusterNodeId) -> Option<&CClusterNode> {
-        let node = unsafe { ghostos_vm_cluster_node((&*self.c_cluster as *const CCluster).cast_mut(), to_c_node_id(id)) };
-        if node.is_null() {
-            None
-        } else {
-            Some(unsafe { &*node })
-        }
-    }
 }
 
 pub struct SharedMemoryFixtureView<'a> {
