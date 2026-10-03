@@ -1774,7 +1774,8 @@ C storage-tree progress on 2026-10-03:
 - [x] Use caller-owned traversal frames and payload scratch without recursion or heap allocation. Old tree nodes remain untouched, and the output root changes only on success. Failed mutations can leave unreachable allocations, matching the allocator side-effect policy.
 - [x] Connect tree mutation to the C daemon empty-write callback, record/version/quota publication, garbage collection with one arena-full retry, and checkpoint root capture.
 - [x] Add loaded-tree cache construction and pinned-root reader materialization in `c/src/volume_tree_reader.c`.
-- [ ] Connect persistent bank flush/load and the active service. Full migration and behavior parity remain incomplete.
+- [x] Add real synchronous bank write/flush callbacks in `c/src/volume_storage.c`, including checkpoint roots and quota metadata.
+- [ ] Connect bank loading, full arena consistency validation, and the active service. Full migration and behavior parity remain incomplete.
 
 `make -j4 c-library` passed. Strict freestanding compilation of the tree
 module passed on x86-64, AArch64, and RISC-V. The tree, block, and record modules
@@ -1805,3 +1806,15 @@ C library build and strict freestanding compilation passed for x86-64,
 AArch64, and RISC-V. No tests were run, no `.rs` files were changed, and Cargo
 was not used. Temporary build log is ready for cleanup:
 `temp/c-library-volume-tree-reader-build.log`.
+
+C durable bank writer progress on 2026-10-03:
+
+- [x] Add actual block-write/flush callbacks over the C mutation arena, encoding type map and superblock, writing all arena slots, zeroing empty disk slots, and switching banks only after successful durability flush.
+- [x] Preserve checkpoint roots, counters, generation, and quota limits in the header. Add a checksum-refreshing C superblock quota setter.
+- [x] Check serialized occupied blocks before I/O and preserve post-flush interruption ordering. I/O failure retains prior in-memory bank/sequence; inactive on-device writes may be partial.
+- [ ] Add device read/load callbacks and full arena consistency validation; connect daemon persistence and dispatch. Full migration remains incomplete.
+
+C library build and strict freestanding compilation passed for x86-64,
+AArch64, and RISC-V. No tests were run, no `.rs` files changed, and Cargo
+was not used. Temporary build log is ready for cleanup:
+`temp/c-library-volume-storage-build.log`.

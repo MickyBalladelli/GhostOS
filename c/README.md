@@ -708,3 +708,25 @@ partially overwritten; never reuse buffers backing an existing reader.
 Keep the checkpoint pinned until its reader is discarded, and serialize
 materialization with mutations. Disk bank loading and daemon dispatch still
 need to call this layer.
+
+
+`volume_storage.h` supplies real synchronous block-write and durability-flush
+callbacks, separate from the older operation-log model in `volume_device.h`.
+`ghostos_volume_storage_flush` writes the inactive bank's encoded type map,
+all arena blocks, and finally its superblock, then calls the durability flush.
+Empty slots are written as zero blocks. The superblock includes current root,
+generation, object/checkpoint counters, occupied checkpoint roots, and all
+three quota limits. Serialized occupied blocks and header metadata are checked
+before the first I/O; full filesystem graph/ownership consistency remains a
+caller precondition. The existing small consistency model is not a full arena
+validator.
+
+Supply two disjoint 4096-byte map/header buffers and tree payload scratch.
+Callbacks borrow buffers synchronously; the map scratch is reused for empty
+blocks after its write. Calls must be serialized against mutations/checkpoint
+changes. Write or flush failures leave in-memory active bank and sequence
+unchanged, though the inactive disk bank can be partially overwritten. After
+flush succeeds, bank state and sequence are committed before the optional
+interruption callback, matching the post-flush crash boundary. This persists
+already-published in-memory state; it does not roll back file mutations when
+I/O fails. Device read/load callbacks and active daemon wiring remain open.
