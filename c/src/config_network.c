@@ -115,7 +115,7 @@ int ghostos_config_parse_network(const uint8_t *source, size_t length, uint8_t *
             if (!status) status = finish_route(routes, route_capacity, route_count, &route_active, has_destination, has_gateway, has_route_interface, destination, destination_length, gateway, gateway_length, route_interface, route_interface_length, has_metric, metric);
             if (status) return status;
             if (line_length == 9 && text_is(line, line_length, "[network]")) section = 1;
-            else if (line_length == 20 && text_is(line, line_length, "[[network.interface]]")) {
+            else if (line_length == 21 && text_is(line, line_length, "[[network.interface]]")) {
                 section = 2;
                 interface_active = true;
                 has_name = has_address = has_mtu = has_enabled = false;
