@@ -688,29 +688,7 @@ impl<
     }
 
     pub fn snapshot(&self) -> ScaleSnapshot {
-        let mut snapshot = ScaleSnapshot {
-            service: self.service,
-            instances: 0,
-            ready: 0,
-            draining: 0,
-            restarting: 0,
-            sessions: 0,
-            in_flight: 0,
-            completed_effects: 0,
-        };
-        for record in self.instances.iter().flatten() {
-            snapshot.instances += 1;
-            snapshot.sessions += record.sessions as usize;
-            snapshot.in_flight += record.in_flight as usize;
-            match record.state {
-                InstanceState::Ready => snapshot.ready += 1,
-                InstanceState::Draining => snapshot.draining += 1,
-                InstanceState::Restarting => snapshot.restarting += 1,
-                InstanceState::Joining => {}
-            }
-        }
-        snapshot.completed_effects = self.effects.iter().flatten().count();
-        snapshot
+        native::snapshot(&self.instances, &self.effects, self.service)
     }
 
     fn retry_request(&mut self, index: usize) -> Result<RouteDecision, ScaleError> {

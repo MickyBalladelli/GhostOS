@@ -109,3 +109,27 @@ bool ghostos_scale_increment(uint64_t value, uint64_t maximum, uint64_t *next) {
     return true;
 }
 uint16_t ghostos_scale_decrement(uint16_t value) { return value ? value - 1 : 0; }
+
+_Static_assert(sizeof(ghostos_scale_snapshot) == 7 * sizeof(size_t), "scale snapshot ABI");
+static bool snapshot_add(size_t *value, size_t amount, bool checked) {
+    if (checked && SIZE_MAX - *value < amount) return false;
+    *value += amount;
+    return true;
+}
+bool ghostos_scale_snapshot_read(const ghostos_scale_instance *instances, size_t instance_count,
+    const ghostos_scale_effect *effects, size_t effect_count, bool checked, ghostos_scale_snapshot *snapshot) {
+    *snapshot = (ghostos_scale_snapshot){0};
+    for (size_t i = 0; i < instance_count; ++i) {
+        const ghostos_scale_instance *record = &instances[i];
+        if (!record->occupied) continue;
+        if (!snapshot_add(&snapshot->instances, 1, checked) ||
+            !snapshot_add(&snapshot->sessions, record->sessions, checked) ||
+            !snapshot_add(&snapshot->in_flight, record->in_flight, checked)) return false;
+        if (record->state == 1 && !snapshot_add(&snapshot->ready, 1, checked)) return false;
+        if (record->state == 2 && !snapshot_add(&snapshot->draining, 1, checked)) return false;
+        if (record->state == 3 && !snapshot_add(&snapshot->restarting, 1, checked)) return false;
+    }
+    for (size_t i = 0; i < effect_count; ++i)
+        if (effects[i].occupied && !snapshot_add(&snapshot->completed_effects, 1, checked)) return false;
+    return true;
+}

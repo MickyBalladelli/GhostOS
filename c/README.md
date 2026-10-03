@@ -557,3 +557,8 @@ arithmetic also run in C. Rust preserves the original individual commit points,
 including partial updates on capacity errors, and retains typed tables and
 snapshot aggregation. Retry attempts keep their checked 32-bit limit; session
 and in-flight counters keep checked 16-bit increments and saturated decrements.
+
+Service-scale snapshots aggregate native instance/effect views in C, retaining
+instance-counter totals and slot order. Debug overflow returns to the Rust
+panic adapter; release sums wrap. Rust converts the snapshot to its public
+type and keeps the service kind and typed table storage.

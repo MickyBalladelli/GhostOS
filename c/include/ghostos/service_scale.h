@@ -44,4 +44,9 @@ int ghostos_scale_request_finish(uint32_t owner, uint64_t generation, uint8_t st
     uint32_t requested_owner, uint64_t requested_generation);
 bool ghostos_scale_increment(uint64_t value, uint64_t maximum, uint64_t *next);
 uint16_t ghostos_scale_decrement(uint16_t value);
+typedef struct {
+    size_t instances, ready, draining, restarting, sessions, in_flight, completed_effects;
+} ghostos_scale_snapshot;
+bool ghostos_scale_snapshot_read(const ghostos_scale_instance *instances, size_t instance_count,
+    const ghostos_scale_effect *effects, size_t effect_count, bool checked, ghostos_scale_snapshot *snapshot);
 #endif

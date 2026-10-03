@@ -146,3 +146,27 @@ unsafe extern "C" {
     fn ghostos_scale_increment(value: u64, maximum: u64, next: *mut u64) -> bool;
     fn ghostos_scale_decrement(value: u16) -> u16;
 }
+
+#[repr(C)]
+#[derive(Default)]
+struct Snapshot { instances: usize, ready: usize, draining: usize, restarting: usize,
+    sessions: usize, in_flight: usize, completed_effects: usize }
+pub(crate) fn snapshot<const I: usize, const E: usize>(records: &[Option<InstanceRecord>; I],
+    effects: &[Option<crate::EffectRecord>; E], service: crate::ServiceKind) -> crate::ScaleSnapshot {
+    let instances = records.map(Instance::from_record);
+    let effects = effects.map(|record| match record {
+        Some(record) => Effect { effect: record.effect, occupied: true },
+        None => Effect { effect: 0, occupied: false },
+    });
+    let mut snapshot = Snapshot::default();
+    if !unsafe { ghostos_scale_snapshot_read(instances.as_ptr(), I, effects.as_ptr(), E,
+        cfg!(debug_assertions), &mut snapshot) } { panic!("attempt to add with overflow") }
+    crate::ScaleSnapshot { service, instances: snapshot.instances, ready: snapshot.ready,
+        draining: snapshot.draining, restarting: snapshot.restarting, sessions: snapshot.sessions,
+        in_flight: snapshot.in_flight, completed_effects: snapshot.completed_effects }
+}
+const _: () = assert!(core::mem::size_of::<Snapshot>() == 7 * core::mem::size_of::<usize>());
+unsafe extern "C" {
+    fn ghostos_scale_snapshot_read(instances: *const Instance, instance_count: usize,
+        effects: *const Effect, effect_count: usize, checked: bool, snapshot: *mut Snapshot) -> bool;
+}
