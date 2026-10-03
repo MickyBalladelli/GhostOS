@@ -512,7 +512,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-audit/` — C owns advisory identifier checks, advisory and obsolescence slot selection, out-of-date version ordering, finding de-duplication, and scan-budget validation. Rust retains feed insertion records, withdrawn-match filtering, package iteration, and batch scheduling. No existing audit tests were present; C contract checks cover the slot rules.
 - [ ] `crates/ghostos-backup/` — backup and recovery.
 - [ ] `crates/ghostos-confidential/` — confidential computing.
-- [ ] `crates/ghostos-debug/` — C probe programs in `c/src/probes.c` verify forward-only jumps, execute bounded arithmetic, and record emitted values in a ring. C GDB framing in `c/src/gdb.c` buffers partial packets, checks checksums, reads memory, and rejects writes without permission. C coredumps in `c/src/coredump.c` validate `/cores` paths and encode `SYNCORE1` metadata and page records. Remote sessions remain. Rust sources were not changed.
+- [ ] `crates/ghostos-debug/` — C probe programs in `c/src/probes.c` verify forward-only jumps, execute bounded arithmetic, and record emitted values in a ring. C GDB framing in `c/src/gdb.c` buffers partial packets, checks checksums, reads memory, and rejects writes without permission. C coredumps in `c/src/coredump.c` validate `/cores` paths and encode `SYNCORE1` metadata and page records. C remote sessions in `c/src/remote_debug.c` check the capability wire header, target, nonce, and operation rights. Signature authorization remains outside C. Rust sources were not changed.
 - [ ] `crates/ghostos-declarative/` — declarative configuration.
 - [ ] `crates/ghostos-embedded-script/` — C owns script limits, capability names, operation masks, duplicate resources, source size, and request admission. Rust retains the Rhai engine and request storage. Existing capability tests were executed.
 - [ ] `crates/ghostos-heal/` — C owns health-service validation, duplicate detection, registration-id arithmetic, progress timestamp decisions, fault classification, and recovery slot selection, generation wrap, and replacement-process acceptance. Rust retains atomic loads and stores in their original order, trace emission, GhostFS checkpoints, and recovery runtime calls. Existing health and recovery behavior was executed; hot-swap and kernel-patch orchestration remain Rust.
@@ -1030,3 +1030,14 @@ freestanding syntax checks passed for `c/src/coredump.c` on x86-64, AArch64,
 and RISC-V. No Rust sources were edited and Cargo was not used. Filesystem
 transactions and remote debug sessions remain. Logs:
 `temp/c-library-coredump-build.log` and `temp/coredump-contract-build.log`.
+
+Remote-debug progress on 2026-10-03: `c/src/remote_debug.c` checks the
+192-byte `SYCA` capability header, rejects a mismatched process or a zero
+nonce before authorization, and selects debug, read, and write rights for
+each operation. A permit still requires the session token to equal the
+capability nonce and an external authorization result. `build/c/remote-debug-contracts`
+passed. `make c-library` passed, and strict freestanding syntax checks passed
+for `c/src/remote_debug.c` on x86-64, AArch64, and RISC-V. No Rust sources
+were edited and Cargo was not used. Signature verification remains outside
+this module. Logs: `temp/c-library-remote-debug-build.log` and
+`temp/remote-debug-contract-build.log`.
