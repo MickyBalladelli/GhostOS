@@ -514,7 +514,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-confidential/` — confidential computing.
 - [ ] `crates/ghostos-debug/` — debugging subsystem.
 - [ ] `crates/ghostos-declarative/` — declarative configuration.
-- [ ] `crates/ghostos-embedded-script/` — embedded scripting.
+- [ ] `crates/ghostos-embedded-script/` — C owns script limits, capability names, operation masks, duplicate resources, source size, and request admission. Rust retains the Rhai engine and request storage. Existing capability tests were executed.
 - [ ] `crates/ghostos-heal/` — C owns health-service validation, duplicate detection, registration-id arithmetic, progress timestamp decisions, fault classification, and recovery slot selection, generation wrap, and replacement-process acceptance. Rust retains atomic loads and stores in their original order, trace emission, GhostFS checkpoints, and recovery runtime calls. Existing health and recovery behavior was executed; hot-swap and kernel-patch orchestration remain Rust.
 - [ ] `crates/ghostos-inference/` — inference service and protocol.
 - [ ] `crates/ghostos-inspect/` — inspection and diagnostics.

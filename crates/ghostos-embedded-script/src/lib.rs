@@ -1,5 +1,8 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+#[allow(unsafe_code)]
+mod native;
 
 extern crate alloc;
 
@@ -48,19 +51,21 @@ impl ScriptLimits {
         max_request_bytes: 4 * 1024,
     };
 
-    pub const fn is_valid(self) -> bool {
-        self.max_source_bytes > 0
-            && self.max_operations > 0
-            && self.max_call_levels > 0
-            && self.max_expression_depth > 0
-            && self.max_variables > 0
-            && self.max_functions > 0
-            && self.max_modules > 0
-            && self.max_string_bytes > 0
-            && self.max_array_items > 0
-            && self.max_map_items > 0
-            && self.max_requests > 0
-            && self.max_request_bytes > 0
+    pub fn is_valid(self) -> bool {
+        crate::native::limits(
+            self.max_source_bytes,
+            self.max_operations,
+            self.max_call_levels,
+            self.max_expression_depth,
+            self.max_variables,
+            self.max_functions,
+            self.max_modules,
+            self.max_string_bytes,
+            self.max_array_items,
+            self.max_map_items,
+            self.max_requests,
+            self.max_request_bytes,
+        )
     }
 }
 
@@ -78,11 +83,7 @@ pub struct ScriptCapability {
 
 impl ScriptCapability {
     pub fn new(resource: &str, operations: u64) -> Result<Self, Error> {
-        if resource.is_empty()
-            || resource.len() > MAX_RESOURCE_NAME_BYTES
-            || resource.as_bytes().contains(&0)
-            || operations == 0
-        {
+        if !crate::native::capability(resource.as_bytes(), operations) {
             return Err(Error::InvalidCapability);
         }
         Ok(Self {
@@ -92,7 +93,7 @@ impl ScriptCapability {
     }
 
     pub fn single(resource: &str, operation: u8) -> Result<Self, Error> {
-        let mask = operation_mask(operation).ok_or(Error::InvalidOperation)?;
+        let mask = crate::native::operation_mask(operation).ok_or(Error::InvalidOperation)?;
         Self::new(resource, mask)
     }
 
@@ -104,8 +105,8 @@ impl ScriptCapability {
         self.operations
     }
 
-    pub const fn allows(&self, operation: u8) -> bool {
-        operation < 64 && self.operations & (1_u64 << operation) != 0
+    pub fn allows(&self, operation: u8) -> bool {
+        crate::native::allows(self.operations, operation)
     }
 }
 
@@ -131,17 +132,24 @@ impl AutomationContext {
         max_requests: usize,
         max_request_bytes: usize,
     ) -> Result<Self, Error> {
-        if capabilities.len() > MAX_SCRIPT_CAPABILITIES {
-            return Err(Error::Capacity);
+        let code = if capabilities.len() > MAX_SCRIPT_CAPABILITIES {
+            crate::native::names(&[], &[], capabilities.len(), MAX_SCRIPT_CAPABILITIES)
+        } else {
+            let mut names = [core::ptr::null(); MAX_SCRIPT_CAPABILITIES];
+            let mut lengths = [0; MAX_SCRIPT_CAPABILITIES];
+            for (index, capability) in capabilities.iter().enumerate() {
+                names[index] = capability.resource.as_ptr();
+                lengths[index] = capability.resource.len();
+            }
+            crate::native::names(&names[..capabilities.len()], &lengths[..capabilities.len()], capabilities.len(), MAX_SCRIPT_CAPABILITIES)
+        };
+        match code {
+            0 => {}
+            1 => return Err(Error::Capacity),
+            _ => return Err(Error::DuplicateCapability),
         }
         let mut stored = Vec::with_capacity(capabilities.len());
         for capability in capabilities {
-            if stored
-                .iter()
-                .any(|existing: &ScriptCapability| existing.resource == capability.resource)
-            {
-                return Err(Error::DuplicateCapability);
-            }
             stored.push(capability.clone())
         }
         Ok(Self {
@@ -158,7 +166,7 @@ impl AutomationContext {
         };
         self.capabilities
             .iter()
-            .any(|capability| capability.resource == resource && capability.allows(operation))
+            .any(|capability| capability.resource == resource && crate::native::allows(capability.operations, operation))
     }
 
     fn request(
@@ -167,29 +175,32 @@ impl AutomationContext {
         operation: i64,
         payload: &str,
     ) -> Result<i64, Box<EvalAltResult>> {
-        let operation = u8::try_from(operation)
-            .ok()
-            .filter(|operation| *operation < 64)
-            .ok_or_else(|| script_error(Error::InvalidOperation))?;
-        if payload.len() > self.max_request_bytes {
-            return Err(script_error(Error::PayloadTooLarge));
-        }
-        if !self
-            .capabilities
-            .iter()
-            .any(|capability| capability.resource == resource && capability.allows(operation))
-        {
-            return Err(script_error(Error::AccessDenied));
-        }
-        if self.requests.len() >= self.max_requests {
-            return Err(script_error(Error::Capacity));
-        }
-        let sequence =
-            u32::try_from(self.requests.len() + 1).map_err(|_| script_error(Error::Capacity))?;
+        let parsed = u8::try_from(operation).ok().filter(|operation| *operation < 64);
+        let allowed = parsed.is_some_and(|operation| {
+            payload.len() <= self.max_request_bytes
+                && self.capabilities.iter().any(|capability| {
+                    capability.resource == resource && crate::native::allows(capability.operations, operation)
+                })
+        });
+        let sequence = match crate::native::request(
+            parsed.is_some(),
+            parsed.unwrap_or(0),
+            allowed,
+            payload.len(),
+            self.max_request_bytes,
+            self.requests.len(),
+            self.max_requests,
+        ) {
+            Ok(sequence) => sequence,
+            Err(1) => return Err(script_error(Error::InvalidOperation)),
+            Err(2) => return Err(script_error(Error::PayloadTooLarge)),
+            Err(3) => return Err(script_error(Error::AccessDenied)),
+            Err(_) => return Err(script_error(Error::Capacity)),
+        };
         self.requests.push(AutomationRequest {
             sequence,
             resource: resource.to_string(),
-            operation,
+            operation: parsed.unwrap_or(0),
             payload: payload.to_string(),
         });
         Ok(i64::from(sequence))
@@ -236,7 +247,7 @@ impl EmbeddedScriptEngine {
         source: &str,
         capabilities: &[ScriptCapability],
     ) -> Result<ScriptOutcome, Error> {
-        if source.len() > self.limits.max_source_bytes {
+        if !crate::native::source(source.len(), self.limits.max_source_bytes) {
             return Err(Error::SourceTooLarge);
         }
         let context = AutomationContext::new(
@@ -364,10 +375,6 @@ impl ErrorKind {
             Self::SourceTooLarge => "script source is too large",
         }
     }
-}
-
-fn operation_mask(operation: u8) -> Option<u64> {
-    (operation < 64).then(|| 1_u64 << operation)
 }
 
 fn script_error(error: Error) -> Box<EvalAltResult> {
